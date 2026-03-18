@@ -1,0 +1,1935 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BAMA Workshop Timesheet</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0e0e0e;
+    --surface: #161616;
+    --card: #1e1e1e;
+    --border: #2a2a2a;
+    --accent: #ff6b00;
+    --accent2: #ffb347;
+    --green: #3ecf8e;
+    --red: #ff4444;
+    --amber: #f59e0b;
+    --text: #f0f0f0;
+    --muted: #888;
+    --subtle: #444;
+    --font-display: 'Bebas Neue', sans-serif;
+    --font-body: 'DM Sans', sans-serif;
+    --font-mono: 'DM Mono', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── TOP BAR ── */
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 28px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    position: sticky; top: 0; z-index: 100;
+  }
+  .logo {
+    font-family: var(--font-display);
+    font-size: 26px;
+    letter-spacing: 2px;
+    color: var(--accent);
+  }
+  .logo span { color: var(--text); }
+  .topbar-right { display: flex; align-items: center; gap: 14px; }
+  .clock-display {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--muted);
+    background: var(--card);
+    border: 1px solid var(--border);
+    padding: 6px 12px;
+    border-radius: 6px;
+  }
+  .manager-btn {
+    background: none;
+    border: 1px solid var(--subtle);
+    color: var(--muted);
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    font-family: var(--font-body);
+    transition: all .2s;
+  }
+  .manager-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* ── SCREENS ── */
+  .screen { display: none; }
+  .screen.active { display: block; }
+
+  /* ── HOME / EMPLOYEE SELECT ── */
+  .home-wrap {
+    max-width: 900px; margin: 0 auto; padding: 48px 24px;
+    text-align: center;
+  }
+  .home-title {
+    font-family: var(--font-display);
+    font-size: 52px;
+    letter-spacing: 3px;
+    line-height: 1;
+    margin-bottom: 8px;
+  }
+  .home-sub { color: var(--muted); font-size: 14px; margin-bottom: 48px; }
+  .employee-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 14px;
+    margin-bottom: 40px;
+  }
+  .emp-btn {
+    background: var(--card);
+    border: 1.5px solid var(--border);
+    border-radius: 12px;
+    padding: 28px 16px 20px;
+    cursor: pointer;
+    transition: all .2s;
+    text-align: center;
+    position: relative;
+  }
+  .emp-btn:hover { border-color: var(--accent); transform: translateY(-2px); background: #222; }
+  .emp-btn.clocked-in { border-color: var(--green); }
+  .emp-avatar {
+    width: 56px; height: 56px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), #c84b00);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-display);
+    font-size: 22px;
+    color: #fff;
+    margin: 0 auto 12px;
+  }
+  .emp-name { font-size: 14px; font-weight: 500; }
+  .emp-status {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 4px;
+    font-family: var(--font-mono);
+  }
+  .emp-status.in { color: var(--green); }
+  .status-dot {
+    display: inline-block; width: 6px; height: 6px;
+    border-radius: 50%; background: var(--green);
+    margin-right: 4px; vertical-align: middle;
+  }
+
+  /* ── EMPLOYEE PANEL ── */
+  .panel-wrap {
+    max-width: 820px; margin: 0 auto; padding: 36px 24px;
+  }
+  .panel-header {
+    display: flex; align-items: center; gap: 16px;
+    margin-bottom: 32px;
+  }
+  .back-btn {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 14px;
+    color: var(--muted); cursor: pointer; font-size: 13px;
+    font-family: var(--font-body); transition: all .2s;
+  }
+  .back-btn:hover { color: var(--text); border-color: var(--subtle); }
+  .panel-name {
+    font-family: var(--font-display);
+    font-size: 36px; letter-spacing: 2px;
+  }
+  .section-label {
+    font-size: 11px; letter-spacing: 2px; color: var(--muted);
+    text-transform: uppercase; margin-bottom: 14px;
+    font-weight: 600;
+  }
+
+  /* ── CARDS ── */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px;
+    margin-bottom: 20px;
+  }
+  .card-title {
+    font-size: 13px; font-weight: 600; color: var(--accent);
+    margin-bottom: 18px; letter-spacing: .5px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .card-title .icon { font-size: 16px; }
+
+  /* ── CLOCK IN/OUT ── */
+  .clock-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+    margin-bottom: 16px;
+  }
+  .clock-grid3 { grid-template-columns: 1fr 1fr 1fr; }
+  .field-label { font-size: 11px; color: var(--muted); margin-bottom: 6px; font-weight: 500; letter-spacing: .5px; }
+  .field-input {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    transition: border-color .2s;
+  }
+  .field-input:focus { outline: none; border-color: var(--accent); }
+  select.field-input option { background: var(--surface); }
+
+  .clock-actions { display: flex; gap: 10px; margin-top: 4px; }
+  .btn {
+    padding: 11px 22px;
+    border-radius: 8px;
+    font-family: var(--font-body);
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+    border: none;
+    transition: all .2s;
+    letter-spacing: .3px;
+  }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: #e05d00; }
+  .btn-success { background: var(--green); color: #0e0e0e; }
+  .btn-success:hover { background: #32b87a; }
+  .btn-danger { background: var(--red); color: #fff; }
+  .btn-danger:hover { background: #cc3333; }
+  .btn-ghost {
+    background: none; border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .btn-ghost:hover { border-color: var(--subtle); color: var(--text); }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+  .btn-full { width: 100%; }
+
+  /* ── TIME ENTRY ── */
+  .project-row {
+    display: grid;
+    grid-template-columns: 180px 1fr 100px auto;
+    gap: 10px; align-items: end;
+    margin-bottom: 10px;
+  }
+  .today-entries { margin-top: 16px; }
+  .entry-chip {
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 14px;
+    margin-bottom: 8px; font-size: 13px;
+  }
+  .entry-chip .proj-id {
+    font-family: var(--font-mono); color: var(--accent2);
+    font-size: 12px; min-width: 60px;
+  }
+  .entry-chip .proj-name { color: var(--muted); flex: 1; margin: 0 12px; }
+  .entry-chip .proj-hrs {
+    font-family: var(--font-mono); font-weight: 500;
+    color: var(--green);
+  }
+  .entry-chip .del-btn {
+    background: none; border: none; color: var(--subtle);
+    cursor: pointer; font-size: 16px; margin-left: 10px;
+    transition: color .2s; line-height: 1;
+  }
+  .entry-chip .del-btn:hover { color: var(--red); }
+
+  /* ── MANAGER VIEW ── */
+  .mgr-wrap {
+    max-width: 1100px; margin: 0 auto; padding: 36px 24px;
+  }
+  .mgr-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 32px;
+  }
+  .mgr-title {
+    font-family: var(--font-display);
+    font-size: 40px; letter-spacing: 2px;
+  }
+  .week-nav {
+    display: flex; align-items: center; gap: 12px;
+  }
+  .week-label {
+    font-family: var(--font-mono); font-size: 13px; color: var(--muted);
+    min-width: 160px; text-align: center;
+  }
+  .nav-btn {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 12px;
+    color: var(--muted); cursor: pointer; font-size: 14px;
+    transition: all .2s;
+  }
+  .nav-btn:hover { color: var(--text); border-color: var(--subtle); }
+
+  /* weekly summary table */
+  .summary-table { width: 100%; border-collapse: collapse; margin-bottom: 28px; }
+  .summary-table th {
+    font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase;
+    color: var(--muted); font-weight: 600;
+    padding: 8px 14px; text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  .summary-table td {
+    padding: 12px 14px; border-bottom: 1px solid var(--border);
+    font-size: 13px; vertical-align: top;
+  }
+  .summary-table tr:hover td { background: rgba(255,255,255,.02); }
+  .mono { font-family: var(--font-mono); }
+  .tag {
+    display: inline-block; padding: 2px 8px;
+    border-radius: 4px; font-size: 11px; font-weight: 600;
+    font-family: var(--font-mono);
+  }
+  .tag-pending { background: rgba(245,158,11,.15); color: var(--amber); border: 1px solid rgba(245,158,11,.3); }
+  .tag-approved { background: rgba(62,207,142,.15); color: var(--green); border: 1px solid rgba(62,207,142,.3); }
+  .tag-rejected { background: rgba(255,68,68,.15); color: var(--red); border: 1px solid rgba(255,68,68,.3); }
+
+  .approve-row { display: flex; gap: 6px; }
+  .tiny-btn {
+    padding: 4px 10px; border-radius: 5px; font-size: 11px;
+    font-family: var(--font-body); font-weight: 600;
+    cursor: pointer; border: none; transition: all .15s;
+  }
+  .tiny-approve { background: rgba(62,207,142,.2); color: var(--green); border: 1px solid rgba(62,207,142,.4); }
+  .tiny-approve:hover { background: var(--green); color: #0e0e0e; }
+  .tiny-reject { background: rgba(255,68,68,.15); color: var(--red); border: 1px solid rgba(255,68,68,.3); }
+  .tiny-reject:hover { background: var(--red); color: #fff; }
+
+  /* stats row */
+  .stats-row { display: grid; grid-template-columns: repeat(4,1fr); gap: 14px; margin-bottom: 28px; }
+  .stat-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px;
+  }
+  .stat-label { font-size: 11px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; margin-bottom: 8px; }
+  .stat-value { font-family: var(--font-display); font-size: 36px; color: var(--accent); }
+  .stat-unit { font-size: 14px; color: var(--muted); margin-left: 4px; font-family: var(--font-body); }
+
+  /* tabs */
+  .tabs { display: flex; gap: 4px; margin-bottom: 20px; }
+  .tab {
+    padding: 8px 18px; border-radius: 8px;
+    font-size: 13px; font-weight: 500; cursor: pointer;
+    border: 1px solid transparent; transition: all .2s;
+    background: none; color: var(--muted);
+  }
+  .tab.active { background: var(--card); border-color: var(--border); color: var(--text); }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* modal */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,.7); z-index: 200;
+    align-items: center; justify-content: center;
+  }
+  .modal-overlay.active { display: flex; }
+  .modal {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 16px; padding: 32px; width: 400px; max-width: 90vw;
+  }
+  .modal-title { font-family: var(--font-display); font-size: 28px; margin-bottom: 20px; }
+  .modal-actions { display: flex; gap: 10px; margin-top: 24px; justify-content: flex-end; }
+
+  /* toast */
+  .toast {
+    position: fixed; bottom: 28px; right: 28px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 20px;
+    font-size: 13px; z-index: 300;
+    transform: translateY(100px); opacity: 0;
+    transition: all .3s; pointer-events: none;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .toast.show { transform: translateY(0); opacity: 1; }
+  .toast.success { border-left: 3px solid var(--green); }
+  .toast.error { border-left: 3px solid var(--red); }
+  .toast.info { border-left: 3px solid var(--accent); }
+
+  /* loading */
+  .loading-bar {
+    height: 2px; background: var(--accent);
+    position: fixed; top: 0; left: 0; z-index: 999;
+    transition: width .4s;
+  }
+  .spinner {
+    display: inline-block; width: 16px; height: 16px;
+    border: 2px solid var(--subtle); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .empty-state {
+    text-align: center; padding: 48px 24px; color: var(--muted);
+    font-size: 14px;
+  }
+  .empty-state .icon { font-size: 36px; margin-bottom: 12px; }
+
+  /* password screen */
+  .auth-wrap {
+    max-width: 360px; margin: 80px auto; padding: 24px;
+    text-align: center;
+  }
+  .auth-wrap .modal-title { font-size: 36px; margin-bottom: 8px; }
+  .auth-sub { color: var(--muted); font-size: 13px; margin-bottom: 28px; }
+
+  /* highlight current clocked-in status bar */
+  .status-bar {
+    background: rgba(62,207,142,.1);
+    border: 1px solid rgba(62,207,142,.25);
+    border-radius: 10px; padding: 12px 18px;
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 20px; font-size: 13px;
+  }
+  .status-bar .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+  .status-bar b { color: var(--green); }
+
+  .divider {
+    border: none; border-top: 1px solid var(--border); margin: 20px 0;
+  }
+
+  /* Approval section */
+  .approval-section { margin-bottom: 32px; }
+  .approve-all-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 18px; margin-bottom: 14px;
+  }
+  .approve-all-bar span { font-size: 13px; color: var(--muted); }
+
+  .clock-summary-entry {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px 16px;
+    margin-bottom: 8px; font-size: 13px;
+    display: grid; grid-template-columns: 1fr 1fr 1fr 1fr 80px;
+    gap: 8px; align-items: center;
+  }
+  .cs-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .cs-value { font-family: var(--font-mono); font-size: 13px; }
+
+  @media (max-width: 600px) {
+    .project-row { grid-template-columns: 1fr 1fr; }
+    .clock-grid3 { grid-template-columns: 1fr 1fr; }
+    .stats-row { grid-template-columns: 1fr 1fr; }
+    .clock-summary-entry { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="loading-bar" id="loadingBar" style="width:0"></div>
+
+<!-- TOP BAR -->
+<div class="topbar">
+  <div class="logo">BAMA<span> WORKSHOP</span></div>
+  <div class="topbar-right">
+    <div class="clock-display" id="liveClock">--:-- --</div>
+    <button class="manager-btn" onclick="showManagerAuth()">⚙ Manager</button>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<!-- ═══════════════════════════════════════
+     SCREEN 1: HOME — EMPLOYEE SELECT
+══════════════════════════════════════════ -->
+<div class="screen active" id="screenHome">
+  <div class="home-wrap">
+    <div class="home-title">WHO'S<br>CLOCKING IN?</div>
+    <div class="home-sub" id="todayDate"></div>
+    <div class="employee-grid" id="employeeGrid">
+      <div class="empty-state"><div class="spinner"></div><br>Loading employees…</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     SCREEN 2: EMPLOYEE PANEL
+══════════════════════════════════════════ -->
+<div class="screen" id="screenEmployee">
+  <div class="panel-wrap">
+    <div class="panel-header">
+      <button class="back-btn" onclick="goHome()">← Back</button>
+      <div class="panel-name" id="empPanelName"></div>
+    </div>
+
+    <!-- STATUS BAR (shown if clocked in) -->
+    <div class="status-bar" id="statusBar" style="display:none">
+      <div class="dot"></div>
+      <div>Clocked in at <b id="statusClockIn">--:--</b> · Working <b id="statusWorking">0h 0m</b></div>
+    </div>
+
+    <!-- ── CLOCK IN/OUT CARD ── -->
+    <div class="card" id="clockCard">
+      <div class="card-title"><span class="icon">🕐</span> Shift Times</div>
+      <div class="clock-grid" id="clockInSection">
+        <div>
+          <div class="field-label">START TIME</div>
+          <select class="field-input" id="clockInTime"></select>
+        </div>
+        <div style="display:flex;align-items:flex-end">
+          <button class="btn btn-success btn-full" onclick="doClock('in')">Clock In</button>
+        </div>
+      </div>
+      <div id="clockedInSection" style="display:none">
+        <div class="clock-grid clock-grid3">
+          <div>
+            <div class="field-label">CLOCKED IN</div>
+            <div class="field-input" id="displayClockIn" style="opacity:.6">—</div>
+          </div>
+          <div>
+            <div class="field-label">BREAK (optional)</div>
+            <select class="field-input" id="breakDuration">
+              <option value="">No break</option>
+              <option value="15">15 min</option>
+              <option value="20">20 min</option>
+              <option value="30">30 min</option>
+              <option value="45">45 min</option>
+              <option value="60">60 min</option>
+            </select>
+          </div>
+          <div>
+            <div class="field-label">FINISH TIME</div>
+            <select class="field-input" id="clockOutTime"></select>
+          </div>
+        </div>
+        <div class="clock-actions" style="margin-top:10px">
+          <button class="btn btn-danger" onclick="doClock('out')">Clock Out</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── TIME ENTRY CARD ── -->
+    <div class="card">
+      <div class="card-title"><span class="icon">🔨</span> Log Project Time</div>
+      <div class="project-row">
+        <div>
+          <div class="field-label">PROJECT ID</div>
+          <select class="field-input" id="projectSelect" onchange="onProjectSelect()">
+            <option value="">Select project…</option>
+          </select>
+        </div>
+        <div>
+          <div class="field-label">PROJECT NAME</div>
+          <div class="field-input" id="projectNameDisplay" style="opacity:.6;min-height:42px;display:flex;align-items:center">—</div>
+        </div>
+        <div>
+          <div class="field-label">HOURS</div>
+          <input type="number" class="field-input" id="hoursInput" min="0.25" max="24" step="0.25" placeholder="0.0">
+        </div>
+        <div style="display:flex;align-items:flex-end">
+          <button class="btn btn-primary" onclick="addEntry()">+ Add</button>
+        </div>
+      </div>
+      <div class="today-entries" id="todayEntries">
+        <div class="empty-state" style="padding:20px"><span style="opacity:.4">No entries yet today</span></div>
+      </div>
+      <hr class="divider">
+      <button class="btn btn-success" onclick="submitDay()" id="submitDayBtn" style="width:100%">✓ Submit Day</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     SCREEN 3: MANAGER AUTH
+══════════════════════════════════════════ -->
+<div class="screen" id="screenAuth">
+  <div class="auth-wrap">
+    <div class="modal-title">MANAGER</div>
+    <div class="auth-sub">Enter your PIN to access approvals</div>
+    <div>
+      <div class="field-label">PIN</div>
+      <input type="password" class="field-input" id="pinInput" placeholder="••••" maxlength="6"
+        onkeydown="if(event.key==='Enter')checkPin()" style="text-align:center;font-size:22px;letter-spacing:8px">
+    </div>
+    <div style="display:flex;gap:10px;margin-top:16px">
+      <button class="btn btn-ghost" style="flex:1" onclick="goHome()">Cancel</button>
+      <button class="btn btn-primary" style="flex:1" onclick="checkPin()">Enter</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     SCREEN 4: MANAGER DASHBOARD
+══════════════════════════════════════════ -->
+<div class="screen" id="screenManager">
+  <div class="mgr-wrap">
+    <div class="mgr-header">
+      <div>
+        <div class="mgr-title">WEEKLY APPROVALS</div>
+        <div style="color:var(--muted);font-size:13px">BAMA Workshop · Manager View</div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center">
+        <div class="week-nav">
+          <button class="nav-btn" onclick="changeWeek(-1)">←</button>
+          <div class="week-label" id="weekLabel">—</div>
+          <button class="nav-btn" onclick="changeWeek(1)">→</button>
+        </div>
+        <button class="btn btn-ghost" onclick="goHome()">Exit</button>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-row" id="mgrStats">
+      <div class="stat-card"><div class="stat-label">Total Hours</div><div class="stat-value" id="stat-hrs">0<span class="stat-unit">hrs</span></div></div>
+      <div class="stat-card"><div class="stat-label">Pending</div><div class="stat-value" id="stat-pending" style="color:var(--amber)">0</div></div>
+      <div class="stat-card"><div class="stat-label">Approved</div><div class="stat-value" id="stat-approved" style="color:var(--green)">0</div></div>
+      <div class="stat-card"><div class="stat-label">Employees</div><div class="stat-value" id="stat-emps">0</div></div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('project')">By Project</button>
+      <button class="tab" onclick="switchTab('employee')">By Employee</button>
+      <button class="tab" onclick="switchTab('clockinout')">Clock In/Out Log</button>
+      <button class="tab" onclick="switchTab('staff')">👥 Staff</button>
+      <button class="tab" onclick="switchTab('settings')">⚙ Settings</button>
+    </div>
+
+    <!-- Tab: By Project -->
+    <div class="tab-content active" id="tab-project">
+      <div class="approval-section">
+        <div class="approve-all-bar">
+          <span id="pendingCount">0 entries pending approval</span>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-success" style="padding:8px 16px;font-size:12px" onclick="approveAll()">✓ Approve All Pending</button>
+            <button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="writeToSharePoint()">↑ Sync to SharePoint</button>
+          </div>
+        </div>
+        <table class="summary-table" id="projectTable">
+          <thead>
+            <tr>
+              <th>PROJECT ID</th>
+              <th>PROJECT NAME</th>
+              <th>EMPLOYEE</th>
+              <th>DATE</th>
+              <th>HRS</th>
+              <th>STATUS</th>
+              <th>ACTION</th>
+            </tr>
+          </thead>
+          <tbody id="projectTableBody">
+            <tr><td colspan="7"><div class="empty-state"><div class="spinner"></div></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Tab: By Employee -->
+    <div class="tab-content" id="tab-employee">
+      <div id="empSummaryArea"></div>
+    </div>
+
+    <!-- Tab: Clock In/Out -->
+    <div class="tab-content" id="tab-clockinout">
+      <div id="clockLogArea"></div>
+    </div>
+
+    <!-- Tab: Staff Management -->
+    <div class="tab-content" id="tab-staff">
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-title"><span class="icon">➕</span> Add New Employee</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:flex-end">
+          <div>
+            <div class="field-label">FULL NAME</div>
+            <input type="text" class="field-input" id="newEmpName" placeholder="e.g. John Smith" onkeydown="if(event.key==='Enter')addEmployee()">
+          </div>
+          <div>
+            <div class="field-label">ROLE (optional)</div>
+            <input type="text" class="field-input" id="newEmpRole" placeholder="e.g. Fabricator" onkeydown="if(event.key==='Enter')addEmployee()">
+          </div>
+          <button class="btn btn-primary" onclick="addEmployee()">Add Employee</button>
+        </div>
+      </div>
+      <div id="staffList">
+        <div class="empty-state"><div class="spinner"></div></div>
+      </div>
+    </div>
+
+    <!-- Tab: Settings -->
+    <div class="tab-content" id="tab-settings">
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-title"><span class="icon">&#128274;</span> Change Manager PIN</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:flex-end">
+          <div>
+            <div class="field-label">NEW PIN</div>
+            <input type="password" class="field-input" id="newPin1" placeholder="Enter new PIN" maxlength="10">
+          </div>
+          <div>
+            <div class="field-label">CONFIRM PIN</div>
+            <input type="password" class="field-input" id="newPin2" placeholder="Confirm new PIN" maxlength="10">
+          </div>
+          <button class="btn btn-primary" onclick="changePin()">Save PIN</button>
+        </div>
+        <div style="margin-top:12px;font-size:12px;color:var(--muted)">PIN is stored securely in your SharePoint timesheet data file.</div>
+      </div>
+      <div class="card">
+        <div class="card-title"><span class="icon">&#128451;</span> Data Management</div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap">
+          <button class="btn btn-ghost" onclick="exportWeekCSV()">&#8595; Export Week as CSV</button>
+          <button class="btn btn-ghost" onclick="refreshProjects()">&#8634; Refresh Project List</button>
+        </div>
+        <div style="margin-top:14px;font-size:12px;color:var(--subtle)">
+          Timesheet data stored at: <span style="color:var(--muted);font-family:var(--font-mono)">01 - Accounts/DANIEL/Project Tracker/timesheet-data.json</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     CONFIRM MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="confirmModal">
+  <div class="modal">
+    <div class="modal-title" id="confirmTitle">Confirm</div>
+    <div id="confirmMsg" style="color:var(--muted);font-size:14px"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="confirmOk" onclick="">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════
+// CONFIGURATION — Edit these
+// ═══════════════════════════════════════════
+const CONFIG = {
+  managerPin: '1234', // Change this PIN!
+  driveId: 'b!CxTKk9lEwkyweUqAo3CRas-huywW4KtLqOk2tNzmx-P7CX86DNhTQo14pLuU_tZu',
+  projectTrackerItemId: '012IX7LSI5MG6U55XFORBYNJORV3AQLGU7',
+  timesheetFileName: 'timesheet-data.json',
+  timesheetFolderItemId: '012IX7LSKBTWWE4SJNNFEJGFDOXH3M3Z5B', // 01 - Accounts/DANIEL/Project Tracker
+  timesheetFolderId: null, // will store in root of drive
+
+  employees: [], // now managed via Manager > Staff tab
+
+  timeSlots: (() => {
+    const slots = [];
+    for (let h = 6; h <= 22; h++) {
+      for (let m of [0, 30]) {
+        const hh = String(h).padStart(2,'0');
+        const mm = String(m).padStart(2,'0');
+        const ampm = h < 12 ? 'AM' : h === 12 ? 'PM' : 'PM';
+        const h12 = h > 12 ? h - 12 : h === 0 ? 12 : h;
+        slots.push({ val: `${hh}:${mm}`, label: `${h12}:${mm} ${ampm}` });
+      }
+    }
+    return slots;
+  })()
+};
+
+// ═══════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════
+let state = {
+  projects: [],       // { id, name, status }
+  timesheetData: {    // persisted to SharePoint JSON
+    employees: [],    // { id, name, role, active, addedAt }
+    entries: [],      // { id, employeeName, projectId, projectName, hours, date, status, submittedAt }
+    clockings: [],    // { id, employeeName, date, clockIn, clockOut, breakMins }
+    settings: { managerPin: '1234' }
+  },
+  currentEmployee: null,
+  currentEntries: [],  // unsaved entries for today's session
+  currentWeekOffset: 0,
+  timesheetItemId: null
+};
+
+// ═══════════════════════════════════════════
+// GRAPH API HELPERS
+// ═══════════════════════════════════════════
+async function graphGet(url) {
+  const res = await fetch(`https://graph.microsoft.com/v1.0${url}`, {
+    headers: { 'Authorization': `Bearer ${await getToken()}` }
+  });
+  if (!res.ok) throw new Error(`Graph GET failed: ${url} ${res.status}`);
+  return res.json();
+}
+
+async function graphPut(url, body) {
+  const res = await fetch(`https://graph.microsoft.com/v1.0${url}`, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bearer ${await getToken()}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) throw new Error(`Graph PUT failed: ${url} ${res.status}`);
+  return res.json();
+}
+
+async function graphPatch(url, body) {
+  const res = await fetch(`https://graph.microsoft.com/v1.0${url}`, {
+    method: 'PATCH',
+    headers: {
+      'Authorization': `Bearer ${await getToken()}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) throw new Error(`Graph PATCH failed ${res.status}`);
+  return res.json();
+}
+
+// ═══════════════════════════════════════════
+// AUTH — MSAL + Microsoft Graph API
+// Hosted on Azure Static Web Apps
+// ═══════════════════════════════════════════
+let _tokenCache = null;
+let _tokenExpiry = 0;
+
+async function getToken() {
+  if (_tokenCache && Date.now() < _tokenExpiry) return _tokenCache;
+  if (!window.msalInstance) await loadMSAL();
+
+  const accounts = window.msalInstance.getAllAccounts();
+  if (!accounts.length) {
+    const result = await window.msalInstance.loginPopup({
+      scopes: ['Files.ReadWrite', 'Sites.ReadWrite.All']
+    });
+    _tokenCache = result.accessToken;
+    _tokenExpiry = Date.now() + 3300000;
+    return _tokenCache;
+  }
+
+  try {
+    const result = await window.msalInstance.acquireTokenSilent({
+      scopes: ['Files.ReadWrite', 'Sites.ReadWrite.All'],
+      account: accounts[0]
+    });
+    _tokenCache = result.accessToken;
+    _tokenExpiry = Date.now() + 3300000;
+    return _tokenCache;
+  } catch {
+    const result = await window.msalInstance.acquireTokenPopup({
+      scopes: ['Files.ReadWrite', 'Sites.ReadWrite.All']
+    });
+    _tokenCache = result.accessToken;
+    _tokenExpiry = Date.now() + 3300000;
+    return _tokenCache;
+  }
+}
+
+async function loadMSAL() {
+  await new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/msal.js/2.38.2/msal-browser.min.js';
+    s.onload = res; s.onerror = rej;
+    document.head.appendChild(s);
+  });
+
+  window.msalInstance = new msal.PublicClientApplication({
+    auth: {
+      clientId: '04b702fd-c53c-4f38-94bc-0334ce91d954',
+      authority: 'https://login.microsoftonline.com/c92626f5-e391-499a-9059-0113bd07da2d',
+      redirectUri: 'https://kind-field-057c32110.4.azurestaticapps.net'
+    },
+    cache: { cacheLocation: 'sessionStorage' }
+  });
+
+  await window.msalInstance.initialize();
+  try {
+    const resp = await window.msalInstance.handleRedirectPromise();
+    if (resp) { _tokenCache = resp.accessToken; _tokenExpiry = Date.now() + 3300000; }
+  } catch {}
+}
+
+// ═══════════════════════════════════════════
+// DATA LAYER — Microsoft Graph API
+// ═══════════════════════════════════════════
+async function loadTimesheetData() {
+  const token = await getToken();
+  const metaUrl = `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.timesheetFolderItemId}:/${CONFIG.timesheetFileName}`;
+  const metaRes = await fetch(metaUrl, { headers: { 'Authorization': `Bearer ${token}` } });
+
+  if (metaRes.status === 404) {
+    console.log('First run — no timesheet-data.json yet');
+    return;
+  }
+  if (!metaRes.ok) throw new Error(`Metadata fetch failed: ${metaRes.status}`);
+
+  const meta = await metaRes.json();
+  state.timesheetItemId = meta.id;
+
+  const contentRes = await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${meta.id}/content`,
+    { headers: { 'Authorization': `Bearer ${token}` } }
+  );
+  if (!contentRes.ok) throw new Error(`Content fetch failed: ${contentRes.status}`);
+
+  const loaded = await contentRes.json();
+  state.timesheetData = {
+    employees: [],
+    entries: [],
+    clockings: [],
+    settings: { managerPin: '1234' },
+    ...loaded
+  };
+  console.log(`Loaded: ${(state.timesheetData.employees||[]).length} employees, ${state.timesheetData.entries.length} entries`);
+}
+
+async function saveTimesheetData() {
+  const token = await getToken();
+  const json = JSON.stringify(state.timesheetData, null, 2);
+  const url = `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.timesheetFolderItemId}:/${CONFIG.timesheetFileName}:/content`;
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: json
+  });
+  if (!res.ok) {
+    const err = await res.text().catch(() => res.status);
+    throw new Error(`Save failed (${res.status}): ${err}`);
+  }
+  console.log('Saved to SharePoint OK');
+}
+
+// ═══════════════════════════════════════════
+// LOAD PROJECTS FROM PROJECT TRACKER
+// ═══════════════════════════════════════════
+async function loadProjects() {
+  // We'll use the hardcoded list from the tracker we already read,
+  // supplemented by a live Graph call to parse the workbook
+  try {
+    const ws = await graphGet(
+      `/drives/${CONFIG.driveId}/items/${CONFIG.projectTrackerItemId}/workbook/worksheets`
+    );
+    const sheetsWithProjects = ws.value.find(s =>
+      s.name.toLowerCase().includes('project') && !s.name.toLowerCase().includes('hour')
+    );
+
+    if (sheetsWithProjects) {
+      const range = await graphGet(
+        `/drives/${CONFIG.driveId}/items/${CONFIG.projectTrackerItemId}/workbook/worksheets/${encodeURIComponent(sheetsWithProjects.name)}/usedRange`
+      );
+      parseProjectsFromRange(range.values);
+      return;
+    }
+  } catch (e) {
+    console.warn('Live project load failed, using cached list:', e.message);
+  }
+
+  // Fallback to hardcoded list from the tracker
+  state.projects = FALLBACK_PROJECTS;
+}
+
+function parseProjectsFromRange(rows) {
+  const projects = [];
+  let idCol = -1, nameCol = -1, statusCol = -1;
+
+  for (let r = 0; r < Math.min(rows.length, 10); r++) {
+    const row = rows[r].map(c => String(c).toLowerCase().trim());
+    const iIdx = row.findIndex(c => c.includes('project id') || c === 'id');
+    const nIdx = row.findIndex(c => c.includes('project name') || c === 'name');
+    const sIdx = row.findIndex(c => c === 'status');
+    if (iIdx >= 0 && nIdx >= 0) {
+      idCol = iIdx; nameCol = nIdx; statusCol = sIdx;
+      break;
+    }
+  }
+
+  if (idCol < 0) {
+    // Try matching column by pattern S19xx
+    for (let r = 1; r < rows.length; r++) {
+      const row = rows[r];
+      for (let c = 0; c < row.length; c++) {
+        if (/^S\d{4}/i.test(String(row[c]))) {
+          if (!projects.find(p => p.id === row[c])) {
+            projects.push({
+              id: String(row[c]).trim(),
+              name: String(row[c + 1] || '').trim(),
+              status: String(row[statusCol] || 'Active').trim()
+            });
+          }
+        }
+      }
+    }
+  } else {
+    for (let r = 1; r < rows.length; r++) {
+      const id = String(rows[r][idCol] || '').trim();
+      const name = String(rows[r][nameCol] || '').trim();
+      const status = statusCol >= 0 ? String(rows[r][statusCol] || '').trim() : 'Active';
+      if (id && /^S\d{4}/i.test(id)) {
+        projects.push({ id, name, status });
+      }
+    }
+  }
+
+  state.projects = projects.length > 0 ? projects : FALLBACK_PROJECTS;
+}
+
+// Fallback project list (from what we read from the tracker)
+const FALLBACK_PROJECTS = [
+  { id: 'S1901', name: 'Essex - Grill', status: 'Active' },
+  { id: 'S1903', name: 'Hethersett Canopies', status: 'Active' },
+  { id: 'S1904', name: 'Belfast Road', status: 'Active' },
+  { id: 'S1905', name: 'Fairview', status: 'Active' },
+  { id: 'S1906', name: 'Windpost', status: 'Active' },
+  { id: 'S1907', name: 'Essex Stairs', status: 'Active' },
+  { id: 'S1908', name: 'DS Developments', status: 'Active' },
+  { id: 'S1909', name: 'Harrow School', status: 'Active' },
+  { id: 'S1910', name: 'Palmerston Road', status: 'Active' },
+  { id: 'S1911', name: 'Ben-Stairs', status: 'Active' },
+  { id: 'S1912', name: 'Valour General Conversions', status: 'Active' },
+  { id: 'S1913', name: 'Valour General Conversions', status: 'Active' },
+  { id: 'S1914', name: 'Devonport Ph1 Temporary Works', status: 'Active' },
+  { id: 'S1915', name: 'Screwfix Goalpost', status: 'Active' },
+  { id: 'S1916', name: 'Eyebrook Gardens', status: 'Active' },
+  { id: 'S1917', name: 'Sally Tomlinson', status: 'Active' },
+  { id: 'S1918', name: '7 Cross Lane', status: 'Active' },
+  { id: 'S1919', name: 'BBC', status: 'Active' },
+  { id: 'S1920', name: 'Pembroke College', status: 'Active' },
+  { id: 'S1921', name: 'Narayan T', status: 'Active' },
+  { id: 'S1922', name: "St Paul's Girls School", status: 'Active' },
+  { id: 'S1923', name: 'Stoneguard', status: 'Active' },
+  { id: 'S1924', name: 'QLCH / Mary Wing', status: 'Active' },
+  { id: 'S1925', name: 'Thomas School', status: 'Active' },
+  { id: 'S1926', name: 'Needhams Contracts', status: 'Active' },
+  { id: 'S1927', name: 'West Barn / Michael McDermid', status: 'Active' },
+  { id: 'S1928', name: 'Manor High Sports Hall', status: 'Active' },
+  { id: 'S1929', name: 'FPF Kentish Town', status: 'Active' },
+  { id: 'S1930', name: 'Mill Barn', status: 'Active' },
+  { id: 'S1931', name: 'Junction 17 / Trolleys', status: 'Active' },
+  { id: 'S1932', name: 'FPF Slippers Place London', status: 'Active' },
+  { id: 'S1933', name: 'Hertford Balustrades', status: 'Active' },
+  { id: 'S1940', name: 'Virtue Staircase', status: 'Active' },
+  { id: 'S1941', name: 'Gosling Racing', status: 'Active' },
+  { id: 'S1944', name: 'Drakes Wall / Devonport', status: 'Active' },
+  { id: 'S1945', name: 'Pentaco Shoreline Plates', status: 'Active' },
+  { id: 'S1946', name: 'Saddlebank', status: 'Active' },
+  { id: 'S1947', name: 'Chris Ord', status: 'Active' },
+  { id: 'S1948', name: 'Mike Thomas', status: 'Active' },
+  { id: 'S1949', name: 'Duct Alterations', status: 'Active' },
+  { id: 'S1952', name: 'Gorton Market', status: 'Active' },
+  { id: 'S1953', name: 'Bama Office Extension', status: 'Active' },
+  { id: 'S1954', name: 'Earls Burton', status: 'Active' },
+  { id: 'S1956', name: 'Christ College', status: 'Active' },
+  { id: 'S1957', name: 'Multifab', status: 'Active' },
+  { id: 'S1958', name: 'Corby Single Spine Staircase', status: 'Active' },
+  { id: 'S1959', name: 'Orton Southgate', status: 'Active' },
+  { id: 'S1961', name: 'Lifting Beam', status: 'Active' },
+  { id: 'S1962', name: 'Alconbury / Orton Winstow', status: 'Active' },
+  { id: 'S1963', name: 'Georgian House', status: 'Active' },
+  { id: 'S1964', name: '9 Jones Hill Steelwork', status: 'Active' },
+  { id: 'S1965', name: 'Brookhurst Farm', status: 'Active' },
+  { id: 'S1966', name: 'Essex Projects Balustrades', status: 'Active' },
+  { id: 'S1968', name: '12 Ash Grove', status: 'Active' },
+  { id: 'S1969', name: 'Linford Wood Place Conversion - Steelwork', status: 'Active' },
+  { id: 'S1977', name: '5 Basin', status: 'Active' }
+];
+
+// ═══════════════════════════════════════════
+// WRITE APPROVED HOURS TO LABOUR LOG
+// ═══════════════════════════════════════════
+async function writeApprovedToLabourLog(entries) {
+  try {
+    setLoading(true);
+    // Find the Labour Log sheet
+    const ws = await graphGet(
+      `/drives/${CONFIG.driveId}/items/${CONFIG.projectTrackerItemId}/workbook/worksheets`
+    );
+
+    const labourSheet = ws.value.find(s =>
+      s.name.toLowerCase().includes('labour') || s.name.toLowerCase().includes('labor')
+    );
+
+    if (!labourSheet) {
+      toast('Could not find Labour Log sheet in PROJECT TRACKER', 'error');
+      return false;
+    }
+
+    // Get current used range to find next empty row
+    const used = await graphGet(
+      `/drives/${CONFIG.driveId}/items/${CONFIG.projectTrackerItemId}/workbook/worksheets/${encodeURIComponent(labourSheet.name)}/usedRange`
+    );
+
+    const nextRow = (used.rowCount || 1) + 1;
+
+    // Build rows to append
+    const rows = entries.map(e => [
+      e.date,
+      e.projectId,
+      e.projectName,
+      e.employeeName,
+      e.hours,
+      '',   // Rate (£/hr) — blank, project tracker handles
+      '',   // Cost — formula
+      'Timesheet App'  // Notes
+    ]);
+
+    // Write to next available rows
+    const rangeAddr = `A${nextRow}:H${nextRow + rows.length - 1}`;
+    await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.projectTrackerItemId}/workbook/worksheets/${encodeURIComponent(labourSheet.name)}/range(address='${rangeAddr}')`,
+      {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${await getToken()}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ values: rows })
+      }
+    );
+
+    return true;
+  } catch (e) {
+    console.error('writeApprovedToLabourLog error:', e);
+    toast(`SharePoint sync error: ${e.message}`, 'error');
+    return false;
+  } finally {
+    setLoading(false);
+  }
+}
+
+// ═══════════════════════════════════════════
+// WEEK HELPERS
+// ═══════════════════════════════════════════
+function getWeekDates(offset = 0) {
+  const now = new Date();
+  const day = now.getDay();
+  const mon = new Date(now);
+  mon.setDate(now.getDate() - (day === 0 ? 6 : day - 1) + offset * 7);
+  const sun = new Date(mon);
+  sun.setDate(mon.getDate() + 6);
+  return { mon, sun };
+}
+
+function dateStr(d) {
+  return d.toISOString().slice(0, 10);
+}
+
+function fmtDate(d) {
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function todayStr() { return dateStr(new Date()); }
+
+// ═══════════════════════════════════════════
+// EMPLOYEE HOME
+// ═══════════════════════════════════════════
+function renderHome() {
+  const grid = document.getElementById('employeeGrid');
+  const today = todayStr();
+  grid.innerHTML = '';
+
+  const empList = (state.timesheetData.employees || [])
+    .filter(e => e.active !== false)
+    .map(e => e.name);
+
+  if (!empList.length) {
+    grid.innerHTML = '<div class="empty-state" style="padding:40px"><div class="icon" style="font-size:32px;margin-bottom:12px">&#128101;</div><div>No employees set up yet.</div><div style="margin-top:8px;font-size:12px">Go to Manager &#8594; Staff to add your team.</div></div>';
+    return;
+  }
+
+  empList.forEach(name => {
+    const clocking = state.timesheetData.clockings.find(
+      c => c.employeeName === name && c.date === today && !c.clockOut
+    );
+    const initials = name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+    const colors = ['#ff6b00','#e05d00','#c84b00','#a83e00','#ff8c42','#f07030'];
+    const col = colors[name.charCodeAt(0) % colors.length];
+
+    const div = document.createElement('div');
+    div.className = 'emp-btn' + (clocking ? ' clocked-in' : '');
+    div.innerHTML = `
+      <div class="emp-avatar" style="background:linear-gradient(135deg,${col},#3e1a00)">${initials}</div>
+      <div class="emp-name">${name}</div>
+      <div class="emp-status ${clocking ? 'in' : ''}">
+        ${clocking ? `<span class="status-dot"></span>In since ${clocking.clockIn}` : 'Not clocked in'}
+      </div>
+    `;
+    div.onclick = () => openEmployee(name);
+    grid.appendChild(div);
+  });
+}
+
+function openEmployee(name) {
+  state.currentEmployee = name;
+  state.currentEntries = [];
+
+  document.getElementById('empPanelName').textContent = name;
+
+  // Time selects
+  fillTimeSelects();
+
+  // Check clocked in
+  const today = todayStr();
+  const clocking = state.timesheetData.clockings.find(
+    c => c.employeeName === name && c.date === today && !c.clockOut
+  );
+
+  if (clocking) {
+    showClockedIn(clocking);
+  } else {
+    document.getElementById('clockInSection').style.display = '';
+    document.getElementById('clockedInSection').style.display = 'none';
+    document.getElementById('statusBar').style.display = 'none';
+  }
+
+  // Populate project select
+  const sel = document.getElementById('projectSelect');
+  sel.innerHTML = '<option value="">Select project…</option>';
+  state.projects.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.textContent = `${p.id} — ${p.name}`;
+    sel.appendChild(opt);
+  });
+
+  // Load today's already-submitted entries
+  renderTodayEntries();
+
+  showScreen('screenEmployee');
+}
+
+function showClockedIn(clocking) {
+  document.getElementById('clockInSection').style.display = 'none';
+  document.getElementById('clockedInSection').style.display = '';
+  document.getElementById('displayClockIn').textContent = clocking.clockIn;
+  document.getElementById('statusBar').style.display = 'flex';
+  document.getElementById('statusClockIn').textContent = clocking.clockIn;
+  updateWorkingTime(clocking.clockIn);
+}
+
+let workingTimer = null;
+function updateWorkingTime(clockInStr) {
+  clearInterval(workingTimer);
+  workingTimer = setInterval(() => {
+    const [h, m] = clockInStr.split(':').map(Number);
+    const start = new Date(); start.setHours(h, m, 0, 0);
+    const diff = Math.floor((Date.now() - start) / 1000);
+    if (diff < 0) { clearInterval(workingTimer); return; }
+    const hrs = Math.floor(diff / 3600);
+    const mins = Math.floor((diff % 3600) / 60);
+    document.getElementById('statusWorking').textContent = `${hrs}h ${mins}m`;
+  }, 10000);
+}
+
+function fillTimeSelects() {
+  ['clockInTime', 'clockOutTime'].forEach(id => {
+    const sel = document.getElementById(id);
+    sel.innerHTML = '';
+    CONFIG.timeSlots.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s.val; opt.textContent = s.label;
+      sel.appendChild(opt);
+    });
+  });
+
+  // Default clock-in to nearest 30 min
+  const now = new Date();
+  const rounded = `${String(now.getHours()).padStart(2,'0')}:${now.getMinutes() < 30 ? '00' : '30'}`;
+  document.getElementById('clockInTime').value = rounded;
+
+  // Default clock-out to now + 30
+  const out = new Date(now.getTime() + 30 * 60000);
+  const outR = `${String(out.getHours()).padStart(2,'0')}:${out.getMinutes() < 30 ? '00' : '30'}`;
+  document.getElementById('clockOutTime').value = outR;
+}
+
+function onProjectSelect() {
+  const id = document.getElementById('projectSelect').value;
+  const p = state.projects.find(x => x.id === id);
+  document.getElementById('projectNameDisplay').textContent = p ? p.name : '—';
+}
+
+function addEntry() {
+  const projId = document.getElementById('projectSelect').value;
+  const hours = parseFloat(document.getElementById('hoursInput').value);
+
+  if (!projId) { toast('Please select a project', 'error'); return; }
+  if (!hours || hours <= 0) { toast('Please enter valid hours', 'error'); return; }
+
+  const proj = state.projects.find(p => p.id === projId);
+  state.currentEntries.push({
+    id: Date.now().toString(),
+    projectId: projId,
+    projectName: proj ? proj.name : projId,
+    hours
+  });
+
+  document.getElementById('hoursInput').value = '';
+  document.getElementById('projectSelect').value = '';
+  document.getElementById('projectNameDisplay').textContent = '—';
+  renderTodayEntries();
+}
+
+function removeEntry(id) {
+  state.currentEntries = state.currentEntries.filter(e => e.id !== id);
+  renderTodayEntries();
+}
+
+function renderTodayEntries() {
+  const container = document.getElementById('todayEntries');
+  const today = todayStr();
+
+  // Submitted entries + current session entries
+  const submitted = state.timesheetData.entries.filter(
+    e => e.employeeName === state.currentEmployee && e.date === today
+  );
+
+  const all = [
+    ...submitted.map(e => ({ ...e, saved: true })),
+    ...state.currentEntries.map(e => ({ ...e, saved: false }))
+  ];
+
+  if (!all.length) {
+    container.innerHTML = '<div class="empty-state" style="padding:20px"><span style="opacity:.4">No entries yet today</span></div>';
+    return;
+  }
+
+  container.innerHTML = all.map(e => `
+    <div class="entry-chip">
+      <span class="proj-id">${e.projectId}</span>
+      <span class="proj-name">${e.projectName}</span>
+      <span class="proj-hrs">${e.hours}h</span>
+      ${e.saved
+        ? `<span style="font-size:11px;color:var(--muted);margin-left:8px">saved</span>`
+        : `<button class="del-btn" onclick="removeEntry('${e.id}')">×</button>`
+      }
+    </div>
+  `).join('');
+}
+
+async function doClock(direction) {
+  const today = todayStr();
+  const emp = state.currentEmployee;
+
+  if (direction === 'in') {
+    const clockIn = document.getElementById('clockInTime').value;
+
+    // Check not already clocked in
+    const existing = state.timesheetData.clockings.find(
+      c => c.employeeName === emp && c.date === today && !c.clockOut
+    );
+    if (existing) { toast('Already clocked in', 'error'); return; }
+
+    state.timesheetData.clockings.push({
+      id: Date.now().toString(),
+      employeeName: emp,
+      date: today,
+      clockIn,
+      clockOut: null,
+      breakMins: 0
+    });
+
+    // Update UI immediately — don't make them wait
+    showClockedIn({ clockIn });
+    renderHome();
+    toast(`Clocked in at ${clockIn}`, 'success');
+
+    // Save in background
+    try {
+      await saveTimesheetData();
+    } catch (e) {
+      console.error('Clock-in save error:', e);
+      toast('Warning: saved locally but sync to SharePoint failed. Try again shortly.', 'error');
+    }
+
+  } else {
+    const clocking = state.timesheetData.clockings.find(
+      c => c.employeeName === emp && c.date === today && !c.clockOut
+    );
+    if (!clocking) { toast('Not clocked in', 'error'); return; }
+
+    const clockOut = document.getElementById('clockOutTime').value;
+    const breakMins = parseInt(document.getElementById('breakDuration').value) || 0;
+
+    clocking.clockOut = clockOut;
+    clocking.breakMins = breakMins;
+
+    // Update UI immediately
+    document.getElementById('clockedInSection').style.display = 'none';
+    document.getElementById('clockInSection').style.display = '';
+    document.getElementById('statusBar').style.display = 'none';
+    clearInterval(workingTimer);
+    renderHome();
+    toast(`Clocked out at ${clockOut}`, 'success');
+
+    // Save in background
+    try {
+      await saveTimesheetData();
+    } catch (e) {
+      console.error('Clock-out save error:', e);
+      toast('Warning: saved locally but sync to SharePoint failed. Try again shortly.', 'error');
+    }
+  }
+}
+
+async function submitDay() {
+  if (!state.currentEntries.length) {
+    toast('No new entries to submit', 'error'); return;
+  }
+  const today = todayStr();
+
+  state.currentEntries.forEach(e => {
+    state.timesheetData.entries.push({
+      id: e.id,
+      employeeName: state.currentEmployee,
+      projectId: e.projectId,
+      projectName: e.projectName,
+      hours: e.hours,
+      date: today,
+      status: 'pending',
+      submittedAt: new Date().toISOString()
+    });
+  });
+
+  try {
+    setLoading(true);
+    await saveTimesheetData();
+    state.currentEntries = [];
+    renderTodayEntries();
+    toast(`${state.currentEntries.length || 'Entries'} submitted for approval`, 'success');
+    // Small delay then go home
+    setTimeout(goHome, 1500);
+  } catch { toast('Submit failed — check connection', 'error'); }
+  finally { setLoading(false); }
+}
+
+// ═══════════════════════════════════════════
+// MANAGER VIEW
+// ═══════════════════════════════════════════
+function showManagerAuth() {
+  showScreen('screenAuth');
+  setTimeout(() => document.getElementById('pinInput').focus(), 100);
+}
+
+function checkPin() {
+  const pin = document.getElementById('pinInput').value;
+  const storedPin = (state.timesheetData.settings && state.timesheetData.settings.managerPin) || CONFIG.managerPin || '1234';
+  if (pin === storedPin) {
+    document.getElementById('pinInput').value = '';
+    showScreen('screenManager');
+    renderManagerView();
+  } else {
+    toast('Incorrect PIN', 'error');
+    document.getElementById('pinInput').value = '';
+  }
+}
+
+function renderManagerView() {
+  const { mon, sun } = getWeekDates(state.currentWeekOffset);
+  document.getElementById('weekLabel').textContent =
+    `${fmtDate(mon)} – ${fmtDate(sun)}`;
+
+  const monStr = dateStr(mon);
+  const sunStr = dateStr(sun);
+
+  const weekEntries = state.timesheetData.entries.filter(
+    e => e.date >= monStr && e.date <= sunStr
+  );
+  const weekClockings = state.timesheetData.clockings.filter(
+    c => c.date >= monStr && c.date <= sunStr
+  );
+
+  // Stats
+  const totalHrs = weekEntries.reduce((s, e) => s + e.hours, 0);
+  const pending = weekEntries.filter(e => e.status === 'pending').length;
+  const approved = weekEntries.filter(e => e.status === 'approved').length;
+  const emps = new Set(weekEntries.map(e => e.employeeName)).size;
+
+  document.getElementById('stat-hrs').innerHTML = `${totalHrs.toFixed(1)}<span class="stat-unit">hrs</span>`;
+  document.getElementById('stat-pending').textContent = pending;
+  document.getElementById('stat-approved').textContent = approved;
+  document.getElementById('stat-emps').textContent = emps;
+  document.getElementById('pendingCount').textContent = `${pending} entr${pending === 1 ? 'y' : 'ies'} pending approval`;
+
+  // Project table
+  renderProjectTable(weekEntries);
+  renderEmpSummary(weekEntries, weekClockings);
+  renderClockLog(weekClockings);
+}
+
+function renderProjectTable(entries) {
+  const tbody = document.getElementById('projectTableBody');
+  if (!entries.length) {
+    tbody.innerHTML = '<tr><td colspan="7"><div class="empty-state"><div class="icon">📋</div>No entries this week</div></td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = entries.map(e => `
+    <tr>
+      <td><span class="mono" style="color:var(--accent2)">${e.projectId}</span></td>
+      <td style="color:var(--muted)">${e.projectName}</td>
+      <td>${e.employeeName}</td>
+      <td class="mono" style="font-size:12px">${e.date}</td>
+      <td class="mono"><b>${e.hours}h</b></td>
+      <td><span class="tag tag-${e.status}">${e.status}</span></td>
+      <td>
+        ${e.status === 'pending' ? `
+          <div class="approve-row">
+            <button class="tiny-btn tiny-approve" onclick="setEntryStatus('${e.id}','approved')">✓ Approve</button>
+            <button class="tiny-btn tiny-reject" onclick="setEntryStatus('${e.id}','rejected')">✕ Reject</button>
+          </div>
+        ` : `<span style="color:var(--subtle);font-size:12px">—</span>`}
+      </td>
+    </tr>
+  `).join('');
+}
+
+function renderEmpSummary(entries, clockings) {
+  const area = document.getElementById('empSummaryArea');
+  const byEmp = {};
+  entries.forEach(e => {
+    if (!byEmp[e.employeeName]) byEmp[e.employeeName] = { entries: [], hours: 0 };
+    byEmp[e.employeeName].entries.push(e);
+    byEmp[e.employeeName].hours += e.hours;
+  });
+
+  if (!Object.keys(byEmp).length) {
+    area.innerHTML = '<div class="empty-state"><div class="icon">👤</div>No entries this week</div>';
+    return;
+  }
+
+  area.innerHTML = Object.entries(byEmp).map(([name, data]) => `
+    <div class="card" style="margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div style="font-weight:600;font-size:15px">${name}</div>
+        <div class="mono" style="color:var(--accent2)">${data.hours.toFixed(1)} hrs total</div>
+      </div>
+      ${data.entries.map(e => `
+        <div class="entry-chip">
+          <span class="proj-id">${e.projectId}</span>
+          <span class="proj-name">${e.projectName}</span>
+          <span style="font-size:12px;color:var(--muted);font-family:var(--font-mono)">${e.date}</span>
+          <span class="proj-hrs">${e.hours}h</span>
+          <span class="tag tag-${e.status}" style="margin-left:8px">${e.status}</span>
+        </div>
+      `).join('')}
+    </div>
+  `).join('');
+}
+
+function renderClockLog(clockings) {
+  const area = document.getElementById('clockLogArea');
+  if (!clockings.length) {
+    area.innerHTML = '<div class="empty-state"><div class="icon">🕐</div>No clock-in/out records this week</div>';
+    return;
+  }
+
+  area.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:8px;padding:8px 16px;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted)">
+      <div>Employee</div><div>Date</div><div>Clock In</div><div>Clock Out</div><div>Break / Total</div>
+    </div>
+    ${clockings.map(c => {
+      let totalHrs = '—';
+      if (c.clockIn && c.clockOut) {
+        const [ih, im] = c.clockIn.split(':').map(Number);
+        const [oh, om] = c.clockOut.split(':').map(Number);
+        const diff = (oh * 60 + om) - (ih * 60 + im) - (c.breakMins || 0);
+        totalHrs = `${(diff / 60).toFixed(2)}h`;
+      }
+      return `
+        <div class="clock-summary-entry">
+          <div><div class="cs-label">Employee</div><div class="cs-value">${c.employeeName}</div></div>
+          <div><div class="cs-label">Date</div><div class="cs-value">${c.date}</div></div>
+          <div><div class="cs-label">In</div><div class="cs-value" style="color:var(--green)">${c.clockIn || '—'}</div></div>
+          <div><div class="cs-label">Out</div><div class="cs-value" style="color:var(--red)">${c.clockOut || 'Still In'}</div></div>
+          <div><div class="cs-label">Break / Total</div><div class="cs-value">${c.breakMins ? c.breakMins+'m / ' : ''}${totalHrs}</div></div>
+        </div>
+      `;
+    }).join('')}
+  `;
+}
+
+async function setEntryStatus(id, status) {
+  const entry = state.timesheetData.entries.find(e => e.id === id);
+  if (!entry) return;
+  entry.status = status;
+  try {
+    await saveTimesheetData();
+    renderManagerView();
+  } catch { toast('Save failed', 'error'); }
+}
+
+async function approveAll() {
+  const { mon, sun } = getWeekDates(state.currentWeekOffset);
+  const pending = state.timesheetData.entries.filter(
+    e => e.status === 'pending' && e.date >= dateStr(mon) && e.date <= dateStr(sun)
+  );
+  if (!pending.length) { toast('No pending entries', 'info'); return; }
+  pending.forEach(e => e.status = 'approved');
+  try {
+    await saveTimesheetData();
+    toast(`${pending.length} entries approved`, 'success');
+    renderManagerView();
+  } catch { toast('Save failed', 'error'); }
+}
+
+async function writeToSharePoint() {
+  const { mon, sun } = getWeekDates(state.currentWeekOffset);
+  const approved = state.timesheetData.entries.filter(
+    e => e.status === 'approved' &&
+         e.date >= dateStr(mon) && e.date <= dateStr(sun) &&
+         !e.synced
+  );
+
+  if (!approved.length) {
+    toast('No newly approved entries to sync', 'info'); return;
+  }
+
+  const ok = await writeApprovedToLabourLog(approved);
+  if (ok) {
+    approved.forEach(e => e.synced = true);
+    await saveTimesheetData();
+    toast(`${approved.length} entries written to PROJECT TRACKER ✓`, 'success');
+    renderManagerView();
+  }
+}
+
+function changeWeek(dir) {
+  state.currentWeekOffset += dir;
+  renderManagerView();
+}
+
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((t, i) => {
+    const names = ['project', 'employee', 'clockinout', 'staff', 'settings'];
+    t.classList.toggle('active', names[i] === name);
+  });
+  document.querySelectorAll('.tab-content').forEach(tc => {
+    tc.classList.toggle('active', tc.id === `tab-${name}`);
+  });
+  if (name === 'staff') renderStaffList();
+}
+
+// ═══════════════════════════════════════════
+// UI HELPERS
+// ═══════════════════════════════════════════
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+
+function goHome() {
+  clearInterval(workingTimer);
+  state.currentEmployee = null;
+  state.currentEntries = [];
+  showScreen('screenHome');
+  renderHome();
+}
+
+function setLoading(on) {
+  document.getElementById('loadingBar').style.width = on ? '70%' : '0';
+}
+
+let toastTimer;
+function toast(msg, type = 'info') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = `toast show ${type}`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+function closeModal() {
+  document.getElementById('confirmModal').classList.remove('active');
+}
+
+// Live clock
+function updateClock() {
+  const now = new Date();
+  const h = String(now.getHours()).padStart(2,'0');
+  const m = String(now.getMinutes()).padStart(2,'0');
+  const ampm = now.getHours() < 12 ? 'AM' : 'PM';
+  document.getElementById('liveClock').textContent =
+    `${h}:${m} ${ampm} — ${now.toLocaleDateString('en-GB', { weekday:'short', day:'numeric', month:'short' })}`;
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+document.getElementById('todayDate').textContent =
+  new Date().toLocaleDateString('en-GB', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+
+// ═══════════════════════════════════════════
+// STAFF MANAGEMENT
+// ═══════════════════════════════════════════
+function renderStaffList() {
+  const container = document.getElementById('staffList');
+  const employees = state.timesheetData.employees || [];
+
+  if (!employees.length) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <div style="font-size:32px;margin-bottom:12px">&#128101;</div>
+        <div>No employees yet.</div>
+        <div style="margin-top:8px;font-size:12px;color:var(--subtle)">Add your team using the form above.</div>
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">
+      ${employees.map(emp => `
+        <div class="card" style="margin-bottom:0;padding:18px;display:flex;align-items:center;gap:14px">
+          <div class="emp-avatar" style="width:44px;height:44px;font-size:18px;flex-shrink:0;background:linear-gradient(135deg,${empColor(emp.name)},#3e1a00)">
+            ${initials(emp.name)}
+          </div>
+          <div style="flex:1;min-width:0">
+            ${emp.editing ? `
+              <input type="text" class="field-input" id="edit-name-${emp.id}" value="${emp.name}"
+                style="margin-bottom:6px;padding:6px 10px;font-size:13px">
+              <input type="text" class="field-input" id="edit-role-${emp.id}" value="${emp.role||''}"
+                placeholder="Role (optional)" style="padding:6px 10px;font-size:12px">
+              <div style="display:flex;gap:6px;margin-top:8px">
+                <button class="tiny-btn tiny-approve" onclick="saveEmployee('${emp.id}')">Save</button>
+                <button class="tiny-btn" style="background:var(--surface);color:var(--muted);border:1px solid var(--border)"
+                  onclick="cancelEdit('${emp.id}')">Cancel</button>
+              </div>
+            ` : `
+              <div style="font-weight:600;font-size:14px">${emp.name}</div>
+              <div style="font-size:12px;color:var(--muted);margin-top:2px">${emp.role || 'No role set'}</div>
+              <div style="display:flex;gap:6px;margin-top:8px">
+                <button class="tiny-btn" style="background:var(--surface);color:var(--muted);border:1px solid var(--border)"
+                  onclick="editEmployee('${emp.id}')">&#9998; Edit</button>
+                <button class="tiny-btn tiny-reject" onclick="toggleEmployeeActive('${emp.id}')">
+                  ${emp.active === false ? '&#10003; Re-activate' : '&#9940; Deactivate'}
+                </button>
+                <button class="tiny-btn tiny-reject" onclick="deleteEmployee('${emp.id}')" style="margin-left:auto">
+                  &#128465; Remove
+                </button>
+              </div>
+            `}
+          </div>
+          ${emp.active === false ? `<div class="tag tag-rejected" style="flex-shrink:0">Inactive</div>` : ''}
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function empColor(name) {
+  const colors = ['#ff6b00','#e05d00','#c84b00','#a83e00','#ff8c42','#f07030'];
+  return colors[(name || '').charCodeAt(0) % colors.length];
+}
+
+function initials(name) {
+  return (name || '?').split(' ').map(n => n[0]).join('').slice(0,2).toUpperCase();
+}
+
+async function addEmployee() {
+  const nameInput = document.getElementById('newEmpName');
+  const roleInput = document.getElementById('newEmpRole');
+  const name = nameInput.value.trim();
+  const role = roleInput.value.trim();
+
+  if (!name) { toast('Please enter a name', 'error'); nameInput.focus(); return; }
+
+  const exists = (state.timesheetData.employees || []).find(
+    e => e.name.toLowerCase() === name.toLowerCase()
+  );
+  if (exists) { toast('Employee already exists', 'error'); return; }
+
+  if (!state.timesheetData.employees) state.timesheetData.employees = [];
+
+  state.timesheetData.employees.push({
+    id: Date.now().toString(),
+    name,
+    role,
+    active: true,
+    addedAt: new Date().toISOString()
+  });
+
+  // Update UI immediately
+  nameInput.value = '';
+  roleInput.value = '';
+  renderStaffList();
+  renderHome();
+  toast(`${name} added ✓`, 'success');
+
+  // Save to SharePoint
+  try {
+    await saveTimesheetData();
+  } catch (e) {
+    console.error('Save error:', e);
+    toast('Warning: changes may not have synced to SharePoint', 'error');
+  }
+}
+
+function editEmployee(id) {
+  const emp = state.timesheetData.employees.find(e => e.id === id);
+  if (!emp) return;
+  emp.editing = true;
+  renderStaffList();
+}
+
+function cancelEdit(id) {
+  const emp = state.timesheetData.employees.find(e => e.id === id);
+  if (!emp) return;
+  delete emp.editing;
+  renderStaffList();
+}
+
+async function saveEmployee(id) {
+  const emp = state.timesheetData.employees.find(e => e.id === id);
+  if (!emp) return;
+
+  const newName = document.getElementById(`edit-name-${id}`).value.trim();
+  const newRole = document.getElementById(`edit-role-${id}`).value.trim();
+
+  if (!newName) { toast('Name cannot be empty', 'error'); return; }
+
+  const oldName = emp.name;
+  emp.name = newName;
+  emp.role = newRole;
+  delete emp.editing;
+
+  // Also update any existing entries/clockings with old name
+  if (oldName !== newName) {
+    state.timesheetData.entries.forEach(e => {
+      if (e.employeeName === oldName) e.employeeName = newName;
+    });
+    state.timesheetData.clockings.forEach(c => {
+      if (c.employeeName === oldName) c.employeeName = newName;
+    });
+  }
+
+  try {
+    await saveTimesheetData();
+    toast('Employee updated ✓', 'success');
+    renderStaffList();
+    renderHome();
+  } catch { toast('Save failed', 'error'); }
+}
+
+async function toggleEmployeeActive(id) {
+  const emp = state.timesheetData.employees.find(e => e.id === id);
+  if (!emp) return;
+  emp.active = emp.active === false ? true : false;
+  try {
+    await saveTimesheetData();
+    toast(`${emp.name} ${emp.active ? 'reactivated' : 'deactivated'}`, 'success');
+    renderStaffList();
+    renderHome();
+  } catch { toast('Save failed', 'error'); }
+}
+
+async function deleteEmployee(id) {
+  const emp = state.timesheetData.employees.find(e => e.id === id);
+  if (!emp) return;
+
+  if (!confirm(`Remove ${emp.name}? Their historical time entries will be kept.`)) return;
+
+  state.timesheetData.employees = state.timesheetData.employees.filter(e => e.id !== id);
+
+  try {
+    await saveTimesheetData();
+    toast(`${emp.name} removed`, 'success');
+    renderStaffList();
+    renderHome();
+  } catch { toast('Save failed', 'error'); }
+}
+
+// ═══════════════════════════════════════════
+// SETTINGS
+// ═══════════════════════════════════════════
+async function changePin() {
+  const p1 = document.getElementById('newPin1').value;
+  const p2 = document.getElementById('newPin2').value;
+
+  if (!p1) { toast('Please enter a new PIN', 'error'); return; }
+  if (p1 !== p2) { toast('PINs do not match', 'error'); return; }
+  if (p1.length < 4) { toast('PIN must be at least 4 characters', 'error'); return; }
+
+  if (!state.timesheetData.settings) state.timesheetData.settings = {};
+  state.timesheetData.settings.managerPin = p1;
+
+  try {
+    await saveTimesheetData();
+    document.getElementById('newPin1').value = '';
+    document.getElementById('newPin2').value = '';
+    toast('Manager PIN updated ✓', 'success');
+  } catch { toast('Save failed', 'error'); }
+}
+
+async function refreshProjects() {
+  toast('Refreshing projects from SharePoint…', 'info');
+  try {
+    await loadProjects();
+    toast(`${state.projects.length} projects loaded ✓`, 'success');
+  } catch { toast('Refresh failed', 'error'); }
+}
+
+function exportWeekCSV() {
+  const { mon, sun } = getWeekDates(state.currentWeekOffset);
+  const monStr = dateStr(mon);
+  const sunStr = dateStr(sun);
+  const entries = state.timesheetData.entries.filter(
+    e => e.date >= monStr && e.date <= sunStr
+  );
+  if (!entries.length) { toast('No entries this week to export', 'info'); return; }
+
+  const rows = [
+    ['Date','Employee','Project ID','Project Name','Hours','Status'],
+    ...entries.map(e => [e.date, e.employeeName, e.projectId, e.projectName, e.hours, e.status])
+  ];
+  const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `BAMA-Timesheet-Week-${monStr}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ═══════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════
+async function init() {
+  setLoading(true);
+
+  // Race loadTimesheetData against a 8 second timeout
+  try {
+    await Promise.race([
+      loadTimesheetData(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 8000))
+    ]);
+  } catch (e) {
+    console.warn('Timesheet load skipped:', e.message);
+    // Ensure defaults are set
+    state.timesheetData = {
+      employees: state.timesheetData.employees || [],
+      entries: state.timesheetData.entries || [],
+      clockings: state.timesheetData.clockings || [],
+      settings: state.timesheetData.settings || { managerPin: '1234' }
+    };
+  }
+
+  // Load projects with timeout
+  try {
+    await Promise.race([
+      loadProjects(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 8000))
+    ]);
+  } catch (e) {
+    console.warn('Project load skipped, using fallback:', e.message);
+    state.projects = FALLBACK_PROJECTS;
+  }
+
+  setLoading(false);
+  renderHome();
+}
+
+init();
+</script>
+</body>
+</html>
