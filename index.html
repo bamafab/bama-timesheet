@@ -747,7 +747,7 @@
     <div class="tab-content" id="tab-staff">
       <div class="card" style="margin-bottom:20px">
         <div class="card-title"><span class="icon">➕</span> Add New Employee</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 120px auto;gap:12px;align-items:flex-end">
+        <div style="display:grid;grid-template-columns:1fr 1fr 120px 100px auto;gap:12px;align-items:flex-end">
           <div>
             <div class="field-label">FULL NAME</div>
             <input type="text" class="field-input" id="newEmpName" placeholder="e.g. John Smith" onkeydown="if(event.key==='Enter')addEmployee()">
@@ -759,6 +759,10 @@
           <div>
             <div class="field-label">HOURLY RATE (£)</div>
             <input type="number" class="field-input" id="newEmpRate" placeholder="0.00" min="0" step="0.50" onkeydown="if(event.key==='Enter')addEmployee()">
+          </div>
+          <div>
+            <div class="field-label">PIN</div>
+            <input type="password" class="field-input" id="newEmpPin" placeholder="e.g. 1234" maxlength="6" onkeydown="if(event.key==='Enter')addEmployee()">
           </div>
           <button class="btn btn-primary" onclick="addEmployee()">Add Employee</button>
         </div>
@@ -876,6 +880,24 @@
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeMgrAddClocking()">Cancel</button>
       <button class="btn btn-success" onclick="saveMgrClocking()">Save Clocking</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     EMPLOYEE PIN MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="empPinModal">
+  <div class="modal" style="text-align:center">
+    <div class="modal-title" id="empPinModalName" style="margin-bottom:4px"></div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:24px">Enter your PIN</div>
+    <input type="password" class="field-input" id="empPinInput" maxlength="6"
+      placeholder="••••" style="text-align:center;font-size:28px;letter-spacing:10px;margin-bottom:8px"
+      onkeydown="if(event.key==='Enter')checkEmpPin()">
+    <div id="empPinError" style="color:var(--red);font-size:12px;height:16px;margin-bottom:12px"></div>
+    <div style="display:flex;gap:10px">
+      <button class="btn btn-ghost" style="flex:1" onclick="closeEmpPinModal()">Cancel</button>
+      <button class="btn btn-primary" style="flex:1" onclick="checkEmpPin()">Enter</button>
     </div>
   </div>
 </div>
@@ -1098,35 +1120,64 @@ async function saveTimesheetData() {
 // LOAD PROJECTS FROM PROJECT TRACKER
 // ═══════════════════════════════════════════
 async function loadProjects() {
-  // We'll use the hardcoded list from the tracker we already read,
-  // supplemented by a live Graph call to parse the workbook
   try {
-    const ws = await graphGet(
-      `/drives/${CONFIG.driveId}/items/${CONFIG.projectTrackerItemId}/workbook/worksheets`
-    );
-    const sheetsWithProjects = ws.value.find(s =>
-      s.name.toLowerCase().includes('project') && !s.name.toLowerCase().includes('hour')
-    );
+    const token = await getToken();
 
-    if (sheetsWithProjects) {
-      const range = await graphGet(
-        `/drives/${CONFIG.driveId}/items/${CONFIG.projectTrackerItemId}/workbook/worksheets/${encodeURIComponent(sheetsWithProjects.name)}/usedRange`
-      );
-      parseProjectsFromRange(range.values);
-      return;
+    // Get worksheets
+    const wsRes = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.projectTrackerItemId}/workbook/worksheets`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    if (!wsRes.ok) throw new Error(`Worksheets fetch failed: ${wsRes.status}`);
+    const wsData = await wsRes.json();
+
+    // Find the Hours Summary or Projects sheet — it has the Status column
+    const sheet = wsData.value.find(s =>
+      s.name.toLowerCase().includes('hour') ||
+      s.name.toLowerCase() === 'projects' ||
+      (s.name.toLowerCase().includes('project') && !s.name.toLowerCase().includes('detail'))
+    ) || wsData.value[0];
+
+    // Read the sheet data
+    const rangeRes = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.projectTrackerItemId}/workbook/worksheets/${encodeURIComponent(sheet.name)}/usedRange`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    if (!rangeRes.ok) throw new Error(`Range fetch failed: ${rangeRes.status}`);
+    const rangeData = await rangeRes.json();
+
+    parseProjectsFromRange(rangeData.values || []);
+
+    if (state.projects.length === 0) {
+      console.warn('No In Progress projects found in sheet, trying all sheets...');
+      // Try other sheets
+      for (const s of wsData.value) {
+        if (s.name === sheet.name) continue;
+        try {
+          const r2 = await fetch(
+            `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.projectTrackerItemId}/workbook/worksheets/${encodeURIComponent(s.name)}/usedRange`,
+            { headers: { 'Authorization': `Bearer ${token}` } }
+          );
+          if (!r2.ok) continue;
+          const d2 = await r2.json();
+          parseProjectsFromRange(d2.values || []);
+          if (state.projects.length > 0) break;
+        } catch {}
+      }
     }
-  } catch (e) {
-    console.warn('Live project load failed, using cached list:', e.message);
-  }
 
-  // Fallback to hardcoded list from the tracker
-  state.projects = FALLBACK_PROJECTS;
+  } catch (e) {
+    console.warn('Live project load failed, using fallback:', e.message);
+    state.projects = FALLBACK_PROJECTS.filter(p => p.status === 'In Progress');
+    if (!state.projects.length) state.projects = FALLBACK_PROJECTS;
+  }
 }
 
 function parseProjectsFromRange(rows) {
   const projects = [];
   let idCol = -1, nameCol = -1, statusCol = -1;
 
+  // Find header row
   for (let r = 0; r < Math.min(rows.length, 10); r++) {
     const row = rows[r].map(c => String(c).toLowerCase().trim());
     const iIdx = row.findIndex(c => c.includes('project id') || c === 'id');
@@ -1138,34 +1189,32 @@ function parseProjectsFromRange(rows) {
     }
   }
 
-  if (idCol < 0) {
-    // Try matching column by pattern S19xx
-    for (let r = 1; r < rows.length; r++) {
-      const row = rows[r];
-      for (let c = 0; c < row.length; c++) {
-        if (/^S\d{4}/i.test(String(row[c]))) {
-          if (!projects.find(p => p.id === row[c])) {
-            projects.push({
-              id: String(row[c]).trim(),
-              name: String(row[c + 1] || '').trim(),
-              status: String(row[statusCol] || 'Active').trim()
-            });
-          }
-        }
-      }
+  for (let r = 1; r < rows.length; r++) {
+    const id = String(rows[r][idCol >= 0 ? idCol : 0] || '').trim();
+    const name = String(rows[r][nameCol >= 0 ? nameCol : 1] || '').trim();
+    const status = statusCol >= 0 ? String(rows[r][statusCol] || '').trim() : '';
+
+    if (!id || !/^S\d{3,}/i.test(id)) continue;
+
+    // Only include "In Progress" projects
+    if (status.toLowerCase() === 'in progress') {
+      projects.push({ id, name, status });
     }
-  } else {
+  }
+
+  // If no In Progress found (e.g. all blank status), fall back to all projects with IDs
+  if (projects.length === 0) {
     for (let r = 1; r < rows.length; r++) {
-      const id = String(rows[r][idCol] || '').trim();
-      const name = String(rows[r][nameCol] || '').trim();
-      const status = statusCol >= 0 ? String(rows[r][statusCol] || '').trim() : 'Active';
-      if (id && /^S\d{4}/i.test(id)) {
-        projects.push({ id, name, status });
+      const id = String(rows[r][idCol >= 0 ? idCol : 0] || '').trim();
+      const name = String(rows[r][nameCol >= 0 ? nameCol : 1] || '').trim();
+      if (id && /^S\d{3,}/i.test(id) && name) {
+        projects.push({ id, name, status: 'Unknown' });
       }
     }
   }
 
   state.projects = projects.length > 0 ? projects : FALLBACK_PROJECTS;
+  console.log(`Projects loaded: ${state.projects.length} In Progress`);
 }
 
 // Fallback project list (from what we read from the tracker)
@@ -1375,7 +1424,48 @@ function renderHome() {
   });
 }
 
+let _pendingEmployee = null;
+
 function openEmployee(name) {
+  const emp = (state.timesheetData.employees || []).find(e => e.name === name);
+
+  // If employee has a PIN, show PIN modal first
+  if (emp && emp.pin) {
+    _pendingEmployee = name;
+    document.getElementById('empPinModalName').textContent = name;
+    document.getElementById('empPinInput').value = '';
+    document.getElementById('empPinError').textContent = '';
+    document.getElementById('empPinModal').classList.add('active');
+    setTimeout(() => document.getElementById('empPinInput').focus(), 100);
+    return;
+  }
+
+  // No PIN — open directly
+  openEmployeePanel(name);
+}
+
+function checkEmpPin() {
+  const pin = document.getElementById('empPinInput').value;
+  const emp = (state.timesheetData.employees || []).find(e => e.name === _pendingEmployee);
+
+  if (!emp) return;
+
+  if (pin === emp.pin) {
+    closeEmpPinModal();
+    openEmployeePanel(emp.name);
+  } else {
+    document.getElementById('empPinError').textContent = 'Incorrect PIN — try again';
+    document.getElementById('empPinInput').value = '';
+    document.getElementById('empPinInput').focus();
+  }
+}
+
+function closeEmpPinModal() {
+  document.getElementById('empPinModal').classList.remove('active');
+  _pendingEmployee = null;
+}
+
+function openEmployeePanel(name) {
   state.currentEmployee = name;
   state.currentEntries = [];
 
@@ -1386,6 +1476,21 @@ function openEmployee(name) {
 
   // Render My Week
   renderMyWeek(name);
+
+  // Reload projects live from PROJECT TRACKER in background
+  loadProjects().then(() => {
+    // Refresh the project dropdown if already on screen
+    const sel = document.getElementById('projectSelect');
+    if (sel) {
+      sel.innerHTML = '<option value="">Select project…</option>';
+      state.projects.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = `${p.id} — ${p.name}`;
+        sel.appendChild(opt);
+      });
+    }
+  }).catch(() => {});
 
   // Check clocked in
   const today = todayStr();
@@ -1500,7 +1605,7 @@ function renderTodayEntries() {
 
   // Submitted entries + current session entries
   const submitted = state.timesheetData.entries.filter(
-    e => e.employeeName === state.currentEmployee && e.date === today
+    e => e.employeeName === state.currentEmployee && e.date === today && e.date === todayStr()
   );
 
   const all = [
@@ -2538,7 +2643,9 @@ function renderStaffList() {
               <input type="text" class="field-input" id="edit-role-${emp.id}" value="${emp.role||''}"
                 placeholder="Role (optional)" style="padding:6px 10px;font-size:12px;margin-bottom:6px">
               <input type="number" class="field-input" id="edit-rate-${emp.id}" value="${emp.rate||''}"
-                placeholder="Hourly rate (£)" min="0" step="0.50" style="padding:6px 10px;font-size:12px">
+                placeholder="Hourly rate (£)" min="0" step="0.50" style="padding:6px 10px;font-size:12px;margin-bottom:6px">
+              <input type="password" class="field-input" id="edit-pin-${emp.id}" value="${emp.pin||''}"
+                placeholder="PIN" maxlength="6" style="padding:6px 10px;font-size:12px">
               <div style="display:flex;gap:6px;margin-top:8px">
                 <button class="tiny-btn tiny-approve" onclick="saveEmployee('${emp.id}')">Save</button>
                 <button class="tiny-btn" style="background:var(--surface);color:var(--muted);border:1px solid var(--border)"
@@ -2548,6 +2655,7 @@ function renderStaffList() {
               <div style="font-weight:600;font-size:14px">${emp.name}</div>
               <div style="font-size:12px;color:var(--muted);margin-top:2px">${emp.role || 'No role set'}</div>
               <div style="font-size:12px;color:var(--accent2);margin-top:2px;font-family:var(--font-mono)">£${(emp.rate||0).toFixed(2)}/hr</div>
+              <div style="font-size:11px;color:var(--subtle);margin-top:2px">${emp.pin ? '&#128274; PIN set' : '&#128275; No PIN'}</div>
               <div style="display:flex;gap:6px;margin-top:8px">
                 <button class="tiny-btn" style="background:var(--surface);color:var(--muted);border:1px solid var(--border)"
                   onclick="editEmployee('${emp.id}')">&#9998; Edit</button>
@@ -2594,11 +2702,15 @@ async function addEmployee() {
   const rateInput = document.getElementById('newEmpRate');
   const rate = parseFloat(rateInput.value) || 0;
 
+  const pinInput2 = document.getElementById('newEmpPin');
+  const pin = pinInput2.value.trim();
+
   state.timesheetData.employees.push({
     id: Date.now().toString(),
     name,
     role,
     rate,
+    pin,
     active: true,
     addedAt: new Date().toISOString()
   });
@@ -2607,6 +2719,7 @@ async function addEmployee() {
   nameInput.value = '';
   roleInput.value = '';
   rateInput.value = '';
+  pinInput2.value = '';
   renderStaffList();
   renderHome();
   toast(`${name} added ✓`, 'success');
@@ -2645,9 +2758,11 @@ async function saveEmployee(id) {
   if (!newName) { toast('Name cannot be empty', 'error'); return; }
 
   const oldName = emp.name;
+  const newPin = document.getElementById(`edit-pin-${id}`).value.trim();
   emp.name = newName;
   emp.role = newRole;
   emp.rate = newRate;
+  emp.pin = newPin;
   delete emp.editing;
 
   // Also update any existing entries/clockings with old name
