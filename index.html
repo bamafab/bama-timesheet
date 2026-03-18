@@ -789,65 +789,65 @@ async function graphPatch(url, body) {
 }
 
 // ═══════════════════════════════════════════
-// AUTH — OAuth2 implicit flow (no MSAL library needed)
-// Works reliably from Azure Static Web Apps
+// AUTH — OAuth2 Implicit Flow for Microsoft Graph
 // ═══════════════════════════════════════════
 const AUTH = {
   clientId: '04b702fd-c53c-4f38-94bc-0334ce91d954',
   tenantId: 'c92626f5-e391-499a-9059-0113bd07da2d',
   redirectUri: 'https://proud-dune-0dee63110.2.azurestaticapps.net',
-  scopes: 'Files.ReadWrite Sites.ReadWrite.All',
-  _token: null,
-  _expiry: 0,
+  scopes: 'https://graph.microsoft.com/Files.ReadWrite https://graph.microsoft.com/Sites.ReadWrite.All',
 
-  // Get token from URL hash (after redirect) or sessionStorage
-  init() {
-    // Check if we're returning from auth redirect
-    if (window.location.hash.includes('access_token')) {
-      const params = new URLSearchParams(window.location.hash.slice(1));
-      const token = params.get('access_token');
-      const expiresIn = parseInt(params.get('expires_in') || '3600');
-      if (token) {
-        AUTH._token = token;
-        AUTH._expiry = Date.now() + (expiresIn * 1000) - 60000;
-        sessionStorage.setItem('bama_token', token);
-        sessionStorage.setItem('bama_token_expiry', AUTH._expiry.toString());
-        // Clean up URL
-        window.history.replaceState({}, document.title, window.location.pathname);
-        console.log('Auth: Token obtained from redirect');
-        return true;
-      }
-    }
-    // Check sessionStorage
-    const stored = sessionStorage.getItem('bama_token');
+  getStoredToken() {
+    const token = sessionStorage.getItem('bama_token');
     const expiry = parseInt(sessionStorage.getItem('bama_token_expiry') || '0');
-    if (stored && Date.now() < expiry) {
-      AUTH._token = stored;
-      AUTH._expiry = expiry;
-      console.log('Auth: Using stored token');
+    if (token && Date.now() < expiry) return token;
+    return null;
+  },
+
+  handleRedirect() {
+    if (!window.location.hash) return false;
+    const params = new URLSearchParams(window.location.hash.replace('#', '?'));
+    const token = params.get('access_token');
+    const expiresIn = parseInt(params.get('expires_in') || '3600');
+    if (token) {
+      sessionStorage.setItem('bama_token', token);
+      sessionStorage.setItem('bama_token_expiry', (Date.now() + (expiresIn - 60) * 1000).toString());
+      window.history.replaceState({}, '', window.location.pathname);
+      console.log('Auth: Token received from Microsoft login');
       return true;
     }
     return false;
   },
 
-  // Redirect to Microsoft login
   login() {
-    const url = `https://login.microsoftonline.com/${AUTH.tenantId}/oauth2/v2.0/authorize` +
-      `?client_id=${AUTH.clientId}` +
-      `&response_type=token` +
-      `&redirect_uri=${encodeURIComponent(AUTH.redirectUri)}` +
-      `&scope=${encodeURIComponent(AUTH.scopes)}` +
-      `&response_mode=fragment` +
-      `&nonce=${Math.random().toString(36)}`;
-    window.location.href = url;
+    const url = new URL(`https://login.microsoftonline.com/${AUTH.tenantId}/oauth2/v2.0/authorize`);
+    url.searchParams.set('client_id', AUTH.clientId);
+    url.searchParams.set('response_type', 'token');
+    url.searchParams.set('redirect_uri', AUTH.redirectUri);
+    url.searchParams.set('scope', AUTH.scopes);
+    url.searchParams.set('response_mode', 'fragment');
+    url.searchParams.set('nonce', Math.random().toString(36).slice(2));
+    url.searchParams.set('prompt', 'none'); // try silent first
+    window.location.href = url.toString();
+  },
+
+  loginInteractive() {
+    const url = new URL(`https://login.microsoftonline.com/${AUTH.tenantId}/oauth2/v2.0/authorize`);
+    url.searchParams.set('client_id', AUTH.clientId);
+    url.searchParams.set('response_type', 'token');
+    url.searchParams.set('redirect_uri', AUTH.redirectUri);
+    url.searchParams.set('scope', AUTH.scopes);
+    url.searchParams.set('response_mode', 'fragment');
+    url.searchParams.set('nonce', Math.random().toString(36).slice(2));
+    window.location.href = url.toString();
   },
 
   async getToken() {
-    if (AUTH._token && Date.now() < AUTH._expiry) return AUTH._token;
-    if (AUTH.init()) return AUTH._token;
-    // Need to login
-    AUTH.login();
-    throw new Error('Redirecting to login...');
+    const stored = AUTH.getStoredToken();
+    if (stored) return stored;
+    // No token — redirect to login
+    AUTH.loginInteractive();
+    await new Promise(() => {}); // wait for redirect
   }
 };
 
@@ -1901,8 +1901,9 @@ function exportWeekCSV() {
 async function init() {
   setLoading(true);
 
-  // Check if returning from auth redirect
-  AUTH.init();
+  // Handle token from Microsoft login redirect
+  const justLoggedIn = AUTH.handleRedirect();
+  if (justLoggedIn) console.log('Just returned from login, token stored');
 
   // Race loadTimesheetData against a 8 second timeout
   try {
