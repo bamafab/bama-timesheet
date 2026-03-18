@@ -789,66 +789,70 @@ async function graphPatch(url, body) {
 }
 
 // ═══════════════════════════════════════════
-// AUTH — MSAL + Microsoft Graph API
-// Hosted on Azure Static Web Apps
+// AUTH — OAuth2 implicit flow (no MSAL library needed)
+// Works reliably from Azure Static Web Apps
 // ═══════════════════════════════════════════
-let _tokenCache = null;
-let _tokenExpiry = 0;
+const AUTH = {
+  clientId: '04b702fd-c53c-4f38-94bc-0334ce91d954',
+  tenantId: 'c92626f5-e391-499a-9059-0113bd07da2d',
+  redirectUri: 'https://proud-dune-0dee63110.2.azurestaticapps.net',
+  scopes: 'Files.ReadWrite Sites.ReadWrite.All',
+  _token: null,
+  _expiry: 0,
+
+  // Get token from URL hash (after redirect) or sessionStorage
+  init() {
+    // Check if we're returning from auth redirect
+    if (window.location.hash.includes('access_token')) {
+      const params = new URLSearchParams(window.location.hash.slice(1));
+      const token = params.get('access_token');
+      const expiresIn = parseInt(params.get('expires_in') || '3600');
+      if (token) {
+        AUTH._token = token;
+        AUTH._expiry = Date.now() + (expiresIn * 1000) - 60000;
+        sessionStorage.setItem('bama_token', token);
+        sessionStorage.setItem('bama_token_expiry', AUTH._expiry.toString());
+        // Clean up URL
+        window.history.replaceState({}, document.title, window.location.pathname);
+        console.log('Auth: Token obtained from redirect');
+        return true;
+      }
+    }
+    // Check sessionStorage
+    const stored = sessionStorage.getItem('bama_token');
+    const expiry = parseInt(sessionStorage.getItem('bama_token_expiry') || '0');
+    if (stored && Date.now() < expiry) {
+      AUTH._token = stored;
+      AUTH._expiry = expiry;
+      console.log('Auth: Using stored token');
+      return true;
+    }
+    return false;
+  },
+
+  // Redirect to Microsoft login
+  login() {
+    const url = `https://login.microsoftonline.com/${AUTH.tenantId}/oauth2/v2.0/authorize` +
+      `?client_id=${AUTH.clientId}` +
+      `&response_type=token` +
+      `&redirect_uri=${encodeURIComponent(AUTH.redirectUri)}` +
+      `&scope=${encodeURIComponent(AUTH.scopes)}` +
+      `&response_mode=fragment` +
+      `&nonce=${Math.random().toString(36)}`;
+    window.location.href = url;
+  },
+
+  async getToken() {
+    if (AUTH._token && Date.now() < AUTH._expiry) return AUTH._token;
+    if (AUTH.init()) return AUTH._token;
+    // Need to login
+    AUTH.login();
+    throw new Error('Redirecting to login...');
+  }
+};
 
 async function getToken() {
-  if (_tokenCache && Date.now() < _tokenExpiry) return _tokenCache;
-  if (!window.msalInstance) await loadMSAL();
-
-  const accounts = window.msalInstance.getAllAccounts();
-  if (!accounts.length) {
-    const result = await window.msalInstance.loginPopup({
-      scopes: ['Files.ReadWrite', 'Sites.ReadWrite.All']
-    });
-    _tokenCache = result.accessToken;
-    _tokenExpiry = Date.now() + 3300000;
-    return _tokenCache;
-  }
-
-  try {
-    const result = await window.msalInstance.acquireTokenSilent({
-      scopes: ['Files.ReadWrite', 'Sites.ReadWrite.All'],
-      account: accounts[0]
-    });
-    _tokenCache = result.accessToken;
-    _tokenExpiry = Date.now() + 3300000;
-    return _tokenCache;
-  } catch {
-    const result = await window.msalInstance.acquireTokenPopup({
-      scopes: ['Files.ReadWrite', 'Sites.ReadWrite.All']
-    });
-    _tokenCache = result.accessToken;
-    _tokenExpiry = Date.now() + 3300000;
-    return _tokenCache;
-  }
-}
-
-async function loadMSAL() {
-  await new Promise((res, rej) => {
-    const s = document.createElement('script');
-    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/msal.js/2.38.2/msal-browser.min.js';
-    s.onload = res; s.onerror = rej;
-    document.head.appendChild(s);
-  });
-
-  window.msalInstance = new msal.PublicClientApplication({
-    auth: {
-      clientId: '04b702fd-c53c-4f38-94bc-0334ce91d954',
-      authority: 'https://login.microsoftonline.com/c92626f5-e391-499a-9059-0113bd07da2d',
-      redirectUri: 'https://proud-dune-0dee63110.2.azurestaticapps.net'
-    },
-    cache: { cacheLocation: 'sessionStorage' }
-  });
-
-  await window.msalInstance.initialize();
-  try {
-    const resp = await window.msalInstance.handleRedirectPromise();
-    if (resp) { _tokenCache = resp.accessToken; _tokenExpiry = Date.now() + 3300000; }
-  } catch {}
+  return AUTH.getToken();
 }
 
 // ═══════════════════════════════════════════
@@ -1896,6 +1900,9 @@ function exportWeekCSV() {
 // ═══════════════════════════════════════════
 async function init() {
   setLoading(true);
+
+  // Check if returning from auth redirect
+  AUTH.init();
 
   // Race loadTimesheetData against a 8 second timeout
   try {
