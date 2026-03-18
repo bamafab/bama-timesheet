@@ -420,6 +420,72 @@
   .cs-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
   .cs-value { font-family: var(--font-mono); font-size: 13px; }
 
+  /* My Week view */
+  .week-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .week-day {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 10px;
+    text-align: center;
+    min-height: 110px;
+    position: relative;
+  }
+  .week-day.today { border-color: var(--accent); }
+  .week-day.has-data { border-color: var(--subtle); }
+  .week-day-name {
+    font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 4px; font-weight: 600;
+  }
+  .week-day-date { font-size: 11px; color: var(--subtle); margin-bottom: 10px; font-family: var(--font-mono); }
+  .week-day-time { font-size: 12px; font-family: var(--font-mono); margin-bottom: 3px; }
+  .week-day-time.in { color: var(--green); }
+  .week-day-time.out { color: var(--red); }
+  .week-day-total { font-size: 13px; font-weight: 600; color: var(--accent2); margin-top: 6px; font-family: var(--font-mono); }
+  .week-day-break { font-size: 10px; color: var(--muted); margin-top: 2px; }
+  .week-day-add {
+    background: none; border: 1px dashed var(--subtle);
+    border-radius: 6px; color: var(--muted); font-size: 11px;
+    padding: 6px; cursor: pointer; width: 100%; margin-top: 6px;
+    font-family: var(--font-body); transition: all .2s;
+  }
+  .week-day-add:hover { border-color: var(--accent); color: var(--accent); }
+  .manually-edited-badge {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    font-size: 10px; font-weight: 600; letter-spacing: .5px;
+    background: rgba(245,158,11,.15); color: var(--amber);
+    border: 1px solid rgba(245,158,11,.3); margin-left: 6px;
+    vertical-align: middle;
+  }
+
+  /* Manager clock log editable */
+  .clock-log-table { width: 100%; border-collapse: collapse; }
+  .clock-log-table th {
+    font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase;
+    color: var(--muted); padding: 8px 12px; text-align: left;
+    border-bottom: 1px solid var(--border); font-weight: 600;
+  }
+  .clock-log-table td {
+    padding: 10px 12px; border-bottom: 1px solid var(--border);
+    font-size: 13px; vertical-align: middle;
+  }
+  .clock-log-table tr:hover td { background: rgba(255,255,255,.02); }
+  .time-edit-input {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 5px; padding: 4px 8px;
+    color: var(--text); font-family: var(--font-mono);
+    font-size: 12px; width: 75px;
+  }
+  .time-edit-input:focus { outline: none; border-color: var(--accent); }
+
+  /* Add clocking modal */
+  .add-clock-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+
   @media (max-width: 600px) {
     .project-row { grid-template-columns: 1fr 1fr; }
     .clock-grid3 { grid-template-columns: 1fr 1fr; }
@@ -513,6 +579,14 @@
       </div>
     </div>
 
+    <!-- ── MY WEEK CARD ── -->
+    <div class="card" id="myWeekCard">
+      <div class="card-title"><span class="icon">📅</span> My Week</div>
+      <div class="week-grid" id="myWeekGrid">
+        <div class="empty-state" style="grid-column:span 7;padding:16px"><div class="spinner"></div></div>
+      </div>
+    </div>
+
     <!-- ── TIME ENTRY CARD ── -->
     <div class="card">
       <div class="card-title"><span class="icon">🔨</span> Log Project Time</div>
@@ -529,7 +603,7 @@
         </div>
         <div>
           <div class="field-label">HOURS</div>
-          <input type="number" class="field-input" id="hoursInput" min="0.25" max="24" step="0.25" placeholder="0.0">
+          <input type="number" class="field-input" id="hoursInput" min="0.5" max="24" step="0.5" placeholder="0.0">
         </div>
         <div style="display:flex;align-items:flex-end">
           <button class="btn btn-primary" onclick="addEntry()">+ Add</button>
@@ -636,14 +710,44 @@
 
     <!-- Tab: Clock In/Out -->
     <div class="tab-content" id="tab-clockinout">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <span style="color:var(--muted);font-size:13px" id="clockLogCount">—</span>
+        <button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="openMgrAddClocking()">+ Add Manual Clocking</button>
+      </div>
       <div id="clockLogArea"></div>
+    </div>
+
+    <!-- Tab: Payroll -->
+    <div class="tab-content" id="tab-payroll">
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-title"><span class="icon">&#163;</span> Payroll Summary</div>
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap">
+          <div class="week-nav">
+            <button class="nav-btn" onclick="changePayrollWeek(-1)">&#8592;</button>
+            <div class="week-label" id="payrollWeekLabel">—</div>
+            <button class="nav-btn" onclick="changePayrollWeek(1)">&#8594;</button>
+          </div>
+          <button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="generatePayrollPDF()">&#8595; Export PDF</button>
+          <button class="btn btn-ghost" style="padding:8px 16px;font-size:12px" onclick="archiveWeek()">&#128190; Archive This Week</button>
+        </div>
+        <div id="payrollSummary">
+          <div class="empty-state"><div class="spinner"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab: Archive -->
+    <div class="tab-content" id="tab-archive">
+      <div id="archiveArea">
+        <div class="empty-state"><div class="spinner"></div></div>
+      </div>
     </div>
 
     <!-- Tab: Staff Management -->
     <div class="tab-content" id="tab-staff">
       <div class="card" style="margin-bottom:20px">
         <div class="card-title"><span class="icon">➕</span> Add New Employee</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:flex-end">
+        <div style="display:grid;grid-template-columns:1fr 1fr 120px auto;gap:12px;align-items:flex-end">
           <div>
             <div class="field-label">FULL NAME</div>
             <input type="text" class="field-input" id="newEmpName" placeholder="e.g. John Smith" onkeydown="if(event.key==='Enter')addEmployee()">
@@ -651,6 +755,10 @@
           <div>
             <div class="field-label">ROLE (optional)</div>
             <input type="text" class="field-input" id="newEmpRole" placeholder="e.g. Fabricator" onkeydown="if(event.key==='Enter')addEmployee()">
+          </div>
+          <div>
+            <div class="field-label">HOURLY RATE (£)</div>
+            <input type="number" class="field-input" id="newEmpRate" placeholder="0.00" min="0" step="0.50" onkeydown="if(event.key==='Enter')addEmployee()">
           </div>
           <button class="btn btn-primary" onclick="addEmployee()">Add Employee</button>
         </div>
@@ -687,6 +795,87 @@
           Timesheet data stored at: <span style="color:var(--muted);font-family:var(--font-mono)">01 - Accounts/DANIEL/Project Tracker/timesheet-data.json</span>
         </div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     ADD MISSING CLOCKING MODAL (Employee)
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="addClockingModal">
+  <div class="modal">
+    <div class="modal-title">Add Clocking</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:20px">
+      This will be saved as <span class="manually-edited-badge">PENDING APPROVAL</span> and reviewed by your manager.
+    </div>
+    <div id="addClockingDate" style="font-family:var(--font-mono);color:var(--accent2);margin-bottom:16px;font-size:14px"></div>
+    <div class="add-clock-grid">
+      <div>
+        <div class="field-label">CLOCK IN</div>
+        <select class="field-input" id="addClockIn"></select>
+      </div>
+      <div>
+        <div class="field-label">CLOCK OUT</div>
+        <select class="field-input" id="addClockOut"></select>
+      </div>
+      <div>
+        <div class="field-label">BREAK</div>
+        <select class="field-input" id="addClockBreak">
+          <option value="">No break</option>
+          <option value="15">15 min</option>
+          <option value="20">20 min</option>
+          <option value="30">30 min</option>
+          <option value="45">45 min</option>
+          <option value="60">60 min</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeAddClockingModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitMissingClocking()">Submit for Approval</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     MANAGER ADD CLOCKING MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="mgrAddClockingModal">
+  <div class="modal">
+    <div class="modal-title">Add Manual Clocking</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:20px">Add a clocking entry for any employee on any date.</div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">EMPLOYEE</div>
+      <select class="field-input" id="mgrClockEmp"></select>
+    </div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">DATE</div>
+      <input type="date" class="field-input" id="mgrClockDate">
+    </div>
+    <div class="add-clock-grid">
+      <div>
+        <div class="field-label">CLOCK IN</div>
+        <select class="field-input" id="mgrClockIn"></select>
+      </div>
+      <div>
+        <div class="field-label">CLOCK OUT</div>
+        <select class="field-input" id="mgrClockOut"></select>
+      </div>
+      <div>
+        <div class="field-label">BREAK</div>
+        <select class="field-input" id="mgrClockBreak">
+          <option value="">No break</option>
+          <option value="15">15 min</option>
+          <option value="20">20 min</option>
+          <option value="30">30 min</option>
+          <option value="45">45 min</option>
+          <option value="60">60 min</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeMgrAddClocking()">Cancel</button>
+      <button class="btn btn-success" onclick="saveMgrClocking()">Save Clocking</button>
     </div>
   </div>
 </div>
@@ -1045,12 +1234,15 @@ const FALLBACK_PROJECTS = [
 async function writeApprovedToLabourLog(entries) {
   try {
     setLoading(true);
-    // Find the Labour Log sheet
-    const ws = await graphGet(
-      `/drives/${CONFIG.driveId}/items/${CONFIG.projectTrackerItemId}/workbook/worksheets`
-    );
+    const token = await getToken();
 
-    const labourSheet = ws.value.find(s =>
+    // Find the Labour Log sheet
+    const wsRes = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.projectTrackerItemId}/workbook/worksheets`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    const wsData = await wsRes.json();
+    const labourSheet = wsData.value.find(s =>
       s.name.toLowerCase().includes('labour') || s.name.toLowerCase().includes('labor')
     );
 
@@ -1059,38 +1251,57 @@ async function writeApprovedToLabourLog(entries) {
       return false;
     }
 
-    // Get current used range to find next empty row
-    const used = await graphGet(
-      `/drives/${CONFIG.driveId}/items/${CONFIG.projectTrackerItemId}/workbook/worksheets/${encodeURIComponent(labourSheet.name)}/usedRange`
+    const sheetName = encodeURIComponent(labourSheet.name);
+
+    // Read the Labour Log sheet to find the first empty row starting from row 5
+    // We read column A from row 5 downwards to find empty cells before TOTALS
+    const rangeRes = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.projectTrackerItemId}/workbook/worksheets/${sheetName}/range(address='A5:A1000')`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
     );
+    const rangeData = await rangeRes.json();
+    const colA = rangeData.values || [];
 
-    const nextRow = (used.rowCount || 1) + 1;
-
-    // Build rows to append
-    const rows = entries.map(e => [
-      e.date,
-      e.projectId,
-      e.projectName,
-      e.employeeName,
-      e.hours,
-      '',   // Rate (£/hr) — blank, project tracker handles
-      '',   // Cost — formula
-      'Timesheet App'  // Notes
-    ]);
-
-    // Write to next available rows
-    const rangeAddr = `A${nextRow}:H${nextRow + rows.length - 1}`;
-    await fetch(
-      `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.projectTrackerItemId}/workbook/worksheets/${encodeURIComponent(labourSheet.name)}/range(address='${rangeAddr}')`,
-      {
-        method: 'PATCH',
-        headers: {
-          'Authorization': `Bearer ${await getToken()}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ values: rows })
+    // Find first empty row in column A (that isn't the TOTALS row)
+    let insertRow = 5;
+    for (let i = 0; i < colA.length; i++) {
+      const cellVal = String(colA[i][0] || '').trim().toUpperCase();
+      if (cellVal === '' || cellVal === '0') {
+        insertRow = 5 + i;
+        break;
       }
-    );
+      // Stop if we hit TOTALS
+      if (cellVal === 'TOTALS') break;
+    }
+
+    // Write each entry one by one into consecutive empty rows
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i];
+      const row = insertRow + i;
+      const rangeAddr = `A${row}:H${row}`;
+      const rowData = [[
+        e.date,
+        e.projectId,
+        e.projectName,
+        e.employeeName,
+        e.hours,
+        '',   // Rate — auto-populated by tracker formula
+        '',   // Cost — auto-populated by tracker formula
+        'Timesheet App'
+      ]];
+
+      await fetch(
+        `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.projectTrackerItemId}/workbook/worksheets/${sheetName}/range(address='${rangeAddr}')`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ values: rowData })
+        }
+      );
+    }
 
     return true;
   } catch (e) {
@@ -1172,6 +1383,9 @@ function openEmployee(name) {
 
   // Time selects
   fillTimeSelects();
+
+  // Render My Week
+  renderMyWeek(name);
 
   // Check clocked in
   const today = todayStr();
@@ -1401,7 +1615,7 @@ async function submitDay() {
     await saveTimesheetData();
     state.currentEntries = [];
     renderTodayEntries();
-    toast(`${state.currentEntries.length || 'Entries'} submitted for approval`, 'success');
+    toast(`Entries submitted for approval ✓`, 'success');
     // Small delay then go home
     setTimeout(goHome, 1500);
   } catch { toast('Submit failed — check connection', 'error'); }
@@ -1522,37 +1736,304 @@ function renderEmpSummary(entries, clockings) {
   `).join('');
 }
 
+function calcHours(clockIn, clockOut, breakMins) {
+  if (!clockIn || !clockOut) return null;
+  const [ih, im] = clockIn.split(':').map(Number);
+  const [oh, om] = clockOut.split(':').map(Number);
+  const diff = (oh * 60 + om) - (ih * 60 + im) - (breakMins || 0);
+  return diff > 0 ? diff / 60 : 0;
+}
+
 function renderClockLog(clockings) {
   const area = document.getElementById('clockLogArea');
+  const countEl = document.getElementById('clockLogCount');
+
+  if (countEl) countEl.textContent = `${clockings.length} record${clockings.length !== 1 ? 's' : ''} this week`;
+
   if (!clockings.length) {
     area.innerHTML = '<div class="empty-state"><div class="icon">🕐</div>No clock-in/out records this week</div>';
     return;
   }
 
+  // Sort by date then employee
+  const sorted = [...clockings].sort((a, b) => a.date.localeCompare(b.date) || a.employeeName.localeCompare(b.employeeName));
+
   area.innerHTML = `
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:8px;padding:8px 16px;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted)">
-      <div>Employee</div><div>Date</div><div>Clock In</div><div>Clock Out</div><div>Break / Total</div>
-    </div>
-    ${clockings.map(c => {
-      let totalHrs = '—';
-      if (c.clockIn && c.clockOut) {
-        const [ih, im] = c.clockIn.split(':').map(Number);
-        const [oh, om] = c.clockOut.split(':').map(Number);
-        const diff = (oh * 60 + om) - (ih * 60 + im) - (c.breakMins || 0);
-        totalHrs = `${(diff / 60).toFixed(2)}h`;
-      }
-      return `
-        <div class="clock-summary-entry">
-          <div><div class="cs-label">Employee</div><div class="cs-value">${c.employeeName}</div></div>
-          <div><div class="cs-label">Date</div><div class="cs-value">${c.date}</div></div>
-          <div><div class="cs-label">In</div><div class="cs-value" style="color:var(--green)">${c.clockIn || '—'}</div></div>
-          <div><div class="cs-label">Out</div><div class="cs-value" style="color:var(--red)">${c.clockOut || 'Still In'}</div></div>
-          <div><div class="cs-label">Break / Total</div><div class="cs-value">${c.breakMins ? c.breakMins+'m / ' : ''}${totalHrs}</div></div>
-        </div>
-      `;
-    }).join('')}
+    <table class="clock-log-table">
+      <thead>
+        <tr>
+          <th>Employee</th>
+          <th>Date</th>
+          <th>Clock In</th>
+          <th>Clock Out</th>
+          <th>Break</th>
+          <th>Total</th>
+          <th>Status</th>
+          <th>Save</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${sorted.map(c => {
+          const hrs = calcHours(c.clockIn, c.clockOut, c.breakMins);
+          const totalDisplay = hrs !== null ? hrs.toFixed(2) + 'h' : '—';
+          const isEdited = c.manuallyEdited;
+          const isPending = c.approvalStatus === 'pending';
+          return `
+            <tr id="clock-row-${c.id}">
+              <td style="font-weight:500">${c.employeeName}${c.addedByManager ? '<span class="manually-edited-badge">MANUAL</span>' : ''}</td>
+              <td class="mono" style="font-size:12px">${c.date}</td>
+              <td>
+                <input type="time" class="time-edit-input" id="edit-in-${c.id}" value="${c.clockIn || ''}"
+                  onchange="markClockDirty('${c.id}')">
+              </td>
+              <td>
+                <input type="time" class="time-edit-input" id="edit-out-${c.id}" value="${c.clockOut || ''}"
+                  onchange="markClockDirty('${c.id}')">
+              </td>
+              <td>
+                <select class="time-edit-input" id="edit-break-${c.id}" onchange="markClockDirty('${c.id}')" style="width:70px">
+                  <option value="0" ${!c.breakMins ? 'selected' : ''}>—</option>
+                  <option value="15" ${c.breakMins==15?'selected':''}>15m</option>
+                  <option value="20" ${c.breakMins==20?'selected':''}>20m</option>
+                  <option value="30" ${c.breakMins==30?'selected':''}>30m</option>
+                  <option value="45" ${c.breakMins==45?'selected':''}>45m</option>
+                  <option value="60" ${c.breakMins==60?'selected':''}>60m</option>
+                </select>
+              </td>
+              <td class="mono" style="color:var(--accent2)" id="edit-total-${c.id}">${totalDisplay}</td>
+              <td>
+                ${isEdited && isPending
+                  ? `<span class="tag tag-pending">Pending Edit</span>`
+                  : isEdited
+                  ? `<span class="manually-edited-badge">EDITED</span>`
+                  : isPending
+                  ? `<span class="tag tag-pending">Pending</span>`
+                  : `<span style="color:var(--subtle);font-size:11px">—</span>`
+                }
+                ${isPending ? `
+                  <div style="display:flex;gap:4px;margin-top:4px">
+                    <button class="tiny-btn tiny-approve" onclick="approveClocking('${c.id}')">✓</button>
+                    <button class="tiny-btn tiny-reject" onclick="rejectClocking('${c.id}')">✕</button>
+                  </div>` : ''
+                }
+              </td>
+              <td>
+                <button class="tiny-btn tiny-approve" id="save-btn-${c.id}" onclick="saveClockEdit('${c.id}')"
+                  style="display:none">Save</button>
+              </td>
+            </tr>
+          `;
+        }).join('')}
+      </tbody>
+    </table>
   `;
 }
+
+function markClockDirty(id) {
+  const btn = document.getElementById(`save-btn-${id}`);
+  if (btn) btn.style.display = 'inline-block';
+  // Update total preview
+  const inVal = document.getElementById(`edit-in-${id}`)?.value;
+  const outVal = document.getElementById(`edit-out-${id}`)?.value;
+  const breakVal = parseInt(document.getElementById(`edit-break-${id}`)?.value) || 0;
+  const hrs = calcHours(inVal, outVal, breakVal);
+  const totalEl = document.getElementById(`edit-total-${id}`);
+  if (totalEl && hrs !== null) totalEl.textContent = hrs.toFixed(2) + 'h';
+}
+
+async function saveClockEdit(id) {
+  const clocking = state.timesheetData.clockings.find(c => c.id === id);
+  if (!clocking) return;
+
+  clocking.clockIn = document.getElementById(`edit-in-${id}`).value;
+  clocking.clockOut = document.getElementById(`edit-out-${id}`).value;
+  clocking.breakMins = parseInt(document.getElementById(`edit-break-${id}`).value) || 0;
+  clocking.manuallyEdited = true;
+
+  try {
+    await saveTimesheetData();
+    document.getElementById(`save-btn-${id}`).style.display = 'none';
+    toast('Clocking updated ✓', 'success');
+    renderManagerView();
+  } catch { toast('Save failed', 'error'); }
+}
+
+async function approveClocking(id) {
+  const c = state.timesheetData.clockings.find(c => c.id === id);
+  if (!c) return;
+  c.approvalStatus = 'approved';
+  try {
+    await saveTimesheetData();
+    toast('Clocking approved ✓', 'success');
+    renderManagerView();
+  } catch { toast('Save failed', 'error'); }
+}
+
+async function rejectClocking(id) {
+  const c = state.timesheetData.clockings.find(c => c.id === id);
+  if (!c) return;
+  // Revert to original if available
+  if (c.originalClockIn) { c.clockIn = c.originalClockIn; c.clockOut = c.originalClockOut; c.breakMins = c.originalBreakMins || 0; }
+  c.approvalStatus = 'rejected';
+  c.manuallyEdited = false;
+  try {
+    await saveTimesheetData();
+    toast('Change rejected', 'success');
+    renderManagerView();
+  } catch { toast('Save failed', 'error'); }
+}
+
+// Manager add clocking modal
+function openMgrAddClocking() {
+  const sel = document.getElementById('mgrClockEmp');
+  sel.innerHTML = (state.timesheetData.employees||[])
+    .filter(e => e.active !== false)
+    .map(e => `<option value="${e.name}">${e.name}</option>`).join('');
+
+  // Fill time selects
+  ['mgrClockIn','mgrClockOut'].forEach(id => {
+    const el = document.getElementById(id);
+    el.innerHTML = CONFIG.timeSlots.map(s => `<option value="${s.val}">${s.label}</option>`).join('');
+  });
+  document.getElementById('mgrClockDate').value = todayStr();
+  document.getElementById('mgrAddClockingModal').classList.add('active');
+}
+
+function closeMgrAddClocking() {
+  document.getElementById('mgrAddClockingModal').classList.remove('active');
+}
+
+async function saveMgrClocking() {
+  const emp = document.getElementById('mgrClockEmp').value;
+  const date = document.getElementById('mgrClockDate').value;
+  const clockIn = document.getElementById('mgrClockIn').value;
+  const clockOut = document.getElementById('mgrClockOut').value;
+  const breakMins = parseInt(document.getElementById('mgrClockBreak').value) || 0;
+
+  if (!emp || !date || !clockIn || !clockOut) {
+    toast('Please fill in all fields', 'error'); return;
+  }
+
+  state.timesheetData.clockings.push({
+    id: Date.now().toString(),
+    employeeName: emp,
+    date,
+    clockIn,
+    clockOut,
+    breakMins,
+    addedByManager: true,
+    manuallyEdited: true,
+    approvalStatus: 'approved'
+  });
+
+  try {
+    await saveTimesheetData();
+    closeMgrAddClocking();
+    toast(`Clocking added for ${emp} ✓`, 'success');
+    renderManagerView();
+  } catch { toast('Save failed', 'error'); }
+}
+
+// Employee My Week view
+function renderMyWeek(employeeName) {
+  const grid = document.getElementById('myWeekGrid');
+  if (!grid) return;
+
+  const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const today = new Date();
+  const dayOfWeek = today.getDay();
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
+
+  grid.innerHTML = days.map((day, i) => {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    const dStr = dateStr(d);
+    const isToday = dStr === todayStr();
+    const isFuture = d > today;
+
+    const clocking = state.timesheetData.clockings.find(
+      c => c.employeeName === employeeName && c.date === dStr
+    );
+
+    let content = '';
+    if (clocking) {
+      const hrs = calcHours(clocking.clockIn, clocking.clockOut, clocking.breakMins);
+      const isPending = clocking.approvalStatus === 'pending';
+      content = `
+        ${clocking.clockIn ? `<div class="week-day-time in">▲ ${clocking.clockIn}</div>` : '<div class="week-day-time" style="color:var(--subtle)">▲ —</div>'}
+        ${clocking.clockOut ? `<div class="week-day-time out">▼ ${clocking.clockOut}</div>` : '<div class="week-day-time" style="color:var(--subtle)">▼ —</div>'}
+        ${clocking.breakMins ? `<div class="week-day-break">☕ ${clocking.breakMins}m</div>` : ''}
+        ${hrs !== null ? `<div class="week-day-total">${hrs.toFixed(1)}h</div>` : ''}
+        ${isPending ? `<div style="margin-top:4px"><span class="tag tag-pending" style="font-size:9px">Pending</span></div>` : ''}
+        ${clocking.manuallyEdited && !isPending ? `<div style="margin-top:4px"><span class="manually-edited-badge" style="font-size:9px">Edited</span></div>` : ''}
+      `;
+    } else if (!isFuture) {
+      content = `
+        <div style="color:var(--subtle);font-size:11px;margin-top:8px">No data</div>
+        <button class="week-day-add" onclick="openAddClocking('${dStr}')">+ Add</button>
+      `;
+    } else {
+      content = `<div style="color:var(--subtle);font-size:11px;margin-top:16px">—</div>`;
+    }
+
+    return `
+      <div class="week-day ${isToday ? 'today' : ''} ${clocking ? 'has-data' : ''}">
+        <div class="week-day-name">${day}</div>
+        <div class="week-day-date">${d.getDate()}/${d.getMonth()+1}</div>
+        ${content}
+      </div>
+    `;
+  }).join('');
+}
+
+// Employee add missing clocking
+let _addClockingDate = null;
+function openAddClocking(date) {
+  _addClockingDate = date;
+  document.getElementById('addClockingDate').textContent = new Date(date + 'T12:00:00').toLocaleDateString('en-GB', { weekday:'long', day:'numeric', month:'long' });
+
+  ['addClockIn','addClockOut'].forEach(id => {
+    const el = document.getElementById(id);
+    el.innerHTML = CONFIG.timeSlots.map(s => `<option value="${s.val}">${s.label}</option>`).join('');
+  });
+
+  document.getElementById('addClockingModal').classList.add('active');
+}
+
+function closeAddClockingModal() {
+  document.getElementById('addClockingModal').classList.remove('active');
+  _addClockingDate = null;
+}
+
+async function submitMissingClocking() {
+  if (!_addClockingDate || !state.currentEmployee) return;
+
+  const clockIn = document.getElementById('addClockIn').value;
+  const clockOut = document.getElementById('addClockOut').value;
+  const breakMins = parseInt(document.getElementById('addClockBreak').value) || 0;
+
+  if (!clockIn || !clockOut) { toast('Please select times', 'error'); return; }
+
+  state.timesheetData.clockings.push({
+    id: Date.now().toString(),
+    employeeName: state.currentEmployee,
+    date: _addClockingDate,
+    clockIn,
+    clockOut,
+    breakMins,
+    manuallyEdited: true,
+    approvalStatus: 'pending'
+  });
+
+  try {
+    await saveTimesheetData();
+    closeAddClockingModal();
+    toast('Submitted for manager approval ✓', 'success');
+    renderMyWeek(state.currentEmployee);
+  } catch { toast('Save failed', 'error'); }
+}
+
 
 async function setEntryStatus(id, status) {
   const entry = state.timesheetData.entries.find(e => e.id === id);
@@ -1606,13 +2087,15 @@ function changeWeek(dir) {
 
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach((t, i) => {
-    const names = ['project', 'employee', 'clockinout', 'staff', 'settings'];
+    const names = ['project', 'employee', 'clockinout', 'staff', 'payroll', 'archive', 'settings'];
     t.classList.toggle('active', names[i] === name);
   });
   document.querySelectorAll('.tab-content').forEach(tc => {
     tc.classList.toggle('active', tc.id === `tab-${name}`);
   });
   if (name === 'staff') renderStaffList();
+  if (name === 'payroll') renderPayroll();
+  if (name === 'archive') renderArchive();
 }
 
 // ═══════════════════════════════════════════
@@ -1664,6 +2147,367 @@ document.getElementById('todayDate').textContent =
   new Date().toLocaleDateString('en-GB', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
 
 // ═══════════════════════════════════════════
+// PAYROLL ENGINE
+// ═══════════════════════════════════════════
+let payrollWeekOffset = 0;
+
+function calculatePayroll(employeeName, weekMon, weekSun) {
+  const monStr = dateStr(weekMon);
+  const sunStr = dateStr(weekSun);
+
+  // Get all approved clockings for this employee this week
+  const clockings = state.timesheetData.clockings.filter(c =>
+    c.employeeName === employeeName &&
+    c.date >= monStr && c.date <= sunStr &&
+    c.approvalStatus !== 'rejected'
+  );
+
+  if (!clockings.length) return null;
+
+  // Calculate hours per day
+  const dayHours = {};
+  let workedSaturday = false;
+  let workedSunday = false;
+  let sundayHours = 0;
+
+  clockings.forEach(c => {
+    const hrs = calcHours(c.clockIn, c.clockOut, c.breakMins) || 0;
+    dayHours[c.date] = (dayHours[c.date] || 0) + hrs;
+
+    const d = new Date(c.date + 'T12:00:00');
+    const dow = d.getDay(); // 0=Sun, 6=Sat
+    if (dow === 6 && hrs > 0) workedSaturday = true;
+    if (dow === 0 && hrs > 0) { workedSunday = true; sundayHours += hrs; }
+  });
+
+  const totalHours = Object.values(dayHours).reduce((s, h) => s + h, 0);
+  const doubleTimeApplies = workedSaturday && workedSunday;
+
+  // Get employee rate
+  const emp = (state.timesheetData.employees || []).find(e => e.name === employeeName);
+  const rate = emp ? (emp.rate || 0) : 0;
+
+  // Calculate pay breakdown
+  let basicHours, overtimeHours, doubleHours;
+  let basicPay, overtimePay, doublePay;
+
+  if (doubleTimeApplies) {
+    // Sunday hours are always double time
+    const nonSundayHours = totalHours - sundayHours;
+    doubleHours = sundayHours;
+
+    if (nonSundayHours >= 40) {
+      basicHours = 40;
+      overtimeHours = nonSundayHours - 40;
+    } else {
+      basicHours = nonSundayHours;
+      overtimeHours = 0;
+    }
+  } else {
+    doubleHours = 0;
+    if (totalHours <= 40) {
+      basicHours = totalHours;
+      overtimeHours = 0;
+    } else {
+      basicHours = 40;
+      overtimeHours = totalHours - 40;
+    }
+  }
+
+  basicPay = basicHours * rate;
+  overtimePay = overtimeHours * rate * 1.5;
+  doublePay = doubleHours * rate * 2;
+  const totalPay = basicPay + overtimePay + doublePay;
+
+  return {
+    employeeName,
+    rate,
+    totalHours,
+    basicHours: parseFloat(basicHours.toFixed(2)),
+    overtimeHours: parseFloat(overtimeHours.toFixed(2)),
+    doubleHours: parseFloat(doubleHours.toFixed(2)),
+    basicPay: parseFloat(basicPay.toFixed(2)),
+    overtimePay: parseFloat(overtimePay.toFixed(2)),
+    doublePay: parseFloat(doublePay.toFixed(2)),
+    totalPay: parseFloat(totalPay.toFixed(2)),
+    doubleTimeApplies,
+    dayHours
+  };
+}
+
+function renderPayroll() {
+  const { mon, sun } = getWeekDates(payrollWeekOffset);
+  document.getElementById('payrollWeekLabel').textContent =
+    `${fmtDate(mon)} – ${fmtDate(sun)}`;
+
+  const container = document.getElementById('payrollSummary');
+  const employees = (state.timesheetData.employees || []).filter(e => e.active !== false);
+
+  if (!employees.length) {
+    container.innerHTML = '<div class="empty-state">No employees set up yet.</div>';
+    return;
+  }
+
+  const results = employees.map(e => calculatePayroll(e.name, mon, sun)).filter(Boolean);
+
+  if (!results.length) {
+    container.innerHTML = '<div class="empty-state"><div class="icon">&#163;</div>No approved clockings this week</div>';
+    return;
+  }
+
+  const totalBasic = results.reduce((s, r) => s + r.basicPay, 0);
+  const totalOT = results.reduce((s, r) => s + r.overtimePay, 0);
+  const totalDT = results.reduce((s, r) => s + r.doublePay, 0);
+  const grandTotal = results.reduce((s, r) => s + r.totalPay, 0);
+
+  container.innerHTML = `
+    <div style="overflow-x:auto">
+      <table class="summary-table" style="min-width:700px">
+        <thead>
+          <tr>
+            <th>EMPLOYEE</th>
+            <th>RATE</th>
+            <th>TOTAL HRS</th>
+            <th>BASIC (40h)</th>
+            <th>O/T &#215;1.5</th>
+            <th>DBL TIME &#215;2</th>
+            <th>TOTAL PAY</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${results.map(r => `
+            <tr>
+              <td style="font-weight:600">${r.employeeName}
+                ${r.doubleTimeApplies ? '<span class="manually-edited-badge" style="background:rgba(62,207,142,.15);color:var(--green);border-color:rgba(62,207,142,.3)">SAT+SUN</span>' : ''}
+              </td>
+              <td class="mono">£${r.rate.toFixed(2)}</td>
+              <td class="mono"><b>${r.totalHours.toFixed(2)}h</b></td>
+              <td class="mono" style="color:var(--text)">${r.basicHours}h<br><span style="color:var(--muted);font-size:11px">£${r.basicPay.toFixed(2)}</span></td>
+              <td class="mono" style="color:var(--amber)">${r.overtimeHours > 0 ? r.overtimeHours+'h' : '—'}<br><span style="color:var(--muted);font-size:11px">${r.overtimeHours > 0 ? '£'+r.overtimePay.toFixed(2) : ''}</span></td>
+              <td class="mono" style="color:var(--accent)">${r.doubleHours > 0 ? r.doubleHours+'h' : '—'}<br><span style="color:var(--muted);font-size:11px">${r.doubleHours > 0 ? '£'+r.doublePay.toFixed(2) : ''}</span></td>
+              <td class="mono" style="color:var(--green);font-weight:700;font-size:15px">£${r.totalPay.toFixed(2)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+        <tfoot>
+          <tr style="border-top:2px solid var(--border)">
+            <td colspan="3" style="font-weight:700;color:var(--muted);font-size:12px;letter-spacing:1px;text-transform:uppercase;padding:12px 14px">TOTALS</td>
+            <td class="mono" style="font-weight:600">£${totalBasic.toFixed(2)}</td>
+            <td class="mono" style="font-weight:600;color:var(--amber)">£${totalOT.toFixed(2)}</td>
+            <td class="mono" style="font-weight:600;color:var(--accent)">£${totalDT.toFixed(2)}</td>
+            <td class="mono" style="color:var(--green);font-weight:700;font-size:16px">£${grandTotal.toFixed(2)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  `;
+}
+
+function changePayrollWeek(dir) {
+  payrollWeekOffset += dir;
+  renderPayroll();
+}
+
+function generatePayrollPDF() {
+  const { mon, sun } = getWeekDates(payrollWeekOffset);
+  const employees = (state.timesheetData.employees || []).filter(e => e.active !== false);
+  const results = employees.map(e => calculatePayroll(e.name, mon, sun)).filter(Boolean);
+
+  if (!results.length) { toast('No payroll data to export', 'error'); return; }
+
+  const totalBasic = results.reduce((s, r) => s + r.basicPay, 0);
+  const totalOT = results.reduce((s, r) => s + r.overtimePay, 0);
+  const totalDT = results.reduce((s, r) => s + r.doublePay, 0);
+  const grandTotal = results.reduce((s, r) => s + r.totalPay, 0);
+  const weekStr = `${fmtDate(mon)} – ${fmtDate(sun)}`;
+
+  const printWin = window.open('', '_blank');
+  printWin.document.write(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>BAMA Payroll – ${weekStr}</title>
+      <style>
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=DM+Mono&display=swap');
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'DM Sans', sans-serif; padding: 32px; color: #111; background: #fff; }
+        h1 { font-size: 28px; font-weight: 700; letter-spacing: 2px; color: #ff6b00; margin-bottom: 4px; }
+        .subtitle { font-size: 13px; color: #888; margin-bottom: 8px; }
+        .week { font-size: 15px; font-weight: 600; margin-bottom: 28px; color: #333; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+        th { font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: #888;
+          padding: 8px 12px; text-align: left; border-bottom: 2px solid #eee; }
+        td { padding: 12px 12px; border-bottom: 1px solid #f0f0f0; font-size: 13px; }
+        .mono { font-family: 'DM Mono', monospace; }
+        .name { font-weight: 600; }
+        .total-pay { font-weight: 700; font-size: 15px; color: #ff6b00; }
+        .ot { color: #f59e0b; }
+        .dt { color: #ef4444; }
+        tfoot td { font-weight: 700; border-top: 2px solid #ddd; border-bottom: none; background: #fafafa; }
+        .grand { font-size: 17px; color: #ff6b00; }
+        .badge { display:inline-block; padding:1px 6px; border-radius:3px; font-size:10px;
+          background:#d1fae5; color:#065f46; margin-left:6px; font-family:sans-serif; }
+        .footer { margin-top: 32px; font-size: 11px; color: #aaa; border-top: 1px solid #eee; padding-top: 12px; }
+        @media print {
+          body { padding: 16px; }
+          button { display: none; }
+        }
+      </style>
+    </head>
+    <body>
+      <h1>BAMA FABRICATION</h1>
+      <div class="subtitle">Payroll Summary Report</div>
+      <div class="week">Week: ${weekStr}</div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Employee</th>
+            <th>Rate</th>
+            <th>Total Hrs</th>
+            <th>Basic (≤40h)</th>
+            <th>O/T ×1.5</th>
+            <th>Dbl Time ×2</th>
+            <th>Total Pay</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${results.map(r => `
+            <tr>
+              <td class="name">${r.employeeName}${r.doubleTimeApplies ? '<span class="badge">SAT+SUN</span>' : ''}</td>
+              <td class="mono">£${r.rate.toFixed(2)}/hr</td>
+              <td class="mono"><b>${r.totalHours.toFixed(2)}h</b></td>
+              <td class="mono">${r.basicHours}h &nbsp; £${r.basicPay.toFixed(2)}</td>
+              <td class="mono ot">${r.overtimeHours > 0 ? r.overtimeHours+'h &nbsp; £'+r.overtimePay.toFixed(2) : '—'}</td>
+              <td class="mono dt">${r.doubleHours > 0 ? r.doubleHours+'h &nbsp; £'+r.doublePay.toFixed(2) : '—'}</td>
+              <td class="mono total-pay">£${r.totalPay.toFixed(2)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="3">TOTALS</td>
+            <td class="mono">£${totalBasic.toFixed(2)}</td>
+            <td class="mono ot">£${totalOT.toFixed(2)}</td>
+            <td class="mono dt">£${totalDT.toFixed(2)}</td>
+            <td class="mono grand">£${grandTotal.toFixed(2)}</td>
+          </tr>
+        </tfoot>
+      </table>
+
+      <div class="footer">
+        Generated by BAMA Workshop Timesheet &nbsp;|&nbsp; ${new Date().toLocaleString('en-GB')} &nbsp;|&nbsp;
+        Pay rules: Standard rate for first 40hrs. Overtime ×1.5 for hours over 40. Sunday ×2 only if Saturday also worked.
+      </div>
+
+      <script>window.onload = function() { window.print(); }<\/script>
+    </body>
+    </html>
+  `);
+  printWin.document.close();
+}
+
+// ═══════════════════════════════════════════
+// WEEKLY ARCHIVE
+// ═══════════════════════════════════════════
+async function archiveWeek() {
+  const { mon, sun } = getWeekDates(payrollWeekOffset);
+  const monStr = dateStr(mon);
+  const sunStr = dateStr(sun);
+  const weekKey = `week_${monStr}`;
+
+  // Check if already archived
+  if (!state.timesheetData.archive) state.timesheetData.archive = {};
+  if (state.timesheetData.archive[weekKey]) {
+    if (!confirm(`Week of ${fmtDate(mon)} is already archived. Overwrite?`)) return;
+  }
+
+  // Snapshot all data for this week
+  const weekEntries = state.timesheetData.entries.filter(e => e.date >= monStr && e.date <= sunStr);
+  const weekClockings = state.timesheetData.clockings.filter(c => c.date >= monStr && c.date <= sunStr);
+  const employees = (state.timesheetData.employees || []).filter(e => e.active !== false);
+  const payrollResults = employees.map(e => calculatePayroll(e.name, mon, sun)).filter(Boolean);
+
+  state.timesheetData.archive[weekKey] = {
+    weekCommencing: monStr,
+    weekEnding: sunStr,
+    archivedAt: new Date().toISOString(),
+    entries: weekEntries,
+    clockings: weekClockings,
+    payroll: payrollResults
+  };
+
+  try {
+    await saveTimesheetData();
+    toast(`Week of ${fmtDate(mon)} archived ✓`, 'success');
+    renderArchive();
+  } catch { toast('Archive save failed', 'error'); }
+}
+
+function renderArchive() {
+  const area = document.getElementById('archiveArea');
+  const archive = state.timesheetData.archive || {};
+  const weeks = Object.values(archive).sort((a, b) => b.weekCommencing.localeCompare(a.weekCommencing));
+
+  if (!weeks.length) {
+    area.innerHTML = `
+      <div class="empty-state">
+        <div style="font-size:32px;margin-bottom:12px">&#128196;</div>
+        <div>No archived weeks yet.</div>
+        <div style="margin-top:8px;font-size:12px;color:var(--subtle)">Go to Payroll tab and click "Archive This Week" to save a week's records.</div>
+      </div>`;
+    return;
+  }
+
+  area.innerHTML = weeks.map(w => {
+    const grandTotal = (w.payroll || []).reduce((s, r) => s + r.totalPay, 0);
+    const totalHrs = (w.payroll || []).reduce((s, r) => s + r.totalHours, 0);
+    return `
+      <div class="card" style="margin-bottom:12px">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+          <div>
+            <div style="font-family:var(--font-display);font-size:20px;letter-spacing:1px">
+              WC ${new Date(w.weekCommencing+'T12:00:00').toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'})}
+            </div>
+            <div style="font-size:12px;color:var(--muted);margin-top:4px">
+              ${(w.payroll||[]).length} employees &nbsp;·&nbsp; ${totalHrs.toFixed(1)} total hours &nbsp;·&nbsp; Archived ${new Date(w.archivedAt).toLocaleDateString('en-GB')}
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px">
+            <div style="font-family:var(--font-display);font-size:28px;color:var(--green)">£${grandTotal.toFixed(2)}</div>
+            <button class="btn btn-ghost" style="padding:6px 12px;font-size:12px" onclick="toggleArchiveDetail('${w.weekCommencing}')">View Details</button>
+          </div>
+        </div>
+        <div id="archive-detail-${w.weekCommencing}" style="display:none;margin-top:16px">
+          <table class="summary-table">
+            <thead>
+              <tr><th>EMPLOYEE</th><th>TOTAL HRS</th><th>BASIC</th><th>O/T ×1.5</th><th>DBL ×2</th><th>TOTAL PAY</th></tr>
+            </thead>
+            <tbody>
+              ${(w.payroll||[]).map(r => `
+                <tr>
+                  <td style="font-weight:600">${r.employeeName}</td>
+                  <td class="mono">${r.totalHours.toFixed(2)}h</td>
+                  <td class="mono">${r.basicHours}h &nbsp; £${r.basicPay.toFixed(2)}</td>
+                  <td class="mono" style="color:var(--amber)">${r.overtimeHours > 0 ? r.overtimeHours+'h &nbsp; £'+r.overtimePay.toFixed(2) : '—'}</td>
+                  <td class="mono" style="color:var(--accent)">${r.doubleHours > 0 ? r.doubleHours+'h &nbsp; £'+r.doublePay.toFixed(2) : '—'}</td>
+                  <td class="mono" style="color:var(--green);font-weight:700">£${r.totalPay.toFixed(2)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function toggleArchiveDetail(weekKey) {
+  const el = document.getElementById(`archive-detail-${weekKey}`);
+  if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+// ═══════════════════════════════════════════
 // STAFF MANAGEMENT
 // ═══════════════════════════════════════════
 function renderStaffList() {
@@ -1692,7 +2536,9 @@ function renderStaffList() {
               <input type="text" class="field-input" id="edit-name-${emp.id}" value="${emp.name}"
                 style="margin-bottom:6px;padding:6px 10px;font-size:13px">
               <input type="text" class="field-input" id="edit-role-${emp.id}" value="${emp.role||''}"
-                placeholder="Role (optional)" style="padding:6px 10px;font-size:12px">
+                placeholder="Role (optional)" style="padding:6px 10px;font-size:12px;margin-bottom:6px">
+              <input type="number" class="field-input" id="edit-rate-${emp.id}" value="${emp.rate||''}"
+                placeholder="Hourly rate (£)" min="0" step="0.50" style="padding:6px 10px;font-size:12px">
               <div style="display:flex;gap:6px;margin-top:8px">
                 <button class="tiny-btn tiny-approve" onclick="saveEmployee('${emp.id}')">Save</button>
                 <button class="tiny-btn" style="background:var(--surface);color:var(--muted);border:1px solid var(--border)"
@@ -1701,6 +2547,7 @@ function renderStaffList() {
             ` : `
               <div style="font-weight:600;font-size:14px">${emp.name}</div>
               <div style="font-size:12px;color:var(--muted);margin-top:2px">${emp.role || 'No role set'}</div>
+              <div style="font-size:12px;color:var(--accent2);margin-top:2px;font-family:var(--font-mono)">£${(emp.rate||0).toFixed(2)}/hr</div>
               <div style="display:flex;gap:6px;margin-top:8px">
                 <button class="tiny-btn" style="background:var(--surface);color:var(--muted);border:1px solid var(--border)"
                   onclick="editEmployee('${emp.id}')">&#9998; Edit</button>
@@ -1744,10 +2591,14 @@ async function addEmployee() {
 
   if (!state.timesheetData.employees) state.timesheetData.employees = [];
 
+  const rateInput = document.getElementById('newEmpRate');
+  const rate = parseFloat(rateInput.value) || 0;
+
   state.timesheetData.employees.push({
     id: Date.now().toString(),
     name,
     role,
+    rate,
     active: true,
     addedAt: new Date().toISOString()
   });
@@ -1755,6 +2606,7 @@ async function addEmployee() {
   // Update UI immediately
   nameInput.value = '';
   roleInput.value = '';
+  rateInput.value = '';
   renderStaffList();
   renderHome();
   toast(`${name} added ✓`, 'success');
@@ -1788,12 +2640,14 @@ async function saveEmployee(id) {
 
   const newName = document.getElementById(`edit-name-${id}`).value.trim();
   const newRole = document.getElementById(`edit-role-${id}`).value.trim();
+  const newRate = parseFloat(document.getElementById(`edit-rate-${id}`).value) || 0;
 
   if (!newName) { toast('Name cannot be empty', 'error'); return; }
 
   const oldName = emp.name;
   emp.name = newName;
   emp.role = newRole;
+  emp.rate = newRate;
   delete emp.editing;
 
   // Also update any existing entries/clockings with old name
