@@ -462,6 +462,7 @@
   .holiday-chip .hdate { font-family: var(--font-mono); font-size: 12px; color: var(--accent2); min-width: 140px; }
   .holiday-chip .htype { font-size: 11px; padding: 2px 8px; border-radius: 4px; }
   .holiday-chip .htype.paid { background: rgba(62,207,142,.15); color: var(--green); }
+  .holiday-chip .htype.half { background: rgba(62,207,142,.08); color: var(--green); border: 1px dashed var(--green); }
   .holiday-chip .htype.unpaid { background: rgba(255,68,68,.1); color: var(--red); }
   .notification-banner {
     background: rgba(255,107,0,.1); border: 1px solid rgba(255,107,0,.3);
@@ -476,6 +477,142 @@
     background: var(--accent); color: #fff; border-radius: 50%;
     width: 24px; height: 24px; display: flex; align-items: center;
     justify-content: center; font-size: 12px; font-weight: 700;
+  }
+
+  /* ── PROJECTS MODULE ── */
+  .projects-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 16px;
+    margin-bottom: 32px;
+  }
+  .project-tile {
+    background: var(--card);
+    border: 1.5px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 18px;
+    cursor: pointer;
+    transition: all .2s;
+    position: relative;
+    overflow: hidden;
+  }
+  .project-tile:hover { border-color: var(--accent); transform: translateY(-2px); background: #222; }
+  .project-tile-id {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--accent2);
+    margin-bottom: 6px;
+  }
+  .project-tile-name {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 4px;
+    line-height: 1.3;
+  }
+  .project-tile-client {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .project-tile-badge {
+    position: absolute;
+    top: 12px; right: 12px;
+    background: rgba(62,207,142,.15);
+    color: var(--green);
+    border: 1px solid rgba(62,207,142,.3);
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 6px;
+  }
+  .drawing-panel {
+    background: var(--card);
+    border: 1.5px solid var(--border);
+    border-radius: 14px;
+    margin-bottom: 20px;
+    overflow: hidden;
+    transition: border-color .3s;
+  }
+  .drawing-panel.complete { border-color: var(--green); background: rgba(62,207,142,.04); }
+  .drawing-panel-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap; gap: 10px;
+  }
+  .drawing-panel.complete .drawing-panel-header { border-bottom-color: rgba(62,207,142,.2); }
+  .drawing-name {
+    font-size: 15px; font-weight: 600; flex: 1;
+  }
+  .drawing-complete-badge {
+    background: rgba(62,207,142,.2); color: var(--green);
+    border: 1px solid rgba(62,207,142,.4);
+    border-radius: 6px; padding: 4px 12px;
+    font-size: 12px; font-weight: 600;
+  }
+  .drawing-panel-body { padding: 20px; }
+  .drawing-preview-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 16px;
+    overflow: hidden;
+    position: relative;
+    min-height: 200px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .drawing-preview-wrap iframe {
+    width: 100%; height: 400px; border: none;
+  }
+  .drawing-preview-placeholder {
+    color: var(--subtle); font-size: 13px; text-align: center; padding: 40px;
+  }
+  .drawing-actions { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+  .notes-section { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .notes-col-title {
+    font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
+    font-weight: 600; margin-bottom: 10px;
+  }
+  .notes-col-title.draftsman { color: #ff4d4d; }
+  .notes-col-title.workshop { color: var(--green); }
+  .note-item {
+    border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; font-size: 13px;
+  }
+  .note-item.draftsman-note {
+    background: rgba(255,77,77,.08); border: 1px solid rgba(255,77,77,.2);
+  }
+  .note-item.workshop-note {
+    background: rgba(62,207,142,.08); border: 1px solid rgba(62,207,142,.2);
+  }
+  .note-author { font-size: 11px; font-weight: 600; margin-bottom: 4px; }
+  .note-author.draftsman-note { color: #ff4d4d; }
+  .note-author.workshop-note { color: var(--green); }
+  .note-time { font-size: 10px; color: var(--subtle); float: right; }
+  .note-text { color: var(--text); line-height: 1.4; }
+  .add-note-row { display: flex; gap: 8px; margin-top: 8px; }
+  .project-back-header {
+    display: flex; align-items: center; gap: 16px; margin-bottom: 24px;
+  }
+  .proj-detail-title {
+    font-family: var(--font-display); font-size: 32px; letter-spacing: 1px;
+  }
+  .proj-detail-meta { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .draftsman-bar {
+    background: rgba(255,107,0,.08); border: 1px solid rgba(255,107,0,.2);
+    border-radius: 10px; padding: 12px 18px;
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 24px; flex-wrap: wrap; gap: 10px;
+  }
+  .upload-zone {
+    border: 2px dashed var(--border); border-radius: 10px;
+    padding: 32px; text-align: center; cursor: pointer;
+    transition: all .2s; margin-bottom: 20px;
+  }
+  .upload-zone:hover { border-color: var(--accent); background: rgba(255,107,0,.05); }
+  .upload-zone-icon { font-size: 32px; margin-bottom: 8px; }
+  .upload-zone-text { color: var(--muted); font-size: 13px; }
+  @media (max-width: 600px) {
+    .notes-section { grid-template-columns: 1fr; }
+    .projects-grid { grid-template-columns: 1fr 1fr; }
   }
 
   /* My Week view */
@@ -587,9 +724,8 @@
       <button class="btn" onclick="openOrderForm()" style="background:var(--surface);border:2px solid var(--green);color:var(--green);padding:16px 32px;font-family:var(--font-display);font-size:20px;border-radius:12px;letter-spacing:2px;min-width:240px">
         &#128230; ORDER FORM
       </button>
-      <button class="btn" disabled style="background:var(--surface);border:2px solid var(--subtle);color:var(--subtle);padding:16px 32px;font-family:var(--font-display);font-size:20px;border-radius:12px;letter-spacing:2px;min-width:240px;cursor:not-allowed;opacity:.5" title="Coming soon">
+      <button class="btn" onclick="openProjects()" style="background:var(--surface);border:2px solid #6366f1;color:#6366f1;padding:16px 32px;font-family:var(--font-display);font-size:20px;border-radius:12px;letter-spacing:2px;min-width:240px">
         &#128196; VIEW PROJECTS
-        <div style="font-size:10px;letter-spacing:1px;margin-top:4px;font-family:var(--font-body);font-weight:400">COMING SOON</div>
       </button>
     </div>
   </div>
@@ -686,6 +822,61 @@
       </div>
       <hr class="divider">
       <button class="btn btn-success" onclick="submitDay()" id="submitDayBtn" style="width:100%">✓ Submit Day</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     SCREEN 2B: PROJECTS — TILE VIEW
+══════════════════════════════════════════ -->
+<div class="screen" id="screenProjects">
+  <div class="panel-wrap" style="max-width:1100px">
+    <div class="panel-header" style="margin-bottom:8px">
+      <button class="back-btn" onclick="goHome()">&#8592; Back</button>
+      <div style="flex:1">
+        <div class="panel-name">PROJECTS</div>
+      </div>
+      <button class="btn" onclick="openDraftsmanLogin()" style="background:none;border:1px solid rgba(255,107,0,.4);color:var(--accent);padding:8px 16px;font-size:12px;border-radius:8px">
+        &#9998; Draftsman Login
+      </button>
+    </div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:28px">Click a project to view drawings</div>
+    <div class="projects-grid" id="projectTilesGrid">
+      <div class="empty-state"><div class="spinner"></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     SCREEN 2C: PROJECT DETAIL — DRAWINGS
+══════════════════════════════════════════ -->
+<div class="screen" id="screenProjectDetail">
+  <div class="panel-wrap" style="max-width:900px">
+    <div class="project-back-header">
+      <button class="back-btn" onclick="showScreen('screenProjects')">&#8592; Projects</button>
+      <div>
+        <div class="proj-detail-title" id="projDetailTitle"></div>
+        <div class="proj-detail-meta" id="projDetailMeta"></div>
+      </div>
+    </div>
+
+    <!-- Draftsman toolbar (shown when logged in as draftsman) -->
+    <div class="draftsman-bar" id="draftsmanBar" style="display:none">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="font-size:16px">&#9998;</span>
+        <span style="font-size:13px;font-weight:600;color:var(--accent)">Draftsman Mode</span>
+        <span style="font-size:12px;color:var(--muted)" id="draftsmanName"></span>
+      </div>
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="openUploadDrawing()">
+          &#43; Add Drawing
+        </button>
+        <button class="btn btn-ghost" style="padding:8px 14px;font-size:12px" onclick="logoutDraftsman()">Exit</button>
+      </div>
+    </div>
+
+    <div id="drawingsList">
+      <div class="empty-state"><div class="spinner"></div></div>
     </div>
   </div>
 </div>
@@ -903,6 +1094,22 @@
 
     <!-- Tab: Settings -->
     <div class="tab-content" id="tab-settings">
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-title"><span class="icon">&#9998;</span> Draftsman PIN</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:flex-end">
+          <div>
+            <div class="field-label">DRAFTSMAN PIN</div>
+            <input type="password" class="field-input" id="draftsmanPinSetting" placeholder="Set draftsman PIN" maxlength="8">
+          </div>
+          <div>
+            <div class="field-label">CONFIRM PIN</div>
+            <input type="password" class="field-input" id="draftsmanPinConfirm" placeholder="Confirm PIN" maxlength="8">
+          </div>
+          <button class="btn btn-primary" onclick="saveDraftsmanPin()">Save</button>
+        </div>
+        <div style="margin-top:10px;font-size:12px;color:var(--muted)">Anyone with this PIN can upload drawings and leave draftsman notes.</div>
+      </div>
+
       <div class="card" style="margin-bottom:20px">
         <div class="card-title"><span class="icon">&#128274;</span> Change Manager PIN</div>
         <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:flex-end">
@@ -1126,6 +1333,7 @@
             <div class="field-label">TYPE</div>
             <select class="field-input" id="hkType">
               <option value="paid">Paid Holiday</option>
+              <option value="half">Half Day Holiday</option>
               <option value="unpaid">Unpaid Leave</option>
               <option value="sick">Sick Leave</option>
               <option value="training">Training</option>
@@ -1190,6 +1398,89 @@
 </div>
 
 <!-- ═══════════════════════════════════════
+     DRAFTSMAN LOGIN MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="draftsmanLoginModal">
+  <div class="modal" style="text-align:center">
+    <div class="modal-title" style="color:var(--accent)">&#9998; Draftsman</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:24px">Enter draftsman PIN</div>
+    <input type="password" class="field-input" id="draftsmanPinInput" maxlength="8"
+      placeholder="••••" style="text-align:center;font-size:28px;letter-spacing:10px;margin-bottom:8px"
+      onkeydown="if(event.key==='Enter')checkDraftsmanPin()">
+    <div id="draftsmanPinError" style="color:var(--red);font-size:12px;height:16px;margin-bottom:12px"></div>
+    <div style="display:flex;gap:10px">
+      <button class="btn btn-ghost" style="flex:1" onclick="closeDraftsmanLogin()">Cancel</button>
+      <button class="btn btn-primary" style="flex:1" onclick="checkDraftsmanPin()">Enter</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     ADD NOTE MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="addNoteModal">
+  <div class="modal">
+    <div class="modal-title">Add Note</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:16px" id="addNoteDrawingName"></div>
+    <div style="margin-bottom:8px">
+      <div class="field-label">YOUR NAME</div>
+      <select class="field-input" id="noteAuthorSelect">
+        <option value="">Select your name...</option>
+      </select>
+    </div>
+    <div style="margin-bottom:16px">
+      <div class="field-label">NOTE</div>
+      <textarea class="field-input" id="noteText" rows="4" placeholder="Type your note here..." style="resize:vertical"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeAddNote()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveNote()">Save Note</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     UPLOAD DRAWING MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="uploadDrawingModal">
+  <div class="modal" style="width:500px;max-width:95vw">
+    <div class="modal-title">&#43; Add Drawing</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:20px" id="uploadProjectName"></div>
+
+    <div style="margin-bottom:12px">
+      <div class="field-label">DRAWING NAME</div>
+      <input type="text" class="field-input" id="drawingNameInput" placeholder="e.g. GA-001 Ground Floor Plan">
+    </div>
+
+    <div style="margin-bottom:12px">
+      <div class="field-label">SHAREPOINT FOLDER PATH <span style="color:var(--muted);font-weight:400">(relative to project folder)</span></div>
+      <input type="text" class="field-input" id="drawingFolderPath" placeholder="e.g. 02 - Drawings or leave blank for root">
+    </div>
+
+    <div style="margin-bottom:16px">
+      <div class="field-label">SELECT PDF FILE</div>
+      <input type="file" id="drawingFileInput" accept=".pdf" style="display:none" onchange="onDrawingFileSelected()">
+      <div class="upload-zone" onclick="document.getElementById('drawingFileInput').click()">
+        <div class="upload-zone-icon">&#128196;</div>
+        <div class="upload-zone-text" id="uploadZoneText">Click to select PDF file</div>
+      </div>
+    </div>
+
+    <div id="uploadProgress" style="display:none;margin-bottom:12px">
+      <div style="background:var(--border);border-radius:4px;overflow:hidden;height:6px">
+        <div id="uploadProgressBar" style="background:var(--accent);height:100%;width:0%;transition:width .3s"></div>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-top:6px;text-align:center" id="uploadProgressText">Uploading...</div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeUploadDrawing()">Cancel</button>
+      <button class="btn btn-primary" id="uploadDrawingBtn" onclick="uploadDrawing()">Upload Drawing</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
      CONFIRM MODAL
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="confirmModal">
@@ -1219,11 +1510,11 @@ const CONFIG = {
 
   timeSlots: (() => {
     const slots = [];
-    for (let h = 6; h <= 22; h++) {
+    for (let h = 4; h <= 14; h++) {
       for (let m of [0, 30]) {
         const hh = String(h).padStart(2,'0');
         const mm = String(m).padStart(2,'0');
-        const ampm = h < 12 ? 'AM' : h === 12 ? 'PM' : 'PM';
+        const ampm = h < 12 ? 'AM' : 'PM';
         const h12 = h > 12 ? h - 12 : h === 0 ? 12 : h;
         slots.push({ val: `${hh}:${mm}`, label: `${h12}:${mm} ${ampm}` });
       }
@@ -1762,6 +2053,9 @@ function openEmployeePanel(name) {
 
   document.getElementById('empPanelName').textContent = name;
 
+  // Show holiday approval/rejection notifications immediately on entry
+  checkHolidayClockInNotification(name);
+
   // Set today's date as shift card title
   const shiftLabel = document.getElementById('shiftDateLabel');
   if (shiftLabel) {
@@ -1957,9 +2251,6 @@ async function doClock(direction) {
       clockOut: null,
       breakMins: 0
     });
-
-    // Check for holiday approval/rejection notifications first
-    checkHolidayClockInNotification(emp);
 
     // Check bank holiday
     if (isBankHoliday(today)) {
@@ -2444,9 +2735,10 @@ function renderMyWeek(employeeName) {
         ${clocking.manuallyEdited && !isPending ? `<div style="margin-top:4px"><span class="manually-edited-badge" style="font-size:9px">Edited</span></div>` : ''}
       `;
     } else if (!isFuture) {
+      const isToday2 = dStr === todayStr();
       content = `
         <div style="color:var(--subtle);font-size:11px;margin-top:8px">No clocking</div>
-        <button class="week-day-add" onclick="openAddClocking('${dStr}')">+ Add</button>
+        ${!isToday2 ? `<button class="week-day-add" onclick="openAddClocking('${dStr}')">+ Add</button>` : ''}
       `;
     } else {
       content = `<div style="color:var(--subtle);font-size:11px;margin-top:16px">—</div>`;
@@ -2744,10 +3036,11 @@ async function submitHKHoliday() {
   if (!from || !to) { toast('Please select dates', 'error'); return; }
   if (from > to) { toast('End date must be after start date', 'error'); return; }
 
-  const workingDays = countWorkingDays(from, to);
+  let workingDays = countWorkingDays(from, to);
+  if (type === 'half') workingDays = 0.5; // Half day always counts as 0.5
   if (workingDays === 0) { toast('No working days in selected range', 'error'); return; }
 
-  if (type === 'paid') {
+  if (type === 'paid' || type === 'half') {
     const bal = calculateHolidayBalance(_hkEmployee);
     if (bal && workingDays > bal.remainingDays) {
       toast(`Only ${bal.remainingDays} days remaining — request is ${workingDays} days`, 'error');
@@ -4369,6 +4662,543 @@ function exportWeekCSV() {
   a.download = `BAMA-Timesheet-Week-${monStr}.csv`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+// ═══════════════════════════════════════════
+// PROJECTS MODULE
+// ═══════════════════════════════════════════
+const DRAWINGS_FILE = 'drawings-data.json';
+const BAMA_DRIVE_ID = 'b!CxTKk9lEwkyweUqAo3CRas-huywW4KtLqOk2tNzmx-P7CX86DNhTQo14pLuU_tZu';
+const PROJECTS_FOLDER = 'Projects'; // Root projects folder on BAMA1
+
+let drawingsData = { projects: {} }; // { projectId: { drawings: [], spFolderId, spDriveId } }
+let currentProject = null;
+let isDraftsman = false;
+let draftsmanUploadFile = null;
+
+// ── Load / Save drawings data ──
+async function loadDrawingsData() {
+  try {
+    const token = await getToken();
+    const metaUrl = `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.timesheetFolderItemId}:/${DRAWINGS_FILE}`;
+    const metaRes = await fetch(metaUrl, { headers: { 'Authorization': `Bearer ${token}` } });
+    if (metaRes.status === 404) return;
+    if (!metaRes.ok) throw new Error(`Meta fetch failed: ${metaRes.status}`);
+    const meta = await metaRes.json();
+    const contentRes = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${meta.id}/content`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    if (!contentRes.ok) throw new Error('Content fetch failed');
+    drawingsData = await contentRes.json();
+    if (!drawingsData.projects) drawingsData.projects = {};
+  } catch (e) {
+    console.warn('Drawings data load failed:', e.message);
+  }
+}
+
+async function saveDrawingsData() {
+  const token = await getToken();
+  const url = `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.timesheetFolderItemId}:/${DRAWINGS_FILE}:/content`;
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(drawingsData)
+  });
+  if (!res.ok) throw new Error(`Save drawings failed: ${res.status}`);
+}
+
+// ── Open projects screen ──
+async function openProjects() {
+  showScreen('screenProjects');
+  renderProjectTiles();
+  // Load drawings data in background
+  loadDrawingsData().then(() => renderProjectTiles()).catch(() => {});
+}
+
+function renderProjectTiles() {
+  const grid = document.getElementById('projectTilesGrid');
+  const projects = state.projects.filter(p =>
+    p.status?.toLowerCase() === 'in progress' || !p.status || p.status === 'Active'
+  );
+
+  if (!projects.length) {
+    grid.innerHTML = '<div class="empty-state">No active projects found</div>';
+    return;
+  }
+
+  grid.innerHTML = projects.map(p => {
+    const projData = drawingsData.projects[p.id];
+    const drawingCount = projData?.drawings?.length || 0;
+    const completeCount = projData?.drawings?.filter(d => d.complete)?.length || 0;
+
+    return `
+      <div class="project-tile" onclick="openProjectDetail('${p.id}')">
+        <div class="project-tile-id">${p.id}</div>
+        <div class="project-tile-name">${p.name}</div>
+        <div class="project-tile-client">${p.client || ''}</div>
+        ${drawingCount > 0 ? `
+          <div style="margin-top:12px;font-size:11px;font-family:var(--font-mono);color:var(--muted)">
+            ${completeCount}/${drawingCount} drawings complete
+          </div>
+          <div style="margin-top:6px;height:3px;background:var(--border);border-radius:2px">
+            <div style="height:100%;background:var(--green);border-radius:2px;width:${drawingCount ? Math.round(completeCount/drawingCount*100) : 0}%"></div>
+          </div>
+        ` : `<div style="margin-top:12px;font-size:11px;color:var(--subtle)">No drawings yet</div>`}
+        ${drawingCount > 0 ? `<div class="project-tile-badge">${drawingCount} drawing${drawingCount>1?'s':''}</div>` : ''}
+      </div>
+    `;
+  }).join('');
+}
+
+async function openProjectDetail(projectId) {
+  const proj = state.projects.find(p => p.id === projectId);
+  if (!proj) return;
+  currentProject = proj;
+
+  document.getElementById('projDetailTitle').textContent = `${proj.id} — ${proj.name}`;
+  document.getElementById('projDetailMeta').textContent = proj.client ? `Client: ${proj.client}` : '';
+  document.getElementById('draftsmanBar').style.display = isDraftsman ? 'flex' : 'none';
+  if (isDraftsman) document.getElementById('draftsmanName').textContent = '(Draftsman Mode Active)';
+
+  showScreen('screenProjectDetail');
+  renderDrawings(projectId);
+}
+
+function renderDrawings(projectId) {
+  const container = document.getElementById('drawingsList');
+  const projData = drawingsData.projects[projectId];
+  const drawings = projData?.drawings || [];
+
+  if (!drawings.length) {
+    container.innerHTML = `
+      <div class="empty-state" style="padding:60px 24px">
+        <div style="font-size:36px;margin-bottom:12px">&#128196;</div>
+        <div>No drawings uploaded yet</div>
+        ${isDraftsman ? '<div style="margin-top:8px;font-size:12px;color:var(--subtle)">Use the Add Drawing button above</div>' : ''}
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = drawings.map((d, idx) => renderDrawingPanel(d, idx, projectId)).join('');
+}
+
+function renderDrawingPanel(drawing, idx, projectId) {
+  const draftsmanNotes = (drawing.notes || []).filter(n => n.type === 'draftsman');
+  const workshopNotes = (drawing.notes || []).filter(n => n.type === 'workshop');
+
+  const previewUrl = drawing.downloadUrl || drawing.webUrl;
+
+  return `
+    <div class="drawing-panel ${drawing.complete ? 'complete' : ''}" id="drawing-panel-${drawing.id}">
+      <div class="drawing-panel-header">
+        <div class="drawing-name">
+          ${drawing.complete ? '&#9989; ' : '&#128196; '}${drawing.name}
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          ${drawing.complete ? `<span class="drawing-complete-badge">&#10003; COMPLETE</span>` : `
+            <button class="btn btn-success" style="padding:6px 14px;font-size:12px"
+              onclick="markDrawingComplete('${projectId}', '${drawing.id}')">
+              &#10003; Mark Complete
+            </button>
+          `}
+          ${isDraftsman && !drawing.complete ? `
+            <button class="btn btn-ghost" style="padding:6px 12px;font-size:12px"
+              onclick="undoDrawingComplete('${projectId}', '${drawing.id}')">
+              Undo
+            </button>
+          ` : ''}
+        </div>
+      </div>
+      <div class="drawing-panel-body">
+        <!-- Preview -->
+        <div class="drawing-preview-wrap">
+          ${previewUrl
+            ? `<iframe src="${previewUrl}#toolbar=0" title="${drawing.name}"></iframe>`
+            : `<div class="drawing-preview-placeholder">&#128196;<br>Preview not available<br><span style="font-size:11px">PDF stored on SharePoint</span></div>`
+          }
+        </div>
+
+        <!-- Actions -->
+        <div class="drawing-actions">
+          ${drawing.webUrl ? `
+            <a href="${drawing.webUrl}" target="_blank" class="btn btn-ghost" style="padding:8px 16px;font-size:12px;text-decoration:none">
+              &#128065; Open in SharePoint
+            </a>
+          ` : ''}
+          <button class="btn btn-ghost" style="padding:8px 16px;font-size:12px"
+            onclick="printDrawing('${drawing.id}', '${drawing.webUrl || ''}')">
+            &#128438; Print
+          </button>
+          <span style="font-size:11px;color:var(--subtle);margin-left:auto;align-self:center">
+            Uploaded ${drawing.uploadedAt ? new Date(drawing.uploadedAt).toLocaleDateString('en-GB') : ''} by ${drawing.uploadedBy || ''}
+          </span>
+        </div>
+
+        <!-- Notes -->
+        <div class="notes-section">
+          <!-- Draftsman notes (red) -->
+          <div>
+            <div class="notes-col-title draftsman">&#9998; Draftsman Notes</div>
+            ${draftsmanNotes.map(n => `
+              <div class="note-item draftsman-note">
+                <div class="note-author draftsman-note">${n.author} <span class="note-time">${new Date(n.timestamp).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span></div>
+                <div class="note-text">${n.text}</div>
+              </div>
+            `).join('') || `<div style="color:var(--subtle);font-size:12px;padding:8px 0">No draftsman notes yet</div>`}
+            ${isDraftsman ? `
+              <div class="add-note-row">
+                <input type="text" class="field-input" id="draftsman-note-${drawing.id}"
+                  placeholder="Add draftsman note..." style="font-size:12px;padding:7px 10px">
+                <button class="btn btn-primary" style="padding:7px 12px;font-size:12px;white-space:nowrap"
+                  onclick="addNote('${projectId}','${drawing.id}','draftsman')">Add</button>
+              </div>
+            ` : ''}
+          </div>
+
+          <!-- Workshop notes (green) -->
+          <div>
+            <div class="notes-col-title workshop">&#128296; Workshop Notes</div>
+            ${workshopNotes.map(n => `
+              <div class="note-item workshop-note">
+                <div class="note-author workshop-note">${n.author} <span class="note-time">${new Date(n.timestamp).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span></div>
+                <div class="note-text">${n.text}</div>
+              </div>
+            `).join('') || `<div style="color:var(--subtle);font-size:12px;padding:8px 0">No workshop notes yet</div>`}
+            <div class="add-note-row">
+              <input type="text" class="field-input" id="workshop-note-${drawing.id}"
+                placeholder="Add workshop note..." style="font-size:12px;padding:7px 10px">
+              <select class="field-input" id="workshop-note-author-${drawing.id}" style="font-size:12px;padding:7px 10px;max-width:130px">
+                <option value="">Your name...</option>
+                ${(state.timesheetData.employees||[]).filter(e=>e.active!==false).map(e=>`<option value="${e.name}">${e.name}</option>`).join('')}
+              </select>
+              <button class="btn btn-success" style="padding:7px 12px;font-size:12px;white-space:nowrap"
+                onclick="addNote('${projectId}','${drawing.id}','workshop')">Add</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ── Mark drawing complete ──
+async function markDrawingComplete(projectId, drawingId) {
+  if (!drawingsData.projects[projectId]) return;
+  const drawing = drawingsData.projects[projectId].drawings.find(d => d.id === drawingId);
+  if (!drawing) return;
+
+  drawing.complete = true;
+  drawing.completedAt = new Date().toISOString();
+  drawing.completedBy = state.currentEmployee || 'Workshop';
+
+  try {
+    setLoading(true);
+    await saveDrawingsData();
+    toast(`Drawing marked complete ✓`, 'success');
+    renderDrawings(projectId);
+    renderProjectTiles();
+
+    // Notify draftsman
+    await notifyDrawingComplete(drawing, projectId);
+  } catch (e) {
+    toast('Save failed', 'error');
+  } finally { setLoading(false); }
+}
+
+async function undoDrawingComplete(projectId, drawingId) {
+  const drawing = drawingsData.projects[projectId]?.drawings?.find(d => d.id === drawingId);
+  if (!drawing) return;
+  drawing.complete = false;
+  delete drawing.completedAt;
+  delete drawing.completedBy;
+  try {
+    await saveDrawingsData();
+    toast('Marked as incomplete', 'info');
+    renderDrawings(projectId);
+  } catch { toast('Save failed', 'error'); }
+}
+
+async function notifyDrawingComplete(drawing, projectId) {
+  const proj = state.projects.find(p => p.id === projectId);
+  const settings = state.timesheetData.settings || {};
+  const notifyEmail = settings.draftsmanNotifyEmail || settings.orderEmail || 'daniel@bamafabrication.co.uk';
+
+  try {
+    const token = await getToken();
+    const emailBody = {
+      message: {
+        subject: `Drawing Completed — ${drawing.name} (${projectId})`,
+        body: {
+          contentType: 'HTML',
+          content: `
+            <h2 style="color:#ff6b00;font-family:sans-serif">BAMA FABRICATION</h2>
+            <h3 style="font-family:sans-serif">Drawing Marked Complete</h3>
+            <table style="font-family:sans-serif;font-size:13px">
+              <tr><td style="color:#888;padding:4px 16px 4px 0">Drawing</td><td><b>${drawing.name}</b></td></tr>
+              <tr><td style="color:#888;padding:4px 16px 4px 0">Project</td><td>${proj?.name || projectId}</td></tr>
+              <tr><td style="color:#888;padding:4px 16px 4px 0">Completed by</td><td>${drawing.completedBy}</td></tr>
+              <tr><td style="color:#888;padding:4px 16px 4px 0">Date</td><td>${new Date().toLocaleString('en-GB')}</td></tr>
+            </table>
+            <p style="margin-top:16px;font-family:sans-serif;font-size:12px;color:#888">
+              <a href="https://proud-dune-0dee63110.2.azurestaticapps.net" style="color:#ff6b00">Open BAMA Workshop App</a>
+            </p>
+          `
+        },
+        toRecipients: [{ emailAddress: { address: notifyEmail } }]
+      },
+      saveToSentItems: false
+    };
+    await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(emailBody)
+    });
+
+    // Store in-app notification
+    if (!state.timesheetData.notifications) state.timesheetData.notifications = [];
+    state.timesheetData.notifications.push({
+      id: Date.now().toString(),
+      type: 'drawing_complete',
+      message: `Drawing "${drawing.name}" on ${proj?.name || projectId} marked complete by ${drawing.completedBy}`,
+      timestamp: new Date().toISOString(),
+      read: false
+    });
+    await saveTimesheetData();
+  } catch (e) {
+    console.warn('Drawing complete notification failed:', e.message);
+  }
+}
+
+// ── Add notes ──
+async function addNote(projectId, drawingId, type) {
+  const inputEl = document.getElementById(`${type}-note-${drawingId}`);
+  const text = inputEl?.value?.trim();
+  if (!text) { toast('Please type a note', 'error'); return; }
+
+  let author = '';
+  if (type === 'workshop') {
+    author = document.getElementById(`workshop-note-author-${drawingId}`)?.value;
+    if (!author) { toast('Please select your name', 'error'); return; }
+  } else {
+    author = 'Draftsman';
+  }
+
+  if (!drawingsData.projects[projectId]) drawingsData.projects[projectId] = { drawings: [] };
+  const drawing = drawingsData.projects[projectId].drawings.find(d => d.id === drawingId);
+  if (!drawing) return;
+
+  if (!drawing.notes) drawing.notes = [];
+  drawing.notes.push({
+    id: Date.now().toString(),
+    type,
+    author,
+    text,
+    timestamp: new Date().toISOString()
+  });
+
+  try {
+    await saveDrawingsData();
+    inputEl.value = '';
+    toast('Note added ✓', 'success');
+    renderDrawings(projectId);
+  } catch { toast('Save failed', 'error'); }
+}
+
+function printDrawing(drawingId, webUrl) {
+  if (!webUrl) { toast('No URL available for this drawing', 'error'); return; }
+  const win = window.open(webUrl, '_blank');
+  if (win) {
+    win.addEventListener('load', () => win.print());
+  } else {
+    toast('Please allow popups to print', 'error');
+  }
+}
+
+// ── Draftsman auth ──
+function openDraftsmanLogin() {
+  document.getElementById('draftsmanPinInput').value = '';
+  document.getElementById('draftsmanPinError').textContent = '';
+  document.getElementById('draftsmanLoginModal').classList.add('active');
+  setTimeout(() => document.getElementById('draftsmanPinInput').focus(), 100);
+}
+
+function closeDraftsmanLogin() {
+  document.getElementById('draftsmanLoginModal').classList.remove('active');
+}
+
+function checkDraftsmanPin() {
+  const pin = document.getElementById('draftsmanPinInput').value;
+  const storedPin = state.timesheetData.settings?.draftsmanPin;
+  if (!storedPin) {
+    toast('Draftsman PIN not set — go to Manager → Settings', 'error');
+    closeDraftsmanLogin();
+    return;
+  }
+  if (pin === storedPin) {
+    isDraftsman = true;
+    closeDraftsmanLogin();
+    toast('Draftsman mode activated ✓', 'success');
+    if (currentProject) {
+      document.getElementById('draftsmanBar').style.display = 'flex';
+      renderDrawings(currentProject.id);
+    }
+  } else {
+    document.getElementById('draftsmanPinError').textContent = 'Incorrect PIN';
+    document.getElementById('draftsmanPinInput').value = '';
+  }
+}
+
+function logoutDraftsman() {
+  isDraftsman = false;
+  document.getElementById('draftsmanBar').style.display = 'none';
+  if (currentProject) renderDrawings(currentProject.id);
+  toast('Draftsman mode deactivated', 'info');
+}
+
+async function saveDraftsmanPin() {
+  const p1 = document.getElementById('draftsmanPinSetting').value;
+  const p2 = document.getElementById('draftsmanPinConfirm').value;
+  if (!p1) { toast('Please enter a PIN', 'error'); return; }
+  if (p1 !== p2) { toast('PINs do not match', 'error'); return; }
+  if (p1.length < 4) { toast('PIN must be at least 4 characters', 'error'); return; }
+  if (!state.timesheetData.settings) state.timesheetData.settings = {};
+  state.timesheetData.settings.draftsmanPin = p1;
+  // Also store notify email if set
+  try {
+    await saveTimesheetData();
+    document.getElementById('draftsmanPinSetting').value = '';
+    document.getElementById('draftsmanPinConfirm').value = '';
+    toast('Draftsman PIN saved ✓', 'success');
+  } catch { toast('Save failed', 'error'); }
+}
+
+// ── Upload Drawing ──
+function openUploadDrawing() {
+  if (!currentProject) return;
+  document.getElementById('uploadProjectName').textContent = `${currentProject.id} — ${currentProject.name}`;
+  document.getElementById('drawingNameInput').value = '';
+  document.getElementById('drawingFolderPath').value = '02 - Drawings';
+  document.getElementById('uploadZoneText').textContent = 'Click to select PDF file';
+  document.getElementById('uploadProgress').style.display = 'none';
+  draftsmanUploadFile = null;
+  document.getElementById('uploadDrawingModal').classList.add('active');
+}
+
+function closeUploadDrawing() {
+  document.getElementById('uploadDrawingModal').classList.remove('active');
+  draftsmanUploadFile = null;
+}
+
+function onDrawingFileSelected() {
+  const file = document.getElementById('drawingFileInput').files[0];
+  if (file) {
+    draftsmanUploadFile = file;
+    document.getElementById('uploadZoneText').textContent = `&#128196; ${file.name} (${(file.size/1024).toFixed(0)}KB)`;
+    // Auto-fill drawing name from filename
+    if (!document.getElementById('drawingNameInput').value) {
+      document.getElementById('drawingNameInput').value = file.name.replace('.pdf','').replace('.PDF','');
+    }
+  }
+}
+
+async function uploadDrawing() {
+  if (!draftsmanUploadFile) { toast('Please select a PDF file', 'error'); return; }
+  const drawingName = document.getElementById('drawingNameInput').value.trim();
+  if (!drawingName) { toast('Please enter a drawing name', 'error'); return; }
+
+  const folderPath = document.getElementById('drawingFolderPath').value.trim();
+  const projectId = currentProject.id;
+  const fileName = draftsmanUploadFile.name;
+
+  document.getElementById('uploadProgress').style.display = 'block';
+  document.getElementById('uploadDrawingBtn').disabled = true;
+  document.getElementById('uploadProgressBar').style.width = '30%';
+  document.getElementById('uploadProgressText').textContent = 'Finding project folder...';
+
+  try {
+    const token = await getToken();
+
+    // Find the project folder on SharePoint by searching for project ID
+    let uploadPath;
+    const searchRes = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/root/search(q='${projectId}')`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    const searchData = await searchRes.json();
+    const projectFolder = searchData.value?.find(item =>
+      item.folder && item.name.includes(projectId)
+    );
+
+    if (projectFolder) {
+      uploadPath = folderPath
+        ? `/drives/${BAMA_DRIVE_ID}/items/${projectFolder.id}:/${folderPath}/${fileName}:/content`
+        : `/drives/${BAMA_DRIVE_ID}/items/${projectFolder.id}:/${fileName}:/content`;
+    } else {
+      // Fallback: upload to Project Tracker folder
+      uploadPath = `/drives/${CONFIG.driveId}/items/${CONFIG.timesheetFolderItemId}:/${projectId}-${fileName}:/content`;
+    }
+
+    document.getElementById('uploadProgressBar').style.width = '60%';
+    document.getElementById('uploadProgressText').textContent = 'Uploading PDF...';
+
+    const arrayBuffer = await draftsmanUploadFile.arrayBuffer();
+    const uploadRes = await fetch(`https://graph.microsoft.com/v1.0${uploadPath}`, {
+      method: 'PUT',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/pdf' },
+      body: arrayBuffer
+    });
+
+    if (!uploadRes.ok) throw new Error(`Upload failed: ${uploadRes.status}`);
+    const uploadedFile = await uploadRes.json();
+
+    document.getElementById('uploadProgressBar').style.width = '90%';
+    document.getElementById('uploadProgressText').textContent = 'Saving drawing info...';
+
+    // Save to drawings data
+    if (!drawingsData.projects[projectId]) drawingsData.projects[projectId] = { drawings: [] };
+    const newDrawing = {
+      id: Date.now().toString(),
+      name: drawingName,
+      fileName,
+      fileId: uploadedFile.id,
+      driveId: uploadedFile.parentReference?.driveId || BAMA_DRIVE_ID,
+      webUrl: uploadedFile.webUrl,
+      downloadUrl: uploadedFile['@microsoft.graph.downloadUrl'],
+      uploadedBy: 'Draftsman',
+      uploadedAt: new Date().toISOString(),
+      complete: false,
+      notes: []
+    };
+    drawingsData.projects[projectId].drawings.push(newDrawing);
+    await saveDrawingsData();
+
+    document.getElementById('uploadProgressBar').style.width = '100%';
+    document.getElementById('uploadProgressText').textContent = 'Done!';
+
+    setTimeout(() => {
+      closeUploadDrawing();
+      toast(`${drawingName} uploaded ✓`, 'success');
+      renderDrawings(projectId);
+      renderProjectTiles();
+    }, 500);
+
+  } catch (e) {
+    console.error('Upload error:', e);
+    toast(`Upload failed: ${e.message}`, 'error');
+    document.getElementById('uploadProgress').style.display = 'none';
+  } finally {
+    document.getElementById('uploadDrawingBtn').disabled = false;
+  }
+}
+
+// ── Load settings into settings tab ──
+const _origLoadEmailSettings = loadEmailSettings;
+function loadEmailSettings() {
+  _origLoadEmailSettings();
+  const dpEl = document.getElementById('draftsmanPinSetting');
+  if (dpEl) dpEl.value = '';  // Never show PIN
 }
 
 // ═══════════════════════════════════════════
