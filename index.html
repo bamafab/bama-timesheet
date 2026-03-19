@@ -575,7 +575,7 @@
 ══════════════════════════════════════════ -->
 <div class="screen active" id="screenHome">
   <div class="home-wrap">
-    <div class="home-title">WHO'S<br>CLOCKING IN?</div>
+    <div class="home-title">CLOCK IN<br>/ OUT</div>
     <div class="home-sub" id="todayDate"></div>
     <div class="employee-grid" id="employeeGrid">
       <div class="empty-state"><div class="spinner"></div><br>Loading employees…</div>
@@ -2552,7 +2552,7 @@ function switchTab(name) {
     tc.classList.toggle('active', tc.id === `tab-${name}`);
   });
   if (name === 'staff') renderStaffList();
-  if (name === 'holidays') renderHolidayTab();
+  if (name === 'holidays') setTimeout(() => renderHolidayTab(), 50);
   if (name === 'payroll') renderPayroll();
   if (name === 'archive') renderArchive();
   if (name === 'settings') loadEmailSettings();
@@ -3404,7 +3404,7 @@ function renderHolidayCalendar() {
   const totalW = labelW + allDays.length * cellW;
 
   // Build HTML
-  let ganttHtml = `<div style="min-width:${totalW}px;font-size:11px;font-family:var(--font-mono)">`;
+  let ganttHtml = `<div style="min-width:${totalW}px;width:${totalW}px;font-size:11px;font-family:var(--font-mono);display:block">`;
 
   // Month headers
   ganttHtml += `<div style="display:flex;margin-left:${labelW}px;margin-bottom:2px">`;
