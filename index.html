@@ -2642,7 +2642,7 @@ function markClockDirty(id) {
   if (totalEl && hrs !== null) totalEl.textContent = hrs.toFixed(2) + 'h';
 }
 
-async async function saveClockEdit(id) {
+async function saveClockEdit(id) {
   const clocking = state.timesheetData.clockings.find(c => c.id === id);
   if (!clocking) return;
 
@@ -3247,21 +3247,6 @@ async function saveEditEntry() {
 
 function closeModal() {
   document.getElementById('confirmModal').classList.remove('active');
-}
-
-function showConfirm(title, message, onConfirm) {
-  const modal = document.getElementById('confirmModal');
-  const titleEl = document.getElementById('confirmTitle');
-  const msgEl = document.getElementById('confirmMessage');
-  const btnEl = document.getElementById('confirmBtn');
-  if (titleEl) titleEl.textContent = title;
-  if (msgEl) msgEl.textContent = message;
-  if (btnEl) {
-    const newBtn = btnEl.cloneNode(true);
-    newBtn.onclick = () => { closeModal(); onConfirm(); };
-    btnEl.parentNode.replaceChild(newBtn, btnEl);
-  }
-  modal.classList.add('active');
 }
 
 // ═══════════════════════════════════════════
