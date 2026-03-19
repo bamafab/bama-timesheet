@@ -558,7 +558,7 @@
 
 <!-- TOP BAR -->
 <div class="topbar">
-  <div class="logo">BAMA<span> WORKSHOP</span></div>
+  <div class="logo"><span style="color:#D0021B">BAMA</span><span> WORKSHOP</span></div>
   <div class="topbar-right">
     <div class="clock-display" id="liveClock">--:-- --</div>
     <button class="manager-btn" onclick="showManagerAuth()">⚙ Manager</button>
@@ -578,9 +578,12 @@
     <div class="employee-grid" id="employeeGrid">
       <div class="empty-state"><div class="spinner"></div><br>Loading employees…</div>
     </div>
-    <div style="margin-top:24px">
-      <button class="btn" onclick="openHolidayKiosk()" style="background:var(--surface);border:2px solid var(--accent);color:var(--accent);padding:16px 32px;font-size:16px;letter-spacing:2px;font-family:var(--font-display);font-size:20px;border-radius:12px;width:100%;max-width:320px">
+    <div style="margin-top:24px;display:flex;gap:16px;justify-content:center;flex-wrap:wrap">
+      <button class="btn" onclick="openHolidayKiosk()" style="background:var(--surface);border:2px solid var(--accent);color:var(--accent);padding:16px 32px;font-family:var(--font-display);font-size:20px;border-radius:12px;letter-spacing:2px;min-width:240px">
         &#127959; REQUEST HOLIDAY
+      </button>
+      <button class="btn" onclick="openOrderForm()" style="background:var(--surface);border:2px solid var(--green);color:var(--green);padding:16px 32px;font-family:var(--font-display);font-size:20px;border-radius:12px;letter-spacing:2px;min-width:240px">
+        &#128230; ORDER FORM
       </button>
     </div>
   </div>
@@ -734,7 +737,7 @@
       <button class="tab" onclick="switchTab('employee')">By Employee</button>
       <button class="tab" onclick="switchTab('clockinout')">Clock In/Out Log</button>
       <button class="tab" onclick="switchTab('staff')">&#128101; Staff</button>
-      <button class="tab" onclick="switchTab('holidays')">&#127959; Holidays</button>
+      <button class="tab" onclick="switchTab('holidays')"><span style="filter:brightness(0) invert(1)">&#127959;</span> Holidays</button>
       <button class="tab" onclick="switchTab('payroll')">&#163; Payroll</button>
       <button class="tab" onclick="switchTab('archive')">&#128196; Archive</button>
       <button class="tab" onclick="switchTab('settings')">&#9881; Settings</button>
@@ -788,6 +791,7 @@
       <div id="holidayNotificationBanner"></div>
       <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;align-items:center">
         <div class="week-nav">
+          <button class="nav-btn" onclick="changeHolidayMonth(-3)">&#171; -3m</button>
           <button class="nav-btn" onclick="changeHolidayMonth(-1)">&#8592;</button>
           <div class="week-label" id="holidayMonthLabel">—</div>
           <button class="nav-btn" onclick="changeHolidayMonth(1)">&#8594;</button>
@@ -826,6 +830,7 @@
             <button class="nav-btn" onclick="changePayrollWeek(1)">&#8594;</button>
           </div>
           <button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="generatePayrollPDF()">&#8595; Export PDF</button>
+          <button class="btn btn-success" style="padding:8px 16px;font-size:12px" onclick="emailPayrollReport()">&#9993; Email to Payroll</button>
           <button class="btn btn-ghost" style="padding:8px 16px;font-size:12px" onclick="archiveWeek()">&#128190; Archive This Week</button>
         </div>
         <div id="payrollSummary">
@@ -898,6 +903,24 @@
           <button class="btn btn-primary" onclick="changePin()">Save PIN</button>
         </div>
         <div style="margin-top:12px;font-size:12px;color:var(--muted)">PIN is stored securely in your SharePoint timesheet data file.</div>
+      </div>
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-title"><span class="icon">&#9993;</span> Email Settings</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+          <div>
+            <div class="field-label">PAYROLL REPORT EMAIL</div>
+            <input type="email" class="field-input" id="settingPayrollEmail" placeholder="e.g. payroll@company.com"
+              onchange="saveEmailSettings()">
+            <div style="font-size:11px;color:var(--subtle);margin-top:4px">Weekly payroll PDF will be emailed here</div>
+          </div>
+          <div>
+            <div class="field-label">ORDERS EMAIL</div>
+            <input type="email" class="field-input" id="settingOrderEmail" placeholder="e.g. orders@company.com"
+              onchange="saveEmailSettings()">
+            <div style="font-size:11px;color:var(--subtle);margin-top:4px">Workshop order requests will be emailed here</div>
+          </div>
+        </div>
+        <button class="btn btn-primary" style="margin-top:14px;padding:8px 20px;font-size:13px" onclick="saveEmailSettings()">Save Email Settings</button>
       </div>
       <div class="card">
         <div class="card-title"><span class="icon">&#128451;</span> Data Management</div>
@@ -990,6 +1013,45 @@
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeMgrAddClocking()">Cancel</button>
       <button class="btn btn-success" onclick="saveMgrClocking()">Save Clocking</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     ORDER FORM MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="orderFormModal" style="align-items:flex-start;padding:20px;overflow-y:auto">
+  <div class="modal" style="width:900px;max-width:98vw;max-height:90vh;overflow-y:auto">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+      <div class="modal-title" style="margin-bottom:0">&#128230; Workshop Order Form</div>
+      <button class="btn btn-ghost" onclick="closeOrderForm()" style="padding:6px 14px">&#10005; Close</button>
+    </div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:20px">
+      Complete the table below and click <b style="color:var(--green)">Send Order</b> — your request will be emailed for approval.
+    </div>
+
+    <!-- Order lines table -->
+    <div style="overflow-x:auto;margin-bottom:20px">
+      <table style="width:100%;border-collapse:collapse;font-size:13px" id="orderTable">
+        <thead>
+          <tr style="border-bottom:2px solid var(--border)">
+            <th style="padding:8px 10px;text-align:left;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);width:30px">#</th>
+            <th style="padding:8px 10px;text-align:left;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted)">Product / Description</th>
+            <th style="padding:8px 10px;text-align:left;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);width:80px">Qty</th>
+            <th style="padding:8px 10px;text-align:left;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);width:150px">Supplier (if known)</th>
+            <th style="padding:8px 10px;text-align:left;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);width:130px">Need By</th>
+            <th style="padding:8px 10px;text-align:left;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);width:130px">Project ID</th>
+            <th style="padding:8px 10px;text-align:left;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);width:150px">Ordered By</th>
+          </tr>
+        </thead>
+        <tbody id="orderTableBody">
+        </tbody>
+      </table>
+    </div>
+
+    <div style="display:flex;gap:12px;justify-content:flex-end">
+      <button class="btn btn-ghost" onclick="clearOrderForm()">Clear All</button>
+      <button class="btn btn-success" onclick="submitOrderForm()" style="font-size:14px;padding:12px 28px">&#9993; Send Order</button>
     </div>
   </div>
 </div>
@@ -1856,7 +1918,10 @@ async function doClock(direction) {
     const existing = state.timesheetData.clockings.find(
       c => c.employeeName === emp && c.date === today && !c.clockOut
     );
-    if (existing) { toast('Already clocked in', 'error'); return; }
+    if (existing) {
+      toast(`${emp} is already clocked in today at ${existing.clockIn}`, 'error');
+      return;
+    }
 
     state.timesheetData.clockings.push({
       id: Date.now().toString(),
@@ -2147,7 +2212,7 @@ function renderClockLog(clockings) {
           const hrs = calcHours(c.clockIn, c.clockOut, c.breakMins);
           const totalDisplay = hrs !== null ? hrs.toFixed(2) + 'h' : '—';
           const isEdited = c.manuallyEdited;
-          const isPending = c.approvalStatus === 'pending';
+          const isPending = c.approvalStatus === 'pending' || (!c.approvalStatus && !c.addedByManager);
           return `
             <tr id="clock-row-${c.id}">
               <td style="font-weight:500">${c.employeeName}${c.addedByManager ? '<span class="manually-edited-badge">MANUAL</span>' : ''}</td>
@@ -2471,6 +2536,7 @@ function switchTab(name) {
   if (name === 'holidays') renderHolidayTab();
   if (name === 'payroll') renderPayroll();
   if (name === 'archive') renderArchive();
+  if (name === 'settings') loadEmailSettings();
 }
 
 // ═══════════════════════════════════════════
@@ -2800,6 +2866,178 @@ function closeModal() {
   document.getElementById('confirmModal').classList.remove('active');
 }
 
+// ═══════════════════════════════════════════
+// EMAIL SETTINGS
+// ═══════════════════════════════════════════
+function loadEmailSettings() {
+  const settings = state.timesheetData.settings || {};
+  const payEl = document.getElementById('settingPayrollEmail');
+  const ordEl = document.getElementById('settingOrderEmail');
+  if (payEl) payEl.value = settings.payrollEmail || '';
+  if (ordEl) ordEl.value = settings.orderEmail || 'daniel@bamafabrication.co.uk';
+}
+
+async function saveEmailSettings() {
+  if (!state.timesheetData.settings) state.timesheetData.settings = {};
+  const payEl = document.getElementById('settingPayrollEmail');
+  const ordEl = document.getElementById('settingOrderEmail');
+  if (payEl) state.timesheetData.settings.payrollEmail = payEl.value;
+  if (ordEl) state.timesheetData.settings.orderEmail = ordEl.value;
+  try {
+    await saveTimesheetData();
+    toast('Email settings saved ✓', 'success');
+  } catch { toast('Save failed', 'error'); }
+}
+
+// ═══════════════════════════════════════════
+// ORDER FORM
+// ═══════════════════════════════════════════
+function openOrderForm() {
+  buildOrderTable();
+  document.getElementById('orderFormModal').classList.add('active');
+}
+
+function closeOrderForm() {
+  document.getElementById('orderFormModal').classList.remove('active');
+}
+
+function buildOrderTable() {
+  const tbody = document.getElementById('orderTableBody');
+  tbody.innerHTML = '';
+
+  // Build project dropdown options
+  const projOpts = state.projects.map(p =>
+    `<option value="${p.id}">${p.id} — ${p.name}</option>`
+  ).join('');
+
+  // Build employee dropdown options
+  const empOpts = (state.timesheetData.employees || [])
+    .filter(e => e.active !== false)
+    .map(e => `<option value="${e.name}">${e.name}</option>`)
+    .join('');
+
+  for (let i = 1; i <= 10; i++) {
+    const tr = document.createElement('tr');
+    tr.style.borderBottom = '1px solid var(--border)';
+    tr.innerHTML = `
+      <td style="padding:6px 10px;color:var(--subtle);font-size:12px;font-family:var(--font-mono)">${i}</td>
+      <td style="padding:4px 6px"><input type="text" class="field-input" id="ord-product-${i}" placeholder="Product or description" style="padding:7px 10px;font-size:12px"></td>
+      <td style="padding:4px 6px"><input type="number" class="field-input" id="ord-qty-${i}" placeholder="1" min="1" style="padding:7px 10px;font-size:12px;text-align:center"></td>
+      <td style="padding:4px 6px"><input type="text" class="field-input" id="ord-supplier-${i}" placeholder="Optional" style="padding:7px 10px;font-size:12px"></td>
+      <td style="padding:4px 6px"><input type="date" class="field-input" id="ord-needby-${i}" style="padding:7px 10px;font-size:12px"></td>
+      <td style="padding:4px 6px">
+        <select class="field-input" id="ord-project-${i}" style="padding:7px 10px;font-size:12px">
+          <option value="">— Not project specific</option>
+          ${projOpts}
+        </select>
+      </td>
+      <td style="padding:4px 6px">
+        <select class="field-input" id="ord-orderedby-${i}" style="padding:7px 10px;font-size:12px">
+          <option value="">— Select</option>
+          ${empOpts}
+        </select>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
+function clearOrderForm() {
+  buildOrderTable();
+}
+
+async function submitOrderForm() {
+  // Collect filled rows
+  const lines = [];
+  for (let i = 1; i <= 10; i++) {
+    const product = document.getElementById(`ord-product-${i}`)?.value?.trim();
+    const qty = document.getElementById(`ord-qty-${i}`)?.value?.trim();
+    if (!product) continue;
+    lines.push({
+      line: i,
+      product,
+      qty: qty || '1',
+      supplier: document.getElementById(`ord-supplier-${i}`)?.value?.trim() || '—',
+      needBy: document.getElementById(`ord-needby-${i}`)?.value || '—',
+      projectId: document.getElementById(`ord-project-${i}`)?.value || '—',
+      orderedBy: document.getElementById(`ord-orderedby-${i}`)?.value || '—'
+    });
+  }
+
+  if (!lines.length) { toast('Please add at least one item', 'error'); return; }
+
+  const orderEmail = state.timesheetData.settings?.orderEmail || 'daniel@bamafabrication.co.uk';
+  const submitted = new Date().toLocaleString('en-GB');
+
+  // Build email HTML table
+  const tableRows = lines.map(l => `
+    <tr style="border-bottom:1px solid #eee">
+      <td style="padding:8px 10px">${l.line}</td>
+      <td style="padding:8px 10px"><b>${l.product}</b></td>
+      <td style="padding:8px 10px;text-align:center">${l.qty}</td>
+      <td style="padding:8px 10px">${l.supplier}</td>
+      <td style="padding:8px 10px">${l.needBy}</td>
+      <td style="padding:8px 10px">${l.projectId}</td>
+      <td style="padding:8px 10px">${l.orderedBy}</td>
+    </tr>
+  `).join('');
+
+  const emailBody = {
+    message: {
+      subject: `Workshop Order Request — ${lines.length} item${lines.length > 1 ? 's' : ''} — ${submitted}`,
+      body: {
+        contentType: 'HTML',
+        content: `
+          <h2 style="color:#ff6b00;font-family:sans-serif;margin-bottom:4px">BAMA FABRICATION</h2>
+          <h3 style="font-family:sans-serif;color:#333;margin-bottom:20px">Workshop Order Request</h3>
+          <p style="font-family:sans-serif;font-size:13px;color:#888;margin-bottom:16px">Submitted: ${submitted}</p>
+          <table style="width:100%;border-collapse:collapse;font-family:sans-serif;font-size:13px">
+            <thead>
+              <tr style="background:#f5f5f5">
+                <th style="padding:8px 10px;text-align:left;font-size:11px;color:#888">#</th>
+                <th style="padding:8px 10px;text-align:left;font-size:11px;color:#888">PRODUCT</th>
+                <th style="padding:8px 10px;text-align:center;font-size:11px;color:#888">QTY</th>
+                <th style="padding:8px 10px;text-align:left;font-size:11px;color:#888">SUPPLIER</th>
+                <th style="padding:8px 10px;text-align:left;font-size:11px;color:#888">NEED BY</th>
+                <th style="padding:8px 10px;text-align:left;font-size:11px;color:#888">PROJECT ID</th>
+                <th style="padding:8px 10px;text-align:left;font-size:11px;color:#888">ORDERED BY</th>
+              </tr>
+            </thead>
+            <tbody>${tableRows}</tbody>
+          </table>
+          <p style="margin-top:24px;font-family:sans-serif;font-size:12px;color:#aaa">
+            Sent from BAMA Workshop Timesheet App —
+            <a href="https://proud-dune-0dee63110.2.azurestaticapps.net" style="color:#ff6b00">Open App</a>
+          </p>
+        `
+      },
+      toRecipients: [{ emailAddress: { address: orderEmail } }]
+    },
+    saveToSentItems: true
+  };
+
+  try {
+    const token = await getToken();
+    const res = await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(emailBody)
+    });
+
+    if (res.ok || res.status === 202) {
+      toast(`Order sent to ${orderEmail} ✓`, 'success');
+      closeOrderForm();
+    } else {
+      const err = await res.text();
+      console.error('Order email error:', err);
+      toast('Email failed — check console', 'error');
+    }
+  } catch (e) {
+    console.error('Order submit error:', e);
+    toast('Failed to send order', 'error');
+  }
+}
+
 // Live clock
 function updateClock() {
   const now = new Date();
@@ -3110,61 +3348,118 @@ function renderHolidayEmpFilter() {
 }
 
 function renderHolidayCalendar() {
-  const grid = document.getElementById('holidayCalGrid');
-  const label = document.getElementById('holidayMonthLabel');
-  if (!grid) return;
+  const wrap = document.getElementById('holidayGanttWrap');
+  const rangeLabel = document.getElementById('ganttRangeLabel');
+  if (!wrap) return;
 
-  const now = new Date();
-  const displayDate = new Date(now.getFullYear(), now.getMonth() + holidayMonthOffset, 1);
-  const year = displayDate.getFullYear();
-  const month = displayDate.getMonth();
-
-  label.textContent = displayDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
-
-  const firstDay = new Date(year, month, 1);
-  const lastDay = new Date(year, month + 1, 0);
-  const startDow = (firstDay.getDay() + 6) % 7; // Mon = 0
   const empFilter = document.getElementById('holidayEmpFilter')?.value || '';
+  const employees = (state.timesheetData.employees || [])
+    .filter(e => e.active !== false && (!empFilter || e.name === empFilter));
 
-  const cells = [];
-  // Empty cells before month starts
-  for (let i = 0; i < startDow; i++) cells.push({ empty: true });
-
-  for (let d = 1; d <= lastDay.getDate(); d++) {
-    const dt = new Date(year, month, d);
-    const ds = dateStr(dt);
-    const isToday = ds === todayStr();
-    const isBH = isBankHoliday(ds);
-    const isWE = isWeekend(ds);
-
-    // Find holidays on this day
-    const dayHols = (state.timesheetData.holidays || []).filter(h => {
-      if (empFilter && h.employeeName !== empFilter) return false;
-      return h.dateFrom <= ds && h.dateTo >= ds;
-    });
-
-    const hasApproved = dayHols.some(h => h.status === 'approved');
-    const hasPending = dayHols.some(h => h.status === 'pending');
-    const names = dayHols.map(h => `${h.employeeName.split(' ')[0]} (${h.status})`).join(', ');
-
-    let cls = 'normal';
-    if (isBH) cls = 'bank-holiday';
-    else if (hasApproved) cls = 'approved-holiday';
-    else if (hasPending) cls = 'pending-holiday';
-
-    cells.push({ d, ds, isToday, isBH, isWE, cls, names, dayHols });
+  // Build 3-month date range starting from holidayMonthOffset
+  const now = new Date();
+  const startMonth = new Date(now.getFullYear(), now.getMonth() + holidayMonthOffset, 1);
+  const months = [];
+  for (let m = 0; m < 3; m++) {
+    const mo = new Date(startMonth.getFullYear(), startMonth.getMonth() + m, 1);
+    months.push(mo);
   }
 
-  grid.innerHTML = cells.map(c => {
-    if (c.empty) return `<div class="hcal-day empty"></div>`;
-    return `
-      <div class="hcal-day ${c.cls} ${c.isToday ? 'today' : ''}" title="${c.names || (c.isBH ? 'Bank Holiday' : '')}">
-        <span class="hcal-day-num" style="${c.isWE ? 'color:var(--subtle)' : ''}">${c.d}</span>
-        ${c.names ? `<span class="hcal-day-label">${c.dayHols[0]?.employeeName.split(' ')[0] || ''}</span>` : ''}
-        ${c.isBH ? `<span class="hcal-day-label">BH</span>` : ''}
-      </div>
-    `;
-  }).join('');
+  const endMonth = new Date(months[2].getFullYear(), months[2].getMonth() + 1, 0);
+
+  if (rangeLabel) {
+    rangeLabel.textContent = `${startMonth.toLocaleDateString('en-GB',{month:'short',year:'numeric'})} – ${endMonth.toLocaleDateString('en-GB',{month:'short',year:'numeric'})}`;
+  }
+
+  // Build all days in the range
+  const allDays = [];
+  const cur = new Date(startMonth);
+  while (cur <= endMonth) {
+    allDays.push(dateStr(cur));
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  // Cell width
+  const cellW = 22;
+  const labelW = 130;
+  const totalW = labelW + allDays.length * cellW;
+
+  // Build HTML
+  let ganttHtml = `<div style="min-width:${totalW}px;font-size:11px;font-family:var(--font-mono)">`;
+
+  // Month headers
+  ganttHtml += `<div style="display:flex;margin-left:${labelW}px;margin-bottom:2px">`;
+  months.forEach(mo => {
+    const daysInMo = new Date(mo.getFullYear(), mo.getMonth() + 1, 0).getDate();
+    ganttHtml += `<div style="width:${daysInMo * cellW}px;text-align:center;font-size:11px;font-weight:600;color:var(--text);letter-spacing:.5px;border-left:1px solid var(--border);padding:2px 0">
+      ${mo.toLocaleDateString('en-GB',{month:'short',year:'numeric'})}
+    </div>`;
+  });
+  ganttHtml += '</div>';
+
+  // Day number header
+  ganttHtml += `<div style="display:flex;margin-left:${labelW}px;margin-bottom:4px">`;
+  allDays.forEach(ds => {
+    const d = new Date(ds + 'T12:00:00');
+    const isWE = isWeekend(ds);
+    const isBH = isBankHoliday(ds);
+    const isToday = ds === todayStr();
+    ganttHtml += `<div style="width:${cellW}px;text-align:center;font-size:9px;
+      color:${isToday ? 'var(--accent)' : isWE || isBH ? 'var(--subtle)' : 'var(--muted)'};
+      font-weight:${isToday ? '700' : '400'}">
+      ${d.getDate()}
+    </div>`;
+  });
+  ganttHtml += '</div>';
+
+  // Employee rows
+  employees.forEach(emp => {
+    ganttHtml += `<div style="display:flex;align-items:center;margin-bottom:3px">`;
+    ganttHtml += `<div style="width:${labelW}px;padding-right:10px;font-weight:600;font-size:12px;
+      color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:var(--font-body)">
+      ${emp.name}
+    </div>`;
+
+    allDays.forEach(ds => {
+      const isWE = isWeekend(ds);
+      const isBH = isBankHoliday(ds);
+      const isToday = ds === todayStr();
+
+      const hol = (state.timesheetData.holidays || []).find(h =>
+        h.employeeName === emp.name && h.dateFrom <= ds && h.dateTo >= ds
+      );
+
+      let bg = 'transparent';
+      let title = '';
+      let border = '1px solid transparent';
+
+      if (isBH) {
+        bg = 'rgba(245,158,11,.25)';
+        title = 'Bank Holiday';
+      } else if (isWE) {
+        bg = 'rgba(100,100,100,.15)';
+      } else if (hol) {
+        if (hol.status === 'approved') {
+          bg = hol.type === 'paid' ? 'rgba(62,207,142,.5)' : 'rgba(255,68,68,.35)';
+          title = `${hol.type} holiday (approved)`;
+        } else if (hol.status === 'pending') {
+          bg = 'rgba(255,107,0,.4)';
+          title = 'Pending approval';
+          border = '1px solid var(--accent)';
+        }
+      }
+
+      if (isToday) border = '1px solid var(--accent)';
+
+      ganttHtml += `<div style="width:${cellW}px;height:22px;background:${bg};border:${border};
+        border-radius:2px;cursor:default" title="${title}"></div>`;
+    });
+
+    ganttHtml += '</div>';
+  });
+
+  ganttHtml += '</div>';
+  wrap.innerHTML = ganttHtml;
 }
 
 function changeHolidayMonth(dir) {
@@ -3239,15 +3534,20 @@ async function rejectHoliday(id) {
 
 // Show notification banner on manager dashboard load
 function checkHolidayNotifications() {
+  // Remove any existing banner first
+  const existingBanner = document.getElementById('holidayPendingBanner');
+  if (existingBanner) existingBanner.remove();
+
   const pending = (state.timesheetData.holidays || []).filter(h => h.status === 'pending');
   if (!pending.length) return;
-  // Show banner in the By Project tab area too
+
   const banner = document.createElement('div');
+  banner.id = 'holidayPendingBanner';
   banner.className = 'notification-banner';
   banner.style.marginBottom = '16px';
   banner.innerHTML = `
     <span class="nb-icon">&#127959;</span>
-    <span class="nb-text"><b>${pending.length} holiday request${pending.length > 1 ? 's' : ''}</b> awaiting approval</span>
+    <span class="nb-text"><b>${pending.length} holiday request${pending.length > 1 ? 's' : ''}</b> awaiting your approval</span>
     <span class="nb-count">${pending.length}</span>
   `;
   banner.onclick = () => switchTab('holidays');
@@ -3346,6 +3646,15 @@ function calculatePayroll(employeeName, weekMon, weekSun) {
   };
 }
 
+function getDayHoursForEmployee(empName, dateStr) {
+  // Get total approved clocked hours for an employee on a specific date
+  const clockings = (state.timesheetData.clockings || []).filter(c =>
+    c.employeeName === empName && c.date === dateStr &&
+    c.approvalStatus !== 'rejected'
+  );
+  return clockings.reduce((s, c) => s + (calcHours(c.clockIn, c.clockOut, c.breakMins) || 0), 0);
+}
+
 function renderPayroll() {
   const { mon, sun } = getWeekDates(payrollWeekOffset);
   document.getElementById('payrollWeekLabel').textContent =
@@ -3359,50 +3668,74 @@ function renderPayroll() {
     return;
   }
 
-  const results = employees.map(e => calculatePayroll(e.name, mon, sun)).filter(Boolean);
+  // Build day columns Mon-Sun
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(mon);
+    d.setDate(mon.getDate() + i);
+    days.push({ label: ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][i], date: dateStr(d) });
+  }
+
+  // Calculate payroll results
+  const results = employees.map(e => {
+    const payroll = calculatePayroll(e.name, mon, sun);
+    const dayHrs = days.map(d => {
+      const hrs = getDayHoursForEmployee(e.name, d.date);
+      return hrs > 0 ? hrs : 0;
+    });
+    const totalHrs = dayHrs.reduce((s, h) => s + h, 0);
+    return { emp: e, payroll, dayHrs, totalHrs };
+  }).filter(r => r.totalHrs > 0 || r.payroll);
 
   if (!results.length) {
     container.innerHTML = '<div class="empty-state"><div class="icon">&#163;</div>No approved clockings this week</div>';
     return;
   }
 
-  const totalBasic = results.reduce((s, r) => s + r.basicPay, 0);
-  const totalOT = results.reduce((s, r) => s + r.overtimePay, 0);
-  const totalDT = results.reduce((s, r) => s + r.doublePay, 0);
-  const grandTotal = results.reduce((s, r) => s + r.totalPay, 0);
+  const grandTotal = results.reduce((s, r) => s + (r.payroll?.totalPay || 0), 0);
+  const totalBasic = results.reduce((s, r) => s + (r.payroll?.basicPay || 0), 0);
+  const totalOT = results.reduce((s, r) => s + (r.payroll?.overtimePay || 0), 0);
+  const totalDT = results.reduce((s, r) => s + (r.payroll?.doublePay || 0), 0);
 
   container.innerHTML = `
     <div style="overflow-x:auto">
-      <table class="summary-table" style="min-width:700px">
+      <table class="summary-table" style="min-width:900px">
         <thead>
           <tr>
-            <th>EMPLOYEE</th>
-            <th>RATE</th>
-            <th>TOTAL HRS</th>
-            <th>BASIC (40h)</th>
-            <th>O/T &#215;1.5</th>
-            <th>DBL TIME &#215;2</th>
-            <th>TOTAL PAY</th>
+            <th style="min-width:140px">EMPLOYEE</th>
+            ${days.map(d => `<th style="text-align:center;min-width:55px">${d.label}<br><span style="font-weight:400;font-size:9px;color:var(--subtle)">${d.date.slice(8)}</span></th>`).join('')}
+            <th style="text-align:center">TOTAL HRS</th>
+            <th>STD (£)</th>
+            <th>O/T ×1.5 (£)</th>
+            <th>DBL ×2 (£)</th>
+            <th style="color:var(--green)">TOTAL PAY</th>
           </tr>
         </thead>
         <tbody>
           ${results.map(r => `
             <tr>
-              <td style="font-weight:600">${r.employeeName}
-                ${r.doubleTimeApplies ? '<span class="manually-edited-badge" style="background:rgba(62,207,142,.15);color:var(--green);border-color:rgba(62,207,142,.3)">SAT+SUN</span>' : ''}
+              <td style="font-weight:600">
+                ${r.emp.name}
+                ${r.payroll?.doubleTimeApplies ? '<span class="manually-edited-badge" style="background:rgba(62,207,142,.15);color:var(--green);border-color:rgba(62,207,142,.3)">SAT+SUN</span>' : ''}
+                <br><span style="font-size:11px;color:var(--muted);font-family:var(--font-mono)">£${(r.emp.rate||0).toFixed(2)}/hr</span>
               </td>
-              <td class="mono">£${r.rate.toFixed(2)}</td>
-              <td class="mono"><b>${r.totalHours.toFixed(2)}h</b></td>
-              <td class="mono" style="color:var(--text)">${r.basicHours}h<br><span style="color:var(--muted);font-size:11px">£${r.basicPay.toFixed(2)}</span></td>
-              <td class="mono" style="color:var(--amber)">${r.overtimeHours > 0 ? r.overtimeHours+'h' : '—'}<br><span style="color:var(--muted);font-size:11px">${r.overtimeHours > 0 ? '£'+r.overtimePay.toFixed(2) : ''}</span></td>
-              <td class="mono" style="color:var(--accent)">${r.doubleHours > 0 ? r.doubleHours+'h' : '—'}<br><span style="color:var(--muted);font-size:11px">${r.doubleHours > 0 ? '£'+r.doublePay.toFixed(2) : ''}</span></td>
-              <td class="mono" style="color:var(--green);font-weight:700;font-size:15px">£${r.totalPay.toFixed(2)}</td>
+              ${r.dayHrs.map(h => `<td class="mono" style="text-align:center;color:${h > 0 ? 'var(--text)' : 'var(--subtle)'}">${h > 0 ? h.toFixed(1) : '—'}</td>`).join('')}
+              <td class="mono" style="text-align:center;font-weight:700">${r.totalHrs.toFixed(1)}</td>
+              <td class="mono">${r.payroll?.basicHours||0}h<br><span style="font-size:11px;color:var(--muted)">£${(r.payroll?.basicPay||0).toFixed(2)}</span></td>
+              <td class="mono" style="color:var(--amber)">${r.payroll?.overtimeHours > 0 ? r.payroll.overtimeHours+'h' : '—'}<br><span style="font-size:11px;color:var(--muted)">${r.payroll?.overtimeHours > 0 ? '£'+r.payroll.overtimePay.toFixed(2) : ''}</span></td>
+              <td class="mono" style="color:var(--accent)">${r.payroll?.doubleHours > 0 ? r.payroll.doubleHours+'h' : '—'}<br><span style="font-size:11px;color:var(--muted)">${r.payroll?.doubleHours > 0 ? '£'+r.payroll.doublePay.toFixed(2) : ''}</span></td>
+              <td class="mono" style="color:var(--green);font-weight:700;font-size:15px">£${(r.payroll?.totalPay||0).toFixed(2)}</td>
             </tr>
           `).join('')}
         </tbody>
         <tfoot>
           <tr style="border-top:2px solid var(--border)">
-            <td colspan="3" style="font-weight:700;color:var(--muted);font-size:12px;letter-spacing:1px;text-transform:uppercase;padding:12px 14px">TOTALS</td>
+            <td style="font-weight:700;color:var(--muted);font-size:11px;letter-spacing:1px;text-transform:uppercase">TOTALS</td>
+            ${days.map((d, i) => {
+              const dayTotal = results.reduce((s, r) => s + (r.dayHrs[i] || 0), 0);
+              return `<td class="mono" style="text-align:center;font-weight:600">${dayTotal > 0 ? dayTotal.toFixed(1) : '—'}</td>`;
+            }).join('')}
+            <td class="mono" style="text-align:center;font-weight:700">${results.reduce((s,r)=>s+r.totalHrs,0).toFixed(1)}</td>
             <td class="mono" style="font-weight:600">£${totalBasic.toFixed(2)}</td>
             <td class="mono" style="font-weight:600;color:var(--amber)">£${totalOT.toFixed(2)}</td>
             <td class="mono" style="font-weight:600;color:var(--accent)">£${totalDT.toFixed(2)}</td>
@@ -3417,6 +3750,100 @@ function renderPayroll() {
 function changePayrollWeek(dir) {
   payrollWeekOffset += dir;
   renderPayroll();
+}
+
+async function emailPayrollReport() {
+  const { mon, sun } = getWeekDates(payrollWeekOffset);
+  const employees = (state.timesheetData.employees || []).filter(e => e.active !== false);
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(mon); d.setDate(mon.getDate() + i);
+    days.push({ label: ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][i], date: dateStr(d) });
+  }
+
+  const results = employees.map(e => {
+    const payroll = calculatePayroll(e.name, mon, sun);
+    const dayHrs = days.map(d => getDayHoursForEmployee(e.name, d.date));
+    const totalHrs = dayHrs.reduce((s, h) => s + h, 0);
+    return { emp: e, payroll, dayHrs, totalHrs };
+  }).filter(r => r.totalHrs > 0);
+
+  if (!results.length) { toast('No payroll data to email', 'error'); return; }
+
+  const grandTotal = results.reduce((s, r) => s + (r.payroll?.totalPay || 0), 0);
+  const weekStr = `${fmtDate(mon)} – ${fmtDate(sun)}`;
+  const payrollEmail = state.timesheetData.settings?.payrollEmail || 'daniel@bamafabrication.co.uk';
+
+  const tableRows = results.map(r => `
+    <tr style="border-bottom:1px solid #eee">
+      <td style="padding:8px 10px;font-weight:600">${r.emp.name}</td>
+      <td style="padding:8px 10px;font-family:monospace;color:#888">£${(r.emp.rate||0).toFixed(2)}/hr</td>
+      ${r.dayHrs.map(h => `<td style="padding:8px 10px;text-align:center;font-family:monospace">${h > 0 ? h.toFixed(1) : '—'}</td>`).join('')}
+      <td style="padding:8px 10px;text-align:center;font-weight:700;font-family:monospace">${r.totalHrs.toFixed(1)}</td>
+      <td style="padding:8px 10px;font-family:monospace">${r.payroll?.basicHours||0}h / £${(r.payroll?.basicPay||0).toFixed(2)}</td>
+      <td style="padding:8px 10px;font-family:monospace;color:#f59e0b">${r.payroll?.overtimeHours > 0 ? r.payroll.overtimeHours+'h / £'+r.payroll.overtimePay.toFixed(2) : '—'}</td>
+      <td style="padding:8px 10px;font-family:monospace;color:#ef4444">${r.payroll?.doubleHours > 0 ? r.payroll.doubleHours+'h / £'+r.payroll.doublePay.toFixed(2) : '—'}</td>
+      <td style="padding:8px 10px;font-weight:700;color:#ff6b00;font-family:monospace">£${(r.payroll?.totalPay||0).toFixed(2)}</td>
+    </tr>
+  `).join('');
+
+  const emailBody = {
+    message: {
+      subject: `BAMA Payroll Report — Week ${weekStr}`,
+      body: {
+        contentType: 'HTML',
+        content: `
+          <h2 style="color:#ff6b00;font-family:sans-serif">BAMA FABRICATION — Payroll Report</h2>
+          <p style="font-family:sans-serif;font-size:13px;color:#888">Week: <b>${weekStr}</b></p>
+          <table style="width:100%;border-collapse:collapse;font-family:sans-serif;font-size:12px">
+            <thead>
+              <tr style="background:#f5f5f5">
+                <th style="padding:8px;text-align:left">Employee</th>
+                <th style="padding:8px">Rate</th>
+                ${days.map(d => `<th style="padding:8px;text-align:center">${d.label}</th>`).join('')}
+                <th style="padding:8px;text-align:center">Total</th>
+                <th style="padding:8px">Basic</th>
+                <th style="padding:8px;color:#f59e0b">OT ×1.5</th>
+                <th style="padding:8px;color:#ef4444">DBL ×2</th>
+                <th style="padding:8px;color:#ff6b00">Total Pay</th>
+              </tr>
+            </thead>
+            <tbody>${tableRows}</tbody>
+            <tfoot>
+              <tr style="background:#fff3e0;font-weight:700">
+                <td colspan="9" style="padding:8px;text-align:right;font-family:sans-serif">Total Payroll:</td>
+                <td style="padding:8px;color:#ff6b00;font-size:16px;font-family:monospace">£${grandTotal.toFixed(2)}</td>
+              </tr>
+            </tfoot>
+          </table>
+          <p style="margin-top:20px;font-family:sans-serif;font-size:11px;color:#aaa">
+            Generated by BAMA Workshop Timesheet — ${new Date().toLocaleString('en-GB')}
+          </p>
+        `
+      },
+      toRecipients: [{ emailAddress: { address: payrollEmail } }]
+    },
+    saveToSentItems: true
+  };
+
+  try {
+    const token = await getToken();
+    const res = await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(emailBody)
+    });
+    if (res.ok || res.status === 202) {
+      toast(`Payroll report emailed to ${payrollEmail} ✓`, 'success');
+    } else {
+      const err = await res.text();
+      console.error('Payroll email error:', err);
+      toast('Email failed — check console', 'error');
+    }
+  } catch (e) {
+    console.error('Email error:', e);
+    toast('Failed to send email', 'error');
+  }
 }
 
 function generatePayrollPDF() {
