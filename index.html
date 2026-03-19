@@ -1457,13 +1457,20 @@
       <input type="text" class="field-input" id="drawingFolderPath" placeholder="e.g. 02 - Drawings or leave blank for root">
     </div>
 
-    <div style="margin-bottom:16px">
+    <div style="margin-bottom:12px">
       <div class="field-label">SELECT PDF FILE</div>
       <input type="file" id="drawingFileInput" accept=".pdf" style="display:none" onchange="onDrawingFileSelected()">
       <div class="upload-zone" onclick="document.getElementById('drawingFileInput').click()">
         <div class="upload-zone-icon">&#128196;</div>
         <div class="upload-zone-text" id="uploadZoneText">Click to select PDF file</div>
       </div>
+    </div>
+
+    <div style="margin-bottom:16px">
+      <div class="field-label">DRAFTSMAN NOTE <span style="color:var(--muted);font-weight:400">(optional)</span></div>
+      <textarea class="field-input" id="uploadDraftsmanNote" rows="2"
+        placeholder="Add a note for the workshop team..."
+        style="resize:vertical;font-size:13px"></textarea>
     </div>
 
     <div id="uploadProgress" style="display:none;margin-bottom:12px">
@@ -4781,10 +4788,12 @@ function renderDrawings(projectId) {
     return;
   }
 
-  container.innerHTML = drawings.map((d, idx) => renderDrawingPanel(d, idx, projectId)).join('');
+  const employees = (state.timesheetData.employees||[]).filter(e=>e.active!==false);
+  container.innerHTML = drawings.map((d, idx) => renderDrawingPanel(d, idx, projectId, employees)).join('');
 }
 
-function renderDrawingPanel(drawing, idx, projectId) {
+function renderDrawingPanel(drawing, idx, projectId, employees) {
+  employees = employees || (state.timesheetData.employees||[]).filter(e=>e.active!==false);
   const draftsmanNotes = (drawing.notes || []).filter(n => n.type === 'draftsman');
   const workshopNotes = (drawing.notes || []).filter(n => n.type === 'workshop');
 
@@ -4813,11 +4822,15 @@ function renderDrawingPanel(drawing, idx, projectId) {
       </div>
       <div class="drawing-panel-body">
         <!-- Preview -->
-        <div class="drawing-preview-wrap">
-          ${previewUrl
-            ? `<iframe src="${previewUrl}#toolbar=0" title="${drawing.name}"></iframe>`
-            : `<div class="drawing-preview-placeholder">&#128196;<br>Preview not available<br><span style="font-size:11px">PDF stored on SharePoint</span></div>`
-          }
+        <div class="drawing-preview-wrap" id="preview-wrap-${drawing.id}">
+          <div class="drawing-preview-placeholder" id="preview-${drawing.id}">
+            <div style="font-size:32px;margin-bottom:12px">&#128196;</div>
+            <div style="margin-bottom:12px;color:var(--text)">${drawing.name}</div>
+            <button class="btn btn-primary" style="padding:10px 20px;font-size:13px"
+              onclick="loadPDFPreview('${drawing.id}', '${drawing.fileId}', '${drawing.driveId}')">
+              &#128065; Load Preview
+            </button>
+          </div>
         </div>
 
         <!-- Actions -->
@@ -4828,7 +4841,7 @@ function renderDrawingPanel(drawing, idx, projectId) {
             </a>
           ` : ''}
           <button class="btn btn-ghost" style="padding:8px 16px;font-size:12px"
-            onclick="printDrawing('${drawing.id}', '${drawing.webUrl || ''}')">
+            onclick="printDrawing('${drawing.id}', '${drawing.fileId || ''}', '${drawing.driveId || ''}')">
             &#128438; Print
           </button>
           <span style="font-size:11px;color:var(--subtle);margin-left:auto;align-self:center">
@@ -4871,7 +4884,7 @@ function renderDrawingPanel(drawing, idx, projectId) {
                 placeholder="Add workshop note..." style="font-size:12px;padding:7px 10px">
               <select class="field-input" id="workshop-note-author-${drawing.id}" style="font-size:12px;padding:7px 10px;max-width:130px">
                 <option value="">Your name...</option>
-                ${(state.timesheetData.employees||[]).filter(e=>e.active!==false).map(e=>`<option value="${e.name}">${e.name}</option>`).join('')}
+                ${employees.map(e=>`<option value="${e.name}">${e.name}</option>`).join('')}
               </select>
               <button class="btn btn-success" style="padding:7px 12px;font-size:12px;white-space:nowrap"
                 onclick="addNote('${projectId}','${drawing.id}','workshop')">Add</button>
@@ -5006,14 +5019,95 @@ async function addNote(projectId, drawingId, type) {
   } catch { toast('Save failed', 'error'); }
 }
 
-function printDrawing(drawingId, webUrl) {
-  if (!webUrl) { toast('No URL available for this drawing', 'error'); return; }
-  const win = window.open(webUrl, '_blank');
-  if (win) {
-    win.addEventListener('load', () => win.print());
-  } else {
-    toast('Please allow popups to print', 'error');
+async function loadPDFPreview(drawingId, fileId, driveId) {
+  const wrap = document.getElementById(`preview-${drawingId}`);
+  if (!wrap) return;
+  if (!fileId || fileId === 'undefined') {
+    wrap.innerHTML = `<div class="drawing-preview-placeholder" style="color:var(--red)">No file ID — please re-upload this drawing</div>`;
+    return;
   }
+
+  wrap.innerHTML = `<div class="drawing-preview-placeholder"><div class="spinner" style="margin:0 auto"></div><div style="margin-top:12px;color:var(--muted)">Loading preview...</div></div>`;
+
+  try {
+    const token = await getToken();
+    const useDriveId = driveId && driveId !== 'undefined' ? driveId : BAMA_DRIVE_ID;
+    const contentRes = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${useDriveId}/items/${fileId}/content`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    if (!contentRes.ok) throw new Error(`Fetch failed: ${contentRes.status}`);
+    const blob = await contentRes.blob();
+    const blobUrl = URL.createObjectURL(blob);
+
+    // Store blob URL on drawing for print use
+    const outerWrap = document.getElementById(`preview-wrap-${drawingId}`);
+    if (outerWrap) outerWrap.dataset.blobUrl = blobUrl;
+
+    wrap.innerHTML = `
+      <iframe src="${blobUrl}#toolbar=1&view=FitH" style="width:100%;height:500px;border:none" title="Drawing Preview"></iframe>
+    `;
+  } catch (e) {
+    wrap.innerHTML = `<div class="drawing-preview-placeholder" style="color:var(--red)">
+      Preview failed: ${e.message}<br>
+      <a href="#" onclick="event.preventDefault()" style="color:var(--accent);font-size:12px">Try opening in SharePoint instead</a>
+    </div>`;
+  }
+}
+
+async function printDrawing(drawingId, fileId, driveId) {
+  // If we already have a blob URL from the preview, use it
+  const outerWrap = document.getElementById(`preview-wrap-${drawingId}`);
+  const existingBlobUrl = outerWrap?.dataset?.blobUrl;
+
+  if (existingBlobUrl) {
+    triggerPrintFromBlob(existingBlobUrl);
+    return;
+  }
+
+  // Otherwise fetch the PDF fresh
+  if (!fileId || fileId === 'undefined') {
+    toast('No file ID available for printing', 'error');
+    return;
+  }
+
+  toast('Preparing print...', 'info');
+
+  try {
+    const token = await getToken();
+    const useDriveId = driveId && driveId !== 'undefined' ? driveId : BAMA_DRIVE_ID;
+    const contentRes = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${useDriveId}/items/${fileId}/content`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    if (!contentRes.ok) throw new Error(`Fetch failed: ${contentRes.status}`);
+    const blob = await contentRes.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    if (outerWrap) outerWrap.dataset.blobUrl = blobUrl;
+    triggerPrintFromBlob(blobUrl);
+  } catch (e) {
+    toast(`Print failed: ${e.message}`, 'error');
+  }
+}
+
+function triggerPrintFromBlob(blobUrl) {
+  // Create hidden iframe, load PDF, trigger print
+  let printFrame = document.getElementById('printFrame');
+  if (printFrame) printFrame.remove();
+  printFrame = document.createElement('iframe');
+  printFrame.id = 'printFrame';
+  printFrame.style.cssText = 'position:fixed;right:-9999px;top:-9999px;width:1px;height:1px;opacity:0;pointer-events:none';
+  printFrame.src = blobUrl;
+  document.body.appendChild(printFrame);
+  printFrame.onload = () => {
+    try {
+      printFrame.contentWindow.focus();
+      printFrame.contentWindow.print();
+    } catch {
+      // Fallback: open in new tab for printing
+      window.open(blobUrl, '_blank');
+    }
+  };
 }
 
 // ── Draftsman auth ──
@@ -5082,6 +5176,7 @@ function openUploadDrawing() {
   document.getElementById('drawingFolderPath').value = '02 - Drawings';
   document.getElementById('uploadZoneText').textContent = 'Click to select PDF file';
   document.getElementById('uploadProgress').style.display = 'none';
+  document.getElementById('uploadDraftsmanNote').value = '';
   draftsmanUploadFile = null;
   document.getElementById('uploadDrawingModal').classList.add('active');
 }
@@ -5158,6 +5253,9 @@ async function uploadDrawing() {
 
     // Save to drawings data
     if (!drawingsData.projects[projectId]) drawingsData.projects[projectId] = { drawings: [] };
+    // Get draftsman note if entered
+    const draftsmanNoteText = document.getElementById('uploadDraftsmanNote')?.value?.trim() || '';
+
     const newDrawing = {
       id: Date.now().toString(),
       name: drawingName,
@@ -5165,11 +5263,17 @@ async function uploadDrawing() {
       fileId: uploadedFile.id,
       driveId: uploadedFile.parentReference?.driveId || BAMA_DRIVE_ID,
       webUrl: uploadedFile.webUrl,
-      downloadUrl: uploadedFile['@microsoft.graph.downloadUrl'],
+      // NO downloadUrl — prevents auto-download
       uploadedBy: 'Draftsman',
       uploadedAt: new Date().toISOString(),
       complete: false,
-      notes: []
+      notes: draftsmanNoteText ? [{
+        id: Date.now().toString(),
+        type: 'draftsman',
+        author: 'Draftsman',
+        text: draftsmanNoteText,
+        timestamp: new Date().toISOString()
+      }] : []
     };
     drawingsData.projects[projectId].drawings.push(newDrawing);
     await saveDrawingsData();
