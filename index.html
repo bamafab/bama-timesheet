@@ -420,6 +420,64 @@
   .cs-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
   .cs-value { font-family: var(--font-mono); font-size: 13px; }
 
+  /* Holiday system */
+  .holiday-calendar { margin-bottom: 20px; }
+  .holiday-month-grid {
+    display: grid; grid-template-columns: repeat(7, 1fr);
+    gap: 3px; margin-bottom: 16px;
+  }
+  .hcal-day {
+    aspect-ratio: 1; border-radius: 6px;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    font-size: 11px; cursor: default;
+    position: relative; padding: 2px;
+  }
+  .hcal-day.empty { background: transparent; }
+  .hcal-day.normal { background: var(--surface); border: 1px solid var(--border); }
+  .hcal-day.today { border-color: var(--accent) !important; }
+  .hcal-day.bank-holiday { background: rgba(245,158,11,.15); border: 1px solid rgba(245,158,11,.3); }
+  .hcal-day.approved-holiday { background: rgba(62,207,142,.15); border: 1px solid rgba(62,207,142,.3); }
+  .hcal-day.pending-holiday { background: rgba(255,107,0,.15); border: 1px solid rgba(255,107,0,.3); }
+  .hcal-day.rejected-holiday { background: rgba(255,68,68,.1); border: 1px solid rgba(255,68,68,.2); }
+  .hcal-day-num { font-weight: 600; font-size: 12px; }
+  .hcal-day-label { font-size: 8px; color: var(--muted); text-align: center; line-height: 1.1; }
+  .hcal-header { display: grid; grid-template-columns: repeat(7,1fr); gap: 3px; margin-bottom: 6px; }
+  .hcal-header div { text-align: center; font-size: 10px; color: var(--muted); font-weight: 600; letter-spacing: .5px; }
+  .holiday-balance-bar {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px 20px;
+    display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 16px;
+  }
+  .hbal-item { text-align: center; }
+  .hbal-value { font-family: var(--font-display); font-size: 28px; color: var(--accent2); }
+  .hbal-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .holiday-request-list { margin-top: 8px; }
+  .holiday-chip {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 12px 16px; margin-bottom: 8px;
+    font-size: 13px;
+  }
+  .holiday-chip .hdate { font-family: var(--font-mono); font-size: 12px; color: var(--accent2); min-width: 140px; }
+  .holiday-chip .htype { font-size: 11px; padding: 2px 8px; border-radius: 4px; }
+  .holiday-chip .htype.paid { background: rgba(62,207,142,.15); color: var(--green); }
+  .holiday-chip .htype.unpaid { background: rgba(255,68,68,.1); color: var(--red); }
+  .notification-banner {
+    background: rgba(255,107,0,.1); border: 1px solid rgba(255,107,0,.3);
+    border-radius: 10px; padding: 12px 18px;
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 20px; cursor: pointer; transition: all .2s;
+  }
+  .notification-banner:hover { background: rgba(255,107,0,.15); }
+  .notification-banner .nb-icon { font-size: 20px; }
+  .notification-banner .nb-text { flex: 1; font-size: 13px; }
+  .notification-banner .nb-count {
+    background: var(--accent); color: #fff; border-radius: 50%;
+    width: 24px; height: 24px; display: flex; align-items: center;
+    justify-content: center; font-size: 12px; font-weight: 700;
+  }
+
   /* My Week view */
   .week-grid {
     display: grid;
@@ -587,6 +645,39 @@
       </div>
     </div>
 
+    <!-- ── HOLIDAY REQUEST CARD ── -->
+    <div class="card" id="holidayRequestCard">
+      <div class="card-title"><span class="icon">&#127959;</span> Holiday</div>
+      <div id="empHolidayBalance" style="margin-bottom:16px"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+        <div>
+          <div class="field-label">FROM DATE</div>
+          <input type="date" class="field-input" id="holFromDate">
+        </div>
+        <div>
+          <div class="field-label">TO DATE</div>
+          <input type="date" class="field-input" id="holToDate">
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+        <div>
+          <div class="field-label">TYPE</div>
+          <select class="field-input" id="holType">
+            <option value="paid">Paid Holiday</option>
+            <option value="unpaid">Unpaid Leave</option>
+            <option value="sick">Sick Leave</option>
+            <option value="training">Training</option>
+          </select>
+        </div>
+        <div>
+          <div class="field-label">REASON (optional)</div>
+          <input type="text" class="field-input" id="holReason" placeholder="e.g. Family holiday">
+        </div>
+      </div>
+      <button class="btn btn-primary btn-full" onclick="submitHolidayRequest()">Submit Holiday Request</button>
+      <div id="empHolidayHistory" style="margin-top:16px"></div>
+    </div>
+
     <!-- ── TIME ENTRY CARD ── -->
     <div class="card">
       <div class="card-title"><span class="icon">🔨</span> Log Project Time</div>
@@ -717,6 +808,38 @@
       <div id="clockLogArea"></div>
     </div>
 
+    <!-- Tab: Holidays -->
+    <div class="tab-content" id="tab-holidays">
+      <div id="holidayNotificationBanner"></div>
+      <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;align-items:center">
+        <div class="week-nav">
+          <button class="nav-btn" onclick="changeHolidayMonth(-1)">&#8592;</button>
+          <div class="week-label" id="holidayMonthLabel">—</div>
+          <button class="nav-btn" onclick="changeHolidayMonth(1)">&#8594;</button>
+        </div>
+        <select class="field-input" id="holidayEmpFilter" onchange="renderHolidayTab()"
+          style="width:180px;padding:6px 12px;font-size:13px">
+          <option value="">All Employees</option>
+        </select>
+      </div>
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-title"><span class="icon">&#128197;</span> Team Holiday Calendar</div>
+        <div class="hcal-header">
+          <div>MON</div><div>TUE</div><div>WED</div><div>THU</div><div>FRI</div><div>SAT</div><div>SUN</div>
+        </div>
+        <div class="holiday-month-grid" id="holidayCalGrid"></div>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:var(--muted)">
+          <span style="display:flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:3px;background:rgba(62,207,142,.3);display:inline-block"></span>Approved</span>
+          <span style="display:flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:3px;background:rgba(255,107,0,.3);display:inline-block"></span>Pending</span>
+          <span style="display:flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:3px;background:rgba(245,158,11,.3);display:inline-block"></span>Bank Holiday</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title"><span class="icon">&#128203;</span> Holiday Requests</div>
+        <div id="holidayRequestsList"></div>
+      </div>
+    </div>
+
     <!-- Tab: Payroll -->
     <div class="tab-content" id="tab-payroll">
       <div class="card" style="margin-bottom:20px">
@@ -747,7 +870,7 @@
     <div class="tab-content" id="tab-staff">
       <div class="card" style="margin-bottom:20px">
         <div class="card-title"><span class="icon">➕</span> Add New Employee</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 120px 100px auto;gap:12px;align-items:flex-end">
+        <div style="display:grid;grid-template-columns:1fr 1fr 120px 100px 100px 120px auto;gap:12px;align-items:flex-end">
           <div>
             <div class="field-label">FULL NAME</div>
             <input type="text" class="field-input" id="newEmpName" placeholder="e.g. John Smith" onkeydown="if(event.key==='Enter')addEmployee()">
@@ -763,6 +886,18 @@
           <div>
             <div class="field-label">PIN</div>
             <input type="password" class="field-input" id="newEmpPin" placeholder="e.g. 1234" maxlength="6" onkeydown="if(event.key==='Enter')addEmployee()">
+          </div>
+          <div>
+            <div class="field-label">ANNUAL DAYS</div>
+            <input type="number" class="field-input" id="newEmpDays" placeholder="20" min="0" max="365" value="20" onkeydown="if(event.key==='Enter')addEmployee()">
+          </div>
+          <div>
+            <div class="field-label">CARRYOVER DAYS</div>
+            <input type="number" class="field-input" id="newEmpCarryover" placeholder="0" min="0" max="365" value="0" onkeydown="if(event.key==='Enter')addEmployee()">
+          </div>
+          <div>
+            <div class="field-label">START DATE</div>
+            <input type="date" class="field-input" id="newEmpStartDate" onkeydown="if(event.key==='Enter')addEmployee()">
           </div>
           <button class="btn btn-primary" onclick="addEmployee()">Add Employee</button>
         </div>
@@ -880,6 +1015,29 @@
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeMgrAddClocking()">Cancel</button>
       <button class="btn btn-success" onclick="saveMgrClocking()">Save Clocking</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     EDIT ENTRY MODAL (Employee)
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="editEntryModal">
+  <div class="modal">
+    <div class="modal-title">Edit Hours</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:6px" id="editEntryProject"></div>
+    <div style="margin-bottom:20px">
+      <span class="manually-edited-badge">PENDING APPROVAL</span>
+      <span style="font-size:12px;color:var(--subtle);margin-left:8px">Your manager will approve this change</span>
+    </div>
+    <div>
+      <div class="field-label">HOURS</div>
+      <input type="number" class="field-input" id="editEntryHours" min="0.5" max="24" step="0.5"
+        style="font-size:20px;text-align:center">
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeEditEntry()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveEditEntry()">Submit for Approval</button>
     </div>
   </div>
 </div>
@@ -1477,6 +1635,9 @@ function openEmployeePanel(name) {
   // Render My Week
   renderMyWeek(name);
 
+  // Render holiday balance
+  renderEmpHolidayBalance(name);
+
   // Reload projects live from PROJECT TRACKER in background
   loadProjects().then(() => {
     // Refresh the project dropdown if already on screen
@@ -1653,6 +1814,20 @@ async function doClock(direction) {
       breakMins: 0
     });
 
+    // Check bank holiday
+    if (isBankHoliday(today)) {
+      toast(`⚠️ Today is a bank holiday — clocking in anyway`, 'info');
+    }
+
+    // Check if they have an approved holiday today
+    const hasApprovedHoliday = (state.timesheetData.holidays || []).some(h =>
+      h.employeeName === emp && h.status === 'approved' &&
+      h.dateFrom <= today && h.dateTo >= today
+    );
+    if (hasApprovedHoliday) {
+      toast(`⚠️ You have approved holiday today — clocking in anyway`, 'info');
+    }
+
     // Update UI immediately — don't make them wait
     showClockedIn({ clockIn });
     renderHome();
@@ -1678,13 +1853,44 @@ async function doClock(direction) {
     clocking.clockOut = clockOut;
     clocking.breakMins = breakMins;
 
+    // Calculate S000 unproductive time
+    const clockedHrs = calcHours(clockIn, clockOut, breakMins) || 0;
+    const totalProjectHrs = state.timesheetData.entries
+      .filter(e => e.employeeName === emp && e.date === today && e.projectId !== 'S000')
+      .reduce((s, e) => s + e.hours, 0);
+    const unproductiveHrs = parseFloat((clockedHrs - totalProjectHrs).toFixed(2));
+
+    // Remove any existing S000 for today and re-add if needed
+    state.timesheetData.entries = state.timesheetData.entries.filter(
+      e => !(e.employeeName === emp && e.date === today && e.projectId === 'S000')
+    );
+
+    if (unproductiveHrs > 0) {
+      state.timesheetData.entries.push({
+        id: `s000-${today}-${emp}`,
+        employeeName: emp,
+        projectId: 'S000',
+        projectName: 'Unproductive Time',
+        hours: unproductiveHrs,
+        date: today,
+        status: 'pending',
+        autoGenerated: true,
+        submittedAt: new Date().toISOString()
+      });
+    }
+
     // Update UI immediately
     document.getElementById('clockedInSection').style.display = 'none';
     document.getElementById('clockInSection').style.display = '';
     document.getElementById('statusBar').style.display = 'none';
     clearInterval(workingTimer);
     renderHome();
-    toast(`Clocked out at ${clockOut}`, 'success');
+
+    if (unproductiveHrs > 0) {
+      toast(`Clocked out at ${clockOut} · ${unproductiveHrs}h added as Unproductive Time`, 'success');
+    } else {
+      toast(`Clocked out at ${clockOut}`, 'success');
+    }
 
     // Save in background
     try {
@@ -1702,6 +1908,7 @@ async function submitDay() {
   }
   const today = todayStr();
 
+  // Push all current entries
   state.currentEntries.forEach(e => {
     state.timesheetData.entries.push({
       id: e.id,
@@ -1721,7 +1928,6 @@ async function submitDay() {
     state.currentEntries = [];
     renderTodayEntries();
     toast(`Entries submitted for approval ✓`, 'success');
-    // Small delay then go home
     setTimeout(goHome, 1500);
   } catch { toast('Submit failed — check connection', 'error'); }
   finally { setLoading(false); }
@@ -1752,6 +1958,9 @@ function renderManagerView() {
   const { mon, sun } = getWeekDates(state.currentWeekOffset);
   document.getElementById('weekLabel').textContent =
     `${fmtDate(mon)} – ${fmtDate(sun)}`;
+
+  // Check holiday notifications
+  checkHolidayNotifications();
 
   const monStr = dateStr(mon);
   const sunStr = dateStr(sun);
@@ -2061,6 +2270,11 @@ function renderMyWeek(employeeName) {
       c => c.employeeName === employeeName && c.date === dStr
     );
 
+    // Get project entries for this day
+    const dayEntries = state.timesheetData.entries.filter(
+      e => e.employeeName === employeeName && e.date === dStr
+    );
+
     let content = '';
     if (clocking) {
       const hrs = calcHours(clocking.clockIn, clocking.clockOut, clocking.breakMins);
@@ -2068,25 +2282,40 @@ function renderMyWeek(employeeName) {
       content = `
         ${clocking.clockIn ? `<div class="week-day-time in">▲ ${clocking.clockIn}</div>` : '<div class="week-day-time" style="color:var(--subtle)">▲ —</div>'}
         ${clocking.clockOut ? `<div class="week-day-time out">▼ ${clocking.clockOut}</div>` : '<div class="week-day-time" style="color:var(--subtle)">▼ —</div>'}
-        ${clocking.breakMins ? `<div class="week-day-break">☕ ${clocking.breakMins}m</div>` : ''}
+        ${clocking.breakMins ? `<div class="week-day-break">&#9749; ${clocking.breakMins}m</div>` : ''}
         ${hrs !== null ? `<div class="week-day-total">${hrs.toFixed(1)}h</div>` : ''}
         ${isPending ? `<div style="margin-top:4px"><span class="tag tag-pending" style="font-size:9px">Pending</span></div>` : ''}
         ${clocking.manuallyEdited && !isPending ? `<div style="margin-top:4px"><span class="manually-edited-badge" style="font-size:9px">Edited</span></div>` : ''}
       `;
     } else if (!isFuture) {
       content = `
-        <div style="color:var(--subtle);font-size:11px;margin-top:8px">No data</div>
+        <div style="color:var(--subtle);font-size:11px;margin-top:8px">No clocking</div>
         <button class="week-day-add" onclick="openAddClocking('${dStr}')">+ Add</button>
       `;
     } else {
       content = `<div style="color:var(--subtle);font-size:11px;margin-top:16px">—</div>`;
     }
 
+    // Show project entries below clocking info
+    const entriesHtml = dayEntries.length ? `
+      <div style="margin-top:8px;border-top:1px solid var(--border);padding-top:6px">
+        ${dayEntries.map(e => `
+          <div style="display:flex;align-items:center;gap:4px;margin-bottom:3px">
+            <span style="font-size:10px;color:var(--accent2);font-family:var(--font-mono);flex-shrink:0">${e.projectId}</span>
+            <span style="flex:1;font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e.projectName.length > 12 ? e.projectName.slice(0,12)+'…' : e.projectName}</span>
+            <span style="font-size:10px;font-family:var(--font-mono);color:var(--green)">${e.hours}h</span>
+            ${e.status === 'pending' ? `<button onclick="openEditEntry('${e.id}')" style="background:none;border:none;color:var(--subtle);cursor:pointer;font-size:11px;padding:0" title="Edit">&#9998;</button>` : ''}
+          </div>
+        `).join('')}
+      </div>
+    ` : '';
+
     return `
       <div class="week-day ${isToday ? 'today' : ''} ${clocking ? 'has-data' : ''}">
         <div class="week-day-name">${day}</div>
         <div class="week-day-date">${d.getDate()}/${d.getMonth()+1}</div>
         ${content}
+        ${entriesHtml}
       </div>
     `;
   }).join('');
@@ -2192,13 +2421,14 @@ function changeWeek(dir) {
 
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach((t, i) => {
-    const names = ['project', 'employee', 'clockinout', 'staff', 'payroll', 'archive', 'settings'];
+    const names = ['project', 'employee', 'clockinout', 'staff', 'holidays', 'payroll', 'archive', 'settings'];
     t.classList.toggle('active', names[i] === name);
   });
   document.querySelectorAll('.tab-content').forEach(tc => {
     tc.classList.toggle('active', tc.id === `tab-${name}`);
   });
   if (name === 'staff') renderStaffList();
+  if (name === 'holidays') renderHolidayTab();
   if (name === 'payroll') renderPayroll();
   if (name === 'archive') renderArchive();
 }
@@ -2232,6 +2462,75 @@ function toast(msg, type = 'info') {
   toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
 }
 
+let _editEntryId = null;
+
+function openEditEntry(id) {
+  const entry = state.timesheetData.entries.find(e => e.id === id);
+  if (!entry) return;
+  _editEntryId = id;
+  document.getElementById('editEntryProject').textContent = `${entry.projectId} — ${entry.projectName}`;
+  document.getElementById('editEntryHours').value = entry.hours;
+  document.getElementById('editEntryModal').classList.add('active');
+}
+
+function closeEditEntry() {
+  document.getElementById('editEntryModal').classList.remove('active');
+  _editEntryId = null;
+}
+
+async function saveEditEntry() {
+  if (!_editEntryId) return;
+  const entry = state.timesheetData.entries.find(e => e.id === _editEntryId);
+  if (!entry) return;
+
+  const newHours = parseFloat(document.getElementById('editEntryHours').value);
+  if (!newHours || newHours <= 0) { toast('Please enter valid hours', 'error'); return; }
+
+  entry.originalHours = entry.originalHours || entry.hours;
+  entry.hours = newHours;
+  entry.status = 'pending';
+  entry.manuallyEdited = true;
+  entry.editedAt = new Date().toISOString();
+
+  // Recalculate S000 for this day if clocked
+  const today = entry.date;
+  const emp = entry.employeeName;
+  const clocking = state.timesheetData.clockings.find(
+    c => c.employeeName === emp && c.date === today && c.clockOut
+  );
+  if (clocking) {
+    const clockedHrs = calcHours(clocking.clockIn, clocking.clockOut, clocking.breakMins) || 0;
+    const totalProjectHrs = state.timesheetData.entries
+      .filter(e => e.employeeName === emp && e.date === today && e.projectId !== 'S000')
+      .reduce((s, e) => s + e.hours, 0);
+    const unproductiveHrs = parseFloat((clockedHrs - totalProjectHrs).toFixed(2));
+
+    state.timesheetData.entries = state.timesheetData.entries.filter(
+      e => !(e.employeeName === emp && e.date === today && e.projectId === 'S000')
+    );
+    if (unproductiveHrs > 0) {
+      state.timesheetData.entries.push({
+        id: `s000-${today}-${emp}`,
+        employeeName: emp,
+        projectId: 'S000',
+        projectName: 'Unproductive Time',
+        hours: unproductiveHrs,
+        date: today,
+        status: 'pending',
+        autoGenerated: true,
+        submittedAt: new Date().toISOString()
+      });
+    }
+  }
+
+  try {
+    await saveTimesheetData();
+    closeEditEntry();
+    renderMyWeek(state.currentEmployee);
+    toast('Hours updated — pending manager approval ✓', 'success');
+  } catch { toast('Save failed', 'error'); }
+}
+
 function closeModal() {
   document.getElementById('confirmModal').classList.remove('active');
 }
@@ -2250,6 +2549,447 @@ updateClock();
 
 document.getElementById('todayDate').textContent =
   new Date().toLocaleDateString('en-GB', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+
+// ═══════════════════════════════════════════
+// HOLIDAY ENGINE
+// ═══════════════════════════════════════════
+
+// UK Bank Holidays 2025-2027
+const UK_BANK_HOLIDAYS = [
+  '2025-01-01','2025-04-18','2025-04-21','2025-05-05','2025-05-26',
+  '2025-08-25','2025-12-25','2025-12-26',
+  '2026-01-01','2026-04-03','2026-04-06','2026-05-04','2026-05-25',
+  '2026-08-31','2026-12-25','2026-12-28',
+  '2027-01-01','2027-03-26','2027-03-29','2027-05-03','2027-05-31',
+  '2027-08-30','2027-12-27','2027-12-28'
+];
+
+const HOLIDAY_YEAR_START = '2026-03-30';
+const DEFAULT_ANNUAL_DAYS = 20;
+let holidayMonthOffset = 0;
+
+function isBankHoliday(dateStr) {
+  return UK_BANK_HOLIDAYS.includes(dateStr);
+}
+
+function isWeekend(dateStr) {
+  const d = new Date(dateStr + 'T12:00:00');
+  return d.getDay() === 0 || d.getDay() === 6;
+}
+
+function countWorkingDays(fromStr, toStr) {
+  let count = 0;
+  const from = new Date(fromStr + 'T12:00:00');
+  const to = new Date(toStr + 'T12:00:00');
+  const cur = new Date(from);
+  while (cur <= to) {
+    const ds = dateStr(cur);
+    if (!isWeekend(ds) && !isBankHoliday(ds)) count++;
+    cur.setDate(cur.getDate() + 1);
+  }
+  return count;
+}
+
+function getHolidayYearStart(forDate) {
+  // Returns the start of the holiday year that contains forDate
+  const base = new Date(HOLIDAY_YEAR_START + 'T00:00:00');
+  const target = new Date((forDate || todayStr()) + 'T00:00:00');
+  let yearStart = new Date(base);
+  while (yearStart <= target) {
+    const next = new Date(yearStart);
+    next.setFullYear(next.getFullYear() + 1);
+    if (next > target) break;
+    yearStart = next;
+  }
+  return dateStr(yearStart);
+}
+
+function calculateHolidayBalance(employeeName) {
+  const emp = (state.timesheetData.employees || []).find(e => e.name === employeeName);
+  if (!emp) return null;
+
+  const yearStart = getHolidayYearStart(todayStr());
+  const yearEnd = new Date(yearStart + 'T00:00:00');
+  yearEnd.setFullYear(yearEnd.getFullYear() + 1);
+  yearEnd.setDate(yearEnd.getDate() - 1);
+  const yearEndStr = dateStr(yearEnd);
+
+  // Pro-rata calculation if employee started after holiday year start
+  let allocation = emp.annualDays || DEFAULT_ANNUAL_DAYS;
+  if (emp.startDate && emp.startDate > yearStart) {
+    const totalDays = countWorkingDays(yearStart, yearEndStr);
+    const remainingDays = countWorkingDays(emp.startDate, yearEndStr);
+    allocation = Math.round((remainingDays / totalDays) * allocation * 2) / 2;
+  }
+
+  const carryover = emp.carryoverDays || 0;
+  const totalAllowance = allocation + carryover;
+
+  // Count approved holidays in this year
+  const approved = (state.timesheetData.holidays || []).filter(h =>
+    h.employeeName === employeeName &&
+    h.status === 'approved' &&
+    h.type === 'paid' &&
+    h.dateFrom >= yearStart && h.dateFrom <= yearEndStr
+  );
+  const usedDays = approved.reduce((s, h) => s + (h.workingDays || countWorkingDays(h.dateFrom, h.dateTo)), 0);
+
+  // Count pending
+  const pending = (state.timesheetData.holidays || []).filter(h =>
+    h.employeeName === employeeName &&
+    h.status === 'pending' &&
+    h.type === 'paid' &&
+    h.dateFrom >= yearStart
+  );
+  const pendingDays = pending.reduce((s, h) => s + (h.workingDays || countWorkingDays(h.dateFrom, h.dateTo)), 0);
+
+  return {
+    allocation,
+    carryover,
+    totalAllowance,
+    usedDays,
+    pendingDays,
+    remainingDays: totalAllowance - usedDays,
+    yearStart,
+    yearEndStr
+  };
+}
+
+// ── Employee holiday request ──
+function renderEmpHolidayBalance(employeeName) {
+  const el = document.getElementById('empHolidayBalance');
+  if (!el) return;
+  const bal = calculateHolidayBalance(employeeName);
+  if (!bal) return;
+
+  el.innerHTML = `
+    <div class="holiday-balance-bar">
+      <div class="hbal-item">
+        <div class="hbal-value" style="color:var(--green)">${bal.remainingDays}</div>
+        <div class="hbal-label">Days Remaining</div>
+      </div>
+      <div class="hbal-item">
+        <div class="hbal-value">${bal.usedDays}</div>
+        <div class="hbal-label">Days Used</div>
+      </div>
+      ${bal.pendingDays > 0 ? `
+      <div class="hbal-item">
+        <div class="hbal-value" style="color:var(--amber)">${bal.pendingDays}</div>
+        <div class="hbal-label">Days Pending</div>
+      </div>` : ''}
+      <div class="hbal-item">
+        <div class="hbal-value" style="color:var(--muted)">${bal.totalAllowance}</div>
+        <div class="hbal-label">Total Allowance</div>
+      </div>
+      ${bal.carryover > 0 ? `
+      <div class="hbal-item">
+        <div class="hbal-value" style="color:var(--accent2)">${bal.carryover}</div>
+        <div class="hbal-label">Carried Over</div>
+      </div>` : ''}
+    </div>
+  `;
+
+  // Show history
+  const history = document.getElementById('empHolidayHistory');
+  if (!history) return;
+  const myHols = (state.timesheetData.holidays || [])
+    .filter(h => h.employeeName === employeeName)
+    .sort((a, b) => b.dateFrom.localeCompare(a.dateFrom));
+
+  if (!myHols.length) {
+    history.innerHTML = '<div style="color:var(--subtle);font-size:12px;text-align:center;padding:8px">No holiday requests yet</div>';
+    return;
+  }
+
+  history.innerHTML = `
+    <div class="section-label" style="margin-bottom:10px">Your Requests</div>
+    ${myHols.map(h => `
+      <div class="holiday-chip">
+        <span class="hdate">${h.dateFrom} → ${h.dateTo}</span>
+        <span class="htype ${h.type}">${h.type === 'paid' ? 'Paid' : h.type === 'unpaid' ? 'Unpaid' : h.type}</span>
+        <span style="flex:1;color:var(--muted);font-size:12px">${h.reason || ''}</span>
+        <span style="font-family:var(--font-mono);font-size:12px">${h.workingDays || 0}d</span>
+        <span class="tag tag-${h.status === 'approved' ? 'approved' : h.status === 'rejected' ? 'rejected' : 'pending'}" style="margin-left:8px">${h.status}</span>
+      </div>
+    `).join('')}
+  `;
+}
+
+async function submitHolidayRequest() {
+  const from = document.getElementById('holFromDate').value;
+  const to = document.getElementById('holToDate').value;
+  const type = document.getElementById('holType').value;
+  const reason = document.getElementById('holReason').value;
+
+  if (!from || !to) { toast('Please select dates', 'error'); return; }
+  if (from > to) { toast('End date must be after start date', 'error'); return; }
+
+  // Check for bank holidays in range
+  const workingDays = countWorkingDays(from, to);
+  if (workingDays === 0) { toast('No working days in selected range', 'error'); return; }
+
+  // Check balance for paid holiday
+  if (type === 'paid') {
+    const bal = calculateHolidayBalance(state.currentEmployee);
+    if (bal && workingDays > bal.remainingDays) {
+      toast(`Only ${bal.remainingDays} days remaining — request is ${workingDays} days`, 'error');
+      return;
+    }
+  }
+
+  const request = {
+    id: Date.now().toString(),
+    employeeName: state.currentEmployee,
+    dateFrom: from,
+    dateTo: to,
+    type,
+    reason,
+    workingDays,
+    status: 'pending',
+    submittedAt: new Date().toISOString()
+  };
+
+  if (!state.timesheetData.holidays) state.timesheetData.holidays = [];
+  state.timesheetData.holidays.push(request);
+
+  try {
+    await saveTimesheetData();
+    // Send email notification
+    await sendHolidayNotificationEmail(request);
+    document.getElementById('holFromDate').value = '';
+    document.getElementById('holToDate').value = '';
+    document.getElementById('holReason').value = '';
+    toast(`Holiday request submitted (${workingDays} working days) ✓`, 'success');
+    renderEmpHolidayBalance(state.currentEmployee);
+  } catch { toast('Submit failed', 'error'); }
+}
+
+async function sendHolidayNotificationEmail(request) {
+  // Uses Microsoft Graph to send email via the logged-in user's account
+  try {
+    const token = await getToken();
+    const emailBody = {
+      message: {
+        subject: `Holiday Request — ${request.employeeName} (${request.dateFrom} to ${request.dateTo})`,
+        body: {
+          contentType: 'HTML',
+          content: `
+            <h2 style="color:#ff6b00;font-family:sans-serif">BAMA Workshop — Holiday Request</h2>
+            <table style="font-family:sans-serif;font-size:14px;border-collapse:collapse">
+              <tr><td style="padding:6px 16px 6px 0;color:#888">Employee</td><td><b>${request.employeeName}</b></td></tr>
+              <tr><td style="padding:6px 16px 6px 0;color:#888">From</td><td>${request.dateFrom}</td></tr>
+              <tr><td style="padding:6px 16px 6px 0;color:#888">To</td><td>${request.dateTo}</td></tr>
+              <tr><td style="padding:6px 16px 6px 0;color:#888">Working Days</td><td><b>${request.workingDays}</b></td></tr>
+              <tr><td style="padding:6px 16px 6px 0;color:#888">Type</td><td>${request.type}</td></tr>
+              <tr><td style="padding:6px 16px 6px 0;color:#888">Reason</td><td>${request.reason || '—'}</td></tr>
+              <tr><td style="padding:6px 16px 6px 0;color:#888">Submitted</td><td>${new Date(request.submittedAt).toLocaleString('en-GB')}</td></tr>
+            </table>
+            <p style="margin-top:20px;font-family:sans-serif;font-size:13px;color:#888">
+              Log in to the BAMA Workshop Timesheet to approve or reject this request.<br>
+              <a href="https://proud-dune-0dee63110.2.azurestaticapps.net" style="color:#ff6b00">Open Timesheet App</a>
+            </p>
+          `
+        },
+        toRecipients: [{ emailAddress: { address: 'daniel@bamafabrication.co.uk' } }]
+      },
+      saveToSentItems: false
+    };
+
+    await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(emailBody)
+    });
+    console.log('Holiday notification email sent');
+  } catch (e) {
+    console.warn('Email notification failed (non-critical):', e.message);
+  }
+}
+
+// ── Manager holiday tab ──
+function renderHolidayTab() {
+  renderHolidayCalendar();
+  renderHolidayRequests();
+  renderHolidayNotificationBanner();
+  renderHolidayEmpFilter();
+}
+
+function renderHolidayNotificationBanner() {
+  const el = document.getElementById('holidayNotificationBanner');
+  if (!el) return;
+  const pending = (state.timesheetData.holidays || []).filter(h => h.status === 'pending');
+  if (!pending.length) { el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <div class="notification-banner" onclick="switchTab('holidays')">
+      <span class="nb-icon">&#127959;</span>
+      <span class="nb-text"><b>${pending.length} holiday request${pending.length > 1 ? 's' : ''}</b> awaiting your approval</span>
+      <span class="nb-count">${pending.length}</span>
+    </div>
+  `;
+}
+
+function renderHolidayEmpFilter() {
+  const sel = document.getElementById('holidayEmpFilter');
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = '<option value="">All Employees</option>';
+  (state.timesheetData.employees || [])
+    .filter(e => e.active !== false)
+    .forEach(e => {
+      const opt = document.createElement('option');
+      opt.value = e.name; opt.textContent = e.name;
+      if (e.name === current) opt.selected = true;
+      sel.appendChild(opt);
+    });
+}
+
+function renderHolidayCalendar() {
+  const grid = document.getElementById('holidayCalGrid');
+  const label = document.getElementById('holidayMonthLabel');
+  if (!grid) return;
+
+  const now = new Date();
+  const displayDate = new Date(now.getFullYear(), now.getMonth() + holidayMonthOffset, 1);
+  const year = displayDate.getFullYear();
+  const month = displayDate.getMonth();
+
+  label.textContent = displayDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+
+  const firstDay = new Date(year, month, 1);
+  const lastDay = new Date(year, month + 1, 0);
+  const startDow = (firstDay.getDay() + 6) % 7; // Mon = 0
+  const empFilter = document.getElementById('holidayEmpFilter')?.value || '';
+
+  const cells = [];
+  // Empty cells before month starts
+  for (let i = 0; i < startDow; i++) cells.push({ empty: true });
+
+  for (let d = 1; d <= lastDay.getDate(); d++) {
+    const dt = new Date(year, month, d);
+    const ds = dateStr(dt);
+    const isToday = ds === todayStr();
+    const isBH = isBankHoliday(ds);
+    const isWE = isWeekend(ds);
+
+    // Find holidays on this day
+    const dayHols = (state.timesheetData.holidays || []).filter(h => {
+      if (empFilter && h.employeeName !== empFilter) return false;
+      return h.dateFrom <= ds && h.dateTo >= ds;
+    });
+
+    const hasApproved = dayHols.some(h => h.status === 'approved');
+    const hasPending = dayHols.some(h => h.status === 'pending');
+    const names = dayHols.map(h => `${h.employeeName.split(' ')[0]} (${h.status})`).join(', ');
+
+    let cls = 'normal';
+    if (isBH) cls = 'bank-holiday';
+    else if (hasApproved) cls = 'approved-holiday';
+    else if (hasPending) cls = 'pending-holiday';
+
+    cells.push({ d, ds, isToday, isBH, isWE, cls, names, dayHols });
+  }
+
+  grid.innerHTML = cells.map(c => {
+    if (c.empty) return `<div class="hcal-day empty"></div>`;
+    return `
+      <div class="hcal-day ${c.cls} ${c.isToday ? 'today' : ''}" title="${c.names || (c.isBH ? 'Bank Holiday' : '')}">
+        <span class="hcal-day-num" style="${c.isWE ? 'color:var(--subtle)' : ''}">${c.d}</span>
+        ${c.names ? `<span class="hcal-day-label">${c.dayHols[0]?.employeeName.split(' ')[0] || ''}</span>` : ''}
+        ${c.isBH ? `<span class="hcal-day-label">BH</span>` : ''}
+      </div>
+    `;
+  }).join('');
+}
+
+function changeHolidayMonth(dir) {
+  holidayMonthOffset += dir;
+  renderHolidayCalendar();
+}
+
+function renderHolidayRequests() {
+  const container = document.getElementById('holidayRequestsList');
+  if (!container) return;
+  const empFilter = document.getElementById('holidayEmpFilter')?.value || '';
+
+  let holidays = (state.timesheetData.holidays || [])
+    .filter(h => !empFilter || h.employeeName === empFilter)
+    .sort((a, b) => b.submittedAt.localeCompare(a.submittedAt));
+
+  if (!holidays.length) {
+    container.innerHTML = '<div class="empty-state" style="padding:24px">No holiday requests yet</div>';
+    return;
+  }
+
+  const pending = holidays.filter(h => h.status === 'pending');
+  const others = holidays.filter(h => h.status !== 'pending');
+
+  const renderGroup = (list, title) => list.length ? `
+    <div class="section-label" style="margin-bottom:10px;margin-top:${title === 'Pending Approval' ? '0' : '20px'}">${title}</div>
+    ${list.map(h => `
+      <div class="holiday-chip" style="flex-wrap:wrap;gap:8px">
+        <span style="font-weight:600;min-width:120px">${h.employeeName}</span>
+        <span class="hdate">${h.dateFrom} → ${h.dateTo}</span>
+        <span class="htype ${h.type}">${h.type === 'paid' ? 'Paid' : h.type === 'unpaid' ? 'Unpaid' : h.type}</span>
+        <span style="font-family:var(--font-mono);font-size:12px;color:var(--accent2)">${h.workingDays}d</span>
+        <span style="color:var(--muted);font-size:12px;flex:1">${h.reason || ''}</span>
+        <span class="tag tag-${h.status === 'approved' ? 'approved' : h.status === 'rejected' ? 'rejected' : 'pending'}">${h.status}</span>
+        ${h.status === 'pending' ? `
+          <div class="approve-row">
+            <button class="tiny-btn tiny-approve" onclick="approveHoliday('${h.id}')">&#10003; Approve</button>
+            <button class="tiny-btn tiny-reject" onclick="rejectHoliday('${h.id}')">&#10005; Reject</button>
+          </div>
+        ` : ''}
+      </div>
+    `).join('')}
+  ` : '';
+
+  container.innerHTML = renderGroup(pending, 'Pending Approval') + renderGroup(others, 'Previous Requests');
+}
+
+async function approveHoliday(id) {
+  const h = (state.timesheetData.holidays || []).find(h => h.id === id);
+  if (!h) return;
+  h.status = 'approved';
+  h.approvedAt = new Date().toISOString();
+  try {
+    await saveTimesheetData();
+    toast(`Holiday approved for ${h.employeeName} ✓`, 'success');
+    renderHolidayTab();
+    renderHolidayNotificationBanner();
+  } catch { toast('Save failed', 'error'); }
+}
+
+async function rejectHoliday(id) {
+  const h = (state.timesheetData.holidays || []).find(h => h.id === id);
+  if (!h) return;
+  h.status = 'rejected';
+  h.rejectedAt = new Date().toISOString();
+  try {
+    await saveTimesheetData();
+    toast(`Holiday rejected`, 'success');
+    renderHolidayTab();
+  } catch { toast('Save failed', 'error'); }
+}
+
+// Show notification banner on manager dashboard load
+function checkHolidayNotifications() {
+  const pending = (state.timesheetData.holidays || []).filter(h => h.status === 'pending');
+  if (!pending.length) return;
+  // Show banner in the By Project tab area too
+  const banner = document.createElement('div');
+  banner.className = 'notification-banner';
+  banner.style.marginBottom = '16px';
+  banner.innerHTML = `
+    <span class="nb-icon">&#127959;</span>
+    <span class="nb-text"><b>${pending.length} holiday request${pending.length > 1 ? 's' : ''}</b> awaiting approval</span>
+    <span class="nb-count">${pending.length}</span>
+  `;
+  banner.onclick = () => switchTab('holidays');
+  const statsRow = document.getElementById('mgrStats');
+  if (statsRow && statsRow.parentNode) {
+    statsRow.parentNode.insertBefore(banner, statsRow);
+  }
+}
 
 // ═══════════════════════════════════════════
 // PAYROLL ENGINE
@@ -2645,7 +3385,22 @@ function renderStaffList() {
               <input type="number" class="field-input" id="edit-rate-${emp.id}" value="${emp.rate||''}"
                 placeholder="Hourly rate (£)" min="0" step="0.50" style="padding:6px 10px;font-size:12px;margin-bottom:6px">
               <input type="password" class="field-input" id="edit-pin-${emp.id}" value="${emp.pin||''}"
-                placeholder="PIN" maxlength="6" style="padding:6px 10px;font-size:12px">
+                placeholder="PIN" maxlength="6" style="padding:6px 10px;font-size:12px;margin-bottom:6px">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px">
+                <div>
+                  <div class="field-label" style="margin-bottom:3px">ANNUAL DAYS</div>
+                  <input type="number" class="field-input" id="edit-days-${emp.id}" value="${emp.annualDays||20}"
+                    min="0" max="365" style="padding:6px 10px;font-size:12px">
+                </div>
+                <div>
+                  <div class="field-label" style="margin-bottom:3px">CARRYOVER</div>
+                  <input type="number" class="field-input" id="edit-carryover-${emp.id}" value="${emp.carryoverDays||0}"
+                    min="0" step="0.5" style="padding:6px 10px;font-size:12px">
+                </div>
+              </div>
+              <div class="field-label" style="margin-bottom:3px">START DATE</div>
+              <input type="date" class="field-input" id="edit-startdate-${emp.id}" value="${emp.startDate||''}"
+                style="padding:6px 10px;font-size:12px">
               <div style="display:flex;gap:6px;margin-top:8px">
                 <button class="tiny-btn tiny-approve" onclick="saveEmployee('${emp.id}')">Save</button>
                 <button class="tiny-btn" style="background:var(--surface);color:var(--muted);border:1px solid var(--border)"
@@ -2656,6 +3411,8 @@ function renderStaffList() {
               <div style="font-size:12px;color:var(--muted);margin-top:2px">${emp.role || 'No role set'}</div>
               <div style="font-size:12px;color:var(--accent2);margin-top:2px;font-family:var(--font-mono)">£${(emp.rate||0).toFixed(2)}/hr</div>
               <div style="font-size:11px;color:var(--subtle);margin-top:2px">${emp.pin ? '&#128274; PIN set' : '&#128275; No PIN'}</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:2px">&#127959; ${emp.annualDays||20}d/yr ${emp.carryoverDays ? '+ '+emp.carryoverDays+'d carry' : ''}</div>
+              ${emp.startDate ? `<div style="font-size:11px;color:var(--subtle);margin-top:2px">Started: ${emp.startDate}</div>` : ''}
               <div style="display:flex;gap:6px;margin-top:8px">
                 <button class="tiny-btn" style="background:var(--surface);color:var(--muted);border:1px solid var(--border)"
                   onclick="editEmployee('${emp.id}')">&#9998; Edit</button>
@@ -2705,12 +3462,22 @@ async function addEmployee() {
   const pinInput2 = document.getElementById('newEmpPin');
   const pin = pinInput2.value.trim();
 
+  const daysInput = document.getElementById('newEmpDays');
+  const carryoverInput = document.getElementById('newEmpCarryover');
+  const startDateInput = document.getElementById('newEmpStartDate');
+  const annualDays = parseInt(daysInput.value) || 20;
+  const carryoverDays = parseFloat(carryoverInput.value) || 0;
+  const startDate = startDateInput.value || '';
+
   state.timesheetData.employees.push({
     id: Date.now().toString(),
     name,
     role,
     rate,
     pin,
+    annualDays,
+    carryoverDays,
+    startDate,
     active: true,
     addedAt: new Date().toISOString()
   });
@@ -2720,6 +3487,9 @@ async function addEmployee() {
   roleInput.value = '';
   rateInput.value = '';
   pinInput2.value = '';
+  daysInput.value = '20';
+  carryoverInput.value = '0';
+  startDateInput.value = '';
   renderStaffList();
   renderHome();
   toast(`${name} added ✓`, 'success');
@@ -2759,10 +3529,16 @@ async function saveEmployee(id) {
 
   const oldName = emp.name;
   const newPin = document.getElementById(`edit-pin-${id}`).value.trim();
+  const newDays = parseInt(document.getElementById(`edit-days-${id}`).value) || 20;
+  const newCarryover = parseFloat(document.getElementById(`edit-carryover-${id}`).value) || 0;
+  const newStartDate = document.getElementById(`edit-startdate-${id}`).value || '';
   emp.name = newName;
   emp.role = newRole;
   emp.rate = newRate;
   emp.pin = newPin;
+  emp.annualDays = newDays;
+  emp.carryoverDays = newCarryover;
+  emp.startDate = newStartDate;
   delete emp.editing;
 
   // Also update any existing entries/clockings with old name
