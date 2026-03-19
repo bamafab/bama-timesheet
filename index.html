@@ -578,6 +578,11 @@
     <div class="employee-grid" id="employeeGrid">
       <div class="empty-state"><div class="spinner"></div><br>Loading employees…</div>
     </div>
+    <div style="margin-top:24px">
+      <button class="btn" onclick="openHolidayKiosk()" style="background:var(--surface);border:2px solid var(--accent);color:var(--accent);padding:16px 32px;font-size:16px;letter-spacing:2px;font-family:var(--font-display);font-size:20px;border-radius:12px;width:100%;max-width:320px">
+        &#127959; REQUEST HOLIDAY
+      </button>
+    </div>
   </div>
 </div>
 
@@ -599,7 +604,7 @@
 
     <!-- ── CLOCK IN/OUT CARD ── -->
     <div class="card" id="clockCard">
-      <div class="card-title"><span class="icon">🕐</span> Shift Times</div>
+      <div class="card-title"><span class="icon" style="filter:brightness(0) invert(1)">🕐</span> Shift Times</div>
       <div class="clock-grid" id="clockInSection">
         <div>
           <div class="field-label">START TIME</div>
@@ -643,39 +648,6 @@
       <div class="week-grid" id="myWeekGrid">
         <div class="empty-state" style="grid-column:span 7;padding:16px"><div class="spinner"></div></div>
       </div>
-    </div>
-
-    <!-- ── HOLIDAY REQUEST CARD ── -->
-    <div class="card" id="holidayRequestCard">
-      <div class="card-title"><span class="icon">&#127959;</span> Holiday</div>
-      <div id="empHolidayBalance" style="margin-bottom:16px"></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
-        <div>
-          <div class="field-label">FROM DATE</div>
-          <input type="date" class="field-input" id="holFromDate">
-        </div>
-        <div>
-          <div class="field-label">TO DATE</div>
-          <input type="date" class="field-input" id="holToDate">
-        </div>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
-        <div>
-          <div class="field-label">TYPE</div>
-          <select class="field-input" id="holType">
-            <option value="paid">Paid Holiday</option>
-            <option value="unpaid">Unpaid Leave</option>
-            <option value="sick">Sick Leave</option>
-            <option value="training">Training</option>
-          </select>
-        </div>
-        <div>
-          <div class="field-label">REASON (optional)</div>
-          <input type="text" class="field-input" id="holReason" placeholder="e.g. Family holiday">
-        </div>
-      </div>
-      <button class="btn btn-primary btn-full" onclick="submitHolidayRequest()">Submit Holiday Request</button>
-      <div id="empHolidayHistory" style="margin-top:16px"></div>
     </div>
 
     <!-- ── TIME ENTRY CARD ── -->
@@ -761,8 +733,11 @@
       <button class="tab active" onclick="switchTab('project')">By Project</button>
       <button class="tab" onclick="switchTab('employee')">By Employee</button>
       <button class="tab" onclick="switchTab('clockinout')">Clock In/Out Log</button>
-      <button class="tab" onclick="switchTab('staff')">👥 Staff</button>
-      <button class="tab" onclick="switchTab('settings')">⚙ Settings</button>
+      <button class="tab" onclick="switchTab('staff')">&#128101; Staff</button>
+      <button class="tab" onclick="switchTab('holidays')">&#127959; Holidays</button>
+      <button class="tab" onclick="switchTab('payroll')">&#163; Payroll</button>
+      <button class="tab" onclick="switchTab('archive')">&#128196; Archive</button>
+      <button class="tab" onclick="switchTab('settings')">&#9881; Settings</button>
     </div>
 
     <!-- Tab: By Project -->
@@ -1020,6 +995,84 @@
 </div>
 
 <!-- ═══════════════════════════════════════
+     HOLIDAY KIOSK MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="holidayKioskModal" style="align-items:flex-start;padding-top:40px;overflow-y:auto">
+  <div class="modal" style="width:560px;max-width:95vw;max-height:85vh;overflow-y:auto">
+
+    <!-- Step 1: Select employee -->
+    <div id="hkStep1">
+      <div class="modal-title">&#127959; Request Holiday</div>
+      <div style="color:var(--muted);font-size:13px;margin-bottom:24px">Select your name to continue</div>
+      <div id="hkEmpGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-bottom:16px"></div>
+      <button class="btn btn-ghost" style="width:100%" onclick="closeHolidayKiosk()">Cancel</button>
+    </div>
+
+    <!-- Step 2: PIN entry -->
+    <div id="hkStep2" style="display:none;text-align:center">
+      <div class="modal-title" id="hkPinName"></div>
+      <div style="color:var(--muted);font-size:13px;margin-bottom:24px">Enter your PIN</div>
+      <input type="password" class="field-input" id="hkPinInput" maxlength="6"
+        placeholder="••••" style="text-align:center;font-size:28px;letter-spacing:10px;margin-bottom:8px"
+        onkeydown="if(event.key==='Enter')checkHKPin()">
+      <div id="hkPinError" style="color:var(--red);font-size:12px;height:16px;margin-bottom:12px"></div>
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-ghost" style="flex:1" onclick="hkBack()">&#8592; Back</button>
+        <button class="btn btn-primary" style="flex:1" onclick="checkHKPin()">Enter</button>
+      </div>
+    </div>
+
+    <!-- Step 3: Holiday form + approved list -->
+    <div id="hkStep3" style="display:none">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+        <button class="back-btn" onclick="hkBack()">&#8592;</button>
+        <div class="modal-title" id="hkEmpName" style="margin-bottom:0"></div>
+      </div>
+
+      <!-- Balance -->
+      <div id="hkBalance" style="margin-bottom:20px"></div>
+
+      <!-- Request form -->
+      <div class="card" style="margin-bottom:16px;padding:18px">
+        <div class="card-title" style="margin-bottom:14px"><span class="icon">&#128197;</span> New Request</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+          <div>
+            <div class="field-label">FROM DATE</div>
+            <input type="date" class="field-input" id="hkFromDate">
+          </div>
+          <div>
+            <div class="field-label">TO DATE</div>
+            <input type="date" class="field-input" id="hkToDate">
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+          <div>
+            <div class="field-label">TYPE</div>
+            <select class="field-input" id="hkType">
+              <option value="paid">Paid Holiday</option>
+              <option value="unpaid">Unpaid Leave</option>
+              <option value="sick">Sick Leave</option>
+              <option value="training">Training</option>
+            </select>
+          </div>
+          <div>
+            <div class="field-label">REASON (optional)</div>
+            <input type="text" class="field-input" id="hkReason" placeholder="e.g. Family holiday">
+          </div>
+        </div>
+        <button class="btn btn-primary btn-full" onclick="submitHKHoliday()">Submit Request</button>
+      </div>
+
+      <!-- Approved holidays table -->
+      <div class="card" style="padding:18px">
+        <div class="card-title" style="margin-bottom:14px"><span class="icon">&#10003;</span> Your Holidays</div>
+        <div id="hkHolidayList"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
      EDIT ENTRY MODAL (Employee)
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="editEntryModal">
@@ -1164,7 +1217,7 @@ const AUTH = {
   clientId: '04b702fd-c53c-4f38-94bc-0334ce91d954',
   tenantId: 'c92626f5-e391-499a-9059-0113bd07da2d',
   redirectUri: 'https://proud-dune-0dee63110.2.azurestaticapps.net',
-  scopes: 'https://graph.microsoft.com/Files.ReadWrite https://graph.microsoft.com/Sites.ReadWrite.All',
+  scopes: 'https://graph.microsoft.com/Files.ReadWrite https://graph.microsoft.com/Sites.ReadWrite.All https://graph.microsoft.com/Mail.Send',
 
   getStoredToken() {
     const token = sessionStorage.getItem('bama_token');
@@ -1814,6 +1867,9 @@ async function doClock(direction) {
       breakMins: 0
     });
 
+    // Check for holiday approval/rejection notifications first
+    checkHolidayClockInNotification(emp);
+
     // Check bank holiday
     if (isBankHoliday(today)) {
       toast(`⚠️ Today is a bank holiday — clocking in anyway`, 'info');
@@ -2270,10 +2326,7 @@ function renderMyWeek(employeeName) {
       c => c.employeeName === employeeName && c.date === dStr
     );
 
-    // Get project entries for this day
-    const dayEntries = state.timesheetData.entries.filter(
-      e => e.employeeName === employeeName && e.date === dStr
-    );
+    // Project entries removed from My Week view per user request
 
     let content = '';
     if (clocking) {
@@ -2296,26 +2349,13 @@ function renderMyWeek(employeeName) {
       content = `<div style="color:var(--subtle);font-size:11px;margin-top:16px">—</div>`;
     }
 
-    // Show project entries below clocking info
-    const entriesHtml = dayEntries.length ? `
-      <div style="margin-top:8px;border-top:1px solid var(--border);padding-top:6px">
-        ${dayEntries.map(e => `
-          <div style="display:flex;align-items:center;gap:4px;margin-bottom:3px">
-            <span style="font-size:10px;color:var(--accent2);font-family:var(--font-mono);flex-shrink:0">${e.projectId}</span>
-            <span style="flex:1;font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e.projectName.length > 12 ? e.projectName.slice(0,12)+'…' : e.projectName}</span>
-            <span style="font-size:10px;font-family:var(--font-mono);color:var(--green)">${e.hours}h</span>
-            ${e.status === 'pending' ? `<button onclick="openEditEntry('${e.id}')" style="background:none;border:none;color:var(--subtle);cursor:pointer;font-size:11px;padding:0" title="Edit">&#9998;</button>` : ''}
-          </div>
-        `).join('')}
-      </div>
-    ` : '';
+    const entriesHtml = ''; // Project entries not shown in My Week
 
     return `
       <div class="week-day ${isToday ? 'today' : ''} ${clocking ? 'has-data' : ''}">
         <div class="week-day-name">${day}</div>
         <div class="week-day-date">${d.getDate()}/${d.getMonth()+1}</div>
         ${content}
-        ${entriesHtml}
       </div>
     `;
   }).join('');
@@ -2462,6 +2502,227 @@ function toast(msg, type = 'info') {
   toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
 }
 
+// ═══════════════════════════════════════════
+// HOLIDAY KIOSK (home screen)
+// ═══════════════════════════════════════════
+let _hkEmployee = null;
+
+function openHolidayKiosk() {
+  const modal = document.getElementById('holidayKioskModal');
+  modal.classList.add('active');
+  renderHKStep1();
+}
+
+function closeHolidayKiosk() {
+  document.getElementById('holidayKioskModal').classList.remove('active');
+  _hkEmployee = null;
+}
+
+function renderHKStep1() {
+  document.getElementById('hkStep1').style.display = '';
+  document.getElementById('hkStep2').style.display = 'none';
+  document.getElementById('hkStep3').style.display = 'none';
+
+  const grid = document.getElementById('hkEmpGrid');
+  const employees = (state.timesheetData.employees || []).filter(e => e.active !== false);
+  grid.innerHTML = employees.map(emp => {
+    const col = ['#ff6b00','#e05d00','#c84b00','#a83e00','#ff8c42','#f07030'][emp.name.charCodeAt(0) % 6];
+    const ini = emp.name.split(' ').map(n => n[0]).join('').slice(0,2).toUpperCase();
+    return `
+      <div class="emp-btn" onclick="hkSelectEmp('${emp.name.replace(/'/g,"\'")}')">
+        <div class="emp-avatar" style="width:44px;height:44px;font-size:18px;background:linear-gradient(135deg,${col},#3e1a00);margin-bottom:8px">${ini}</div>
+        <div class="emp-name" style="font-size:13px">${emp.name}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+function hkSelectEmp(name) {
+  _hkEmployee = name;
+  const emp = (state.timesheetData.employees || []).find(e => e.name === name);
+  if (emp && emp.pin) {
+    document.getElementById('hkStep1').style.display = 'none';
+    document.getElementById('hkStep2').style.display = '';
+    document.getElementById('hkPinName').textContent = name;
+    document.getElementById('hkPinInput').value = '';
+    document.getElementById('hkPinError').textContent = '';
+    setTimeout(() => document.getElementById('hkPinInput').focus(), 100);
+  } else {
+    showHKStep3(name);
+  }
+}
+
+function checkHKPin() {
+  const pin = document.getElementById('hkPinInput').value;
+  const emp = (state.timesheetData.employees || []).find(e => e.name === _hkEmployee);
+  if (emp && pin === emp.pin) {
+    showHKStep3(_hkEmployee);
+  } else {
+    document.getElementById('hkPinError').textContent = 'Incorrect PIN — try again';
+    document.getElementById('hkPinInput').value = '';
+  }
+}
+
+function hkBack() {
+  if (document.getElementById('hkStep2').style.display !== 'none') {
+    document.getElementById('hkStep2').style.display = 'none';
+    document.getElementById('hkStep1').style.display = '';
+  } else if (document.getElementById('hkStep3').style.display !== 'none') {
+    document.getElementById('hkStep3').style.display = 'none';
+    document.getElementById('hkStep1').style.display = '';
+    _hkEmployee = null;
+  }
+}
+
+function showHKStep3(name) {
+  document.getElementById('hkStep1').style.display = 'none';
+  document.getElementById('hkStep2').style.display = 'none';
+  document.getElementById('hkStep3').style.display = '';
+  document.getElementById('hkEmpName').textContent = name;
+
+  // Set default dates
+  const today = todayStr();
+  document.getElementById('hkFromDate').value = today;
+  document.getElementById('hkToDate').value = today;
+  document.getElementById('hkReason').value = '';
+
+  // Render balance
+  const bal = calculateHolidayBalance(name);
+  const balEl = document.getElementById('hkBalance');
+  if (bal) {
+    balEl.innerHTML = `
+      <div class="holiday-balance-bar" style="flex-wrap:wrap">
+        <div class="hbal-item"><div class="hbal-value" style="color:var(--green)">${bal.remainingDays}</div><div class="hbal-label">Remaining</div></div>
+        <div class="hbal-item"><div class="hbal-value">${bal.usedDays}</div><div class="hbal-label">Used</div></div>
+        ${bal.pendingDays > 0 ? `<div class="hbal-item"><div class="hbal-value" style="color:var(--amber)">${bal.pendingDays}</div><div class="hbal-label">Pending</div></div>` : ''}
+        <div class="hbal-item"><div class="hbal-value" style="color:var(--muted)">${bal.totalAllowance}</div><div class="hbal-label">Total</div></div>
+      </div>
+    `;
+  }
+
+  // Render holiday list
+  renderHKHolidayList(name);
+}
+
+function renderHKHolidayList(name) {
+  const el = document.getElementById('hkHolidayList');
+  const hols = (state.timesheetData.holidays || [])
+    .filter(h => h.employeeName === name)
+    .sort((a, b) => b.dateFrom.localeCompare(a.dateFrom));
+
+  if (!hols.length) {
+    el.innerHTML = '<div style="color:var(--subtle);font-size:12px;text-align:center;padding:12px">No holiday requests yet</div>';
+    return;
+  }
+
+  el.innerHTML = `<table class="summary-table" style="font-size:12px">
+    <thead><tr><th>DATES</th><th>TYPE</th><th>DAYS</th><th>REASON</th><th>STATUS</th></tr></thead>
+    <tbody>
+      ${hols.map(h => `
+        <tr>
+          <td class="mono">${h.dateFrom}${h.dateFrom !== h.dateTo ? ' → '+h.dateTo : ''}</td>
+          <td><span class="htype ${h.type}" style="font-size:10px">${h.type}</span></td>
+          <td class="mono">${h.workingDays}d</td>
+          <td style="color:var(--muted)">${h.reason || '—'}</td>
+          <td><span class="tag tag-${h.status === 'approved' ? 'approved' : h.status === 'rejected' ? 'rejected' : 'pending'}" style="font-size:10px">${h.status}</span></td>
+        </tr>
+      `).join('')}
+    </tbody>
+  </table>`;
+}
+
+async function submitHKHoliday() {
+  const from = document.getElementById('hkFromDate').value;
+  const to = document.getElementById('hkToDate').value;
+  const type = document.getElementById('hkType').value;
+  const reason = document.getElementById('hkReason').value;
+
+  if (!from || !to) { toast('Please select dates', 'error'); return; }
+  if (from > to) { toast('End date must be after start date', 'error'); return; }
+
+  const workingDays = countWorkingDays(from, to);
+  if (workingDays === 0) { toast('No working days in selected range', 'error'); return; }
+
+  if (type === 'paid') {
+    const bal = calculateHolidayBalance(_hkEmployee);
+    if (bal && workingDays > bal.remainingDays) {
+      toast(`Only ${bal.remainingDays} days remaining — request is ${workingDays} days`, 'error');
+      return;
+    }
+  }
+
+  const request = {
+    id: Date.now().toString(),
+    employeeName: _hkEmployee,
+    dateFrom: from,
+    dateTo: to,
+    type,
+    reason,
+    workingDays,
+    status: 'pending',
+    submittedAt: new Date().toISOString()
+  };
+
+  if (!state.timesheetData.holidays) state.timesheetData.holidays = [];
+  state.timesheetData.holidays.push(request);
+
+  try {
+    await saveTimesheetData();
+    await sendHolidayNotificationEmail(request);
+    document.getElementById('hkFromDate').value = todayStr();
+    document.getElementById('hkToDate').value = todayStr();
+    document.getElementById('hkReason').value = '';
+    toast(`Holiday request submitted (${workingDays} working days) ✓`, 'success');
+    renderHKHolidayList(_hkEmployee);
+    showHKStep3(_hkEmployee);
+  } catch { toast('Submit failed', 'error'); }
+}
+
+// ── Holiday notification on clock-in ──
+function checkHolidayClockInNotification(employeeName) {
+  // Check for recently approved/rejected holidays (last 7 days)
+  const recentlyActioned = (state.timesheetData.holidays || []).filter(h => {
+    if (h.employeeName !== employeeName) return false;
+    if (!h.approvedAt && !h.rejectedAt) return false;
+    const actionDate = h.approvedAt || h.rejectedAt;
+    const daysSince = (Date.now() - new Date(actionDate).getTime()) / (1000 * 60 * 60 * 24);
+    return daysSince <= 7 && !h.notificationShown;
+  });
+
+  if (!recentlyActioned.length) return;
+
+  // Show notification for each
+  recentlyActioned.forEach(h => {
+    const approved = h.status === 'approved';
+    const msg = approved
+      ? `&#10003; Holiday APPROVED: ${h.dateFrom}${h.dateFrom !== h.dateTo ? ' → ' + h.dateTo : ''} (${h.workingDays} days)`
+      : `&#10005; Holiday DECLINED: ${h.dateFrom}${h.dateFrom !== h.dateTo ? ' → ' + h.dateTo : ''}`;
+    const color = approved ? 'var(--green)' : 'var(--red)';
+
+    // Show a full-screen notification overlay
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:500;display:flex;align-items:center;justify-content:center;`;
+    overlay.innerHTML = `
+      <div style="background:var(--card);border:2px solid ${color};border-radius:16px;padding:40px;text-align:center;max-width:400px;margin:20px">
+        <div style="font-size:48px;margin-bottom:16px">${approved ? '✅' : '❌'}</div>
+        <div style="font-family:var(--font-display);font-size:28px;color:${color};margin-bottom:12px">
+          HOLIDAY ${approved ? 'APPROVED' : 'DECLINED'}
+        </div>
+        <div style="color:var(--muted);font-size:14px;margin-bottom:8px">${h.dateFrom}${h.dateFrom !== h.dateTo ? ' → ' + h.dateTo : ''}</div>
+        <div style="color:var(--text);font-size:16px;margin-bottom:24px">${h.workingDays} working days · ${h.type}</div>
+        <button class="btn btn-primary" style="width:100%" onclick="this.parentElement.parentElement.remove()">OK</button>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    // Mark as shown
+    h.notificationShown = true;
+  });
+
+  // Save the notificationShown flags
+  saveTimesheetData().catch(() => {});
+}
+
 let _editEntryId = null;
 
 function openEditEntry(id) {
@@ -2470,6 +2731,7 @@ function openEditEntry(id) {
   _editEntryId = id;
   document.getElementById('editEntryProject').textContent = `${entry.projectId} — ${entry.projectName}`;
   document.getElementById('editEntryHours').value = entry.hours;
+  document.getElementById('editEntryReason').value = '';
   document.getElementById('editEntryModal').classList.add('active');
 }
 
@@ -2484,12 +2746,15 @@ async function saveEditEntry() {
   if (!entry) return;
 
   const newHours = parseFloat(document.getElementById('editEntryHours').value);
+  const reason = document.getElementById('editEntryReason').value.trim();
   if (!newHours || newHours <= 0) { toast('Please enter valid hours', 'error'); return; }
+  if (!reason) { toast('Please provide a reason for the change', 'error'); document.getElementById('editEntryReason').focus(); return; }
 
   entry.originalHours = entry.originalHours || entry.hours;
   entry.hours = newHours;
   entry.status = 'pending';
   entry.manuallyEdited = true;
+  entry.editReason = reason;
   entry.editedAt = new Date().toISOString();
 
   // Recalculate S000 for this day if clocked
@@ -2800,9 +3065,10 @@ async function sendHolidayNotificationEmail(request) {
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(emailBody)
     });
-    console.log('Holiday notification email sent');
+    console.log('Holiday notification email sent ✓');
   } catch (e) {
-    console.warn('Email notification failed (non-critical):', e.message);
+    console.warn('Email notification failed:', e.message, e);
+    // Non-critical — holiday still saved, just email didn't send
   }
 }
 
