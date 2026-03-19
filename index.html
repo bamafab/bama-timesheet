@@ -558,10 +558,14 @@
     overflow: hidden;
     position: relative;
     min-height: 300px;
-    display: flex; align-items: center; justify-content: center;
+    width: 100%;
+    display: block;
   }
   .drawing-preview-wrap iframe {
-    width: 100%; height: 75vh; min-height: 500px; border: none; display: block;
+    width: 100%; height: 80vh; min-height: 600px; border: none; display: block;
+  }
+  .drawing-preview-placeholder {
+    width: 100%; padding: 40px; text-align: center;
   }
   .drawing-preview-placeholder {
     color: var(--subtle); font-size: 13px; text-align: center; padding: 40px;
@@ -3278,14 +3282,13 @@ function filterClockLog() {
 // DELETE / RE-UPLOAD DRAWING
 // ═══════════════════════════════════════════
 function confirmDeleteDrawing(projectId, drawingId) {
-  const drawing = drawingsData.projects[projectId]?.drawings?.find(d => d.id === drawingId);
-  if (!drawing) return;
+  const drawing = drawingsData?.projects?.[projectId]?.drawings?.find(d => d.id === drawingId);
+  if (!drawing) { toast('Drawing not found', 'error'); return; }
+
   showConfirm(
-    `Delete drawing "${drawing.name}"?`,
-    `This will permanently remove the drawing panel. Notes will NOT be deleted — they will be preserved if you re-upload a replacement.`,
-    async () => {
-      await deleteDrawing(projectId, drawingId);
-    }
+    `Delete "${drawing.name}"?`,
+    `This permanently removes the drawing. Notes are preserved and will reappear if you re-upload a drawing with the same name.`,
+    async () => { await deleteDrawing(projectId, drawingId); }
   );
 }
 
@@ -5016,7 +5019,7 @@ function renderDrawingPanel(drawing, idx, projectId, employees) {
 
         <!-- Notes -->
         <div class="notes-section">
-          <!-- Draftsman notes (red) -->
+          <!-- Draftsman notes (red) — read-only in workshop view, editable in draftsman mode -->
           <div>
             <div class="notes-col-title draftsman">&#9998; Draftsman Notes</div>
             ${draftsmanNotes.map(n => `
@@ -5026,13 +5029,13 @@ function renderDrawingPanel(drawing, idx, projectId, employees) {
               </div>
             `).join('') || `<div style="color:var(--subtle);font-size:12px;padding:8px 0">No draftsman notes yet</div>`}
             ${isDraftsman ? `
-              <div class="add-note-row">
+              <div class="add-note-row" style="margin-top:8px">
                 <input type="text" class="field-input" id="draftsman-note-${drawing.id}"
                   placeholder="Add draftsman note..." style="font-size:12px;padding:7px 10px">
                 <button class="btn btn-primary" style="padding:7px 12px;font-size:12px;white-space:nowrap"
                   onclick="addNote('${projectId}','${drawing.id}','draftsman')">Add</button>
               </div>
-            ` : ''}
+            ` : '<div style="font-size:11px;color:var(--subtle);margin-top:8px;font-style:italic">Draftsman access required to add notes</div>'}
           </div>
 
           <!-- Workshop notes (green) -->
@@ -5210,7 +5213,9 @@ async function loadPDFPreview(drawingId, fileId, driveId) {
     if (outerWrap) outerWrap.dataset.blobUrl = blobUrl;
 
     wrap.innerHTML = `
-      <iframe src="${blobUrl}#toolbar=1&view=FitH" style="width:100%;height:75vh;min-height:600px;border:none;display:block" title="Drawing Preview"></iframe>
+      <iframe src="${blobUrl}#toolbar=1&view=FitH"
+        style="width:100%;height:80vh;min-height:600px;border:none;display:block;position:relative;z-index:1"
+        title="Drawing Preview"></iframe>
     `;
   } catch (e) {
     wrap.innerHTML = `<div class="drawing-preview-placeholder" style="color:var(--red)">
