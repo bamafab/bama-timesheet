@@ -942,6 +942,12 @@
 
     <!-- Tab: By Project -->
     <div class="tab-content active" id="tab-project">
+      <div style="margin-bottom:14px">
+        <input type="text" class="field-input" id="projectSearchBox"
+          placeholder="&#128269; Search by project or employee..."
+          oninput="filterProjectTable()"
+          style="width:100%;max-width:400px;padding:9px 14px;font-size:13px">
+      </div>
       <div class="approval-section">
         <div class="approve-all-bar">
           <span id="pendingCount">0 entries pending approval</span>
@@ -971,13 +977,23 @@
 
     <!-- Tab: By Employee -->
     <div class="tab-content" id="tab-employee">
+      <div style="margin-bottom:14px">
+        <input type="text" class="field-input" id="employeeSearchBox"
+          placeholder="&#128269; Search by employee or project..."
+          oninput="filterEmployeeTable()"
+          style="width:100%;max-width:400px;padding:9px 14px;font-size:13px">
+      </div>
       <div id="empSummaryArea"></div>
     </div>
 
     <!-- Tab: Clock In/Out -->
     <div class="tab-content" id="tab-clockinout">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-        <span style="color:var(--muted);font-size:13px" id="clockLogCount">—</span>
+      <div style="display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap">
+        <input type="text" class="field-input" id="clockSearchBox"
+          placeholder="&#128269; Search employee..."
+          oninput="filterClockLog()"
+          style="width:200px;padding:7px 12px;font-size:13px">
+        <span style="color:var(--muted);font-size:13px;flex:1" id="clockLogCount">—</span>
         <button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="openMgrAddClocking()">+ Add Manual Clocking</button>
       </div>
       <div id="clockLogArea"></div>
@@ -1699,6 +1715,18 @@ async function saveTimesheetData() {
     throw new Error(`Save failed (${res.status}): ${err}`);
   }
   console.log('Saved to SharePoint OK');
+
+  // Auto-backup max once every 5 minutes
+  const now = Date.now();
+  if (!saveTimesheetData._lastBackup || now - saveTimesheetData._lastBackup > 5 * 60 * 1000) {
+    saveTimesheetData._lastBackup = now;
+    const ts = new Date().toISOString().replace(/[:.]/g,'-').slice(0,16);
+    fetch(`https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/012IX7LSOBE5X4IMQJT5A25KEJEMOV2OUR:/timesheet-backup-${ts}.json:/content`, {
+      method: 'PUT',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: json
+    }).then(() => console.log('Backup saved')).catch(e => console.warn('Backup failed (non-critical):', e.message));
+  }
 }
 
 // ═══════════════════════════════════════════
@@ -1760,7 +1788,7 @@ async function loadProjects() {
 
 function parseProjectsFromRange(rows) {
   const projects = [];
-  let idCol = -1, nameCol = -1, statusCol = -1;
+  let idCol = -1, nameCol = -1, statusCol = -1, clientCol = -1;
 
   // Find header row
   for (let r = 0; r < Math.min(rows.length, 10); r++) {
@@ -1768,8 +1796,9 @@ function parseProjectsFromRange(rows) {
     const iIdx = row.findIndex(c => c.includes('project id') || c === 'id');
     const nIdx = row.findIndex(c => c.includes('project name') || c === 'name');
     const sIdx = row.findIndex(c => c === 'status');
+    const cIdx = row.findIndex(c => c.includes('client') || c.includes('customer'));
     if (iIdx >= 0 && nIdx >= 0) {
-      idCol = iIdx; nameCol = nIdx; statusCol = sIdx;
+      idCol = iIdx; nameCol = nIdx; statusCol = sIdx; clientCol = cIdx;
       break;
     }
   }
@@ -1778,22 +1807,23 @@ function parseProjectsFromRange(rows) {
     const id = String(rows[r][idCol >= 0 ? idCol : 0] || '').trim();
     const name = String(rows[r][nameCol >= 0 ? nameCol : 1] || '').trim();
     const status = statusCol >= 0 ? String(rows[r][statusCol] || '').trim() : '';
+    const client = clientCol >= 0 ? String(rows[r][clientCol] || '').trim() : '';
 
     if (!id || !/^S\d{3,}/i.test(id)) continue;
 
-    // Only include "In Progress" projects
     if (status.toLowerCase() === 'in progress') {
-      projects.push({ id, name, status });
+      projects.push({ id, name, status, client });
     }
   }
 
-  // If no In Progress found (e.g. all blank status), fall back to all projects with IDs
+  // If no In Progress found, fall back to all projects with IDs
   if (projects.length === 0) {
     for (let r = 1; r < rows.length; r++) {
       const id = String(rows[r][idCol >= 0 ? idCol : 0] || '').trim();
       const name = String(rows[r][nameCol >= 0 ? nameCol : 1] || '').trim();
+      const client = clientCol >= 0 ? String(rows[r][clientCol] || '').trim() : '';
       if (id && /^S\d{3,}/i.test(id) && name) {
-        projects.push({ id, name, status: 'Unknown' });
+        projects.push({ id, name, status: 'Unknown', client });
       }
     }
   }
@@ -2612,7 +2642,7 @@ function markClockDirty(id) {
   if (totalEl && hrs !== null) totalEl.textContent = hrs.toFixed(2) + 'h';
 }
 
-async function saveClockEdit(id) {
+async async function saveClockEdit(id) {
   const clocking = state.timesheetData.clockings.find(c => c.id === id);
   if (!clocking) return;
 
@@ -2620,11 +2650,12 @@ async function saveClockEdit(id) {
   clocking.clockOut = document.getElementById(`edit-out-${id}`).value;
   clocking.breakMins = parseInt(document.getElementById(`edit-break-${id}`).value) || 0;
   clocking.manuallyEdited = true;
+  clocking.approvalStatus = 'pending'; // Mark as pending after manual edit
 
   try {
     await saveTimesheetData();
     document.getElementById(`save-btn-${id}`).style.display = 'none';
-    toast('Clocking updated ✓', 'success');
+    toast('Clocking updated — pending approval ✓', 'success');
     renderManagerView();
   } catch { toast('Save failed', 'error'); }
 }
@@ -2715,6 +2746,20 @@ function renderMyWeek(employeeName) {
   const dayOfWeek = today.getDay();
   const monday = new Date(today);
   monday.setDate(today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
+
+  // Calculate and display weekly total
+  const monStr = dateStr(monday);
+  const sun = new Date(monday); sun.setDate(monday.getDate() + 6);
+  const sunStr = dateStr(sun);
+  const weekClockings = (state.timesheetData.clockings || []).filter(c =>
+    c.employeeName === employeeName && c.date >= monStr && c.date <= sunStr
+  );
+  const weekTotalHrs = weekClockings.reduce((s, c) => s + (calcHours(c.clockIn, c.clockOut, c.breakMins) || 0), 0);
+  const totalEl = document.getElementById('myWeekTotal');
+  if (totalEl) {
+    totalEl.textContent = weekTotalHrs > 0 ? `${weekTotalHrs.toFixed(1)}h this week` : '';
+    totalEl.style.color = weekTotalHrs >= 40 ? 'var(--green)' : 'var(--accent2)';
+  }
 
   grid.innerHTML = days.map((day, i) => {
     const d = new Date(monday);
@@ -2871,7 +2916,7 @@ function switchTab(name) {
   });
   if (name === 'staff') renderStaffList();
   if (name === 'holidays') setTimeout(() => renderHolidayTab(), 50);
-  if (name === 'payroll') renderPayroll();
+  if (name === 'payroll') { renderPayroll(); checkArchiveReminder(); }
   if (name === 'archive') renderArchive();
   if (name === 'settings') loadEmailSettings();
 }
@@ -3202,6 +3247,106 @@ async function saveEditEntry() {
 
 function closeModal() {
   document.getElementById('confirmModal').classList.remove('active');
+}
+
+function showConfirm(title, message, onConfirm) {
+  const modal = document.getElementById('confirmModal');
+  const titleEl = document.getElementById('confirmTitle');
+  const msgEl = document.getElementById('confirmMessage');
+  const btnEl = document.getElementById('confirmBtn');
+  if (titleEl) titleEl.textContent = title;
+  if (msgEl) msgEl.textContent = message;
+  if (btnEl) {
+    const newBtn = btnEl.cloneNode(true);
+    newBtn.onclick = () => { closeModal(); onConfirm(); };
+    btnEl.parentNode.replaceChild(newBtn, btnEl);
+  }
+  modal.classList.add('active');
+}
+
+// ═══════════════════════════════════════════
+// SEARCH FILTERS
+// ═══════════════════════════════════════════
+function filterProjectTable() {
+  const q = (document.getElementById('projectSearchBox')?.value || '').toLowerCase();
+  document.querySelectorAll('#projectTableBody tr').forEach(row => {
+    row.style.display = !q || row.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+}
+
+function filterEmployeeTable() {
+  const q = (document.getElementById('employeeSearchBox')?.value || '').toLowerCase();
+  document.querySelectorAll('#employeeTableBody tr').forEach(row => {
+    row.style.display = !q || row.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+}
+
+function filterClockLog() {
+  const q = (document.getElementById('clockSearchBox')?.value || '').toLowerCase();
+  document.querySelectorAll('#clockLogArea tr').forEach(row => {
+    if (row.tagName === 'TR' && row.closest('thead')) return;
+    row.style.display = !q || row.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+}
+
+// ═══════════════════════════════════════════
+// DELETE / RE-UPLOAD DRAWING
+// ═══════════════════════════════════════════
+function confirmDeleteDrawing(projectId, drawingId) {
+  const drawing = drawingsData.projects[projectId]?.drawings?.find(d => d.id === drawingId);
+  if (!drawing) return;
+  showConfirm(
+    `Delete drawing "${drawing.name}"?`,
+    `This will permanently remove the drawing panel. Notes will NOT be deleted — they will be preserved if you re-upload a replacement.`,
+    async () => {
+      await deleteDrawing(projectId, drawingId);
+    }
+  );
+}
+
+async function deleteDrawing(projectId, drawingId) {
+  const projData = drawingsData.projects[projectId];
+  if (!projData) return;
+
+  const drawing = projData.drawings.find(d => d.id === drawingId);
+  if (!drawing) return;
+
+  // Remove the drawing but keep notes archived
+  projData.drawings = projData.drawings.filter(d => d.id !== drawingId);
+
+  // Store deleted drawing notes in an archive so re-upload can restore them
+  if (!projData.deletedNotes) projData.deletedNotes = {};
+  if (drawing.notes?.length) {
+    projData.deletedNotes[drawing.name] = drawing.notes;
+  }
+
+  try {
+    setLoading(true);
+    await saveDrawingsData();
+    toast('Drawing removed ✓', 'success');
+    renderDrawings(projectId);
+    renderProjectTiles();
+  } catch (e) {
+    toast('Delete failed: ' + e.message, 'error');
+  } finally { setLoading(false); }
+}
+
+function openReUploadDrawing(projectId, drawingId) {
+  // Open upload modal but pre-fill with existing drawing info
+  const drawing = drawingsData.projects[projectId]?.drawings?.find(d => d.id === drawingId);
+  if (!drawing || !currentProject) return;
+
+  document.getElementById('uploadProjectName').textContent = `${currentProject.id} — ${currentProject.name}`;
+  document.getElementById('drawingNameInput').value = drawing.name;
+  document.getElementById('drawingFolderPath').value = '';
+  document.getElementById('uploadZoneText').textContent = 'Click to select replacement PDF file';
+  document.getElementById('uploadProgress').style.display = 'none';
+  document.getElementById('uploadDraftsmanNote').value = '';
+  draftsmanUploadFile = null;
+
+  // Store the drawing ID being replaced
+  document.getElementById('uploadDrawingModal').dataset.replacingId = drawingId;
+  document.getElementById('uploadDrawingModal').classList.add('active');
 }
 
 // ═══════════════════════════════════════════
@@ -3982,6 +4127,31 @@ function calculatePayroll(employeeName, weekMon, weekSun) {
     doubleTimeApplies,
     dayHours
   };
+}
+
+function checkArchiveReminder() {
+  const today = new Date();
+  const dow = today.getDay(); // 0=Sun, 1=Mon
+  if (dow !== 1) return; // Only show on Monday
+
+  const { mon } = getWeekDates(-1); // Last week's Monday
+  const lastMonStr = dateStr(mon);
+  const alreadyArchived = state.timesheetData.archive && state.timesheetData.archive[`week_${lastMonStr}`];
+  if (alreadyArchived) return;
+
+  // Show reminder
+  const existing = document.getElementById('archiveReminderBanner');
+  if (existing) return;
+  const banner = document.createElement('div');
+  banner.id = 'archiveReminderBanner';
+  banner.style.cssText = 'background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);border-radius:10px;padding:12px 18px;display:flex;align-items:center;gap:12px;margin-bottom:16px;';
+  banner.innerHTML = `
+    <span style="font-size:18px">📁</span>
+    <span style="flex:1;font-size:13px">Last week's timesheet hasn't been archived yet.</span>
+    <button class="btn btn-primary" style="padding:6px 14px;font-size:12px" onclick="changePayrollWeek(-1);archiveWeek()">Archive Last Week</button>
+  `;
+  const payrollTab = document.getElementById('tab-payroll');
+  if (payrollTab) payrollTab.insertBefore(banner, payrollTab.firstChild);
 }
 
 function getDayHoursForEmployee(empName, dateStr) {
@@ -4812,10 +4982,20 @@ function renderDrawingPanel(drawing, idx, projectId, employees) {
               &#10003; Mark Complete
             </button>
           `}
-          ${isDraftsman && !drawing.complete ? `
+          ${isDraftsman ? `
             <button class="btn btn-ghost" style="padding:6px 12px;font-size:12px"
-              onclick="undoDrawingComplete('${projectId}', '${drawing.id}')">
-              Undo
+              onclick="openReUploadDrawing('${projectId}', '${drawing.id}')" title="Replace PDF (notes preserved)">
+              &#8634; Replace
+            </button>
+            ${drawing.complete ? `
+              <button class="btn btn-ghost" style="padding:6px 12px;font-size:12px"
+                onclick="undoDrawingComplete('${projectId}', '${drawing.id}')">
+                Undo
+              </button>
+            ` : ''}
+            <button class="btn" style="padding:6px 12px;font-size:12px;background:rgba(255,68,68,.1);border:1px solid rgba(255,68,68,.3);color:var(--red)"
+              onclick="confirmDeleteDrawing('${projectId}', '${drawing.id}')">
+              &#128465; Delete
             </button>
           ` : ''}
         </div>
@@ -5275,7 +5455,39 @@ async function uploadDrawing() {
         timestamp: new Date().toISOString()
       }] : []
     };
-    drawingsData.projects[projectId].drawings.push(newDrawing);
+    // Check if we're replacing an existing drawing (preserve its notes)
+    const replacingId = document.getElementById('uploadDrawingModal').dataset.replacingId;
+    if (replacingId) {
+      const existingDrawing = drawingsData.projects[projectId].drawings.find(d => d.id === replacingId);
+      if (existingDrawing) {
+        // Preserve existing notes, add any new draftsman note
+        newDrawing.notes = existingDrawing.notes || [];
+        if (draftsmanNoteText) {
+          newDrawing.notes.push({
+            id: Date.now().toString(), type: 'draftsman', author: 'Draftsman',
+            text: draftsmanNoteText, timestamp: new Date().toISOString()
+          });
+        }
+        // Replace the drawing in the array
+        const idx = drawingsData.projects[projectId].drawings.findIndex(d => d.id === replacingId);
+        if (idx >= 0) drawingsData.projects[projectId].drawings[idx] = newDrawing;
+      } else {
+        drawingsData.projects[projectId].drawings.push(newDrawing);
+      }
+      document.getElementById('uploadDrawingModal').dataset.replacingId = '';
+    } else {
+      // Check if deleted notes exist for this drawing name (restore them)
+      const deletedNotes = drawingsData.projects[projectId]?.deletedNotes?.[drawingName];
+      if (deletedNotes?.length) {
+        newDrawing.notes = deletedNotes;
+        if (draftsmanNoteText) newDrawing.notes.push({
+          id: Date.now().toString(), type: 'draftsman', author: 'Draftsman',
+          text: draftsmanNoteText, timestamp: new Date().toISOString()
+        });
+        delete drawingsData.projects[projectId].deletedNotes[drawingName];
+      }
+      drawingsData.projects[projectId].drawings.push(newDrawing);
+    }
     await saveDrawingsData();
 
     document.getElementById('uploadProgressBar').style.width = '100%';
