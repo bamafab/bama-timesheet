@@ -557,11 +557,13 @@
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
 
 <!-- TOP BAR -->
-<div class="topbar">
-  <div class="logo"><span style="color:#D0021B">BAMA</span><span> WORKSHOP</span></div>
+<div class="topbar" style="position:relative">
+  <div class="logo"><span style="color:#D0021B">BAMA</span> <span style="color:#D0021B">FABRICATION</span><span> WORKSHOP</span></div>
+  <div style="position:absolute;left:50%;transform:translateX(-50%);top:50%;transform:translate(-50%,-50%)">
+    <div class="clock-display" id="liveClock" style="font-size:15px;font-weight:700;letter-spacing:.5px">--:-- --</div>
+  </div>
   <div class="topbar-right">
-    <div class="clock-display" id="liveClock">--:-- --</div>
-    <button class="manager-btn" onclick="showManagerAuth()">⚙ Manager</button>
+    <button class="manager-btn" onclick="showManagerAuth()">&#9881; Manager</button>
   </div>
 </div>
 
@@ -584,6 +586,10 @@
       </button>
       <button class="btn" onclick="openOrderForm()" style="background:var(--surface);border:2px solid var(--green);color:var(--green);padding:16px 32px;font-family:var(--font-display);font-size:20px;border-radius:12px;letter-spacing:2px;min-width:240px">
         &#128230; ORDER FORM
+      </button>
+      <button class="btn" disabled style="background:var(--surface);border:2px solid var(--subtle);color:var(--subtle);padding:16px 32px;font-family:var(--font-display);font-size:20px;border-radius:12px;letter-spacing:2px;min-width:240px;cursor:not-allowed;opacity:.5" title="Coming soon">
+        &#128196; VIEW PROJECTS
+        <div style="font-size:10px;letter-spacing:1px;margin-top:4px;font-family:var(--font-body);font-weight:400">COMING SOON</div>
       </button>
     </div>
   </div>
@@ -801,18 +807,7 @@
           <option value="">All Employees</option>
         </select>
       </div>
-      <div class="card" style="margin-bottom:20px">
-        <div class="card-title"><span class="icon">&#128197;</span> Team Holiday Calendar</div>
-        <div class="hcal-header">
-          <div>MON</div><div>TUE</div><div>WED</div><div>THU</div><div>FRI</div><div>SAT</div><div>SUN</div>
-        </div>
-        <div class="holiday-month-grid" id="holidayCalGrid"></div>
-        <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:var(--muted)">
-          <span style="display:flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:3px;background:rgba(62,207,142,.3);display:inline-block"></span>Approved</span>
-          <span style="display:flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:3px;background:rgba(255,107,0,.3);display:inline-block"></span>Pending</span>
-          <span style="display:flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:3px;background:rgba(245,158,11,.3);display:inline-block"></span>Bank Holiday</span>
-        </div>
-      </div>
+
       <div class="card">
         <div class="card-title"><span class="icon">&#128203;</span> Holiday Requests</div>
         <div id="holidayRequestsList"></div>
@@ -1681,10 +1676,14 @@ function renderHome() {
     );
     const initials = name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
     const colors = ['#ff6b00','#e05d00','#c84b00','#a83e00','#ff8c42','#f07030'];
-    const col = colors[name.charCodeAt(0) % colors.length];
+    const col = clocking ? '#3ecf8e' : colors[name.charCodeAt(0) % colors.length];
 
     const div = document.createElement('div');
     div.className = 'emp-btn' + (clocking ? ' clocked-in' : '');
+    if (clocking) {
+      div.style.borderColor = 'var(--green)';
+      div.style.background = 'rgba(62,207,142,.08)';
+    }
     div.innerHTML = `
       <div class="emp-avatar" style="background:linear-gradient(135deg,${col},#3e1a00)">${initials}</div>
       <div class="emp-name">${name}</div>
@@ -1743,6 +1742,14 @@ function openEmployeePanel(name) {
   state.currentEntries = [];
 
   document.getElementById('empPanelName').textContent = name;
+
+  // Set today's date as shift card title
+  const shiftLabel = document.getElementById('shiftDateLabel');
+  if (shiftLabel) {
+    shiftLabel.textContent = new Date().toLocaleDateString('en-GB', {
+      weekday: 'long', day: 'numeric', month: 'long'
+    });
+  }
 
   // Time selects
   fillTimeSelects();
@@ -1969,7 +1976,14 @@ async function doClock(direction) {
     if (!clocking) { toast('Not clocked in', 'error'); return; }
 
     const clockOut = document.getElementById('clockOutTime').value;
-    const breakMins = parseInt(document.getElementById('breakDuration').value) || 0;
+    let breakMins = parseInt(document.getElementById('breakDuration').value) || 0;
+    // Auto-default 30min break for shifts 8 hours or longer
+    if (breakMins === 0) {
+      const [ih, im] = clocking.clockIn.split(':').map(Number);
+      const [oh, om] = clockOut.split(':').map(Number);
+      const shiftHours = (oh * 60 + om - ih * 60 - im) / 60;
+      if (shiftHours >= 8) breakMins = 30;
+    }
 
     clocking.clockOut = clockOut;
     clocking.breakMins = breakMins;
@@ -1994,7 +2008,7 @@ async function doClock(direction) {
         projectName: 'Unproductive Time',
         hours: unproductiveHrs,
         date: today,
-        status: 'pending',
+        status: 'approved',
         autoGenerated: true,
         submittedAt: new Date().toISOString()
       });
@@ -2038,7 +2052,7 @@ async function submitDay() {
       projectName: e.projectName,
       hours: e.hours,
       date: today,
-      status: 'pending',
+      status: 'approved',
       submittedAt: new Date().toISOString()
     });
   });
@@ -2190,8 +2204,13 @@ function renderClockLog(clockings) {
     return;
   }
 
-  // Sort by date then employee
-  const sorted = [...clockings].sort((a, b) => a.date.localeCompare(b.date) || a.employeeName.localeCompare(b.employeeName));
+  // Sort by employee name, then by day of week Mon(0)-Sun(6) within each employee
+  const dayOrder = d => { const dow = new Date(d + 'T12:00:00').getDay(); return dow === 0 ? 6 : dow - 1; };
+  const sorted = [...clockings].sort((a, b) => {
+    const empCmp = a.employeeName.localeCompare(b.employeeName);
+    if (empCmp !== 0) return empCmp;
+    return a.date.localeCompare(b.date); // date sort within employee (Mon-Sun naturally)
+  });
 
   area.innerHTML = `
     <table class="clock-log-table">
