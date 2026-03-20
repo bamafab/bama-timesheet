@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Workshop Timesheet</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <style>
   :root {
     --bg: #0e0e0e;
@@ -938,6 +939,7 @@
       <button class="tab" onclick="switchTab('holidays')"><span style="filter:brightness(0) invert(1)">&#127959;</span> Holidays</button>
       <button class="tab" onclick="switchTab('payroll')">&#163; Payroll</button>
       <button class="tab" onclick="switchTab('archive')">&#128196; Archive</button>
+      <button class="tab" onclick="switchTab('reports')">&#128202; Reports</button>
       <button class="tab" onclick="switchTab('settings')">&#9881; Settings</button>
     </div>
 
@@ -1107,6 +1109,61 @@
       <div id="staffList">
         <div class="empty-state"><div class="spinner"></div></div>
       </div>
+    </div>
+
+    <!-- Tab: Reports -->
+    <div class="tab-content" id="tab-reports">
+
+      <!-- Period selector -->
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:24px;flex-wrap:wrap">
+        <div style="display:flex;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden">
+          <button id="rpt-btn-week" class="btn" onclick="setReportPeriod('week')"
+            style="border-radius:0;border:none;padding:8px 18px;font-size:13px;background:var(--accent);color:#fff">Week</button>
+          <button id="rpt-btn-month" class="btn" onclick="setReportPeriod('month')"
+            style="border-radius:0;border:none;padding:8px 18px;font-size:13px;background:var(--surface);color:var(--muted)">Month</button>
+          <button id="rpt-btn-year" class="btn" onclick="setReportPeriod('year')"
+            style="border-radius:0;border:none;padding:8px 18px;font-size:13px;background:var(--surface);color:var(--muted)">Year</button>
+        </div>
+        <select class="field-input" id="rptEmployeeFilter" onchange="renderReports()"
+          style="width:180px;padding:7px 12px;font-size:13px">
+          <option value="">All Employees</option>
+        </select>
+        <span style="font-size:13px;color:var(--muted)" id="rptRangeLabel"></span>
+      </div>
+
+      <!-- KPI cards row -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:28px" id="rptKpiRow"></div>
+
+      <!-- Line chart: hours over time -->
+      <div class="card" style="margin-bottom:20px;padding:20px">
+        <div class="card-title" style="margin-bottom:4px"><span class="icon">&#128200;</span> Hours Over Time</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Clocked vs Project vs Unproductive — per week</div>
+        <canvas id="rptLineChart" style="width:100%;max-height:280px"></canvas>
+      </div>
+
+      <!-- Two charts side by side -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
+        <!-- Bar chart: hours by employee -->
+        <div class="card" style="padding:20px">
+          <div class="card-title" style="margin-bottom:4px"><span class="icon">&#128101;</span> Hours by Employee</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Total clocked hours per person</div>
+          <canvas id="rptEmpBar" style="width:100%;max-height:220px"></canvas>
+        </div>
+        <!-- Doughnut: project time split -->
+        <div class="card" style="padding:20px">
+          <div class="card-title" style="margin-bottom:4px"><span class="icon">&#127775;</span> Time by Project</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Where hours are being spent</div>
+          <canvas id="rptProjectDoughnut" style="width:100%;max-height:220px"></canvas>
+        </div>
+      </div>
+
+      <!-- Unproductive time bar per employee -->
+      <div class="card" style="padding:20px;margin-bottom:20px">
+        <div class="card-title" style="margin-bottom:4px"><span class="icon">&#9203;</span> Unproductive Time by Employee</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:16px">S000 hours logged per person in selected period</div>
+        <canvas id="rptUnproductiveBar" style="width:100%;max-height:200px"></canvas>
+      </div>
+
     </div>
 
     <!-- Tab: Settings -->
@@ -1988,6 +2045,74 @@ async function writeApprovedToLabourLog(entries) {
 }
 
 // ═══════════════════════════════════════════
+// WRITE UNPRODUCTIVE TIME TO SEPARATE SHEET
+// ═══════════════════════════════════════════
+async function writeUnproductiveTimeLog(entries) {
+  try {
+    const token = await getToken();
+    const baseUrl = `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.projectTrackerItemId}/workbook`;
+    const sheetName = 'Unproductive%20Time';
+
+    // Find first empty row (starting from row 4)
+    const rangeRes = await fetch(
+      `${baseUrl}/worksheets/${sheetName}/range(address='A5:A500')`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    const rangeData = await rangeRes.json();
+    const colA = rangeData.values || [];
+
+    let insertRow = 5;
+    for (let i = 0; i < colA.length; i++) {
+      if (!String(colA[i][0] || '').trim()) {
+        insertRow = 5 + i;
+        break;
+      }
+    }
+
+    // Write each S000 entry
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i];
+      const row = insertRow + i;
+
+      // Get clocked hours for this day
+      const clocking = state.timesheetData.clockings.find(
+        c => c.employeeName === e.employeeName && c.date === e.date && c.clockOut
+      );
+      const clockedHrs = clocking ? (calcHours(clocking.clockIn, clocking.clockOut, clocking.breakMins) || 0) : 0;
+      const projectHrs = clockedHrs - e.hours;
+
+      // Calculate week commencing (Monday)
+      const d = new Date(e.date + 'T12:00:00');
+      const dow = d.getDay();
+      const mon = new Date(d);
+      mon.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1));
+      const weekCommencing = dateStr(mon);
+
+      await fetch(
+        `${baseUrl}/worksheets/${sheetName}/range(address='A${row}:G${row}')`,
+        {
+          method: 'PATCH',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ values: [[
+            e.date,
+            e.employeeName,
+            clockedHrs,
+            parseFloat(projectHrs.toFixed(2)),
+            e.hours,
+            weekCommencing,
+            'Timesheet App'
+          ]] })
+        }
+      );
+    }
+    return true;
+  } catch (e) {
+    console.error('Unproductive time log write failed:', e.message);
+    return false;
+  }
+}
+
+// ═══════════════════════════════════════════
 // WEEK HELPERS
 // ═══════════════════════════════════════════
 function getWeekDates(offset = 0) {
@@ -2033,9 +2158,8 @@ function renderHome() {
     );
     const initials = name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
     const colors = ['#ff6b00','#e05d00','#c84b00','#a83e00','#ff8c42','#f07030'];
-    const col = isOnHoliday ? '#ff69b4' : clocking ? '#3ecf8e' : clockedOutToday ? '#ff4444' : colors[name.charCodeAt(0) % colors.length];
 
-    // Check holiday status
+    // Check holiday status — must be declared before use in col
     const isOnHoliday = (state.timesheetData.holidays || []).some(h =>
       h.employeeName === name && h.status === 'approved' &&
       h.dateFrom <= today && h.dateTo >= today
@@ -2044,6 +2168,8 @@ function renderHome() {
     const clockedOutToday = state.timesheetData.clockings.find(
       c => c.employeeName === name && c.date === today && c.clockOut
     );
+
+    const col = isOnHoliday ? '#ff69b4' : clocking ? '#3ecf8e' : clockedOutToday ? '#ff4444' : colors[name.charCodeAt(0) % colors.length];
 
     const div = document.createElement('div');
     div.className = 'emp-btn' + (clocking ? ' clocked-in' : '');
@@ -2304,12 +2430,21 @@ async function doClock(direction) {
   if (direction === 'in') {
     const clockIn = document.getElementById('clockInTime').value;
 
-    // Check not already clocked in
+    // Block if already clocked in (no clock-out yet)
     const existing = state.timesheetData.clockings.find(
       c => c.employeeName === emp && c.date === today && !c.clockOut
     );
     if (existing) {
       toast(`${emp} is already clocked in today at ${existing.clockIn}`, 'error');
+      return;
+    }
+
+    // Block if already completed a full shift today (clocked in AND out)
+    const completedToday = state.timesheetData.clockings.find(
+      c => c.employeeName === emp && c.date === today && c.clockOut
+    );
+    if (completedToday) {
+      toast(`${emp} has already clocked in and out today (${completedToday.clockIn} – ${completedToday.clockOut})`, 'error');
       return;
     }
 
@@ -2929,9 +3064,21 @@ async function writeToSharePoint() {
     toast('No newly approved entries to sync', 'info'); return;
   }
 
+  // Write S000 unproductive time to separate sheet
+  const s000Entries = state.timesheetData.entries.filter(
+    e => e.status === 'approved' &&
+         e.date >= dateStr(mon) && e.date <= dateStr(sun) &&
+         !e.synced &&
+         e.projectId === 'S000'
+  );
+  if (s000Entries.length) {
+    await writeUnproductiveTimeLog(s000Entries);
+  }
+
   const ok = await writeApprovedToLabourLog(approved);
   if (ok) {
     approved.forEach(e => e.synced = true);
+    s000Entries.forEach(e => e.synced = true);
     await saveTimesheetData();
     toast(`${approved.length} entries written to PROJECT TRACKER ✓`, 'success');
     renderManagerView();
@@ -2945,7 +3092,7 @@ function changeWeek(dir) {
 
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach((t, i) => {
-    const names = ['project', 'employee', 'clockinout', 'staff', 'holidays', 'payroll', 'archive', 'settings'];
+    const names = ['project', 'employee', 'clockinout', 'staff', 'holidays', 'payroll', 'archive', 'reports', 'settings'];
     t.classList.toggle('active', names[i] === name);
   });
   document.querySelectorAll('.tab-content').forEach(tc => {
@@ -2955,6 +3102,7 @@ function switchTab(name) {
   if (name === 'holidays') setTimeout(() => renderHolidayTab(), 50);
   if (name === 'payroll') { renderPayroll(); checkArchiveReminder(); }
   if (name === 'archive') renderArchive();
+  if (name === 'reports') renderReports();
   if (name === 'settings') loadEmailSettings();
 }
 
@@ -4148,6 +4296,256 @@ function calculatePayroll(employeeName, weekMon, weekSun) {
     doubleTimeApplies,
     dayHours
   };
+}
+
+// ═══════════════════════════════════════════
+// REPORTS ENGINE
+// ═══════════════════════════════════════════
+let rptPeriod = 'week';
+let rptCharts = {};
+
+function setReportPeriod(period) {
+  rptPeriod = period;
+  ['week','month','year'].forEach(p => {
+    const btn = document.getElementById(`rpt-btn-${p}`);
+    if (btn) {
+      btn.style.background = p === period ? 'var(--accent)' : 'var(--surface)';
+      btn.style.color = p === period ? '#fff' : 'var(--muted)';
+    }
+  });
+  renderReports();
+}
+
+function getReportDateRange() {
+  const now = new Date();
+  let from, to;
+
+  if (rptPeriod === 'week') {
+    const dow = now.getDay();
+    const mon = new Date(now);
+    mon.setDate(now.getDate() - (dow === 0 ? 6 : dow - 1));
+    mon.setHours(0,0,0,0);
+    from = dateStr(mon);
+    const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+    to = dateStr(sun);
+  } else if (rptPeriod === 'month') {
+    from = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`;
+    const last = new Date(now.getFullYear(), now.getMonth()+1, 0);
+    to = dateStr(last);
+  } else {
+    from = `${now.getFullYear()}-01-01`;
+    to = `${now.getFullYear()}-12-31`;
+  }
+  return { from, to };
+}
+
+function getWeeklyData(empFilter) {
+  // Build week-by-week data from all available data
+  const clockings = (state.timesheetData.clockings || [])
+    .filter(c => !empFilter || c.employeeName === empFilter);
+  const entries = (state.timesheetData.entries || [])
+    .filter(e => !empFilter || e.employeeName === empFilter);
+
+  // Collect all unique weeks
+  const weekMap = {};
+  clockings.forEach(c => {
+    const d = new Date(c.date + 'T12:00:00');
+    const dow = d.getDay();
+    const mon = new Date(d);
+    mon.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1));
+    const wk = dateStr(mon);
+    if (!weekMap[wk]) weekMap[wk] = { label: wk, clocked: 0, project: 0, unproductive: 0 };
+    const hrs = calcHours(c.clockIn, c.clockOut, c.breakMins) || 0;
+    weekMap[wk].clocked = Math.round((weekMap[wk].clocked + hrs) * 10) / 10;
+  });
+  entries.forEach(e => {
+    const d = new Date(e.date + 'T12:00:00');
+    const dow = d.getDay();
+    const mon = new Date(d);
+    mon.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1));
+    const wk = dateStr(mon);
+    if (!weekMap[wk]) return;
+    if (e.projectId === 'S000') weekMap[wk].unproductive = Math.round((weekMap[wk].unproductive + e.hours) * 10) / 10;
+    else weekMap[wk].project = Math.round((weekMap[wk].project + e.hours) * 10) / 10;
+  });
+  return Object.values(weekMap).sort((a,b) => a.label.localeCompare(b.label));
+}
+
+function getPeriodData(empFilter) {
+  const { from, to } = getReportDateRange();
+  const clockings = (state.timesheetData.clockings || [])
+    .filter(c => c.date >= from && c.date <= to && (!empFilter || c.employeeName === empFilter));
+  const entries = (state.timesheetData.entries || [])
+    .filter(e => e.date >= from && e.date <= to && (!empFilter || e.employeeName === empFilter));
+
+  const totalClocked = clockings.reduce((s,c) => s + (calcHours(c.clockIn, c.clockOut, c.breakMins)||0), 0);
+  const totalProject = entries.filter(e => e.projectId !== 'S000').reduce((s,e) => s + e.hours, 0);
+  const totalUnproductive = entries.filter(e => e.projectId === 'S000').reduce((s,e) => s + e.hours, 0);
+  const utilisation = totalClocked > 0 ? Math.round((totalProject / totalClocked) * 100) : 0;
+
+  // By employee
+  const empMap = {};
+  clockings.forEach(c => {
+    if (!empMap[c.employeeName]) empMap[c.employeeName] = { clocked: 0, project: 0, unproductive: 0 };
+    empMap[c.employeeName].clocked = Math.round((empMap[c.employeeName].clocked + (calcHours(c.clockIn, c.clockOut, c.breakMins)||0)) * 10) / 10;
+  });
+  entries.forEach(e => {
+    if (!empMap[e.employeeName]) return;
+    if (e.projectId === 'S000') empMap[e.employeeName].unproductive = Math.round((empMap[e.employeeName].unproductive + e.hours) * 10) / 10;
+    else empMap[e.employeeName].project = Math.round((empMap[e.employeeName].project + e.hours) * 10) / 10;
+  });
+
+  // By project
+  const projMap = {};
+  entries.filter(e => e.projectId !== 'S000').forEach(e => {
+    if (!projMap[e.projectId]) projMap[e.projectId] = { id: e.projectId, name: e.projectName, hours: 0 };
+    projMap[e.projectId].hours = Math.round((projMap[e.projectId].hours + e.hours) * 10) / 10;
+  });
+
+  return { totalClocked, totalProject, totalUnproductive, utilisation, empMap, projMap, from, to };
+}
+
+function renderReports() {
+  const empFilter = document.getElementById('rptEmployeeFilter')?.value || '';
+
+  // Populate employee filter
+  const sel = document.getElementById('rptEmployeeFilter');
+  if (sel && sel.options.length <= 1) {
+    (state.timesheetData.employees || []).filter(e => e.active !== false).forEach(e => {
+      const opt = document.createElement('option');
+      opt.value = e.name; opt.textContent = e.name;
+      sel.appendChild(opt);
+    });
+  }
+
+  const { totalClocked, totalProject, totalUnproductive, utilisation, empMap, projMap, from, to } = getPeriodData(empFilter);
+  const periodLabels = { week: 'This Week', month: 'This Month', year: 'This Year' };
+
+  // Update range label
+  const label = document.getElementById('rptRangeLabel');
+  if (label) label.textContent = `${from} → ${to}`;
+
+  // KPI cards
+  const kpiRow = document.getElementById('rptKpiRow');
+  if (kpiRow) {
+    kpiRow.innerHTML = [
+      { label: 'Total Hours', value: totalClocked.toFixed(1) + 'h', color: 'var(--accent2)' },
+      { label: 'Project Hours', value: totalProject.toFixed(1) + 'h', color: 'var(--green)' },
+      { label: 'Unproductive', value: totalUnproductive.toFixed(1) + 'h', color: 'var(--red)' },
+      { label: 'Utilisation', value: utilisation + '%', color: utilisation >= 80 ? 'var(--green)' : utilisation >= 60 ? 'var(--amber)' : 'var(--red)' },
+    ].map(k => `
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px 18px">
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">${k.label}</div>
+        <div style="font-family:var(--font-display);font-size:30px;color:${k.color}">${k.value}</div>
+        <div style="font-size:10px;color:var(--subtle);margin-top:4px">${periodLabels[rptPeriod]}</div>
+      </div>
+    `).join('');
+  }
+
+  // Destroy old charts
+  Object.values(rptCharts).forEach(c => { try { c.destroy(); } catch {} });
+  rptCharts = {};
+
+  const weeklyData = getWeeklyData(empFilter);
+  const weekLabels = weeklyData.map(w => w.label.slice(5)); // MM-DD
+
+  // ── Line chart: hours over time ──
+  const lineCtx = document.getElementById('rptLineChart');
+  if (lineCtx && weeklyData.length) {
+    rptCharts.line = new Chart(lineCtx, {
+      type: 'line',
+      data: {
+        labels: weekLabels,
+        datasets: [
+          { label: 'Clocked', data: weeklyData.map(w => w.clocked), borderColor: '#ffb347', backgroundColor: 'rgba(255,179,71,.1)', tension: 0.4, fill: true, pointRadius: 4 },
+          { label: 'Project', data: weeklyData.map(w => w.project), borderColor: '#3ecf8e', backgroundColor: 'rgba(62,207,142,.1)', tension: 0.4, fill: true, pointRadius: 4 },
+          { label: 'Unproductive', data: weeklyData.map(w => w.unproductive), borderColor: '#ff4444', backgroundColor: 'rgba(255,68,68,.1)', tension: 0.4, fill: true, pointRadius: 4 },
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: true,
+        plugins: { legend: { labels: { color: '#888', font: { size: 11 } } } },
+        scales: {
+          x: { ticks: { color: '#888', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,.05)' } },
+          y: { ticks: { color: '#888', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,.05)' }, beginAtZero: true }
+        }
+      }
+    });
+  }
+
+  // ── Bar chart: hours by employee ──
+  const empBarCtx = document.getElementById('rptEmpBar');
+  if (empBarCtx) {
+    const empNames = Object.keys(empMap);
+    const colors = ['#ff6b00','#3ecf8e','#6366f1','#ffb347','#ff4444'];
+    rptCharts.empBar = new Chart(empBarCtx, {
+      type: 'bar',
+      data: {
+        labels: empNames.map(n => n.split(' ')[0]),
+        datasets: [
+          { label: 'Clocked', data: empNames.map(n => empMap[n].clocked), backgroundColor: colors.map(c => c + 'cc') },
+          { label: 'Project', data: empNames.map(n => empMap[n].project), backgroundColor: empNames.map(() => 'rgba(62,207,142,.6)') },
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: true,
+        plugins: { legend: { labels: { color: '#888', font: { size: 11 } } } },
+        scales: {
+          x: { ticks: { color: '#888' }, grid: { color: 'rgba(255,255,255,.05)' } },
+          y: { ticks: { color: '#888' }, grid: { color: 'rgba(255,255,255,.05)' }, beginAtZero: true }
+        }
+      }
+    });
+  }
+
+  // ── Doughnut: project split ──
+  const doughCtx = document.getElementById('rptProjectDoughnut');
+  if (doughCtx) {
+    const projects = Object.values(projMap).sort((a,b) => b.hours - a.hours).slice(0,8);
+    const palette = ['#ff6b00','#3ecf8e','#6366f1','#ffb347','#ff4444','#06b6d4','#a855f7','#f59e0b'];
+    rptCharts.dough = new Chart(doughCtx, {
+      type: 'doughnut',
+      data: {
+        labels: projects.map(p => `${p.id}`),
+        datasets: [{ data: projects.map(p => p.hours), backgroundColor: palette, borderWidth: 2, borderColor: '#1e1e1e' }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: true,
+        plugins: {
+          legend: { position: 'right', labels: { color: '#888', font: { size: 10 }, boxWidth: 12 } },
+          tooltip: { callbacks: { label: ctx => ` ${projects[ctx.dataIndex]?.name || ''}: ${ctx.parsed}h` } }
+        }
+      }
+    });
+  }
+
+  // ── Unproductive bar per employee ──
+  const unprodCtx = document.getElementById('rptUnproductiveBar');
+  if (unprodCtx) {
+    const empNames = Object.keys(empMap);
+    rptCharts.unprod = new Chart(unprodCtx, {
+      type: 'bar',
+      data: {
+        labels: empNames,
+        datasets: [{
+          label: 'Unproductive Hours (S000)',
+          data: empNames.map(n => empMap[n].unproductive),
+          backgroundColor: 'rgba(255,68,68,.6)',
+          borderColor: '#ff4444',
+          borderWidth: 1,
+          borderRadius: 4
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: true, indexAxis: 'y',
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: '#888' }, grid: { color: 'rgba(255,255,255,.05)' }, beginAtZero: true },
+          y: { ticks: { color: '#aaa' }, grid: { color: 'rgba(255,255,255,.05)' } }
+        }
+      }
+    });
+  }
 }
 
 function checkArchiveReminder() {
