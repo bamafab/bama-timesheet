@@ -2033,19 +2033,44 @@ function renderHome() {
     );
     const initials = name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
     const colors = ['#ff6b00','#e05d00','#c84b00','#a83e00','#ff8c42','#f07030'];
-    const col = clocking ? '#3ecf8e' : colors[name.charCodeAt(0) % colors.length];
+    const col = isOnHoliday ? '#ff69b4' : clocking ? '#3ecf8e' : clockedOutToday ? '#ff4444' : colors[name.charCodeAt(0) % colors.length];
+
+    // Check holiday status
+    const isOnHoliday = (state.timesheetData.holidays || []).some(h =>
+      h.employeeName === name && h.status === 'approved' &&
+      h.dateFrom <= today && h.dateTo >= today
+    );
+    // Check clocked out today
+    const clockedOutToday = state.timesheetData.clockings.find(
+      c => c.employeeName === name && c.date === today && c.clockOut
+    );
 
     const div = document.createElement('div');
     div.className = 'emp-btn' + (clocking ? ' clocked-in' : '');
-    if (clocking) {
+
+    if (isOnHoliday) {
+      div.style.borderColor = '#ff69b4';
+      div.style.background = 'rgba(255,105,180,.08)';
+    } else if (clocking) {
+      // Currently clocked in — green
       div.style.borderColor = 'var(--green)';
       div.style.background = 'rgba(62,207,142,.08)';
+    } else if (clockedOutToday) {
+      // Clocked out today — red
+      div.style.borderColor = 'var(--red)';
+      div.style.background = 'rgba(255,68,68,.08)';
     }
     div.innerHTML = `
-      <div class="emp-avatar" style="background:linear-gradient(135deg,${col},#3e1a00)">${initials}</div>
+      <div class="emp-avatar" style="background:linear-gradient(135deg,${col},${isOnHoliday?'#8b0057':clockedOutToday?'#7a0000':'#3e1a00'})">${initials}</div>
       <div class="emp-name">${name}</div>
       <div class="emp-status ${clocking ? 'in' : ''}">
-        ${clocking ? `<span class="status-dot"></span>In since ${clocking.clockIn}` : 'Not clocked in'}
+        ${isOnHoliday
+          ? '🌴 On Holiday'
+          : clocking
+          ? `<span class="status-dot"></span>In since ${clocking.clockIn}`
+          : clockedOutToday
+          ? `✓ Clocked out ${clockedOutToday.clockOut}`
+          : 'Not clocked in'}
       </div>
     `;
     div.onclick = () => openEmployee(name);
@@ -2346,6 +2371,7 @@ async function doClock(direction) {
     clocking.breakMins = breakMins;
 
     // Calculate S000 unproductive time
+    const clockIn = clocking.clockIn; // Read from the stored clocking record
     const clockedHrs = calcHours(clockIn, clockOut, breakMins) || 0;
     const totalProjectHrs = state.timesheetData.entries
       .filter(e => e.employeeName === emp && e.date === today && e.projectId !== 'S000')
@@ -2895,7 +2921,8 @@ async function writeToSharePoint() {
   const approved = state.timesheetData.entries.filter(
     e => e.status === 'approved' &&
          e.date >= dateStr(mon) && e.date <= dateStr(sun) &&
-         !e.synced
+         !e.synced &&
+         e.projectId !== 'S000'  // Never write unproductive time to Project Tracker
   );
 
   if (!approved.length) {
