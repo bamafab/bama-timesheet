@@ -798,7 +798,7 @@
     </div>
 
     <!-- ── TIME ENTRY CARD ── -->
-    <div class="card">
+    <div class="card" id="projectTimeCard">
       <div class="card-title"><span class="icon">🔨</span> Log Project Time</div>
       <div class="project-row">
         <div>
@@ -2262,6 +2262,19 @@ function openEmployeePanel(name) {
     });
   }
 
+  // Hide project time card if employee has already clocked out today
+  const projectCard = document.getElementById('projectTimeCard');
+  const alreadyClockedOut = state.timesheetData.clockings.find(
+    c => c.employeeName === name && c.date === todayStr() && c.clockOut
+  );
+  if (projectCard) {
+    if (alreadyClockedOut) {
+      projectCard.style.display = 'none';
+    } else {
+      projectCard.style.display = '';
+    }
+  }
+
   // Time selects
   fillTimeSelects();
 
@@ -2498,9 +2511,17 @@ async function doClock(direction) {
     }
     let breakMins = parseInt(breakVal) || 0;
 
-    // Auto-capture current time as clock out
+    // Auto-capture current time as clock out, rounded to nearest :00 or :30
+    // with 5-minute grace period (e.g. 13:56 → 14:00, 13:54 → 13:30)
     const now = new Date();
-    const clockOut = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+    const rawMins = now.getHours() * 60 + now.getMinutes();
+    const slot = Math.floor(rawMins / 30) * 30; // nearest :00 or :30 slot below
+    const nextSlot = slot + 30;
+    // Round up if within 5 minutes of next slot
+    const roundedMins = (nextSlot - rawMins) <= 5 ? nextSlot : slot;
+    const coH = Math.floor(roundedMins / 60) % 24;
+    const coM = roundedMins % 60;
+    const clockOut = `${String(coH).padStart(2,'0')}:${String(coM).padStart(2,'0')}`;
 
     clocking.clockOut = clockOut;
     clocking.breakMins = breakMins;
