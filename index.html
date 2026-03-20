@@ -764,25 +764,22 @@
         </div>
       </div>
       <div id="clockedInSection" style="display:none">
-        <div class="clock-grid clock-grid3">
+        <div class="clock-grid" style="grid-template-columns:1fr 1fr;gap:12px">
           <div>
             <div class="field-label">CLOCKED IN</div>
             <div class="field-input" id="displayClockIn" style="opacity:.6">—</div>
           </div>
           <div>
-            <div class="field-label">BREAK (optional)</div>
+            <div class="field-label">BREAK <span style="color:var(--red)">*</span></div>
             <select class="field-input" id="breakDuration">
-              <option value="">No break</option>
+              <option value="" disabled selected>Select break...</option>
+              <option value="0">No break taken</option>
               <option value="15">15 min</option>
               <option value="20">20 min</option>
               <option value="30">30 min</option>
               <option value="45">45 min</option>
               <option value="60">60 min</option>
             </select>
-          </div>
-          <div>
-            <div class="field-label">FINISH TIME</div>
-            <select class="field-input" id="clockOutTime"></select>
           </div>
         </div>
         <div class="clock-actions" style="margin-top:10px">
@@ -1537,7 +1534,7 @@ const CONFIG = {
 
   timeSlots: (() => {
     const slots = [];
-    for (let h = 4; h <= 14; h++) {
+    for (let h = 4; h <= 23; h++) {
       for (let m of [0, 30]) {
         const hh = String(h).padStart(2,'0');
         const mm = String(m).padStart(2,'0');
@@ -1946,17 +1943,26 @@ async function writeApprovedToLabourLog(entries) {
     for (let i = 0; i < entries.length; i++) {
       const e = entries[i];
       const row = insertRow + i;
-      const rangeAddr = `A${row}:H${row}`;
+      // Write A-E only (date, projectId, projectName, employeeName, hours)
+      // Columns F (Rate) and G (Cost) are left alone — they have spreadsheet formulas
+      const rangeAddr = `A${row}:E${row}`;
       const rowData = [[
         e.date,
         e.projectId,
         e.projectName,
         e.employeeName,
-        e.hours,
-        '',   // Rate — auto-populated by tracker formula
-        '',   // Cost — auto-populated by tracker formula
-        'Timesheet App'
+        e.hours
       ]];
+
+      // Write notes to column H separately
+      await fetch(
+        `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.projectTrackerItemId}/workbook/worksheets/${sheetName}/range(address='H${row}')`,
+        {
+          method: 'PATCH',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ values: [['Timesheet App']] })
+        }
+      );
 
       await fetch(
         `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.projectTrackerItemId}/workbook/worksheets/${sheetName}/range(address='${rangeAddr}')`,
@@ -2183,25 +2189,23 @@ function updateWorkingTime(clockInStr) {
 }
 
 function fillTimeSelects() {
-  ['clockInTime', 'clockOutTime'].forEach(id => {
-    const sel = document.getElementById(id);
+  // Only fill clockInTime — clockOutTime has been removed (auto-captures on button press)
+  const sel = document.getElementById('clockInTime');
+  if (sel) {
     sel.innerHTML = '';
     CONFIG.timeSlots.forEach(s => {
       const opt = document.createElement('option');
       opt.value = s.val; opt.textContent = s.label;
       sel.appendChild(opt);
     });
-  });
-
-  // Default clock-in to nearest 30 min
-  const now = new Date();
-  const rounded = `${String(now.getHours()).padStart(2,'0')}:${now.getMinutes() < 30 ? '00' : '30'}`;
-  document.getElementById('clockInTime').value = rounded;
-
-  // Default clock-out to now + 30
-  const out = new Date(now.getTime() + 30 * 60000);
-  const outR = `${String(out.getHours()).padStart(2,'0')}:${out.getMinutes() < 30 ? '00' : '30'}`;
-  document.getElementById('clockOutTime').value = outR;
+    // Default to nearest 30 min
+    const now = new Date();
+    const rounded = `${String(now.getHours()).padStart(2,'0')}:${now.getMinutes() < 30 ? '00' : '30'}`;
+    sel.value = rounded;
+  }
+  // Reset break selection
+  const breakSel = document.getElementById('breakDuration');
+  if (breakSel) breakSel.value = '';
 }
 
 function onProjectSelect() {
@@ -2326,15 +2330,17 @@ async function doClock(direction) {
     );
     if (!clocking) { toast('Not clocked in', 'error'); return; }
 
-    const clockOut = document.getElementById('clockOutTime').value;
-    let breakMins = parseInt(document.getElementById('breakDuration').value) || 0;
-    // Auto-default 30min break for shifts 8 hours or longer
-    if (breakMins === 0) {
-      const [ih, im] = clocking.clockIn.split(':').map(Number);
-      const [oh, om] = clockOut.split(':').map(Number);
-      const shiftHours = (oh * 60 + om - ih * 60 - im) / 60;
-      if (shiftHours >= 8) breakMins = 30;
+    // Validate break selection
+    const breakVal = document.getElementById('breakDuration').value;
+    if (breakVal === '' || breakVal === null) {
+      toast('Please select your break duration before clocking out', 'error');
+      return;
     }
+    let breakMins = parseInt(breakVal) || 0;
+
+    // Auto-capture current time as clock out
+    const now = new Date();
+    const clockOut = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
 
     clocking.clockOut = clockOut;
     clocking.breakMins = breakMins;
@@ -2403,7 +2409,7 @@ async function submitDay() {
       projectName: e.projectName,
       hours: e.hours,
       date: today,
-      status: 'approved',
+      status: 'pending',
       submittedAt: new Date().toISOString()
     });
   });
