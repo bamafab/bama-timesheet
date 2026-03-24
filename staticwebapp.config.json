@@ -1,0 +1,11 @@
+{
+  "navigationFallback": {
+    "rewrite": "/timesheet.html"
+  },
+  "routes": [
+    {
+      "route": "/",
+      "rewrite": "/timesheet.html"
+    }
+  ]
+}
