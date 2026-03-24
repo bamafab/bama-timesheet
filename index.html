@@ -1562,6 +1562,41 @@
 </div>
 
 <!-- ═══════════════════════════════════════
+     NO PROJECT HOURS MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="noProjectModal" style="align-items:center;justify-content:center">
+  <div class="modal" style="max-width:440px;width:95vw;text-align:center">
+    <div style="font-size:52px;margin-bottom:12px">⚠️</div>
+    <div class="modal-title" style="font-size:22px;margin-bottom:10px">No Project Hours Logged</div>
+    <div style="color:var(--muted);font-size:14px;line-height:1.7;margin-bottom:24px">
+      You haven't logged any project hours today.<br>
+      Please confirm before clocking out.
+    </div>
+
+    <!-- WGD checkbox option -->
+    <div style="background:var(--surface);border:2px solid var(--border);border-radius:12px;padding:20px;margin-bottom:20px;cursor:pointer;transition:all .2s"
+      id="wgdOptionBox" onclick="toggleWGDOption()">
+      <div style="display:flex;align-items:center;gap:14px">
+        <div id="wgdCheckbox" style="width:28px;height:28px;border-radius:6px;border:2px solid var(--border);background:var(--card);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:18px;transition:all .2s"></div>
+        <div style="text-align:left">
+          <div style="font-size:15px;font-weight:600;color:var(--text)">🔧 Workshop General Duties</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:3px">Tick to log all shift hours as general workshop duties</div>
+        </div>
+      </div>
+    </div>
+
+    <button class="btn btn-primary btn-full" id="noProjectClockOutBtn"
+      onclick="confirmNoProjectClockOut()"
+      style="padding:16px;font-size:16px;opacity:.4;cursor:not-allowed" disabled>
+      Clock Out
+    </button>
+    <button class="btn btn-ghost btn-full" onclick="closeNoProjectModal()" style="margin-top:10px;padding:12px">
+      ← Go Back &amp; Log Hours
+    </button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
      CONFIRM MODAL
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="confirmModal">
@@ -2290,6 +2325,11 @@ function openEmployeePanel(name) {
     const sel = document.getElementById('projectSelect');
     if (sel) {
       sel.innerHTML = '<option value="">Select project…</option>';
+      // Always add Workshop General Duties at the top
+      const wgdOpt = document.createElement('option');
+      wgdOpt.value = 'WGD';
+      wgdOpt.textContent = '🔧 Workshop General Duties';
+      sel.appendChild(wgdOpt);
       state.projects.forEach(p => {
         const opt = document.createElement('option');
         opt.value = p.id;
@@ -2374,7 +2414,9 @@ function fillTimeSelects() {
 
 function onProjectSelect() {
   const id = document.getElementById('projectSelect').value;
-  const p = state.projects.find(x => x.id === id);
+  const p = id === 'WGD'
+    ? { name: 'Workshop General Duties' }
+    : state.projects.find(x => x.id === id);
   document.getElementById('projectNameDisplay').textContent = p ? p.name : '—';
 }
 
@@ -2385,7 +2427,9 @@ function addEntry() {
   if (!projId) { toast('Please select a project', 'error'); return; }
   if (!hours || hours <= 0) { toast('Please enter valid hours', 'error'); return; }
 
-  const proj = state.projects.find(p => p.id === projId);
+  const proj = projId === 'WGD'
+    ? { id: 'WGD', name: 'Workshop General Duties' }
+    : state.projects.find(p => p.id === projId);
   state.currentEntries.push({
     id: Date.now().toString(),
     projectId: projId,
@@ -2523,11 +2567,33 @@ async function doClock(direction) {
     const coM = roundedMins % 60;
     const clockOut = `${String(coH).padStart(2,'0')}:${String(coM).padStart(2,'0')}`;
 
+    // Check if any project hours logged today (excluding S000 and WGD auto entries)
+    const todayProjectHrs = state.timesheetData.entries.filter(
+      e => e.employeeName === emp && e.date === today &&
+           e.projectId !== 'S000' && e.projectId !== 'WGD'
+    );
+    const todayWGDHrs = state.timesheetData.entries.filter(
+      e => e.employeeName === emp && e.date === today && e.projectId === 'WGD'
+    );
+
+    if (todayProjectHrs.length === 0 && todayWGDHrs.length === 0) {
+      // No project hours — show the mandatory prompt
+      _pendingClockOutData = { emp, today, clockOut, breakMins, clocking };
+      document.getElementById('noProjectModal').classList.add('active');
+      return;
+    }
+
+    // Has project hours — proceed directly
+    await finishClockOut({ emp, today, clockOut, breakMins, clocking });
+  }
+}
+
+async function finishClockOut({ emp, today, clockOut, breakMins, clocking }) {
     clocking.clockOut = clockOut;
     clocking.breakMins = breakMins;
 
     // Calculate S000 unproductive time
-    const clockIn = clocking.clockIn; // Read from the stored clocking record
+    const clockIn = clocking.clockIn;
     const clockedHrs = calcHours(clockIn, clockOut, breakMins) || 0;
     const totalProjectHrs = state.timesheetData.entries
       .filter(e => e.employeeName === emp && e.date === today && e.projectId !== 'S000')
@@ -2573,7 +2639,6 @@ async function doClock(direction) {
       console.error('Clock-out save error:', e);
       toast('Warning: saved locally but sync to SharePoint failed. Try again shortly.', 'error');
     }
-  }
 }
 
 async function submitDay() {
@@ -3453,6 +3518,79 @@ async function saveEditEntry() {
 
 function closeModal() {
   document.getElementById('confirmModal').classList.remove('active');
+}
+
+// ── Workshop General Duties / No Project Hours ──
+let _pendingClockOutData = null;
+
+function toggleWGDOption() {
+  const box = document.getElementById('wgdOptionBox');
+  const check = document.getElementById('wgdCheckbox');
+  const btn = document.getElementById('noProjectClockOutBtn');
+  const isChecked = check.textContent === '✓';
+
+  if (isChecked) {
+    check.textContent = '';
+    check.style.background = 'var(--card)';
+    check.style.borderColor = 'var(--border)';
+    box.style.borderColor = 'var(--border)';
+    box.style.background = 'var(--surface)';
+    btn.disabled = true;
+    btn.style.opacity = '.4';
+    btn.style.cursor = 'not-allowed';
+  } else {
+    check.textContent = '✓';
+    check.style.background = 'var(--green)';
+    check.style.borderColor = 'var(--green)';
+    check.style.color = '#fff';
+    box.style.borderColor = 'var(--green)';
+    box.style.background = 'rgba(62,207,142,.06)';
+    btn.disabled = false;
+    btn.style.opacity = '1';
+    btn.style.cursor = 'pointer';
+  }
+}
+
+function closeNoProjectModal() {
+  document.getElementById('noProjectModal').classList.remove('active');
+  _pendingClockOutData = null;
+  // Reset checkbox
+  const check = document.getElementById('wgdCheckbox');
+  const box = document.getElementById('wgdOptionBox');
+  const btn = document.getElementById('noProjectClockOutBtn');
+  check.textContent = '';
+  check.style.background = 'var(--card)';
+  check.style.borderColor = 'var(--border)';
+  box.style.borderColor = 'var(--border)';
+  box.style.background = 'var(--surface)';
+  btn.disabled = true;
+  btn.style.opacity = '.4';
+  btn.style.cursor = 'not-allowed';
+}
+
+async function confirmNoProjectClockOut() {
+  if (!_pendingClockOutData) return;
+  const { emp, today, clockOut, breakMins, clocking } = _pendingClockOutData;
+
+  // Log full shift as WGD
+  const clockedHrs = calcHours(clocking.clockIn, clockOut, breakMins) || 0;
+  if (clockedHrs > 0) {
+    state.timesheetData.entries.push({
+      id: `wgd-${today}-${emp.replace(/\s/g,'')}`,
+      employeeName: emp,
+      projectId: 'WGD',
+      projectName: 'Workshop General Duties',
+      hours: clockedHrs,
+      date: today,
+      status: 'pending',
+      autoGenerated: true,
+      submittedAt: new Date().toISOString()
+    });
+  }
+
+  closeNoProjectModal();
+  // Proceed with clock-out
+  await finishClockOut(_pendingClockOutData);
 }
 
 // ═══════════════════════════════════════════
