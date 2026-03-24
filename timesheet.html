@@ -838,7 +838,11 @@
       <div style="flex:1">
         <div class="panel-name">PROJECTS</div>
       </div>
-      <button class="btn" onclick="openDraftsmanLogin()" style="background:none;border:1px solid rgba(255,107,0,.4);color:var(--accent);padding:8px 16px;font-size:12px;border-radius:8px">
+      <div id="draftsmanBadge" style="display:none;background:rgba(255,107,0,.15);border:1.5px solid var(--accent);border-radius:8px;padding:6px 14px;font-size:13px;font-weight:600;color:var(--accent);display:none;align-items:center;gap:8px">
+        <span style="font-size:16px">&#9998;</span> DRAFTSMAN MODE
+        <button onclick="logoutDraftsman()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px;margin-left:6px;padding:0">Exit</button>
+      </div>
+      <button id="draftsmanLoginBtn" class="btn" onclick="openDraftsmanLogin()" style="background:none;border:1px solid rgba(255,107,0,.4);color:var(--accent);padding:8px 16px;font-size:12px;border-radius:8px">
         &#9998; Draftsman Login
       </button>
     </div>
@@ -991,6 +995,15 @@
 
     <!-- Tab: Clock In/Out -->
     <div class="tab-content" id="tab-clockinout">
+      <!-- Week nav + current/last week indicator -->
+      <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+        <div class="week-nav">
+          <button class="nav-btn" onclick="changeClockLogWeek(-1)">&#8592;</button>
+          <div class="week-label" id="clockLogWeekLabel">—</div>
+          <button class="nav-btn" onclick="changeClockLogWeek(1)">&#8594;</button>
+        </div>
+        <div id="clockLogWeekBadge" style="font-size:12px;font-weight:600;padding:4px 12px;border-radius:20px"></div>
+      </div>
       <div style="display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap">
         <input type="text" class="field-input" id="clockSearchBox"
           placeholder="&#128269; Search employee..."
@@ -2726,7 +2739,8 @@ function renderManagerView() {
   // Project table
   renderProjectTable(weekEntries);
   renderEmpSummary(weekEntries, weekClockings);
-  renderClockLog(weekClockings);
+  // Clock log rendered by its own week navigator
+  renderClockLogForWeek();
 }
 
 function renderProjectTable(entries) {
@@ -3185,6 +3199,7 @@ function switchTab(name) {
     tc.classList.toggle('active', tc.id === `tab-${name}`);
   });
   if (name === 'staff') renderStaffList();
+  if (name === 'clockinout') { clockLogWeekOffset = 0; renderClockLogForWeek(); }
   if (name === 'holidays') setTimeout(() => renderHolidayTab(), 50);
   if (name === 'payroll') { renderPayroll(); checkArchiveReminder(); }
   if (name === 'archive') renderArchive();
@@ -4525,6 +4540,7 @@ function getWeeklyData(empFilter) {
     const wk = dateStr(mon);
     if (!weekMap[wk]) return;
     if (e.projectId === 'S000') weekMap[wk].unproductive = Math.round((weekMap[wk].unproductive + e.hours) * 10) / 10;
+    else if (e.projectId === 'WGD') weekMap[wk].wgd = Math.round(((weekMap[wk].wgd||0) + e.hours) * 10) / 10;
     else weekMap[wk].project = Math.round((weekMap[wk].project + e.hours) * 10) / 10;
   });
   return Object.values(weekMap).sort((a,b) => a.label.localeCompare(b.label));
@@ -4538,30 +4554,32 @@ function getPeriodData(empFilter) {
     .filter(e => e.date >= from && e.date <= to && (!empFilter || e.employeeName === empFilter));
 
   const totalClocked = clockings.reduce((s,c) => s + (calcHours(c.clockIn, c.clockOut, c.breakMins)||0), 0);
-  const totalProject = entries.filter(e => e.projectId !== 'S000').reduce((s,e) => s + e.hours, 0);
+  const totalProject = entries.filter(e => e.projectId !== 'S000' && e.projectId !== 'WGD').reduce((s,e) => s + e.hours, 0);
+  const totalWGD = entries.filter(e => e.projectId === 'WGD').reduce((s,e) => s + e.hours, 0);
   const totalUnproductive = entries.filter(e => e.projectId === 'S000').reduce((s,e) => s + e.hours, 0);
-  const utilisation = totalClocked > 0 ? Math.round((totalProject / totalClocked) * 100) : 0;
+  const utilisation = totalClocked > 0 ? Math.round(((totalProject + totalWGD) / totalClocked) * 100) : 0;
 
   // By employee
   const empMap = {};
   clockings.forEach(c => {
-    if (!empMap[c.employeeName]) empMap[c.employeeName] = { clocked: 0, project: 0, unproductive: 0 };
+    if (!empMap[c.employeeName]) empMap[c.employeeName] = { clocked: 0, project: 0, wgd: 0, unproductive: 0 };
     empMap[c.employeeName].clocked = Math.round((empMap[c.employeeName].clocked + (calcHours(c.clockIn, c.clockOut, c.breakMins)||0)) * 10) / 10;
   });
   entries.forEach(e => {
     if (!empMap[e.employeeName]) return;
     if (e.projectId === 'S000') empMap[e.employeeName].unproductive = Math.round((empMap[e.employeeName].unproductive + e.hours) * 10) / 10;
+    else if (e.projectId === 'WGD') empMap[e.employeeName].wgd = Math.round((empMap[e.employeeName].wgd + e.hours) * 10) / 10;
     else empMap[e.employeeName].project = Math.round((empMap[e.employeeName].project + e.hours) * 10) / 10;
   });
 
-  // By project
+  // By project (exclude S000 and WGD from project doughnut)
   const projMap = {};
-  entries.filter(e => e.projectId !== 'S000').forEach(e => {
+  entries.filter(e => e.projectId !== 'S000' && e.projectId !== 'WGD').forEach(e => {
     if (!projMap[e.projectId]) projMap[e.projectId] = { id: e.projectId, name: e.projectName, hours: 0 };
     projMap[e.projectId].hours = Math.round((projMap[e.projectId].hours + e.hours) * 10) / 10;
   });
 
-  return { totalClocked, totalProject, totalUnproductive, utilisation, empMap, projMap, from, to };
+  return { totalClocked, totalProject, totalWGD, totalUnproductive, utilisation, empMap, projMap, from, to };
 }
 
 function renderReports() {
@@ -4590,6 +4608,7 @@ function renderReports() {
     kpiRow.innerHTML = [
       { label: 'Total Hours', value: totalClocked.toFixed(1) + 'h', color: 'var(--accent2)' },
       { label: 'Project Hours', value: totalProject.toFixed(1) + 'h', color: 'var(--green)' },
+      { label: 'Workshop General', value: totalWGD.toFixed(1) + 'h', color: '#6366f1' },
       { label: 'Unproductive', value: totalUnproductive.toFixed(1) + 'h', color: 'var(--red)' },
       { label: 'Utilisation', value: utilisation + '%', color: utilisation >= 80 ? 'var(--green)' : utilisation >= 60 ? 'var(--amber)' : 'var(--red)' },
     ].map(k => `
@@ -4644,6 +4663,7 @@ function renderReports() {
         datasets: [
           { label: 'Clocked', data: empNames.map(n => empMap[n].clocked), backgroundColor: colors.map(c => c + 'cc') },
           { label: 'Project', data: empNames.map(n => empMap[n].project), backgroundColor: empNames.map(() => 'rgba(62,207,142,.6)') },
+          { label: 'Workshop General', data: empNames.map(n => empMap[n].wgd||0), backgroundColor: empNames.map(() => 'rgba(99,102,241,.6)') },
         ]
       },
       options: {
@@ -4686,14 +4706,24 @@ function renderReports() {
       type: 'bar',
       data: {
         labels: empNames,
-        datasets: [{
-          label: 'Unproductive Hours (S000)',
-          data: empNames.map(n => empMap[n].unproductive),
-          backgroundColor: 'rgba(255,68,68,.6)',
-          borderColor: '#ff4444',
-          borderWidth: 1,
-          borderRadius: 4
-        }]
+        datasets: [
+          {
+            label: 'Unproductive (S000)',
+            data: empNames.map(n => empMap[n].unproductive),
+            backgroundColor: 'rgba(255,68,68,.6)',
+            borderColor: '#ff4444',
+            borderWidth: 1,
+            borderRadius: 4
+          },
+          {
+            label: 'Workshop General Duties',
+            data: empNames.map(n => empMap[n].wgd||0),
+            backgroundColor: 'rgba(99,102,241,.6)',
+            borderColor: '#6366f1',
+            borderWidth: 1,
+            borderRadius: 4
+          }
+        ]
       },
       options: {
         responsive: true, maintainAspectRatio: true, indexAxis: 'y',
@@ -4705,6 +4735,50 @@ function renderReports() {
       }
     });
   }
+}
+
+// ── Clock Log Week Navigation ──
+let clockLogWeekOffset = 0;
+
+function changeClockLogWeek(dir) {
+  clockLogWeekOffset += dir;
+  // Don't allow navigating into the future
+  if (clockLogWeekOffset > 0) { clockLogWeekOffset = 0; return; }
+  if (clockLogWeekOffset < -1) { clockLogWeekOffset = -1; return; }
+  renderClockLogForWeek();
+}
+
+function renderClockLogForWeek() {
+  const { mon, sun } = getWeekDates(clockLogWeekOffset);
+  const monStr = dateStr(mon);
+  const sunStr = dateStr(sun);
+  const thisWeekMon = dateStr(getWeekDates(0).mon);
+
+  // Update week label
+  const label = document.getElementById('clockLogWeekLabel');
+  if (label) label.textContent = `${fmtDate(mon)} – ${fmtDate(sun)}`;
+
+  // Update badge — clear visual distinction between this week and last/previous
+  const badge = document.getElementById('clockLogWeekBadge');
+  if (badge) {
+    if (clockLogWeekOffset === 0) {
+      badge.textContent = 'THIS WEEK';
+      badge.style.background = 'rgba(62,207,142,.15)';
+      badge.style.color = 'var(--green)';
+      badge.style.border = '1px solid rgba(62,207,142,.3)';
+    } else {
+      badge.textContent = 'LAST WEEK — PENDING REVIEW';
+      badge.style.background = 'rgba(245,158,11,.15)';
+      badge.style.color = 'var(--amber)';
+      badge.style.border = '1px solid rgba(245,158,11,.3)';
+    }
+  }
+
+  // Filter clockings for this week
+  const weekClockings = state.timesheetData.clockings.filter(
+    c => c.date >= monStr && c.date <= sunStr
+  );
+  renderClockLog(weekClockings);
 }
 
 function checkArchiveReminder() {
@@ -5894,6 +5968,11 @@ function checkDraftsmanPin() {
     isDraftsman = true;
     closeDraftsmanLogin();
     toast('Draftsman mode activated ✓', 'success');
+    // Show persistent badge, hide login button
+    const badge = document.getElementById('draftsmanBadge');
+    const loginBtn = document.getElementById('draftsmanLoginBtn');
+    if (badge) badge.style.display = 'flex';
+    if (loginBtn) loginBtn.style.display = 'none';
     if (currentProject) {
       document.getElementById('draftsmanBar').style.display = 'flex';
       renderDrawings(currentProject.id);
@@ -5907,6 +5986,11 @@ function checkDraftsmanPin() {
 function logoutDraftsman() {
   isDraftsman = false;
   document.getElementById('draftsmanBar').style.display = 'none';
+  // Hide badge, show login button
+  const badge = document.getElementById('draftsmanBadge');
+  const loginBtn = document.getElementById('draftsmanLoginBtn');
+  if (badge) badge.style.display = 'none';
+  if (loginBtn) loginBtn.style.display = '';
   if (currentProject) renderDrawings(currentProject.id);
   toast('Draftsman mode deactivated', 'info');
 }
