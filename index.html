@@ -774,10 +774,9 @@
             <div class="field-label">BREAK <span style="color:var(--red)">*</span></div>
             <select class="field-input" id="breakDuration">
               <option value="" disabled selected>Select break...</option>
-              <option value="0">No break taken</option>
               <option value="15">15 min</option>
               <option value="20">20 min</option>
-              <option value="30">30 min</option>
+              <option value="30" selected>30 min (standard)</option>
               <option value="45">45 min</option>
               <option value="60">60 min</option>
             </select>
@@ -1043,11 +1042,25 @@
           <div id="holidayGanttWrap" style="display:block;min-height:50px"></div>
         </div>
         <div style="display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap">
-          <button class="nav-btn" onclick="changeHolidayMonth(-3)">&#171; -3m</button>
-          <button class="nav-btn" onclick="changeHolidayMonth(-1)">&#8592;</button>
-          <span style="font-size:12px;color:var(--muted);min-width:160px;text-align:center" id="ganttRangeLabel"></span>
-          <button class="nav-btn" onclick="changeHolidayMonth(1)">&#8594;</button>
-          <button class="nav-btn" onclick="changeHolidayMonth(3)">+3m &#187;</button>
+          <div style="display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:6px 10px">
+            <button onclick="changeHolidayMonth(-3)"
+              style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px;font-family:var(--font-mono);padding:4px 8px;border-radius:6px;transition:all .15s"
+              onmouseover="this.style.background='var(--card)';this.style.color='var(--text)'"
+              onmouseout="this.style.background='none';this.style.color='var(--muted)'">&#171; 3m</button>
+            <button onclick="changeHolidayMonth(-1)"
+              style="background:none;border:none;color:var(--text);cursor:pointer;font-size:16px;padding:4px 10px;border-radius:6px;transition:all .15s"
+              onmouseover="this.style.background='var(--card)'"
+              onmouseout="this.style.background='none'">&#8592;</button>
+            <span style="font-size:13px;color:var(--text);font-weight:600;min-width:180px;text-align:center;font-family:var(--font-mono)" id="ganttRangeLabel"></span>
+            <button onclick="changeHolidayMonth(1)"
+              style="background:none;border:none;color:var(--text);cursor:pointer;font-size:16px;padding:4px 10px;border-radius:6px;transition:all .15s"
+              onmouseover="this.style.background='var(--card)'"
+              onmouseout="this.style.background='none'">&#8594;</button>
+            <button onclick="changeHolidayMonth(3)"
+              style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px;font-family:var(--font-mono);padding:4px 8px;border-radius:6px;transition:all .15s"
+              onmouseover="this.style.background='var(--card)';this.style.color='var(--text)'"
+              onmouseout="this.style.background='none';this.style.color='var(--muted)'">3m &#187;</button>
+          </div>
         </div>
       </div>
             <div class="card">
@@ -1308,14 +1321,11 @@
       </div>
       <div>
         <div class="field-label">BREAK</div>
-        <select class="field-input" id="mgrClockBreak">
-          <option value="">No break</option>
-          <option value="15">15 min</option>
-          <option value="20">20 min</option>
-          <option value="30">30 min</option>
-          <option value="45">45 min</option>
-          <option value="60">60 min</option>
-        </select>
+        <div class="field-input" style="opacity:.7;display:flex;align-items:center;gap:8px">
+          <span>&#9201;</span> 30 minutes (standard)
+        </div>
+        <input type="hidden" id="mgrClockBreak" value="30">
+        <div style="display:none"><select>
       </div>
     </div>
     <div class="modal-actions">
@@ -2566,7 +2576,7 @@ async function doClock(direction) {
       toast('Please select your break duration before clocking out', 'error');
       return;
     }
-    let breakMins = parseInt(breakVal) || 0;
+    let breakMins = parseInt(breakVal) || 30; // Default 30 if somehow empty
 
     // Auto-capture current time as clock out, rounded to nearest :00 or :30
     // with 5-minute grace period (e.g. 13:56 → 14:00, 13:54 → 13:30)
@@ -2581,13 +2591,15 @@ async function doClock(direction) {
     const clockOut = `${String(coH).padStart(2,'0')}:${String(coM).padStart(2,'0')}`;
 
     // Check if any project hours logged today (excluding S000 and WGD auto entries)
-    const todayProjectHrs = state.timesheetData.entries.filter(
-      e => e.employeeName === emp && e.date === today &&
-           e.projectId !== 'S000' && e.projectId !== 'WGD'
-    );
-    const todayWGDHrs = state.timesheetData.entries.filter(
-      e => e.employeeName === emp && e.date === today && e.projectId === 'WGD'
-    );
+    // Check both saved entries AND current (unsaved) entries
+    const todayProjectHrs = [
+      ...state.timesheetData.entries.filter(e => e.employeeName === emp && e.date === today && e.projectId !== 'S000' && e.projectId !== 'WGD'),
+      ...(state.currentEntries || []).filter(e => e.projectId !== 'S000' && e.projectId !== 'WGD')
+    ];
+    const todayWGDHrs = [
+      ...state.timesheetData.entries.filter(e => e.employeeName === emp && e.date === today && e.projectId === 'WGD'),
+      ...(state.currentEntries || []).filter(e => e.projectId === 'WGD')
+    ];
 
     if (todayProjectHrs.length === 0 && todayWGDHrs.length === 0) {
       // No project hours — show the mandatory prompt
@@ -2822,84 +2834,122 @@ function renderClockLog(clockings) {
     return;
   }
 
-  // Sort by employee name, then by day of week Mon(0)-Sun(6) within each employee
-  const dayOrder = d => { const dow = new Date(d + 'T12:00:00').getDay(); return dow === 0 ? 6 : dow - 1; };
-  const sorted = [...clockings].sort((a, b) => {
-    const empCmp = a.employeeName.localeCompare(b.employeeName);
-    if (empCmp !== 0) return empCmp;
-    return a.date.localeCompare(b.date); // date sort within employee (Mon-Sun naturally)
+  // Build week days Mon-Sun based on current clock log week
+  const { mon } = getWeekDates(clockLogWeekOffset);
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(mon);
+    d.setDate(mon.getDate() + i);
+    days.push({ label: ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][i], date: dateStr(d) });
+  }
+
+  // Group clockings by employee
+  const empMap = {};
+  clockings.forEach(c => {
+    if (!empMap[c.employeeName]) empMap[c.employeeName] = {};
+    empMap[c.employeeName][c.date] = c;
   });
 
+  // Apply search filter
+  const q = (document.getElementById('clockSearchBox')?.value || '').toLowerCase();
+  const employees = Object.keys(empMap).filter(n => !q || n.toLowerCase().includes(q)).sort();
+
+  if (!employees.length) {
+    area.innerHTML = '<div class="empty-state">No results found</div>';
+    return;
+  }
+
+  const rows = employees.map(emp => {
+    const dayData = days.map(d => {
+      const c = empMap[emp][d.date];
+      if (!c) return { html: '<td style="text-align:center;color:var(--subtle)">—</td>', hrs: 0 };
+
+      const hrs = calcHours(c.clockIn, c.clockOut, c.breakMins) || 0;
+      const isPending = c.approvalStatus === 'pending' || (!c.approvalStatus && !c.addedByManager);
+      const isEdited = c.manuallyEdited;
+
+      const statusBadge = isPending
+        ? `<div style="margin-top:3px"><span class="tag tag-pending" style="font-size:9px">pending</span>
+           <button class="tiny-btn tiny-approve" onclick="approveClocking('${c.id}')" style="font-size:9px;padding:1px 5px">✓</button>
+           <button class="tiny-btn tiny-reject" onclick="rejectClocking('${c.id}')" style="font-size:9px;padding:1px 5px">✕</button></div>`
+        : c.approvalStatus === 'rejected'
+        ? `<div style="margin-top:3px"><span class="tag tag-rejected" style="font-size:9px">rejected</span></div>`
+        : '';
+
+      const editedBadge = isEdited ? `<span style="color:var(--amber);font-size:9px"> ✎</span>` : '';
+
+      return {
+        html: `<td style="text-align:center;padding:8px 6px;vertical-align:top">
+          <div style="font-family:var(--font-mono);font-size:11px;color:var(--text)">
+            ${c.clockIn || '—'} – ${c.clockOut || '<span style="color:var(--amber)">in</span>'}${editedBadge}
+          </div>
+          <div style="font-size:11px;color:${hrs >= 8 ? 'var(--green)' : 'var(--accent2)'};font-family:var(--font-mono);margin-top:2px">
+            ${hrs > 0 ? hrs.toFixed(1) + 'h' : ''}
+          </div>
+          ${statusBadge}
+          <div style="margin-top:4px">
+            <button class="tiny-btn" onclick="editClockingInline('${c.id}')"
+              style="font-size:9px;padding:1px 6px;background:rgba(255,255,255,.05);border-color:var(--subtle);color:var(--subtle)">edit</button>
+          </div>
+        </td>`,
+        hrs
+      };
+    });
+
+    const totalHrs = dayData.reduce((s, d) => s + d.hrs, 0);
+    const workedDays = dayData.filter(d => d.hrs > 0).length;
+
+    return `
+      <tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:10px 14px;font-weight:600;white-space:nowrap;vertical-align:middle">
+          ${emp}
+          <div style="font-size:11px;color:var(--muted);font-weight:400">${workedDays} day${workedDays !== 1 ? 's' : ''}</div>
+        </td>
+        ${dayData.map(d => d.html).join('')}
+        <td style="text-align:center;padding:10px 8px;vertical-align:middle">
+          <div style="font-family:var(--font-display);font-size:20px;color:${totalHrs >= 40 ? 'var(--green)' : 'var(--accent2)'}">${totalHrs.toFixed(1)}</div>
+          <div style="font-size:10px;color:var(--muted)">hrs</div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  // Day totals footer
+  const dayTotals = days.map((d, i) => {
+    const total = Object.values(empMap).reduce((s, emp) => {
+      const c = emp[d.date];
+      return s + (c ? calcHours(c.clockIn, c.clockOut, c.breakMins) || 0 : 0);
+    }, 0);
+    return `<td style="text-align:center;padding:8px 6px;font-family:var(--font-mono);font-size:12px;font-weight:600;color:var(--muted)">${total > 0 ? total.toFixed(1) + 'h' : '—'}</td>`;
+  }).join('');
+
+  const grandTotal = Object.values(empMap).reduce((s, emp) => {
+    return s + Object.values(emp).reduce((ss, c) => ss + (calcHours(c.clockIn, c.clockOut, c.breakMins) || 0), 0);
+  }, 0);
+
   area.innerHTML = `
-    <table class="clock-log-table">
-      <thead>
-        <tr>
-          <th>Employee</th>
-          <th>Date</th>
-          <th>Clock In</th>
-          <th>Clock Out</th>
-          <th>Break</th>
-          <th>Total</th>
-          <th>Status</th>
-          <th>Save</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${sorted.map(c => {
-          const hrs = calcHours(c.clockIn, c.clockOut, c.breakMins);
-          const totalDisplay = hrs !== null ? hrs.toFixed(2) + 'h' : '—';
-          const isEdited = c.manuallyEdited;
-          const isPending = c.approvalStatus === 'pending' || (!c.approvalStatus && !c.addedByManager);
-          return `
-            <tr id="clock-row-${c.id}">
-              <td style="font-weight:500">${c.employeeName}${c.addedByManager ? '<span class="manually-edited-badge">MANUAL</span>' : ''}</td>
-              <td class="mono" style="font-size:12px">${c.date}</td>
-              <td>
-                <input type="time" class="time-edit-input" id="edit-in-${c.id}" value="${c.clockIn || ''}"
-                  onchange="markClockDirty('${c.id}')">
-              </td>
-              <td>
-                <input type="time" class="time-edit-input" id="edit-out-${c.id}" value="${c.clockOut || ''}"
-                  onchange="markClockDirty('${c.id}')">
-              </td>
-              <td>
-                <select class="time-edit-input" id="edit-break-${c.id}" onchange="markClockDirty('${c.id}')" style="width:70px">
-                  <option value="0" ${!c.breakMins ? 'selected' : ''}>—</option>
-                  <option value="15" ${c.breakMins==15?'selected':''}>15m</option>
-                  <option value="20" ${c.breakMins==20?'selected':''}>20m</option>
-                  <option value="30" ${c.breakMins==30?'selected':''}>30m</option>
-                  <option value="45" ${c.breakMins==45?'selected':''}>45m</option>
-                  <option value="60" ${c.breakMins==60?'selected':''}>60m</option>
-                </select>
-              </td>
-              <td class="mono" style="color:var(--accent2)" id="edit-total-${c.id}">${totalDisplay}</td>
-              <td>
-                ${isEdited && isPending
-                  ? `<span class="tag tag-pending">Pending Edit</span>`
-                  : isEdited
-                  ? `<span class="manually-edited-badge">EDITED</span>`
-                  : isPending
-                  ? `<span class="tag tag-pending">Pending</span>`
-                  : `<span style="color:var(--subtle);font-size:11px">—</span>`
-                }
-                ${isPending ? `
-                  <div style="display:flex;gap:4px;margin-top:4px">
-                    <button class="tiny-btn tiny-approve" onclick="approveClocking('${c.id}')">✓</button>
-                    <button class="tiny-btn tiny-reject" onclick="rejectClocking('${c.id}')">✕</button>
-                  </div>` : ''
-                }
-              </td>
-              <td>
-                <button class="tiny-btn tiny-approve" id="save-btn-${c.id}" onclick="saveClockEdit('${c.id}')"
-                  style="display:none">Save</button>
-              </td>
-            </tr>
-          `;
-        }).join('')}
-      </tbody>
-    </table>
+    <div style="overflow-x:auto">
+      <table class="summary-table" style="min-width:800px;width:100%">
+        <thead>
+          <tr>
+            <th style="text-align:left;min-width:140px">EMPLOYEE</th>
+            ${days.map(d => `<th style="text-align:center;min-width:90px">${d.label}<br><span style="font-weight:400;font-size:9px;color:var(--subtle)">${d.date.slice(5)}</span></th>`).join('')}
+            <th style="text-align:center;min-width:60px">TOTAL</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+        <tfoot>
+          <tr style="border-top:2px solid var(--border)">
+            <td style="padding:8px 14px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Daily Total</td>
+            ${dayTotals}
+            <td style="text-align:center;font-family:var(--font-display);font-size:18px;color:var(--green)">${grandTotal.toFixed(1)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
   `;
 }
+
 
 function markClockDirty(id) {
   const btn = document.getElementById(`save-btn-${id}`);
@@ -4595,7 +4645,7 @@ function renderReports() {
     });
   }
 
-  const { totalClocked, totalProject, totalUnproductive, utilisation, empMap, projMap, from, to } = getPeriodData(empFilter);
+  const { totalClocked, totalProject, totalWGD, totalUnproductive, utilisation, empMap, projMap, from, to } = getPeriodData(empFilter);
   const periodLabels = { week: 'This Week', month: 'This Month', year: 'This Year' };
 
   // Update range label
