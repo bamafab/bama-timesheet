@@ -1240,6 +1240,12 @@
               onchange="saveEmailSettings()">
             <div style="font-size:11px;color:var(--subtle);margin-top:4px">Workshop order requests will be emailed here</div>
           </div>
+          <div>
+            <div class="field-label">DRAFTSMAN EMAIL</div>
+            <input type="email" class="field-input" id="settingDraftsmanEmail" placeholder="e.g. draftsman@company.com"
+              onchange="saveEmailSettings()">
+            <div style="font-size:11px;color:var(--subtle);margin-top:4px">Drawing completion notifications will be sent here</div>
+          </div>
         </div>
         <button class="btn btn-primary" style="margin-top:14px;padding:8px 20px;font-size:13px" onclick="saveEmailSettings()">Save Email Settings</button>
       </div>
@@ -1278,14 +1284,11 @@
       </div>
       <div>
         <div class="field-label">BREAK</div>
-        <select class="field-input" id="addClockBreak">
-          <option value="">No break</option>
-          <option value="15">15 min</option>
-          <option value="20">20 min</option>
-          <option value="30">30 min</option>
-          <option value="45">45 min</option>
-          <option value="60">60 min</option>
-        </select>
+        <div class="field-input" style="opacity:.7;display:flex;align-items:center;gap:8px">
+          <span>&#9201;</span> 30 minutes (standard)
+        </div>
+        <input type="hidden" id="addClockBreak" value="30">
+        <div style="display:none"></select>
       </div>
     </div>
     <div class="modal-actions">
@@ -1563,6 +1566,24 @@
       </div>
     </div>
 
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <div class="field-label">FINISHING REQUIREMENT</div>
+        <select class="field-input" id="uploadFinishing" style="font-size:13px;padding:8px 12px">
+          <option value="none">No finishing required</option>
+          <option value="galvanise">Must be Galvanised</option>
+          <option value="paint">Must be Painted</option>
+        </select>
+      </div>
+      <div>
+        <div class="field-label">TRANSPORT</div>
+        <select class="field-input" id="uploadTransport" style="font-size:13px;padding:8px 12px">
+          <option value="collect">They collect (from us)</option>
+          <option value="deliver">We deliver</option>
+        </select>
+      </div>
+    </div>
+
     <div style="margin-bottom:16px">
       <div class="field-label">DRAFTSMAN NOTE <span style="color:var(--muted);font-weight:400">(optional)</span></div>
       <textarea class="field-input" id="uploadDraftsmanNote" rows="2"
@@ -1615,6 +1636,46 @@
     </button>
     <button class="btn btn-ghost btn-full" onclick="closeNoProjectModal()" style="margin-top:10px;padding:12px">
       ← Go Back &amp; Log Hours
+    </button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     FINISHING ACKNOWLEDGEMENT MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="finishingModal" style="align-items:center;justify-content:center">
+  <div class="modal" style="max-width:460px;width:95vw;text-align:center">
+    <div id="finishingModalIcon" style="font-size:48px;margin-bottom:12px"></div>
+    <div class="modal-title" id="finishingModalTitle" style="font-size:20px;margin-bottom:8px"></div>
+    <div id="finishingModalMessage" style="color:var(--muted);font-size:14px;line-height:1.7;margin-bottom:20px"></div>
+
+    <!-- Transport alert box -->
+    <div id="finishingTransportAlert" style="display:none;border-radius:10px;padding:16px;margin-bottom:20px;text-align:left"></div>
+
+    <!-- Acknowledgement checkbox -->
+    <div style="background:var(--surface);border:2px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px;cursor:pointer;transition:all .2s;text-align:left"
+      id="finishingCheckBox" onclick="toggleFinishingCheck()">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div id="finishingCheckIcon" style="width:26px;height:26px;border-radius:6px;border:2px solid var(--border);background:var(--card);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:16px;transition:all .2s"></div>
+        <div id="finishingCheckLabel" style="font-size:14px;font-weight:600;color:var(--text)"></div>
+      </div>
+    </div>
+
+    <!-- Name selection -->
+    <div style="margin-bottom:20px;text-align:left">
+      <div class="field-label" style="margin-bottom:6px">ACKNOWLEDGED BY</div>
+      <select class="field-input" id="finishingAcknowledgedBy" style="font-size:14px;padding:10px 12px">
+        <option value="">Select your name...</option>
+      </select>
+    </div>
+
+    <button class="btn btn-primary btn-full" id="finishingConfirmBtn"
+      onclick="confirmFinishingComplete()"
+      style="padding:14px;font-size:15px;opacity:.4;cursor:not-allowed" disabled>
+      Confirm &amp; Mark Complete
+    </button>
+    <button class="btn btn-ghost btn-full" onclick="closeFinishingModal()" style="margin-top:10px;padding:12px">
+      Cancel
     </button>
   </div>
 </div>
@@ -3735,6 +3796,8 @@ function openReUploadDrawing(projectId, drawingId) {
   document.getElementById('uploadZoneText').textContent = 'Click to select replacement PDF file';
   document.getElementById('uploadProgress').style.display = 'none';
   document.getElementById('uploadDraftsmanNote').value = '';
+  document.getElementById('uploadFinishing').value = 'none';
+  document.getElementById('uploadTransport').value = 'collect';
   draftsmanUploadFile = null;
 
   // Store the drawing ID being replaced
@@ -3749,8 +3812,10 @@ function loadEmailSettings() {
   const settings = state.timesheetData.settings || {};
   const payEl = document.getElementById('settingPayrollEmail');
   const ordEl = document.getElementById('settingOrderEmail');
+  const draftEl = document.getElementById('settingDraftsmanEmail');
   if (payEl) payEl.value = settings.payrollEmail || '';
   if (ordEl) ordEl.value = settings.orderEmail || 'daniel@bamafabrication.co.uk';
+  if (draftEl) draftEl.value = settings.draftsmanEmail || '';
 }
 
 async function saveEmailSettings() {
@@ -3759,6 +3824,8 @@ async function saveEmailSettings() {
   const ordEl = document.getElementById('settingOrderEmail');
   if (payEl) state.timesheetData.settings.payrollEmail = payEl.value;
   if (ordEl) state.timesheetData.settings.orderEmail = ordEl.value;
+  const draftEl2 = document.getElementById('settingDraftsmanEmail');
+  if (draftEl2) state.timesheetData.settings.draftsmanEmail = draftEl2.value;
   try {
     await saveTimesheetData();
     toast('Email settings saved ✓', 'success');
@@ -5674,8 +5741,24 @@ function renderDrawingPanel(drawing, idx, projectId, employees) {
   return `
     <div class="drawing-panel ${drawing.complete ? 'complete' : ''}" id="drawing-panel-${drawing.id}">
       <div class="drawing-panel-header">
-        <div class="drawing-name">
-          ${drawing.complete ? '&#9989; ' : '&#128196; '}${drawing.name}
+        <div>
+          <div class="drawing-name">
+            ${drawing.complete ? '&#9989; ' : '&#128196; '}${drawing.name}
+          </div>
+          ${drawing.finishing && drawing.finishing !== 'none' ? `
+            <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap">
+              <span style="font-size:11px;padding:2px 8px;border-radius:4px;font-weight:600;
+                background:${drawing.finishing === 'galvanise' ? 'rgba(99,102,241,.2)' : 'rgba(245,158,11,.2)'};
+                color:${drawing.finishing === 'galvanise' ? '#818cf8' : 'var(--amber)'}">
+                ${drawing.finishing === 'galvanise' ? '⚙️ Must be Galvanised' : '🎨 Must be Painted'}
+              </span>
+              <span style="font-size:11px;padding:2px 8px;border-radius:4px;font-weight:600;
+                background:${drawing.transport === 'deliver' ? 'rgba(255,68,68,.15)' : 'rgba(62,207,142,.15)'};
+                color:${drawing.transport === 'deliver' ? 'var(--red)' : 'var(--green)'}">
+                ${drawing.transport === 'deliver' ? '🚚 We deliver' : '📦 They collect'}
+              </span>
+            </div>
+          ` : ''}
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           ${drawing.complete ? `<span class="drawing-complete-badge">&#10003; COMPLETE</span>` : `
@@ -5779,28 +5862,167 @@ function renderDrawingPanel(drawing, idx, projectId, employees) {
 }
 
 // ── Mark drawing complete ──
-async function markDrawingComplete(projectId, drawingId) {
-  if (!drawingsData.projects[projectId]) return;
-  const drawing = drawingsData.projects[projectId].drawings.find(d => d.id === drawingId);
+let _pendingCompleteData = null;
+
+function markDrawingComplete(projectId, drawingId) {
+  const drawing = drawingsData.projects[projectId]?.drawings?.find(d => d.id === drawingId);
+  if (!drawing) return;
+  _pendingCompleteData = { projectId, drawingId };
+  openFinishingModal(drawing, projectId);
+}
+
+function openFinishingModal(drawing, projectId) {
+  const finishing = drawing.finishing || 'none';
+  const transport = drawing.transport || 'collect';
+  const finishingLabel = finishing === 'galvanise' ? 'Galvanising' : finishing === 'paint' ? 'Painting' : 'Completion';
+
+  document.getElementById('finishingModalIcon').textContent = finishing === 'galvanise' ? '⚙️' : finishing === 'paint' ? '🎨' : '✅';
+  document.getElementById('finishingModalTitle').textContent = `Ready for ${finishingLabel}?`;
+  document.getElementById('finishingModalMessage').textContent = finishing !== 'none'
+    ? `Confirm this item is ready for ${finishingLabel.toLowerCase()} before marking complete.`
+    : `Confirm this drawing is complete.`;
+
+  const alertBox = document.getElementById('finishingTransportAlert');
+  if (finishing !== 'none') {
+    alertBox.style.display = 'block';
+    if (transport === 'deliver') {
+      alertBox.style.cssText = 'display:block;background:rgba(255,68,68,.1);border:1px solid rgba(255,68,68,.3);border-radius:10px;padding:14px;margin-bottom:20px;text-align:left';
+      alertBox.innerHTML = `<div style="font-size:14px;margin-bottom:4px">🚚 <b style="color:var(--red)">We must deliver this</b></div><div style="font-size:12px;color:var(--muted)">Please arrange transport to drop off for ${finishingLabel.toLowerCase()}.</div>`;
+    } else {
+      alertBox.style.cssText = 'display:block;background:rgba(62,207,142,.08);border:1px solid rgba(62,207,142,.2);border-radius:10px;padding:14px;margin-bottom:20px;text-align:left';
+      alertBox.innerHTML = `<div style="font-size:14px;margin-bottom:4px">📦 <b style="color:var(--green)">They will collect</b></div><div style="font-size:12px;color:var(--muted)">Pack up, label clearly and get ready for collection.</div>`;
+    }
+  } else {
+    alertBox.style.display = 'none';
+  }
+
+  document.getElementById('finishingCheckLabel').textContent = finishing !== 'none'
+    ? `I confirm this item is ready for ${finishingLabel.toLowerCase()}`
+    : `I confirm this drawing is complete`;
+
+  const icon = document.getElementById('finishingCheckIcon');
+  icon.textContent = '';
+  icon.style.background = 'var(--card)';
+  icon.style.borderColor = 'var(--border)';
+  document.getElementById('finishingCheckBox').style.borderColor = 'var(--border)';
+  const btn = document.getElementById('finishingConfirmBtn');
+  btn.disabled = true; btn.style.opacity = '.4'; btn.style.cursor = 'not-allowed';
+
+  const sel = document.getElementById('finishingAcknowledgedBy');
+  sel.innerHTML = '<option value="">Select your name...</option>';
+  (state.timesheetData.employees || []).filter(e => e.active !== false).forEach(e => {
+    const opt = document.createElement('option');
+    opt.value = e.name; opt.textContent = e.name; sel.appendChild(opt);
+  });
+  sel.onchange = checkFinishingReady;
+
+  document.getElementById('finishingModal').classList.add('active');
+}
+
+function toggleFinishingCheck() {
+  const icon = document.getElementById('finishingCheckIcon');
+  const isChecked = icon.textContent === '✓';
+  if (isChecked) {
+    icon.textContent = ''; icon.style.background = 'var(--card)'; icon.style.borderColor = 'var(--border)';
+    document.getElementById('finishingCheckBox').style.borderColor = 'var(--border)';
+  } else {
+    icon.textContent = '✓'; icon.style.background = 'var(--green)'; icon.style.borderColor = 'var(--green)'; icon.style.color = '#fff';
+    document.getElementById('finishingCheckBox').style.borderColor = 'var(--green)';
+  }
+  checkFinishingReady();
+}
+
+function checkFinishingReady() {
+  const checked = document.getElementById('finishingCheckIcon').textContent === '✓';
+  const name = document.getElementById('finishingAcknowledgedBy').value;
+  const btn = document.getElementById('finishingConfirmBtn');
+  const ready = checked && !!name;
+  btn.disabled = !ready; btn.style.opacity = ready ? '1' : '.4'; btn.style.cursor = ready ? 'pointer' : 'not-allowed';
+}
+
+function closeFinishingModal() {
+  document.getElementById('finishingModal').classList.remove('active');
+  _pendingCompleteData = null;
+}
+
+async function confirmFinishingComplete() {
+  if (!_pendingCompleteData) return;
+  const { projectId, drawingId } = _pendingCompleteData;
+  const acknowledgedBy = document.getElementById('finishingAcknowledgedBy').value;
+  const drawing = drawingsData.projects[projectId]?.drawings?.find(d => d.id === drawingId);
   if (!drawing) return;
 
   drawing.complete = true;
   drawing.completedAt = new Date().toISOString();
-  drawing.completedBy = state.currentEmployee || 'Workshop';
+  drawing.completedBy = acknowledgedBy;
+  drawing.acknowledgedBy = acknowledgedBy;
+  drawing.acknowledgedAt = new Date().toISOString();
+
+  if (!drawing.notes) drawing.notes = [];
+  const finishing = drawing.finishing || 'none';
+  const transport = drawing.transport || 'collect';
+  const finishingLabel = finishing === 'galvanise' ? 'galvanising' : finishing === 'paint' ? 'painting' : 'completion';
+  const transportMsg = finishing !== 'none' ? (transport === 'deliver' ? ` — we will deliver for ${finishingLabel}` : ` — they will collect for ${finishingLabel}`) : '';
+  drawing.notes.push({
+    id: Date.now().toString(), type: 'workshop', author: acknowledgedBy,
+    text: `✅ Marked complete${transportMsg}. Acknowledged by ${acknowledgedBy}.`,
+    timestamp: new Date().toISOString(), isAcknowledgement: true
+  });
 
   try {
     setLoading(true);
     await saveDrawingsData();
-    toast(`Drawing marked complete ✓`, 'success');
+    closeFinishingModal();
+    toast('Drawing marked complete ✓', 'success');
     renderDrawings(projectId);
     renderProjectTiles();
-
-    // Notify draftsman
-    await notifyDrawingComplete(drawing, projectId);
-  } catch (e) {
-    toast('Save failed', 'error');
-  } finally { setLoading(false); }
+    if (finishing !== 'none') {
+      await sendFinishingNotificationEmail(drawing, projectId, acknowledgedBy);
+    } else {
+      await notifyDrawingComplete(drawing, projectId);
+    }
+  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+  finally { setLoading(false); }
 }
+
+async function sendFinishingNotificationEmail(drawing, projectId, acknowledgedBy) {
+  const proj = state.projects.find(p => p.id === projectId);
+  const draftsmanEmail = state.timesheetData.settings?.draftsmanEmail || 'daniel@bamafabrication.co.uk';
+  const finishing = drawing.finishing;
+  const transport = drawing.transport || 'collect';
+  const finishingLabel = finishing === 'galvanise' ? 'Galvanising' : 'Painting';
+  const transportMsg = transport === 'deliver'
+    ? '🚚 <b style="color:#ef4444">We must deliver this item</b> — please arrange transport.'
+    : '📦 <b style="color:#10b981">Item ready for collection</b> — packed and labelled.';
+  try {
+    const token = await getToken();
+    await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: {
+        subject: `Ready for ${finishingLabel} — ${drawing.name} (${projectId})`,
+        body: { contentType: 'HTML', content: `
+          <h2 style="color:#ff6b00;font-family:sans-serif">BAMA FABRICATION</h2>
+          <h3 style="font-family:sans-serif">Drawing Ready for ${finishingLabel}</h3>
+          <table style="font-family:sans-serif;font-size:13px">
+            <tr><td style="padding:6px 16px 6px 0;color:#888">Drawing</td><td><b>${drawing.name}</b></td></tr>
+            <tr><td style="padding:6px 16px 6px 0;color:#888">Project</td><td>${proj?.name || projectId}</td></tr>
+            <tr><td style="padding:6px 16px 6px 0;color:#888">Finishing</td><td><b>${finishingLabel}</b></td></tr>
+            <tr><td style="padding:6px 16px 6px 0;color:#888">Transport</td><td>${transport === 'deliver' ? 'We deliver' : 'They collect'}</td></tr>
+            <tr><td style="padding:6px 16px 6px 0;color:#888">Acknowledged by</td><td>${acknowledgedBy}</td></tr>
+            <tr><td style="padding:6px 16px 6px 0;color:#888">Date/Time</td><td>${new Date().toLocaleString('en-GB')}</td></tr>
+          </table>
+          <p style="margin-top:16px;font-family:sans-serif;font-size:13px;padding:12px;border-radius:8px;background:#f9f9f9">${transportMsg}</p>
+          <p style="font-family:sans-serif;font-size:11px;color:#aaa;margin-top:12px">
+            <a href="https://proud-dune-0dee63110.2.azurestaticapps.net" style="color:#ff6b00">Open BAMA Workshop App</a>
+          </p>
+        `},
+        toRecipients: [{ emailAddress: { address: draftsmanEmail } }]
+      }, saveToSentItems: false })
+    });
+  } catch (e) { console.warn('Finishing email failed:', e.message); }
+}
+
 
 async function undoDrawingComplete(projectId, drawingId) {
   const drawing = drawingsData.projects[projectId]?.drawings?.find(d => d.id === drawingId);
