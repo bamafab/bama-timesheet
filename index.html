@@ -771,15 +771,11 @@
             <div class="field-input" id="displayClockIn" style="opacity:.6">—</div>
           </div>
           <div>
-            <div class="field-label">BREAK <span style="color:var(--red)">*</span></div>
-            <select class="field-input" id="breakDuration">
-              <option value="" disabled selected>Select break...</option>
-              <option value="15">15 min</option>
-              <option value="20">20 min</option>
-              <option value="30" selected>30 min (standard)</option>
-              <option value="45">45 min</option>
-              <option value="60">60 min</option>
-            </select>
+            <div class="field-label">BREAK</div>
+            <div class="field-input" style="opacity:.7;display:flex;align-items:center;gap:8px">
+              <span>&#9201;</span> 30 min (mandatory)
+            </div>
+            <input type="hidden" id="breakDuration" value="30">
           </div>
         </div>
         <div class="clock-actions" style="margin-top:10px">
@@ -1164,7 +1160,7 @@
       <div class="card" style="margin-bottom:20px;padding:20px">
         <div class="card-title" style="margin-bottom:4px"><span class="icon">&#128200;</span> Hours Over Time</div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Clocked vs Project vs Unproductive — per week</div>
-        <canvas id="rptLineChart" style="width:100%;max-height:280px"></canvas>
+        <canvas id="rptLineChart" style="width:100%;height:280px;max-height:280px"></canvas>
       </div>
 
       <!-- Two charts side by side -->
@@ -1173,13 +1169,13 @@
         <div class="card" style="padding:20px">
           <div class="card-title" style="margin-bottom:4px"><span class="icon">&#128101;</span> Hours by Employee</div>
           <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Total clocked hours per person</div>
-          <canvas id="rptEmpBar" style="width:100%;max-height:220px"></canvas>
+          <canvas id="rptEmpBar" style="width:100%;height:220px;max-height:220px"></canvas>
         </div>
         <!-- Doughnut: project time split -->
         <div class="card" style="padding:20px">
           <div class="card-title" style="margin-bottom:4px"><span class="icon">&#127775;</span> Time by Project</div>
           <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Where hours are being spent</div>
-          <canvas id="rptProjectDoughnut" style="width:100%;max-height:220px"></canvas>
+          <canvas id="rptProjectDoughnut" style="width:100%;height:220px;max-height:220px"></canvas>
         </div>
       </div>
 
@@ -1187,7 +1183,7 @@
       <div class="card" style="padding:20px;margin-bottom:20px">
         <div class="card-title" style="margin-bottom:4px"><span class="icon">&#9203;</span> Unproductive Time by Employee</div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:16px">S000 hours logged per person in selected period</div>
-        <canvas id="rptUnproductiveBar" style="width:100%;max-height:200px"></canvas>
+        <canvas id="rptUnproductiveBar" style="width:100%;height:200px;max-height:200px"></canvas>
       </div>
 
     </div>
@@ -1249,6 +1245,22 @@
         </div>
         <button class="btn btn-primary" style="margin-top:14px;padding:8px 20px;font-size:13px" onclick="saveEmailSettings()">Save Email Settings</button>
       </div>
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-title"><span class="icon">&#128101;</span> Office Staff</div>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:14px">
+          Names listed here will appear in the "Approve the week" dropdown in the Clock In/Out log.
+        </div>
+        <div id="officeStaffList" style="margin-bottom:14px"></div>
+        <div style="display:flex;gap:10px;align-items:flex-end">
+          <div style="flex:1">
+            <div class="field-label">ADD STAFF NAME</div>
+            <input type="text" class="field-input" id="newOfficeStaffName" placeholder="e.g. Sarah, Daniel..." maxlength="40"
+              onkeydown="if(event.key==='Enter') addOfficeStaff()">
+          </div>
+          <button class="btn btn-primary" onclick="addOfficeStaff()" style="padding:10px 18px">Add</button>
+        </div>
+      </div>
+
       <div class="card">
         <div class="card-title"><span class="icon">&#128451;</span> Data Management</div>
         <div style="display:flex;gap:12px;flex-wrap:wrap">
@@ -1690,6 +1702,31 @@
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" id="confirmOk" onclick="">Confirm</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════
+     APPROVE WEEK MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="approveWeekModal" style="align-items:center;justify-content:center">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-title">✓ Approve the week</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:20px">
+      Approving the week will mark all pending clockings as approved. This action is logged with your name.
+    </div>
+    <div id="approveWeekSummary" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:18px;font-size:13px;color:var(--muted)"></div>
+    <div style="margin-bottom:18px">
+      <div class="field-label">SELECT YOUR NAME</div>
+      <select class="field-input" id="approveWeekApprover">
+        <option value="">— Select approver —</option>
+      </select>
+      <div style="font-size:11px;color:var(--subtle);margin-top:4px">Office staff names are set in Manager → Settings</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeApproveWeekModal()">Cancel</button>
+      <button class="btn btn-success" id="approveWeekConfirmBtn" onclick="confirmApproveWeek()" style="font-weight:600" disabled>✓ Confirm Approval</button>
     </div>
   </div>
 </div>
@@ -2631,13 +2668,9 @@ async function doClock(direction) {
     );
     if (!clocking) { toast('Not clocked in', 'error'); return; }
 
-    // Validate break selection
+    // Break is always 30 mins (mandatory default)
     const breakVal = document.getElementById('breakDuration').value;
-    if (breakVal === '' || breakVal === null) {
-      toast('Please select your break duration before clocking out', 'error');
-      return;
-    }
-    let breakMins = parseInt(breakVal) || 30; // Default 30 if somehow empty
+    let breakMins = parseInt(breakVal) || 30;
 
     // Auto-capture current time as clock out, rounded to nearest :00 or :30
     // with 5-minute grace period (e.g. 13:56 → 14:00, 13:54 → 13:30)
@@ -2929,13 +2962,34 @@ function renderClockLog(clockings) {
       const isPending = c.approvalStatus === 'pending' || (!c.approvalStatus && !c.addedByManager);
       const isEdited = c.manuallyEdited;
 
+      // Inline edit mode
+      if (c._editing) {
+        const times = [];
+        for (let h = 5; h <= 22; h++) { times.push(`${String(h).padStart(2,'0')}:00`); times.push(`${String(h).padStart(2,'0')}:30`); }
+        const inOpts = times.map(t => `<option value="${t}" ${t === c.clockIn ? 'selected' : ''}>${t}</option>`).join('');
+        const outOpts = times.map(t => `<option value="${t}" ${t === (c.clockOut||'') ? 'selected' : ''}>${t}</option>`).join('');
+        return {
+          html: `<td style="text-align:center;padding:6px 4px;vertical-align:top;min-width:110px">
+            <select id="edit-in-${c.id}" class="field-input" style="font-size:10px;padding:3px 4px;margin-bottom:3px;width:100%" onchange="markClockDirty('${c.id}')">${inOpts}</select>
+            <select id="edit-out-${c.id}" class="field-input" style="font-size:10px;padding:3px 4px;margin-bottom:3px;width:100%" onchange="markClockDirty('${c.id}')">${outOpts}</select>
+            <div style="font-size:9px;color:var(--muted);margin-bottom:3px" id="edit-total-${c.id}">${hrs > 0 ? hrs.toFixed(2)+'h' : ''}</div>
+            <input type="hidden" id="edit-break-${c.id}" value="${c.breakMins||30}">
+            <div style="display:flex;gap:3px;justify-content:center">
+              <button id="save-btn-${c.id}" class="tiny-btn tiny-approve" onclick="saveClockEdit('${c.id}')" style="font-size:9px;padding:2px 6px">Save</button>
+              <button class="tiny-btn" onclick="cancelClockEdit('${c.id}')" style="font-size:9px;padding:2px 5px;color:var(--muted)">✕</button>
+            </div>
+          </td>`,
+          hrs
+        };
+      }
+
       const statusBadge = isPending
         ? `<div style="margin-top:3px"><span class="tag tag-pending" style="font-size:9px">pending</span>
            <button class="tiny-btn tiny-approve" onclick="approveClocking('${c.id}')" style="font-size:9px;padding:1px 5px">✓</button>
            <button class="tiny-btn tiny-reject" onclick="rejectClocking('${c.id}')" style="font-size:9px;padding:1px 5px">✕</button></div>`
         : c.approvalStatus === 'rejected'
         ? `<div style="margin-top:3px"><span class="tag tag-rejected" style="font-size:9px">rejected</span></div>`
-        : '';
+        : `<div style="margin-top:3px"><span class="tag" style="font-size:9px;background:rgba(62,207,142,.15);color:var(--green);border:1px solid rgba(62,207,142,.3)">approved</span></div>`;
 
       const editedBadge = isEdited ? `<span style="color:var(--amber);font-size:9px"> ✎</span>` : '';
 
@@ -3024,6 +3078,26 @@ function markClockDirty(id) {
   if (totalEl && hrs !== null) totalEl.textContent = hrs.toFixed(2) + 'h';
 }
 
+function editClockingInline(id) {
+  const clocking = state.timesheetData.clockings.find(c => c.id === id);
+  if (!clocking) return;
+  // Store originals for cancel/reject
+  if (!clocking.originalClockIn) {
+    clocking.originalClockIn = clocking.clockIn;
+    clocking.originalClockOut = clocking.clockOut;
+    clocking.originalBreakMins = clocking.breakMins;
+  }
+  clocking._editing = true;
+  renderManagerView();
+}
+
+function cancelClockEdit(id) {
+  const clocking = state.timesheetData.clockings.find(c => c.id === id);
+  if (!clocking) return;
+  clocking._editing = false;
+  renderManagerView();
+}
+
 async function saveClockEdit(id) {
   const clocking = state.timesheetData.clockings.find(c => c.id === id);
   if (!clocking) return;
@@ -3033,10 +3107,10 @@ async function saveClockEdit(id) {
   clocking.breakMins = parseInt(document.getElementById(`edit-break-${id}`).value) || 0;
   clocking.manuallyEdited = true;
   clocking.approvalStatus = 'pending'; // Mark as pending after manual edit
+  clocking._editing = false;
 
   try {
     await saveTimesheetData();
-    document.getElementById(`save-btn-${id}`).style.display = 'none';
     toast('Clocking updated — pending approval ✓', 'success');
     renderManagerView();
   } catch { toast('Save failed', 'error'); }
@@ -3314,8 +3388,8 @@ function switchTab(name) {
   if (name === 'holidays') setTimeout(() => renderHolidayTab(), 50);
   if (name === 'payroll') { renderPayroll(); checkArchiveReminder(); }
   if (name === 'archive') renderArchive();
-  if (name === 'reports') renderReports();
-  if (name === 'settings') loadEmailSettings();
+  if (name === 'reports') setTimeout(() => renderReports(), 50);
+  if (name === 'settings') { loadEmailSettings(); renderOfficeStaffList(); }
 }
 
 // ═══════════════════════════════════════════
@@ -3808,6 +3882,132 @@ function openReUploadDrawing(projectId, drawingId) {
 // ═══════════════════════════════════════════
 // EMAIL SETTINGS
 // ═══════════════════════════════════════════
+
+// ═══════════════════════════════════════════
+// OFFICE STAFF MANAGEMENT
+// ═══════════════════════════════════════════
+function renderOfficeStaffList() {
+  const list = document.getElementById('officeStaffList');
+  if (!list) return;
+  const staff = (state.timesheetData.settings && state.timesheetData.settings.officeStaff) || [];
+  if (!staff.length) {
+    list.innerHTML = '<div style="font-size:13px;color:var(--subtle);padding:8px 0">No office staff added yet.</div>';
+    return;
+  }
+  list.innerHTML = staff.map((name, i) => `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:6px">
+      <span style="font-size:14px">${name}</span>
+      <button class="tiny-btn tiny-reject" onclick="removeOfficeStaff(${i})" style="font-size:11px;padding:2px 8px">Remove</button>
+    </div>
+  `).join('');
+}
+
+async function addOfficeStaff() {
+  const input = document.getElementById('newOfficeStaffName');
+  const name = (input.value || '').trim();
+  if (!name) { toast('Please enter a name', 'error'); return; }
+  if (!state.timesheetData.settings) state.timesheetData.settings = {};
+  if (!state.timesheetData.settings.officeStaff) state.timesheetData.settings.officeStaff = [];
+  if (state.timesheetData.settings.officeStaff.includes(name)) { toast('Name already exists', 'error'); return; }
+  state.timesheetData.settings.officeStaff.push(name);
+  input.value = '';
+  try {
+    await saveTimesheetData();
+    renderOfficeStaffList();
+    toast(`${name} added to office staff ✓`, 'success');
+  } catch { toast('Save failed', 'error'); }
+}
+
+async function removeOfficeStaff(index) {
+  if (!state.timesheetData.settings || !state.timesheetData.settings.officeStaff) return;
+  const name = state.timesheetData.settings.officeStaff[index];
+  state.timesheetData.settings.officeStaff.splice(index, 1);
+  try {
+    await saveTimesheetData();
+    renderOfficeStaffList();
+    toast(`${name} removed ✓`, 'success');
+  } catch { toast('Save failed', 'error'); }
+}
+
+// ═══════════════════════════════════════════
+// APPROVE WEEK MODAL
+// ═══════════════════════════════════════════
+function openApproveWeekModal() {
+  const { mon, sun } = getWeekDates(clockLogWeekOffset);
+  const monStr = dateStr(mon);
+  const sunStr = dateStr(sun);
+
+  // Count pending clockings for this week
+  const weekClockings = (state.timesheetData.clockings || []).filter(
+    c => c.date >= monStr && c.date <= sunStr
+  );
+  const pending = weekClockings.filter(c => c.approvalStatus === 'pending' || (!c.approvalStatus && !c.addedByManager));
+  const alreadyApproved = weekClockings.filter(c => c.approvalStatus === 'approved');
+
+  const summary = document.getElementById('approveWeekSummary');
+  if (summary) {
+    summary.innerHTML = `
+      <div style="margin-bottom:6px"><span style="color:var(--text);font-weight:600">${weekClockings.length}</span> total clockings for ${fmtDate(mon)} – ${fmtDate(sun)}</div>
+      <div style="color:var(--amber)">⏳ ${pending.length} pending approval</div>
+      <div style="color:var(--green)">✓ ${alreadyApproved.length} already approved</div>
+    `;
+  }
+
+  // Populate approver dropdown
+  const sel = document.getElementById('approveWeekApprover');
+  if (sel) {
+    sel.innerHTML = '<option value="">— Select approver —</option>';
+    const staff = (state.timesheetData.settings && state.timesheetData.settings.officeStaff) || [];
+    staff.forEach(name => {
+      const opt = document.createElement('option');
+      opt.value = name; opt.textContent = name;
+      sel.appendChild(opt);
+    });
+    sel.onchange = () => {
+      const btn = document.getElementById('approveWeekConfirmBtn');
+      if (btn) btn.disabled = !sel.value;
+    };
+  }
+
+  document.getElementById('approveWeekModal').classList.add('active');
+}
+
+function closeApproveWeekModal() {
+  document.getElementById('approveWeekModal').classList.remove('active');
+  const sel = document.getElementById('approveWeekApprover');
+  if (sel) sel.value = '';
+  const btn = document.getElementById('approveWeekConfirmBtn');
+  if (btn) btn.disabled = true;
+}
+
+async function confirmApproveWeek() {
+  const approver = document.getElementById('approveWeekApprover').value;
+  if (!approver) { toast('Please select your name', 'error'); return; }
+
+  const { mon, sun } = getWeekDates(clockLogWeekOffset);
+  const monStr = dateStr(mon);
+  const sunStr = dateStr(sun);
+
+  let approvedCount = 0;
+  (state.timesheetData.clockings || []).forEach(c => {
+    if (c.date >= monStr && c.date <= sunStr) {
+      if (c.approvalStatus === 'pending' || (!c.approvalStatus && !c.addedByManager)) {
+        c.approvalStatus = 'approved';
+        c.approvedBy = approver;
+        c.approvedAt = new Date().toISOString();
+        approvedCount++;
+      }
+    }
+  });
+
+  try {
+    await saveTimesheetData();
+    closeApproveWeekModal();
+    renderClockLogForWeek();
+    toast(`Week approved by ${approver} — ${approvedCount} clocking${approvedCount !== 1 ? 's' : ''} approved ✓`, 'success');
+  } catch { toast('Save failed', 'error'); }
+}
+
 function loadEmailSettings() {
   const settings = state.timesheetData.settings || {};
   const payEl = document.getElementById('settingPayrollEmail');
@@ -4879,16 +5079,34 @@ function renderClockLogForWeek() {
   const badge = document.getElementById('clockLogWeekBadge');
   if (badge) {
     if (clockLogWeekOffset === 0) {
-      badge.textContent = 'THIS WEEK';
+      badge.innerHTML = '<span>THIS WEEK</span>';
       badge.style.background = 'rgba(62,207,142,.15)';
       badge.style.color = 'var(--green)';
       badge.style.border = '1px solid rgba(62,207,142,.3)';
     } else {
-      badge.textContent = 'LAST WEEK — PENDING REVIEW';
+      badge.innerHTML = '<span>LAST WEEK — PENDING REVIEW</span>';
       badge.style.background = 'rgba(245,158,11,.15)';
       badge.style.color = 'var(--amber)';
       badge.style.border = '1px solid rgba(245,158,11,.3)';
     }
+  }
+
+  // Show/hide approve week button
+  let approveBtn = document.getElementById('approveWeekBtn');
+  if (clockLogWeekOffset !== 0) {
+    if (!approveBtn) {
+      approveBtn = document.createElement('button');
+      approveBtn.id = 'approveWeekBtn';
+      approveBtn.className = 'btn btn-success';
+      approveBtn.style.cssText = 'padding:8px 18px;font-size:13px;font-weight:600';
+      approveBtn.textContent = '✓ Approve the week';
+      approveBtn.onclick = openApproveWeekModal;
+      // Insert after badge
+      badge.parentNode.insertBefore(approveBtn, badge.nextSibling);
+    }
+    approveBtn.style.display = '';
+  } else {
+    if (approveBtn) approveBtn.style.display = 'none';
   }
 
   // Filter clockings for this week
