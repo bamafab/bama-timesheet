@@ -3,117 +3,145 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BAMA Fabrication — ERP Portal</title>
+<title>BAMA Fabrication — Portal Hub</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="bama.css">
 <style>
-.hub-wrap{max-width:960px;margin:0 auto;padding:48px 24px}
-.hub-header{text-align:center;margin-bottom:52px}
-.hub-title{font-family:var(--font-display);font-size:52px;letter-spacing:4px;line-height:1}
-.hub-title span{color:#D0021B}
-.hub-subtitle{font-size:13px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-top:8px}
-.hub-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:20px}
-.hub-tile{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:32px 28px;
-  cursor:pointer;text-decoration:none;display:block;transition:border-color .2s,transform .15s;position:relative;overflow:hidden}
-.hub-tile:hover{border-color:var(--accent);background:#222;transform:translateY(-2px)}
-.hub-tile-icon{font-size:36px;margin-bottom:16px;display:block}
-.hub-tile-name{font-family:var(--font-display);font-size:26px;letter-spacing:2px;color:var(--text);margin-bottom:6px}
-.hub-tile-desc{font-size:13px;color:var(--muted);line-height:1.5}
-.hub-tile-phase{position:absolute;top:14px;right:14px;font-size:10px;font-weight:600;
-  padding:3px 8px;border-radius:20px;letter-spacing:.5px;text-transform:uppercase}
-.phase-live{background:rgba(62,207,142,.15);color:var(--green);border:1px solid rgba(62,207,142,.3)}
-.phase-coming{background:rgba(136,136,136,.1);color:var(--muted);border:1px solid var(--border)}
-.hub-tile.disabled{opacity:.5;cursor:not-allowed;pointer-events:none}
-.hub-divider{border:none;border-top:1px solid var(--border);margin:40px 0 32px}
-.hub-section-label{font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--subtle);margin-bottom:16px}
+  .hub-wrap {
+    max-width: 900px; margin: 0 auto; padding: 60px 24px;
+    text-align: center;
+  }
+  .hub-title {
+    font-family: var(--font-display);
+    font-size: 56px;
+    letter-spacing: 3px;
+    line-height: 1;
+    margin-bottom: 8px;
+  }
+  .hub-title span { color: #D0021B; }
+  .hub-sub { color: var(--muted); font-size: 14px; margin-bottom: 52px; }
+  .hub-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 20px;
+    text-align: left;
+  }
+  .hub-card {
+    background: var(--card);
+    border: 1.5px solid var(--border);
+    border-radius: 14px;
+    padding: 28px 24px;
+    cursor: pointer;
+    transition: all .25s;
+    text-decoration: none;
+    color: inherit;
+    display: block;
+    position: relative;
+    overflow: hidden;
+  }
+  .hub-card:hover {
+    border-color: var(--accent);
+    transform: translateY(-3px);
+    background: #222;
+  }
+  .hub-card-icon {
+    font-size: 32px;
+    margin-bottom: 14px;
+    display: block;
+  }
+  .hub-card-title {
+    font-family: var(--font-display);
+    font-size: 24px;
+    letter-spacing: 1.5px;
+    margin-bottom: 6px;
+  }
+  .hub-card-desc {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  .hub-card-badge {
+    position: absolute;
+    top: 16px; right: 16px;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 20px;
+    letter-spacing: .5px;
+  }
+  .badge-live {
+    background: rgba(62,207,142,.15);
+    color: var(--green);
+    border: 1px solid rgba(62,207,142,.3);
+  }
 </style>
 </head>
 <body>
-<div class="topbar">
-  <div class="logo"><span style="color:#D0021B">BAMA</span> <span style="color:#D0021B">FABRICATION</span></div>
-  <div class="topbar-right">
+
+<div class="loading-bar" id="loadingBar" style="width:0"></div>
+
+<!-- TOP BAR -->
+<div class="topbar" style="position:relative">
+  <div class="logo"><span style="color:#D0021B">BAMA</span> <span style="color:#D0021B">FABRICATION</span><span> ERP</span></div>
+  <div style="position:absolute;left:50%;transform:translateX(-50%);top:50%;transform:translate(-50%,-50%)">
     <div class="clock-display" id="liveClock" style="font-size:15px;font-weight:700;letter-spacing:.5px">--:-- --</div>
   </div>
+  <div class="topbar-right">
+    <button class="manager-btn" onclick="window.location.href='manager.html'">&#9881; Manager</button>
+  </div>
 </div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
 <div class="hub-wrap">
-  <div class="hub-header">
-    <div class="hub-title"><span>BAMA</span> ERP</div>
-    <div class="hub-subtitle">Internal Operations Platform</div>
-  </div>
-  <div class="hub-section-label">&#128994; Live modules</div>
+  <div class="hub-title"><span>BAMA</span> PORTAL</div>
+  <div class="hub-sub">Bama Fabrication — Workshop Management System</div>
+
   <div class="hub-grid">
-    <a href="index.html" class="hub-tile">
-      <span class="hub-tile-phase phase-live">Live</span>
-      <span class="hub-tile-icon">&#128336;</span>
-      <div class="hub-tile-name">TIMESHEET</div>
-      <div class="hub-tile-desc">Clock in &amp; out, log project hours, submit daily work records.</div>
+    <a class="hub-card" href="index.html">
+      <span class="hub-card-badge badge-live">LIVE</span>
+      <span class="hub-card-icon">🕐</span>
+      <div class="hub-card-title">WORKSHOP KIOSK</div>
+      <div class="hub-card-desc">Clock in/out, log project hours, request holidays, submit orders.</div>
     </a>
-    <a href="projects.html" class="hub-tile">
-      <span class="hub-tile-phase phase-live">Live</span>
-      <span class="hub-tile-icon">&#128196;</span>
-      <div class="hub-tile-name">PROJECTS</div>
-      <div class="hub-tile-desc">View drawings, mark completions, upload PDFs, draftsman mode.</div>
+
+    <a class="hub-card" href="projects.html">
+      <span class="hub-card-badge badge-live">LIVE</span>
+      <span class="hub-card-icon">📐</span>
+      <div class="hub-card-title">PROJECTS &amp; DRAWINGS</div>
+      <div class="hub-card-desc">View project drawings, draftsman uploads, mark items complete.</div>
     </a>
-    <a href="manager.html" class="hub-tile">
-      <span class="hub-tile-phase phase-live">Live</span>
-      <span class="hub-tile-icon">&#9881;</span>
-      <div class="hub-tile-name">MANAGER</div>
-      <div class="hub-tile-desc">Approve hours, payroll, reports, staff management, settings.</div>
+
+    <a class="hub-card" href="manager.html">
+      <span class="hub-card-badge badge-live">LIVE</span>
+      <span class="hub-card-icon">⚙️</span>
+      <div class="hub-card-title">MANAGER</div>
+      <div class="hub-card-desc">Approvals, payroll, staff management, reports, settings.</div>
     </a>
-  </div>
-  <hr class="hub-divider">
-  <div class="hub-section-label">&#128992; Coming soon — Phase 2</div>
-  <div class="hub-grid">
-    <div class="hub-tile disabled">
-      <span class="hub-tile-phase phase-coming">Phase 2</span>
-      <span class="hub-tile-icon">&#128203;</span>
-      <div class="hub-tile-name">QUOTATIONS</div>
-      <div class="hub-tile-desc">Build quotes, mark won, auto-create projects in the tracker.</div>
-    </div>
-    <div class="hub-tile disabled">
-      <span class="hub-tile-phase phase-coming">Phase 2</span>
-      <span class="hub-tile-icon">&#128722;</span>
-      <div class="hub-tile-name">PURCHASE ORDERS</div>
-      <div class="hub-tile-desc">Raise &amp; track POs, supplier invoices, spend by project.</div>
-    </div>
-    <div class="hub-tile disabled">
-      <span class="hub-tile-phase phase-coming">Phase 2</span>
-      <span class="hub-tile-icon">&#128241;</span>
-      <div class="hub-tile-name">REMOTE CLOCK-IN</div>
-      <div class="hub-tile-desc">PIN-based clock in/out for site workers — no M365 login needed.</div>
-    </div>
-  </div>
-  <hr class="hub-divider">
-  <div class="hub-section-label">&#9898; Phase 3</div>
-  <div class="hub-grid">
-    <div class="hub-tile disabled">
-      <span class="hub-tile-phase phase-coming">Phase 3</span>
-      <span class="hub-tile-icon">&#128101;</span>
-      <div class="hub-tile-name">HR</div>
-      <div class="hub-tile-desc">Holiday management, absence tracking, employee records.</div>
-    </div>
-    <div class="hub-tile disabled">
-      <span class="hub-tile-phase phase-coming">Phase 3</span>
-      <span class="hub-tile-icon">&#128203;</span>
-      <div class="hub-tile-name">INVOICING</div>
-      <div class="hub-tile-desc">Applications for payment, client billing, invoice history.</div>
-    </div>
-    <div class="hub-tile disabled">
-      <span class="hub-tile-phase phase-coming">Phase 3</span>
-      <span class="hub-tile-icon">&#128200;</span>
-      <div class="hub-tile-name">CRM</div>
-      <div class="hub-tile-desc">Client contacts, project history, communication log.</div>
-    </div>
+
+    <a class="hub-card" style="opacity:.4;cursor:not-allowed;pointer-events:none" href="#">
+      <span class="hub-card-icon">📊</span>
+      <div class="hub-card-title">QUOTATIONS</div>
+      <div class="hub-card-desc">Coming soon — create and manage customer quotes.</div>
+    </a>
   </div>
 </div>
+
 <script>
-function updateClock(){
-  const now=new Date(); let h=now.getHours(),m=now.getMinutes();
-  const ap=h>=12?'PM':'AM'; h=h%12||12;
-  document.getElementById('liveClock').textContent=
-    String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+' '+ap;
+// Minimal JS for hub — just the clock
+function updateClock() {
+  const el = document.getElementById('liveClock');
+  if (!el) return;
+  const now = new Date();
+  const h = String(now.getHours()).padStart(2,'0');
+  const m = String(now.getMinutes()).padStart(2,'0');
+  const ampm = now.getHours() < 12 ? 'AM' : 'PM';
+  el.textContent = h + ':' + m + ' ' + ampm + ' — ' +
+    now.toLocaleDateString('en-GB', { weekday:'short', day:'numeric', month:'short' });
 }
-updateClock(); setInterval(updateClock,1000);
+setInterval(updateClock, 1000);
+updateClock();
 </script>
 </body>
 </html>

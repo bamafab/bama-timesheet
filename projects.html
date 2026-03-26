@@ -1,26 +1,34 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<title>BAMA Workshop — Projects &amp; Drawings</title>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BAMA Projects & Drawings</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="bama.css">
 </head>
 <body>
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
+
+<!-- TOP BAR -->
 <div class="topbar" style="position:relative">
-  <div class="logo"><a href="hub.html" style="text-decoration:none;color:inherit"><span style="color:#D0021B">BAMA</span> <span style="color:#D0021B">FABRICATION</span></a><span> PROJECTS</span></div>
-  <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)">
+  <div class="logo"><span style="color:#D0021B">BAMA</span> <span style="color:#D0021B">FABRICATION</span><span> WORKSHOP</span></div>
+  <div style="position:absolute;left:50%;transform:translateX(-50%);top:50%;transform:translate(-50%,-50%)">
     <div class="clock-display" id="liveClock" style="font-size:15px;font-weight:700;letter-spacing:.5px">--:-- --</div>
   </div>
   <div class="topbar-right">
-    <a href="index.html" class="manager-btn" style="text-decoration:none">&#128336; Timesheet</a>
-    <a href="manager.html" class="manager-btn" style="text-decoration:none">&#9881; Manager</a>
+    <a href="hub.html" style="text-decoration:none"><button class="manager-btn">&#8592; Hub</button></a>
+    <button class="manager-btn" onclick="showManagerAuth()">&#9881; Manager</button>
   </div>
 </div>
+
+<!-- TOAST -->
 <div class="toast" id="toast"></div>
-<div class="screen" id="screenProjects">
+
+<!-- ═══════════════════════════════════════
+     SCREEN 2B: PROJECTS — TILE VIEW
+══════════════════════════════════════════ -->
+<div class="screen active" id="screenProjects">
   <div class="panel-wrap" style="max-width:1100px">
     <div class="panel-header" style="margin-bottom:8px">
       <button class="back-btn" onclick="goHome()">&#8592; Back</button>
@@ -45,7 +53,6 @@
 <!-- ═══════════════════════════════════════
      SCREEN 2C: PROJECT DETAIL — DRAWINGS
 ══════════════════════════════════════════ -->
-
 <div class="screen" id="screenProjectDetail">
   <div class="panel-wrap" style="max-width:900px">
     <div class="project-back-header">
@@ -78,11 +85,6 @@
 </div>
 
 <!-- ═══════════════════════════════════════
-     SCREEN 3: MANAGER AUTH
-══════════════════════════════════════════ -->
-
-
-<!-- ═══════════════════════════════════════
      DRAFTSMAN LOGIN MODAL
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="draftsmanLoginModal">
@@ -99,7 +101,6 @@
     </div>
   </div>
 </div>
-
 
 <!-- ═══════════════════════════════════════
      ADD NOTE MODAL
@@ -124,7 +125,6 @@
     </div>
   </div>
 </div>
-
 
 <!-- ═══════════════════════════════════════
      UPLOAD DRAWING MODAL
@@ -192,7 +192,6 @@
   </div>
 </div>
 
-
 <!-- ═══════════════════════════════════════
      FINISHING ACKNOWLEDGEMENT MODAL
 ══════════════════════════════════════════ -->
@@ -233,7 +232,6 @@
   </div>
 </div>
 
-
 <!-- ═══════════════════════════════════════
      CONFIRM MODAL
 ══════════════════════════════════════════ -->
@@ -249,23 +247,5 @@
 </div>
 
 <script src="shared.js"></script>
-<script>
-async function init() {
-  setLoading(true);
-  AUTH.handleRedirect();
-  try { await Promise.race([loadTimesheetData(),
-      new Promise((_,rej) => setTimeout(() => rej(new Error('Timeout')),8000))]); }
-  catch(e) { console.warn('Data load:',e.message);
-    state.timesheetData={employees:[],entries:[],clockings:[],settings:{managerPin:'1234'}}; }
-  try { await Promise.race([loadProjects(),
-      new Promise((_,rej) => setTimeout(() => rej(new Error('Timeout')),8000))]); }
-  catch(e) { console.warn('Projects:',e.message); state.projects=FALLBACK_PROJECTS; }
-  setLoading(false);
-  updateClock(); setInterval(updateClock,1000);
-  showScreen('screenProjects');
-  await openProjects();
-}
-init();
-</script>
 </body>
 </html>

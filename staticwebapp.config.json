@@ -1,0 +1,12 @@
+{
+  "routes": [
+    {
+      "route": "/",
+      "rewrite": "/hub.html"
+    }
+  ],
+  "navigationFallback": {
+    "rewrite": "/hub.html",
+    "exclude": ["*.css", "*.js", "*.png", "*.jpg", "*.ico"]
+  }
+}

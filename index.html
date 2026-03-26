@@ -1,22 +1,33 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<title>BAMA Workshop — Timesheet</title>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BAMA Workshop Timesheet</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="bama.css">
 </head>
 <body>
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
+
+<!-- TOP BAR -->
 <div class="topbar" style="position:relative">
-  <div class="logo"><a href="hub.html" style="text-decoration:none;color:inherit"><span style="color:#D0021B">BAMA</span> <span style="color:#D0021B">FABRICATION</span></a><span> WORKSHOP</span></div>
-  <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)">
+  <div class="logo"><span style="color:#D0021B">BAMA</span> <span style="color:#D0021B">FABRICATION</span><span> WORKSHOP</span></div>
+  <div style="position:absolute;left:50%;transform:translateX(-50%);top:50%;transform:translate(-50%,-50%)">
     <div class="clock-display" id="liveClock" style="font-size:15px;font-weight:700;letter-spacing:.5px">--:-- --</div>
   </div>
-  <div class="topbar-right"><a href="manager.html" class="manager-btn" style="text-decoration:none">&#9881; Manager</a></div>
+  <div class="topbar-right">
+    <a href="hub.html" style="text-decoration:none"><button class="manager-btn">&#8592; Hub</button></a>
+    <button class="manager-btn" onclick="showManagerAuth()">&#9881; Manager</button>
+  </div>
 </div>
+
+<!-- TOAST -->
 <div class="toast" id="toast"></div>
+
+<!-- ═══════════════════════════════════════
+     SCREEN 1: HOME — EMPLOYEE SELECT
+══════════════════════════════════════════ -->
 <div class="screen active" id="screenHome">
   <div class="home-wrap">
     <div class="home-title">CLOCK IN<br>/ OUT</div>
@@ -41,7 +52,6 @@
 <!-- ═══════════════════════════════════════
      SCREEN 2: EMPLOYEE PANEL
 ══════════════════════════════════════════ -->
-
 <div class="screen" id="screenEmployee">
   <div class="panel-wrap">
     <div class="panel-header">
@@ -74,15 +84,11 @@
             <div class="field-input" id="displayClockIn" style="opacity:.6">—</div>
           </div>
           <div>
-            <div class="field-label">BREAK <span style="color:var(--red)">*</span></div>
-            <select class="field-input" id="breakDuration">
-              <option value="" disabled selected>Select break...</option>
-              <option value="15">15 min</option>
-              <option value="20">20 min</option>
-              <option value="30" selected>30 min (standard)</option>
-              <option value="45">45 min</option>
-              <option value="60">60 min</option>
-            </select>
+            <div class="field-label">BREAK</div>
+            <div class="field-input" style="opacity:.7;display:flex;align-items:center;gap:8px">
+              <span>&#9201;</span> 30 min (mandatory)
+            </div>
+            <input type="hidden" id="breakDuration" value="30">
           </div>
         </div>
         <div class="clock-actions" style="margin-top:10px">
@@ -131,9 +137,122 @@
 </div>
 
 <!-- ═══════════════════════════════════════
-     SCREEN 2B: PROJECTS — TILE VIEW
+     HOLIDAY KIOSK MODAL
 ══════════════════════════════════════════ -->
+<div class="modal-overlay" id="holidayKioskModal" style="align-items:flex-start;padding-top:40px;overflow-y:auto">
+  <div class="modal" style="width:560px;max-width:95vw;max-height:85vh;overflow-y:auto">
 
+    <!-- Step 1: Select employee -->
+    <div id="hkStep1">
+      <div class="modal-title">&#127959; Request Holiday</div>
+      <div style="color:var(--muted);font-size:13px;margin-bottom:24px">Select your name to continue</div>
+      <div id="hkEmpGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-bottom:16px"></div>
+      <button class="btn btn-ghost" style="width:100%" onclick="closeHolidayKiosk()">Cancel</button>
+    </div>
+
+    <!-- Step 2: PIN entry -->
+    <div id="hkStep2" style="display:none;text-align:center">
+      <div class="modal-title" id="hkPinName"></div>
+      <div style="color:var(--muted);font-size:13px;margin-bottom:24px">Enter your PIN</div>
+      <input type="password" class="field-input" id="hkPinInput" maxlength="6"
+        placeholder="••••" style="text-align:center;font-size:28px;letter-spacing:10px;margin-bottom:8px"
+        onkeydown="if(event.key==='Enter')checkHKPin()">
+      <div id="hkPinError" style="color:var(--red);font-size:12px;height:16px;margin-bottom:12px"></div>
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-ghost" style="flex:1" onclick="hkBack()">&#8592; Back</button>
+        <button class="btn btn-primary" style="flex:1" onclick="checkHKPin()">Enter</button>
+      </div>
+    </div>
+
+    <!-- Step 3: Holiday form + approved list -->
+    <div id="hkStep3" style="display:none">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+        <button class="back-btn" onclick="hkBack()">&#8592;</button>
+        <div class="modal-title" id="hkEmpName" style="margin-bottom:0"></div>
+      </div>
+
+      <!-- Balance -->
+      <div id="hkBalance" style="margin-bottom:20px"></div>
+
+      <!-- Request form -->
+      <div class="card" style="margin-bottom:16px;padding:18px">
+        <div class="card-title" style="margin-bottom:14px"><span class="icon">&#128197;</span> New Request</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+          <div>
+            <div class="field-label">FROM DATE</div>
+            <input type="date" class="field-input" id="hkFromDate">
+          </div>
+          <div>
+            <div class="field-label">TO DATE</div>
+            <input type="date" class="field-input" id="hkToDate">
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+          <div>
+            <div class="field-label">TYPE</div>
+            <select class="field-input" id="hkType">
+              <option value="paid">Paid Holiday</option>
+              <option value="half">Half Day Holiday</option>
+              <option value="unpaid">Unpaid Leave</option>
+              <option value="sick">Sick Leave</option>
+              <option value="training">Training</option>
+            </select>
+          </div>
+          <div>
+            <div class="field-label">REASON (optional)</div>
+            <input type="text" class="field-input" id="hkReason" placeholder="e.g. Family holiday">
+          </div>
+        </div>
+        <button class="btn btn-primary btn-full" onclick="submitHKHoliday()">Submit Request</button>
+      </div>
+
+      <!-- Approved holidays table -->
+      <div class="card" style="padding:18px">
+        <div class="card-title" style="margin-bottom:14px"><span class="icon">&#10003;</span> Your Holidays</div>
+        <div id="hkHolidayList"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     ORDER FORM MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="orderFormModal" style="align-items:flex-start;padding:20px;overflow-y:auto">
+  <div class="modal" style="width:900px;max-width:98vw;max-height:90vh;overflow-y:auto">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+      <div class="modal-title" style="margin-bottom:0">&#128230; Workshop Order Form</div>
+      <button class="btn btn-ghost" onclick="closeOrderForm()" style="padding:6px 14px">&#10005; Close</button>
+    </div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:20px">
+      Complete the table below and click <b style="color:var(--green)">Send Order</b> — your request will be emailed for approval.
+    </div>
+
+    <!-- Order lines table -->
+    <div style="overflow-x:auto;margin-bottom:20px">
+      <table style="width:100%;border-collapse:collapse;font-size:13px" id="orderTable">
+        <thead>
+          <tr style="border-bottom:2px solid var(--border)">
+            <th style="padding:8px 10px;text-align:left;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);width:30px">#</th>
+            <th style="padding:8px 10px;text-align:left;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted)">Product / Description</th>
+            <th style="padding:8px 10px;text-align:left;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);width:80px">Qty</th>
+            <th style="padding:8px 10px;text-align:left;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);width:150px">Supplier (if known)</th>
+            <th style="padding:8px 10px;text-align:left;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);width:130px">Need By</th>
+            <th style="padding:8px 10px;text-align:left;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);width:130px">Project ID</th>
+            <th style="padding:8px 10px;text-align:left;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);width:150px">Ordered By</th>
+          </tr>
+        </thead>
+        <tbody id="orderTableBody">
+        </tbody>
+      </table>
+    </div>
+
+    <div style="display:flex;gap:12px;justify-content:flex-end">
+      <button class="btn btn-ghost" onclick="clearOrderForm()">Clear All</button>
+      <button class="btn btn-success" onclick="submitOrderForm()" style="font-size:14px;padding:12px 28px">&#9993; Send Order</button>
+    </div>
+  </div>
+</div>
 
 <!-- ═══════════════════════════════════════
      EMPLOYEE PIN MODAL
@@ -152,43 +271,6 @@
     </div>
   </div>
 </div>
-
-
-<!-- ═══════════════════════════════════════
-     NO PROJECT HOURS MODAL
-══════════════════════════════════════════ -->
-<div class="modal-overlay" id="noProjectModal" style="align-items:center;justify-content:center">
-  <div class="modal" style="max-width:440px;width:95vw;text-align:center">
-    <div style="font-size:52px;margin-bottom:12px">⚠️</div>
-    <div class="modal-title" style="font-size:22px;margin-bottom:10px">No Project Hours Logged</div>
-    <div style="color:var(--muted);font-size:14px;line-height:1.7;margin-bottom:24px">
-      You haven't logged any project hours today.<br>
-      Please confirm before clocking out.
-    </div>
-
-    <!-- WGD checkbox option -->
-    <div style="background:var(--surface);border:2px solid var(--border);border-radius:12px;padding:20px;margin-bottom:20px;cursor:pointer;transition:all .2s"
-      id="wgdOptionBox" onclick="toggleWGDOption()">
-      <div style="display:flex;align-items:center;gap:14px">
-        <div id="wgdCheckbox" style="width:28px;height:28px;border-radius:6px;border:2px solid var(--border);background:var(--card);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:18px;transition:all .2s"></div>
-        <div style="text-align:left">
-          <div style="font-size:15px;font-weight:600;color:var(--text)">🔧 Workshop General Duties</div>
-          <div style="font-size:12px;color:var(--muted);margin-top:3px">Tick to log all shift hours as general workshop duties</div>
-        </div>
-      </div>
-    </div>
-
-    <button class="btn btn-primary btn-full" id="noProjectClockOutBtn"
-      onclick="confirmNoProjectClockOut()"
-      style="padding:16px;font-size:16px;opacity:.4;cursor:not-allowed" disabled>
-      Clock Out
-    </button>
-    <button class="btn btn-ghost btn-full" onclick="closeNoProjectModal()" style="margin-top:10px;padding:12px">
-      ← Go Back &amp; Log Hours
-    </button>
-  </div>
-</div>
-
 
 <!-- ═══════════════════════════════════════
      ADD MISSING CLOCKING MODAL (Employee)
@@ -225,6 +307,63 @@
   </div>
 </div>
 
+<!-- ═══════════════════════════════════════
+     EDIT ENTRY MODAL (Employee)
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="editEntryModal">
+  <div class="modal">
+    <div class="modal-title">Edit Hours</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:6px" id="editEntryProject"></div>
+    <div style="margin-bottom:20px">
+      <span class="manually-edited-badge">PENDING APPROVAL</span>
+      <span style="font-size:12px;color:var(--subtle);margin-left:8px">Your manager will approve this change</span>
+    </div>
+    <div>
+      <div class="field-label">HOURS</div>
+      <input type="number" class="field-input" id="editEntryHours" min="0.5" max="24" step="0.5"
+        style="font-size:20px;text-align:center">
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeEditEntry()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveEditEntry()">Submit for Approval</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     NO PROJECT HOURS MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="noProjectModal" style="align-items:center;justify-content:center">
+  <div class="modal" style="max-width:440px;width:95vw;text-align:center">
+    <div style="font-size:52px;margin-bottom:12px">⚠️</div>
+    <div class="modal-title" style="font-size:22px;margin-bottom:10px">No Project Hours Logged</div>
+    <div style="color:var(--muted);font-size:14px;line-height:1.7;margin-bottom:24px">
+      You haven't logged any project hours today.<br>
+      Please confirm before clocking out.
+    </div>
+
+    <!-- WGD checkbox option -->
+    <div style="background:var(--surface);border:2px solid var(--border);border-radius:12px;padding:20px;margin-bottom:20px;cursor:pointer;transition:all .2s"
+      id="wgdOptionBox" onclick="toggleWGDOption()">
+      <div style="display:flex;align-items:center;gap:14px">
+        <div id="wgdCheckbox" style="width:28px;height:28px;border-radius:6px;border:2px solid var(--border);background:var(--card);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:18px;transition:all .2s"></div>
+        <div style="text-align:left">
+          <div style="font-size:15px;font-weight:600;color:var(--text)">🔧 Workshop General Duties</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:3px">Tick to log all shift hours as general workshop duties</div>
+        </div>
+      </div>
+    </div>
+
+    <button class="btn btn-primary btn-full" id="noProjectClockOutBtn"
+      onclick="confirmNoProjectClockOut()"
+      style="padding:16px;font-size:16px;opacity:.4;cursor:not-allowed" disabled>
+      Clock Out
+    </button>
+    <button class="btn btn-ghost btn-full" onclick="closeNoProjectModal()" style="margin-top:10px;padding:12px">
+      ← Go Back &amp; Log Hours
+    </button>
+  </div>
+</div>
 
 <!-- ═══════════════════════════════════════
      CONFIRM MODAL
@@ -241,22 +380,5 @@
 </div>
 
 <script src="shared.js"></script>
-<script>
-async function init() {
-  setLoading(true);
-  AUTH.handleRedirect();
-  try { await Promise.race([loadTimesheetData(),
-      new Promise((_,rej) => setTimeout(() => rej(new Error('Timeout')),8000))]); }
-  catch(e) { console.warn('Data load:',e.message);
-    state.timesheetData={employees:[],entries:[],clockings:[],settings:{managerPin:'1234'}}; }
-  try { await Promise.race([loadProjects(),
-      new Promise((_,rej) => setTimeout(() => rej(new Error('Timeout')),8000))]); }
-  catch(e) { console.warn('Projects:',e.message); state.projects=FALLBACK_PROJECTS; }
-  setLoading(false);
-  renderHome();
-  updateClock(); setInterval(updateClock,1000);
-}
-init();
-</script>
 </body>
 </html>

@@ -1,7 +1,3 @@
-// BAMA ERP — Shared JS (all pages)
-// Do not edit directly — generated from source
-
-
 // ═══════════════════════════════════════════
 // CONFIGURATION — Edit these
 // ═══════════════════════════════════════════
@@ -90,10 +86,7 @@ async function graphPatch(url, body) {
 const AUTH = {
   clientId: '04b702fd-c53c-4f38-94bc-0334ce91d954',
   tenantId: 'c92626f5-e391-499a-9059-0113bd07da2d',
-  // Dynamic: each page redirects back to itself after Microsoft login
-  get redirectUri() {
-    return window.location.origin + window.location.pathname;
-  },
+  redirectUri: 'https://proud-dune-0dee63110.2.azurestaticapps.net',
   scopes: 'https://graph.microsoft.com/Files.ReadWrite https://graph.microsoft.com/Sites.ReadWrite.All https://graph.microsoft.com/Mail.Send',
 
   getStoredToken() {
@@ -569,6 +562,7 @@ function todayStr() { return dateStr(new Date()); }
 // ═══════════════════════════════════════════
 function renderHome() {
   const grid = document.getElementById('employeeGrid');
+  if (!grid) return; // not on kiosk page
   const today = todayStr();
   grid.innerHTML = '';
 
@@ -1068,6 +1062,10 @@ async function submitDay() {
 // MANAGER VIEW
 // ═══════════════════════════════════════════
 function showManagerAuth() {
+  if (CURRENT_PAGE !== 'manager') {
+    window.location.href = 'manager.html';
+    return;
+  }
   showScreen('screenAuth');
   setTimeout(() => document.getElementById('pinInput').focus(), 100);
 }
@@ -1677,8 +1675,17 @@ function goHome() {
   clearInterval(workingTimer);
   state.currentEmployee = null;
   state.currentEntries = [];
-  showScreen('screenHome');
-  renderHome();
+  if (CURRENT_PAGE === 'manager') {
+    showScreen('screenAuth');
+  } else if (CURRENT_PAGE === 'projects') {
+    showScreen('screenProjects');
+    renderProjectTiles();
+  } else if (CURRENT_PAGE === 'hub') {
+    window.location.href = 'hub.html';
+  } else {
+    showScreen('screenHome');
+    renderHome();
+  }
 }
 
 function setLoading(on) {
@@ -2456,17 +2463,20 @@ async function submitOrderForm() {
 
 // Live clock
 function updateClock() {
+  const el = document.getElementById('liveClock');
+  if (!el) return;
   const now = new Date();
   const h = String(now.getHours()).padStart(2,'0');
   const m = String(now.getMinutes()).padStart(2,'0');
   const ampm = now.getHours() < 12 ? 'AM' : 'PM';
-  document.getElementById('liveClock').textContent =
+  el.textContent =
     `${h}:${m} ${ampm} — ${now.toLocaleDateString('en-GB', { weekday:'short', day:'numeric', month:'short' })}`;
 }
 setInterval(updateClock, 1000);
 updateClock();
 
-document.getElementById('todayDate').textContent =
+const _todayDateEl = document.getElementById('todayDate');
+if (_todayDateEl) _todayDateEl.textContent =
   new Date().toLocaleDateString('en-GB', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
 
 // ═══════════════════════════════════════════
@@ -4147,6 +4157,10 @@ async function saveDrawingsData() {
 
 // ── Open projects screen ──
 async function openProjects() {
+  if (CURRENT_PAGE !== 'projects') {
+    window.location.href = 'projects.html';
+    return;
+  }
   showScreen('screenProjects');
   renderProjectTiles();
   // Load drawings data in background
@@ -4614,6 +4628,53 @@ async function addNote(projectId, drawingId, type) {
   } catch { toast('Save failed', 'error'); }
 }
 
+// ── Add Note Modal helpers ──
+let _noteContext = { projectId: null, drawingId: null, type: 'workshop' };
+
+function openAddNoteModal(projectId, drawingId, drawingName, type) {
+  _noteContext = { projectId, drawingId, type };
+  document.getElementById('addNoteDrawingName').textContent = drawingName || '';
+  const sel = document.getElementById('noteAuthorSelect');
+  sel.innerHTML = '<option value="">Select your name...</option>';
+  (state.timesheetData.employees || []).filter(e => e.active !== false).forEach(emp => {
+    sel.innerHTML += `<option value="${emp.name}">${emp.name}</option>`;
+  });
+  document.getElementById('noteText').value = '';
+  document.getElementById('addNoteModal').classList.add('active');
+}
+
+function closeAddNote() {
+  document.getElementById('addNoteModal').classList.remove('active');
+}
+
+async function saveNote() {
+  const author = document.getElementById('noteAuthorSelect').value;
+  const text = document.getElementById('noteText').value.trim();
+  if (!author) { toast('Please select your name', 'error'); return; }
+  if (!text) { toast('Please type a note', 'error'); return; }
+
+  const { projectId, drawingId, type } = _noteContext;
+  if (!drawingsData.projects[projectId]) drawingsData.projects[projectId] = { drawings: [] };
+  const drawing = drawingsData.projects[projectId].drawings.find(d => d.id === drawingId);
+  if (!drawing) return;
+
+  if (!drawing.notes) drawing.notes = [];
+  drawing.notes.push({
+    id: Date.now().toString(),
+    type,
+    author,
+    text,
+    timestamp: new Date().toISOString()
+  });
+
+  try {
+    await saveDrawingsData();
+    closeAddNote();
+    toast('Note added ✓', 'success');
+    renderDrawings(projectId);
+  } catch { toast('Save failed', 'error'); }
+}
+
 async function loadPDFPreview(drawingId, fileId, driveId) {
   const wrap = document.getElementById(`preview-${drawingId}`);
   if (!wrap) return;
@@ -4942,3 +5003,64 @@ async function uploadDrawing() {
 // ═══════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════
+// ═══════════════════════════════════════════
+// PAGE DETECTION
+// ═══════════════════════════════════════════
+const CURRENT_PAGE = (() => {
+  const path = window.location.pathname.toLowerCase();
+  if (path.includes('manager')) return 'manager';
+  if (path.includes('projects') || path.includes('project')) return 'projects';
+  if (path.includes('hub')) return 'hub';
+  return 'index'; // default kiosk
+})();
+
+async function init() {
+  setLoading(true);
+
+  // Handle token from Microsoft login redirect
+  const justLoggedIn = AUTH.handleRedirect();
+  if (justLoggedIn) console.log('Just returned from login, token stored');
+
+  // Race loadTimesheetData against a 8 second timeout
+  try {
+    await Promise.race([
+      loadTimesheetData(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 8000))
+    ]);
+  } catch (e) {
+    console.warn('Timesheet load skipped:', e.message);
+    state.timesheetData = {
+      employees: state.timesheetData.employees || [],
+      entries: state.timesheetData.entries || [],
+      clockings: state.timesheetData.clockings || [],
+      settings: state.timesheetData.settings || { managerPin: '1234' }
+    };
+  }
+
+  // Load projects with timeout
+  try {
+    await Promise.race([
+      loadProjects(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 8000))
+    ]);
+  } catch (e) {
+    console.warn('Project load skipped, using fallback:', e.message);
+    state.projects = FALLBACK_PROJECTS;
+  }
+
+  setLoading(false);
+
+  // Page-specific startup
+  if (CURRENT_PAGE === 'manager') {
+    showScreen('screenAuth');
+  } else if (CURRENT_PAGE === 'projects') {
+    showScreen('screenProjects');
+    renderProjectTiles();
+  } else if (CURRENT_PAGE === 'hub') {
+    // hub has its own simple rendering
+  } else {
+    renderHome();
+  }
+}
+
+init();

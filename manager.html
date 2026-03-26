@@ -1,40 +1,53 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<title>BAMA Workshop — Manager</title>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BAMA Manager Dashboard</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<link rel="stylesheet" href="bama.css">
 </head>
 <body>
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
+
+<!-- TOP BAR -->
 <div class="topbar" style="position:relative">
-  <div class="logo"><a href="hub.html" style="text-decoration:none;color:inherit"><span style="color:#D0021B">BAMA</span> <span style="color:#D0021B">FABRICATION</span></a><span> MANAGER</span></div>
-  <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)">
+  <div class="logo"><span style="color:#D0021B">BAMA</span> <span style="color:#D0021B">FABRICATION</span><span> WORKSHOP</span></div>
+  <div style="position:absolute;left:50%;transform:translateX(-50%);top:50%;transform:translate(-50%,-50%)">
     <div class="clock-display" id="liveClock" style="font-size:15px;font-weight:700;letter-spacing:.5px">--:-- --</div>
   </div>
   <div class="topbar-right">
-    <a href="index.html" class="manager-btn" style="text-decoration:none">&#128336; Timesheet</a>
-    <a href="projects.html" class="manager-btn" style="text-decoration:none">&#128196; Projects</a>
+    <a href="hub.html" style="text-decoration:none"><button class="manager-btn">&#8592; Hub</button></a>
+    <button class="manager-btn" onclick="showManagerAuth()">&#9881; Manager</button>
   </div>
 </div>
+
+<!-- TOAST -->
 <div class="toast" id="toast"></div>
+
+<!-- ═══════════════════════════════════════
+     SCREEN 3: MANAGER AUTH
+══════════════════════════════════════════ -->
 <div class="screen active" id="screenAuth">
   <div class="auth-wrap">
     <div class="modal-title">MANAGER</div>
     <div class="auth-sub">Enter your PIN to access approvals</div>
-    <div><div class="field-label">PIN</div>
-      <input type="password" class="field-input" id="pinInput" placeholder="&#8226;&#8226;&#8226;&#8226;" maxlength="6"
+    <div>
+      <div class="field-label">PIN</div>
+      <input type="password" class="field-input" id="pinInput" placeholder="••••" maxlength="6"
         onkeydown="if(event.key==='Enter')checkPin()" style="text-align:center;font-size:22px;letter-spacing:8px">
     </div>
     <div style="display:flex;gap:10px;margin-top:16px">
-      <button class="btn btn-ghost" style="flex:1" onclick="location.href='hub.html'">Cancel</button>
+      <button class="btn btn-ghost" style="flex:1" onclick="goHome()">Cancel</button>
       <button class="btn btn-primary" style="flex:1" onclick="checkPin()">Enter</button>
     </div>
   </div>
 </div>
+
+<!-- ═══════════════════════════════════════
+     SCREEN 4: MANAGER DASHBOARD
+══════════════════════════════════════════ -->
 <div class="screen" id="screenManager">
   <div class="mgr-wrap">
     <div class="mgr-header">
@@ -291,7 +304,7 @@
       <div class="card" style="margin-bottom:20px;padding:20px">
         <div class="card-title" style="margin-bottom:4px"><span class="icon">&#128200;</span> Hours Over Time</div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Clocked vs Project vs Unproductive — per week</div>
-        <canvas id="rptLineChart" style="width:100%;max-height:280px"></canvas>
+        <canvas id="rptLineChart" style="width:100%;height:280px;max-height:280px"></canvas>
       </div>
 
       <!-- Two charts side by side -->
@@ -300,13 +313,13 @@
         <div class="card" style="padding:20px">
           <div class="card-title" style="margin-bottom:4px"><span class="icon">&#128101;</span> Hours by Employee</div>
           <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Total clocked hours per person</div>
-          <canvas id="rptEmpBar" style="width:100%;max-height:220px"></canvas>
+          <canvas id="rptEmpBar" style="width:100%;height:220px;max-height:220px"></canvas>
         </div>
         <!-- Doughnut: project time split -->
         <div class="card" style="padding:20px">
           <div class="card-title" style="margin-bottom:4px"><span class="icon">&#127775;</span> Time by Project</div>
           <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Where hours are being spent</div>
-          <canvas id="rptProjectDoughnut" style="width:100%;max-height:220px"></canvas>
+          <canvas id="rptProjectDoughnut" style="width:100%;height:220px;max-height:220px"></canvas>
         </div>
       </div>
 
@@ -314,7 +327,7 @@
       <div class="card" style="padding:20px;margin-bottom:20px">
         <div class="card-title" style="margin-bottom:4px"><span class="icon">&#9203;</span> Unproductive Time by Employee</div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:16px">S000 hours logged per person in selected period</div>
-        <canvas id="rptUnproductiveBar" style="width:100%;max-height:200px"></canvas>
+        <canvas id="rptUnproductiveBar" style="width:100%;height:200px;max-height:200px"></canvas>
       </div>
 
     </div>
@@ -376,6 +389,22 @@
         </div>
         <button class="btn btn-primary" style="margin-top:14px;padding:8px 20px;font-size:13px" onclick="saveEmailSettings()">Save Email Settings</button>
       </div>
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-title"><span class="icon">&#128101;</span> Office Staff</div>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:14px">
+          Names listed here will appear in the "Approve the week" dropdown in the Clock In/Out log.
+        </div>
+        <div id="officeStaffList" style="margin-bottom:14px"></div>
+        <div style="display:flex;gap:10px;align-items:flex-end">
+          <div style="flex:1">
+            <div class="field-label">ADD STAFF NAME</div>
+            <input type="text" class="field-input" id="newOfficeStaffName" placeholder="e.g. Sarah, Daniel..." maxlength="40"
+              onkeydown="if(event.key==='Enter') addOfficeStaff()">
+          </div>
+          <button class="btn btn-primary" onclick="addOfficeStaff()" style="padding:10px 18px">Add</button>
+        </div>
+      </div>
+
       <div class="card">
         <div class="card-title"><span class="icon">&#128451;</span> Data Management</div>
         <div style="display:flex;gap:12px;flex-wrap:wrap">
@@ -389,8 +418,6 @@
     </div>
   </div>
 </div>
-
-
 
 <!-- ═══════════════════════════════════════
      MANAGER ADD CLOCKING MODAL
@@ -432,150 +459,29 @@
   </div>
 </div>
 
-
 <!-- ═══════════════════════════════════════
-     ORDER FORM MODAL
+     APPROVE WEEK MODAL
 ══════════════════════════════════════════ -->
-<div class="modal-overlay" id="orderFormModal" style="align-items:flex-start;padding:20px;overflow-y:auto">
-  <div class="modal" style="width:900px;max-width:98vw;max-height:90vh;overflow-y:auto">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
-      <div class="modal-title" style="margin-bottom:0">&#128230; Workshop Order Form</div>
-      <button class="btn btn-ghost" onclick="closeOrderForm()" style="padding:6px 14px">&#10005; Close</button>
-    </div>
+<div class="modal-overlay" id="approveWeekModal" style="align-items:center;justify-content:center">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-title">✓ Approve the week</div>
     <div style="color:var(--muted);font-size:13px;margin-bottom:20px">
-      Complete the table below and click <b style="color:var(--green)">Send Order</b> — your request will be emailed for approval.
+      Approving the week will mark all pending clockings as approved. This action is logged with your name.
     </div>
-
-    <!-- Order lines table -->
-    <div style="overflow-x:auto;margin-bottom:20px">
-      <table style="width:100%;border-collapse:collapse;font-size:13px" id="orderTable">
-        <thead>
-          <tr style="border-bottom:2px solid var(--border)">
-            <th style="padding:8px 10px;text-align:left;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);width:30px">#</th>
-            <th style="padding:8px 10px;text-align:left;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted)">Product / Description</th>
-            <th style="padding:8px 10px;text-align:left;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);width:80px">Qty</th>
-            <th style="padding:8px 10px;text-align:left;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);width:150px">Supplier (if known)</th>
-            <th style="padding:8px 10px;text-align:left;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);width:130px">Need By</th>
-            <th style="padding:8px 10px;text-align:left;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);width:130px">Project ID</th>
-            <th style="padding:8px 10px;text-align:left;font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);width:150px">Ordered By</th>
-          </tr>
-        </thead>
-        <tbody id="orderTableBody">
-        </tbody>
-      </table>
-    </div>
-
-    <div style="display:flex;gap:12px;justify-content:flex-end">
-      <button class="btn btn-ghost" onclick="clearOrderForm()">Clear All</button>
-      <button class="btn btn-success" onclick="submitOrderForm()" style="font-size:14px;padding:12px 28px">&#9993; Send Order</button>
-    </div>
-  </div>
-</div>
-
-
-<!-- ═══════════════════════════════════════
-     HOLIDAY KIOSK MODAL
-══════════════════════════════════════════ -->
-<div class="modal-overlay" id="holidayKioskModal" style="align-items:flex-start;padding-top:40px;overflow-y:auto">
-  <div class="modal" style="width:560px;max-width:95vw;max-height:85vh;overflow-y:auto">
-
-    <!-- Step 1: Select employee -->
-    <div id="hkStep1">
-      <div class="modal-title">&#127959; Request Holiday</div>
-      <div style="color:var(--muted);font-size:13px;margin-bottom:24px">Select your name to continue</div>
-      <div id="hkEmpGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-bottom:16px"></div>
-      <button class="btn btn-ghost" style="width:100%" onclick="closeHolidayKiosk()">Cancel</button>
-    </div>
-
-    <!-- Step 2: PIN entry -->
-    <div id="hkStep2" style="display:none;text-align:center">
-      <div class="modal-title" id="hkPinName"></div>
-      <div style="color:var(--muted);font-size:13px;margin-bottom:24px">Enter your PIN</div>
-      <input type="password" class="field-input" id="hkPinInput" maxlength="6"
-        placeholder="••••" style="text-align:center;font-size:28px;letter-spacing:10px;margin-bottom:8px"
-        onkeydown="if(event.key==='Enter')checkHKPin()">
-      <div id="hkPinError" style="color:var(--red);font-size:12px;height:16px;margin-bottom:12px"></div>
-      <div style="display:flex;gap:10px">
-        <button class="btn btn-ghost" style="flex:1" onclick="hkBack()">&#8592; Back</button>
-        <button class="btn btn-primary" style="flex:1" onclick="checkHKPin()">Enter</button>
-      </div>
-    </div>
-
-    <!-- Step 3: Holiday form + approved list -->
-    <div id="hkStep3" style="display:none">
-      <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
-        <button class="back-btn" onclick="hkBack()">&#8592;</button>
-        <div class="modal-title" id="hkEmpName" style="margin-bottom:0"></div>
-      </div>
-
-      <!-- Balance -->
-      <div id="hkBalance" style="margin-bottom:20px"></div>
-
-      <!-- Request form -->
-      <div class="card" style="margin-bottom:16px;padding:18px">
-        <div class="card-title" style="margin-bottom:14px"><span class="icon">&#128197;</span> New Request</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
-          <div>
-            <div class="field-label">FROM DATE</div>
-            <input type="date" class="field-input" id="hkFromDate">
-          </div>
-          <div>
-            <div class="field-label">TO DATE</div>
-            <input type="date" class="field-input" id="hkToDate">
-          </div>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
-          <div>
-            <div class="field-label">TYPE</div>
-            <select class="field-input" id="hkType">
-              <option value="paid">Paid Holiday</option>
-              <option value="half">Half Day Holiday</option>
-              <option value="unpaid">Unpaid Leave</option>
-              <option value="sick">Sick Leave</option>
-              <option value="training">Training</option>
-            </select>
-          </div>
-          <div>
-            <div class="field-label">REASON (optional)</div>
-            <input type="text" class="field-input" id="hkReason" placeholder="e.g. Family holiday">
-          </div>
-        </div>
-        <button class="btn btn-primary btn-full" onclick="submitHKHoliday()">Submit Request</button>
-      </div>
-
-      <!-- Approved holidays table -->
-      <div class="card" style="padding:18px">
-        <div class="card-title" style="margin-bottom:14px"><span class="icon">&#10003;</span> Your Holidays</div>
-        <div id="hkHolidayList"></div>
-      </div>
-    </div>
-  </div>
-</div>
-
-
-<!-- ═══════════════════════════════════════
-     EDIT ENTRY MODAL (Employee)
-══════════════════════════════════════════ -->
-<div class="modal-overlay" id="editEntryModal">
-  <div class="modal">
-    <div class="modal-title">Edit Hours</div>
-    <div style="color:var(--muted);font-size:13px;margin-bottom:6px" id="editEntryProject"></div>
-    <div style="margin-bottom:20px">
-      <span class="manually-edited-badge">PENDING APPROVAL</span>
-      <span style="font-size:12px;color:var(--subtle);margin-left:8px">Your manager will approve this change</span>
-    </div>
-    <div>
-      <div class="field-label">HOURS</div>
-      <input type="number" class="field-input" id="editEntryHours" min="0.5" max="24" step="0.5"
-        style="font-size:20px;text-align:center">
+    <div id="approveWeekSummary" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:18px;font-size:13px;color:var(--muted)"></div>
+    <div style="margin-bottom:18px">
+      <div class="field-label">SELECT YOUR NAME</div>
+      <select class="field-input" id="approveWeekApprover">
+        <option value="">— Select approver —</option>
+      </select>
+      <div style="font-size:11px;color:var(--subtle);margin-top:4px">Office staff names are set in Manager → Settings</div>
     </div>
     <div class="modal-actions">
-      <button class="btn btn-ghost" onclick="closeEditEntry()">Cancel</button>
-      <button class="btn btn-primary" onclick="saveEditEntry()">Submit for Approval</button>
+      <button class="btn btn-ghost" onclick="closeApproveWeekModal()">Cancel</button>
+      <button class="btn btn-success" id="approveWeekConfirmBtn" onclick="confirmApproveWeek()" style="font-weight:600" disabled>✓ Confirm Approval</button>
     </div>
   </div>
 </div>
-
 
 <!-- ═══════════════════════════════════════
      CONFIRM MODAL
@@ -591,47 +497,6 @@
   </div>
 </div>
 
-<!-- MODAL: Approve Week -->
-<div class="modal-overlay" id="approveWeekModal" style="align-items:center;justify-content:center">
-  <div class="modal" style="max-width:420px">
-    <div class="modal-title">&#10003; Approve the week</div>
-    <div style="color:var(--muted);font-size:13px;margin-bottom:20px">Approving the week will mark all pending clockings as approved. This action is logged with your name.</div>
-    <div id="approveWeekSummary" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:18px;font-size:13px;color:var(--muted)"></div>
-    <div style="margin-bottom:18px">
-      <div class="field-label">SELECT YOUR NAME</div>
-      <select class="field-input" id="approveWeekApprover"><option value="">&#8212; Select approver &#8212;</option></select>
-      <div style="font-size:11px;color:var(--subtle);margin-top:4px">Office staff names set in Settings tab</div>
-    </div>
-    <div class="modal-actions">
-      <button class="btn btn-ghost" onclick="closeApproveWeekModal()">Cancel</button>
-      <button class="btn btn-success" id="approveWeekConfirmBtn" onclick="confirmApproveWeek()" style="font-weight:600" disabled>&#10003; Confirm Approval</button>
-    </div>
-  </div>
-</div>
 <script src="shared.js"></script>
-<script>
-function checkPin() {
-  const entered = document.getElementById('pinInput').value;
-  const correct = (state.timesheetData.settings && state.timesheetData.settings.managerPin) || CONFIG.managerPin;
-  if (entered === correct) { showScreen('screenManager'); renderManagerView(); }
-  else { document.getElementById('pinInput').value = ''; toast('Incorrect PIN','error'); }
-}
-async function init() {
-  setLoading(true);
-  AUTH.handleRedirect();
-  try { await Promise.race([loadTimesheetData(),
-      new Promise((_,rej) => setTimeout(() => rej(new Error('Timeout')),8000))]); }
-  catch(e) { console.warn('Data load:',e.message);
-    state.timesheetData={employees:[],entries:[],clockings:[],settings:{managerPin:'1234'}}; }
-  try { await Promise.race([loadProjects(),
-      new Promise((_,rej) => setTimeout(() => rej(new Error('Timeout')),8000))]); }
-  catch(e) { console.warn('Projects:',e.message); state.projects=FALLBACK_PROJECTS; }
-  setLoading(false);
-  updateClock(); setInterval(updateClock,1000);
-  showScreen('screenAuth');
-  document.getElementById('pinInput').focus();
-}
-init();
-</script>
 </body>
 </html>
