@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<title>BAMA Workshop — Projects &amp; Drawings</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="bama.css">
+</head>
+<body>
+<div class="loading-bar" id="loadingBar" style="width:0"></div>
+<div class="topbar" style="position:relative">
+  <div class="logo"><a href="hub.html" style="text-decoration:none;color:inherit"><span style="color:#D0021B">BAMA</span> <span style="color:#D0021B">FABRICATION</span></a><span> PROJECTS</span></div>
+  <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)">
+    <div class="clock-display" id="liveClock" style="font-size:15px;font-weight:700;letter-spacing:.5px">--:-- --</div>
+  </div>
+  <div class="topbar-right">
+    <a href="index.html" class="manager-btn" style="text-decoration:none">&#128336; Timesheet</a>
+    <a href="manager.html" class="manager-btn" style="text-decoration:none">&#9881; Manager</a>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<div class="screen" id="screenProjects">
+  <div class="panel-wrap" style="max-width:1100px">
+    <div class="panel-header" style="margin-bottom:8px">
+      <button class="back-btn" onclick="goHome()">&#8592; Back</button>
+      <div style="flex:1">
+        <div class="panel-name">PROJECTS</div>
+      </div>
+      <div id="draftsmanBadge" style="display:none;background:rgba(255,107,0,.15);border:1.5px solid var(--accent);border-radius:8px;padding:6px 14px;font-size:13px;font-weight:600;color:var(--accent);display:none;align-items:center;gap:8px">
+        <span style="font-size:16px">&#9998;</span> DRAFTSMAN MODE
+        <button onclick="logoutDraftsman()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px;margin-left:6px;padding:0">Exit</button>
+      </div>
+      <button id="draftsmanLoginBtn" class="btn" onclick="openDraftsmanLogin()" style="background:none;border:1px solid rgba(255,107,0,.4);color:var(--accent);padding:8px 16px;font-size:12px;border-radius:8px">
+        &#9998; Draftsman Login
+      </button>
+    </div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:28px">Click a project to view drawings</div>
+    <div class="projects-grid" id="projectTilesGrid">
+      <div class="empty-state"><div class="spinner"></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     SCREEN 2C: PROJECT DETAIL — DRAWINGS
+══════════════════════════════════════════ -->
+
+<div class="screen" id="screenProjectDetail">
+  <div class="panel-wrap" style="max-width:900px">
+    <div class="project-back-header">
+      <button class="back-btn" onclick="showScreen('screenProjects')">&#8592; Projects</button>
+      <div>
+        <div class="proj-detail-title" id="projDetailTitle"></div>
+        <div class="proj-detail-meta" id="projDetailMeta"></div>
+      </div>
+    </div>
+
+    <!-- Draftsman toolbar (shown when logged in as draftsman) -->
+    <div class="draftsman-bar" id="draftsmanBar" style="display:none">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="font-size:16px">&#9998;</span>
+        <span style="font-size:13px;font-weight:600;color:var(--accent)">Draftsman Mode</span>
+        <span style="font-size:12px;color:var(--muted)" id="draftsmanName"></span>
+      </div>
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="openUploadDrawing()">
+          &#43; Add Drawing
+        </button>
+        <button class="btn btn-ghost" style="padding:8px 14px;font-size:12px" onclick="logoutDraftsman()">Exit</button>
+      </div>
+    </div>
+
+    <div id="drawingsList">
+      <div class="empty-state"><div class="spinner"></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     SCREEN 3: MANAGER AUTH
+══════════════════════════════════════════ -->
+
+
+<!-- ═══════════════════════════════════════
+     DRAFTSMAN LOGIN MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="draftsmanLoginModal">
+  <div class="modal" style="text-align:center">
+    <div class="modal-title" style="color:var(--accent)">&#9998; Draftsman</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:24px">Enter draftsman PIN</div>
+    <input type="password" class="field-input" id="draftsmanPinInput" maxlength="8"
+      placeholder="••••" style="text-align:center;font-size:28px;letter-spacing:10px;margin-bottom:8px"
+      onkeydown="if(event.key==='Enter')checkDraftsmanPin()">
+    <div id="draftsmanPinError" style="color:var(--red);font-size:12px;height:16px;margin-bottom:12px"></div>
+    <div style="display:flex;gap:10px">
+      <button class="btn btn-ghost" style="flex:1" onclick="closeDraftsmanLogin()">Cancel</button>
+      <button class="btn btn-primary" style="flex:1" onclick="checkDraftsmanPin()">Enter</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════
+     ADD NOTE MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="addNoteModal">
+  <div class="modal">
+    <div class="modal-title">Add Note</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:16px" id="addNoteDrawingName"></div>
+    <div style="margin-bottom:8px">
+      <div class="field-label">YOUR NAME</div>
+      <select class="field-input" id="noteAuthorSelect">
+        <option value="">Select your name...</option>
+      </select>
+    </div>
+    <div style="margin-bottom:16px">
+      <div class="field-label">NOTE</div>
+      <textarea class="field-input" id="noteText" rows="4" placeholder="Type your note here..." style="resize:vertical"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeAddNote()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveNote()">Save Note</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════
+     UPLOAD DRAWING MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="uploadDrawingModal">
+  <div class="modal" style="width:500px;max-width:95vw">
+    <div class="modal-title">&#43; Add Drawing</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:20px" id="uploadProjectName"></div>
+
+    <div style="margin-bottom:12px">
+      <div class="field-label">DRAWING NAME</div>
+      <input type="text" class="field-input" id="drawingNameInput" placeholder="e.g. GA-001 Ground Floor Plan">
+    </div>
+
+    <div style="margin-bottom:12px">
+      <div class="field-label">SHAREPOINT FOLDER PATH <span style="color:var(--muted);font-weight:400">(relative to project folder)</span></div>
+      <input type="text" class="field-input" id="drawingFolderPath" placeholder="e.g. 02 - Drawings or leave blank for root">
+    </div>
+
+    <div style="margin-bottom:12px">
+      <div class="field-label">SELECT PDF FILE</div>
+      <input type="file" id="drawingFileInput" accept=".pdf" style="display:none" onchange="onDrawingFileSelected()">
+      <div class="upload-zone" onclick="document.getElementById('drawingFileInput').click()">
+        <div class="upload-zone-icon">&#128196;</div>
+        <div class="upload-zone-text" id="uploadZoneText">Click to select PDF file</div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <div class="field-label">FINISHING REQUIREMENT</div>
+        <select class="field-input" id="uploadFinishing" style="font-size:13px;padding:8px 12px">
+          <option value="none">No finishing required</option>
+          <option value="galvanise">Must be Galvanised</option>
+          <option value="paint">Must be Painted</option>
+        </select>
+      </div>
+      <div>
+        <div class="field-label">TRANSPORT</div>
+        <select class="field-input" id="uploadTransport" style="font-size:13px;padding:8px 12px">
+          <option value="collect">They collect (from us)</option>
+          <option value="deliver">We deliver</option>
+        </select>
+      </div>
+    </div>
+
+    <div style="margin-bottom:16px">
+      <div class="field-label">DRAFTSMAN NOTE <span style="color:var(--muted);font-weight:400">(optional)</span></div>
+      <textarea class="field-input" id="uploadDraftsmanNote" rows="2"
+        placeholder="Add a note for the workshop team..."
+        style="resize:vertical;font-size:13px"></textarea>
+    </div>
+
+    <div id="uploadProgress" style="display:none;margin-bottom:12px">
+      <div style="background:var(--border);border-radius:4px;overflow:hidden;height:6px">
+        <div id="uploadProgressBar" style="background:var(--accent);height:100%;width:0%;transition:width .3s"></div>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-top:6px;text-align:center" id="uploadProgressText">Uploading...</div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeUploadDrawing()">Cancel</button>
+      <button class="btn btn-primary" id="uploadDrawingBtn" onclick="uploadDrawing()">Upload Drawing</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════
+     FINISHING ACKNOWLEDGEMENT MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="finishingModal" style="align-items:center;justify-content:center">
+  <div class="modal" style="max-width:460px;width:95vw;text-align:center">
+    <div id="finishingModalIcon" style="font-size:48px;margin-bottom:12px"></div>
+    <div class="modal-title" id="finishingModalTitle" style="font-size:20px;margin-bottom:8px"></div>
+    <div id="finishingModalMessage" style="color:var(--muted);font-size:14px;line-height:1.7;margin-bottom:20px"></div>
+
+    <!-- Transport alert box -->
+    <div id="finishingTransportAlert" style="display:none;border-radius:10px;padding:16px;margin-bottom:20px;text-align:left"></div>
+
+    <!-- Acknowledgement checkbox -->
+    <div style="background:var(--surface);border:2px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px;cursor:pointer;transition:all .2s;text-align:left"
+      id="finishingCheckBox" onclick="toggleFinishingCheck()">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div id="finishingCheckIcon" style="width:26px;height:26px;border-radius:6px;border:2px solid var(--border);background:var(--card);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:16px;transition:all .2s"></div>
+        <div id="finishingCheckLabel" style="font-size:14px;font-weight:600;color:var(--text)"></div>
+      </div>
+    </div>
+
+    <!-- Name selection -->
+    <div style="margin-bottom:20px;text-align:left">
+      <div class="field-label" style="margin-bottom:6px">ACKNOWLEDGED BY</div>
+      <select class="field-input" id="finishingAcknowledgedBy" style="font-size:14px;padding:10px 12px">
+        <option value="">Select your name...</option>
+      </select>
+    </div>
+
+    <button class="btn btn-primary btn-full" id="finishingConfirmBtn"
+      onclick="confirmFinishingComplete()"
+      style="padding:14px;font-size:15px;opacity:.4;cursor:not-allowed" disabled>
+      Confirm &amp; Mark Complete
+    </button>
+    <button class="btn btn-ghost btn-full" onclick="closeFinishingModal()" style="margin-top:10px;padding:12px">
+      Cancel
+    </button>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════
+     CONFIRM MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="confirmModal">
+  <div class="modal">
+    <div class="modal-title" id="confirmTitle">Confirm</div>
+    <div id="confirmMsg" style="color:var(--muted);font-size:14px"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="confirmOk" onclick="">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<script src="shared.js"></script>
+<script>
+async function init() {
+  setLoading(true);
+  AUTH.handleRedirect();
+  try { await Promise.race([loadTimesheetData(),
+      new Promise((_,rej) => setTimeout(() => rej(new Error('Timeout')),8000))]); }
+  catch(e) { console.warn('Data load:',e.message);
+    state.timesheetData={employees:[],entries:[],clockings:[],settings:{managerPin:'1234'}}; }
+  try { await Promise.race([loadProjects(),
+      new Promise((_,rej) => setTimeout(() => rej(new Error('Timeout')),8000))]); }
+  catch(e) { console.warn('Projects:',e.message); state.projects=FALLBACK_PROJECTS; }
+  setLoading(false);
+  updateClock(); setInterval(updateClock,1000);
+  showScreen('screenProjects');
+  await openProjects();
+}
+init();
+</script>
+</body>
+</html>
