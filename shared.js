@@ -194,6 +194,13 @@ async function loadTimesheetData() {
 }
 
 async function saveTimesheetData() {
+  // SAFEGUARD: Never overwrite SharePoint with empty employees
+  if (!state.timesheetData.employees || state.timesheetData.employees.length === 0) {
+    console.error('BLOCKED: Attempted to save empty employees array — aborting to protect data');
+    toast('Save blocked — no employee data to save', 'error');
+    return;
+  }
+
   const token = await getToken();
   const json = JSON.stringify(state.timesheetData, null, 2);
   const url = `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.timesheetFolderItemId}:/${CONFIG.timesheetFileName}:/content`;
