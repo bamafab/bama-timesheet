@@ -194,7 +194,14 @@ async function loadTimesheetData() {
 }
 
 async function saveTimesheetData() {
-  // SAFEGUARD: Never overwrite SharePoint with empty employees
+  // SAFEGUARD 1: Never save if we didn't successfully load data first
+  if (!_dataLoadedFromSharePoint) {
+    console.error('BLOCKED: Cannot save — data was never loaded from SharePoint');
+    toast('Save blocked — data not loaded yet. Please refresh.', 'error');
+    return;
+  }
+
+  // SAFEGUARD 2: Never overwrite SharePoint with empty employees
   if (!state.timesheetData.employees || state.timesheetData.employees.length === 0) {
     console.error('BLOCKED: Attempted to save empty employees array — aborting to protect data');
     toast('Save blocked — no employee data to save', 'error');
@@ -885,8 +892,10 @@ function renderTodayEntries() {
 }
 
 async function doClock(direction) {
+  try {
   const today = todayStr();
   const emp = state.currentEmployee;
+  if (!emp) { toast('No employee selected', 'error'); return; }
 
   if (direction === 'in') {
     // Capture exact current time
@@ -981,6 +990,10 @@ async function doClock(direction) {
 
     // Has project hours — proceed directly
     await finishClockOut({ emp, today, clockOut, breakMins, clocking });
+  }
+  } catch (err) {
+    console.error('doClock error:', err);
+    toast('Clock error: ' + err.message, 'error');
   }
 }
 
@@ -5256,6 +5269,9 @@ const CURRENT_PAGE = (() => {
   return 'index'; // default kiosk
 })();
 
+// Track whether we successfully loaded data from SharePoint
+let _dataLoadedFromSharePoint = false;
+
 async function init() {
   setLoading(true);
 
@@ -5269,14 +5285,14 @@ async function init() {
       loadTimesheetData(),
       new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 8000))
     ]);
+    _dataLoadedFromSharePoint = true;
   } catch (e) {
     console.warn('Timesheet load skipped:', e.message);
-    state.timesheetData = {
-      employees: state.timesheetData.employees || [],
-      entries: state.timesheetData.entries || [],
-      clockings: state.timesheetData.clockings || [],
-      settings: state.timesheetData.settings || { managerPin: '1234' }
-    };
+    // DO NOT overwrite state with empty defaults — keep whatever was loaded
+    // Only set defaults if there's truly nothing
+    if (!state.timesheetData.employees || state.timesheetData.employees.length === 0) {
+      console.warn('No employee data loaded — app will be read-only until data loads');
+    }
   }
 
   // Load projects with timeout
