@@ -68,14 +68,9 @@
     <!-- ── CLOCK IN/OUT CARD ── -->
     <div class="card" id="clockCard">
       <div class="card-title"><span class="icon" style="filter:brightness(0) invert(1)">🕐</span> Shift Times</div>
-      <div class="clock-grid" id="clockInSection">
-        <div>
-          <div class="field-label">START TIME</div>
-          <select class="field-input" id="clockInTime"></select>
-        </div>
-        <div style="display:flex;align-items:flex-end">
-          <button class="btn btn-success btn-full" onclick="doClock('in')">Clock In</button>
-        </div>
+      <div id="clockInSection">
+        <input type="hidden" id="clockInTime" value="">
+        <button class="btn btn-success btn-full" onclick="doClock('in')" style="padding:18px;font-size:16px;letter-spacing:1px">&#9201; Clock In Now</button>
       </div>
       <div id="clockedInSection" style="display:none">
         <div class="clock-grid" style="grid-template-columns:1fr 1fr;gap:12px">
@@ -375,6 +370,60 @@
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" id="confirmOk" onclick="">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     AMENDMENT REQUEST MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="amendmentModal">
+  <div class="modal" style="width:440px;max-width:95vw">
+    <div class="modal-title">&#9998; Request Amendment</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:16px">
+      Your manager will review and approve or reject this change.
+    </div>
+    <div id="amendCurrentDate" style="font-family:var(--font-mono);color:var(--accent2);margin-bottom:16px;font-size:14px"></div>
+
+    <!-- Current times -->
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-bottom:16px;display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div>
+        <div class="field-label">CURRENT CLOCK IN</div>
+        <div style="font-family:var(--font-mono);font-size:14px;color:var(--green)" id="amendCurrentIn">—</div>
+      </div>
+      <div>
+        <div class="field-label">CURRENT CLOCK OUT</div>
+        <div style="font-family:var(--font-mono);font-size:14px;color:var(--red)" id="amendCurrentOut">—</div>
+      </div>
+    </div>
+
+    <!-- Requested new times -->
+    <div class="add-clock-grid" style="margin-bottom:12px">
+      <div>
+        <div class="field-label">CORRECTED CLOCK IN</div>
+        <select class="field-input" id="amendNewIn">
+          <option value="">No change</option>
+        </select>
+      </div>
+      <div>
+        <div class="field-label">CORRECTED CLOCK OUT</div>
+        <select class="field-input" id="amendNewOut">
+          <option value="">No change</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Reason -->
+    <div style="margin-bottom:16px">
+      <div class="field-label">REASON <span style="color:var(--red)">*</span></div>
+      <textarea class="field-input" id="amendReason" rows="3"
+        placeholder="e.g. Forgot to clock in, was here at 6:30..."
+        style="resize:vertical;font-size:13px"></textarea>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeAmendmentModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitAmendment()">Submit Request</button>
     </div>
   </div>
 </div>

@@ -793,23 +793,19 @@ function updateWorkingTime(clockInStr) {
 }
 
 function fillTimeSelects() {
-  // Only fill clockInTime — clockOutTime has been removed (auto-captures on button press)
-  const sel = document.getElementById('clockInTime');
-  if (sel) {
-    sel.innerHTML = '';
-    CONFIG.timeSlots.forEach(s => {
-      const opt = document.createElement('option');
-      opt.value = s.val; opt.textContent = s.label;
-      sel.appendChild(opt);
-    });
-    // Default to nearest 30 min
-    const now = new Date();
-    const rounded = `${String(now.getHours()).padStart(2,'0')}:${now.getMinutes() < 30 ? '00' : '30'}`;
-    sel.value = rounded;
-  }
-  // Reset break selection
-  const breakSel = document.getElementById('breakDuration');
-  if (breakSel) breakSel.value = '';
+  // Clock in time is now auto-captured — no dropdown to fill
+  // Only populate time selects for add-clocking modals that still need them
+  ['addClockIn', 'addClockOut', 'mgrClockIn', 'mgrClockOut'].forEach(id => {
+    const sel = document.getElementById(id);
+    if (sel && sel.tagName === 'SELECT') {
+      sel.innerHTML = '';
+      CONFIG.timeSlots.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.val; opt.textContent = s.label;
+        sel.appendChild(opt);
+      });
+    }
+  });
 }
 
 function onProjectSelect() {
@@ -885,7 +881,16 @@ async function doClock(direction) {
   const emp = state.currentEmployee;
 
   if (direction === 'in') {
-    const clockIn = document.getElementById('clockInTime').value;
+    // Auto-capture current time, rounded to nearest :00 or :30
+    // with 5-minute grace period (e.g. 7:26 → 7:30, 7:24 → 7:00)
+    const now = new Date();
+    const rawMins = now.getHours() * 60 + now.getMinutes();
+    const slot = Math.floor(rawMins / 30) * 30;
+    const nextSlot = slot + 30;
+    const roundedMins = (nextSlot - rawMins) <= 5 ? nextSlot : slot;
+    const ciH = Math.floor(roundedMins / 60) % 24;
+    const ciM = roundedMins % 60;
+    const clockIn = `${String(ciH).padStart(2,'0')}:${String(ciM).padStart(2,'0')}`;
 
     // Block if already clocked in (no clock-out yet)
     const existing = state.timesheetData.clockings.find(
@@ -1325,7 +1330,60 @@ function renderClockLog(clockings) {
     return s + Object.values(emp).reduce((ss, c) => ss + (calcHours(c.clockIn, c.clockOut, c.breakMins) || 0), 0);
   }, 0);
 
+  // Build amendment requests banner
+  const { mon: wMon, sun: wSun } = getWeekDates(clockLogWeekOffset);
+  const wMonStr = dateStr(wMon);
+  const wSunStr = dateStr(wSun);
+  const pendingAmendments = (state.timesheetData.amendments || []).filter(
+    a => a.status === 'pending' && a.date >= wMonStr && a.date <= wSunStr
+  );
+
+  let amendmentHtml = '';
+  if (pendingAmendments.length > 0) {
+    const items = pendingAmendments.map(a => {
+      const dateLabel = new Date(a.date + 'T12:00:00').toLocaleDateString('en-GB', { weekday:'short', day:'numeric', month:'short' });
+      return `
+        <div style="background:var(--surface);border:1px solid rgba(255,107,0,.25);border-radius:8px;padding:12px 16px;margin-bottom:8px;font-size:13px">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+            <div>
+              <span style="font-weight:600;color:var(--text)">${a.employeeName}</span>
+              <span style="color:var(--muted);margin:0 6px">·</span>
+              <span style="font-family:var(--font-mono);font-size:12px;color:var(--accent2)">${dateLabel}</span>
+            </div>
+            <div style="display:flex;gap:6px">
+              <button class="tiny-btn tiny-approve" onclick="approveAmendment('${a.id}')" style="font-size:11px;padding:4px 10px">&#10003; Approve</button>
+              <button class="tiny-btn tiny-reject" onclick="rejectAmendment('${a.id}')" style="font-size:11px;padding:4px 10px">&#10005; Reject</button>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px">
+            <div>
+              <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Original</div>
+              <span style="font-family:var(--font-mono);color:var(--subtle)">&#9650; ${a.originalIn || '—'} &#9660; ${a.originalOut || '—'}</span>
+            </div>
+            <div>
+              <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Requested</div>
+              <span style="font-family:var(--font-mono);color:var(--accent)">&#9650; ${a.requestedIn || 'no change'} &#9660; ${a.requestedOut || 'no change'}</span>
+            </div>
+          </div>
+          <div style="margin-top:8px;font-size:12px;color:var(--muted)">
+            <span style="font-weight:600">Reason:</span> ${a.reason}
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    amendmentHtml = `
+      <div class="notification-banner" style="cursor:default;margin-bottom:16px">
+        <div class="nb-icon">&#9998;</div>
+        <div class="nb-text"><b>${pendingAmendments.length}</b> amendment request${pendingAmendments.length > 1 ? 's' : ''} pending review</div>
+        <div class="nb-count">${pendingAmendments.length}</div>
+      </div>
+      ${items}
+    `;
+  }
+
   area.innerHTML = `
+    ${amendmentHtml}
     <div style="overflow-x:auto">
       <table class="summary-table" style="min-width:800px;width:100%">
         <thead>
@@ -1517,6 +1575,9 @@ function renderMyWeek(employeeName) {
     if (clocking) {
       const hrs = calcHours(clocking.clockIn, clocking.clockOut, clocking.breakMins);
       const isPending = clocking.approvalStatus === 'pending';
+      // Check for pending amendment
+      const amendment = (state.timesheetData.amendments || []).find(a => a.clockingId === clocking.id && a.status === 'pending');
+      const rejectedAmendment = (state.timesheetData.amendments || []).find(a => a.clockingId === clocking.id && a.status === 'rejected');
       content = `
         ${clocking.clockIn ? `<div class="week-day-time in">▲ ${clocking.clockIn}</div>` : '<div class="week-day-time" style="color:var(--subtle)">▲ —</div>'}
         ${clocking.clockOut ? `<div class="week-day-time out">▼ ${clocking.clockOut}</div>` : '<div class="week-day-time" style="color:var(--subtle)">▼ —</div>'}
@@ -1524,6 +1585,9 @@ function renderMyWeek(employeeName) {
         ${hrs !== null ? `<div class="week-day-total">${hrs.toFixed(1)}h</div>` : ''}
         ${isPending ? `<div style="margin-top:4px"><span class="tag tag-pending" style="font-size:9px">Pending</span></div>` : ''}
         ${clocking.manuallyEdited && !isPending ? `<div style="margin-top:4px"><span class="manually-edited-badge" style="font-size:9px">Edited</span></div>` : ''}
+        ${amendment ? `<div style="margin-top:4px"><span class="tag tag-pending" style="font-size:9px">Amendment pending</span></div>` : ''}
+        ${rejectedAmendment && !amendment ? `<div style="margin-top:4px"><span class="tag tag-rejected" style="font-size:9px">Amendment rejected</span></div>` : ''}
+        ${!isFuture && clocking.clockOut && !amendment ? `<button class="week-day-add" onclick="openAmendmentRequest('${clocking.id}')">&#9998; Request Amendment</button>` : ''}
       `;
     } else if (!isFuture) {
       const isToday2 = dStr === todayStr();
@@ -1591,6 +1655,126 @@ async function submitMissingClocking() {
     closeAddClockingModal();
     toast('Submitted for manager approval ✓', 'success');
     renderMyWeek(state.currentEmployee);
+  } catch { toast('Save failed', 'error'); }
+}
+
+// ═══════════════════════════════════════════
+// AMENDMENT REQUESTS
+// ═══════════════════════════════════════════
+let _amendmentClockingId = null;
+
+function openAmendmentRequest(clockingId) {
+  _amendmentClockingId = clockingId;
+  const clocking = state.timesheetData.clockings.find(c => c.id === clockingId);
+  if (!clocking) return;
+
+  const modal = document.getElementById('amendmentModal');
+  if (!modal) return;
+
+  // Show current times
+  document.getElementById('amendCurrentDate').textContent =
+    new Date(clocking.date + 'T12:00:00').toLocaleDateString('en-GB', { weekday:'long', day:'numeric', month:'long' });
+  document.getElementById('amendCurrentIn').textContent = clocking.clockIn || '—';
+  document.getElementById('amendCurrentOut').textContent = clocking.clockOut || '—';
+
+  // Fill time dropdowns
+  ['amendNewIn','amendNewOut'].forEach(id => {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    sel.innerHTML = '<option value="">No change</option>' +
+      CONFIG.timeSlots.map(s => `<option value="${s.val}">${s.label}</option>`).join('');
+  });
+
+  document.getElementById('amendReason').value = '';
+  modal.classList.add('active');
+}
+
+function closeAmendmentModal() {
+  const modal = document.getElementById('amendmentModal');
+  if (modal) modal.classList.remove('active');
+  _amendmentClockingId = null;
+}
+
+async function submitAmendment() {
+  const newIn = document.getElementById('amendNewIn').value;
+  const newOut = document.getElementById('amendNewOut').value;
+  const reason = document.getElementById('amendReason').value.trim();
+
+  if (!newIn && !newOut) {
+    toast('Please select at least one time to change', 'error');
+    return;
+  }
+  if (!reason) {
+    toast('Please provide a reason for the amendment', 'error');
+    return;
+  }
+
+  const clocking = state.timesheetData.clockings.find(c => c.id === _amendmentClockingId);
+  if (!clocking) return;
+
+  if (!state.timesheetData.amendments) state.timesheetData.amendments = [];
+
+  // Remove any previous rejected amendment for this clocking (allow re-submit)
+  state.timesheetData.amendments = state.timesheetData.amendments.filter(
+    a => !(a.clockingId === _amendmentClockingId && a.status === 'rejected')
+  );
+
+  state.timesheetData.amendments.push({
+    id: Date.now().toString(),
+    clockingId: _amendmentClockingId,
+    employeeName: clocking.employeeName,
+    date: clocking.date,
+    originalIn: clocking.clockIn,
+    originalOut: clocking.clockOut,
+    requestedIn: newIn || null,
+    requestedOut: newOut || null,
+    reason,
+    status: 'pending',
+    submittedAt: new Date().toISOString()
+  });
+
+  try {
+    await saveTimesheetData();
+    closeAmendmentModal();
+    toast('Amendment request submitted', 'success');
+    renderMyWeek(state.currentEmployee);
+  } catch {
+    toast('Save failed', 'error');
+  }
+}
+
+async function approveAmendment(id) {
+  const amendment = (state.timesheetData.amendments || []).find(a => a.id === id);
+  if (!amendment) return;
+
+  const clocking = state.timesheetData.clockings.find(c => c.id === amendment.clockingId);
+  if (!clocking) return;
+
+  // Apply the changes
+  if (amendment.requestedIn) clocking.clockIn = amendment.requestedIn;
+  if (amendment.requestedOut) clocking.clockOut = amendment.requestedOut;
+  clocking.manuallyEdited = true;
+  amendment.status = 'approved';
+  amendment.resolvedAt = new Date().toISOString();
+
+  try {
+    await saveTimesheetData();
+    toast('Amendment approved — clocking updated', 'success');
+    renderManagerView();
+  } catch { toast('Save failed', 'error'); }
+}
+
+async function rejectAmendment(id) {
+  const amendment = (state.timesheetData.amendments || []).find(a => a.id === id);
+  if (!amendment) return;
+
+  amendment.status = 'rejected';
+  amendment.resolvedAt = new Date().toISOString();
+
+  try {
+    await saveTimesheetData();
+    toast('Amendment rejected', 'info');
+    renderManagerView();
   } catch { toast('Save failed', 'error'); }
 }
 
@@ -1690,8 +1874,7 @@ function goHome() {
   if (CURRENT_PAGE === 'manager') {
     showScreen('screenAuth');
   } else if (CURRENT_PAGE === 'projects') {
-    showScreen('screenProjects');
-    renderProjectTiles();
+    window.location.href = 'index.html';
   } else if (CURRENT_PAGE === 'hub') {
     window.location.href = 'hub.html';
   } else {
