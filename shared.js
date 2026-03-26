@@ -106,12 +106,22 @@ const AUTH = {
       sessionStorage.setItem('bama_token_expiry', (Date.now() + (expiresIn - 60) * 1000).toString());
       window.history.replaceState({}, '', window.location.pathname);
       console.log('Auth: Token received from Microsoft login');
+
+      // If we were redirected here from another page, bounce back
+      const returnTo = sessionStorage.getItem('bama_return_page');
+      if (returnTo) {
+        sessionStorage.removeItem('bama_return_page');
+        window.location.href = returnTo;
+        return true;
+      }
       return true;
     }
     return false;
   },
 
   login() {
+    // Remember which page we're on so we can come back after auth
+    sessionStorage.setItem('bama_return_page', window.location.pathname);
     const url = new URL(`https://login.microsoftonline.com/${AUTH.tenantId}/oauth2/v2.0/authorize`);
     url.searchParams.set('client_id', AUTH.clientId);
     url.searchParams.set('response_type', 'token');
@@ -124,6 +134,8 @@ const AUTH = {
   },
 
   loginInteractive() {
+    // Remember which page we're on so we can come back after auth
+    sessionStorage.setItem('bama_return_page', window.location.pathname);
     const url = new URL(`https://login.microsoftonline.com/${AUTH.tenantId}/oauth2/v2.0/authorize`);
     url.searchParams.set('client_id', AUTH.clientId);
     url.searchParams.set('response_type', 'token');
