@@ -958,9 +958,8 @@ async function doClock(direction) {
 
   } else {
     // CLOCK OUT
-    alert('DEBUG: Clock out pressed for ' + emp + ' on ' + today);
-
     if (!state.timesheetData || !state.timesheetData.clockings) {
+      alert('DEBUG: No timesheet data loaded');
       toast('Error: timesheet data not loaded', 'error');
       return;
     }
@@ -968,7 +967,9 @@ async function doClock(direction) {
     const clocking = state.timesheetData.clockings.find(
       c => c.employeeName === emp && c.date === today && !c.clockOut
     );
-    if (!clocking) { toast('Not clocked in today — cannot clock out', 'error'); return; }
+    if (!clocking) { alert('DEBUG: No open clocking found for ' + emp + ' on ' + today); toast('Not clocked in today — cannot clock out', 'error'); return; }
+
+    alert('DEBUG: Found clocking id=' + clocking.id + ' clockIn=' + clocking.clockIn);
 
     // Break is always 30 mins (mandatory default)
     const breakEl = document.getElementById('breakDuration');
@@ -990,12 +991,16 @@ async function doClock(direction) {
       ...currentEntries.filter(e => e.projectId === 'WGD')
     ];
 
+    alert('DEBUG: Project hrs=' + todayProjectHrs.length + ' WGD hrs=' + todayWGDHrs.length + ' → showing noProjectModal');
+
     if (todayProjectHrs.length === 0 && todayWGDHrs.length === 0) {
       // No project hours — show the mandatory prompt
       _pendingClockOutData = { emp, today, clockOut, breakMins, clocking };
       const modal = document.getElementById('noProjectModal');
+      alert('DEBUG: noProjectModal element = ' + (modal ? 'FOUND' : 'NULL'));
       if (modal) {
         modal.classList.add('active');
+        alert('DEBUG: Modal should now be visible');
       } else {
         toast('Error: noProjectModal not found in page', 'error');
       }
@@ -1684,12 +1689,17 @@ async function submitMissingClocking() {
 let _amendmentClockingId = null;
 
 function openAmendmentRequest(clockingId) {
+  alert('DEBUG Amendment: clockingId=' + clockingId);
   _amendmentClockingId = String(clockingId);
   const clocking = state.timesheetData.clockings.find(c => String(c.id) === String(clockingId));
-  if (!clocking) { toast('Clocking not found', 'error'); return; }
+  if (!clocking) { alert('DEBUG Amendment: Clocking NOT FOUND'); toast('Clocking not found', 'error'); return; }
+
+  alert('DEBUG Amendment: Found clocking for ' + clocking.employeeName + ' on ' + clocking.date);
 
   const modal = document.getElementById('amendmentModal');
-  if (!modal) { toast('Amendment modal not found', 'error'); return; }
+  if (!modal) { alert('DEBUG Amendment: Modal element NOT FOUND'); toast('Amendment modal not found', 'error'); return; }
+
+  alert('DEBUG Amendment: Modal found, showing it now');
 
   // Show current times
   document.getElementById('amendCurrentDate').textContent =
