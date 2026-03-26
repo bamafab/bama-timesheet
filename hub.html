@@ -129,7 +129,28 @@
 </div>
 
 <script>
-// Minimal JS for hub — just the clock
+// Handle OAuth redirect — token arrives here at the root URL
+(function() {
+  if (window.location.hash && window.location.hash.includes('access_token')) {
+    const params = new URLSearchParams(window.location.hash.replace('#', '?'));
+    const token = params.get('access_token');
+    const expiresIn = parseInt(params.get('expires_in') || '3600');
+    if (token) {
+      sessionStorage.setItem('bama_token', token);
+      sessionStorage.setItem('bama_token_expiry', (Date.now() + (expiresIn - 60) * 1000).toString());
+      window.history.replaceState({}, '', window.location.pathname);
+      // Bounce back to the page that triggered login
+      const returnTo = sessionStorage.getItem('bama_return_page');
+      if (returnTo && returnTo !== '/' && returnTo !== '/hub.html') {
+        sessionStorage.removeItem('bama_return_page');
+        window.location.href = returnTo;
+        return;
+      }
+    }
+  }
+})();
+
+// Clock
 function updateClock() {
   const el = document.getElementById('liveClock');
   if (!el) return;
