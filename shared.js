@@ -994,7 +994,7 @@ async function doClock(direction) {
       _pendingClockOutData = { emp, today, clockOut, breakMins, clocking };
       const modal = document.getElementById('noProjectModal');
       if (modal) {
-        modal.style.display = 'flex';
+        modal.setAttribute('style', 'display:flex !important;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;align-items:center;justify-content:center;');
       } else {
         toast('Error: noProjectModal not found in page', 'error');
       }
@@ -1705,13 +1705,13 @@ function openAmendmentRequest(clockingId) {
   });
 
   document.getElementById('amendReason').value = '';
-  modal.style.display = 'flex';
+  modal.setAttribute('style', 'display:flex !important;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;align-items:center;justify-content:center;');
   modal.classList.add('active');
 }
 
 function closeAmendmentModal() {
   const modal = document.getElementById('amendmentModal');
-  if (modal) { modal.style.display = 'none'; modal.classList.remove('active'); }
+  if (modal) { modal.setAttribute('style', 'display:none;'); modal.classList.remove('active'); }
   _amendmentClockingId = null;
 }
 
@@ -2247,8 +2247,9 @@ function toggleWGDOption() {
 }
 
 function closeNoProjectModal() {
-  document.getElementById('noProjectModal').style.display = 'none';
-  document.getElementById('noProjectModal').classList.remove('active');
+  const m = document.getElementById('noProjectModal');
+  m.setAttribute('style', 'display:none;');
+  m.classList.remove('active');
   _pendingClockOutData = null;
   // Reset checkbox
   const check = document.getElementById('wgdCheckbox');
