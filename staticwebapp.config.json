@@ -4,9 +4,5 @@
       "route": "/",
       "rewrite": "/hub.html"
     }
-  ],
-  "navigationFallback": {
-    "rewrite": "/hub.html",
-    "exclude": ["/*.html", "/*.css", "/*.js", "/*.png", "/*.jpg", "/*.ico", "/*.json"]
-  }
+  ]
 }
