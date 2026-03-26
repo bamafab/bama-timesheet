@@ -957,10 +957,18 @@ async function doClock(direction) {
     }
 
   } else {
+    // CLOCK OUT
+    alert('DEBUG: Clock out pressed for ' + emp + ' on ' + today);
+
+    if (!state.timesheetData || !state.timesheetData.clockings) {
+      toast('Error: timesheet data not loaded', 'error');
+      return;
+    }
+
     const clocking = state.timesheetData.clockings.find(
       c => c.employeeName === emp && c.date === today && !c.clockOut
     );
-    if (!clocking) { toast('Not clocked in', 'error'); return; }
+    if (!clocking) { toast('Not clocked in today — cannot clock out', 'error'); return; }
 
     // Break is always 30 mins (mandatory default)
     const breakEl = document.getElementById('breakDuration');
@@ -971,20 +979,26 @@ async function doClock(direction) {
     const clockOut = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
 
     // Check if any project hours logged today (excluding S000 and WGD auto entries)
-    // Check both saved entries AND current (unsaved) entries
+    const allEntries = state.timesheetData.entries || [];
+    const currentEntries = state.currentEntries || [];
     const todayProjectHrs = [
-      ...state.timesheetData.entries.filter(e => e.employeeName === emp && e.date === today && e.projectId !== 'S000' && e.projectId !== 'WGD'),
-      ...(state.currentEntries || []).filter(e => e.projectId !== 'S000' && e.projectId !== 'WGD')
+      ...allEntries.filter(e => e.employeeName === emp && e.date === today && e.projectId !== 'S000' && e.projectId !== 'WGD'),
+      ...currentEntries.filter(e => e.projectId !== 'S000' && e.projectId !== 'WGD')
     ];
     const todayWGDHrs = [
-      ...state.timesheetData.entries.filter(e => e.employeeName === emp && e.date === today && e.projectId === 'WGD'),
-      ...(state.currentEntries || []).filter(e => e.projectId === 'WGD')
+      ...allEntries.filter(e => e.employeeName === emp && e.date === today && e.projectId === 'WGD'),
+      ...currentEntries.filter(e => e.projectId === 'WGD')
     ];
 
     if (todayProjectHrs.length === 0 && todayWGDHrs.length === 0) {
       // No project hours — show the mandatory prompt
       _pendingClockOutData = { emp, today, clockOut, breakMins, clocking };
-      document.getElementById('noProjectModal').classList.add('active');
+      const modal = document.getElementById('noProjectModal');
+      if (modal) {
+        modal.classList.add('active');
+      } else {
+        toast('Error: noProjectModal not found in page', 'error');
+      }
       return;
     }
 
