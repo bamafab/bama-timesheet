@@ -7,6 +7,6 @@
   ],
   "navigationFallback": {
     "rewrite": "/hub.html",
-    "exclude": ["*.css", "*.js", "*.png", "*.jpg", "*.ico"]
+    "exclude": ["/*.html", "/*.css", "/*.js", "/*.png", "/*.jpg", "/*.ico", "/*.json"]
   }
 }
