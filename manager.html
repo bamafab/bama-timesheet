@@ -240,15 +240,34 @@
     <div class="tab-content" id="tab-staff">
       <div class="card" style="margin-bottom:20px">
         <div class="card-title"><span class="icon">➕</span> Add New Employee</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 120px 100px 100px 120px auto;gap:12px;align-items:flex-end">
+        <div style="display:grid;grid-template-columns:1fr 1fr 120px 100px;gap:12px;align-items:flex-end;margin-bottom:12px">
           <div>
             <div class="field-label">FULL NAME</div>
             <input type="text" class="field-input" id="newEmpName" placeholder="e.g. John Smith" onkeydown="if(event.key==='Enter')addEmployee()">
           </div>
           <div>
-            <div class="field-label">ROLE (optional)</div>
+            <div class="field-label">JOB TITLE (optional)</div>
             <input type="text" class="field-input" id="newEmpRole" placeholder="e.g. Fabricator" onkeydown="if(event.key==='Enter')addEmployee()">
           </div>
+          <div>
+            <div class="field-label">STAFF TYPE</div>
+            <select class="field-input" id="newEmpStaffType">
+              <option value="workshop">Workshop</option>
+              <option value="office">Office</option>
+            </select>
+          </div>
+          <div>
+            <div class="field-label">ERP ROLE</div>
+            <select class="field-input" id="newEmpErpRole">
+              <option value="workshop">Workshop</option>
+              <option value="office_admin">Office Admin</option>
+              <option value="project_manager">Project Manager</option>
+              <option value="finance">Finance</option>
+              <option value="director">Director</option>
+            </select>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:120px 100px 100px 120px 120px auto;gap:12px;align-items:flex-end">
           <div>
             <div class="field-label">HOURLY RATE (£)</div>
             <input type="number" class="field-input" id="newEmpRate" placeholder="0.00" min="0" step="0.50" onkeydown="if(event.key==='Enter')addEmployee()">
