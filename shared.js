@@ -1562,8 +1562,8 @@ function renderMyWeek(employeeName) {
       const hrs = calcHours(clocking.clockIn, clocking.clockOut, clocking.breakMins);
       const isPending = clocking.approvalStatus === 'pending';
       // Check for pending amendment
-      const amendment = (state.timesheetData.amendments || []).find(a => a.clockingId === clocking.id && a.status === 'pending');
-      const rejectedAmendment = (state.timesheetData.amendments || []).find(a => a.clockingId === clocking.id && a.status === 'rejected');
+      const amendment = (state.timesheetData.amendments || []).find(a => String(a.clockingId) === String(clocking.id) && a.status === 'pending');
+      const rejectedAmendment = (state.timesheetData.amendments || []).find(a => String(a.clockingId) === String(clocking.id) && a.status === 'rejected');
       content = `
         ${clocking.clockIn ? `<div class="week-day-time in">▲ ${clocking.clockIn}</div>` : '<div class="week-day-time" style="color:var(--subtle)">▲ —</div>'}
         ${clocking.clockOut ? `<div class="week-day-time out">▼ ${clocking.clockOut}</div>` : '<div class="week-day-time" style="color:var(--subtle)">▼ —</div>'}
@@ -1650,12 +1650,12 @@ async function submitMissingClocking() {
 let _amendmentClockingId = null;
 
 function openAmendmentRequest(clockingId) {
-  _amendmentClockingId = clockingId;
-  const clocking = state.timesheetData.clockings.find(c => c.id === clockingId);
-  if (!clocking) return;
+  _amendmentClockingId = String(clockingId);
+  const clocking = state.timesheetData.clockings.find(c => String(c.id) === String(clockingId));
+  if (!clocking) { toast('Clocking not found', 'error'); return; }
 
   const modal = document.getElementById('amendmentModal');
-  if (!modal) return;
+  if (!modal) { toast('Amendment modal not found', 'error'); return; }
 
   // Show current times
   document.getElementById('amendCurrentDate').textContent =
@@ -1695,14 +1695,14 @@ async function submitAmendment() {
     return;
   }
 
-  const clocking = state.timesheetData.clockings.find(c => c.id === _amendmentClockingId);
+  const clocking = state.timesheetData.clockings.find(c => String(c.id) === String(_amendmentClockingId));
   if (!clocking) return;
 
   if (!state.timesheetData.amendments) state.timesheetData.amendments = [];
 
   // Remove any previous rejected amendment for this clocking (allow re-submit)
   state.timesheetData.amendments = state.timesheetData.amendments.filter(
-    a => !(a.clockingId === _amendmentClockingId && a.status === 'rejected')
+    a => !(String(a.clockingId) === String(_amendmentClockingId) && a.status === 'rejected')
   );
 
   state.timesheetData.amendments.push({
@@ -1730,10 +1730,10 @@ async function submitAmendment() {
 }
 
 async function approveAmendment(id) {
-  const amendment = (state.timesheetData.amendments || []).find(a => a.id === id);
+  const amendment = (state.timesheetData.amendments || []).find(a => String(a.id) === String(id));
   if (!amendment) return;
 
-  const clocking = state.timesheetData.clockings.find(c => c.id === amendment.clockingId);
+  const clocking = state.timesheetData.clockings.find(c => String(c.id) === String(amendment.clockingId));
   if (!clocking) return;
 
   // Apply the changes
@@ -1751,7 +1751,7 @@ async function approveAmendment(id) {
 }
 
 async function rejectAmendment(id) {
-  const amendment = (state.timesheetData.amendments || []).find(a => a.id === id);
+  const amendment = (state.timesheetData.amendments || []).find(a => String(a.id) === String(id));
   if (!amendment) return;
 
   amendment.status = 'rejected';
