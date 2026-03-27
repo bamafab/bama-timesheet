@@ -5327,6 +5327,8 @@ async function init() {
   } else if (CURRENT_PAGE === 'projects') {
     showScreen('screenProjects');
     renderProjectTiles();
+    // Load drawings data then re-render tiles with drawing counts
+    loadDrawingsData().then(() => renderProjectTiles()).catch(e => console.warn('Drawings load failed:', e.message));
   } else if (CURRENT_PAGE === 'hub') {
     // hub has its own simple rendering
   } else {
