@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BAMA Projects & Drawings</title>
+<title>BAMA Projects & Jobs</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="bama.css">
 </head>
@@ -13,7 +13,7 @@
 <!-- TOP BAR -->
 <div class="topbar" style="position:relative">
   <div class="logo"><span style="color:#D0021B">BAMA</span> <span style="color:#D0021B">FABRICATION</span><span> WORKSHOP</span></div>
-  <div style="position:absolute;left:50%;transform:translateX(-50%);top:50%;transform:translate(-50%,-50%)">
+  <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)">
     <div class="clock-display" id="liveClock" style="font-size:15px;font-weight:700;letter-spacing:.5px">--:-- --</div>
   </div>
   <div class="topbar-right">
@@ -26,7 +26,7 @@
 <div class="toast" id="toast"></div>
 
 <!-- ═══════════════════════════════════════
-     SCREEN 2B: PROJECTS — TILE VIEW
+     SCREEN: PROJECTS — TILE VIEW
 ══════════════════════════════════════════ -->
 <div class="screen active" id="screenProjects">
   <div class="panel-wrap" style="max-width:1100px">
@@ -35,7 +35,7 @@
       <div style="flex:1">
         <div class="panel-name">PROJECTS</div>
       </div>
-      <div id="draftsmanBadge" style="display:none;background:rgba(255,107,0,.15);border:1.5px solid var(--accent);border-radius:8px;padding:6px 14px;font-size:13px;font-weight:600;color:var(--accent);display:none;align-items:center;gap:8px">
+      <div id="draftsmanBadge" style="display:none;background:rgba(255,107,0,.15);border:1.5px solid var(--accent);border-radius:8px;padding:6px 14px;font-size:13px;font-weight:600;color:var(--accent);align-items:center;gap:8px">
         <span style="font-size:16px">&#9998;</span> DRAFTSMAN MODE
         <button onclick="logoutDraftsman()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px;margin-left:6px;padding:0">Exit</button>
       </div>
@@ -43,7 +43,7 @@
         &#9998; Draftsman Login
       </button>
     </div>
-    <div style="color:var(--muted);font-size:13px;margin-bottom:28px">Click a project to view drawings</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:28px">Click a project to manage jobs</div>
     <div class="projects-grid" id="projectTilesGrid">
       <div class="empty-state"><div class="spinner"></div></div>
     </div>
@@ -51,10 +51,10 @@
 </div>
 
 <!-- ═══════════════════════════════════════
-     SCREEN 2C: PROJECT DETAIL — DRAWINGS
+     SCREEN: PROJECT DETAIL — JOB LIST
 ══════════════════════════════════════════ -->
 <div class="screen" id="screenProjectDetail">
-  <div class="panel-wrap" style="max-width:900px">
+  <div class="panel-wrap" style="max-width:1100px">
     <div class="project-back-header">
       <button class="back-btn" onclick="showScreen('screenProjects')">&#8592; Projects</button>
       <div>
@@ -63,23 +63,112 @@
       </div>
     </div>
 
-    <!-- Draftsman toolbar (shown when logged in as draftsman) -->
+    <!-- Draftsman toolbar -->
     <div class="draftsman-bar" id="draftsmanBar" style="display:none">
       <div style="display:flex;align-items:center;gap:10px">
         <span style="font-size:16px">&#9998;</span>
         <span style="font-size:13px;font-weight:600;color:var(--accent)">Draftsman Mode</span>
-        <span style="font-size:12px;color:var(--muted)" id="draftsmanName"></span>
       </div>
       <div style="display:flex;gap:10px">
-        <button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="openUploadDrawing()">
-          &#43; Add Drawing
+        <button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="openCreateJobModal()">
+          &#43; Add Job
         </button>
         <button class="btn btn-ghost" style="padding:8px 14px;font-size:12px" onclick="logoutDraftsman()">Exit</button>
       </div>
     </div>
 
-    <div id="drawingsList">
+    <div id="jobsList">
       <div class="empty-state"><div class="spinner"></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     SCREEN: JOB DETAIL — 5 ELEMENTS
+══════════════════════════════════════════ -->
+<div class="screen" id="screenJobDetail">
+  <div class="panel-wrap" style="max-width:1100px">
+    <div class="project-back-header">
+      <button class="back-btn" id="jobBackBtn" onclick="openProjectDetail(currentProject?.id)">&#8592; Jobs</button>
+      <div style="flex:1">
+        <div class="proj-detail-title" id="jobDetailTitle"></div>
+        <div class="proj-detail-meta" id="jobDetailMeta"></div>
+      </div>
+      <div id="jobStatusBadge" style="font-size:12px;font-weight:600;padding:6px 14px;border-radius:8px"></div>
+    </div>
+
+    <!-- Draftsman toolbar for job -->
+    <div class="draftsman-bar" id="jobDraftsmanBar" style="display:none">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span style="font-size:16px">&#9998;</span>
+        <span style="font-size:13px;font-weight:600;color:var(--accent)">Draftsman Mode</span>
+      </div>
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-ghost" style="padding:8px 14px;font-size:12px" onclick="logoutDraftsman()">Exit</button>
+      </div>
+    </div>
+
+    <!-- 5 Elements -->
+    <div id="jobElements">
+      <div class="element-card" id="elementBOM">
+        <div class="element-header" onclick="toggleElement('BOM')">
+          <div class="element-number">01</div>
+          <div class="element-title">BOM — Bill of Materials</div>
+          <div class="element-status" id="elementBOMStatus"></div>
+          <div class="element-chevron" id="elementBOMChevron">&#9660;</div>
+        </div>
+        <div class="element-body" id="elementBOMBody">
+          <div id="bomContent"></div>
+        </div>
+      </div>
+
+      <div class="element-card" id="elementApproval">
+        <div class="element-header" onclick="toggleElement('Approval')">
+          <div class="element-number">02</div>
+          <div class="element-title">Approval</div>
+          <div class="element-status" id="elementApprovalStatus"></div>
+          <div class="element-chevron" id="elementApprovalChevron">&#9660;</div>
+        </div>
+        <div class="element-body" id="elementApprovalBody">
+          <div id="approvalContent"></div>
+        </div>
+      </div>
+
+      <div class="element-card" id="elementParts">
+        <div class="element-header" onclick="toggleElement('Parts')">
+          <div class="element-number">03</div>
+          <div class="element-title">Parts</div>
+          <div class="element-status" id="elementPartsStatus"></div>
+          <div class="element-chevron" id="elementPartsChevron">&#9660;</div>
+        </div>
+        <div class="element-body" id="elementPartsBody">
+          <div id="partsContent"></div>
+        </div>
+      </div>
+
+      <div class="element-card" id="elementAssembly">
+        <div class="element-header" onclick="toggleElement('Assembly')">
+          <div class="element-number">04</div>
+          <div class="element-title">Assembly</div>
+          <div class="element-status" id="elementAssemblyStatus"></div>
+          <div class="element-chevron" id="elementAssemblyChevron">&#9660;</div>
+        </div>
+        <div class="element-body" id="elementAssemblyBody">
+          <div id="assemblyContent"></div>
+        </div>
+      </div>
+
+      <div class="element-card" id="elementSite">
+        <div class="element-header" onclick="toggleElement('Site')">
+          <div class="element-number">05</div>
+          <div class="element-title">Site Installation</div>
+          <div class="element-status" id="elementSiteStatus"></div>
+          <div class="element-chevron" id="elementSiteChevron">&#9660;</div>
+        </div>
+        <div class="element-body" id="elementSiteBody">
+          <div id="siteContent"></div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -103,130 +192,197 @@
 </div>
 
 <!-- ═══════════════════════════════════════
-     ADD NOTE MODAL
+     CREATE JOB MODAL
 ══════════════════════════════════════════ -->
-<div class="modal-overlay" id="addNoteModal">
-  <div class="modal">
-    <div class="modal-title">Add Note</div>
-    <div style="color:var(--muted);font-size:13px;margin-bottom:16px" id="addNoteDrawingName"></div>
-    <div style="margin-bottom:8px">
-      <div class="field-label">YOUR NAME</div>
-      <select class="field-input" id="noteAuthorSelect">
-        <option value="">Select your name...</option>
-      </select>
-    </div>
+<div class="modal-overlay" id="createJobModal">
+  <div class="modal" style="width:460px;max-width:95vw">
+    <div class="modal-title">&#43; Create New Job</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:20px" id="createJobProjectName"></div>
     <div style="margin-bottom:16px">
-      <div class="field-label">NOTE</div>
-      <textarea class="field-input" id="noteText" rows="4" placeholder="Type your note here..." style="resize:vertical"></textarea>
+      <div class="field-label">JOB NAME</div>
+      <input type="text" class="field-input" id="createJobName" placeholder="e.g. Main Steel Frame">
     </div>
-    <div class="modal-actions">
-      <button class="btn btn-ghost" onclick="closeAddNote()">Cancel</button>
-      <button class="btn btn-primary" onclick="saveNote()">Save Note</button>
-    </div>
-  </div>
-</div>
-
-<!-- ═══════════════════════════════════════
-     UPLOAD DRAWING MODAL
-══════════════════════════════════════════ -->
-<div class="modal-overlay" id="uploadDrawingModal">
-  <div class="modal" style="width:500px;max-width:95vw">
-    <div class="modal-title">&#43; Add Drawing</div>
-    <div style="color:var(--muted);font-size:13px;margin-bottom:20px" id="uploadProjectName"></div>
-
-    <div style="margin-bottom:12px">
-      <div class="field-label">DRAWING NAME</div>
-      <input type="text" class="field-input" id="drawingNameInput" placeholder="e.g. GA-001 Ground Floor Plan">
-    </div>
-
-    <div style="margin-bottom:12px">
-      <div class="field-label">SHAREPOINT FOLDER PATH <span style="color:var(--muted);font-weight:400">(relative to project folder)</span></div>
-      <input type="text" class="field-input" id="drawingFolderPath" placeholder="e.g. 02 - Drawings or leave blank for root">
-    </div>
-
-    <div style="margin-bottom:12px">
-      <div class="field-label">SELECT PDF FILE</div>
-      <input type="file" id="drawingFileInput" accept=".pdf" style="display:none" onchange="onDrawingFileSelected()">
-      <div class="upload-zone" onclick="document.getElementById('drawingFileInput').click()">
-        <div class="upload-zone-icon">&#128196;</div>
-        <div class="upload-zone-text" id="uploadZoneText">Click to select PDF file</div>
-      </div>
-    </div>
-
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
-      <div>
-        <div class="field-label">FINISHING REQUIREMENT</div>
-        <select class="field-input" id="uploadFinishing" style="font-size:13px;padding:8px 12px">
-          <option value="none">No finishing required</option>
-          <option value="galvanise">Must be Galvanised</option>
-          <option value="paint">Must be Painted</option>
-        </select>
-      </div>
-      <div>
-        <div class="field-label">TRANSPORT</div>
-        <select class="field-input" id="uploadTransport" style="font-size:13px;padding:8px 12px">
-          <option value="collect">They collect (from us)</option>
-          <option value="deliver">We deliver</option>
-        </select>
-      </div>
-    </div>
-
-    <div style="margin-bottom:16px">
-      <div class="field-label">DRAFTSMAN NOTE <span style="color:var(--muted);font-weight:400">(optional)</span></div>
-      <textarea class="field-input" id="uploadDraftsmanNote" rows="2"
-        placeholder="Add a note for the workshop team..."
-        style="resize:vertical;font-size:13px"></textarea>
-    </div>
-
-    <div id="uploadProgress" style="display:none;margin-bottom:12px">
+    <div id="createJobProgress" style="display:none;margin-bottom:12px">
       <div style="background:var(--border);border-radius:4px;overflow:hidden;height:6px">
-        <div id="uploadProgressBar" style="background:var(--accent);height:100%;width:0%;transition:width .3s"></div>
+        <div id="createJobProgressBar" style="background:var(--accent);height:100%;width:0%;transition:width .3s"></div>
       </div>
-      <div style="font-size:12px;color:var(--muted);margin-top:6px;text-align:center" id="uploadProgressText">Uploading...</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:6px;text-align:center" id="createJobProgressText">Creating folders...</div>
     </div>
-
     <div class="modal-actions">
-      <button class="btn btn-ghost" onclick="closeUploadDrawing()">Cancel</button>
-      <button class="btn btn-primary" id="uploadDrawingBtn" onclick="uploadDrawing()">Upload Drawing</button>
+      <button class="btn btn-ghost" onclick="closeCreateJobModal()">Cancel</button>
+      <button class="btn btn-primary" id="createJobBtn" onclick="createJob()">Create Job</button>
     </div>
   </div>
 </div>
 
 <!-- ═══════════════════════════════════════
-     FINISHING ACKNOWLEDGEMENT MODAL
+     UPLOAD FILE MODAL (all elements)
 ══════════════════════════════════════════ -->
-<div class="modal-overlay" id="finishingModal" style="align-items:center;justify-content:center">
-  <div class="modal" style="max-width:460px;width:95vw;text-align:center">
-    <div id="finishingModalIcon" style="font-size:48px;margin-bottom:12px"></div>
-    <div class="modal-title" id="finishingModalTitle" style="font-size:20px;margin-bottom:8px"></div>
-    <div id="finishingModalMessage" style="color:var(--muted);font-size:14px;line-height:1.7;margin-bottom:20px"></div>
+<div class="modal-overlay" id="uploadFileModal">
+  <div class="modal" style="width:520px;max-width:95vw">
+    <div class="modal-title" id="uploadFileTitle">Upload File</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:20px" id="uploadFileContext"></div>
 
-    <!-- Transport alert box -->
-    <div id="finishingTransportAlert" style="display:none;border-radius:10px;padding:16px;margin-bottom:20px;text-align:left"></div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">FILE NAME <span style="color:var(--muted);font-weight:400">(auto-filled, editable)</span></div>
+      <input type="text" class="field-input" id="uploadFileName" placeholder="File name">
+    </div>
 
-    <!-- Acknowledgement checkbox -->
-    <div style="background:var(--surface);border:2px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px;cursor:pointer;transition:all .2s;text-align:left"
-      id="finishingCheckBox" onclick="toggleFinishingCheck()">
-      <div style="display:flex;align-items:center;gap:12px">
-        <div id="finishingCheckIcon" style="width:26px;height:26px;border-radius:6px;border:2px solid var(--border);background:var(--card);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:16px;transition:all .2s"></div>
-        <div id="finishingCheckLabel" style="font-size:14px;font-weight:600;color:var(--text)"></div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">SELECT FILE(S)</div>
+      <input type="file" id="uploadFileInput" accept=".pdf,.PDF,.png,.jpg,.jpeg,.dwg,.dxf" multiple style="display:none" onchange="onUploadFilesSelected()">
+      <div class="upload-zone" id="uploadDropZone" onclick="document.getElementById('uploadFileInput').click()">
+        <div class="upload-zone-icon">&#128196;</div>
+        <div class="upload-zone-text" id="uploadFileZoneText">Click or drag files here</div>
+      </div>
+      <div id="uploadFileList" style="margin-top:8px"></div>
+    </div>
+
+    <!-- Approval status toggle (only for Approval uploads) -->
+    <div id="uploadApprovalSection" style="display:none;margin-bottom:12px">
+      <div class="field-label">APPROVAL STATUS</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <label class="toggle-chip" id="chipSentForApproval">
+          <input type="radio" name="approvalStatus" value="sent" style="display:none" checked onchange="updateApprovalChips()">
+          <span>&#128232; Sent for Approval</span>
+        </label>
+        <label class="toggle-chip" id="chipApproved">
+          <input type="radio" name="approvalStatus" value="approved" style="display:none" onchange="updateApprovalChips()">
+          <span>&#9989; Approved</span>
+        </label>
+        <label class="toggle-chip" id="chipNotApproved">
+          <input type="radio" name="approvalStatus" value="rejected" style="display:none" onchange="updateApprovalChips()">
+          <span>&#10060; Not Approved</span>
+        </label>
       </div>
     </div>
 
-    <!-- Name selection -->
+    <div id="uploadFileProgress" style="display:none;margin-bottom:12px">
+      <div style="background:var(--border);border-radius:4px;overflow:hidden;height:6px">
+        <div id="uploadFileProgressBar" style="background:var(--accent);height:100%;width:0%;transition:width .3s"></div>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-top:6px;text-align:center" id="uploadFileProgressText">Uploading...</div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeUploadFileModal()">Cancel</button>
+      <button class="btn btn-primary" id="uploadFileBtn" onclick="confirmUploadFile()">Upload</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     CREATE ASSEMBLY TASK MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="createTaskModal">
+  <div class="modal" style="width:520px;max-width:95vw">
+    <div class="modal-title">&#43; Create Assembly Task</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:20px" id="createTaskContext"></div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">TASK NAME</div>
+      <input type="text" class="field-input" id="createTaskName" placeholder="e.g. Brackets Installation">
+    </div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">FINISHING REQUIREMENT</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <label class="toggle-chip" id="taskChipGalvanising">
+          <input type="radio" name="newTaskFinishing" value="galvanising" style="display:none" onchange="updateNewTaskFinishingChips()">
+          <span>&#9881; Galvanising</span>
+        </label>
+        <label class="toggle-chip" id="taskChipPPC">
+          <input type="radio" name="newTaskFinishing" value="ppc" style="display:none" onchange="updateNewTaskFinishingChips()">
+          <span>&#9881; PPC (Powder Coat)</span>
+        </label>
+        <label class="toggle-chip" id="taskChipPainting">
+          <input type="radio" name="newTaskFinishing" value="painting" style="display:none" onchange="updateNewTaskFinishingChips()">
+          <span>&#127912; Painting (On Site)</span>
+        </label>
+        <label class="toggle-chip active" id="taskChipNone">
+          <input type="radio" name="newTaskFinishing" value="none" style="display:none" checked onchange="updateNewTaskFinishingChips()">
+          <span>No finishing</span>
+        </label>
+      </div>
+    </div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">SELECT FILE(S) <span style="color:var(--muted);font-weight:400">(optional — can add later)</span></div>
+      <input type="file" id="taskFileInput" accept=".pdf,.PDF,.png,.jpg,.jpeg,.dwg,.dxf" multiple style="display:none" onchange="onTaskFilesSelected()">
+      <div class="upload-zone" onclick="document.getElementById('taskFileInput').click()">
+        <div class="upload-zone-icon">&#128196;</div>
+        <div class="upload-zone-text" id="taskFileZoneText">Click or drag files here</div>
+      </div>
+      <div id="taskFileList" style="margin-top:8px"></div>
+    </div>
+    <div id="createTaskProgress" style="display:none;margin-bottom:12px">
+      <div style="background:var(--border);border-radius:4px;overflow:hidden;height:6px">
+        <div id="createTaskProgressBar" style="background:var(--accent);height:100%;width:0%;transition:width .3s"></div>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-top:6px;text-align:center" id="createTaskProgressText">Creating...</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeCreateTaskModal()">Cancel</button>
+      <button class="btn btn-primary" id="createTaskBtn" onclick="createAssemblyTask()">Create Task</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     COMPLETE TASK MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="completeTaskModal">
+  <div class="modal" style="max-width:460px;width:95vw;text-align:center">
+    <div id="completeTaskIcon" style="font-size:48px;margin-bottom:12px"></div>
+    <div class="modal-title" id="completeTaskTitle" style="font-size:20px;margin-bottom:8px"></div>
+    <div id="completeTaskMessage" style="color:var(--muted);font-size:14px;line-height:1.7;margin-bottom:20px"></div>
+    <div id="paintingCheckSection" style="display:none;margin-bottom:16px">
+      <div style="background:rgba(245,158,11,.1);border:1.5px solid rgba(245,158,11,.3);border-radius:10px;padding:16px;text-align:left;margin-bottom:12px">
+        <div style="font-size:14px;font-weight:600;color:var(--amber);margin-bottom:4px">&#127912; Painting Reminder</div>
+        <div style="font-size:13px;color:var(--muted)">This task requires on-site painting. Confirm painting is complete before marking done.</div>
+      </div>
+      <div style="background:var(--surface);border:2px solid var(--border);border-radius:12px;padding:16px;cursor:pointer;transition:all .2s;text-align:left"
+        id="paintingCheckBox" onclick="togglePaintingCheck()">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div id="paintingCheckIcon" style="width:26px;height:26px;border-radius:6px;border:2px solid var(--border);background:var(--card);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:16px;transition:all .2s"></div>
+          <div style="font-size:14px;font-weight:600;color:var(--text)">I confirm painting is complete</div>
+        </div>
+      </div>
+    </div>
     <div style="margin-bottom:20px;text-align:left">
-      <div class="field-label" style="margin-bottom:6px">ACKNOWLEDGED BY</div>
-      <select class="field-input" id="finishingAcknowledgedBy" style="font-size:14px;padding:10px 12px">
+      <div class="field-label" style="margin-bottom:6px">COMPLETED BY</div>
+      <select class="field-input" id="completeTaskPerson" style="font-size:14px;padding:10px 12px">
         <option value="">Select your name...</option>
       </select>
     </div>
-
-    <button class="btn btn-primary btn-full" id="finishingConfirmBtn"
-      onclick="confirmFinishingComplete()"
+    <button class="btn btn-primary btn-full" id="completeTaskConfirmBtn"
+      onclick="confirmCompleteTask()"
       style="padding:14px;font-size:15px;opacity:.4;cursor:not-allowed" disabled>
       Confirm &amp; Mark Complete
     </button>
-    <button class="btn btn-ghost btn-full" onclick="closeFinishingModal()" style="margin-top:10px;padding:12px">
+    <button class="btn btn-ghost btn-full" onclick="closeCompleteTaskModal()" style="margin-top:10px;padding:12px">
+      Cancel
+    </button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     CLOSE JOB MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="closeJobModal">
+  <div class="modal" style="max-width:460px;width:95vw;text-align:center">
+    <div style="font-size:48px;margin-bottom:12px">&#127919;</div>
+    <div class="modal-title" style="font-size:20px;margin-bottom:8px">Close Job?</div>
+    <div id="closeJobMessage" style="color:var(--muted);font-size:14px;line-height:1.7;margin-bottom:20px"></div>
+    <div style="margin-bottom:20px;text-align:left">
+      <div class="field-label" style="margin-bottom:6px">COMPLETED BY</div>
+      <select class="field-input" id="closeJobPerson" style="font-size:14px;padding:10px 12px">
+        <option value="">Select your name...</option>
+      </select>
+    </div>
+    <button class="btn btn-primary btn-full" id="closeJobConfirmBtn"
+      onclick="confirmCloseJob()"
+      style="padding:14px;font-size:15px;opacity:.4;cursor:not-allowed" disabled>
+      Close Job &amp; Notify
+    </button>
+    <button class="btn btn-ghost btn-full" onclick="closeCloseJobModal()" style="margin-top:10px;padding:12px">
       Cancel
     </button>
   </div>

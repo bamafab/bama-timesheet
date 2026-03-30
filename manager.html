@@ -405,6 +405,18 @@
               onchange="saveEmailSettings()">
             <div style="font-size:11px;color:var(--subtle);margin-top:4px">Drawing completion notifications will be sent here</div>
           </div>
+          <div>
+            <div class="field-label">TASK COMPLETION EMAILS</div>
+            <input type="text" class="field-input" id="settingTaskCompletionEmails" placeholder="e.g. email1@co.uk, email2@co.uk"
+              onchange="saveEmailSettings()">
+            <div style="font-size:11px;color:var(--subtle);margin-top:4px">Notified when an assembly task is completed (comma-separated)</div>
+          </div>
+          <div>
+            <div class="field-label">SITE COMPLETION EMAILS</div>
+            <input type="text" class="field-input" id="settingSiteCompletionEmails" placeholder="e.g. email1@co.uk, email2@co.uk"
+              onchange="saveEmailSettings()">
+            <div style="font-size:11px;color:var(--subtle);margin-top:4px">Notified when a job is closed via site installation (comma-separated)</div>
+          </div>
         </div>
         <button class="btn btn-primary" style="margin-top:14px;padding:8px 20px;font-size:13px" onclick="saveEmailSettings()">Save Email Settings</button>
       </div>

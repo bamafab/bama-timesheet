@@ -2210,10 +2210,6 @@ async function saveEditEntry() {
   } catch { toast('Save failed', 'error'); }
 }
 
-function closeModal() {
-  document.getElementById('confirmModal').classList.remove('active');
-}
-
 // ── Workshop General Duties / No Project Hours ──
 let _pendingClockOutData = null;
 
@@ -2310,67 +2306,6 @@ function filterClockLog() {
     if (row.tagName === 'TR' && row.closest('thead')) return;
     row.style.display = !q || row.textContent.toLowerCase().includes(q) ? '' : 'none';
   });
-}
-
-// ═══════════════════════════════════════════
-// DELETE / RE-UPLOAD DRAWING
-// ═══════════════════════════════════════════
-function confirmDeleteDrawing(projectId, drawingId) {
-  const drawing = drawingsData?.projects?.[projectId]?.drawings?.find(d => d.id === drawingId);
-  if (!drawing) { toast('Drawing not found', 'error'); return; }
-
-  showConfirm(
-    `Delete "${drawing.name}"?`,
-    `This permanently removes the drawing. Notes are preserved and will reappear if you re-upload a drawing with the same name.`,
-    async () => { await deleteDrawing(projectId, drawingId); }
-  );
-}
-
-async function deleteDrawing(projectId, drawingId) {
-  const projData = drawingsData.projects[projectId];
-  if (!projData) return;
-
-  const drawing = projData.drawings.find(d => d.id === drawingId);
-  if (!drawing) return;
-
-  // Remove the drawing but keep notes archived
-  projData.drawings = projData.drawings.filter(d => d.id !== drawingId);
-
-  // Store deleted drawing notes in an archive so re-upload can restore them
-  if (!projData.deletedNotes) projData.deletedNotes = {};
-  if (drawing.notes?.length) {
-    projData.deletedNotes[drawing.name] = drawing.notes;
-  }
-
-  try {
-    setLoading(true);
-    await saveDrawingsData();
-    toast('Drawing removed ✓', 'success');
-    renderDrawings(projectId);
-    renderProjectTiles();
-  } catch (e) {
-    toast('Delete failed: ' + e.message, 'error');
-  } finally { setLoading(false); }
-}
-
-function openReUploadDrawing(projectId, drawingId) {
-  // Open upload modal but pre-fill with existing drawing info
-  const drawing = drawingsData.projects[projectId]?.drawings?.find(d => d.id === drawingId);
-  if (!drawing || !currentProject) return;
-
-  document.getElementById('uploadProjectName').textContent = `${currentProject.id} — ${currentProject.name}`;
-  document.getElementById('drawingNameInput').value = drawing.name;
-  document.getElementById('drawingFolderPath').value = '';
-  document.getElementById('uploadZoneText').textContent = 'Click to select replacement PDF file';
-  document.getElementById('uploadProgress').style.display = 'none';
-  document.getElementById('uploadDraftsmanNote').value = '';
-  document.getElementById('uploadFinishing').value = 'none';
-  document.getElementById('uploadTransport').value = 'collect';
-  draftsmanUploadFile = null;
-
-  // Store the drawing ID being replaced
-  document.getElementById('uploadDrawingModal').dataset.replacingId = drawingId;
-  document.getElementById('uploadDrawingModal').classList.add('active');
 }
 
 // ═══════════════════════════════════════════
@@ -2518,9 +2453,13 @@ function loadEmailSettings() {
   const payEl = document.getElementById('settingPayrollEmail');
   const ordEl = document.getElementById('settingOrderEmail');
   const draftEl = document.getElementById('settingDraftsmanEmail');
+  const taskEl = document.getElementById('settingTaskCompletionEmails');
+  const siteEl = document.getElementById('settingSiteCompletionEmails');
   if (payEl) payEl.value = settings.payrollEmail || '';
   if (ordEl) ordEl.value = settings.orderEmail || 'daniel@bamafabrication.co.uk';
   if (draftEl) draftEl.value = settings.draftsmanEmail || '';
+  if (taskEl) taskEl.value = settings.taskCompletionEmails || '';
+  if (siteEl) siteEl.value = settings.siteCompletionEmails || '';
 }
 
 async function saveEmailSettings() {
@@ -2531,6 +2470,10 @@ async function saveEmailSettings() {
   if (ordEl) state.timesheetData.settings.orderEmail = ordEl.value;
   const draftEl2 = document.getElementById('settingDraftsmanEmail');
   if (draftEl2) state.timesheetData.settings.draftsmanEmail = draftEl2.value;
+  const taskEl = document.getElementById('settingTaskCompletionEmails');
+  if (taskEl) state.timesheetData.settings.taskCompletionEmails = taskEl.value;
+  const siteEl = document.getElementById('settingSiteCompletionEmails');
+  if (siteEl) state.timesheetData.settings.siteCompletionEmails = siteEl.value;
   try {
     await saveTimesheetData();
     toast('Email settings saved ✓', 'success');
@@ -4379,17 +4322,45 @@ function exportWeekCSV() {
   URL.revokeObjectURL(url);
 }
 
+
 // ═══════════════════════════════════════════
-// PROJECTS MODULE
+// PROJECTS MODULE — Job-Based System
 // ═══════════════════════════════════════════
 const DRAWINGS_FILE = 'drawings-data.json';
 const BAMA_DRIVE_ID = 'b!CxTKk9lEwkyweUqAo3CRas-huywW4KtLqOk2tNzmx-P7CX86DNhTQo14pLuU_tZu';
-const PROJECTS_FOLDER = 'Projects'; // Root projects folder on BAMA1
+const PROJECTS_FOLDER = 'Projects';
 
-let drawingsData = { projects: {} }; // { projectId: { drawings: [], spFolderId, spDriveId } }
+// Element folder names (auto-created inside each job folder)
+const ELEMENT_FOLDERS = {
+  bom:      '01 - BOM',
+  approval: '02 - Approval',
+  parts:    '03 - Parts',
+  assembly: '04 - Assembly',
+  site:     '05 - Site Installation'
+};
+const PARTS_SUBFOLDERS = ['01 - Sections', '02 - Plates'];
+
+let drawingsData = { projects: {} };
+// Data shape: drawingsData.projects[projectId] = {
+//   jobs: [{ id, number, name, status:'open'|'closed', createdAt, closedAt, closedBy,
+//     bom: { files: [{id,name,fileName,fileId,driveId,webUrl,uploadedAt}], notes:[] },
+//     approval: { revisions: [{ id, type:'PO'|'CO', number:1, status:'sent'|'approved'|'rejected', files:[], uploadedAt }], notes:[] },
+//     parts: { sections: { files:[], notes:[] }, plates: { files:[], notes:[] } },
+//     assembly: { tasks: [{ id, number, name, finishing, status:'open'|'complete', files:[], notes:[], completedAt, completedBy }] },
+//     site: { files:[], notes:[], completedAt, completedBy }
+//   }]
+// }
+
 let currentProject = null;
+let currentJob = null;
 let isDraftsman = false;
-let draftsmanUploadFile = null;
+
+// Upload state
+let _uploadFiles = [];
+let _uploadContext = null; // { element, subElement, jobId, projectId, taskId }
+let _taskFiles = [];
+let _pendingCompleteTask = null;
+let _pendingCloseJob = null;
 
 // ── Load / Save drawings data ──
 async function loadDrawingsData() {
@@ -4423,7 +4394,76 @@ async function saveDrawingsData() {
   if (!res.ok) throw new Error(`Save drawings failed: ${res.status}`);
 }
 
-// ── Open projects screen ──
+// ── SharePoint folder helpers ──
+async function findProjectFolder(projectId) {
+  const token = await getToken();
+  const searchRes = await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/root/search(q='${projectId}')`,
+    { headers: { 'Authorization': `Bearer ${token}` } }
+  );
+  const searchData = await searchRes.json();
+  return searchData.value?.find(item => item.folder && item.name.includes(projectId));
+}
+
+async function createFolderInDrive(parentItemId, folderName, driveId) {
+  const token = await getToken();
+  const res = await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${driveId || BAMA_DRIVE_ID}/items/${parentItemId}/children`,
+    {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: folderName, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' })
+    }
+  );
+  if (res.status === 409) {
+    // Folder already exists, find it
+    const listRes = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${driveId || BAMA_DRIVE_ID}/items/${parentItemId}/children?$filter=name eq '${folderName}'`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    const listData = await listRes.json();
+    return listData.value?.[0] || null;
+  }
+  if (!res.ok) throw new Error(`Create folder failed: ${res.status}`);
+  return await res.json();
+}
+
+async function getOrCreateSubfolder(parentItemId, folderName, driveId) {
+  const token = await getToken();
+  // Try to get existing
+  const getRes = await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${driveId || BAMA_DRIVE_ID}/items/${parentItemId}:/${folderName}`,
+    { headers: { 'Authorization': `Bearer ${token}` } }
+  );
+  if (getRes.ok) return await getRes.json();
+  // Create it
+  return await createFolderInDrive(parentItemId, folderName, driveId);
+}
+
+async function uploadFileToFolder(parentItemId, fileName, fileData, contentType, driveId) {
+  const token = await getToken();
+  const url = `https://graph.microsoft.com/v1.0/drives/${driveId || BAMA_DRIVE_ID}/items/${parentItemId}:/${fileName}:/content`;
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': contentType || 'application/octet-stream' },
+    body: fileData
+  });
+  if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+  return await res.json();
+}
+
+async function deleteFileFromDrive(fileId, driveId) {
+  const token = await getToken();
+  const res = await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${driveId || BAMA_DRIVE_ID}/items/${fileId}`,
+    { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } }
+  );
+  if (!res.ok && res.status !== 404) throw new Error(`Delete failed: ${res.status}`);
+}
+
+// ═══════════════════════════════════════════
+// OPEN PROJECTS / RENDER TILES
+// ═══════════════════════════════════════════
 async function openProjects() {
   if (CURRENT_PAGE !== 'projects') {
     window.location.href = 'projects.html';
@@ -4431,12 +4471,12 @@ async function openProjects() {
   }
   showScreen('screenProjects');
   renderProjectTiles();
-  // Load drawings data in background
   loadDrawingsData().then(() => renderProjectTiles()).catch(() => {});
 }
 
 function renderProjectTiles() {
   const grid = document.getElementById('projectTilesGrid');
+  if (!grid) return;
   const projects = state.projects.filter(p =>
     p.status?.toLowerCase() === 'in progress' || !p.status || p.status === 'Active'
   );
@@ -4448,595 +4488,1399 @@ function renderProjectTiles() {
 
   grid.innerHTML = projects.map(p => {
     const projData = drawingsData.projects[p.id];
-    const drawingCount = projData?.drawings?.length || 0;
-    const completeCount = projData?.drawings?.filter(d => d.complete)?.length || 0;
+    const jobs = projData?.jobs || [];
+    const openJobs = jobs.filter(j => j.status !== 'closed').length;
+    const closedJobs = jobs.filter(j => j.status === 'closed').length;
 
     return `
       <div class="project-tile" onclick="openProjectDetail('${p.id}')">
         <div class="project-tile-id">${p.id}</div>
         <div class="project-tile-name">${p.name}</div>
         <div class="project-tile-client">${p.client || ''}</div>
-        ${drawingCount > 0 ? `
+        ${jobs.length > 0 ? `
           <div style="margin-top:12px;font-size:11px;font-family:var(--font-mono);color:var(--muted)">
-            ${completeCount}/${drawingCount} drawings complete
+            ${openJobs} open${closedJobs ? ` · ${closedJobs} closed` : ''}
           </div>
           <div style="margin-top:6px;height:3px;background:var(--border);border-radius:2px">
-            <div style="height:100%;background:var(--green);border-radius:2px;width:${drawingCount ? Math.round(completeCount/drawingCount*100) : 0}%"></div>
+            <div style="height:100%;background:var(--green);border-radius:2px;width:${jobs.length ? Math.round(closedJobs/jobs.length*100) : 0}%"></div>
           </div>
-        ` : `<div style="margin-top:12px;font-size:11px;color:var(--subtle)">No drawings yet</div>`}
-        ${drawingCount > 0 ? `<div class="project-tile-badge">${drawingCount} drawing${drawingCount>1?'s':''}</div>` : ''}
+        ` : '<div style="margin-top:12px;font-size:11px;color:var(--subtle)">No jobs yet</div>'}
+        ${jobs.length > 0 ? `<div class="project-tile-badge">${jobs.length} job${jobs.length>1?'s':''}</div>` : ''}
       </div>
     `;
   }).join('');
 }
 
+// ═══════════════════════════════════════════
+// PROJECT DETAIL — JOB LIST
+// ═══════════════════════════════════════════
 async function openProjectDetail(projectId) {
   const proj = state.projects.find(p => p.id === projectId);
   if (!proj) return;
   currentProject = proj;
+  currentJob = null;
 
   document.getElementById('projDetailTitle').textContent = `${proj.id} — ${proj.name}`;
   document.getElementById('projDetailMeta').textContent = proj.client ? `Client: ${proj.client}` : '';
   document.getElementById('draftsmanBar').style.display = isDraftsman ? 'flex' : 'none';
-  if (isDraftsman) document.getElementById('draftsmanName').textContent = '(Draftsman Mode Active)';
 
   showScreen('screenProjectDetail');
-  renderDrawings(projectId);
+  renderJobsList(projectId);
 }
 
-function renderDrawings(projectId) {
-  const container = document.getElementById('drawingsList');
+function renderJobsList(projectId) {
+  const container = document.getElementById('jobsList');
+  if (!container) return;
   const projData = drawingsData.projects[projectId];
-  const drawings = projData?.drawings || [];
+  const jobs = projData?.jobs || [];
 
-  if (!drawings.length) {
+  if (!jobs.length) {
     container.innerHTML = `
       <div class="empty-state" style="padding:60px 24px">
-        <div style="font-size:36px;margin-bottom:12px">&#128196;</div>
-        <div>No drawings uploaded yet</div>
-        ${isDraftsman ? '<div style="margin-top:8px;font-size:12px;color:var(--subtle)">Use the Add Drawing button above</div>' : ''}
+        <div style="font-size:36px;margin-bottom:12px">&#128221;</div>
+        <div>No jobs created yet</div>
+        ${isDraftsman ? '<div style="margin-top:8px;font-size:12px;color:var(--subtle)">Use the + Add Job button above</div>' : ''}
       </div>
     `;
     return;
   }
 
-  const employees = (state.timesheetData.employees||[]).filter(e=>e.active!==false);
-  container.innerHTML = drawings.map((d, idx) => renderDrawingPanel(d, idx, projectId, employees)).join('');
+  container.innerHTML = jobs.map(job => {
+    const isClosed = job.status === 'closed';
+    // Calculate element progress
+    const progress = getJobProgress(job);
+
+    return `
+      <div class="job-card ${isClosed ? 'closed' : ''}" onclick="openJobDetail('${projectId}', '${job.id}')">
+        <div class="job-number">${String(job.number).padStart(2, '0')}</div>
+        <div style="flex:1">
+          <div class="job-name">${job.name}</div>
+          <div style="font-size:11px;color:var(--subtle);margin-top:4px">
+            Created ${new Date(job.createdAt).toLocaleDateString('en-GB')}
+            ${isClosed ? ` · Closed ${new Date(job.closedAt).toLocaleDateString('en-GB')}` : ''}
+          </div>
+        </div>
+        <div class="job-progress" title="${progress.label}">
+          ${['bom','approval','parts','assembly','site'].map((el, i) => {
+            const s = progress.elements[el];
+            return `<div class="job-progress-dot ${s === 'complete' ? 'complete' : s === 'active' ? 'active' : ''}" title="${['BOM','Approval','Parts','Assembly','Site'][i]}: ${s}"></div>`;
+          }).join('')}
+        </div>
+        <div class="job-badge ${isClosed ? 'closed' : 'open'}">${isClosed ? 'CLOSED' : 'OPEN'}</div>
+      </div>
+    `;
+  }).join('');
 }
 
-function renderDrawingPanel(drawing, idx, projectId, employees) {
-  employees = employees || (state.timesheetData.employees||[]).filter(e=>e.active!==false);
-  const draftsmanNotes = (drawing.notes || []).filter(n => n.type === 'draftsman');
-  const workshopNotes = (drawing.notes || []).filter(n => n.type === 'workshop');
+function getJobProgress(job) {
+  const elements = {};
+  // BOM: has files = complete, else empty
+  elements.bom = (job.bom?.files?.length > 0) ? 'complete' : 'empty';
+  // Approval: has an approved CO = complete, has any revision = active
+  const revs = job.approval?.revisions || [];
+  const hasApprovedCO = revs.some(r => r.type === 'CO');
+  elements.approval = hasApprovedCO ? 'complete' : revs.length > 0 ? 'active' : 'empty';
+  // Parts: both sections and plates have files = complete, either has = active
+  const secFiles = job.parts?.sections?.files?.length || 0;
+  const platFiles = job.parts?.plates?.files?.length || 0;
+  elements.parts = (secFiles > 0 && platFiles > 0) ? 'complete' : (secFiles > 0 || platFiles > 0) ? 'active' : 'empty';
+  // Assembly: all tasks complete = complete, any task = active
+  const tasks = job.assembly?.tasks || [];
+  const allDone = tasks.length > 0 && tasks.every(t => t.status === 'complete');
+  elements.assembly = allDone ? 'complete' : tasks.length > 0 ? 'active' : 'empty';
+  // Site: has completedAt = complete, has files = active
+  elements.site = job.site?.completedAt ? 'complete' : (job.site?.files?.length > 0) ? 'active' : 'empty';
 
-  const previewUrl = drawing.downloadUrl || drawing.webUrl;
+  const completeCount = Object.values(elements).filter(v => v === 'complete').length;
+  return { elements, label: `${completeCount}/5 elements complete` };
+}
 
-  return `
-    <div class="drawing-panel ${drawing.complete ? 'complete' : ''}" id="drawing-panel-${drawing.id}">
-      <div class="drawing-panel-header">
-        <div>
-          <div class="drawing-name">
-            ${drawing.complete ? '&#9989; ' : '&#128196; '}${drawing.name}
-          </div>
-          ${drawing.finishing && drawing.finishing !== 'none' ? `
-            <div style="display:flex;gap:6px;margin-top:4px;flex-wrap:wrap">
-              <span style="font-size:11px;padding:2px 8px;border-radius:4px;font-weight:600;
-                background:${drawing.finishing === 'galvanise' ? 'rgba(99,102,241,.2)' : 'rgba(245,158,11,.2)'};
-                color:${drawing.finishing === 'galvanise' ? '#818cf8' : 'var(--amber)'}">
-                ${drawing.finishing === 'galvanise' ? '⚙️ Must be Galvanised' : '🎨 Must be Painted'}
-              </span>
-              <span style="font-size:11px;padding:2px 8px;border-radius:4px;font-weight:600;
-                background:${drawing.transport === 'deliver' ? 'rgba(255,68,68,.15)' : 'rgba(62,207,142,.15)'};
-                color:${drawing.transport === 'deliver' ? 'var(--red)' : 'var(--green)'}">
-                ${drawing.transport === 'deliver' ? '🚚 We deliver' : '📦 They collect'}
-              </span>
-            </div>
-          ` : ''}
-        </div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          ${drawing.complete ? `<span class="drawing-complete-badge">&#10003; COMPLETE</span>` : `
-            <button class="btn btn-success" style="padding:6px 14px;font-size:12px"
-              onclick="markDrawingComplete('${projectId}', '${drawing.id}')">
-              &#10003; Mark Complete
-            </button>
-          `}
-          ${isDraftsman ? `
-            <button class="btn btn-ghost" style="padding:6px 12px;font-size:12px"
-              onclick="openReUploadDrawing('${projectId}', '${drawing.id}')" title="Replace PDF (notes preserved)">
-              &#8634; Replace
-            </button>
-            ${drawing.complete ? `
-              <button class="btn btn-ghost" style="padding:6px 12px;font-size:12px"
-                onclick="undoDrawingComplete('${projectId}', '${drawing.id}')">
-                Undo
-              </button>
-            ` : ''}
-            <button class="btn" style="padding:6px 12px;font-size:12px;background:rgba(255,68,68,.1);border:1px solid rgba(255,68,68,.3);color:var(--red)"
-              onclick="confirmDeleteDrawing('${projectId}', '${drawing.id}')">
-              &#128465; Delete
-            </button>
-          ` : ''}
-        </div>
+// ═══════════════════════════════════════════
+// CREATE JOB
+// ═══════════════════════════════════════════
+function openCreateJobModal() {
+  if (!isDraftsman || !currentProject) return;
+  document.getElementById('createJobProjectName').textContent = `${currentProject.id} — ${currentProject.name}`;
+  document.getElementById('createJobName').value = '';
+  document.getElementById('createJobProgress').style.display = 'none';
+  document.getElementById('createJobBtn').disabled = false;
+  document.getElementById('createJobModal').classList.add('active');
+  setTimeout(() => document.getElementById('createJobName').focus(), 100);
+}
+
+function closeCreateJobModal() {
+  document.getElementById('createJobModal').classList.remove('active');
+}
+
+async function createJob() {
+  const jobName = document.getElementById('createJobName').value.trim();
+  if (!jobName) { toast('Please enter a job name', 'error'); return; }
+
+  const projectId = currentProject.id;
+  if (!drawingsData.projects[projectId]) drawingsData.projects[projectId] = { jobs: [] };
+  const jobs = drawingsData.projects[projectId].jobs;
+  const jobNumber = jobs.length + 1;
+  const folderName = `${String(jobNumber).padStart(2, '0')} - ${jobName}`;
+
+  document.getElementById('createJobProgress').style.display = 'block';
+  document.getElementById('createJobBtn').disabled = true;
+  document.getElementById('createJobProgressBar').style.width = '10%';
+  document.getElementById('createJobProgressText').textContent = 'Finding project folder...';
+
+  try {
+    // Find project folder on SharePoint
+    const projectFolder = await findProjectFolder(projectId);
+    if (!projectFolder) throw new Error('Project folder not found on SharePoint');
+
+    document.getElementById('createJobProgressBar').style.width = '20%';
+    document.getElementById('createJobProgressText').textContent = 'Creating 02 - Drawings folder...';
+
+    // Get or create 02 - Drawings folder
+    const drawingsFolder = await getOrCreateSubfolder(projectFolder.id, '02 - Drawings');
+    if (!drawingsFolder) throw new Error('Could not create Drawings folder');
+
+    document.getElementById('createJobProgressBar').style.width = '35%';
+    document.getElementById('createJobProgressText').textContent = `Creating ${folderName}...`;
+
+    // Create job folder
+    const jobFolder = await createFolderInDrive(drawingsFolder.id, folderName);
+    if (!jobFolder) throw new Error('Could not create job folder');
+
+    // Create 5 element subfolders
+    const elementNames = Object.values(ELEMENT_FOLDERS);
+    for (let i = 0; i < elementNames.length; i++) {
+      const pct = 40 + Math.round((i / elementNames.length) * 40);
+      document.getElementById('createJobProgressBar').style.width = `${pct}%`;
+      document.getElementById('createJobProgressText').textContent = `Creating ${elementNames[i]}...`;
+      const elFolder = await createFolderInDrive(jobFolder.id, elementNames[i]);
+      // For Parts, create sub-subfolders
+      if (elementNames[i] === ELEMENT_FOLDERS.parts && elFolder) {
+        for (const sub of PARTS_SUBFOLDERS) {
+          await createFolderInDrive(elFolder.id, sub);
+        }
+      }
+    }
+
+    document.getElementById('createJobProgressBar').style.width = '90%';
+    document.getElementById('createJobProgressText').textContent = 'Saving job data...';
+
+    // Create job entry in drawingsData
+    const newJob = {
+      id: Date.now().toString(),
+      number: jobNumber,
+      name: jobName,
+      folderName,
+      spFolderId: jobFolder.id,
+      spDriveId: jobFolder.parentReference?.driveId || BAMA_DRIVE_ID,
+      status: 'open',
+      createdAt: new Date().toISOString(),
+      bom: { files: [], notes: [] },
+      approval: { revisions: [], notes: [] },
+      parts: {
+        sections: { files: [], notes: [] },
+        plates: { files: [], notes: [] }
+      },
+      assembly: { tasks: [] },
+      site: { files: [], notes: [] }
+    };
+
+    jobs.push(newJob);
+    await saveDrawingsData();
+
+    document.getElementById('createJobProgressBar').style.width = '100%';
+    document.getElementById('createJobProgressText').textContent = 'Done!';
+
+    setTimeout(() => {
+      closeCreateJobModal();
+      toast(`Job "${jobName}" created`, 'success');
+      renderJobsList(projectId);
+    }, 400);
+
+  } catch (e) {
+    console.error('Create job error:', e);
+    toast(`Failed: ${e.message}`, 'error');
+    document.getElementById('createJobProgress').style.display = 'none';
+  } finally {
+    document.getElementById('createJobBtn').disabled = false;
+  }
+}
+
+// ═══════════════════════════════════════════
+// JOB DETAIL — 5 ELEMENTS VIEW
+// ═══════════════════════════════════════════
+function openJobDetail(projectId, jobId) {
+  const proj = state.projects.find(p => p.id === projectId);
+  if (!proj) return;
+  currentProject = proj;
+  const projData = drawingsData.projects[projectId];
+  const job = projData?.jobs?.find(j => j.id === jobId);
+  if (!job) return;
+  currentJob = job;
+
+  document.getElementById('jobDetailTitle').textContent = `${String(job.number).padStart(2,'0')} — ${job.name}`;
+  document.getElementById('jobDetailMeta').textContent = `${proj.id} — ${proj.name}`;
+  document.getElementById('jobDraftsmanBar').style.display = isDraftsman ? 'flex' : 'none';
+
+  const badge = document.getElementById('jobStatusBadge');
+  if (job.status === 'closed') {
+    badge.textContent = 'CLOSED';
+    badge.style.cssText = 'font-size:12px;font-weight:600;padding:6px 14px;border-radius:8px;background:rgba(62,207,142,.15);color:var(--green)';
+  } else {
+    badge.textContent = 'OPEN';
+    badge.style.cssText = 'font-size:12px;font-weight:600;padding:6px 14px;border-radius:8px;background:rgba(255,107,0,.12);color:var(--accent)';
+  }
+
+  showScreen('screenJobDetail');
+  renderAllElements();
+}
+
+function toggleElement(name) {
+  const body = document.getElementById(`element${name}Body`);
+  const chevron = document.getElementById(`element${name}Chevron`);
+  if (!body) return;
+  body.classList.toggle('collapsed');
+  chevron.classList.toggle('collapsed');
+}
+
+function renderAllElements() {
+  if (!currentJob) return;
+  renderBOM();
+  renderApproval();
+  renderParts();
+  renderAssembly();
+  renderSite();
+}
+
+// ═══════════════════════════════════════════
+// ELEMENT 1: BOM
+// ═══════════════════════════════════════════
+function renderBOM() {
+  const container = document.getElementById('bomContent');
+  if (!container) return;
+  const bom = currentJob.bom || { files: [], notes: [] };
+  const status = document.getElementById('elementBOMStatus');
+  status.textContent = bom.files.length > 0 ? `${bom.files.length} file${bom.files.length>1?'s':''}` : 'Empty';
+  status.style.cssText = bom.files.length > 0
+    ? 'color:var(--green);background:rgba(62,207,142,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600'
+    : 'color:var(--subtle);font-size:11px;font-weight:600';
+
+  let html = '';
+
+  // Upload button (draftsman only)
+  if (isDraftsman && currentJob.status !== 'closed') {
+    html += `<button class="btn btn-primary" style="margin-bottom:12px;padding:8px 16px;font-size:12px" onclick="openUploadFileModal('bom')">&#43; Upload File</button>`;
+  }
+
+  // File list
+  if (bom.files.length > 0) {
+    html += bom.files.map(f => renderFileRow(f, 'bom')).join('');
+  } else {
+    html += '<div style="color:var(--subtle);font-size:13px;padding:12px 0">No BOM files uploaded yet</div>';
+  }
+
+  // Notes
+  html += renderNotesSection(bom.notes, 'bom');
+
+  container.innerHTML = html;
+}
+
+// ═══════════════════════════════════════════
+// ELEMENT 2: APPROVAL
+// ═══════════════════════════════════════════
+function renderApproval() {
+  const container = document.getElementById('approvalContent');
+  if (!container) return;
+  const approval = currentJob.approval || { revisions: [], notes: [] };
+  const revisions = approval.revisions || [];
+  const status = document.getElementById('elementApprovalStatus');
+
+  const latestCO = [...revisions].reverse().find(r => r.type === 'CO');
+  const latestPO = [...revisions].reverse().find(r => r.type === 'PO');
+  if (latestCO) {
+    status.textContent = `CO${latestCO.number} Approved`;
+    status.style.cssText = 'color:var(--green);background:rgba(62,207,142,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600';
+  } else if (latestPO) {
+    const stLabel = latestPO.status === 'sent' ? 'Sent' : latestPO.status === 'approved' ? 'Approved' : 'Rejected';
+    status.textContent = `PO${latestPO.number} ${stLabel}`;
+    const stColor = latestPO.status === 'approved' ? 'var(--green)' : latestPO.status === 'rejected' ? 'var(--red)' : '#60a5fa';
+    status.style.cssText = `color:${stColor};background:${latestPO.status === 'approved' ? 'rgba(62,207,142,.1)' : latestPO.status === 'rejected' ? 'rgba(255,68,68,.1)' : 'rgba(59,130,246,.1)'};padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600`;
+  } else {
+    status.textContent = 'No submissions';
+    status.style.cssText = 'color:var(--subtle);font-size:11px;font-weight:600';
+  }
+
+  let html = '';
+
+  // Upload buttons (draftsman only)
+  if (isDraftsman && currentJob.status !== 'closed') {
+    html += '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">';
+    html += `<button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="openUploadFileModal('approval','PO')">&#43; Upload for Approval (PO)</button>`;
+    // Only show CO upload if there's an approved PO
+    const hasApprovedPO = revisions.some(r => r.type === 'PO' && r.status === 'approved');
+    if (hasApprovedPO) {
+      html += `<button class="btn" style="padding:8px 16px;font-size:12px;background:rgba(62,207,142,.1);border:1px solid rgba(62,207,142,.3);color:var(--green)" onclick="openUploadFileModal('approval','CO')">&#43; Upload Approved (CO)</button>`;
+    }
+    html += '</div>';
+
+    // Status toggles for latest PO revision (draftsman can change status)
+    if (latestPO && latestPO.type === 'PO') {
+      html += `<div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
+        <span style="font-size:12px;color:var(--muted);font-weight:500">PO${latestPO.number} Status:</span>
+        <label class="toggle-chip"><input type="radio" name="approvalStatusToggle" value="sent" ${latestPO.status==='sent'?'checked':''} style="display:none" onchange="updateApprovalStatus('${latestPO.id}','sent')"><span>&#128232; Sent</span></label>
+        <label class="toggle-chip"><input type="radio" name="approvalStatusToggle" value="approved" ${latestPO.status==='approved'?'checked':''} style="display:none" onchange="updateApprovalStatus('${latestPO.id}','approved')"><span>&#9989; Approved</span></label>
+        <label class="toggle-chip"><input type="radio" name="approvalStatusToggle" value="rejected" ${latestPO.status==='rejected'?'checked':''} style="display:none" onchange="updateApprovalStatus('${latestPO.id}','rejected')"><span>&#10060; Not Approved</span></label>
+      </div>`;
+    }
+  }
+
+  // Render revisions (latest first for visibility, CO on top)
+  const sortedRevisions = [...revisions].reverse();
+  const latestCOId = latestCO?.id;
+
+  sortedRevisions.forEach(rev => {
+    const isCurrent = (rev.type === 'CO' && rev.id === latestCOId);
+    const isGrayed = !isDraftsman && !isCurrent;
+    const badgeClass = rev.status === 'approved' ? 'approved' : rev.status === 'rejected' ? 'rejected' : 'sent';
+
+    html += `<div class="revision-group ${isCurrent ? 'current' : ''} ${isGrayed ? 'grayed' : ''}">
+      <div class="revision-header">
+        <span class="revision-badge ${badgeClass}">${rev.type}${rev.number}</span>
+        <span style="font-size:12px;color:var(--muted)">${rev.status === 'sent' ? 'Sent for Approval' : rev.status === 'approved' ? 'Approved' : 'Not Approved'}</span>
+        <span style="font-size:11px;color:var(--subtle);margin-left:auto">${new Date(rev.uploadedAt).toLocaleDateString('en-GB')}</span>
+      </div>`;
+
+    if (rev.files?.length > 0) {
+      html += '<div style="padding:8px 14px">';
+      rev.files.forEach(f => {
+        if (isCurrent || isDraftsman) {
+          html += renderFileRow(f, 'approval', false);
+        } else {
+          html += `<div class="file-row grayed"><div class="file-row-icon">&#128196;</div><div class="file-row-name">${f.name || f.fileName}</div></div>`;
+        }
+      });
+      html += '</div>';
+    }
+    html += '</div>';
+  });
+
+  if (!revisions.length) {
+    html += '<div style="color:var(--subtle);font-size:13px;padding:12px 0">No approval submissions yet</div>';
+  }
+
+  // Notes
+  html += renderNotesSection(approval.notes, 'approval');
+
+  container.innerHTML = html;
+}
+
+async function updateApprovalStatus(revisionId, newStatus) {
+  if (!currentJob || !currentProject) return;
+  const projectId = currentProject.id;
+  const rev = currentJob.approval?.revisions?.find(r => r.id === revisionId);
+  if (!rev) return;
+  rev.status = newStatus;
+  rev.statusUpdatedAt = new Date().toISOString();
+  try {
+    await saveDrawingsData();
+    toast(`Status updated to ${newStatus === 'sent' ? 'Sent for Approval' : newStatus === 'approved' ? 'Approved' : 'Not Approved'}`, 'success');
+    renderApproval();
+  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+// ═══════════════════════════════════════════
+// ELEMENT 3: PARTS
+// ═══════════════════════════════════════════
+function renderParts() {
+  const container = document.getElementById('partsContent');
+  if (!container) return;
+  const parts = currentJob.parts || { sections: { files: [], notes: [] }, plates: { files: [], notes: [] } };
+  const secCount = parts.sections?.files?.length || 0;
+  const platCount = parts.plates?.files?.length || 0;
+
+  const status = document.getElementById('elementPartsStatus');
+  if (secCount > 0 || platCount > 0) {
+    status.textContent = `Sec: ${secCount} · Plt: ${platCount}`;
+    status.style.cssText = 'color:var(--green);background:rgba(62,207,142,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600';
+  } else {
+    status.textContent = 'Empty';
+    status.style.cssText = 'color:var(--subtle);font-size:11px;font-weight:600';
+  }
+
+  let html = '';
+
+  // Sections
+  html += `<div class="parts-sub">
+    <div class="parts-sub-header">
+      <span>&#128297; Sections</span>
+      ${isDraftsman && currentJob.status !== 'closed' ? `<button class="btn btn-primary" style="padding:6px 12px;font-size:11px" onclick="openUploadFileModal('parts','sections')">&#43; Upload</button>` : ''}
+    </div>
+    <div style="padding:12px 14px">`;
+  if (secCount > 0) {
+    html += parts.sections.files.map(f => renderFileRow(f, 'parts-sections')).join('');
+  } else {
+    html += '<div style="color:var(--subtle);font-size:12px">No section files yet</div>';
+  }
+  html += renderNotesSection(parts.sections?.notes || [], 'parts-sections');
+  html += '</div></div>';
+
+  // Plates
+  html += `<div class="parts-sub">
+    <div class="parts-sub-header">
+      <span>&#128297; Plates</span>
+      ${isDraftsman && currentJob.status !== 'closed' ? `<button class="btn btn-primary" style="padding:6px 12px;font-size:11px" onclick="openUploadFileModal('parts','plates')">&#43; Upload</button>` : ''}
+    </div>
+    <div style="padding:12px 14px">`;
+  if (platCount > 0) {
+    html += parts.plates.files.map(f => renderFileRow(f, 'parts-plates')).join('');
+  } else {
+    html += '<div style="color:var(--subtle);font-size:12px">No plate files yet</div>';
+  }
+  html += renderNotesSection(parts.plates?.notes || [], 'parts-plates');
+  html += '</div></div>';
+
+  container.innerHTML = html;
+}
+
+// ═══════════════════════════════════════════
+// ELEMENT 4: ASSEMBLY
+// ═══════════════════════════════════════════
+function renderAssembly() {
+  const container = document.getElementById('assemblyContent');
+  if (!container) return;
+  const assembly = currentJob.assembly || { tasks: [] };
+  const tasks = assembly.tasks || [];
+
+  const status = document.getElementById('elementAssemblyStatus');
+  const completeTasks = tasks.filter(t => t.status === 'complete').length;
+  if (tasks.length > 0) {
+    status.textContent = `${completeTasks}/${tasks.length} tasks`;
+    status.style.cssText = completeTasks === tasks.length
+      ? 'color:var(--green);background:rgba(62,207,142,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600'
+      : 'color:var(--accent);background:rgba(255,107,0,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600';
+  } else {
+    status.textContent = 'No tasks';
+    status.style.cssText = 'color:var(--subtle);font-size:11px;font-weight:600';
+  }
+
+  let html = '';
+
+  // Add task button (draftsman only)
+  if (isDraftsman && currentJob.status !== 'closed') {
+    html += `<button class="btn btn-primary" style="margin-bottom:12px;padding:8px 16px;font-size:12px" onclick="openCreateTaskModal()">&#43; Add Task</button>`;
+  }
+
+  // Render tasks
+  tasks.forEach(task => {
+    const isComplete = task.status === 'complete';
+    const finishLabel = task.finishing === 'galvanising' ? '⚙️ Galvanising' : task.finishing === 'ppc' ? '⚙️ PPC' : task.finishing === 'painting' ? '🎨 Painting' : '';
+    const finishColor = task.finishing === 'galvanising' ? 'rgba(99,102,241,.2);color:#818cf8' : task.finishing === 'ppc' ? 'rgba(99,102,241,.2);color:#818cf8' : task.finishing === 'painting' ? 'rgba(245,158,11,.2);color:var(--amber)' : '';
+
+    html += `<div class="task-card ${isComplete ? 'complete' : ''}">
+      <div class="task-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
+        <div style="font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--accent);min-width:28px">${String(task.number).padStart(2,'0')}</div>
+        <div class="task-name">${isComplete ? '&#9989; ' : ''}${task.name}</div>
+        ${finishLabel ? `<span class="task-finish-badge" style="background:${finishColor}">${finishLabel}</span>` : ''}
+        ${isComplete
+          ? `<span style="font-size:11px;color:var(--green);font-weight:600">COMPLETE</span>`
+          : `<button class="btn btn-success" style="padding:5px 12px;font-size:11px" onclick="event.stopPropagation();openCompleteTaskModal('${task.id}')">&#10003; Complete</button>`
+        }
       </div>
-      <div class="drawing-panel-body">
-        <!-- Preview -->
-        <div class="drawing-preview-wrap" id="preview-wrap-${drawing.id}">
-          <div class="drawing-preview-placeholder" id="preview-${drawing.id}">
-            <div style="font-size:32px;margin-bottom:12px">&#128196;</div>
-            <div style="margin-bottom:12px;color:var(--text)">${drawing.name}</div>
-            <button class="btn btn-primary" style="padding:10px 20px;font-size:13px"
-              onclick="loadPDFPreview('${drawing.id}', '${drawing.fileId}', '${drawing.driveId}')">
-              &#128065; Load Preview
-            </button>
-          </div>
-        </div>
+      <div class="task-body">`;
 
-        <!-- Actions -->
-        <div class="drawing-actions">
-          ${drawing.webUrl ? `
-            <a href="${drawing.webUrl}" target="_blank" class="btn btn-ghost" style="padding:8px 16px;font-size:12px;text-decoration:none">
-              &#128065; Open in SharePoint
-            </a>
-          ` : ''}
-          <button class="btn btn-ghost" style="padding:8px 16px;font-size:12px"
-            onclick="printDrawing('${drawing.id}', '${drawing.fileId || ''}', '${drawing.driveId || ''}')">
-            &#128438; Print
-          </button>
-          <span style="font-size:11px;color:var(--subtle);margin-left:auto;align-self:center">
-            Uploaded ${drawing.uploadedAt ? new Date(drawing.uploadedAt).toLocaleDateString('en-GB') : ''} by ${drawing.uploadedBy || ''}
-          </span>
-        </div>
+    // Upload button for task files
+    if (isDraftsman && currentJob.status !== 'closed') {
+      html += `<button class="btn btn-primary" style="margin-bottom:8px;padding:6px 12px;font-size:11px" onclick="openUploadFileModal('assembly','${task.id}')">&#43; Upload File</button>`;
+    }
 
-        <!-- Notes -->
-        <div class="notes-section">
-          <!-- Draftsman notes (red) — read-only in workshop view, editable in draftsman mode -->
-          <div>
-            <div class="notes-col-title draftsman">&#9998; Draftsman Notes</div>
-            ${draftsmanNotes.map(n => `
-              <div class="note-item draftsman-note">
-                <div class="note-author draftsman-note">${n.author} <span class="note-time">${new Date(n.timestamp).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span></div>
-                <div class="note-text">${n.text}</div>
-              </div>
-            `).join('') || `<div style="color:var(--subtle);font-size:12px;padding:8px 0">No draftsman notes yet</div>`}
-            ${isDraftsman ? `
-              <div class="add-note-row" style="margin-top:8px">
-                <input type="text" class="field-input" id="draftsman-note-${drawing.id}"
-                  placeholder="Add draftsman note..." style="font-size:12px;padding:7px 10px">
-                <button class="btn btn-primary" style="padding:7px 12px;font-size:12px;white-space:nowrap"
-                  onclick="addNote('${projectId}','${drawing.id}','draftsman')">Add</button>
-              </div>
-            ` : '<div style="font-size:11px;color:var(--subtle);margin-top:8px;font-style:italic">Draftsman access required to add notes</div>'}
-          </div>
+    // Task files
+    if (task.files?.length > 0) {
+      html += task.files.map(f => renderFileRow(f, `assembly-${task.id}`)).join('');
+    } else {
+      html += '<div style="color:var(--subtle);font-size:12px;padding:4px 0">No files yet</div>';
+    }
 
-          <!-- Workshop notes (green) -->
-          <div>
-            <div class="notes-col-title workshop">&#128296; Workshop Notes</div>
-            ${workshopNotes.map(n => `
-              <div class="note-item workshop-note">
-                <div class="note-author workshop-note">${n.author} <span class="note-time">${new Date(n.timestamp).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span></div>
-                <div class="note-text">${n.text}</div>
-              </div>
-            `).join('') || `<div style="color:var(--subtle);font-size:12px;padding:8px 0">No workshop notes yet</div>`}
-            <div class="add-note-row">
-              <input type="text" class="field-input" id="workshop-note-${drawing.id}"
-                placeholder="Add workshop note..." style="font-size:12px;padding:7px 10px">
-              <select class="field-input" id="workshop-note-author-${drawing.id}" style="font-size:12px;padding:7px 10px;max-width:130px">
-                <option value="">Your name...</option>
-                ${employees.map(e=>`<option value="${e.name}">${e.name}</option>`).join('')}
-              </select>
-              <button class="btn btn-success" style="padding:7px 12px;font-size:12px;white-space:nowrap"
-                onclick="addNote('${projectId}','${drawing.id}','workshop')">Add</button>
-            </div>
-          </div>
-        </div>
+    // Task notes
+    html += renderNotesSection(task.notes || [], `assembly-${task.id}`);
+
+    if (isComplete) {
+      html += `<div style="margin-top:8px;font-size:11px;color:var(--green)">Completed by ${task.completedBy} on ${new Date(task.completedAt).toLocaleDateString('en-GB')}</div>`;
+    }
+
+    html += '</div></div>';
+  });
+
+  if (!tasks.length) {
+    html += '<div style="color:var(--subtle);font-size:13px;padding:12px 0">No assembly tasks yet</div>';
+  }
+
+  container.innerHTML = html;
+}
+
+// ═══════════════════════════════════════════
+// ELEMENT 5: SITE INSTALLATION
+// ═══════════════════════════════════════════
+function renderSite() {
+  const container = document.getElementById('siteContent');
+  if (!container) return;
+  const site = currentJob.site || { files: [], notes: [] };
+
+  const status = document.getElementById('elementSiteStatus');
+  if (site.completedAt) {
+    status.textContent = 'Complete';
+    status.style.cssText = 'color:var(--green);background:rgba(62,207,142,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600';
+  } else if (site.files?.length > 0) {
+    status.textContent = `${site.files.length} file${site.files.length>1?'s':''}`;
+    status.style.cssText = 'color:var(--accent);background:rgba(255,107,0,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600';
+  } else {
+    status.textContent = 'Empty';
+    status.style.cssText = 'color:var(--subtle);font-size:11px;font-weight:600';
+  }
+
+  let html = '';
+
+  // Upload and complete buttons
+  if (currentJob.status !== 'closed') {
+    html += '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">';
+    if (isDraftsman) {
+      html += `<button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="openUploadFileModal('site')">&#43; Upload File</button>`;
+    }
+    if (!site.completedAt) {
+      html += `<button class="btn btn-success" style="padding:8px 16px;font-size:12px" onclick="openCloseJobModal()">&#127919; Mark Site Complete &amp; Close Job</button>`;
+    }
+    html += '</div>';
+  }
+
+  // File list
+  if (site.files?.length > 0) {
+    html += site.files.map(f => renderFileRow(f, 'site')).join('');
+  } else {
+    html += '<div style="color:var(--subtle);font-size:13px;padding:12px 0">No site installation files yet</div>';
+  }
+
+  // Notes
+  html += renderNotesSection(site.notes || [], 'site');
+
+  if (site.completedAt) {
+    html += `<div style="margin-top:12px;padding:12px;background:rgba(62,207,142,.08);border:1px solid rgba(62,207,142,.2);border-radius:8px;font-size:13px;color:var(--green)">
+      &#127919; Site installation completed by ${site.completedBy} on ${new Date(site.completedAt).toLocaleDateString('en-GB')}
+    </div>`;
+  }
+
+  container.innerHTML = html;
+}
+
+// ═══════════════════════════════════════════
+// SHARED: FILE ROW RENDERER
+// ═══════════════════════════════════════════
+function renderFileRow(file, context, showDelete) {
+  if (showDelete === undefined) showDelete = isDraftsman && currentJob?.status !== 'closed';
+  const dateStr = file.uploadedAt ? new Date(file.uploadedAt).toLocaleDateString('en-GB') : '';
+  return `
+    <div class="file-row">
+      <div class="file-row-icon">&#128196;</div>
+      <div class="file-row-name">${file.name || file.fileName}</div>
+      <div class="file-row-date">${dateStr}</div>
+      <div class="file-row-actions">
+        ${file.webUrl ? `<a href="${file.webUrl}" target="_blank" class="btn btn-ghost" style="padding:4px 10px;font-size:11px;text-decoration:none">&#128065; View</a>` : ''}
+        <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="printFile('${file.fileId}','${file.driveId || ''}')">&#128438; Print</button>
+        ${showDelete ? `<button class="btn" style="padding:4px 10px;font-size:11px;background:rgba(255,68,68,.1);border:1px solid rgba(255,68,68,.3);color:var(--red)" onclick="confirmDeleteFile('${context}','${file.id}')">&#128465;</button>` : ''}
       </div>
     </div>
   `;
 }
 
-// ── Mark drawing complete ──
-let _pendingCompleteData = null;
+// ═══════════════════════════════════════════
+// SHARED: NOTES SECTION RENDERER
+// ═══════════════════════════════════════════
+function renderNotesSection(notes, context) {
+  notes = notes || [];
+  const draftsmanNotes = notes.filter(n => n.type === 'draftsman');
+  const workshopNotes = notes.filter(n => n.type === 'workshop');
+  const employees = (state.timesheetData.employees || []).filter(e => e.active !== false);
 
-function markDrawingComplete(projectId, drawingId) {
-  const drawing = drawingsData.projects[projectId]?.drawings?.find(d => d.id === drawingId);
-  if (!drawing) return;
-  _pendingCompleteData = { projectId, drawingId };
-  openFinishingModal(drawing, projectId);
+  let html = '<div class="notes-section" style="margin-top:12px">';
+
+  // Draftsman notes
+  html += '<div>';
+  html += '<div class="notes-col-title draftsman">&#9998; Draftsman Notes</div>';
+  if (draftsmanNotes.length) {
+    html += draftsmanNotes.map(n => `
+      <div class="note-item draftsman-note">
+        <div class="note-author draftsman-note">${n.author} <span class="note-time">${new Date(n.timestamp).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span></div>
+        <div class="note-text">${n.text}</div>
+      </div>`).join('');
+  } else {
+    html += '<div style="color:var(--subtle);font-size:12px;padding:8px 0">No draftsman notes</div>';
+  }
+  if (isDraftsman) {
+    html += `<div class="add-note-row" style="margin-top:8px">
+      <input type="text" class="field-input" id="dn-${context}" placeholder="Add draftsman note..." style="font-size:12px;padding:7px 10px">
+      <button class="btn btn-primary" style="padding:7px 12px;font-size:12px;white-space:nowrap" onclick="addElementNote('${context}','draftsman')">Add</button>
+    </div>`;
+  }
+  html += '</div>';
+
+  // Workshop notes
+  html += '<div>';
+  html += '<div class="notes-col-title workshop">&#128296; Workshop Notes</div>';
+  if (workshopNotes.length) {
+    html += workshopNotes.map(n => `
+      <div class="note-item workshop-note">
+        <div class="note-author workshop-note">${n.author} <span class="note-time">${new Date(n.timestamp).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</span></div>
+        <div class="note-text">${n.text}</div>
+      </div>`).join('');
+  } else {
+    html += '<div style="color:var(--subtle);font-size:12px;padding:8px 0">No workshop notes</div>';
+  }
+  html += `<div class="add-note-row" style="margin-top:8px">
+    <input type="text" class="field-input" id="wn-${context}" placeholder="Add workshop note..." style="font-size:12px;padding:7px 10px">
+    <select class="field-input" id="wna-${context}" style="font-size:12px;padding:7px 10px;max-width:130px">
+      <option value="">Your name...</option>
+      ${employees.map(e => `<option value="${e.name}">${e.name}</option>`).join('')}
+    </select>
+    <button class="btn btn-success" style="padding:7px 12px;font-size:12px;white-space:nowrap" onclick="addElementNote('${context}','workshop')">Add</button>
+  </div>`;
+  html += '</div>';
+
+  html += '</div>';
+  return html;
 }
 
-function openFinishingModal(drawing, projectId) {
-  const finishing = drawing.finishing || 'none';
-  const transport = drawing.transport || 'collect';
-  const finishingLabel = finishing === 'galvanise' ? 'Galvanising' : finishing === 'paint' ? 'Painting' : 'Completion';
+// ═══════════════════════════════════════════
+// ADD NOTES (Element-level)
+// ═══════════════════════════════════════════
+async function addElementNote(context, type) {
+  if (!currentJob || !currentProject) return;
+  const inputEl = document.getElementById(`${type === 'draftsman' ? 'dn' : 'wn'}-${context}`);
+  const text = inputEl?.value?.trim();
+  if (!text) { toast('Please type a note', 'error'); return; }
 
-  document.getElementById('finishingModalIcon').textContent = finishing === 'galvanise' ? '⚙️' : finishing === 'paint' ? '🎨' : '✅';
-  document.getElementById('finishingModalTitle').textContent = `Ready for ${finishingLabel}?`;
-  document.getElementById('finishingModalMessage').textContent = finishing !== 'none'
-    ? `Confirm this item is ready for ${finishingLabel.toLowerCase()} before marking complete.`
-    : `Confirm this drawing is complete.`;
-
-  const alertBox = document.getElementById('finishingTransportAlert');
-  if (finishing !== 'none') {
-    alertBox.style.display = 'block';
-    if (transport === 'deliver') {
-      alertBox.style.cssText = 'display:block;background:rgba(255,68,68,.1);border:1px solid rgba(255,68,68,.3);border-radius:10px;padding:14px;margin-bottom:20px;text-align:left';
-      alertBox.innerHTML = `<div style="font-size:14px;margin-bottom:4px">🚚 <b style="color:var(--red)">We must deliver this</b></div><div style="font-size:12px;color:var(--muted)">Please arrange transport to drop off for ${finishingLabel.toLowerCase()}.</div>`;
-    } else {
-      alertBox.style.cssText = 'display:block;background:rgba(62,207,142,.08);border:1px solid rgba(62,207,142,.2);border-radius:10px;padding:14px;margin-bottom:20px;text-align:left';
-      alertBox.innerHTML = `<div style="font-size:14px;margin-bottom:4px">📦 <b style="color:var(--green)">They will collect</b></div><div style="font-size:12px;color:var(--muted)">Pack up, label clearly and get ready for collection.</div>`;
-    }
+  let author = '';
+  if (type === 'draftsman') {
+    author = 'Draftsman';
   } else {
-    alertBox.style.display = 'none';
+    const authorEl = document.getElementById(`wna-${context}`);
+    author = authorEl?.value;
+    if (!author) { toast('Please select your name', 'error'); return; }
   }
 
-  document.getElementById('finishingCheckLabel').textContent = finishing !== 'none'
-    ? `I confirm this item is ready for ${finishingLabel.toLowerCase()}`
-    : `I confirm this drawing is complete`;
+  const note = {
+    id: Date.now().toString(),
+    type,
+    author,
+    text,
+    timestamp: new Date().toISOString()
+  };
 
-  const icon = document.getElementById('finishingCheckIcon');
-  icon.textContent = '';
-  icon.style.background = 'var(--card)';
-  icon.style.borderColor = 'var(--border)';
-  document.getElementById('finishingCheckBox').style.borderColor = 'var(--border)';
-  const btn = document.getElementById('finishingConfirmBtn');
-  btn.disabled = true; btn.style.opacity = '.4'; btn.style.cursor = 'not-allowed';
+  // Find the right notes array based on context
+  const notesArr = getNotesArray(context);
+  if (!notesArr) { toast('Error: could not find notes location', 'error'); return; }
+  notesArr.push(note);
 
-  const sel = document.getElementById('finishingAcknowledgedBy');
-  sel.innerHTML = '<option value="">Select your name...</option>';
-  (state.timesheetData.employees || []).filter(e => e.active !== false).forEach(e => {
-    const opt = document.createElement('option');
-    opt.value = e.name; opt.textContent = e.name; sel.appendChild(opt);
-  });
-  sel.onchange = checkFinishingReady;
-
-  document.getElementById('finishingModal').classList.add('active');
+  try {
+    await saveDrawingsData();
+    inputEl.value = '';
+    toast('Note added', 'success');
+    renderAllElements();
+  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
 }
 
-function toggleFinishingCheck() {
-  const icon = document.getElementById('finishingCheckIcon');
+function getNotesArray(context) {
+  if (!currentJob) return null;
+  if (context === 'bom') return currentJob.bom?.notes;
+  if (context === 'approval') return currentJob.approval?.notes;
+  if (context === 'parts-sections') return currentJob.parts?.sections?.notes;
+  if (context === 'parts-plates') return currentJob.parts?.plates?.notes;
+  if (context === 'site') return currentJob.site?.notes;
+  // Assembly task notes
+  if (context.startsWith('assembly-')) {
+    const taskId = context.replace('assembly-', '');
+    const task = currentJob.assembly?.tasks?.find(t => t.id === taskId);
+    return task?.notes;
+  }
+  return null;
+}
+
+// ═══════════════════════════════════════════
+// UPLOAD FILE MODAL (shared across all elements)
+// ═══════════════════════════════════════════
+function openUploadFileModal(element, subElement) {
+  if (!currentJob || !currentProject) return;
+  _uploadFiles = [];
+  _uploadContext = {
+    element,
+    subElement: subElement || null,
+    jobId: currentJob.id,
+    projectId: currentProject.id
+  };
+
+  const modal = document.getElementById('uploadFileModal');
+  document.getElementById('uploadFileName').value = '';
+  document.getElementById('uploadFileZoneText').textContent = 'Click or drag files here';
+  document.getElementById('uploadFileList').innerHTML = '';
+  document.getElementById('uploadFileProgress').style.display = 'none';
+  document.getElementById('uploadFileBtn').disabled = false;
+  document.getElementById('uploadFileInput').value = '';
+
+  // Title & context
+  let title = 'Upload File';
+  let ctx = `${currentJob.name}`;
+  if (element === 'bom') { title = 'Upload BOM File'; }
+  else if (element === 'approval') {
+    title = subElement === 'CO' ? 'Upload Approved Drawing (CO)' : 'Upload for Approval (PO)';
+  }
+  else if (element === 'parts') {
+    title = subElement === 'sections' ? 'Upload Sections File' : 'Upload Plates File';
+  }
+  else if (element === 'assembly') { title = 'Upload Assembly File'; }
+  else if (element === 'site') { title = 'Upload Site Installation File'; }
+
+  document.getElementById('uploadFileTitle').textContent = title;
+  document.getElementById('uploadFileContext').textContent = ctx;
+
+  // Show/hide approval section
+  document.getElementById('uploadApprovalSection').style.display =
+    (element === 'approval') ? 'block' : 'none';
+
+  modal.classList.add('active');
+}
+
+function closeUploadFileModal() {
+  document.getElementById('uploadFileModal').classList.remove('active');
+  _uploadFiles = [];
+  _uploadContext = null;
+}
+
+function onUploadFilesSelected() {
+  const input = document.getElementById('uploadFileInput');
+  _uploadFiles = Array.from(input.files);
+  updateUploadFileListUI();
+}
+
+function updateUploadFileListUI() {
+  const container = document.getElementById('uploadFileList');
+  const nameInput = document.getElementById('uploadFileName');
+
+  if (_uploadFiles.length === 0) {
+    container.innerHTML = '';
+    document.getElementById('uploadFileZoneText').textContent = 'Click or drag files here';
+    return;
+  }
+
+  if (_uploadFiles.length === 1) {
+    document.getElementById('uploadFileZoneText').textContent = `&#128196; ${_uploadFiles[0].name} (${(_uploadFiles[0].size/1024).toFixed(0)}KB)`;
+    if (!nameInput.value) {
+      nameInput.value = _uploadFiles[0].name.replace(/\.[^.]+$/, '');
+    }
+  } else {
+    document.getElementById('uploadFileZoneText').textContent = `${_uploadFiles.length} files selected`;
+  }
+
+  container.innerHTML = _uploadFiles.map((f, i) => `
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;font-size:12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;margin-bottom:4px">
+      <span style="flex:1">&#128196; ${f.name} <span style="color:var(--subtle)">(${(f.size/1024).toFixed(0)}KB)</span></span>
+      <button class="btn btn-ghost" style="padding:2px 8px;font-size:10px;color:var(--red)" onclick="removeUploadFile(${i})">&#10005;</button>
+    </div>
+  `).join('');
+}
+
+function removeUploadFile(index) {
+  _uploadFiles.splice(index, 1);
+  updateUploadFileListUI();
+}
+
+function updateApprovalChips() {
+  document.querySelectorAll('#uploadApprovalSection .toggle-chip').forEach(chip => {
+    chip.classList.toggle('active', chip.querySelector('input').checked);
+  });
+}
+
+async function confirmUploadFile() {
+  if (!_uploadFiles.length) { toast('Please select a file', 'error'); return; }
+  if (!_uploadContext) return;
+
+  const { element, subElement, jobId, projectId } = _uploadContext;
+  const projData = drawingsData.projects[projectId];
+  const job = projData?.jobs?.find(j => j.id === jobId);
+  if (!job) { toast('Job not found', 'error'); return; }
+
+  document.getElementById('uploadFileProgress').style.display = 'block';
+  document.getElementById('uploadFileBtn').disabled = true;
+
+  try {
+    const token = await getToken();
+    // Determine the SharePoint target folder path
+    let targetFolderId = job.spFolderId;
+    const driveId = job.spDriveId || BAMA_DRIVE_ID;
+
+    document.getElementById('uploadFileProgressBar').style.width = '15%';
+    document.getElementById('uploadFileProgressText').textContent = 'Finding target folder...';
+
+    // Navigate to the right subfolder
+    if (element === 'bom') {
+      const folder = await getOrCreateSubfolder(targetFolderId, ELEMENT_FOLDERS.bom, driveId);
+      targetFolderId = folder.id;
+    } else if (element === 'approval') {
+      const approvalFolder = await getOrCreateSubfolder(targetFolderId, ELEMENT_FOLDERS.approval, driveId);
+      // Determine PO/CO number
+      const revisions = job.approval?.revisions || [];
+      let folderName;
+      if (subElement === 'CO') {
+        const coCount = revisions.filter(r => r.type === 'CO').length;
+        folderName = `CO${coCount + 1}`;
+      } else {
+        const poCount = revisions.filter(r => r.type === 'PO').length;
+        folderName = `PO${poCount + 1}`;
+      }
+      const revFolder = await createFolderInDrive(approvalFolder.id, folderName, driveId);
+      targetFolderId = revFolder.id;
+    } else if (element === 'parts') {
+      const partsFolder = await getOrCreateSubfolder(targetFolderId, ELEMENT_FOLDERS.parts, driveId);
+      const subName = subElement === 'sections' ? PARTS_SUBFOLDERS[0] : PARTS_SUBFOLDERS[1];
+      const subFolder = await getOrCreateSubfolder(partsFolder.id, subName, driveId);
+      targetFolderId = subFolder.id;
+    } else if (element === 'assembly') {
+      const asmFolder = await getOrCreateSubfolder(targetFolderId, ELEMENT_FOLDERS.assembly, driveId);
+      // subElement is taskId — find or create task folder
+      const task = job.assembly?.tasks?.find(t => t.id === subElement);
+      if (task) {
+        const taskFolderName = `${String(task.number).padStart(2,'0')} - ${task.name}`;
+        const taskFolder = await getOrCreateSubfolder(asmFolder.id, taskFolderName, driveId);
+        targetFolderId = taskFolder.id;
+      } else {
+        targetFolderId = asmFolder.id;
+      }
+    } else if (element === 'site') {
+      const folder = await getOrCreateSubfolder(targetFolderId, ELEMENT_FOLDERS.site, driveId);
+      targetFolderId = folder.id;
+    }
+
+    // Upload files
+    const uploadedFiles = [];
+    for (let i = 0; i < _uploadFiles.length; i++) {
+      const file = _uploadFiles[i];
+      const pct = 20 + Math.round((i / _uploadFiles.length) * 65);
+      document.getElementById('uploadFileProgressBar').style.width = `${pct}%`;
+      document.getElementById('uploadFileProgressText').textContent = `Uploading ${i + 1} of ${_uploadFiles.length}...`;
+
+      const arrayBuffer = await file.arrayBuffer();
+      const uploaded = await uploadFileToFolder(targetFolderId, file.name, arrayBuffer, file.type, driveId);
+      uploadedFiles.push({
+        id: Date.now().toString() + '-' + i,
+        name: document.getElementById('uploadFileName').value.trim() || file.name.replace(/\.[^.]+$/, ''),
+        fileName: file.name,
+        fileId: uploaded.id,
+        driveId: uploaded.parentReference?.driveId || driveId,
+        webUrl: uploaded.webUrl,
+        uploadedAt: new Date().toISOString()
+      });
+    }
+
+    document.getElementById('uploadFileProgressBar').style.width = '90%';
+    document.getElementById('uploadFileProgressText').textContent = 'Saving data...';
+
+    // Save to drawingsData
+    if (element === 'bom') {
+      if (!job.bom) job.bom = { files: [], notes: [] };
+      job.bom.files.push(...uploadedFiles);
+    } else if (element === 'approval') {
+      if (!job.approval) job.approval = { revisions: [], notes: [] };
+      const revisions = job.approval.revisions;
+      const type = subElement || 'PO';
+      const num = revisions.filter(r => r.type === type).length + 1;
+      const approvalStatus = document.querySelector('input[name="approvalStatus"]:checked')?.value || 'sent';
+      revisions.push({
+        id: Date.now().toString(),
+        type,
+        number: num,
+        status: type === 'CO' ? 'approved' : approvalStatus,
+        files: uploadedFiles,
+        uploadedAt: new Date().toISOString()
+      });
+    } else if (element === 'parts') {
+      if (!job.parts) job.parts = { sections: { files: [], notes: [] }, plates: { files: [], notes: [] } };
+      const target = subElement === 'sections' ? job.parts.sections : job.parts.plates;
+      if (!target.files) target.files = [];
+      target.files.push(...uploadedFiles);
+    } else if (element === 'assembly') {
+      const task = job.assembly?.tasks?.find(t => t.id === subElement);
+      if (task) {
+        if (!task.files) task.files = [];
+        task.files.push(...uploadedFiles);
+      }
+    } else if (element === 'site') {
+      if (!job.site) job.site = { files: [], notes: [] };
+      job.site.files.push(...uploadedFiles);
+    }
+
+    await saveDrawingsData();
+
+    document.getElementById('uploadFileProgressBar').style.width = '100%';
+    document.getElementById('uploadFileProgressText').textContent = 'Done!';
+
+    setTimeout(() => {
+      closeUploadFileModal();
+      toast(`${uploadedFiles.length} file${uploadedFiles.length>1?'s':''} uploaded`, 'success');
+      renderAllElements();
+    }, 400);
+
+  } catch (e) {
+    console.error('Upload error:', e);
+    toast(`Upload failed: ${e.message}`, 'error');
+    document.getElementById('uploadFileProgress').style.display = 'none';
+  } finally {
+    document.getElementById('uploadFileBtn').disabled = false;
+  }
+}
+
+// ═══════════════════════════════════════════
+// DELETE FILE
+// ═══════════════════════════════════════════
+function confirmDeleteFile(context, fileId) {
+  if (!currentJob || !currentProject) return;
+  const filesArr = getFilesArray(context);
+  const file = filesArr?.find(f => f.id === fileId);
+  if (!file) return;
+
+  showConfirm('Delete File', `Delete "${file.name || file.fileName}"? This cannot be undone.`, async () => {
+    try {
+      setLoading(true);
+      // Delete from SharePoint
+      if (file.fileId) {
+        await deleteFileFromDrive(file.fileId, file.driveId);
+      }
+      // Remove from data
+      const idx = filesArr.indexOf(file);
+      if (idx >= 0) filesArr.splice(idx, 1);
+      await saveDrawingsData();
+      toast('File deleted', 'success');
+      renderAllElements();
+    } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
+    finally { setLoading(false); }
+  });
+}
+
+function getFilesArray(context) {
+  if (!currentJob) return null;
+  if (context === 'bom') return currentJob.bom?.files;
+  if (context === 'parts-sections') return currentJob.parts?.sections?.files;
+  if (context === 'parts-plates') return currentJob.parts?.plates?.files;
+  if (context === 'site') return currentJob.site?.files;
+  if (context.startsWith('assembly-')) {
+    const taskId = context.replace('assembly-', '');
+    const task = currentJob.assembly?.tasks?.find(t => t.id === taskId);
+    return task?.files;
+  }
+  // Approval files are inside revisions, handled separately
+  return null;
+}
+
+// ═══════════════════════════════════════════
+// PRINT FILE
+// ═══════════════════════════════════════════
+async function printFile(fileId, driveId) {
+  if (!fileId) { toast('No file to print', 'error'); return; }
+  try {
+    setLoading(true);
+    const token = await getToken();
+    const drive = driveId || BAMA_DRIVE_ID;
+    const res = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${drive}/items/${fileId}`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    if (!res.ok) throw new Error('File not found');
+    const meta = await res.json();
+    const downloadUrl = meta['@microsoft.graph.downloadUrl'];
+    if (downloadUrl) {
+      const pdfRes = await fetch(downloadUrl);
+      const blob = await pdfRes.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const printWin = window.open(blobUrl);
+      if (printWin) {
+        printWin.onload = () => { printWin.print(); };
+      }
+    } else if (meta.webUrl) {
+      window.open(meta.webUrl, '_blank');
+    }
+  } catch (e) {
+    toast('Print failed: ' + e.message, 'error');
+  } finally {
+    setLoading(false);
+  }
+}
+
+// ═══════════════════════════════════════════
+// ASSEMBLY: CREATE TASK
+// ═══════════════════════════════════════════
+function openCreateTaskModal() {
+  if (!isDraftsman || !currentJob || !currentProject) return;
+  document.getElementById('createTaskContext').textContent = `Job: ${currentJob.name}`;
+  document.getElementById('createTaskName').value = '';
+  document.getElementById('taskFileZoneText').textContent = 'Click or drag files here';
+  document.getElementById('taskFileList').innerHTML = '';
+  document.getElementById('createTaskProgress').style.display = 'none';
+  document.getElementById('createTaskBtn').disabled = false;
+  document.getElementById('taskFileInput').value = '';
+  _taskFiles = [];
+  // Reset finishing chips
+  document.querySelector('input[name="newTaskFinishing"][value="none"]').checked = true;
+  updateNewTaskFinishingChips();
+  document.getElementById('createTaskModal').classList.add('active');
+  setTimeout(() => document.getElementById('createTaskName').focus(), 100);
+}
+
+function closeCreateTaskModal() {
+  document.getElementById('createTaskModal').classList.remove('active');
+  _taskFiles = [];
+}
+
+function onTaskFilesSelected() {
+  _taskFiles = Array.from(document.getElementById('taskFileInput').files);
+  if (_taskFiles.length === 1) {
+    document.getElementById('taskFileZoneText').textContent = `&#128196; ${_taskFiles[0].name}`;
+  } else if (_taskFiles.length > 1) {
+    document.getElementById('taskFileZoneText').textContent = `${_taskFiles.length} files selected`;
+  }
+  document.getElementById('taskFileList').innerHTML = _taskFiles.map((f, i) => `
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;font-size:12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;margin-bottom:4px">
+      <span style="flex:1">&#128196; ${f.name}</span>
+    </div>
+  `).join('');
+}
+
+function updateNewTaskFinishingChips() {
+  document.querySelectorAll('#createTaskModal .toggle-chip').forEach(chip => {
+    chip.classList.toggle('active', chip.querySelector('input')?.checked);
+  });
+}
+
+async function createAssemblyTask() {
+  const taskName = document.getElementById('createTaskName').value.trim();
+  if (!taskName) { toast('Please enter a task name', 'error'); return; }
+
+  const finishing = document.querySelector('input[name="newTaskFinishing"]:checked')?.value || 'none';
+  const projectId = currentProject.id;
+  const job = currentJob;
+
+  if (!job.assembly) job.assembly = { tasks: [] };
+  const tasks = job.assembly.tasks;
+  const taskNumber = tasks.length + 1;
+  const taskFolderName = `${String(taskNumber).padStart(2,'0')} - ${taskName}`;
+
+  document.getElementById('createTaskProgress').style.display = 'block';
+  document.getElementById('createTaskBtn').disabled = true;
+  document.getElementById('createTaskProgressBar').style.width = '20%';
+  document.getElementById('createTaskProgressText').textContent = 'Creating task folder...';
+
+  try {
+    const driveId = job.spDriveId || BAMA_DRIVE_ID;
+    // Create folder inside 04 - Assembly
+    const asmFolder = await getOrCreateSubfolder(job.spFolderId, ELEMENT_FOLDERS.assembly, driveId);
+    const taskFolder = await createFolderInDrive(asmFolder.id, taskFolderName, driveId);
+
+    // Upload files if any
+    const uploadedFiles = [];
+    if (_taskFiles.length > 0) {
+      for (let i = 0; i < _taskFiles.length; i++) {
+        const pct = 30 + Math.round((i / _taskFiles.length) * 50);
+        document.getElementById('createTaskProgressBar').style.width = `${pct}%`;
+        document.getElementById('createTaskProgressText').textContent = `Uploading ${i + 1} of ${_taskFiles.length}...`;
+        const file = _taskFiles[i];
+        const arrayBuffer = await file.arrayBuffer();
+        const uploaded = await uploadFileToFolder(taskFolder.id, file.name, arrayBuffer, file.type, driveId);
+        uploadedFiles.push({
+          id: Date.now().toString() + '-' + i,
+          name: file.name.replace(/\.[^.]+$/, ''),
+          fileName: file.name,
+          fileId: uploaded.id,
+          driveId: uploaded.parentReference?.driveId || driveId,
+          webUrl: uploaded.webUrl,
+          uploadedAt: new Date().toISOString()
+        });
+      }
+    }
+
+    document.getElementById('createTaskProgressBar').style.width = '90%';
+    document.getElementById('createTaskProgressText').textContent = 'Saving...';
+
+    const newTask = {
+      id: Date.now().toString(),
+      number: taskNumber,
+      name: taskName,
+      folderName: taskFolderName,
+      spFolderId: taskFolder?.id,
+      finishing,
+      status: 'open',
+      createdAt: new Date().toISOString(),
+      files: uploadedFiles,
+      notes: []
+    };
+
+    tasks.push(newTask);
+    await saveDrawingsData();
+
+    document.getElementById('createTaskProgressBar').style.width = '100%';
+    setTimeout(() => {
+      closeCreateTaskModal();
+      toast(`Task "${taskName}" created`, 'success');
+      renderAssembly();
+    }, 400);
+
+  } catch (e) {
+    console.error('Create task error:', e);
+    toast(`Failed: ${e.message}`, 'error');
+    document.getElementById('createTaskProgress').style.display = 'none';
+  } finally {
+    document.getElementById('createTaskBtn').disabled = false;
+  }
+}
+
+// ═══════════════════════════════════════════
+// ASSEMBLY: COMPLETE TASK
+// ═══════════════════════════════════════════
+function openCompleteTaskModal(taskId) {
+  const task = currentJob?.assembly?.tasks?.find(t => t.id === taskId);
+  if (!task) return;
+  _pendingCompleteTask = task;
+
+  const isPainting = task.finishing === 'painting';
+  const finishLabel = task.finishing === 'galvanising' ? 'Galvanising' : task.finishing === 'ppc' ? 'PPC (Powder Coat)' : task.finishing === 'painting' ? 'Painting' : '';
+
+  document.getElementById('completeTaskIcon').textContent = isPainting ? '🎨' : '✅';
+  document.getElementById('completeTaskTitle').textContent = `Complete "${task.name}"?`;
+  document.getElementById('completeTaskMessage').textContent = finishLabel
+    ? `This task requires ${finishLabel}. ${isPainting ? 'Confirm painting is done before completing.' : `Draftsman will be notified to organise ${finishLabel.toLowerCase()}.`}`
+    : 'Mark this assembly task as complete.';
+
+  // Painting check
+  document.getElementById('paintingCheckSection').style.display = isPainting ? 'block' : 'none';
+  const paintIcon = document.getElementById('paintingCheckIcon');
+  paintIcon.textContent = '';
+  paintIcon.style.background = 'var(--card)';
+  paintIcon.style.borderColor = 'var(--border)';
+
+  // Person select
+  const sel = document.getElementById('completeTaskPerson');
+  sel.innerHTML = '<option value="">Select your name...</option>';
+  (state.timesheetData.employees || []).filter(e => e.active !== false).forEach(e => {
+    sel.innerHTML += `<option value="${e.name}">${e.name}</option>`;
+  });
+  sel.onchange = checkCompleteTaskReady;
+
+  // Reset confirm button
+  const btn = document.getElementById('completeTaskConfirmBtn');
+  btn.disabled = true; btn.style.opacity = '.4'; btn.style.cursor = 'not-allowed';
+
+  document.getElementById('completeTaskModal').classList.add('active');
+}
+
+function closeCompleteTaskModal() {
+  document.getElementById('completeTaskModal').classList.remove('active');
+  _pendingCompleteTask = null;
+}
+
+function togglePaintingCheck() {
+  const icon = document.getElementById('paintingCheckIcon');
   const isChecked = icon.textContent === '✓';
   if (isChecked) {
     icon.textContent = ''; icon.style.background = 'var(--card)'; icon.style.borderColor = 'var(--border)';
-    document.getElementById('finishingCheckBox').style.borderColor = 'var(--border)';
   } else {
     icon.textContent = '✓'; icon.style.background = 'var(--green)'; icon.style.borderColor = 'var(--green)'; icon.style.color = '#fff';
-    document.getElementById('finishingCheckBox').style.borderColor = 'var(--green)';
   }
-  checkFinishingReady();
+  checkCompleteTaskReady();
 }
 
-function checkFinishingReady() {
-  const checked = document.getElementById('finishingCheckIcon').textContent === '✓';
-  const name = document.getElementById('finishingAcknowledgedBy').value;
-  const btn = document.getElementById('finishingConfirmBtn');
-  const ready = checked && !!name;
+function checkCompleteTaskReady() {
+  const person = document.getElementById('completeTaskPerson').value;
+  const isPainting = _pendingCompleteTask?.finishing === 'painting';
+  const paintingOk = !isPainting || document.getElementById('paintingCheckIcon').textContent === '✓';
+  const ready = !!person && paintingOk;
+  const btn = document.getElementById('completeTaskConfirmBtn');
   btn.disabled = !ready; btn.style.opacity = ready ? '1' : '.4'; btn.style.cursor = ready ? 'pointer' : 'not-allowed';
 }
 
-function closeFinishingModal() {
-  document.getElementById('finishingModal').classList.remove('active');
-  _pendingCompleteData = null;
-}
+async function confirmCompleteTask() {
+  if (!_pendingCompleteTask || !currentJob || !currentProject) return;
+  const task = _pendingCompleteTask;
+  const person = document.getElementById('completeTaskPerson').value;
 
-async function confirmFinishingComplete() {
-  if (!_pendingCompleteData) return;
-  const { projectId, drawingId } = _pendingCompleteData;
-  const acknowledgedBy = document.getElementById('finishingAcknowledgedBy').value;
-  const drawing = drawingsData.projects[projectId]?.drawings?.find(d => d.id === drawingId);
-  if (!drawing) return;
+  task.status = 'complete';
+  task.completedAt = new Date().toISOString();
+  task.completedBy = person;
 
-  drawing.complete = true;
-  drawing.completedAt = new Date().toISOString();
-  drawing.completedBy = acknowledgedBy;
-  drawing.acknowledgedBy = acknowledgedBy;
-  drawing.acknowledgedAt = new Date().toISOString();
-
-  if (!drawing.notes) drawing.notes = [];
-  const finishing = drawing.finishing || 'none';
-  const transport = drawing.transport || 'collect';
-  const finishingLabel = finishing === 'galvanise' ? 'galvanising' : finishing === 'paint' ? 'painting' : 'completion';
-  const transportMsg = finishing !== 'none' ? (transport === 'deliver' ? ` — we will deliver for ${finishingLabel}` : ` — they will collect for ${finishingLabel}`) : '';
-  drawing.notes.push({
-    id: Date.now().toString(), type: 'workshop', author: acknowledgedBy,
-    text: `✅ Marked complete${transportMsg}. Acknowledged by ${acknowledgedBy}.`,
-    timestamp: new Date().toISOString(), isAcknowledgement: true
+  // Add completion note
+  if (!task.notes) task.notes = [];
+  const finishLabel = task.finishing === 'galvanising' ? 'galvanising' : task.finishing === 'ppc' ? 'PPC' : task.finishing === 'painting' ? 'painting (on site)' : '';
+  task.notes.push({
+    id: Date.now().toString(), type: 'workshop', author: person,
+    text: `✅ Task completed${finishLabel ? ` — ready for ${finishLabel}` : ''}`,
+    timestamp: new Date().toISOString()
   });
 
   try {
     setLoading(true);
     await saveDrawingsData();
-    closeFinishingModal();
-    toast('Drawing marked complete ✓', 'success');
-    renderDrawings(projectId);
-    renderProjectTiles();
-    if (finishing !== 'none') {
-      await sendFinishingNotificationEmail(drawing, projectId, acknowledgedBy);
-    } else {
-      await notifyDrawingComplete(drawing, projectId);
-    }
+    closeCompleteTaskModal();
+    toast(`Task "${task.name}" completed`, 'success');
+    renderAssembly();
+
+    // Email notifications
+    await sendTaskCompletionEmail(task);
   } catch (e) { toast('Save failed: ' + e.message, 'error'); }
   finally { setLoading(false); }
 }
 
-async function sendFinishingNotificationEmail(drawing, projectId, acknowledgedBy) {
-  const proj = state.projects.find(p => p.id === projectId);
-  const draftsmanEmail = state.timesheetData.settings?.draftsmanEmail || 'daniel@bamafabrication.co.uk';
-  const finishing = drawing.finishing;
-  const transport = drawing.transport || 'collect';
-  const finishingLabel = finishing === 'galvanise' ? 'Galvanising' : 'Painting';
-  const transportMsg = transport === 'deliver'
-    ? '🚚 <b style="color:#ef4444">We must deliver this item</b> — please arrange transport.'
-    : '📦 <b style="color:#10b981">Item ready for collection</b> — packed and labelled.';
+async function sendTaskCompletionEmail(task) {
+  const settings = state.timesheetData.settings || {};
+  const draftsmanEmail = settings.draftsmanEmail || 'daniel@bamafabrication.co.uk';
+  const taskEmailList = settings.taskCompletionEmails || '';
+  const recipients = [draftsmanEmail];
+  if (taskEmailList) {
+    taskEmailList.split(',').map(e => e.trim()).filter(Boolean).forEach(e => {
+      if (!recipients.includes(e)) recipients.push(e);
+    });
+  }
+
+  const finishLabel = task.finishing === 'galvanising' ? 'Galvanising' : task.finishing === 'ppc' ? 'PPC (Powder Coat)' : task.finishing === 'painting' ? 'Painting (on site)' : 'No finishing';
+  const proj = currentProject;
+
   try {
     const token = await getToken();
     await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: {
-        subject: `Ready for ${finishingLabel} — ${drawing.name} (${projectId})`,
+        subject: `Task Completed — ${task.name} (${proj?.id} / ${currentJob?.name})`,
         body: { contentType: 'HTML', content: `
           <h2 style="color:#ff6b00;font-family:sans-serif">BAMA FABRICATION</h2>
-          <h3 style="font-family:sans-serif">Drawing Ready for ${finishingLabel}</h3>
+          <h3 style="font-family:sans-serif">Assembly Task Completed</h3>
           <table style="font-family:sans-serif;font-size:13px">
-            <tr><td style="padding:6px 16px 6px 0;color:#888">Drawing</td><td><b>${drawing.name}</b></td></tr>
-            <tr><td style="padding:6px 16px 6px 0;color:#888">Project</td><td>${proj?.name || projectId}</td></tr>
-            <tr><td style="padding:6px 16px 6px 0;color:#888">Finishing</td><td><b>${finishingLabel}</b></td></tr>
-            <tr><td style="padding:6px 16px 6px 0;color:#888">Transport</td><td>${transport === 'deliver' ? 'We deliver' : 'They collect'}</td></tr>
-            <tr><td style="padding:6px 16px 6px 0;color:#888">Acknowledged by</td><td>${acknowledgedBy}</td></tr>
+            <tr><td style="padding:6px 16px 6px 0;color:#888">Task</td><td><b>${task.name}</b></td></tr>
+            <tr><td style="padding:6px 16px 6px 0;color:#888">Project</td><td>${proj?.id} — ${proj?.name}</td></tr>
+            <tr><td style="padding:6px 16px 6px 0;color:#888">Job</td><td>${currentJob?.name}</td></tr>
+            <tr><td style="padding:6px 16px 6px 0;color:#888">Finishing</td><td><b>${finishLabel}</b></td></tr>
+            <tr><td style="padding:6px 16px 6px 0;color:#888">Completed by</td><td>${task.completedBy}</td></tr>
             <tr><td style="padding:6px 16px 6px 0;color:#888">Date/Time</td><td>${new Date().toLocaleString('en-GB')}</td></tr>
           </table>
-          <p style="margin-top:16px;font-family:sans-serif;font-size:13px;padding:12px;border-radius:8px;background:#f9f9f9">${transportMsg}</p>
-          <p style="font-family:sans-serif;font-size:11px;color:#aaa;margin-top:12px">
-            <a href="https://proud-dune-0dee63110.2.azurestaticapps.net" style="color:#ff6b00">Open BAMA Workshop App</a>
-          </p>
+          ${task.finishing && task.finishing !== 'none' ? `<p style="margin-top:16px;font-family:sans-serif;font-size:13px;padding:12px;border-radius:8px;background:#f0f0f0"><b>Action required:</b> Please organise ${finishLabel.toLowerCase()} for this task.</p>` : ''}
+          <p style="font-family:sans-serif;font-size:11px;color:#aaa;margin-top:12px"><a href="https://proud-dune-0dee63110.2.azurestaticapps.net" style="color:#ff6b00">Open BAMA Workshop</a></p>
         `},
-        toRecipients: [{ emailAddress: { address: draftsmanEmail } }]
+        toRecipients: recipients.map(e => ({ emailAddress: { address: e } }))
       }, saveToSentItems: false })
     });
-  } catch (e) { console.warn('Finishing email failed:', e.message); }
+  } catch (e) { console.warn('Task email failed:', e.message); }
 }
 
+// ═══════════════════════════════════════════
+// SITE INSTALLATION: CLOSE JOB
+// ═══════════════════════════════════════════
+function openCloseJobModal() {
+  if (!currentJob || !currentProject) return;
+  _pendingCloseJob = currentJob;
+  document.getElementById('closeJobMessage').textContent = `This will mark site installation as complete and close the job "${currentJob.name}". Notifications will be sent.`;
 
-async function undoDrawingComplete(projectId, drawingId) {
-  const drawing = drawingsData.projects[projectId]?.drawings?.find(d => d.id === drawingId);
-  if (!drawing) return;
-  drawing.complete = false;
-  delete drawing.completedAt;
-  delete drawing.completedBy;
+  const sel = document.getElementById('closeJobPerson');
+  sel.innerHTML = '<option value="">Select your name...</option>';
+  (state.timesheetData.employees || []).filter(e => e.active !== false).forEach(e => {
+    sel.innerHTML += `<option value="${e.name}">${e.name}</option>`;
+  });
+  sel.onchange = () => {
+    const ready = !!sel.value;
+    const btn = document.getElementById('closeJobConfirmBtn');
+    btn.disabled = !ready; btn.style.opacity = ready ? '1' : '.4'; btn.style.cursor = ready ? 'pointer' : 'not-allowed';
+  };
+
+  const btn = document.getElementById('closeJobConfirmBtn');
+  btn.disabled = true; btn.style.opacity = '.4'; btn.style.cursor = 'not-allowed';
+
+  document.getElementById('closeJobModal').classList.add('active');
+}
+
+function closeCloseJobModal() {
+  document.getElementById('closeJobModal').classList.remove('active');
+  _pendingCloseJob = null;
+}
+
+async function confirmCloseJob() {
+  if (!_pendingCloseJob || !currentJob || !currentProject) return;
+  const person = document.getElementById('closeJobPerson').value;
+  if (!person) return;
+
+  const job = _pendingCloseJob;
+  job.site.completedAt = new Date().toISOString();
+  job.site.completedBy = person;
+  job.status = 'closed';
+  job.closedAt = new Date().toISOString();
+  job.closedBy = person;
+
+  // Add completion note
+  if (!job.site.notes) job.site.notes = [];
+  job.site.notes.push({
+    id: Date.now().toString(), type: 'workshop', author: person,
+    text: `🏁 Site installation complete. Job closed.`,
+    timestamp: new Date().toISOString()
+  });
+
   try {
+    setLoading(true);
     await saveDrawingsData();
-    toast('Marked as incomplete', 'info');
-    renderDrawings(projectId);
-  } catch { toast('Save failed', 'error'); }
+    closeCloseJobModal();
+    toast(`Job "${job.name}" closed`, 'success');
+
+    // Re-render
+    renderAllElements();
+    openJobDetail(currentProject.id, job.id);
+
+    // Send emails
+    await sendJobClosedEmail(job, person);
+  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+  finally { setLoading(false); }
 }
 
-async function notifyDrawingComplete(drawing, projectId) {
-  const proj = state.projects.find(p => p.id === projectId);
+async function sendJobClosedEmail(job, person) {
   const settings = state.timesheetData.settings || {};
-  const notifyEmail = settings.draftsmanNotifyEmail || settings.orderEmail || 'daniel@bamafabrication.co.uk';
+  const draftsmanEmail = settings.draftsmanEmail || 'daniel@bamafabrication.co.uk';
+  const siteEmailList = settings.siteCompletionEmails || '';
+  const recipients = [draftsmanEmail];
+  if (siteEmailList) {
+    siteEmailList.split(',').map(e => e.trim()).filter(Boolean).forEach(e => {
+      if (!recipients.includes(e)) recipients.push(e);
+    });
+  }
+  // Always include daniel
+  if (!recipients.includes('daniel@bamafabrication.co.uk')) recipients.push('daniel@bamafabrication.co.uk');
 
+  const proj = currentProject;
   try {
     const token = await getToken();
-    const emailBody = {
-      message: {
-        subject: `Drawing Completed — ${drawing.name} (${projectId})`,
-        body: {
-          contentType: 'HTML',
-          content: `
-            <h2 style="color:#ff6b00;font-family:sans-serif">BAMA FABRICATION</h2>
-            <h3 style="font-family:sans-serif">Drawing Marked Complete</h3>
-            <table style="font-family:sans-serif;font-size:13px">
-              <tr><td style="color:#888;padding:4px 16px 4px 0">Drawing</td><td><b>${drawing.name}</b></td></tr>
-              <tr><td style="color:#888;padding:4px 16px 4px 0">Project</td><td>${proj?.name || projectId}</td></tr>
-              <tr><td style="color:#888;padding:4px 16px 4px 0">Completed by</td><td>${drawing.completedBy}</td></tr>
-              <tr><td style="color:#888;padding:4px 16px 4px 0">Date</td><td>${new Date().toLocaleString('en-GB')}</td></tr>
-            </table>
-            <p style="margin-top:16px;font-family:sans-serif;font-size:12px;color:#888">
-              <a href="https://proud-dune-0dee63110.2.azurestaticapps.net" style="color:#ff6b00">Open BAMA Workshop App</a>
-            </p>
-          `
-        },
-        toRecipients: [{ emailAddress: { address: notifyEmail } }]
-      },
-      saveToSentItems: false
-    };
     await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(emailBody)
+      body: JSON.stringify({ message: {
+        subject: `Job Closed — ${job.name} (${proj?.id})`,
+        body: { contentType: 'HTML', content: `
+          <h2 style="color:#ff6b00;font-family:sans-serif">BAMA FABRICATION</h2>
+          <h3 style="font-family:sans-serif">Job Completed & Closed</h3>
+          <table style="font-family:sans-serif;font-size:13px">
+            <tr><td style="padding:6px 16px 6px 0;color:#888">Job</td><td><b>${job.name}</b></td></tr>
+            <tr><td style="padding:6px 16px 6px 0;color:#888">Project</td><td>${proj?.id} — ${proj?.name}</td></tr>
+            <tr><td style="padding:6px 16px 6px 0;color:#888">Closed by</td><td>${person}</td></tr>
+            <tr><td style="padding:6px 16px 6px 0;color:#888">Date/Time</td><td>${new Date().toLocaleString('en-GB')}</td></tr>
+          </table>
+          <p style="margin-top:16px;font-family:sans-serif;font-size:13px;padding:12px;border-radius:8px;background:#e8fae8;color:#166534">
+            🏁 Site installation is complete. This job has been closed.
+          </p>
+          <p style="font-family:sans-serif;font-size:11px;color:#aaa;margin-top:12px"><a href="https://proud-dune-0dee63110.2.azurestaticapps.net" style="color:#ff6b00">Open BAMA Workshop</a></p>
+        `},
+        toRecipients: recipients.map(e => ({ emailAddress: { address: e } }))
+      }, saveToSentItems: false })
     });
-
-    // Store in-app notification
-    if (!state.timesheetData.notifications) state.timesheetData.notifications = [];
-    state.timesheetData.notifications.push({
-      id: Date.now().toString(),
-      type: 'drawing_complete',
-      message: `Drawing "${drawing.name}" on ${proj?.name || projectId} marked complete by ${drawing.completedBy}`,
-      timestamp: new Date().toISOString(),
-      read: false
-    });
-    await saveTimesheetData();
-  } catch (e) {
-    console.warn('Drawing complete notification failed:', e.message);
-  }
+  } catch (e) { console.warn('Job closed email failed:', e.message); }
 }
 
-// ── Add notes ──
-async function addNote(projectId, drawingId, type) {
-  const inputEl = document.getElementById(`${type}-note-${drawingId}`);
-  const text = inputEl?.value?.trim();
-  if (!text) { toast('Please type a note', 'error'); return; }
-
-  let author = '';
-  if (type === 'workshop') {
-    author = document.getElementById(`workshop-note-author-${drawingId}`)?.value;
-    if (!author) { toast('Please select your name', 'error'); return; }
-  } else {
-    author = 'Draftsman';
-  }
-
-  if (!drawingsData.projects[projectId]) drawingsData.projects[projectId] = { drawings: [] };
-  const drawing = drawingsData.projects[projectId].drawings.find(d => d.id === drawingId);
-  if (!drawing) return;
-
-  if (!drawing.notes) drawing.notes = [];
-  drawing.notes.push({
-    id: Date.now().toString(),
-    type,
-    author,
-    text,
-    timestamp: new Date().toISOString()
-  });
-
-  try {
-    await saveDrawingsData();
-    inputEl.value = '';
-    toast('Note added ✓', 'success');
-    renderDrawings(projectId);
-  } catch { toast('Save failed', 'error'); }
-}
-
-// ── Add Note Modal helpers ──
-let _noteContext = { projectId: null, drawingId: null, type: 'workshop' };
-
-function openAddNoteModal(projectId, drawingId, drawingName, type) {
-  _noteContext = { projectId, drawingId, type };
-  document.getElementById('addNoteDrawingName').textContent = drawingName || '';
-  const sel = document.getElementById('noteAuthorSelect');
-  sel.innerHTML = '<option value="">Select your name...</option>';
-  (state.timesheetData.employees || []).filter(e => e.active !== false).forEach(emp => {
-    sel.innerHTML += `<option value="${emp.name}">${emp.name}</option>`;
-  });
-  document.getElementById('noteText').value = '';
-  document.getElementById('addNoteModal').classList.add('active');
-}
-
-function closeAddNote() {
-  document.getElementById('addNoteModal').classList.remove('active');
-}
-
-async function saveNote() {
-  const author = document.getElementById('noteAuthorSelect').value;
-  const text = document.getElementById('noteText').value.trim();
-  if (!author) { toast('Please select your name', 'error'); return; }
-  if (!text) { toast('Please type a note', 'error'); return; }
-
-  const { projectId, drawingId, type } = _noteContext;
-  if (!drawingsData.projects[projectId]) drawingsData.projects[projectId] = { drawings: [] };
-  const drawing = drawingsData.projects[projectId].drawings.find(d => d.id === drawingId);
-  if (!drawing) return;
-
-  if (!drawing.notes) drawing.notes = [];
-  drawing.notes.push({
-    id: Date.now().toString(),
-    type,
-    author,
-    text,
-    timestamp: new Date().toISOString()
-  });
-
-  try {
-    await saveDrawingsData();
-    closeAddNote();
-    toast('Note added ✓', 'success');
-    renderDrawings(projectId);
-  } catch { toast('Save failed', 'error'); }
-}
-
-async function loadPDFPreview(drawingId, fileId, driveId) {
-  const wrap = document.getElementById(`preview-${drawingId}`);
-  if (!wrap) return;
-  if (!fileId || fileId === 'undefined') {
-    wrap.innerHTML = `<div class="drawing-preview-placeholder" style="color:var(--red)">No file ID — please re-upload this drawing</div>`;
-    return;
-  }
-
-  wrap.innerHTML = `<div class="drawing-preview-placeholder"><div class="spinner" style="margin:0 auto"></div><div style="margin-top:12px;color:var(--muted)">Loading preview...</div></div>`;
-
-  try {
-    const token = await getToken();
-    const useDriveId = driveId && driveId !== 'undefined' ? driveId : BAMA_DRIVE_ID;
-    const contentRes = await fetch(
-      `https://graph.microsoft.com/v1.0/drives/${useDriveId}/items/${fileId}/content`,
-      { headers: { 'Authorization': `Bearer ${token}` } }
-    );
-    if (!contentRes.ok) throw new Error(`Fetch failed: ${contentRes.status}`);
-    const blob = await contentRes.blob();
-    const blobUrl = URL.createObjectURL(blob);
-
-    // Store blob URL on drawing for print use
-    const outerWrap = document.getElementById(`preview-wrap-${drawingId}`);
-    if (outerWrap) outerWrap.dataset.blobUrl = blobUrl;
-
-    wrap.innerHTML = `
-      <iframe src="${blobUrl}#toolbar=1&view=FitH"
-        style="width:100%;height:80vh;min-height:600px;border:none;display:block;position:relative;z-index:1"
-        title="Drawing Preview"></iframe>
-    `;
-  } catch (e) {
-    wrap.innerHTML = `<div class="drawing-preview-placeholder" style="color:var(--red)">
-      Preview failed: ${e.message}<br>
-      <a href="#" onclick="event.preventDefault()" style="color:var(--accent);font-size:12px">Try opening in SharePoint instead</a>
-    </div>`;
-  }
-}
-
-async function printDrawing(drawingId, fileId, driveId) {
-  // If we already have a blob URL from the preview, use it
-  const outerWrap = document.getElementById(`preview-wrap-${drawingId}`);
-  const existingBlobUrl = outerWrap?.dataset?.blobUrl;
-
-  if (existingBlobUrl) {
-    triggerPrintFromBlob(existingBlobUrl);
-    return;
-  }
-
-  // Otherwise fetch the PDF fresh
-  if (!fileId || fileId === 'undefined') {
-    toast('No file ID available for printing', 'error');
-    return;
-  }
-
-  toast('Preparing print...', 'info');
-
-  try {
-    const token = await getToken();
-    const useDriveId = driveId && driveId !== 'undefined' ? driveId : BAMA_DRIVE_ID;
-    const contentRes = await fetch(
-      `https://graph.microsoft.com/v1.0/drives/${useDriveId}/items/${fileId}/content`,
-      { headers: { 'Authorization': `Bearer ${token}` } }
-    );
-    if (!contentRes.ok) throw new Error(`Fetch failed: ${contentRes.status}`);
-    const blob = await contentRes.blob();
-    const blobUrl = URL.createObjectURL(blob);
-    if (outerWrap) outerWrap.dataset.blobUrl = blobUrl;
-    triggerPrintFromBlob(blobUrl);
-  } catch (e) {
-    toast(`Print failed: ${e.message}`, 'error');
-  }
-}
-
-function triggerPrintFromBlob(blobUrl) {
-  // Create hidden iframe, load PDF, trigger print
-  let printFrame = document.getElementById('printFrame');
-  if (printFrame) printFrame.remove();
-  printFrame = document.createElement('iframe');
-  printFrame.id = 'printFrame';
-  printFrame.style.cssText = 'position:fixed;right:-9999px;top:-9999px;width:1px;height:1px;opacity:0;pointer-events:none';
-  printFrame.src = blobUrl;
-  document.body.appendChild(printFrame);
-  printFrame.onload = () => {
-    try {
-      printFrame.contentWindow.focus();
-      printFrame.contentWindow.print();
-    } catch {
-      // Fallback: open in new tab for printing
-      window.open(blobUrl, '_blank');
-    }
-  };
-}
-
-// ── Draftsman auth ──
+// ═══════════════════════════════════════════
+// DRAFTSMAN LOGIN / LOGOUT
+// ═══════════════════════════════════════════
 function openDraftsmanLogin() {
   document.getElementById('draftsmanPinInput').value = '';
   document.getElementById('draftsmanPinError').textContent = '';
@@ -5052,22 +5896,29 @@ function checkDraftsmanPin() {
   const pin = document.getElementById('draftsmanPinInput').value;
   const storedPin = state.timesheetData.settings?.draftsmanPin;
   if (!storedPin) {
-    toast('Draftsman PIN not set — go to Manager → Settings', 'error');
-    closeDraftsmanLogin();
+    document.getElementById('draftsmanPinError').textContent = 'No draftsman PIN set. Ask manager to set one in Settings.';
     return;
   }
   if (pin === storedPin) {
     isDraftsman = true;
     closeDraftsmanLogin();
-    toast('Draftsman mode activated ✓', 'success');
-    // Show persistent badge, hide login button
+    toast('Draftsman mode active', 'success');
+
+    // Update UI
     const badge = document.getElementById('draftsmanBadge');
     const loginBtn = document.getElementById('draftsmanLoginBtn');
     if (badge) badge.style.display = 'flex';
     if (loginBtn) loginBtn.style.display = 'none';
-    if (currentProject) {
+
+    // Re-render current view
+    if (currentJob) {
+      document.getElementById('jobDraftsmanBar').style.display = 'flex';
+      renderAllElements();
+    } else if (currentProject) {
       document.getElementById('draftsmanBar').style.display = 'flex';
-      renderDrawings(currentProject.id);
+      renderJobsList(currentProject.id);
+    } else {
+      renderProjectTiles();
     }
   } else {
     document.getElementById('draftsmanPinError').textContent = 'Incorrect PIN';
@@ -5077,26 +5928,34 @@ function checkDraftsmanPin() {
 
 function logoutDraftsman() {
   isDraftsman = false;
-  document.getElementById('draftsmanBar').style.display = 'none';
-  // Hide badge, show login button
   const badge = document.getElementById('draftsmanBadge');
   const loginBtn = document.getElementById('draftsmanLoginBtn');
   if (badge) badge.style.display = 'none';
   if (loginBtn) loginBtn.style.display = '';
-  if (currentProject) renderDrawings(currentProject.id);
-  toast('Draftsman mode deactivated', 'info');
+
+  const bar = document.getElementById('draftsmanBar');
+  if (bar) bar.style.display = 'none';
+  const jobBar = document.getElementById('jobDraftsmanBar');
+  if (jobBar) jobBar.style.display = 'none';
+
+  toast('Draftsman mode exited', 'info');
+
+  // Re-render to hide edit buttons
+  if (currentJob) {
+    renderAllElements();
+  } else if (currentProject) {
+    renderJobsList(currentProject.id);
+  }
 }
 
 async function saveDraftsmanPin() {
   const p1 = document.getElementById('draftsmanPinSetting').value;
   const p2 = document.getElementById('draftsmanPinConfirm').value;
-  if (!p1) { toast('Please enter a PIN', 'error'); return; }
+  if (!p1 || p1.length < 4) { toast('PIN must be at least 4 characters', 'error'); return; }
   if (p1 !== p2) { toast('PINs do not match', 'error'); return; }
-  if (p1.length < 4) { toast('PIN must be at least 4 characters', 'error'); return; }
-  if (!state.timesheetData.settings) state.timesheetData.settings = {};
-  state.timesheetData.settings.draftsmanPin = p1;
-  // Also store notify email if set
   try {
+    if (!state.timesheetData.settings) state.timesheetData.settings = {};
+    state.timesheetData.settings.draftsmanPin = p1;
     await saveTimesheetData();
     document.getElementById('draftsmanPinSetting').value = '';
     document.getElementById('draftsmanPinConfirm').value = '';
@@ -5104,169 +5963,28 @@ async function saveDraftsmanPin() {
   } catch { toast('Save failed', 'error'); }
 }
 
-// ── Upload Drawing ──
-function openUploadDrawing() {
-  if (!currentProject) return;
-  document.getElementById('uploadProjectName').textContent = `${currentProject.id} — ${currentProject.name}`;
-  document.getElementById('drawingNameInput').value = '';
-  document.getElementById('drawingFolderPath').value = '02 - Drawings';
-  document.getElementById('uploadZoneText').textContent = 'Click to select PDF file';
-  document.getElementById('uploadProgress').style.display = 'none';
-  document.getElementById('uploadDraftsmanNote').value = '';
-  draftsmanUploadFile = null;
-  document.getElementById('uploadDrawingModal').classList.add('active');
-}
-
-function closeUploadDrawing() {
-  document.getElementById('uploadDrawingModal').classList.remove('active');
-  draftsmanUploadFile = null;
-}
-
-function onDrawingFileSelected() {
-  const file = document.getElementById('drawingFileInput').files[0];
-  if (file) {
-    draftsmanUploadFile = file;
-    document.getElementById('uploadZoneText').textContent = `&#128196; ${file.name} (${(file.size/1024).toFixed(0)}KB)`;
-    // Auto-fill drawing name from filename
-    if (!document.getElementById('drawingNameInput').value) {
-      document.getElementById('drawingNameInput').value = file.name.replace('.pdf','').replace('.PDF','');
-    }
+// ═══════════════════════════════════════════
+// CONFIRM MODAL HELPER
+// ═══════════════════════════════════════════
+function showConfirm(title, message, onConfirm) {
+  const modal = document.getElementById('confirmModal');
+  const titleEl = document.getElementById('confirmTitle');
+  const msgEl = document.getElementById('confirmMsg');
+  const btnEl = document.getElementById('confirmOk');
+  if (titleEl) titleEl.textContent = title;
+  if (msgEl) msgEl.textContent = message;
+  if (btnEl) {
+    const newBtn = btnEl.cloneNode(true);
+    newBtn.onclick = () => { closeModal(); onConfirm(); };
+    btnEl.parentNode.replaceChild(newBtn, btnEl);
   }
+  modal.classList.add('active');
 }
 
-async function uploadDrawing() {
-  if (!draftsmanUploadFile) { toast('Please select a PDF file', 'error'); return; }
-  const drawingName = document.getElementById('drawingNameInput').value.trim();
-  if (!drawingName) { toast('Please enter a drawing name', 'error'); return; }
-
-  const folderPath = document.getElementById('drawingFolderPath').value.trim();
-  const projectId = currentProject.id;
-  const fileName = draftsmanUploadFile.name;
-
-  document.getElementById('uploadProgress').style.display = 'block';
-  document.getElementById('uploadDrawingBtn').disabled = true;
-  document.getElementById('uploadProgressBar').style.width = '30%';
-  document.getElementById('uploadProgressText').textContent = 'Finding project folder...';
-
-  try {
-    const token = await getToken();
-
-    // Find the project folder on SharePoint by searching for project ID
-    let uploadPath;
-    const searchRes = await fetch(
-      `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/root/search(q='${projectId}')`,
-      { headers: { 'Authorization': `Bearer ${token}` } }
-    );
-    const searchData = await searchRes.json();
-    const projectFolder = searchData.value?.find(item =>
-      item.folder && item.name.includes(projectId)
-    );
-
-    if (projectFolder) {
-      uploadPath = folderPath
-        ? `/drives/${BAMA_DRIVE_ID}/items/${projectFolder.id}:/${folderPath}/${fileName}:/content`
-        : `/drives/${BAMA_DRIVE_ID}/items/${projectFolder.id}:/${fileName}:/content`;
-    } else {
-      // Fallback: upload to Project Tracker folder
-      uploadPath = `/drives/${CONFIG.driveId}/items/${CONFIG.timesheetFolderItemId}:/${projectId}-${fileName}:/content`;
-    }
-
-    document.getElementById('uploadProgressBar').style.width = '60%';
-    document.getElementById('uploadProgressText').textContent = 'Uploading PDF...';
-
-    const arrayBuffer = await draftsmanUploadFile.arrayBuffer();
-    const uploadRes = await fetch(`https://graph.microsoft.com/v1.0${uploadPath}`, {
-      method: 'PUT',
-      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/pdf' },
-      body: arrayBuffer
-    });
-
-    if (!uploadRes.ok) throw new Error(`Upload failed: ${uploadRes.status}`);
-    const uploadedFile = await uploadRes.json();
-
-    document.getElementById('uploadProgressBar').style.width = '90%';
-    document.getElementById('uploadProgressText').textContent = 'Saving drawing info...';
-
-    // Save to drawings data
-    if (!drawingsData.projects[projectId]) drawingsData.projects[projectId] = { drawings: [] };
-    // Get draftsman note if entered
-    const draftsmanNoteText = document.getElementById('uploadDraftsmanNote')?.value?.trim() || '';
-
-    const newDrawing = {
-      id: Date.now().toString(),
-      name: drawingName,
-      fileName,
-      fileId: uploadedFile.id,
-      driveId: uploadedFile.parentReference?.driveId || BAMA_DRIVE_ID,
-      webUrl: uploadedFile.webUrl,
-      // NO downloadUrl — prevents auto-download
-      uploadedBy: 'Draftsman',
-      uploadedAt: new Date().toISOString(),
-      complete: false,
-      notes: draftsmanNoteText ? [{
-        id: Date.now().toString(),
-        type: 'draftsman',
-        author: 'Draftsman',
-        text: draftsmanNoteText,
-        timestamp: new Date().toISOString()
-      }] : []
-    };
-    // Check if we're replacing an existing drawing (preserve its notes)
-    const replacingId = document.getElementById('uploadDrawingModal').dataset.replacingId;
-    if (replacingId) {
-      const existingDrawing = drawingsData.projects[projectId].drawings.find(d => d.id === replacingId);
-      if (existingDrawing) {
-        // Preserve existing notes, add any new draftsman note
-        newDrawing.notes = existingDrawing.notes || [];
-        if (draftsmanNoteText) {
-          newDrawing.notes.push({
-            id: Date.now().toString(), type: 'draftsman', author: 'Draftsman',
-            text: draftsmanNoteText, timestamp: new Date().toISOString()
-          });
-        }
-        // Replace the drawing in the array
-        const idx = drawingsData.projects[projectId].drawings.findIndex(d => d.id === replacingId);
-        if (idx >= 0) drawingsData.projects[projectId].drawings[idx] = newDrawing;
-      } else {
-        drawingsData.projects[projectId].drawings.push(newDrawing);
-      }
-      document.getElementById('uploadDrawingModal').dataset.replacingId = '';
-    } else {
-      // Check if deleted notes exist for this drawing name (restore them)
-      const deletedNotes = drawingsData.projects[projectId]?.deletedNotes?.[drawingName];
-      if (deletedNotes?.length) {
-        newDrawing.notes = deletedNotes;
-        if (draftsmanNoteText) newDrawing.notes.push({
-          id: Date.now().toString(), type: 'draftsman', author: 'Draftsman',
-          text: draftsmanNoteText, timestamp: new Date().toISOString()
-        });
-        delete drawingsData.projects[projectId].deletedNotes[drawingName];
-      }
-      drawingsData.projects[projectId].drawings.push(newDrawing);
-    }
-    await saveDrawingsData();
-
-    document.getElementById('uploadProgressBar').style.width = '100%';
-    document.getElementById('uploadProgressText').textContent = 'Done!';
-
-    setTimeout(() => {
-      closeUploadDrawing();
-      toast(`${drawingName} uploaded ✓`, 'success');
-      renderDrawings(projectId);
-      renderProjectTiles();
-    }, 500);
-
-  } catch (e) {
-    console.error('Upload error:', e);
-    toast(`Upload failed: ${e.message}`, 'error');
-    document.getElementById('uploadProgress').style.display = 'none';
-  } finally {
-    document.getElementById('uploadDrawingBtn').disabled = false;
-  }
+function closeModal() {
+  document.getElementById('confirmModal').classList.remove('active');
 }
 
-// ── Load settings into settings tab (draftsman PIN field) ──
-// Note: integrated into the main loadEmailSettings function below via switchTab
 
 // ═══════════════════════════════════════════
 // INIT
@@ -5327,8 +6045,8 @@ async function init() {
   } else if (CURRENT_PAGE === 'projects') {
     showScreen('screenProjects');
     renderProjectTiles();
-    // Load drawings data then re-render tiles with drawing counts
-    loadDrawingsData().then(() => renderProjectTiles()).catch(e => console.warn('Drawings load failed:', e.message));
+    // Load job data then re-render tiles with job counts
+    loadDrawingsData().then(() => renderProjectTiles()).catch(e => console.warn('Job data load failed:', e.message));
   } else if (CURRENT_PAGE === 'hub') {
     // hub has its own simple rendering
   } else {

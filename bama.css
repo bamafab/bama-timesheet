@@ -516,53 +516,154 @@
     font-weight: 600;
     padding: 2px 6px;
   }
-  .drawing-panel {
+  /* ── JOB CARDS ── */
+  .job-card {
     background: var(--card);
     border: 1.5px solid var(--border);
     border-radius: 14px;
-    margin-bottom: 20px;
+    padding: 20px;
+    cursor: pointer;
+    transition: all .2s;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .job-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .job-card.closed { border-color: var(--green); background: rgba(62,207,142,.04); opacity: .7; }
+  .job-number {
+    font-family: var(--font-mono);
+    font-size: 24px; font-weight: 700;
+    color: var(--accent); min-width: 44px;
+  }
+  .job-name { font-size: 16px; font-weight: 600; flex: 1; }
+  .job-progress {
+    display: flex; gap: 4px; align-items: center;
+  }
+  .job-progress-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    border: 1.5px solid var(--border); background: transparent;
+  }
+  .job-progress-dot.active { background: var(--accent); border-color: var(--accent); }
+  .job-progress-dot.complete { background: var(--green); border-color: var(--green); }
+  .job-badge {
+    font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 6px;
+  }
+  .job-badge.open { background: rgba(255,107,0,.12); color: var(--accent); }
+  .job-badge.closed { background: rgba(62,207,142,.15); color: var(--green); }
+
+  /* ── ELEMENT CARDS (5 stages) ── */
+  .element-card {
+    background: var(--card);
+    border: 1.5px solid var(--border);
+    border-radius: 14px;
+    margin-bottom: 16px;
     overflow: hidden;
     transition: border-color .3s;
   }
-  .drawing-panel.complete { border-color: var(--green); background: rgba(62,207,142,.04); }
-  .drawing-panel-header {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 16px 20px;
-    border-bottom: 1px solid var(--border);
-    flex-wrap: wrap; gap: 10px;
+  .element-card.has-content { border-color: rgba(255,107,0,.3); }
+  .element-header {
+    display: flex; align-items: center; gap: 14px;
+    padding: 16px 20px; cursor: pointer;
+    transition: background .2s;
   }
-  .drawing-panel.complete .drawing-panel-header { border-bottom-color: rgba(62,207,142,.2); }
-  .drawing-name {
-    font-size: 15px; font-weight: 600; flex: 1;
+  .element-header:hover { background: rgba(255,255,255,.03); }
+  .element-number {
+    font-family: var(--font-mono); font-size: 13px; font-weight: 700;
+    color: var(--accent); background: rgba(255,107,0,.1);
+    width: 32px; height: 32px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
   }
-  .drawing-complete-badge {
-    background: rgba(62,207,142,.2); color: var(--green);
-    border: 1px solid rgba(62,207,142,.4);
-    border-radius: 6px; padding: 4px 12px;
-    font-size: 12px; font-weight: 600;
+  .element-title { font-size: 15px; font-weight: 600; flex: 1; }
+  .element-status {
+    font-size: 11px; font-weight: 600; padding: 3px 10px;
+    border-radius: 4px;
   }
-  .drawing-panel-body { padding: 20px; }
-  .drawing-preview-wrap {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    margin-bottom: 16px;
-    overflow: hidden;
-    position: relative;
-    min-height: 300px;
-    width: 100%;
-    display: block;
+  .element-chevron {
+    font-size: 10px; color: var(--muted); transition: transform .2s;
   }
-  .drawing-preview-wrap iframe {
-    width: 100%; height: 80vh; min-height: 600px; border: none; display: block;
+  .element-chevron.collapsed { transform: rotate(-90deg); }
+  .element-body {
+    padding: 0 20px 20px; display: block;
   }
-  .drawing-preview-placeholder {
-    width: 100%; padding: 40px; text-align: center;
+  .element-body.collapsed { display: none; }
+
+  /* ── FILE ROW (inside elements) ── */
+  .file-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 14px; border-radius: 10px;
+    background: var(--surface); border: 1px solid var(--border);
+    margin-bottom: 8px; transition: all .2s;
   }
-  .drawing-preview-placeholder {
-    color: var(--subtle); font-size: 13px; text-align: center; padding: 40px;
+  .file-row:hover { border-color: rgba(255,107,0,.3); }
+  .file-row.grayed { opacity: .4; pointer-events: none; }
+  .file-row-icon { font-size: 20px; flex-shrink: 0; }
+  .file-row-name { font-size: 13px; font-weight: 500; flex: 1; }
+  .file-row-date { font-size: 11px; color: var(--subtle); }
+  .file-row-actions { display: flex; gap: 6px; }
+
+  /* ── APPROVAL REVISION GROUPS ── */
+  .revision-group {
+    border: 1px solid var(--border); border-radius: 10px;
+    margin-bottom: 12px; overflow: hidden;
   }
-  .drawing-actions { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+  .revision-group.current { border-color: var(--green); }
+  .revision-group.grayed { opacity: .4; }
+  .revision-header {
+    padding: 10px 14px; font-size: 12px; font-weight: 600;
+    display: flex; align-items: center; gap: 8px;
+    background: rgba(255,255,255,.03);
+  }
+  .revision-badge {
+    font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 4px;
+    font-family: var(--font-mono);
+  }
+  .revision-badge.sent { background: rgba(59,130,246,.15); color: #60a5fa; }
+  .revision-badge.approved { background: rgba(62,207,142,.15); color: var(--green); }
+  .revision-badge.rejected { background: rgba(255,68,68,.15); color: var(--red); }
+
+  /* ── ASSEMBLY TASK CARD ── */
+  .task-card {
+    background: var(--surface); border: 1.5px solid var(--border);
+    border-radius: 12px; margin-bottom: 12px; overflow: hidden;
+    transition: border-color .2s;
+  }
+  .task-card.complete { border-color: var(--green); background: rgba(62,207,142,.04); }
+  .task-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 16px; cursor: pointer;
+  }
+  .task-header:hover { background: rgba(255,255,255,.03); }
+  .task-name { font-size: 14px; font-weight: 600; flex: 1; }
+  .task-finish-badge {
+    font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 4px;
+  }
+  .task-body { padding: 0 16px 16px; }
+
+  /* ── TOGGLE CHIPS ── */
+  .toggle-chip {
+    display: inline-flex; cursor: pointer;
+  }
+  .toggle-chip span {
+    padding: 8px 14px; border-radius: 8px; font-size: 12px; font-weight: 500;
+    border: 1.5px solid var(--border); background: var(--surface);
+    color: var(--muted); transition: all .2s;
+  }
+  .toggle-chip input:checked + span {
+    border-color: var(--accent); background: rgba(255,107,0,.1); color: var(--accent);
+  }
+
+  /* ── PARTS SUB-SECTIONS ── */
+  .parts-sub {
+    border: 1px solid var(--border); border-radius: 10px;
+    margin-bottom: 12px; overflow: hidden;
+  }
+  .parts-sub-header {
+    padding: 12px 16px; font-size: 13px; font-weight: 600;
+    background: rgba(255,255,255,.03); display: flex;
+    align-items: center; justify-content: space-between;
+  }
   .notes-section { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   .notes-col-title {
     font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase;
