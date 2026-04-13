@@ -1862,9 +1862,8 @@ function changeWeek(dir) {
 }
 
 function switchTab(name) {
-  document.querySelectorAll('.tab').forEach((t, i) => {
-    const names = ['project', 'employee', 'clockinout', 'staff', 'holidays', 'payroll', 'archive', 'reports', 'settings'];
-    t.classList.toggle('active', names[i] === name);
+  document.querySelectorAll('.sidebar-nav-item').forEach(item => {
+    item.classList.toggle('active', item.getAttribute('data-tab') === name);
   });
   document.querySelectorAll('.tab-content').forEach(tc => {
     tc.classList.toggle('active', tc.id === `tab-${name}`);
@@ -1876,6 +1875,19 @@ function switchTab(name) {
   if (name === 'archive') renderArchive();
   if (name === 'reports') setTimeout(() => renderReports(), 50);
   if (name === 'settings') { loadEmailSettings(); renderOfficeStaffList(); }
+}
+
+let activeReport = 'overview';
+function selectReport(name) {
+  if (document.querySelector(`.report-picker-card[data-report="${name}"]`)?.classList.contains('disabled')) return;
+  activeReport = name;
+  document.querySelectorAll('.report-picker-card').forEach(card => {
+    card.classList.toggle('active', card.getAttribute('data-report') === name);
+  });
+  document.querySelectorAll('.report-panel').forEach(panel => {
+    panel.classList.toggle('active', panel.id === `rptPanel-${name}`);
+  });
+  renderReports();
 }
 
 // ═══════════════════════════════════════════

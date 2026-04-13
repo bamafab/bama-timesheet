@@ -49,42 +49,75 @@
      SCREEN 4: MANAGER DASHBOARD
 ══════════════════════════════════════════ -->
 <div class="screen" id="screenManager">
-  <div class="mgr-wrap">
-    <div class="mgr-header">
-      <div>
-        <div class="mgr-title">WEEKLY APPROVALS</div>
-        <div style="color:var(--muted);font-size:13px">BAMA Workshop · Manager View</div>
+  <div class="mgr-layout">
+    <!-- Sidebar Navigation -->
+    <nav class="mgr-sidebar" id="mgrSidebar">
+      <div class="sidebar-nav-group">
+        <div class="sidebar-nav-label">Timesheets &amp; Finance</div>
+        <button class="sidebar-nav-item active" data-tab="project" onclick="switchTab('project')">
+          <span class="sidebar-nav-icon">&#9638;</span> By Project
+        </button>
+        <button class="sidebar-nav-item" data-tab="employee" onclick="switchTab('employee')">
+          <span class="sidebar-nav-icon">&#9673;</span> By Employee
+        </button>
+        <button class="sidebar-nav-item" data-tab="clockinout" onclick="switchTab('clockinout')">
+          <span class="sidebar-nav-icon">&#9201;</span> Clocking In/Out
+        </button>
+        <button class="sidebar-nav-item" data-tab="payroll" onclick="switchTab('payroll')">
+          <span class="sidebar-nav-icon">&#163;</span> Payroll
+        </button>
+        <button class="sidebar-nav-item" data-tab="archive" onclick="switchTab('archive')">
+          <span class="sidebar-nav-icon">&#9776;</span> Archive
+        </button>
       </div>
-      <div style="display:flex;gap:10px;align-items:center">
-        <div class="week-nav">
-          <button class="nav-btn" onclick="changeWeek(-1)">←</button>
-          <div class="week-label" id="weekLabel">—</div>
-          <button class="nav-btn" onclick="changeWeek(1)">→</button>
+      <div class="sidebar-nav-group">
+        <div class="sidebar-nav-label">People &amp; Leave</div>
+        <button class="sidebar-nav-item" data-tab="staff" onclick="switchTab('staff')">
+          <span class="sidebar-nav-icon">&#128101;</span> Staff
+        </button>
+        <button class="sidebar-nav-item" data-tab="holidays" onclick="switchTab('holidays')">
+          <span class="sidebar-nav-icon">&#9788;</span> Holidays
+        </button>
+      </div>
+      <div class="sidebar-nav-group">
+        <div class="sidebar-nav-label">Reports</div>
+        <button class="sidebar-nav-item" data-tab="reports" onclick="switchTab('reports')">
+          <span class="sidebar-nav-icon">&#128202;</span> Reports
+        </button>
+      </div>
+      <div class="sidebar-nav-divider"></div>
+      <div class="sidebar-nav-group">
+        <div class="sidebar-nav-label">System</div>
+        <button class="sidebar-nav-item" data-tab="settings" onclick="switchTab('settings')">
+          <span class="sidebar-nav-icon">&#9881;</span> Settings
+        </button>
+      </div>
+    </nav>
+
+    <!-- Main Content Area -->
+    <div class="mgr-content">
+      <div class="mgr-header">
+        <div>
+          <div class="mgr-title">WEEKLY APPROVALS</div>
+          <div style="color:var(--muted);font-size:13px">BAMA Workshop · Manager View</div>
         </div>
-        <button class="btn btn-ghost" onclick="goHome()">Exit</button>
+        <div style="display:flex;gap:10px;align-items:center">
+          <div class="week-nav">
+            <button class="nav-btn" onclick="changeWeek(-1)">←</button>
+            <div class="week-label" id="weekLabel">—</div>
+            <button class="nav-btn" onclick="changeWeek(1)">→</button>
+          </div>
+          <button class="btn btn-ghost" onclick="goHome()">Exit</button>
+        </div>
       </div>
-    </div>
 
-    <!-- Stats -->
-    <div class="stats-row" id="mgrStats">
-      <div class="stat-card"><div class="stat-label">Total Hours</div><div class="stat-value" id="stat-hrs">0<span class="stat-unit">hrs</span></div></div>
-      <div class="stat-card"><div class="stat-label">Pending</div><div class="stat-value" id="stat-pending" style="color:var(--amber)">0</div></div>
-      <div class="stat-card"><div class="stat-label">Approved</div><div class="stat-value" id="stat-approved" style="color:var(--green)">0</div></div>
-      <div class="stat-card"><div class="stat-label">Employees</div><div class="stat-value" id="stat-emps">0</div></div>
-    </div>
-
-    <!-- Tabs -->
-    <div class="tabs">
-      <button class="tab active" onclick="switchTab('project')">By Project</button>
-      <button class="tab" onclick="switchTab('employee')">By Employee</button>
-      <button class="tab" onclick="switchTab('clockinout')">Clock In/Out Log</button>
-      <button class="tab" onclick="switchTab('staff')">&#128101; Staff</button>
-      <button class="tab" onclick="switchTab('holidays')"><span style="filter:brightness(0) invert(1)">&#127959;</span> Holidays</button>
-      <button class="tab" onclick="switchTab('payroll')">&#163; Payroll</button>
-      <button class="tab" onclick="switchTab('archive')">&#128196; Archive</button>
-      <button class="tab" onclick="switchTab('reports')">&#128202; Reports</button>
-      <button class="tab" onclick="switchTab('settings')">&#9881; Settings</button>
-    </div>
+      <!-- Stats -->
+      <div class="stats-row" id="mgrStats">
+        <div class="stat-card"><div class="stat-label">Total Hours</div><div class="stat-value" id="stat-hrs">0<span class="stat-unit">hrs</span></div></div>
+        <div class="stat-card"><div class="stat-label">Pending</div><div class="stat-value" id="stat-pending" style="color:var(--amber)">0</div></div>
+        <div class="stat-card"><div class="stat-label">Approved</div><div class="stat-value" id="stat-approved" style="color:var(--green)">0</div></div>
+        <div class="stat-card"><div class="stat-label">Employees</div><div class="stat-value" id="stat-emps">0</div></div>
+      </div>
 
     <!-- Tab: By Project -->
     <div class="tab-content active" id="tab-project">
@@ -316,37 +349,79 @@
         <span style="font-size:13px;color:var(--muted)" id="rptRangeLabel"></span>
       </div>
 
+      <!-- Report Picker Cards -->
+      <div class="report-picker-grid">
+        <div class="report-picker-card active" data-report="overview" onclick="selectReport('overview')">
+          <div class="report-picker-icon">&#128200;</div>
+          <div class="report-picker-name">Hours overview</div>
+          <div class="report-picker-desc">Clocked vs project vs unproductive time trends</div>
+        </div>
+        <div class="report-picker-card" data-report="employee" onclick="selectReport('employee')">
+          <div class="report-picker-icon">&#128101;</div>
+          <div class="report-picker-name">Employee breakdown</div>
+          <div class="report-picker-desc">Hours by employee with utilisation rates</div>
+        </div>
+        <div class="report-picker-card" data-report="projectsplit" onclick="selectReport('projectsplit')">
+          <div class="report-picker-icon">&#127775;</div>
+          <div class="report-picker-name">Project split</div>
+          <div class="report-picker-desc">Where hours are being spent across jobs</div>
+        </div>
+        <div class="report-picker-card" data-report="unproductive" onclick="selectReport('unproductive')">
+          <div class="report-picker-icon">&#9203;</div>
+          <div class="report-picker-name">Unproductive time</div>
+          <div class="report-picker-desc">S000 hours per employee breakdown</div>
+        </div>
+        <div class="report-picker-card disabled" data-report="attendance">
+          <div class="report-picker-badge">Coming soon</div>
+          <div class="report-picker-icon">&#128197;</div>
+          <div class="report-picker-name">Attendance</div>
+          <div class="report-picker-desc">Late arrivals, absences, patterns</div>
+        </div>
+        <div class="report-picker-card disabled" data-report="costanalysis">
+          <div class="report-picker-badge">Coming soon</div>
+          <div class="report-picker-icon">&#163;</div>
+          <div class="report-picker-name">Cost analysis</div>
+          <div class="report-picker-desc">Labour cost per project with margins</div>
+        </div>
+      </div>
+
       <!-- KPI cards row -->
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:28px" id="rptKpiRow"></div>
 
-      <!-- Line chart: hours over time -->
-      <div class="card" style="margin-bottom:20px;padding:20px">
-        <div class="card-title" style="margin-bottom:4px"><span class="icon">&#128200;</span> Hours Over Time</div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Clocked vs Project vs Unproductive — per week</div>
-        <canvas id="rptLineChart" style="width:100%;height:280px;max-height:280px"></canvas>
+      <!-- Report: Hours Overview (line chart) -->
+      <div class="report-panel active" id="rptPanel-overview">
+        <div class="card" style="padding:20px">
+          <div class="card-title" style="margin-bottom:4px"><span class="icon">&#128200;</span> Hours Over Time</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Clocked vs Project vs Unproductive — per week</div>
+          <canvas id="rptLineChart" style="width:100%;height:280px;max-height:280px"></canvas>
+        </div>
       </div>
 
-      <!-- Two charts side by side -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
-        <!-- Bar chart: hours by employee -->
+      <!-- Report: Employee Breakdown (bar chart) -->
+      <div class="report-panel" id="rptPanel-employee">
         <div class="card" style="padding:20px">
           <div class="card-title" style="margin-bottom:4px"><span class="icon">&#128101;</span> Hours by Employee</div>
           <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Total clocked hours per person</div>
-          <canvas id="rptEmpBar" style="width:100%;height:220px;max-height:220px"></canvas>
-        </div>
-        <!-- Doughnut: project time split -->
-        <div class="card" style="padding:20px">
-          <div class="card-title" style="margin-bottom:4px"><span class="icon">&#127775;</span> Time by Project</div>
-          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Where hours are being spent</div>
-          <canvas id="rptProjectDoughnut" style="width:100%;height:220px;max-height:220px"></canvas>
+          <canvas id="rptEmpBar" style="width:100%;height:260px;max-height:260px"></canvas>
         </div>
       </div>
 
-      <!-- Unproductive time bar per employee -->
-      <div class="card" style="padding:20px;margin-bottom:20px">
-        <div class="card-title" style="margin-bottom:4px"><span class="icon">&#9203;</span> Unproductive Time by Employee</div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:16px">S000 hours logged per person in selected period</div>
-        <canvas id="rptUnproductiveBar" style="width:100%;height:200px;max-height:200px"></canvas>
+      <!-- Report: Project Split (doughnut) -->
+      <div class="report-panel" id="rptPanel-projectsplit">
+        <div class="card" style="padding:20px">
+          <div class="card-title" style="margin-bottom:4px"><span class="icon">&#127775;</span> Time by Project</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Where hours are being spent</div>
+          <canvas id="rptProjectDoughnut" style="width:100%;height:280px;max-height:280px"></canvas>
+        </div>
+      </div>
+
+      <!-- Report: Unproductive Time (horizontal bar) -->
+      <div class="report-panel" id="rptPanel-unproductive">
+        <div class="card" style="padding:20px">
+          <div class="card-title" style="margin-bottom:4px"><span class="icon">&#9203;</span> Unproductive Time by Employee</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">S000 hours logged per person in selected period</div>
+          <canvas id="rptUnproductiveBar" style="width:100%;height:240px;max-height:240px"></canvas>
+        </div>
       </div>
 
     </div>
@@ -447,8 +522,9 @@
         </div>
       </div>
     </div>
-  </div>
-</div>
+    </div><!-- end mgr-content -->
+  </div><!-- end mgr-layout -->
+</div><!-- end screenManager -->
 
 <!-- ═══════════════════════════════════════
      MANAGER ADD CLOCKING MODAL
