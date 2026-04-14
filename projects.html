@@ -174,18 +174,35 @@
 </div>
 
 <!-- ═══════════════════════════════════════
-     DRAFTSMAN LOGIN MODAL
+     DRAFTSMAN LOGIN — EMPLOYEE SELECT
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="draftsmanLoginModal">
+  <div class="modal" style="width:600px;max-width:95vw">
+    <div class="modal-title" style="color:var(--accent)">&#9998; Draftsman Login</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:20px">Select your name to enter draftsman mode</div>
+    <div class="mgr-emp-grid" id="draftsmanEmpGrid" style="max-height:400px;overflow-y:auto">
+      <div class="empty-state"><div class="spinner"></div></div>
+    </div>
+    <div style="margin-top:16px;text-align:right">
+      <button class="btn btn-ghost" onclick="closeDraftsmanLogin()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     DRAFTSMAN LOGIN — PIN ENTRY
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="draftsmanPinModal">
   <div class="modal" style="text-align:center">
-    <div class="modal-title" style="color:var(--accent)">&#9998; Draftsman</div>
-    <div style="color:var(--muted);font-size:13px;margin-bottom:24px">Enter draftsman PIN</div>
-    <input type="password" class="field-input" id="draftsmanPinInput" maxlength="8"
-      placeholder="••••" style="text-align:center;font-size:28px;letter-spacing:10px;margin-bottom:8px"
+    <div class="emp-avatar" id="draftPinAvatar" style="width:56px;height:56px;font-size:22px;margin:0 auto 12px;background:linear-gradient(135deg,var(--accent),#3e1a00)"></div>
+    <div class="modal-title" id="draftPinName" style="color:var(--accent);font-size:24px;margin-bottom:4px"></div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:20px">Enter your PIN</div>
+    <input type="password" class="field-input" id="draftsmanPinInput" maxlength="10"
+      placeholder="••••••" style="text-align:center;font-size:28px;letter-spacing:10px;margin-bottom:8px"
       onkeydown="if(event.key==='Enter')checkDraftsmanPin()">
     <div id="draftsmanPinError" style="color:var(--red);font-size:12px;height:16px;margin-bottom:12px"></div>
     <div style="display:flex;gap:10px">
-      <button class="btn btn-ghost" style="flex:1" onclick="closeDraftsmanLogin()">Cancel</button>
+      <button class="btn btn-ghost" style="flex:1" onclick="closeDraftsmanPinModal();openDraftsmanLogin()">Back</button>
       <button class="btn btn-primary" style="flex:1" onclick="checkDraftsmanPin()">Enter</button>
     </div>
   </div>

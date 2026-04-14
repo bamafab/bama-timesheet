@@ -27,20 +27,55 @@
 <div class="toast" id="toast"></div>
 
 <!-- ═══════════════════════════════════════
-     SCREEN 3: MANAGER AUTH
+     SCREEN: MANAGER EMPLOYEE SELECT
 ══════════════════════════════════════════ -->
-<div class="screen active" id="screenAuth">
+<div class="screen active" id="screenManagerSelect">
+  <div class="mgr-select-wrap">
+    <div class="mgr-select-title">MANAGER</div>
+    <div class="mgr-select-sub">Select your name to log in</div>
+    <div class="mgr-emp-grid" id="mgrEmpGrid">
+      <div class="empty-state"><div class="spinner"></div></div>
+    </div>
+    <div style="text-align:center;margin-top:24px">
+      <button class="btn btn-ghost" onclick="goHome()">&#8592; Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     SCREEN: MANAGER PIN ENTRY
+══════════════════════════════════════════ -->
+<div class="screen" id="screenManagerPin">
   <div class="auth-wrap">
-    <div class="modal-title">MANAGER</div>
-    <div class="auth-sub">Enter your PIN to access approvals</div>
+    <div class="emp-avatar" id="mgrPinAvatar" style="width:64px;height:64px;font-size:24px;margin:0 auto 16px;background:linear-gradient(135deg,var(--accent),#3e1a00)"></div>
+    <div class="modal-title" id="mgrPinName" style="font-size:28px;margin-bottom:4px"></div>
+    <div class="auth-sub">Enter your PIN</div>
     <div>
       <div class="field-label">PIN</div>
-      <input type="password" class="field-input" id="pinInput" placeholder="••••" maxlength="6"
-        onkeydown="if(event.key==='Enter')checkPin()" style="text-align:center;font-size:22px;letter-spacing:8px">
+      <input type="password" class="field-input" id="mgrPinInput" placeholder="••••••" maxlength="10"
+        onkeydown="if(event.key==='Enter')checkManagerPin()" style="text-align:center;font-size:22px;letter-spacing:8px">
     </div>
-    <div style="display:flex;gap:10px;margin-top:16px">
-      <button class="btn btn-ghost" style="flex:1" onclick="goHome()">Cancel</button>
-      <button class="btn btn-primary" style="flex:1" onclick="checkPin()">Enter</button>
+    <div id="mgrPinError" style="color:var(--red);font-size:12px;height:18px;margin-top:6px"></div>
+    <div style="display:flex;gap:10px;margin-top:12px">
+      <button class="btn btn-ghost" style="flex:1" onclick="showScreen('screenManagerSelect');renderManagerEmployeeGrid()">Back</button>
+      <button class="btn btn-primary" style="flex:1" onclick="checkManagerPin()">Enter</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     SCREEN: ACCESS DENIED
+══════════════════════════════════════════ -->
+<div class="screen" id="screenAccessDenied">
+  <div class="access-denied-wrap">
+    <div class="access-denied-icon">&#128274;</div>
+    <div class="access-denied-title">ACCESS DENIED</div>
+    <div class="access-denied-sub" id="accessDeniedMsg">
+      You don't have any manager permissions assigned yet. Contact an admin or request access below.
+    </div>
+    <div style="display:flex;gap:10px;justify-content:center">
+      <button class="btn btn-ghost" onclick="showScreen('screenManagerSelect');renderManagerEmployeeGrid()">&#8592; Back</button>
+      <button class="btn btn-primary" onclick="openRequestAccessModal()">&#9993; Request Access</button>
     </div>
   </div>
 </div>
@@ -90,6 +125,9 @@
         <div class="sidebar-nav-label">System</div>
         <button class="sidebar-nav-item" data-tab="settings" onclick="switchTab('settings')">
           <span class="sidebar-nav-icon">&#9881;</span> Settings
+        </button>
+        <button class="sidebar-nav-item" data-tab="useraccess" onclick="switchTab('useraccess')">
+          <span class="sidebar-nav-icon">&#128274;</span> User Access
         </button>
       </div>
     </nav>
@@ -428,37 +466,7 @@
 
     <!-- Tab: Settings -->
     <div class="tab-content" id="tab-settings">
-      <div class="card" style="margin-bottom:20px">
-        <div class="card-title"><span class="icon">&#9998;</span> Draftsman PIN</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:flex-end">
-          <div>
-            <div class="field-label">DRAFTSMAN PIN</div>
-            <input type="password" class="field-input" id="draftsmanPinSetting" placeholder="Set draftsman PIN" maxlength="8">
-          </div>
-          <div>
-            <div class="field-label">CONFIRM PIN</div>
-            <input type="password" class="field-input" id="draftsmanPinConfirm" placeholder="Confirm PIN" maxlength="8">
-          </div>
-          <button class="btn btn-primary" onclick="saveDraftsmanPin()">Save</button>
-        </div>
-        <div style="margin-top:10px;font-size:12px;color:var(--muted)">Anyone with this PIN can upload drawings and leave draftsman notes.</div>
-      </div>
 
-      <div class="card" style="margin-bottom:20px">
-        <div class="card-title"><span class="icon">&#128274;</span> Change Manager PIN</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:flex-end">
-          <div>
-            <div class="field-label">NEW PIN</div>
-            <input type="password" class="field-input" id="newPin1" placeholder="Enter new PIN" maxlength="10">
-          </div>
-          <div>
-            <div class="field-label">CONFIRM PIN</div>
-            <input type="password" class="field-input" id="newPin2" placeholder="Confirm new PIN" maxlength="10">
-          </div>
-          <button class="btn btn-primary" onclick="changePin()">Save PIN</button>
-        </div>
-        <div style="margin-top:12px;font-size:12px;color:var(--muted)">PIN is stored securely in your SharePoint timesheet data file.</div>
-      </div>
       <div class="card" style="margin-bottom:20px">
         <div class="card-title"><span class="icon">&#9993;</span> Email Settings</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
@@ -522,9 +530,56 @@
         </div>
       </div>
     </div>
+    <!-- Tab: User Access -->
+    <div class="tab-content" id="tab-useraccess">
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-title"><span class="icon">&#127760;</span> Global Admin Email</div>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:12px">Access requests will be emailed to this address.</div>
+        <div style="display:flex;gap:10px;align-items:flex-end">
+          <div style="flex:1">
+            <div class="field-label">ADMIN EMAIL</div>
+            <input type="email" class="field-input" id="globalAdminEmail" placeholder="e.g. admin@company.com">
+          </div>
+          <button class="btn btn-primary" onclick="saveGlobalAdminEmail()" style="padding:10px 18px">Save</button>
+        </div>
+      </div>
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-title"><span class="icon">&#128101;</span> Employee Permissions</div>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:16px">Expand an employee card to manage their access to manager tabs and draftsman mode.</div>
+        <div id="userAccessList">
+          <div class="empty-state"><div class="spinner"></div></div>
+        </div>
+      </div>
+      <div class="card" id="accessRequestsCard" style="display:none">
+        <div class="card-title"><span class="icon">&#128232;</span> Pending Access Requests</div>
+        <div id="accessRequestsList"></div>
+      </div>
+    </div>
+
     </div><!-- end mgr-content -->
   </div><!-- end mgr-layout -->
 </div><!-- end screenManager -->
+
+<!-- ═══════════════════════════════════════
+     REQUEST ACCESS MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="requestAccessModal">
+  <div class="modal" style="max-width:440px;width:95vw">
+    <div class="modal-title">&#9993; Request Access</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:20px">
+      Your request will be emailed to the system admin. Please describe why you need access.
+    </div>
+    <div style="margin-bottom:16px">
+      <div class="field-label">REASON <span style="color:var(--red)">*</span></div>
+      <textarea class="field-input" id="accessRequestReason" rows="4" placeholder="e.g. I need access to the Payroll tab to process weekly wages..."
+        style="resize:vertical;min-height:80px"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeRequestAccessModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitAccessRequest()">Send Request</button>
+    </div>
+  </div>
+</div>
 
 <!-- ═══════════════════════════════════════
      MANAGER ADD CLOCKING MODAL

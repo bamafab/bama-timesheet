@@ -1102,21 +1102,118 @@ function showManagerAuth() {
     window.location.href = 'manager.html';
     return;
   }
-  showScreen('screenAuth');
-  setTimeout(() => document.getElementById('pinInput').focus(), 100);
+  currentManagerUser = null;
+  _pendingManagerUser = null;
+  showScreen('screenManagerSelect');
+  renderManagerEmployeeGrid();
 }
 
-function checkPin() {
-  const pin = document.getElementById('pinInput').value;
-  const storedPin = (state.timesheetData.settings && state.timesheetData.settings.managerPin) || CONFIG.managerPin || '1234';
-  if (pin === storedPin) {
-    document.getElementById('pinInput').value = '';
-    showScreen('screenManager');
-    renderManagerView();
-  } else {
-    toast('Incorrect PIN', 'error');
-    document.getElementById('pinInput').value = '';
+function renderManagerEmployeeGrid() {
+  const grid = document.getElementById('mgrEmpGrid');
+  if (!grid) return;
+  const empList = (state.timesheetData.employees || []).filter(e => e.active !== false);
+
+  if (!empList.length) {
+    grid.innerHTML = '<div class="empty-state" style="padding:30px"><div style="font-size:28px;margin-bottom:10px">&#128101;</div><div>No employees set up yet.</div><div style="margin-top:8px;font-size:12px;color:var(--subtle)">Go to Workshop Kiosk → Manager → Staff to add your team.</div></div>';
+    return;
   }
+
+  grid.innerHTML = empList.map(emp => {
+    const ini = (emp.name || '').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+    const col = empColor(emp.name);
+    return `
+      <div class="emp-btn" onclick="selectManagerUser('${emp.name.replace(/'/g, "\\'")}')" style="padding:22px 14px 16px">
+        <div class="emp-avatar" style="width:48px;height:48px;font-size:19px;background:linear-gradient(135deg,${col},#3e1a00)">${ini}</div>
+        <div class="emp-name" style="font-size:13px">${emp.name}</div>
+        <div style="font-size:10px;color:var(--subtle);margin-top:3px">${emp.pin ? '&#128274; PIN set' : '&#128275; No PIN'}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+function selectManagerUser(name) {
+  const emp = (state.timesheetData.employees || []).find(e => e.name === name);
+  if (!emp) return;
+
+  if (!emp.pin) {
+    toast('No PIN set for this user. Set one in Staff management first.', 'error');
+    return;
+  }
+
+  _pendingManagerUser = name;
+  const ini = name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+  const col = empColor(name);
+
+  document.getElementById('mgrPinAvatar').innerHTML = ini;
+  document.getElementById('mgrPinAvatar').style.background = `linear-gradient(135deg,${col},#3e1a00)`;
+  document.getElementById('mgrPinName').textContent = name;
+  document.getElementById('mgrPinInput').value = '';
+  document.getElementById('mgrPinError').textContent = '';
+  showScreen('screenManagerPin');
+  setTimeout(() => document.getElementById('mgrPinInput').focus(), 100);
+}
+
+function checkManagerPin() {
+  const pin = document.getElementById('mgrPinInput').value;
+  const emp = (state.timesheetData.employees || []).find(e => e.name === _pendingManagerUser);
+
+  if (!emp || !emp.pin) {
+    document.getElementById('mgrPinError').textContent = 'No PIN set for this user';
+    return;
+  }
+
+  if (pin !== emp.pin) {
+    document.getElementById('mgrPinError').textContent = 'Incorrect PIN';
+    document.getElementById('mgrPinInput').value = '';
+    return;
+  }
+
+  // PIN correct — check permissions
+  const perms = getUserPermissions(_pendingManagerUser);
+  if (!perms || !hasAnyPermission(_pendingManagerUser)) {
+    // No permissions — show access denied
+    currentManagerUser = _pendingManagerUser; // store so we know who for the request
+    document.getElementById('accessDeniedMsg').textContent =
+      `${_pendingManagerUser}, you don't have any manager permissions assigned yet. Contact an admin or request access below.`;
+    showScreen('screenAccessDenied');
+    return;
+  }
+
+  // Has permissions — enter dashboard
+  currentManagerUser = _pendingManagerUser;
+  _pendingManagerUser = null;
+  document.getElementById('mgrPinInput').value = '';
+
+  // Filter sidebar tabs based on permissions
+  filterSidebarTabs(perms);
+
+  showScreen('screenManager');
+  // Auto-switch to first allowed tab
+  const firstTab = findFirstAllowedTab(perms);
+  if (firstTab) switchTab(firstTab);
+  renderManagerView();
+}
+
+function filterSidebarTabs(perms) {
+  const sidebar = document.getElementById('mgrSidebar');
+  if (!sidebar) return;
+
+  sidebar.querySelectorAll('.sidebar-nav-item').forEach(btn => {
+    const tab = btn.getAttribute('data-tab');
+    const permKey = Object.keys(PERM_TO_TAB).find(k => PERM_TO_TAB[k] === tab);
+    if (permKey) {
+      btn.style.display = perms[permKey] ? '' : 'none';
+    }
+  });
+}
+
+function findFirstAllowedTab(perms) {
+  const tabOrder = ['project','employee','clockinout','payroll','archive','staff','holidays','reports','settings','useraccess'];
+  for (const tab of tabOrder) {
+    const permKey = Object.keys(PERM_TO_TAB).find(k => PERM_TO_TAB[k] === tab);
+    if (permKey && perms[permKey]) return tab;
+  }
+  return 'project'; // fallback
 }
 
 function renderManagerView() {
@@ -1875,6 +1972,7 @@ function switchTab(name) {
   if (name === 'archive') renderArchive();
   if (name === 'reports') setTimeout(() => renderReports(), 50);
   if (name === 'settings') { loadEmailSettings(); renderOfficeStaffList(); }
+  if (name === 'useraccess') renderUserAccessTab();
 }
 
 let activeReport = 'overview';
@@ -1903,7 +2001,10 @@ function goHome() {
   state.currentEmployee = null;
   state.currentEntries = [];
   if (CURRENT_PAGE === 'manager') {
-    showScreen('screenAuth');
+    currentManagerUser = null;
+    _pendingManagerUser = null;
+    showScreen('screenManagerSelect');
+    renderManagerEmployeeGrid();
   } else if (CURRENT_PAGE === 'projects') {
     window.location.href = 'index.html';
   } else if (CURRENT_PAGE === 'hub') {
@@ -4284,25 +4385,6 @@ async function deleteEmployee(id) {
 // ═══════════════════════════════════════════
 // SETTINGS
 // ═══════════════════════════════════════════
-async function changePin() {
-  const p1 = document.getElementById('newPin1').value;
-  const p2 = document.getElementById('newPin2').value;
-
-  if (!p1) { toast('Please enter a new PIN', 'error'); return; }
-  if (p1 !== p2) { toast('PINs do not match', 'error'); return; }
-  if (p1.length < 4) { toast('PIN must be at least 4 characters', 'error'); return; }
-
-  if (!state.timesheetData.settings) state.timesheetData.settings = {};
-  state.timesheetData.settings.managerPin = p1;
-
-  try {
-    await saveTimesheetData();
-    document.getElementById('newPin1').value = '';
-    document.getElementById('newPin2').value = '';
-    toast('Manager PIN updated ✓', 'success');
-  } catch { toast('Save failed', 'error'); }
-}
-
 async function refreshProjects() {
   toast('Refreshing projects from SharePoint…', 'info');
   try {
@@ -4339,6 +4421,7 @@ function exportWeekCSV() {
 // PROJECTS MODULE — Job-Based System
 // ═══════════════════════════════════════════
 const DRAWINGS_FILE = 'drawings-data.json';
+const USER_ACCESS_FILE = 'user-access.json';
 const BAMA_DRIVE_ID = 'b!CxTKk9lEwkyweUqAo3CRas-huywW4KtLqOk2tNzmx-P7CX86DNhTQo14pLuU_tZu';
 const PROJECTS_FOLDER = 'Projects';
 
@@ -4362,6 +4445,11 @@ let drawingsData = { projects: {} };
 //     site: { files:[], notes:[], completedAt, completedBy }
 //   }]
 // }
+
+let userAccessData = { globalAdminEmail: '', users: {}, accessRequests: [] };
+let currentManagerUser = null; // name of user currently logged into manager dashboard
+let _pendingManagerUser = null; // name of user selected but not yet PIN-verified
+let _pendingDraftsmanUser = null; // name of user selected for draftsman login
 
 let currentProject = null;
 let currentJob = null;
@@ -4405,6 +4493,86 @@ async function saveDrawingsData() {
   });
   if (!res.ok) throw new Error(`Save drawings failed: ${res.status}`);
 }
+
+// ── Load / Save user access data ──
+async function loadUserAccessData() {
+  try {
+    const token = await getToken();
+    const metaUrl = `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.timesheetFolderItemId}:/${USER_ACCESS_FILE}`;
+    const metaRes = await fetch(metaUrl, { headers: { 'Authorization': `Bearer ${token}` } });
+    if (metaRes.status === 404) {
+      console.log('No user-access.json yet — will create on first save');
+      return;
+    }
+    if (!metaRes.ok) throw new Error(`User access meta fetch failed: ${metaRes.status}`);
+    const meta = await metaRes.json();
+    const contentRes = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${meta.id}/content`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    if (!contentRes.ok) throw new Error('User access content fetch failed');
+    const loaded = await contentRes.json();
+    userAccessData = {
+      globalAdminEmail: loaded.globalAdminEmail || '',
+      users: loaded.users || {},
+      accessRequests: loaded.accessRequests || []
+    };
+    console.log('User access data loaded:', Object.keys(userAccessData.users).length, 'users');
+  } catch (e) {
+    console.warn('User access data load failed:', e.message);
+  }
+}
+
+async function saveUserAccessData() {
+  const token = await getToken();
+  const url = `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.timesheetFolderItemId}:/${USER_ACCESS_FILE}:/content`;
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(userAccessData, null, 2)
+  });
+  if (!res.ok) throw new Error(`Save user access failed: ${res.status}`);
+  console.log('User access data saved OK');
+}
+
+function getUserPermissions(empName) {
+  const entry = userAccessData.users[empName];
+  if (!entry || !entry.permissions) return null;
+  return entry.permissions;
+}
+
+function hasAnyPermission(empName) {
+  const perms = getUserPermissions(empName);
+  if (!perms) return false;
+  return Object.values(perms).some(v => v === true);
+}
+
+const PERMISSION_DEFS = [
+  { key: 'byProject', label: 'By Project', desc: 'View timesheet entries grouped by project' },
+  { key: 'byEmployee', label: 'By Employee', desc: 'View timesheet entries grouped by employee' },
+  { key: 'clockingInOut', label: 'Clocking In/Out', desc: 'View and manage the clock log' },
+  { key: 'payroll', label: 'Payroll', desc: 'View payroll summaries and export reports' },
+  { key: 'archive', label: 'Archive', desc: 'View and manage archived weeks' },
+  { key: 'staff', label: 'Staff', desc: 'Add, edit, and manage employees' },
+  { key: 'holidays', label: 'Holidays', desc: 'Manage holiday requests and calendar' },
+  { key: 'reports', label: 'Reports', desc: 'View analytics and reports' },
+  { key: 'settings', label: 'Settings', desc: 'Manage email settings and system config' },
+  { key: 'userAccess', label: 'User Access', desc: 'Manage who can access what' },
+  { key: 'draftsmanMode', label: 'Draftsman Mode', desc: 'Upload drawings and manage jobs in Projects' }
+];
+
+const PERM_TO_TAB = {
+  byProject: 'project',
+  byEmployee: 'employee',
+  clockingInOut: 'clockinout',
+  payroll: 'payroll',
+  archive: 'archive',
+  staff: 'staff',
+  holidays: 'holidays',
+  reports: 'reports',
+  settings: 'settings',
+  userAccess: 'useraccess'
+};
 
 // ── SharePoint folder helpers ──
 async function findProjectFolder(projectId) {
@@ -5891,50 +6059,113 @@ async function sendJobClosedEmail(job, person) {
 }
 
 // ═══════════════════════════════════════════
-// DRAFTSMAN LOGIN / LOGOUT
+// DRAFTSMAN LOGIN / LOGOUT (Per-User)
 // ═══════════════════════════════════════════
 function openDraftsmanLogin() {
-  document.getElementById('draftsmanPinInput').value = '';
-  document.getElementById('draftsmanPinError').textContent = '';
+  _pendingDraftsmanUser = null;
+  const grid = document.getElementById('draftsmanEmpGrid');
+  if (!grid) return;
+
+  const empList = (state.timesheetData.employees || []).filter(e => e.active !== false);
+  if (!empList.length) {
+    grid.innerHTML = '<div class="empty-state" style="padding:20px">No employees set up yet.</div>';
+  } else {
+    grid.innerHTML = empList.map(emp => {
+      const ini = (emp.name || '').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+      const col = empColor(emp.name);
+      return `
+        <div class="emp-btn" onclick="selectDraftsmanUser('${emp.name.replace(/'/g, "\\'")}')" style="padding:18px 12px 14px">
+          <div class="emp-avatar" style="width:42px;height:42px;font-size:17px;background:linear-gradient(135deg,${col},#3e1a00)">${ini}</div>
+          <div class="emp-name" style="font-size:12px">${emp.name}</div>
+        </div>
+      `;
+    }).join('');
+  }
+
   document.getElementById('draftsmanLoginModal').classList.add('active');
-  setTimeout(() => document.getElementById('draftsmanPinInput').focus(), 100);
 }
 
 function closeDraftsmanLogin() {
   document.getElementById('draftsmanLoginModal').classList.remove('active');
 }
 
-function checkDraftsmanPin() {
-  const pin = document.getElementById('draftsmanPinInput').value;
-  const storedPin = state.timesheetData.settings?.draftsmanPin;
-  if (!storedPin) {
-    document.getElementById('draftsmanPinError').textContent = 'No draftsman PIN set. Ask manager to set one in Settings.';
+function selectDraftsmanUser(name) {
+  const emp = (state.timesheetData.employees || []).find(e => e.name === name);
+  if (!emp) return;
+
+  if (!emp.pin) {
+    toast('No PIN set for this user. Set one in Manager → Staff first.', 'error');
     return;
   }
-  if (pin === storedPin) {
-    isDraftsman = true;
-    closeDraftsmanLogin();
-    toast('Draftsman mode active', 'success');
 
-    // Update UI
-    const badge = document.getElementById('draftsmanBadge');
-    const loginBtn = document.getElementById('draftsmanLoginBtn');
-    if (badge) badge.style.display = 'flex';
-    if (loginBtn) loginBtn.style.display = 'none';
+  _pendingDraftsmanUser = name;
+  closeDraftsmanLogin();
 
-    // Re-render current view
-    if (currentJob) {
-      document.getElementById('jobDraftsmanBar').style.display = 'flex';
-      renderAllElements();
-    } else if (currentProject) {
-      document.getElementById('draftsmanBar').style.display = 'flex';
-      renderJobsList(currentProject.id);
-    } else {
-      renderProjectTiles();
-    }
-  } else {
+  const ini = name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+  const col = empColor(name);
+
+  const avatar = document.getElementById('draftPinAvatar');
+  if (avatar) {
+    avatar.innerHTML = ini;
+    avatar.style.background = `linear-gradient(135deg,${col},#3e1a00)`;
+  }
+  const nameEl = document.getElementById('draftPinName');
+  if (nameEl) nameEl.textContent = name;
+
+  document.getElementById('draftsmanPinInput').value = '';
+  document.getElementById('draftsmanPinError').textContent = '';
+  document.getElementById('draftsmanPinModal').classList.add('active');
+  setTimeout(() => document.getElementById('draftsmanPinInput').focus(), 100);
+}
+
+function closeDraftsmanPinModal() {
+  document.getElementById('draftsmanPinModal').classList.remove('active');
+}
+
+function checkDraftsmanPin() {
+  const pin = document.getElementById('draftsmanPinInput').value;
+  const emp = (state.timesheetData.employees || []).find(e => e.name === _pendingDraftsmanUser);
+
+  if (!emp || !emp.pin) {
+    document.getElementById('draftsmanPinError').textContent = 'No PIN set for this user';
+    return;
+  }
+
+  if (pin !== emp.pin) {
     document.getElementById('draftsmanPinError').textContent = 'Incorrect PIN';
     document.getElementById('draftsmanPinInput').value = '';
+    return;
+  }
+
+  // PIN correct — check draftsman permission
+  const perms = getUserPermissions(_pendingDraftsmanUser);
+  if (!perms || !perms.draftsmanMode) {
+    document.getElementById('draftsmanPinError').textContent = 'You do not have draftsman access. Contact an admin.';
+    document.getElementById('draftsmanPinInput').value = '';
+    return;
+  }
+
+  // Authorised — enter draftsman mode
+  isDraftsman = true;
+  closeDraftsmanPinModal();
+  toast(`Draftsman mode active — ${_pendingDraftsmanUser}`, 'success');
+  _pendingDraftsmanUser = null;
+
+  // Update UI
+  const badge = document.getElementById('draftsmanBadge');
+  const loginBtn = document.getElementById('draftsmanLoginBtn');
+  if (badge) badge.style.display = 'flex';
+  if (loginBtn) loginBtn.style.display = 'none';
+
+  // Re-render current view
+  if (currentJob) {
+    document.getElementById('jobDraftsmanBar').style.display = 'flex';
+    renderAllElements();
+  } else if (currentProject) {
+    document.getElementById('draftsmanBar').style.display = 'flex';
+    renderJobsList(currentProject.id);
+  } else {
+    renderProjectTiles();
   }
 }
 
@@ -5960,19 +6191,235 @@ function logoutDraftsman() {
   }
 }
 
-async function saveDraftsmanPin() {
-  const p1 = document.getElementById('draftsmanPinSetting').value;
-  const p2 = document.getElementById('draftsmanPinConfirm').value;
-  if (!p1 || p1.length < 4) { toast('PIN must be at least 4 characters', 'error'); return; }
-  if (p1 !== p2) { toast('PINs do not match', 'error'); return; }
+// ═══════════════════════════════════════════
+// USER ACCESS TAB
+// ═══════════════════════════════════════════
+function renderUserAccessTab() {
+  // Load global admin email
+  const adminInput = document.getElementById('globalAdminEmail');
+  if (adminInput) adminInput.value = userAccessData.globalAdminEmail || '';
+
+  // Render employee permission cards
+  const container = document.getElementById('userAccessList');
+  if (!container) return;
+
+  const employees = (state.timesheetData.employees || []).filter(e => e.active !== false);
+  if (!employees.length) {
+    container.innerHTML = '<div class="empty-state" style="padding:30px">No employees to show.</div>';
+    return;
+  }
+
+  container.innerHTML = employees.map(emp => {
+    const ini = (emp.name || '').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+    const col = empColor(emp.name);
+    const perms = getUserPermissions(emp.name) || {};
+    const enabledCount = Object.values(perms).filter(v => v === true).length;
+    const safeName = emp.name.replace(/'/g, "\\'");
+
+    return `
+      <div class="ua-card" id="uaCard-${emp.id}">
+        <div class="ua-card-header" onclick="toggleUACard('${emp.id}')">
+          <div class="emp-avatar" style="width:38px;height:38px;font-size:16px;flex-shrink:0;background:linear-gradient(135deg,${col},#3e1a00)">${ini}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600;font-size:14px">${emp.name}</div>
+            <div style="font-size:11px;color:var(--muted)">${enabledCount > 0 ? enabledCount + ' permission' + (enabledCount > 1 ? 's' : '') + ' enabled' : 'No permissions'}</div>
+          </div>
+          <div style="font-size:11px;color:var(--subtle)">&#9660;</div>
+        </div>
+        <div class="ua-card-body" id="uaBody-${emp.id}" style="display:none">
+          ${PERMISSION_DEFS.map(p => {
+            const checked = perms[p.key] === true;
+            return `
+              <div class="ua-perm-row">
+                <div>
+                  <div class="ua-perm-label">${p.label}</div>
+                  <div class="ua-perm-desc">${p.desc}</div>
+                </div>
+                <label class="perm-switch">
+                  <input type="checkbox" ${checked ? 'checked' : ''}
+                    onchange="toggleUserPermission('${safeName}', '${p.key}', this.checked)">
+                  <span class="slider"></span>
+                </label>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // Render access requests
+  renderAccessRequests();
+}
+
+function toggleUACard(empId) {
+  const body = document.getElementById(`uaBody-${empId}`);
+  const card = document.getElementById(`uaCard-${empId}`);
+  if (!body || !card) return;
+
+  const isOpen = body.style.display !== 'none';
+  body.style.display = isOpen ? 'none' : 'block';
+  card.classList.toggle('expanded', !isOpen);
+}
+
+async function toggleUserPermission(empName, permKey, enabled) {
+  // Ensure user entry exists
+  if (!userAccessData.users[empName]) {
+    userAccessData.users[empName] = {
+      permissions: {
+        byProject: false, byEmployee: false, clockingInOut: false,
+        payroll: false, archive: false, staff: false, holidays: false,
+        reports: false, settings: false, userAccess: false, draftsmanMode: false
+      }
+    };
+  }
+  userAccessData.users[empName].permissions[permKey] = enabled;
+
   try {
-    if (!state.timesheetData.settings) state.timesheetData.settings = {};
-    state.timesheetData.settings.draftsmanPin = p1;
-    await saveTimesheetData();
-    document.getElementById('draftsmanPinSetting').value = '';
-    document.getElementById('draftsmanPinConfirm').value = '';
-    toast('Draftsman PIN saved ✓', 'success');
+    await saveUserAccessData();
+    toast(`${empName}: ${permKey} ${enabled ? 'enabled' : 'disabled'} ✓`, 'success');
+  } catch (e) {
+    toast('Failed to save permission', 'error');
+    console.error('Permission save error:', e);
+  }
+}
+
+async function saveGlobalAdminEmail() {
+  const input = document.getElementById('globalAdminEmail');
+  if (!input) return;
+  const email = input.value.trim();
+
+  if (email && !email.includes('@')) {
+    toast('Please enter a valid email address', 'error');
+    return;
+  }
+
+  userAccessData.globalAdminEmail = email;
+  try {
+    await saveUserAccessData();
+    toast('Global admin email saved ✓', 'success');
   } catch { toast('Save failed', 'error'); }
+}
+
+function renderAccessRequests() {
+  const card = document.getElementById('accessRequestsCard');
+  const list = document.getElementById('accessRequestsList');
+  if (!card || !list) return;
+
+  const requests = userAccessData.accessRequests || [];
+  if (!requests.length) {
+    card.style.display = 'none';
+    return;
+  }
+
+  card.style.display = 'block';
+  list.innerHTML = requests.map((req, i) => `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+        <span style="font-weight:600;font-size:14px">${req.employeeName || 'Unknown'}</span>
+        <span style="font-size:11px;color:var(--subtle);font-family:var(--font-mono)">${req.date || ''}</span>
+      </div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:8px">${req.reason || 'No reason given'}</div>
+      <button class="tiny-btn" style="background:var(--surface);color:var(--muted);border:1px solid var(--border);font-size:11px;padding:4px 10px"
+        onclick="dismissAccessRequest(${i})">Dismiss</button>
+    </div>
+  `).join('');
+}
+
+async function dismissAccessRequest(index) {
+  userAccessData.accessRequests.splice(index, 1);
+  try {
+    await saveUserAccessData();
+    renderAccessRequests();
+    toast('Request dismissed', 'info');
+  } catch { toast('Save failed', 'error'); }
+}
+
+// ═══════════════════════════════════════════
+// REQUEST ACCESS (from Access Denied screen)
+// ═══════════════════════════════════════════
+function openRequestAccessModal() {
+  const textarea = document.getElementById('accessRequestReason');
+  if (textarea) textarea.value = '';
+  document.getElementById('requestAccessModal').classList.add('active');
+}
+
+function closeRequestAccessModal() {
+  document.getElementById('requestAccessModal').classList.remove('active');
+}
+
+async function submitAccessRequest() {
+  const reason = (document.getElementById('accessRequestReason')?.value || '').trim();
+  if (!reason) {
+    toast('Please provide a reason for your request', 'error');
+    return;
+  }
+
+  const empName = currentManagerUser || _pendingManagerUser || 'Unknown';
+  const adminEmail = userAccessData.globalAdminEmail;
+
+  // Log the request
+  if (!userAccessData.accessRequests) userAccessData.accessRequests = [];
+  userAccessData.accessRequests.push({
+    employeeName: empName,
+    reason: reason,
+    date: new Date().toISOString().slice(0, 16).replace('T', ' ')
+  });
+
+  try {
+    await saveUserAccessData();
+  } catch (e) {
+    console.warn('Failed to save access request:', e.message);
+  }
+
+  // Send email if admin email is configured
+  if (adminEmail) {
+    try {
+      const token = await getToken();
+      const emailBody = {
+        message: {
+          subject: `BAMA ERP — Access Request from ${empName}`,
+          body: {
+            contentType: 'HTML',
+            content: `
+              <h2 style="color:#ff6b00;font-family:sans-serif">BAMA FABRICATION — Access Request</h2>
+              <p style="font-family:sans-serif;font-size:14px"><b>Employee:</b> ${empName}</p>
+              <p style="font-family:sans-serif;font-size:14px"><b>Reason:</b></p>
+              <div style="background:#f5f5f5;padding:16px;border-radius:8px;font-family:sans-serif;font-size:14px;margin:12px 0">${reason}</div>
+              <p style="font-family:sans-serif;font-size:13px;color:#888">
+                To grant access, go to Manager → User Access tab and enable the relevant permissions for this user.
+              </p>
+              <p style="margin-top:20px;font-family:sans-serif;font-size:11px;color:#aaa">
+                Generated by BAMA Workshop ERP — ${new Date().toLocaleString('en-GB')}
+              </p>
+            `
+          },
+          toRecipients: [{ emailAddress: { address: adminEmail } }]
+        },
+        saveToSentItems: true
+      };
+
+      const res = await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(emailBody)
+      });
+
+      if (res.ok || res.status === 202) {
+        toast('Access request sent ✓', 'success');
+      } else {
+        console.error('Email error:', await res.text());
+        toast('Request logged but email failed', 'info');
+      }
+    } catch (e) {
+      console.error('Email send error:', e);
+      toast('Request logged but email failed', 'info');
+    }
+  } else {
+    toast('Request logged (no admin email configured)', 'info');
+  }
+
+  closeRequestAccessModal();
 }
 
 // ═══════════════════════════════════════════
@@ -6049,11 +6496,22 @@ async function init() {
     state.projects = FALLBACK_PROJECTS;
   }
 
+  // Load user access data (non-blocking)
+  try {
+    await Promise.race([
+      loadUserAccessData(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 6000))
+    ]);
+  } catch (e) {
+    console.warn('User access load skipped:', e.message);
+  }
+
   setLoading(false);
 
   // Page-specific startup
   if (CURRENT_PAGE === 'manager') {
-    showScreen('screenAuth');
+    showScreen('screenManagerSelect');
+    renderManagerEmployeeGrid();
   } else if (CURRENT_PAGE === 'projects') {
     showScreen('screenProjects');
     renderProjectTiles();
