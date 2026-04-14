@@ -1103,14 +1103,19 @@ async function submitDay() {
 // MANAGER VIEW
 // ═══════════════════════════════════════════
 function showManagerAuth() {
-  if (CURRENT_PAGE !== 'manager') {
+  if (CURRENT_PAGE !== 'manager' && CURRENT_PAGE !== 'office') {
     window.location.href = 'manager.html';
     return;
   }
   currentManagerUser = null;
   _pendingManagerUser = null;
-  showScreen('screenManagerSelect');
-  renderManagerEmployeeGrid();
+  if (CURRENT_PAGE === 'office') {
+    showScreen('screenOfficeSelect');
+    renderOfficeEmployeeGrid();
+  } else {
+    showScreen('screenManagerSelect');
+    renderManagerEmployeeGrid();
+  }
 }
 
 function renderManagerEmployeeGrid() {
@@ -1219,7 +1224,8 @@ function checkManagerPin() {
 }
 
 function filterSidebarTabs(perms) {
-  const sidebar = document.getElementById('mgrSidebar');
+  const sidebarId = CURRENT_PAGE === 'office' ? 'officeSidebar' : 'mgrSidebar';
+  const sidebar = document.getElementById(sidebarId);
   if (!sidebar) return;
 
   sidebar.querySelectorAll('.sidebar-nav-item').forEach(btn => {
@@ -1229,21 +1235,163 @@ function filterSidebarTabs(perms) {
       btn.style.display = perms[permKey] ? '' : 'none';
     }
   });
+
+  // On office page, hide collapsible group labels if no child items are visible
+  if (CURRENT_PAGE === 'office') {
+    sidebar.querySelectorAll('.sidebar-nav-subitems').forEach(sub => {
+      const anyVisible = Array.from(sub.querySelectorAll('.sidebar-nav-item')).some(btn => btn.style.display !== 'none');
+      const groupEl = sub.closest('.sidebar-nav-group');
+      if (groupEl) groupEl.style.display = anyVisible ? '' : 'none';
+    });
+    // Also hide People & Leave group labels if their items are hidden
+    sidebar.querySelectorAll('.sidebar-nav-group').forEach(group => {
+      const label = group.querySelector('.sidebar-nav-label');
+      if (label) {
+        const items = group.querySelectorAll('.sidebar-nav-item');
+        const anyVisible = Array.from(items).some(btn => btn.style.display !== 'none');
+        group.style.display = anyVisible ? '' : 'none';
+      }
+    });
+  }
 }
 
 function findFirstAllowedTab(perms) {
-  const tabOrder = ['project','employee','clockinout','payroll','archive','staff','holidays','reports','settings','useraccess'];
+  const tabOrder = CURRENT_PAGE === 'office'
+    ? ['staff','holidays','project','employee','clockinout','payroll','archive']
+    : ['reports','settings','useraccess'];
   for (const tab of tabOrder) {
     const permKey = Object.keys(PERM_TO_TAB).find(k => PERM_TO_TAB[k] === tab);
     if (permKey && perms[permKey]) return tab;
   }
-  return 'project'; // fallback
+  return CURRENT_PAGE === 'office' ? 'staff' : 'reports'; // fallback
+}
+
+// ═══════════════════════════════════════════
+// OFFICE VIEW
+// ═══════════════════════════════════════════
+function renderOfficeEmployeeGrid() {
+  const grid = document.getElementById('officeEmpGrid');
+  if (!grid) return;
+  const empList = (state.timesheetData.employees || []).filter(e => e.active !== false && (e.staffType || 'workshop') === 'office');
+
+  if (!empList.length) {
+    grid.innerHTML = '<div class="empty-state" style="padding:30px"><div style="font-size:28px;margin-bottom:10px">&#128101;</div><div>No office staff set up yet.</div><div style="margin-top:8px;font-size:12px;color:var(--subtle)">Go to Manager → Staff to add office employees.</div></div>';
+    return;
+  }
+
+  grid.innerHTML = empList.map(emp => {
+    const ini = (emp.name || '').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+    const col = empColor(emp.name);
+    return `
+      <div class="emp-btn" onclick="selectOfficeUser('${emp.name.replace(/'/g, "\\\\'")}')" style="padding:22px 14px 16px">
+        <div class="emp-avatar" style="width:48px;height:48px;font-size:19px;background:linear-gradient(135deg,${col},#3e1a00)">${ini}</div>
+        <div class="emp-name" style="font-size:13px">${emp.name}</div>
+        <div style="font-size:10px;color:var(--subtle);margin-top:3px">${emp.pin ? '&#128274; PIN set' : '&#128275; No PIN'}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+function selectOfficeUser(name) {
+  const emp = (state.timesheetData.employees || []).find(e => e.name === name);
+  if (!emp) return;
+
+  if (!emp.pin) {
+    toast('No PIN set for this user. Set one in Staff management first.', 'error');
+    return;
+  }
+
+  _pendingManagerUser = name;
+  const ini = name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+  const col = empColor(name);
+
+  document.getElementById('officePinAvatar').innerHTML = ini;
+  document.getElementById('officePinAvatar').style.background = `linear-gradient(135deg,${col},#3e1a00)`;
+  document.getElementById('officePinName').textContent = name;
+  document.getElementById('officePinInput').value = '';
+  document.getElementById('officePinError').textContent = '';
+  showScreen('screenOfficePin');
+  setTimeout(() => document.getElementById('officePinInput').focus(), 100);
+}
+
+function checkOfficePin() {
+  const pin = document.getElementById('officePinInput').value;
+  const emp = (state.timesheetData.employees || []).find(e => e.name === _pendingManagerUser);
+
+  if (!emp || !emp.pin) {
+    document.getElementById('officePinError').textContent = 'No PIN set for this user';
+    return;
+  }
+
+  if (pin !== emp.pin) {
+    document.getElementById('officePinError').textContent = 'Incorrect PIN';
+    document.getElementById('officePinInput').value = '';
+    return;
+  }
+
+  // PIN correct — check permissions (same bootstrap logic as manager)
+  const anyoneHasPerms = Object.values(userAccessData.users || {}).some(u =>
+    u.permissions && Object.values(u.permissions).some(v => v === true)
+  );
+
+  if (!anyoneHasPerms) {
+    console.log('Bootstrap: No permissions configured yet — granting full access to', _pendingManagerUser);
+    if (!userAccessData.users[_pendingManagerUser]) {
+      userAccessData.users[_pendingManagerUser] = { permissions: {} };
+    }
+    PERMISSION_DEFS.forEach(p => {
+      userAccessData.users[_pendingManagerUser].permissions[p.key] = true;
+    });
+    saveUserAccessData().catch(e => console.warn('Bootstrap save failed:', e.message));
+    toast('First-time setup — you have been granted full admin access', 'success');
+  }
+
+  const perms = getUserPermissions(_pendingManagerUser);
+  // For office page, check if they have any of the office-relevant permissions
+  const officePerms = ['byProject','byEmployee','clockingInOut','payroll','archive','staff','holidays'];
+  const hasOfficeAccess = officePerms.some(k => perms[k] === true);
+
+  if (!hasOfficeAccess) {
+    currentManagerUser = _pendingManagerUser;
+    document.getElementById('accessDeniedMsg').textContent =
+      `${_pendingManagerUser}, you don't have any office permissions assigned yet. Contact an admin or request access below.`;
+    showScreen('screenAccessDenied');
+    return;
+  }
+
+  // Has permissions — enter office dashboard
+  currentManagerUser = _pendingManagerUser;
+  _pendingManagerUser = null;
+  document.getElementById('officePinInput').value = '';
+
+  // Filter sidebar tabs based on permissions
+  filterSidebarTabs(perms);
+
+  showScreen('screenOffice');
+  // Auto-switch to first allowed tab (office tab order)
+  const officeTabOrder = ['staff','holidays','project','employee','clockinout','payroll','archive'];
+  let firstTab = null;
+  for (const tab of officeTabOrder) {
+    const permKey = Object.keys(PERM_TO_TAB).find(k => PERM_TO_TAB[k] === tab);
+    if (permKey && perms[permKey]) { firstTab = tab; break; }
+  }
+  if (firstTab) switchTab(firstTab);
+  renderManagerView();
+}
+
+// Collapsible sidebar group toggle
+function toggleSidebarGroup(labelEl) {
+  labelEl.classList.toggle('collapsed');
+  const subitems = labelEl.nextElementSibling;
+  if (subitems && subitems.classList.contains('sidebar-nav-subitems')) {
+    subitems.classList.toggle('collapsed');
+  }
 }
 
 function renderManagerView() {
   const { mon, sun } = getWeekDates(state.currentWeekOffset);
-  document.getElementById('weekLabel').textContent =
-    `${fmtDate(mon)} – ${fmtDate(sun)}`;
+  const weekLabelEl = document.getElementById('weekLabel');
+  if (weekLabelEl) weekLabelEl.textContent = `${fmtDate(mon)} – ${fmtDate(sun)}`;
 
   // Check holiday notifications
   checkHolidayNotifications();
@@ -1264,10 +1412,11 @@ function renderManagerView() {
   const approved = weekEntries.filter(e => e.status === 'approved').length;
   const emps = new Set(weekEntries.map(e => e.employeeName)).size;
 
-  document.getElementById('stat-pending').textContent = pending;
-  document.getElementById('stat-approved').textContent = approved;
-  document.getElementById('stat-emps').textContent = emps;
-  document.getElementById('pendingCount').textContent = `${pending} entr${pending === 1 ? 'y' : 'ies'} pending approval`;
+  const el = (id, val) => { const e = document.getElementById(id); if (e) e.textContent = val; };
+  el('stat-pending', pending);
+  el('stat-approved', approved);
+  el('stat-emps', emps);
+  el('pendingCount', `${pending} entr${pending === 1 ? 'y' : 'ies'} pending approval`);
 
   // Project table
   renderProjectTable(weekEntries);
@@ -1278,6 +1427,7 @@ function renderManagerView() {
 
 function renderProjectTable(entries) {
   const tbody = document.getElementById('projectTableBody');
+  if (!tbody) return;
   if (!entries.length) {
     tbody.innerHTML = '<tr><td colspan="7"><div class="empty-state"><div class="icon">📋</div>No entries this week</div></td></tr>';
     return;
@@ -1305,6 +1455,7 @@ function renderProjectTable(entries) {
 
 function renderEmpSummary(entries, clockings) {
   const area = document.getElementById('empSummaryArea');
+  if (!area) return;
   const byEmp = {};
   entries.forEach(e => {
     if (!byEmp[e.employeeName]) byEmp[e.employeeName] = { entries: [], hours: 0 };
@@ -1346,6 +1497,7 @@ function calcHours(clockIn, clockOut, breakMins) {
 
 function renderClockLog(clockings) {
   const area = document.getElementById('clockLogArea');
+  if (!area) return;
   const countEl = document.getElementById('clockLogCount');
 
   if (countEl) countEl.textContent = `${clockings.length} record${clockings.length !== 1 ? 's' : ''} this week`;
@@ -1982,9 +2134,14 @@ function changeWeek(dir) {
 }
 
 function switchTab(name) {
-  document.querySelectorAll('.sidebar-nav-item').forEach(item => {
-    item.classList.toggle('active', item.getAttribute('data-tab') === name);
-  });
+  // Scope sidebar items to the correct sidebar
+  const sidebarId = CURRENT_PAGE === 'office' ? 'officeSidebar' : 'mgrSidebar';
+  const sidebar = document.getElementById(sidebarId);
+  if (sidebar) {
+    sidebar.querySelectorAll('.sidebar-nav-item').forEach(item => {
+      item.classList.toggle('active', item.getAttribute('data-tab') === name);
+    });
+  }
   document.querySelectorAll('.tab-content').forEach(tc => {
     tc.classList.toggle('active', tc.id === `tab-${name}`);
   });
@@ -2028,6 +2185,11 @@ function goHome() {
     _pendingManagerUser = null;
     showScreen('screenManagerSelect');
     renderManagerEmployeeGrid();
+  } else if (CURRENT_PAGE === 'office') {
+    currentManagerUser = null;
+    _pendingManagerUser = null;
+    showScreen('screenOfficeSelect');
+    renderOfficeEmployeeGrid();
   } else if (CURRENT_PAGE === 'projects') {
     window.location.href = 'index.html';
   } else if (CURRENT_PAGE === 'hub') {
@@ -3750,6 +3912,7 @@ function renderPayroll() {
     `${fmtDate(mon)} – ${fmtDate(sun)}`;
 
   const container = document.getElementById('payrollSummary');
+  if (!container) return;
   const employees = (state.timesheetData.employees || []).filter(e => e.active !== false);
 
   if (!employees.length) {
@@ -4073,6 +4236,7 @@ async function archiveWeek() {
 
 function renderArchive() {
   const area = document.getElementById('archiveArea');
+  if (!area) return;
   const archive = state.timesheetData.archive || {};
   const weeks = Object.values(archive).sort((a, b) => b.weekCommencing.localeCompare(a.weekCommencing));
 
@@ -4139,6 +4303,7 @@ function toggleArchiveDetail(weekKey) {
 // ═══════════════════════════════════════════
 function renderStaffList() {
   const container = document.getElementById('staffList');
+  if (!container) return;
   const employees = state.timesheetData.employees || [];
 
   if (!employees.length) {
@@ -6484,6 +6649,7 @@ function closeModal() {
 const CURRENT_PAGE = (() => {
   const path = window.location.pathname.toLowerCase();
   if (path.includes('manager')) return 'manager';
+  if (path.includes('office')) return 'office';
   if (path.includes('projects') || path.includes('project')) return 'projects';
   if (path.includes('hub')) return 'hub';
   return 'index'; // default kiosk
@@ -6542,6 +6708,9 @@ async function init() {
   if (CURRENT_PAGE === 'manager') {
     showScreen('screenManagerSelect');
     renderManagerEmployeeGrid();
+  } else if (CURRENT_PAGE === 'office') {
+    showScreen('screenOfficeSelect');
+    renderOfficeEmployeeGrid();
   } else if (CURRENT_PAGE === 'projects') {
     showScreen('screenProjects');
     renderProjectTiles();

@@ -53,10 +53,11 @@
   .manager-btn {
     background: none;
     border: 1px solid var(--subtle);
-    color: var(--muted);
+    color: #ffffff;
     padding: 6px 14px;
     border-radius: 6px;
     font-size: 12px;
+    font-weight: 700;
     cursor: pointer;
     font-family: var(--font-body);
     transition: all .2s;
@@ -331,10 +332,10 @@
     font-size: 10px;
     letter-spacing: 1.5px;
     text-transform: uppercase;
-    color: var(--subtle);
+    color: #ffffff;
     padding: 0 18px;
     margin-bottom: 6px;
-    font-weight: 600;
+    font-weight: 700;
   }
   .sidebar-nav-item {
     display: flex;
@@ -358,9 +359,10 @@
     background: rgba(255,255,255,.03);
   }
   .sidebar-nav-item.active {
-    color: var(--accent);
-    background: rgba(255,107,0,.06);
-    border-left-color: var(--accent);
+    color: #ffffff;
+    background: #ff4444;
+    border-left-color: #ff4444;
+    font-weight: 600;
   }
   .sidebar-nav-icon {
     font-size: 14px;
@@ -382,6 +384,30 @@
     border-top: 1px solid var(--border);
     margin: 8px 18px 12px;
   }
+  .sidebar-nav-label-toggle {
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: #ffffff;
+    padding: 0 18px;
+    margin-bottom: 6px;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    user-select: none;
+    transition: color .15s;
+  }
+  .sidebar-nav-label-toggle:hover { color: var(--accent); }
+  .sidebar-nav-label-toggle .chevron {
+    font-size: 10px;
+    transition: transform .2s;
+    margin-right: 0;
+  }
+  .sidebar-nav-label-toggle.collapsed .chevron { transform: rotate(-90deg); }
+  .sidebar-nav-subitems { overflow: hidden; transition: max-height .25s ease; max-height: 500px; }
+  .sidebar-nav-subitems.collapsed { max-height: 0; }
   .mgr-content {
     flex: 1;
     padding: 36px 32px;
@@ -483,7 +509,7 @@
     }
     .sidebar-nav-item.active {
       border-left-color: transparent;
-      border-bottom-color: var(--accent);
+      border-bottom-color: #ff4444;
     }
     .sidebar-nav-divider { display: none; }
     .mgr-content { padding: 24px 16px; }
