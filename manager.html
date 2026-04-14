@@ -88,20 +88,28 @@
     <!-- Sidebar Navigation -->
     <nav class="mgr-sidebar" id="mgrSidebar">
       <div class="sidebar-nav-group">
-        <div class="sidebar-nav-label">Reports</div>
-        <button class="sidebar-nav-item active" data-tab="reports" onclick="switchTab('reports')">
-          <span class="sidebar-nav-icon">&#128202;</span> Reports
-        </button>
+        <div class="sidebar-nav-label-toggle" onclick="toggleSidebarGroup(this)">
+          Reports <span class="chevron">&#9660;</span>
+        </div>
+        <div class="sidebar-nav-subitems">
+          <button class="sidebar-nav-item active" data-tab="reports" onclick="switchTab('reports')">
+            <span class="sidebar-nav-icon">&#128202;</span> Reports
+          </button>
+        </div>
       </div>
       <div class="sidebar-nav-divider"></div>
       <div class="sidebar-nav-group">
-        <div class="sidebar-nav-label">System</div>
-        <button class="sidebar-nav-item" data-tab="settings" onclick="switchTab('settings')">
-          <span class="sidebar-nav-icon">&#9881;</span> Settings
-        </button>
-        <button class="sidebar-nav-item" data-tab="useraccess" onclick="switchTab('useraccess')">
-          <span class="sidebar-nav-icon">&#128274;</span> User Access
-        </button>
+        <div class="sidebar-nav-label-toggle" onclick="toggleSidebarGroup(this)">
+          System <span class="chevron">&#9660;</span>
+        </div>
+        <div class="sidebar-nav-subitems">
+          <button class="sidebar-nav-item" data-tab="settings" onclick="switchTab('settings')">
+            <span class="sidebar-nav-icon">&#9881;</span> Settings
+          </button>
+          <button class="sidebar-nav-item" data-tab="useraccess" onclick="switchTab('useraccess')">
+            <span class="sidebar-nav-icon">&#128274;</span> User Access
+          </button>
+        </div>
       </div>
     </nav>
 

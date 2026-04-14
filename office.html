@@ -86,13 +86,17 @@
     <!-- Sidebar Navigation -->
     <nav class="mgr-sidebar" id="officeSidebar">
       <div class="sidebar-nav-group">
-        <div class="sidebar-nav-label">People &amp; Leave</div>
-        <button class="sidebar-nav-item" data-tab="staff" onclick="switchTab('staff')">
-          <span class="sidebar-nav-icon">&#128101;</span> Staff
-        </button>
-        <button class="sidebar-nav-item" data-tab="holidays" onclick="switchTab('holidays')">
-          <span class="sidebar-nav-icon">&#9788;</span> Holidays
-        </button>
+        <div class="sidebar-nav-label-toggle" onclick="toggleSidebarGroup(this)">
+          People &amp; Leave <span class="chevron">&#9660;</span>
+        </div>
+        <div class="sidebar-nav-subitems">
+          <button class="sidebar-nav-item" data-tab="staff" onclick="switchTab('staff')">
+            <span class="sidebar-nav-icon">&#128101;</span> Staff
+          </button>
+          <button class="sidebar-nav-item" data-tab="holidays" onclick="switchTab('holidays')">
+            <span class="sidebar-nav-icon">&#9788;</span> Holidays
+          </button>
+        </div>
       </div>
       <div class="sidebar-nav-divider"></div>
       <div class="sidebar-nav-group">
