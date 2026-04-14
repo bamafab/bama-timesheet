@@ -1169,6 +1169,25 @@ function checkManagerPin() {
   }
 
   // PIN correct — check permissions
+  // BOOTSTRAP: if NO users have ANY permissions yet, grant this user full admin
+  const anyoneHasPerms = Object.values(userAccessData.users || {}).some(u =>
+    u.permissions && Object.values(u.permissions).some(v => v === true)
+  );
+
+  if (!anyoneHasPerms) {
+    // First-time setup — auto-grant all permissions to this user
+    console.log('Bootstrap: No permissions configured yet — granting full access to', _pendingManagerUser);
+    if (!userAccessData.users[_pendingManagerUser]) {
+      userAccessData.users[_pendingManagerUser] = { permissions: {} };
+    }
+    PERMISSION_DEFS.forEach(p => {
+      userAccessData.users[_pendingManagerUser].permissions[p.key] = true;
+    });
+    // Save in background (non-blocking)
+    saveUserAccessData().catch(e => console.warn('Bootstrap save failed:', e.message));
+    toast('First-time setup — you have been granted full admin access', 'success');
+  }
+
   const perms = getUserPermissions(_pendingManagerUser);
   if (!perms || !hasAnyPermission(_pendingManagerUser)) {
     // No permissions — show access denied
