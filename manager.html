@@ -151,7 +151,6 @@
 
       <!-- Stats -->
       <div class="stats-row" id="mgrStats">
-        <div class="stat-card"><div class="stat-label">Total Hours</div><div class="stat-value" id="stat-hrs">0<span class="stat-unit">hrs</span></div></div>
         <div class="stat-card"><div class="stat-label">Pending</div><div class="stat-value" id="stat-pending" style="color:var(--amber)">0</div></div>
         <div class="stat-card"><div class="stat-label">Approved</div><div class="stat-value" id="stat-approved" style="color:var(--green)">0</div></div>
         <div class="stat-card"><div class="stat-label">Employees</div><div class="stat-value" id="stat-emps">0</div></div>
@@ -226,7 +225,7 @@
     </div>
 
     <!-- Tab: Holidays -->
-    <div class="tab-content" id="tab-holidays">
+    <div class="tab-content" id="tab-holidays" style="max-width:none">
       <div id="holidayNotificationBanner"></div>
       <div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;align-items:center">
         <div class="week-nav">
@@ -235,6 +234,7 @@
           <div class="week-label" id="holidayMonthLabel">—</div>
           <button class="nav-btn" onclick="changeHolidayMonth(1)">&#8594;</button>
         </div>
+        <button class="btn btn-ghost" onclick="holidayMonthOffset=0;renderHolidayTab()" style="padding:6px 14px;font-size:12px">&#9673; Today</button>
         <select class="field-input" id="holidayEmpFilter" onchange="renderHolidayTab()"
           style="width:180px;padding:6px 12px;font-size:13px">
           <option value="">All Employees</option>
@@ -244,9 +244,11 @@
       <div class="card" style="margin-bottom:20px">
         <div class="card-title"><span class="icon" style="filter:brightness(0) invert(1)">&#127959;</span> Team Holiday Calendar</div>
         <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;font-size:11px;color:var(--muted)">
-          <span style="display:flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:3px;background:rgba(62,207,142,.4);display:inline-block"></span>Approved</span>
-          <span style="display:flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:3px;background:rgba(255,107,0,.4);display:inline-block"></span>Pending</span>
-          <span style="display:flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:3px;background:rgba(245,158,11,.4);display:inline-block"></span>Bank Holiday</span>
+          <span style="display:flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:3px;background:rgba(62,207,142,.5);display:inline-block"></span>Approved</span>
+          <span style="display:flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:3px;background:rgba(236,72,153,.45);display:inline-block"></span>Pending</span>
+          <span style="display:flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:3px;background:rgba(239,68,68,.5);display:inline-block"></span>Sick</span>
+          <span style="display:flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:3px;background:rgba(255,159,67,.5);display:inline-block"></span>Unpaid Absence</span>
+          <span style="display:flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:3px;background:rgba(96,165,250,.4);display:inline-block"></span>Bank Holiday</span>
           <span style="display:flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:3px;background:rgba(100,100,100,.3);display:inline-block"></span>Weekend</span>
         </div>
         <div style="overflow-x:auto;width:100%;display:block">
@@ -271,6 +273,10 @@
               style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px;font-family:var(--font-mono);padding:4px 8px;border-radius:6px;transition:all .15s"
               onmouseover="this.style.background='var(--card)';this.style.color='var(--text)'"
               onmouseout="this.style.background='none';this.style.color='var(--muted)'">3m &#187;</button>
+            <button onclick="holidayMonthOffset=0;renderHolidayTab()"
+              style="background:none;border:1px solid var(--border);color:var(--muted);cursor:pointer;font-size:11px;padding:4px 10px;border-radius:6px;margin-left:4px;transition:all .15s"
+              onmouseover="this.style.background='var(--card)';this.style.color='var(--text)'"
+              onmouseout="this.style.background='none';this.style.color='var(--muted)'">Today</button>
           </div>
         </div>
       </div>

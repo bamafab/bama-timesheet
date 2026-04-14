@@ -17,9 +17,7 @@ const CONFIG = {
       for (let m of [0, 30]) {
         const hh = String(h).padStart(2,'0');
         const mm = String(m).padStart(2,'0');
-        const ampm = h < 12 ? 'AM' : 'PM';
-        const h12 = h > 12 ? h - 12 : h === 0 ? 12 : h;
-        slots.push({ val: `${hh}:${mm}`, label: `${h12}:${mm} ${ampm}` });
+        slots.push({ val: `${hh}:${mm}`, label: `${hh}:${mm}` });
       }
     }
     return slots;
@@ -579,6 +577,13 @@ function dateStr(d) {
 
 function fmtDate(d) {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+// Format a YYYY-MM-DD string to DD/MM/YYYY for display
+function fmtDateStr(ds) {
+  if (!ds || ds.length < 10) return ds || '';
+  const [y, m, d] = ds.split('-');
+  return `${d}/${m}/${y}`;
 }
 
 function todayStr() { return dateStr(new Date()); }
@@ -1259,7 +1264,6 @@ function renderManagerView() {
   const approved = weekEntries.filter(e => e.status === 'approved').length;
   const emps = new Set(weekEntries.map(e => e.employeeName)).size;
 
-  document.getElementById('stat-hrs').innerHTML = `${totalHrs.toFixed(1)}<span class="stat-unit">hrs</span>`;
   document.getElementById('stat-pending').textContent = pending;
   document.getElementById('stat-approved').textContent = approved;
   document.getElementById('stat-emps').textContent = emps;
@@ -1284,7 +1288,7 @@ function renderProjectTable(entries) {
       <td><span class="mono" style="color:var(--accent2)">${e.projectId}</span></td>
       <td style="color:var(--muted)">${e.projectName}</td>
       <td>${e.employeeName}</td>
-      <td class="mono" style="font-size:12px">${e.date}</td>
+      <td class="mono" style="font-size:12px">${fmtDateStr(e.date)}</td>
       <td class="mono"><b>${e.hours}h</b></td>
       <td><span class="tag tag-${e.status}">${e.status}</span></td>
       <td>
@@ -1323,7 +1327,7 @@ function renderEmpSummary(entries, clockings) {
         <div class="entry-chip">
           <span class="proj-id">${e.projectId}</span>
           <span class="proj-name">${e.projectName}</span>
-          <span style="font-size:12px;color:var(--muted);font-family:var(--font-mono)">${e.date}</span>
+          <span style="font-size:12px;color:var(--muted);font-family:var(--font-mono)">${fmtDateStr(e.date)}</span>
           <span class="proj-hrs">${e.hours}h</span>
           <span class="tag tag-${e.status}" style="margin-left:8px">${e.status}</span>
         </div>
@@ -2768,9 +2772,8 @@ function updateClock() {
   const now = new Date();
   const h = String(now.getHours()).padStart(2,'0');
   const m = String(now.getMinutes()).padStart(2,'0');
-  const ampm = now.getHours() < 12 ? 'AM' : 'PM';
   el.textContent =
-    `${h}:${m} ${ampm} — ${now.toLocaleDateString('en-GB', { weekday:'short', day:'numeric', month:'short' })}`;
+    `${h}:${m} — ${now.toLocaleDateString('en-GB', { weekday:'short', day:'numeric', month:'short' })}`;
 }
 setInterval(updateClock, 1000);
 updateClock();
@@ -2858,7 +2861,7 @@ function calculateHolidayBalance(employeeName) {
   const approved = (state.timesheetData.holidays || []).filter(h =>
     h.employeeName === employeeName &&
     h.status === 'approved' &&
-    h.type === 'paid' &&
+    (h.type === 'paid' || h.type === 'half') &&
     h.dateFrom >= yearStart && h.dateFrom <= yearEndStr
   );
   const usedDays = approved.reduce((s, h) => s + (h.workingDays || countWorkingDays(h.dateFrom, h.dateTo)), 0);
@@ -2867,7 +2870,7 @@ function calculateHolidayBalance(employeeName) {
   const pending = (state.timesheetData.holidays || []).filter(h =>
     h.employeeName === employeeName &&
     h.status === 'pending' &&
-    h.type === 'paid' &&
+    (h.type === 'paid' || h.type === 'half') &&
     h.dateFrom >= yearStart
   );
   const pendingDays = pending.reduce((s, h) => s + (h.workingDays || countWorkingDays(h.dateFrom, h.dateTo)), 0);
@@ -2934,8 +2937,8 @@ function renderEmpHolidayBalance(employeeName) {
     <div class="section-label" style="margin-bottom:10px">Your Requests</div>
     ${myHols.map(h => `
       <div class="holiday-chip">
-        <span class="hdate">${h.dateFrom} → ${h.dateTo}</span>
-        <span class="htype ${h.type}">${h.type === 'paid' ? 'Paid' : h.type === 'unpaid' ? 'Unpaid' : h.type}</span>
+        <span class="hdate">${fmtDateStr(h.dateFrom)} → ${fmtDateStr(h.dateTo)}</span>
+        <span class="htype ${h.type}">${h.type === 'paid' ? 'Paid' : h.type === 'unpaid' ? 'Unpaid Absence' : h.type === 'sick' ? 'Sick' : h.type === 'half' ? 'Half Day' : h.type}</span>
         <span style="flex:1;color:var(--muted);font-size:12px">${h.reason || ''}</span>
         <span style="font-family:var(--font-mono);font-size:12px">${h.workingDays || 0}d</span>
         <span class="tag tag-${h.status === 'approved' ? 'approved' : h.status === 'rejected' ? 'rejected' : 'pending'}" style="margin-left:8px">${h.status}</span>
@@ -3160,18 +3163,26 @@ function renderHolidayCalendar() {
       let border = '1px solid transparent';
 
       if (isBH) {
-        bg = 'rgba(245,158,11,.25)';
+        bg = 'rgba(96,165,250,.3)';
         title = 'Bank Holiday';
       } else if (isWE) {
         bg = 'rgba(100,100,100,.15)';
       } else if (hol) {
-        if (hol.status === 'approved') {
-          bg = hol.type === 'paid' ? 'rgba(62,207,142,.5)' : 'rgba(255,68,68,.35)';
-          title = `${hol.type} holiday (approved)`;
-        } else if (hol.status === 'pending') {
-          bg = 'rgba(255,107,0,.4)';
+        if (hol.status === 'pending') {
+          bg = 'rgba(236,72,153,.4)';
           title = 'Pending approval';
-          border = '1px solid var(--accent)';
+          border = '1px solid rgba(236,72,153,.6)';
+        } else if (hol.status === 'approved') {
+          if (hol.type === 'sick') {
+            bg = 'rgba(239,68,68,.45)';
+            title = 'Sick (approved)';
+          } else if (hol.type === 'unpaid') {
+            bg = 'rgba(255,159,67,.45)';
+            title = 'Unpaid absence (approved)';
+          } else {
+            bg = 'rgba(62,207,142,.5)';
+            title = `${hol.type === 'half' ? 'Half day' : 'Paid'} holiday (approved)`;
+          }
         }
       }
 
@@ -3215,8 +3226,8 @@ function renderHolidayRequests() {
     ${list.map(h => `
       <div class="holiday-chip" style="flex-wrap:wrap;gap:8px">
         <span style="font-weight:600;min-width:120px">${h.employeeName}</span>
-        <span class="hdate">${h.dateFrom} → ${h.dateTo}</span>
-        <span class="htype ${h.type}">${h.type === 'paid' ? 'Paid' : h.type === 'unpaid' ? 'Unpaid' : h.type}</span>
+        <span class="hdate">${fmtDateStr(h.dateFrom)} → ${fmtDateStr(h.dateTo)}</span>
+        <span class="htype ${h.type}">${h.type === 'paid' ? 'Paid' : h.type === 'unpaid' ? 'Unpaid Absence' : h.type === 'sick' ? 'Sick' : h.type === 'half' ? 'Half Day' : h.type}</span>
         <span style="font-family:var(--font-mono);font-size:12px;color:var(--accent2)">${h.workingDays}d</span>
         <span style="color:var(--muted);font-size:12px;flex:1">${h.reason || ''}</span>
         <span class="tag tag-${h.status === 'approved' ? 'approved' : h.status === 'rejected' ? 'rejected' : 'pending'}">${h.status}</span>
@@ -4423,7 +4434,7 @@ function exportWeekCSV() {
 
   const rows = [
     ['Date','Employee','Project ID','Project Name','Hours','Status'],
-    ...entries.map(e => [e.date, e.employeeName, e.projectId, e.projectName, e.hours, e.status])
+    ...entries.map(e => [fmtDateStr(e.date), e.employeeName, e.projectId, e.projectName, e.hours, e.status])
   ];
   const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
   const blob = new Blob([csv], { type: 'text/csv' });
