@@ -3926,7 +3926,7 @@ function renderPayroll() {
 
   const container = document.getElementById('payrollSummary');
   if (!container) return;
-  const employees = (state.timesheetData.employees || []).filter(e => e.active !== false);
+  const employees = (state.timesheetData.employees || []).filter(e => e.active !== false && (e.payType || 'payee') !== 'cis');
 
   if (!employees.length) {
     container.innerHTML = '<div class="empty-state">No employees set up yet.</div>';
@@ -4035,7 +4035,7 @@ function jumpToPayrollWeek(dateValue) {
 
 async function emailPayrollReport() {
   const { mon, sun } = getWeekDates(payrollWeekOffset);
-  const employees = (state.timesheetData.employees || []).filter(e => e.active !== false);
+  const employees = (state.timesheetData.employees || []).filter(e => e.active !== false && (e.payType || 'payee') !== 'cis');
   const days = [];
   for (let i = 0; i < 7; i++) {
     const d = new Date(mon); d.setDate(mon.getDate() + i);
@@ -4129,7 +4129,7 @@ async function emailPayrollReport() {
 
 function generatePayrollPDF() {
   const { mon, sun } = getWeekDates(payrollWeekOffset);
-  const employees = (state.timesheetData.employees || []).filter(e => e.active !== false);
+  const employees = (state.timesheetData.employees || []).filter(e => e.active !== false && (e.payType || 'payee') !== 'cis');
   const results = employees.map(e => calculatePayroll(e.name, mon, sun)).filter(Boolean);
 
   if (!results.length) { toast('No payroll data to export', 'error'); return; }
@@ -4794,7 +4794,7 @@ function renderDashboard() {
             </div>
           </div>
           <div class="dash-item-actions">
-            <button onclick="switchTab('holidays')">Review</button>
+            <button onclick="switchTab('holidays')" style="background:#ff4444;color:#fff;border-color:#ff4444;font-weight:600">Review</button>
           </div>
         </div>`;
       }).join('');
