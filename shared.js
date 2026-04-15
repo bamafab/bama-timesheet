@@ -1865,7 +1865,10 @@ function renderMyWeek(employeeName) {
       c => c.employeeName === employeeName && c.date === dStr
     );
 
-    // Project entries removed from My Week view per user request
+    // Project entries for this day
+    const dayEntries = (state.timesheetData.entries || []).filter(
+      e => e.employeeName === employeeName && e.date === dStr
+    );
 
     let content = '';
     if (clocking) {
@@ -1895,13 +1898,21 @@ function renderMyWeek(employeeName) {
       content = `<div style="color:var(--subtle);font-size:11px;margin-top:16px">—</div>`;
     }
 
-    const entriesHtml = ''; // Project entries not shown in My Week
+    const entriesHtml = dayEntries.length ? `
+      <div style="margin-top:6px;border-top:1px solid var(--border);padding-top:4px">
+        ${dayEntries.map(e => `<div style="font-size:9px;color:var(--muted);display:flex;justify-content:space-between;padding:1px 0">
+          <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%">${e.projectId}</span>
+          <span style="color:var(--accent2);font-family:var(--font-mono)">${e.hours}h</span>
+        </div>`).join('')}
+      </div>
+    ` : '';
 
     return `
       <div class="week-day ${isToday ? 'today' : ''} ${clocking ? 'has-data' : ''}">
         <div class="week-day-name">${day}</div>
         <div class="week-day-date">${d.getDate()}/${d.getMonth()+1}</div>
         ${content}
+        ${entriesHtml}
       </div>
     `;
   }).join('');
