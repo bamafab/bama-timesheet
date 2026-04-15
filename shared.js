@@ -4596,7 +4596,9 @@ async function saveEmployee(id) {
 async function toggleEmployeeActive(id) {
   const emp = state.timesheetData.employees.find(e => e.id === id);
   if (!emp) return;
-  emp.active = emp.active === false ? true : false;
+  const deactivating = emp.active !== false;
+  if (deactivating && !confirm(`Deactivate ${emp.name}? They will no longer appear on the kiosk or in payroll.`)) return;
+  emp.active = deactivating ? false : true;
   try {
     await saveTimesheetData();
     toast(`${emp.name} ${emp.active ? 'reactivated' : 'deactivated'}`, 'success');
