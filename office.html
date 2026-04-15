@@ -205,7 +205,9 @@
 
         <!-- 7. My Holiday Status -->
         <div class="card dash-card">
-          <div class="card-title"><span class="icon">&#127796;</span> My Holiday Status <span class="dash-count" id="dashMyHolidayCount">0</span></div>
+          <div class="card-title"><span class="icon">&#127796;</span> My Holiday Status <span class="dash-count" id="dashMyHolidayCount">0</span>
+            <button class="btn btn-primary" style="padding:4px 12px;font-size:11px;margin-left:auto" onclick="openOfficeHolidayModal()">+ Request Holiday</button>
+          </div>
           <div id="dashMyHolidayList" class="dash-list">
             <div class="empty-state" style="padding:20px"><div class="icon">&#127796;</div>You have no pending holiday requests</div>
           </div>
@@ -419,7 +421,7 @@
     <div class="tab-content" id="tab-payroll">
       <div class="card" style="margin-bottom:20px">
         <div class="card-title"><span class="icon">&#163;</span> Payroll Summary</div>
-        <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap">
           <div class="week-nav">
             <button class="nav-btn" onclick="changePayrollWeek(-1)">&#8592;</button>
             <div class="week-label" id="payrollWeekLabel">—</div>
@@ -430,6 +432,8 @@
             <input type="date" class="field-input" id="payrollWeekPicker" onchange="jumpToPayrollWeek(this.value)"
               style="width:150px;padding:6px 10px;font-size:12px">
           </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:20px;flex-wrap:wrap">
           <button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="generatePayrollPDF()">&#8595; Export PDF</button>
           <button class="btn btn-success" style="padding:8px 16px;font-size:12px" onclick="emailPayrollReport()">&#9993; Email to Payroll</button>
           <button class="btn btn-ghost" style="padding:8px 16px;font-size:12px" onclick="archiveWeek()">&#128190; Archive This Week</button>
@@ -593,6 +597,44 @@
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeDashMessageModal()">Cancel</button>
       <button class="btn btn-primary" onclick="submitDashMessage()">Send</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     OFFICE HOLIDAY REQUEST MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="officeHolidayModal">
+  <div class="modal" style="max-width:440px;width:95vw">
+    <div class="modal-title">&#127796; Request Holiday</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:20px">Submit a holiday request for approval.</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <div class="field-label">FROM</div>
+        <input type="date" class="field-input" id="offHolFrom">
+      </div>
+      <div>
+        <div class="field-label">TO</div>
+        <input type="date" class="field-input" id="offHolTo">
+      </div>
+    </div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">TYPE</div>
+      <select class="field-input" id="offHolType">
+        <option value="paid">Paid Holiday</option>
+        <option value="unpaid">Unpaid Absence</option>
+        <option value="sick">Sick</option>
+        <option value="half">Half Day</option>
+      </select>
+    </div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">REASON (optional)</div>
+      <input type="text" class="field-input" id="offHolReason" placeholder="e.g. Family holiday">
+    </div>
+    <div id="offHolBalance" style="font-size:12px;color:var(--muted);margin-bottom:12px"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeOfficeHolidayModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitOfficeHoliday()">Submit Request</button>
     </div>
   </div>
 </div>

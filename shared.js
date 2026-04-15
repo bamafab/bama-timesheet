@@ -5088,6 +5088,76 @@ async function deleteMessage(msgId) {
   }
 }
 
+// ── Office Holiday Request ──
+function openOfficeHolidayModal() {
+  if (!currentManagerUser) return;
+  document.getElementById('offHolFrom').value = '';
+  document.getElementById('offHolTo').value = '';
+  document.getElementById('offHolType').value = 'paid';
+  document.getElementById('offHolReason').value = '';
+  // Show balance
+  const balEl = document.getElementById('offHolBalance');
+  if (balEl) {
+    const bal = calculateHolidayBalance(currentManagerUser);
+    if (bal) {
+      balEl.textContent = `Holiday balance: ${bal.remainingDays} days remaining out of ${bal.totalEntitlement}`;
+    } else {
+      balEl.textContent = '';
+    }
+  }
+  document.getElementById('officeHolidayModal').classList.add('active');
+}
+
+function closeOfficeHolidayModal() {
+  document.getElementById('officeHolidayModal').classList.remove('active');
+}
+
+async function submitOfficeHoliday() {
+  const from = document.getElementById('offHolFrom').value;
+  const to = document.getElementById('offHolTo').value;
+  const type = document.getElementById('offHolType').value;
+  const reason = document.getElementById('offHolReason').value;
+
+  if (!from || !to) { toast('Please select dates', 'error'); return; }
+  if (from > to) { toast('End date must be after start date', 'error'); return; }
+
+  const workingDays = countWorkingDays(from, to);
+  if (workingDays === 0) { toast('No working days in selected range', 'error'); return; }
+
+  if (type === 'paid') {
+    const bal = calculateHolidayBalance(currentManagerUser);
+    if (bal && workingDays > bal.remainingDays) {
+      toast(`Only ${bal.remainingDays} days remaining — request is ${workingDays} days`, 'error');
+      return;
+    }
+  }
+
+  const request = {
+    id: Date.now().toString(),
+    employeeName: currentManagerUser,
+    dateFrom: from,
+    dateTo: to,
+    type,
+    reason,
+    workingDays,
+    status: 'pending',
+    submittedAt: new Date().toISOString()
+  };
+
+  if (!state.timesheetData.holidays) state.timesheetData.holidays = [];
+  state.timesheetData.holidays.push(request);
+
+  try {
+    await saveTimesheetData();
+    toast(`Holiday request submitted (${workingDays} working days) ✓`, 'success');
+    closeOfficeHolidayModal();
+    renderDashboard();
+  } catch (e) {
+    toast('Submit failed: ' + e.message, 'error');
+    state.timesheetData.holidays.pop();
+  }
+}
+
 // ═══════════════════════════════════════════
 // PROJECTS MODULE — Job-Based System
 // ═══════════════════════════════════════════
