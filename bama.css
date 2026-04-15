@@ -570,7 +570,7 @@
   }
   .dash-item-meta {
     font-size: 11px;
-    color: var(--subtle);
+    color: var(--muted);
     display: flex;
     gap: 10px;
     flex-wrap: wrap;
