@@ -7047,54 +7047,44 @@ async function init() {
   const justLoggedIn = AUTH.handleRedirect();
   if (justLoggedIn) console.log('Just returned from login, token stored');
 
-  // Race loadTimesheetData against a 8 second timeout
-  try {
-    await Promise.race([
-      loadTimesheetData(),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 8000))
-    ]);
-    _dataLoadedFromSharePoint = true;
-  } catch (e) {
+  // Build the list of data loads needed for this page
+  // Timesheet data is always needed (employees, clockings, entries)
+  const timesheetPromise = Promise.race([
+    loadTimesheetData(),
+    new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 8000))
+  ]).then(() => { _dataLoadedFromSharePoint = true; }).catch(e => {
     console.warn('Timesheet load skipped:', e.message);
-    // DO NOT overwrite state with empty defaults — keep whatever was loaded
-    // Only set defaults if there's truly nothing
     if (!state.timesheetData.employees || state.timesheetData.employees.length === 0) {
       console.warn('No employee data loaded — app will be read-only until data loads');
     }
-  }
+  });
 
-  // Load projects with timeout
-  try {
-    await Promise.race([
-      loadProjects(),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 8000))
-    ]);
-  } catch (e) {
-    console.warn('Project load skipped, using fallback:', e.message);
-    state.projects = FALLBACK_PROJECTS;
-  }
+  // Projects Excel only needed on kiosk and projects pages
+  const projectsPromise = (CURRENT_PAGE === 'index' || CURRENT_PAGE === 'projects')
+    ? Promise.race([
+        loadProjects(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 8000))
+      ]).catch(e => { console.warn('Project load skipped, using fallback:', e.message); state.projects = FALLBACK_PROJECTS; })
+    : Promise.resolve();
 
-  // Load user access data (non-blocking)
-  try {
-    await Promise.race([
-      loadUserAccessData(),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 6000))
-    ]);
-  } catch (e) {
-    console.warn('User access load skipped:', e.message);
-  }
+  // User access needed on manager and office pages
+  const userAccessPromise = (CURRENT_PAGE === 'manager' || CURRENT_PAGE === 'office')
+    ? Promise.race([
+        loadUserAccessData(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 6000))
+      ]).catch(e => { console.warn('User access load skipped:', e.message); })
+    : Promise.resolve();
 
-  // Load office tasks data (office page only, non-blocking)
-  if (CURRENT_PAGE === 'office') {
-    try {
-      await Promise.race([
+  // Office tasks only needed on office page
+  const officeTasksPromise = (CURRENT_PAGE === 'office')
+    ? Promise.race([
         loadOfficeTasksData(),
         new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 6000))
-      ]);
-    } catch (e) {
-      console.warn('Office tasks load skipped:', e.message);
-    }
-  }
+      ]).catch(e => { console.warn('Office tasks load skipped:', e.message); })
+    : Promise.resolve();
+
+  // Run all loads in parallel — they don't depend on each other
+  await Promise.all([timesheetPromise, projectsPromise, userAccessPromise, officeTasksPromise]);
 
   setLoading(false);
 
