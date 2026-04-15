@@ -618,6 +618,8 @@
   .priority-medium { background: rgba(245,158,11,.15); color: var(--amber); }
   .priority-low { background: rgba(62,207,142,.15); color: var(--green); }
   .msg-unread { background: rgba(255,107,0,.04); border-left: 3px solid var(--accent); padding-left: 10px; }
+  .dash-item-complete { opacity: .6; }
+  .dash-item-complete .dash-item-title { text-decoration: line-through; }
 
   @media (max-width: 900px) {
     .dash-grid { grid-template-columns: 1fr; }

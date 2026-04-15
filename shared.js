@@ -4839,6 +4839,43 @@ function renderDashboard() {
       }).join('');
     }
   }
+
+  // ── Tasks I Assigned ──
+  const assignedTasks = (officeTasksData.tasks || [])
+    .filter(t => t.assignedBy === user && t.status !== 'dismissed')
+    .sort((a, b) => {
+      // Open tasks first, then completed
+      if (a.status === 'complete' && b.status !== 'complete') return 1;
+      if (a.status !== 'complete' && b.status === 'complete') return -1;
+      return (b.createdAt || '').localeCompare(a.createdAt || '');
+    });
+  const assignedList = document.getElementById('dashAssignedList');
+  const assignedCount = document.getElementById('dashAssignedCount');
+  if (assignedCount) { assignedCount.textContent = assignedTasks.length; assignedCount.className = 'dash-count' + (assignedTasks.length === 0 ? ' zero' : ''); }
+  if (assignedList) {
+    if (!assignedTasks.length) {
+      assignedList.innerHTML = '<div class="empty-state" style="padding:20px"><div class="icon">&#128203;</div>You haven\'t assigned any tasks</div>';
+    } else {
+      assignedList.innerHTML = assignedTasks.map(t => {
+        const isComplete = t.status === 'complete';
+        const due = t.dueDate ? new Date(t.dueDate).toLocaleDateString('en-GB', { day:'numeric', month:'short' }) : '';
+        const completedWhen = t.completedAt ? timeAgo(t.completedAt) : '';
+        return `<div class="dash-item${isComplete ? ' dash-item-complete' : ''}">
+          <div class="dash-item-body">
+            <div class="dash-item-title">${isComplete ? '<span style="color:var(--green)">&#10003;</span> ' : ''}${esc(t.title)}</div>
+            <div class="dash-item-meta">
+              <span>Assigned to: ${esc(t.assignedTo)}</span>
+              <span class="priority-badge priority-${t.priority}">${t.priority}</span>
+              ${isComplete ? `<span style="color:var(--green)">Completed ${completedWhen}</span>` : (due ? `<span>Due: ${due}</span>` : '')}
+            </div>
+          </div>
+          <div class="dash-item-actions">
+            <button class="dash-delete" onclick="dismissAssignedTask('${t.id}')">&#10005; Clear</button>
+          </div>
+        </div>`;
+      }).join('');
+    }
+  }
 }
 
 function timeAgo(dateStr) {
@@ -4924,6 +4961,19 @@ async function completeTask(taskId) {
     toast('Failed to save: ' + e.message, 'error');
     task.status = 'open';
     delete task.completedAt;
+  }
+}
+
+async function dismissAssignedTask(taskId) {
+  const task = officeTasksData.tasks.find(t => t.id === taskId);
+  if (!task) return;
+  task.status = 'dismissed';
+  try {
+    await saveOfficeTasksData();
+    renderDashboard();
+  } catch (e) {
+    toast('Failed to clear: ' + e.message, 'error');
+    task.status = task.completedAt ? 'complete' : 'open';
   }
 }
 
