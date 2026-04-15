@@ -4738,14 +4738,14 @@ function renderDashboard() {
       holList.innerHTML = '<div class="empty-state" style="padding:20px"><div class="icon">&#9788;</div>No pending holiday requests</div>';
     } else {
       holList.innerHTML = pendingHols.map(h => {
-        const from = new Date(h.startDate).toLocaleDateString('en-GB', { day:'numeric', month:'short' });
-        const to = new Date(h.endDate).toLocaleDateString('en-GB', { day:'numeric', month:'short' });
+        const from = new Date(h.dateFrom).toLocaleDateString('en-GB', { day:'numeric', month:'short' });
+        const to = new Date(h.dateTo).toLocaleDateString('en-GB', { day:'numeric', month:'short' });
         return `<div class="dash-item">
           <div class="dash-item-body">
             <div class="dash-item-title">${esc(h.employeeName)}</div>
             <div class="dash-item-meta">
               <span>${from} — ${to}</span>
-              <span>${h.days || '?'} day${h.days !== 1 ? 's' : ''}</span>
+              <span>${h.workingDays || '?'} day${h.workingDays !== 1 ? 's' : ''}</span>
               <span>${esc(h.type || 'Holiday')}</span>
             </div>
           </div>
@@ -4800,13 +4800,13 @@ function renderDashboard() {
       myHolList.innerHTML = '<div class="empty-state" style="padding:20px"><div class="icon">&#127796;</div>You have no pending holiday requests</div>';
     } else {
       myHolList.innerHTML = myHols.map(h => {
-        const from = new Date(h.startDate).toLocaleDateString('en-GB', { day:'numeric', month:'short' });
-        const to = new Date(h.endDate).toLocaleDateString('en-GB', { day:'numeric', month:'short' });
+        const from = new Date(h.dateFrom).toLocaleDateString('en-GB', { day:'numeric', month:'short' });
+        const to = new Date(h.dateTo).toLocaleDateString('en-GB', { day:'numeric', month:'short' });
         return `<div class="dash-item">
           <div class="dash-item-body">
             <div class="dash-item-title">${from} — ${to}</div>
             <div class="dash-item-meta">
-              <span>${h.days || '?'} day${h.days !== 1 ? 's' : ''}</span>
+              <span>${h.workingDays || '?'} day${h.workingDays !== 1 ? 's' : ''}</span>
               <span class="priority-badge priority-medium">Pending</span>
             </div>
           </div>
