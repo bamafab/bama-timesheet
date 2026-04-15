@@ -4861,7 +4861,7 @@ function esc(str) {
 }
 
 // ── Task CRUD ──
-function openCreateTaskModal() {
+function openDashTaskModal() {
   const sel = document.getElementById('taskAssignTo');
   if (!sel) return;
   const officeStaff = (state.timesheetData.employees || []).filter(e => e.active !== false && (e.staffType || 'workshop') === 'office');
@@ -4870,14 +4870,14 @@ function openCreateTaskModal() {
   document.getElementById('taskDescription').value = '';
   document.getElementById('taskDueDate').value = '';
   document.getElementById('taskPriority').value = 'medium';
-  document.getElementById('createTaskModal').classList.add('active');
+  document.getElementById('dashCreateTaskModal').classList.add('active');
 }
 
-function closeCreateTaskModal() {
-  document.getElementById('createTaskModal').classList.remove('active');
+function closeDashTaskModal() {
+  document.getElementById('dashCreateTaskModal').classList.remove('active');
 }
 
-async function submitCreateTask() {
+async function submitDashTask() {
   const assignTo = document.getElementById('taskAssignTo').value;
   const title = document.getElementById('taskTitle').value.trim();
   const description = document.getElementById('taskDescription').value.trim();
@@ -4903,7 +4903,7 @@ async function submitCreateTask() {
   try {
     await saveOfficeTasksData();
     toast(`Task assigned to ${assignTo}`, 'success');
-    closeCreateTaskModal();
+    closeDashTaskModal();
     renderDashboard();
   } catch (e) {
     toast('Failed to save task: ' + e.message, 'error');
@@ -4928,20 +4928,20 @@ async function completeTask(taskId) {
 }
 
 // ── Message CRUD ──
-function openSendMessageModal() {
+function openDashMessageModal() {
   const sel = document.getElementById('msgSendTo');
   if (!sel) return;
   const officeStaff = (state.timesheetData.employees || []).filter(e => e.active !== false && (e.staffType || 'workshop') === 'office' && e.name !== currentManagerUser);
   sel.innerHTML = officeStaff.map(e => `<option value="${esc(e.name)}">${esc(e.name)}</option>`).join('');
   document.getElementById('msgText').value = '';
-  document.getElementById('sendMessageModal').classList.add('active');
+  document.getElementById('dashSendMessageModal').classList.add('active');
 }
 
-function closeSendMessageModal() {
-  document.getElementById('sendMessageModal').classList.remove('active');
+function closeDashMessageModal() {
+  document.getElementById('dashSendMessageModal').classList.remove('active');
 }
 
-async function submitSendMessage() {
+async function submitDashMessage() {
   const to = document.getElementById('msgSendTo').value;
   const text = document.getElementById('msgText').value.trim();
 
@@ -4961,7 +4961,7 @@ async function submitSendMessage() {
   try {
     await saveOfficeTasksData();
     toast(`Message sent to ${to}`, 'success');
-    closeSendMessageModal();
+    closeDashMessageModal();
     renderDashboard();
   } catch (e) {
     toast('Failed to send: ' + e.message, 'error');
