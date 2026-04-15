@@ -717,18 +717,9 @@ function openEmployeePanel(name) {
     });
   }
 
-  // Hide project time card if employee has already clocked out today
+  // Always show project time card — employees may log hours before or after clocking out
   const projectCard = document.getElementById('projectTimeCard');
-  const alreadyClockedOut = state.timesheetData.clockings.find(
-    c => c.employeeName === name && c.date === todayStr() && c.clockOut
-  );
-  if (projectCard) {
-    if (alreadyClockedOut) {
-      projectCard.style.display = 'none';
-    } else {
-      projectCard.style.display = '';
-    }
-  }
+  if (projectCard) projectCard.style.display = '';
 
   // Time selects
   fillTimeSelects();
