@@ -1230,6 +1230,8 @@ function filterSidebarTabs(perms) {
 
   sidebar.querySelectorAll('.sidebar-nav-item').forEach(btn => {
     const tab = btn.getAttribute('data-tab');
+    // Dashboard is always visible on office page
+    if (tab === 'dashboard' && CURRENT_PAGE === 'office') return;
     const permKey = Object.keys(PERM_TO_TAB).find(k => PERM_TO_TAB[k] === tab);
     if (permKey) {
       btn.style.display = perms[permKey] ? '' : 'none';
@@ -1348,15 +1350,18 @@ function checkOfficePin() {
 
   const perms = getUserPermissions(_pendingManagerUser);
   // For office page, check if they have any of the office-relevant permissions
-  const officePerms = ['dashboard','byProject','byEmployee','clockingInOut','payroll','archive','staff','holidays'];
+  // Dashboard is always accessible, so any office user with at least one permission gets in
+  const officePerms = ['byProject','byEmployee','clockingInOut','payroll','archive','staff','holidays'];
   const hasOfficeAccess = officePerms.some(k => perms[k] === true);
 
-  if (!hasOfficeAccess) {
-    currentManagerUser = _pendingManagerUser;
-    document.getElementById('accessDeniedMsg').textContent =
-      `${_pendingManagerUser}, you don't have any office permissions assigned yet. Contact an admin or request access below.`;
-    showScreen('screenAccessDenied');
-    return;
+  // Even if they have no specific tab permissions, they always get the dashboard
+  // Only deny if they truly have zero permissions AND this isn't a bootstrap scenario
+  const anyoneHasPermsCheck = Object.values(userAccessData.users || {}).some(u =>
+    u.permissions && Object.values(u.permissions).some(v => v === true)
+  );
+  if (!hasOfficeAccess && anyoneHasPermsCheck) {
+    // They have no office tab permissions — but still let them in to see the dashboard
+    // Dashboard shows their own tasks, messages, holiday status etc.
   }
 
   // Has permissions — enter office dashboard
@@ -1368,9 +1373,8 @@ function checkOfficePin() {
   filterSidebarTabs(perms);
 
   showScreen('screenOffice');
-  // Auto-switch to first allowed tab
-  const firstTab = findFirstAllowedTab(perms);
-  if (firstTab) switchTab(firstTab);
+  // Always land on dashboard first
+  switchTab('dashboard');
   renderManagerView();
 }
 
@@ -5121,7 +5125,6 @@ function hasAnyPermission(empName) {
 }
 
 const PERMISSION_DEFS = [
-  { key: 'dashboard', label: 'Dashboard', desc: 'View personal dashboard with tasks, messages, and notifications' },
   { key: 'byProject', label: 'By Project', desc: 'View timesheet entries grouped by project' },
   { key: 'byEmployee', label: 'By Employee', desc: 'View timesheet entries grouped by employee' },
   { key: 'clockingInOut', label: 'Clocking In/Out', desc: 'View and manage the clock log' },
@@ -5136,7 +5139,6 @@ const PERMISSION_DEFS = [
 ];
 
 const PERM_TO_TAB = {
-  dashboard: 'dashboard',
   byProject: 'project',
   byEmployee: 'employee',
   clockingInOut: 'clockinout',
