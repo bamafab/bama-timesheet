@@ -3212,6 +3212,8 @@ function renderHolidayTab() {
 function renderHolidayNotificationBanner() {
   const el = document.getElementById('holidayNotificationBanner');
   if (!el) return;
+  // On office page, the top-level checkHolidayNotifications banner already shows this
+  if (CURRENT_PAGE === 'office') { el.innerHTML = ''; return; }
   const pending = (state.timesheetData.holidays || []).filter(h => h.status === 'pending');
   if (!pending.length) { el.innerHTML = ''; return; }
   el.innerHTML = `
