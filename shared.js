@@ -7217,15 +7217,30 @@ async function init() {
 
   // Build the list of data loads needed for this page
   // Timesheet data is always needed (employees, clockings, entries)
-  const timesheetPromise = Promise.race([
-    loadTimesheetData(),
-    new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 8000))
-  ]).then(() => { _dataLoadedFromSharePoint = true; }).catch(e => {
-    console.warn('Timesheet load skipped:', e.message);
-    if (!state.timesheetData.employees || state.timesheetData.employees.length === 0) {
-      console.warn('No employee data loaded — app will be read-only until data loads');
+  // Retry up to 3 times if it fails — SharePoint cold starts can be slow
+  const loadTimesheetWithRetry = async () => {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await Promise.race([
+          loadTimesheetData(),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), attempt === 1 ? 8000 : 12000))
+        ]);
+        _dataLoadedFromSharePoint = true;
+        return; // success
+      } catch (e) {
+        console.warn(`Timesheet load attempt ${attempt}/3 failed:`, e.message);
+        if (attempt < 3) {
+          console.log(`Retrying in ${attempt}s...`);
+          await new Promise(r => setTimeout(r, attempt * 1000));
+        }
+      }
     }
-  });
+    // All attempts failed
+    if (!state.timesheetData.employees || state.timesheetData.employees.length === 0) {
+      console.warn('No employee data loaded after 3 attempts — app will be read-only until data loads');
+    }
+  };
+  const timesheetPromise = loadTimesheetWithRetry();
 
   // Projects Excel only needed on kiosk and projects pages
   const projectsPromise = (CURRENT_PAGE === 'index' || CURRENT_PAGE === 'projects')
