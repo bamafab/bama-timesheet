@@ -1121,10 +1121,10 @@ function showManagerAuth() {
 function renderManagerEmployeeGrid() {
   const grid = document.getElementById('mgrEmpGrid');
   if (!grid) return;
-  const empList = (state.timesheetData.employees || []).filter(e => e.active !== false);
+  const empList = (state.timesheetData.employees || []).filter(e => e.active !== false && (e.staffType || 'workshop') === 'office');
 
   if (!empList.length) {
-    grid.innerHTML = '<div class="empty-state" style="padding:30px"><div style="font-size:28px;margin-bottom:10px">&#128101;</div><div>No employees set up yet.</div><div style="margin-top:8px;font-size:12px;color:var(--subtle)">Go to Workshop Kiosk → Manager → Staff to add your team.</div></div>';
+    grid.innerHTML = '<div class="empty-state" style="padding:30px"><div style="font-size:28px;margin-bottom:10px">&#128101;</div><div>No office staff set up yet.</div><div style="margin-top:8px;font-size:12px;color:var(--subtle)">Go to Office → Staff to add office employees.</div></div>';
     return;
   }
 
@@ -1544,8 +1544,14 @@ function renderClockLog(clockings) {
       if (c._editing) {
         const times = [];
         for (let h = 5; h <= 22; h++) { times.push(`${String(h).padStart(2,'0')}:00`); times.push(`${String(h).padStart(2,'0')}:30`); }
-        const inOpts = times.map(t => `<option value="${t}" ${t === c.clockIn ? 'selected' : ''}>${t}</option>`).join('');
-        const outOpts = times.map(t => `<option value="${t}" ${t === (c.clockOut||'') ? 'selected' : ''}>${t}</option>`).join('');
+        // Include the actual clock times if they're not standard 30-min slots
+        const actualIn = c.clockIn || '';
+        const actualOut = c.clockOut || '';
+        if (actualIn && !times.includes(actualIn)) times.push(actualIn);
+        if (actualOut && !times.includes(actualOut)) times.push(actualOut);
+        times.sort();
+        const inOpts = times.map(t => `<option value="${t}" ${t === actualIn ? 'selected' : ''}>${t}</option>`).join('');
+        const outOpts = times.map(t => `<option value="${t}" ${t === actualOut ? 'selected' : ''}>${t}</option>`).join('');
         return {
           html: `<td style="text-align:center;padding:6px 4px;vertical-align:top;min-width:110px">
             <select id="edit-in-${c.id}" class="field-input" style="font-size:10px;padding:3px 4px;margin-bottom:3px;width:100%" onchange="markClockDirty('${c.id}')">${inOpts}</select>
@@ -3387,7 +3393,12 @@ function renderHolidayRequests() {
 
   const renderGroup = (list, title) => list.length ? `
     <div class="section-label" style="margin-bottom:10px;margin-top:${title === 'Pending Approval' ? '0' : '20px'}">${title}</div>
-    ${list.map(h => `
+    ${list.map(h => {
+      const isOwnRequest = currentManagerUser && h.employeeName === currentManagerUser;
+      const loggedInEmp = (state.timesheetData.employees || []).find(e => e.name === currentManagerUser);
+      const isDirector = loggedInEmp && loggedInEmp.erpRole === 'director';
+      const canApprove = h.status === 'pending' && (!isOwnRequest || isDirector);
+      return `
       <div class="holiday-chip" style="flex-wrap:wrap;gap:8px">
         <span style="font-weight:600;min-width:120px">${h.employeeName}</span>
         <span class="hdate">${fmtDateStr(h.dateFrom)} → ${fmtDateStr(h.dateTo)}</span>
@@ -3395,14 +3406,14 @@ function renderHolidayRequests() {
         <span style="font-family:var(--font-mono);font-size:12px;color:var(--accent2)">${h.workingDays}d</span>
         <span style="color:var(--muted);font-size:12px;flex:1">${h.reason || ''}</span>
         <span class="tag tag-${h.status === 'approved' ? 'approved' : h.status === 'rejected' ? 'rejected' : 'pending'}">${h.status}</span>
-        ${h.status === 'pending' ? `
+        ${canApprove ? `
           <div class="approve-row">
             <button class="tiny-btn tiny-approve" onclick="approveHoliday('${h.id}')">&#10003; Approve</button>
             <button class="tiny-btn tiny-reject" onclick="rejectHoliday('${h.id}')">&#10005; Reject</button>
           </div>
-        ` : ''}
+        ` : (h.status === 'pending' && isOwnRequest ? '<span style="font-size:11px;color:var(--subtle);font-style:italic">Awaiting approval from another user</span>' : '')}
       </div>
-    `).join('')}
+    `}).join('')}
   ` : '';
 
   container.innerHTML = renderGroup(pending, 'Pending Approval') + renderGroup(others, 'Previous Requests');
@@ -4006,6 +4017,22 @@ function changePayrollWeek(dir) {
   renderPayroll();
 }
 
+function jumpToPayrollWeek(dateValue) {
+  if (!dateValue) return;
+  const picked = new Date(dateValue);
+  const today = new Date();
+  // Calculate how many weeks between the current week and the picked date's week
+  const todayMon = new Date(today);
+  todayMon.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+  todayMon.setHours(0,0,0,0);
+  const pickedMon = new Date(picked);
+  pickedMon.setDate(picked.getDate() - ((picked.getDay() + 6) % 7));
+  pickedMon.setHours(0,0,0,0);
+  const diffWeeks = Math.round((pickedMon - todayMon) / (7 * 24 * 60 * 60 * 1000));
+  payrollWeekOffset = diffWeeks;
+  renderPayroll();
+}
+
 async function emailPayrollReport() {
   const { mon, sun } = getWeekDates(payrollWeekOffset);
   const employees = (state.timesheetData.employees || []).filter(e => e.active !== false);
@@ -4323,7 +4350,9 @@ function renderStaffList() {
       ${employees.map(emp => {
         const staffType = emp.staffType || 'workshop';
         const erpRole = emp.erpRole || 'workshop';
+        const payType = emp.payType || 'payee';
         const erpRoleLabels = { workshop:'Workshop', office_admin:'Office Admin', project_manager:'Project Manager', finance:'Finance', director:'Director' };
+        const payTypeLabels = { payee:'PAYEE', cis:'CIS' };
         const typeBadge = staffType === 'office'
           ? `<span style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:4px;background:rgba(99,102,241,.15);color:#6366f1;border:1px solid rgba(99,102,241,.3)">OFFICE</span>`
           : `<span style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:4px;background:rgba(62,207,142,.15);color:var(--green);border:1px solid rgba(62,207,142,.3)">WORKSHOP</span>`;
@@ -4339,7 +4368,7 @@ function renderStaffList() {
                 style="margin-bottom:6px;padding:6px 10px;font-size:13px">
               <input type="text" class="field-input" id="edit-role-${emp.id}" value="${emp.role||''}"
                 placeholder="Job title (optional)" style="padding:6px 10px;font-size:12px;margin-bottom:6px">
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px">
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:6px">
                 <div>
                   <div class="field-label" style="margin-bottom:3px">STAFF TYPE</div>
                   <select class="field-input" id="edit-stafftype-${emp.id}" style="padding:6px 10px;font-size:12px">
@@ -4355,6 +4384,13 @@ function renderStaffList() {
                     <option value="project_manager" ${erpRole==='project_manager'?'selected':''}>Project Manager</option>
                     <option value="finance" ${erpRole==='finance'?'selected':''}>Finance</option>
                     <option value="director" ${erpRole==='director'?'selected':''}>Director</option>
+                  </select>
+                </div>
+                <div>
+                  <div class="field-label" style="margin-bottom:3px">PAY TYPE</div>
+                  <select class="field-input" id="edit-paytype-${emp.id}" style="padding:6px 10px;font-size:12px">
+                    <option value="payee" ${payType==='payee'?'selected':''}>PAYEE</option>
+                    <option value="cis" ${payType==='cis'?'selected':''}>CIS</option>
                   </select>
                 </div>
               </div>
@@ -4387,7 +4423,7 @@ function renderStaffList() {
                 <span style="font-weight:600;font-size:14px">${emp.name}</span>
                 ${typeBadge}
               </div>
-              <div style="font-size:12px;color:var(--muted);margin-top:2px">${emp.role || 'No title set'} · <span style="color:var(--accent2)">${erpRoleLabels[erpRole] || erpRole}</span></div>
+              <div style="font-size:12px;color:var(--muted);margin-top:2px">${emp.role || 'No title set'} · <span style="color:var(--accent2)">${erpRoleLabels[erpRole] || erpRole}</span> · <span style="color:var(--muted)">${payTypeLabels[payType] || 'PAYEE'}</span></div>
               <div style="font-size:12px;color:var(--accent2);margin-top:2px;font-family:var(--font-mono)">£${(emp.rate||0).toFixed(2)}/hr</div>
               <div style="font-size:11px;color:var(--subtle);margin-top:2px">${emp.pin ? '&#128274; PIN set' : '&#128275; No PIN'}</div>
               <div style="font-size:11px;color:var(--muted);margin-top:2px">&#127959; ${emp.annualDays||20}d/yr ${emp.carryoverDays ? '+ '+emp.carryoverDays+'d carry' : ''}</div>
@@ -4450,8 +4486,10 @@ async function addEmployee() {
 
   const staffTypeInput = document.getElementById('newEmpStaffType');
   const erpRoleInput = document.getElementById('newEmpErpRole');
+  const payTypeInput = document.getElementById('newEmpPayType');
   const staffType = staffTypeInput ? staffTypeInput.value : 'workshop';
   const erpRole = erpRoleInput ? erpRoleInput.value : 'workshop';
+  const payType = payTypeInput ? payTypeInput.value : 'payee';
 
   state.timesheetData.employees.push({
     id: Date.now().toString(),
@@ -4459,6 +4497,7 @@ async function addEmployee() {
     role,
     staffType,
     erpRole,
+    payType,
     rate,
     pin,
     annualDays,
@@ -4478,6 +4517,7 @@ async function addEmployee() {
   startDateInput.value = '';
   if (staffTypeInput) staffTypeInput.value = 'workshop';
   if (erpRoleInput) erpRoleInput.value = 'workshop';
+  if (payTypeInput) payTypeInput.value = 'payee';
   renderStaffList();
   renderHome();
   toast(`${name} added ✓`, 'success');
@@ -4522,6 +4562,7 @@ async function saveEmployee(id) {
   const newStartDate = document.getElementById(`edit-startdate-${id}`).value || '';
   const newStaffType = document.getElementById(`edit-stafftype-${id}`)?.value || emp.staffType || 'workshop';
   const newErpRole = document.getElementById(`edit-erprole-${id}`)?.value || emp.erpRole || 'workshop';
+  const newPayType = document.getElementById(`edit-paytype-${id}`)?.value || emp.payType || 'payee';
   emp.name = newName;
   emp.role = newRole;
   emp.rate = newRate;
@@ -4531,6 +4572,7 @@ async function saveEmployee(id) {
   emp.startDate = newStartDate;
   emp.staffType = newStaffType;
   emp.erpRole = newErpRole;
+  emp.payType = newPayType;
   delete emp.editing;
 
   // Also update any existing entries/clockings with old name
@@ -4907,7 +4949,7 @@ function openDashTaskModal() {
   sel.innerHTML = officeStaff.map(e => `<option value="${esc(e.name)}">${esc(e.name)}</option>`).join('');
   document.getElementById('taskTitle').value = '';
   document.getElementById('taskDescription').value = '';
-  document.getElementById('taskDueDate').value = '';
+  document.getElementById('taskDueDate').value = new Date().toISOString().slice(0, 10);
   document.getElementById('taskPriority').value = 'medium';
   document.getElementById('dashCreateTaskModal').classList.add('active');
 }

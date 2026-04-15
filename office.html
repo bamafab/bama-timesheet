@@ -137,20 +137,8 @@
           <div style="color:var(--muted);font-size:13px">BAMA Fabrication · Office View</div>
         </div>
         <div style="display:flex;gap:10px;align-items:center">
-          <div class="week-nav">
-            <button class="nav-btn" onclick="changeWeek(-1)">←</button>
-            <div class="week-label" id="weekLabel">—</div>
-            <button class="nav-btn" onclick="changeWeek(1)">→</button>
-          </div>
           <button class="btn btn-ghost" onclick="goHome()">Exit</button>
         </div>
-      </div>
-
-      <!-- Stats -->
-      <div class="stats-row" id="mgrStats">
-        <div class="stat-card"><div class="stat-label">Pending</div><div class="stat-value" id="stat-pending" style="color:var(--amber)">0</div></div>
-        <div class="stat-card"><div class="stat-label">Approved</div><div class="stat-value" id="stat-approved" style="color:var(--green)">0</div></div>
-        <div class="stat-card"><div class="stat-label">Employees</div><div class="stat-value" id="stat-emps">0</div></div>
       </div>
 
     <!-- Tab: Dashboard -->
@@ -160,16 +148,14 @@
           <div class="mgr-title" id="dashGreeting">Good morning</div>
           <div style="color:var(--muted);font-size:13px" id="dashSubtitle">Here's what needs your attention today</div>
         </div>
-        <div style="display:flex;gap:8px">
-          <button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="openDashTaskModal()">+ New Task</button>
-          <button class="btn btn-ghost" style="padding:8px 16px;font-size:12px" onclick="openDashMessageModal()">&#9993; Send Message</button>
-        </div>
       </div>
 
       <div class="dash-grid">
         <!-- 1. My Tasks -->
         <div class="card dash-card">
-          <div class="card-title"><span class="icon">&#9745;</span> My Tasks <span class="dash-count" id="dashTaskCount">0</span></div>
+          <div class="card-title"><span class="icon">&#9745;</span> My Tasks <span class="dash-count" id="dashTaskCount">0</span>
+            <button class="btn btn-primary" style="padding:4px 12px;font-size:11px;margin-left:auto" onclick="openDashTaskModal()">+ New Task</button>
+          </div>
           <div id="dashTaskList" class="dash-list">
             <div class="empty-state" style="padding:20px"><div class="icon">&#9745;</div>No tasks assigned to you</div>
           </div>
@@ -177,7 +163,9 @@
 
         <!-- 2. Messages -->
         <div class="card dash-card">
-          <div class="card-title"><span class="icon">&#9993;</span> Messages <span class="dash-count" id="dashMsgCount">0</span></div>
+          <div class="card-title"><span class="icon">&#9993;</span> Messages <span class="dash-count" id="dashMsgCount">0</span>
+            <button class="btn btn-ghost" style="padding:4px 12px;font-size:11px;margin-left:auto" onclick="openDashMessageModal()">&#9993; Send</button>
+          </div>
           <div id="dashMsgList" class="dash-list">
             <div class="empty-state" style="padding:20px"><div class="icon">&#9993;</div>No messages</div>
           </div>
@@ -229,7 +217,7 @@
     <div class="tab-content" id="tab-staff">
       <div class="card" style="margin-bottom:20px">
         <div class="card-title"><span class="icon">➕</span> Add New Employee</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 120px 100px;gap:12px;align-items:flex-end;margin-bottom:12px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 120px 100px 100px;gap:12px;align-items:flex-end;margin-bottom:12px">
           <div>
             <div class="field-label">FULL NAME</div>
             <input type="text" class="field-input" id="newEmpName" placeholder="e.g. John Smith" onkeydown="if(event.key==='Enter')addEmployee()">
@@ -253,6 +241,13 @@
               <option value="project_manager">Project Manager</option>
               <option value="finance">Finance</option>
               <option value="director">Director</option>
+            </select>
+          </div>
+          <div>
+            <div class="field-label">PAY TYPE</div>
+            <select class="field-input" id="newEmpPayType">
+              <option value="payee">PAYEE</option>
+              <option value="cis">CIS</option>
             </select>
           </div>
         </div>
@@ -395,6 +390,11 @@
 
     <!-- Tab: Clock In/Out -->
     <div class="tab-content" id="tab-clockinout">
+      <!-- Stats for this tab -->
+      <div class="stats-row" id="clockStats" style="margin-bottom:16px">
+        <div class="stat-card"><div class="stat-label">Pending</div><div class="stat-value" id="stat-pending" style="color:var(--amber)">0</div></div>
+        <div class="stat-card"><div class="stat-label">Approved</div><div class="stat-value" id="stat-approved" style="color:var(--green)">0</div></div>
+      </div>
       <!-- Week nav + current/last week indicator -->
       <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
         <div class="week-nav">
@@ -424,6 +424,11 @@
             <button class="nav-btn" onclick="changePayrollWeek(-1)">&#8592;</button>
             <div class="week-label" id="payrollWeekLabel">—</div>
             <button class="nav-btn" onclick="changePayrollWeek(1)">&#8594;</button>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <div class="field-label" style="margin:0;font-size:11px">Jump to week:</div>
+            <input type="date" class="field-input" id="payrollWeekPicker" onchange="jumpToPayrollWeek(this.value)"
+              style="width:150px;padding:6px 10px;font-size:12px">
           </div>
           <button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="generatePayrollPDF()">&#8595; Export PDF</button>
           <button class="btn btn-success" style="padding:8px 16px;font-size:12px" onclick="emailPayrollReport()">&#9993; Email to Payroll</button>
