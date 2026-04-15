@@ -86,6 +86,12 @@
     <!-- Sidebar Navigation -->
     <nav class="mgr-sidebar" id="officeSidebar">
       <div class="sidebar-nav-group">
+        <button class="sidebar-nav-item active" data-tab="dashboard" onclick="switchTab('dashboard')">
+          <span class="sidebar-nav-icon">&#9776;</span> Dashboard
+        </button>
+      </div>
+      <div class="sidebar-nav-divider"></div>
+      <div class="sidebar-nav-group">
         <div class="sidebar-nav-label-toggle" onclick="toggleSidebarGroup(this)">
           People &amp; Leave <span class="chevron">&#9660;</span>
         </div>
@@ -146,6 +152,70 @@
         <div class="stat-card"><div class="stat-label">Approved</div><div class="stat-value" id="stat-approved" style="color:var(--green)">0</div></div>
         <div class="stat-card"><div class="stat-label">Employees</div><div class="stat-value" id="stat-emps">0</div></div>
       </div>
+
+    <!-- Tab: Dashboard -->
+    <div class="tab-content active" id="tab-dashboard">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+        <div>
+          <div class="mgr-title" id="dashGreeting">Good morning</div>
+          <div style="color:var(--muted);font-size:13px" id="dashSubtitle">Here's what needs your attention today</div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="openCreateTaskModal()">+ New Task</button>
+          <button class="btn btn-ghost" style="padding:8px 16px;font-size:12px" onclick="openSendMessageModal()">&#9993; Send Message</button>
+        </div>
+      </div>
+
+      <div class="dash-grid">
+        <!-- My Tasks -->
+        <div class="card dash-card">
+          <div class="card-title"><span class="icon">&#9745;</span> My Tasks <span class="dash-count" id="dashTaskCount">0</span></div>
+          <div id="dashTaskList" class="dash-list">
+            <div class="empty-state" style="padding:20px"><div class="icon">&#9745;</div>No tasks assigned to you</div>
+          </div>
+        </div>
+
+        <!-- Messages -->
+        <div class="card dash-card">
+          <div class="card-title"><span class="icon">&#9993;</span> Messages <span class="dash-count" id="dashMsgCount">0</span></div>
+          <div id="dashMsgList" class="dash-list">
+            <div class="empty-state" style="padding:20px"><div class="icon">&#9993;</div>No messages</div>
+          </div>
+        </div>
+
+        <!-- Pending Holiday Requests -->
+        <div class="card dash-card">
+          <div class="card-title"><span class="icon">&#9788;</span> Pending Holiday Requests <span class="dash-count" id="dashHolidayCount">0</span></div>
+          <div id="dashHolidayList" class="dash-list">
+            <div class="empty-state" style="padding:20px"><div class="icon">&#9788;</div>No pending holiday requests</div>
+          </div>
+        </div>
+
+        <!-- Pending Clockings to Approve -->
+        <div class="card dash-card">
+          <div class="card-title"><span class="icon">&#9201;</span> Pending Clockings <span class="dash-count" id="dashClockCount">0</span></div>
+          <div id="dashClockList" class="dash-list">
+            <div class="empty-state" style="padding:20px"><div class="icon">&#9201;</div>No clockings awaiting approval</div>
+          </div>
+        </div>
+
+        <!-- My Holiday Requests -->
+        <div class="card dash-card">
+          <div class="card-title"><span class="icon">&#127796;</span> My Holiday Status <span class="dash-count" id="dashMyHolidayCount">0</span></div>
+          <div id="dashMyHolidayList" class="dash-list">
+            <div class="empty-state" style="padding:20px"><div class="icon">&#127796;</div>You have no pending holiday requests</div>
+          </div>
+        </div>
+
+        <!-- My Access Requests -->
+        <div class="card dash-card">
+          <div class="card-title"><span class="icon">&#128274;</span> My Access Requests <span class="dash-count" id="dashAccessCount">0</span></div>
+          <div id="dashAccessList" class="dash-list">
+            <div class="empty-state" style="padding:20px"><div class="icon">&#128274;</div>No outstanding access requests</div>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- Tab: Staff Management -->
     <div class="tab-content" id="tab-staff">
@@ -448,6 +518,68 @@
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeApproveWeekModal()">Cancel</button>
       <button class="btn btn-success" id="approveWeekConfirmBtn" onclick="confirmApproveWeek()" style="font-weight:600" disabled>✓ Confirm Approval</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     CREATE TASK MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="createTaskModal">
+  <div class="modal" style="max-width:480px;width:95vw">
+    <div class="modal-title">&#9745; Create Task</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:20px">Assign a task to an office team member.</div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">ASSIGN TO</div>
+      <select class="field-input" id="taskAssignTo"></select>
+    </div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">TASK TITLE <span style="color:var(--red)">*</span></div>
+      <input type="text" class="field-input" id="taskTitle" placeholder="e.g. Review Q2 payroll report" maxlength="200">
+    </div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">DESCRIPTION (optional)</div>
+      <textarea class="field-input" id="taskDescription" rows="3" placeholder="Add any extra detail..." style="resize:vertical;min-height:60px"></textarea>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <div class="field-label">DUE DATE</div>
+        <input type="date" class="field-input" id="taskDueDate">
+      </div>
+      <div>
+        <div class="field-label">PRIORITY</div>
+        <select class="field-input" id="taskPriority">
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+          <option value="low">Low</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeCreateTaskModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitCreateTask()">Create Task</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     SEND MESSAGE MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="sendMessageModal">
+  <div class="modal" style="max-width:440px;width:95vw">
+    <div class="modal-title">&#9993; Send Message</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:20px">Send a message to an office team member.</div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">SEND TO</div>
+      <select class="field-input" id="msgSendTo"></select>
+    </div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">MESSAGE <span style="color:var(--red)">*</span></div>
+      <textarea class="field-input" id="msgText" rows="4" placeholder="Type your message..." style="resize:vertical;min-height:80px"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeSendMessageModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitSendMessage()">Send</button>
     </div>
   </div>
 </div>

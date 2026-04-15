@@ -1257,13 +1257,13 @@ function filterSidebarTabs(perms) {
 
 function findFirstAllowedTab(perms) {
   const tabOrder = CURRENT_PAGE === 'office'
-    ? ['staff','holidays','project','employee','clockinout','payroll','archive']
+    ? ['dashboard','staff','holidays','project','employee','clockinout','payroll','archive']
     : ['reports','settings','useraccess'];
   for (const tab of tabOrder) {
     const permKey = Object.keys(PERM_TO_TAB).find(k => PERM_TO_TAB[k] === tab);
     if (permKey && perms[permKey]) return tab;
   }
-  return CURRENT_PAGE === 'office' ? 'staff' : 'reports'; // fallback
+  return CURRENT_PAGE === 'office' ? 'dashboard' : 'reports'; // fallback
 }
 
 // ═══════════════════════════════════════════
@@ -1348,7 +1348,7 @@ function checkOfficePin() {
 
   const perms = getUserPermissions(_pendingManagerUser);
   // For office page, check if they have any of the office-relevant permissions
-  const officePerms = ['byProject','byEmployee','clockingInOut','payroll','archive','staff','holidays'];
+  const officePerms = ['dashboard','byProject','byEmployee','clockingInOut','payroll','archive','staff','holidays'];
   const hasOfficeAccess = officePerms.some(k => perms[k] === true);
 
   if (!hasOfficeAccess) {
@@ -1368,13 +1368,8 @@ function checkOfficePin() {
   filterSidebarTabs(perms);
 
   showScreen('screenOffice');
-  // Auto-switch to first allowed tab (office tab order)
-  const officeTabOrder = ['staff','holidays','project','employee','clockinout','payroll','archive'];
-  let firstTab = null;
-  for (const tab of officeTabOrder) {
-    const permKey = Object.keys(PERM_TO_TAB).find(k => PERM_TO_TAB[k] === tab);
-    if (permKey && perms[permKey]) { firstTab = tab; break; }
-  }
+  // Auto-switch to first allowed tab
+  const firstTab = findFirstAllowedTab(perms);
   if (firstTab) switchTab(firstTab);
   renderManagerView();
 }
@@ -2145,6 +2140,7 @@ function switchTab(name) {
   document.querySelectorAll('.tab-content').forEach(tc => {
     tc.classList.toggle('active', tc.id === `tab-${name}`);
   });
+  if (name === 'dashboard') renderDashboard();
   if (name === 'staff') renderStaffList();
   if (name === 'clockinout') { clockLogWeekOffset = 0; renderClockLogForWeek(); }
   if (name === 'holidays') setTimeout(() => renderHolidayTab(), 50);
@@ -4613,6 +4609,388 @@ function exportWeekCSV() {
 
 
 // ═══════════════════════════════════════════
+// OFFICE DASHBOARD — Tasks & Messages
+// ═══════════════════════════════════════════
+const OFFICE_TASKS_FILE = 'office-tasks.json';
+let officeTasksData = { tasks: [], messages: [] };
+
+async function loadOfficeTasksData() {
+  try {
+    const token = await getToken();
+    const pathEnc = encodeURIComponent('01 - Accounts/DANIEL/Project Tracker/' + OFFICE_TASKS_FILE);
+    const res = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/root:/${pathEnc}:/content`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (res.status === 404) {
+      console.log('No office-tasks.json yet — will create on first save');
+      return;
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    officeTasksData = await res.json();
+    officeTasksData.tasks = officeTasksData.tasks || [];
+    officeTasksData.messages = officeTasksData.messages || [];
+    console.log('Office tasks loaded:', officeTasksData.tasks.length, 'tasks,', officeTasksData.messages.length, 'messages');
+  } catch (e) {
+    console.warn('Office tasks load failed:', e.message);
+  }
+}
+
+async function saveOfficeTasksData() {
+  const token = await getToken();
+  const pathEnc = encodeURIComponent('01 - Accounts/DANIEL/Project Tracker/' + OFFICE_TASKS_FILE);
+  const res = await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/root:/${pathEnc}:/content`,
+    { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(officeTasksData, null, 2) }
+  );
+  if (!res.ok) throw new Error(`Save failed: HTTP ${res.status}`);
+}
+
+function renderDashboard() {
+  if (CURRENT_PAGE !== 'office' || !currentManagerUser) return;
+  const user = currentManagerUser;
+
+  // Greeting based on time
+  const hr = new Date().getHours();
+  const greeting = hr < 12 ? 'Good morning' : hr < 17 ? 'Good afternoon' : 'Good evening';
+  const greetEl = document.getElementById('dashGreeting');
+  if (greetEl) greetEl.textContent = `${greeting}, ${user.split(' ')[0]}`;
+
+  // ── My Tasks ──
+  const myTasks = (officeTasksData.tasks || [])
+    .filter(t => t.assignedTo === user && t.status !== 'complete')
+    .sort((a, b) => {
+      const pri = { high: 0, medium: 1, low: 2 };
+      return (pri[a.priority] || 1) - (pri[b.priority] || 1) || (a.dueDate || '9999').localeCompare(b.dueDate || '9999');
+    });
+  const taskList = document.getElementById('dashTaskList');
+  const taskCount = document.getElementById('dashTaskCount');
+  if (taskCount) { taskCount.textContent = myTasks.length; taskCount.className = 'dash-count' + (myTasks.length === 0 ? ' zero' : ''); }
+  if (taskList) {
+    if (!myTasks.length) {
+      taskList.innerHTML = '<div class="empty-state" style="padding:20px"><div class="icon">&#9745;</div>No tasks assigned to you</div>';
+    } else {
+      taskList.innerHTML = myTasks.map(t => {
+        const due = t.dueDate ? new Date(t.dueDate).toLocaleDateString('en-GB', { day:'numeric', month:'short' }) : '';
+        const overdue = t.dueDate && t.dueDate < new Date().toISOString().slice(0,10) ? ' style="color:var(--red)"' : '';
+        return `<div class="dash-item">
+          <div class="dash-item-body">
+            <div class="dash-item-title">${esc(t.title)}</div>
+            ${t.description ? `<div style="font-size:12px;color:var(--muted);margin-bottom:3px">${esc(t.description)}</div>` : ''}
+            <div class="dash-item-meta">
+              <span class="priority-badge priority-${t.priority}">${t.priority}</span>
+              ${due ? `<span${overdue}>Due: ${due}</span>` : ''}
+              <span>From: ${esc(t.assignedBy)}</span>
+            </div>
+          </div>
+          <div class="dash-item-actions">
+            <button class="dash-complete" onclick="completeTask('${t.id}')">&#10003; Done</button>
+          </div>
+        </div>`;
+      }).join('');
+    }
+  }
+
+  // ── Messages ──
+  const myMsgs = (officeTasksData.messages || [])
+    .filter(m => m.to === user)
+    .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  const msgList = document.getElementById('dashMsgList');
+  const msgCount = document.getElementById('dashMsgCount');
+  const unreadCount = myMsgs.filter(m => !m.read).length;
+  if (msgCount) { msgCount.textContent = unreadCount; msgCount.className = 'dash-count' + (unreadCount === 0 ? ' zero' : ''); }
+  if (msgList) {
+    if (!myMsgs.length) {
+      msgList.innerHTML = '<div class="empty-state" style="padding:20px"><div class="icon">&#9993;</div>No messages</div>';
+    } else {
+      msgList.innerHTML = myMsgs.slice(0, 20).map(m => {
+        const when = m.createdAt ? timeAgo(m.createdAt) : '';
+        const unread = !m.read ? ' msg-unread' : '';
+        return `<div class="dash-item${unread}">
+          <div class="dash-item-body">
+            <div class="dash-item-title">${esc(m.text)}</div>
+            <div class="dash-item-meta">
+              <span>From: ${esc(m.from)}</span>
+              ${when ? `<span>${when}</span>` : ''}
+            </div>
+          </div>
+          <div class="dash-item-actions">
+            ${!m.read ? `<button onclick="markMessageRead('${m.id}')">&#10003; Read</button>` : ''}
+            <button class="dash-delete" onclick="deleteMessage('${m.id}')">&#10005;</button>
+          </div>
+        </div>`;
+      }).join('');
+    }
+  }
+
+  // ── Pending Holiday Requests (all staff, for approvers) ──
+  const pendingHols = (state.timesheetData.holidays || []).filter(h => h.status === 'pending');
+  const holList = document.getElementById('dashHolidayList');
+  const holCount = document.getElementById('dashHolidayCount');
+  if (holCount) { holCount.textContent = pendingHols.length; holCount.className = 'dash-count' + (pendingHols.length === 0 ? ' zero' : ''); }
+  if (holList) {
+    if (!pendingHols.length) {
+      holList.innerHTML = '<div class="empty-state" style="padding:20px"><div class="icon">&#9788;</div>No pending holiday requests</div>';
+    } else {
+      holList.innerHTML = pendingHols.map(h => {
+        const from = new Date(h.startDate).toLocaleDateString('en-GB', { day:'numeric', month:'short' });
+        const to = new Date(h.endDate).toLocaleDateString('en-GB', { day:'numeric', month:'short' });
+        return `<div class="dash-item">
+          <div class="dash-item-body">
+            <div class="dash-item-title">${esc(h.employeeName)}</div>
+            <div class="dash-item-meta">
+              <span>${from} — ${to}</span>
+              <span>${h.days || '?'} day${h.days !== 1 ? 's' : ''}</span>
+              <span>${esc(h.type || 'Holiday')}</span>
+            </div>
+          </div>
+          <div class="dash-item-actions">
+            <button onclick="switchTab('holidays')">Review</button>
+          </div>
+        </div>`;
+      }).join('');
+    }
+  }
+
+  // ── Pending Clockings (current week) ──
+  const { mon, sun } = getWeekDates(0);
+  const monStr = dateStr(mon);
+  const sunStr = dateStr(sun);
+  const pendingClocks = (state.timesheetData.clockings || [])
+    .filter(c => c.date >= monStr && c.date <= sunStr && c.status !== 'approved');
+  const clockList = document.getElementById('dashClockList');
+  const clockCount = document.getElementById('dashClockCount');
+  if (clockCount) { clockCount.textContent = pendingClocks.length; clockCount.className = 'dash-count' + (pendingClocks.length === 0 ? ' zero' : ''); }
+  if (clockList) {
+    if (!pendingClocks.length) {
+      clockList.innerHTML = '<div class="empty-state" style="padding:20px"><div class="icon">&#9201;</div>No clockings awaiting approval</div>';
+    } else {
+      // Group by employee
+      const byEmp = {};
+      pendingClocks.forEach(c => { if (!byEmp[c.employeeName]) byEmp[c.employeeName] = []; byEmp[c.employeeName].push(c); });
+      clockList.innerHTML = Object.entries(byEmp).map(([name, clocks]) => {
+        return `<div class="dash-item">
+          <div class="dash-item-body">
+            <div class="dash-item-title">${esc(name)}</div>
+            <div class="dash-item-meta">
+              <span>${clocks.length} pending clocking${clocks.length !== 1 ? 's' : ''} this week</span>
+            </div>
+          </div>
+          <div class="dash-item-actions">
+            <button onclick="switchTab('clockinout')">Review</button>
+          </div>
+        </div>`;
+      }).join('');
+    }
+  }
+
+  // ── My Holiday Status ──
+  const myHols = (state.timesheetData.holidays || [])
+    .filter(h => h.employeeName === user && h.status === 'pending');
+  const myHolList = document.getElementById('dashMyHolidayList');
+  const myHolCount = document.getElementById('dashMyHolidayCount');
+  if (myHolCount) { myHolCount.textContent = myHols.length; myHolCount.className = 'dash-count' + (myHols.length === 0 ? ' zero' : ''); }
+  if (myHolList) {
+    if (!myHols.length) {
+      myHolList.innerHTML = '<div class="empty-state" style="padding:20px"><div class="icon">&#127796;</div>You have no pending holiday requests</div>';
+    } else {
+      myHolList.innerHTML = myHols.map(h => {
+        const from = new Date(h.startDate).toLocaleDateString('en-GB', { day:'numeric', month:'short' });
+        const to = new Date(h.endDate).toLocaleDateString('en-GB', { day:'numeric', month:'short' });
+        return `<div class="dash-item">
+          <div class="dash-item-body">
+            <div class="dash-item-title">${from} — ${to}</div>
+            <div class="dash-item-meta">
+              <span>${h.days || '?'} day${h.days !== 1 ? 's' : ''}</span>
+              <span class="priority-badge priority-medium">Pending</span>
+            </div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+  }
+
+  // ── My Access Requests ──
+  const myAccess = (userAccessData.accessRequests || [])
+    .filter(r => r.employeeName === user && r.status === 'pending');
+  const accList = document.getElementById('dashAccessList');
+  const accCount = document.getElementById('dashAccessCount');
+  if (accCount) { accCount.textContent = myAccess.length; accCount.className = 'dash-count' + (myAccess.length === 0 ? ' zero' : ''); }
+  if (accList) {
+    if (!myAccess.length) {
+      accList.innerHTML = '<div class="empty-state" style="padding:20px"><div class="icon">&#128274;</div>No outstanding access requests</div>';
+    } else {
+      accList.innerHTML = myAccess.map(r => {
+        const when = r.date ? timeAgo(r.date) : '';
+        return `<div class="dash-item">
+          <div class="dash-item-body">
+            <div class="dash-item-title">${esc(r.reason || 'Access requested')}</div>
+            <div class="dash-item-meta">
+              <span class="priority-badge priority-medium">Pending</span>
+              ${when ? `<span>Submitted ${when}</span>` : ''}
+            </div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+  }
+}
+
+function timeAgo(dateStr) {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(dateStr).toLocaleDateString('en-GB', { day:'numeric', month:'short' });
+}
+
+function esc(str) {
+  if (!str) return '';
+  const d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+
+// ── Task CRUD ──
+function openCreateTaskModal() {
+  const sel = document.getElementById('taskAssignTo');
+  if (!sel) return;
+  const officeStaff = (state.timesheetData.employees || []).filter(e => e.active !== false && (e.staffType || 'workshop') === 'office');
+  sel.innerHTML = officeStaff.map(e => `<option value="${esc(e.name)}">${esc(e.name)}</option>`).join('');
+  document.getElementById('taskTitle').value = '';
+  document.getElementById('taskDescription').value = '';
+  document.getElementById('taskDueDate').value = '';
+  document.getElementById('taskPriority').value = 'medium';
+  document.getElementById('createTaskModal').classList.add('active');
+}
+
+function closeCreateTaskModal() {
+  document.getElementById('createTaskModal').classList.remove('active');
+}
+
+async function submitCreateTask() {
+  const assignTo = document.getElementById('taskAssignTo').value;
+  const title = document.getElementById('taskTitle').value.trim();
+  const description = document.getElementById('taskDescription').value.trim();
+  const dueDate = document.getElementById('taskDueDate').value;
+  const priority = document.getElementById('taskPriority').value;
+
+  if (!title) { toast('Task title is required', 'error'); return; }
+  if (!assignTo) { toast('Select someone to assign the task to', 'error'); return; }
+
+  const task = {
+    id: 'task_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+    title,
+    description: description || null,
+    assignedTo: assignTo,
+    assignedBy: currentManagerUser,
+    dueDate: dueDate || null,
+    priority,
+    status: 'open',
+    createdAt: new Date().toISOString()
+  };
+
+  officeTasksData.tasks.push(task);
+  try {
+    await saveOfficeTasksData();
+    toast(`Task assigned to ${assignTo}`, 'success');
+    closeCreateTaskModal();
+    renderDashboard();
+  } catch (e) {
+    toast('Failed to save task: ' + e.message, 'error');
+    officeTasksData.tasks.pop();
+  }
+}
+
+async function completeTask(taskId) {
+  const task = officeTasksData.tasks.find(t => t.id === taskId);
+  if (!task) return;
+  task.status = 'complete';
+  task.completedAt = new Date().toISOString();
+  try {
+    await saveOfficeTasksData();
+    toast('Task completed', 'success');
+    renderDashboard();
+  } catch (e) {
+    toast('Failed to save: ' + e.message, 'error');
+    task.status = 'open';
+    delete task.completedAt;
+  }
+}
+
+// ── Message CRUD ──
+function openSendMessageModal() {
+  const sel = document.getElementById('msgSendTo');
+  if (!sel) return;
+  const officeStaff = (state.timesheetData.employees || []).filter(e => e.active !== false && (e.staffType || 'workshop') === 'office' && e.name !== currentManagerUser);
+  sel.innerHTML = officeStaff.map(e => `<option value="${esc(e.name)}">${esc(e.name)}</option>`).join('');
+  document.getElementById('msgText').value = '';
+  document.getElementById('sendMessageModal').classList.add('active');
+}
+
+function closeSendMessageModal() {
+  document.getElementById('sendMessageModal').classList.remove('active');
+}
+
+async function submitSendMessage() {
+  const to = document.getElementById('msgSendTo').value;
+  const text = document.getElementById('msgText').value.trim();
+
+  if (!text) { toast('Message cannot be empty', 'error'); return; }
+  if (!to) { toast('Select a recipient', 'error'); return; }
+
+  const msg = {
+    id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+    to,
+    from: currentManagerUser,
+    text,
+    read: false,
+    createdAt: new Date().toISOString()
+  };
+
+  officeTasksData.messages.push(msg);
+  try {
+    await saveOfficeTasksData();
+    toast(`Message sent to ${to}`, 'success');
+    closeSendMessageModal();
+    renderDashboard();
+  } catch (e) {
+    toast('Failed to send: ' + e.message, 'error');
+    officeTasksData.messages.pop();
+  }
+}
+
+async function markMessageRead(msgId) {
+  const msg = officeTasksData.messages.find(m => m.id === msgId);
+  if (!msg) return;
+  msg.read = true;
+  try {
+    await saveOfficeTasksData();
+    renderDashboard();
+  } catch (e) {
+    msg.read = false;
+  }
+}
+
+async function deleteMessage(msgId) {
+  const idx = officeTasksData.messages.findIndex(m => m.id === msgId);
+  if (idx < 0) return;
+  const removed = officeTasksData.messages.splice(idx, 1);
+  try {
+    await saveOfficeTasksData();
+    renderDashboard();
+  } catch (e) {
+    toast('Failed to delete: ' + e.message, 'error');
+    officeTasksData.messages.splice(idx, 0, ...removed);
+  }
+}
+
+// ═══════════════════════════════════════════
 // PROJECTS MODULE — Job-Based System
 // ═══════════════════════════════════════════
 const DRAWINGS_FILE = 'drawings-data.json';
@@ -4743,6 +5121,7 @@ function hasAnyPermission(empName) {
 }
 
 const PERMISSION_DEFS = [
+  { key: 'dashboard', label: 'Dashboard', desc: 'View personal dashboard with tasks, messages, and notifications' },
   { key: 'byProject', label: 'By Project', desc: 'View timesheet entries grouped by project' },
   { key: 'byEmployee', label: 'By Employee', desc: 'View timesheet entries grouped by employee' },
   { key: 'clockingInOut', label: 'Clocking In/Out', desc: 'View and manage the clock log' },
@@ -4757,6 +5136,7 @@ const PERMISSION_DEFS = [
 ];
 
 const PERM_TO_TAB = {
+  dashboard: 'dashboard',
   byProject: 'project',
   byEmployee: 'employee',
   clockingInOut: 'clockinout',
@@ -6700,6 +7080,18 @@ async function init() {
     ]);
   } catch (e) {
     console.warn('User access load skipped:', e.message);
+  }
+
+  // Load office tasks data (office page only, non-blocking)
+  if (CURRENT_PAGE === 'office') {
+    try {
+      await Promise.race([
+        loadOfficeTasksData(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 6000))
+      ]);
+    } catch (e) {
+      console.warn('Office tasks load skipped:', e.message);
+    }
   }
 
   setLoading(false);
