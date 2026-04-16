@@ -6041,7 +6041,7 @@ async function confirmUploadBom() {
           if (jobFolder) {
             const bomFolder = await getOrCreateSubfolder(jobFolder.id, '01 - BOM');
             if (bomFolder) {
-              const uploaded = await uploadFileToDrive(bomFolder.id, parsedBomData._file);
+              const uploaded = await uploadFileToFolder(bomFolder.id, parsedBomData._file.name, parsedBomData._file, parsedBomData._file.type || 'application/pdf');
               fileRecord = {
                 fileId: uploaded.id,
                 driveId: uploaded.parentReference?.driveId || BAMA_DRIVE_ID,
