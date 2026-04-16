@@ -6217,7 +6217,8 @@ function renderBOM() {
     for (const ml of lists) {
       if (!ml.items?.length) continue;
       html += `<div class="bom-list-header">`;
-      html += `<div class="bom-list-title">${ml.metadata?.title || ml.fileName || 'Material List'}</div>`;
+      const displayTitle = ml.fileName || (ml.metadata?.title || 'Material List').substring(0, 60);
+      html += `<div class="bom-list-title">${displayTitle}</div>`;
       html += `<div class="bom-list-badge">${ml.items.length} items</div>`;
       if (ml.webUrl) html += `<a href="${ml.webUrl}" target="_blank" style="font-size:11px;color:var(--accent);text-decoration:none">View PDF</a>`;
       html += `</div>`;
