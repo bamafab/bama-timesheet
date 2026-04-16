@@ -5192,6 +5192,7 @@ let drawingsData = { projects: {} };
 // }
 
 let userAccessData = { globalAdminEmail: '', users: {}, accessRequests: [] };
+let bomDataCache = {}; // keyed by projectId: { jobs: { jobId: { materialLists:[], deliveryNotes:[] } } }
 let currentManagerUser = null; // name of user currently logged into manager dashboard
 let _pendingManagerUser = null; // name of user selected but not yet PIN-verified
 let _pendingDraftsmanUser = null; // name of user selected for draftsman login
@@ -5237,6 +5238,63 @@ async function saveDrawingsData() {
     body: JSON.stringify(drawingsData)
   });
   if (!res.ok) throw new Error(`Save drawings failed: ${res.status}`);
+}
+
+// ── Load / Save BOM data (per-project file) ──
+function bomFileName(projectId) { return `bom-${projectId}.json`; }
+
+function getBomDataForJob(projectId, jobId) {
+  const projBom = bomDataCache[projectId];
+  if (!projBom || !projBom.jobs || !projBom.jobs[jobId]) return { materialLists: [], deliveryNotes: [] };
+  return projBom.jobs[jobId];
+}
+
+function ensureBomDataForJob(projectId, jobId) {
+  if (!bomDataCache[projectId]) bomDataCache[projectId] = { projectId, jobs: {}, settings: { weldingMachines: [] } };
+  if (!bomDataCache[projectId].jobs[jobId]) bomDataCache[projectId].jobs[jobId] = { materialLists: [], deliveryNotes: [] };
+  return bomDataCache[projectId].jobs[jobId];
+}
+
+async function loadBomData(projectId) {
+  if (bomDataCache[projectId]) return bomDataCache[projectId];
+  try {
+    const token = await getToken();
+    const metaUrl = `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.timesheetFolderItemId}:/${bomFileName(projectId)}`;
+    const metaRes = await fetch(metaUrl, { headers: { 'Authorization': `Bearer ${token}` } });
+    if (metaRes.status === 404) {
+      bomDataCache[projectId] = { projectId, jobs: {}, settings: { weldingMachines: [] } };
+      return bomDataCache[projectId];
+    }
+    if (!metaRes.ok) throw new Error(`BOM meta fetch failed: ${metaRes.status}`);
+    const meta = await metaRes.json();
+    const contentRes = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${meta.id}/content`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    if (!contentRes.ok) throw new Error('BOM content fetch failed');
+    bomDataCache[projectId] = await contentRes.json();
+    if (!bomDataCache[projectId].jobs) bomDataCache[projectId].jobs = {};
+    if (!bomDataCache[projectId].settings) bomDataCache[projectId].settings = { weldingMachines: [] };
+    console.log(`BOM data loaded for ${projectId}:`, Object.keys(bomDataCache[projectId].jobs).length, 'jobs');
+    return bomDataCache[projectId];
+  } catch (e) {
+    console.warn(`BOM data load failed for ${projectId}:`, e.message);
+    bomDataCache[projectId] = { projectId, jobs: {}, settings: { weldingMachines: [] } };
+    return bomDataCache[projectId];
+  }
+}
+
+async function saveBomData(projectId) {
+  if (!bomDataCache[projectId]) return;
+  const token = await getToken();
+  const url = `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.timesheetFolderItemId}:/${bomFileName(projectId)}:/content`;
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(bomDataCache[projectId])
+  });
+  if (!res.ok) throw new Error(`Save BOM data failed: ${res.status}`);
+  console.log(`BOM data saved for ${projectId}`);
 }
 
 // ── Load / Save user access data ──
@@ -5451,6 +5509,9 @@ async function openProjectDetail(projectId) {
 
   showScreen('screenProjectDetail');
   renderJobsList(projectId);
+
+  // Load BOM data for this project in background
+  loadBomData(projectId).catch(e => console.warn('BOM data load:', e.message));
 }
 
 function renderJobsList(projectId) {
@@ -5656,7 +5717,8 @@ function openJobDetail(projectId, jobId) {
   }
 
   showScreen('screenJobDetail');
-  renderAllElements();
+  // Ensure BOM data is loaded, then render
+  loadBomData(projectId).then(() => renderAllElements()).catch(() => renderAllElements());
 }
 
 function toggleElement(name) {
@@ -6000,10 +6062,10 @@ async function confirmUploadBom() {
     };
 
     // Add to job
-    if (!currentJob.materialLists) currentJob.materialLists = [];
-    currentJob.materialLists.push(ml);
+    const bomJob = ensureBomDataForJob(currentProject.id, currentJob.id);
+    bomJob.materialLists.push(ml);
 
-    await saveDrawingsData();
+    await saveBomData(currentProject.id);
 
     document.getElementById('bomUploadProgressBar').style.width = '100%';
     document.getElementById('bomUploadProgressText').textContent = 'Done!';
@@ -6047,8 +6109,8 @@ async function confirmAddBomItem() {
   if (!mark && !desc) { toast('Enter a mark or description', 'error'); return; }
 
   // Find the first material list to add to, or create a manual one
-  if (!currentJob.materialLists) currentJob.materialLists = [];
-  let targetList = currentJob.materialLists[0];
+  const bomJob = ensureBomDataForJob(currentProject.id, currentJob.id);
+  let targetList = bomJob.materialLists[0];
   if (!targetList) {
     targetList = {
       id: 'ml-manual-' + Date.now(), fileName: 'Manual entries', fileId: '', driveId: '', webUrl: '',
@@ -6057,7 +6119,7 @@ async function confirmAddBomItem() {
       columns: [{key:'mark',label:'Mark'},{key:'description',label:'Description'},{key:'quantity',label:'Quantity'},{key:'coating',label:'Coating'},{key:'totalWeight',label:'Weight'}],
       items: []
     };
-    currentJob.materialLists.push(targetList);
+    bomJob.materialLists.push(targetList);
   }
 
   const item = {
@@ -6071,7 +6133,7 @@ async function confirmAddBomItem() {
   };
 
   targetList.items.push(item);
-  await saveDrawingsData();
+  await saveBomData(currentProject.id);
   closeAddBomItemModal();
   toast(`Added ${item.mark} to BOM`, 'success');
   renderBOM();
@@ -6082,7 +6144,8 @@ function renderBOM() {
   const container = document.getElementById('bomContent');
   if (!container) return;
 
-  const lists = currentJob.materialLists || [];
+  const bomJob = getBomDataForJob(currentProject?.id, currentJob?.id);
+  const lists = bomJob.materialLists || [];
   const allItems = lists.flatMap(ml => ml.items || []);
   const status = document.getElementById('elementBOMStatus');
 
@@ -6182,7 +6245,8 @@ function renderBOM() {
 function renderBomTable(mlId) {
   const wrap = document.getElementById(`bomTableWrap-${mlId}`);
   if (!wrap) return;
-  const lists = currentJob.materialLists || [];
+  const bomJob = getBomDataForJob(currentProject?.id, currentJob?.id);
+  const lists = bomJob.materialLists || [];
   const ml = lists.find(m => m.id === mlId);
   if (!ml) return;
 
@@ -6261,7 +6325,8 @@ function toggleBomSelect(itemId, checked) {
 }
 
 function toggleBomSelectAll(mlId, checked) {
-  const ml = (currentJob.materialLists || []).find(m => m.id === mlId);
+  const bomJob = getBomDataForJob(currentProject?.id, currentJob?.id);
+  const ml = (bomJob.materialLists || []).find(m => m.id === mlId);
   if (!ml) return;
   let items = [...ml.items];
   if (bomFilterCoating) items = items.filter(i => i.coating === bomFilterCoating);
@@ -6290,7 +6355,8 @@ function updateBomBulkBar() {
 
 // ── Fabrication toggle (workshop) ──
 async function openFabricateItemModal(mlId, itemId) {
-  const ml = (currentJob.materialLists || []).find(m => m.id === mlId);
+  const bomJob = getBomDataForJob(currentProject?.id, currentJob?.id);
+  const ml = (bomJob.materialLists || []).find(m => m.id === mlId);
   if (!ml) return;
   const item = ml.items.find(i => i.id === itemId);
   if (!item) return;
@@ -6333,7 +6399,7 @@ async function openFabricateItemModal(mlId, itemId) {
     };
 
     try {
-      await saveDrawingsData();
+      await saveBomData(currentProject.id);
       closeModal();
       toast(`${item.mark} marked as fabricated`, 'success');
       renderBOM();
@@ -6358,7 +6424,8 @@ function onDnDestTypeChange() { updateDnSummary(); }
 
 function updateDnSummary() {
   const destType = document.getElementById('dnDestType').value;
-  const allItems = (currentJob.materialLists || []).flatMap(ml => ml.items || []);
+  const bomJob = getBomDataForJob(currentProject?.id, currentJob?.id);
+  const allItems = (bomJob.materialLists || []).flatMap(ml => ml.items || []);
   const selected = allItems.filter(i => bomSelectedIds.has(i.id));
   const totalWeight = selected.reduce((sum, i) => sum + (i.totalWeight || i.weightPerUnit || 0), 0);
   const coatings = [...new Set(selected.map(i => i.coating).filter(Boolean))];
@@ -6378,13 +6445,14 @@ async function confirmGenerateDn() {
   if (!destType) { toast('Select a destination type', 'error'); return; }
   if (!destName) { toast('Enter a destination name', 'error'); return; }
 
-  const allItems = (currentJob.materialLists || []).flatMap(ml => ml.items || []);
+  const bomJob2 = ensureBomDataForJob(currentProject.id, currentJob.id);
+  const allItems = (bomJob2.materialLists || []).flatMap(ml => ml.items || []);
   const selected = allItems.filter(i => bomSelectedIds.has(i.id));
   if (!selected.length) { toast('No items selected', 'error'); return; }
 
   // Generate DN number
-  if (!currentJob.deliveryNotes) currentJob.deliveryNotes = [];
-  const dnNumber = `DN-${String(currentJob.deliveryNotes.length + 1).padStart(3, '0')}`;
+  if (!bomJob2.deliveryNotes) bomJob2.deliveryNotes = [];
+  const dnNumber = `DN-${String(bomJob2.deliveryNotes.length + 1).padStart(3, '0')}`;
 
   const dn = {
     id: 'dn-' + Date.now(),
@@ -6403,7 +6471,7 @@ async function confirmGenerateDn() {
     receivedAt: null
   };
 
-  currentJob.deliveryNotes.push(dn);
+  bomJob2.deliveryNotes.push(dn);
 
   // Update item statuses
   for (const item of selected) {
@@ -6419,7 +6487,7 @@ async function confirmGenerateDn() {
   }
 
   try {
-    await saveDrawingsData();
+    await saveBomData(currentProject.id);
     bomSelectedIds.clear();
     closeGenerateDnModal();
     toast(`Delivery note ${dnNumber} created for ${selected.length} items`, 'success');
