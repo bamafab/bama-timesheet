@@ -5677,36 +5677,756 @@ function renderAllElements() {
 }
 
 // ═══════════════════════════════════════════
-// ELEMENT 1: BOM
+// ELEMENT 1: BOM — MATERIAL LIST SYSTEM
 // ═══════════════════════════════════════════
+
+// ── BOM State ──
+let bomFilterCoating = '';
+let bomFilterStatus = '';
+let bomFilterFab = '';
+let bomFilterMark = '';
+let bomSelectedIds = new Set();
+let parsedBomData = null; // temp storage during upload
+
+// ── BOM Parser Constants ──
+const NON_FAB_KEYWORDS = [
+  'bolt','nut','washer','anchor','screw','rivet','hilti','hit-v','hit-re',
+  'xox','hexagon','din 934','din 933','iso 4017','iso 4014','stud',
+  'threaded rod','chemical anchor','fixings','fastener'
+];
+const BOM_HEADER_MAP = {
+  'mark':'mark','quantity':'quantity','amount':'quantity',
+  'size':'size','name':'description','description':'description',
+  'coating':'coating','wt per assembly':'weightPerUnit',
+  'weight (kg)':'weightPerUnit','weight':'weightPerUnit',
+  'total wt (kg)':'totalWeight','total weight':'totalWeight',
+  'x':'dimX','y':'dimY','z':'dimZ','length':'length','width':'width'
+};
+const BOM_NUMERIC_FIELDS = ['quantity','weightPerUnit','totalWeight','totalSurface','length','width','dimX','dimY','dimZ'];
+
+// ── PDF Parser (uses PDF.js loaded on projects.html) ──
+async function parseBomPdfBrowser(file) {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
+  const allPages = [];
+
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const tc = await page.getTextContent();
+    const vp = page.getViewport({scale: 1});
+    const items = tc.items.map(it => ({
+      text: it.str, x: Math.round(it.transform[4]),
+      y: Math.round(vp.height - it.transform[5]),
+      width: Math.round(it.width), height: Math.round(Math.abs(it.transform[0]))
+    })).filter(it => it.text.trim());
+    allPages.push(items);
+  }
+
+  // Get full page 1 text for type/metadata detection
+  const p1Text = allPages[0]?.map(i => i.text).join(' ') || '';
+  const bomType = detectBomTypeBrowser(p1Text);
+  const metadata = extractMetadataBrowser(p1Text);
+
+  let columns = null;
+  const allItems = [];
+  let itemCounter = 0;
+
+  for (const pageItems of allPages) {
+    const rows = groupRowsBrowser(pageItems);
+    let headerRowIdx = -1;
+    let bestCols = [];
+
+    for (let ri = 0; ri < Math.min(rows.length, 8); ri++) {
+      const detected = detectColumnsBrowser(rows[ri]);
+      if (detected.length > bestCols.length) { bestCols = detected; headerRowIdx = ri; }
+    }
+    if (bestCols.length < 2) continue;
+    if (!columns) columns = bestCols;
+
+    for (let ri = headerRowIdx + 1; ri < rows.length; ri++) {
+      const rowText = rows[ri].map(i => i.text).join(' ').toLowerCase();
+      if (rowText.match(/page\s+\d+\s*\/\s*\d+/) || rowText.includes('total weight') && rows[ri].length <= 3) continue;
+      if (rowText.includes('delivered by') || rowText.includes('received by')) continue;
+
+      const vals = assignColsBrowser(rows[ri], columns);
+      const nonEmpty = Object.values(vals).filter(v => v.trim());
+      if (nonEmpty.length < 2) continue;
+      if (vals.mark && /^\(.*\)$/.test(vals.mark)) continue;
+
+      const item = {
+        id: null, mark: vals.mark||'', description: vals.description||'',
+        quantity: null, coating: vals.coating||'', size: vals.size||'',
+        weightPerUnit: null, totalWeight: null, totalSurface: null,
+        length: null, width: null, dimX: null, dimY: null, dimZ: null,
+        fabricated: true, manuallyAdded: false, status: 'not_started',
+        traceability: null, deliveryHistory: []
+      };
+
+      for (const f of BOM_NUMERIC_FIELDS) {
+        if (vals[f] !== undefined) {
+          const cleaned = String(vals[f]).trim().replace(/,/g, '');
+          const n = parseFloat(cleaned);
+          if (!isNaN(n)) item[f] = n;
+        }
+      }
+
+      if (!item.mark && !item.description) continue;
+      if (!item.mark && item.description) {
+        itemCounter++;
+        item.mark = `ITEM-${String(itemCounter).padStart(3, '0')}`;
+      }
+
+      const checkText = (item.description || item.mark || '').toLowerCase();
+      if (bomType === 'bolt_anchor_list') item.fabricated = false;
+      else item.fabricated = !NON_FAB_KEYWORDS.some(kw => checkText.includes(kw));
+
+      item.id = `bom-${item.mark}-${allItems.length}`;
+      allItems.push(item);
+    }
+  }
+
+  return {
+    metadata, bomType, fileName: file.name,
+    columns: (columns||[]).map(c => ({key: c.key, label: c.label})),
+    itemCount: allItems.length,
+    fabricatedCount: allItems.filter(i => i.fabricated).length,
+    nonFabricatedCount: allItems.filter(i => !i.fabricated).length,
+    items: allItems
+  };
+}
+
+function detectBomTypeBrowser(text) {
+  const t = text.toLowerCase();
+  if (t.includes('shipping list')) return 'shipping_list';
+  if (t.includes('bolt') && (t.includes('anchor') || t.includes('list'))) return 'bolt_anchor_list';
+  if (t.includes('grating')) return 'grating_list';
+  return 'material_list';
+}
+
+function extractMetadataBrowser(text) {
+  const meta = {title:'',date:'',project:'',client:'',jobNo:'',author:'',detailer:''};
+  const lines = text.split(/\s{3,}|\n/).map(l => l.trim()).filter(Boolean);
+  for (const line of lines.slice(0, 15)) {
+    const ll = line.toLowerCase();
+    if (ll.includes('shipping list')||ll.includes('bolt')||ll.includes('grating list')||ll.includes('anchor list')) meta.title = line;
+    let m;
+    if ((m = line.match(/Date:\s*(.+)/i))) meta.date = m[1].trim();
+    if ((m = line.match(/Project:\s*(.+)/i))) meta.project = m[1].trim();
+    if ((m = line.match(/Client:\s*(.+?)(?:\s{2,}|Job|$)/i))) meta.client = m[1].trim();
+    if ((m = line.match(/Job\s*No\.?:\s*(.+)/i))) meta.jobNo = m[1].trim();
+    if ((m = line.match(/Contract:\s*(.+)/i)) && !meta.project) meta.project = m[1].trim();
+  }
+  return meta;
+}
+
+function groupRowsBrowser(items, tol = 4) {
+  if (!items.length) return [];
+  const sorted = [...items].sort((a,b) => a.y - b.y || a.x - b.x);
+  const rows = [];
+  let cur = [sorted[0]], curY = sorted[0].y;
+  for (let i = 1; i < sorted.length; i++) {
+    if (Math.abs(sorted[i].y - curY) <= tol) cur.push(sorted[i]);
+    else { rows.push(cur); cur = [sorted[i]]; curY = sorted[i].y; }
+  }
+  rows.push(cur);
+  return rows;
+}
+
+function detectColumnsBrowser(row) {
+  const cols = [];
+  for (const item of row) {
+    const label = item.text.trim().toLowerCase();
+    let norm = BOM_HEADER_MAP[label];
+    if (!norm) {
+      for (const [k,v] of Object.entries(BOM_HEADER_MAP)) {
+        if (label.includes(k) || k.includes(label)) { norm = v; break; }
+      }
+    }
+    if (norm && !cols.find(c => c.key === norm)) {
+      cols.push({key: norm, label: item.text.trim(), x: item.x, width: item.width || 60});
+    }
+  }
+  return cols.sort((a,b) => a.x - b.x);
+}
+
+function assignColsBrowser(rowItems, columns) {
+  const result = {};
+  for (const col of columns) result[col.key] = '';
+  for (const item of rowItems) {
+    let bestCol = null, bestDist = Infinity;
+    for (const col of columns) {
+      const dist = Math.abs((item.x + item.width/2) - (col.x + col.width/2));
+      const inRange = item.x >= col.x - 30 && item.x <= col.x + col.width + 50;
+      if (inRange && dist < bestDist) { bestDist = dist; bestCol = col; }
+    }
+    if (!bestCol) {
+      for (const col of columns) {
+        const dist = Math.abs(item.x - col.x);
+        if (dist < bestDist) { bestDist = dist; bestCol = col; }
+      }
+    }
+    if (bestCol) {
+      result[bestCol.key] = result[bestCol.key] ? result[bestCol.key] + ' ' + item.text.trim() : item.text.trim();
+    }
+  }
+  return result;
+}
+
+// ── BOM Upload Modal ──
+function openUploadBomModal() {
+  if (!isDraftsman || !currentJob || !currentProject) return;
+  document.getElementById('uploadBomContext').textContent = `${currentProject.id} — ${currentProject.name} / ${currentJob.name}`;
+  document.getElementById('bomFileInput').value = '';
+  document.getElementById('bomUploadZoneText').textContent = 'Click or drag a BOM PDF here';
+  document.getElementById('bomParsePreview').style.display = 'none';
+  document.getElementById('bomUploadConfirmBtn').style.display = 'none';
+  document.getElementById('bomUploadProgress').style.display = 'none';
+  parsedBomData = null;
+  document.getElementById('uploadBomModal').classList.add('active');
+}
+function closeUploadBomModal() { document.getElementById('uploadBomModal').classList.remove('active'); parsedBomData = null; }
+
+async function onBomFileSelected() {
+  const input = document.getElementById('bomFileInput');
+  if (!input.files.length) return;
+  const file = input.files[0];
+  document.getElementById('bomUploadZoneText').textContent = file.name;
+  document.getElementById('bomUploadProgress').style.display = 'block';
+  document.getElementById('bomUploadProgressText').textContent = 'Parsing PDF...';
+  document.getElementById('bomUploadProgressBar').style.width = '30%';
+
+  try {
+    parsedBomData = await parseBomPdfBrowser(file);
+    parsedBomData._file = file;
+    document.getElementById('bomUploadProgressBar').style.width = '100%';
+    document.getElementById('bomUploadProgressText').textContent = 'Parsed!';
+
+    // Show preview
+    document.getElementById('bomParseTitle').textContent = `${parsedBomData.metadata.title || parsedBomData.bomType}`;
+    document.getElementById('bomParseSummary').textContent =
+      `${parsedBomData.itemCount} items found — ${parsedBomData.fabricatedCount} fabricated, ${parsedBomData.nonFabricatedCount} non-fabricated (bought-in)`;
+
+    // Build preview table
+    const cols = parsedBomData.columns;
+    let tableHtml = '<thead><tr>';
+    tableHtml += '<th style="padding:6px 8px;font-size:10px;border-bottom:1px solid var(--border);color:var(--subtle)">Type</th>';
+    for (const c of cols.slice(0, 5)) {
+      tableHtml += `<th style="padding:6px 8px;font-size:10px;border-bottom:1px solid var(--border);color:var(--subtle)">${c.label}</th>`;
+    }
+    tableHtml += '</tr></thead><tbody>';
+    for (const item of parsedBomData.items.slice(0, 15)) {
+      const rowClass = item.fabricated ? '' : 'non-fab';
+      tableHtml += `<tr class="${rowClass}">`;
+      tableHtml += `<td style="padding:4px 8px;font-size:11px">${item.fabricated ? '&#128296;' : '&#128230;'}</td>`;
+      for (const c of cols.slice(0, 5)) {
+        let val = item[c.key];
+        if (val === null || val === undefined) val = '';
+        if (typeof val === 'number') val = val.toLocaleString('en-GB');
+        tableHtml += `<td style="padding:4px 8px;font-size:11px">${val}</td>`;
+      }
+      tableHtml += '</tr>';
+    }
+    if (parsedBomData.items.length > 15) {
+      tableHtml += `<tr><td colspan="${cols.length+1}" style="padding:8px;text-align:center;color:var(--muted);font-size:11px">... and ${parsedBomData.items.length - 15} more items</td></tr>`;
+    }
+    tableHtml += '</tbody>';
+    document.getElementById('bomPreviewTable').innerHTML = tableHtml;
+
+    document.getElementById('bomParsePreview').style.display = 'block';
+    document.getElementById('bomUploadConfirmBtn').style.display = '';
+    setTimeout(() => { document.getElementById('bomUploadProgress').style.display = 'none'; }, 600);
+  } catch (e) {
+    console.error('BOM parse error:', e);
+    document.getElementById('bomUploadProgressText').textContent = `Parse failed: ${e.message}`;
+    document.getElementById('bomUploadProgressBar').style.width = '100%';
+    document.getElementById('bomUploadProgressBar').style.background = 'var(--red)';
+    toast('Failed to parse BOM PDF: ' + e.message, 'error');
+  }
+}
+
+async function confirmUploadBom() {
+  if (!parsedBomData || !currentJob || !currentProject) return;
+  const projectId = currentProject.id;
+  const btn = document.getElementById('bomUploadConfirmBtn');
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+
+  try {
+    // Upload the PDF file to SharePoint
+    let fileRecord = {};
+    if (parsedBomData._file) {
+      document.getElementById('bomUploadProgress').style.display = 'block';
+      document.getElementById('bomUploadProgressText').textContent = 'Uploading PDF to SharePoint...';
+      document.getElementById('bomUploadProgressBar').style.width = '50%';
+      document.getElementById('bomUploadProgressBar').style.background = 'var(--accent)';
+
+      const projectFolder = await findProjectFolder(projectId);
+      if (projectFolder) {
+        const drawingsFolder = await getOrCreateSubfolder(projectFolder.id, '02 - Drawings');
+        if (drawingsFolder) {
+          const jobFolder = currentJob.spFolderId
+            ? { id: currentJob.spFolderId }
+            : await getOrCreateSubfolder(drawingsFolder.id, currentJob.folderName || currentJob.name);
+          if (jobFolder) {
+            const bomFolder = await getOrCreateSubfolder(jobFolder.id, '01 - BOM');
+            if (bomFolder) {
+              const uploaded = await uploadFileToDrive(bomFolder.id, parsedBomData._file);
+              fileRecord = {
+                fileId: uploaded.id,
+                driveId: uploaded.parentReference?.driveId || BAMA_DRIVE_ID,
+                webUrl: uploaded.webUrl
+              };
+            }
+          }
+        }
+      }
+      document.getElementById('bomUploadProgressBar').style.width = '80%';
+      document.getElementById('bomUploadProgressText').textContent = 'Saving data...';
+    }
+
+    // Build material list entry
+    const ml = {
+      id: 'ml-' + Date.now(),
+      fileName: parsedBomData.fileName,
+      fileId: fileRecord.fileId || '',
+      driveId: fileRecord.driveId || '',
+      webUrl: fileRecord.webUrl || '',
+      bomType: parsedBomData.bomType,
+      uploadedAt: new Date().toISOString(),
+      uploadedBy: 'Draftsman',
+      metadata: parsedBomData.metadata,
+      columns: parsedBomData.columns,
+      items: parsedBomData.items
+    };
+
+    // Add to job
+    if (!currentJob.materialLists) currentJob.materialLists = [];
+    currentJob.materialLists.push(ml);
+
+    await saveDrawingsData();
+
+    document.getElementById('bomUploadProgressBar').style.width = '100%';
+    document.getElementById('bomUploadProgressText').textContent = 'Done!';
+
+    setTimeout(() => {
+      closeUploadBomModal();
+      toast(`BOM uploaded: ${ml.items.length} items parsed`, 'success');
+      renderBOM();
+    }, 400);
+
+  } catch (e) {
+    console.error('BOM upload error:', e);
+    toast('Upload failed: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Upload & Save BOM';
+  }
+}
+
+// ── Add Manual Item ──
+function openAddBomItemModal() {
+  if (!currentJob) return;
+  document.getElementById('manualBomMark').value = '';
+  document.getElementById('manualBomQty').value = '1';
+  document.getElementById('manualBomDesc').value = '';
+  document.getElementById('manualBomCoating').value = '';
+  document.getElementById('manualBomWeight').value = '';
+  document.querySelectorAll('input[name="manualBomFab"]')[0].checked = true;
+  document.getElementById('addBomItemModal').classList.add('active');
+}
+function closeAddBomItemModal() { document.getElementById('addBomItemModal').classList.remove('active'); }
+
+async function confirmAddBomItem() {
+  const mark = document.getElementById('manualBomMark').value.trim();
+  const qty = parseFloat(document.getElementById('manualBomQty').value) || 1;
+  const desc = document.getElementById('manualBomDesc').value.trim();
+  const coating = document.getElementById('manualBomCoating').value.trim();
+  const weight = parseFloat(document.getElementById('manualBomWeight').value) || null;
+  const fab = document.querySelector('input[name="manualBomFab"]:checked')?.value === 'true';
+
+  if (!mark && !desc) { toast('Enter a mark or description', 'error'); return; }
+
+  // Find the first material list to add to, or create a manual one
+  if (!currentJob.materialLists) currentJob.materialLists = [];
+  let targetList = currentJob.materialLists[0];
+  if (!targetList) {
+    targetList = {
+      id: 'ml-manual-' + Date.now(), fileName: 'Manual entries', fileId: '', driveId: '', webUrl: '',
+      bomType: 'manual', uploadedAt: new Date().toISOString(), uploadedBy: 'Manual',
+      metadata: { title: 'Manual entries', date: '', project: '', client: '', jobNo: '', author: '', detailer: '' },
+      columns: [{key:'mark',label:'Mark'},{key:'description',label:'Description'},{key:'quantity',label:'Quantity'},{key:'coating',label:'Coating'},{key:'totalWeight',label:'Weight'}],
+      items: []
+    };
+    currentJob.materialLists.push(targetList);
+  }
+
+  const item = {
+    id: `bom-manual-${Date.now()}`,
+    mark: mark || `MANUAL-${targetList.items.length + 1}`,
+    description: desc, quantity: qty, coating, size: '',
+    weightPerUnit: null, totalWeight: weight, totalSurface: null,
+    length: null, width: null, dimX: null, dimY: null, dimZ: null,
+    fabricated: fab, manuallyAdded: true, status: 'not_started',
+    traceability: null, deliveryHistory: []
+  };
+
+  targetList.items.push(item);
+  await saveDrawingsData();
+  closeAddBomItemModal();
+  toast(`Added ${item.mark} to BOM`, 'success');
+  renderBOM();
+}
+
+// ── Render BOM Element ──
 function renderBOM() {
   const container = document.getElementById('bomContent');
   if (!container) return;
-  const bom = currentJob.bom || { files: [], notes: [] };
+
+  const lists = currentJob.materialLists || [];
+  const allItems = lists.flatMap(ml => ml.items || []);
   const status = document.getElementById('elementBOMStatus');
-  status.textContent = bom.files.length > 0 ? `${bom.files.length} file${bom.files.length>1?'s':''}` : 'Empty';
-  status.style.cssText = bom.files.length > 0
-    ? 'color:var(--green);background:rgba(62,207,142,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600'
-    : 'color:var(--subtle);font-size:11px;font-weight:600';
+
+  if (allItems.length > 0) {
+    const fabDone = allItems.filter(i => i.fabricated && i.status !== 'not_started').length;
+    const fabTotal = allItems.filter(i => i.fabricated).length;
+    status.textContent = `${allItems.length} items · ${fabDone}/${fabTotal} fabricated`;
+    status.style.cssText = fabDone === fabTotal && fabTotal > 0
+      ? 'color:var(--green);background:rgba(62,207,142,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600'
+      : 'color:var(--accent);background:rgba(255,107,0,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600';
+  } else {
+    const bom = currentJob.bom || { files: [], notes: [] };
+    status.textContent = bom.files?.length > 0 ? `${bom.files.length} file${bom.files.length>1?'s':''}` : 'Empty';
+    status.style.cssText = bom.files?.length > 0
+      ? 'color:var(--green);background:rgba(62,207,142,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600'
+      : 'color:var(--subtle);font-size:11px;font-weight:600';
+  }
 
   let html = '';
 
-  // Upload button (draftsman only)
+  // Toolbar
+  html += '<div class="bom-toolbar">';
   if (isDraftsman && currentJob.status !== 'closed') {
-    html += `<button class="btn btn-primary" style="margin-bottom:12px;padding:8px 16px;font-size:12px" onclick="openUploadFileModal('bom')">&#43; Upload File</button>`;
+    html += `<button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="openUploadBomModal()">&#128196; Upload BOM PDF</button>`;
+    html += `<button class="btn" style="padding:8px 16px;font-size:12px;background:rgba(255,107,0,.08);border:1px solid rgba(255,107,0,.25);color:var(--accent)" onclick="openAddBomItemModal()">&#43; Add Item</button>`;
   }
+  // Legacy file upload button
+  if (isDraftsman && currentJob.status !== 'closed') {
+    html += `<button class="btn btn-ghost" style="padding:8px 16px;font-size:12px" onclick="openUploadFileModal('bom')">&#128196; Upload File</button>`;
+  }
+  html += '</div>';
 
-  // File list
-  if (bom.files.length > 0) {
-    html += bom.files.map(f => renderFileRow(f, 'bom')).join('');
+  // Show material lists
+  if (allItems.length > 0) {
+    // Progress bar
+    const fabItems = allItems.filter(i => i.fabricated);
+    const fabDone = fabItems.filter(i => i.status !== 'not_started').length;
+    const pct = fabItems.length ? Math.round(fabDone / fabItems.length * 100) : 0;
+    html += `<div class="bom-progress-bar"><div class="bom-progress-fill" style="width:${pct}%;background:${pct === 100 ? 'var(--green)' : 'var(--accent)'}"></div></div>`;
+
+    // Per-list sections
+    for (const ml of lists) {
+      if (!ml.items?.length) continue;
+      html += `<div class="bom-list-header">`;
+      html += `<div class="bom-list-title">${ml.metadata?.title || ml.fileName || 'Material List'}</div>`;
+      html += `<div class="bom-list-badge">${ml.items.length} items</div>`;
+      if (ml.webUrl) html += `<a href="${ml.webUrl}" target="_blank" style="font-size:11px;color:var(--accent);text-decoration:none">View PDF</a>`;
+      html += `</div>`;
+
+      // Filter bar
+      const coatings = [...new Set(ml.items.map(i => i.coating).filter(Boolean))];
+      const statuses = [...new Set(ml.items.map(i => i.status))];
+      html += `<div class="bom-filter-bar">`;
+      html += `<select onchange="bomFilterCoating=this.value;renderBomTable('${ml.id}')"><option value="">All coatings</option>${coatings.map(c => `<option value="${c}" ${bomFilterCoating===c?'selected':''}>${c}</option>`).join('')}</select>`;
+      html += `<select onchange="bomFilterStatus=this.value;renderBomTable('${ml.id}')"><option value="">All statuses</option>${statuses.map(s => `<option value="${s}" ${bomFilterStatus===s?'selected':''}>${s.replace(/_/g,' ')}</option>`).join('')}</select>`;
+      html += `<select onchange="bomFilterFab=this.value;renderBomTable('${ml.id}')"><option value="">All types</option><option value="true" ${bomFilterFab==='true'?'selected':''}>Fabricated</option><option value="false" ${bomFilterFab==='false'?'selected':''}>Non-fabricated</option></select>`;
+      html += `<input type="text" placeholder="Search mark..." value="${bomFilterMark}" oninput="bomFilterMark=this.value;renderBomTable('${ml.id}')" style="max-width:120px">`;
+      html += `</div>`;
+
+      // Table container
+      html += `<div id="bomTableWrap-${ml.id}" style="max-height:400px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:16px"></div>`;
+    }
+
+    // Bulk actions bar (for office/draftsman)
+    if (isDraftsman) {
+      html += `<div id="bomBulkBar" style="display:none" class="bom-select-all-bar">`;
+      html += `<span id="bomSelCount">0 selected</span>`;
+      html += `<div class="bom-bulk-actions">`;
+      html += `<button class="btn btn-primary" style="padding:6px 14px;font-size:12px" onclick="openGenerateDnModal()">&#128666; Generate Delivery Note</button>`;
+      html += `</div></div>`;
+    }
   } else {
-    html += '<div style="color:var(--subtle);font-size:13px;padding:12px 0">No BOM files uploaded yet</div>';
+    // Legacy file list
+    const bom = currentJob.bom || { files: [], notes: [] };
+    if (bom.files?.length > 0) {
+      html += bom.files.map(f => renderFileRow(f, 'bom')).join('');
+    } else {
+      html += '<div style="color:var(--subtle);font-size:13px;padding:12px 0">No material lists uploaded yet. Use "Upload BOM PDF" to parse a material list.</div>';
+    }
   }
 
   // Notes
-  html += renderNotesSection(bom.notes, 'bom');
+  const bom = currentJob.bom || { files: [], notes: [] };
+  html += renderNotesSection(bom.notes || [], 'bom');
 
   container.innerHTML = html;
+
+  // Render tables after DOM is ready
+  for (const ml of lists) {
+    if (ml.items?.length) {
+      setTimeout(() => renderBomTable(ml.id), 0);
+    }
+  }
+}
+
+// ── Render BOM Table (filterable) ──
+function renderBomTable(mlId) {
+  const wrap = document.getElementById(`bomTableWrap-${mlId}`);
+  if (!wrap) return;
+  const lists = currentJob.materialLists || [];
+  const ml = lists.find(m => m.id === mlId);
+  if (!ml) return;
+
+  let items = [...ml.items];
+
+  // Apply filters
+  if (bomFilterCoating) items = items.filter(i => i.coating === bomFilterCoating);
+  if (bomFilterStatus) items = items.filter(i => i.status === bomFilterStatus);
+  if (bomFilterFab === 'true') items = items.filter(i => i.fabricated);
+  else if (bomFilterFab === 'false') items = items.filter(i => !i.fabricated);
+  if (bomFilterMark) items = items.filter(i => i.mark.toLowerCase().includes(bomFilterMark.toLowerCase()));
+
+  const employees = (state.timesheetData.employees || []).filter(e => e.active !== false);
+  const machines = state.timesheetData.settings?.weldingMachines || [];
+
+  // Select all bar
+  const allFilteredIds = items.map(i => i.id);
+  const allSelected = allFilteredIds.length > 0 && allFilteredIds.every(id => bomSelectedIds.has(id));
+
+  let html = `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface);border-bottom:1px solid var(--border)">`;
+  html += `<input type="checkbox" ${allSelected ? 'checked' : ''} onchange="toggleBomSelectAll('${mlId}', this.checked)" style="width:16px;height:16px;accent-color:var(--accent)">`;
+  html += `<span style="font-size:11px;color:var(--muted)">${allSelected ? 'Deselect' : 'Select'} all ${items.length} filtered</span>`;
+  html += `</div>`;
+
+  html += '<table class="bom-table"><thead><tr>';
+  html += '<th class="cb-cell"></th>';
+  html += '<th>Mark</th>';
+  const showDesc = ml.columns.some(c => c.key === 'description');
+  const showSize = ml.columns.some(c => c.key === 'size');
+  const showCoating = ml.columns.some(c => c.key === 'coating');
+  if (showDesc || showSize) html += `<th>${showDesc ? 'Description' : 'Size'}</th>`;
+  html += '<th>Qty</th>';
+  if (showCoating) html += '<th>Coating</th>';
+  html += '<th>Weight</th><th>Status</th>';
+  html += '<th>Traceability</th>';
+  html += '</tr></thead><tbody>';
+
+  for (const item of items) {
+    const classes = [];
+    if (!item.fabricated) classes.push('non-fab');
+    if (item.manuallyAdded) classes.push('manual-item');
+    if (item.status === 'dispatched') classes.push('dispatched');
+
+    html += `<tr class="${classes.join(' ')}">`;
+    html += `<td class="cb-cell"><input type="checkbox" ${bomSelectedIds.has(item.id) ? 'checked' : ''} onchange="toggleBomSelect('${item.id}', this.checked)"></td>`;
+    html += `<td style="font-weight:600;font-family:var(--font-mono)">${item.mark}${item.manuallyAdded ? ' <span style="color:var(--amber);font-size:10px" title="Manually added">&#9679;</span>' : ''}</td>`;
+    if (showDesc || showSize) html += `<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${item.description || item.size}">${item.description || item.size}</td>`;
+    html += `<td>${item.quantity || ''}</td>`;
+    if (showCoating) html += `<td>${item.coating}</td>`;
+    html += `<td>${item.totalWeight != null ? item.totalWeight.toLocaleString('en-GB') : (item.weightPerUnit != null ? item.weightPerUnit.toLocaleString('en-GB') : '')}</td>`;
+    html += `<td><span class="bom-status-badge ${item.status.replace(/_/g,'-')}">${item.status.replace(/_/g,' ')}</span></td>`;
+
+    // Traceability cell
+    if (item.fabricated && item.status === 'not_started') {
+      // Workshop can tick fabricated
+      html += `<td><button class="btn btn-success" style="padding:3px 10px;font-size:10px" onclick="openFabricateItemModal('${mlId}','${item.id}')">&#10003; Fabricated</button></td>`;
+    } else if (item.traceability) {
+      html += `<td style="font-size:10px">${item.traceability.welder}${item.traceability.machine ? ' / ' + item.traceability.machine : ''}</td>`;
+    } else if (!item.fabricated) {
+      html += `<td style="font-size:10px;color:var(--subtle)">N/A</td>`;
+    } else {
+      html += `<td></td>`;
+    }
+    html += '</tr>';
+  }
+
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+  updateBomBulkBar();
+}
+
+function toggleBomSelect(itemId, checked) {
+  if (checked) bomSelectedIds.add(itemId);
+  else bomSelectedIds.delete(itemId);
+  updateBomBulkBar();
+}
+
+function toggleBomSelectAll(mlId, checked) {
+  const ml = (currentJob.materialLists || []).find(m => m.id === mlId);
+  if (!ml) return;
+  let items = [...ml.items];
+  if (bomFilterCoating) items = items.filter(i => i.coating === bomFilterCoating);
+  if (bomFilterStatus) items = items.filter(i => i.status === bomFilterStatus);
+  if (bomFilterFab === 'true') items = items.filter(i => i.fabricated);
+  else if (bomFilterFab === 'false') items = items.filter(i => !i.fabricated);
+  if (bomFilterMark) items = items.filter(i => i.mark.toLowerCase().includes(bomFilterMark.toLowerCase()));
+
+  for (const item of items) {
+    if (checked) bomSelectedIds.add(item.id);
+    else bomSelectedIds.delete(item.id);
+  }
+  renderBomTable(mlId);
+}
+
+function updateBomBulkBar() {
+  const bar = document.getElementById('bomBulkBar');
+  if (!bar) return;
+  if (bomSelectedIds.size > 0) {
+    bar.style.display = 'flex';
+    document.getElementById('bomSelCount').textContent = `${bomSelectedIds.size} selected`;
+  } else {
+    bar.style.display = 'none';
+  }
+}
+
+// ── Fabrication toggle (workshop) ──
+async function openFabricateItemModal(mlId, itemId) {
+  const ml = (currentJob.materialLists || []).find(m => m.id === mlId);
+  if (!ml) return;
+  const item = ml.items.find(i => i.id === itemId);
+  if (!item) return;
+
+  const employees = (state.timesheetData.employees || []).filter(e => e.active !== false);
+  const machines = state.timesheetData.settings?.weldingMachines || [];
+
+  // Quick inline approach using confirm modal
+  const empOptions = employees.map(e => `<option value="${e.name}">${e.name}</option>`).join('');
+  const machOptions = machines.filter(m => m.active !== false).map(m => `<option value="${m.name}">${m.name} (${m.type || ''})</option>`).join('');
+
+  const content = `
+    <div style="text-align:left;margin-top:12px">
+      <div style="font-size:14px;font-weight:600;margin-bottom:12px">${item.mark} — Mark as fabricated</div>
+      <div style="margin-bottom:10px">
+        <div class="field-label">WELDER</div>
+        <select class="field-input" id="fabWelder" style="font-size:13px"><option value="">Select welder...</option>${empOptions}</select>
+      </div>
+      <div style="margin-bottom:10px">
+        <div class="field-label">WELDING MACHINE (if applicable)</div>
+        <select class="field-input" id="fabMachine" style="font-size:13px"><option value="">N/A</option>${machOptions}</select>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('confirmTitle').textContent = '&#10003; Mark as Fabricated';
+  document.getElementById('confirmMsg').innerHTML = content;
+  const okBtn = document.getElementById('confirmOk');
+  okBtn.textContent = 'Confirm';
+  okBtn.onclick = async () => {
+    const welder = document.getElementById('fabWelder').value;
+    if (!welder) { toast('Please select the welder', 'error'); return; }
+    const machine = document.getElementById('fabMachine').value;
+
+    item.status = 'fabricated';
+    item.traceability = {
+      welder,
+      machine: machine || null,
+      completedAt: new Date().toISOString()
+    };
+
+    try {
+      await saveDrawingsData();
+      closeModal();
+      toast(`${item.mark} marked as fabricated`, 'success');
+      renderBOM();
+    } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+  };
+  document.getElementById('confirmModal').classList.add('active');
+}
+
+// ── Delivery Note Generation ──
+function openGenerateDnModal() {
+  if (bomSelectedIds.size === 0) { toast('Select items first', 'error'); return; }
+  document.getElementById('dnItemCount').textContent = `${bomSelectedIds.size} items selected`;
+  document.getElementById('dnDestType').value = '';
+  document.getElementById('dnDestName').value = '';
+  document.getElementById('dnAddress').value = '';
+  document.getElementById('dnSiteContact').value = '';
+  updateDnSummary();
+  document.getElementById('generateDnModal').classList.add('active');
+}
+function closeGenerateDnModal() { document.getElementById('generateDnModal').classList.remove('active'); }
+function onDnDestTypeChange() { updateDnSummary(); }
+
+function updateDnSummary() {
+  const destType = document.getElementById('dnDestType').value;
+  const allItems = (currentJob.materialLists || []).flatMap(ml => ml.items || []);
+  const selected = allItems.filter(i => bomSelectedIds.has(i.id));
+  const totalWeight = selected.reduce((sum, i) => sum + (i.totalWeight || i.weightPerUnit || 0), 0);
+  const coatings = [...new Set(selected.map(i => i.coating).filter(Boolean))];
+
+  let summary = `${selected.length} items · ${totalWeight.toLocaleString('en-GB')} kg total`;
+  if (coatings.length) summary += ` · Coatings: ${coatings.join(', ')}`;
+  if (destType) summary += ` · Destination: ${destType.replace(/_/g, ' ')}`;
+  document.getElementById('dnSummary').textContent = summary;
+}
+
+async function confirmGenerateDn() {
+  const destType = document.getElementById('dnDestType').value;
+  const destName = document.getElementById('dnDestName').value.trim();
+  const address = document.getElementById('dnAddress').value.trim();
+  const siteContact = document.getElementById('dnSiteContact').value.trim();
+
+  if (!destType) { toast('Select a destination type', 'error'); return; }
+  if (!destName) { toast('Enter a destination name', 'error'); return; }
+
+  const allItems = (currentJob.materialLists || []).flatMap(ml => ml.items || []);
+  const selected = allItems.filter(i => bomSelectedIds.has(i.id));
+  if (!selected.length) { toast('No items selected', 'error'); return; }
+
+  // Generate DN number
+  if (!currentJob.deliveryNotes) currentJob.deliveryNotes = [];
+  const dnNumber = `DN-${String(currentJob.deliveryNotes.length + 1).padStart(3, '0')}`;
+
+  const dn = {
+    id: 'dn-' + Date.now(),
+    number: dnNumber,
+    destination: destType,
+    destinationName: destName,
+    address,
+    siteContact,
+    createdAt: new Date().toISOString(),
+    createdBy: 'Office',
+    itemIds: selected.map(i => i.id),
+    totalWeight: selected.reduce((s, i) => s + (i.totalWeight || i.weightPerUnit || 0), 0),
+    deliveredBy: '',
+    deliveredAt: null,
+    receivedBy: '',
+    receivedAt: null
+  };
+
+  currentJob.deliveryNotes.push(dn);
+
+  // Update item statuses
+  for (const item of selected) {
+    item.status = destType === 'site' ? 'delivered_to_site' : 'dispatched';
+    item.deliveryHistory.push({
+      deliveryNoteId: dn.id,
+      deliveryNoteNumber: dnNumber,
+      destination: destType,
+      destinationName: destName,
+      createdAt: dn.createdAt,
+      createdBy: dn.createdBy
+    });
+  }
+
+  try {
+    await saveDrawingsData();
+    bomSelectedIds.clear();
+    closeGenerateDnModal();
+    toast(`Delivery note ${dnNumber} created for ${selected.length} items`, 'success');
+    renderBOM();
+  } catch (e) {
+    toast('Save failed: ' + e.message, 'error');
+  }
 }
 
 // ═══════════════════════════════════════════

@@ -1158,3 +1158,86 @@
     .clock-summary-entry { grid-template-columns: 1fr 1fr; }
     .mgr-emp-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
   }
+  /* ═══════════════════════════════════
+     BOM / MATERIAL LIST STYLES
+  ═══════════════════════════════════ */
+  .bom-toolbar {
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    padding: 12px 0; border-bottom: 1px solid var(--border); margin-bottom: 12px;
+  }
+  .bom-filter-bar {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    padding: 10px 0; margin-bottom: 8px;
+  }
+  .bom-filter-bar select, .bom-filter-bar input {
+    font-size: 12px; padding: 6px 10px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--card); color: var(--text);
+    font-family: var(--font-body);
+  }
+  .bom-table {
+    width: 100%; border-collapse: collapse; font-size: 12px;
+  }
+  .bom-table th {
+    text-align: left; padding: 8px 10px; font-size: 11px; font-weight: 600;
+    color: var(--subtle); text-transform: uppercase; letter-spacing: .5px;
+    border-bottom: 2px solid var(--border); position: sticky; top: 0;
+    background: var(--card); z-index: 1;
+  }
+  .bom-table td {
+    padding: 7px 10px; border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  .bom-table tr:hover { background: rgba(255,107,0,.03); }
+  .bom-table tr.non-fab { background: rgba(99,102,241,.04); }
+  .bom-table tr.non-fab:hover { background: rgba(99,102,241,.08); }
+  .bom-table tr.manual-item td:first-child::before {
+    content: ''; display: inline-block; width: 6px; height: 6px;
+    background: var(--amber); border-radius: 50%; margin-right: 6px;
+  }
+  .bom-table tr.dispatched { opacity: .5; }
+  .bom-table .cb-cell { width: 32px; text-align: center; }
+  .bom-table .cb-cell input[type="checkbox"] {
+    width: 16px; height: 16px; cursor: pointer; accent-color: var(--accent);
+  }
+  .bom-status-badge {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: 10px; font-weight: 600; letter-spacing: .3px;
+    white-space: nowrap;
+  }
+  .bom-status-badge.not-started { background: var(--surface); color: var(--subtle); }
+  .bom-status-badge.fabricated { background: rgba(62,207,142,.12); color: var(--green); }
+  .bom-status-badge.dispatched { background: rgba(99,102,241,.12); color: #6366f1; }
+  .bom-status-badge.returned { background: rgba(245,158,11,.12); color: var(--amber); }
+  .bom-status-badge.delivered-to-site { background: rgba(62,207,142,.2); color: var(--green); }
+  .bom-status-badge.complete { background: rgba(62,207,142,.25); color: var(--green); }
+  .bom-select-all-bar {
+    display: flex; align-items: center; gap: 12px; padding: 8px 12px;
+    background: rgba(255,107,0,.06); border: 1px solid rgba(255,107,0,.2);
+    border-radius: 8px; margin-bottom: 10px; font-size: 12px;
+  }
+  .bom-bulk-actions {
+    display: flex; gap: 8px; margin-left: auto;
+  }
+  .bom-list-header {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 4px;
+  }
+  .bom-list-title {
+    font-size: 13px; font-weight: 600; color: var(--text);
+  }
+  .bom-list-badge {
+    font-size: 11px; padding: 2px 8px; border-radius: 10px;
+    background: rgba(255,107,0,.1); color: var(--accent); font-weight: 600;
+  }
+  .bom-progress-bar {
+    height: 4px; background: var(--border); border-radius: 2px;
+    margin-top: 8px; margin-bottom: 16px; overflow: hidden;
+  }
+  .bom-progress-fill {
+    height: 100%; border-radius: 2px; transition: width .3s;
+  }
+  .dn-history-item {
+    display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+    border: 1px solid var(--border); border-radius: 8px; margin-bottom: 8px;
+    font-size: 12px;
+  }
+  .dn-history-item:hover { border-color: rgba(255,107,0,.3); }

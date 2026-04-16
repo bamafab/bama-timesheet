@@ -406,6 +406,150 @@
 </div>
 
 <!-- ═══════════════════════════════════════
+     UPLOAD BOM MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="uploadBomModal" style="align-items:flex-start;padding-top:40px;overflow-y:auto">
+  <div class="modal" style="width:620px;max-width:95vw;max-height:85vh;overflow-y:auto">
+    <div class="modal-title">&#128196; Upload Material List (BOM)</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:20px" id="uploadBomContext"></div>
+
+    <div style="margin-bottom:16px">
+      <div class="field-label">SELECT PDF FILE</div>
+      <input type="file" id="bomFileInput" accept=".pdf,.PDF" style="display:none" onchange="onBomFileSelected()">
+      <div class="upload-zone" id="bomDropZone" onclick="document.getElementById('bomFileInput').click()">
+        <div class="upload-zone-icon">&#128196;</div>
+        <div class="upload-zone-text" id="bomUploadZoneText">Click or drag a BOM PDF here</div>
+      </div>
+    </div>
+
+    <!-- Parse preview (shown after file selected) -->
+    <div id="bomParsePreview" style="display:none">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;padding:14px;background:rgba(62,207,142,.06);border:1px solid rgba(62,207,142,.2);border-radius:10px">
+        <div style="font-size:24px">&#9989;</div>
+        <div>
+          <div style="font-weight:600;font-size:14px" id="bomParseTitle">Parsed successfully</div>
+          <div style="font-size:12px;color:var(--muted)" id="bomParseSummary"></div>
+        </div>
+      </div>
+      <div style="max-height:240px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:16px">
+        <table style="width:100%;border-collapse:collapse;font-size:12px" id="bomPreviewTable">
+        </table>
+      </div>
+      <div style="display:flex;gap:12px;align-items:center;margin-bottom:8px">
+        <div style="font-size:12px;color:var(--muted)">
+          <span style="display:inline-block;width:10px;height:10px;background:rgba(62,207,142,.2);border:1px solid var(--green);border-radius:2px;margin-right:4px"></span>Fabricated
+          <span style="display:inline-block;width:10px;height:10px;background:rgba(99,102,241,.15);border:1px solid #6366f1;border-radius:2px;margin-left:12px;margin-right:4px"></span>Non-fabricated (bought-in)
+        </div>
+      </div>
+    </div>
+
+    <div id="bomUploadProgress" style="display:none;margin-bottom:12px">
+      <div style="background:var(--border);border-radius:4px;overflow:hidden;height:6px">
+        <div id="bomUploadProgressBar" style="background:var(--accent);height:100%;width:0%;transition:width .3s"></div>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-top:6px;text-align:center" id="bomUploadProgressText">Parsing PDF...</div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeUploadBomModal()">Cancel</button>
+      <button class="btn btn-primary" id="bomUploadConfirmBtn" onclick="confirmUploadBom()" style="display:none">Upload &amp; Save BOM</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     ADD MANUAL BOM ITEM MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="addBomItemModal">
+  <div class="modal" style="width:520px;max-width:95vw">
+    <div class="modal-title">&#43; Add Item to BOM</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:20px">This item will be flagged as manually added</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <div class="field-label">MARK</div>
+        <input type="text" class="field-input" id="manualBomMark" placeholder="e.g. PL5">
+      </div>
+      <div>
+        <div class="field-label">QUANTITY</div>
+        <input type="number" class="field-input" id="manualBomQty" min="1" value="1">
+      </div>
+    </div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">DESCRIPTION / SIZE</div>
+      <input type="text" class="field-input" id="manualBomDesc" placeholder="e.g. PLT15x250 or M20 Bolt">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <div class="field-label">COATING</div>
+        <input type="text" class="field-input" id="manualBomCoating" placeholder="e.g. Galvanised">
+      </div>
+      <div>
+        <div class="field-label">WEIGHT (kg)</div>
+        <input type="number" class="field-input" id="manualBomWeight" step="0.1" placeholder="0.0">
+      </div>
+    </div>
+    <div style="margin-bottom:16px">
+      <div class="field-label">ITEM TYPE</div>
+      <div style="display:flex;gap:8px">
+        <label class="toggle-chip active" id="chipManualFab">
+          <input type="radio" name="manualBomFab" value="true" style="display:none" checked>
+          <span>&#128296; Fabricated</span>
+        </label>
+        <label class="toggle-chip" id="chipManualNonFab">
+          <input type="radio" name="manualBomFab" value="false" style="display:none">
+          <span>&#128230; Non-fabricated</span>
+        </label>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeAddBomItemModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmAddBomItem()">Add Item</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     GENERATE DELIVERY NOTE MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="generateDnModal">
+  <div class="modal" style="width:520px;max-width:95vw">
+    <div class="modal-title">&#128666; Generate Delivery Note</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:20px" id="dnItemCount"></div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">DESTINATION TYPE</div>
+      <select class="field-input" id="dnDestType" onchange="onDnDestTypeChange()">
+        <option value="">Select destination...</option>
+        <option value="galvaniser">Galvaniser</option>
+        <option value="painter">Painter</option>
+        <option value="powder_coater">Powder Coater</option>
+        <option value="site">Site (Final Delivery)</option>
+        <option value="other">Other</option>
+      </select>
+    </div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">DESTINATION NAME</div>
+      <input type="text" class="field-input" id="dnDestName" placeholder="e.g. ABC Galvanising Ltd">
+    </div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">ADDRESS (optional)</div>
+      <input type="text" class="field-input" id="dnAddress" placeholder="Delivery address">
+    </div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">SITE CONTACT (optional)</div>
+      <input type="text" class="field-input" id="dnSiteContact" placeholder="Contact name">
+    </div>
+    <div style="margin-bottom:16px;padding:12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--muted)">
+      <div style="font-weight:600;margin-bottom:4px">Summary</div>
+      <div id="dnSummary">Select items and destination to generate delivery note</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeGenerateDnModal()">Cancel</button>
+      <button class="btn btn-primary" id="dnGenerateBtn" onclick="confirmGenerateDn()">Generate &amp; Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
      CONFIRM MODAL
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="confirmModal">
@@ -419,6 +563,8 @@
   </div>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
 <script src="shared.js"></script>
 </body>
 </html>
