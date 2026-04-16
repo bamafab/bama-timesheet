@@ -7971,7 +7971,7 @@ async function init() {
     : Promise.resolve();
 
   // User access needed on manager and office pages
-  const userAccessPromise = (CURRENT_PAGE === 'manager' || CURRENT_PAGE === 'office')
+  const userAccessPromise = (CURRENT_PAGE === 'manager' || CURRENT_PAGE === 'office' || CURRENT_PAGE === 'projects')
     ? Promise.race([
         loadUserAccessData(),
         new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 6000))
