@@ -512,23 +512,33 @@
      GENERATE DELIVERY NOTE MODAL
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="generateDnModal">
-  <div class="modal" style="width:520px;max-width:95vw">
+  <div class="modal" style="width:560px;max-width:95vw">
     <div class="modal-title">&#128666; Generate Delivery Note</div>
     <div style="color:var(--muted);font-size:13px;margin-bottom:20px" id="dnItemCount"></div>
+
     <div style="margin-bottom:12px">
-      <div class="field-label">DESTINATION TYPE</div>
-      <select class="field-input" id="dnDestType" onchange="onDnDestTypeChange()">
-        <option value="">Select destination...</option>
-        <option value="galvaniser">Galvaniser</option>
-        <option value="painter">Painter</option>
-        <option value="powder_coater">Powder Coater</option>
-        <option value="site">Site (Final Delivery)</option>
-        <option value="other">Other</option>
+      <div class="field-label">SAVED SUPPLIER</div>
+      <select class="field-input" id="dnSupplierSelect" onchange="onDnSupplierSelect()">
+        <option value="">-- Select saved supplier --</option>
       </select>
     </div>
-    <div style="margin-bottom:12px">
-      <div class="field-label">DESTINATION NAME</div>
-      <input type="text" class="field-input" id="dnDestName" placeholder="e.g. ABC Galvanising Ltd">
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <div class="field-label">DESTINATION TYPE</div>
+        <select class="field-input" id="dnDestType" onchange="onDnDestTypeChange()">
+          <option value="">Select destination...</option>
+          <option value="galvaniser">Galvaniser</option>
+          <option value="painter">Painter</option>
+          <option value="powder_coater">Powder Coater</option>
+          <option value="site">Site (Final Delivery)</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div>
+        <div class="field-label">DESTINATION NAME</div>
+        <input type="text" class="field-input" id="dnDestName" placeholder="e.g. ABC Galvanising Ltd">
+      </div>
     </div>
     <div style="margin-bottom:12px">
       <div class="field-label">ADDRESS (optional)</div>
@@ -537,6 +547,16 @@
     <div style="margin-bottom:12px">
       <div class="field-label">SITE CONTACT (optional)</div>
       <input type="text" class="field-input" id="dnSiteContact" placeholder="Contact name">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <div class="field-label">COLLECTION DATE</div>
+        <input type="date" class="field-input" id="dnCollectionDate">
+      </div>
+      <div>
+        <div class="field-label">DELIVERY DATE (optional)</div>
+        <input type="date" class="field-input" id="dnDeliveryDate">
+      </div>
     </div>
     <div style="margin-bottom:16px;padding:12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--muted)">
       <div style="font-weight:600;margin-bottom:4px">Summary</div>

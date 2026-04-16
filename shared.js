@@ -5879,14 +5879,19 @@ function extractMetadataBrowser(text) {
   const lines = text.split(/\s{3,}|\n/).map(l => l.trim()).filter(Boolean);
   for (const line of lines.slice(0, 15)) {
     const ll = line.toLowerCase();
-    if (ll.includes('shipping list')||ll.includes('bolt')||ll.includes('grating list')||ll.includes('anchor list')) meta.title = line;
+    if (!meta.title && (ll.includes('shipping list')||ll.includes('bolt')||ll.includes('grating list')||ll.includes('anchor list'))) {
+      // Extract just the title portion — cut at first date/number pattern or limit to 60 chars
+      const titleMatch = line.match(/(.*?(?:shipping list|bolt\s*&?\s*anchor\s*list|grating list))/i);
+      meta.title = titleMatch ? titleMatch[1].trim() : line.substring(0, 60).trim();
+    }
     let m;
-    if ((m = line.match(/Date:\s*(.+)/i))) meta.date = m[1].trim();
-    if ((m = line.match(/Project:\s*(.+)/i))) meta.project = m[1].trim();
+    if ((m = line.match(/Date:\s*(.+?)(?:\s{2,}|Project|$)/i))) meta.date = m[1].trim();
+    if ((m = line.match(/Project:\s*(.+?)(?:\s{2,}|Author|$)/i))) meta.project = m[1].trim();
     if ((m = line.match(/Client:\s*(.+?)(?:\s{2,}|Job|$)/i))) meta.client = m[1].trim();
-    if ((m = line.match(/Job\s*No\.?:\s*(.+)/i))) meta.jobNo = m[1].trim();
-    if ((m = line.match(/Contract:\s*(.+)/i)) && !meta.project) meta.project = m[1].trim();
+    if ((m = line.match(/Job\s*No\.?:\s*(.+?)(?:\s{2,}|$)/i))) meta.jobNo = m[1].trim();
+    if ((m = line.match(/Contract:\s*(.+?)(?:\s{2,}|$)/i)) && !meta.project) meta.project = m[1].trim();
   }
+  if (!meta.title) meta.title = detectBomTypeBrowser(text).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
   return meta;
 }
 
@@ -6193,7 +6198,20 @@ function renderBOM() {
     const fabItems = allItems.filter(i => i.fabricated);
     const fabDone = fabItems.filter(i => i.status !== 'not_started').length;
     const pct = fabItems.length ? Math.round(fabDone / fabItems.length * 100) : 0;
-    html += `<div class="bom-progress-bar"><div class="bom-progress-fill" style="width:${pct}%;background:${pct === 100 ? 'var(--green)' : 'var(--accent)'}"></div></div>`;
+    const dispatchedCount = allItems.filter(i => ['dispatched','returned','delivered_to_site','complete'].includes(i.status)).length;
+    html += `<div style="background:var(--surface);border:1.5px solid ${pct === 100 ? 'rgba(62,207,142,.4)' : 'rgba(255,107,0,.25)'};border-radius:12px;padding:16px 20px;margin-bottom:16px">`;
+    html += `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">`;
+    html += `<div style="font-size:14px;font-weight:600">Fabrication Progress</div>`;
+    html += `<div style="font-size:28px;font-weight:700;font-family:var(--font-mono);color:${pct === 100 ? 'var(--green)' : 'var(--accent)'}">${pct}%</div>`;
+    html += `</div>`;
+    html += `<div style="height:12px;background:var(--border);border-radius:6px;overflow:hidden">`;
+    html += `<div style="height:100%;border-radius:6px;width:${pct}%;background:${pct === 100 ? 'var(--green)' : 'var(--accent)'};transition:width .4s"></div>`;
+    html += `</div>`;
+    html += `<div style="display:flex;gap:16px;margin-top:10px;font-size:12px;color:var(--muted)">`;
+    html += `<span>${fabDone}/${fabItems.length} fabricated</span>`;
+    html += `<span>${allItems.length - fabItems.length} non-fab</span>`;
+    html += `<span>${dispatchedCount} dispatched</span>`;
+    html += `</div></div>`;
 
     // Per-list sections
     for (const ml of lists) {
@@ -6218,14 +6236,15 @@ function renderBOM() {
       html += `<div id="bomTableWrap-${ml.id}" style="max-height:400px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:16px"></div>`;
     }
 
-    // Bulk actions bar (for office/draftsman)
+    // Bulk actions bar
+    html += `<div id="bomBulkBar" style="display:none" class="bom-select-all-bar">`;
+    html += `<span id="bomSelCount">0 selected</span>`;
+    html += `<div class="bom-bulk-actions">`;
+    html += `<button class="btn btn-success" style="padding:6px 14px;font-size:12px" onclick="bulkMarkFabricated()">&#10003; Mark as fabricated</button>`;
     if (isDraftsman) {
-      html += `<div id="bomBulkBar" style="display:none" class="bom-select-all-bar">`;
-      html += `<span id="bomSelCount">0 selected</span>`;
-      html += `<div class="bom-bulk-actions">`;
       html += `<button class="btn btn-primary" style="padding:6px 14px;font-size:12px" onclick="openGenerateDnModal()">&#128666; Generate Delivery Note</button>`;
-      html += `</div></div>`;
     }
+    html += `</div></div>`;
   } else {
     // Legacy file list
     const bom = currentJob.bom || { files: [], notes: [] };
@@ -6258,6 +6277,30 @@ function renderBOM() {
       html += `</div>`;
     } else {
       html += `<div style="font-size:12px;color:var(--subtle)">No welding machines set up. Add them here for traceability tracking.</div>`;
+    }
+    html += `</div>`;
+
+    // Suppliers setup (draftsman only)
+    const suppliers = bomProjData?.settings?.suppliers || [];
+    html += `<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">`;
+    html += `<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">`;
+    html += `<span style="font-size:13px;font-weight:600">Suppliers / Destinations</span>`;
+    html += `<button class="btn btn-primary" style="padding:4px 12px;font-size:11px" onclick="addSupplier()">&#43; Add</button>`;
+    html += `</div>`;
+    if (suppliers.length) {
+      html += `<div style="display:flex;flex-wrap:wrap;gap:8px">`;
+      for (const s of suppliers) {
+        if (s.active === false) continue;
+        const typeLabel = s.type === 'galvaniser' ? 'Galv' : s.type === 'painter' ? 'Paint' : s.type === 'powder_coater' ? 'PPC' : s.type === 'site' ? 'Site' : s.type;
+        html += `<div style="display:flex;align-items:center;gap:6px;padding:6px 12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;font-size:12px">`;
+        html += `<span style="font-weight:600">${s.name}</span>`;
+        html += `<span style="color:var(--subtle)">(${typeLabel})</span>`;
+        html += `<button style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:0 0 0 4px" onclick="removeSupplier('${s.id}')" title="Remove">&#10005;</button>`;
+        html += `</div>`;
+      }
+      html += `</div>`;
+    } else {
+      html += `<div style="font-size:12px;color:var(--subtle)">Add galvanisers, painters, powder coaters etc. for quick delivery note creation.</div>`;
     }
     html += `</div>`;
   }
@@ -6347,7 +6390,7 @@ function renderBomTable(mlId) {
     // Actions cell
     html += '<td style="white-space:nowrap">';
     if (item.fabricated && item.status === 'not_started') {
-      html += `<button class="btn btn-success" style="padding:3px 10px;font-size:10px" onclick="openFabricateItemModal('${mlId}','${item.id}')">&#10003; Fabricated</button>`;
+      html += `<button class="btn btn-success" style="padding:3px 10px;font-size:10px" onclick="openFabricateItemModal('${mlId}','${item.id}')">&#10003; Mark as fabricated</button>`;
     } else if (item.status === 'dispatched') {
       html += `<button class="btn" style="padding:3px 10px;font-size:10px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);color:var(--amber)" onclick="markItemReturned('${mlId}','${item.id}')">&#8617; Returned</button>`;
     } else if (item.traceability) {
@@ -6455,6 +6498,65 @@ async function openFabricateItemModal(mlId, itemId) {
   document.getElementById('confirmModal').classList.add('active');
 }
 
+// ── Bulk Mark as Fabricated ──
+function bulkMarkFabricated() {
+  if (bomSelectedIds.size === 0) { toast('Select items first', 'error'); return; }
+
+  // Find selected fabricatable items
+  const bomJob = getBomDataForJob(currentProject?.id, currentJob?.id);
+  const allItems = (bomJob.materialLists || []).flatMap(ml => ml.items || []);
+  const selected = allItems.filter(i => bomSelectedIds.has(i.id) && i.fabricated && i.status === 'not_started');
+
+  if (!selected.length) { toast('No unfabricated items in selection', 'error'); return; }
+
+  const employees = (state.timesheetData.employees || []).filter(e => e.active !== false);
+  const bomProjectData = bomDataCache[currentProject?.id];
+  const machines = bomProjectData?.settings?.weldingMachines || state.timesheetData.settings?.weldingMachines || [];
+
+  const empOptions = employees.map(e => `<option value="${e.name}">${e.name}</option>`).join('');
+  const machOptions = machines.filter(m => m.active !== false).map(m => `<option value="${m.name}">${m.name} (${m.type || ''})</option>`).join('');
+
+  const content = `
+    <div style="text-align:left;margin-top:12px">
+      <div style="font-size:14px;font-weight:600;margin-bottom:4px">Mark ${selected.length} items as fabricated</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:12px">${selected.map(i => i.mark).join(', ')}</div>
+      <div style="margin-bottom:10px">
+        <div class="field-label">WELDER</div>
+        <select class="field-input" id="fabWelder" style="font-size:13px"><option value="">Select welder...</option>${empOptions}</select>
+      </div>
+      <div style="margin-bottom:10px">
+        <div class="field-label">WELDING MACHINE (if applicable)</div>
+        <select class="field-input" id="fabMachine" style="font-size:13px"><option value="">N/A</option>${machOptions}</select>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('confirmTitle').textContent = 'Mark as Fabricated';
+  document.getElementById('confirmMsg').innerHTML = content;
+  const okBtn = document.getElementById('confirmOk');
+  okBtn.textContent = 'Confirm';
+  okBtn.onclick = async () => {
+    const welder = document.getElementById('fabWelder').value;
+    if (!welder) { toast('Please select the welder', 'error'); return; }
+    const machine = document.getElementById('fabMachine').value;
+    const now = new Date().toISOString();
+
+    for (const item of selected) {
+      item.status = 'fabricated';
+      item.traceability = { welder, machine: machine || null, completedAt: now };
+    }
+
+    try {
+      await saveBomData(currentProject.id);
+      bomSelectedIds.clear();
+      closeModal();
+      toast(`${selected.length} items marked as fabricated`, 'success');
+      renderBOM();
+    } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+  };
+  document.getElementById('confirmModal').classList.add('active');
+}
+
 // ── Delivery Note Generation ──
 function openGenerateDnModal() {
   if (bomSelectedIds.size === 0) { toast('Select items first', 'error'); return; }
@@ -6463,10 +6565,45 @@ function openGenerateDnModal() {
   document.getElementById('dnDestName').value = '';
   document.getElementById('dnAddress').value = '';
   document.getElementById('dnSiteContact').value = '';
+
+  // Populate supplier dropdown
+  const bomProjData = bomDataCache[currentProject?.id];
+  const suppliers = (bomProjData?.settings?.suppliers || []).filter(s => s.active !== false);
+  const suppSelect = document.getElementById('dnSupplierSelect');
+  if (suppSelect) {
+    suppSelect.innerHTML = '<option value="">-- Select saved supplier --</option>' +
+      suppliers.map(s => {
+        const typeLabel = s.type === 'galvaniser' ? 'Galv' : s.type === 'painter' ? 'Paint' : s.type === 'powder_coater' ? 'PPC' : s.type === 'site' ? 'Site' : s.type;
+        return `<option value="${s.id}">${s.name} (${typeLabel})</option>`;
+      }).join('');
+  }
+
+  // Set default dates
+  const today = new Date().toISOString().split('T')[0];
+  const collEl = document.getElementById('dnCollectionDate');
+  const delEl = document.getElementById('dnDeliveryDate');
+  if (collEl) collEl.value = today;
+  if (delEl) delEl.value = '';
+
   updateDnSummary();
   document.getElementById('generateDnModal').classList.add('active');
 }
 function closeGenerateDnModal() { document.getElementById('generateDnModal').classList.remove('active'); }
+
+function onDnSupplierSelect() {
+  const suppSelect = document.getElementById('dnSupplierSelect');
+  const suppId = suppSelect?.value;
+  if (!suppId) return;
+  const bomProjData = bomDataCache[currentProject?.id];
+  const supplier = (bomProjData?.settings?.suppliers || []).find(s => s.id === suppId);
+  if (!supplier) return;
+  document.getElementById('dnDestType').value = supplier.type || '';
+  document.getElementById('dnDestName').value = supplier.name || '';
+  document.getElementById('dnAddress').value = supplier.address || '';
+  document.getElementById('dnSiteContact').value = supplier.contact || '';
+  updateDnSummary();
+}
+
 function onDnDestTypeChange() { updateDnSummary(); }
 
 function updateDnSummary() {
@@ -6488,6 +6625,8 @@ async function confirmGenerateDn() {
   const destName = document.getElementById('dnDestName').value.trim();
   const address = document.getElementById('dnAddress').value.trim();
   const siteContact = document.getElementById('dnSiteContact').value.trim();
+  const collectionDate = document.getElementById('dnCollectionDate')?.value || '';
+  const deliveryDate = document.getElementById('dnDeliveryDate')?.value || '';
 
   if (!destType) { toast('Select a destination type', 'error'); return; }
   if (!destName) { toast('Enter a destination name', 'error'); return; }
@@ -6508,6 +6647,8 @@ async function confirmGenerateDn() {
     destinationName: destName,
     address,
     siteContact,
+    collectionDate,
+    deliveryDate,
     createdAt: new Date().toISOString(),
     createdBy: 'Office',
     itemIds: selected.map(i => i.id),
@@ -6668,6 +6809,8 @@ function printDeliveryNote(dnId) {
       <span class="meta-label">Destination:</span><span>${dn.destinationName || dn.destination}</span>
       ${dn.address ? `<span class="meta-label">Address:</span><span>${dn.address}</span>` : ''}
       ${dn.siteContact ? `<span class="meta-label">Site Contact:</span><span>${dn.siteContact}</span>` : ''}
+      ${dn.collectionDate ? `<span class="meta-label">Collection Date:</span><span>${new Date(dn.collectionDate).toLocaleDateString('en-GB')}</span>` : ''}
+      ${dn.deliveryDate ? `<span class="meta-label">Delivery Date:</span><span>${new Date(dn.deliveryDate).toLocaleDateString('en-GB')}</span>` : ''}
     </div>
   </div>
 </div>
@@ -6769,6 +6912,79 @@ async function removeWeldingMachine(machineId) {
   try {
     await saveBomData(currentProject.id);
     toast(`${machine.name} removed`, 'success');
+    renderBOM();
+  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+// ── Supplier Management ──
+function addSupplier() {
+  if (!currentProject) return;
+  const content = `
+    <div style="text-align:left;margin-top:12px">
+      <div style="font-size:14px;font-weight:600;margin-bottom:12px">Add Supplier / Destination</div>
+      <div style="margin-bottom:10px">
+        <div class="field-label">SUPPLIER NAME</div>
+        <input type="text" class="field-input" id="suppName" placeholder="e.g. ABC Galvanising Ltd" style="font-size:13px">
+      </div>
+      <div style="margin-bottom:10px">
+        <div class="field-label">TYPE</div>
+        <select class="field-input" id="suppType" style="font-size:13px">
+          <option value="galvaniser">Galvaniser</option>
+          <option value="painter">Painter</option>
+          <option value="powder_coater">Powder Coater</option>
+          <option value="site">Site (Final Delivery)</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div style="margin-bottom:10px">
+        <div class="field-label">ADDRESS (optional)</div>
+        <input type="text" class="field-input" id="suppAddress" placeholder="Address" style="font-size:13px">
+      </div>
+      <div style="margin-bottom:10px">
+        <div class="field-label">CONTACT (optional)</div>
+        <input type="text" class="field-input" id="suppContact" placeholder="Contact name / phone" style="font-size:13px">
+      </div>
+    </div>
+  `;
+  document.getElementById('confirmTitle').textContent = 'Add Supplier';
+  document.getElementById('confirmMsg').innerHTML = content;
+  const okBtn = document.getElementById('confirmOk');
+  okBtn.textContent = 'Add';
+  okBtn.onclick = async () => {
+    const name = document.getElementById('suppName').value.trim();
+    if (!name) { toast('Enter a supplier name', 'error'); return; }
+    const type = document.getElementById('suppType').value;
+    const address = document.getElementById('suppAddress').value.trim();
+    const contact = document.getElementById('suppContact').value.trim();
+
+    ensureBomDataForJob(currentProject.id, '__settings__');
+    const bomProjData = bomDataCache[currentProject.id];
+    if (!bomProjData.settings) bomProjData.settings = { weldingMachines: [], suppliers: [] };
+    if (!bomProjData.settings.suppliers) bomProjData.settings.suppliers = [];
+    bomProjData.settings.suppliers.push({
+      id: 'sup-' + Date.now(), name, type, address, contact, active: true
+    });
+    try {
+      await saveBomData(currentProject.id);
+      closeModal();
+      toast(`${name} added`, 'success');
+      renderBOM();
+    } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+  };
+  document.getElementById('confirmModal').classList.add('active');
+  setTimeout(() => document.getElementById('suppName')?.focus(), 100);
+}
+
+async function removeSupplier(supplierId) {
+  if (!currentProject) return;
+  const bomProjData = bomDataCache[currentProject.id];
+  if (!bomProjData?.settings?.suppliers) return;
+  const supplier = bomProjData.settings.suppliers.find(s => s.id === supplierId);
+  if (!supplier) return;
+  supplier.active = false;
+  try {
+    await saveBomData(currentProject.id);
+    toast(`${supplier.name} removed`, 'success');
     renderBOM();
   } catch (e) { toast('Save failed: ' + e.message, 'error'); }
 }
