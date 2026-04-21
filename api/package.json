@@ -1,0 +1,14 @@
+{
+  "name": "bama-erp-api",
+  "version": "1.0.0",
+  "description": "BAMA Fabrication ERP - Azure Functions API",
+  "main": "src/functions/*.js",
+  "scripts": {
+    "start": "func start",
+    "test": "echo \"No tests yet\""
+  },
+  "dependencies": {
+    "@azure/functions": "^4.0.0",
+    "mssql": "^10.0.0"
+  }
+}

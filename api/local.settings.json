@@ -1,0 +1,10 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "",
+    "FUNCTIONS_WORKER_RUNTIME": "node",
+    "SQL_CONNECTION_STRING": "Server=tcp:bama-erp-sql.database.windows.net,1433;Initial Catalog=bama-erp;Persist Security Info=False;User ID=bamaadmin;Password={your_password};MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;",
+    "AZURE_TENANT_ID": "c92626f5-e391-499a-9059-0113bd07da2d",
+    "AZURE_CLIENT_ID": "04b702fd-c53c-4f38-94bc-0334ce91d954"
+  }
+}

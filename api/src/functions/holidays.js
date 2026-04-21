@@ -1,0 +1,223 @@
+const { app } = require('@azure/functions');
+const { query, sql } = require('../db');
+const { requireAuth } = require('../auth');
+const { ok, created, badRequest, notFound, serverError } = require('../responses');
+
+// POST /api/holidays — submit holiday request
+app.http('holidays-create', {
+    methods: ['POST'],
+    authLevel: 'anonymous',
+    route: 'holidays',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const body = await request.json();
+            const { employee_id, date_from, date_to, type, reason, working_days } = body;
+
+            if (!employee_id || !date_from || !date_to || !working_days) {
+                return badRequest('employee_id, date_from, date_to, and working_days are required');
+            }
+
+            // Check employee exists
+            const emp = await query(
+                'SELECT id, name, holiday_balance FROM Employees WHERE id = @id AND is_active = 1',
+                { id: parseInt(employee_id) }
+            );
+            if (emp.recordset.length === 0) return notFound('Employee not found');
+
+            // Check sufficient balance for paid holidays
+            const holidayType = type || 'paid';
+            if (holidayType === 'paid' && emp.recordset[0].holiday_balance < working_days) {
+                return badRequest(`Insufficient holiday balance. Available: ${emp.recordset[0].holiday_balance}, Requested: ${working_days}`);
+            }
+
+            const result = await query(
+                `INSERT INTO Holidays (employee_id, date_from, date_to, type, reason, working_days)
+                 OUTPUT INSERTED.*
+                 VALUES (@employeeId, @dateFrom, @dateTo, @type, @reason, @workingDays)`,
+                {
+                    employeeId: parseInt(employee_id),
+                    dateFrom: date_from,
+                    dateTo: date_to,
+                    type: holidayType,
+                    reason: reason || null,
+                    workingDays: parseInt(working_days)
+                }
+            );
+
+            return created({
+                ...result.recordset[0],
+                employee_name: emp.recordset[0].name
+            });
+        } catch (err) {
+            context.error('Error creating holiday:', err);
+            return serverError('Failed to create holiday request');
+        }
+    }
+});
+
+// GET /api/holidays — list holidays with filters
+// ?employee_id=1&status=pending&from=2026-04-01&to=2026-12-31
+app.http('holidays-list', {
+    methods: ['GET'],
+    authLevel: 'anonymous',
+    route: 'holidays',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const url = new URL(request.url);
+            const employeeId = url.searchParams.get('employee_id');
+            const status = url.searchParams.get('status');
+            const from = url.searchParams.get('from');
+            const to = url.searchParams.get('to');
+
+            let sqlText = `
+                SELECT h.*, e.name as employee_name
+                FROM Holidays h
+                JOIN Employees e ON e.id = h.employee_id
+                WHERE 1=1
+            `;
+            const params = {};
+
+            if (employeeId) {
+                sqlText += ' AND h.employee_id = @employeeId';
+                params.employeeId = parseInt(employeeId);
+            }
+
+            if (status) {
+                sqlText += ' AND h.status = @status';
+                params.status = status;
+            }
+
+            if (from) {
+                sqlText += ' AND h.date_to >= @from';
+                params.from = from;
+            }
+
+            if (to) {
+                sqlText += ' AND h.date_from <= @to';
+                params.to = to;
+            }
+
+            sqlText += ' ORDER BY h.date_from DESC';
+
+            const result = await query(sqlText, params);
+            return ok(result.recordset);
+        } catch (err) {
+            context.error('Error fetching holidays:', err);
+            return serverError('Failed to fetch holidays');
+        }
+    }
+});
+
+// PUT /api/holidays/:id — approve or reject holiday (manager)
+app.http('holidays-update', {
+    methods: ['PUT'],
+    authLevel: 'anonymous',
+    route: 'holidays/{id}',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const id = parseInt(request.params.id);
+            const body = await request.json();
+            const { status } = body;
+
+            if (!status || !['approved', 'rejected'].includes(status)) {
+                return badRequest('status must be "approved" or "rejected"');
+            }
+
+            // Get current holiday
+            const current = await query(
+                `SELECT h.*, e.holiday_balance, e.name as employee_name
+                 FROM Holidays h
+                 JOIN Employees e ON e.id = h.employee_id
+                 WHERE h.id = @id`,
+                { id }
+            );
+
+            if (current.recordset.length === 0) return notFound('Holiday not found');
+            const holiday = current.recordset[0];
+
+            if (holiday.status !== 'pending') {
+                return badRequest(`Holiday already ${holiday.status}`);
+            }
+
+            // Update holiday status
+            const result = await query(
+                `UPDATE Holidays
+                 SET status = @status, decided_at = GETUTCDATE()
+                 OUTPUT INSERTED.*
+                 WHERE id = @id`,
+                { id, status }
+            );
+
+            // If approved and type is paid, deduct from balance
+            if (status === 'approved' && holiday.type === 'paid') {
+                await query(
+                    `UPDATE Employees
+                     SET holiday_balance = holiday_balance - @days
+                     WHERE id = @employeeId`,
+                    {
+                        days: holiday.working_days,
+                        employeeId: holiday.employee_id
+                    }
+                );
+            }
+
+            return ok({
+                ...result.recordset[0],
+                employee_name: holiday.employee_name
+            });
+        } catch (err) {
+            context.error('Error updating holiday:', err);
+            return serverError('Failed to update holiday');
+        }
+    }
+});
+
+// DELETE /api/holidays/:id — cancel a holiday request
+app.http('holidays-delete', {
+    methods: ['DELETE'],
+    authLevel: 'anonymous',
+    route: 'holidays/{id}',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const id = parseInt(request.params.id);
+
+            // Get holiday before deleting (to restore balance if needed)
+            const current = await query('SELECT * FROM Holidays WHERE id = @id', { id });
+            if (current.recordset.length === 0) return notFound('Holiday not found');
+
+            const holiday = current.recordset[0];
+
+            // If it was approved and paid, restore the balance
+            if (holiday.status === 'approved' && holiday.type === 'paid') {
+                await query(
+                    `UPDATE Employees
+                     SET holiday_balance = holiday_balance + @days
+                     WHERE id = @employeeId`,
+                    {
+                        days: holiday.working_days,
+                        employeeId: holiday.employee_id
+                    }
+                );
+            }
+
+            await query('DELETE FROM Holidays WHERE id = @id', { id });
+
+            return ok({ deleted: true, restored_days: (holiday.status === 'approved' && holiday.type === 'paid') ? holiday.working_days : 0 });
+        } catch (err) {
+            context.error('Error deleting holiday:', err);
+            return serverError('Failed to delete holiday');
+        }
+    }
+});
