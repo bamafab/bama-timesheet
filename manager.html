@@ -106,9 +106,6 @@
           <button class="sidebar-nav-item" data-tab="settings" onclick="switchTab('settings')">
             <span class="sidebar-nav-icon">&#9881;</span> Settings
           </button>
-          <button class="sidebar-nav-item" data-tab="useraccess" onclick="switchTab('useraccess')">
-            <span class="sidebar-nav-icon">&#128274;</span> User Access
-          </button>
         </div>
       </div>
     </nav>
@@ -317,32 +314,6 @@
         </div>
       </div>
     </div>
-    <!-- Tab: User Access -->
-    <div class="tab-content" id="tab-useraccess">
-      <div class="card" style="margin-bottom:20px">
-        <div class="card-title"><span class="icon">&#127760;</span> Global Admin Email</div>
-        <div style="font-size:13px;color:var(--muted);margin-bottom:12px">Access requests will be emailed to this address.</div>
-        <div style="display:flex;gap:10px;align-items:flex-end">
-          <div style="flex:1">
-            <div class="field-label">ADMIN EMAIL</div>
-            <input type="email" class="field-input" id="globalAdminEmail" placeholder="e.g. admin@company.com">
-          </div>
-          <button class="btn btn-primary" onclick="saveGlobalAdminEmail()" style="padding:10px 18px">Save</button>
-        </div>
-      </div>
-      <div class="card" style="margin-bottom:20px">
-        <div class="card-title"><span class="icon">&#128101;</span> Employee Permissions</div>
-        <div style="font-size:13px;color:var(--muted);margin-bottom:16px">Expand an employee card to manage their access to manager tabs and draftsman mode.</div>
-        <div id="userAccessList">
-          <div class="empty-state"><div class="spinner"></div></div>
-        </div>
-      </div>
-      <div class="card" id="accessRequestsCard" style="display:none">
-        <div class="card-title"><span class="icon">&#128232;</span> Pending Access Requests</div>
-        <div id="accessRequestsList"></div>
-      </div>
-    </div>
-
     </div><!-- end mgr-content -->
   </div><!-- end mgr-layout -->
 </div><!-- end screenManager -->
