@@ -2313,6 +2313,8 @@ function switchTab(name) {
   if (name === 'reports') setTimeout(() => renderReports(), 50);
   if (name === 'settings') { loadEmailSettings(); renderOfficeStaffList(); }
   if (name === 'useraccess') renderUserAccessTab();
+  if (name === 'welding') renderWeldingTab();
+  if (name === 'suppliers') renderSuppliersTab();
 }
 
 let activeReport = 'overview';
@@ -4482,6 +4484,252 @@ function exportAttendancePDF() {
   </body></html>`);
   printWin.document.close();
 }
+
+// ═══════════════════════════════════════════
+// TRACEABILITY — WELDING EQUIPMENT
+// ═══════════════════════════════════════════
+let _weldingMachines = [];
+
+async function renderWeldingTab() {
+  const container = document.getElementById('weldingMachineList');
+  if (!container) return;
+  try {
+    _weldingMachines = await api.get('/api/welding-machines');
+  } catch (e) {
+    container.innerHTML = '<div class="empty-state">Failed to load welding machines</div>';
+    return;
+  }
+
+  if (!_weldingMachines.length) {
+    container.innerHTML = '<div class="empty-state" style="padding:30px"><div class="icon">&#128293;</div>No welding machines registered yet</div>';
+    return;
+  }
+
+  container.innerHTML = _weldingMachines.map(m => {
+    const expiry = m.expiry_date ? m.expiry_date.split('T')[0] : null;
+    const isExpired = expiry && expiry < todayStr();
+    const isExpiringSoon = expiry && !isExpired && expiry <= dateStr(new Date(Date.now() + 90 * 86400000));
+    const expiryColor = isExpired ? 'var(--red)' : isExpiringSoon ? 'var(--amber)' : 'var(--green)';
+    const expiryLabel = isExpired ? 'EXPIRED' : isExpiringSoon ? 'Expiring soon' : 'Valid';
+    const welderNames = (m.welders || []).map(w => w.employee_name).join(', ') || 'None assigned';
+
+    return `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:10px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px">
+          <div>
+            <div style="font-weight:600;font-size:15px;margin-bottom:2px">${m.machine_name}</div>
+            <div style="font-size:12px;color:var(--muted);font-family:var(--font-mono)">S/N: ${m.serial_number || '—'}</div>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="editWeldingMachine(${m.id})">&#9998; Edit</button>
+            <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px;color:var(--red)" onclick="deleteWeldingMachine(${m.id}, '${m.machine_name.replace(/'/g, "\\'")}')">&#10005;</button>
+          </div>
+        </div>
+        <div style="display:flex;gap:20px;flex-wrap:wrap;font-size:13px;color:var(--muted)">
+          <div>Expiry: <span style="color:${expiryColor};font-weight:600">${expiry ? fmtDateStr(expiry) : '—'}</span> <span style="font-size:10px;color:${expiryColor}">${expiry ? expiryLabel : ''}</span></div>
+          <div>Authorised: <span style="color:var(--text)">${welderNames}</span></div>
+        </div>
+        ${m.notes ? `<div style="font-size:12px;color:var(--subtle);margin-top:6px">${m.notes}</div>` : ''}
+      </div>`;
+  }).join('');
+}
+
+function openAddWeldingMachineForm() {
+  document.getElementById('weldEditId').value = '';
+  document.getElementById('weldMachineName').value = '';
+  document.getElementById('weldSerialNumber').value = '';
+  document.getElementById('weldExpiryDate').value = '';
+  document.getElementById('weldNotes').value = '';
+  document.getElementById('weldingFormTitle').textContent = 'Add Welding Machine';
+  populateWelderCheckboxes([]);
+  document.getElementById('weldingMachineFormArea').style.display = 'block';
+}
+
+function closeWeldingMachineForm() {
+  document.getElementById('weldingMachineFormArea').style.display = 'none';
+}
+
+function populateWelderCheckboxes(selectedIds) {
+  const container = document.getElementById('weldWelderCheckboxes');
+  if (!container) return;
+  const workshopStaff = (state.timesheetData.employees || [])
+    .filter(e => e.active !== false && e.staffType === 'workshop');
+  container.innerHTML = workshopStaff.map(e => {
+    const checked = selectedIds.includes(e.id) ? 'checked' : '';
+    return `<label style="display:flex;align-items:center;gap:6px;font-size:13px;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:6px 12px;cursor:pointer">
+      <input type="checkbox" class="weld-welder-cb" value="${e.id}" ${checked}> ${e.name}
+    </label>`;
+  }).join('');
+}
+
+async function editWeldingMachine(id) {
+  try {
+    const m = await api.get(`/api/welding-machines/${id}`);
+    document.getElementById('weldEditId').value = m.id;
+    document.getElementById('weldMachineName').value = m.machine_name || '';
+    document.getElementById('weldSerialNumber').value = m.serial_number || '';
+    document.getElementById('weldExpiryDate').value = m.expiry_date ? m.expiry_date.split('T')[0] : '';
+    document.getElementById('weldNotes').value = m.notes || '';
+    document.getElementById('weldingFormTitle').textContent = 'Edit Welding Machine';
+    populateWelderCheckboxes((m.welders || []).map(w => w.employee_id));
+    document.getElementById('weldingMachineFormArea').style.display = 'block';
+  } catch (e) { toast('Failed to load machine details', 'error'); }
+}
+
+async function saveWeldingMachine() {
+  const editId = document.getElementById('weldEditId').value;
+  const machineName = document.getElementById('weldMachineName').value.trim();
+  const serialNumber = document.getElementById('weldSerialNumber').value.trim();
+  const expiryDate = document.getElementById('weldExpiryDate').value;
+  const notes = document.getElementById('weldNotes').value.trim();
+  const welderIds = [...document.querySelectorAll('.weld-welder-cb:checked')].map(cb => parseInt(cb.value));
+
+  if (!machineName) { toast('Machine name is required', 'error'); return; }
+
+  const body = { machine_name: machineName, serial_number: serialNumber, expiry_date: expiryDate || null, notes: notes || null, welder_ids: welderIds };
+
+  try {
+    if (editId) {
+      await api.put(`/api/welding-machines/${editId}`, body);
+      toast('Machine updated ✓', 'success');
+    } else {
+      await api.post('/api/welding-machines', body);
+      toast('Machine added ✓', 'success');
+    }
+    closeWeldingMachineForm();
+    renderWeldingTab();
+  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+async function deleteWeldingMachine(id, name) {
+  if (!confirm(`Remove "${name}" from the register?`)) return;
+  try {
+    await api.delete(`/api/welding-machines/${id}`);
+    toast('Machine removed', 'info');
+    renderWeldingTab();
+  } catch (e) { toast('Delete failed', 'error'); }
+}
+
+// ═══════════════════════════════════════════
+// TRACEABILITY — SUPPLIERS
+// ═══════════════════════════════════════════
+let _suppliers = [];
+
+async function renderSuppliersTab() {
+  const container = document.getElementById('supplierList');
+  if (!container) return;
+  try {
+    _suppliers = await api.get('/api/suppliers');
+  } catch (e) {
+    container.innerHTML = '<div class="empty-state">Failed to load suppliers</div>';
+    return;
+  }
+
+  if (!_suppliers.length) {
+    container.innerHTML = '<div class="empty-state" style="padding:30px"><div class="icon">&#128666;</div>No suppliers registered yet</div>';
+    return;
+  }
+
+  // Group by service type
+  const grouped = {};
+  _suppliers.forEach(s => {
+    if (!grouped[s.service_type]) grouped[s.service_type] = [];
+    grouped[s.service_type].push(s);
+  });
+
+  container.innerHTML = Object.entries(grouped).sort((a, b) => a[0].localeCompare(b[0])).map(([service, suppliers]) => {
+    const rows = suppliers.map(s => `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
+          <div style="font-weight:600;font-size:14px">${s.supplier_name}</div>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="editSupplier(${s.id})">&#9998; Edit</button>
+            <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px;color:var(--red)" onclick="deleteSupplier(${s.id}, '${s.supplier_name.replace(/'/g, "\\'")}')">&#10005;</button>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;font-size:12px;color:var(--muted)">
+          ${s.contact_name ? `<div>Contact: <span style="color:var(--text)">${s.contact_name}</span></div>` : ''}
+          ${s.telephone ? `<div>Tel: <span style="color:var(--text)">${s.telephone}</span></div>` : ''}
+          ${s.email ? `<div>Email: <span style="color:var(--text)">${s.email}</span></div>` : ''}
+          ${s.address ? `<div>Address: <span style="color:var(--text)">${s.address}</span></div>` : ''}
+        </div>
+      </div>`).join('');
+
+    return `
+      <div style="margin-bottom:20px">
+        <div style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--accent);margin-bottom:8px">${service}</div>
+        ${rows}
+      </div>`;
+  }).join('');
+}
+
+function openAddSupplierForm() {
+  document.getElementById('supplierEditId').value = '';
+  document.getElementById('supplierServiceType').value = '';
+  document.getElementById('supplierName').value = '';
+  document.getElementById('supplierContactName').value = '';
+  document.getElementById('supplierTel').value = '';
+  document.getElementById('supplierEmail').value = '';
+  document.getElementById('supplierAddress').value = '';
+  document.getElementById('supplierFormTitle').textContent = 'Add Supplier';
+  document.getElementById('supplierFormArea').style.display = 'block';
+}
+
+function closeSupplierForm() {
+  document.getElementById('supplierFormArea').style.display = 'none';
+}
+
+async function editSupplier(id) {
+  try {
+    const s = await api.get(`/api/suppliers/${id}`);
+    document.getElementById('supplierEditId').value = s.id;
+    document.getElementById('supplierServiceType').value = s.service_type || '';
+    document.getElementById('supplierName').value = s.supplier_name || '';
+    document.getElementById('supplierContactName').value = s.contact_name || '';
+    document.getElementById('supplierTel').value = s.telephone || '';
+    document.getElementById('supplierEmail').value = s.email || '';
+    document.getElementById('supplierAddress').value = s.address || '';
+    document.getElementById('supplierFormTitle').textContent = 'Edit Supplier';
+    document.getElementById('supplierFormArea').style.display = 'block';
+  } catch (e) { toast('Failed to load supplier details', 'error'); }
+}
+
+async function saveSupplier() {
+  const editId = document.getElementById('supplierEditId').value;
+  const serviceType = document.getElementById('supplierServiceType').value;
+  const supplierName = document.getElementById('supplierName').value.trim();
+  const contactName = document.getElementById('supplierContactName').value.trim();
+  const telephone = document.getElementById('supplierTel').value.trim();
+  const email = document.getElementById('supplierEmail').value.trim();
+  const address = document.getElementById('supplierAddress').value.trim();
+
+  if (!serviceType) { toast('Please select a service', 'error'); return; }
+  if (!supplierName) { toast('Supplier name is required', 'error'); return; }
+
+  const body = { service_type: serviceType, supplier_name: supplierName, contact_name: contactName || null, telephone: telephone || null, email: email || null, address: address || null };
+
+  try {
+    if (editId) {
+      await api.put(`/api/suppliers/${editId}`, body);
+      toast('Supplier updated ✓', 'success');
+    } else {
+      await api.post('/api/suppliers', body);
+      toast('Supplier added ✓', 'success');
+    }
+    closeSupplierForm();
+    renderSuppliersTab();
+  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+async function deleteSupplier(id, name) {
+  if (!confirm(`Remove supplier "${name}"?`)) return;
+  try {
+    await api.delete(`/api/suppliers/${id}`);
+    toast('Supplier removed', 'info');
+    renderSuppliersTab();
+  } catch (e) { toast('Delete failed', 'error'); }
+}
+
 let clockLogWeekOffset = 0;
 
 function changeClockLogWeek(dir) {

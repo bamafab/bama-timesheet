@@ -130,6 +130,20 @@
           </button>
         </div>
       </div>
+      <div class="sidebar-nav-divider"></div>
+      <div class="sidebar-nav-group">
+        <div class="sidebar-nav-label-toggle" onclick="toggleSidebarGroup(this)">
+          Traceability <span class="chevron">&#9660;</span>
+        </div>
+        <div class="sidebar-nav-subitems">
+          <button class="sidebar-nav-item" data-tab="welding" onclick="switchTab('welding')">
+            <span class="sidebar-nav-icon">&#128293;</span> Welding Equipment
+          </button>
+          <button class="sidebar-nav-item" data-tab="suppliers" onclick="switchTab('suppliers')">
+            <span class="sidebar-nav-icon">&#128666;</span> Assigned Suppliers
+          </button>
+        </div>
+      </div>
     </nav>
 
     <!-- Main Content Area -->
@@ -480,6 +494,113 @@
       <div class="card" id="accessRequestsCard" style="display:none">
         <div class="card-title"><span class="icon">&#128232;</span> Pending Access Requests</div>
         <div id="accessRequestsList"></div>
+      </div>
+    </div>
+
+    <!-- Tab: Welding Equipment -->
+    <div class="tab-content" id="tab-welding">
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-title"><span class="icon">&#128293;</span> Welding Equipment Register</div>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:16px">Manage welding machines and assign authorised welders.</div>
+        <button class="btn btn-primary" onclick="openAddWeldingMachineForm()" style="margin-bottom:16px">+ Add Machine</button>
+        <div id="weldingMachineFormArea" style="display:none">
+          <div class="card" style="background:var(--surface);margin-bottom:16px;padding:16px">
+            <div class="card-title" id="weldingFormTitle" style="font-size:14px">Add Welding Machine</div>
+            <input type="hidden" id="weldEditId" value="">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+              <div>
+                <div class="field-label">MACHINE NAME <span style="color:var(--red)">*</span></div>
+                <input type="text" class="field-input" id="weldMachineName" placeholder="e.g. RUSTLER EM350C PRO">
+              </div>
+              <div>
+                <div class="field-label">SERIAL NUMBER</div>
+                <input type="text" class="field-input" id="weldSerialNumber" placeholder="e.g. OP25024150233">
+              </div>
+              <div>
+                <div class="field-label">EXPIRY DATE</div>
+                <input type="date" class="field-input" id="weldExpiryDate">
+              </div>
+              <div>
+                <div class="field-label">NOTES</div>
+                <input type="text" class="field-input" id="weldNotes" placeholder="Optional notes">
+              </div>
+            </div>
+            <div style="margin-bottom:12px">
+              <div class="field-label">AUTHORISED WELDERS</div>
+              <div id="weldWelderCheckboxes" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px"></div>
+            </div>
+            <div style="display:flex;gap:10px">
+              <button class="btn btn-primary" onclick="saveWeldingMachine()">Save</button>
+              <button class="btn btn-ghost" onclick="closeWeldingMachineForm()">Cancel</button>
+            </div>
+          </div>
+        </div>
+        <div id="weldingMachineList">
+          <div class="empty-state"><div class="spinner"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab: Assigned Suppliers -->
+    <div class="tab-content" id="tab-suppliers">
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-title"><span class="icon">&#128666;</span> Assigned Suppliers</div>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:16px">Manage suppliers for specific services.</div>
+        <button class="btn btn-primary" onclick="openAddSupplierForm()" style="margin-bottom:16px">+ Add Supplier</button>
+        <div id="supplierFormArea" style="display:none">
+          <div class="card" style="background:var(--surface);margin-bottom:16px;padding:16px">
+            <div class="card-title" id="supplierFormTitle" style="font-size:14px">Add Supplier</div>
+            <input type="hidden" id="supplierEditId" value="">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+              <div>
+                <div class="field-label">SERVICE <span style="color:var(--red)">*</span></div>
+                <select class="field-input" id="supplierServiceType">
+                  <option value="">Select a service...</option>
+                  <option value="Galvanising">Galvanising</option>
+                  <option value="Powder Coating">Powder Coating</option>
+                  <option value="Wet Spray">Wet Spray</option>
+                  <option value="Shot Blasting">Shot Blasting</option>
+                  <option value="Laser Cutting">Laser Cutting</option>
+                  <option value="Plasma Cutting">Plasma Cutting</option>
+                  <option value="Steel Supply">Steel Supply</option>
+                  <option value="Fasteners">Fasteners</option>
+                  <option value="Transport">Transport</option>
+                  <option value="Welding Gas">Welding Gas</option>
+                  <option value="Crane Hire">Crane Hire</option>
+                  <option value="NDT / Inspection">NDT / Inspection</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+              <div>
+                <div class="field-label">SUPPLIER NAME <span style="color:var(--red)">*</span></div>
+                <input type="text" class="field-input" id="supplierName" placeholder="e.g. Wedge Galvanizing">
+              </div>
+              <div>
+                <div class="field-label">CONTACT NAME</div>
+                <input type="text" class="field-input" id="supplierContactName" placeholder="e.g. John Smith">
+              </div>
+              <div>
+                <div class="field-label">TELEPHONE</div>
+                <input type="tel" class="field-input" id="supplierTel" placeholder="e.g. 01234 567890">
+              </div>
+              <div>
+                <div class="field-label">EMAIL</div>
+                <input type="email" class="field-input" id="supplierEmail" placeholder="e.g. info@supplier.com">
+              </div>
+              <div>
+                <div class="field-label">ADDRESS</div>
+                <input type="text" class="field-input" id="supplierAddress" placeholder="Full address">
+              </div>
+            </div>
+            <div style="display:flex;gap:10px">
+              <button class="btn btn-primary" onclick="saveSupplier()">Save</button>
+              <button class="btn btn-ghost" onclick="closeSupplierForm()">Cancel</button>
+            </div>
+          </div>
+        </div>
+        <div id="supplierList">
+          <div class="empty-state"><div class="spinner"></div></div>
+        </div>
       </div>
     </div>
 
