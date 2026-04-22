@@ -123,18 +123,10 @@ async function authenticate(request) {
 
 // Middleware: returns user or sends 401
 async function requireAuth(request) {
-    // Handle CORS preflight — no auth needed
-    if (request.method === 'OPTIONS') {
-        return { _preflight: true };
-    }
-
     const user = await authenticate(request);
     if (!user) {
         const { unauthorized } = require('./responses');
-        return {
-            status: 401,
-            ...unauthorized('Unauthorized — valid Microsoft token required', request)
-        };
+        return unauthorized('Unauthorized — valid Microsoft token required', request);
     }
     return user;
 }
