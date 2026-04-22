@@ -2938,6 +2938,8 @@ function loadEmailSettings() {
   if (draftEl) draftEl.value = settings.draftsmanEmail || '';
   if (taskEl) taskEl.value = settings.taskCompletionEmails || '';
   if (siteEl) siteEl.value = settings.siteCompletionEmails || '';
+  const attEl = document.getElementById('settingAttendanceStart');
+  if (attEl) attEl.value = settings.attendanceStartTime || '07:00';
 }
 
 async function saveEmailSettings() {
@@ -2952,13 +2954,16 @@ async function saveEmailSettings() {
   if (taskEl) state.timesheetData.settings.taskCompletionEmails = taskEl.value;
   const siteEl = document.getElementById('settingSiteCompletionEmails');
   if (siteEl) state.timesheetData.settings.siteCompletionEmails = siteEl.value;
+  const attEl = document.getElementById('settingAttendanceStart');
+  if (attEl) state.timesheetData.settings.attendanceStartTime = attEl.value;
   try {
     await api.put('/api/settings', {
       payrollEmail: state.timesheetData.settings.payrollEmail || '',
       orderEmail: state.timesheetData.settings.orderEmail || '',
       draftsmanEmail: state.timesheetData.settings.draftsmanEmail || '',
       taskCompletionEmails: state.timesheetData.settings.taskCompletionEmails || '',
-      siteCompletionEmails: state.timesheetData.settings.siteCompletionEmails || ''
+      siteCompletionEmails: state.timesheetData.settings.siteCompletionEmails || '',
+      attendanceStartTime: state.timesheetData.settings.attendanceStartTime || '07:00'
     });
     toast('Email settings saved ✓', 'success');
   } catch (err) { toast('Save failed: ' + err.message, 'error'); }
@@ -4145,9 +4150,195 @@ function renderReports() {
       }
     });
   }
+
+  // ── Attendance report ──
+  if (activeReport === 'attendance') renderAttendanceReport(empFilter);
 }
 
-// ── Clock Log Week Navigation ──
+// ═══════════════════════════════════════════
+// ATTENDANCE REPORT
+// ═══════════════════════════════════════════
+function getExpectedStart() {
+  return (state.timesheetData.settings && state.timesheetData.settings.attendanceStartTime) || '07:00';
+}
+
+function getAttendanceData(empFilter) {
+  const { from, to } = getReportDateRange();
+  const expectedStart = getExpectedStart();
+  const [expH, expM] = expectedStart.split(':').map(Number);
+  const expMins = expH * 60 + expM;
+
+  const employees = (state.timesheetData.employees || [])
+    .filter(e => e.active !== false && (!empFilter || e.name === empFilter));
+
+  const clockings = state.timesheetData.clockings || [];
+  const holidays = (state.timesheetData.holidays || []).filter(h => h.status === 'approved');
+
+  // Build list of working days (Mon-Fri) in period
+  const workDays = [];
+  const d = new Date(from + 'T12:00:00');
+  const end = new Date(to + 'T12:00:00');
+  while (d <= end) {
+    const dow = d.getDay();
+    if (dow >= 1 && dow <= 5) workDays.push(dateStr(d));
+    d.setDate(d.getDate() + 1);
+  }
+
+  // Limit to days up to today
+  const today = todayStr();
+  const relevantDays = workDays.filter(wd => wd <= today);
+
+  let totalPresent = 0, totalAbsent = 0, totalLate = 0, totalHoliday = 0;
+  const lateList = [];
+  const grid = []; // { name, days: [{ date, status, clockIn }] }
+
+  employees.forEach(emp => {
+    const empClockings = clockings.filter(c => c.employeeName === emp.name);
+    const empHolidays = holidays.filter(h => h.employeeName === emp.name);
+    const row = { name: emp.name, days: [] };
+
+    relevantDays.forEach(day => {
+      // Check if on holiday
+      const onHoliday = empHolidays.some(h => day >= h.dateFrom && day <= h.dateTo);
+      if (onHoliday) {
+        row.days.push({ date: day, status: 'holiday', clockIn: null });
+        totalHoliday++;
+        return;
+      }
+
+      // Find earliest clocking for the day
+      const dayClockings = empClockings
+        .filter(c => c.date === day && c.clockIn)
+        .sort((a, b) => a.clockIn.localeCompare(b.clockIn));
+
+      if (!dayClockings.length) {
+        row.days.push({ date: day, status: 'absent', clockIn: null });
+        totalAbsent++;
+        return;
+      }
+
+      const firstIn = dayClockings[0].clockIn;
+      const [inH, inM] = firstIn.split(':').map(Number);
+      const inMins = inH * 60 + inM;
+      const isLate = inMins > expMins;
+
+      if (isLate) {
+        totalLate++;
+        lateList.push({
+          name: emp.name,
+          date: day,
+          clockIn: firstIn,
+          minsLate: inMins - expMins
+        });
+      }
+
+      totalPresent++;
+      row.days.push({ date: day, status: isLate ? 'late' : 'present', clockIn: firstIn });
+    });
+
+    grid.push(row);
+  });
+
+  // Average clock-in time
+  let avgClockInMins = 0;
+  let clockInCount = 0;
+  grid.forEach(row => row.days.forEach(d => {
+    if (d.clockIn) {
+      const [h, m] = d.clockIn.split(':').map(Number);
+      avgClockInMins += h * 60 + m;
+      clockInCount++;
+    }
+  }));
+  const avgMins = clockInCount ? Math.round(avgClockInMins / clockInCount) : 0;
+  const avgClockIn = `${String(Math.floor(avgMins / 60)).padStart(2, '0')}:${String(avgMins % 60).padStart(2, '0')}`;
+
+  // Attendance rate
+  const totalPossible = totalPresent + totalAbsent + totalLate;
+  const attendanceRate = totalPossible > 0 ? Math.round(((totalPresent + totalLate) / (totalPresent + totalAbsent + totalLate)) * 100) : 100;
+
+  return {
+    totalPresent, totalAbsent, totalLate, totalHoliday,
+    attendanceRate, avgClockIn, lateList, grid,
+    relevantDays, expectedStart
+  };
+}
+
+function renderAttendanceReport(empFilter) {
+  const data = getAttendanceData(empFilter);
+
+  // KPI cards
+  const kpiRow = document.getElementById('rptAttendanceKpis');
+  if (kpiRow) {
+    const periodLabels = { week: 'This Week', month: 'This Month', year: 'This Year' };
+    kpiRow.innerHTML = [
+      { label: 'Attendance Rate', value: data.attendanceRate + '%', color: data.attendanceRate >= 95 ? 'var(--green)' : data.attendanceRate >= 85 ? 'var(--amber)' : 'var(--red)' },
+      { label: 'Days Present', value: data.totalPresent, color: 'var(--green)' },
+      { label: 'Days Absent', value: data.totalAbsent, color: data.totalAbsent > 0 ? 'var(--red)' : 'var(--green)' },
+      { label: 'Late Arrivals', value: data.totalLate, color: data.totalLate > 0 ? 'var(--amber)' : 'var(--green)' },
+      { label: 'On Holiday', value: data.totalHoliday, color: '#6366f1' },
+      { label: 'Avg Clock-In', value: data.avgClockIn, color: 'var(--accent2)' },
+    ].map(k => `
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px 18px">
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">${k.label}</div>
+        <div style="font-family:var(--font-display);font-size:30px;color:${k.color}">${k.value}</div>
+        <div style="font-size:10px;color:var(--subtle);margin-top:4px">${periodLabels[rptPeriod]}</div>
+      </div>
+    `).join('');
+  }
+
+  // Attendance grid
+  const gridEl = document.getElementById('rptAttendanceGrid');
+  if (gridEl && data.grid.length) {
+    const dayLabels = data.relevantDays.map(d => {
+      const dt = new Date(d + 'T12:00:00');
+      return `<th style="font-size:10px;color:var(--muted);padding:4px 6px;font-weight:500;min-width:32px;text-align:center">${dt.toLocaleDateString('en-GB', { weekday: 'short' })}<br>${dt.getDate()}</th>`;
+    }).join('');
+
+    const rows = data.grid.map(row => {
+      const cells = row.days.map(d => {
+        const colors = { present: '#3ecf8e', late: '#ffb347', absent: '#ff4444', holiday: '#6366f1' };
+        const bg = colors[d.status] || '#333';
+        const title = d.status === 'late' ? `Late: ${d.clockIn}` : d.status === 'present' ? `In: ${d.clockIn}` : d.status;
+        return `<td style="padding:4px 6px;text-align:center" title="${title}"><div style="width:24px;height:24px;border-radius:5px;background:${bg};margin:0 auto;opacity:${d.status === 'absent' ? '.5' : '.85'}"></div></td>`;
+      }).join('');
+      return `<tr><td style="font-size:12px;color:var(--text);padding:6px 12px 6px 0;white-space:nowrap;font-weight:500">${row.name.split(' ')[0]}</td>${cells}</tr>`;
+    }).join('');
+
+    gridEl.innerHTML = `<table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left;font-size:11px;color:var(--muted);padding:4px 12px 4px 0">Employee</th>${dayLabels}</tr></thead><tbody>${rows}</tbody></table>`;
+  } else if (gridEl) {
+    gridEl.innerHTML = '<div class="empty-state" style="padding:30px"><div class="icon">📊</div>No attendance data for this period</div>';
+  }
+
+  // Late arrivals table
+  const lateEl = document.getElementById('rptLateArrivals');
+  if (lateEl) {
+    if (!data.lateList.length) {
+      lateEl.innerHTML = `<div style="text-align:center;color:var(--muted);padding:24px;font-size:13px">No late arrivals — everyone on time! Expected start: ${data.expectedStart}</div>`;
+    } else {
+      const sorted = [...data.lateList].sort((a, b) => b.minsLate - a.minsLate);
+      const lateRows = sorted.map(l => {
+        const minsStr = l.minsLate >= 60 ? `${Math.floor(l.minsLate / 60)}h ${l.minsLate % 60}m` : `${l.minsLate}m`;
+        return `<tr>
+          <td style="padding:8px 12px;font-size:13px;color:var(--text)">${l.name}</td>
+          <td style="padding:8px 12px;font-size:13px;color:var(--muted)">${fmtDateStr(l.date)}</td>
+          <td style="padding:8px 12px;font-size:13px;color:var(--muted)">${l.clockIn}</td>
+          <td style="padding:8px 12px;font-size:13px;color:var(--amber);font-weight:600">+${minsStr}</td>
+        </tr>`;
+      }).join('');
+      lateEl.innerHTML = `
+        <div style="font-size:11px;color:var(--subtle);margin-bottom:10px">Expected start: ${data.expectedStart} — sorted by latest arrival</div>
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr>
+            <th style="text-align:left;font-size:11px;color:var(--muted);padding:6px 12px;border-bottom:1px solid var(--border)">Employee</th>
+            <th style="text-align:left;font-size:11px;color:var(--muted);padding:6px 12px;border-bottom:1px solid var(--border)">Date</th>
+            <th style="text-align:left;font-size:11px;color:var(--muted);padding:6px 12px;border-bottom:1px solid var(--border)">Clock In</th>
+            <th style="text-align:left;font-size:11px;color:var(--muted);padding:6px 12px;border-bottom:1px solid var(--border)">Late By</th>
+          </tr></thead>
+          <tbody>${lateRows}</tbody>
+        </table>`;
+    }
+  }
+}
 let clockLogWeekOffset = 0;
 
 function changeClockLogWeek(dir) {
