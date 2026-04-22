@@ -1,15 +1,16 @@
 const { app } = require('@azure/functions');
 const { query, sql } = require('../db');
 const { requireAuth } = require('../auth');
-const { ok, created, badRequest, notFound, serverError } = require('../responses');
+const { ok, created, badRequest, notFound, serverError, preflight } = require('../responses');
 
 // POST /api/holidays — submit holiday request
 app.http('holidays-create', {
-    methods: ['POST'],
+    methods: ['POST', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'holidays',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -17,7 +18,7 @@ app.http('holidays-create', {
             const { employee_id, date_from, date_to, type, reason, working_days } = body;
 
             if (!employee_id || !date_from || !date_to || !working_days) {
-                return badRequest('employee_id, date_from, date_to, and working_days are required');
+                return badRequest('employee_id, date_from, date_to, and working_days are required', request);
             }
 
             // Check employee exists
@@ -25,12 +26,12 @@ app.http('holidays-create', {
                 'SELECT id, name, holiday_balance FROM Employees WHERE id = @id AND is_active = 1',
                 { id: parseInt(employee_id) }
             );
-            if (emp.recordset.length === 0) return notFound('Employee not found');
+            if (emp.recordset.length === 0) return notFound('Employee not found', request);
 
             // Check sufficient balance for paid holidays
             const holidayType = type || 'paid';
             if (holidayType === 'paid' && emp.recordset[0].holiday_balance < working_days) {
-                return badRequest(`Insufficient holiday balance. Available: ${emp.recordset[0].holiday_balance}, Requested: ${working_days}`);
+                return badRequest(`Insufficient holiday balance. Available: ${emp.recordset[0].holiday_balance}, Requested: ${working_days}`, request);
             }
 
             const result = await query(
@@ -50,7 +51,7 @@ app.http('holidays-create', {
             return created({
                 ...result.recordset[0],
                 employee_name: emp.recordset[0].name
-            });
+            }, request);
         } catch (err) {
             context.error('Error creating holiday:', err);
             return serverError('Failed to create holiday request');
@@ -61,11 +62,12 @@ app.http('holidays-create', {
 // GET /api/holidays — list holidays with filters
 // ?employee_id=1&status=pending&from=2026-04-01&to=2026-12-31
 app.http('holidays-list', {
-    methods: ['GET'],
+    methods: ['GET', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'holidays',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -106,21 +108,22 @@ app.http('holidays-list', {
             sqlText += ' ORDER BY h.date_from DESC';
 
             const result = await query(sqlText, params);
-            return ok(result.recordset);
+            return ok(result.recordset, request);
         } catch (err) {
             context.error('Error fetching holidays:', err);
-            return serverError('Failed to fetch holidays');
+            return serverError('Failed to fetch holidays', request);
         }
     }
 });
 
 // PUT /api/holidays/:id — approve or reject holiday (manager)
 app.http('holidays-update', {
-    methods: ['PUT'],
+    methods: ['PUT', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'holidays/{id}',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -129,7 +132,7 @@ app.http('holidays-update', {
             const { status } = body;
 
             if (!status || !['approved', 'rejected'].includes(status)) {
-                return badRequest('status must be "approved" or "rejected"');
+                return badRequest('status must be "approved" or "rejected"', request);
             }
 
             // Get current holiday
@@ -141,11 +144,11 @@ app.http('holidays-update', {
                 { id }
             );
 
-            if (current.recordset.length === 0) return notFound('Holiday not found');
+            if (current.recordset.length === 0) return notFound('Holiday not found', request);
             const holiday = current.recordset[0];
 
             if (holiday.status !== 'pending') {
-                return badRequest(`Holiday already ${holiday.status}`);
+                return badRequest(`Holiday already ${holiday.status}`, request);
             }
 
             // Update holiday status
@@ -173,21 +176,22 @@ app.http('holidays-update', {
             return ok({
                 ...result.recordset[0],
                 employee_name: holiday.employee_name
-            });
+            }, request);
         } catch (err) {
             context.error('Error updating holiday:', err);
-            return serverError('Failed to update holiday');
+            return serverError('Failed to update holiday', request);
         }
     }
 });
 
 // DELETE /api/holidays/:id — cancel a holiday request
 app.http('holidays-delete', {
-    methods: ['DELETE'],
+    methods: ['DELETE', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'holidays/{id}',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -195,7 +199,7 @@ app.http('holidays-delete', {
 
             // Get holiday before deleting (to restore balance if needed)
             const current = await query('SELECT * FROM Holidays WHERE id = @id', { id });
-            if (current.recordset.length === 0) return notFound('Holiday not found');
+            if (current.recordset.length === 0) return notFound('Holiday not found', request);
 
             const holiday = current.recordset[0];
 
@@ -217,7 +221,7 @@ app.http('holidays-delete', {
             return ok({ deleted: true, restored_days: (holiday.status === 'approved' && holiday.type === 'paid') ? holiday.working_days : 0 });
         } catch (err) {
             context.error('Error deleting holiday:', err);
-            return serverError('Failed to delete holiday');
+            return serverError('Failed to delete holiday', request);
         }
     }
 });

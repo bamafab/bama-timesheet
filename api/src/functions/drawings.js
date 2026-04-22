@@ -1,15 +1,16 @@
 const { app } = require('@azure/functions');
 const { query, sql } = require('../db');
 const { requireAuth } = require('../auth');
-const { ok, created, badRequest, notFound, serverError } = require('../responses');
+const { ok, created, badRequest, notFound, serverError, preflight } = require('../responses');
 
 // POST /api/drawings — create a drawing job
 app.http('drawings-create', {
-    methods: ['POST'],
+    methods: ['POST', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'drawings',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -17,7 +18,7 @@ app.http('drawings-create', {
             const { project_number, job_name, finishing, transport, sharepoint_file_id } = body;
 
             if (!project_number || !job_name) {
-                return badRequest('project_number and job_name are required');
+                return badRequest('project_number and job_name are required', request);
             }
 
             const result = await query(
@@ -33,10 +34,10 @@ app.http('drawings-create', {
                 }
             );
 
-            return created(result.recordset[0]);
+            return created(result.recordset[0], request);
         } catch (err) {
             context.error('Error creating drawing:', err);
-            return serverError('Failed to create drawing');
+            return serverError('Failed to create drawing', request);
         }
     }
 });
@@ -44,11 +45,12 @@ app.http('drawings-create', {
 // GET /api/drawings — list drawings with filters
 // ?project_number=P-1234&complete=false
 app.http('drawings-list', {
-    methods: ['GET'],
+    methods: ['GET', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'drawings',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -72,28 +74,29 @@ app.http('drawings-list', {
             sqlText += ' ORDER BY created_at DESC';
 
             const result = await query(sqlText, params);
-            return ok(result.recordset);
+            return ok(result.recordset, request);
         } catch (err) {
             context.error('Error fetching drawings:', err);
-            return serverError('Failed to fetch drawings');
+            return serverError('Failed to fetch drawings', request);
         }
     }
 });
 
 // GET /api/drawings/:id — get single drawing with elements and notes
 app.http('drawings-get', {
-    methods: ['GET'],
+    methods: ['GET', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'drawings/{id}',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
             const id = parseInt(request.params.id);
 
             const job = await query('SELECT * FROM DrawingJobs WHERE id = @id', { id });
-            if (job.recordset.length === 0) return notFound('Drawing not found');
+            if (job.recordset.length === 0) return notFound('Drawing not found', request);
 
             const elements = await query(
                 'SELECT * FROM DrawingElements WHERE job_id = @id ORDER BY element_name',
@@ -109,21 +112,22 @@ app.http('drawings-get', {
                 ...job.recordset[0],
                 elements: elements.recordset,
                 notes: notes.recordset
-            });
+            }, request);
         } catch (err) {
             context.error('Error fetching drawing:', err);
-            return serverError('Failed to fetch drawing');
+            return serverError('Failed to fetch drawing', request);
         }
     }
 });
 
 // PUT /api/drawings/:id — update drawing (mark complete, etc.)
 app.http('drawings-update', {
-    methods: ['PUT'],
+    methods: ['PUT', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'drawings/{id}',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -147,29 +151,30 @@ app.http('drawings-update', {
                 }
             }
 
-            if (fields.length === 0) return badRequest('No fields to update');
+            if (fields.length === 0) return badRequest('No fields to update', request);
 
             const result = await query(
                 `UPDATE DrawingJobs SET ${fields.join(', ')} OUTPUT INSERTED.* WHERE id = @id`,
                 params
             );
 
-            if (result.recordset.length === 0) return notFound('Drawing not found');
-            return ok(result.recordset[0]);
+            if (result.recordset.length === 0) return notFound('Drawing not found', request);
+            return ok(result.recordset[0], request);
         } catch (err) {
             context.error('Error updating drawing:', err);
-            return serverError('Failed to update drawing');
+            return serverError('Failed to update drawing', request);
         }
     }
 });
 
 // POST /api/drawings/:id/elements — add element to drawing
 app.http('drawing-elements-create', {
-    methods: ['POST'],
+    methods: ['POST', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'drawings/{id}/elements',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -177,7 +182,7 @@ app.http('drawing-elements-create', {
             const body = await request.json();
             const { element_name, quantity } = body;
 
-            if (!element_name) return badRequest('element_name is required');
+            if (!element_name) return badRequest('element_name is required', request);
 
             const result = await query(
                 `INSERT INTO DrawingElements (job_id, element_name, quantity)
@@ -190,21 +195,22 @@ app.http('drawing-elements-create', {
                 }
             );
 
-            return created(result.recordset[0]);
+            return created(result.recordset[0], request);
         } catch (err) {
             context.error('Error creating element:', err);
-            return serverError('Failed to create element');
+            return serverError('Failed to create element', request);
         }
     }
 });
 
 // PUT /api/drawing-elements/:id — update element (mark complete)
 app.http('drawing-elements-update', {
-    methods: ['PUT'],
+    methods: ['PUT', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'drawing-elements/{id}',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -227,29 +233,30 @@ app.http('drawing-elements-update', {
                 }
             }
 
-            if (fields.length === 0) return badRequest('No fields to update');
+            if (fields.length === 0) return badRequest('No fields to update', request);
 
             const result = await query(
                 `UPDATE DrawingElements SET ${fields.join(', ')} OUTPUT INSERTED.* WHERE id = @id`,
                 params
             );
 
-            if (result.recordset.length === 0) return notFound('Element not found');
-            return ok(result.recordset[0]);
+            if (result.recordset.length === 0) return notFound('Element not found', request);
+            return ok(result.recordset[0], request);
         } catch (err) {
             context.error('Error updating element:', err);
-            return serverError('Failed to update element');
+            return serverError('Failed to update element', request);
         }
     }
 });
 
 // POST /api/drawings/:id/notes — add note to drawing
 app.http('drawing-notes-create', {
-    methods: ['POST'],
+    methods: ['POST', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'drawings/{id}/notes',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -258,7 +265,7 @@ app.http('drawing-notes-create', {
             const { note_text, added_by } = body;
 
             if (!note_text || !added_by) {
-                return badRequest('note_text and added_by are required');
+                return badRequest('note_text and added_by are required', request);
             }
 
             const result = await query(
@@ -272,10 +279,10 @@ app.http('drawing-notes-create', {
                 }
             );
 
-            return created(result.recordset[0]);
+            return created(result.recordset[0], request);
         } catch (err) {
             context.error('Error creating note:', err);
-            return serverError('Failed to create note');
+            return serverError('Failed to create note', request);
         }
     }
 });

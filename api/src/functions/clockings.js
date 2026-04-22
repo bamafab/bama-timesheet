@@ -1,29 +1,30 @@
 const { app } = require('@azure/functions');
 const { query, sql } = require('../db');
 const { requireAuth } = require('../auth');
-const { ok, created, badRequest, notFound, serverError } = require('../responses');
+const { ok, created, badRequest, notFound, serverError, preflight } = require('../responses');
 
 // POST /api/clock-in — record a clock-in
 app.http('clock-in', {
-    methods: ['POST'],
+    methods: ['POST', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'clock-in',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
             const body = await request.json();
             const { employee_id, timestamp, source } = body;
 
-            if (!employee_id) return badRequest('employee_id is required');
+            if (!employee_id) return badRequest('employee_id is required', request);
 
             // Check employee exists and is active
             const emp = await query(
                 'SELECT id, name FROM Employees WHERE id = @id AND is_active = 1',
                 { id: parseInt(employee_id) }
             );
-            if (emp.recordset.length === 0) return notFound('Employee not found or inactive');
+            if (emp.recordset.length === 0) return notFound('Employee not found or inactive', request);
 
             // Check if already clocked in (has an open entry with no clock_out)
             const open = await query(
@@ -31,7 +32,7 @@ app.http('clock-in', {
                 { id: parseInt(employee_id) }
             );
             if (open.recordset.length > 0) {
-                return badRequest('Employee is already clocked in');
+                return badRequest('Employee is already clocked in', request);
             }
 
             const clockTime = timestamp ? new Date(timestamp) : new Date();
@@ -50,28 +51,29 @@ app.http('clock-in', {
             return created({
                 ...result.recordset[0],
                 employee_name: emp.recordset[0].name
-            });
+            }, request);
         } catch (err) {
             context.error('Error clocking in:', err);
-            return serverError('Failed to clock in');
+            return serverError('Failed to clock in', request);
         }
     }
 });
 
 // POST /api/clock-out — record a clock-out
 app.http('clock-out', {
-    methods: ['POST'],
+    methods: ['POST', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'clock-out',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
             const body = await request.json();
             const { employee_id, timestamp } = body;
 
-            if (!employee_id) return badRequest('employee_id is required');
+            if (!employee_id) return badRequest('employee_id is required', request);
 
             // Find the open clock entry
             const open = await query(
@@ -83,7 +85,7 @@ app.http('clock-out', {
             );
 
             if (open.recordset.length === 0) {
-                return badRequest('Employee is not clocked in');
+                return badRequest('Employee is not clocked in', request);
             }
 
             const clockTime = timestamp ? new Date(timestamp) : new Date();
@@ -102,10 +104,10 @@ app.http('clock-out', {
             return ok({
                 ...result.recordset[0],
                 employee_name: open.recordset[0].employee_name
-            });
+            }, request);
         } catch (err) {
             context.error('Error clocking out:', err);
-            return serverError('Failed to clock out');
+            return serverError('Failed to clock out', request);
         }
     }
 });
@@ -113,11 +115,12 @@ app.http('clock-out', {
 // GET /api/clockings — get clock entries with filters
 // ?employee_id=1&date=2026-04-21&week_commencing=2026-04-20&from=2026-04-01&to=2026-04-30
 app.http('clockings-list', {
-    methods: ['GET'],
+    methods: ['GET', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'clockings',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -168,21 +171,22 @@ app.http('clockings-list', {
             sqlText += ' ORDER BY ce.clock_in DESC';
 
             const result = await query(sqlText, params);
-            return ok(result.recordset);
+            return ok(result.recordset, request);
         } catch (err) {
             context.error('Error fetching clockings:', err);
-            return serverError('Failed to fetch clockings');
+            return serverError('Failed to fetch clockings', request);
         }
     }
 });
 
 // PUT /api/clockings/:id — amend a clock entry (manager)
 app.http('clockings-update', {
-    methods: ['PUT'],
+    methods: ['PUT', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'clockings/{id}',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -202,22 +206,23 @@ app.http('clockings-update', {
                 params
             );
 
-            if (result.recordset.length === 0) return notFound('Clock entry not found');
-            return ok(result.recordset[0]);
+            if (result.recordset.length === 0) return notFound('Clock entry not found', request);
+            return ok(result.recordset[0], request);
         } catch (err) {
             context.error('Error updating clocking:', err);
-            return serverError('Failed to update clocking');
+            return serverError('Failed to update clocking', request);
         }
     }
 });
 
 // POST /api/clockings — add manual clock entry (manager)
 app.http('clockings-create', {
-    methods: ['POST'],
+    methods: ['POST', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'clockings',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -225,7 +230,7 @@ app.http('clockings-create', {
             const { employee_id, clock_in, clock_out, amended_by } = body;
 
             if (!employee_id || !clock_in) {
-                return badRequest('employee_id and clock_in are required');
+                return badRequest('employee_id and clock_in are required', request);
             }
 
             const params = {
@@ -249,21 +254,22 @@ app.http('clockings-create', {
             }
 
             const result = await query(sqlText, params);
-            return created(result.recordset[0]);
+            return created(result.recordset[0], request);
         } catch (err) {
             context.error('Error creating clocking:', err);
-            return serverError('Failed to create clocking');
+            return serverError('Failed to create clocking', request);
         }
     }
 });
 
 // DELETE /api/clockings/:id — delete a clock entry (manager)
 app.http('clockings-delete', {
-    methods: ['DELETE'],
+    methods: ['DELETE', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'clockings/{id}',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -273,11 +279,11 @@ app.http('clockings-delete', {
                 { id }
             );
 
-            if (result.recordset.length === 0) return notFound('Clock entry not found');
-            return ok({ deleted: true, entry: result.recordset[0] });
+            if (result.recordset.length === 0) return notFound('Clock entry not found', request);
+            return ok({ deleted: true, entry: result.recordset[0] }, request);
         } catch (err) {
             context.error('Error deleting clocking:', err);
-            return serverError('Failed to delete clocking');
+            return serverError('Failed to delete clocking', request);
         }
     }
 });

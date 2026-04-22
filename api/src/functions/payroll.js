@@ -1,22 +1,23 @@
 const { app } = require('@azure/functions');
 const { query, getPool, sql } = require('../db');
 const { requireAuth } = require('../auth');
-const { ok, created, badRequest, notFound, serverError } = require('../responses');
+const { ok, created, badRequest, notFound, serverError, preflight } = require('../responses');
 
 // POST /api/payroll/approve — approve a week and calculate payroll
 app.http('payroll-approve', {
-    methods: ['POST'],
+    methods: ['POST', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'payroll/approve',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
             const body = await request.json();
             const { week_commencing } = body;
 
-            if (!week_commencing) return badRequest('week_commencing is required');
+            if (!week_commencing) return badRequest('week_commencing is required', request);
 
             // Check if already archived
             const existing = await query(
@@ -24,7 +25,7 @@ app.http('payroll-approve', {
                 { wc: week_commencing }
             );
             if (existing.recordset[0].count > 0) {
-                return badRequest('This week has already been approved');
+                return badRequest('This week has already been approved', request);
             }
 
             // Get all project hours for this week
@@ -40,7 +41,7 @@ app.http('payroll-approve', {
             );
 
             if (hours.recordset.length === 0) {
-                return badRequest('No project hours found for this week');
+                return badRequest('No project hours found for this week', request);
             }
 
             // Group by employee and calculate payroll
@@ -153,7 +154,7 @@ app.http('payroll-approve', {
             });
         } catch (err) {
             context.error('Error approving payroll:', err);
-            return serverError('Failed to approve payroll');
+            return serverError('Failed to approve payroll', request);
         }
     }
 });
@@ -161,11 +162,12 @@ app.http('payroll-approve', {
 // GET /api/archive — get archived payroll weeks
 // ?week_commencing=2026-04-20&from=2026-01-01&to=2026-12-31
 app.http('archive-list', {
-    methods: ['GET'],
+    methods: ['GET', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'archive',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -200,21 +202,22 @@ app.http('archive-list', {
             sqlText += ' ORDER BY pa.week_commencing DESC, e.name';
 
             const result = await query(sqlText, params);
-            return ok(result.recordset);
+            return ok(result.recordset, request);
         } catch (err) {
             context.error('Error fetching archive:', err);
-            return serverError('Failed to fetch archive');
+            return serverError('Failed to fetch archive', request);
         }
     }
 });
 
 // GET /api/archive/weeks — list all archived weeks (summary)
 app.http('archive-weeks', {
-    methods: ['GET'],
+    methods: ['GET', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'archive/weeks',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -229,10 +232,10 @@ app.http('archive-weeks', {
                 ORDER BY week_commencing DESC
             `);
 
-            return ok(result.recordset);
+            return ok(result.recordset, request);
         } catch (err) {
             context.error('Error fetching archive weeks:', err);
-            return serverError('Failed to fetch archive weeks');
+            return serverError('Failed to fetch archive weeks', request);
         }
     }
 });

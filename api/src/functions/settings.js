@@ -1,16 +1,17 @@
 const { app } = require('@azure/functions');
 const { query, sql } = require('../db');
 const { requireAuth } = require('../auth');
-const { ok, badRequest, serverError } = require('../responses');
+const { ok, badRequest, serverError, preflight } = require('../responses');
 
 // GET /api/settings — get all settings
 // GET /api/settings/:key — get single setting
 app.http('settings-get', {
-    methods: ['GET'],
+    methods: ['GET', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'settings/{key?}',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -22,7 +23,7 @@ app.http('settings-get', {
                     { key }
                 );
                 if (result.recordset.length === 0) {
-                    return ok({ key, value: null });
+                    return ok({ key, value: null }, request);
                 }
                 const row = result.recordset[0];
                 // Try to parse JSON values
@@ -31,7 +32,7 @@ app.http('settings-get', {
                 } catch (e) {
                     // Not JSON, keep as string
                 }
-                return ok(row);
+                return ok(row, request);
             }
 
             const result = await query('SELECT * FROM Settings ORDER BY [key]');
@@ -43,10 +44,10 @@ app.http('settings-get', {
                     settings[row.key] = row.value;
                 }
             }
-            return ok(settings);
+            return ok(settings, request);
         } catch (err) {
             context.error('Error fetching settings:', err);
-            return serverError('Failed to fetch settings');
+            return serverError('Failed to fetch settings', request);
         }
     }
 });
@@ -54,18 +55,19 @@ app.http('settings-get', {
 // PUT /api/settings — update one or more settings
 // Body: { "key": "value" } or { "key1": "value1", "key2": "value2" }
 app.http('settings-update', {
-    methods: ['PUT'],
+    methods: ['PUT', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'settings',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
             const body = await request.json();
 
             if (!body || typeof body !== 'object') {
-                return badRequest('Body must be an object of key-value pairs');
+                return badRequest('Body must be an object of key-value pairs', request);
             }
 
             const updated = {};
@@ -86,21 +88,22 @@ app.http('settings-update', {
                 updated[key] = value;
             }
 
-            return ok({ updated });
+            return ok({ updated }, request);
         } catch (err) {
             context.error('Error updating settings:', err);
-            return serverError('Failed to update settings');
+            return serverError('Failed to update settings', request);
         }
     }
 });
 
 // POST /api/auth/verify-pin — verify manager/draftsman PIN
 app.http('auth-verify-pin', {
-    methods: ['POST'],
+    methods: ['POST', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'auth/verify-pin',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -108,7 +111,7 @@ app.http('auth-verify-pin', {
             const { employee_id, pin } = body;
 
             if (!employee_id || !pin) {
-                return badRequest('employee_id and pin are required');
+                return badRequest('employee_id and pin are required', request);
             }
 
             const result = await query(
@@ -117,12 +120,12 @@ app.http('auth-verify-pin', {
             );
 
             if (result.recordset.length === 0) {
-                return ok({ valid: false, reason: 'Employee not found' });
+                return ok({ valid: false, reason: 'Employee not found' }, request);
             }
 
             const emp = result.recordset[0];
             if (emp.pin !== pin) {
-                return ok({ valid: false, reason: 'Incorrect PIN' });
+                return ok({ valid: false, reason: 'Incorrect PIN' }, request);
             }
 
             return ok({
@@ -130,28 +133,30 @@ app.http('auth-verify-pin', {
                 employee_id: emp.id,
                 name: emp.name,
                 erp_role: emp.erp_role
-            });
+            }, request);
         } catch (err) {
             context.error('Error verifying PIN:', err);
-            return serverError('Failed to verify PIN');
+            return serverError('Failed to verify PIN', request);
         }
     }
 });
 
 // GET /api/health — simple health check
 app.http('health', {
-    methods: ['GET'],
+    methods: ['GET', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'health',
     handler: async (request, context) => {
+        if (request.method === 'OPTIONS') return preflight(request);
         try {
             const result = await query('SELECT 1 AS ok');
             return ok({
                 status: 'healthy',
                 database: 'connected',
                 timestamp: new Date().toISOString()
-            });
+            }, request);
         } catch (err) {
+            const { corsHeaders } = require('../responses');
             return {
                 status: 503,
                 jsonBody: {
@@ -159,7 +164,8 @@ app.http('health', {
                     database: 'disconnected',
                     error: err.message,
                     timestamp: new Date().toISOString()
-                }
+                },
+                headers: { 'Content-Type': 'application/json', ...corsHeaders(request) }
             };
         }
     }

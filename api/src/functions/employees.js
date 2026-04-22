@@ -1,17 +1,18 @@
 const { app } = require('@azure/functions');
 const { query, sql } = require('../db');
 const { requireAuth } = require('../auth');
-const { ok, created, badRequest, notFound, serverError } = require('../responses');
+const { ok, created, badRequest, notFound, serverError, preflight } = require('../responses');
 
 // GET /api/employees — list all active employees
 // GET /api/employees?all=true — include inactive
 // GET /api/employees/:id — get single employee
 app.http('employees-list', {
-    methods: ['GET'],
+    methods: ['GET', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'employees/{id?}',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth; // 401 response
 
         try {
@@ -22,8 +23,8 @@ app.http('employees-list', {
                     'SELECT * FROM Employees WHERE id = @id',
                     { id: parseInt(id) }
                 );
-                if (result.recordset.length === 0) return notFound('Employee not found');
-                return ok(result.recordset[0]);
+                if (result.recordset.length === 0) return notFound('Employee not found', request);
+                return ok(result.recordset[0], request);
             }
 
             const showAll = new URL(request.url).searchParams.get('all') === 'true';
@@ -32,21 +33,22 @@ app.http('employees-list', {
                 : 'SELECT * FROM Employees WHERE is_active = 1 ORDER BY name';
 
             const result = await query(sqlText);
-            return ok(result.recordset);
+            return ok(result.recordset, request);
         } catch (err) {
             context.error('Error fetching employees:', err);
-            return serverError('Failed to fetch employees');
+            return serverError('Failed to fetch employees', request);
         }
     }
 });
 
 // POST /api/employees — create new employee
 app.http('employees-create', {
-    methods: ['POST'],
+    methods: ['POST', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'employees',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -54,7 +56,7 @@ app.http('employees-create', {
             const { name, pin, rate, staff_type, erp_role, holiday_entitlement } = body;
 
             if (!name || !pin || rate === undefined) {
-                return badRequest('name, pin, and rate are required');
+                return badRequest('name, pin, and rate are required', request);
             }
 
             const result = await query(
@@ -71,21 +73,22 @@ app.http('employees-create', {
                 }
             );
 
-            return created(result.recordset[0]);
+            return created(result.recordset[0], request);
         } catch (err) {
             context.error('Error creating employee:', err);
-            return serverError('Failed to create employee');
+            return serverError('Failed to create employee', request);
         }
     }
 });
 
 // PUT /api/employees/:id — update employee
 app.http('employees-update', {
-    methods: ['PUT'],
+    methods: ['PUT', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'employees/{id}',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -105,18 +108,18 @@ app.http('employees-update', {
             if (body.holiday_entitlement !== undefined) { fields.push('holiday_entitlement = @holidayEntitlement'); params.holidayEntitlement = parseFloat(body.holiday_entitlement); }
             if (body.is_active !== undefined) { fields.push('is_active = @isActive'); params.isActive = body.is_active ? 1 : 0; }
 
-            if (fields.length === 0) return badRequest('No fields to update');
+            if (fields.length === 0) return badRequest('No fields to update', request);
 
             const result = await query(
                 `UPDATE Employees SET ${fields.join(', ')} OUTPUT INSERTED.* WHERE id = @id`,
                 params
             );
 
-            if (result.recordset.length === 0) return notFound('Employee not found');
-            return ok(result.recordset[0]);
+            if (result.recordset.length === 0) return notFound('Employee not found', request);
+            return ok(result.recordset[0], request);
         } catch (err) {
             context.error('Error updating employee:', err);
-            return serverError('Failed to update employee');
+            return serverError('Failed to update employee', request);
         }
     }
 });

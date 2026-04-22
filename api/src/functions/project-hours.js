@@ -1,15 +1,16 @@
 const { app } = require('@azure/functions');
 const { query, sql } = require('../db');
 const { requireAuth } = require('../auth');
-const { ok, created, badRequest, notFound, serverError } = require('../responses');
+const { ok, created, badRequest, notFound, serverError, preflight } = require('../responses');
 
 // POST /api/project-hours — log project hours
 app.http('project-hours-create', {
-    methods: ['POST'],
+    methods: ['POST', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'project-hours',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -17,7 +18,7 @@ app.http('project-hours-create', {
             const { employee_id, project_number, date, hours, week_commencing } = body;
 
             if (!employee_id || !project_number || !date || hours === undefined) {
-                return badRequest('employee_id, project_number, date, and hours are required');
+                return badRequest('employee_id, project_number, date, and hours are required', request);
             }
 
             // Calculate week_commencing if not provided (Monday of the week)
@@ -43,10 +44,10 @@ app.http('project-hours-create', {
                 }
             );
 
-            return created(result.recordset[0]);
+            return created(result.recordset[0], request);
         } catch (err) {
             context.error('Error logging project hours:', err);
-            return serverError('Failed to log project hours');
+            return serverError('Failed to log project hours', request);
         }
     }
 });
@@ -54,11 +55,12 @@ app.http('project-hours-create', {
 // GET /api/project-hours — get project hours with filters
 // ?employee_id=1&week_commencing=2026-04-20&project_number=P-1234&from=2026-04-01&to=2026-04-30
 app.http('project-hours-list', {
-    methods: ['GET'],
+    methods: ['GET', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'project-hours',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -111,21 +113,22 @@ app.http('project-hours-list', {
             sqlText += ' ORDER BY ph.date DESC, e.name';
 
             const result = await query(sqlText, params);
-            return ok(result.recordset);
+            return ok(result.recordset, request);
         } catch (err) {
             context.error('Error fetching project hours:', err);
-            return serverError('Failed to fetch project hours');
+            return serverError('Failed to fetch project hours', request);
         }
     }
 });
 
 // PUT /api/project-hours/:id — update project hours entry
 app.http('project-hours-update', {
-    methods: ['PUT'],
+    methods: ['PUT', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'project-hours/{id}',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -139,29 +142,30 @@ app.http('project-hours-update', {
             if (body.date !== undefined) { fields.push('date = @date'); params.date = body.date; }
             if (body.is_approved !== undefined) { fields.push('is_approved = @isApproved'); params.isApproved = body.is_approved ? 1 : 0; }
 
-            if (fields.length === 0) return badRequest('No fields to update');
+            if (fields.length === 0) return badRequest('No fields to update', request);
 
             const result = await query(
                 `UPDATE ProjectHours SET ${fields.join(', ')} OUTPUT INSERTED.* WHERE id = @id`,
                 params
             );
 
-            if (result.recordset.length === 0) return notFound('Project hours entry not found');
-            return ok(result.recordset[0]);
+            if (result.recordset.length === 0) return notFound('Project hours entry not found', request);
+            return ok(result.recordset[0], request);
         } catch (err) {
             context.error('Error updating project hours:', err);
-            return serverError('Failed to update project hours');
+            return serverError('Failed to update project hours', request);
         }
     }
 });
 
 // DELETE /api/project-hours/:id — delete project hours entry
 app.http('project-hours-delete', {
-    methods: ['DELETE'],
+    methods: ['DELETE', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'project-hours/{id}',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -171,11 +175,11 @@ app.http('project-hours-delete', {
                 { id }
             );
 
-            if (result.recordset.length === 0) return notFound('Entry not found');
-            return ok({ deleted: true, entry: result.recordset[0] });
+            if (result.recordset.length === 0) return notFound('Entry not found', request);
+            return ok({ deleted: true, entry: result.recordset[0] }, request);
         } catch (err) {
             context.error('Error deleting project hours:', err);
-            return serverError('Failed to delete project hours');
+            return serverError('Failed to delete project hours', request);
         }
     }
 });
@@ -184,11 +188,12 @@ app.http('project-hours-delete', {
 // ?group_by=project&week_commencing=2026-04-20
 // ?group_by=employee&week_commencing=2026-04-20
 app.http('project-hours-summary', {
-    methods: ['GET'],
+    methods: ['GET', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'project-hours/summary',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
+        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -241,10 +246,10 @@ app.http('project-hours-summary', {
             }
 
             const result = await query(sqlText, params);
-            return ok(result.recordset);
+            return ok(result.recordset, request);
         } catch (err) {
             context.error('Error fetching summary:', err);
-            return serverError('Failed to fetch summary');
+            return serverError('Failed to fetch summary', request);
         }
     }
 });
