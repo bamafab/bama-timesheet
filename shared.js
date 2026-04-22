@@ -1,15 +1,15 @@
 // ═══════════════════════════════════════════
-// CONFIGURATION — Edit these
+// CONFIGURATION
 // ═══════════════════════════════════════════
+const API_BASE = 'https://bama-erp-api-deauckd2cja7ebd5.uksouth-01.azurewebsites.net';
+
+// SharePoint config — ONLY used for file operations (PROJECT TRACKER.xlsx, drawing PDFs, emails)
 const CONFIG = {
-  managerPin: '1234', // Change this PIN!
   driveId: 'b!CxTKk9lEwkyweUqAo3CRas-huywW4KtLqOk2tNzmx-P7CX86DNhTQo14pLuU_tZu',
   projectTrackerItemId: '012IX7LSI5MG6U55XFORBYNJORV3AQLGU7',
-  timesheetFileName: 'timesheet-data.json',
-  timesheetFolderItemId: '012IX7LSKBTWWE4SJNNFEJGFDOXH3M3Z5B', // 01 - Accounts/DANIEL/Project Tracker
-  timesheetFolderId: null, // will store in root of drive
+  timesheetFolderItemId: '012IX7LSKBTWWE4SJNNFEJGFDOXH3M3Z5B', // 01 - Accounts/DANIEL/Project Tracker (for drawings PDFs / BOM files)
 
-  employees: [], // now managed via Manager > Staff tab
+  employees: [], // populated from API at startup
 
   timeSlots: (() => {
     const slots = [];
@@ -25,15 +25,85 @@ const CONFIG = {
 };
 
 // ═══════════════════════════════════════════
+// API LAYER — All data operations go through here
+// ═══════════════════════════════════════════
+async function apiCall(method, endpoint, body = null) {
+  const token = await getToken();
+  const opts = {
+    method,
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    }
+  };
+  if (body && method !== 'GET') opts.body = JSON.stringify(body);
+
+  const res = await fetch(`${API_BASE}${endpoint}`, opts);
+
+  if (res.status === 401) {
+    // Token expired — force re-login
+    console.warn('API returned 401, forcing re-auth');
+    AUTH.loginInteractive();
+    await new Promise(() => {}); // wait for redirect
+  }
+
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({ error: res.statusText }));
+    const err = new Error(errBody.error || `API ${method} ${endpoint} failed (${res.status})`);
+    err.status = res.status;
+    err.body = errBody;
+    throw err;
+  }
+
+  return res.json();
+}
+
+// Convenience wrappers
+const api = {
+  get:    (endpoint) => apiCall('GET', endpoint),
+  post:   (endpoint, body) => apiCall('POST', endpoint, body),
+  put:    (endpoint, body) => apiCall('PUT', endpoint, body),
+  delete: (endpoint) => apiCall('DELETE', endpoint),
+};
+
+// ═══════════════════════════════════════════
+// EMPLOYEE NAME ↔ ID MAPPING
+// ═══════════════════════════════════════════
+// The SQL database uses integer IDs, but the UI was built around employee names.
+// These helpers bridge the gap during migration.
+const _empNameToId = {};
+const _empIdToName = {};
+
+function buildEmployeeMaps() {
+  // Clear existing maps
+  for (const k in _empNameToId) delete _empNameToId[k];
+  for (const k in _empIdToName) delete _empIdToName[k];
+  // Build from current state
+  (state.timesheetData.employees || []).forEach(emp => {
+    _empNameToId[emp.name] = emp.id;
+    _empIdToName[emp.id] = emp.name;
+  });
+}
+
+function empIdByName(name) {
+  return _empNameToId[name] || null;
+}
+
+function empNameById(id) {
+  return _empIdToName[id] || null;
+}
+
+// ═══════════════════════════════════════════
 // STATE
 // ═══════════════════════════════════════════
 let state = {
-  projects: [],       // { id, name, status }
-  timesheetData: {    // persisted to SharePoint JSON
-    employees: [],    // { id, name, role, active, addedAt }
-    entries: [],      // { id, employeeName, projectId, projectName, hours, date, status, submittedAt }
-    clockings: [],    // { id, employeeName, date, clockIn, clockOut, breakMins }
-    settings: { managerPin: '1234' }
+  projects: [],       // { id, name, status } — from PROJECT TRACKER.xlsx
+  timesheetData: {    // populated from SQL API at startup
+    employees: [],    // { id, name, pin, rate, staff_type, erp_role, ... }
+    entries: [],      // { id, employee_id, employee_name, project_number, hours, date, ... }
+    clockings: [],    // { id, employee_id, employee_name, clock_in, clock_out, ... }
+    holidays: [],     // { id, employee_id, employee_name, date_from, date_to, ... }
+    settings: {}      // { managerPin, payrollEmail, ... }
   },
   currentEmployee: null,
   currentEntries: [],  // unsaved entries for today's session
@@ -158,79 +228,111 @@ async function getToken() {
 }
 
 // ═══════════════════════════════════════════
-// DATA LAYER — Microsoft Graph API
+// DATA LAYER — SQL API
 // ═══════════════════════════════════════════
-async function loadTimesheetData() {
-  const token = await getToken();
-  const metaUrl = `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.timesheetFolderItemId}:/${CONFIG.timesheetFileName}`;
-  const metaRes = await fetch(metaUrl, { headers: { 'Authorization': `Bearer ${token}` } });
 
-  if (metaRes.status === 404) {
-    console.log('First run — no timesheet-data.json yet');
-    return;
-  }
-  if (!metaRes.ok) throw new Error(`Metadata fetch failed: ${metaRes.status}`);
-
-  const meta = await metaRes.json();
-  state.timesheetItemId = meta.id;
-
-  const contentRes = await fetch(
-    `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${meta.id}/content`,
-    { headers: { 'Authorization': `Bearer ${token}` } }
-  );
-  if (!contentRes.ok) throw new Error(`Content fetch failed: ${contentRes.status}`);
-
-  const loaded = await contentRes.json();
-  state.timesheetData = {
-    employees: [],
-    entries: [],
-    clockings: [],
-    settings: { managerPin: '1234' },
-    ...loaded
+// Normalise API employee row to the shape the UI expects
+function normaliseEmployee(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    pin: row.pin,
+    role: row.erp_role || row.staff_type || 'employee',
+    staffType: row.staff_type || 'workshop',
+    erpRole: row.erp_role || 'employee',
+    payType: row.pay_type || 'payee',
+    rate: parseFloat(row.rate) || 0,
+    annualDays: parseFloat(row.holiday_entitlement) || 28,
+    holidayBalance: parseFloat(row.holiday_balance) || 0,
+    carryoverDays: 0,
+    startDate: '',
+    active: row.is_active === undefined ? true : !!row.is_active,
+    addedAt: row.created_at || new Date().toISOString()
   };
-  console.log(`Loaded: ${(state.timesheetData.employees||[]).length} employees, ${state.timesheetData.entries.length} entries`);
 }
 
+// Normalise API clocking row to the shape the UI expects
+function normaliseClocking(row) {
+  const clockIn = row.clock_in ? new Date(row.clock_in) : null;
+  const clockOut = row.clock_out ? new Date(row.clock_out) : null;
+  return {
+    id: row.id,
+    employeeName: row.employee_name || empNameById(row.employee_id) || `Employee #${row.employee_id}`,
+    employee_id: row.employee_id,
+    date: clockIn ? clockIn.toISOString().split('T')[0] : '',
+    clockIn: clockIn ? `${String(clockIn.getHours()).padStart(2,'0')}:${String(clockIn.getMinutes()).padStart(2,'0')}` : null,
+    clockOut: clockOut ? `${String(clockOut.getHours()).padStart(2,'0')}:${String(clockOut.getMinutes()).padStart(2,'0')}` : null,
+    breakMins: row.break_mins || 0,
+    source: row.source || 'kiosk',
+    addedByManager: row.source === 'manual',
+    manuallyEdited: !!row.is_amended,
+    approvalStatus: row.is_amended ? 'pending' : null,
+    _raw: row // keep raw data for API updates
+  };
+}
+
+// Normalise API project hours row
+function normaliseEntry(row) {
+  return {
+    id: row.id,
+    employeeName: row.employee_name || empNameById(row.employee_id) || `Employee #${row.employee_id}`,
+    employee_id: row.employee_id,
+    projectId: row.project_number,
+    projectName: row.project_name || row.project_number,
+    hours: parseFloat(row.hours) || 0,
+    date: row.date ? (typeof row.date === 'string' ? row.date.split('T')[0] : new Date(row.date).toISOString().split('T')[0]) : '',
+    status: row.is_approved ? 'approved' : 'pending',
+    is_approved: !!row.is_approved,
+    week_commencing: row.week_commencing,
+    submittedAt: row.created_at || new Date().toISOString()
+  };
+}
+
+// Normalise API holiday row
+function normaliseHoliday(row) {
+  return {
+    id: row.id,
+    employeeName: row.employee_name || empNameById(row.employee_id) || `Employee #${row.employee_id}`,
+    employee_id: row.employee_id,
+    dateFrom: row.date_from ? (typeof row.date_from === 'string' ? row.date_from.split('T')[0] : new Date(row.date_from).toISOString().split('T')[0]) : '',
+    dateTo: row.date_to ? (typeof row.date_to === 'string' ? row.date_to.split('T')[0] : new Date(row.date_to).toISOString().split('T')[0]) : '',
+    type: row.type || 'paid',
+    reason: row.reason || '',
+    status: row.status || 'pending',
+    workingDays: row.working_days || 0,
+    submittedAt: row.submitted_at || new Date().toISOString(),
+    decidedAt: row.decided_at || null
+  };
+}
+
+async function loadTimesheetData() {
+  // Load employees, clockings, project hours, holidays, settings in parallel from API
+  const [employees, clockings, entries, holidays, settings] = await Promise.all([
+    api.get('/api/employees?all=true').catch(e => { console.warn('Employee load failed:', e.message); return []; }),
+    api.get('/api/clockings').catch(e => { console.warn('Clockings load failed:', e.message); return []; }),
+    api.get('/api/project-hours').catch(e => { console.warn('Project hours load failed:', e.message); return []; }),
+    api.get('/api/holidays').catch(e => { console.warn('Holidays load failed:', e.message); return []; }),
+    api.get('/api/settings').catch(e => { console.warn('Settings load failed:', e.message); return {}; }),
+  ]);
+
+  // Normalise employees first (needed for name lookups)
+  state.timesheetData.employees = (Array.isArray(employees) ? employees : []).map(normaliseEmployee);
+  buildEmployeeMaps();
+
+  // Now normalise the rest (they can use empNameById)
+  state.timesheetData.clockings = (Array.isArray(clockings) ? clockings : []).map(normaliseClocking);
+  state.timesheetData.entries = (Array.isArray(entries) ? entries : []).map(normaliseEntry);
+  state.timesheetData.holidays = (Array.isArray(holidays) ? holidays : []).map(normaliseHoliday);
+  state.timesheetData.settings = (settings && typeof settings === 'object') ? settings : {};
+
+  console.log(`API loaded: ${state.timesheetData.employees.length} employees, ${state.timesheetData.clockings.length} clockings, ${state.timesheetData.entries.length} entries, ${state.timesheetData.holidays.length} holidays`);
+}
+
+// saveTimesheetData is NO LONGER USED — each action calls its own API endpoint.
+// This stub exists only to catch any missed call sites during migration.
 async function saveTimesheetData() {
-  // SAFEGUARD 1: Never save if we didn't successfully load data first
-  if (!_dataLoadedFromSharePoint) {
-    console.error('BLOCKED: Cannot save — data was never loaded from SharePoint');
-    toast('Save blocked — data not loaded yet. Please refresh.', 'error');
-    return;
-  }
-
-  // SAFEGUARD 2: Never overwrite SharePoint with empty employees
-  if (!state.timesheetData.employees || state.timesheetData.employees.length === 0) {
-    console.error('BLOCKED: Attempted to save empty employees array — aborting to protect data');
-    toast('Save blocked — no employee data to save', 'error');
-    return;
-  }
-
-  const token = await getToken();
-  const json = JSON.stringify(state.timesheetData, null, 2);
-  const url = `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.timesheetFolderItemId}:/${CONFIG.timesheetFileName}:/content`;
-  const res = await fetch(url, {
-    method: 'PUT',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: json
-  });
-  if (!res.ok) {
-    const err = await res.text().catch(() => res.status);
-    throw new Error(`Save failed (${res.status}): ${err}`);
-  }
-  console.log('Saved to SharePoint OK');
-
-  // Auto-backup max once every 5 minutes
-  const now = Date.now();
-  if (!saveTimesheetData._lastBackup || now - saveTimesheetData._lastBackup > 5 * 60 * 1000) {
-    saveTimesheetData._lastBackup = now;
-    const ts = new Date().toISOString().replace(/[:.]/g,'-').slice(0,16);
-    fetch(`https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/012IX7LSOBE5X4IMQJT5A25KEJEMOV2OUR:/timesheet-backup-${ts}.json:/content`, {
-      method: 'PUT',
-      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: json
-    }).then(() => console.log('Backup saved')).catch(e => console.warn('Backup failed (non-critical):', e.message));
-  }
+  console.warn('saveTimesheetData() called — this is a migration stub. The caller should use a targeted API endpoint instead.');
+  console.trace('saveTimesheetData caller');
 }
 
 // ═══════════════════════════════════════════
@@ -892,13 +994,11 @@ async function doClock(direction) {
   const today = todayStr();
   const emp = state.currentEmployee;
   if (!emp) { toast('No employee selected', 'error'); return; }
+  const empId = empIdByName(emp);
+  if (!empId) { toast('Employee not found in system', 'error'); return; }
 
   if (direction === 'in') {
-    // Capture exact current time
-    const now = new Date();
-    const clockIn = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
-
-    // Block if already clocked in (no clock-out yet)
+    // Check if already clocked in (local check for instant feedback)
     const existing = state.timesheetData.clockings.find(
       c => c.employeeName === emp && c.date === today && !c.clockOut
     );
@@ -907,7 +1007,7 @@ async function doClock(direction) {
       return;
     }
 
-    // Block if already completed a full shift today (clocked in AND out)
+    // Block if already completed a full shift today
     const completedToday = state.timesheetData.clockings.find(
       c => c.employeeName === emp && c.date === today && c.clockOut
     );
@@ -916,14 +1016,15 @@ async function doClock(direction) {
       return;
     }
 
-    state.timesheetData.clockings.push({
-      id: Date.now().toString(),
-      employeeName: emp,
-      date: today,
-      clockIn,
-      clockOut: null,
-      breakMins: 0
+    // Call API
+    const result = await api.post('/api/clock-in', {
+      employee_id: empId,
+      source: 'kiosk'
     });
+
+    // Add to local state
+    const newClocking = normaliseClocking(result);
+    state.timesheetData.clockings.push(newClocking);
 
     // Check bank holiday
     if (isBankHoliday(today)) {
@@ -939,32 +1040,17 @@ async function doClock(direction) {
       toast(`⚠️ You have approved holiday today — clocking in anyway`, 'info');
     }
 
-    // Update UI immediately — don't make them wait
-    showClockedIn({ clockIn });
+    showClockedIn({ clockIn: newClocking.clockIn });
     renderHome();
-    toast(`Clocked in at ${clockIn}`, 'success');
-
-    // Save in background
-    try {
-      await saveTimesheetData();
-    } catch (e) {
-      console.error('Clock-in save error:', e);
-      toast('Warning: saved locally but sync to SharePoint failed. Try again shortly.', 'error');
-    }
+    toast(`Clocked in at ${newClocking.clockIn}`, 'success');
 
   } else {
     // CLOCK OUT
-    if (!state.timesheetData || !state.timesheetData.clockings) {
-      toast('Error: timesheet data not loaded', 'error');
-      return;
-    }
-
     const clocking = state.timesheetData.clockings.find(
       c => c.employeeName === emp && c.date === today && !c.clockOut
     );
     if (!clocking) { toast('Not clocked in today — cannot clock out', 'error'); return; }
 
-    // Break is always 30 mins (mandatory default)
     const breakEl = document.getElementById('breakDuration');
     let breakMins = breakEl ? (parseInt(breakEl.value) || 30) : 30;
 
@@ -984,9 +1070,7 @@ async function doClock(direction) {
       ...currentEntries.filter(e => e.projectId === 'WGD')
     ];
 
-
     if (todayProjectHrs.length === 0 && todayWGDHrs.length === 0) {
-      // No project hours — show the mandatory prompt
       _pendingClockOutData = { emp, today, clockOut, breakMins, clocking };
       const modal = document.getElementById('noProjectModal');
       if (modal) {
@@ -997,7 +1081,6 @@ async function doClock(direction) {
       return;
     }
 
-    // Has project hours — proceed directly
     await finishClockOut({ emp, today, clockOut, breakMins, clocking });
   }
   } catch (err) {
@@ -1007,6 +1090,14 @@ async function doClock(direction) {
 }
 
 async function finishClockOut({ emp, today, clockOut, breakMins, clocking }) {
+    const empId = empIdByName(emp);
+
+    // Call API to clock out
+    const result = await api.post('/api/clock-out', {
+      employee_id: empId
+    });
+
+    // Update local state
     clocking.clockOut = clockOut;
     clocking.breakMins = breakMins;
 
@@ -1018,23 +1109,28 @@ async function finishClockOut({ emp, today, clockOut, breakMins, clocking }) {
       .reduce((s, e) => s + e.hours, 0);
     const unproductiveHrs = parseFloat((clockedHrs - totalProjectHrs).toFixed(2));
 
-    // Remove any existing S000 for today and re-add if needed
+    // Remove any existing S000 for today locally
     state.timesheetData.entries = state.timesheetData.entries.filter(
       e => !(e.employeeName === emp && e.date === today && e.projectId === 'S000')
     );
 
-    if (unproductiveHrs > 0) {
-      state.timesheetData.entries.push({
-        id: `s000-${today}-${emp}`,
-        employeeName: emp,
-        projectId: 'S000',
-        projectName: 'Unproductive Time',
-        hours: unproductiveHrs,
-        date: today,
-        status: 'approved',
-        autoGenerated: true,
-        submittedAt: new Date().toISOString()
-      });
+    if (unproductiveHrs > 0 && empId) {
+      // Post S000 unproductive time to API
+      try {
+        const s000Result = await api.post('/api/project-hours', {
+          employee_id: empId,
+          project_number: 'S000',
+          date: today,
+          hours: unproductiveHrs
+        });
+        state.timesheetData.entries.push(normaliseEntry({
+          ...s000Result,
+          employee_name: emp,
+          project_name: 'Unproductive Time'
+        }));
+      } catch (e) {
+        console.warn('Failed to save S000 unproductive time:', e.message);
+      }
     }
 
     // Update UI immediately
@@ -1049,14 +1145,6 @@ async function finishClockOut({ emp, today, clockOut, breakMins, clocking }) {
     } else {
       toast(`Clocked out at ${clockOut}`, 'success');
     }
-
-    // Save in background
-    try {
-      await saveTimesheetData();
-    } catch (e) {
-      console.error('Clock-out save error:', e);
-      toast('Warning: saved locally but sync to SharePoint failed. Try again shortly.', 'error');
-    }
 }
 
 async function submitDay() {
@@ -1064,30 +1152,37 @@ async function submitDay() {
     toast('No new entries to submit', 'error'); return;
   }
   const today = todayStr();
-
-  // Push all current entries
-  state.currentEntries.forEach(e => {
-    state.timesheetData.entries.push({
-      id: e.id,
-      employeeName: state.currentEmployee,
-      projectId: e.projectId,
-      projectName: e.projectName,
-      hours: e.hours,
-      date: today,
-      status: 'pending',
-      submittedAt: new Date().toISOString()
-    });
-  });
+  const empId = empIdByName(state.currentEmployee);
+  if (!empId) { toast('Employee not found in system', 'error'); return; }
 
   try {
     setLoading(true);
-    await saveTimesheetData();
+
+    // Submit each entry to the API
+    for (const e of state.currentEntries) {
+      const result = await api.post('/api/project-hours', {
+        employee_id: empId,
+        project_number: e.projectId,
+        date: today,
+        hours: e.hours
+      });
+
+      // Add to local state
+      state.timesheetData.entries.push(normaliseEntry({
+        ...result,
+        employee_name: state.currentEmployee,
+        project_name: e.projectName
+      }));
+    }
+
     state.currentEntries = [];
     renderTodayEntries();
-    toast(`Entries submitted for approval ✓`, 'success');
+    toast(`Entries submitted ✓`, 'success');
     setTimeout(goHome, 1500);
-  } catch { toast('Submit failed — check connection', 'error'); }
-  finally { setLoading(false); }
+  } catch (err) {
+    console.error('Submit failed:', err);
+    toast('Submit failed — ' + err.message, 'error');
+  } finally { setLoading(false); }
 }
 
 // ═══════════════════════════════════════════
@@ -1730,43 +1825,69 @@ async function saveClockEdit(id) {
   const clocking = state.timesheetData.clockings.find(c => c.id === id);
   if (!clocking) return;
 
-  clocking.clockIn = document.getElementById(`edit-in-${id}`).value;
-  clocking.clockOut = document.getElementById(`edit-out-${id}`).value;
-  clocking.breakMins = parseInt(document.getElementById(`edit-break-${id}`).value) || 0;
-  clocking.manuallyEdited = true;
-  clocking.approvalStatus = 'pending'; // Mark as pending after manual edit
-  clocking._editing = false;
+  const newClockIn = document.getElementById(`edit-in-${id}`).value;
+  const newClockOut = document.getElementById(`edit-out-${id}`).value;
+  const newBreakMins = parseInt(document.getElementById(`edit-break-${id}`).value) || 0;
 
   try {
-    await saveTimesheetData();
+    // Build full datetime from date + time
+    const clockInDT = `${clocking.date}T${newClockIn}:00`;
+    const clockOutDT = newClockOut ? `${clocking.date}T${newClockOut}:00` : null;
+
+    await api.put(`/api/clockings/${id}`, {
+      clock_in: clockInDT,
+      clock_out: clockOutDT,
+      amended_by: currentManagerUser || 'manager'
+    });
+
+    // Update local state
+    clocking.clockIn = newClockIn;
+    clocking.clockOut = newClockOut;
+    clocking.breakMins = newBreakMins;
+    clocking.manuallyEdited = true;
+    clocking.approvalStatus = 'pending';
+    clocking._editing = false;
+
     toast('Clocking updated — pending approval ✓', 'success');
     renderManagerView();
-  } catch { toast('Save failed', 'error'); }
+  } catch (err) { toast('Save failed: ' + err.message, 'error'); }
 }
 
 async function approveClocking(id) {
   const c = state.timesheetData.clockings.find(c => c.id === id);
   if (!c) return;
-  c.approvalStatus = 'approved';
   try {
-    await saveTimesheetData();
+    await api.put(`/api/clockings/${id}`, {
+      amended_by: currentManagerUser || 'manager'
+    });
+    c.approvalStatus = 'approved';
     toast('Clocking approved ✓', 'success');
     renderManagerView();
-  } catch { toast('Save failed', 'error'); }
+  } catch (err) { toast('Save failed: ' + err.message, 'error'); }
 }
 
 async function rejectClocking(id) {
   const c = state.timesheetData.clockings.find(c => c.id === id);
   if (!c) return;
-  // Revert to original if available
-  if (c.originalClockIn) { c.clockIn = c.originalClockIn; c.clockOut = c.originalClockOut; c.breakMins = c.originalBreakMins || 0; }
-  c.approvalStatus = 'rejected';
-  c.manuallyEdited = false;
   try {
-    await saveTimesheetData();
+    // Revert to original times if available
+    const revertIn = c.originalClockIn || c.clockIn;
+    const revertOut = c.originalClockOut || c.clockOut;
+    const clockInDT = `${c.date}T${revertIn}:00`;
+    const clockOutDT = revertOut ? `${c.date}T${revertOut}:00` : null;
+
+    const updateBody = { amended_by: currentManagerUser || 'manager' };
+    if (c.originalClockIn) updateBody.clock_in = clockInDT;
+    if (c.originalClockOut) updateBody.clock_out = clockOutDT;
+
+    await api.put(`/api/clockings/${id}`, updateBody);
+
+    if (c.originalClockIn) { c.clockIn = c.originalClockIn; c.clockOut = c.originalClockOut; c.breakMins = c.originalBreakMins || 0; }
+    c.approvalStatus = 'rejected';
+    c.manuallyEdited = false;
     toast('Change rejected', 'success');
     renderManagerView();
-  } catch { toast('Save failed', 'error'); }
+  } catch (err) { toast('Save failed: ' + err.message, 'error'); }
 }
 
 // Manager add clocking modal
@@ -1790,34 +1911,38 @@ function closeMgrAddClocking() {
 }
 
 async function saveMgrClocking() {
-  const emp = document.getElementById('mgrClockEmp').value;
+  const empName = document.getElementById('mgrClockEmp').value;
   const date = document.getElementById('mgrClockDate').value;
   const clockIn = document.getElementById('mgrClockIn').value;
   const clockOut = document.getElementById('mgrClockOut').value;
   const breakMins = parseInt(document.getElementById('mgrClockBreak').value) || 0;
 
-  if (!emp || !date || !clockIn || !clockOut) {
+  if (!empName || !date || !clockIn || !clockOut) {
     toast('Please fill in all fields', 'error'); return;
   }
 
-  state.timesheetData.clockings.push({
-    id: Date.now().toString(),
-    employeeName: emp,
-    date,
-    clockIn,
-    clockOut,
-    breakMins,
-    addedByManager: true,
-    manuallyEdited: true,
-    approvalStatus: 'approved'
-  });
+  const empId = empIdByName(empName);
+  if (!empId) { toast('Employee not found in system', 'error'); return; }
 
   try {
-    await saveTimesheetData();
+    const result = await api.post('/api/clockings', {
+      employee_id: empId,
+      clock_in: `${date}T${clockIn}:00`,
+      clock_out: `${date}T${clockOut}:00`,
+      amended_by: currentManagerUser || 'manager'
+    });
+
+    // Add to local state
+    const newClocking = normaliseClocking({ ...result, employee_name: empName });
+    newClocking.addedByManager = true;
+    newClocking.approvalStatus = 'approved';
+    newClocking.breakMins = breakMins;
+    state.timesheetData.clockings.push(newClocking);
+
     closeMgrAddClocking();
-    toast(`Clocking added for ${emp} ✓`, 'success');
+    toast(`Clocking added for ${empName} ✓`, 'success');
     renderManagerView();
-  } catch { toast('Save failed', 'error'); }
+  } catch (err) { toast('Save failed: ' + err.message, 'error'); }
 }
 
 // Employee My Week view
@@ -1937,23 +2062,27 @@ async function submitMissingClocking() {
 
   if (!clockIn || !clockOut) { toast('Please select times', 'error'); return; }
 
-  state.timesheetData.clockings.push({
-    id: Date.now().toString(),
-    employeeName: state.currentEmployee,
-    date: _addClockingDate,
-    clockIn,
-    clockOut,
-    breakMins,
-    manuallyEdited: true,
-    approvalStatus: 'pending'
-  });
+  const empId = empIdByName(state.currentEmployee);
+  if (!empId) { toast('Employee not found', 'error'); return; }
 
   try {
-    await saveTimesheetData();
+    const result = await api.post('/api/clockings', {
+      employee_id: empId,
+      clock_in: `${_addClockingDate}T${clockIn}:00`,
+      clock_out: `${_addClockingDate}T${clockOut}:00`,
+      amended_by: state.currentEmployee
+    });
+
+    const newClocking = normaliseClocking({ ...result, employee_name: state.currentEmployee });
+    newClocking.breakMins = breakMins;
+    newClocking.manuallyEdited = true;
+    newClocking.approvalStatus = 'pending';
+    state.timesheetData.clockings.push(newClocking);
+
     closeAddClockingModal();
     toast('Submitted for manager approval ✓', 'success');
     renderMyWeek(state.currentEmployee);
-  } catch { toast('Save failed', 'error'); }
+  } catch (err) { toast('Save failed: ' + err.message, 'error'); }
 }
 
 // ═══════════════════════════════════════════
@@ -2031,14 +2160,11 @@ async function submitAmendment() {
     submittedAt: new Date().toISOString()
   });
 
-  try {
-    await saveTimesheetData();
-    closeAmendmentModal();
-    toast('Amendment request submitted', 'success');
-    renderMyWeek(state.currentEmployee);
-  } catch {
-    toast('Save failed', 'error');
-  }
+  // TODO: Amendments don't have their own API table yet — stored in local state only
+  // Will need an Amendments table in SQL for full persistence
+  closeAmendmentModal();
+  toast('Amendment request submitted', 'success');
+  renderMyWeek(state.currentEmployee);
 }
 
 async function approveAmendment(id) {
@@ -2048,18 +2174,24 @@ async function approveAmendment(id) {
   const clocking = state.timesheetData.clockings.find(c => String(c.id) === String(amendment.clockingId));
   if (!clocking) return;
 
-  // Apply the changes
-  if (amendment.requestedIn) clocking.clockIn = amendment.requestedIn;
-  if (amendment.requestedOut) clocking.clockOut = amendment.requestedOut;
-  clocking.manuallyEdited = true;
-  amendment.status = 'approved';
-  amendment.resolvedAt = new Date().toISOString();
-
   try {
-    await saveTimesheetData();
+    // Apply changes via API
+    const updateBody = { amended_by: currentManagerUser || 'manager' };
+    if (amendment.requestedIn) updateBody.clock_in = `${clocking.date}T${amendment.requestedIn}:00`;
+    if (amendment.requestedOut) updateBody.clock_out = `${clocking.date}T${amendment.requestedOut}:00`;
+
+    await api.put(`/api/clockings/${clocking.id}`, updateBody);
+
+    // Update local state
+    if (amendment.requestedIn) clocking.clockIn = amendment.requestedIn;
+    if (amendment.requestedOut) clocking.clockOut = amendment.requestedOut;
+    clocking.manuallyEdited = true;
+    amendment.status = 'approved';
+    amendment.resolvedAt = new Date().toISOString();
+
     toast('Amendment approved — clocking updated', 'success');
     renderManagerView();
-  } catch { toast('Save failed', 'error'); }
+  } catch (err) { toast('Save failed: ' + err.message, 'error'); }
 }
 
 async function rejectAmendment(id) {
@@ -2069,22 +2201,23 @@ async function rejectAmendment(id) {
   amendment.status = 'rejected';
   amendment.resolvedAt = new Date().toISOString();
 
-  try {
-    await saveTimesheetData();
-    toast('Amendment rejected', 'info');
-    renderManagerView();
-  } catch { toast('Save failed', 'error'); }
+  // TODO: Persist amendment status to API when Amendments table exists
+  toast('Amendment rejected', 'info');
+  renderManagerView();
 }
 
 
 async function setEntryStatus(id, status) {
   const entry = state.timesheetData.entries.find(e => e.id === id);
   if (!entry) return;
-  entry.status = status;
   try {
-    await saveTimesheetData();
+    await api.put(`/api/project-hours/${id}`, {
+      is_approved: status === 'approved'
+    });
+    entry.status = status;
+    entry.is_approved = status === 'approved';
     renderManagerView();
-  } catch { toast('Save failed', 'error'); }
+  } catch (err) { toast('Save failed: ' + err.message, 'error'); }
 }
 
 async function approveAll() {
@@ -2093,12 +2226,16 @@ async function approveAll() {
     e => e.status === 'pending' && e.date >= dateStr(mon) && e.date <= dateStr(sun)
   );
   if (!pending.length) { toast('No pending entries', 'info'); return; }
-  pending.forEach(e => e.status = 'approved');
+
   try {
-    await saveTimesheetData();
+    // Approve each entry via API
+    await Promise.all(pending.map(e =>
+      api.put(`/api/project-hours/${e.id}`, { is_approved: true })
+    ));
+    pending.forEach(e => { e.status = 'approved'; e.is_approved = true; });
     toast(`${pending.length} entries approved`, 'success');
     renderManagerView();
-  } catch { toast('Save failed', 'error'); }
+  } catch (err) { toast('Save failed: ' + err.message, 'error'); }
 }
 
 async function writeToSharePoint() {
@@ -2127,9 +2264,15 @@ async function writeToSharePoint() {
 
   const ok = await writeApprovedToLabourLog(approved);
   if (ok) {
+    // Mark entries as synced via API
+    try {
+      await Promise.all([
+        ...approved.map(e => api.put(`/api/project-hours/${e.id}`, { is_approved: true })),
+        ...s000Entries.map(e => api.put(`/api/project-hours/${e.id}`, { is_approved: true }))
+      ]);
+    } catch (e) { console.warn('Sync flag update failed:', e.message); }
     approved.forEach(e => e.synced = true);
     s000Entries.forEach(e => e.synced = true);
-    await saveTimesheetData();
     toast(`${approved.length} entries written to PROJECT TRACKER ✓`, 'success');
     renderManagerView();
   }
@@ -2371,31 +2514,31 @@ async function submitHKHoliday() {
     }
   }
 
-  const request = {
-    id: Date.now().toString(),
-    employeeName: _hkEmployee,
-    dateFrom: from,
-    dateTo: to,
-    type,
-    reason,
-    workingDays,
-    status: 'pending',
-    submittedAt: new Date().toISOString()
-  };
-
-  if (!state.timesheetData.holidays) state.timesheetData.holidays = [];
-  state.timesheetData.holidays.push(request);
+  const empId = empIdByName(_hkEmployee);
+  if (!empId) { toast('Employee not found', 'error'); return; }
 
   try {
-    await saveTimesheetData();
-    await sendHolidayNotificationEmail(request);
+    const result = await api.post('/api/holidays', {
+      employee_id: empId,
+      date_from: from,
+      date_to: to,
+      type,
+      reason,
+      working_days: workingDays
+    });
+
+    const newHoliday = normaliseHoliday({ ...result, employee_name: _hkEmployee });
+    if (!state.timesheetData.holidays) state.timesheetData.holidays = [];
+    state.timesheetData.holidays.push(newHoliday);
+
+    await sendHolidayNotificationEmail(newHoliday);
     document.getElementById('hkFromDate').value = todayStr();
     document.getElementById('hkToDate').value = todayStr();
     document.getElementById('hkReason').value = '';
     toast(`Holiday request submitted (${workingDays} working days) ✓`, 'success');
     renderHKHolidayList(_hkEmployee);
     showHKStep3(_hkEmployee);
-  } catch { toast('Submit failed', 'error'); }
+  } catch (err) { toast('Submit failed: ' + err.message, 'error'); }
 }
 
 // ── Holiday notification on clock-in ──
@@ -2439,8 +2582,8 @@ function checkHolidayClockInNotification(employeeName) {
     h.notificationShown = true;
   });
 
-  // Save the notificationShown flags
-  saveTimesheetData().catch(() => {});
+  // Save the notificationShown flags — local only, no persistence needed
+  // (If user reclocks, they'll see the notification again — that's fine)
 }
 
 let _editEntryId = null;
@@ -2470,50 +2613,59 @@ async function saveEditEntry() {
   if (!newHours || newHours <= 0) { toast('Please enter valid hours', 'error'); return; }
   if (!reason) { toast('Please provide a reason for the change', 'error'); document.getElementById('editEntryReason').focus(); return; }
 
-  entry.originalHours = entry.originalHours || entry.hours;
-  entry.hours = newHours;
-  entry.status = 'pending';
-  entry.manuallyEdited = true;
-  entry.editReason = reason;
-  entry.editedAt = new Date().toISOString();
-
-  // Recalculate S000 for this day if clocked
-  const today = entry.date;
-  const emp = entry.employeeName;
-  const clocking = state.timesheetData.clockings.find(
-    c => c.employeeName === emp && c.date === today && c.clockOut
-  );
-  if (clocking) {
-    const clockedHrs = calcHours(clocking.clockIn, clocking.clockOut, clocking.breakMins) || 0;
-    const totalProjectHrs = state.timesheetData.entries
-      .filter(e => e.employeeName === emp && e.date === today && e.projectId !== 'S000')
-      .reduce((s, e) => s + e.hours, 0);
-    const unproductiveHrs = parseFloat((clockedHrs - totalProjectHrs).toFixed(2));
-
-    state.timesheetData.entries = state.timesheetData.entries.filter(
-      e => !(e.employeeName === emp && e.date === today && e.projectId === 'S000')
-    );
-    if (unproductiveHrs > 0) {
-      state.timesheetData.entries.push({
-        id: `s000-${today}-${emp}`,
-        employeeName: emp,
-        projectId: 'S000',
-        projectName: 'Unproductive Time',
-        hours: unproductiveHrs,
-        date: today,
-        status: 'pending',
-        autoGenerated: true,
-        submittedAt: new Date().toISOString()
-      });
-    }
-  }
-
   try {
-    await saveTimesheetData();
+    await api.put(`/api/project-hours/${_editEntryId}`, {
+      hours: newHours,
+      is_approved: false
+    });
+
+    entry.originalHours = entry.originalHours || entry.hours;
+    entry.hours = newHours;
+    entry.status = 'pending';
+    entry.is_approved = false;
+    entry.manuallyEdited = true;
+    entry.editReason = reason;
+    entry.editedAt = new Date().toISOString();
+
+    // Recalculate S000 for this day if clocked
+    const today = entry.date;
+    const emp = entry.employeeName;
+    const empId = empIdByName(emp);
+    const clocking = state.timesheetData.clockings.find(
+      c => c.employeeName === emp && c.date === today && c.clockOut
+    );
+    if (clocking && empId) {
+      const clockedHrs = calcHours(clocking.clockIn, clocking.clockOut, clocking.breakMins) || 0;
+      const totalProjectHrs = state.timesheetData.entries
+        .filter(e => e.employeeName === emp && e.date === today && e.projectId !== 'S000')
+        .reduce((s, e) => s + e.hours, 0);
+      const unproductiveHrs = parseFloat((clockedHrs - totalProjectHrs).toFixed(2));
+
+      // Remove old S000 locally
+      state.timesheetData.entries = state.timesheetData.entries.filter(
+        e => !(e.employeeName === emp && e.date === today && e.projectId === 'S000')
+      );
+      if (unproductiveHrs > 0) {
+        try {
+          const s000Result = await api.post('/api/project-hours', {
+            employee_id: empId,
+            project_number: 'S000',
+            date: today,
+            hours: unproductiveHrs
+          });
+          state.timesheetData.entries.push(normaliseEntry({
+            ...s000Result,
+            employee_name: emp,
+            project_name: 'Unproductive Time'
+          }));
+        } catch (e) { console.warn('S000 update failed:', e.message); }
+      }
+    }
+
     closeEditEntry();
     renderMyWeek(state.currentEmployee);
     toast('Hours updated — pending manager approval ✓', 'success');
-  } catch { toast('Save failed', 'error'); }
+  } catch (err) { toast('Save failed: ' + err.message, 'error'); }
 }
 
 // ── Workshop General Duties / No Project Hours ──
@@ -2571,17 +2723,24 @@ async function confirmNoProjectClockOut() {
   // Log full shift as WGD
   const clockedHrs = calcHours(clocking.clockIn, clockOut, breakMins) || 0;
   if (clockedHrs > 0) {
-    state.timesheetData.entries.push({
-      id: `wgd-${today}-${emp.replace(/\s/g,'')}`,
-      employeeName: emp,
-      projectId: 'WGD',
-      projectName: 'Workshop General Duties',
-      hours: clockedHrs,
-      date: today,
-      status: 'pending',
-      autoGenerated: true,
-      submittedAt: new Date().toISOString()
-    });
+    const empId = empIdByName(emp);
+    if (empId) {
+      try {
+        const result = await api.post('/api/project-hours', {
+          employee_id: empId,
+          project_number: 'WGD',
+          date: today,
+          hours: clockedHrs
+        });
+        state.timesheetData.entries.push(normaliseEntry({
+          ...result,
+          employee_name: emp,
+          project_name: 'Workshop General Duties'
+        }));
+      } catch (e) {
+        console.warn('WGD entry save failed:', e.message);
+      }
+    }
   }
 
   closeNoProjectModal();
@@ -2647,10 +2806,10 @@ async function addOfficeStaff() {
   state.timesheetData.settings.officeStaff.push(name);
   input.value = '';
   try {
-    await saveTimesheetData();
+    await api.put('/api/settings', { officeStaff: state.timesheetData.settings.officeStaff });
     renderOfficeStaffList();
     toast(`${name} added to office staff ✓`, 'success');
-  } catch { toast('Save failed', 'error'); }
+  } catch (err) { toast('Save failed: ' + err.message, 'error'); }
 }
 
 async function removeOfficeStaff(index) {
@@ -2658,10 +2817,10 @@ async function removeOfficeStaff(index) {
   const name = state.timesheetData.settings.officeStaff[index];
   state.timesheetData.settings.officeStaff.splice(index, 1);
   try {
-    await saveTimesheetData();
+    await api.put('/api/settings', { officeStaff: state.timesheetData.settings.officeStaff });
     renderOfficeStaffList();
     toast(`${name} removed ✓`, 'success');
-  } catch { toast('Save failed', 'error'); }
+  } catch (err) { toast('Save failed: ' + err.message, 'error'); }
 }
 
 // ═══════════════════════════════════════════
@@ -2734,24 +2893,28 @@ async function confirmApproveWeek() {
   const monStr = dateStr(mon);
   const sunStr = dateStr(sun);
 
-  let approvedCount = 0;
-  (state.timesheetData.clockings || []).forEach(c => {
-    if (c.date >= monStr && c.date <= sunStr) {
-      if (c.approvalStatus === 'pending' || (!c.approvalStatus && !c.addedByManager)) {
-        c.approvalStatus = 'approved';
-        c.approvedBy = approver;
-        c.approvedAt = new Date().toISOString();
-        approvedCount++;
-      }
-    }
+  // Find clockings to approve
+  const toApprove = (state.timesheetData.clockings || []).filter(c => {
+    if (c.date < monStr || c.date > sunStr) return false;
+    return c.approvalStatus === 'pending' || (!c.approvalStatus && !c.addedByManager);
   });
 
   try {
-    await saveTimesheetData();
+    // Approve each clocking via API
+    await Promise.all(toApprove.map(c =>
+      api.put(`/api/clockings/${c.id}`, { amended_by: approver })
+    ));
+
+    toApprove.forEach(c => {
+      c.approvalStatus = 'approved';
+      c.approvedBy = approver;
+      c.approvedAt = new Date().toISOString();
+    });
+
     closeApproveWeekModal();
     renderClockLogForWeek();
-    toast(`Week approved by ${approver} — ${approvedCount} clocking${approvedCount !== 1 ? 's' : ''} approved ✓`, 'success');
-  } catch { toast('Save failed', 'error'); }
+    toast(`Week approved by ${approver} — ${toApprove.length} clocking${toApprove.length !== 1 ? 's' : ''} approved ✓`, 'success');
+  } catch (err) { toast('Save failed: ' + err.message, 'error'); }
 }
 
 function loadEmailSettings() {
@@ -2781,9 +2944,15 @@ async function saveEmailSettings() {
   const siteEl = document.getElementById('settingSiteCompletionEmails');
   if (siteEl) state.timesheetData.settings.siteCompletionEmails = siteEl.value;
   try {
-    await saveTimesheetData();
+    await api.put('/api/settings', {
+      payrollEmail: state.timesheetData.settings.payrollEmail || '',
+      orderEmail: state.timesheetData.settings.orderEmail || '',
+      draftsmanEmail: state.timesheetData.settings.draftsmanEmail || '',
+      taskCompletionEmails: state.timesheetData.settings.taskCompletionEmails || '',
+      siteCompletionEmails: state.timesheetData.settings.siteCompletionEmails || ''
+    });
     toast('Email settings saved ✓', 'success');
-  } catch { toast('Save failed', 'error'); }
+  } catch (err) { toast('Save failed: ' + err.message, 'error'); }
 }
 
 // ═══════════════════════════════════════════
@@ -3139,31 +3308,31 @@ async function submitHolidayRequest() {
     }
   }
 
-  const request = {
-    id: Date.now().toString(),
-    employeeName: state.currentEmployee,
-    dateFrom: from,
-    dateTo: to,
-    type,
-    reason,
-    workingDays,
-    status: 'pending',
-    submittedAt: new Date().toISOString()
-  };
-
-  if (!state.timesheetData.holidays) state.timesheetData.holidays = [];
-  state.timesheetData.holidays.push(request);
+  const empId = empIdByName(state.currentEmployee);
+  if (!empId) { toast('Employee not found', 'error'); return; }
 
   try {
-    await saveTimesheetData();
+    const result = await api.post('/api/holidays', {
+      employee_id: empId,
+      date_from: from,
+      date_to: to,
+      type,
+      reason,
+      working_days: workingDays
+    });
+
+    const newHoliday = normaliseHoliday({ ...result, employee_name: state.currentEmployee });
+    if (!state.timesheetData.holidays) state.timesheetData.holidays = [];
+    state.timesheetData.holidays.push(newHoliday);
+
     // Send email notification
-    await sendHolidayNotificationEmail(request);
+    await sendHolidayNotificationEmail(newHoliday);
     document.getElementById('holFromDate').value = '';
     document.getElementById('holToDate').value = '';
     document.getElementById('holReason').value = '';
     toast(`Holiday request submitted (${workingDays} working days) ✓`, 'success');
     renderEmpHolidayBalance(state.currentEmployee);
-  } catch { toast('Submit failed', 'error'); }
+  } catch (err) { toast('Submit failed: ' + err.message, 'error'); }
 }
 
 async function sendHolidayNotificationEmail(request) {
@@ -3424,26 +3593,26 @@ function renderHolidayRequests() {
 async function approveHoliday(id) {
   const h = (state.timesheetData.holidays || []).find(h => h.id === id);
   if (!h) return;
-  h.status = 'approved';
-  h.approvedAt = new Date().toISOString();
   try {
-    await saveTimesheetData();
+    await api.put(`/api/holidays/${id}`, { status: 'approved' });
+    h.status = 'approved';
+    h.approvedAt = new Date().toISOString();
     toast(`Holiday approved for ${h.employeeName} ✓`, 'success');
     renderHolidayTab();
     renderHolidayNotificationBanner();
-  } catch { toast('Save failed', 'error'); }
+  } catch (err) { toast('Save failed: ' + err.message, 'error'); }
 }
 
 async function rejectHoliday(id) {
   const h = (state.timesheetData.holidays || []).find(h => h.id === id);
   if (!h) return;
-  h.status = 'rejected';
-  h.rejectedAt = new Date().toISOString();
   try {
-    await saveTimesheetData();
+    await api.put(`/api/holidays/${id}`, { status: 'rejected' });
+    h.status = 'rejected';
+    h.rejectedAt = new Date().toISOString();
     toast(`Holiday rejected`, 'success');
     renderHolidayTab();
-  } catch { toast('Save failed', 'error'); }
+  } catch (err) { toast('Save failed: ' + err.message, 'error'); }
 }
 
 // Show notification banner on manager dashboard load
@@ -4235,34 +4404,47 @@ async function archiveWeek() {
   const { mon, sun } = getWeekDates(payrollWeekOffset);
   const monStr = dateStr(mon);
   const sunStr = dateStr(sun);
-  const weekKey = `week_${monStr}`;
-
-  // Check if already archived
-  if (!state.timesheetData.archive) state.timesheetData.archive = {};
-  if (state.timesheetData.archive[weekKey]) {
-    if (!confirm(`Week of ${fmtDate(mon)} is already archived. Overwrite?`)) return;
-  }
-
-  // Snapshot all data for this week
-  const weekEntries = state.timesheetData.entries.filter(e => e.date >= monStr && e.date <= sunStr);
-  const weekClockings = state.timesheetData.clockings.filter(c => c.date >= monStr && c.date <= sunStr);
-  const employees = (state.timesheetData.employees || []).filter(e => e.active !== false);
-  const payrollResults = employees.map(e => calculatePayroll(e.name, mon, sun)).filter(Boolean);
-
-  state.timesheetData.archive[weekKey] = {
-    weekCommencing: monStr,
-    weekEnding: sunStr,
-    archivedAt: new Date().toISOString(),
-    entries: weekEntries,
-    clockings: weekClockings,
-    payroll: payrollResults
-  };
 
   try {
-    await saveTimesheetData();
-    toast(`Week of ${fmtDate(mon)} archived ✓`, 'success');
+    // Call the API to approve the week — it calculates payroll server-side
+    const result = await api.post('/api/payroll/approve', {
+      week_commencing: monStr
+    });
+
+    // Store in local state for immediate display
+    const weekKey = `week_${monStr}`;
+    if (!state.timesheetData.archive) state.timesheetData.archive = {};
+    state.timesheetData.archive[weekKey] = {
+      weekCommencing: monStr,
+      weekEnding: sunStr,
+      archivedAt: new Date().toISOString(),
+      entries: state.timesheetData.entries.filter(e => e.date >= monStr && e.date <= sunStr),
+      clockings: state.timesheetData.clockings.filter(c => c.date >= monStr && c.date <= sunStr),
+      payroll: (result.records || []).map(r => ({
+        employeeName: empNameById(r.employee_id) || `Employee #${r.employee_id}`,
+        totalHours: r.total_hours,
+        basicHours: r.basic_hours,
+        overtimeHours: r.overtime_hours,
+        doubleHours: r.double_hours || 0,
+        rate: r.rate,
+        basicPay: r.basic_pay,
+        overtimePay: r.overtime_pay,
+        doublePay: r.double_pay || 0,
+        totalPay: r.total_pay
+      }))
+    };
+
+    // Mark entries as approved locally
+    state.timesheetData.entries.forEach(e => {
+      if (e.date >= monStr && e.date <= sunStr) {
+        e.status = 'approved';
+        e.is_approved = true;
+      }
+    });
+
+    toast(`Week of ${fmtDate(mon)} archived ✓ — ${result.employees} employees, £${result.total_payroll.toFixed(2)} total`, 'success');
     renderArchive();
-  } catch { toast('Archive save failed', 'error'); }
+  } catch (err) { toast('Archive failed: ' + err.message, 'error'); }
 }
 
 function renderArchive() {
@@ -4471,8 +4653,6 @@ async function addEmployee() {
   );
   if (exists) { toast('Employee already exists', 'error'); return; }
 
-  if (!state.timesheetData.employees) state.timesheetData.employees = [];
-
   const rateInput = document.getElementById('newEmpRate');
   const rate = parseFloat(rateInput.value) || 0;
 
@@ -4480,56 +4660,49 @@ async function addEmployee() {
   const pin = pinInput2.value.trim();
 
   const daysInput = document.getElementById('newEmpDays');
-  const carryoverInput = document.getElementById('newEmpCarryover');
-  const startDateInput = document.getElementById('newEmpStartDate');
   const annualDays = parseInt(daysInput.value) || 20;
-  const carryoverDays = parseFloat(carryoverInput.value) || 0;
-  const startDate = startDateInput.value || '';
 
   const staffTypeInput = document.getElementById('newEmpStaffType');
   const erpRoleInput = document.getElementById('newEmpErpRole');
-  const payTypeInput = document.getElementById('newEmpPayType');
   const staffType = staffTypeInput ? staffTypeInput.value : 'workshop';
-  const erpRole = erpRoleInput ? erpRoleInput.value : 'workshop';
-  const payType = payTypeInput ? payTypeInput.value : 'payee';
+  const erpRole = erpRoleInput ? erpRoleInput.value : 'employee';
 
-  state.timesheetData.employees.push({
-    id: Date.now().toString(),
-    name,
-    role,
-    staffType,
-    erpRole,
-    payType,
-    rate,
-    pin,
-    annualDays,
-    carryoverDays,
-    startDate,
-    active: true,
-    addedAt: new Date().toISOString()
-  });
-
-  // Update UI immediately
-  nameInput.value = '';
-  roleInput.value = '';
-  rateInput.value = '';
-  pinInput2.value = '';
-  daysInput.value = '20';
-  carryoverInput.value = '0';
-  startDateInput.value = '';
-  if (staffTypeInput) staffTypeInput.value = 'workshop';
-  if (erpRoleInput) erpRoleInput.value = 'workshop';
-  if (payTypeInput) payTypeInput.value = 'payee';
-  renderStaffList();
-  renderHome();
-  toast(`${name} added ✓`, 'success');
-
-  // Save to SharePoint
   try {
-    await saveTimesheetData();
-  } catch (e) {
-    console.error('Save error:', e);
-    toast('Warning: changes may not have synced to SharePoint', 'error');
+    const result = await api.post('/api/employees', {
+      name,
+      pin: pin || '0000',
+      rate,
+      staff_type: staffType,
+      erp_role: erpRole,
+      holiday_entitlement: annualDays
+    });
+
+    // Add to local state
+    const newEmp = normaliseEmployee(result);
+    if (!state.timesheetData.employees) state.timesheetData.employees = [];
+    state.timesheetData.employees.push(newEmp);
+    buildEmployeeMaps();
+
+    // Clear form
+    nameInput.value = '';
+    roleInput.value = '';
+    rateInput.value = '';
+    pinInput2.value = '';
+    daysInput.value = '20';
+    const carryoverInput = document.getElementById('newEmpCarryover');
+    const startDateInput = document.getElementById('newEmpStartDate');
+    const payTypeInput = document.getElementById('newEmpPayType');
+    if (carryoverInput) carryoverInput.value = '0';
+    if (startDateInput) startDateInput.value = '';
+    if (staffTypeInput) staffTypeInput.value = 'workshop';
+    if (erpRoleInput) erpRoleInput.value = 'workshop';
+    if (payTypeInput) payTypeInput.value = 'payee';
+    renderStaffList();
+    renderHome();
+    toast(`${name} added ✓`, 'success');
+  } catch (err) {
+    console.error('Add employee error:', err);
+    toast('Failed to add employee: ' + err.message, 'error');
   }
 }
 
@@ -4557,42 +4730,52 @@ async function saveEmployee(id) {
 
   if (!newName) { toast('Name cannot be empty', 'error'); return; }
 
-  const oldName = emp.name;
   const newPin = document.getElementById(`edit-pin-${id}`).value.trim();
   const newDays = parseInt(document.getElementById(`edit-days-${id}`).value) || 20;
-  const newCarryover = parseFloat(document.getElementById(`edit-carryover-${id}`).value) || 0;
-  const newStartDate = document.getElementById(`edit-startdate-${id}`).value || '';
   const newStaffType = document.getElementById(`edit-stafftype-${id}`)?.value || emp.staffType || 'workshop';
-  const newErpRole = document.getElementById(`edit-erprole-${id}`)?.value || emp.erpRole || 'workshop';
-  const newPayType = document.getElementById(`edit-paytype-${id}`)?.value || emp.payType || 'payee';
-  emp.name = newName;
-  emp.role = newRole;
-  emp.rate = newRate;
-  emp.pin = newPin;
-  emp.annualDays = newDays;
-  emp.carryoverDays = newCarryover;
-  emp.startDate = newStartDate;
-  emp.staffType = newStaffType;
-  emp.erpRole = newErpRole;
-  emp.payType = newPayType;
-  delete emp.editing;
-
-  // Also update any existing entries/clockings with old name
-  if (oldName !== newName) {
-    state.timesheetData.entries.forEach(e => {
-      if (e.employeeName === oldName) e.employeeName = newName;
-    });
-    state.timesheetData.clockings.forEach(c => {
-      if (c.employeeName === oldName) c.employeeName = newName;
-    });
-  }
+  const newErpRole = document.getElementById(`edit-erprole-${id}`)?.value || emp.erpRole || 'employee';
 
   try {
-    await saveTimesheetData();
+    await api.put(`/api/employees/${id}`, {
+      name: newName,
+      pin: newPin,
+      rate: newRate,
+      staff_type: newStaffType,
+      erp_role: newErpRole,
+      holiday_entitlement: newDays
+    });
+
+    const oldName = emp.name;
+    emp.name = newName;
+    emp.role = newRole;
+    emp.rate = newRate;
+    emp.pin = newPin;
+    emp.annualDays = newDays;
+    emp.staffType = newStaffType;
+    emp.erpRole = newErpRole;
+    const newCarryover = parseFloat(document.getElementById(`edit-carryover-${id}`).value) || 0;
+    const newStartDate = document.getElementById(`edit-startdate-${id}`).value || '';
+    const newPayType = document.getElementById(`edit-paytype-${id}`)?.value || emp.payType || 'payee';
+    emp.carryoverDays = newCarryover;
+    emp.startDate = newStartDate;
+    emp.payType = newPayType;
+    delete emp.editing;
+
+    // Update name in local state lookups
+    if (oldName !== newName) {
+      state.timesheetData.entries.forEach(e => {
+        if (e.employeeName === oldName) e.employeeName = newName;
+      });
+      state.timesheetData.clockings.forEach(c => {
+        if (c.employeeName === oldName) c.employeeName = newName;
+      });
+      buildEmployeeMaps();
+    }
+
     toast('Employee updated ✓', 'success');
     renderStaffList();
     renderHome();
-  } catch { toast('Save failed', 'error'); }
+  } catch (err) { toast('Save failed: ' + err.message, 'error'); }
 }
 
 async function toggleEmployeeActive(id) {
@@ -4600,13 +4783,16 @@ async function toggleEmployeeActive(id) {
   if (!emp) return;
   const deactivating = emp.active !== false;
   if (deactivating && !confirm(`Deactivate ${emp.name}? They will no longer appear on the kiosk or in payroll.`)) return;
-  emp.active = deactivating ? false : true;
   try {
-    await saveTimesheetData();
+    await api.put(`/api/employees/${id}`, {
+      is_active: !deactivating
+    });
+    emp.active = deactivating ? false : true;
+    buildEmployeeMaps();
     toast(`${emp.name} ${emp.active ? 'reactivated' : 'deactivated'}`, 'success');
     renderStaffList();
     renderHome();
-  } catch { toast('Save failed', 'error'); }
+  } catch (err) { toast('Save failed: ' + err.message, 'error'); }
 }
 
 async function deleteEmployee(id) {
@@ -4615,14 +4801,15 @@ async function deleteEmployee(id) {
 
   if (!confirm(`Remove ${emp.name}? Their historical time entries will be kept.`)) return;
 
-  state.timesheetData.employees = state.timesheetData.employees.filter(e => e.id !== id);
-
   try {
-    await saveTimesheetData();
+    // Deactivate rather than truly delete — preserve history
+    await api.put(`/api/employees/${id}`, { is_active: false });
+    state.timesheetData.employees = state.timesheetData.employees.filter(e => e.id !== id);
+    buildEmployeeMaps();
     toast(`${emp.name} removed`, 'success');
     renderStaffList();
     renderHome();
-  } catch { toast('Save failed', 'error'); }
+  } catch (err) { toast('Delete failed: ' + err.message, 'error'); }
 }
 
 // ═══════════════════════════════════════════
@@ -5136,29 +5323,28 @@ async function submitOfficeHoliday() {
     }
   }
 
-  const request = {
-    id: Date.now().toString(),
-    employeeName: currentManagerUser,
-    dateFrom: from,
-    dateTo: to,
-    type,
-    reason,
-    workingDays,
-    status: 'pending',
-    submittedAt: new Date().toISOString()
-  };
-
-  if (!state.timesheetData.holidays) state.timesheetData.holidays = [];
-  state.timesheetData.holidays.push(request);
+  const empId = empIdByName(currentManagerUser);
+  if (!empId) { toast('Employee not found', 'error'); return; }
 
   try {
-    await saveTimesheetData();
+    const result = await api.post('/api/holidays', {
+      employee_id: empId,
+      date_from: from,
+      date_to: to,
+      type,
+      reason,
+      working_days: workingDays
+    });
+
+    const newHoliday = normaliseHoliday({ ...result, employee_name: currentManagerUser });
+    if (!state.timesheetData.holidays) state.timesheetData.holidays = [];
+    state.timesheetData.holidays.push(newHoliday);
+
     toast(`Holiday request submitted (${workingDays} working days) ✓`, 'success');
     closeOfficeHolidayModal();
     renderDashboard();
   } catch (e) {
     toast('Submit failed: ' + e.message, 'error');
-    state.timesheetData.holidays.pop();
   }
 }
 
@@ -8507,8 +8693,8 @@ const CURRENT_PAGE = (() => {
   return 'index'; // default kiosk
 })();
 
-// Track whether we successfully loaded data from SharePoint
-let _dataLoadedFromSharePoint = false;
+// Track whether we successfully loaded data from the API
+let _dataLoadedFromAPI = false;
 
 async function init() {
   setLoading(true);
@@ -8517,34 +8703,31 @@ async function init() {
   const justLoggedIn = AUTH.handleRedirect();
   if (justLoggedIn) console.log('Just returned from login, token stored');
 
-  // Build the list of data loads needed for this page
-  // Timesheet data is always needed (employees, clockings, entries)
-  // Retry up to 3 times if it fails — SharePoint cold starts can be slow
-  const loadTimesheetWithRetry = async () => {
+  // Load core data from SQL API with retry
+  const loadDataWithRetry = async () => {
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         await Promise.race([
           loadTimesheetData(),
-          new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), attempt === 1 ? 8000 : 12000))
+          new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), attempt === 1 ? 10000 : 15000))
         ]);
-        _dataLoadedFromSharePoint = true;
-        return; // success
+        _dataLoadedFromAPI = true;
+        return;
       } catch (e) {
-        console.warn(`Timesheet load attempt ${attempt}/3 failed:`, e.message);
+        console.warn(`API data load attempt ${attempt}/3 failed:`, e.message);
         if (attempt < 3) {
           console.log(`Retrying in ${attempt}s...`);
           await new Promise(r => setTimeout(r, attempt * 1000));
         }
       }
     }
-    // All attempts failed
     if (!state.timesheetData.employees || state.timesheetData.employees.length === 0) {
       console.warn('No employee data loaded after 3 attempts — app will be read-only until data loads');
     }
   };
-  const timesheetPromise = loadTimesheetWithRetry();
+  const dataPromise = loadDataWithRetry();
 
-  // Projects Excel only needed on kiosk and projects pages
+  // Projects Excel only needed on kiosk and projects pages (still from SharePoint)
   const projectsPromise = (CURRENT_PAGE === 'index' || CURRENT_PAGE === 'projects')
     ? Promise.race([
         loadProjects(),
@@ -8552,7 +8735,7 @@ async function init() {
       ]).catch(e => { console.warn('Project load skipped, using fallback:', e.message); state.projects = FALLBACK_PROJECTS; })
     : Promise.resolve();
 
-  // User access needed on manager and office pages
+  // User access needed on manager and office pages (still from SharePoint for now)
   const userAccessPromise = (CURRENT_PAGE === 'manager' || CURRENT_PAGE === 'office' || CURRENT_PAGE === 'projects')
     ? Promise.race([
         loadUserAccessData(),
@@ -8560,7 +8743,7 @@ async function init() {
       ]).catch(e => { console.warn('User access load skipped:', e.message); })
     : Promise.resolve();
 
-  // Office tasks only needed on office page
+  // Office tasks only needed on office page (still from SharePoint for now)
   const officeTasksPromise = (CURRENT_PAGE === 'office')
     ? Promise.race([
         loadOfficeTasksData(),
@@ -8568,8 +8751,8 @@ async function init() {
       ]).catch(e => { console.warn('Office tasks load skipped:', e.message); })
     : Promise.resolve();
 
-  // Run all loads in parallel — they don't depend on each other
-  await Promise.all([timesheetPromise, projectsPromise, userAccessPromise, officeTasksPromise]);
+  // Run all loads in parallel
+  await Promise.all([dataPromise, projectsPromise, userAccessPromise, officeTasksPromise]);
 
   setLoading(false);
 
