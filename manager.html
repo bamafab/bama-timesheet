@@ -221,22 +221,19 @@
 
       <!-- Report: Attendance -->
       <div class="report-panel" id="rptPanel-attendance">
+        <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
+          <button class="btn btn-ghost" onclick="exportAttendancePDF()" style="padding:6px 16px;font-size:12px">&#128438; Export PDF</button>
+        </div>
         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:20px" id="rptAttendanceKpis"></div>
         <div class="card" style="padding:20px;margin-bottom:20px">
-          <div class="card-title" style="margin-bottom:4px"><span class="icon">&#128197;</span> Attendance Grid</div>
-          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">
-            Daily attendance per employee —
-            <span style="display:inline-block;width:10px;height:10px;background:#3ecf8e;border-radius:3px;vertical-align:middle"></span> on time
-            <span style="display:inline-block;width:10px;height:10px;background:#ffb347;border-radius:3px;vertical-align:middle;margin-left:8px"></span> late
-            <span style="display:inline-block;width:10px;height:10px;background:#ff4444;border-radius:3px;vertical-align:middle;margin-left:8px"></span> absent
-            <span style="display:inline-block;width:10px;height:10px;background:#6366f1;border-radius:3px;vertical-align:middle;margin-left:8px"></span> holiday
-          </div>
-          <div id="rptAttendanceGrid" style="overflow-x:auto"></div>
-        </div>
-        <div class="card" style="padding:20px">
           <div class="card-title" style="margin-bottom:4px"><span class="icon">&#9200;</span> Late Arrivals</div>
           <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Employees who clocked in after expected start time</div>
           <div id="rptLateArrivals"></div>
+        </div>
+        <div class="card" style="padding:20px">
+          <div class="card-title" style="margin-bottom:4px"><span class="icon">&#129298;</span> Absences</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Approved sick leave in selected period</div>
+          <div id="rptAbsences"></div>
         </div>
       </div>
 

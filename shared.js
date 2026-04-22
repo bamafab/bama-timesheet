@@ -4174,7 +4174,37 @@ function getAttendanceData(empFilter) {
   const clockings = state.timesheetData.clockings || [];
   const holidays = (state.timesheetData.holidays || []).filter(h => h.status === 'approved');
 
-  // Build list of working days (Mon-Fri) in period
+  // Sick days — approved holidays with type 'sick' in range
+  const sickHolidays = holidays.filter(h =>
+    h.type === 'sick' && h.dateTo >= from && h.dateFrom <= to &&
+    (!empFilter || h.employeeName === empFilter)
+  );
+  const totalSickDays = sickHolidays.reduce((s, h) => s + (h.workingDays || countWorkingDays(h.dateFrom, h.dateTo)), 0);
+
+  // Holidays taken (paid + half) in range
+  const paidHolidays = holidays.filter(h =>
+    (h.type === 'paid' || h.type === 'half') && h.dateTo >= from && h.dateFrom <= to &&
+    (!empFilter || h.employeeName === empFilter)
+  );
+  const totalHolidayDays = paidHolidays.reduce((s, h) => s + (h.workingDays || countWorkingDays(h.dateFrom, h.dateTo)), 0);
+
+  // Holiday balance (sum remaining across filtered employees)
+  let totalHolidayBalance = 0;
+  employees.forEach(emp => {
+    const bal = calculateHolidayBalance(emp.name);
+    if (bal) totalHolidayBalance += bal.remainingDays;
+  });
+
+  // Build absences list for the table
+  const absenceList = sickHolidays.map(h => ({
+    name: h.employeeName,
+    dateFrom: h.dateFrom,
+    dateTo: h.dateTo,
+    days: h.workingDays || countWorkingDays(h.dateFrom, h.dateTo),
+    reason: h.reason || ''
+  })).sort((a, b) => b.dateFrom.localeCompare(a.dateFrom));
+
+  // Build list of working days (Mon-Fri) in period up to today
   const workDays = [];
   const d = new Date(from + 'T12:00:00');
   const end = new Date(to + 'T12:00:00');
@@ -4183,83 +4213,56 @@ function getAttendanceData(empFilter) {
     if (dow >= 1 && dow <= 5) workDays.push(dateStr(d));
     d.setDate(d.getDate() + 1);
   }
-
-  // Limit to days up to today
   const today = todayStr();
   const relevantDays = workDays.filter(wd => wd <= today);
 
-  let totalPresent = 0, totalAbsent = 0, totalLate = 0, totalHoliday = 0;
+  let totalLate = 0;
   const lateList = [];
-  const grid = []; // { name, days: [{ date, status, clockIn }] }
 
+  // Late arrivals
+  let avgClockInMins = 0, clockInCount = 0;
   employees.forEach(emp => {
     const empClockings = clockings.filter(c => c.employeeName === emp.name);
-    const empHolidays = holidays.filter(h => h.employeeName === emp.name);
-    const row = { name: emp.name, days: [] };
-
     relevantDays.forEach(day => {
-      // Check if on holiday
-      const onHoliday = empHolidays.some(h => day >= h.dateFrom && day <= h.dateTo);
-      if (onHoliday) {
-        row.days.push({ date: day, status: 'holiday', clockIn: null });
-        totalHoliday++;
-        return;
-      }
-
-      // Find earliest clocking for the day
       const dayClockings = empClockings
         .filter(c => c.date === day && c.clockIn)
         .sort((a, b) => a.clockIn.localeCompare(b.clockIn));
-
-      if (!dayClockings.length) {
-        row.days.push({ date: day, status: 'absent', clockIn: null });
-        totalAbsent++;
-        return;
-      }
+      if (!dayClockings.length) return;
 
       const firstIn = dayClockings[0].clockIn;
       const [inH, inM] = firstIn.split(':').map(Number);
       const inMins = inH * 60 + inM;
-      const isLate = inMins > expMins;
+      avgClockInMins += inMins;
+      clockInCount++;
 
-      if (isLate) {
+      if (inMins > expMins) {
         totalLate++;
-        lateList.push({
-          name: emp.name,
-          date: day,
-          clockIn: firstIn,
-          minsLate: inMins - expMins
-        });
+        lateList.push({ name: emp.name, date: day, clockIn: firstIn, minsLate: inMins - expMins });
       }
-
-      totalPresent++;
-      row.days.push({ date: day, status: isLate ? 'late' : 'present', clockIn: firstIn });
     });
-
-    grid.push(row);
   });
 
-  // Average clock-in time
-  let avgClockInMins = 0;
-  let clockInCount = 0;
-  grid.forEach(row => row.days.forEach(d => {
-    if (d.clockIn) {
-      const [h, m] = d.clockIn.split(':').map(Number);
-      avgClockInMins += h * 60 + m;
-      clockInCount++;
-    }
-  }));
   const avgMins = clockInCount ? Math.round(avgClockInMins / clockInCount) : 0;
   const avgClockIn = `${String(Math.floor(avgMins / 60)).padStart(2, '0')}:${String(avgMins % 60).padStart(2, '0')}`;
 
-  // Attendance rate
-  const totalPossible = totalPresent + totalAbsent + totalLate;
-  const attendanceRate = totalPossible > 0 ? Math.round(((totalPresent + totalLate) / (totalPresent + totalAbsent + totalLate)) * 100) : 100;
+  // Attendance rate: (days with a clocking) / (working days × employees), excluding holidays & sick
+  let totalPossible = 0, totalPresent = 0;
+  employees.forEach(emp => {
+    const empClockings = clockings.filter(c => c.employeeName === emp.name);
+    const empHolidays = holidays.filter(h => h.employeeName === emp.name);
+    relevantDays.forEach(day => {
+      const onLeave = empHolidays.some(h => day >= h.dateFrom && day <= h.dateTo);
+      if (onLeave) return; // don't count leave days in attendance rate
+      totalPossible++;
+      if (empClockings.some(c => c.date === day && c.clockIn)) totalPresent++;
+    });
+  });
+  const attendanceRate = totalPossible > 0 ? Math.round((totalPresent / totalPossible) * 100) : 100;
 
   return {
-    totalPresent, totalAbsent, totalLate, totalHoliday,
-    attendanceRate, avgClockIn, lateList, grid,
-    relevantDays, expectedStart
+    totalSickDays, totalHolidayDays, totalHolidayBalance,
+    totalLate, attendanceRate, avgClockIn, lateList, absenceList,
+    expectedStart
   };
 }
 
@@ -4272,10 +4275,10 @@ function renderAttendanceReport(empFilter) {
     const periodLabels = { week: 'This Week', month: 'This Month', year: 'This Year' };
     kpiRow.innerHTML = [
       { label: 'Attendance Rate', value: data.attendanceRate + '%', color: data.attendanceRate >= 95 ? 'var(--green)' : data.attendanceRate >= 85 ? 'var(--amber)' : 'var(--red)' },
-      { label: 'Days Present', value: data.totalPresent, color: 'var(--green)' },
-      { label: 'Days Absent', value: data.totalAbsent, color: data.totalAbsent > 0 ? 'var(--red)' : 'var(--green)' },
+      { label: 'Days Absent', value: data.totalSickDays, color: data.totalSickDays > 0 ? 'var(--red)' : 'var(--green)' },
       { label: 'Late Arrivals', value: data.totalLate, color: data.totalLate > 0 ? 'var(--amber)' : 'var(--green)' },
-      { label: 'On Holiday', value: data.totalHoliday, color: '#6366f1' },
+      { label: 'Holidays Taken', value: data.totalHolidayDays, color: '#6366f1' },
+      { label: 'Holiday Balance', value: data.totalHolidayBalance, color: data.totalHolidayBalance > 0 ? 'var(--green)' : 'var(--red)' },
       { label: 'Avg Clock-In', value: data.avgClockIn, color: 'var(--accent2)' },
     ].map(k => `
       <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px 18px">
@@ -4284,29 +4287,6 @@ function renderAttendanceReport(empFilter) {
         <div style="font-size:10px;color:var(--subtle);margin-top:4px">${periodLabels[rptPeriod]}</div>
       </div>
     `).join('');
-  }
-
-  // Attendance grid
-  const gridEl = document.getElementById('rptAttendanceGrid');
-  if (gridEl && data.grid.length) {
-    const dayLabels = data.relevantDays.map(d => {
-      const dt = new Date(d + 'T12:00:00');
-      return `<th style="font-size:10px;color:var(--muted);padding:4px 6px;font-weight:500;min-width:32px;text-align:center">${dt.toLocaleDateString('en-GB', { weekday: 'short' })}<br>${dt.getDate()}</th>`;
-    }).join('');
-
-    const rows = data.grid.map(row => {
-      const cells = row.days.map(d => {
-        const colors = { present: '#3ecf8e', late: '#ffb347', absent: '#ff4444', holiday: '#6366f1' };
-        const bg = colors[d.status] || '#333';
-        const title = d.status === 'late' ? `Late: ${d.clockIn}` : d.status === 'present' ? `In: ${d.clockIn}` : d.status;
-        return `<td style="padding:4px 6px;text-align:center" title="${title}"><div style="width:24px;height:24px;border-radius:5px;background:${bg};margin:0 auto;opacity:${d.status === 'absent' ? '.5' : '.85'}"></div></td>`;
-      }).join('');
-      return `<tr><td style="font-size:12px;color:var(--text);padding:6px 12px 6px 0;white-space:nowrap;font-weight:500">${row.name.split(' ')[0]}</td>${cells}</tr>`;
-    }).join('');
-
-    gridEl.innerHTML = `<table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left;font-size:11px;color:var(--muted);padding:4px 12px 4px 0">Employee</th>${dayLabels}</tr></thead><tbody>${rows}</tbody></table>`;
-  } else if (gridEl) {
-    gridEl.innerHTML = '<div class="empty-state" style="padding:30px"><div class="icon">📊</div>No attendance data for this period</div>';
   }
 
   // Late arrivals table
@@ -4338,6 +4318,107 @@ function renderAttendanceReport(empFilter) {
         </table>`;
     }
   }
+
+  // Absences table
+  const absEl = document.getElementById('rptAbsences');
+  if (absEl) {
+    if (!data.absenceList.length) {
+      absEl.innerHTML = '<div style="text-align:center;color:var(--muted);padding:24px;font-size:13px">No sick leave recorded in this period</div>';
+    } else {
+      const absRows = data.absenceList.map(a => {
+        const rangeStr = a.dateFrom === a.dateTo ? fmtDateStr(a.dateFrom) : `${fmtDateStr(a.dateFrom)} – ${fmtDateStr(a.dateTo)}`;
+        return `<tr>
+          <td style="padding:8px 12px;font-size:13px;color:var(--text)">${a.name}</td>
+          <td style="padding:8px 12px;font-size:13px;color:var(--muted)">${rangeStr}</td>
+          <td style="padding:8px 12px;font-size:13px;color:var(--red);font-weight:600">${a.days} day${a.days !== 1 ? 's' : ''}</td>
+          <td style="padding:8px 12px;font-size:13px;color:var(--muted)">${a.reason || '—'}</td>
+        </tr>`;
+      }).join('');
+      absEl.innerHTML = `
+        <table style="width:100%;border-collapse:collapse">
+          <thead><tr>
+            <th style="text-align:left;font-size:11px;color:var(--muted);padding:6px 12px;border-bottom:1px solid var(--border)">Employee</th>
+            <th style="text-align:left;font-size:11px;color:var(--muted);padding:6px 12px;border-bottom:1px solid var(--border)">Dates</th>
+            <th style="text-align:left;font-size:11px;color:var(--muted);padding:6px 12px;border-bottom:1px solid var(--border)">Duration</th>
+            <th style="text-align:left;font-size:11px;color:var(--muted);padding:6px 12px;border-bottom:1px solid var(--border)">Reason</th>
+          </tr></thead>
+          <tbody>${absRows}</tbody>
+        </table>`;
+    }
+  }
+}
+
+function exportAttendancePDF() {
+  const empFilter = document.getElementById('rptEmployeeFilter')?.value || '';
+  const data = getAttendanceData(empFilter);
+  const periodLabels = { week: 'This Week', month: 'This Month', year: 'This Year' };
+  const periodLabel = periodLabels[rptPeriod];
+  const { from, to } = getReportDateRange();
+
+  const lateRows = [...data.lateList].sort((a, b) => b.minsLate - a.minsLate).map(l => {
+    const minsStr = l.minsLate >= 60 ? `${Math.floor(l.minsLate / 60)}h ${l.minsLate % 60}m` : `${l.minsLate}m`;
+    return `<tr><td>${l.name}</td><td>${fmtDateStr(l.date)}</td><td>${l.clockIn}</td><td class="late">+${minsStr}</td></tr>`;
+  }).join('');
+
+  const absRows = data.absenceList.map(a => {
+    const rangeStr = a.dateFrom === a.dateTo ? fmtDateStr(a.dateFrom) : `${fmtDateStr(a.dateFrom)} – ${fmtDateStr(a.dateTo)}`;
+    return `<tr><td>${a.name}</td><td>${rangeStr}</td><td class="sick">${a.days} day${a.days !== 1 ? 's' : ''}</td><td>${a.reason || '—'}</td></tr>`;
+  }).join('');
+
+  const filterLabel = empFilter ? ` — ${empFilter}` : ' — All Employees';
+
+  const printWin = window.open('', '_blank');
+  printWin.document.write(`<!DOCTYPE html><html><head>
+    <title>BAMA Attendance Report – ${periodLabel}</title>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=DM+Mono&display=swap');
+      * { box-sizing:border-box; margin:0; padding:0; }
+      body { font-family:'DM Sans',sans-serif; padding:32px; color:#111; background:#fff; }
+      h1 { font-size:28px; font-weight:700; letter-spacing:2px; color:#ff6b00; margin-bottom:4px; }
+      .subtitle { font-size:13px; color:#888; margin-bottom:4px; }
+      .period { font-size:15px; font-weight:600; margin-bottom:24px; color:#333; }
+      .kpi-row { display:flex; gap:16px; margin-bottom:28px; flex-wrap:wrap; }
+      .kpi { border:1.5px solid #eee; border-radius:10px; padding:14px 18px; min-width:130px; }
+      .kpi-label { font-size:10px; text-transform:uppercase; letter-spacing:1px; color:#888; margin-bottom:4px; }
+      .kpi-value { font-size:26px; font-weight:700; font-family:'DM Mono',monospace; }
+      .green { color:#16a34a; } .red { color:#ef4444; } .amber { color:#f59e0b; } .purple { color:#6366f1; } .orange { color:#ff6b00; }
+      h2 { font-size:16px; font-weight:600; margin:24px 0 12px; }
+      table { width:100%; border-collapse:collapse; margin-bottom:20px; }
+      th { font-size:10px; letter-spacing:1.5px; text-transform:uppercase; color:#888; padding:8px 12px; text-align:left; border-bottom:2px solid #eee; }
+      td { padding:10px 12px; border-bottom:1px solid #f0f0f0; font-size:13px; }
+      .late { color:#f59e0b; font-weight:600; }
+      .sick { color:#ef4444; font-weight:600; }
+      .empty { color:#aaa; font-size:13px; text-align:center; padding:20px; }
+      .footer { margin-top:32px; font-size:11px; color:#aaa; border-top:1px solid #eee; padding-top:12px; }
+      @media print { body { padding:16px; } button { display:none; } }
+    </style>
+  </head><body>
+    <h1>BAMA FABRICATION</h1>
+    <div class="subtitle">Attendance Report${filterLabel}</div>
+    <div class="period">${periodLabel}: ${fmtDateStr(from)} – ${fmtDateStr(to)}</div>
+
+    <div class="kpi-row">
+      <div class="kpi"><div class="kpi-label">Attendance Rate</div><div class="kpi-value ${data.attendanceRate >= 95 ? 'green' : data.attendanceRate >= 85 ? 'amber' : 'red'}">${data.attendanceRate}%</div></div>
+      <div class="kpi"><div class="kpi-label">Days Absent (Sick)</div><div class="kpi-value ${data.totalSickDays > 0 ? 'red' : 'green'}">${data.totalSickDays}</div></div>
+      <div class="kpi"><div class="kpi-label">Late Arrivals</div><div class="kpi-value ${data.totalLate > 0 ? 'amber' : 'green'}">${data.totalLate}</div></div>
+      <div class="kpi"><div class="kpi-label">Holidays Taken</div><div class="kpi-value purple">${data.totalHolidayDays}</div></div>
+      <div class="kpi"><div class="kpi-label">Holiday Balance</div><div class="kpi-value ${data.totalHolidayBalance > 0 ? 'green' : 'red'}">${data.totalHolidayBalance}</div></div>
+      <div class="kpi"><div class="kpi-label">Avg Clock-In</div><div class="kpi-value orange">${data.avgClockIn}</div></div>
+    </div>
+
+    <h2>Late Arrivals</h2>
+    ${data.lateList.length ? `<table><thead><tr><th>Employee</th><th>Date</th><th>Clock In</th><th>Late By</th></tr></thead><tbody>${lateRows}</tbody></table>` : '<div class="empty">No late arrivals in this period</div>'}
+
+    <h2>Absences (Sick Leave)</h2>
+    ${data.absenceList.length ? `<table><thead><tr><th>Employee</th><th>Dates</th><th>Duration</th><th>Reason</th></tr></thead><tbody>${absRows}</tbody></table>` : '<div class="empty">No sick leave recorded in this period</div>'}
+
+    <div class="footer">
+      Generated by BAMA Workshop ERP &nbsp;|&nbsp; ${new Date().toLocaleString('en-GB')} &nbsp;|&nbsp;
+      Expected start time: ${data.expectedStart}
+    </div>
+    <script>window.onload = function() { window.print(); }<\\/script>
+  </body></html>`);
+  printWin.document.close();
 }
 let clockLogWeekOffset = 0;
 
