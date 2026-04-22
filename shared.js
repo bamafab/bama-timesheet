@@ -953,7 +953,7 @@ function addEntry() {
 }
 
 function removeEntry(id) {
-  state.currentEntries = state.currentEntries.filter(e => e.id !== id);
+  state.currentEntries = state.currentEntries.filter(e => String(e.id) !== String(id));
   renderTodayEntries();
 }
 
@@ -1802,7 +1802,7 @@ function markClockDirty(id) {
 }
 
 function editClockingInline(id) {
-  const clocking = state.timesheetData.clockings.find(c => c.id === id);
+  const clocking = state.timesheetData.clockings.find(c => String(c.id) === String(id));
   if (!clocking) return;
   // Store originals for cancel/reject
   if (!clocking.originalClockIn) {
@@ -1815,14 +1815,14 @@ function editClockingInline(id) {
 }
 
 function cancelClockEdit(id) {
-  const clocking = state.timesheetData.clockings.find(c => c.id === id);
+  const clocking = state.timesheetData.clockings.find(c => String(c.id) === String(id));
   if (!clocking) return;
   clocking._editing = false;
   renderManagerView();
 }
 
 async function saveClockEdit(id) {
-  const clocking = state.timesheetData.clockings.find(c => c.id === id);
+  const clocking = state.timesheetData.clockings.find(c => String(c.id) === String(id));
   if (!clocking) return;
 
   const newClockIn = document.getElementById(`edit-in-${id}`).value;
@@ -1854,7 +1854,7 @@ async function saveClockEdit(id) {
 }
 
 async function approveClocking(id) {
-  const c = state.timesheetData.clockings.find(c => c.id === id);
+  const c = state.timesheetData.clockings.find(c => String(c.id) === String(id));
   if (!c) return;
   try {
     await api.put(`/api/clockings/${id}`, {
@@ -1867,7 +1867,7 @@ async function approveClocking(id) {
 }
 
 async function rejectClocking(id) {
-  const c = state.timesheetData.clockings.find(c => c.id === id);
+  const c = state.timesheetData.clockings.find(c => String(c.id) === String(id));
   if (!c) return;
   try {
     // Revert to original times if available
@@ -2208,7 +2208,7 @@ async function rejectAmendment(id) {
 
 
 async function setEntryStatus(id, status) {
-  const entry = state.timesheetData.entries.find(e => e.id === id);
+  const entry = state.timesheetData.entries.find(e => String(e.id) === String(id));
   if (!entry) return;
   try {
     await api.put(`/api/project-hours/${id}`, {
@@ -2589,7 +2589,7 @@ function checkHolidayClockInNotification(employeeName) {
 let _editEntryId = null;
 
 function openEditEntry(id) {
-  const entry = state.timesheetData.entries.find(e => e.id === id);
+  const entry = state.timesheetData.entries.find(e => String(e.id) === String(id));
   if (!entry) return;
   _editEntryId = id;
   document.getElementById('editEntryProject').textContent = `${entry.projectId} — ${entry.projectName}`;
@@ -2605,7 +2605,7 @@ function closeEditEntry() {
 
 async function saveEditEntry() {
   if (!_editEntryId) return;
-  const entry = state.timesheetData.entries.find(e => e.id === _editEntryId);
+  const entry = state.timesheetData.entries.find(e => String(e.id) === String(_editEntryId));
   if (!entry) return;
 
   const newHours = parseFloat(document.getElementById('editEntryHours').value);
@@ -3591,7 +3591,7 @@ function renderHolidayRequests() {
 }
 
 async function approveHoliday(id) {
-  const h = (state.timesheetData.holidays || []).find(h => h.id === id);
+  const h = (state.timesheetData.holidays || []).find(h => String(h.id) === String(id));
   if (!h) return;
   try {
     await api.put(`/api/holidays/${id}`, { status: 'approved' });
@@ -3604,7 +3604,7 @@ async function approveHoliday(id) {
 }
 
 async function rejectHoliday(id) {
-  const h = (state.timesheetData.holidays || []).find(h => h.id === id);
+  const h = (state.timesheetData.holidays || []).find(h => String(h.id) === String(id));
   if (!h) return;
   try {
     await api.put(`/api/holidays/${id}`, { status: 'rejected' });
@@ -4707,21 +4707,21 @@ async function addEmployee() {
 }
 
 function editEmployee(id) {
-  const emp = state.timesheetData.employees.find(e => e.id === id);
+  const emp = state.timesheetData.employees.find(e => String(e.id) === String(id));
   if (!emp) return;
   emp.editing = true;
   renderStaffList();
 }
 
 function cancelEdit(id) {
-  const emp = state.timesheetData.employees.find(e => e.id === id);
+  const emp = state.timesheetData.employees.find(e => String(e.id) === String(id));
   if (!emp) return;
   delete emp.editing;
   renderStaffList();
 }
 
 async function saveEmployee(id) {
-  const emp = state.timesheetData.employees.find(e => e.id === id);
+  const emp = state.timesheetData.employees.find(e => String(e.id) === String(id));
   if (!emp) return;
 
   const newName = document.getElementById(`edit-name-${id}`).value.trim();
@@ -4779,7 +4779,7 @@ async function saveEmployee(id) {
 }
 
 async function toggleEmployeeActive(id) {
-  const emp = state.timesheetData.employees.find(e => e.id === id);
+  const emp = state.timesheetData.employees.find(e => String(e.id) === String(id));
   if (!emp) return;
   const deactivating = emp.active !== false;
   if (deactivating && !confirm(`Deactivate ${emp.name}? They will no longer appear on the kiosk or in payroll.`)) return;
@@ -4796,7 +4796,7 @@ async function toggleEmployeeActive(id) {
 }
 
 async function deleteEmployee(id) {
-  const emp = state.timesheetData.employees.find(e => e.id === id);
+  const emp = state.timesheetData.employees.find(e => String(e.id) === String(id));
   if (!emp) return;
 
   if (!confirm(`Remove ${emp.name}? Their historical time entries will be kept.`)) return;
@@ -4804,7 +4804,7 @@ async function deleteEmployee(id) {
   try {
     // Deactivate rather than truly delete — preserve history
     await api.put(`/api/employees/${id}`, { is_active: false });
-    state.timesheetData.employees = state.timesheetData.employees.filter(e => e.id !== id);
+    state.timesheetData.employees = state.timesheetData.employees.filter(e => String(e.id) !== String(id));
     buildEmployeeMaps();
     toast(`${emp.name} removed`, 'success');
     renderStaffList();
@@ -8703,13 +8703,18 @@ async function init() {
   const justLoggedIn = AUTH.handleRedirect();
   if (justLoggedIn) console.log('Just returned from login, token stored');
 
+  // Fire a warm-up ping immediately — no auth needed, wakes the Function App from cold start
+  const warmupPromise = fetch(`${API_BASE}/api/health`).catch(() => {});
+
   // Load core data from SQL API with retry
+  // Generous timeouts to handle Azure Function cold starts (can take 15-25s on free tier)
   const loadDataWithRetry = async () => {
+    await warmupPromise; // wait for warmup to complete first
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         await Promise.race([
           loadTimesheetData(),
-          new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), attempt === 1 ? 10000 : 15000))
+          new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), attempt === 1 ? 30000 : 20000))
         ]);
         _dataLoadedFromAPI = true;
         return;
