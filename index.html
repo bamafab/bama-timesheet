@@ -67,10 +67,10 @@
 
     <!-- ── CLOCK IN/OUT CARD ── -->
     <div class="card" id="clockCard">
-      <div class="card-title"><span class="icon" style="filter:brightness(0) invert(1)">🕐</span> Shift Times</div>
+      <div class="card-title"><span class="icon">🕐</span> Shift Times</div>
       <div id="clockInSection">
         <input type="hidden" id="clockInTime" value="">
-        <button class="btn btn-success btn-full" onclick="doClock('in')" style="padding:18px;font-size:16px;letter-spacing:1px">&#9201; Clock In Now</button>
+        <button class="btn btn-success btn-full" onclick="doClock('in')" style="padding:18px;font-size:16px;letter-spacing:1px">⏰ Clock In Now</button>
       </div>
       <div id="clockedInSection" style="display:none">
         <div class="clock-grid" style="grid-template-columns:1fr 1fr;gap:12px">
@@ -81,7 +81,7 @@
           <div>
             <div class="field-label">BREAK</div>
             <div class="field-input" style="opacity:.7;display:flex;align-items:center;gap:8px">
-              <span>&#9201;</span> 30 min (mandatory)
+              <span>⏰</span> 30 min (mandatory)
             </div>
             <input type="hidden" id="breakDuration" value="30">
           </div>
@@ -245,7 +245,7 @@
 
     <div style="display:flex;gap:12px;justify-content:flex-end">
       <button class="btn btn-ghost" onclick="clearOrderForm()">Clear All</button>
-      <button class="btn btn-success" onclick="submitOrderForm()" style="font-size:14px;padding:12px 28px">&#9993; Send Order</button>
+      <button class="btn btn-success" onclick="submitOrderForm()" style="font-size:14px;padding:12px 28px">📧 Send Order</button>
     </div>
   </div>
 </div>
@@ -290,7 +290,7 @@
       <div>
         <div class="field-label">BREAK</div>
         <div class="field-input" style="opacity:.7;display:flex;align-items:center;gap:8px">
-          <span>&#9201;</span> 30 minutes (standard)
+          <span>⏰</span> 30 minutes (standard)
         </div>
         <input type="hidden" id="addClockBreak" value="30">
       </div>

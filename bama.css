@@ -364,12 +364,6 @@
     border-left-color: #ff4444;
     font-weight: 600;
   }
-  .sidebar-nav-icon {
-    font-size: 14px;
-    width: 20px;
-    text-align: center;
-    flex-shrink: 0;
-  }
   .sidebar-nav-badge {
     margin-left: auto;
     background: rgba(245,158,11,.15);
@@ -673,7 +667,19 @@
   }
   .empty-state .icon { font-size: 36px; margin-bottom: 12px; }
 
-  /* password screen */
+  /* ── Date input calendar icon fix (dark theme) ── */
+  input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: invert(1);
+    cursor: pointer;
+  }
+
+  /* ── Ensure sidebar & card icons are visible on dark bg ── */
+  .sidebar-nav-icon {
+    font-size: 14px;
+    width: 20px;
+    text-align: center;
+    flex-shrink: 0;
+  }
   .auth-wrap {
     max-width: 360px; margin: 80px auto; padding: 24px;
     text-align: center;

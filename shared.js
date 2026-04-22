@@ -5041,7 +5041,7 @@ function renderPayroll() {
   }).filter(r => r.totalHrs > 0 || r.payroll);
 
   if (!results.length) {
-    container.innerHTML = '<div class="empty-state"><div class="icon">&#163;</div>No approved clockings this week</div>';
+    container.innerHTML = '<div class="empty-state"><div class="icon">💷</div>No approved clockings this week</div>';
     return;
   }
 
@@ -5825,7 +5825,7 @@ function renderDashboard() {
   if (taskCount) { taskCount.textContent = myTasks.length; taskCount.className = 'dash-count' + (myTasks.length === 0 ? ' zero' : ''); }
   if (taskList) {
     if (!myTasks.length) {
-      taskList.innerHTML = '<div class="empty-state" style="padding:20px"><div class="icon">&#9745;</div>No tasks assigned to you</div>';
+      taskList.innerHTML = '<div class="empty-state" style="padding:20px"><div class="icon">✅</div>No tasks assigned to you</div>';
     } else {
       taskList.innerHTML = myTasks.map(t => {
         const due = t.dueDate ? new Date(t.dueDate).toLocaleDateString('en-GB', { day:'numeric', month:'short' }) : '';
@@ -5858,7 +5858,7 @@ function renderDashboard() {
   if (msgCount) { msgCount.textContent = unreadCount; msgCount.className = 'dash-count' + (unreadCount === 0 ? ' zero' : ''); }
   if (msgList) {
     if (!myMsgs.length) {
-      msgList.innerHTML = '<div class="empty-state" style="padding:20px"><div class="icon">&#9993;</div>No messages</div>';
+      msgList.innerHTML = '<div class="empty-state" style="padding:20px"><div class="icon">📧</div>No messages</div>';
     } else {
       msgList.innerHTML = myMsgs.slice(0, 20).map(m => {
         const when = m.createdAt ? timeAgo(m.createdAt) : '';
@@ -5887,7 +5887,7 @@ function renderDashboard() {
   if (holCount) { holCount.textContent = pendingHols.length; holCount.className = 'dash-count' + (pendingHols.length === 0 ? ' zero' : ''); }
   if (holList) {
     if (!pendingHols.length) {
-      holList.innerHTML = '<div class="empty-state" style="padding:20px"><div class="icon">&#9788;</div>No pending holiday requests</div>';
+      holList.innerHTML = '<div class="empty-state" style="padding:20px"><div class="icon">🌴</div>No pending holiday requests</div>';
     } else {
       holList.innerHTML = pendingHols.map(h => {
         const from = new Date(h.dateFrom).toLocaleDateString('en-GB', { day:'numeric', month:'short' });
@@ -5920,7 +5920,7 @@ function renderDashboard() {
   if (clockCount) { clockCount.textContent = pendingClocks.length; clockCount.className = 'dash-count' + (pendingClocks.length === 0 ? ' zero' : ''); }
   if (clockList) {
     if (!pendingClocks.length) {
-      clockList.innerHTML = '<div class="empty-state" style="padding:20px"><div class="icon">&#9201;</div>No clockings awaiting approval</div>';
+      clockList.innerHTML = '<div class="empty-state" style="padding:20px"><div class="icon">⏰</div>No clockings awaiting approval</div>';
     } else {
       // Group by employee
       const byEmp = {};

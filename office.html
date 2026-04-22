@@ -73,7 +73,7 @@
     </div>
     <div style="display:flex;gap:10px;justify-content:center">
       <button class="btn btn-ghost" onclick="showScreen('screenOfficeSelect');renderOfficeEmployeeGrid()">&#8592; Back</button>
-      <button class="btn btn-primary" onclick="openRequestAccessModal()">&#9993; Request Access</button>
+      <button class="btn btn-primary" onclick="openRequestAccessModal()">📧 Request Access</button>
     </div>
   </div>
 </div>
@@ -87,7 +87,7 @@
     <nav class="mgr-sidebar" id="officeSidebar">
       <div class="sidebar-nav-group">
         <button class="sidebar-nav-item active" data-tab="dashboard" onclick="switchTab('dashboard')">
-          <span class="sidebar-nav-icon">&#9776;</span> Dashboard
+          <span class="sidebar-nav-icon">📊</span> Dashboard
         </button>
       </div>
       <div class="sidebar-nav-divider"></div>
@@ -103,7 +103,7 @@
             <span class="sidebar-nav-icon">&#128274;</span> User Access
           </button>
           <button class="sidebar-nav-item" data-tab="holidays" onclick="switchTab('holidays')">
-            <span class="sidebar-nav-icon">&#9788;</span> Holidays
+            <span class="sidebar-nav-icon">🌴</span> Holidays
           </button>
         </div>
       </div>
@@ -114,19 +114,19 @@
         </div>
         <div class="sidebar-nav-subitems">
           <button class="sidebar-nav-item" data-tab="project" onclick="switchTab('project')">
-            <span class="sidebar-nav-icon">&#9638;</span> By Project
+            <span class="sidebar-nav-icon">📁</span> By Project
           </button>
           <button class="sidebar-nav-item" data-tab="employee" onclick="switchTab('employee')">
-            <span class="sidebar-nav-icon">&#9673;</span> By Employee
+            <span class="sidebar-nav-icon">👤</span> By Employee
           </button>
           <button class="sidebar-nav-item" data-tab="clockinout" onclick="switchTab('clockinout')">
-            <span class="sidebar-nav-icon">&#9201;</span> Clocking In/Out
+            <span class="sidebar-nav-icon">⏰</span> Clocking In/Out
           </button>
           <button class="sidebar-nav-item" data-tab="payroll" onclick="switchTab('payroll')">
-            <span class="sidebar-nav-icon">&#163;</span> Payroll
+            <span class="sidebar-nav-icon">💷</span> Payroll
           </button>
           <button class="sidebar-nav-item" data-tab="archive" onclick="switchTab('archive')">
-            <span class="sidebar-nav-icon">&#9776;</span> Archive
+            <span class="sidebar-nav-icon">📦</span> Archive
           </button>
         </div>
       </div>
@@ -170,21 +170,21 @@
       <div class="dash-grid">
         <!-- 1. My Tasks -->
         <div class="card dash-card">
-          <div class="card-title"><span class="icon">&#9745;</span> My Tasks <span class="dash-count" id="dashTaskCount">0</span>
+          <div class="card-title"><span class="icon">✅</span> My Tasks <span class="dash-count" id="dashTaskCount">0</span>
             <button class="btn btn-primary" style="padding:4px 12px;font-size:11px;margin-left:auto" onclick="openDashTaskModal()">+ New Task</button>
           </div>
           <div id="dashTaskList" class="dash-list">
-            <div class="empty-state" style="padding:20px"><div class="icon">&#9745;</div>No tasks assigned to you</div>
+            <div class="empty-state" style="padding:20px"><div class="icon">✅</div>No tasks assigned to you</div>
           </div>
         </div>
 
         <!-- 2. Messages -->
         <div class="card dash-card">
-          <div class="card-title"><span class="icon">&#9993;</span> Messages <span class="dash-count" id="dashMsgCount">0</span>
-            <button class="btn btn-ghost" style="padding:4px 12px;font-size:11px;margin-left:auto" onclick="openDashMessageModal()">&#9993; Send</button>
+          <div class="card-title"><span class="icon">💬</span> Messages <span class="dash-count" id="dashMsgCount">0</span>
+            <button class="btn btn-ghost" style="padding:4px 12px;font-size:11px;margin-left:auto" onclick="openDashMessageModal()">📧 Send</button>
           </div>
           <div id="dashMsgList" class="dash-list">
-            <div class="empty-state" style="padding:20px"><div class="icon">&#9993;</div>No messages</div>
+            <div class="empty-state" style="padding:20px"><div class="icon">💬</div>No messages</div>
           </div>
         </div>
 
@@ -198,17 +198,17 @@
 
         <!-- 4. Pending Holiday Requests -->
         <div class="card dash-card">
-          <div class="card-title"><span class="icon">&#9788;</span> Pending Holiday Requests <span class="dash-count" id="dashHolidayCount">0</span></div>
+          <div class="card-title"><span class="icon">🌴</span> Pending Holiday Requests <span class="dash-count" id="dashHolidayCount">0</span></div>
           <div id="dashHolidayList" class="dash-list">
-            <div class="empty-state" style="padding:20px"><div class="icon">&#9788;</div>No pending holiday requests</div>
+            <div class="empty-state" style="padding:20px"><div class="icon">🌴</div>No pending holiday requests</div>
           </div>
         </div>
 
         <!-- 5. Pending Clockings to Approve -->
         <div class="card dash-card">
-          <div class="card-title"><span class="icon">&#9201;</span> Pending Clockings <span class="dash-count" id="dashClockCount">0</span></div>
+          <div class="card-title"><span class="icon">⏰</span> Pending Clockings <span class="dash-count" id="dashClockCount">0</span></div>
           <div id="dashClockList" class="dash-list">
-            <div class="empty-state" style="padding:20px"><div class="icon">&#9201;</div>No clockings awaiting approval</div>
+            <div class="empty-state" style="padding:20px"><div class="icon">⏰</div>No clockings awaiting approval</div>
           </div>
         </div>
 
@@ -309,7 +309,7 @@
           <div class="week-label" id="holidayMonthLabel">—</div>
           <button class="nav-btn" onclick="changeHolidayMonth(1)">&#8594;</button>
         </div>
-        <button class="btn btn-ghost" onclick="holidayMonthOffset=0;renderHolidayTab()" style="padding:6px 14px;font-size:12px">&#9673; Today</button>
+        <button class="btn btn-ghost" onclick="holidayMonthOffset=0;renderHolidayTab()" style="padding:6px 14px;font-size:12px">📍 Today</button>
         <select class="field-input" id="holidayEmpFilter" onchange="renderHolidayTab()"
           style="width:180px;padding:6px 12px;font-size:13px">
           <option value="">All Employees</option>
@@ -317,7 +317,7 @@
       </div>
 
       <div class="card" style="margin-bottom:20px">
-        <div class="card-title"><span class="icon" style="filter:brightness(0) invert(1)">&#127959;</span> Team Holiday Calendar</div>
+        <div class="card-title"><span class="icon">📅</span> Team Holiday Calendar</div>
         <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;font-size:11px;color:var(--muted)">
           <span style="display:flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:3px;background:rgba(62,207,142,.5);display:inline-block"></span>Approved</span>
           <span style="display:flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:3px;background:rgba(236,72,153,.45);display:inline-block"></span>Pending</span>
@@ -440,7 +440,7 @@
     <!-- Tab: Payroll -->
     <div class="tab-content" id="tab-payroll">
       <div class="card" style="margin-bottom:20px">
-        <div class="card-title"><span class="icon">&#163;</span> Payroll Summary</div>
+        <div class="card-title"><span class="icon">💷</span> Payroll Summary</div>
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap">
           <div class="week-nav">
             <button class="nav-btn" onclick="changePayrollWeek(-1)">&#8592;</button>
@@ -455,7 +455,7 @@
         </div>
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:20px;flex-wrap:wrap">
           <button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="generatePayrollPDF()">&#8595; Export PDF</button>
-          <button class="btn btn-success" style="padding:8px 16px;font-size:12px" onclick="emailPayrollReport()">&#9993; Email to Payroll</button>
+          <button class="btn btn-success" style="padding:8px 16px;font-size:12px" onclick="emailPayrollReport()">📧 Email to Payroll</button>
           <button class="btn btn-ghost" style="padding:8px 16px;font-size:12px" onclick="archiveWeek()">&#128190; Archive This Week</button>
         </div>
         <div id="payrollSummary">
@@ -548,7 +548,7 @@
         <div style="font-size:13px;color:var(--muted);margin-bottom:16px">Manage suppliers and the services they offer.</div>
         <div style="display:flex;gap:10px;margin-bottom:16px">
           <button class="btn btn-primary" onclick="openAddSupplierForm()">+ Add Supplier</button>
-          <button class="btn btn-ghost" onclick="toggleManageServices()">&#9881; Manage Services</button>
+          <button class="btn btn-ghost" onclick="toggleManageServices()">⚙️ Manage Services</button>
         </div>
 
         <!-- Manage Services (hidden by default) -->
@@ -638,7 +638,7 @@
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="requestAccessModal">
   <div class="modal" style="max-width:440px;width:95vw">
-    <div class="modal-title">&#9993; Request Access</div>
+    <div class="modal-title">📧 Request Access</div>
     <div style="color:var(--muted);font-size:13px;margin-bottom:20px">
       Your request will be emailed to the system admin. Please describe why you need access.
     </div>
@@ -722,7 +722,7 @@
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="dashCreateTaskModal">
   <div class="modal" style="max-width:480px;width:95vw">
-    <div class="modal-title">&#9745; Create Task</div>
+    <div class="modal-title">✅ Create Task</div>
     <div style="color:var(--muted);font-size:13px;margin-bottom:20px">Assign a task to an office team member.</div>
     <div style="margin-bottom:12px">
       <div class="field-label">ASSIGN TO</div>
@@ -762,7 +762,7 @@
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="dashSendMessageModal">
   <div class="modal" style="max-width:440px;width:95vw">
-    <div class="modal-title">&#9993; Send Message</div>
+    <div class="modal-title">📧 Send Message</div>
     <div style="color:var(--muted);font-size:13px;margin-bottom:20px">Send a message to an office team member.</div>
     <div style="margin-bottom:12px">
       <div class="field-label">SEND TO</div>
@@ -822,7 +822,7 @@
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="bookAbsenceModal">
   <div class="modal" style="max-width:480px;width:95vw">
-    <div class="modal-title"><span style="filter:brightness(0) invert(1)">&#128197;</span> Book Absence</div>
+    <div class="modal-title">📅 Book Absence</div>
     <div style="color:var(--muted);font-size:13px;margin-bottom:20px">Record holiday, sickness, or absence for an employee. This will be auto-approved.</div>
     <div style="margin-bottom:12px">
       <div class="field-label">EMPLOYEE</div>
