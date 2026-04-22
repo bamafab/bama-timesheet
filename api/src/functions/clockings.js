@@ -5,12 +5,11 @@ const { ok, created, badRequest, notFound, serverError, preflight } = require('.
 
 // POST /api/clock-in — record a clock-in
 app.http('clock-in', {
-    methods: ['POST', 'OPTIONS'],
+    methods: ['POST'],
     authLevel: 'anonymous',
     route: 'clock-in',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -61,12 +60,11 @@ app.http('clock-in', {
 
 // POST /api/clock-out — record a clock-out
 app.http('clock-out', {
-    methods: ['POST', 'OPTIONS'],
+    methods: ['POST'],
     authLevel: 'anonymous',
     route: 'clock-out',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -115,12 +113,11 @@ app.http('clock-out', {
 // GET /api/clockings — get clock entries with filters
 // ?employee_id=1&date=2026-04-21&week_commencing=2026-04-20&from=2026-04-01&to=2026-04-30
 app.http('clockings-list', {
-    methods: ['GET', 'OPTIONS'],
+    methods: ['GET'],
     authLevel: 'anonymous',
     route: 'clockings',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -181,12 +178,11 @@ app.http('clockings-list', {
 
 // PUT /api/clockings/:id — amend a clock entry (manager)
 app.http('clockings-update', {
-    methods: ['PUT', 'OPTIONS'],
+    methods: ['PUT'],
     authLevel: 'anonymous',
     route: 'clockings/{id}',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -217,12 +213,11 @@ app.http('clockings-update', {
 
 // POST /api/clockings — add manual clock entry (manager)
 app.http('clockings-create', {
-    methods: ['POST', 'OPTIONS'],
+    methods: ['POST'],
     authLevel: 'anonymous',
     route: 'clockings',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -264,12 +259,11 @@ app.http('clockings-create', {
 
 // DELETE /api/clockings/:id — delete a clock entry (manager)
 app.http('clockings-delete', {
-    methods: ['DELETE', 'OPTIONS'],
+    methods: ['DELETE'],
     authLevel: 'anonymous',
     route: 'clockings/{id}',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {

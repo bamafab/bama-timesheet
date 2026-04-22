@@ -6,12 +6,11 @@ const { ok, badRequest, serverError, preflight } = require('../responses');
 // GET /api/settings — get all settings
 // GET /api/settings/:key — get single setting
 app.http('settings-get', {
-    methods: ['GET', 'OPTIONS'],
+    methods: ['GET'],
     authLevel: 'anonymous',
     route: 'settings/{key?}',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -55,12 +54,11 @@ app.http('settings-get', {
 // PUT /api/settings — update one or more settings
 // Body: { "key": "value" } or { "key1": "value1", "key2": "value2" }
 app.http('settings-update', {
-    methods: ['PUT', 'OPTIONS'],
+    methods: ['PUT'],
     authLevel: 'anonymous',
     route: 'settings',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -98,12 +96,11 @@ app.http('settings-update', {
 
 // POST /api/auth/verify-pin — verify manager/draftsman PIN
 app.http('auth-verify-pin', {
-    methods: ['POST', 'OPTIONS'],
+    methods: ['POST'],
     authLevel: 'anonymous',
     route: 'auth/verify-pin',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -143,7 +140,7 @@ app.http('auth-verify-pin', {
 
 // GET /api/health — simple health check
 app.http('health', {
-    methods: ['GET', 'OPTIONS'],
+    methods: ['GET'],
     authLevel: 'anonymous',
     route: 'health',
     handler: async (request, context) => {

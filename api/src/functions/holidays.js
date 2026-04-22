@@ -5,12 +5,11 @@ const { ok, created, badRequest, notFound, serverError, preflight } = require('.
 
 // POST /api/holidays — submit holiday request
 app.http('holidays-create', {
-    methods: ['POST', 'OPTIONS'],
+    methods: ['POST'],
     authLevel: 'anonymous',
     route: 'holidays',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -62,12 +61,11 @@ app.http('holidays-create', {
 // GET /api/holidays — list holidays with filters
 // ?employee_id=1&status=pending&from=2026-04-01&to=2026-12-31
 app.http('holidays-list', {
-    methods: ['GET', 'OPTIONS'],
+    methods: ['GET'],
     authLevel: 'anonymous',
     route: 'holidays',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -118,12 +116,11 @@ app.http('holidays-list', {
 
 // PUT /api/holidays/:id — approve or reject holiday (manager)
 app.http('holidays-update', {
-    methods: ['PUT', 'OPTIONS'],
+    methods: ['PUT'],
     authLevel: 'anonymous',
     route: 'holidays/{id}',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -186,12 +183,11 @@ app.http('holidays-update', {
 
 // DELETE /api/holidays/:id — cancel a holiday request
 app.http('holidays-delete', {
-    methods: ['DELETE', 'OPTIONS'],
+    methods: ['DELETE'],
     authLevel: 'anonymous',
     route: 'holidays/{id}',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {

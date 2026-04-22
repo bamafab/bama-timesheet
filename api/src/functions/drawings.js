@@ -5,12 +5,11 @@ const { ok, created, badRequest, notFound, serverError, preflight } = require('.
 
 // POST /api/drawings — create a drawing job
 app.http('drawings-create', {
-    methods: ['POST', 'OPTIONS'],
+    methods: ['POST'],
     authLevel: 'anonymous',
     route: 'drawings',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -45,12 +44,11 @@ app.http('drawings-create', {
 // GET /api/drawings — list drawings with filters
 // ?project_number=P-1234&complete=false
 app.http('drawings-list', {
-    methods: ['GET', 'OPTIONS'],
+    methods: ['GET'],
     authLevel: 'anonymous',
     route: 'drawings',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -84,12 +82,11 @@ app.http('drawings-list', {
 
 // GET /api/drawings/:id — get single drawing with elements and notes
 app.http('drawings-get', {
-    methods: ['GET', 'OPTIONS'],
+    methods: ['GET'],
     authLevel: 'anonymous',
     route: 'drawings/{id}',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -122,12 +119,11 @@ app.http('drawings-get', {
 
 // PUT /api/drawings/:id — update drawing (mark complete, etc.)
 app.http('drawings-update', {
-    methods: ['PUT', 'OPTIONS'],
+    methods: ['PUT'],
     authLevel: 'anonymous',
     route: 'drawings/{id}',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -169,12 +165,11 @@ app.http('drawings-update', {
 
 // POST /api/drawings/:id/elements — add element to drawing
 app.http('drawing-elements-create', {
-    methods: ['POST', 'OPTIONS'],
+    methods: ['POST'],
     authLevel: 'anonymous',
     route: 'drawings/{id}/elements',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -205,12 +200,11 @@ app.http('drawing-elements-create', {
 
 // PUT /api/drawing-elements/:id — update element (mark complete)
 app.http('drawing-elements-update', {
-    methods: ['PUT', 'OPTIONS'],
+    methods: ['PUT'],
     authLevel: 'anonymous',
     route: 'drawing-elements/{id}',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -251,12 +245,11 @@ app.http('drawing-elements-update', {
 
 // POST /api/drawings/:id/notes — add note to drawing
 app.http('drawing-notes-create', {
-    methods: ['POST', 'OPTIONS'],
+    methods: ['POST'],
     authLevel: 'anonymous',
     route: 'drawings/{id}/notes',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {

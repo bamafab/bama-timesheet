@@ -5,12 +5,11 @@ const { ok, created, badRequest, notFound, serverError, preflight } = require('.
 
 // POST /api/project-hours — log project hours
 app.http('project-hours-create', {
-    methods: ['POST', 'OPTIONS'],
+    methods: ['POST'],
     authLevel: 'anonymous',
     route: 'project-hours',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -55,12 +54,11 @@ app.http('project-hours-create', {
 // GET /api/project-hours — get project hours with filters
 // ?employee_id=1&week_commencing=2026-04-20&project_number=P-1234&from=2026-04-01&to=2026-04-30
 app.http('project-hours-list', {
-    methods: ['GET', 'OPTIONS'],
+    methods: ['GET'],
     authLevel: 'anonymous',
     route: 'project-hours',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -123,12 +121,11 @@ app.http('project-hours-list', {
 
 // PUT /api/project-hours/:id — update project hours entry
 app.http('project-hours-update', {
-    methods: ['PUT', 'OPTIONS'],
+    methods: ['PUT'],
     authLevel: 'anonymous',
     route: 'project-hours/{id}',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -160,12 +157,11 @@ app.http('project-hours-update', {
 
 // DELETE /api/project-hours/:id — delete project hours entry
 app.http('project-hours-delete', {
-    methods: ['DELETE', 'OPTIONS'],
+    methods: ['DELETE'],
     authLevel: 'anonymous',
     route: 'project-hours/{id}',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -188,12 +184,11 @@ app.http('project-hours-delete', {
 // ?group_by=project&week_commencing=2026-04-20
 // ?group_by=employee&week_commencing=2026-04-20
 app.http('project-hours-summary', {
-    methods: ['GET', 'OPTIONS'],
+    methods: ['GET'],
     authLevel: 'anonymous',
     route: 'project-hours/summary',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {

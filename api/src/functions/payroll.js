@@ -5,12 +5,11 @@ const { ok, created, badRequest, notFound, serverError, preflight } = require('.
 
 // POST /api/payroll/approve — approve a week and calculate payroll
 app.http('payroll-approve', {
-    methods: ['POST', 'OPTIONS'],
+    methods: ['POST'],
     authLevel: 'anonymous',
     route: 'payroll/approve',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -162,12 +161,11 @@ app.http('payroll-approve', {
 // GET /api/archive — get archived payroll weeks
 // ?week_commencing=2026-04-20&from=2026-01-01&to=2026-12-31
 app.http('archive-list', {
-    methods: ['GET', 'OPTIONS'],
+    methods: ['GET'],
     authLevel: 'anonymous',
     route: 'archive',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -212,12 +210,11 @@ app.http('archive-list', {
 
 // GET /api/archive/weeks — list all archived weeks (summary)
 app.http('archive-weeks', {
-    methods: ['GET', 'OPTIONS'],
+    methods: ['GET'],
     authLevel: 'anonymous',
     route: 'archive/weeks',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {

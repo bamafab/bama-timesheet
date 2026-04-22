@@ -7,12 +7,11 @@ const { ok, created, badRequest, notFound, serverError, preflight } = require('.
 // GET /api/employees?all=true — include inactive
 // GET /api/employees/:id — get single employee
 app.http('employees-list', {
-    methods: ['GET', 'OPTIONS'],
+    methods: ['GET'],
     authLevel: 'anonymous',
     route: 'employees/{id?}',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth; // 401 response
 
         try {
@@ -43,12 +42,11 @@ app.http('employees-list', {
 
 // POST /api/employees — create new employee
 app.http('employees-create', {
-    methods: ['POST', 'OPTIONS'],
+    methods: ['POST'],
     authLevel: 'anonymous',
     route: 'employees',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
@@ -83,12 +81,11 @@ app.http('employees-create', {
 
 // PUT /api/employees/:id — update employee
 app.http('employees-update', {
-    methods: ['PUT', 'OPTIONS'],
+    methods: ['PUT'],
     authLevel: 'anonymous',
     route: 'employees/{id}',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
-        if (auth._preflight) return preflight(request);
         if (auth.status) return auth;
 
         try {
