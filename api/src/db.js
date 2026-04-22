@@ -27,7 +27,11 @@ async function query(sqlText, params = {}) {
     const request = db.request();
 
     for (const [name, value] of Object.entries(params)) {
-        request.input(name, value);
+        if (value === null || value === undefined) {
+            request.input(name, sql.NVarChar, null);
+        } else {
+            request.input(name, value);
+        }
     }
 
     return request.query(sqlText);
