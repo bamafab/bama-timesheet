@@ -4669,12 +4669,76 @@ async function renderSuppliersTab() {
 function populateServiceCheckboxes(selectedIds) {
   const container = document.getElementById('supplierServiceCheckboxes');
   if (!container) return;
-  container.innerHTML = _serviceTypes.map(st => {
-    const checked = selectedIds.includes(st.id) ? 'checked' : '';
-    return `<label style="display:flex;align-items:center;gap:6px;font-size:13px;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:6px 12px;cursor:pointer">
-      <input type="checkbox" class="supplier-svc-cb" value="${st.id}" ${checked}> ${st.name}
+  const _svcSelectedIds = new Set(selectedIds.map(Number));
+
+  container.innerHTML = `
+    <div style="position:relative;margin-bottom:8px">
+      <input type="text" id="svcSearchBox" class="field-input" placeholder="Search services..." 
+        style="padding-left:30px;font-size:13px"
+        oninput="filterServiceCheckboxes()">
+      <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:14px;pointer-events:none">&#128269;</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:12px;color:var(--muted)">
+      <span id="svcSelectedCount">${_svcSelectedIds.size} selected</span>
+      <span id="svcFilterInfo" style="display:none"></span>
+    </div>
+    <div id="svcCheckboxList" style="max-height:250px;overflow-y:auto;display:flex;flex-wrap:wrap;gap:8px;padding:2px">
+      ${renderServiceCheckboxItems(_serviceTypes, _svcSelectedIds, '')}
+    </div>`;
+}
+
+function renderServiceCheckboxItems(types, selectedSet, filter) {
+  const lower = filter.toLowerCase();
+  const sorted = [...types].sort((a, b) => {
+    const aChecked = selectedSet.has(a.id) ? 0 : 1;
+    const bChecked = selectedSet.has(b.id) ? 0 : 1;
+    return aChecked - bChecked || a.name.localeCompare(b.name);
+  });
+  return sorted.map(st => {
+    const match = !lower || st.name.toLowerCase().includes(lower);
+    const checked = selectedSet.has(st.id) ? 'checked' : '';
+    return `<label style="display:${match ? 'flex' : 'none'};align-items:center;gap:6px;font-size:13px;background:${checked ? 'var(--accent-bg, rgba(59,130,246,0.08))' : 'var(--card)'};border:1px solid ${checked ? 'var(--accent)' : 'var(--border)'};border-radius:8px;padding:6px 12px;cursor:pointer;transition:all .15s" data-svc-id="${st.id}" data-svc-name="${st.name.toLowerCase()}">
+      <input type="checkbox" class="supplier-svc-cb" value="${st.id}" ${checked} onchange="onServiceCheckboxChange()"> ${st.name}
     </label>`;
   }).join('');
+}
+
+function filterServiceCheckboxes() {
+  const search = (document.getElementById('svcSearchBox')?.value || '').toLowerCase();
+  const labels = document.querySelectorAll('#svcCheckboxList label');
+  let visible = 0;
+  labels.forEach(lbl => {
+    const name = lbl.dataset.svcName || '';
+    const show = !search || name.includes(search);
+    lbl.style.display = show ? 'flex' : 'none';
+    if (show) visible++;
+  });
+  const info = document.getElementById('svcFilterInfo');
+  if (info) {
+    info.style.display = search ? 'inline' : 'none';
+    info.textContent = search ? `(${visible} matching)` : '';
+  }
+}
+
+function onServiceCheckboxChange() {
+  const checked = document.querySelectorAll('.supplier-svc-cb:checked');
+  const countEl = document.getElementById('svcSelectedCount');
+  if (countEl) countEl.textContent = `${checked.length} selected`;
+  // Re-sort: move checked to top
+  const list = document.getElementById('svcCheckboxList');
+  if (!list) return;
+  const labels = [...list.querySelectorAll('label')];
+  labels.sort((a, b) => {
+    const aC = a.querySelector('input').checked ? 0 : 1;
+    const bC = b.querySelector('input').checked ? 0 : 1;
+    return aC - bC || (a.dataset.svcName || '').localeCompare(b.dataset.svcName || '');
+  });
+  labels.forEach(lbl => {
+    const inp = lbl.querySelector('input');
+    lbl.style.background = inp.checked ? 'var(--accent-bg, rgba(59,130,246,0.08))' : 'var(--card)';
+    lbl.style.borderColor = inp.checked ? 'var(--accent)' : 'var(--border)';
+    list.appendChild(lbl);
+  });
 }
 
 function openAddSupplierForm() {
@@ -4777,13 +4841,52 @@ function renderServiceTypeList() {
     container.innerHTML = '<div style="font-size:13px;color:var(--muted)">No service types defined</div>';
     return;
   }
-  container.innerHTML = _serviceTypes.map(st =>
-    `<div style="display:flex;align-items:center;gap:6px;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px">
-      ${st.name}
-      <button onclick="deleteServiceType(${st.id}, '${st.name.replace(/'/g, "\\'")}')"
-        style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:0 2px" title="Remove">&#10005;</button>
-    </div>`
-  ).join('');
+
+  const sorted = [..._serviceTypes].sort((a, b) => a.name.localeCompare(b.name));
+  const groups = {};
+  sorted.forEach(st => {
+    const letter = (st.name[0] || '#').toUpperCase();
+    if (!groups[letter]) groups[letter] = [];
+    groups[letter].push(st);
+  });
+
+  container.innerHTML = `
+    <div style="position:relative;margin-bottom:10px">
+      <input type="text" id="svcMgmtSearch" class="field-input" placeholder="Filter services..." 
+        style="padding-left:30px;font-size:13px"
+        oninput="filterServiceTypeList()">
+      <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:14px;pointer-events:none">&#128269;</span>
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:8px">${_serviceTypes.length} service${_serviceTypes.length !== 1 ? 's' : ''} total</div>
+    <div id="svcMgmtGroupedList" style="max-height:300px;overflow-y:auto;padding-right:4px">
+      ${Object.keys(groups).sort().map(letter => `
+        <div class="svc-mgmt-group" data-letter="${letter}">
+          <div style="font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:1px;padding:6px 0 4px;border-bottom:1px solid var(--border);margin-bottom:6px">${letter}</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">
+            ${groups[letter].map(st => `
+              <div class="svc-mgmt-pill" data-svc-name="${st.name.toLowerCase()}" style="display:flex;align-items:center;gap:6px;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:5px 10px;font-size:13px">
+                ${st.name}
+                <button onclick="deleteServiceType(${st.id}, '${st.name.replace(/'/g, "\\'")}')"
+                  style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:0 2px;line-height:1" title="Remove">&#10005;</button>
+              </div>`).join('')}
+          </div>
+        </div>`).join('')}
+    </div>`;
+}
+
+function filterServiceTypeList() {
+  const search = (document.getElementById('svcMgmtSearch')?.value || '').toLowerCase();
+  document.querySelectorAll('.svc-mgmt-group').forEach(group => {
+    const pills = group.querySelectorAll('.svc-mgmt-pill');
+    let anyVisible = false;
+    pills.forEach(pill => {
+      const name = pill.dataset.svcName || '';
+      const show = !search || name.includes(search);
+      pill.style.display = show ? 'flex' : 'none';
+      if (show) anyVisible = true;
+    });
+    group.style.display = anyVisible ? 'block' : 'none';
+  });
 }
 
 async function addServiceType() {
