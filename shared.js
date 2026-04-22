@@ -3199,13 +3199,17 @@ function calculateHolidayBalance(employeeName) {
   yearEnd.setDate(yearEnd.getDate() - 1);
   const yearEndStr = dateStr(yearEnd);
 
-  // Pro-rata calculation if employee started after holiday year start
-  let allocation = emp.annualDays || DEFAULT_ANNUAL_DAYS;
+  // Fixed 20-day base entitlement per year
+  const BASE_ENTITLEMENT = 20;
+  let allocation = BASE_ENTITLEMENT;
+
+  // Pro-rata only if employee started AFTER the holiday year start
   if (emp.startDate && emp.startDate > yearStart) {
     const totalDays = countWorkingDays(yearStart, yearEndStr);
     const remainingDays = countWorkingDays(emp.startDate, yearEndStr);
-    allocation = Math.round((remainingDays / totalDays) * allocation * 2) / 2;
+    allocation = totalDays > 0 ? Math.round((remainingDays / totalDays) * BASE_ENTITLEMENT * 2) / 2 : 0;
   }
+  // If started on or before holiday year start → full 20 days
 
   const carryover = emp.carryoverDays || 0;
   const totalAllowance = allocation + carryover;
@@ -3891,10 +3895,12 @@ function calculatePayroll(employeeName, weekMon, weekSun) {
 // REPORTS ENGINE
 // ═══════════════════════════════════════════
 let rptPeriod = 'week';
+let rptOffset = 0;
 let rptCharts = {};
 
 function setReportPeriod(period) {
   rptPeriod = period;
+  rptOffset = 0; // reset offset when changing period
   ['week','month','year'].forEach(p => {
     const btn = document.getElementById(`rpt-btn-${p}`);
     if (btn) {
@@ -3905,6 +3911,12 @@ function setReportPeriod(period) {
   renderReports();
 }
 
+function changeReportOffset(dir) {
+  rptOffset += dir;
+  if (rptOffset > 0) rptOffset = 0;
+  renderReports();
+}
+
 function getReportDateRange() {
   const now = new Date();
   let from, to;
@@ -3912,18 +3924,20 @@ function getReportDateRange() {
   if (rptPeriod === 'week') {
     const dow = now.getDay();
     const mon = new Date(now);
-    mon.setDate(now.getDate() - (dow === 0 ? 6 : dow - 1));
+    mon.setDate(now.getDate() - (dow === 0 ? 6 : dow - 1) + rptOffset * 7);
     mon.setHours(0,0,0,0);
     from = dateStr(mon);
     const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
     to = dateStr(sun);
   } else if (rptPeriod === 'month') {
-    from = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`;
-    const last = new Date(now.getFullYear(), now.getMonth()+1, 0);
+    const target = new Date(now.getFullYear(), now.getMonth() + rptOffset, 1);
+    from = dateStr(target);
+    const last = new Date(target.getFullYear(), target.getMonth() + 1, 0);
     to = dateStr(last);
   } else {
-    from = `${now.getFullYear()}-01-01`;
-    to = `${now.getFullYear()}-12-31`;
+    const yr = now.getFullYear() + rptOffset;
+    from = `${yr}-01-01`;
+    to = `${yr}-12-31`;
   }
   return { from, to };
 }
@@ -4012,25 +4026,38 @@ function renderReports() {
 
   const { totalClocked, totalProject, totalWGD, totalUnproductive, utilisation, empMap, projMap, from, to } = getPeriodData(empFilter);
   const periodLabels = { week: 'This Week', month: 'This Month', year: 'This Year' };
+  let periodLabel = periodLabels[rptPeriod];
+  if (rptOffset !== 0) {
+    if (rptPeriod === 'week') periodLabel = `Week of ${fmtDateStr(from)}`;
+    else if (rptPeriod === 'month') {
+      const d = new Date(from + 'T12:00:00');
+      periodLabel = d.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+    } else periodLabel = from.slice(0, 4);
+  }
 
   // Update range label
   const label = document.getElementById('rptRangeLabel');
-  if (label) label.textContent = `${from} → ${to}`;
+  if (label) label.textContent = `${fmtDateStr(from)} → ${fmtDateStr(to)}`;
 
-  // KPI cards
+  // Calculate attendance rate for the general view
+  const attendanceData = getAttendanceData(empFilter);
+
+  // KPI cards — general view (all employees) shows hours + utilisation + attendance only
   const kpiRow = document.getElementById('rptKpiRow');
   if (kpiRow) {
-    kpiRow.innerHTML = [
+    const kpis = [
       { label: 'Total Hours', value: totalClocked.toFixed(1) + 'h', color: 'var(--accent2)' },
       { label: 'Project Hours', value: totalProject.toFixed(1) + 'h', color: 'var(--green)' },
       { label: 'Workshop General', value: totalWGD.toFixed(1) + 'h', color: '#6366f1' },
       { label: 'Unproductive', value: totalUnproductive.toFixed(1) + 'h', color: 'var(--red)' },
       { label: 'Utilisation', value: utilisation + '%', color: utilisation >= 80 ? 'var(--green)' : utilisation >= 60 ? 'var(--amber)' : 'var(--red)' },
-    ].map(k => `
+      { label: 'Attendance', value: attendanceData.attendanceRate + '%', color: attendanceData.attendanceRate >= 95 ? 'var(--green)' : attendanceData.attendanceRate >= 85 ? 'var(--amber)' : 'var(--red)' },
+    ];
+    kpiRow.innerHTML = kpis.map(k => `
       <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px 18px">
         <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">${k.label}</div>
         <div style="font-family:var(--font-display);font-size:30px;color:${k.color}">${k.value}</div>
-        <div style="font-size:10px;color:var(--subtle);margin-top:4px">${periodLabels[rptPeriod]}</div>
+        <div style="font-size:10px;color:var(--subtle);margin-top:4px">${periodLabel}</div>
       </div>
     `).join('');
   }
@@ -4219,8 +4246,8 @@ function getAttendanceData(empFilter) {
   let totalLate = 0;
   const lateList = [];
 
-  // Late arrivals
-  let avgClockInMins = 0, clockInCount = 0;
+  // Late arrivals and avg shift length
+  let totalShiftMins = 0, shiftCount = 0;
   employees.forEach(emp => {
     const empClockings = clockings.filter(c => c.employeeName === emp.name);
     relevantDays.forEach(day => {
@@ -4232,8 +4259,13 @@ function getAttendanceData(empFilter) {
       const firstIn = dayClockings[0].clockIn;
       const [inH, inM] = firstIn.split(':').map(Number);
       const inMins = inH * 60 + inM;
-      avgClockInMins += inMins;
-      clockInCount++;
+
+      // Calculate shift length from earliest clock with a clock-out
+      const completed = empClockings.filter(c => c.date === day && c.clockIn && c.clockOut);
+      if (completed.length) {
+        const hrs = completed.reduce((s, c) => s + (calcHours(c.clockIn, c.clockOut, c.breakMins) || 0), 0);
+        if (hrs > 0) { totalShiftMins += hrs * 60; shiftCount++; }
+      }
 
       if (inMins > expMins) {
         totalLate++;
@@ -4242,8 +4274,10 @@ function getAttendanceData(empFilter) {
     });
   });
 
-  const avgMins = clockInCount ? Math.round(avgClockInMins / clockInCount) : 0;
-  const avgClockIn = `${String(Math.floor(avgMins / 60)).padStart(2, '0')}:${String(avgMins % 60).padStart(2, '0')}`;
+  const avgShiftMins = shiftCount ? Math.round(totalShiftMins / shiftCount) : 0;
+  const avgShiftH = Math.floor(avgShiftMins / 60);
+  const avgShiftM = avgShiftMins % 60;
+  const avgShiftLength = `${avgShiftH}h ${avgShiftM}m`;
 
   // Attendance rate: (days with a clocking) / (working days × employees), excluding holidays & sick
   let totalPossible = 0, totalPresent = 0;
@@ -4261,7 +4295,7 @@ function getAttendanceData(empFilter) {
 
   return {
     totalSickDays, totalHolidayDays, totalHolidayBalance,
-    totalLate, attendanceRate, avgClockIn, lateList, absenceList,
+    totalLate, attendanceRate, avgShiftLength, lateList, absenceList,
     expectedStart
   };
 }
@@ -4273,18 +4307,27 @@ function renderAttendanceReport(empFilter) {
   const kpiRow = document.getElementById('rptAttendanceKpis');
   if (kpiRow) {
     const periodLabels = { week: 'This Week', month: 'This Month', year: 'This Year' };
+    let periodLabel = periodLabels[rptPeriod];
+    if (rptOffset !== 0) {
+      const { from, to } = getReportDateRange();
+      if (rptPeriod === 'week') periodLabel = `Week of ${fmtDateStr(from)}`;
+      else if (rptPeriod === 'month') {
+        const d = new Date(from + 'T12:00:00');
+        periodLabel = d.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+      } else periodLabel = from.slice(0, 4);
+    }
     kpiRow.innerHTML = [
       { label: 'Attendance Rate', value: data.attendanceRate + '%', color: data.attendanceRate >= 95 ? 'var(--green)' : data.attendanceRate >= 85 ? 'var(--amber)' : 'var(--red)' },
       { label: 'Days Absent', value: data.totalSickDays, color: data.totalSickDays > 0 ? 'var(--red)' : 'var(--green)' },
       { label: 'Late Arrivals', value: data.totalLate, color: data.totalLate > 0 ? 'var(--amber)' : 'var(--green)' },
       { label: 'Holidays Taken', value: data.totalHolidayDays, color: '#6366f1' },
       { label: 'Holiday Balance', value: data.totalHolidayBalance, color: data.totalHolidayBalance > 0 ? 'var(--green)' : 'var(--red)' },
-      { label: 'Avg Clock-In', value: data.avgClockIn, color: 'var(--accent2)' },
+      { label: 'Avg Shift Length', value: data.avgShiftLength, color: 'var(--accent2)' },
     ].map(k => `
       <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px 18px">
         <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">${k.label}</div>
         <div style="font-family:var(--font-display);font-size:30px;color:${k.color}">${k.value}</div>
-        <div style="font-size:10px;color:var(--subtle);margin-top:4px">${periodLabels[rptPeriod]}</div>
+        <div style="font-size:10px;color:var(--subtle);margin-top:4px">${periodLabel}</div>
       </div>
     `).join('');
   }
@@ -4351,9 +4394,17 @@ function renderAttendanceReport(empFilter) {
 function exportAttendancePDF() {
   const empFilter = document.getElementById('rptEmployeeFilter')?.value || '';
   const data = getAttendanceData(empFilter);
-  const periodLabels = { week: 'This Week', month: 'This Month', year: 'This Year' };
-  const periodLabel = periodLabels[rptPeriod];
+  const general = getPeriodData(empFilter);
   const { from, to } = getReportDateRange();
+  const periodLabels = { week: 'This Week', month: 'This Month', year: 'This Year' };
+  let periodLabel = periodLabels[rptPeriod];
+  if (rptOffset !== 0) {
+    if (rptPeriod === 'week') periodLabel = `Week of ${fmtDateStr(from)}`;
+    else if (rptPeriod === 'month') {
+      const d = new Date(from + 'T12:00:00');
+      periodLabel = d.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+    } else periodLabel = from.slice(0, 4);
+  }
 
   const lateRows = [...data.lateList].sort((a, b) => b.minsLate - a.minsLate).map(l => {
     const minsStr = l.minsLate >= 60 ? `${Math.floor(l.minsLate / 60)}h ${l.minsLate % 60}m` : `${l.minsLate}m`;
@@ -4369,7 +4420,7 @@ function exportAttendancePDF() {
 
   const printWin = window.open('', '_blank');
   printWin.document.write(`<!DOCTYPE html><html><head>
-    <title>BAMA Attendance Report – ${periodLabel}</title>
+    <title>BAMA Report – ${periodLabel}</title>
     <style>
       @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=DM+Mono&display=swap');
       * { box-sizing:border-box; margin:0; padding:0; }
@@ -4377,13 +4428,14 @@ function exportAttendancePDF() {
       h1 { font-size:28px; font-weight:700; letter-spacing:2px; color:#ff6b00; margin-bottom:4px; }
       .subtitle { font-size:13px; color:#888; margin-bottom:4px; }
       .period { font-size:15px; font-weight:600; margin-bottom:24px; color:#333; }
-      .kpi-row { display:flex; gap:16px; margin-bottom:28px; flex-wrap:wrap; }
-      .kpi { border:1.5px solid #eee; border-radius:10px; padding:14px 18px; min-width:130px; }
-      .kpi-label { font-size:10px; text-transform:uppercase; letter-spacing:1px; color:#888; margin-bottom:4px; }
-      .kpi-value { font-size:26px; font-weight:700; font-family:'DM Mono',monospace; }
+      .section-title { font-size:12px; text-transform:uppercase; letter-spacing:1.5px; color:#888; margin:24px 0 10px; border-bottom:1px solid #eee; padding-bottom:6px; }
+      .kpi-row { display:flex; gap:14px; margin-bottom:16px; flex-wrap:wrap; }
+      .kpi { border:1.5px solid #eee; border-radius:10px; padding:12px 16px; min-width:120px; }
+      .kpi-label { font-size:9px; text-transform:uppercase; letter-spacing:1px; color:#888; margin-bottom:3px; }
+      .kpi-value { font-size:22px; font-weight:700; font-family:'DM Mono',monospace; }
       .green { color:#16a34a; } .red { color:#ef4444; } .amber { color:#f59e0b; } .purple { color:#6366f1; } .orange { color:#ff6b00; }
-      h2 { font-size:16px; font-weight:600; margin:24px 0 12px; }
-      table { width:100%; border-collapse:collapse; margin-bottom:20px; }
+      h2 { font-size:16px; font-weight:600; margin:20px 0 10px; }
+      table { width:100%; border-collapse:collapse; margin-bottom:16px; }
       th { font-size:10px; letter-spacing:1.5px; text-transform:uppercase; color:#888; padding:8px 12px; text-align:left; border-bottom:2px solid #eee; }
       td { padding:10px 12px; border-bottom:1px solid #f0f0f0; font-size:13px; }
       .late { color:#f59e0b; font-weight:600; }
@@ -4394,16 +4446,26 @@ function exportAttendancePDF() {
     </style>
   </head><body>
     <h1>BAMA FABRICATION</h1>
-    <div class="subtitle">Attendance Report${filterLabel}</div>
+    <div class="subtitle">Workshop Report${filterLabel}</div>
     <div class="period">${periodLabel}: ${fmtDateStr(from)} – ${fmtDateStr(to)}</div>
 
+    <div class="section-title">Hours &amp; Utilisation</div>
+    <div class="kpi-row">
+      <div class="kpi"><div class="kpi-label">Total Hours</div><div class="kpi-value orange">${general.totalClocked.toFixed(1)}h</div></div>
+      <div class="kpi"><div class="kpi-label">Project Hours</div><div class="kpi-value green">${general.totalProject.toFixed(1)}h</div></div>
+      <div class="kpi"><div class="kpi-label">Workshop General</div><div class="kpi-value purple">${general.totalWGD.toFixed(1)}h</div></div>
+      <div class="kpi"><div class="kpi-label">Unproductive</div><div class="kpi-value red">${general.totalUnproductive.toFixed(1)}h</div></div>
+      <div class="kpi"><div class="kpi-label">Utilisation</div><div class="kpi-value ${general.utilisation >= 80 ? 'green' : general.utilisation >= 60 ? 'amber' : 'red'}">${general.utilisation}%</div></div>
+    </div>
+
+    <div class="section-title">Attendance</div>
     <div class="kpi-row">
       <div class="kpi"><div class="kpi-label">Attendance Rate</div><div class="kpi-value ${data.attendanceRate >= 95 ? 'green' : data.attendanceRate >= 85 ? 'amber' : 'red'}">${data.attendanceRate}%</div></div>
       <div class="kpi"><div class="kpi-label">Days Absent (Sick)</div><div class="kpi-value ${data.totalSickDays > 0 ? 'red' : 'green'}">${data.totalSickDays}</div></div>
       <div class="kpi"><div class="kpi-label">Late Arrivals</div><div class="kpi-value ${data.totalLate > 0 ? 'amber' : 'green'}">${data.totalLate}</div></div>
       <div class="kpi"><div class="kpi-label">Holidays Taken</div><div class="kpi-value purple">${data.totalHolidayDays}</div></div>
       <div class="kpi"><div class="kpi-label">Holiday Balance</div><div class="kpi-value ${data.totalHolidayBalance > 0 ? 'green' : 'red'}">${data.totalHolidayBalance}</div></div>
-      <div class="kpi"><div class="kpi-label">Avg Clock-In</div><div class="kpi-value orange">${data.avgClockIn}</div></div>
+      <div class="kpi"><div class="kpi-label">Avg Shift Length</div><div class="kpi-value orange">${data.avgShiftLength}</div></div>
     </div>
 
     <h2>Late Arrivals</h2>

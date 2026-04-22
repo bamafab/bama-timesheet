@@ -138,6 +138,12 @@
           <button id="rpt-btn-year" class="btn" onclick="setReportPeriod('year')"
             style="border-radius:0;border:none;padding:8px 18px;font-size:13px;background:var(--surface);color:var(--muted)">Year</button>
         </div>
+        <div style="display:flex;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden">
+          <button class="btn" onclick="changeReportOffset(-1)"
+            style="border-radius:0;border:none;padding:8px 14px;font-size:15px;background:var(--surface);color:var(--muted);cursor:pointer">&#9664;</button>
+          <button class="btn" onclick="changeReportOffset(1)"
+            style="border-radius:0;border:none;padding:8px 14px;font-size:15px;background:var(--surface);color:var(--muted);cursor:pointer">&#9654;</button>
+        </div>
         <select class="field-input" id="rptEmployeeFilter" onchange="renderReports()"
           style="width:180px;padding:7px 12px;font-size:13px">
           <option value="">All Employees</option>
