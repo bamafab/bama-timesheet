@@ -3615,7 +3615,151 @@ async function rejectHoliday(id) {
   } catch (err) { toast('Save failed: ' + err.message, 'error'); }
 }
 
-// Show notification banner on manager dashboard load
+// ═══════════════════════════════════════════
+// BOOK ABSENCE — Manager books on behalf of employee
+// ═══════════════════════════════════════════
+function canBookAbsences() {
+  // Check if current user has permission to book absences for others
+  const allowedRoles = ['director', 'finance', 'office_admin'];
+  const currentEmp = (state.timesheetData.employees || []).find(e => e.name === currentManagerUser);
+  if (!currentEmp) return false;
+
+  // Check ERP role
+  if (allowedRoles.includes(currentEmp.erpRole)) return true;
+
+  // Check custom permission in settings
+  const permitted = state.timesheetData.settings?.absenceBookingPermissions || [];
+  if (permitted.includes(currentEmp.name) || permitted.includes(String(currentEmp.id))) return true;
+
+  return false;
+}
+
+function openBookAbsenceModal() {
+  if (!canBookAbsences()) {
+    toast('You don\'t have permission to book absences. Contact a Director or Finance user.', 'error');
+    return;
+  }
+
+  const sel = document.getElementById('absEmpSelect');
+  sel.innerHTML = '<option value="">— Select employee —</option>';
+  (state.timesheetData.employees || [])
+    .filter(e => e.active !== false)
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .forEach(e => {
+      sel.innerHTML += `<option value="${e.id}">${e.name}</option>`;
+    });
+
+  // Set default dates to today
+  const today = todayStr();
+  document.getElementById('absFromDate').value = today;
+  document.getElementById('absToDate').value = today;
+  document.getElementById('absType').value = 'paid';
+  document.getElementById('absStatus').value = 'approved';
+  document.getElementById('absReason').value = '';
+  document.getElementById('absBalanceInfo').textContent = '';
+  document.getElementById('absDaysInfo').textContent = '';
+
+  document.getElementById('bookAbsenceModal').classList.add('active');
+}
+
+function closeBookAbsenceModal() {
+  document.getElementById('bookAbsenceModal').classList.remove('active');
+}
+
+function updateAbsenceBalance() {
+  const empId = document.getElementById('absEmpSelect').value;
+  const balEl = document.getElementById('absBalanceInfo');
+  if (!empId) { balEl.textContent = ''; return; }
+
+  const emp = (state.timesheetData.employees || []).find(e => String(e.id) === String(empId));
+  if (!emp) { balEl.textContent = ''; return; }
+
+  const bal = calculateHolidayBalance(emp.name);
+  if (bal) {
+    balEl.innerHTML = `<span style="color:var(--green)">${bal.remainingDays} days remaining</span> of ${bal.totalAllowance} · ${bal.usedDays} used${bal.pendingDays > 0 ? ` · <span style="color:var(--amber)">${bal.pendingDays} pending</span>` : ''}`;
+  } else {
+    balEl.textContent = '';
+  }
+  updateAbsenceDays();
+}
+
+function updateAbsenceDays() {
+  const from = document.getElementById('absFromDate').value;
+  const to = document.getElementById('absToDate').value;
+  const type = document.getElementById('absType').value;
+  const infoEl = document.getElementById('absDaysInfo');
+
+  if (!from || !to) { infoEl.textContent = ''; return; }
+
+  let days = type === 'half' ? 0.5 : countWorkingDays(from, to);
+  if (days === 0 && type !== 'half') {
+    infoEl.innerHTML = '<span style="color:var(--red)">No working days in selected range</span>';
+    return;
+  }
+
+  infoEl.textContent = `${days} working day${days !== 1 ? 's' : ''}`;
+}
+
+async function submitBookAbsence() {
+  const empId = document.getElementById('absEmpSelect').value;
+  const from = document.getElementById('absFromDate').value;
+  const to = document.getElementById('absToDate').value;
+  const type = document.getElementById('absType').value;
+  const status = document.getElementById('absStatus').value;
+  const reason = document.getElementById('absReason').value;
+
+  if (!empId) { toast('Please select an employee', 'error'); return; }
+  if (!from || !to) { toast('Please select dates', 'error'); return; }
+  if (from > to) { toast('End date must be after start date', 'error'); return; }
+
+  let workingDays = type === 'half' ? 0.5 : countWorkingDays(from, to);
+  if (workingDays === 0) { toast('No working days in selected range', 'error'); return; }
+
+  const emp = (state.timesheetData.employees || []).find(e => String(e.id) === String(empId));
+  const empName = emp ? emp.name : `Employee #${empId}`;
+
+  // Balance check for paid holidays
+  if ((type === 'paid' || type === 'half') && status === 'approved' && emp) {
+    const bal = calculateHolidayBalance(emp.name);
+    if (bal && workingDays > bal.remainingDays) {
+      if (!confirm(`${emp.name} only has ${bal.remainingDays} days remaining but this is ${workingDays} days. Book anyway?`)) return;
+    }
+  }
+
+  try {
+    const result = await api.post('/api/holidays', {
+      employee_id: parseInt(empId),
+      date_from: from,
+      date_to: to,
+      type,
+      reason: reason || `Booked by ${currentManagerUser || 'manager'}`,
+      working_days: workingDays
+    });
+
+    const newHoliday = normaliseHoliday({ ...result, employee_name: empName });
+
+    // If status should be approved, approve it immediately
+    if (status === 'approved' && newHoliday.status === 'pending') {
+      try {
+        await api.put(`/api/holidays/${newHoliday.id}`, { status: 'approved' });
+        newHoliday.status = 'approved';
+        newHoliday.approvedAt = new Date().toISOString();
+      } catch (e) {
+        console.warn('Auto-approve failed:', e.message);
+      }
+    }
+
+    if (!state.timesheetData.holidays) state.timesheetData.holidays = [];
+    state.timesheetData.holidays.push(newHoliday);
+
+    closeBookAbsenceModal();
+    const typeLabel = { paid:'Holiday', unpaid:'Unpaid Absence', sick:'Sick Leave', half:'Half Day', compassionate:'Compassionate Leave', training:'Training' }[type] || type;
+    toast(`${typeLabel} booked for ${empName} (${workingDays}d) ${status === 'approved' ? '✓' : '— pending approval'}`, 'success');
+    renderHolidayTab();
+  } catch (err) {
+    toast('Failed to book absence: ' + err.message, 'error');
+  }
+}
 function checkHolidayNotifications() {
   // Remove any existing banner first
   const existingBanner = document.getElementById('holidayPendingBanner');

@@ -339,7 +339,10 @@
         </div>
       </div>
             <div class="card">
-        <div class="card-title"><span class="icon">&#128203;</span> Holiday Requests</div>
+        <div class="card-title">
+          <span class="icon">&#128203;</span> Holiday Requests
+          <button class="btn btn-primary" style="padding:4px 12px;font-size:11px;margin-left:auto" onclick="openBookAbsenceModal()">+ Book Absence</button>
+        </div>
         <div id="holidayRequestsList"></div>
       </div>
     </div>
@@ -635,6 +638,62 @@
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeOfficeHolidayModal()">Cancel</button>
       <button class="btn btn-primary" onclick="submitOfficeHoliday()">Submit Request</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     BOOK ABSENCE MODAL (Manager books on behalf of employee)
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="bookAbsenceModal">
+  <div class="modal" style="max-width:480px;width:95vw">
+    <div class="modal-title">&#128197; Book Absence</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:20px">Record holiday, sickness, or absence for an employee. This will be auto-approved.</div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">EMPLOYEE</div>
+      <select class="field-input" id="absEmpSelect" onchange="updateAbsenceBalance()">
+        <option value="">— Select employee —</option>
+      </select>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <div class="field-label">FROM</div>
+        <input type="date" class="field-input" id="absFromDate" onchange="updateAbsenceDays()">
+      </div>
+      <div>
+        <div class="field-label">TO</div>
+        <input type="date" class="field-input" id="absToDate" onchange="updateAbsenceDays()">
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <div class="field-label">TYPE</div>
+        <select class="field-input" id="absType" onchange="updateAbsenceDays()">
+          <option value="paid">Paid Holiday</option>
+          <option value="unpaid">Unpaid Absence</option>
+          <option value="sick">Sick</option>
+          <option value="half">Half Day</option>
+          <option value="compassionate">Compassionate</option>
+          <option value="training">Training</option>
+        </select>
+      </div>
+      <div>
+        <div class="field-label">STATUS</div>
+        <select class="field-input" id="absStatus">
+          <option value="approved">Approved (book now)</option>
+          <option value="pending">Pending (needs approval)</option>
+        </select>
+      </div>
+    </div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">REASON / NOTES (optional)</div>
+      <input type="text" class="field-input" id="absReason" placeholder="e.g. Flu, family emergency, pre-booked holiday">
+    </div>
+    <div id="absBalanceInfo" style="font-size:12px;color:var(--muted);margin-bottom:4px"></div>
+    <div id="absDaysInfo" style="font-size:13px;font-weight:600;color:var(--accent2);margin-bottom:12px"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeBookAbsenceModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitBookAbsence()">Book Absence</button>
     </div>
   </div>
 </div>
