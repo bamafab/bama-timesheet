@@ -235,18 +235,22 @@ app.http('suppliers-create', {
 
         try {
             const body = await request.json();
-            const { service_type, supplier_name, address, telephone, email, contact_name, notes } = body;
+            const { service_type, supplier_name, address_line1, address_line2, city, county, postcode, telephone, email, contact_name, notes } = body;
 
             if (!service_type || !supplier_name) return badRequest('service_type and supplier_name are required', request);
 
             const result = await query(
-                `INSERT INTO Suppliers (service_type, supplier_name, address, telephone, email, contact_name, notes)
+                `INSERT INTO Suppliers (service_type, supplier_name, address_line1, address_line2, city, county, postcode, telephone, email, contact_name, notes)
                  OUTPUT INSERTED.*
-                 VALUES (@serviceType, @supplierName, @address, @telephone, @email, @contactName, @notes)`,
+                 VALUES (@serviceType, @supplierName, @addressLine1, @addressLine2, @city, @county, @postcode, @telephone, @email, @contactName, @notes)`,
                 {
                     serviceType: service_type,
                     supplierName: supplier_name,
-                    address: address || null,
+                    addressLine1: address_line1 || null,
+                    addressLine2: address_line2 || null,
+                    city: city || null,
+                    county: county || null,
+                    postcode: postcode || null,
                     telephone: telephone || null,
                     email: email || null,
                     contactName: contact_name || null,
@@ -280,7 +284,11 @@ app.http('suppliers-update', {
 
             if (body.service_type !== undefined) { fields.push('service_type = @serviceType'); params.serviceType = body.service_type; }
             if (body.supplier_name !== undefined) { fields.push('supplier_name = @supplierName'); params.supplierName = body.supplier_name; }
-            if (body.address !== undefined) { fields.push('address = @address'); params.address = body.address; }
+            if (body.address_line1 !== undefined) { fields.push('address_line1 = @addressLine1'); params.addressLine1 = body.address_line1; }
+            if (body.address_line2 !== undefined) { fields.push('address_line2 = @addressLine2'); params.addressLine2 = body.address_line2; }
+            if (body.city !== undefined) { fields.push('city = @city'); params.city = body.city; }
+            if (body.county !== undefined) { fields.push('county = @county'); params.county = body.county; }
+            if (body.postcode !== undefined) { fields.push('postcode = @postcode'); params.postcode = body.postcode; }
             if (body.telephone !== undefined) { fields.push('telephone = @telephone'); params.telephone = body.telephone; }
             if (body.email !== undefined) { fields.push('email = @email'); params.email = body.email; }
             if (body.contact_name !== undefined) { fields.push('contact_name = @contactName'); params.contactName = body.contact_name; }
