@@ -5973,42 +5973,60 @@ async function saveBomData(projectId) {
 // ── Load / Save user access data ──
 async function loadUserAccessData() {
   try {
-    const token = await getToken();
-    const metaUrl = `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.timesheetFolderItemId}:/${USER_ACCESS_FILE}`;
-    const metaRes = await fetch(metaUrl, { headers: { 'Authorization': `Bearer ${token}` } });
-    if (metaRes.status === 404) {
-      console.log('No user-access.json yet — will create on first save');
-      return;
-    }
-    if (!metaRes.ok) throw new Error(`User access meta fetch failed: ${metaRes.status}`);
-    const meta = await metaRes.json();
-    const contentRes = await fetch(
-      `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${meta.id}/content`,
-      { headers: { 'Authorization': `Bearer ${token}` } }
-    );
-    if (!contentRes.ok) throw new Error('User access content fetch failed');
-    const loaded = await contentRes.json();
+    // Load permissions from API
+    const [permsData, requestsData] = await Promise.all([
+      api.get('/api/user-access').catch(() => []),
+      api.get('/api/access-requests').catch(() => [])
+    ]);
+
+    // Load globalAdminEmail from settings
+    const settings = state.timesheetData.settings || {};
+    const adminEmail = settings.globalAdminEmail || '';
+
+    // Build the userAccessData structure from API rows
+    const users = {};
+    (Array.isArray(permsData) ? permsData : []).forEach(row => {
+      const name = row.employee_name;
+      if (!name) return;
+      users[name] = {
+        employee_id: row.employee_id,
+        permissions: {
+          byProject: !!row.by_project,
+          byEmployee: !!row.by_employee,
+          clockingInOut: !!row.clocking_in_out,
+          payroll: !!row.payroll,
+          archive: !!row.archive,
+          staff: !!row.staff,
+          holidays: !!row.holidays,
+          reports: !!row.reports,
+          settings: !!row.settings,
+          userAccess: !!row.user_access,
+          draftsmanMode: !!row.draftsman_mode
+        }
+      };
+    });
+
     userAccessData = {
-      globalAdminEmail: loaded.globalAdminEmail || '',
-      users: loaded.users || {},
-      accessRequests: loaded.accessRequests || []
+      globalAdminEmail: adminEmail,
+      users,
+      accessRequests: (Array.isArray(requestsData) ? requestsData : []).map(r => ({
+        id: r.id,
+        employeeName: r.employee_name,
+        reason: r.reason,
+        date: r.created_at ? r.created_at.slice(0, 16).replace('T', ' ') : '',
+        status: r.status
+      }))
     };
-    console.log('User access data loaded:', Object.keys(userAccessData.users).length, 'users');
+    console.log('User access loaded from API:', Object.keys(users).length, 'users');
   } catch (e) {
     console.warn('User access data load failed:', e.message);
   }
 }
 
 async function saveUserAccessData() {
-  const token = await getToken();
-  const url = `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.timesheetFolderItemId}:/${USER_ACCESS_FILE}:/content`;
-  const res = await fetch(url, {
-    method: 'PUT',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(userAccessData, null, 2)
-  });
-  if (!res.ok) throw new Error(`Save user access failed: ${res.status}`);
-  console.log('User access data saved OK');
+  // No-op — individual operations now save directly via API
+  // Kept for backwards compatibility with any code that still calls it
+  console.log('saveUserAccessData: skipped (API handles individual saves)');
 }
 
 function getUserPermissions(empName) {
@@ -8983,9 +9001,14 @@ function toggleUACard(empId) {
 }
 
 async function toggleUserPermission(empName, permKey, enabled) {
-  // Ensure user entry exists
+  // Find employee_id
+  const emp = (state.timesheetData.employees || []).find(e => e.name === empName);
+  if (!emp) { toast('Employee not found', 'error'); return; }
+
+  // Update local state
   if (!userAccessData.users[empName]) {
     userAccessData.users[empName] = {
+      employee_id: emp.id,
       permissions: {
         byProject: false, byEmployee: false, clockingInOut: false,
         payroll: false, archive: false, staff: false, holidays: false,
@@ -8996,7 +9019,7 @@ async function toggleUserPermission(empName, permKey, enabled) {
   userAccessData.users[empName].permissions[permKey] = enabled;
 
   try {
-    await saveUserAccessData();
+    await api.put(`/api/user-access/${emp.id}`, { [permKey]: enabled });
     toast(`${empName}: ${permKey} ${enabled ? 'enabled' : 'disabled'} ✓`, 'success');
   } catch (e) {
     toast('Failed to save permission', 'error');
@@ -9016,7 +9039,7 @@ async function saveGlobalAdminEmail() {
 
   userAccessData.globalAdminEmail = email;
   try {
-    await saveUserAccessData();
+    await api.put('/api/settings', { globalAdminEmail: email });
     toast('Global admin email saved ✓', 'success');
   } catch { toast('Save failed', 'error'); }
 }
@@ -9047,9 +9070,15 @@ function renderAccessRequests() {
 }
 
 async function dismissAccessRequest(index) {
-  userAccessData.accessRequests.splice(index, 1);
+  const req = userAccessData.accessRequests[index];
+  if (!req || !req.id) {
+    userAccessData.accessRequests.splice(index, 1);
+    renderAccessRequests();
+    return;
+  }
   try {
-    await saveUserAccessData();
+    await api.put(`/api/access-requests/${req.id}`, { status: 'dismissed' });
+    userAccessData.accessRequests.splice(index, 1);
     renderAccessRequests();
     toast('Request dismissed', 'info');
   } catch { toast('Save failed', 'error'); }
@@ -9078,16 +9107,19 @@ async function submitAccessRequest() {
   const empName = currentManagerUser || _pendingManagerUser || 'Unknown';
   const adminEmail = userAccessData.globalAdminEmail;
 
-  // Log the request
-  if (!userAccessData.accessRequests) userAccessData.accessRequests = [];
-  userAccessData.accessRequests.push({
-    employeeName: empName,
-    reason: reason,
-    date: new Date().toISOString().slice(0, 16).replace('T', ' ')
-  });
-
+  // Save request via API
   try {
-    await saveUserAccessData();
+    const result = await api.post('/api/access-requests', {
+      employee_name: empName,
+      reason: reason
+    });
+    if (!userAccessData.accessRequests) userAccessData.accessRequests = [];
+    userAccessData.accessRequests.push({
+      id: result.id,
+      employeeName: empName,
+      reason: reason,
+      date: new Date().toISOString().slice(0, 16).replace('T', ' ')
+    });
   } catch (e) {
     console.warn('Failed to save access request:', e.message);
   }
@@ -9107,7 +9139,7 @@ async function submitAccessRequest() {
               <p style="font-family:sans-serif;font-size:14px"><b>Reason:</b></p>
               <div style="background:#f5f5f5;padding:16px;border-radius:8px;font-family:sans-serif;font-size:14px;margin:12px 0">${reason}</div>
               <p style="font-family:sans-serif;font-size:13px;color:#888">
-                To grant access, go to Manager → User Access tab and enable the relevant permissions for this user.
+                To grant access, go to Office → User Access tab and enable the relevant permissions for this user.
               </p>
               <p style="margin-top:20px;font-family:sans-serif;font-size:11px;color:#aaa">
                 Generated by BAMA Workshop ERP — ${new Date().toLocaleString('en-GB')}
