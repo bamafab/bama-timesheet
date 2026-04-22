@@ -167,8 +167,7 @@
           <div class="report-picker-name">Unproductive time</div>
           <div class="report-picker-desc">S000 hours per employee breakdown</div>
         </div>
-        <div class="report-picker-card disabled" data-report="attendance">
-          <div class="report-picker-badge">Coming soon</div>
+        <div class="report-picker-card" data-report="attendance" onclick="selectReport('attendance')">
           <div class="report-picker-icon">&#128197;</div>
           <div class="report-picker-name">Attendance</div>
           <div class="report-picker-desc">Late arrivals, absences, patterns</div>
@@ -220,6 +219,27 @@
         </div>
       </div>
 
+      <!-- Report: Attendance -->
+      <div class="report-panel" id="rptPanel-attendance">
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:20px" id="rptAttendanceKpis"></div>
+        <div class="card" style="padding:20px;margin-bottom:20px">
+          <div class="card-title" style="margin-bottom:4px"><span class="icon">&#128197;</span> Attendance Grid</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">
+            Daily attendance per employee —
+            <span style="display:inline-block;width:10px;height:10px;background:#3ecf8e;border-radius:3px;vertical-align:middle"></span> on time
+            <span style="display:inline-block;width:10px;height:10px;background:#ffb347;border-radius:3px;vertical-align:middle;margin-left:8px"></span> late
+            <span style="display:inline-block;width:10px;height:10px;background:#ff4444;border-radius:3px;vertical-align:middle;margin-left:8px"></span> absent
+            <span style="display:inline-block;width:10px;height:10px;background:#6366f1;border-radius:3px;vertical-align:middle;margin-left:8px"></span> holiday
+          </div>
+          <div id="rptAttendanceGrid" style="overflow-x:auto"></div>
+        </div>
+        <div class="card" style="padding:20px">
+          <div class="card-title" style="margin-bottom:4px"><span class="icon">&#9200;</span> Late Arrivals</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Employees who clocked in after expected start time</div>
+          <div id="rptLateArrivals"></div>
+        </div>
+      </div>
+
     </div>
 
     <!-- Tab: Settings -->
@@ -257,6 +277,12 @@
             <input type="text" class="field-input" id="settingSiteCompletionEmails" placeholder="e.g. email1@co.uk, email2@co.uk"
               onchange="saveEmailSettings()">
             <div style="font-size:11px;color:var(--subtle);margin-top:4px">Notified when a job is closed via site installation (comma-separated)</div>
+          </div>
+          <div>
+            <div class="field-label">EXPECTED START TIME</div>
+            <input type="time" class="field-input" id="settingAttendanceStart" value="07:00"
+              onchange="saveEmailSettings()">
+            <div style="font-size:11px;color:var(--subtle);margin-top:4px">Clock-ins after this time are flagged as late in attendance reports</div>
           </div>
         </div>
         <button class="btn btn-primary" style="margin-top:14px;padding:8px 20px;font-size:13px" onclick="saveEmailSettings()">Save Email Settings</button>
