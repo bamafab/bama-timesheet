@@ -27,7 +27,7 @@ const CONFIG = {
 // ═══════════════════════════════════════════
 // API LAYER — All data operations go through here
 // ═══════════════════════════════════════════
-async function apiCall(method, endpoint, body = null) {
+async function apiCall(method, endpoint, body = null, _isRetry = false) {
   const token = await getToken();
   const opts = {
     method,
@@ -40,11 +40,20 @@ async function apiCall(method, endpoint, body = null) {
 
   const res = await fetch(`${API_BASE}${endpoint}`, opts);
 
-  if (res.status === 401) {
-    // Token expired — force re-login
-    console.warn('API returned 401, forcing re-auth');
-    AUTH.loginInteractive();
-    await new Promise(() => {}); // wait for redirect
+  if (res.status === 401 && !_isRetry) {
+    // Token might be expired — try silent refresh first
+    console.warn('API returned 401, attempting silent token refresh');
+    sessionStorage.removeItem('bama_token');
+    sessionStorage.removeItem('bama_token_expiry');
+    try {
+      // Try silent login (prompt=none)
+      AUTH.login();
+      // If we get here, the redirect is happening — wait
+      await new Promise(() => {});
+    } catch {
+      // Silent failed — don't redirect, just throw
+      throw new Error('Session expired — please refresh the page');
+    }
   }
 
   if (!res.ok) {
