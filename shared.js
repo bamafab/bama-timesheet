@@ -4614,8 +4614,14 @@ async function deleteWeldingMachine(id, name) {
 // TRACEABILITY — SUPPLIERS
 // ═══════════════════════════════════════════
 let _suppliers = [];
+let _serviceTypes = [];
+
+async function loadServiceTypes() {
+  try { _serviceTypes = await api.get('/api/service-types'); } catch { _serviceTypes = []; }
+}
 
 async function renderSuppliersTab() {
+  await loadServiceTypes();
   const container = document.getElementById('supplierList');
   if (!container) return;
   try {
@@ -4630,18 +4636,18 @@ async function renderSuppliersTab() {
     return;
   }
 
-  // Group by service type
-  const grouped = {};
-  _suppliers.forEach(s => {
-    if (!grouped[s.service_type]) grouped[s.service_type] = [];
-    grouped[s.service_type].push(s);
-  });
+  // Group by first service (or show all services per card)
+  container.innerHTML = _suppliers.map(s => {
+    const svcNames = (s.services || []).map(sv => sv.service_name);
+    const svcLabel = svcNames.length ? svcNames.join(', ') : 'No services assigned';
 
-  container.innerHTML = Object.entries(grouped).sort((a, b) => a[0].localeCompare(b[0])).map(([service, suppliers]) => {
-    const rows = suppliers.map(s => `
+    return `
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:8px">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
-          <div style="font-weight:600;font-size:14px">${s.supplier_name}</div>
+          <div>
+            <div style="font-weight:600;font-size:14px">${s.supplier_name}</div>
+            <div style="font-size:11px;color:var(--accent);margin-top:2px">${svcLabel}</div>
+          </div>
           <div style="display:flex;gap:6px">
             <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="editSupplier(${s.id})">&#9998; Edit</button>
             <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px;color:var(--red)" onclick="deleteSupplier(${s.id}, '${s.supplier_name.replace(/'/g, "\\'")}')">&#10005;</button>
@@ -4653,19 +4659,26 @@ async function renderSuppliersTab() {
           ${s.email ? `<div>Email: <span style="color:var(--text)">${s.email}</span></div>` : ''}
           ${(s.address_line1 || s.city || s.postcode) ? `<div>Address: <span style="color:var(--text)">${[s.address_line1, s.address_line2, s.city, s.county, s.postcode].filter(Boolean).join(', ')}</span></div>` : ''}
         </div>
-      </div>`).join('');
-
-    return `
-      <div style="margin-bottom:20px">
-        <div style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--accent);margin-bottom:8px">${service}</div>
-        ${rows}
       </div>`;
+  }).join('');
+
+  // Also render service type list if visible
+  renderServiceTypeList();
+}
+
+function populateServiceCheckboxes(selectedIds) {
+  const container = document.getElementById('supplierServiceCheckboxes');
+  if (!container) return;
+  container.innerHTML = _serviceTypes.map(st => {
+    const checked = selectedIds.includes(st.id) ? 'checked' : '';
+    return `<label style="display:flex;align-items:center;gap:6px;font-size:13px;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:6px 12px;cursor:pointer">
+      <input type="checkbox" class="supplier-svc-cb" value="${st.id}" ${checked}> ${st.name}
+    </label>`;
   }).join('');
 }
 
 function openAddSupplierForm() {
   document.getElementById('supplierEditId').value = '';
-  document.getElementById('supplierServiceType').value = '';
   document.getElementById('supplierName').value = '';
   document.getElementById('supplierContactName').value = '';
   document.getElementById('supplierTel').value = '';
@@ -4676,6 +4689,7 @@ function openAddSupplierForm() {
   document.getElementById('supplierCounty').value = '';
   document.getElementById('supplierPostcode').value = '';
   document.getElementById('supplierFormTitle').textContent = 'Add Supplier';
+  populateServiceCheckboxes([]);
   document.getElementById('supplierFormArea').style.display = 'block';
 }
 
@@ -4687,7 +4701,6 @@ async function editSupplier(id) {
   try {
     const s = await api.get(`/api/suppliers/${id}`);
     document.getElementById('supplierEditId').value = s.id;
-    document.getElementById('supplierServiceType').value = s.service_type || '';
     document.getElementById('supplierName').value = s.supplier_name || '';
     document.getElementById('supplierContactName').value = s.contact_name || '';
     document.getElementById('supplierTel').value = s.telephone || '';
@@ -4698,13 +4711,13 @@ async function editSupplier(id) {
     document.getElementById('supplierCounty').value = s.county || '';
     document.getElementById('supplierPostcode').value = s.postcode || '';
     document.getElementById('supplierFormTitle').textContent = 'Edit Supplier';
+    populateServiceCheckboxes((s.services || []).map(sv => sv.service_type_id));
     document.getElementById('supplierFormArea').style.display = 'block';
   } catch (e) { toast('Failed to load supplier details', 'error'); }
 }
 
 async function saveSupplier() {
   const editId = document.getElementById('supplierEditId').value;
-  const serviceType = document.getElementById('supplierServiceType').value;
   const supplierName = document.getElementById('supplierName').value.trim();
   const contactName = document.getElementById('supplierContactName').value.trim();
   const telephone = document.getElementById('supplierTel').value.trim();
@@ -4714,15 +4727,17 @@ async function saveSupplier() {
   const city = document.getElementById('supplierCity').value.trim();
   const county = document.getElementById('supplierCounty').value.trim();
   const postcode = document.getElementById('supplierPostcode').value.trim();
+  const serviceTypeIds = [...document.querySelectorAll('.supplier-svc-cb:checked')].map(cb => parseInt(cb.value));
 
-  if (!serviceType) { toast('Please select a service', 'error'); return; }
   if (!supplierName) { toast('Supplier name is required', 'error'); return; }
+  if (!serviceTypeIds.length) { toast('Please select at least one service', 'error'); return; }
 
   const body = {
-    service_type: serviceType, supplier_name: supplierName,
+    supplier_name: supplierName,
     contact_name: contactName || null, telephone: telephone || null, email: email || null,
     address_line1: addr1 || null, address_line2: addr2 || null,
-    city: city || null, county: county || null, postcode: postcode || null
+    city: city || null, county: county || null, postcode: postcode || null,
+    service_type_ids: serviceTypeIds
   };
 
   try {
@@ -4744,6 +4759,53 @@ async function deleteSupplier(id, name) {
     await api.delete(`/api/suppliers/${id}`);
     toast('Supplier removed', 'info');
     renderSuppliersTab();
+  } catch (e) { toast('Delete failed', 'error'); }
+}
+
+// ── Service Type Management ──
+function toggleManageServices() {
+  const area = document.getElementById('manageServicesArea');
+  if (!area) return;
+  area.style.display = area.style.display === 'none' ? 'block' : 'none';
+  if (area.style.display === 'block') renderServiceTypeList();
+}
+
+function renderServiceTypeList() {
+  const container = document.getElementById('serviceTypeList');
+  if (!container) return;
+  if (!_serviceTypes.length) {
+    container.innerHTML = '<div style="font-size:13px;color:var(--muted)">No service types defined</div>';
+    return;
+  }
+  container.innerHTML = _serviceTypes.map(st =>
+    `<div style="display:flex;align-items:center;gap:6px;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px">
+      ${st.name}
+      <button onclick="deleteServiceType(${st.id}, '${st.name.replace(/'/g, "\\'")}')"
+        style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:0 2px" title="Remove">&#10005;</button>
+    </div>`
+  ).join('');
+}
+
+async function addServiceType() {
+  const input = document.getElementById('newServiceTypeName');
+  const name = (input?.value || '').trim();
+  if (!name) { toast('Enter a service name', 'error'); return; }
+  try {
+    await api.post('/api/service-types', { name });
+    input.value = '';
+    await loadServiceTypes();
+    renderServiceTypeList();
+    toast('Service added ✓', 'success');
+  } catch (e) { toast(e.message || 'Failed to add service', 'error'); }
+}
+
+async function deleteServiceType(id, name) {
+  if (!confirm(`Remove service "${name}"? Existing supplier assignments will be unaffected.`)) return;
+  try {
+    await api.delete(`/api/service-types/${id}`);
+    await loadServiceTypes();
+    renderServiceTypeList();
+    toast('Service removed', 'info');
   } catch (e) { toast('Delete failed', 'error'); }
 }
 

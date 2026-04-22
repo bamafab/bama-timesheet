@@ -545,32 +545,34 @@
     <div class="tab-content" id="tab-suppliers">
       <div class="card" style="margin-bottom:20px">
         <div class="card-title"><span class="icon">&#128666;</span> Assigned Suppliers</div>
-        <div style="font-size:13px;color:var(--muted);margin-bottom:16px">Manage suppliers for specific services.</div>
-        <button class="btn btn-primary" onclick="openAddSupplierForm()" style="margin-bottom:16px">+ Add Supplier</button>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:16px">Manage suppliers and the services they offer.</div>
+        <div style="display:flex;gap:10px;margin-bottom:16px">
+          <button class="btn btn-primary" onclick="openAddSupplierForm()">+ Add Supplier</button>
+          <button class="btn btn-ghost" onclick="toggleManageServices()">&#9881; Manage Services</button>
+        </div>
+
+        <!-- Manage Services (hidden by default) -->
+        <div id="manageServicesArea" style="display:none">
+          <div class="card" style="background:var(--surface);margin-bottom:16px;padding:16px">
+            <div class="card-title" style="font-size:14px">Service Types</div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Add or remove the service categories available for suppliers.</div>
+            <div id="serviceTypeList" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px"></div>
+            <div style="display:flex;gap:10px;align-items:flex-end">
+              <div style="flex:1">
+                <div class="field-label">NEW SERVICE NAME</div>
+                <input type="text" class="field-input" id="newServiceTypeName" placeholder="e.g. Fabrication" onkeydown="if(event.key==='Enter')addServiceType()">
+              </div>
+              <button class="btn btn-primary" onclick="addServiceType()">Add</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Add/Edit Supplier Form -->
         <div id="supplierFormArea" style="display:none">
           <div class="card" style="background:var(--surface);margin-bottom:16px;padding:16px">
             <div class="card-title" id="supplierFormTitle" style="font-size:14px">Add Supplier</div>
             <input type="hidden" id="supplierEditId" value="">
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
-              <div>
-                <div class="field-label">SERVICE <span style="color:var(--red)">*</span></div>
-                <select class="field-input" id="supplierServiceType">
-                  <option value="">Select a service...</option>
-                  <option value="Galvanising">Galvanising</option>
-                  <option value="Powder Coating">Powder Coating</option>
-                  <option value="Wet Spray">Wet Spray</option>
-                  <option value="Shot Blasting">Shot Blasting</option>
-                  <option value="Laser Cutting">Laser Cutting</option>
-                  <option value="Plasma Cutting">Plasma Cutting</option>
-                  <option value="Steel Supply">Steel Supply</option>
-                  <option value="Fasteners">Fasteners</option>
-                  <option value="Transport">Transport</option>
-                  <option value="Welding Gas">Welding Gas</option>
-                  <option value="Crane Hire">Crane Hire</option>
-                  <option value="NDT / Inspection">NDT / Inspection</option>
-                  <option value="Other">Other</option>
-                </select>
-              </div>
               <div>
                 <div class="field-label">SUPPLIER NAME <span style="color:var(--red)">*</span></div>
                 <input type="text" class="field-input" id="supplierName" placeholder="e.g. Wedge Galvanizing">
@@ -587,7 +589,10 @@
                 <div class="field-label">EMAIL</div>
                 <input type="email" class="field-input" id="supplierEmail" placeholder="e.g. info@supplier.com">
               </div>
-              <div></div>
+            </div>
+            <div style="margin-bottom:12px">
+              <div class="field-label">SERVICES OFFERED <span style="color:var(--red)">*</span></div>
+              <div id="supplierServiceCheckboxes" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px"></div>
             </div>
             <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:8px">Address</div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
