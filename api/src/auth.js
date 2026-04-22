@@ -1,8 +1,11 @@
 const TENANT_ID = process.env.AZURE_TENANT_ID || 'c92626f5-e391-499a-9059-0113bd07da2d';
 const CLIENT_ID = process.env.AZURE_CLIENT_ID || '04b702fd-c53c-4f38-94bc-0334ce91d954';
 
-// JWKS URI for Microsoft identity platform
-const JWKS_URI = `https://login.microsoftonline.com/${TENANT_ID}/discovery/v2.0/keys`;
+// JWKS URIs for Microsoft identity platform (v1 and v2)
+const JWKS_URIS = [
+    `https://login.microsoftonline.com/${TENANT_ID}/discovery/v2.0/keys`,
+    `https://login.microsoftonline.com/common/discovery/keys`
+];
 
 let cachedKeys = null;
 let keysCachedAt = 0;
@@ -15,17 +18,27 @@ function base64urlDecode(str) {
     return Buffer.from(str, 'base64');
 }
 
-// Fetch Microsoft signing keys
+// Fetch Microsoft signing keys from both v1 and v2 endpoints
 async function getSigningKeys() {
     if (cachedKeys && Date.now() - keysCachedAt < KEY_CACHE_DURATION) {
         return cachedKeys;
     }
 
-    const response = await fetch(JWKS_URI);
-    if (!response.ok) throw new Error('Failed to fetch JWKS keys');
+    const allKeys = [];
+    for (const uri of JWKS_URIS) {
+        try {
+            const response = await fetch(uri);
+            if (response.ok) {
+                const data = await response.json();
+                allKeys.push(...(data.keys || []));
+            }
+        } catch (e) {
+            // Continue with other URIs
+        }
+    }
+    if (allKeys.length === 0) throw new Error('Failed to fetch any JWKS keys');
 
-    const data = await response.json();
-    cachedKeys = data.keys;
+    cachedKeys = allKeys;
     keysCachedAt = Date.now();
     return cachedKeys;
 }
@@ -53,15 +66,21 @@ async function validateToken(token) {
             return null;
         }
 
-        // Check audience (must be our app)
-        if (payload.aud !== CLIENT_ID) {
+        // Check audience (accept our app ID or Graph API — the frontend token is Graph-scoped)
+        const validAudiences = [
+            CLIENT_ID,
+            'https://graph.microsoft.com',
+            '00000003-0000-0000-c000-000000000000' // Graph API app ID
+        ];
+        if (!validAudiences.includes(payload.aud)) {
             return null;
         }
 
-        // Check issuer (must be our tenant)
+        // Check issuer (must be our tenant — accept both v1 and v2 formats)
         const validIssuers = [
             `https://login.microsoftonline.com/${TENANT_ID}/v2.0`,
-            `https://sts.windows.net/${TENANT_ID}/`
+            `https://sts.windows.net/${TENANT_ID}/`,
+            `https://login.microsoftonline.com/${TENANT_ID}/`
         ];
         if (!validIssuers.includes(payload.iss)) {
             return null;
@@ -104,11 +123,17 @@ async function authenticate(request) {
 
 // Middleware: returns user or sends 401
 async function requireAuth(request) {
+    // Handle CORS preflight — no auth needed
+    if (request.method === 'OPTIONS') {
+        return { _preflight: true };
+    }
+
     const user = await authenticate(request);
     if (!user) {
+        const { unauthorized } = require('./responses');
         return {
             status: 401,
-            jsonBody: { error: 'Unauthorized — valid Microsoft token required' }
+            ...unauthorized('Unauthorized — valid Microsoft token required', request)
         };
     }
     return user;
