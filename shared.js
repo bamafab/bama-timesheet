@@ -4651,7 +4651,7 @@ async function renderSuppliersTab() {
           ${s.contact_name ? `<div>Contact: <span style="color:var(--text)">${s.contact_name}</span></div>` : ''}
           ${s.telephone ? `<div>Tel: <span style="color:var(--text)">${s.telephone}</span></div>` : ''}
           ${s.email ? `<div>Email: <span style="color:var(--text)">${s.email}</span></div>` : ''}
-          ${s.address ? `<div>Address: <span style="color:var(--text)">${s.address}</span></div>` : ''}
+          ${(s.address_line1 || s.city || s.postcode) ? `<div>Address: <span style="color:var(--text)">${[s.address_line1, s.address_line2, s.city, s.county, s.postcode].filter(Boolean).join(', ')}</span></div>` : ''}
         </div>
       </div>`).join('');
 
@@ -4670,7 +4670,11 @@ function openAddSupplierForm() {
   document.getElementById('supplierContactName').value = '';
   document.getElementById('supplierTel').value = '';
   document.getElementById('supplierEmail').value = '';
-  document.getElementById('supplierAddress').value = '';
+  document.getElementById('supplierAddr1').value = '';
+  document.getElementById('supplierAddr2').value = '';
+  document.getElementById('supplierCity').value = '';
+  document.getElementById('supplierCounty').value = '';
+  document.getElementById('supplierPostcode').value = '';
   document.getElementById('supplierFormTitle').textContent = 'Add Supplier';
   document.getElementById('supplierFormArea').style.display = 'block';
 }
@@ -4688,7 +4692,11 @@ async function editSupplier(id) {
     document.getElementById('supplierContactName').value = s.contact_name || '';
     document.getElementById('supplierTel').value = s.telephone || '';
     document.getElementById('supplierEmail').value = s.email || '';
-    document.getElementById('supplierAddress').value = s.address || '';
+    document.getElementById('supplierAddr1').value = s.address_line1 || '';
+    document.getElementById('supplierAddr2').value = s.address_line2 || '';
+    document.getElementById('supplierCity').value = s.city || '';
+    document.getElementById('supplierCounty').value = s.county || '';
+    document.getElementById('supplierPostcode').value = s.postcode || '';
     document.getElementById('supplierFormTitle').textContent = 'Edit Supplier';
     document.getElementById('supplierFormArea').style.display = 'block';
   } catch (e) { toast('Failed to load supplier details', 'error'); }
@@ -4701,12 +4709,21 @@ async function saveSupplier() {
   const contactName = document.getElementById('supplierContactName').value.trim();
   const telephone = document.getElementById('supplierTel').value.trim();
   const email = document.getElementById('supplierEmail').value.trim();
-  const address = document.getElementById('supplierAddress').value.trim();
+  const addr1 = document.getElementById('supplierAddr1').value.trim();
+  const addr2 = document.getElementById('supplierAddr2').value.trim();
+  const city = document.getElementById('supplierCity').value.trim();
+  const county = document.getElementById('supplierCounty').value.trim();
+  const postcode = document.getElementById('supplierPostcode').value.trim();
 
   if (!serviceType) { toast('Please select a service', 'error'); return; }
   if (!supplierName) { toast('Supplier name is required', 'error'); return; }
 
-  const body = { service_type: serviceType, supplier_name: supplierName, contact_name: contactName || null, telephone: telephone || null, email: email || null, address: address || null };
+  const body = {
+    service_type: serviceType, supplier_name: supplierName,
+    contact_name: contactName || null, telephone: telephone || null, email: email || null,
+    address_line1: addr1 || null, address_line2: addr2 || null,
+    city: city || null, county: county || null, postcode: postcode || null
+  };
 
   try {
     if (editId) {
