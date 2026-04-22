@@ -370,7 +370,7 @@ app.http('suppliers-create', {
             return created(supplier, request);
         } catch (err) {
             context.error('Error creating supplier:', err);
-            return serverError('Failed to create supplier', request);
+            return serverError('Failed to create supplier: ' + (err.message || String(err)), request);
         }
     }
 });
