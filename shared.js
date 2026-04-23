@@ -7859,6 +7859,21 @@ async function confirmGenerateDn() {
 
   try {
     await saveBomData(currentProject.id);
+
+    // Upload PDF copy to SharePoint: 07 - Deliveries / [Job Folder] / [ProjectId] - DN-NNNN.pdf
+    try {
+      const saved = await saveDeliveryNotePDFToSharePoint(dn, bomJob2, currentProject, currentJob);
+      dn.fileId = saved.fileId;
+      dn.driveId = saved.driveId;
+      dn.webUrl = saved.webUrl;
+      dn.fileName = saved.fileName;
+      dn.savedAt = new Date().toISOString();
+      await saveBomData(currentProject.id);
+    } catch (pdfErr) {
+      console.error('DN PDF save to SharePoint failed:', pdfErr);
+      toast(`DN created but PDF save failed: ${pdfErr.message}`, 'warning');
+    }
+
     bomSelectedIds.clear();
     closeGenerateDnModal();
     toast(`Delivery note ${dnNumber} created for ${selected.length} items`, 'success');
@@ -7944,16 +7959,9 @@ function renderDeliveryNotesList() {
 }
 
 // ── Print Delivery Note (BAMA format) ──
-function printDeliveryNote(dnId) {
-  const bomJob = getBomDataForJob(currentProject?.id, currentJob?.id);
-  const dn = (bomJob.deliveryNotes || []).find(d => d.id === dnId);
-  if (!dn) return;
-
+function buildDeliveryNoteHTML(dn, bomJob, proj, job) {
   const allItems = (bomJob.materialLists || []).flatMap(ml => ml.items || []);
   const dnItems = dn.itemIds.map(id => allItems.find(i => i.id === id)).filter(Boolean);
-
-  const proj = currentProject || {};
-  const job = currentJob || {};
   const date = new Date(dn.createdAt).toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'});
 
   let html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
@@ -7989,6 +7997,7 @@ function printDeliveryNote(dnId) {
       <span class="meta-label">Date:</span><span>${date}</span>
       <span class="meta-label">Project:</span><span>${proj.name || ''}</span>
       <span class="meta-label">Job No:</span><span>${proj.id || ''}</span>
+      ${job && job.name ? `<span class="meta-label">Job:</span><span>${job.name}</span>` : ''}
       <span class="meta-label">Destination:</span><span>${dn.destinationName || dn.destination}</span>
       ${dn.address ? `<span class="meta-label">Address:</span><span>${dn.address}</span>` : ''}
       ${dn.siteContact ? `<span class="meta-label">Site Contact:</span><span>${dn.siteContact}</span>` : ''}
@@ -8031,7 +8040,88 @@ function printDeliveryNote(dnId) {
   </div>
 </div>
 </body></html>`;
+  return html;
+}
 
+// ── Upload generated Delivery Note PDF to SharePoint ──
+// Saves to: [Project Folder]/07 - Deliveries/[Job Folder]/[ProjectId] - DN-NNNN.pdf
+// Keeps original on re-save (conflict: fail) so reprints re-open the original.
+async function saveDeliveryNotePDFToSharePoint(dn, bomJob, proj, job) {
+  if (typeof html2pdf === 'undefined') throw new Error('PDF library not loaded');
+
+  // Build HTML into a hidden container
+  const html = buildDeliveryNoteHTML(dn, bomJob, proj, job);
+  const container = document.createElement('div');
+  container.style.cssText = 'position:fixed;left:-10000px;top:0;width:794px;background:#fff;';
+  container.innerHTML = html.replace(/^[\s\S]*?<body[^>]*>|<\/body>[\s\S]*$/g, '');
+  document.body.appendChild(container);
+
+  let pdfBlob;
+  try {
+    pdfBlob = await html2pdf().set({
+      margin: [10, 10, 10, 10],
+      filename: `${proj.id} - ${dn.number}.pdf`,
+      image: { type: 'jpeg', quality: 0.95 },
+      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    }).from(container).outputPdf('blob');
+  } finally {
+    document.body.removeChild(container);
+  }
+
+  // Find project folder on SharePoint
+  const projectFolder = await findProjectFolder(proj.id);
+  if (!projectFolder) throw new Error('Project folder not found on SharePoint');
+  const driveId = projectFolder.parentReference?.driveId || BAMA_DRIVE_ID;
+
+  // Ensure "07 - Deliveries" exists inside project folder
+  const deliveriesFolder = await getOrCreateSubfolder(projectFolder.id, '07 - Deliveries', driveId);
+  if (!deliveriesFolder) throw new Error('Could not create 07 - Deliveries folder');
+
+  // Ensure subfolder named after the job exists
+  const jobFolderName = (job && (job.folderName || job.name)) || 'Unassigned';
+  const jobSubFolder = await getOrCreateSubfolder(deliveriesFolder.id, jobFolderName, driveId);
+  if (!jobSubFolder) throw new Error('Could not create job delivery subfolder');
+
+  // Upload PDF — use fail-on-conflict so existing originals are preserved
+  const fileName = `${proj.id} - ${dn.number}.pdf`;
+  const token = await getToken();
+  const uploadUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${jobSubFolder.id}:/${encodeURIComponent(fileName)}:/content?@microsoft.graph.conflictBehavior=fail`;
+  const upRes = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/pdf' },
+    body: pdfBlob
+  });
+  if (upRes.status === 409) {
+    // Already exists — look it up so we can still store the fileId
+    const lookupRes = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${jobSubFolder.id}:/${encodeURIComponent(fileName)}`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    if (!lookupRes.ok) throw new Error('DN exists on SharePoint but could not be read back');
+    const existing = await lookupRes.json();
+    return { fileId: existing.id, driveId, webUrl: existing.webUrl, fileName, reused: true };
+  }
+  if (!upRes.ok) throw new Error(`DN upload failed: ${upRes.status}`);
+  const uploaded = await upRes.json();
+  return { fileId: uploaded.id, driveId, webUrl: uploaded.webUrl, fileName, reused: false };
+}
+
+// ── Print / open a Delivery Note ──
+// Preferred path: open the saved PDF on SharePoint (via printFile).
+// Fallback: re-render HTML for DNs that were created before the SharePoint-save change.
+async function printDeliveryNote(dnId) {
+  const bomJob = getBomDataForJob(currentProject?.id, currentJob?.id);
+  const dn = (bomJob.deliveryNotes || []).find(d => d.id === dnId);
+  if (!dn) return;
+
+  // If we have a SharePoint copy, open it
+  if (dn.fileId) {
+    return printFile(dn.fileId, dn.driveId);
+  }
+
+  // Fallback: render HTML directly for legacy DNs
+  const html = buildDeliveryNoteHTML(dn, bomJob, currentProject || {}, currentJob || {});
   const printWin = window.open('', '_blank');
   printWin.document.write(html);
   printWin.document.close();
@@ -8752,6 +8842,21 @@ async function confirmDispatchDn() {
 
   try {
     await saveBomData(currentProject.id);
+
+    // Upload PDF copy to SharePoint: 07 - Deliveries / [Job Folder] / [ProjectId] - DN-NNNN.pdf
+    try {
+      const saved = await saveDeliveryNotePDFToSharePoint(dn, bomJob2, currentProject, currentJob);
+      dn.fileId = saved.fileId;
+      dn.driveId = saved.driveId;
+      dn.webUrl = saved.webUrl;
+      dn.fileName = saved.fileName;
+      dn.savedAt = new Date().toISOString();
+      await saveBomData(currentProject.id);
+    } catch (pdfErr) {
+      console.error('DN PDF save to SharePoint failed:', pdfErr);
+      toast(`DN created but PDF save failed: ${pdfErr.message}`, 'warning');
+    }
+
     _dispatchSelectedIds.clear();
     closeModal();
     toast(`${dnNumber} created \u2014 ${selected.length} items to ${destName}`, 'success');
