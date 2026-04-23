@@ -802,7 +802,9 @@ function _renderWorkshopNotifs(container) {
         const isNew = created > (Date.now() - 48 * 60 * 60 * 1000);
         notifications.push({
           type: 'assembly',
+          projectId: projId,
           project: projName,
+          jobId: job.id,
           job: job.name,
           task: task.name,
           finishing: task.finishing,
@@ -830,10 +832,13 @@ function _renderWorkshopNotifs(container) {
     const age = timeAgo(n.createdAt);
     const finLabel = n.finishing && n.finishing !== 'none' ? ` · ${n.finishing}` : '';
     const borderColor = n.isNew ? 'var(--accent)' : 'var(--border)';
-    html += `<div class="notification-banner" style="cursor:default;margin-bottom:8px;text-align:left;border-left:3px solid ${borderColor}">`;
+    const deepLink = `projects.html?project=${encodeURIComponent(n.projectId)}&job=${encodeURIComponent(n.jobId)}&element=Assembly`;
+    html += `<a href="${deepLink}" style="text-decoration:none;color:inherit;display:block">`;
+    html += `<div class="notification-banner" style="cursor:pointer;margin-bottom:8px;text-align:left;border-left:3px solid ${borderColor}">`;
     html += `<span class="nb-icon">${n.isNew ? '&#128312;' : '&#128295;'}</span>`;
     html += `<span class="nb-text"><b>${n.isNew ? 'NEW: ' : ''}${n.task}</b>${finLabel}<br><span style="font-size:11px;color:var(--subtle)">${n.project} · ${n.job} · ${age}</span></span>`;
-    html += `</div>`;
+    html += `<span style="font-size:11px;color:var(--accent);margin-left:auto;padding-left:8px">View &rarr;</span>`;
+    html += `</div></a>`;
   }
   container.innerHTML = html;
 }
@@ -6735,12 +6740,10 @@ function renderJobsList(projectId) {
             ${isClosed ? ` · Closed ${new Date(job.closedAt).toLocaleDateString('en-GB')}` : ''}
           </div>
         </div>
-        <div class="job-progress" title="${progress.label}">
-          ${['bom','assembly'].map((el, i) => {
-            const s = progress.elements[el];
-            const label = ['BOM','Assembly'][i];
-            return `<div class="job-progress-dot ${s === 'complete' ? 'complete' : s === 'active' ? 'active' : ''}" title="${label}: ${s}" style="width:10px;height:10px"></div>`;
-          }).join('')}
+        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+          ${progress.fabPct >= 0 ? `<span style="font-size:11px;font-family:var(--font-mono);color:${progress.fabPct === 100 ? 'var(--green)' : 'var(--muted)'};font-weight:600">Fab ${progress.fabPct}%</span>` : ''}
+          ${progress.tasksTotal > 0 ? `<span style="font-size:11px;font-family:var(--font-mono);color:${progress.tasksDone === progress.tasksTotal ? 'var(--green)' : 'var(--muted)'};font-weight:600">${progress.tasksDone}/${progress.tasksTotal} tasks</span>` : ''}
+          ${progress.hasNewTasks ? `<span style="font-size:9px;font-weight:700;background:var(--accent);color:#fff;padding:2px 6px;border-radius:4px;letter-spacing:.3px">NEW TASK</span>` : ''}
         </div>
         <div class="job-badge ${isClosed ? 'closed' : 'open'}">${isClosed ? 'CLOSED' : 'OPEN'}</div>
       </div>
@@ -6779,12 +6782,18 @@ function getJobProgress(job) {
   elements.site = job.site?.completedAt ? 'complete' : (dns.length > 0 || job.site?.files?.length > 0) ? 'active' : 'empty';
 
   // Progress label based on BOM + Assembly only
-  const bomPct = bomItems.length > 0 ? Math.round(bomItems.filter(i => i.status === 'delivered_to_site' || i.status === 'complete').length / bomItems.length * 100) : 0;
-  const asmPct = tasks.length > 0 ? Math.round(tasks.filter(t => t.status === 'complete').length / tasks.length * 100) : 0;
-  const label = bomItems.length > 0 || tasks.length > 0
-    ? `BOM: ${bomPct}% · Assembly: ${asmPct}%`
+  const fabItems = bomItems.filter(i => i.fabricated);
+  const fabDone = fabItems.filter(i => i.status !== 'not_started').length;
+  const fabPct = fabItems.length > 0 ? Math.round(fabDone / fabItems.length * 100) : -1;
+  const tasksDone = tasks.filter(t => t.status === 'complete').length;
+  const tasksTotal = tasks.length;
+  const newTaskCutoff = Date.now() - 48 * 60 * 60 * 1000;
+  const hasNewTasks = tasks.some(t => t.status !== 'complete' && new Date(t.createdAt).getTime() > newTaskCutoff);
+
+  const label = fabItems.length > 0 || tasks.length > 0
+    ? `Fab: ${fabPct >= 0 ? fabPct + '%' : 'N/A'} · Tasks: ${tasksDone}/${tasksTotal}`
     : 'No progress data';
-  return { elements, label };
+  return { elements, label, fabPct, tasksDone, tasksTotal, hasNewTasks };
 }
 
 // ═══════════════════════════════════════════
@@ -10083,8 +10092,33 @@ async function init() {
   } else if (CURRENT_PAGE === 'projects') {
     showScreen('screenProjects');
     renderProjectTiles();
-    // Load job data then re-render tiles with job counts
-    loadDrawingsData().then(() => renderProjectTiles()).catch(e => console.warn('Job data load failed:', e.message));
+    // Load job data then re-render tiles with job counts, and handle deep links
+    loadDrawingsData().then(() => {
+      renderProjectTiles();
+      // Deep link: ?project=X&job=Y&element=Assembly
+      const params = new URLSearchParams(window.location.search);
+      const deepProject = params.get('project');
+      const deepJob = params.get('job');
+      const deepElement = params.get('element');
+      if (deepProject && deepJob) {
+        // Clear URL params so back button doesn't re-trigger
+        window.history.replaceState({}, '', window.location.pathname);
+        // Wait for BOM data, then navigate
+        loadBomData(deepProject).then(() => {
+          openJobDetail(deepProject, deepJob);
+          if (deepElement) {
+            setTimeout(() => {
+              // Expand the target element section
+              const body = document.getElementById(`element${deepElement}Body`);
+              if (body && body.classList.contains('collapsed')) toggleElement(deepElement);
+              // Scroll to it
+              const card = document.getElementById(`element${deepElement}`);
+              if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 300);
+          }
+        }).catch(() => {});
+      }
+    }).catch(e => console.warn('Job data load failed:', e.message));
   } else if (CURRENT_PAGE === 'hub') {
     // hub has its own simple rendering
   } else {
