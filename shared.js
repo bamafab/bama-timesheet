@@ -7377,47 +7377,6 @@ function renderBOM() {
     }
   }
 
-  // Welding machines + suppliers (draftsman only)
-  if (isDraftsman) {
-    const bomProjData = bomDataCache[currentProject?.id];
-
-    // Welding machines placeholder — populated after DOM write to avoid blocking render
-    html += `<div id="bomWeldingMachinesSection" style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">`;
-    html += `<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">`;
-    html += `<span style="font-size:13px;font-weight:600">Welding Machines</span>`;
-    html += `<span style="font-size:11px;color:var(--subtle)">(managed in Office &rarr; Traceability)</span>`;
-    html += `</div>`;
-    html += `<div style="font-size:12px;color:var(--subtle)">Loading...</div>`;
-    html += `</div>`;
-
-    // Suppliers setup (draftsman only)
-    const suppliers = bomProjData?.settings?.suppliers || [];
-    html += `<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">`;
-    html += `<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">`;
-    html += `<span style="font-size:13px;font-weight:600">Suppliers / Destinations</span>`;
-    html += `<button class="btn btn-primary" style="padding:4px 12px;font-size:11px" onclick="addSupplier()">&#43; Add</button>`;
-    html += `</div>`;
-    if (suppliers.length) {
-      html += `<div style="display:flex;flex-wrap:wrap;gap:8px">`;
-      for (const s of suppliers) {
-        if (s.active === false) continue;
-        const typeLabel = s.type === 'galvaniser' ? 'Galv' : s.type === 'painter' ? 'Paint' : s.type === 'powder_coater' ? 'PPC' : s.type === 'site' ? 'Site' : s.type;
-        html += `<div style="display:flex;align-items:center;gap:6px;padding:6px 12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;font-size:12px">`;
-        html += `<span style="font-weight:600">${s.name}</span>`;
-        html += `<span style="color:var(--subtle)">(${typeLabel})</span>`;
-        html += `<button style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:0 0 0 4px" onclick="removeSupplier('${s.id}')" title="Remove">&#10005;</button>`;
-        html += `</div>`;
-      }
-      html += `</div>`;
-    } else {
-      html += `<div style="font-size:12px;color:var(--subtle)">Add galvanisers, painters, powder coaters etc. for quick delivery note creation.</div>`;
-    }
-    html += `</div>`;
-  }
-
-  // Delivery notes list
-  html += renderDeliveryNotesList();
-
   // Notes
   const bom = currentJob.bom || { files: [], notes: [] };
   html += renderNotesSection(bom.notes || [], 'bom');
@@ -7429,36 +7388,6 @@ function renderBOM() {
     if (ml.items?.length) {
       setTimeout(() => renderBomTable(ml.id), 0);
     }
-  }
-
-  // Populate welding machines section asynchronously (draftsman only)
-  if (isDraftsman) {
-    api.get('/api/welding-machines').then(apiMachines => {
-      const section = document.getElementById('bomWeldingMachinesSection');
-      if (!section) return;
-      const activeMachines = (apiMachines || []).filter(m => m.is_active !== false);
-      let mHtml = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">`;
-      mHtml += `<span style="font-size:13px;font-weight:600">Welding Machines</span>`;
-      mHtml += `<span style="font-size:11px;color:var(--subtle)">(managed in Office &rarr; Traceability)</span>`;
-      mHtml += `</div>`;
-      if (activeMachines.length) {
-        mHtml += `<div style="display:flex;flex-wrap:wrap;gap:8px">`;
-        for (const m of activeMachines) {
-          mHtml += `<div style="display:flex;align-items:center;gap:6px;padding:6px 12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;font-size:12px">`;
-          mHtml += `<span style="font-weight:600">${m.machine_name}</span>`;
-          if (m.serial_number) mHtml += `<span style="color:var(--subtle)">(S/N ${m.serial_number})</span>`;
-          mHtml += `</div>`;
-        }
-        mHtml += `</div>`;
-      } else {
-        mHtml += `<div style="font-size:12px;color:var(--subtle)">No welding machines registered. Add them in Office &rarr; Traceability tab.</div>`;
-      }
-      section.innerHTML = mHtml;
-    }).catch(e => {
-      console.warn('Failed to load welding machines:', e.message);
-      const section = document.getElementById('bomWeldingMachinesSection');
-      if (section) section.innerHTML = '<div style="font-size:12px;color:var(--subtle)">Could not load welding machines.</div>';
-    });
   }
 }
 
@@ -7479,6 +7408,10 @@ function renderBomTable(mlId) {
   if (bomFilterFab === 'true') items = items.filter(i => i.fabricated);
   else if (bomFilterFab === 'false') items = items.filter(i => !i.fabricated);
   if (bomFilterMark) items = items.filter(i => i.mark.toLowerCase().includes(bomFilterMark.toLowerCase()));
+
+  // Auto-sort: not_started first, then fabricated, then dispatched/returned, then delivered_to_site last
+  const STATUS_ORDER = { not_started: 0, fabricated: 1, returned: 2, dispatched: 3, delivered_to_site: 4, complete: 5 };
+  items.sort((a, b) => (STATUS_ORDER[a.status] ?? 3) - (STATUS_ORDER[b.status] ?? 3));
 
   // Select all bar
   const allFilteredIds = items.map(i => i.id);
@@ -7714,7 +7647,7 @@ async function bulkMarkFabricated() {
 }
 
 // ── Delivery Note Generation ──
-function openGenerateDnModal() {
+async function openGenerateDnModal() {
   if (bomSelectedIds.size === 0) { toast('Select items first', 'error'); return; }
   document.getElementById('dnItemCount').textContent = `${bomSelectedIds.size} items selected`;
   document.getElementById('dnDestType').value = '';
@@ -7722,15 +7655,16 @@ function openGenerateDnModal() {
   document.getElementById('dnAddress').value = '';
   document.getElementById('dnSiteContact').value = '';
 
-  // Populate supplier dropdown
-  const bomProjData = bomDataCache[currentProject?.id];
-  const suppliers = (bomProjData?.settings?.suppliers || []).filter(s => s.active !== false);
+  // Populate supplier dropdown from SQL API
+  let apiSuppliers = [];
+  try { apiSuppliers = await api.get('/api/suppliers'); } catch (e) { console.warn('Failed to load suppliers:', e.message); }
+  window._dnSuppliers = (apiSuppliers || []).filter(s => s.is_active !== false);
   const suppSelect = document.getElementById('dnSupplierSelect');
   if (suppSelect) {
     suppSelect.innerHTML = '<option value="">-- Select saved supplier --</option>' +
-      suppliers.map(s => {
-        const typeLabel = s.type === 'galvaniser' ? 'Galv' : s.type === 'painter' ? 'Paint' : s.type === 'powder_coater' ? 'PPC' : s.type === 'site' ? 'Site' : s.type;
-        return `<option value="${s.id}">${s.name} (${typeLabel})</option>`;
+      window._dnSuppliers.map(s => {
+        const svcLabel = (s.services || []).map(sv => sv.service_name).join(', ') || '';
+        return `<option value="${s.id}">${s.supplier_name}${svcLabel ? ' (' + svcLabel + ')' : ''}</option>`;
       }).join('');
   }
 
@@ -7750,13 +7684,21 @@ function onDnSupplierSelect() {
   const suppSelect = document.getElementById('dnSupplierSelect');
   const suppId = suppSelect?.value;
   if (!suppId) return;
-  const bomProjData = bomDataCache[currentProject?.id];
-  const supplier = (bomProjData?.settings?.suppliers || []).find(s => s.id === suppId);
+  const supplier = (window._dnSuppliers || []).find(s => String(s.id) === suppId);
   if (!supplier) return;
-  document.getElementById('dnDestType').value = supplier.type || '';
-  document.getElementById('dnDestName').value = supplier.name || '';
-  document.getElementById('dnAddress').value = supplier.address || '';
-  document.getElementById('dnSiteContact').value = supplier.contact || '';
+  // Map service types to destination type
+  const svcNames = (supplier.services || []).map(sv => sv.service_name.toLowerCase());
+  let destType = '';
+  if (svcNames.some(s => s.includes('galvan'))) destType = 'galvaniser';
+  else if (svcNames.some(s => s.includes('paint'))) destType = 'painter';
+  else if (svcNames.some(s => s.includes('powder'))) destType = 'powder_coater';
+  else if (svcNames.some(s => s.includes('site'))) destType = 'site';
+  else if (svcNames.length) destType = 'other';
+  document.getElementById('dnDestType').value = destType;
+  document.getElementById('dnDestName').value = supplier.supplier_name || '';
+  const addrParts = [supplier.address_line1, supplier.address_line2, supplier.city, supplier.county, supplier.postcode].filter(Boolean);
+  document.getElementById('dnAddress').value = addrParts.join(', ');
+  document.getElementById('dnSiteContact').value = supplier.contact_name || '';
   updateDnSummary();
 }
 
@@ -7965,6 +7907,7 @@ function printDeliveryNote(dnId) {
       <span class="meta-label">Destination:</span><span>${dn.destinationName || dn.destination}</span>
       ${dn.address ? `<span class="meta-label">Address:</span><span>${dn.address}</span>` : ''}
       ${dn.siteContact ? `<span class="meta-label">Site Contact:</span><span>${dn.siteContact}</span>` : ''}
+      ${dn.phone ? `<span class="meta-label">Phone:</span><span>${dn.phone}</span>` : ''}
       ${dn.collectionDate ? `<span class="meta-label">Collection Date:</span><span>${new Date(dn.collectionDate).toLocaleDateString('en-GB')}</span>` : ''}
       ${dn.deliveryDate ? `<span class="meta-label">Delivery Date:</span><span>${new Date(dn.deliveryDate).toLocaleDateString('en-GB')}</span>` : ''}
     </div>
@@ -8451,7 +8394,7 @@ function renderSite() {
 // ═══════════════════════════════════════════
 let _dispatchSelectedIds = new Set();
 
-function openDispatchPanel() {
+async function openDispatchPanel() {
   if (!currentProject || !currentJob) return;
   _dispatchSelectedIds.clear();
 
@@ -8523,12 +8466,16 @@ function openDispatchPanel() {
   // Selection summary
   content += `<div id="dispatchSummary" style="padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;font-size:12px;color:var(--muted);margin-bottom:16px">Select items above</div>`;
 
-  // Destination form
-  const bomProjData = bomDataCache[currentProject?.id];
-  const suppliers = (bomProjData?.settings?.suppliers || []).filter(s => s.active !== false);
-  const suppOptions = suppliers.map(s => {
-    const typeLabel = s.type === 'galvaniser' ? 'Galv' : s.type === 'painter' ? 'Paint' : s.type === 'powder_coater' ? 'PPC' : s.type === 'site' ? 'Site' : s.type;
-    return `<option value="${s.id}">${s.name} (${typeLabel})</option>`;
+  // Destination form — suppliers loaded from SQL API
+  let apiSuppliers = [];
+  try { apiSuppliers = await api.get('/api/suppliers'); } catch (e) { console.warn('Failed to load suppliers:', e.message); }
+  const activeSuppliers = (apiSuppliers || []).filter(s => s.is_active !== false);
+  // Store on window for the onchange handler
+  window._dispatchSuppliers = activeSuppliers;
+
+  const suppOptions = activeSuppliers.map(s => {
+    const svcLabel = (s.services || []).map(sv => sv.service_name).join(', ') || '';
+    return `<option value="${s.id}">${s.supplier_name}${svcLabel ? ' (' + svcLabel + ')' : ''}</option>`;
   }).join('');
 
   content += `<div style="margin-bottom:10px">`;
@@ -8554,9 +8501,13 @@ function openDispatchPanel() {
   content += `<input type="text" class="field-input" id="dispatchAddress" placeholder="Delivery address" style="font-size:13px"></div>`;
 
   content += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">`;
-  content += `<div><div class="field-label">SITE CONTACT (optional)</div>`;
+  content += `<div><div class="field-label">SITE CONTACT *</div>`;
   content += `<input type="text" class="field-input" id="dispatchContact" placeholder="Contact name" style="font-size:13px"></div>`;
-  content += `<div><div class="field-label">COLLECTION DATE</div>`;
+  content += `<div><div class="field-label">PHONE NUMBER *</div>`;
+  content += `<input type="text" class="field-input" id="dispatchPhone" placeholder="Phone number" style="font-size:13px"></div>`;
+  content += `</div>`;
+
+  content += `<div style="margin-bottom:10px"><div class="field-label">COLLECTION DATE</div>`;
   content += `<input type="date" class="field-input" id="dispatchCollDate" value="${new Date().toISOString().split('T')[0]}" style="font-size:13px"></div>`;
   content += `</div>`;
 
@@ -8636,13 +8587,22 @@ function updateDispatchSummary() {
 function onDispatchSupplierSelect() {
   const suppId = document.getElementById('dispatchSupplier')?.value;
   if (!suppId) return;
-  const bomProjData = bomDataCache[currentProject?.id];
-  const supplier = (bomProjData?.settings?.suppliers || []).find(s => s.id === suppId);
+  const supplier = (window._dispatchSuppliers || []).find(s => String(s.id) === suppId);
   if (!supplier) return;
-  document.getElementById('dispatchDestType').value = supplier.type || '';
-  document.getElementById('dispatchDestName').value = supplier.name || '';
-  document.getElementById('dispatchAddress').value = supplier.address || '';
-  document.getElementById('dispatchContact').value = supplier.contact || '';
+  // Map service types to destination type
+  const svcNames = (supplier.services || []).map(sv => sv.service_name.toLowerCase());
+  let destType = '';
+  if (svcNames.some(s => s.includes('galvan'))) destType = 'galvaniser';
+  else if (svcNames.some(s => s.includes('paint'))) destType = 'painter';
+  else if (svcNames.some(s => s.includes('powder'))) destType = 'powder_coater';
+  else if (svcNames.some(s => s.includes('site'))) destType = 'site';
+  else if (svcNames.length) destType = 'other';
+  document.getElementById('dispatchDestType').value = destType;
+  document.getElementById('dispatchDestName').value = supplier.supplier_name || '';
+  const addrParts = [supplier.address_line1, supplier.address_line2, supplier.city, supplier.county, supplier.postcode].filter(Boolean);
+  document.getElementById('dispatchAddress').value = addrParts.join(', ');
+  document.getElementById('dispatchContact').value = supplier.contact_name || '';
+  document.getElementById('dispatchPhone').value = supplier.telephone || '';
 }
 
 async function confirmDispatchDn() {
@@ -8652,10 +8612,13 @@ async function confirmDispatchDn() {
   const destName = document.getElementById('dispatchDestName').value.trim();
   const address = document.getElementById('dispatchAddress').value.trim();
   const siteContact = document.getElementById('dispatchContact').value.trim();
+  const phone = document.getElementById('dispatchPhone').value.trim();
   const collectionDate = document.getElementById('dispatchCollDate')?.value || '';
 
   if (!destType) { toast('Select a destination type', 'error'); return; }
   if (!destName) { toast('Enter a destination name', 'error'); return; }
+  if (!siteContact) { toast('Site contact is required', 'error'); return; }
+  if (!phone) { toast('Phone number is required', 'error'); return; }
 
   const bomJob2 = ensureBomDataForJob(currentProject.id, currentJob.id);
   const allItems = (bomJob2.materialLists || []).flatMap(ml => ml.items || []);
@@ -8673,6 +8636,7 @@ async function confirmDispatchDn() {
     destinationName: destName,
     address,
     siteContact,
+    phone,
     collectionDate,
     deliveryDate: '',
     createdAt: new Date().toISOString(),
@@ -8942,6 +8906,13 @@ function updateApprovalChips() {
 async function confirmUploadFile() {
   if (!_uploadFiles.length) { toast('Please select a file', 'error'); return; }
   if (!_uploadContext) return;
+
+  // Pre-check token before starting upload to avoid mid-upload redirect
+  const preToken = AUTH.getStoredToken();
+  if (!preToken) {
+    toast('Session expired — please log in again. Your draftsman session will be preserved.', 'error');
+    return;
+  }
 
   const { element, subElement, jobId, projectId } = _uploadContext;
   const projData = drawingsData.projects[projectId];
