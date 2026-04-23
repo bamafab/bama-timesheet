@@ -8148,10 +8148,13 @@ function renderApproval() {
     status.textContent = `CO${latestCO.number} Approved`;
     status.style.cssText = 'color:var(--green);background:rgba(62,207,142,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600';
   } else if (latestPO) {
-    const stLabel = latestPO.status === 'sent' ? 'Sent' : latestPO.status === 'approved' ? 'Approved' : 'Rejected';
-    status.textContent = `PO${latestPO.number} ${stLabel}`;
-    const stColor = latestPO.status === 'approved' ? 'var(--green)' : latestPO.status === 'rejected' ? 'var(--red)' : '#60a5fa';
-    status.style.cssText = `color:${stColor};background:${latestPO.status === 'approved' ? 'rgba(62,207,142,.1)' : latestPO.status === 'rejected' ? 'rgba(255,68,68,.1)' : 'rgba(59,130,246,.1)'};padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600`;
+    if (latestPO.status === 'rejected') {
+      status.textContent = `PO${latestPO.number} Not Approved`;
+      status.style.cssText = 'color:var(--red);background:rgba(255,68,68,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600';
+    } else {
+      status.textContent = `PO${latestPO.number} Sent for Approval`;
+      status.style.cssText = 'color:#60a5fa;background:rgba(59,130,246,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600';
+    }
   } else {
     status.textContent = 'No submissions';
     status.style.cssText = 'color:var(--subtle);font-size:11px;font-weight:600';
@@ -8188,12 +8191,22 @@ function renderApproval() {
   sortedRevisions.forEach(rev => {
     const isCurrent = (rev.type === 'CO' && rev.id === latestCOId);
     const isGrayed = !isDraftsman && !isCurrent;
-    const badgeClass = rev.status === 'approved' ? 'approved' : rev.status === 'rejected' ? 'rejected' : 'sent';
+    // PO rows always look "sent" (blue) unless explicitly rejected, even if their
+    // stored status was flipped to 'approved' to unlock the CO upload.
+    // CO rows always look "approved" (green).
+    const badgeClass = rev.type === 'CO'
+      ? 'approved'
+      : rev.status === 'rejected' ? 'rejected' : 'sent';
+    const labelHtml = rev.type === 'CO'
+      ? '<span style="color:var(--green);background:rgba(62,207,142,.15);border:1px solid rgba(62,207,142,.45);padding:2px 10px;border-radius:4px;font-size:11px;font-weight:600;letter-spacing:.3px">Approved</span>'
+      : rev.status === 'rejected'
+        ? '<span style="font-size:12px;color:var(--red)">Not Approved</span>'
+        : '<span style="font-size:12px;color:var(--muted)">Sent for Approval</span>';
 
     html += `<div class="revision-group ${isCurrent ? 'current' : ''} ${isGrayed ? 'grayed' : ''}">
       <div class="revision-header">
         <span class="revision-badge ${badgeClass}">${rev.type}${rev.number}</span>
-        <span style="font-size:12px;color:var(--muted)">${rev.status === 'sent' ? 'Sent for Approval' : rev.status === 'approved' ? 'Approved' : 'Not Approved'}</span>
+        ${labelHtml}
         <span style="font-size:11px;color:var(--subtle);margin-left:auto">${new Date(rev.uploadedAt).toLocaleDateString('en-GB')}</span>
       </div>`;
 
