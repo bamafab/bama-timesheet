@@ -1378,6 +1378,7 @@ function checkManagerPin() {
 
   // Has permissions — enter dashboard
   currentManagerUser = _pendingManagerUser;
+  sessionStorage.setItem('bama_mgr_authed', currentManagerUser);
   _pendingManagerUser = null;
   document.getElementById('mgrPinInput').value = '';
 
@@ -1428,7 +1429,7 @@ function filterSidebarTabs(perms) {
 function findFirstAllowedTab(perms) {
   const tabOrder = CURRENT_PAGE === 'office'
     ? ['dashboard','staff','holidays','project','employee','clockinout','payroll','archive']
-    : ['reports','settings','useraccess'];
+    : ['reports','settings','useraccess','templates'];
   for (const tab of tabOrder) {
     const permKey = Object.keys(PERM_TO_TAB).find(k => PERM_TO_TAB[k] === tab);
     if (permKey && perms[permKey]) return tab;
@@ -2427,6 +2428,8 @@ function goHome() {
     renderOfficeEmployeeGrid();
   } else if (CURRENT_PAGE === 'projects') {
     window.location.href = 'index.html';
+  } else if (CURRENT_PAGE === 'templates') {
+    window.location.href = 'manager.html';
   } else if (CURRENT_PAGE === 'hub') {
     window.location.href = 'hub.html';
   } else {
@@ -4466,7 +4469,7 @@ function renderAttendanceReport(empFilter) {
   }
 }
 
-function exportAttendancePDF() {
+async function exportAttendancePDF() {
   const empFilter = document.getElementById('rptEmployeeFilter')?.value || '';
   const data = getAttendanceData(empFilter);
   const general = getPeriodData(empFilter);
@@ -4480,81 +4483,20 @@ function exportAttendancePDF() {
       periodLabel = d.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
     } else periodLabel = from.slice(0, 4);
   }
-
-  const lateRows = [...data.lateList].sort((a, b) => b.minsLate - a.minsLate).map(l => {
-    const minsStr = l.minsLate >= 60 ? `${Math.floor(l.minsLate / 60)}h ${l.minsLate % 60}m` : `${l.minsLate}m`;
-    return `<tr><td>${l.name}</td><td>${fmtDateStr(l.date)}</td><td>${l.clockIn}</td><td class="late">+${minsStr}</td></tr>`;
-  }).join('');
-
-  const absRows = data.absenceList.map(a => {
-    const rangeStr = a.dateFrom === a.dateTo ? fmtDateStr(a.dateFrom) : `${fmtDateStr(a.dateFrom)} – ${fmtDateStr(a.dateTo)}`;
-    return `<tr><td>${a.name}</td><td>${rangeStr}</td><td class="sick">${a.days} day${a.days !== 1 ? 's' : ''}</td><td>${a.reason || '—'}</td></tr>`;
-  }).join('');
-
   const filterLabel = empFilter ? ` — ${empFilter}` : ' — All Employees';
 
+  await loadLogoDataUri();
+
+  const html = buildAttendanceHTML({
+    periodLabel,
+    from: fmtDateStr(from),
+    to: fmtDateStr(to),
+    filterLabel,
+    general,
+    data
+  });
   const printWin = window.open('', '_blank');
-  printWin.document.write(`<!DOCTYPE html><html><head>
-    <title>BAMA Report – ${periodLabel}</title>
-    <style>
-      @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=DM+Mono&display=swap');
-      * { box-sizing:border-box; margin:0; padding:0; }
-      body { font-family:'DM Sans',sans-serif; padding:32px; color:#111; background:#fff; }
-      h1 { font-size:28px; font-weight:700; letter-spacing:2px; color:#ff6b00; margin-bottom:4px; }
-      .subtitle { font-size:13px; color:#888; margin-bottom:4px; }
-      .period { font-size:15px; font-weight:600; margin-bottom:24px; color:#333; }
-      .section-title { font-size:12px; text-transform:uppercase; letter-spacing:1.5px; color:#888; margin:24px 0 10px; border-bottom:1px solid #eee; padding-bottom:6px; }
-      .kpi-row { display:flex; gap:14px; margin-bottom:16px; flex-wrap:wrap; }
-      .kpi { border:1.5px solid #eee; border-radius:10px; padding:12px 16px; min-width:120px; }
-      .kpi-label { font-size:9px; text-transform:uppercase; letter-spacing:1px; color:#888; margin-bottom:3px; }
-      .kpi-value { font-size:22px; font-weight:700; font-family:'DM Mono',monospace; }
-      .green { color:#16a34a; } .red { color:#ef4444; } .amber { color:#f59e0b; } .purple { color:#6366f1; } .orange { color:#ff6b00; }
-      h2 { font-size:16px; font-weight:600; margin:20px 0 10px; }
-      table { width:100%; border-collapse:collapse; margin-bottom:16px; }
-      th { font-size:10px; letter-spacing:1.5px; text-transform:uppercase; color:#888; padding:8px 12px; text-align:left; border-bottom:2px solid #eee; }
-      td { padding:10px 12px; border-bottom:1px solid #f0f0f0; font-size:13px; }
-      .late { color:#f59e0b; font-weight:600; }
-      .sick { color:#ef4444; font-weight:600; }
-      .empty { color:#aaa; font-size:13px; text-align:center; padding:20px; }
-      .footer { margin-top:32px; font-size:11px; color:#aaa; border-top:1px solid #eee; padding-top:12px; }
-      @media print { body { padding:16px; } button { display:none; } }
-    </style>
-  </head><body>
-    <h1>BAMA FABRICATION</h1>
-    <div class="subtitle">Workshop Report${filterLabel}</div>
-    <div class="period">${periodLabel}: ${fmtDateStr(from)} – ${fmtDateStr(to)}</div>
-
-    <div class="section-title">Hours &amp; Utilisation</div>
-    <div class="kpi-row">
-      <div class="kpi"><div class="kpi-label">Total Hours</div><div class="kpi-value orange">${general.totalClocked.toFixed(1)}h</div></div>
-      <div class="kpi"><div class="kpi-label">Project Hours</div><div class="kpi-value green">${general.totalProject.toFixed(1)}h</div></div>
-      <div class="kpi"><div class="kpi-label">Workshop General</div><div class="kpi-value purple">${general.totalWGD.toFixed(1)}h</div></div>
-      <div class="kpi"><div class="kpi-label">Unproductive</div><div class="kpi-value red">${general.totalUnproductive.toFixed(1)}h</div></div>
-      <div class="kpi"><div class="kpi-label">Utilisation</div><div class="kpi-value ${general.utilisation >= 80 ? 'green' : general.utilisation >= 60 ? 'amber' : 'red'}">${general.utilisation}%</div></div>
-    </div>
-
-    <div class="section-title">Attendance</div>
-    <div class="kpi-row">
-      <div class="kpi"><div class="kpi-label">Attendance Rate</div><div class="kpi-value ${data.attendanceRate >= 95 ? 'green' : data.attendanceRate >= 85 ? 'amber' : 'red'}">${data.attendanceRate}%</div></div>
-      <div class="kpi"><div class="kpi-label">Days Absent (Sick)</div><div class="kpi-value ${data.totalSickDays > 0 ? 'red' : 'green'}">${data.totalSickDays}</div></div>
-      <div class="kpi"><div class="kpi-label">Late Arrivals</div><div class="kpi-value ${data.totalLate > 0 ? 'amber' : 'green'}">${data.totalLate}</div></div>
-      <div class="kpi"><div class="kpi-label">Holidays Taken</div><div class="kpi-value purple">${data.totalHolidayDays}</div></div>
-      <div class="kpi"><div class="kpi-label">Holiday Balance</div><div class="kpi-value ${data.totalHolidayBalance > 0 ? 'green' : 'red'}">${data.totalHolidayBalance}</div></div>
-      <div class="kpi"><div class="kpi-label">Avg Shift Length</div><div class="kpi-value orange">${data.avgShiftLength}</div></div>
-    </div>
-
-    <h2>Late Arrivals</h2>
-    ${data.lateList.length ? `<table><thead><tr><th>Employee</th><th>Date</th><th>Clock In</th><th>Late By</th></tr></thead><tbody>${lateRows}</tbody></table>` : '<div class="empty">No late arrivals in this period</div>'}
-
-    <h2>Absences (Sick Leave)</h2>
-    ${data.absenceList.length ? `<table><thead><tr><th>Employee</th><th>Dates</th><th>Duration</th><th>Reason</th></tr></thead><tbody>${absRows}</tbody></table>` : '<div class="empty">No sick leave recorded in this period</div>'}
-
-    <div class="footer">
-      Generated by BAMA Workshop ERP &nbsp;|&nbsp; ${new Date().toLocaleString('en-GB')} &nbsp;|&nbsp;
-      Expected start time: ${data.expectedStart}
-    </div>
-    <script>window.onload = function() { window.print(); }<\\/script>
-  </body></html>`);
+  printWin.document.write(html + `<script>window.onload = function() { window.print(); }<\/script>`);
   printWin.document.close();
 }
 
@@ -5288,102 +5230,27 @@ async function emailPayrollReport() {
   }
 }
 
-function generatePayrollPDF() {
+async function generatePayrollPDF() {
   const { mon, sun } = getWeekDates(payrollWeekOffset);
   const employees = (state.timesheetData.employees || []).filter(e => e.active !== false && (e.payType || 'payee') !== 'cis');
   const results = employees.map(e => calculatePayroll(e.name, mon, sun)).filter(Boolean);
 
   if (!results.length) { toast('No payroll data to export', 'error'); return; }
 
-  const totalBasic = results.reduce((s, r) => s + r.basicPay, 0);
-  const totalOT = results.reduce((s, r) => s + r.overtimePay, 0);
-  const totalDT = results.reduce((s, r) => s + r.doublePay, 0);
-  const grandTotal = results.reduce((s, r) => s + r.totalPay, 0);
+  const totals = {
+    basic: results.reduce((s, r) => s + r.basicPay, 0),
+    ot: results.reduce((s, r) => s + r.overtimePay, 0),
+    dt: results.reduce((s, r) => s + r.doublePay, 0),
+    grand: results.reduce((s, r) => s + r.totalPay, 0)
+  };
   const weekStr = `${fmtDate(mon)} – ${fmtDate(sun)}`;
 
+  // Ensure logo is loaded into cache so it embeds in the print window
+  await loadLogoDataUri();
+
+  const html = buildPayrollHTML({ results, totals, weekStr });
   const printWin = window.open('', '_blank');
-  printWin.document.write(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>BAMA Payroll – ${weekStr}</title>
-      <style>
-        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=DM+Mono&display=swap');
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: 'DM Sans', sans-serif; padding: 32px; color: #111; background: #fff; }
-        h1 { font-size: 28px; font-weight: 700; letter-spacing: 2px; color: #ff6b00; margin-bottom: 4px; }
-        .subtitle { font-size: 13px; color: #888; margin-bottom: 8px; }
-        .week { font-size: 15px; font-weight: 600; margin-bottom: 28px; color: #333; }
-        table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
-        th { font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: #888;
-          padding: 8px 12px; text-align: left; border-bottom: 2px solid #eee; }
-        td { padding: 12px 12px; border-bottom: 1px solid #f0f0f0; font-size: 13px; }
-        .mono { font-family: 'DM Mono', monospace; }
-        .name { font-weight: 600; }
-        .total-pay { font-weight: 700; font-size: 15px; color: #ff6b00; }
-        .ot { color: #f59e0b; }
-        .dt { color: #ef4444; }
-        tfoot td { font-weight: 700; border-top: 2px solid #ddd; border-bottom: none; background: #fafafa; }
-        .grand { font-size: 17px; color: #ff6b00; }
-        .badge { display:inline-block; padding:1px 6px; border-radius:3px; font-size:10px;
-          background:#d1fae5; color:#065f46; margin-left:6px; font-family:sans-serif; }
-        .footer { margin-top: 32px; font-size: 11px; color: #aaa; border-top: 1px solid #eee; padding-top: 12px; }
-        @media print {
-          body { padding: 16px; }
-          button { display: none; }
-        }
-      </style>
-    </head>
-    <body>
-      <h1>BAMA FABRICATION</h1>
-      <div class="subtitle">Payroll Summary Report</div>
-      <div class="week">Week: ${weekStr}</div>
-
-      <table>
-        <thead>
-          <tr>
-            <th>Employee</th>
-            <th>Rate</th>
-            <th>Total Hrs</th>
-            <th>Basic (≤40h)</th>
-            <th>O/T ×1.5</th>
-            <th>Dbl Time ×2</th>
-            <th>Total Pay</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${results.map(r => `
-            <tr>
-              <td class="name">${r.employeeName}${r.doubleTimeApplies ? '<span class="badge">SAT+SUN</span>' : ''}</td>
-              <td class="mono">£${r.rate.toFixed(2)}/hr</td>
-              <td class="mono"><b>${r.totalHours.toFixed(2)}h</b></td>
-              <td class="mono">${r.basicHours}h &nbsp; £${r.basicPay.toFixed(2)}</td>
-              <td class="mono ot">${r.overtimeHours > 0 ? r.overtimeHours+'h &nbsp; £'+r.overtimePay.toFixed(2) : '—'}</td>
-              <td class="mono dt">${r.doubleHours > 0 ? r.doubleHours+'h &nbsp; £'+r.doublePay.toFixed(2) : '—'}</td>
-              <td class="mono total-pay">£${r.totalPay.toFixed(2)}</td>
-            </tr>
-          `).join('')}
-        </tbody>
-        <tfoot>
-          <tr>
-            <td colspan="3">TOTALS</td>
-            <td class="mono">£${totalBasic.toFixed(2)}</td>
-            <td class="mono ot">£${totalOT.toFixed(2)}</td>
-            <td class="mono dt">£${totalDT.toFixed(2)}</td>
-            <td class="mono grand">£${grandTotal.toFixed(2)}</td>
-          </tr>
-        </tfoot>
-      </table>
-
-      <div class="footer">
-        Generated by BAMA Workshop Timesheet &nbsp;|&nbsp; ${new Date().toLocaleString('en-GB')} &nbsp;|&nbsp;
-        Pay rules: Standard rate for first 40hrs. Overtime ×1.5 for hours over 40. Sunday ×2 only if Saturday also worked.
-      </div>
-
-      <script>window.onload = function() { window.print(); }<\/script>
-    </body>
-    </html>
-  `);
+  printWin.document.write(html + `<script>window.onload = function() { window.print(); }<\/script>`);
   printWin.document.close();
 }
 
@@ -6554,6 +6421,7 @@ const PERMISSION_DEFS = [
   { key: 'holidays', label: 'Holidays', desc: 'Manage holiday requests and calendar' },
   { key: 'reports', label: 'Reports', desc: 'View analytics and reports' },
   { key: 'settings', label: 'Settings', desc: 'Manage email settings and system config' },
+  { key: 'templates', label: 'Templates', desc: 'Edit document templates (payroll PDF, delivery notes, reports)' },
   { key: 'userAccess', label: 'User Access', desc: 'Manage who can access what' },
   { key: 'draftsmanMode', label: 'Draftsman Mode', desc: 'Upload drawings and manage jobs in Projects' }
 ];
@@ -6568,6 +6436,7 @@ const PERM_TO_TAB = {
   holidays: 'holidays',
   reports: 'reports',
   settings: 'settings',
+  templates: 'templates',
   userAccess: 'useraccess'
 };
 
@@ -7960,87 +7829,9 @@ function renderDeliveryNotesList() {
 
 // ── Print Delivery Note (BAMA format) ──
 function buildDeliveryNoteHTML(dn, bomJob, proj, job) {
-  const allItems = (bomJob.materialLists || []).flatMap(ml => ml.items || []);
-  const dnItems = dn.itemIds.map(id => allItems.find(i => i.id === id)).filter(Boolean);
-  const date = new Date(dn.createdAt).toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'});
-
-  let html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
-<title>${dn.number} - Delivery Note</title>
-<style>
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body { font-family: Arial, sans-serif; font-size: 12px; padding: 20px; color: #222; }
-  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 2px solid #222; }
-  .company { font-size: 22px; font-weight: 700; color: #D0021B; letter-spacing: 1px; }
-  .company-sub { font-size: 9px; color: #666; margin-top: 4px; line-height: 1.4; }
-  .header-right { text-align: right; }
-  .dn-title { font-size: 20px; font-weight: 700; font-style: italic; margin-bottom: 8px; }
-  .meta-grid { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 11px; }
-  .meta-label { font-weight: 600; }
-  table { width: 100%; border-collapse: collapse; margin: 16px 0; }
-  th { background: #f5f5f5; border: 1px solid #ccc; padding: 6px 8px; text-align: left; font-size: 11px; font-weight: 600; }
-  td { border: 1px solid #ccc; padding: 5px 8px; font-size: 11px; }
-  .sign-section { margin-top: 30px; display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
-  .sign-box { border: 1px solid #ccc; padding: 12px; min-height: 60px; }
-  .sign-label { font-weight: 600; font-size: 10px; margin-bottom: 20px; }
-  .total-row td { font-weight: 700; background: #f9f9f9; }
-  @media print { body { padding: 10px; } }
-</style></head><body>
-<div class="header">
-  <div>
-    <div class="company">BAMA FABRICATION</div>
-    <div class="company-sub">11 Enterprise Way, Enterprise Park, Yaxley,<br>Peterborough, Cambridgeshire PE7 3WY<br>Tel: 01733 855212 · Email: info@bamafabrication.co.uk</div>
-  </div>
-  <div class="header-right">
-    <div class="dn-title">DELIVERY NOTE</div>
-    <div class="meta-grid">
-      <span class="meta-label">DN Number:</span><span>${dn.number}</span>
-      <span class="meta-label">Date:</span><span>${date}</span>
-      <span class="meta-label">Project:</span><span>${proj.name || ''}</span>
-      <span class="meta-label">Job No:</span><span>${proj.id || ''}</span>
-      ${job && job.name ? `<span class="meta-label">Job:</span><span>${job.name}</span>` : ''}
-      <span class="meta-label">Destination:</span><span>${dn.destinationName || dn.destination}</span>
-      ${dn.address ? `<span class="meta-label">Address:</span><span>${dn.address}</span>` : ''}
-      ${dn.siteContact ? `<span class="meta-label">Site Contact:</span><span>${dn.siteContact}</span>` : ''}
-      ${dn.phone ? `<span class="meta-label">Phone:</span><span>${dn.phone}</span>` : ''}
-      ${dn.collectionDate ? `<span class="meta-label">Collection Date:</span><span>${new Date(dn.collectionDate).toLocaleDateString('en-GB')}</span>` : ''}
-      ${dn.deliveryDate ? `<span class="meta-label">Delivery Date:</span><span>${new Date(dn.deliveryDate).toLocaleDateString('en-GB')}</span>` : ''}
-    </div>
-  </div>
-</div>
-<table>
-<thead><tr><th>Mark</th><th>Qty</th><th>Description / Size</th><th>Coating</th><th>Weight (kg)</th></tr></thead>
-<tbody>`;
-
-  let totalWt = 0;
-  for (const item of dnItems) {
-    const wt = item.totalWeight || item.weightPerUnit || 0;
-    totalWt += wt;
-    html += `<tr>
-      <td style="font-weight:600">${item.mark}</td>
-      <td>${item.quantity || ''}</td>
-      <td>${item.description || item.size || ''}</td>
-      <td>${item.coating || ''}</td>
-      <td style="text-align:right">${wt ? wt.toLocaleString('en-GB') : ''}</td>
-    </tr>`;
-  }
-  html += `<tr class="total-row">
-    <td colspan="4" style="text-align:right">Total Weight:</td>
-    <td style="text-align:right">${totalWt.toLocaleString('en-GB')} kg</td>
-  </tr></tbody></table>
-<div class="sign-section">
-  <div class="sign-box">
-    <div class="sign-label">Delivered By:</div>
-    <div style="border-bottom:1px solid #999;margin-top:24px;padding-bottom:4px"></div>
-    <div style="font-size:10px;color:#666;margin-top:4px">Date Delivered:</div>
-  </div>
-  <div class="sign-box">
-    <div class="sign-label">Received By:</div>
-    <div style="border-bottom:1px solid #999;margin-top:24px;padding-bottom:4px"></div>
-    <div style="font-size:10px;color:#666;margin-top:4px">Date Received:</div>
-  </div>
-</div>
-</body></html>`;
-  return html;
+  // Thin wrapper over buildDeliveryNoteHTMLCore so existing callers keep working.
+  // Callers that want the logo embedded should `await loadLogoDataUri()` before calling this.
+  return buildDeliveryNoteHTMLCore(dn, bomJob, proj, job);
 }
 
 // ── Upload generated Delivery Note PDF to SharePoint ──
@@ -8050,6 +7841,7 @@ async function saveDeliveryNotePDFToSharePoint(dn, bomJob, proj, job) {
   if (typeof html2pdf === 'undefined') throw new Error('PDF library not loaded');
 
   // Build HTML into a hidden container
+  await loadLogoDataUri();
   const html = buildDeliveryNoteHTML(dn, bomJob, proj, job);
   const container = document.createElement('div');
   container.style.cssText = 'position:fixed;left:-10000px;top:0;width:794px;background:#fff;';
@@ -8121,6 +7913,7 @@ async function printDeliveryNote(dnId) {
   }
 
   // Fallback: render HTML directly for legacy DNs
+  await loadLogoDataUri();
   const html = buildDeliveryNoteHTML(dn, bomJob, currentProject || {}, currentJob || {});
   const printWin = window.open('', '_blank');
   printWin.document.write(html);
@@ -10108,12 +9901,782 @@ function closeModal() {
 // INIT
 // ═══════════════════════════════════════════
 // ═══════════════════════════════════════════
+// ═══════════════════════════════════════════
+// TEMPLATES MODULE
+// ═══════════════════════════════════════════
+
+// ── Template editor state ──
+let tplCurrent = 'global';
+let tplDraft = null;
+let tplDirty = false;
+let _logoFileToUpload = null;
+let _logoDataUriCache = null;
+
+// ── Defaults — match existing hardcoded output so byte-identical before any edits ──
+const TEMPLATE_DEFAULTS = {
+  global: {
+    companyName: 'BAMA FABRICATION',
+    address: '11 Enterprise Way, Enterprise Park, Yaxley, Peterborough, Cambridgeshire PE7 3WY',
+    phone: '01733 855212',
+    email: 'info@bamafabrication.co.uk',
+    vatNumber: '',
+    logoUrl: '',
+    logoItemId: ''
+  },
+  payroll: {
+    title: 'Payroll Summary Report',
+    accentColor: '#ff6b00',
+    showLogo: true,
+    showCompanyDetails: true,
+    footerText: 'Generated by BAMA Workshop Timesheet',
+    payRulesText: 'Pay rules: Standard rate for first 40hrs. Overtime \u00d71.5 for hours over 40. Sunday \u00d72 only if Saturday also worked.'
+  },
+  attendance: {
+    title: 'Workshop Report',
+    accentColor: '#ff6b00',
+    showLogo: true,
+    showCompanyDetails: true,
+    footerText: 'Generated by BAMA Workshop ERP'
+  },
+  deliveryNote: {
+    title: 'DELIVERY NOTE',
+    accentColor: '#D0021B',
+    showLogo: true,
+    showCompanyDetails: true,
+    showSignatureBlock: true,
+    termsText: ''
+  }
+};
+
+// ── Small HTML-escape helper (no equivalent in shared.js yet) ──
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// ── Read a template setting with fallback to defaults ──
+function tplGet(key, field) {
+  const tpls = (state.timesheetData.settings && state.timesheetData.settings.templates) || {};
+  const block = tpls[key] || {};
+  if (block[field] !== undefined && block[field] !== null && block[field] !== '') return block[field];
+  return TEMPLATE_DEFAULTS[key] ? TEMPLATE_DEFAULTS[key][field] : '';
+}
+
+// ── Deep clone current templates settings for draft editing ──
+function tplCloneSettings() {
+  const saved = (state.timesheetData.settings && state.timesheetData.settings.templates) || {};
+  const out = {};
+  for (const k of Object.keys(TEMPLATE_DEFAULTS)) {
+    out[k] = Object.assign({}, TEMPLATE_DEFAULTS[k], saved[k] || {});
+  }
+  return out;
+}
+
+// ── Fetch logo from SharePoint and cache as data URI ──
+// Required because print windows can't share auth tokens; data URI embeds directly.
+async function loadLogoDataUri(force) {
+  if (_logoDataUriCache && !force) return _logoDataUriCache;
+  const itemId = tplGet('global', 'logoItemId');
+  if (!itemId) return '';
+  try {
+    const token = await getToken();
+    const res = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/items/${itemId}/content`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    if (!res.ok) { console.warn('Logo fetch failed:', res.status); return ''; }
+    const blob = await res.blob();
+    _logoDataUriCache = await new Promise(resolve => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => resolve('');
+      reader.readAsDataURL(blob);
+    });
+    return _logoDataUriCache;
+  } catch (e) {
+    console.warn('Logo load error:', e.message);
+    return '';
+  }
+}
+
+// ── Templates page init ──
+function initTemplatesPage() {
+  const authed = sessionStorage.getItem('bama_mgr_authed');
+  if (!authed) {
+    showScreen('screenTemplatesAuth');
+    return;
+  }
+  const userLabel = document.getElementById('tplUserLabel');
+  if (userLabel) userLabel.textContent = authed;
+
+  tplDraft = tplCloneSettings();
+  tplDirty = false;
+
+  loadLogoDataUri().then(() => {
+    showScreen('screenTemplates');
+    selectTemplate('global');
+  });
+}
+
+// ── Sidebar template selection ──
+function selectTemplate(key) {
+  if (tplDirty) {
+    if (!confirm('You have unsaved changes. Discard and switch template?')) return;
+    tplDraft = tplCloneSettings();
+    tplDirty = false;
+    updateDirtyIndicator();
+  }
+  tplCurrent = key;
+  document.querySelectorAll('.tpl-item').forEach(el => {
+    el.classList.toggle('active', el.getAttribute('data-template') === key);
+  });
+  renderTemplateEditor(key);
+  refreshTemplatePreview();
+}
+
+// ── Render the form for the current template ──
+function renderTemplateEditor(key) {
+  const editor = document.getElementById('tplEditor');
+  if (!editor) return;
+  const d = tplDraft[key] || {};
+
+  const field = (name, label, type, hint) => {
+    const val = d[name] != null ? d[name] : '';
+    if (type === 'textarea') {
+      return `<div class="tpl-field"><label>${label}${hint ? ' <span class="hint">'+hint+'</span>' : ''}</label>
+        <textarea data-field="${name}" oninput="onTemplateFieldInput(event)">${escapeHtml(val)}</textarea></div>`;
+    }
+    if (type === 'color') {
+      return `<div class="tpl-field"><label>${label}${hint ? ' <span class="hint">'+hint+'</span>' : ''}</label>
+        <div class="color-row">
+          <input type="color" data-field="${name}" value="${escapeHtml(val || '#ff6b00')}" oninput="onTemplateFieldInput(event)">
+          <span>${escapeHtml(val || '#ff6b00')}</span>
+        </div></div>`;
+    }
+    if (type === 'checkbox') {
+      return `<div class="tpl-field"><div class="checkbox-row">
+        <input type="checkbox" data-field="${name}" ${d[name] ? 'checked' : ''} onchange="onTemplateFieldInput(event)" id="tpl_${name}">
+        <label for="tpl_${name}">${label}${hint ? ' <span class="hint">'+hint+'</span>' : ''}</label>
+      </div></div>`;
+    }
+    return `<div class="tpl-field"><label>${label}${hint ? ' <span class="hint">'+hint+'</span>' : ''}</label>
+      <input type="${type||'text'}" data-field="${name}" value="${escapeHtml(val)}" oninput="onTemplateFieldInput(event)"></div>`;
+  };
+
+  let html = '';
+  if (key === 'global') {
+    html = `
+      <h2>Company Details</h2>
+      <div class="tpl-desc">Shared across every template. Changes here propagate to payroll, attendance reports, and delivery notes.</div>
+      <div class="tpl-section">
+        <div class="tpl-section-title">Logo</div>
+        <div class="tpl-logo-preview" id="tplLogoDisplay">
+          ${_logoDataUriCache
+            ? `<img src="${_logoDataUriCache}" alt="Current logo">`
+            : `<div class="logo-empty">No logo uploaded yet</div>`}
+          <button class="btn btn-ghost" style="margin-left:auto;padding:6px 12px;font-size:12px" onclick="openLogoUploadModal()">${_logoDataUriCache ? 'Replace' : 'Upload'} logo</button>
+          ${_logoDataUriCache ? '<button class="btn btn-ghost" style="padding:6px 12px;font-size:12px" onclick="removeLogo()">Remove</button>' : ''}
+        </div>
+      </div>
+      <div class="tpl-section">
+        <div class="tpl-section-title">Company</div>
+        ${field('companyName', 'Company name', 'text')}
+        ${field('address', 'Address', 'textarea', 'multi-line, shown on headers')}
+        ${field('phone', 'Phone', 'text')}
+        ${field('email', 'Email', 'email')}
+        ${field('vatNumber', 'VAT number', 'text', 'optional')}
+      </div>`;
+  } else if (key === 'payroll') {
+    html = `
+      <h2>Payroll Summary</h2>
+      <div class="tpl-desc">Weekly payroll PDF generated from the Payroll tab.</div>
+      <div class="tpl-section">
+        <div class="tpl-section-title">Header</div>
+        ${field('title', 'Document title', 'text')}
+        ${field('accentColor', 'Accent colour', 'color', 'used for totals and title')}
+        ${field('showLogo', 'Show company logo', 'checkbox')}
+        ${field('showCompanyDetails', 'Show company address &amp; contact', 'checkbox')}
+      </div>
+      <div class="tpl-section">
+        <div class="tpl-section-title">Footer</div>
+        ${field('footerText', 'Footer text', 'textarea')}
+        ${field('payRulesText', 'Pay rules note', 'textarea', 'displayed below footer')}
+      </div>`;
+  } else if (key === 'attendance') {
+    html = `
+      <h2>Attendance Report</h2>
+      <div class="tpl-desc">Workshop KPI and absence report from the Reports tab.</div>
+      <div class="tpl-section">
+        <div class="tpl-section-title">Header</div>
+        ${field('title', 'Document title', 'text')}
+        ${field('accentColor', 'Accent colour', 'color')}
+        ${field('showLogo', 'Show company logo', 'checkbox')}
+        ${field('showCompanyDetails', 'Show company address &amp; contact', 'checkbox')}
+      </div>
+      <div class="tpl-section">
+        <div class="tpl-section-title">Footer</div>
+        ${field('footerText', 'Footer text', 'textarea')}
+      </div>`;
+  } else if (key === 'deliveryNote') {
+    html = `
+      <h2>Delivery Note</h2>
+      <div class="tpl-desc">Saved to <code>07 - Deliveries/</code> on SharePoint when generated.</div>
+      <div class="tpl-section">
+        <div class="tpl-section-title">Header</div>
+        ${field('title', 'Document title', 'text')}
+        ${field('accentColor', 'Accent colour', 'color', 'used for title &amp; company name')}
+        ${field('showLogo', 'Show company logo', 'checkbox')}
+        ${field('showCompanyDetails', 'Show company address &amp; contact', 'checkbox')}
+      </div>
+      <div class="tpl-section">
+        <div class="tpl-section-title">Footer</div>
+        ${field('showSignatureBlock', 'Show signature block (Delivered by / Received by)', 'checkbox')}
+        ${field('termsText', 'Terms / notes', 'textarea', 'optional &mdash; e.g. returns policy')}
+      </div>`;
+  }
+  editor.innerHTML = html;
+}
+
+// ── Live-update field handler ──
+function onTemplateFieldInput(ev) {
+  const el = ev.target;
+  const name = el.getAttribute('data-field');
+  if (!name) return;
+  let val;
+  if (el.type === 'checkbox') val = el.checked;
+  else val = el.value;
+  if (!tplDraft[tplCurrent]) tplDraft[tplCurrent] = {};
+  tplDraft[tplCurrent][name] = val;
+  tplDirty = true;
+  updateDirtyIndicator();
+  if (el.type === 'color') {
+    const span = el.parentElement.querySelector('span');
+    if (span) span.textContent = val;
+  }
+  clearTimeout(window._tplPreviewTimer);
+  window._tplPreviewTimer = setTimeout(refreshTemplatePreview, 150);
+}
+
+function updateDirtyIndicator() {
+  const flag = document.getElementById('tplDirtyFlag');
+  if (flag) flag.style.display = tplDirty ? '' : 'none';
+}
+
+// ── Save draft via /api/settings ──
+async function saveTemplateSettings() {
+  const btn = document.getElementById('tplSaveBtn');
+  btn.disabled = true;
+  btn.textContent = 'Saving\u2026';
+  try {
+    await api.put('/api/settings', { templates: tplDraft });
+    if (!state.timesheetData.settings) state.timesheetData.settings = {};
+    state.timesheetData.settings.templates = JSON.parse(JSON.stringify(tplDraft));
+    tplDirty = false;
+    updateDirtyIndicator();
+    toast('Templates saved', 'success');
+  } catch (e) {
+    toast('Save failed: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save changes';
+  }
+}
+
+function discardTemplateChanges() {
+  if (!tplDirty) return;
+  if (!confirm('Discard all unsaved changes?')) return;
+  tplDraft = tplCloneSettings();
+  tplDirty = false;
+  updateDirtyIndicator();
+  renderTemplateEditor(tplCurrent);
+  refreshTemplatePreview();
+}
+
+// ── Live preview (right pane iframe) ──
+function refreshTemplatePreview() {
+  const iframe = document.getElementById('tplPreviewFrame');
+  const label = document.getElementById('tplPreviewLabel');
+  if (!iframe) return;
+
+  let html = '';
+  if (tplCurrent === 'global' || tplCurrent === 'payroll') {
+    html = buildPayrollHTML(getMockPayrollData(), tplDraft);
+    if (label) label.textContent = 'Payroll Summary \u2014 sample data';
+  } else if (tplCurrent === 'attendance') {
+    html = buildAttendanceHTML(getMockAttendanceData(), tplDraft);
+    if (label) label.textContent = 'Attendance Report \u2014 sample data';
+  } else if (tplCurrent === 'deliveryNote') {
+    html = buildDeliveryNoteHTMLCore(getMockDeliveryNote(), getMockBomJob(), getMockProject(), getMockJob(), tplDraft);
+    if (label) label.textContent = 'Delivery Note \u2014 sample data';
+  }
+  iframe.srcdoc = html;
+}
+
+// ── Mock data for preview ──
+function getMockPayrollData() {
+  return {
+    weekStr: '12 Aug \u2013 18 Aug 2024',
+    results: [
+      { employeeName: 'John Smith', rate: 18.50, totalHours: 42.5, basicHours: 40, basicPay: 740.00,
+        overtimeHours: 2.5, overtimePay: 69.38, doubleHours: 0, doublePay: 0, totalPay: 809.38, doubleTimeApplies: false },
+      { employeeName: 'Sarah Jones', rate: 22.00, totalHours: 48, basicHours: 40, basicPay: 880.00,
+        overtimeHours: 6, overtimePay: 198.00, doubleHours: 2, doublePay: 88.00, totalPay: 1166.00, doubleTimeApplies: true },
+      { employeeName: 'Tom Wilson', rate: 16.00, totalHours: 38, basicHours: 38, basicPay: 608.00,
+        overtimeHours: 0, overtimePay: 0, doubleHours: 0, doublePay: 0, totalPay: 608.00, doubleTimeApplies: false }
+    ],
+    totals: { basic: 2228.00, ot: 267.38, dt: 88.00, grand: 2583.38 }
+  };
+}
+function getMockAttendanceData() {
+  return {
+    periodLabel: 'This Week',
+    from: '12/08/2024', to: '18/08/2024',
+    filterLabel: ' \u2014 All Employees',
+    general: { totalClocked: 187.5, totalProject: 142.0, totalWGD: 32.5, totalUnproductive: 13.0, utilisation: 85 },
+    data: {
+      attendanceRate: 96, totalSickDays: 1, totalLate: 2, totalHolidayDays: 3,
+      totalHolidayBalance: 18, avgShiftLength: '8.2h', expectedStart: '07:30',
+      lateList: [
+        { name: 'Tom Wilson', date: '13/08/2024', clockIn: '07:42', minsLate: 12 },
+        { name: 'John Smith', date: '15/08/2024', clockIn: '07:38', minsLate: 8 }
+      ],
+      absenceList: [
+        { name: 'Sarah Jones', dateFrom: '14/08/2024', dateTo: '14/08/2024', days: 1, reason: 'Doctor appointment' }
+      ]
+    }
+  };
+}
+function getMockDeliveryNote() {
+  return {
+    number: 'DN-001', createdAt: new Date().toISOString(),
+    destinationName: 'Site A \u2014 Main Building', address: 'Unit 4, Industrial Park, Peterborough PE1 5XY',
+    siteContact: 'Mike Johnson', phone: '07123 456789', deliveryDate: new Date().toISOString(),
+    itemIds: ['i1','i2','i3']
+  };
+}
+function getMockBomJob() {
+  return { materialLists: [{ items: [
+    { id: 'i1', mark: 'B1', quantity: 4, description: '203\u00d7203 UC46 \u00d7 3500mm', coating: 'Galv', totalWeight: 644 },
+    { id: 'i2', mark: 'C1', quantity: 2, description: '152\u00d789 PFC \u00d7 2800mm', coating: 'Primed', totalWeight: 95 },
+    { id: 'i3', mark: 'P1', quantity: 12, description: '200\u00d7200\u00d710mm Base Plate', coating: 'Galv', totalWeight: 76 }
+  ]}]};
+}
+function getMockProject() { return { id: '24-156', name: 'Peterborough Office Expansion' }; }
+function getMockJob() { return { name: 'Main Frame' }; }
+
+// ═══════════════════════════════════════════
+// LOGO UPLOAD
+// ═══════════════════════════════════════════
+function openLogoUploadModal() {
+  document.getElementById('logoFileInput').value = '';
+  document.getElementById('logoUploadPreview').style.display = 'none';
+  document.getElementById('logoUploadError').style.display = 'none';
+  document.getElementById('logoUploadProgress').style.display = 'none';
+  document.getElementById('logoUploadConfirmBtn').disabled = true;
+  _logoFileToUpload = null;
+  document.getElementById('logoUploadModal').classList.add('active');
+}
+
+function closeLogoUploadModal() {
+  document.getElementById('logoUploadModal').classList.remove('active');
+  _logoFileToUpload = null;
+}
+
+function handleLogoFileSelected(ev) {
+  const file = ev.target.files[0];
+  const errEl = document.getElementById('logoUploadError');
+  const btn = document.getElementById('logoUploadConfirmBtn');
+  errEl.style.display = 'none';
+  btn.disabled = true;
+  if (!file) return;
+
+  const isPng = file.type === 'image/png' || /\.png$/i.test(file.name);
+  if (!isPng) {
+    errEl.textContent = 'PNG files only. Please convert your logo to PNG first.';
+    errEl.style.display = '';
+    return;
+  }
+  if (file.size > 2 * 1024 * 1024) {
+    errEl.textContent = `File too large (${(file.size/1024/1024).toFixed(1)} MB). Max 2 MB.`;
+    errEl.style.display = '';
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      if (img.width > 1000 || img.height > 1000) {
+        errEl.textContent = `Too big (${img.width}\u00d7${img.height}). Max 1000\u00d71000 px.`;
+        errEl.style.display = '';
+        return;
+      }
+      _logoFileToUpload = file;
+      document.getElementById('logoUploadImg').src = reader.result;
+      document.getElementById('logoUploadMeta').textContent = `${file.name} \u00b7 ${img.width}\u00d7${img.height} \u00b7 ${(file.size/1024).toFixed(0)} KB`;
+      document.getElementById('logoUploadPreview').style.display = '';
+      btn.disabled = false;
+    };
+    img.onerror = () => {
+      errEl.textContent = 'Could not read image.';
+      errEl.style.display = '';
+    };
+    img.src = reader.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+async function uploadLogoToSharePoint() {
+  if (!_logoFileToUpload) return;
+  const btn = document.getElementById('logoUploadConfirmBtn');
+  const progress = document.getElementById('logoUploadProgress');
+  const errEl = document.getElementById('logoUploadError');
+  btn.disabled = true;
+  progress.style.display = '';
+  errEl.style.display = 'none';
+
+  try {
+    const uploaded = await uploadFileToFolder(
+      CONFIG.timesheetFolderItemId,
+      'bama-logo.png',
+      _logoFileToUpload,
+      'image/png'
+    );
+    if (!tplDraft.global) tplDraft.global = {};
+    tplDraft.global.logoItemId = uploaded.id;
+    tplDraft.global.logoUrl = uploaded.webUrl || '';
+
+    // Save immediately so logo persists even if user discards other draft changes
+    const mergedSettings = (state.timesheetData.settings && state.timesheetData.settings.templates) || {};
+    const newSettings = Object.assign({}, mergedSettings);
+    newSettings.global = Object.assign({}, newSettings.global || {}, {
+      logoItemId: uploaded.id, logoUrl: uploaded.webUrl || ''
+    });
+    await api.put('/api/settings', { templates: newSettings });
+    if (!state.timesheetData.settings) state.timesheetData.settings = {};
+    state.timesheetData.settings.templates = newSettings;
+
+    _logoDataUriCache = null;
+    await loadLogoDataUri(true);
+
+    toast('Logo uploaded', 'success');
+    closeLogoUploadModal();
+    renderTemplateEditor(tplCurrent);
+    refreshTemplatePreview();
+  } catch (e) {
+    console.error('Logo upload failed:', e);
+    errEl.textContent = 'Upload failed: ' + e.message;
+    errEl.style.display = '';
+    progress.style.display = 'none';
+    btn.disabled = false;
+  }
+}
+
+async function removeLogo() {
+  if (!confirm('Remove the company logo? Templates will render without it.')) return;
+  try {
+    const mergedSettings = (state.timesheetData.settings && state.timesheetData.settings.templates) || {};
+    const newSettings = Object.assign({}, mergedSettings);
+    newSettings.global = Object.assign({}, newSettings.global || {}, { logoItemId: '', logoUrl: '' });
+    await api.put('/api/settings', { templates: newSettings });
+    state.timesheetData.settings.templates = newSettings;
+    if (tplDraft.global) { tplDraft.global.logoItemId = ''; tplDraft.global.logoUrl = ''; }
+    _logoDataUriCache = null;
+    toast('Logo removed', 'success');
+    renderTemplateEditor(tplCurrent);
+    refreshTemplatePreview();
+  } catch (e) {
+    toast('Remove failed: ' + e.message, 'error');
+  }
+}
+
+// ═══════════════════════════════════════════
+// CORE HTML BUILDERS
+// Used by both the real PDF generators AND the live preview.
+// Each takes (data, settingsOverride?) — when override is absent, reads from state.
+// ═══════════════════════════════════════════
+
+function _pickTplSettings(override) {
+  if (override) return override;
+  return tplCloneSettings();
+}
+
+function buildPayrollHTML(data, settingsOverride) {
+  const s = _pickTplSettings(settingsOverride);
+  const g = s.global || TEMPLATE_DEFAULTS.global;
+  const t = s.payroll || TEMPLATE_DEFAULTS.payroll;
+  const logo = _logoDataUriCache || '';
+  const showLogo = t.showLogo !== false && logo;
+  const showCo = t.showCompanyDetails !== false;
+  const accent = t.accentColor || TEMPLATE_DEFAULTS.payroll.accentColor;
+
+  const rowsHtml = data.results.map(r => `
+    <tr>
+      <td class="name">${escapeHtml(r.employeeName)}${r.doubleTimeApplies ? '<span class="badge">SAT+SUN</span>' : ''}</td>
+      <td class="mono">\u00a3${r.rate.toFixed(2)}/hr</td>
+      <td class="mono"><b>${r.totalHours.toFixed(2)}h</b></td>
+      <td class="mono">${r.basicHours}h &nbsp; \u00a3${r.basicPay.toFixed(2)}</td>
+      <td class="mono ot">${r.overtimeHours > 0 ? r.overtimeHours+'h &nbsp; \u00a3'+r.overtimePay.toFixed(2) : '\u2014'}</td>
+      <td class="mono dt">${r.doubleHours > 0 ? r.doubleHours+'h &nbsp; \u00a3'+r.doublePay.toFixed(2) : '\u2014'}</td>
+      <td class="mono total-pay">\u00a3${r.totalPay.toFixed(2)}</td>
+    </tr>`).join('');
+
+  return `<!DOCTYPE html><html><head>
+    <title>${escapeHtml(g.companyName)} Payroll \u2013 ${escapeHtml(data.weekStr)}</title>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=DM+Mono&display=swap');
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { font-family: 'DM Sans', sans-serif; padding: 32px; color: #111; background: #fff; }
+      .header-row { display:flex; align-items:flex-start; justify-content:space-between; margin-bottom: 8px; gap: 20px; }
+      .header-left { flex: 1; }
+      .header-logo { max-width: 130px; max-height: 70px; object-fit: contain; }
+      h1 { font-size: 28px; font-weight: 700; letter-spacing: 2px; color: ${accent}; margin-bottom: 4px; }
+      .subtitle { font-size: 13px; color: #888; margin-bottom: 8px; }
+      .company-meta { font-size: 10px; color: #999; margin-top: 4px; line-height: 1.5; }
+      .week { font-size: 15px; font-weight: 600; margin: 16px 0 24px; color: #333; }
+      table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+      th { font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: #888;
+        padding: 8px 12px; text-align: left; border-bottom: 2px solid #eee; }
+      td { padding: 12px 12px; border-bottom: 1px solid #f0f0f0; font-size: 13px; }
+      .mono { font-family: 'DM Mono', monospace; }
+      .name { font-weight: 600; }
+      .total-pay { font-weight: 700; font-size: 15px; color: ${accent}; }
+      .ot { color: #f59e0b; } .dt { color: #ef4444; }
+      tfoot td { font-weight: 700; border-top: 2px solid #ddd; border-bottom: none; background: #fafafa; }
+      .grand { font-size: 17px; color: ${accent}; }
+      .badge { display:inline-block; padding:1px 6px; border-radius:3px; font-size:10px; background:#d1fae5; color:#065f46; margin-left:6px; font-family:sans-serif; }
+      .footer { margin-top: 32px; font-size: 11px; color: #aaa; border-top: 1px solid #eee; padding-top: 12px; white-space: pre-line; }
+      @media print { body { padding: 16px; } button { display: none; } }
+    </style></head>
+    <body>
+      <div class="header-row">
+        <div class="header-left">
+          <h1>${escapeHtml(g.companyName)}</h1>
+          <div class="subtitle">${escapeHtml(t.title)}</div>
+          ${showCo ? `<div class="company-meta">${escapeHtml(g.address).replace(/\n/g,'<br>')}${g.phone ? ' &nbsp;\u00b7&nbsp; Tel: '+escapeHtml(g.phone) : ''}${g.email ? ' &nbsp;\u00b7&nbsp; '+escapeHtml(g.email) : ''}${g.vatNumber ? '<br>VAT: '+escapeHtml(g.vatNumber) : ''}</div>` : ''}
+        </div>
+        ${showLogo ? `<img src="${logo}" class="header-logo" alt="">` : ''}
+      </div>
+      <div class="week">Week: ${escapeHtml(data.weekStr)}</div>
+      <table>
+        <thead><tr>
+          <th>Employee</th><th>Rate</th><th>Total Hrs</th><th>Basic (\u226440h)</th>
+          <th>O/T \u00d71.5</th><th>Dbl Time \u00d72</th><th>Total Pay</th>
+        </tr></thead>
+        <tbody>${rowsHtml}</tbody>
+        <tfoot><tr>
+          <td colspan="3">TOTALS</td>
+          <td class="mono">\u00a3${data.totals.basic.toFixed(2)}</td>
+          <td class="mono ot">\u00a3${data.totals.ot.toFixed(2)}</td>
+          <td class="mono dt">\u00a3${data.totals.dt.toFixed(2)}</td>
+          <td class="mono grand">\u00a3${data.totals.grand.toFixed(2)}</td>
+        </tr></tfoot>
+      </table>
+      <div class="footer">${escapeHtml(t.footerText)} &nbsp;|&nbsp; ${new Date().toLocaleString('en-GB')}${t.payRulesText ? '\n'+escapeHtml(t.payRulesText) : ''}</div>
+    </body></html>`;
+}
+
+function buildAttendanceHTML(d, settingsOverride) {
+  const s = _pickTplSettings(settingsOverride);
+  const g = s.global || TEMPLATE_DEFAULTS.global;
+  const t = s.attendance || TEMPLATE_DEFAULTS.attendance;
+  const logo = _logoDataUriCache || '';
+  const showLogo = t.showLogo !== false && logo;
+  const showCo = t.showCompanyDetails !== false;
+  const accent = t.accentColor || TEMPLATE_DEFAULTS.attendance.accentColor;
+
+  const lateRows = [...d.data.lateList].sort((a,b) => b.minsLate - a.minsLate).map(l => {
+    const minsStr = l.minsLate >= 60 ? `${Math.floor(l.minsLate/60)}h ${l.minsLate%60}m` : `${l.minsLate}m`;
+    return `<tr><td>${escapeHtml(l.name)}</td><td>${escapeHtml(l.date)}</td><td>${escapeHtml(l.clockIn)}</td><td class="late">+${minsStr}</td></tr>`;
+  }).join('');
+  const absRows = d.data.absenceList.map(a => {
+    const range = a.dateFrom === a.dateTo ? a.dateFrom : `${a.dateFrom} \u2013 ${a.dateTo}`;
+    return `<tr><td>${escapeHtml(a.name)}</td><td>${range}</td><td class="sick">${a.days} day${a.days!==1?'s':''}</td><td>${escapeHtml(a.reason||'\u2014')}</td></tr>`;
+  }).join('');
+
+  return `<!DOCTYPE html><html><head>
+    <title>${escapeHtml(g.companyName)} Report \u2013 ${escapeHtml(d.periodLabel)}</title>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;700&family=DM+Mono&display=swap');
+      * { box-sizing:border-box; margin:0; padding:0; }
+      body { font-family:'DM Sans',sans-serif; padding:32px; color:#111; background:#fff; }
+      .header-row { display:flex; align-items:flex-start; justify-content:space-between; gap:20px; }
+      .header-logo { max-width: 130px; max-height: 70px; object-fit: contain; }
+      h1 { font-size:28px; font-weight:700; letter-spacing:2px; color:${accent}; margin-bottom:4px; }
+      .subtitle { font-size:13px; color:#888; margin-bottom:4px; }
+      .company-meta { font-size:10px; color:#999; margin-top:4px; line-height:1.5; }
+      .period { font-size:15px; font-weight:600; margin:16px 0 24px; color:#333; }
+      .section-title { font-size:12px; text-transform:uppercase; letter-spacing:1.5px; color:#888; margin:24px 0 10px; border-bottom:1px solid #eee; padding-bottom:6px; }
+      .kpi-row { display:flex; gap:14px; margin-bottom:16px; flex-wrap:wrap; }
+      .kpi { border:1.5px solid #eee; border-radius:10px; padding:12px 16px; min-width:120px; }
+      .kpi-label { font-size:9px; text-transform:uppercase; letter-spacing:1px; color:#888; margin-bottom:3px; }
+      .kpi-value { font-size:22px; font-weight:700; font-family:'DM Mono',monospace; }
+      .green { color:#16a34a; } .red { color:#ef4444; } .amber { color:#f59e0b; } .purple { color:#6366f1; } .orange { color:${accent}; }
+      h2 { font-size:16px; font-weight:600; margin:20px 0 10px; }
+      table { width:100%; border-collapse:collapse; margin-bottom:16px; }
+      th { font-size:10px; letter-spacing:1.5px; text-transform:uppercase; color:#888; padding:8px 12px; text-align:left; border-bottom:2px solid #eee; }
+      td { padding:10px 12px; border-bottom:1px solid #f0f0f0; font-size:13px; }
+      .late { color:#f59e0b; font-weight:600; }
+      .sick { color:#ef4444; font-weight:600; }
+      .empty { color:#aaa; font-size:13px; text-align:center; padding:20px; }
+      .footer { margin-top:32px; font-size:11px; color:#aaa; border-top:1px solid #eee; padding-top:12px; white-space:pre-line; }
+      @media print { body { padding:16px; } button { display:none; } }
+    </style></head><body>
+    <div class="header-row">
+      <div>
+        <h1>${escapeHtml(g.companyName)}</h1>
+        <div class="subtitle">${escapeHtml(t.title)}${escapeHtml(d.filterLabel)}</div>
+        ${showCo ? `<div class="company-meta">${escapeHtml(g.address).replace(/\n/g,'<br>')}${g.phone ? ' &nbsp;\u00b7&nbsp; Tel: '+escapeHtml(g.phone) : ''}${g.email ? ' &nbsp;\u00b7&nbsp; '+escapeHtml(g.email) : ''}</div>` : ''}
+      </div>
+      ${showLogo ? `<img src="${logo}" class="header-logo" alt="">` : ''}
+    </div>
+    <div class="period">${escapeHtml(d.periodLabel)}: ${escapeHtml(d.from)} \u2013 ${escapeHtml(d.to)}</div>
+
+    <div class="section-title">Hours &amp; Utilisation</div>
+    <div class="kpi-row">
+      <div class="kpi"><div class="kpi-label">Total Hours</div><div class="kpi-value orange">${d.general.totalClocked.toFixed(1)}h</div></div>
+      <div class="kpi"><div class="kpi-label">Project Hours</div><div class="kpi-value green">${d.general.totalProject.toFixed(1)}h</div></div>
+      <div class="kpi"><div class="kpi-label">Workshop General</div><div class="kpi-value purple">${d.general.totalWGD.toFixed(1)}h</div></div>
+      <div class="kpi"><div class="kpi-label">Unproductive</div><div class="kpi-value red">${d.general.totalUnproductive.toFixed(1)}h</div></div>
+      <div class="kpi"><div class="kpi-label">Utilisation</div><div class="kpi-value ${d.general.utilisation >= 80 ? 'green' : d.general.utilisation >= 60 ? 'amber' : 'red'}">${d.general.utilisation}%</div></div>
+    </div>
+
+    <div class="section-title">Attendance</div>
+    <div class="kpi-row">
+      <div class="kpi"><div class="kpi-label">Attendance Rate</div><div class="kpi-value ${d.data.attendanceRate >= 95 ? 'green' : d.data.attendanceRate >= 85 ? 'amber' : 'red'}">${d.data.attendanceRate}%</div></div>
+      <div class="kpi"><div class="kpi-label">Days Absent (Sick)</div><div class="kpi-value ${d.data.totalSickDays > 0 ? 'red' : 'green'}">${d.data.totalSickDays}</div></div>
+      <div class="kpi"><div class="kpi-label">Late Arrivals</div><div class="kpi-value ${d.data.totalLate > 0 ? 'amber' : 'green'}">${d.data.totalLate}</div></div>
+      <div class="kpi"><div class="kpi-label">Holidays Taken</div><div class="kpi-value purple">${d.data.totalHolidayDays}</div></div>
+      <div class="kpi"><div class="kpi-label">Holiday Balance</div><div class="kpi-value ${d.data.totalHolidayBalance > 0 ? 'green' : 'red'}">${d.data.totalHolidayBalance}</div></div>
+      <div class="kpi"><div class="kpi-label">Avg Shift Length</div><div class="kpi-value orange">${d.data.avgShiftLength}</div></div>
+    </div>
+
+    <h2>Late Arrivals</h2>
+    ${d.data.lateList.length ? `<table><thead><tr><th>Employee</th><th>Date</th><th>Clock In</th><th>Late By</th></tr></thead><tbody>${lateRows}</tbody></table>` : '<div class="empty">No late arrivals in this period</div>'}
+
+    <h2>Absences (Sick Leave)</h2>
+    ${d.data.absenceList.length ? `<table><thead><tr><th>Employee</th><th>Dates</th><th>Duration</th><th>Reason</th></tr></thead><tbody>${absRows}</tbody></table>` : '<div class="empty">No sick leave recorded in this period</div>'}
+
+    <div class="footer">${escapeHtml(t.footerText)} &nbsp;|&nbsp; ${new Date().toLocaleString('en-GB')} &nbsp;|&nbsp; Expected start: ${escapeHtml(d.data.expectedStart)}</div>
+  </body></html>`;
+}
+
+function buildDeliveryNoteHTMLCore(dn, bomJob, proj, job, settingsOverride) {
+  const s = _pickTplSettings(settingsOverride);
+  const g = s.global || TEMPLATE_DEFAULTS.global;
+  const t = s.deliveryNote || TEMPLATE_DEFAULTS.deliveryNote;
+  const logo = _logoDataUriCache || '';
+  const showLogo = t.showLogo !== false && logo;
+  const showCo = t.showCompanyDetails !== false;
+  const accent = t.accentColor || TEMPLATE_DEFAULTS.deliveryNote.accentColor;
+
+  const allItems = (bomJob.materialLists || []).flatMap(ml => ml.items || []);
+  const dnItems = dn.itemIds.map(id => allItems.find(i => i.id === id)).filter(Boolean);
+  const date = new Date(dn.createdAt).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
+
+  let html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+<title>${escapeHtml(dn.number)} - Delivery Note</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: Arial, sans-serif; font-size: 12px; padding: 20px; color: #222; }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 2px solid #222; gap: 20px; }
+  .company { font-size: 22px; font-weight: 700; color: ${accent}; letter-spacing: 1px; }
+  .company-sub { font-size: 9px; color: #666; margin-top: 4px; line-height: 1.4; white-space: pre-line; }
+  .header-logo { max-width: 110px; max-height: 60px; object-fit: contain; margin-right: 12px; }
+  .header-left { display: flex; align-items: flex-start; flex: 1; }
+  .header-right { text-align: right; }
+  .dn-title { font-size: 20px; font-weight: 700; font-style: italic; color: ${accent}; margin-bottom: 8px; }
+  .meta-grid { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 11px; text-align: left; }
+  .meta-label { font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+  th { background: #f5f5f5; border: 1px solid #ccc; padding: 6px 8px; text-align: left; font-size: 11px; font-weight: 600; }
+  td { border: 1px solid #ccc; padding: 5px 8px; font-size: 11px; }
+  .sign-section { margin-top: 30px; display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .sign-box { border: 1px solid #ccc; padding: 12px; min-height: 60px; }
+  .sign-label { font-weight: 600; font-size: 10px; margin-bottom: 20px; }
+  .total-row td { font-weight: 700; background: #f9f9f9; }
+  .terms { margin-top: 20px; font-size: 10px; color: #666; padding-top: 10px; border-top: 1px solid #eee; white-space: pre-line; }
+  @media print { body { padding: 10px; } }
+</style></head><body>
+<div class="header">
+  <div class="header-left">
+    ${showLogo ? `<img src="${logo}" class="header-logo" alt="">` : ''}
+    <div>
+      <div class="company">${escapeHtml(g.companyName)}</div>
+      ${showCo ? `<div class="company-sub">${escapeHtml(g.address)}${g.phone ? '\nTel: '+escapeHtml(g.phone) : ''}${g.email ? ' \u00b7 '+escapeHtml(g.email) : ''}${g.vatNumber ? '\nVAT: '+escapeHtml(g.vatNumber) : ''}</div>` : ''}
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="dn-title">${escapeHtml(t.title)}</div>
+    <div class="meta-grid">
+      <span class="meta-label">DN Number:</span><span>${escapeHtml(dn.number)}</span>
+      <span class="meta-label">Date:</span><span>${date}</span>
+      <span class="meta-label">Project:</span><span>${escapeHtml(proj.name || '')}</span>
+      <span class="meta-label">Job No:</span><span>${escapeHtml(proj.id || '')}</span>
+      ${job && job.name ? `<span class="meta-label">Job:</span><span>${escapeHtml(job.name)}</span>` : ''}
+      <span class="meta-label">Destination:</span><span>${escapeHtml(dn.destinationName || dn.destination || '')}</span>
+      ${dn.address ? `<span class="meta-label">Address:</span><span>${escapeHtml(dn.address)}</span>` : ''}
+      ${dn.siteContact ? `<span class="meta-label">Site Contact:</span><span>${escapeHtml(dn.siteContact)}</span>` : ''}
+      ${dn.phone ? `<span class="meta-label">Phone:</span><span>${escapeHtml(dn.phone)}</span>` : ''}
+      ${dn.collectionDate ? `<span class="meta-label">Collection Date:</span><span>${new Date(dn.collectionDate).toLocaleDateString('en-GB')}</span>` : ''}
+      ${dn.deliveryDate ? `<span class="meta-label">Delivery Date:</span><span>${new Date(dn.deliveryDate).toLocaleDateString('en-GB')}</span>` : ''}
+    </div>
+  </div>
+</div>
+<table>
+<thead><tr><th>Mark</th><th>Qty</th><th>Description / Size</th><th>Coating</th><th>Weight (kg)</th></tr></thead>
+<tbody>`;
+
+  let totalWt = 0;
+  for (const item of dnItems) {
+    const wt = item.totalWeight || item.weightPerUnit || 0;
+    totalWt += wt;
+    html += `<tr>
+      <td style="font-weight:600">${escapeHtml(item.mark || '')}</td>
+      <td>${item.quantity || ''}</td>
+      <td>${escapeHtml(item.description || item.size || '')}</td>
+      <td>${escapeHtml(item.coating || '')}</td>
+      <td style="text-align:right">${wt ? wt.toLocaleString('en-GB') : ''}</td>
+    </tr>`;
+  }
+  html += `<tr class="total-row">
+    <td colspan="4" style="text-align:right">Total Weight:</td>
+    <td style="text-align:right">${totalWt.toLocaleString('en-GB')} kg</td>
+  </tr></tbody></table>`;
+
+  if (t.showSignatureBlock !== false) {
+    html += `<div class="sign-section">
+      <div class="sign-box">
+        <div class="sign-label">Delivered By:</div>
+        <div style="border-bottom:1px solid #999;margin-top:24px;padding-bottom:4px"></div>
+        <div style="font-size:10px;color:#666;margin-top:4px">Date Delivered:</div>
+      </div>
+      <div class="sign-box">
+        <div class="sign-label">Received By:</div>
+        <div style="border-bottom:1px solid #999;margin-top:24px;padding-bottom:4px"></div>
+        <div style="font-size:10px;color:#666;margin-top:4px">Date Received:</div>
+      </div>
+    </div>`;
+  }
+  if (t.termsText) {
+    html += `<div class="terms">${escapeHtml(t.termsText)}</div>`;
+  }
+  html += `</body></html>`;
+  return html;
+}
+
 // PAGE DETECTION
 // ═══════════════════════════════════════════
 const CURRENT_PAGE = (() => {
   const path = window.location.pathname.toLowerCase();
   if (path.includes('manager')) return 'manager';
   if (path.includes('office')) return 'office';
+  if (path.includes('templates')) return 'templates';
   if (path.includes('projects') || path.includes('project')) return 'projects';
   if (path.includes('hub')) return 'hub';
   return 'index'; // default kiosk
@@ -10224,6 +10787,8 @@ async function init() {
         }).catch(() => {});
       }
     }).catch(e => console.warn('Job data load failed:', e.message));
+  } else if (CURRENT_PAGE === 'templates') {
+    initTemplatesPage();
   } else if (CURRENT_PAGE === 'hub') {
     // hub has its own simple rendering
   } else {

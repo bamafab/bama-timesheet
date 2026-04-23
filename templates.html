@@ -3,134 +3,261 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Templates – BAMA ERP</title>
+<title>BAMA Templates</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="bama.css">
 <style>
-  /* ── Templates editor-specific styles ── */
-  .tpl-wrap { display: grid; grid-template-columns: 280px 1fr; gap: 0; height: 100vh; overflow: hidden; }
-  .tpl-sidebar { background: var(--panel, #1a1a1a); border-right: 1px solid var(--border, #2a2a2a); padding: 24px 0; overflow-y: auto; }
-  .tpl-sidebar h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 2px; color: var(--subtle, #888); padding: 0 24px; margin: 0 0 12px; font-weight: 600; }
-  .tpl-sidebar h2:not(:first-child) { margin-top: 28px; }
-  .tpl-nav-item { padding: 12px 24px; cursor: pointer; display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--text, #eee); border-left: 3px solid transparent; transition: all 0.15s; }
-  .tpl-nav-item:hover { background: rgba(255,107,0,0.08); }
-  .tpl-nav-item.active { background: rgba(255,107,0,0.12); border-left-color: var(--accent, #ff6b00); color: var(--accent, #ff6b00); font-weight: 600; }
-  .tpl-nav-icon { font-size: 16px; width: 18px; text-align: center; }
-
-  .tpl-main { display: grid; grid-template-rows: auto 1fr; overflow: hidden; }
-  .tpl-header { padding: 20px 32px; border-bottom: 1px solid var(--border, #2a2a2a); display: flex; justify-content: space-between; align-items: center; background: var(--bg, #111); }
-  .tpl-header-title { font-size: 20px; font-weight: 700; color: var(--text, #eee); }
-  .tpl-header-sub { font-size: 12px; color: var(--subtle, #888); margin-top: 2px; }
-  .tpl-header-actions { display: flex; gap: 10px; }
-
-  .tpl-body { display: grid; grid-template-columns: 380px 1fr; gap: 0; overflow: hidden; }
-  .tpl-editor { padding: 24px 32px; overflow-y: auto; border-right: 1px solid var(--border, #2a2a2a); background: var(--bg, #111); }
-  .tpl-preview-pane { background: #2a2a2a; padding: 24px; overflow: hidden; display: flex; flex-direction: column; }
-  .tpl-preview-label { font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--subtle, #888); margin-bottom: 10px; }
-  .tpl-preview-frame { flex: 1; width: 100%; border: 0; background: #fff; border-radius: 4px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); min-height: 500px; }
-
-  .tpl-field { margin-bottom: 18px; }
-  .tpl-field label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--subtle, #888); margin-bottom: 6px; font-weight: 600; }
-  .tpl-field input[type="text"], .tpl-field input[type="email"], .tpl-field input[type="tel"], .tpl-field textarea, .tpl-field input[type="color"] {
-    width: 100%; padding: 10px 12px; background: var(--panel, #1a1a1a); border: 1px solid var(--border, #2a2a2a); border-radius: 6px; color: var(--text, #eee); font-family: inherit; font-size: 13px; transition: border-color 0.15s;
+  /* ── Template editor (scoped, extends bama.css) ── */
+  .tpl-layout {
+    display: grid;
+    grid-template-columns: 230px 1fr 1fr;
+    height: calc(100vh - 60px);
+    background: var(--bg);
   }
-  .tpl-field input:focus, .tpl-field textarea:focus { outline: none; border-color: var(--accent, #ff6b00); }
-  .tpl-field input[type="color"] { height: 42px; padding: 4px; cursor: pointer; }
-  .tpl-field textarea { resize: vertical; min-height: 60px; font-family: 'DM Mono', monospace; font-size: 12px; }
-  .tpl-field-hint { font-size: 11px; color: var(--subtle, #888); margin-top: 4px; }
-
-  .tpl-logo-preview { display: flex; align-items: center; gap: 14px; padding: 14px; background: #fafafa; border-radius: 6px; margin-bottom: 10px; min-height: 80px; }
-  .tpl-logo-preview img { max-height: 60px; max-width: 180px; object-fit: contain; }
-  .tpl-logo-preview .tpl-logo-empty { color: #999; font-size: 12px; font-style: italic; }
-  .tpl-logo-actions { display: flex; gap: 8px; }
-
-  .tpl-section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--accent, #ff6b00); margin: 0 0 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border, #2a2a2a); font-weight: 700; }
-  .tpl-section-title:not(:first-child) { margin-top: 28px; }
-
-  .tpl-checkbox-field { display: flex; align-items: center; gap: 10px; padding: 10px 0; }
-  .tpl-checkbox-field input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent, #ff6b00); cursor: pointer; }
-  .tpl-checkbox-field label { text-transform: none; letter-spacing: 0; font-size: 14px; color: var(--text, #eee); font-weight: 400; margin: 0; cursor: pointer; }
-
-  .tpl-unsaved-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent, #ff6b00); margin-right: 8px; opacity: 0; transition: opacity 0.2s; }
-  .tpl-unsaved-dot.show { opacity: 1; }
-
-  .tpl-loading { padding: 40px; text-align: center; color: var(--subtle, #888); font-size: 14px; }
-
-  @media (max-width: 1200px) {
-    .tpl-body { grid-template-columns: 340px 1fr; }
+  .tpl-sidebar {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 18px 0;
+    overflow-y: auto;
   }
+  .tpl-sidebar h3 {
+    font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase;
+    color: var(--muted); padding: 0 18px 10px; margin: 0; font-weight: 600;
+  }
+  .tpl-item {
+    padding: 11px 18px; cursor: pointer; font-size: 13px;
+    border-left: 3px solid transparent; transition: background .15s;
+    color: var(--text);
+  }
+  .tpl-item:hover { background: rgba(255,107,0,0.06); }
+  .tpl-item.active {
+    background: rgba(255,107,0,0.12);
+    border-left-color: var(--accent);
+    color: var(--accent);
+  }
+  .tpl-item.active .tpl-item-sub { color: var(--accent); opacity: 0.75; }
+  .tpl-item > div:first-child { font-weight: 600; }
+  .tpl-item-sub { font-size: 10px; color: var(--muted); margin-top: 2px; }
+
+  .tpl-middle { display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid var(--border); }
+  .tpl-editor { padding: 20px 24px; overflow-y: auto; flex: 1; }
+  .tpl-editor h2 { font-family: var(--font-display); font-size: 26px; letter-spacing: 1.5px; margin: 0 0 4px; color: var(--text); }
+  .tpl-desc { font-size: 12px; color: var(--muted); margin-bottom: 20px; line-height: 1.5; }
+  .tpl-desc code { font-family: var(--font-mono); background: var(--card); padding: 1px 6px; border-radius: 3px; font-size: 11px; }
+
+  .tpl-section { margin-bottom: 22px; padding-bottom: 18px; border-bottom: 1px solid var(--border); }
+  .tpl-section:last-child { border-bottom: none; }
+  .tpl-section-title {
+    font-size: 10px; letter-spacing: 1.3px; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 12px; font-weight: 600;
+  }
+
+  .tpl-field { margin-bottom: 12px; }
+  .tpl-field label {
+    display: block; font-size: 12px; font-weight: 500;
+    margin-bottom: 5px; color: var(--text);
+  }
+  .tpl-field label .hint { font-size: 10px; color: var(--muted); font-weight: 400; margin-left: 6px; }
+  .tpl-field input[type="text"],
+  .tpl-field input[type="email"],
+  .tpl-field textarea {
+    width: 100%; padding: 8px 10px;
+    background: var(--card); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    font-size: 13px; font-family: inherit;
+  }
+  .tpl-field input:focus, .tpl-field textarea:focus {
+    outline: none; border-color: var(--accent);
+  }
+  .tpl-field input[type="color"] {
+    width: 44px; height: 30px; padding: 2px;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--card); cursor: pointer; vertical-align: middle;
+  }
+  .tpl-field .color-row { display: flex; align-items: center; gap: 10px; }
+  .tpl-field .color-row span { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+  .tpl-field textarea { resize: vertical; min-height: 60px; line-height: 1.4; }
+  .tpl-field .checkbox-row { display: flex; align-items: center; gap: 8px; }
+  .tpl-field .checkbox-row input { width: 16px; height: 16px; accent-color: var(--accent); }
+  .tpl-field .checkbox-row label { margin: 0; font-weight: 400; font-size: 13px; cursor: pointer; }
+
+  .tpl-logo-preview {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px; background: var(--card);
+    border: 1px dashed var(--border); border-radius: 8px;
+  }
+  .tpl-logo-preview img {
+    max-width: 90px; max-height: 55px; object-fit: contain;
+    background: #fff; padding: 4px; border-radius: 4px;
+  }
+  .tpl-logo-preview .logo-empty {
+    font-size: 12px; color: var(--muted); font-style: italic; flex: 1;
+  }
+
+  .tpl-actions {
+    display: flex; gap: 10px;
+    padding: 14px 24px;
+    background: var(--surface); border-top: 1px solid var(--border);
+  }
+
+  .tpl-preview-pane {
+    background: #2a2a2a; overflow: hidden;
+    display: flex; flex-direction: column;
+  }
+  .tpl-preview-header {
+    padding: 11px 16px;
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
+    color: var(--muted);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .tpl-preview-header #tplPreviewLabel {
+    text-transform: none; letter-spacing: 0; font-size: 11px;
+  }
+  .tpl-preview-frame { flex: 1; width: 100%; border: none; background: #fff; }
+
+  /* Top bar (matches manager.html shape) */
+  .tpl-topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 24px;
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    height: 60px;
+  }
+  .tpl-topbar-left { display: flex; align-items: center; gap: 20px; }
+  .tpl-topbar .logo {
+    font-family: var(--font-display); font-size: 22px;
+    letter-spacing: 2px; color: var(--accent);
+  }
+  .tpl-topbar .tpl-user {
+    font-size: 12px; color: var(--muted);
+    padding-left: 16px; border-left: 1px solid var(--border);
+  }
+  .tpl-dirty-flag {
+    font-size: 12px; color: var(--accent); display: none;
+  }
+  .tpl-dirty-flag .dot {
+    display: inline-block; width: 8px; height: 8px;
+    border-radius: 50%; background: var(--accent);
+    margin-left: 4px; vertical-align: middle;
+  }
+
+  /* Auth-denied screen */
+  .tpl-denied {
+    max-width: 420px; margin: 80px auto; padding: 32px; text-align: center;
+  }
+  .tpl-denied-icon { font-size: 40px; margin-bottom: 14px; }
+  .tpl-denied h2 { font-family: var(--font-display); font-size: 30px; letter-spacing: 1.5px; margin: 0 0 10px; }
+  .tpl-denied p { color: var(--muted); font-size: 13px; margin-bottom: 22px; line-height: 1.5; }
 </style>
 </head>
 <body>
 
-<!-- Auth gate (shown while checking manager session) -->
-<div id="tplAuthGate" class="tpl-loading" style="min-height:100vh;display:flex;align-items:center;justify-content:center;">
-  Checking access…
+<div class="loading-bar" id="loadingBar" style="width:0"></div>
+<div class="toast" id="toast"></div>
+
+<!-- ═══════════════════════════════════════
+     SCREEN: ACCESS DENIED (no manager session)
+══════════════════════════════════════════ -->
+<div class="screen" id="screenTemplatesAuth">
+  <div class="tpl-denied">
+    <div class="tpl-denied-icon">&#128274;</div>
+    <h2>MANAGER ACCESS REQUIRED</h2>
+    <p>Templates can only be edited by signed-in managers. Return to the Manager dashboard, enter your PIN, then open Templates from the sidebar.</p>
+    <button class="btn btn-primary" onclick="window.location.href='manager.html'">&#8592; Go to Manager</button>
+  </div>
 </div>
 
-<!-- Main UI (shown after auth passes) -->
-<div id="tplApp" class="tpl-wrap" style="display:none">
+<!-- ═══════════════════════════════════════
+     SCREEN: TEMPLATES EDITOR
+══════════════════════════════════════════ -->
+<div class="screen" id="screenTemplates">
 
-  <!-- Sidebar -->
-  <aside class="tpl-sidebar">
-    <h2>Company</h2>
-    <div class="tpl-nav-item active" data-target="global">
-      <span class="tpl-nav-icon">&#127970;</span>
-      <span>Global Details</span>
+  <div class="tpl-topbar">
+    <div class="tpl-topbar-left">
+      <button class="btn btn-ghost" onclick="goHome()">&#8592; Manager</button>
+      <span class="logo">TEMPLATES</span>
+      <span class="tpl-user" id="tplUserLabel"></span>
     </div>
+    <div class="tpl-dirty-flag" id="tplDirtyFlag">
+      Unsaved changes<span class="dot"></span>
+    </div>
+  </div>
 
-    <h2>Templates</h2>
-    <div class="tpl-nav-item" data-target="payroll">
-      <span class="tpl-nav-icon">&#128176;</span>
-      <span>Payroll Summary</span>
-    </div>
-    <div class="tpl-nav-item" data-target="attendance">
-      <span class="tpl-nav-icon">&#128202;</span>
-      <span>Attendance Report</span>
-    </div>
-    <div class="tpl-nav-item" data-target="deliveryNote">
-      <span class="tpl-nav-icon">&#128230;</span>
-      <span>Delivery Note</span>
-    </div>
-  </aside>
+  <div class="tpl-layout">
 
-  <!-- Main -->
-  <main class="tpl-main">
-    <header class="tpl-header">
-      <div>
-        <div class="tpl-header-title">
-          <span id="tplUnsavedDot" class="tpl-unsaved-dot"></span>
-          <span id="tplHeaderTitle">Global Details</span>
-        </div>
-        <div class="tpl-header-sub" id="tplHeaderSub">Company info shared by all templates</div>
+    <!-- Left: template list -->
+    <div class="tpl-sidebar">
+      <h3>Shared</h3>
+      <div class="tpl-item" data-template="global" onclick="selectTemplate('global')">
+        <div>Company Details</div>
+        <div class="tpl-item-sub">Logo, address, contact</div>
       </div>
-      <div class="tpl-header-actions">
-        <button class="btn btn-ghost" onclick="window.location.href='manager.html'">&#8592; Back to Manager</button>
-        <button id="tplSaveBtn" class="btn btn-primary" onclick="tplSaveAll()" disabled>Save Changes</button>
+      <h3 style="margin-top:22px">Documents</h3>
+      <div class="tpl-item" data-template="payroll" onclick="selectTemplate('payroll')">
+        <div>Payroll Summary</div>
+        <div class="tpl-item-sub">Weekly payroll PDF</div>
       </div>
-    </header>
-
-    <div class="tpl-body">
-      <!-- Editor pane -->
-      <section class="tpl-editor" id="tplEditorPane">
-        <div class="tpl-loading">Loading…</div>
-      </section>
-
-      <!-- Preview pane -->
-      <section class="tpl-preview-pane">
-        <div class="tpl-preview-label">Live Preview</div>
-        <iframe id="tplPreviewFrame" class="tpl-preview-frame" sandbox="allow-same-origin"></iframe>
-      </section>
+      <div class="tpl-item" data-template="attendance" onclick="selectTemplate('attendance')">
+        <div>Attendance Report</div>
+        <div class="tpl-item-sub">Workshop KPIs &amp; absences</div>
+      </div>
+      <div class="tpl-item" data-template="deliveryNote" onclick="selectTemplate('deliveryNote')">
+        <div>Delivery Note</div>
+        <div class="tpl-item-sub">Job material dispatch</div>
+      </div>
     </div>
-  </main>
 
+    <!-- Middle: edit form + save bar -->
+    <div class="tpl-middle">
+      <div class="tpl-editor" id="tplEditor">
+        <!-- populated by selectTemplate() -->
+      </div>
+      <div class="tpl-actions">
+        <button class="btn btn-primary" id="tplSaveBtn" onclick="saveTemplateSettings()">Save changes</button>
+        <button class="btn btn-ghost" onclick="discardTemplateChanges()">Discard</button>
+      </div>
+    </div>
+
+    <!-- Right: live preview -->
+    <div class="tpl-preview-pane">
+      <div class="tpl-preview-header">
+        <span>Live Preview</span>
+        <span id="tplPreviewLabel"></span>
+      </div>
+      <iframe id="tplPreviewFrame" class="tpl-preview-frame" sandbox="allow-same-origin"></iframe>
+    </div>
+
+  </div>
 </div>
 
-<!-- Hidden file input for logo upload -->
-<input type="file" id="tplLogoInput" accept=".png,image/png" style="display:none" onchange="tplHandleLogoFile(event)">
-
-<!-- Toast container (reuses bama.css styling) -->
-<div id="toastContainer"></div>
+<!-- ═══════════════════════════════════════
+     MODAL: LOGO UPLOAD
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="logoUploadModal">
+  <div class="modal">
+    <div class="modal-title" style="font-size:22px">Upload Company Logo</div>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:16px;line-height:1.5">
+      PNG only. Max 2 MB, max 1000&times;1000 px. Transparent background recommended for best results.
+    </p>
+    <input type="file" id="logoFileInput" accept="image/png,.png"
+      onchange="handleLogoFileSelected(event)"
+      style="margin-bottom:14px;color:var(--text)">
+    <div id="logoUploadPreview" style="display:none;text-align:center;padding:14px;background:#fff;border:1px dashed var(--border);border-radius:6px;margin-bottom:14px">
+      <img id="logoUploadImg" style="max-width:180px;max-height:100px;object-fit:contain">
+      <div id="logoUploadMeta" style="font-size:11px;color:#666;margin-top:8px;font-family:var(--font-mono)"></div>
+    </div>
+    <div id="logoUploadError" style="color:var(--red);font-size:12px;margin-bottom:10px;display:none"></div>
+    <div id="logoUploadProgress" style="display:none;font-size:12px;color:var(--muted);margin-bottom:10px">
+      <span class="spinner"></span> Uploading to SharePoint&hellip;
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeLogoUploadModal()">Cancel</button>
+      <button class="btn btn-primary" id="logoUploadConfirmBtn" onclick="uploadLogoToSharePoint()" disabled>Upload</button>
+    </div>
+  </div>
+</div>
 
 <script src="shared.js"></script>
+
 </body>
 </html>

@@ -1,0 +1,18 @@
+staticwebapp.config.json — change
+==================================
+
+Open your existing staticwebapp.config.json. In the "routes" array, add one
+entry for /templates.html. It should sit alongside your existing page routes
+(next to the /manager.html or /projects.html entry):
+
+    {
+      "route": "/templates.html",
+      "allowedRoles": ["anonymous"]
+    }
+
+If your config uses a "navigationFallback" block that excludes specific paths
+(so deep links don't fall through to index.html), add "/templates.html" to
+that exclusion list too — same place as /manager.html.
+
+No other changes to the config are needed. Microsoft login is triggered from
+shared.js at runtime, not enforced at the route level, matching the other pages.
