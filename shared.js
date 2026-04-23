@@ -768,6 +768,74 @@ function renderHome() {
     div.onclick = () => openEmployee(name);
     grid.appendChild(div);
   });
+
+  // Load workshop notifications (assembly tasks, etc.)
+  if (CURRENT_PAGE === 'index') renderWorkshopNotifications();
+}
+
+// ── Workshop Kiosk Notifications ──
+function renderWorkshopNotifications() {
+  const container = document.getElementById('workshopNotifications');
+  if (!container) return;
+
+  // Load drawings data in background if not already loaded
+  if (!Object.keys(drawingsData.projects || {}).length) {
+    loadDrawingsData().then(() => _renderWorkshopNotifs(container)).catch(() => {});
+    return;
+  }
+  _renderWorkshopNotifs(container);
+}
+
+function _renderWorkshopNotifs(container) {
+  // Scan all projects/jobs for open assembly tasks
+  const notifications = [];
+
+  for (const projId of Object.keys(drawingsData.projects || {})) {
+    const projData = drawingsData.projects[projId];
+    const proj = state.projects?.find(p => p.id === projId);
+    const projName = proj ? `${proj.id} — ${proj.name}` : projId;
+    for (const job of (projData.jobs || [])) {
+      if (job.status === 'closed') continue;
+      for (const task of (job.assembly?.tasks || [])) {
+        if (task.status === 'complete') continue;
+        const created = new Date(task.createdAt).getTime();
+        const isNew = created > (Date.now() - 48 * 60 * 60 * 1000);
+        notifications.push({
+          type: 'assembly',
+          project: projName,
+          job: job.name,
+          task: task.name,
+          finishing: task.finishing,
+          createdAt: task.createdAt,
+          isNew
+        });
+      }
+    }
+  }
+
+  if (!notifications.length) { container.innerHTML = ''; return; }
+
+  // Sort newest first
+  notifications.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const newCount = notifications.filter(n => n.isNew).length;
+
+  let html = '';
+  html += `<div style="font-size:13px;font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:8px">`;
+  html += `<span>&#128295; Workshop Tasks</span>`;
+  html += `<span style="background:var(--accent);color:#fff;font-size:10px;padding:2px 8px;border-radius:10px;font-weight:700">${notifications.length}</span>`;
+  if (newCount) html += `<span style="font-size:11px;color:var(--green);font-weight:500">${newCount} new</span>`;
+  html += `</div>`;
+
+  for (const n of notifications) {
+    const age = timeAgo(n.createdAt);
+    const finLabel = n.finishing && n.finishing !== 'none' ? ` · ${n.finishing}` : '';
+    const borderColor = n.isNew ? 'var(--accent)' : 'var(--border)';
+    html += `<div class="notification-banner" style="cursor:default;margin-bottom:8px;text-align:left;border-left:3px solid ${borderColor}">`;
+    html += `<span class="nb-icon">${n.isNew ? '&#128312;' : '&#128295;'}</span>`;
+    html += `<span class="nb-text"><b>${n.isNew ? 'NEW: ' : ''}${n.task}</b>${finLabel}<br><span style="font-size:11px;color:var(--subtle)">${n.project} · ${n.job} · ${age}</span></span>`;
+    html += `</div>`;
+  }
+  container.innerHTML = html;
 }
 
 let _pendingEmployee = null;
@@ -6668,9 +6736,10 @@ function renderJobsList(projectId) {
           </div>
         </div>
         <div class="job-progress" title="${progress.label}">
-          ${['bom','approval','parts','assembly','site'].map((el, i) => {
+          ${['bom','assembly'].map((el, i) => {
             const s = progress.elements[el];
-            return `<div class="job-progress-dot ${s === 'complete' ? 'complete' : s === 'active' ? 'active' : ''}" title="${['BOM','Approval','Parts','Assembly','Site'][i]}: ${s}"></div>`;
+            const label = ['BOM','Assembly'][i];
+            return `<div class="job-progress-dot ${s === 'complete' ? 'complete' : s === 'active' ? 'active' : ''}" title="${label}: ${s}" style="width:10px;height:10px"></div>`;
           }).join('')}
         </div>
         <div class="job-badge ${isClosed ? 'closed' : 'open'}">${isClosed ? 'CLOSED' : 'OPEN'}</div>
@@ -6681,34 +6750,41 @@ function renderJobsList(projectId) {
 
 function getJobProgress(job) {
   const elements = {};
-  // BOM: check material lists from bomDataCache, fall back to files
   const projId = currentProject?.id;
   const bomJob = projId ? getBomDataForJob(projId, job.id) : { materialLists: [] };
   const bomItems = (bomJob.materialLists || []).flatMap(ml => ml.items || []);
+
+  // BOM progress: based on item statuses — the primary measure
   if (bomItems.length > 0) {
-    const fabItems = bomItems.filter(i => i.fabricated);
-    const fabDone = fabItems.filter(i => i.status !== 'not_started').length;
-    elements.bom = (fabDone === fabItems.length && fabItems.length > 0) ? 'complete' : fabDone > 0 ? 'active' : (bomItems.length > 0 ? 'active' : 'empty');
+    const allOnSite = bomItems.every(i => i.status === 'delivered_to_site' || i.status === 'complete');
+    const anyProgress = bomItems.some(i => i.status !== 'not_started');
+    elements.bom = allOnSite ? 'complete' : anyProgress ? 'active' : 'empty';
   } else {
-    elements.bom = (job.bom?.files?.length > 0) ? 'complete' : 'empty';
+    elements.bom = (job.bom?.files?.length > 0) ? 'active' : 'empty';
   }
-  // Approval: has an approved CO = complete, has any revision = active
+
+  // Approval, Parts, Site — simple indicators, not measured progress
   const revs = job.approval?.revisions || [];
-  const hasApprovedCO = revs.some(r => r.type === 'CO');
-  elements.approval = hasApprovedCO ? 'complete' : revs.length > 0 ? 'active' : 'empty';
-  // Parts: both sections and plates have files = complete, either has = active
-  const secFiles = job.parts?.sections?.files?.length || 0;
-  const platFiles = job.parts?.plates?.files?.length || 0;
-  elements.parts = (secFiles > 0 && platFiles > 0) ? 'complete' : (secFiles > 0 || platFiles > 0) ? 'active' : 'empty';
-  // Assembly: all tasks complete = complete, any task = active
+  elements.approval = revs.some(r => r.type === 'CO') ? 'complete' : revs.length > 0 ? 'active' : 'empty';
+
+  elements.parts = ((job.parts?.sections?.files?.length || 0) + (job.parts?.plates?.files?.length || 0)) > 0 ? 'complete' : 'empty';
+
+  // Assembly progress: based on task completion — the second measure
   const tasks = job.assembly?.tasks || [];
   const allDone = tasks.length > 0 && tasks.every(t => t.status === 'complete');
   elements.assembly = allDone ? 'complete' : tasks.length > 0 ? 'active' : 'empty';
-  // Site: has completedAt = complete, has files = active
-  elements.site = job.site?.completedAt ? 'complete' : (job.site?.files?.length > 0) ? 'active' : 'empty';
 
-  const completeCount = Object.values(elements).filter(v => v === 'complete').length;
-  return { elements, label: `${completeCount}/5 elements complete` };
+  // Site: just an indicator
+  const dns = bomJob.deliveryNotes || [];
+  elements.site = job.site?.completedAt ? 'complete' : (dns.length > 0 || job.site?.files?.length > 0) ? 'active' : 'empty';
+
+  // Progress label based on BOM + Assembly only
+  const bomPct = bomItems.length > 0 ? Math.round(bomItems.filter(i => i.status === 'delivered_to_site' || i.status === 'complete').length / bomItems.length * 100) : 0;
+  const asmPct = tasks.length > 0 ? Math.round(tasks.filter(t => t.status === 'complete').length / tasks.length * 100) : 0;
+  const label = bomItems.length > 0 || tasks.length > 0
+    ? `BOM: ${bomPct}% · Assembly: ${asmPct}%`
+    : 'No progress data';
+  return { elements, label };
 }
 
 // ═══════════════════════════════════════════
@@ -9420,6 +9496,24 @@ async function confirmCloseJob() {
   if (!_pendingCloseJob || !currentJob || !currentProject) return;
   const person = document.getElementById('closeJobPerson').value;
   if (!person) return;
+
+  // Check all BOM items are delivered to site
+  const bomJob = getBomDataForJob(currentProject.id, currentJob.id);
+  const allItems = (bomJob.materialLists || []).flatMap(ml => ml.items || []);
+  if (allItems.length > 0) {
+    const notOnSite = allItems.filter(i => i.status !== 'delivered_to_site' && i.status !== 'complete');
+    if (notOnSite.length > 0) {
+      const fabPending = notOnSite.filter(i => i.fabricated && i.status === 'not_started').length;
+      const dispPending = notOnSite.filter(i => i.status === 'dispatched' || i.status === 'returned').length;
+      const readyPending = notOnSite.filter(i => !i.fabricated && i.status === 'not_started').length;
+      let detail = `${notOnSite.length} item${notOnSite.length > 1 ? 's' : ''} not yet on site:`;
+      if (fabPending) detail += `\n• ${fabPending} awaiting fabrication`;
+      if (readyPending) detail += `\n• ${readyPending} non-fab items not dispatched`;
+      if (dispPending) detail += `\n• ${dispPending} dispatched but not returned to site`;
+      toast(detail, 'error');
+      return;
+    }
+  }
 
   const job = _pendingCloseJob;
   job.site.completedAt = new Date().toISOString();
