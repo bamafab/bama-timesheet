@@ -7275,7 +7275,7 @@ async function confirmAddBomItem() {
 }
 
 // ── Render BOM Element ──
-async function renderBOM() {
+function renderBOM() {
   const container = document.getElementById('bomContent');
   if (!container) return;
 
@@ -7377,28 +7377,17 @@ async function renderBOM() {
     }
   }
 
-  // Welding machines (read-only, sourced from central traceability register)
+  // Welding machines + suppliers (draftsman only)
   if (isDraftsman) {
-    let apiMachines = [];
-    try { apiMachines = await api.get('/api/welding-machines'); } catch (e) { console.warn('Failed to load welding machines:', e.message); }
-    const activeMachines = apiMachines.filter(m => m.is_active !== false);
-    html += `<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">`;
+    const bomProjData = bomDataCache[currentProject?.id];
+
+    // Welding machines placeholder — populated after DOM write to avoid blocking render
+    html += `<div id="bomWeldingMachinesSection" style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">`;
     html += `<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">`;
     html += `<span style="font-size:13px;font-weight:600">Welding Machines</span>`;
     html += `<span style="font-size:11px;color:var(--subtle)">(managed in Office &rarr; Traceability)</span>`;
     html += `</div>`;
-    if (activeMachines.length) {
-      html += `<div style="display:flex;flex-wrap:wrap;gap:8px">`;
-      for (const m of activeMachines) {
-        html += `<div style="display:flex;align-items:center;gap:6px;padding:6px 12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;font-size:12px">`;
-        html += `<span style="font-weight:600">${m.machine_name}</span>`;
-        if (m.serial_number) html += `<span style="color:var(--subtle)">(S/N ${m.serial_number})</span>`;
-        html += `</div>`;
-      }
-      html += `</div>`;
-    } else {
-      html += `<div style="font-size:12px;color:var(--subtle)">No welding machines registered. Add them in Office &rarr; Traceability tab.</div>`;
-    }
+    html += `<div style="font-size:12px;color:var(--subtle)">Loading...</div>`;
     html += `</div>`;
 
     // Suppliers setup (draftsman only)
@@ -7440,6 +7429,36 @@ async function renderBOM() {
     if (ml.items?.length) {
       setTimeout(() => renderBomTable(ml.id), 0);
     }
+  }
+
+  // Populate welding machines section asynchronously (draftsman only)
+  if (isDraftsman) {
+    api.get('/api/welding-machines').then(apiMachines => {
+      const section = document.getElementById('bomWeldingMachinesSection');
+      if (!section) return;
+      const activeMachines = (apiMachines || []).filter(m => m.is_active !== false);
+      let mHtml = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">`;
+      mHtml += `<span style="font-size:13px;font-weight:600">Welding Machines</span>`;
+      mHtml += `<span style="font-size:11px;color:var(--subtle)">(managed in Office &rarr; Traceability)</span>`;
+      mHtml += `</div>`;
+      if (activeMachines.length) {
+        mHtml += `<div style="display:flex;flex-wrap:wrap;gap:8px">`;
+        for (const m of activeMachines) {
+          mHtml += `<div style="display:flex;align-items:center;gap:6px;padding:6px 12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;font-size:12px">`;
+          mHtml += `<span style="font-weight:600">${m.machine_name}</span>`;
+          if (m.serial_number) mHtml += `<span style="color:var(--subtle)">(S/N ${m.serial_number})</span>`;
+          mHtml += `</div>`;
+        }
+        mHtml += `</div>`;
+      } else {
+        mHtml += `<div style="font-size:12px;color:var(--subtle)">No welding machines registered. Add them in Office &rarr; Traceability tab.</div>`;
+      }
+      section.innerHTML = mHtml;
+    }).catch(e => {
+      console.warn('Failed to load welding machines:', e.message);
+      const section = document.getElementById('bomWeldingMachinesSection');
+      if (section) section.innerHTML = '<div style="font-size:12px;color:var(--subtle)">Could not load welding machines.</div>';
+    });
   }
 }
 
