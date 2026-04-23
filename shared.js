@@ -8377,6 +8377,9 @@ function renderSite() {
     if (isDraftsman) {
       html += `<button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="openUploadFileModal('site')">&#43; Upload File</button>`;
     }
+    if (isDraftsman) {
+      html += `<button class="btn" style="padding:8px 16px;font-size:12px;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);color:#60a5fa" onclick="openDispatchPanel()">&#128666; Create Delivery Note</button>`;
+    }
     if (!site.completedAt) {
       html += `<button class="btn btn-success" style="padding:8px 16px;font-size:12px" onclick="openCloseJobModal()">&#127919; Mark Site Complete &amp; Close Job</button>`;
     }
@@ -8393,6 +8396,47 @@ function renderSite() {
   // Notes
   html += renderNotesSection(site.notes || [], 'site');
 
+  // Delivery notes summary for this job (all DNs across all material lists)
+  const bomJob = getBomDataForJob(currentProject?.id, currentJob?.id);
+  const dns = bomJob.deliveryNotes || [];
+  if (dns.length) {
+    const allBomItems = (bomJob.materialLists || []).flatMap(ml => ml.items || []);
+    html += '<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">';
+    html += '<div style="font-size:13px;font-weight:600;margin-bottom:10px">Delivery Notes</div>';
+    for (const dn of dns) {
+      const date = new Date(dn.createdAt).toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'});
+      const destLabel = dn.destination === 'site' ? 'Site Delivery' :
+        dn.destination === 'galvaniser' ? 'Galvaniser' :
+        dn.destination === 'painter' ? 'Painter' :
+        dn.destination === 'powder_coater' ? 'Powder Coater' : dn.destination;
+      html += `<div class="dn-history-item">
+        <div style="font-weight:700;color:var(--accent);min-width:70px;font-family:var(--font-mono)">${dn.number}</div>
+        <div style="flex:1">
+          <div style="font-weight:500">${dn.destinationName || destLabel}</div>
+          <div style="color:var(--subtle);font-size:11px">${dn.itemIds.length} items · ${dn.totalWeight?.toLocaleString('en-GB') || 0} kg · ${date}</div>
+        </div>
+        <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="printDeliveryNote('${dn.id}')">&#128438; Print</button>
+      </div>`;
+    }
+    html += '</div>';
+
+    // Dispatch progress
+    const totalItems = allBomItems.length;
+    const siteItems = allBomItems.filter(i => i.status === 'delivered_to_site' || i.status === 'complete').length;
+    const dispatchedItems = allBomItems.filter(i => ['dispatched','returned','delivered_to_site','complete'].includes(i.status)).length;
+    if (totalItems > 0) {
+      html += `<div style="margin-top:12px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-size:12px">`;
+      html += `<div style="display:flex;justify-content:space-between;margin-bottom:6px">`;
+      html += `<span style="color:var(--muted)">Dispatch progress</span>`;
+      html += `<span style="font-weight:600">${siteItems}/${totalItems} on site</span>`;
+      html += `</div>`;
+      html += `<div style="height:4px;background:var(--border);border-radius:2px">`;
+      html += `<div style="height:100%;background:var(--green);border-radius:2px;width:${Math.round(siteItems/totalItems*100)}%;transition:width .3s"></div>`;
+      html += `</div>`;
+      html += `</div>`;
+    }
+  }
+
   if (site.completedAt) {
     html += `<div style="margin-top:12px;padding:12px;background:rgba(62,207,142,.08);border:1px solid rgba(62,207,142,.2);border-radius:8px;font-size:13px;color:var(--green)">
       &#127919; Site installation completed by ${site.completedBy} on ${new Date(site.completedAt).toLocaleDateString('en-GB')}
@@ -8400,6 +8444,273 @@ function renderSite() {
   }
 
   container.innerHTML = html;
+}
+
+// ═══════════════════════════════════════════
+// DISPATCH PANEL — Delivery Note Creation
+// ═══════════════════════════════════════════
+let _dispatchSelectedIds = new Set();
+
+function openDispatchPanel() {
+  if (!currentProject || !currentJob) return;
+  _dispatchSelectedIds.clear();
+
+  const bomJob = getBomDataForJob(currentProject.id, currentJob.id);
+  const allItems = (bomJob.materialLists || []).flatMap(ml => ml.items || []);
+  if (!allItems.length) { toast('No BOM items found for this job — upload a BOM first', 'error'); return; }
+
+  // Items eligible for dispatch:
+  // - fabricated (welded, ready to go)
+  // - not_started + non-fab (bought-in items, ready to dispatch)
+  // - returned (back from finishing, can re-dispatch)
+  // - dispatched (already at a service, can go to next destination or site)
+  const eligible = allItems.filter(i =>
+    i.status === 'fabricated' ||
+    (i.status === 'not_started' && !i.fabricated) ||
+    i.status === 'returned' ||
+    i.status === 'dispatched'
+  );
+
+  if (!eligible.length) { toast('No items are ready for dispatch', 'error'); return; }
+
+  // Build the modal content
+  let content = '';
+  content += `<div style="text-align:left;max-height:70vh;overflow-y:auto">`;
+  content += `<div style="font-size:15px;font-weight:600;margin-bottom:4px">Create Delivery Note</div>`;
+  content += `<div style="font-size:12px;color:var(--muted);margin-bottom:16px">${currentProject.id} — ${currentJob.name}</div>`;
+
+  // Quick-select buttons
+  content += `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">`;
+  content += `<button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="dispatchSelectGroup('all')">Select all eligible</button>`;
+  content += `<button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="dispatchSelectGroup('fabricated')">All fabricated</button>`;
+  content += `<button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="dispatchSelectGroup('non-fab')">All non-fab</button>`;
+  content += `<button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="dispatchSelectGroup('returned')">All returned</button>`;
+  content += `<button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="dispatchSelectGroup('none')">Clear</button>`;
+  content += `</div>`;
+
+  // Items table
+  content += `<div style="max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:16px">`;
+  content += `<table class="bom-table" style="width:100%;font-size:11px"><thead><tr>`;
+  content += `<th style="width:30px;padding:6px"><input type="checkbox" id="dispatchSelectAll" onchange="dispatchToggleAll(this.checked)"></th>`;
+  content += `<th>Mark</th><th>Description</th><th>Qty</th><th>Weight</th><th>Status</th>`;
+  content += `</tr></thead><tbody>`;
+
+  for (const item of allItems) {
+    const isEligible = eligible.includes(item);
+    const statusLabel = item.status === 'fabricated' ? 'Fabricated' :
+      item.status === 'not_started' && !item.fabricated ? 'Ready (non-fab)' :
+      item.status === 'returned' ? 'Returned' :
+      item.status === 'dispatched' ? 'Dispatched' :
+      item.status === 'delivered_to_site' ? 'On site' :
+      item.status.replace(/_/g, ' ');
+    const statusColor = isEligible ? 'var(--green)' :
+      item.status === 'delivered_to_site' ? 'var(--accent)' :
+      item.status === 'not_started' ? 'var(--subtle)' : 'var(--muted)';
+    const lastDn = item.deliveryHistory?.length ? item.deliveryHistory[item.deliveryHistory.length - 1] : null;
+    const dnHint = lastDn ? ` (${lastDn.deliveryNoteNumber} \u2192 ${lastDn.destinationName || lastDn.destination})` : '';
+
+    content += `<tr style="opacity:${isEligible ? '1' : '0.4'}">`;
+    content += `<td style="padding:4px 6px"><input type="checkbox" ${isEligible ? '' : 'disabled'} data-dispatch-id="${item.id}" onchange="dispatchToggleItem('${item.id}', this.checked)"></td>`;
+    content += `<td style="font-weight:600;font-family:var(--font-mono);padding:4px 8px">${item.mark}</td>`;
+    content += `<td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:4px 8px">${item.description || item.size || ''}</td>`;
+    content += `<td style="padding:4px 8px">${item.quantity || ''}</td>`;
+    content += `<td style="padding:4px 8px">${item.totalWeight != null ? item.totalWeight.toLocaleString('en-GB') : ''}</td>`;
+    content += `<td style="padding:4px 8px;color:${statusColor};font-size:10px">${statusLabel}${dnHint}</td>`;
+    content += `</tr>`;
+  }
+  content += `</tbody></table></div>`;
+
+  // Selection summary
+  content += `<div id="dispatchSummary" style="padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;font-size:12px;color:var(--muted);margin-bottom:16px">Select items above</div>`;
+
+  // Destination form
+  const bomProjData = bomDataCache[currentProject?.id];
+  const suppliers = (bomProjData?.settings?.suppliers || []).filter(s => s.active !== false);
+  const suppOptions = suppliers.map(s => {
+    const typeLabel = s.type === 'galvaniser' ? 'Galv' : s.type === 'painter' ? 'Paint' : s.type === 'powder_coater' ? 'PPC' : s.type === 'site' ? 'Site' : s.type;
+    return `<option value="${s.id}">${s.name} (${typeLabel})</option>`;
+  }).join('');
+
+  content += `<div style="margin-bottom:10px">`;
+  content += `<div class="field-label">SAVED SUPPLIER / DESTINATION</div>`;
+  content += `<select class="field-input" id="dispatchSupplier" onchange="onDispatchSupplierSelect()" style="font-size:13px"><option value="">-- Select or fill in below --</option>${suppOptions}</select>`;
+  content += `</div>`;
+
+  content += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">`;
+  content += `<div><div class="field-label">DESTINATION TYPE</div>`;
+  content += `<select class="field-input" id="dispatchDestType" style="font-size:13px">`;
+  content += `<option value="">Select...</option>`;
+  content += `<option value="galvaniser">Galvaniser</option>`;
+  content += `<option value="painter">Painter</option>`;
+  content += `<option value="powder_coater">Powder Coater</option>`;
+  content += `<option value="site">Site (Final Delivery)</option>`;
+  content += `<option value="other">Other</option>`;
+  content += `</select></div>`;
+  content += `<div><div class="field-label">DESTINATION NAME</div>`;
+  content += `<input type="text" class="field-input" id="dispatchDestName" placeholder="e.g. ABC Galvanising Ltd" style="font-size:13px"></div>`;
+  content += `</div>`;
+
+  content += `<div style="margin-bottom:10px"><div class="field-label">ADDRESS (optional)</div>`;
+  content += `<input type="text" class="field-input" id="dispatchAddress" placeholder="Delivery address" style="font-size:13px"></div>`;
+
+  content += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">`;
+  content += `<div><div class="field-label">SITE CONTACT (optional)</div>`;
+  content += `<input type="text" class="field-input" id="dispatchContact" placeholder="Contact name" style="font-size:13px"></div>`;
+  content += `<div><div class="field-label">COLLECTION DATE</div>`;
+  content += `<input type="date" class="field-input" id="dispatchCollDate" value="${new Date().toISOString().split('T')[0]}" style="font-size:13px"></div>`;
+  content += `</div>`;
+
+  content += `</div>`;
+
+  document.getElementById('confirmTitle').innerHTML = '&#128230; Create Delivery Note';
+  document.getElementById('confirmMsg').innerHTML = content;
+  const modalEl = document.getElementById('confirmModal').querySelector('.modal');
+  if (modalEl) modalEl.style.width = '620px';
+  const okBtn = document.getElementById('confirmOk');
+  okBtn.textContent = 'Generate & Save';
+  okBtn.onclick = () => confirmDispatchDn();
+  document.getElementById('confirmModal').classList.add('active');
+}
+
+function dispatchToggleItem(itemId, checked) {
+  if (checked) _dispatchSelectedIds.add(itemId);
+  else _dispatchSelectedIds.delete(itemId);
+  updateDispatchSummary();
+}
+
+function dispatchToggleAll(checked) {
+  const checkboxes = document.querySelectorAll('[data-dispatch-id]');
+  checkboxes.forEach(cb => {
+    if (!cb.disabled) {
+      cb.checked = checked;
+      if (checked) _dispatchSelectedIds.add(cb.dataset.dispatchId);
+      else _dispatchSelectedIds.delete(cb.dataset.dispatchId);
+    }
+  });
+  updateDispatchSummary();
+}
+
+function dispatchSelectGroup(group) {
+  const bomJob = getBomDataForJob(currentProject?.id, currentJob?.id);
+  const allItems = (bomJob.materialLists || []).flatMap(ml => ml.items || []);
+
+  _dispatchSelectedIds.clear();
+  if (group !== 'none') {
+    for (const item of allItems) {
+      const match =
+        (group === 'all' && (item.status === 'fabricated' || (item.status === 'not_started' && !item.fabricated) || item.status === 'returned' || item.status === 'dispatched')) ||
+        (group === 'fabricated' && item.status === 'fabricated') ||
+        (group === 'non-fab' && item.status === 'not_started' && !item.fabricated) ||
+        (group === 'returned' && item.status === 'returned');
+      if (match) _dispatchSelectedIds.add(item.id);
+    }
+  }
+
+  // Update checkboxes in DOM
+  const checkboxes = document.querySelectorAll('[data-dispatch-id]');
+  checkboxes.forEach(cb => {
+    if (!cb.disabled) cb.checked = _dispatchSelectedIds.has(cb.dataset.dispatchId);
+  });
+  const selectAll = document.getElementById('dispatchSelectAll');
+  if (selectAll) selectAll.checked = group === 'all';
+  updateDispatchSummary();
+}
+
+function updateDispatchSummary() {
+  const el = document.getElementById('dispatchSummary');
+  if (!el) return;
+  if (_dispatchSelectedIds.size === 0) { el.textContent = 'Select items above'; return; }
+
+  const bomJob = getBomDataForJob(currentProject?.id, currentJob?.id);
+  const allItems = (bomJob.materialLists || []).flatMap(ml => ml.items || []);
+  const selected = allItems.filter(i => _dispatchSelectedIds.has(i.id));
+  const totalWeight = selected.reduce((s, i) => s + (i.totalWeight || i.weightPerUnit || 0), 0);
+  const coatings = [...new Set(selected.map(i => i.coating).filter(Boolean))];
+
+  let text = `${selected.length} item${selected.length > 1 ? 's' : ''} selected`;
+  text += ` \u00B7 ${totalWeight.toLocaleString('en-GB')} kg`;
+  if (coatings.length) text += ` \u00B7 ${coatings.join(', ')}`;
+  el.innerHTML = `<span style="color:var(--text);font-weight:600">${text}</span>`;
+}
+
+function onDispatchSupplierSelect() {
+  const suppId = document.getElementById('dispatchSupplier')?.value;
+  if (!suppId) return;
+  const bomProjData = bomDataCache[currentProject?.id];
+  const supplier = (bomProjData?.settings?.suppliers || []).find(s => s.id === suppId);
+  if (!supplier) return;
+  document.getElementById('dispatchDestType').value = supplier.type || '';
+  document.getElementById('dispatchDestName').value = supplier.name || '';
+  document.getElementById('dispatchAddress').value = supplier.address || '';
+  document.getElementById('dispatchContact').value = supplier.contact || '';
+}
+
+async function confirmDispatchDn() {
+  if (_dispatchSelectedIds.size === 0) { toast('Select items first', 'error'); return; }
+
+  const destType = document.getElementById('dispatchDestType').value;
+  const destName = document.getElementById('dispatchDestName').value.trim();
+  const address = document.getElementById('dispatchAddress').value.trim();
+  const siteContact = document.getElementById('dispatchContact').value.trim();
+  const collectionDate = document.getElementById('dispatchCollDate')?.value || '';
+
+  if (!destType) { toast('Select a destination type', 'error'); return; }
+  if (!destName) { toast('Enter a destination name', 'error'); return; }
+
+  const bomJob2 = ensureBomDataForJob(currentProject.id, currentJob.id);
+  const allItems = (bomJob2.materialLists || []).flatMap(ml => ml.items || []);
+  const selected = allItems.filter(i => _dispatchSelectedIds.has(i.id));
+  if (!selected.length) { toast('No items selected', 'error'); return; }
+
+  // Generate DN number
+  if (!bomJob2.deliveryNotes) bomJob2.deliveryNotes = [];
+  const dnNumber = `DN-${String(bomJob2.deliveryNotes.length + 1).padStart(3, '0')}`;
+
+  const dn = {
+    id: 'dn-' + Date.now(),
+    number: dnNumber,
+    destination: destType,
+    destinationName: destName,
+    address,
+    siteContact,
+    collectionDate,
+    deliveryDate: '',
+    createdAt: new Date().toISOString(),
+    createdBy: isDraftsman ? 'Draftsman' : 'Workshop',
+    itemIds: selected.map(i => i.id),
+    totalWeight: selected.reduce((s, i) => s + (i.totalWeight || i.weightPerUnit || 0), 0),
+    deliveredBy: '',
+    deliveredAt: null,
+    receivedBy: '',
+    receivedAt: null
+  };
+
+  bomJob2.deliveryNotes.push(dn);
+
+  // Update item statuses
+  for (const item of selected) {
+    item.status = destType === 'site' ? 'delivered_to_site' : 'dispatched';
+    if (!item.deliveryHistory) item.deliveryHistory = [];
+    item.deliveryHistory.push({
+      deliveryNoteId: dn.id,
+      deliveryNoteNumber: dnNumber,
+      destination: destType,
+      destinationName: destName,
+      createdAt: dn.createdAt,
+      createdBy: dn.createdBy
+    });
+  }
+
+  try {
+    await saveBomData(currentProject.id);
+    _dispatchSelectedIds.clear();
+    closeModal();
+    toast(`${dnNumber} created \u2014 ${selected.length} items to ${destName}`, 'success');
+    renderBOM();
+    renderSite();
+  } catch (e) {
+    toast('Save failed: ' + e.message, 'error');
+  }
 }
 
 // ═══════════════════════════════════════════
@@ -9609,6 +9920,8 @@ function showConfirm(title, message, onConfirm) {
 
 function closeModal() {
   document.getElementById('confirmModal').classList.remove('active');
+  const modalEl = document.getElementById('confirmModal').querySelector('.modal');
+  if (modalEl) modalEl.style.width = '';
 }
 
 
