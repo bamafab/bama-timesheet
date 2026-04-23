@@ -7275,7 +7275,7 @@ async function confirmAddBomItem() {
 }
 
 // ── Render BOM Element ──
-function renderBOM() {
+async function renderBOM() {
   const container = document.getElementById('bomContent');
   if (!container) return;
 
@@ -7377,28 +7377,27 @@ function renderBOM() {
     }
   }
 
-  // Welding machines setup (draftsman only)
+  // Welding machines (read-only, sourced from central traceability register)
   if (isDraftsman) {
-    const bomProjData = bomDataCache[currentProject?.id];
-    const machines = bomProjData?.settings?.weldingMachines || [];
+    let apiMachines = [];
+    try { apiMachines = await api.get('/api/welding-machines'); } catch (e) { console.warn('Failed to load welding machines:', e.message); }
+    const activeMachines = apiMachines.filter(m => m.is_active !== false);
     html += `<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">`;
     html += `<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">`;
     html += `<span style="font-size:13px;font-weight:600">Welding Machines</span>`;
-    html += `<button class="btn btn-primary" style="padding:4px 12px;font-size:11px" onclick="addWeldingMachine()">&#43; Add</button>`;
+    html += `<span style="font-size:11px;color:var(--subtle)">(managed in Office &rarr; Traceability)</span>`;
     html += `</div>`;
-    if (machines.length) {
+    if (activeMachines.length) {
       html += `<div style="display:flex;flex-wrap:wrap;gap:8px">`;
-      for (const m of machines) {
-        if (m.active === false) continue;
+      for (const m of activeMachines) {
         html += `<div style="display:flex;align-items:center;gap:6px;padding:6px 12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;font-size:12px">`;
-        html += `<span style="font-weight:600">${m.name}</span>`;
-        if (m.type) html += `<span style="color:var(--subtle)">(${m.type})</span>`;
-        html += `<button style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:0 0 0 4px" onclick="removeWeldingMachine('${m.id}')" title="Remove">&#10005;</button>`;
+        html += `<span style="font-weight:600">${m.machine_name}</span>`;
+        if (m.serial_number) html += `<span style="color:var(--subtle)">(S/N ${m.serial_number})</span>`;
         html += `</div>`;
       }
       html += `</div>`;
     } else {
-      html += `<div style="font-size:12px;color:var(--subtle)">No welding machines set up. Add them here for traceability tracking.</div>`;
+      html += `<div style="font-size:12px;color:var(--subtle)">No welding machines registered. Add them in Office &rarr; Traceability tab.</div>`;
     }
     html += `</div>`;
 
@@ -7573,12 +7572,14 @@ async function openFabricateItemModal(mlId, itemId) {
   if (!item) return;
 
   const employees = (state.timesheetData.employees || []).filter(e => e.active !== false);
-  const bomProjectData = bomDataCache[currentProject?.id];
-  const machines = bomProjectData?.settings?.weldingMachines || state.timesheetData.settings?.weldingMachines || [];
+
+  // Load welding machines from the central SQL-backed API
+  let machines = [];
+  try { machines = await api.get('/api/welding-machines'); } catch (e) { console.warn('Failed to load welding machines:', e.message); }
 
   // Quick inline approach using confirm modal
   const empOptions = employees.map(e => `<option value="${e.name}">${e.name}</option>`).join('');
-  const machOptions = machines.filter(m => m.active !== false).map(m => `<option value="${m.name}">${m.name} (${m.type || ''})</option>`).join('');
+  const machOptions = machines.filter(m => m.is_active !== false).map(m => `<option value="${m.machine_name}">${m.machine_name}${m.serial_number ? ' (S/N ' + m.serial_number + ')' : ''}</option>`).join('');
 
   const content = `
     <div style="text-align:left;margin-top:12px">
@@ -7604,9 +7605,13 @@ async function openFabricateItemModal(mlId, itemId) {
     const machine = document.getElementById('fabMachine').value;
 
     item.status = 'fabricated';
+    const selectedMachine = machines.find(m => m.machine_name === machine);
     item.traceability = {
       welder,
       machine: machine || null,
+      machineSerialNumber: selectedMachine?.serial_number || null,
+      projectNumber: currentProject?.id || null,
+      jobName: currentJob?.job_name || currentJob?.jobName || null,
       completedAt: new Date().toISOString()
     };
 
@@ -7621,7 +7626,7 @@ async function openFabricateItemModal(mlId, itemId) {
 }
 
 // ── Bulk Mark as Fabricated ──
-function bulkMarkFabricated() {
+async function bulkMarkFabricated() {
   if (bomSelectedIds.size === 0) { toast('Select items first', 'error'); return; }
 
   // Find selected fabricatable items
@@ -7632,11 +7637,13 @@ function bulkMarkFabricated() {
   if (!selected.length) { toast('No unfabricated items in selection', 'error'); return; }
 
   const employees = (state.timesheetData.employees || []).filter(e => e.active !== false);
-  const bomProjectData = bomDataCache[currentProject?.id];
-  const machines = bomProjectData?.settings?.weldingMachines || state.timesheetData.settings?.weldingMachines || [];
+
+  // Load welding machines from the central SQL-backed API
+  let machines = [];
+  try { machines = await api.get('/api/welding-machines'); } catch (e) { console.warn('Failed to load welding machines:', e.message); }
 
   const empOptions = employees.map(e => `<option value="${e.name}">${e.name}</option>`).join('');
-  const machOptions = machines.filter(m => m.active !== false).map(m => `<option value="${m.name}">${m.name} (${m.type || ''})</option>`).join('');
+  const machOptions = machines.filter(m => m.is_active !== false).map(m => `<option value="${m.machine_name}">${m.machine_name}${m.serial_number ? ' (S/N ' + m.serial_number + ')' : ''}</option>`).join('');
 
   const content = `
     <div style="text-align:left;margin-top:12px">
@@ -7662,10 +7669,18 @@ function bulkMarkFabricated() {
     if (!welder) { toast('Please select the welder', 'error'); return; }
     const machine = document.getElementById('fabMachine').value;
     const now = new Date().toISOString();
+    const selectedMachine = machines.find(m => m.machine_name === machine);
 
     for (const item of selected) {
       item.status = 'fabricated';
-      item.traceability = { welder, machine: machine || null, completedAt: now };
+      item.traceability = {
+        welder,
+        machine: machine || null,
+        machineSerialNumber: selectedMachine?.serial_number || null,
+        projectNumber: currentProject?.id || null,
+        jobName: currentJob?.job_name || currentJob?.jobName || null,
+        completedAt: now
+      };
     }
 
     try {
@@ -7974,68 +7989,6 @@ function printDeliveryNote(dnId) {
   printWin.document.write(html);
   printWin.document.close();
   setTimeout(() => printWin.print(), 300);
-}
-
-// ── Welding Machine Management ──
-function addWeldingMachine() {
-  if (!currentProject) return;
-  const content = `
-    <div style="text-align:left;margin-top:12px">
-      <div style="font-size:14px;font-weight:600;margin-bottom:12px">Add Welding Machine</div>
-      <div style="margin-bottom:10px">
-        <div class="field-label">MACHINE NAME</div>
-        <input type="text" class="field-input" id="wmName" placeholder="e.g. MIG-01" style="font-size:13px">
-      </div>
-      <div style="margin-bottom:10px">
-        <div class="field-label">TYPE</div>
-        <select class="field-input" id="wmType" style="font-size:13px">
-          <option value="MIG">MIG</option>
-          <option value="TIG">TIG</option>
-          <option value="MMA">MMA (Stick)</option>
-          <option value="Flux Core">Flux Core</option>
-          <option value="Other">Other</option>
-        </select>
-      </div>
-    </div>
-  `;
-  document.getElementById('confirmTitle').textContent = 'Add Welding Machine';
-  document.getElementById('confirmMsg').innerHTML = content;
-  const okBtn = document.getElementById('confirmOk');
-  okBtn.textContent = 'Add';
-  okBtn.onclick = async () => {
-    const name = document.getElementById('wmName').value.trim();
-    if (!name) { toast('Enter a machine name', 'error'); return; }
-    const type = document.getElementById('wmType').value;
-
-    ensureBomDataForJob(currentProject.id, '__settings__');
-    const bomProjData = bomDataCache[currentProject.id];
-    if (!bomProjData.settings) bomProjData.settings = { weldingMachines: [] };
-    bomProjData.settings.weldingMachines.push({
-      id: 'wm-' + Date.now(), name, type, active: true
-    });
-    try {
-      await saveBomData(currentProject.id);
-      closeModal();
-      toast(`${name} added`, 'success');
-      renderBOM();
-    } catch (e) { toast('Save failed: ' + e.message, 'error'); }
-  };
-  document.getElementById('confirmModal').classList.add('active');
-  setTimeout(() => document.getElementById('wmName')?.focus(), 100);
-}
-
-async function removeWeldingMachine(machineId) {
-  if (!currentProject) return;
-  const bomProjData = bomDataCache[currentProject.id];
-  if (!bomProjData?.settings?.weldingMachines) return;
-  const machine = bomProjData.settings.weldingMachines.find(m => m.id === machineId);
-  if (!machine) return;
-  machine.active = false;
-  try {
-    await saveBomData(currentProject.id);
-    toast(`${machine.name} removed`, 'success');
-    renderBOM();
-  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
 }
 
 // ── Supplier Management ──
