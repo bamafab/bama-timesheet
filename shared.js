@@ -1444,13 +1444,13 @@ function filterSidebarTabs(perms) {
 
 function findFirstAllowedTab(perms) {
   const tabOrder = CURRENT_PAGE === 'office'
-    ? ['dashboard','staff','holidays','project','employee','clockinout','payroll','archive']
-    : ['reports','settings','useraccess','templates'];
+    ? ['dashboard','staff','holidays','project','employee','clockinout','payroll','archive','welding','suppliers','reports']
+    : ['settings','useraccess','templates'];
   for (const tab of tabOrder) {
     const permKey = Object.keys(PERM_TO_TAB).find(k => PERM_TO_TAB[k] === tab);
     if (permKey && perms[permKey]) return tab;
   }
-  return CURRENT_PAGE === 'office' ? 'dashboard' : 'reports'; // fallback
+  return CURRENT_PAGE === 'office' ? 'dashboard' : 'settings'; // fallback
 }
 
 // ═══════════════════════════════════════════

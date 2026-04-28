@@ -5,14 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Manager Dashboard</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <link rel="stylesheet" href="bama.css">
 </head>
 <body>
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
 
 <!-- TOP BAR -->
-<div class="topbar" style="position:relative">
+<div class="topbar">
   <div class="logo"><span style="color:#D0021B">BAMA</span> <span style="color:#D0021B">FABRICATION</span><span> WORKSHOP</span></div>
   <div style="position:absolute;left:50%;transform:translateX(-50%);top:50%;transform:translate(-50%,-50%)">
     <div class="clock-display" id="liveClock" style="font-size:15px;font-weight:700;letter-spacing:.5px">--:-- --</div>
@@ -89,21 +88,10 @@
     <nav class="mgr-sidebar" id="mgrSidebar">
       <div class="sidebar-nav-group">
         <div class="sidebar-nav-label-toggle" onclick="toggleSidebarGroup(this)">
-          Reports <span class="chevron">&#9660;</span>
-        </div>
-        <div class="sidebar-nav-subitems">
-          <button class="sidebar-nav-item active" data-tab="reports" onclick="switchTab('reports')">
-            <span class="sidebar-nav-icon">&#128202;</span> Reports
-          </button>
-        </div>
-      </div>
-      <div class="sidebar-nav-divider"></div>
-      <div class="sidebar-nav-group">
-        <div class="sidebar-nav-label-toggle" onclick="toggleSidebarGroup(this)">
           System <span class="chevron">&#9660;</span>
         </div>
         <div class="sidebar-nav-subitems">
-          <button class="sidebar-nav-item" data-tab="settings" onclick="switchTab('settings')">
+          <button class="sidebar-nav-item active" data-tab="settings" onclick="switchTab('settings')">
             <span class="sidebar-nav-icon">&#9881;</span> Settings
           </button>
           <button class="sidebar-nav-item" data-tab="settings" onclick="window.location.href='templates.html'">
@@ -125,128 +113,8 @@
         </div>
       </div>
 
-    <!-- Tab: Reports -->
-    <div class="tab-content active" id="tab-reports">
-
-      <!-- Period selector -->
-      <div style="display:flex;gap:10px;align-items:center;margin-bottom:24px;flex-wrap:wrap">
-        <div style="display:flex;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden">
-          <button id="rpt-btn-week" class="btn" onclick="setReportPeriod('week')"
-            style="border-radius:0;border:none;padding:8px 18px;font-size:13px;background:var(--accent);color:#fff">Week</button>
-          <button id="rpt-btn-month" class="btn" onclick="setReportPeriod('month')"
-            style="border-radius:0;border:none;padding:8px 18px;font-size:13px;background:var(--surface);color:var(--muted)">Month</button>
-          <button id="rpt-btn-year" class="btn" onclick="setReportPeriod('year')"
-            style="border-radius:0;border:none;padding:8px 18px;font-size:13px;background:var(--surface);color:var(--muted)">Year</button>
-        </div>
-        <div style="display:flex;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden">
-          <button class="btn" onclick="changeReportOffset(-1)"
-            style="border-radius:0;border:none;padding:8px 14px;font-size:15px;background:var(--surface);color:var(--muted);cursor:pointer">&#9664;</button>
-          <button class="btn" onclick="changeReportOffset(1)"
-            style="border-radius:0;border:none;padding:8px 14px;font-size:15px;background:var(--surface);color:var(--muted);cursor:pointer">&#9654;</button>
-        </div>
-        <select class="field-input" id="rptEmployeeFilter" onchange="renderReports()"
-          style="width:180px;padding:7px 12px;font-size:13px">
-          <option value="">All Employees</option>
-        </select>
-        <span style="font-size:13px;color:var(--muted)" id="rptRangeLabel"></span>
-      </div>
-
-      <!-- Report Picker Cards -->
-      <div class="report-picker-grid">
-        <div class="report-picker-card active" data-report="overview" onclick="selectReport('overview')">
-          <div class="report-picker-icon">&#128200;</div>
-          <div class="report-picker-name">Hours overview</div>
-          <div class="report-picker-desc">Clocked vs project vs unproductive time trends</div>
-        </div>
-        <div class="report-picker-card" data-report="employee" onclick="selectReport('employee')">
-          <div class="report-picker-icon">&#128101;</div>
-          <div class="report-picker-name">Employee breakdown</div>
-          <div class="report-picker-desc">Hours by employee with utilisation rates</div>
-        </div>
-        <div class="report-picker-card" data-report="projectsplit" onclick="selectReport('projectsplit')">
-          <div class="report-picker-icon">&#127775;</div>
-          <div class="report-picker-name">Project split</div>
-          <div class="report-picker-desc">Where hours are being spent across jobs</div>
-        </div>
-        <div class="report-picker-card" data-report="unproductive" onclick="selectReport('unproductive')">
-          <div class="report-picker-icon">&#9203;</div>
-          <div class="report-picker-name">Unproductive time</div>
-          <div class="report-picker-desc">S000 hours per employee breakdown</div>
-        </div>
-        <div class="report-picker-card" data-report="attendance" onclick="selectReport('attendance')">
-          <div class="report-picker-icon">&#128197;</div>
-          <div class="report-picker-name">Attendance</div>
-          <div class="report-picker-desc">Late arrivals, absences, patterns</div>
-        </div>
-        <div class="report-picker-card disabled" data-report="costanalysis">
-          <div class="report-picker-badge">Coming soon</div>
-          <div class="report-picker-icon">💷</div>
-          <div class="report-picker-name">Cost analysis</div>
-          <div class="report-picker-desc">Labour cost per project with margins</div>
-        </div>
-      </div>
-
-      <!-- KPI cards row -->
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:28px" id="rptKpiRow"></div>
-
-      <!-- Report: Hours Overview (line chart) -->
-      <div class="report-panel active" id="rptPanel-overview">
-        <div class="card" style="padding:20px">
-          <div class="card-title" style="margin-bottom:4px"><span class="icon">&#128200;</span> Hours Over Time</div>
-          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Clocked vs Project vs Unproductive — per week</div>
-          <canvas id="rptLineChart" style="width:100%;height:280px;max-height:280px"></canvas>
-        </div>
-      </div>
-
-      <!-- Report: Employee Breakdown (bar chart) -->
-      <div class="report-panel" id="rptPanel-employee">
-        <div class="card" style="padding:20px">
-          <div class="card-title" style="margin-bottom:4px"><span class="icon">&#128101;</span> Hours by Employee</div>
-          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Total clocked hours per person</div>
-          <canvas id="rptEmpBar" style="width:100%;height:260px;max-height:260px"></canvas>
-        </div>
-      </div>
-
-      <!-- Report: Project Split (doughnut) -->
-      <div class="report-panel" id="rptPanel-projectsplit">
-        <div class="card" style="padding:20px">
-          <div class="card-title" style="margin-bottom:4px"><span class="icon">&#127775;</span> Time by Project</div>
-          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Where hours are being spent</div>
-          <canvas id="rptProjectDoughnut" style="width:100%;height:280px;max-height:280px"></canvas>
-        </div>
-      </div>
-
-      <!-- Report: Unproductive Time (horizontal bar) -->
-      <div class="report-panel" id="rptPanel-unproductive">
-        <div class="card" style="padding:20px">
-          <div class="card-title" style="margin-bottom:4px"><span class="icon">&#9203;</span> Unproductive Time by Employee</div>
-          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">S000 hours logged per person in selected period</div>
-          <canvas id="rptUnproductiveBar" style="width:100%;height:240px;max-height:240px"></canvas>
-        </div>
-      </div>
-
-      <!-- Report: Attendance -->
-      <div class="report-panel" id="rptPanel-attendance">
-        <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
-          <button class="btn btn-ghost" onclick="exportAttendancePDF()" style="padding:6px 16px;font-size:12px">&#128438; Export PDF</button>
-        </div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:20px" id="rptAttendanceKpis"></div>
-        <div class="card" style="padding:20px;margin-bottom:20px">
-          <div class="card-title" style="margin-bottom:4px"><span class="icon">&#9200;</span> Late Arrivals</div>
-          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Employees who clocked in after expected start time</div>
-          <div id="rptLateArrivals"></div>
-        </div>
-        <div class="card" style="padding:20px">
-          <div class="card-title" style="margin-bottom:4px"><span class="icon">&#129298;</span> Absences</div>
-          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Approved sick leave in selected period</div>
-          <div id="rptAbsences"></div>
-        </div>
-      </div>
-
-    </div>
-
     <!-- Tab: Settings -->
-    <div class="tab-content" id="tab-settings">
+    <div class="tab-content active" id="tab-settings">
 
       <div class="card" style="margin-bottom:20px">
         <div class="card-title"><span class="icon">📧</span> Email Settings</div>
@@ -356,6 +224,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260423h"></script>
+<script src="shared.js?v=20260428a"></script>
 </body>
 </html>

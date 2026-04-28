@@ -11,8 +11,8 @@ management, and a standalone UK steel section reference.
 - **Do not touch hub.html OAuth logic without asking first.** The token-handoff
   dance (`#access_token` capture → sessionStorage → `bama_return_page` bounce) is
   load-bearing for every authenticated page. Changes here have broken prod before.
-- **Chart.js stays in manager.html only.** It's the only page that renders charts;
-  don't add the CDN tag to other pages, and don't bundle a second copy.
+- **Chart.js is loaded in office.html only.** Reports (with charts) have moved from
+  manager to office. Don't add the CDN tag to other pages.
 - **Bump the cache-bust version when shipping UI changes** to `shared.js` or
   `bama.css`. Format: `?v=YYYYMMDD` + letter (`a`/`b`/`c`/… for same-day pushes).
   Example: first push on 2026-03-26 → `?v=20260326a`; hotfix same day → `?v=20260326b`.
