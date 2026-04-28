@@ -138,32 +138,23 @@ app.http('auth-verify-pin', {
     }
 });
 
-// GET /api/health — simple health check
+// GET /api/health — simple health check.
+//
+// IMPORTANT: this endpoint does NOT touch SQL. The frontend pings it on every
+// page load as a Function App warm-up; if we run a query here, we wake the
+// Serverless DB on every page load and it never gets to auto-pause. That
+// alone burned the entire monthly free vCore allowance in ~4 working days.
+// If you need a DB-aware probe for diagnostics, add a separate /api/health/db
+// endpoint that's called manually, not by the warm-up path.
 app.http('health', {
-    methods: ['GET'],
+    methods: ['GET', 'OPTIONS'],
     authLevel: 'anonymous',
     route: 'health',
     handler: async (request, context) => {
         if (request.method === 'OPTIONS') return preflight(request);
-        try {
-            const result = await query('SELECT 1 AS ok');
-            return ok({
-                status: 'healthy',
-                database: 'connected',
-                timestamp: new Date().toISOString()
-            }, request);
-        } catch (err) {
-            const { corsHeaders } = require('../responses');
-            return {
-                status: 503,
-                jsonBody: {
-                    status: 'unhealthy',
-                    database: 'disconnected',
-                    error: err.message,
-                    timestamp: new Date().toISOString()
-                },
-                headers: { 'Content-Type': 'application/json', ...corsHeaders(request) }
-            };
-        }
+        return ok({
+            status: 'healthy',
+            timestamp: new Date().toISOString()
+        }, request);
     }
 });

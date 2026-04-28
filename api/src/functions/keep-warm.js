@@ -1,17 +1,16 @@
 const { app } = require('@azure/functions');
-const { query } = require('../db');
 
 // Runs every 4 minutes between 5am-8pm Mon-Sat (UK working hours for a workshop)
-// Keeps the Function App warm so kiosk users never hit a cold start
+// Keeps the Function App INSTANCE warm so kiosk users never hit a cold start.
+//
+// IMPORTANT: do NOT touch the SQL pool from here. The DB is on Serverless and
+// auto-pauses when idle; pinging it every 4 min keeps it online for 15 hrs/day,
+// which burns the entire monthly free vCore allowance in ~4 working days.
+// The timer firing is what keeps the App warm — the handler itself doesn't
+// need to do anything for that to work.
 app.timer('keep-warm', {
     schedule: '0 */4 5-20 * * 1-6',
     handler: async (myTimer, context) => {
-        try {
-            // Simple DB query to keep the connection pool alive too
-            await query('SELECT 1 AS ok');
-            context.log(`Keep-warm ping at ${new Date().toISOString()}`);
-        } catch (err) {
-            context.warn('Keep-warm ping failed:', err.message);
-        }
+        context.log(`Keep-warm ping at ${new Date().toISOString()}`);
     }
 });
