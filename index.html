@@ -176,7 +176,7 @@
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
           <div>
             <div class="field-label">FROM DATE</div>
-            <input type="date" class="field-input" id="hkFromDate">
+            <input type="date" class="field-input" id="hkFromDate" onchange="syncToDate('hkFromDate','hkToDate')">
           </div>
           <div>
             <div class="field-label">TO DATE</div>

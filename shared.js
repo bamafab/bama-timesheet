@@ -3815,6 +3815,15 @@ function updateAbsenceBalance() {
   updateAbsenceDays();
 }
 
+// Sync "to" date: if empty or before the new "from", set it to match "from"
+function syncToDate(fromId, toId) {
+  const from = document.getElementById(fromId)?.value;
+  const to = document.getElementById(toId)?.value;
+  if (from && (!to || to < from)) {
+    document.getElementById(toId).value = from;
+  }
+}
+
 function updateAbsenceDays() {
   const from = document.getElementById('absFromDate').value;
   const to = document.getElementById('absToDate').value;
