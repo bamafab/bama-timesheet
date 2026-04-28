@@ -39,9 +39,10 @@ Labour Log, drawings PDFs/BOM JSON) and sending mail. All relational data lives 
 /
 ├── hub.html              — Landing page, also the OAuth redirect target
 ├── index.html            — Workshop kiosk (clock in/out, log hours, holidays, orders)
-├── manager.html          — Manager dashboard (reports, settings, user access)
-├── office.html           — Office dashboard (staff, holidays, payroll, archive, etc.)
+├── manager.html          — Manager dashboard (settings, user access)
+├── office.html           — Office dashboard (staff, holidays, payroll, reports, archive, etc.)
 ├── projects.html         — Projects + drawings + draftsman mode
+├── tenders.html          — Tenders & quotes management, client database
 ├── steel-database.html   — Standalone UK steel section reference (no shared.js, no auth)
 ├── shared.js             — ~9700 LOC. Page-aware; every page except hub/steel loads it.
 ├── bama.css              — Single shared stylesheet. Dark theme, CSS variables.
@@ -60,6 +61,7 @@ Labour Log, drawings PDFs/BOM JSON) and sending mail. All relational data lives 
         └── functions/            — One file per domain, each registers routes with app.http(…)
             ├── auth.js           — (legacy copy of ../auth.js — not referenced; see Conventions)
             ├── clockings.js      — clock-in, clock-out, CRUD
+            ├── clients.js        — Client database CRUD + search/autocomplete
             ├── drawings.js       — DrawingJobs + elements + notes
             ├── employees.js      — CRUD
             ├── holidays.js       — request / approve / reject, balance maintenance
@@ -68,6 +70,7 @@ Labour Log, drawings PDFs/BOM JSON) and sending mail. All relational data lives 
             ├── project-hours.js  — CRUD + grouped summary
             ├── responses.js      — (legacy copy of ../responses.js — not referenced)
             ├── settings.js       — Settings KV + PIN verify + /api/health
+            ├── tenders.js        — Tenders CRUD + reference generation + status changes
             ├── traceability.js   — welding machines, service types, suppliers
             └── user-access.js    — UserPermissions + AccessRequests
 ```
@@ -175,6 +178,15 @@ Core tables:
 - `Suppliers(id, supplier_name, address_line1/2, city, county, postcode, telephone,
   email, contact_name, notes, is_active, updated_at)` +
   `SupplierServices(supplier_id, service_type_id)` join
+- `Clients(id, company_name, address_line1/2, city, county, postcode,
+  contact_name, contact_email, contact_phone, notes, is_active, created_at,
+  updated_at)` — UNIQUE on company_name
+- `Tenders(id, reference, client_id, project_name, comments, status,
+  quote_handler_id, sharepoint_folder_id, sharepoint_tender_folder_id,
+  created_by, created_at, updated_at, converted_at, converted_by)` —
+  status in {`tender`,`quote`,`won`,`lost`,`cancelled`}; reference format
+  `Q260402` (Q + YY + MM + sequential count). SharePoint folders auto-created
+  under `Quotation/{year}/{reference}/` with `00 - Tender` subfolder.
 
 ## Payroll rules (BAMA-specific)
 
@@ -308,6 +320,12 @@ the markup it mutates.
 
 hub.html and steel-database.html have no modals.
 
+**tenders.html**
+- `newTenderModal` — create new tender with client autocomplete
+- `editTenderModal` — edit tender details and status
+- `newClientModal` — add a new client to the database
+- `uploadProgressModal` — file upload progress indicator
+
 ## Roadmap / queued
 
 Tracked here so Claude Code has context when a related question comes up —
@@ -319,9 +337,9 @@ none of this is built yet.
 - **Full project tracker in-app** — replace the SharePoint PROJECT TRACKER.xlsx
   dependency. Projects, statuses, and the Labour Log move into SQL. `loadProjects()`
   and `writeApprovedToLabourLog()` / `writeUnproductiveTimeLog()` will retire.
-- **Quote → project workflow** — the currently-disabled QUOTATIONS tile on the
-  hub becomes real: create a quote, accept it, auto-create a project + initial
-  jobs. Depends on the project tracker migration above.
+- **Quote → project workflow** — tender system is built (`tenders.html`). Next:
+  wire up the Quote pricing/editing workflow, then auto-create a Project when
+  a quote is marked as "won". Depends on the project tracker migration below.
 - **RBAC** — real role-based permissions enforced server-side. Current
   `UserPermissions` flags become the source of truth the API checks, not just
   what the UI hides. Blocker: move PIN verification server-side first.

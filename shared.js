@@ -3052,6 +3052,10 @@ function loadEmailSettings() {
   if (siteEl) siteEl.value = settings.siteCompletionEmails || '';
   const attEl = document.getElementById('settingAttendanceStart');
   if (attEl) attEl.value = settings.attendanceStartTime || '07:00';
+  const qhNameEl = document.getElementById('settingQuoteHandlerName');
+  if (qhNameEl) qhNameEl.value = settings.quoteHandlerName || '';
+  const qhEmailEl = document.getElementById('settingQuoteHandlerEmail');
+  if (qhEmailEl) qhEmailEl.value = settings.quoteHandlerEmail || '';
 }
 
 async function saveEmailSettings() {
@@ -3068,6 +3072,10 @@ async function saveEmailSettings() {
   if (siteEl) state.timesheetData.settings.siteCompletionEmails = siteEl.value;
   const attEl = document.getElementById('settingAttendanceStart');
   if (attEl) state.timesheetData.settings.attendanceStartTime = attEl.value;
+  const qhNameEl = document.getElementById('settingQuoteHandlerName');
+  if (qhNameEl) state.timesheetData.settings.quoteHandlerName = qhNameEl.value;
+  const qhEmailEl = document.getElementById('settingQuoteHandlerEmail');
+  if (qhEmailEl) state.timesheetData.settings.quoteHandlerEmail = qhEmailEl.value;
   try {
     await api.put('/api/settings', {
       payrollEmail: state.timesheetData.settings.payrollEmail || '',
@@ -3075,7 +3083,9 @@ async function saveEmailSettings() {
       draftsmanEmail: state.timesheetData.settings.draftsmanEmail || '',
       taskCompletionEmails: state.timesheetData.settings.taskCompletionEmails || '',
       siteCompletionEmails: state.timesheetData.settings.siteCompletionEmails || '',
-      attendanceStartTime: state.timesheetData.settings.attendanceStartTime || '07:00'
+      attendanceStartTime: state.timesheetData.settings.attendanceStartTime || '07:00',
+      quoteHandlerName: state.timesheetData.settings.quoteHandlerName || '',
+      quoteHandlerEmail: state.timesheetData.settings.quoteHandlerEmail || ''
     });
     toast('Email settings saved ✓', 'success');
   } catch (err) { toast('Save failed: ' + err.message, 'error'); }
@@ -6586,7 +6596,10 @@ const PERMISSION_DEFS = [
   { key: 'settings', label: 'Settings', desc: 'Manage email settings and system config' },
   { key: 'templates', label: 'Templates', desc: 'Edit document templates (payroll PDF, delivery notes, reports)' },
   { key: 'userAccess', label: 'User Access', desc: 'Manage who can access what' },
-  { key: 'draftsmanMode', label: 'Draftsman Mode', desc: 'Upload drawings and manage jobs in Projects' }
+  { key: 'draftsmanMode', label: 'Draftsman Mode', desc: 'Upload drawings and manage jobs in Projects' },
+  { key: 'tenders', label: 'Tenders', desc: 'View, add, and amend tenders' },
+  { key: 'editQuotes', label: 'Edit Quotes', desc: 'Edit and manage quotes' },
+  { key: 'viewQuotes', label: 'View Quotes', desc: 'View quotes (read-only)' }
 ];
 
 const PERM_TO_TAB = {
@@ -10841,6 +10854,700 @@ function buildDeliveryNoteHTMLCore(dn, bomJob, proj, job, settingsOverride) {
   return html;
 }
 
+// ═══════════════════════════════════════════
+// TENDERS & CLIENTS
+// ═══════════════════════════════════════════
+let tendersData = [];
+let clientsData = [];
+let currentTender = null;
+let _clientSearchTimeout = null;
+
+// ── SharePoint config for Quotation folder ──
+const QUOTATION_FOLDER_PATH = 'Quotation'; // root-level in the BAMA drive
+
+async function initTendersPage() {
+  try {
+    const [tenders, clients] = await Promise.all([
+      api.get('/api/tenders'),
+      api.get('/api/clients')
+    ]);
+    tendersData = tenders || [];
+    clientsData = clients || [];
+    renderTenderList();
+    renderClientList();
+  } catch (err) {
+    console.error('Failed to load tenders data:', err);
+    toast('Failed to load tenders data', 'error');
+  }
+}
+
+// ── Tab switching ──
+function switchTenderTab(tab) {
+  document.querySelectorAll('#tenderLayout .tab-content').forEach(el => {
+    el.classList.remove('active');
+    el.style.display = 'none';
+  });
+  const target = document.getElementById(`tab-${tab}`);
+  if (target) { target.classList.add('active'); target.style.display = ''; }
+
+  document.querySelectorAll('#tenderSidebar .sidebar-nav-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.tab === tab);
+  });
+
+  const titles = { tenders: 'TENDERS', quotes: 'QUOTES', clients: 'CLIENT DATABASE' };
+  const titleEl = document.getElementById('tenderPageTitle');
+  if (titleEl) titleEl.textContent = titles[tab] || 'TENDERS';
+
+  const newBtn = document.getElementById('btnNewTender');
+  if (newBtn) newBtn.style.display = tab === 'tenders' ? '' : 'none';
+
+  if (tab === 'quotes') renderQuoteList();
+  if (tab === 'clients') renderClientList();
+}
+
+// ── Render Tender List ──
+function renderTenderList() {
+  const container = document.getElementById('tenderListContainer');
+  if (!container) return;
+
+  const search = (document.getElementById('tenderSearch')?.value || '').toLowerCase();
+  const statusFilter = document.getElementById('tenderStatusFilter')?.value || '';
+
+  let list = tendersData.filter(t => {
+    if (statusFilter && t.status !== statusFilter) return false;
+    if (search) {
+      const hay = `${t.reference} ${t.project_name} ${t.company_name} ${t.contact_name || ''}`.toLowerCase();
+      if (!hay.includes(search)) return false;
+    }
+    return true;
+  });
+
+  if (!list.length) {
+    container.innerHTML = '<div class="empty-state" style="padding:24px"><div class="icon">📋</div>No tenders found</div>';
+    return;
+  }
+
+  container.innerHTML = list.map(t => `
+    <div class="tender-row" onclick="openTenderDetail(${t.id})">
+      <div style="font-family:var(--font-mono);font-weight:600;font-size:14px;min-width:80px;color:var(--accent)">${t.reference}</div>
+      <div style="flex:1">
+        <div style="font-weight:500">${t.project_name}</div>
+        <div style="font-size:12px;color:var(--muted)">${t.company_name}${t.contact_name ? ' · ' + t.contact_name : ''}</div>
+      </div>
+      <span class="tag tag-${t.status === 'tender' ? 'pending' : t.status === 'quote' ? 'approved' : t.status === 'won' ? 'approved' : t.status === 'lost' ? 'rejected' : 'pending'}">${t.status}</span>
+      <div style="font-size:11px;color:var(--subtle);min-width:75px;text-align:right">${fmtDateStr(t.created_at?.split('T')[0] || '')}</div>
+    </div>
+  `).join('');
+}
+
+// ── Render Quote List (status=quote/won/lost) ──
+function renderQuoteList() {
+  const container = document.getElementById('quoteListContainer');
+  if (!container) return;
+
+  const search = (document.getElementById('quoteSearch')?.value || '').toLowerCase();
+  let list = tendersData.filter(t => ['quote', 'won', 'lost'].includes(t.status));
+
+  if (search) {
+    list = list.filter(t => {
+      const hay = `${t.reference} ${t.project_name} ${t.company_name}`.toLowerCase();
+      return hay.includes(search);
+    });
+  }
+
+  if (!list.length) {
+    container.innerHTML = '<div class="empty-state" style="padding:24px"><div class="icon">📊</div>No quotes yet</div>';
+    return;
+  }
+
+  container.innerHTML = list.map(t => `
+    <div class="tender-row" onclick="openTenderDetail(${t.id})">
+      <div style="font-family:var(--font-mono);font-weight:600;font-size:14px;min-width:80px;color:var(--accent)">${t.reference}</div>
+      <div style="flex:1">
+        <div style="font-weight:500">${t.project_name}</div>
+        <div style="font-size:12px;color:var(--muted)">${t.company_name}</div>
+      </div>
+      <span class="tag tag-${t.status === 'quote' ? 'approved' : t.status === 'won' ? 'approved' : 'rejected'}">${t.status}</span>
+    </div>
+  `).join('');
+}
+
+// ── Render Client List ──
+function renderClientList() {
+  const container = document.getElementById('clientListContainer');
+  if (!container) return;
+
+  const search = (document.getElementById('clientSearch')?.value || '').toLowerCase();
+  let list = clientsData.filter(c => c.is_active !== false && c.is_active !== 0);
+
+  if (search) {
+    list = list.filter(c => {
+      const hay = `${c.company_name} ${c.contact_name || ''} ${c.contact_email || ''}`.toLowerCase();
+      return hay.includes(search);
+    });
+  }
+
+  if (!list.length) {
+    container.innerHTML = '<div class="empty-state" style="padding:24px"><div class="icon">🏢</div>No clients found</div>';
+    return;
+  }
+
+  container.innerHTML = list.map(c => `
+    <div class="tender-row" style="cursor:default">
+      <div style="flex:1">
+        <div style="font-weight:600">${c.company_name}</div>
+        <div style="font-size:12px;color:var(--muted)">${[c.address_line1, c.city, c.postcode].filter(Boolean).join(', ')}</div>
+      </div>
+      <div style="text-align:right;font-size:12px">
+        <div>${c.contact_name || '—'}</div>
+        <div style="color:var(--muted)">${c.contact_email || ''}</div>
+        <div style="color:var(--muted)">${c.contact_phone || ''}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ── Client Autocomplete ──
+function onClientSearch(value) {
+  clearTimeout(_clientSearchTimeout);
+  const dropdown = document.getElementById('ntClientSuggestions');
+
+  if (!value || value.length < 2) {
+    dropdown.style.display = 'none';
+    document.getElementById('ntClientId').value = '';
+    return;
+  }
+
+  _clientSearchTimeout = setTimeout(() => {
+    const matches = clientsData.filter(c =>
+      c.company_name.toLowerCase().includes(value.toLowerCase())
+    );
+
+    if (!matches.length) {
+      dropdown.style.display = 'none';
+      document.getElementById('ntClientId').value = '';
+      return;
+    }
+
+    dropdown.innerHTML = matches.map(c => `
+      <div class="autocomplete-item" onclick="selectClient(${c.id})">
+        <div class="ac-company">${c.company_name}</div>
+        <div class="ac-contact">${c.contact_name || ''} ${c.contact_email ? '· ' + c.contact_email : ''}</div>
+      </div>
+    `).join('');
+    dropdown.style.display = '';
+  }, 200);
+}
+
+function selectClient(clientId) {
+  const client = clientsData.find(c => c.id === clientId);
+  if (!client) return;
+
+  document.getElementById('ntClientId').value = client.id;
+  document.getElementById('ntCompanyName').value = client.company_name;
+  document.getElementById('ntAddress1').value = client.address_line1 || '';
+  document.getElementById('ntAddress2').value = client.address_line2 || '';
+  document.getElementById('ntCity').value = client.city || '';
+  document.getElementById('ntCounty').value = client.county || '';
+  document.getElementById('ntPostcode').value = client.postcode || '';
+  document.getElementById('ntContactName').value = client.contact_name || '';
+  document.getElementById('ntContactEmail').value = client.contact_email || '';
+  document.getElementById('ntContactPhone').value = client.contact_phone || '';
+  document.getElementById('ntClientSuggestions').style.display = 'none';
+}
+
+// ── New Tender Modal ──
+async function openNewTenderModal() {
+  // Clear form
+  ['ntClientId','ntCompanyName','ntAddress1','ntAddress2','ntCity','ntCounty',
+   'ntPostcode','ntContactName','ntContactEmail','ntContactPhone',
+   'ntProjectName','ntComments'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  document.getElementById('ntClientSuggestions').style.display = 'none';
+
+  // Generate next reference
+  try {
+    const refData = await api.get('/api/tenders/next-reference');
+    document.getElementById('ntReference').textContent = refData.reference;
+  } catch (e) {
+    document.getElementById('ntReference').textContent = '—';
+  }
+
+  document.getElementById('newTenderModal').classList.add('active');
+}
+
+function closeNewTenderModal() {
+  document.getElementById('newTenderModal').classList.remove('active');
+}
+
+async function submitNewTender() {
+  const companyName = document.getElementById('ntCompanyName').value.trim();
+  const projectName = document.getElementById('ntProjectName').value.trim();
+  const reference = document.getElementById('ntReference').textContent;
+
+  if (!companyName) { toast('Company name is required', 'error'); return; }
+  if (!projectName) { toast('Project name is required', 'error'); return; }
+  if (!reference || reference === '—') { toast('Reference could not be generated', 'error'); return; }
+
+  try {
+    // Step 1: Create or find the client
+    let clientId = document.getElementById('ntClientId').value;
+
+    if (!clientId) {
+      // New client — create it
+      const newClient = await api.post('/api/clients', {
+        company_name: companyName,
+        address_line1: document.getElementById('ntAddress1').value.trim() || null,
+        address_line2: document.getElementById('ntAddress2').value.trim() || null,
+        city: document.getElementById('ntCity').value.trim() || null,
+        county: document.getElementById('ntCounty').value.trim() || null,
+        postcode: document.getElementById('ntPostcode').value.trim() || null,
+        contact_name: document.getElementById('ntContactName').value.trim() || null,
+        contact_email: document.getElementById('ntContactEmail').value.trim() || null,
+        contact_phone: document.getElementById('ntContactPhone').value.trim() || null
+      });
+      clientId = newClient.id;
+      clientsData.push(newClient);
+    }
+
+    // Step 2: Create SharePoint folders
+    const token = await getToken();
+    const year = '20' + reference.slice(1, 3); // Q260402 → 2026
+
+    // Find or create the year folder under Quotation
+    const quotationFolder = await getOrCreateFolderByPath(QUOTATION_FOLDER_PATH, token);
+    const yearFolder = await createFolderInDrive(quotationFolder.id, year);
+    const quoteFolder = await createFolderInDrive(yearFolder.id, reference);
+    const tenderSubFolder = await createFolderInDrive(quoteFolder.id, '00 - Tender');
+
+    // Step 3: Create the tender record
+    const tender = await api.post('/api/tenders', {
+      reference,
+      client_id: parseInt(clientId),
+      project_name: projectName,
+      comments: document.getElementById('ntComments').value.trim() || null,
+      sharepoint_folder_id: quoteFolder.id,
+      sharepoint_tender_folder_id: tenderSubFolder.id,
+      created_by: currentManagerUser || AUTH.getUserName() || 'unknown'
+    });
+
+    tender.company_name = companyName;
+    tender.contact_name = document.getElementById('ntContactName').value.trim() || null;
+    tendersData.unshift(tender);
+
+    closeNewTenderModal();
+    toast(`Tender ${reference} created ✓`, 'success');
+    renderTenderList();
+
+    // Open the detail view with upload prompt
+    openTenderDetail(tender.id);
+
+  } catch (err) {
+    toast('Failed to create tender: ' + err.message, 'error');
+  }
+}
+
+// Helper to find a folder by path from drive root
+async function getOrCreateFolderByPath(path, token) {
+  const res = await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/root:/${encodeURIComponent(path)}`,
+    { headers: { 'Authorization': `Bearer ${token}` } }
+  );
+  if (res.ok) return await res.json();
+  // Doesn't exist — create from root
+  const rootRes = await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/root`,
+    { headers: { 'Authorization': `Bearer ${token}` } }
+  );
+  const root = await rootRes.json();
+  return await createFolderInDrive(root.id, path);
+}
+
+// ── Tender Detail ──
+async function openTenderDetail(id) {
+  const tender = tendersData.find(t => t.id === id);
+  if (!tender) { toast('Tender not found', 'error'); return; }
+  currentTender = tender;
+
+  // Hide other tabs, show detail
+  document.querySelectorAll('#tenderLayout .tab-content').forEach(el => {
+    el.classList.remove('active');
+    el.style.display = 'none';
+  });
+  document.getElementById('tab-tenderDetail').style.display = '';
+
+  // Populate detail
+  document.getElementById('detailReference').textContent = tender.reference;
+  document.getElementById('detailProjectName').textContent = tender.project_name;
+  document.getElementById('detailComments').textContent = tender.comments || 'No comments';
+
+  const badge = document.getElementById('detailStatusBadge');
+  badge.textContent = tender.status;
+  badge.className = `tag tag-${tender.status === 'tender' ? 'pending' : tender.status === 'quote' ? 'approved' : tender.status === 'won' ? 'approved' : tender.status === 'lost' ? 'rejected' : 'pending'}`;
+
+  // Client info
+  const clientInfo = document.getElementById('detailClientInfo');
+  if (tender.company_name) {
+    const parts = [
+      `<strong>${tender.company_name}</strong>`,
+      [tender.address_line1, tender.address_line2, tender.city, tender.county, tender.postcode].filter(Boolean).join(', '),
+      tender.contact_name ? `Contact: ${tender.contact_name}` : '',
+      tender.contact_email ? `Email: ${tender.contact_email}` : '',
+      tender.contact_phone ? `Phone: ${tender.contact_phone}` : ''
+    ].filter(Boolean);
+    clientInfo.innerHTML = parts.join('<br>');
+  } else {
+    // Fetch full client data
+    try {
+      const full = await api.get(`/api/tenders/${id}`);
+      Object.assign(tender, full);
+      const parts = [
+        `<strong>${full.company_name}</strong>`,
+        [full.address_line1, full.address_line2, full.city, full.county, full.postcode].filter(Boolean).join(', '),
+        full.contact_name ? `Contact: ${full.contact_name}` : '',
+        full.contact_email ? `Email: ${full.contact_email}` : '',
+        full.contact_phone ? `Phone: ${full.contact_phone}` : ''
+      ].filter(Boolean);
+      clientInfo.innerHTML = parts.join('<br>');
+    } catch (e) {
+      clientInfo.textContent = 'Client info unavailable';
+    }
+  }
+
+  // Show/hide convert button
+  document.getElementById('convertToQuoteSection').style.display = tender.status === 'tender' ? '' : 'none';
+
+  // Load files from SharePoint
+  loadTenderFiles();
+}
+
+function closeTenderDetail() {
+  currentTender = null;
+  document.getElementById('tab-tenderDetail').style.display = 'none';
+  // Show the previously active tab
+  const activeTab = document.querySelector('#tenderSidebar .sidebar-nav-item.active');
+  const tab = activeTab?.dataset.tab || 'tenders';
+  switchTenderTab(tab);
+}
+
+// ── Load files from SharePoint folders ──
+async function loadTenderFiles() {
+  if (!currentTender) return;
+  const token = await getToken();
+
+  // Load quote folder files
+  const qContainer = document.getElementById('quoteFolderFiles');
+  const tContainer = document.getElementById('tenderPackFiles');
+
+  for (const [folderId, container, label] of [
+    [currentTender.sharepoint_folder_id, qContainer, 'quote'],
+    [currentTender.sharepoint_tender_folder_id, tContainer, 'tender']
+  ]) {
+    if (!folderId || !container) { if (container) container.innerHTML = ''; continue; }
+    try {
+      const res = await fetch(
+        `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/items/${folderId}/children`,
+        { headers: { 'Authorization': `Bearer ${token}` } }
+      );
+      const data = await res.json();
+      const files = (data.value || []).filter(f => !f.folder || f.folder.childCount !== undefined);
+
+      if (!files.length) {
+        container.innerHTML = '<div style="font-size:12px;color:var(--subtle);padding:8px">No files uploaded yet</div>';
+        continue;
+      }
+
+      container.innerHTML = files.map(f => {
+        const isFolder = !!f.folder;
+        const icon = isFolder ? '📁' : '📄';
+        const size = isFolder ? `${f.folder.childCount} items` : formatFileSize(f.size || 0);
+        return `<div class="file-chip">
+          <span>${icon}</span>
+          <a href="${f.webUrl}" target="_blank" style="color:var(--text);text-decoration:none">${f.name}</a>
+          <span style="color:var(--subtle);font-size:11px">${size}</span>
+        </div>`;
+      }).join('');
+    } catch (e) {
+      container.innerHTML = '<div style="font-size:12px;color:var(--red);padding:8px">Failed to load files</div>';
+    }
+  }
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+// ── File Upload ──
+function handleTenderUpload(event, target) {
+  const items = event.dataTransfer?.items;
+  if (items) {
+    // Handle dropped items (could be folders via webkitGetAsEntry)
+    const files = [];
+    const entries = [];
+    for (let i = 0; i < items.length; i++) {
+      const entry = items[i].webkitGetAsEntry?.();
+      if (entry) entries.push(entry);
+      else if (items[i].kind === 'file') files.push(items[i].getAsFile());
+    }
+    if (entries.length) {
+      readAllEntries(entries).then(allFiles => uploadTenderFiles(allFiles, target));
+    } else {
+      uploadTenderFiles(files, target);
+    }
+  } else {
+    const files = Array.from(event.dataTransfer?.files || []);
+    uploadTenderFiles(files, target);
+  }
+}
+
+function handleTenderFileSelect(fileList, target) {
+  uploadTenderFiles(Array.from(fileList), target);
+}
+
+// Recursively read directory entries from drag-drop
+async function readAllEntries(entries) {
+  const files = [];
+  async function processEntry(entry, path) {
+    if (entry.isFile) {
+      const file = await new Promise(resolve => entry.file(resolve));
+      // Preserve relative path for folder uploads
+      Object.defineProperty(file, '_relativePath', { value: path + file.name });
+      files.push(file);
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      const subEntries = await new Promise(resolve => reader.readEntries(resolve));
+      for (const sub of subEntries) {
+        await processEntry(sub, path + entry.name + '/');
+      }
+    }
+  }
+  for (const entry of entries) {
+    await processEntry(entry, '');
+  }
+  return files;
+}
+
+async function uploadTenderFiles(files, target) {
+  if (!files.length || !currentTender) return;
+
+  const folderId = target === 'tender'
+    ? currentTender.sharepoint_tender_folder_id
+    : currentTender.sharepoint_folder_id;
+
+  if (!folderId) { toast('SharePoint folder not set', 'error'); return; }
+
+  const modal = document.getElementById('uploadProgressModal');
+  modal.classList.add('active');
+  const bar = document.getElementById('uploadProgressBar');
+  const text = document.getElementById('uploadProgressText');
+  const token = await getToken();
+
+  let uploaded = 0;
+  const total = files.length;
+
+  for (const file of files) {
+    const relativePath = file._relativePath || file.webkitRelativePath || file.name;
+    text.textContent = `Uploading ${uploaded + 1}/${total}: ${file.name}`;
+    bar.style.width = `${(uploaded / total) * 100}%`;
+
+    try {
+      // If the file has a path with folders, create them first
+      const parts = relativePath.split('/');
+      let parentId = folderId;
+
+      if (parts.length > 1) {
+        // Create subdirectories
+        for (let i = 0; i < parts.length - 1; i++) {
+          const subFolder = await getOrCreateSubfolder(parentId, parts[i]);
+          parentId = subFolder.id;
+        }
+      }
+
+      const fileName = parts[parts.length - 1];
+      await uploadFileToFolder(parentId, fileName, file, file.type || 'application/octet-stream');
+      uploaded++;
+    } catch (err) {
+      console.error(`Upload failed for ${file.name}:`, err);
+      toast(`Failed to upload ${file.name}`, 'error');
+    }
+  }
+
+  bar.style.width = '100%';
+  text.textContent = `${uploaded}/${total} files uploaded ✓`;
+
+  setTimeout(() => {
+    modal.classList.remove('active');
+    bar.style.width = '0%';
+    loadTenderFiles(); // Refresh file list
+    toast(`${uploaded} file${uploaded !== 1 ? 's' : ''} uploaded ✓`, 'success');
+  }, 1000);
+}
+
+// ── Convert to Quote ──
+async function convertToQuote() {
+  if (!currentTender) return;
+
+  const settings = state.timesheetData.settings || {};
+  const handlerName = settings.quoteHandlerName || '';
+  const handlerEmail = settings.quoteHandlerEmail || '';
+
+  if (!handlerName && !handlerEmail) {
+    toast('No Quote Handler configured. Go to Manager > Settings to set one.', 'error');
+    return;
+  }
+
+  if (!confirm(`Convert ${currentTender.reference} to a Quote?\n\nThis will notify ${handlerName || handlerEmail} and create a task for them.`)) return;
+
+  try {
+    // Update status
+    const updated = await api.put(`/api/tenders/${currentTender.id}`, {
+      status: 'quote',
+      converted_by: currentManagerUser || AUTH.getUserName() || 'unknown'
+    });
+
+    Object.assign(currentTender, updated);
+
+    // Create office task for quote handler
+    const task = {
+      id: 'task_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+      title: `Quote: ${currentTender.reference} — ${currentTender.project_name}`,
+      description: `Tender ${currentTender.reference} (${currentTender.company_name}) has been converted to a Quote. Please review and prepare the quotation.`,
+      assignedTo: handlerName,
+      assignedBy: currentManagerUser || AUTH.getUserName() || 'System',
+      dueDate: null,
+      priority: 'high',
+      status: 'open',
+      createdAt: new Date().toISOString()
+    };
+
+    officeTasksData.tasks = officeTasksData.tasks || [];
+    officeTasksData.tasks.push(task);
+    await saveOfficeTasksData();
+
+    // Send email notification
+    if (handlerEmail) {
+      try {
+        const token = await getToken();
+        await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: {
+              subject: `New Quote Assigned: ${currentTender.reference} — ${currentTender.project_name}`,
+              body: {
+                contentType: 'HTML',
+                content: `<p>Hi ${handlerName || 'there'},</p>
+                  <p>Tender <strong>${currentTender.reference}</strong> has been converted to a Quote and assigned to you.</p>
+                  <p><strong>Client:</strong> ${currentTender.company_name}<br>
+                  <strong>Project:</strong> ${currentTender.project_name}<br>
+                  <strong>Converted by:</strong> ${currentManagerUser || AUTH.getUserName() || 'unknown'}</p>
+                  <p>Please log in to the BAMA ERP to review and prepare the quotation.</p>`
+              },
+              toRecipients: [{ emailAddress: { address: handlerEmail } }]
+            }
+          })
+        });
+      } catch (mailErr) {
+        console.warn('Email notification failed:', mailErr);
+        toast('Status updated but email notification failed', 'info');
+      }
+    }
+
+    // Update UI
+    const idx = tendersData.findIndex(t => t.id === currentTender.id);
+    if (idx >= 0) tendersData[idx] = currentTender;
+
+    toast(`${currentTender.reference} converted to Quote ✓`, 'success');
+    openTenderDetail(currentTender.id); // Refresh the detail view
+
+  } catch (err) {
+    toast('Failed to convert: ' + err.message, 'error');
+  }
+}
+
+// ── Edit Tender Modal ──
+function openEditTenderModal() {
+  if (!currentTender) return;
+  document.getElementById('etTenderId').value = currentTender.id;
+  document.getElementById('etProjectName').value = currentTender.project_name || '';
+  document.getElementById('etComments').value = currentTender.comments || '';
+  document.getElementById('etStatus').value = currentTender.status || 'tender';
+  document.getElementById('editTenderModal').classList.add('active');
+}
+
+function closeEditTenderModal() {
+  document.getElementById('editTenderModal').classList.remove('active');
+}
+
+async function submitEditTender() {
+  const id = document.getElementById('etTenderId').value;
+  const projectName = document.getElementById('etProjectName').value.trim();
+  const comments = document.getElementById('etComments').value.trim();
+  const status = document.getElementById('etStatus').value;
+
+  if (!projectName) { toast('Project name is required', 'error'); return; }
+
+  try {
+    const updated = await api.put(`/api/tenders/${id}`, { project_name: projectName, comments, status });
+
+    const idx = tendersData.findIndex(t => String(t.id) === String(id));
+    if (idx >= 0) Object.assign(tendersData[idx], updated);
+    if (currentTender && String(currentTender.id) === String(id)) Object.assign(currentTender, updated);
+
+    closeEditTenderModal();
+    toast('Tender updated ✓', 'success');
+    openTenderDetail(parseInt(id));
+    renderTenderList();
+  } catch (err) {
+    toast('Failed to update: ' + err.message, 'error');
+  }
+}
+
+// ── New Client Modal ──
+function openNewClientModal() {
+  ['ncCompanyName','ncAddress1','ncAddress2','ncCity','ncCounty','ncPostcode',
+   'ncContactName','ncContactEmail','ncContactPhone'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  document.getElementById('newClientModal').classList.add('active');
+}
+
+function closeNewClientModal() {
+  document.getElementById('newClientModal').classList.remove('active');
+}
+
+async function submitNewClient() {
+  const companyName = document.getElementById('ncCompanyName').value.trim();
+  if (!companyName) { toast('Company name is required', 'error'); return; }
+
+  try {
+    const client = await api.post('/api/clients', {
+      company_name: companyName,
+      address_line1: document.getElementById('ncAddress1').value.trim() || null,
+      address_line2: document.getElementById('ncAddress2').value.trim() || null,
+      city: document.getElementById('ncCity').value.trim() || null,
+      county: document.getElementById('ncCounty').value.trim() || null,
+      postcode: document.getElementById('ncPostcode').value.trim() || null,
+      contact_name: document.getElementById('ncContactName').value.trim() || null,
+      contact_email: document.getElementById('ncContactEmail').value.trim() || null,
+      contact_phone: document.getElementById('ncContactPhone').value.trim() || null
+    });
+
+    clientsData.push(client);
+    closeNewClientModal();
+    toast(`Client "${companyName}" created ✓`, 'success');
+    renderClientList();
+  } catch (err) {
+    toast('Failed to create client: ' + err.message, 'error');
+  }
+}
+
+
 // PAGE DETECTION
 // ═══════════════════════════════════════════
 const CURRENT_PAGE = (() => {
@@ -10848,6 +11555,7 @@ const CURRENT_PAGE = (() => {
   if (path.includes('manager')) return 'manager';
   if (path.includes('office')) return 'office';
   if (path.includes('templates')) return 'templates';
+  if (path.includes('tenders')) return 'tenders';
   if (path.includes('projects') || path.includes('project')) return 'projects';
   if (path.includes('hub')) return 'hub';
   return 'index'; // default kiosk
@@ -10960,6 +11668,8 @@ async function init() {
     }).catch(e => console.warn('Job data load failed:', e.message));
   } else if (CURRENT_PAGE === 'templates') {
     initTemplatesPage();
+  } else if (CURRENT_PAGE === 'tenders') {
+    initTendersPage();
   } else if (CURRENT_PAGE === 'hub') {
     // hub has its own simple rendering
   } else {

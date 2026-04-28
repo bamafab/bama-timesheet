@@ -155,6 +155,18 @@
               onchange="saveEmailSettings()">
             <div style="font-size:11px;color:var(--subtle);margin-top:4px">Clock-ins after this time are flagged as late in attendance reports</div>
           </div>
+          <div>
+            <div class="field-label">QUOTE HANDLER NAME</div>
+            <input type="text" class="field-input" id="settingQuoteHandlerName" placeholder="e.g. Daniel"
+              onchange="saveEmailSettings()">
+            <div style="font-size:11px;color:var(--subtle);margin-top:4px">Person responsible for processing converted quotes</div>
+          </div>
+          <div>
+            <div class="field-label">QUOTE HANDLER EMAIL</div>
+            <input type="email" class="field-input" id="settingQuoteHandlerEmail" placeholder="e.g. quotes@bamafabrication.co.uk"
+              onchange="saveEmailSettings()">
+            <div style="font-size:11px;color:var(--subtle);margin-top:4px">Email notified when a tender is converted to a quote</div>
+          </div>
         </div>
         <button class="btn btn-primary" style="margin-top:14px;padding:8px 20px;font-size:13px" onclick="saveEmailSettings()">Save Email Settings</button>
       </div>

@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BAMA Tenders &amp; Quotes</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="bama.css">
+</head>
+<body>
+<div class="loading-bar" id="loadingBar" style="width:0"></div>
+
+<!-- TOP BAR -->
+<div class="topbar">
+  <div class="logo"><span style="color:#D0021B">BAMA</span> <span style="color:#D0021B">FABRICATION</span><span> TENDERS</span></div>
+  <div style="position:absolute;left:50%;transform:translate(-50%,-50%);top:50%">
+    <div class="clock-display" id="liveClock" style="font-size:15px;font-weight:700;letter-spacing:.5px">--:-- --</div>
+  </div>
+  <div class="topbar-right">
+    <a href="hub.html" style="text-decoration:none"><button class="manager-btn">&#8592; Hub</button></a>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<!-- ═══════════════════════════════════════
+     MAIN LAYOUT
+══════════════════════════════════════════ -->
+<div class="mgr-layout" id="tenderLayout" style="display:flex">
+  <!-- Sidebar -->
+  <nav class="mgr-sidebar" id="tenderSidebar">
+    <div class="sidebar-nav-group">
+      <button class="sidebar-nav-item active" data-tab="tenders" onclick="switchTenderTab('tenders')">
+        <span class="sidebar-nav-icon">📋</span> Tenders
+      </button>
+      <button class="sidebar-nav-item" data-tab="quotes" onclick="switchTenderTab('quotes')">
+        <span class="sidebar-nav-icon">📊</span> Quotes
+      </button>
+      <button class="sidebar-nav-item" data-tab="clients" onclick="switchTenderTab('clients')">
+        <span class="sidebar-nav-icon">🏢</span> Clients
+      </button>
+    </div>
+  </nav>
+
+  <!-- Content -->
+  <div class="mgr-content">
+    <div class="mgr-header">
+      <div>
+        <div class="mgr-title" id="tenderPageTitle">TENDERS</div>
+        <div style="color:var(--muted);font-size:13px">BAMA Fabrication · Tender &amp; Quote Management</div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center">
+        <button class="btn btn-primary" id="btnNewTender" onclick="openNewTenderModal()">+ New Tender</button>
+        <a href="hub.html" style="text-decoration:none"><button class="btn btn-ghost">Exit</button></a>
+      </div>
+    </div>
+
+    <!-- Tab: Tenders List -->
+    <div class="tab-content active" id="tab-tenders">
+      <div class="card">
+        <div class="card-title"><span class="icon">📋</span> All Tenders</div>
+        <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+          <input type="text" class="field-input" id="tenderSearch" placeholder="Search tenders..."
+            style="max-width:260px" oninput="renderTenderList()">
+          <select class="field-input" id="tenderStatusFilter" style="max-width:160px" onchange="renderTenderList()">
+            <option value="">All Statuses</option>
+            <option value="tender">Tender</option>
+            <option value="quote">Quote</option>
+            <option value="won">Won</option>
+            <option value="lost">Lost</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+        </div>
+        <div id="tenderListContainer">
+          <div class="empty-state"><div class="spinner"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab: Quotes List -->
+    <div class="tab-content" id="tab-quotes">
+      <div class="card">
+        <div class="card-title"><span class="icon">📊</span> Quotes</div>
+        <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+          <input type="text" class="field-input" id="quoteSearch" placeholder="Search quotes..."
+            style="max-width:260px" oninput="renderQuoteList()">
+        </div>
+        <div id="quoteListContainer">
+          <div class="empty-state"><div class="spinner"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab: Clients -->
+    <div class="tab-content" id="tab-clients">
+      <div class="card">
+        <div class="card-title"><span class="icon">🏢</span> Client Database</div>
+        <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+          <input type="text" class="field-input" id="clientSearch" placeholder="Search clients..."
+            style="max-width:260px" oninput="renderClientList()">
+          <button class="btn btn-primary" onclick="openNewClientModal()">+ Add Client</button>
+        </div>
+        <div id="clientListContainer">
+          <div class="empty-state"><div class="spinner"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tender Detail View (hidden by default) -->
+    <div class="tab-content" id="tab-tenderDetail" style="display:none">
+      <div style="margin-bottom:16px">
+        <button class="btn btn-ghost" onclick="closeTenderDetail()" style="padding:6px 14px;font-size:12px">&#8592; Back to list</button>
+      </div>
+      <div class="card" style="margin-bottom:20px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
+          <div>
+            <div style="font-size:24px;font-weight:700;font-family:var(--font-display);letter-spacing:1px" id="detailReference">—</div>
+            <div style="font-size:15px;color:var(--muted)" id="detailProjectName">—</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span class="tag" id="detailStatusBadge">—</span>
+            <button class="btn btn-ghost" id="detailEditBtn" onclick="openEditTenderModal()" style="padding:4px 12px;font-size:11px">✏️ Edit</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Client info -->
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-title"><span class="icon">🏢</span> Client Details</div>
+        <div id="detailClientInfo" style="font-size:13px;color:var(--muted)">—</div>
+      </div>
+
+      <!-- Comments -->
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-title"><span class="icon">💬</span> Comments</div>
+        <div id="detailComments" style="font-size:13px;color:var(--muted);white-space:pre-wrap">—</div>
+      </div>
+
+      <!-- File Upload Zones -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
+        <div class="card">
+          <div class="card-title"><span class="icon">📁</span> Quote Folder</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Upload correspondence, emails, and general documents here.</div>
+          <div id="quoteFolderFiles" style="margin-bottom:12px"></div>
+          <div class="upload-zone" id="quoteFolderUpload"
+               ondragover="event.preventDefault();this.classList.add('drag-over')"
+               ondragleave="this.classList.remove('drag-over')"
+               ondrop="event.preventDefault();this.classList.remove('drag-over');handleTenderUpload(event,'quote')">
+            <div style="text-align:center;padding:20px;cursor:pointer" onclick="document.getElementById('quoteFolderInput').click()">
+              <div style="font-size:24px;margin-bottom:8px">📎</div>
+              <div style="font-size:13px;color:var(--muted)">Drop files/folders here or click to upload</div>
+            </div>
+            <input type="file" id="quoteFolderInput" multiple style="display:none"
+                   onchange="handleTenderFileSelect(this.files,'quote')">
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title"><span class="icon">📦</span> 00 - Tender Pack</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Upload the tender pack documents and folder structures here.</div>
+          <div id="tenderPackFiles" style="margin-bottom:12px"></div>
+          <div class="upload-zone" id="tenderPackUpload"
+               ondragover="event.preventDefault();this.classList.add('drag-over')"
+               ondragleave="this.classList.remove('drag-over')"
+               ondrop="event.preventDefault();this.classList.remove('drag-over');handleTenderUpload(event,'tender')">
+            <div style="text-align:center;padding:20px;cursor:pointer" onclick="document.getElementById('tenderPackInput').click()">
+              <div style="font-size:24px;margin-bottom:8px">📎</div>
+              <div style="font-size:13px;color:var(--muted)">Drop files/folders here or click to upload</div>
+            </div>
+            <input type="file" id="tenderPackInput" webkitdirectory multiple style="display:none"
+                   onchange="handleTenderFileSelect(this.files,'tender')">
+          </div>
+        </div>
+      </div>
+
+      <!-- Convert to Quote button (only visible when status is 'tender') -->
+      <div id="convertToQuoteSection" style="display:none">
+        <div class="card" style="background:rgba(255,107,0,.06);border:1px solid rgba(255,107,0,.2)">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+            <div>
+              <div style="font-weight:600;font-size:14px;color:var(--accent)">Ready to convert?</div>
+              <div style="font-size:12px;color:var(--muted)">This will change the status to Quote and notify the Quote Handler.</div>
+            </div>
+            <button class="btn btn-primary" onclick="convertToQuote()" style="padding:10px 24px;font-size:14px">
+              🔄 Convert to Quote
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- end mgr-content -->
+</div><!-- end mgr-layout -->
+
+<!-- ═══════════════════════════════════════
+     NEW TENDER MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="newTenderModal">
+  <div class="modal" style="max-width:560px;width:95vw">
+    <div class="modal-title">📋 New Tender</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:20px">Create a new tender entry. Start typing a client name to see suggestions.</div>
+
+    <input type="hidden" id="ntClientId" value="">
+    <div style="margin-bottom:12px;position:relative">
+      <div class="field-label">COMPANY NAME</div>
+      <input type="text" class="field-input" id="ntCompanyName" placeholder="Start typing..."
+             autocomplete="off" oninput="onClientSearch(this.value)">
+      <div id="ntClientSuggestions" class="autocomplete-dropdown" style="display:none"></div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <div class="field-label">ADDRESS LINE 1</div>
+        <input type="text" class="field-input" id="ntAddress1" placeholder="Street address">
+      </div>
+      <div>
+        <div class="field-label">ADDRESS LINE 2</div>
+        <input type="text" class="field-input" id="ntAddress2" placeholder="Optional">
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <div class="field-label">CITY</div>
+        <input type="text" class="field-input" id="ntCity">
+      </div>
+      <div>
+        <div class="field-label">COUNTY</div>
+        <input type="text" class="field-input" id="ntCounty">
+      </div>
+      <div>
+        <div class="field-label">POSTCODE</div>
+        <input type="text" class="field-input" id="ntPostcode">
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <div class="field-label">CONTACT NAME</div>
+        <input type="text" class="field-input" id="ntContactName">
+      </div>
+      <div>
+        <div class="field-label">CONTACT EMAIL</div>
+        <input type="email" class="field-input" id="ntContactEmail">
+      </div>
+      <div>
+        <div class="field-label">CONTACT PHONE</div>
+        <input type="text" class="field-input" id="ntContactPhone">
+      </div>
+    </div>
+
+    <div class="field-label" style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">TENDER DETAILS</div>
+    <div style="margin-bottom:12px;margin-top:8px">
+      <div class="field-label">PROJECT NAME</div>
+      <input type="text" class="field-input" id="ntProjectName" placeholder="e.g. Warehouse Steelwork">
+    </div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">COMMENTS</div>
+      <textarea class="field-input" id="ntComments" rows="3" placeholder="Any notes about this tender..."></textarea>
+    </div>
+
+    <div style="margin-bottom:16px;padding:12px;background:var(--surface);border-radius:8px;border:1px solid var(--border)">
+      <div style="font-size:12px;color:var(--muted)">Reference will be generated:</div>
+      <div style="font-size:18px;font-weight:700;font-family:var(--font-mono);color:var(--accent)" id="ntReference">—</div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeNewTenderModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitNewTender()">Create Tender</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     EDIT TENDER MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="editTenderModal">
+  <div class="modal" style="max-width:480px;width:95vw">
+    <div class="modal-title">✏️ Edit Tender</div>
+    <input type="hidden" id="etTenderId">
+    <div style="margin-bottom:12px">
+      <div class="field-label">PROJECT NAME</div>
+      <input type="text" class="field-input" id="etProjectName">
+    </div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">COMMENTS</div>
+      <textarea class="field-input" id="etComments" rows="3"></textarea>
+    </div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">STATUS</div>
+      <select class="field-input" id="etStatus">
+        <option value="tender">Tender</option>
+        <option value="quote">Quote</option>
+        <option value="won">Won</option>
+        <option value="lost">Lost</option>
+        <option value="cancelled">Cancelled</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeEditTenderModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitEditTender()">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     NEW CLIENT MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="newClientModal">
+  <div class="modal" style="max-width:480px;width:95vw">
+    <div class="modal-title">🏢 Add Client</div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">COMPANY NAME</div>
+      <input type="text" class="field-input" id="ncCompanyName">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <div class="field-label">ADDRESS LINE 1</div>
+        <input type="text" class="field-input" id="ncAddress1">
+      </div>
+      <div>
+        <div class="field-label">ADDRESS LINE 2</div>
+        <input type="text" class="field-input" id="ncAddress2">
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <div class="field-label">CITY</div>
+        <input type="text" class="field-input" id="ncCity">
+      </div>
+      <div>
+        <div class="field-label">COUNTY</div>
+        <input type="text" class="field-input" id="ncCounty">
+      </div>
+      <div>
+        <div class="field-label">POSTCODE</div>
+        <input type="text" class="field-input" id="ncPostcode">
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <div class="field-label">CONTACT NAME</div>
+        <input type="text" class="field-input" id="ncContactName">
+      </div>
+      <div>
+        <div class="field-label">CONTACT EMAIL</div>
+        <input type="email" class="field-input" id="ncContactEmail">
+      </div>
+      <div>
+        <div class="field-label">CONTACT PHONE</div>
+        <input type="text" class="field-input" id="ncContactPhone">
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeNewClientModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitNewClient()">Save Client</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     FILE UPLOAD PROGRESS MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="uploadProgressModal">
+  <div class="modal" style="max-width:420px;width:95vw;text-align:center">
+    <div style="font-size:48px;margin-bottom:16px">📤</div>
+    <div class="modal-title" id="uploadProgressTitle">Uploading files...</div>
+    <div style="margin:16px 0">
+      <div style="background:var(--surface);border-radius:8px;height:8px;overflow:hidden">
+        <div id="uploadProgressBar" style="height:100%;background:var(--accent);width:0%;transition:width .3s"></div>
+      </div>
+    </div>
+    <div id="uploadProgressText" style="font-size:13px;color:var(--muted)">Preparing...</div>
+  </div>
+</div>
+
+<style>
+  .autocomplete-dropdown {
+    position: absolute; top: 100%; left: 0; right: 0; z-index: 200;
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    max-height: 200px; overflow-y: auto; box-shadow: 0 8px 24px rgba(0,0,0,.4);
+  }
+  .autocomplete-item {
+    padding: 10px 14px; cursor: pointer; font-size: 13px; border-bottom: 1px solid var(--border);
+  }
+  .autocomplete-item:hover { background: var(--surface2); }
+  .autocomplete-item:last-child { border-bottom: none; }
+  .autocomplete-item .ac-company { font-weight: 600; }
+  .autocomplete-item .ac-contact { color: var(--muted); font-size: 12px; }
+
+  .tender-row {
+    display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+    border-bottom: 1px solid var(--border); cursor: pointer; transition: background .15s;
+  }
+  .tender-row:hover { background: var(--surface2); }
+  .tender-row:last-child { border-bottom: none; }
+
+  .upload-zone {
+    border: 2px dashed var(--border); border-radius: 10px; transition: border-color .2s;
+  }
+  .upload-zone.drag-over { border-color: var(--accent); background: rgba(255,107,0,.04); }
+
+  .file-chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+    font-size: 12px; margin: 2px;
+  }
+</style>
+
+<script src="shared.js?v=20260428a"></script>
+</body>
+</html>
