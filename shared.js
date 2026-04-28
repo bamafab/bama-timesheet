@@ -1559,6 +1559,7 @@ async function checkOfficePin() {
 
   // Has permissions — enter office dashboard
   currentManagerUser = _pendingManagerUser;
+  sessionStorage.setItem('bama_mgr_authed', currentManagerUser);
   _pendingManagerUser = null;
   document.getElementById('officePinInput').value = '';
 
@@ -10866,42 +10867,81 @@ let _clientSearchTimeout = null;
 const QUOTATION_FOLDER_PATH = 'Quotation'; // root-level in the BAMA drive
 
 async function initTendersPage() {
-  // Show employee selection grid first
+  // Check if already logged in from office/manager
+  const authed = sessionStorage.getItem('bama_mgr_authed');
+  if (authed) {
+    currentManagerUser = authed;
+    // Check tenders permission
+    const perms = getUserPermissions(currentManagerUser);
+    if (perms && perms.tenders) {
+      document.getElementById('screenTenderSelect').style.display = 'none';
+      document.getElementById('tenderLayout').style.display = 'flex';
+      loadTendersData();
+      return;
+    }
+  }
+  // Show employee selection grid
   renderTenderEmployeeGrid();
+}
+
+async function loadTendersData() {
+  try {
+    const [tenders, clients] = await Promise.all([
+      api.get('/api/tenders'),
+      api.get('/api/clients')
+    ]);
+    tendersData = tenders || [];
+    clientsData = clients || [];
+    renderTenderList();
+    renderClientList();
+  } catch (err) {
+    console.error('Failed to load tenders data:', err);
+    toast('Failed to load tenders data', 'error');
+  }
 }
 
 function renderTenderEmployeeGrid() {
   const grid = document.getElementById('tenderEmployeeGrid');
   if (!grid) return;
 
-  const employees = (state.timesheetData.employees || []).filter(e => e.active !== false);
-  if (!employees.length) {
-    grid.innerHTML = '<div class="empty-state">No employees found</div>';
+  // Only show office staff (same as office login)
+  const empList = (state.timesheetData.employees || []).filter(e => e.active !== false && (e.staffType || 'workshop') === 'office');
+
+  if (!empList.length) {
+    grid.innerHTML = '<div class="empty-state" style="padding:30px"><div style="font-size:28px;margin-bottom:10px">&#128101;</div><div>No office staff set up yet.</div><div style="margin-top:8px;font-size:12px;color:var(--subtle)">Go to Manager → Staff to add office employees.</div></div>';
     return;
   }
 
-  grid.innerHTML = employees.map(emp => `
-    <div class="emp-card" onclick="selectTenderEmployee('${emp.name}', ${emp.id}, ${!!emp.hasPin})">
-      <div class="emp-avatar">${emp.name.split(' ').map(n => n[0]).join('').slice(0,2)}</div>
-      <div class="emp-name">${emp.name}</div>
-      <div style="font-size:10px;color:var(--subtle);margin-top:3px">${emp.hasPin ? '&#128274; PIN set' : '&#128275; No PIN'}</div>
-    </div>
-  `).join('');
+  grid.innerHTML = empList.map(emp => {
+    const ini = (emp.name || '').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+    const col = empColor(emp.name);
+    return `
+      <div class="emp-btn" onclick="selectTenderEmployee('${emp.name.replace(/'/g, "\\\\'")}')" style="padding:22px 14px 16px">
+        <div class="emp-avatar" style="width:48px;height:48px;font-size:19px;background:linear-gradient(135deg,${col},#3e1a00)">${ini}</div>
+        <div class="emp-name" style="font-size:13px">${emp.name}</div>
+        <div style="font-size:10px;color:var(--subtle);margin-top:3px">${emp.hasPin ? '&#128274; PIN set' : '&#128275; No PIN'}</div>
+      </div>
+    `;
+  }).join('');
 }
 
 let _pendingTenderUser = null;
 
-function selectTenderEmployee(name, empId, hasPin) {
-  if (hasPin) {
-    _pendingTenderUser = { name, empId };
-    document.getElementById('tenderPinUser').textContent = name;
-    document.getElementById('tenderPinInput').value = '';
-    document.getElementById('tenderPinError').textContent = '';
-    document.getElementById('tenderPinModal').classList.add('active');
-    setTimeout(() => document.getElementById('tenderPinInput').focus(), 200);
-  } else {
+function selectTenderEmployee(name) {
+  const emp = (state.timesheetData.employees || []).find(e => e.name === name);
+  if (!emp) return;
+
+  if (!emp.hasPin) {
     toast('No PIN set for this user. Set one in Staff management first.', 'error');
+    return;
   }
+
+  _pendingTenderUser = { name, empId: emp.id };
+  document.getElementById('tenderPinUser').textContent = name;
+  document.getElementById('tenderPinInput').value = '';
+  document.getElementById('tenderPinError').textContent = '';
+  document.getElementById('tenderPinModal').classList.add('active');
+  setTimeout(() => document.getElementById('tenderPinInput').focus(), 200);
 }
 
 async function verifyTenderPin() {
@@ -10915,44 +10955,33 @@ async function verifyTenderPin() {
       pin
     });
 
-    if (!result.valid) {
+    if (!result || !result.valid) {
       document.getElementById('tenderPinError').textContent = (result && result.reason) || 'Incorrect PIN';
+      document.getElementById('tenderPinInput').value = '';
       return;
     }
 
-    // PIN correct — enter tenders
+    // PIN correct — check permissions
     currentManagerUser = _pendingTenderUser.name;
+    sessionStorage.setItem('bama_mgr_authed', currentManagerUser);
     document.getElementById('tenderPinModal').classList.remove('active');
 
-    // Check tenders permission
     const perms = getUserPermissions(currentManagerUser);
     if (!perms || !perms.tenders) {
       toast('You don\'t have permission to access Tenders. Contact your admin.', 'error');
       currentManagerUser = null;
+      sessionStorage.removeItem('bama_mgr_authed');
       return;
     }
 
     // Show main layout, hide login screen
     document.getElementById('screenTenderSelect').style.display = 'none';
     document.getElementById('tenderLayout').style.display = 'flex';
-
-    // Load data
-    try {
-      const [tenders, clients] = await Promise.all([
-        api.get('/api/tenders'),
-        api.get('/api/clients')
-      ]);
-      tendersData = tenders || [];
-      clientsData = clients || [];
-      renderTenderList();
-      renderClientList();
-    } catch (err) {
-      console.error('Failed to load tenders data:', err);
-      toast('Failed to load tenders data', 'error');
-    }
+    loadTendersData();
 
   } catch (err) {
     document.getElementById('tenderPinError').textContent = 'PIN verification failed';
+    document.getElementById('tenderPinInput').value = '';
   }
 }
 
@@ -11784,7 +11813,7 @@ async function init() {
     : Promise.resolve();
 
   // User access needed on manager and office pages (still from SharePoint for now)
-  const userAccessPromise = (CURRENT_PAGE === 'manager' || CURRENT_PAGE === 'office' || CURRENT_PAGE === 'projects')
+  const userAccessPromise = (CURRENT_PAGE === 'manager' || CURRENT_PAGE === 'office' || CURRENT_PAGE === 'projects' || CURRENT_PAGE === 'tenders')
     ? Promise.race([
         loadUserAccessData(),
         new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 6000))
@@ -11792,7 +11821,7 @@ async function init() {
     : Promise.resolve();
 
   // Office tasks only needed on office page (still from SharePoint for now)
-  const officeTasksPromise = (CURRENT_PAGE === 'office')
+  const officeTasksPromise = (CURRENT_PAGE === 'office' || CURRENT_PAGE === 'tenders')
     ? Promise.race([
         loadOfficeTasksData(),
         new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 6000))
