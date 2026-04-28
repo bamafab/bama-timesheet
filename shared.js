@@ -11067,15 +11067,60 @@ async function openNewTenderModal() {
   });
   document.getElementById('ntClientSuggestions').style.display = 'none';
 
-  // Generate next reference
+  // Generate next reference by scanning SharePoint + database
   try {
-    const refData = await api.get('/api/tenders/next-reference');
-    document.getElementById('ntReference').textContent = refData.reference;
+    const ref = await getNextTenderReference();
+    document.getElementById('ntReference').textContent = ref;
   } catch (e) {
+    console.error('Reference generation failed:', e);
     document.getElementById('ntReference').textContent = '—';
   }
 
   document.getElementById('newTenderModal').classList.add('active');
+}
+
+async function getNextTenderReference() {
+  const now = new Date();
+  const yy = String(now.getFullYear()).slice(-2); // "26"
+  const prefix = `Q${yy}`; // "Q26" — we search ALL of this year, not per month
+
+  let highestNum = 0;
+
+  // 1. Check SharePoint — scan the year folder for existing quote folders
+  try {
+    const token = await getToken();
+    const year = '20' + yy;
+    const res = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/root:/${QUOTATION_FOLDER_PATH}/${year}:/children?$select=name&$top=999`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    if (res.ok) {
+      const data = await res.json();
+      (data.value || []).forEach(item => {
+        // Match folders like Q260426, Q260401 etc — extract the number part after Q26
+        const match = item.name.match(new RegExp(`^${prefix}(\\d+)`));
+        if (match) {
+          const num = parseInt(match[1], 10);
+          if (num > highestNum) highestNum = num;
+        }
+      });
+    }
+  } catch (e) {
+    console.warn('SharePoint scan failed, falling back to DB only:', e);
+  }
+
+  // 2. Also check database for any that might not have SP folders yet
+  try {
+    const dbData = await api.get(`/api/tenders/next-reference?year=${yy}`);
+    // dbData.count is the DB count + 1, so the highest DB number is count - 1
+    const dbHighest = (dbData.count || 1) - 1;
+    if (dbHighest > highestNum) highestNum = dbHighest;
+  } catch (e) {
+    console.warn('DB reference check failed:', e);
+  }
+
+  const nextNum = highestNum + 1;
+  return `${prefix}${String(nextNum).padStart(2, '0')}`;
 }
 
 function closeNewTenderModal() {
