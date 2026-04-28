@@ -6545,7 +6545,10 @@ async function loadUserAccessData() {
           reports: !!row.reports,
           settings: !!row.settings,
           userAccess: !!row.user_access,
-          draftsmanMode: !!row.draftsman_mode
+          draftsmanMode: !!row.draftsman_mode,
+          tenders: !!row.tenders,
+          editQuotes: !!row.edit_quotes,
+          viewQuotes: !!row.view_quotes
         }
       };
     });
@@ -9895,7 +9898,8 @@ async function toggleUserPermission(empName, permKey, enabled) {
       permissions: {
         byProject: false, byEmployee: false, clockingInOut: false,
         payroll: false, archive: false, staff: false, holidays: false,
-        reports: false, settings: false, userAccess: false, draftsmanMode: false
+        reports: false, settings: false, userAccess: false, draftsmanMode: false,
+        tenders: false, editQuotes: false, viewQuotes: false
       }
     };
   }
