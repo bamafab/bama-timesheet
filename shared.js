@@ -245,7 +245,7 @@ function normaliseEmployee(row) {
   return {
     id: row.id,
     name: row.name,
-    pin: row.pin,
+    hasPin: !!row.has_pin,
     role: row.erp_role || row.staff_type || 'employee',
     staffType: row.staff_type || 'workshop',
     erpRole: row.erp_role || 'employee',
@@ -849,7 +849,7 @@ function openEmployee(name) {
   const emp = (state.timesheetData.employees || []).find(e => e.name === name);
 
   // If employee has a PIN, show PIN modal first
-  if (emp && emp.pin) {
+  if (emp && emp.hasPin) {
     _pendingEmployee = name;
     document.getElementById('empPinModalName').textContent = name;
     document.getElementById('empPinInput').value = '';
@@ -863,17 +863,25 @@ function openEmployee(name) {
   openEmployeePanel(name);
 }
 
-function checkEmpPin() {
+async function checkEmpPin() {
   const pin = document.getElementById('empPinInput').value;
   const emp = (state.timesheetData.employees || []).find(e => e.name === _pendingEmployee);
 
   if (!emp) return;
 
-  if (pin === emp.pin) {
+  let result;
+  try {
+    result = await api.post('/api/auth/verify-pin', { employee_id: emp.id, pin });
+  } catch (err) {
+    document.getElementById('empPinError').textContent = 'Verification failed — try again';
+    return;
+  }
+
+  if (result && result.valid) {
     closeEmpPinModal();
     openEmployeePanel(emp.name);
   } else {
-    document.getElementById('empPinError').textContent = 'Incorrect PIN — try again';
+    document.getElementById('empPinError').textContent = (result && result.reason) || 'Incorrect PIN — try again';
     document.getElementById('empPinInput').value = '';
     document.getElementById('empPinInput').focus();
   }
@@ -1303,7 +1311,7 @@ function renderManagerEmployeeGrid() {
       <div class="emp-btn" onclick="selectManagerUser('${emp.name.replace(/'/g, "\\'")}')" style="padding:22px 14px 16px">
         <div class="emp-avatar" style="width:48px;height:48px;font-size:19px;background:linear-gradient(135deg,${col},#3e1a00)">${ini}</div>
         <div class="emp-name" style="font-size:13px">${emp.name}</div>
-        <div style="font-size:10px;color:var(--subtle);margin-top:3px">${emp.pin ? '&#128274; PIN set' : '&#128275; No PIN'}</div>
+        <div style="font-size:10px;color:var(--subtle);margin-top:3px">${emp.hasPin ? '&#128274; PIN set' : '&#128275; No PIN'}</div>
       </div>
     `;
   }).join('');
@@ -1313,7 +1321,7 @@ function selectManagerUser(name) {
   const emp = (state.timesheetData.employees || []).find(e => e.name === name);
   if (!emp) return;
 
-  if (!emp.pin) {
+  if (!emp.hasPin) {
     toast('No PIN set for this user. Set one in Staff management first.', 'error');
     return;
   }
@@ -1331,17 +1339,25 @@ function selectManagerUser(name) {
   setTimeout(() => document.getElementById('mgrPinInput').focus(), 100);
 }
 
-function checkManagerPin() {
+async function checkManagerPin() {
   const pin = document.getElementById('mgrPinInput').value;
   const emp = (state.timesheetData.employees || []).find(e => e.name === _pendingManagerUser);
 
-  if (!emp || !emp.pin) {
+  if (!emp || !emp.hasPin) {
     document.getElementById('mgrPinError').textContent = 'No PIN set for this user';
     return;
   }
 
-  if (pin !== emp.pin) {
-    document.getElementById('mgrPinError').textContent = 'Incorrect PIN';
+  let result;
+  try {
+    result = await api.post('/api/auth/verify-pin', { employee_id: emp.id, pin });
+  } catch (err) {
+    document.getElementById('mgrPinError').textContent = 'Verification failed — try again';
+    return;
+  }
+
+  if (!result || !result.valid) {
+    document.getElementById('mgrPinError').textContent = (result && result.reason) || 'Incorrect PIN';
     document.getElementById('mgrPinInput').value = '';
     return;
   }
@@ -1457,7 +1473,7 @@ function renderOfficeEmployeeGrid() {
       <div class="emp-btn" onclick="selectOfficeUser('${emp.name.replace(/'/g, "\\\\'")}')" style="padding:22px 14px 16px">
         <div class="emp-avatar" style="width:48px;height:48px;font-size:19px;background:linear-gradient(135deg,${col},#3e1a00)">${ini}</div>
         <div class="emp-name" style="font-size:13px">${emp.name}</div>
-        <div style="font-size:10px;color:var(--subtle);margin-top:3px">${emp.pin ? '&#128274; PIN set' : '&#128275; No PIN'}</div>
+        <div style="font-size:10px;color:var(--subtle);margin-top:3px">${emp.hasPin ? '&#128274; PIN set' : '&#128275; No PIN'}</div>
       </div>
     `;
   }).join('');
@@ -1467,7 +1483,7 @@ function selectOfficeUser(name) {
   const emp = (state.timesheetData.employees || []).find(e => e.name === name);
   if (!emp) return;
 
-  if (!emp.pin) {
+  if (!emp.hasPin) {
     toast('No PIN set for this user. Set one in Staff management first.', 'error');
     return;
   }
@@ -1485,17 +1501,25 @@ function selectOfficeUser(name) {
   setTimeout(() => document.getElementById('officePinInput').focus(), 100);
 }
 
-function checkOfficePin() {
+async function checkOfficePin() {
   const pin = document.getElementById('officePinInput').value;
   const emp = (state.timesheetData.employees || []).find(e => e.name === _pendingManagerUser);
 
-  if (!emp || !emp.pin) {
+  if (!emp || !emp.hasPin) {
     document.getElementById('officePinError').textContent = 'No PIN set for this user';
     return;
   }
 
-  if (pin !== emp.pin) {
-    document.getElementById('officePinError').textContent = 'Incorrect PIN';
+  let result;
+  try {
+    result = await api.post('/api/auth/verify-pin', { employee_id: emp.id, pin });
+  } catch (err) {
+    document.getElementById('officePinError').textContent = 'Verification failed — try again';
+    return;
+  }
+
+  if (!result || !result.valid) {
+    document.getElementById('officePinError').textContent = (result && result.reason) || 'Incorrect PIN';
     document.getElementById('officePinInput').value = '';
     return;
   }
@@ -2489,7 +2513,7 @@ function renderHKStep1() {
 function hkSelectEmp(name) {
   _hkEmployee = name;
   const emp = (state.timesheetData.employees || []).find(e => e.name === name);
-  if (emp && emp.pin) {
+  if (emp && emp.hasPin) {
     document.getElementById('hkStep1').style.display = 'none';
     document.getElementById('hkStep2').style.display = '';
     document.getElementById('hkPinName').textContent = name;
@@ -2501,13 +2525,23 @@ function hkSelectEmp(name) {
   }
 }
 
-function checkHKPin() {
+async function checkHKPin() {
   const pin = document.getElementById('hkPinInput').value;
   const emp = (state.timesheetData.employees || []).find(e => e.name === _hkEmployee);
-  if (emp && pin === emp.pin) {
+  if (!emp) return;
+
+  let result;
+  try {
+    result = await api.post('/api/auth/verify-pin', { employee_id: emp.id, pin });
+  } catch (err) {
+    document.getElementById('hkPinError').textContent = 'Verification failed — try again';
+    return;
+  }
+
+  if (result && result.valid) {
     showHKStep3(_hkEmployee);
   } else {
-    document.getElementById('hkPinError').textContent = 'Incorrect PIN — try again';
+    document.getElementById('hkPinError').textContent = (result && result.reason) || 'Incorrect PIN — try again';
     document.getElementById('hkPinInput').value = '';
   }
 }
@@ -5437,8 +5471,8 @@ function renderStaffList() {
               </div>
               <input type="number" class="field-input" id="edit-rate-${emp.id}" value="${emp.rate||''}"
                 placeholder="Hourly rate (£)" min="0" step="0.50" style="padding:6px 10px;font-size:12px;margin-bottom:6px">
-              <input type="password" class="field-input" id="edit-pin-${emp.id}" value="${emp.pin||''}"
-                placeholder="PIN" maxlength="6" style="padding:6px 10px;font-size:12px;margin-bottom:6px">
+              <input type="password" class="field-input" id="edit-pin-${emp.id}" value=""
+                placeholder="${emp.hasPin ? 'PIN set — leave blank to keep' : 'Set PIN (4-6 digits)'}" maxlength="6" style="padding:6px 10px;font-size:12px;margin-bottom:6px">
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px">
                 <div>
                   <div class="field-label" style="margin-bottom:3px">ANNUAL DAYS</div>
@@ -5466,7 +5500,7 @@ function renderStaffList() {
               </div>
               <div style="font-size:12px;color:var(--muted);margin-top:2px">${emp.role || 'No title set'} · <span style="color:var(--accent2)">${erpRoleLabels[erpRole] || erpRole}</span> · <span style="color:var(--muted)">${payTypeLabels[payType] || 'PAYEE'}</span></div>
               <div style="font-size:12px;color:var(--accent2);margin-top:2px;font-family:var(--font-mono)">£${(emp.rate||0).toFixed(2)}/hr</div>
-              <div style="font-size:11px;color:var(--subtle);margin-top:2px">${emp.pin ? '&#128274; PIN set' : '&#128275; No PIN'}</div>
+              <div style="font-size:11px;color:var(--subtle);margin-top:2px">${emp.hasPin ? '&#128274; PIN set' : '&#128275; No PIN'}</div>
               <div style="font-size:11px;color:var(--muted);margin-top:2px">&#127959; ${emp.annualDays||20}d/yr ${emp.carryoverDays ? '+ '+emp.carryoverDays+'d carry' : ''}</div>
               ${emp.startDate ? `<div style="font-size:11px;color:var(--subtle);margin-top:2px">Started: ${emp.startDate}</div>` : ''}
               <div style="display:flex;gap:6px;margin-top:8px">
@@ -5593,20 +5627,24 @@ async function saveEmployee(id) {
   const newErpRole = document.getElementById(`edit-erprole-${id}`)?.value || emp.erpRole || 'employee';
 
   try {
-    await api.put(`/api/employees/${id}`, {
+    // Build update body — only include PIN if user typed a new one.
+    // Empty field means "leave PIN alone"; the API also defends against this.
+    const updateBody = {
       name: newName,
-      pin: newPin,
       rate: newRate,
       staff_type: newStaffType,
       erp_role: newErpRole,
       holiday_entitlement: newDays
-    });
+    };
+    if (newPin) updateBody.pin = newPin;
+
+    await api.put(`/api/employees/${id}`, updateBody);
 
     const oldName = emp.name;
     emp.name = newName;
     emp.role = newRole;
     emp.rate = newRate;
-    emp.pin = newPin;
+    if (newPin) emp.hasPin = true;  // PIN value never lives on the client
     emp.annualDays = newDays;
     emp.staffType = newStaffType;
     emp.erpRole = newErpRole;
@@ -9529,7 +9567,7 @@ function selectDraftsmanUser(name) {
   const emp = (state.timesheetData.employees || []).find(e => e.name === name);
   if (!emp) return;
 
-  if (!emp.pin) {
+  if (!emp.hasPin) {
     toast('No PIN set for this user. Set one in Manager → Staff first.', 'error');
     return;
   }
@@ -9558,17 +9596,25 @@ function closeDraftsmanPinModal() {
   document.getElementById('draftsmanPinModal').classList.remove('active');
 }
 
-function checkDraftsmanPin() {
+async function checkDraftsmanPin() {
   const pin = document.getElementById('draftsmanPinInput').value;
   const emp = (state.timesheetData.employees || []).find(e => e.name === _pendingDraftsmanUser);
 
-  if (!emp || !emp.pin) {
+  if (!emp || !emp.hasPin) {
     document.getElementById('draftsmanPinError').textContent = 'No PIN set for this user';
     return;
   }
 
-  if (pin !== emp.pin) {
-    document.getElementById('draftsmanPinError').textContent = 'Incorrect PIN';
+  let result;
+  try {
+    result = await api.post('/api/auth/verify-pin', { employee_id: emp.id, pin });
+  } catch (err) {
+    document.getElementById('draftsmanPinError').textContent = 'Verification failed — try again';
+    return;
+  }
+
+  if (!result || !result.valid) {
+    document.getElementById('draftsmanPinError').textContent = (result && result.reason) || 'Incorrect PIN';
     document.getElementById('draftsmanPinInput').value = '';
     return;
   }
