@@ -114,7 +114,7 @@ app.http('holidays-list', {
     }
 });
 
-// PUT /api/holidays/:id — approve or reject holiday (manager)
+// PUT /api/holidays/:id — approve/reject OR full edit (dates, type, status, reason)
 app.http('holidays-update', {
     methods: ['PUT'],
     authLevel: 'anonymous',
@@ -126,11 +126,6 @@ app.http('holidays-update', {
         try {
             const id = parseInt(request.params.id);
             const body = await request.json();
-            const { status } = body;
-
-            if (!status || !['approved', 'rejected'].includes(status)) {
-                return badRequest('status must be "approved" or "rejected"', request);
-            }
 
             // Get current holiday
             const current = await query(
@@ -144,36 +139,79 @@ app.http('holidays-update', {
             if (current.recordset.length === 0) return notFound('Holiday not found', request);
             const holiday = current.recordset[0];
 
-            if (holiday.status !== 'pending') {
-                return badRequest(`Holiday already ${holiday.status}`, request);
+            // Determine if this is a simple approve/reject or a full edit
+            const isSimpleStatusChange = body.status && !body.date_from && !body.date_to && !body.type && body.working_days === undefined;
+
+            if (isSimpleStatusChange) {
+                // Original approve/reject flow
+                const { status } = body;
+                if (!['approved', 'rejected'].includes(status)) {
+                    return badRequest('status must be "approved" or "rejected"', request);
+                }
+                if (holiday.status !== 'pending') {
+                    return badRequest(`Holiday already ${holiday.status}`, request);
+                }
+
+                const result = await query(
+                    `UPDATE Holidays
+                     SET status = @status, decided_at = GETUTCDATE()
+                     OUTPUT INSERTED.*
+                     WHERE id = @id`,
+                    { id, status }
+                );
+
+                if (status === 'approved' && holiday.type === 'paid') {
+                    await query(
+                        `UPDATE Employees SET holiday_balance = holiday_balance - @days WHERE id = @employeeId`,
+                        { days: holiday.working_days, employeeId: holiday.employee_id }
+                    );
+                }
+
+                return ok({ ...result.recordset[0], employee_name: holiday.employee_name }, request);
             }
 
-            // Update holiday status
-            const result = await query(
-                `UPDATE Holidays
-                 SET status = @status, decided_at = GETUTCDATE()
-                 OUTPUT INSERTED.*
-                 WHERE id = @id`,
-                { id, status }
-            );
+            // ── Full edit flow ──
+            const newStatus = body.status || holiday.status;
+            const newType = body.type || holiday.type;
+            const newFrom = body.date_from || holiday.date_from;
+            const newTo = body.date_to || holiday.date_to;
+            const newDays = body.working_days !== undefined ? body.working_days : holiday.working_days;
+            const newReason = body.reason !== undefined ? body.reason : holiday.reason;
 
-            // If approved and type is paid, deduct from balance
-            if (status === 'approved' && holiday.type === 'paid') {
+            if (newStatus && !['pending', 'approved', 'rejected'].includes(newStatus)) {
+                return badRequest('status must be "pending", "approved", or "rejected"', request);
+            }
+
+            // Reverse old balance impact (if was approved + paid, restore days)
+            const oldWasApprovedPaid = holiday.status === 'approved' && holiday.type === 'paid';
+            if (oldWasApprovedPaid) {
                 await query(
-                    `UPDATE Employees
-                     SET holiday_balance = holiday_balance - @days
-                     WHERE id = @employeeId`,
-                    {
-                        days: holiday.working_days,
-                        employeeId: holiday.employee_id
-                    }
+                    `UPDATE Employees SET holiday_balance = holiday_balance + @days WHERE id = @employeeId`,
+                    { days: holiday.working_days, employeeId: holiday.employee_id }
                 );
             }
 
-            return ok({
-                ...result.recordset[0],
-                employee_name: holiday.employee_name
-            }, request);
+            // Update the holiday record
+            const result = await query(
+                `UPDATE Holidays
+                 SET date_from = @dateFrom, date_to = @dateTo, type = @type,
+                     status = @status, reason = @reason, working_days = @workingDays,
+                     decided_at = CASE WHEN @status IN ('approved','rejected') THEN GETUTCDATE() ELSE decided_at END
+                 OUTPUT INSERTED.*
+                 WHERE id = @id`,
+                { id, dateFrom: newFrom, dateTo: newTo, type: newType, status: newStatus, reason: newReason, workingDays: newDays }
+            );
+
+            // Apply new balance impact (if now approved + paid, deduct days)
+            const newIsApprovedPaid = newStatus === 'approved' && newType === 'paid';
+            if (newIsApprovedPaid) {
+                await query(
+                    `UPDATE Employees SET holiday_balance = holiday_balance - @days WHERE id = @employeeId`,
+                    { days: newDays, employeeId: holiday.employee_id }
+                );
+            }
+
+            return ok({ ...result.recordset[0], employee_name: holiday.employee_name }, request);
         } catch (err) {
             context.error('Error updating holiday:', err);
             return serverError('Failed to update holiday', request);

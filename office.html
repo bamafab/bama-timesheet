@@ -874,6 +874,64 @@
 </div>
 
 <!-- ═══════════════════════════════════════
+     EDIT HOLIDAY MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="editHolidayModal">
+  <div class="modal" style="max-width:480px;width:95vw">
+    <div class="modal-title">✏️ Edit Holiday / Absence</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:20px">Update or delete this record. Balance will be recalculated automatically.</div>
+    <input type="hidden" id="editHolId">
+    <div style="margin-bottom:12px">
+      <div class="field-label">EMPLOYEE</div>
+      <input type="text" class="field-input" id="editHolEmployee" disabled style="opacity:.7">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <div class="field-label">FROM</div>
+        <input type="date" class="field-input" id="editHolFrom" onchange="updateEditHolidayDays()">
+      </div>
+      <div>
+        <div class="field-label">TO</div>
+        <input type="date" class="field-input" id="editHolTo" onchange="updateEditHolidayDays()">
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <div class="field-label">TYPE</div>
+        <select class="field-input" id="editHolType" onchange="updateEditHolidayDays()">
+          <option value="paid">Paid Holiday</option>
+          <option value="unpaid">Unpaid Absence</option>
+          <option value="sick">Sick</option>
+          <option value="half">Half Day</option>
+          <option value="compassionate">Compassionate</option>
+          <option value="training">Training</option>
+        </select>
+      </div>
+      <div>
+        <div class="field-label">STATUS</div>
+        <select class="field-input" id="editHolStatus">
+          <option value="pending">Pending</option>
+          <option value="approved">Approved</option>
+          <option value="rejected">Rejected</option>
+        </select>
+      </div>
+    </div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">REASON / NOTES</div>
+      <input type="text" class="field-input" id="editHolReason" placeholder="e.g. Flu, family emergency, pre-booked holiday">
+    </div>
+    <div id="editHolDaysInfo" style="font-size:13px;font-weight:600;color:var(--accent2);margin-bottom:12px"></div>
+    <div class="modal-actions" style="justify-content:space-between">
+      <button class="btn" style="background:var(--red);color:#fff" onclick="deleteHolidayFromEdit()">🗑️ Delete</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost" onclick="closeEditHolidayModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitEditHoliday()">Save Changes</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
      CONFIRM MODAL
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="confirmModal">
@@ -887,6 +945,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260423h"></script>
+<script src="shared.js?v=20260428a"></script>
 </body>
 </html>

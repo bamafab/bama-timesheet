@@ -3699,6 +3699,7 @@ function renderHolidayRequests() {
       const loggedInEmp = (state.timesheetData.employees || []).find(e => e.name === currentManagerUser);
       const isDirector = loggedInEmp && loggedInEmp.erpRole === 'director';
       const canApprove = h.status === 'pending' && (!isOwnRequest || isDirector);
+      const showEdit = canEditHolidays();
       return `
       <div class="holiday-chip" style="flex-wrap:wrap;gap:8px">
         <span style="font-weight:600;min-width:120px">${h.employeeName}</span>
@@ -3707,6 +3708,7 @@ function renderHolidayRequests() {
         <span style="font-family:var(--font-mono);font-size:12px;color:var(--accent2)">${h.workingDays}d</span>
         <span style="color:var(--muted);font-size:12px;flex:1">${h.reason || ''}</span>
         <span class="tag tag-${h.status === 'approved' ? 'approved' : h.status === 'rejected' ? 'rejected' : 'pending'}">${h.status}</span>
+        ${showEdit ? `<button class="tiny-btn" onclick="openEditHolidayModal('${h.id}')" style="padding:2px 8px;font-size:11px;background:var(--surface2);color:var(--muted);border:1px solid var(--border)" title="Edit">✏️</button>` : ''}
         ${canApprove ? `
           <div class="approve-row">
             <button class="tiny-btn tiny-approve" onclick="approveHoliday('${h.id}')">&#10003; Approve</button>
@@ -3890,6 +3892,120 @@ async function submitBookAbsence() {
     toast('Failed to book absence: ' + err.message, 'error');
   }
 }
+
+// ═══════════════════════════════════════════
+// EDIT HOLIDAY — Directors / Finance / Office Admin
+// ═══════════════════════════════════════════
+function canEditHolidays() {
+  const allowedRoles = ['director', 'finance', 'office_admin'];
+  const currentEmp = (state.timesheetData.employees || []).find(e => e.name === currentManagerUser);
+  if (!currentEmp) return false;
+  if (allowedRoles.includes(currentEmp.erpRole)) return true;
+  return false;
+}
+
+function openEditHolidayModal(id) {
+  if (!canEditHolidays()) {
+    toast('You don\'t have permission to edit holidays. Contact a Director or Finance user.', 'error');
+    return;
+  }
+  const h = (state.timesheetData.holidays || []).find(h => String(h.id) === String(id));
+  if (!h) { toast('Holiday record not found', 'error'); return; }
+
+  document.getElementById('editHolId').value = h.id;
+  document.getElementById('editHolEmployee').value = h.employeeName || '';
+  document.getElementById('editHolFrom').value = h.dateFrom || '';
+  document.getElementById('editHolTo').value = h.dateTo || '';
+  document.getElementById('editHolType').value = h.type || 'paid';
+  document.getElementById('editHolStatus').value = h.status || 'pending';
+  document.getElementById('editHolReason').value = h.reason || '';
+  updateEditHolidayDays();
+  document.getElementById('editHolidayModal').classList.add('active');
+}
+
+function closeEditHolidayModal() {
+  document.getElementById('editHolidayModal').classList.remove('active');
+}
+
+function updateEditHolidayDays() {
+  const from = document.getElementById('editHolFrom').value;
+  const to = document.getElementById('editHolTo').value;
+  const type = document.getElementById('editHolType').value;
+  const infoEl = document.getElementById('editHolDaysInfo');
+  if (!from || !to) { infoEl.textContent = ''; return; }
+  let days = type === 'half' ? 0.5 : countWorkingDays(from, to);
+  if (days === 0 && type !== 'half') {
+    infoEl.innerHTML = '<span style="color:var(--red)">No working days in selected range</span>';
+    return;
+  }
+  infoEl.textContent = `${days} working day${days !== 1 ? 's' : ''}`;
+}
+
+async function submitEditHoliday() {
+  const id = document.getElementById('editHolId').value;
+  const from = document.getElementById('editHolFrom').value;
+  const to = document.getElementById('editHolTo').value;
+  const type = document.getElementById('editHolType').value;
+  const status = document.getElementById('editHolStatus').value;
+  const reason = document.getElementById('editHolReason').value;
+
+  if (!from || !to) { toast('Please select dates', 'error'); return; }
+  if (from > to) { toast('End date must be after start date', 'error'); return; }
+
+  let workingDays = type === 'half' ? 0.5 : countWorkingDays(from, to);
+  if (workingDays === 0 && type !== 'half') { toast('No working days in selected range', 'error'); return; }
+
+  try {
+    await api.put(`/api/holidays/${id}`, {
+      date_from: from,
+      date_to: to,
+      type,
+      status,
+      reason,
+      working_days: workingDays
+    });
+
+    // Update local state
+    const h = (state.timesheetData.holidays || []).find(h => String(h.id) === String(id));
+    if (h) {
+      h.dateFrom = from;
+      h.dateTo = to;
+      h.type = type;
+      h.status = status;
+      h.reason = reason;
+      h.workingDays = workingDays;
+    }
+
+    closeEditHolidayModal();
+    toast('Holiday updated ✓', 'success');
+    renderHolidayTab();
+    renderHolidayNotificationBanner();
+  } catch (err) {
+    toast('Failed to update: ' + err.message, 'error');
+  }
+}
+
+async function deleteHolidayFromEdit() {
+  const id = document.getElementById('editHolId').value;
+  const h = (state.timesheetData.holidays || []).find(h => String(h.id) === String(id));
+  if (!h) return;
+
+  const label = `${h.employeeName} — ${h.type} (${fmtDateStr(h.dateFrom)} → ${fmtDateStr(h.dateTo)})`;
+  if (!confirm(`Delete this record?\n\n${label}\n\nIf this was an approved paid holiday, the balance will be restored.`)) return;
+
+  try {
+    const result = await api.delete(`/api/holidays/${id}`);
+    state.timesheetData.holidays = (state.timesheetData.holidays || []).filter(h => String(h.id) !== String(id));
+    closeEditHolidayModal();
+    const restored = result?.restored_days;
+    toast(`Holiday deleted${restored ? ` — ${restored} day${restored !== 1 ? 's' : ''} restored` : ''} ✓`, 'success');
+    renderHolidayTab();
+    renderHolidayNotificationBanner();
+  } catch (err) {
+    toast('Failed to delete: ' + err.message, 'error');
+  }
+}
+
 function checkHolidayNotifications() {
   // Remove any existing banner first
   const existingBanner = document.getElementById('holidayPendingBanner');

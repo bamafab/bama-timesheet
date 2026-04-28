@@ -290,6 +290,7 @@ the markup it mutates.
 - `dashSendMessageModal` — office dashboard: internal message
 - `officeHolidayModal` — manager approve/reject holiday request
 - `bookAbsenceModal` — office books an absence directly (no request flow)
+- `editHolidayModal` — edit/delete any holiday, sickness, or absence (directors, finance, office_admin)
 - `confirmModal` — generic confirm dialog
 
 **projects.html**
