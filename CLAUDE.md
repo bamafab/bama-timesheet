@@ -137,11 +137,21 @@ on `userAccessData.users[name].permissions`.
 
 Permission keys (`PERMISSION_DEFS` / `PERM_TO_TAB`):
 `byProject, byEmployee, clockingInOut, payroll, archive, staff, holidays, reports,
-settings, userAccess, draftsmanMode`.
+settings, userAccess, draftsmanMode, tenders, editQuotes, viewQuotes`.
 
-PIN gate: manager/office/draftsman entry requires the employee's numeric `pin`
-(stored on the Employees row). Verified client-side against loaded employee data;
-`/api/auth/verify-pin` exists but the UI currently compares locally.
+⚠️ When adding new permission keys, update **all four places**:
+1. `PERMISSION_DEFS` array in shared.js
+2. `loadUserAccessData()` in shared.js — must map snake_case row → camelCase
+3. `toggleUserPermission()` default permissions object in shared.js
+4. `permCols` and `keyMap` in `api/src/functions/user-access.js`
+5. SQL `UserPermissions` table — add column with default 0
+Skipping any of these causes silent permission resets, "no valid fields" errors,
+or bootstrap logic falsely re-granting all perms.
+
+PIN gate: manager/office/draftsman/tenders entry requires the employee's numeric
+`pin` (stored on the Employees row). Verified via `/api/verify-pin`. After successful
+PIN, `currentManagerUser` is stored in `sessionStorage.bama_mgr_authed` so navigating
+between manager/office/tenders pages skips re-authentication.
 
 **Bootstrap** — if *no* user has any permission yet, the first user to PIN into
 manager/office is auto-granted full admin. See `checkManagerPin`/`checkOfficePin`.
@@ -185,8 +195,13 @@ Core tables:
   quote_handler_id, sharepoint_folder_id, sharepoint_tender_folder_id,
   created_by, created_at, updated_at, converted_at, converted_by)` —
   status in {`tender`,`quote`,`won`,`lost`,`cancelled`}; reference format
-  `Q260402` (Q + YY + MM + sequential count). SharePoint folders auto-created
-  under `Quotation/{year}/{reference}/` with `00 - Tender` subfolder.
+  `Q260402` (Q + YY + sequential count for the year, NOT per-month). SharePoint
+  folders auto-created under `Quotation/{NN - YYYY}/{reference}/` with
+  `00 - Tender` subfolder. Year folder format: `(year - 2023) - YYYY` so
+  2026 = `03 - 2026`, 2027 = `04 - 2027`. Reference numbering scans existing
+  SharePoint folder names + DB records to find the next free number.
+  Contact fields (name/email/phone) stored on the tender, not the client,
+  since they vary per project even with the same client.
 
 ## Payroll rules (BAMA-specific)
 

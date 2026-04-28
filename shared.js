@@ -11192,22 +11192,25 @@ async function openNewTenderModal() {
 async function getNextTenderReference() {
   const now = new Date();
   const yy = String(now.getFullYear()).slice(-2); // "26"
-  const prefix = `Q${yy}`; // "Q26" — we search ALL of this year, not per month
+  const fullYear = '20' + yy;
+  const yearNum = parseInt(fullYear);
+  const yearPrefix = String(yearNum - 2023).padStart(2, '0'); // 2026→03, 2027→04
+  const yearFolderName = `${yearPrefix} - ${fullYear}`; // "03 - 2026"
+  const prefix = `Q${yy}`; // "Q26"
 
   let highestNum = 0;
 
   // 1. Check SharePoint — scan the year folder for existing quote folders
   try {
     const token = await getToken();
-    const year = '20' + yy;
     const res = await fetch(
-      `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/root:/${QUOTATION_FOLDER_PATH}/${year}:/children?$select=name&$top=999`,
+      `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/root:/${QUOTATION_FOLDER_PATH}/${yearFolderName}:/children?$select=name&$top=999`,
       { headers: { 'Authorization': `Bearer ${token}` } }
     );
     if (res.ok) {
       const data = await res.json();
       (data.value || []).forEach(item => {
-        // Match folders like Q260426, Q260401 etc — extract the number part after Q26
+        // Match folders like Q260426, "Q260426 - Client Name" etc
         const match = item.name.match(new RegExp(`^${prefix}(\\d+)`));
         if (match) {
           const num = parseInt(match[1], 10);
@@ -11269,11 +11272,14 @@ async function submitNewTender() {
 
     // Step 2: Create SharePoint folders
     const token = await getToken();
-    const year = '20' + reference.slice(1, 3); // Q260402 → 2026
+    const fullYear = '20' + reference.slice(1, 3); // Q260402 → 2026
+    const yearNum = parseInt(fullYear);
+    const yearPrefix = String(yearNum - 2023).padStart(2, '0'); // 2026→03, 2027→04
+    const yearFolderName = `${yearPrefix} - ${fullYear}`; // "03 - 2026"
 
     // Find or create the year folder under Quotation
     const quotationFolder = await getOrCreateFolderByPath(QUOTATION_FOLDER_PATH, token);
-    const yearFolder = await createFolderInDrive(quotationFolder.id, year);
+    const yearFolder = await createFolderInDrive(quotationFolder.id, yearFolderName);
     const quoteFolder = await createFolderInDrive(yearFolder.id, reference);
     const tenderSubFolder = await createFolderInDrive(quoteFolder.id, '00 - Tender');
 
@@ -11292,14 +11298,49 @@ async function submitNewTender() {
     });
 
     tender.company_name = companyName;
+    tender.contact_name = document.getElementById('ntContactName').value.trim() || null;
+    tender.contact_email = document.getElementById('ntContactEmail').value.trim() || null;
+    tender.contact_phone = document.getElementById('ntContactPhone').value.trim() || null;
     tendersData.unshift(tender);
 
     closeNewTenderModal();
-    toast(`Tender ${reference} created ✓`, 'success');
     renderTenderList();
 
-    // Open the detail view with upload prompt
-    openTenderDetail(tender.id);
+    // Go straight to detail view with success message
+    toast(`Tender ${reference} created ✓ — Upload your documents below`, 'success');
+    currentTender = tender;
+
+    // Show detail view directly
+    document.querySelectorAll('#tenderLayout .tab-content').forEach(el => {
+      el.classList.remove('active');
+      el.style.display = 'none';
+    });
+    const detailEl = document.getElementById('tab-tenderDetail');
+    detailEl.style.display = '';
+    detailEl.classList.add('active');
+
+    // Populate detail
+    document.getElementById('detailReference').textContent = tender.reference;
+    document.getElementById('detailProjectName').textContent = tender.project_name;
+    document.getElementById('detailComments').textContent = tender.comments || 'No comments';
+
+    const badge = document.getElementById('detailStatusBadge');
+    badge.textContent = tender.status;
+    badge.className = 'tag tag-pending';
+
+    const clientInfo = document.getElementById('detailClientInfo');
+    const infoParts = [
+      `<strong>${companyName}</strong>`,
+      [document.getElementById('ntAddress1').value, document.getElementById('ntCity').value, document.getElementById('ntPostcode').value].filter(Boolean).join(', '),
+      tender.contact_name ? `Contact: ${tender.contact_name}` : '',
+      tender.contact_email ? `Email: ${tender.contact_email}` : '',
+      tender.contact_phone ? `Phone: ${tender.contact_phone}` : ''
+    ].filter(Boolean);
+    clientInfo.innerHTML = infoParts.join('<br>');
+
+    document.getElementById('convertToQuoteSection').style.display = '';
+    document.getElementById('quoteFolderFiles').innerHTML = '<div style="font-size:12px;color:var(--subtle);padding:8px">No files uploaded yet</div>';
+    document.getElementById('tenderPackFiles').innerHTML = '<div style="font-size:12px;color:var(--subtle);padding:8px">No files uploaded yet</div>';
 
   } catch (err) {
     toast('Failed to create tender: ' + err.message, 'error');
@@ -11324,8 +11365,17 @@ async function getOrCreateFolderByPath(path, token) {
 
 // ── Tender Detail ──
 async function openTenderDetail(id) {
-  const tender = tendersData.find(t => t.id === id);
+  let tender = tendersData.find(t => String(t.id) === String(id));
   if (!tender) { toast('Tender not found', 'error'); return; }
+
+  // Always fetch full data from API to ensure we have everything
+  try {
+    const full = await api.get(`/api/tenders/${id}`);
+    Object.assign(tender, full);
+  } catch (e) {
+    console.warn('Could not fetch full tender data:', e);
+  }
+
   currentTender = tender;
 
   // Hide other tabs, show detail
@@ -11346,32 +11396,14 @@ async function openTenderDetail(id) {
 
   // Client info
   const clientInfo = document.getElementById('detailClientInfo');
-  if (tender.company_name) {
-    const parts = [
-      `<strong>${tender.company_name}</strong>`,
-      [tender.address_line1, tender.address_line2, tender.city, tender.county, tender.postcode].filter(Boolean).join(', '),
-      tender.contact_name ? `Contact: ${tender.contact_name}` : '',
-      tender.contact_email ? `Email: ${tender.contact_email}` : '',
-      tender.contact_phone ? `Phone: ${tender.contact_phone}` : ''
-    ].filter(Boolean);
-    clientInfo.innerHTML = parts.join('<br>');
-  } else {
-    // Fetch full client data
-    try {
-      const full = await api.get(`/api/tenders/${id}`);
-      Object.assign(tender, full);
-      const parts = [
-        `<strong>${full.company_name}</strong>`,
-        [full.address_line1, full.address_line2, full.city, full.county, full.postcode].filter(Boolean).join(', '),
-        full.contact_name ? `Contact: ${full.contact_name}` : '',
-        full.contact_email ? `Email: ${full.contact_email}` : '',
-        full.contact_phone ? `Phone: ${full.contact_phone}` : ''
-      ].filter(Boolean);
-      clientInfo.innerHTML = parts.join('<br>');
-    } catch (e) {
-      clientInfo.textContent = 'Client info unavailable';
-    }
-  }
+  const parts = [
+    `<strong>${tender.company_name || '—'}</strong>`,
+    [tender.address_line1, tender.address_line2, tender.city, tender.county, tender.postcode].filter(Boolean).join(', '),
+    tender.contact_name ? `Contact: ${tender.contact_name}` : '',
+    tender.contact_email ? `Email: ${tender.contact_email}` : '',
+    tender.contact_phone ? `Phone: ${tender.contact_phone}` : ''
+  ].filter(Boolean);
+  clientInfo.innerHTML = parts.join('<br>');
 
   // Show/hide convert button
   document.getElementById('convertToQuoteSection').style.display = tender.status === 'tender' ? '' : 'none';
