@@ -121,7 +121,12 @@ app.http('auth-verify-pin', {
             }
 
             const emp = result.recordset[0];
-            if (emp.pin !== pin) {
+            // Coerce both sides to strings: emp.pin may be INT or NVARCHAR
+            // depending on schema; the request body is always parsed JSON so
+            // numeric PINs arrive as Number. Strict equality across types
+            // would always return false. PINs are conceptually strings
+            // (leading zeros matter), so compare as strings.
+            if (String(emp.pin).trim() !== String(pin).trim()) {
                 return ok({ valid: false, reason: 'Incorrect PIN' }, request);
             }
 

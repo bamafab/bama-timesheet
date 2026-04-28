@@ -3,6 +3,16 @@ const { query, sql } = require('../db');
 const { requireAuth } = require('../auth');
 const { ok, created, badRequest, notFound, serverError, preflight } = require('../responses');
 
+// Strip `pin` from any employee row returned to the client and replace it
+// with a `has_pin` boolean. PIN values must never leave the API — verification
+// happens via /api/auth/verify-pin only.
+function stripPin(row) {
+    if (!row || typeof row !== 'object') return row;
+    const { pin, ...rest } = row;
+    rest.has_pin = pin !== null && pin !== undefined && String(pin).trim() !== '';
+    return rest;
+}
+
 // GET /api/employees — list all active employees
 // GET /api/employees?all=true — include inactive
 // GET /api/employees/:id — get single employee
@@ -23,7 +33,7 @@ app.http('employees-list', {
                     { id: parseInt(id) }
                 );
                 if (result.recordset.length === 0) return notFound('Employee not found', request);
-                return ok(result.recordset[0], request);
+                return ok(stripPin(result.recordset[0]), request);
             }
 
             const showAll = new URL(request.url).searchParams.get('all') === 'true';
@@ -32,7 +42,7 @@ app.http('employees-list', {
                 : 'SELECT * FROM Employees WHERE is_active = 1 ORDER BY name';
 
             const result = await query(sqlText);
-            return ok(result.recordset, request);
+            return ok(result.recordset.map(stripPin), request);
         } catch (err) {
             context.error('Error fetching employees:', err);
             return serverError('Failed to fetch employees', request);
@@ -71,7 +81,7 @@ app.http('employees-create', {
                 }
             );
 
-            return created(result.recordset[0], request);
+            return created(stripPin(result.recordset[0]), request);
         } catch (err) {
             context.error('Error creating employee:', err);
             return serverError('Failed to create employee', request);
@@ -97,7 +107,12 @@ app.http('employees-update', {
             const params = { id };
 
             if (body.name !== undefined) { fields.push('name = @name'); params.name = body.name; }
-            if (body.pin !== undefined) { fields.push('pin = @pin'); params.pin = body.pin; }
+            // PIN updates: only apply if a non-empty value is sent. The frontend
+            // sends an empty PIN field to mean "leave alone"; treat null/'' the
+            // same way to avoid accidentally wiping a PIN.
+            if (body.pin !== undefined && body.pin !== null && String(body.pin).trim() !== '') {
+                fields.push('pin = @pin'); params.pin = String(body.pin).trim();
+            }
             if (body.rate !== undefined) { fields.push('rate = @rate'); params.rate = parseFloat(body.rate); }
             if (body.staff_type !== undefined) { fields.push('staff_type = @staffType'); params.staffType = body.staff_type; }
             if (body.erp_role !== undefined) { fields.push('erp_role = @erpRole'); params.erpRole = body.erp_role; }
@@ -113,7 +128,7 @@ app.http('employees-update', {
             );
 
             if (result.recordset.length === 0) return notFound('Employee not found', request);
-            return ok(result.recordset[0], request);
+            return ok(stripPin(result.recordset[0]), request);
         } catch (err) {
             context.error('Error updating employee:', err);
             return serverError('Failed to update employee', request);
