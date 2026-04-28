@@ -70,11 +70,11 @@ app.http('tenders-get', {
     }
 });
 
-// GET /api/tenders/next-reference?year=2026&month=04 — get next available reference
+// GET /api/tender-next-ref — get next available reference
 app.http('tenders-next-ref', {
     methods: ['GET'],
     authLevel: 'anonymous',
-    route: 'tenders/next-reference',
+    route: 'tender-next-ref',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
         if (auth.status) return auth;
@@ -113,7 +113,8 @@ app.http('tenders-create', {
         try {
             const body = await request.json();
             const { reference, client_id, project_name, comments,
-                    sharepoint_folder_id, sharepoint_tender_folder_id, created_by } = body;
+                    sharepoint_folder_id, sharepoint_tender_folder_id, created_by,
+                    contact_name, contact_email, contact_phone } = body;
 
             if (!reference) return badRequest('reference is required', request);
             if (!client_id) return badRequest('client_id is required', request);
@@ -121,10 +122,12 @@ app.http('tenders-create', {
 
             const result = await query(
                 `INSERT INTO Tenders (reference, client_id, project_name, comments, status,
-                    sharepoint_folder_id, sharepoint_tender_folder_id, created_by)
+                    sharepoint_folder_id, sharepoint_tender_folder_id, created_by,
+                    contact_name, contact_email, contact_phone)
                  OUTPUT INSERTED.*
                  VALUES (@reference, @client_id, @project_name, @comments, 'tender',
-                    @sharepoint_folder_id, @sharepoint_tender_folder_id, @created_by)`,
+                    @sharepoint_folder_id, @sharepoint_tender_folder_id, @created_by,
+                    @contact_name, @contact_email, @contact_phone)`,
                 {
                     reference,
                     client_id: parseInt(client_id),
@@ -132,7 +135,10 @@ app.http('tenders-create', {
                     comments: comments || null,
                     sharepoint_folder_id: sharepoint_folder_id || null,
                     sharepoint_tender_folder_id: sharepoint_tender_folder_id || null,
-                    created_by: created_by || null
+                    created_by: created_by || null,
+                    contact_name: contact_name || null,
+                    contact_email: contact_email || null,
+                    contact_phone: contact_phone || null
                 }
             );
 
@@ -165,7 +171,7 @@ app.http('tenders-update', {
 
             const allowed = ['project_name', 'comments', 'status', 'quote_handler_id',
                            'sharepoint_folder_id', 'sharepoint_tender_folder_id',
-                           'converted_by'];
+                           'converted_by', 'contact_name', 'contact_email', 'contact_phone'];
 
             for (const key of allowed) {
                 if (body[key] !== undefined) {

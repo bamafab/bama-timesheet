@@ -10866,18 +10866,93 @@ let _clientSearchTimeout = null;
 const QUOTATION_FOLDER_PATH = 'Quotation'; // root-level in the BAMA drive
 
 async function initTendersPage() {
+  // Show employee selection grid first
+  renderTenderEmployeeGrid();
+}
+
+function renderTenderEmployeeGrid() {
+  const grid = document.getElementById('tenderEmployeeGrid');
+  if (!grid) return;
+
+  const employees = (state.timesheetData.employees || []).filter(e => e.active !== false);
+  if (!employees.length) {
+    grid.innerHTML = '<div class="empty-state">No employees found</div>';
+    return;
+  }
+
+  grid.innerHTML = employees.map(emp => `
+    <div class="emp-card" onclick="selectTenderEmployee('${emp.name}', ${emp.id}, ${!!emp.hasPin})">
+      <div class="emp-avatar">${emp.name.split(' ').map(n => n[0]).join('').slice(0,2)}</div>
+      <div class="emp-name">${emp.name}</div>
+      <div style="font-size:10px;color:var(--subtle);margin-top:3px">${emp.hasPin ? '&#128274; PIN set' : '&#128275; No PIN'}</div>
+    </div>
+  `).join('');
+}
+
+let _pendingTenderUser = null;
+
+function selectTenderEmployee(name, empId, hasPin) {
+  if (hasPin) {
+    _pendingTenderUser = { name, empId };
+    document.getElementById('tenderPinUser').textContent = name;
+    document.getElementById('tenderPinInput').value = '';
+    document.getElementById('tenderPinError').textContent = '';
+    document.getElementById('tenderPinModal').classList.add('active');
+    setTimeout(() => document.getElementById('tenderPinInput').focus(), 200);
+  } else {
+    toast('No PIN set for this user. Set one in Staff management first.', 'error');
+  }
+}
+
+async function verifyTenderPin() {
+  if (!_pendingTenderUser) return;
+  const pin = document.getElementById('tenderPinInput').value;
+  if (!pin) return;
+
   try {
-    const [tenders, clients] = await Promise.all([
-      api.get('/api/tenders'),
-      api.get('/api/clients')
-    ]);
-    tendersData = tenders || [];
-    clientsData = clients || [];
-    renderTenderList();
-    renderClientList();
+    const result = await api.post('/api/verify-pin', {
+      employee_id: _pendingTenderUser.empId,
+      pin
+    });
+
+    if (!result.valid) {
+      document.getElementById('tenderPinError').textContent = (result && result.reason) || 'Incorrect PIN';
+      return;
+    }
+
+    // PIN correct — enter tenders
+    currentManagerUser = _pendingTenderUser.name;
+    document.getElementById('tenderPinModal').classList.remove('active');
+
+    // Check tenders permission
+    const perms = getUserPermissions(currentManagerUser);
+    if (!perms || !perms.tenders) {
+      toast('You don\'t have permission to access Tenders. Contact your admin.', 'error');
+      currentManagerUser = null;
+      return;
+    }
+
+    // Show main layout, hide login screen
+    document.getElementById('screenTenderSelect').style.display = 'none';
+    document.getElementById('tenderLayout').style.display = 'flex';
+
+    // Load data
+    try {
+      const [tenders, clients] = await Promise.all([
+        api.get('/api/tenders'),
+        api.get('/api/clients')
+      ]);
+      tendersData = tenders || [];
+      clientsData = clients || [];
+      renderTenderList();
+      renderClientList();
+    } catch (err) {
+      console.error('Failed to load tenders data:', err);
+      toast('Failed to load tenders data', 'error');
+    }
+
   } catch (err) {
-    console.error('Failed to load tenders data:', err);
-    toast('Failed to load tenders data', 'error');
+    document.getElementById('tenderPinError').textContent = 'PIN verification failed';
   }
 }
 
@@ -11003,6 +11078,7 @@ function renderClientList() {
         <div style="color:var(--muted)">${c.contact_email || ''}</div>
         <div style="color:var(--muted)">${c.contact_phone || ''}</div>
       </div>
+      <button class="tiny-btn" onclick="openEditClientModal(${c.id})" style="padding:2px 8px;font-size:11px;background:var(--surface2);color:var(--muted);border:1px solid var(--border);margin-left:8px" title="Edit">✏️</button>
     </div>
   `).join('');
 }
@@ -11050,9 +11126,10 @@ function selectClient(clientId) {
   document.getElementById('ntCity').value = client.city || '';
   document.getElementById('ntCounty').value = client.county || '';
   document.getElementById('ntPostcode').value = client.postcode || '';
-  document.getElementById('ntContactName').value = client.contact_name || '';
-  document.getElementById('ntContactEmail').value = client.contact_email || '';
-  document.getElementById('ntContactPhone').value = client.contact_phone || '';
+  // Contact fields left blank — they vary per project/location
+  document.getElementById('ntContactName').value = '';
+  document.getElementById('ntContactEmail').value = '';
+  document.getElementById('ntContactPhone').value = '';
   document.getElementById('ntClientSuggestions').style.display = 'none';
 }
 
@@ -11111,7 +11188,7 @@ async function getNextTenderReference() {
 
   // 2. Also check database for any that might not have SP folders yet
   try {
-    const dbData = await api.get(`/api/tenders/next-reference?year=${yy}`);
+    const dbData = await api.get(`/api/tender-next-ref?year=${yy}`);
     // dbData.count is the DB count + 1, so the highest DB number is count - 1
     const dbHighest = (dbData.count || 1) - 1;
     if (dbHighest > highestNum) highestNum = dbHighest;
@@ -11175,11 +11252,13 @@ async function submitNewTender() {
       comments: document.getElementById('ntComments').value.trim() || null,
       sharepoint_folder_id: quoteFolder.id,
       sharepoint_tender_folder_id: tenderSubFolder.id,
-      created_by: currentManagerUser || AUTH.getUserName() || 'unknown'
+      created_by: currentManagerUser || AUTH.getUserName() || 'unknown',
+      contact_name: document.getElementById('ntContactName').value.trim() || null,
+      contact_email: document.getElementById('ntContactEmail').value.trim() || null,
+      contact_phone: document.getElementById('ntContactPhone').value.trim() || null
     });
 
     tender.company_name = companyName;
-    tender.contact_name = document.getElementById('ntContactName').value.trim() || null;
     tendersData.unshift(tender);
 
     closeNewTenderModal();
@@ -11589,6 +11668,57 @@ async function submitNewClient() {
     renderClientList();
   } catch (err) {
     toast('Failed to create client: ' + err.message, 'error');
+  }
+}
+
+// ── Edit Client ──
+function openEditClientModal(id) {
+  const client = clientsData.find(c => c.id === id);
+  if (!client) { toast('Client not found', 'error'); return; }
+
+  document.getElementById('ecClientId').value = client.id;
+  document.getElementById('ecCompanyName').value = client.company_name || '';
+  document.getElementById('ecAddress1').value = client.address_line1 || '';
+  document.getElementById('ecAddress2').value = client.address_line2 || '';
+  document.getElementById('ecCity').value = client.city || '';
+  document.getElementById('ecCounty').value = client.county || '';
+  document.getElementById('ecPostcode').value = client.postcode || '';
+  document.getElementById('ecContactName').value = client.contact_name || '';
+  document.getElementById('ecContactEmail').value = client.contact_email || '';
+  document.getElementById('ecContactPhone').value = client.contact_phone || '';
+  document.getElementById('editClientModal').classList.add('active');
+}
+
+function closeEditClientModal() {
+  document.getElementById('editClientModal').classList.remove('active');
+}
+
+async function submitEditClient() {
+  const id = document.getElementById('ecClientId').value;
+  const companyName = document.getElementById('ecCompanyName').value.trim();
+  if (!companyName) { toast('Company name is required', 'error'); return; }
+
+  try {
+    const updated = await api.put(`/api/clients/${id}`, {
+      company_name: companyName,
+      address_line1: document.getElementById('ecAddress1').value.trim() || null,
+      address_line2: document.getElementById('ecAddress2').value.trim() || null,
+      city: document.getElementById('ecCity').value.trim() || null,
+      county: document.getElementById('ecCounty').value.trim() || null,
+      postcode: document.getElementById('ecPostcode').value.trim() || null,
+      contact_name: document.getElementById('ecContactName').value.trim() || null,
+      contact_email: document.getElementById('ecContactEmail').value.trim() || null,
+      contact_phone: document.getElementById('ecContactPhone').value.trim() || null
+    });
+
+    const idx = clientsData.findIndex(c => String(c.id) === String(id));
+    if (idx >= 0) Object.assign(clientsData[idx], updated);
+
+    closeEditClientModal();
+    toast('Client updated ✓', 'success');
+    renderClientList();
+  } catch (err) {
+    toast('Failed to update client: ' + err.message, 'error');
   }
 }
 

@@ -27,7 +27,36 @@
 <!-- ═══════════════════════════════════════
      MAIN LAYOUT
 ══════════════════════════════════════════ -->
-<div class="mgr-layout" id="tenderLayout" style="display:flex">
+<!-- ═══════════════════════════════════════
+     LOGIN SCREEN
+══════════════════════════════════════════ -->
+<div class="screen active" id="screenTenderSelect">
+  <div class="employee-grid-title">Select Your Name</div>
+  <div class="employee-grid" id="tenderEmployeeGrid">
+    <div class="empty-state"><div class="spinner"></div></div>
+  </div>
+</div>
+
+<!-- PIN MODAL -->
+<div class="modal-overlay" id="tenderPinModal">
+  <div class="modal" style="max-width:340px;text-align:center">
+    <div class="modal-title">🔐 Enter PIN</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:16px" id="tenderPinUser">—</div>
+    <input type="password" class="field-input" id="tenderPinInput" maxlength="6"
+      style="text-align:center;font-size:24px;letter-spacing:8px;max-width:180px;margin:0 auto"
+      onkeydown="if(event.key==='Enter')verifyTenderPin()">
+    <div id="tenderPinError" style="color:var(--red);font-size:12px;margin-top:8px;min-height:18px"></div>
+    <div class="modal-actions" style="margin-top:16px">
+      <button class="btn btn-ghost" onclick="document.getElementById('tenderPinModal').classList.remove('active')">Cancel</button>
+      <button class="btn btn-primary" onclick="verifyTenderPin()">Unlock</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     MAIN LAYOUT (hidden until logged in)
+══════════════════════════════════════════ -->
+<div class="mgr-layout" id="tenderLayout" style="display:none">
   <!-- Sidebar -->
   <nav class="mgr-sidebar" id="tenderSidebar">
     <div class="sidebar-nav-group">
@@ -352,6 +381,62 @@
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeNewClientModal()">Cancel</button>
       <button class="btn btn-primary" onclick="submitNewClient()">Save Client</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     EDIT CLIENT MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="editClientModal">
+  <div class="modal" style="max-width:480px;width:95vw">
+    <div class="modal-title">✏️ Edit Client</div>
+    <input type="hidden" id="ecClientId">
+    <div style="margin-bottom:12px">
+      <div class="field-label">COMPANY NAME</div>
+      <input type="text" class="field-input" id="ecCompanyName">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <div class="field-label">ADDRESS LINE 1</div>
+        <input type="text" class="field-input" id="ecAddress1">
+      </div>
+      <div>
+        <div class="field-label">ADDRESS LINE 2</div>
+        <input type="text" class="field-input" id="ecAddress2">
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <div class="field-label">CITY</div>
+        <input type="text" class="field-input" id="ecCity">
+      </div>
+      <div>
+        <div class="field-label">COUNTY</div>
+        <input type="text" class="field-input" id="ecCounty">
+      </div>
+      <div>
+        <div class="field-label">POSTCODE</div>
+        <input type="text" class="field-input" id="ecPostcode">
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <div class="field-label">CONTACT NAME</div>
+        <input type="text" class="field-input" id="ecContactName">
+      </div>
+      <div>
+        <div class="field-label">CONTACT EMAIL</div>
+        <input type="email" class="field-input" id="ecContactEmail">
+      </div>
+      <div>
+        <div class="field-label">CONTACT PHONE</div>
+        <input type="text" class="field-input" id="ecContactPhone">
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeEditClientModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitEditClient()">Save Changes</button>
     </div>
   </div>
 </div>
