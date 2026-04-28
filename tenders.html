@@ -169,7 +169,11 @@
       <!-- Comments -->
       <div class="card" style="margin-bottom:20px">
         <div class="card-title"><span class="icon">💬</span> Comments</div>
-        <div id="detailComments" style="font-size:13px;color:var(--muted);white-space:pre-wrap">—</div>
+        <div id="detailCommentsList" style="margin-bottom:14px"></div>
+        <div style="display:flex;gap:8px;align-items:flex-start">
+          <textarea class="field-input" id="newCommentInput" rows="2" placeholder="Add a comment..." style="flex:1;resize:vertical;min-height:38px"></textarea>
+          <button class="btn btn-primary" onclick="addTenderComment()" style="padding:8px 16px;font-size:13px;white-space:nowrap">+ Add</button>
+        </div>
       </div>
 
       <!-- File Upload Zones -->
@@ -288,8 +292,8 @@
       <input type="text" class="field-input" id="ntProjectName" placeholder="e.g. Warehouse Steelwork">
     </div>
     <div style="margin-bottom:12px">
-      <div class="field-label">COMMENTS</div>
-      <textarea class="field-input" id="ntComments" rows="3" placeholder="Any notes about this tender..."></textarea>
+      <div class="field-label">INITIAL COMMENT (OPTIONAL)</div>
+      <textarea class="field-input" id="ntComments" rows="3" placeholder="Any notes about this tender... (more can be added later)"></textarea>
     </div>
 
     <div style="margin-bottom:16px;padding:12px;background:var(--surface);border-radius:8px;border:1px solid var(--border)">
@@ -314,10 +318,6 @@
     <div style="margin-bottom:12px">
       <div class="field-label">PROJECT NAME</div>
       <input type="text" class="field-input" id="etProjectName">
-    </div>
-    <div style="margin-bottom:12px">
-      <div class="field-label">COMMENTS</div>
-      <textarea class="field-input" id="etComments" rows="3"></textarea>
     </div>
     <div style="margin-bottom:12px">
       <div class="field-label">STATUS</div>

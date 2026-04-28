@@ -202,6 +202,10 @@ Core tables:
   SharePoint folder names + DB records to find the next free number.
   Contact fields (name/email/phone) stored on the tender, not the client,
   since they vary per project even with the same client.
+- `TenderComments(id, tender_id, comment, created_by, created_at)` — threaded
+  comments on a tender. ON DELETE CASCADE so removing a tender drops its
+  comments. The original `comments` field on Tenders is rendered as the
+  first "(initial)" entry in the thread for backwards compatibility.
 
 ## Payroll rules (BAMA-specific)
 

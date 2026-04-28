@@ -209,3 +209,90 @@ app.http('tenders-update', {
         }
     }
 });
+
+// GET /api/tender-comments?tender_id=X — list comments for a tender
+app.http('tender-comments-list', {
+    methods: ['GET'],
+    authLevel: 'anonymous',
+    route: 'tender-comments',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const tenderId = parseInt(request.query.get('tender_id'));
+            if (!tenderId) return badRequest('tender_id is required', request);
+
+            const result = await query(
+                `SELECT * FROM TenderComments WHERE tender_id = @tenderId ORDER BY created_at ASC`,
+                { tenderId }
+            );
+            return ok(result.recordset, request);
+        } catch (err) {
+            context.error('Error fetching comments:', err);
+            return serverError('Failed to fetch comments', request);
+        }
+    }
+});
+
+// POST /api/tender-comments — add a comment
+app.http('tender-comments-create', {
+    methods: ['POST'],
+    authLevel: 'anonymous',
+    route: 'tender-comments',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const body = await request.json();
+            const { tender_id, comment, created_by } = body;
+            if (!tender_id) return badRequest('tender_id is required', request);
+            if (!comment || !comment.trim()) return badRequest('comment is required', request);
+
+            const result = await query(
+                `INSERT INTO TenderComments (tender_id, comment, created_by)
+                 OUTPUT INSERTED.*
+                 VALUES (@tenderId, @comment, @createdBy)`,
+                { tenderId: parseInt(tender_id), comment: comment.trim(), createdBy: created_by || null }
+            );
+
+            return created(result.recordset[0], request);
+        } catch (err) {
+            context.error('Error creating comment:', err);
+            return serverError('Failed to create comment', request);
+        }
+    }
+});
+
+// DELETE /api/tender-comments/:id — delete a comment
+app.http('tender-comments-delete', {
+    methods: ['DELETE'],
+    authLevel: 'anonymous',
+    route: 'tender-comments/{id}',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const id = parseInt(request.params.id);
+            const result = await query(
+                `DELETE FROM TenderComments OUTPUT DELETED.* WHERE id = @id`,
+                { id }
+            );
+            if (result.recordset.length === 0) return notFound('Comment not found', request);
+            return ok({ deleted: true, id }, request);
+        } catch (err) {
+            context.error('Error deleting comment:', err);
+            return serverError('Failed to delete comment', request);
+        }
+    }
+});
+
+// OPTIONS preflight for tender-comments
+app.http('tender-comments-preflight', {
+    methods: ['OPTIONS'],
+    authLevel: 'anonymous',
+    route: 'tender-comments/{*path}',
+    handler: async (request) => preflight(request)
+});

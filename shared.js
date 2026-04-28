@@ -11322,7 +11322,6 @@ async function submitNewTender() {
     // Populate detail
     document.getElementById('detailReference').textContent = tender.reference;
     document.getElementById('detailProjectName').textContent = tender.project_name;
-    document.getElementById('detailComments').textContent = tender.comments || 'No comments';
 
     const badge = document.getElementById('detailStatusBadge');
     badge.textContent = tender.status;
@@ -11341,6 +11340,9 @@ async function submitNewTender() {
     document.getElementById('convertToQuoteSection').style.display = '';
     document.getElementById('quoteFolderFiles').innerHTML = '<div style="font-size:12px;color:var(--subtle);padding:8px">No files uploaded yet</div>';
     document.getElementById('tenderPackFiles').innerHTML = '<div style="font-size:12px;color:var(--subtle);padding:8px">No files uploaded yet</div>';
+
+    // Load comments (will show the initial comment if entered)
+    loadTenderComments();
 
   } catch (err) {
     toast('Failed to create tender: ' + err.message, 'error');
@@ -11383,12 +11385,13 @@ async function openTenderDetail(id) {
     el.classList.remove('active');
     el.style.display = 'none';
   });
-  document.getElementById('tab-tenderDetail').style.display = '';
+  const detailEl = document.getElementById('tab-tenderDetail');
+  detailEl.style.display = '';
+  detailEl.classList.add('active');
 
   // Populate detail
   document.getElementById('detailReference').textContent = tender.reference;
   document.getElementById('detailProjectName').textContent = tender.project_name;
-  document.getElementById('detailComments').textContent = tender.comments || 'No comments';
 
   const badge = document.getElementById('detailStatusBadge');
   badge.textContent = tender.status;
@@ -11410,6 +11413,9 @@ async function openTenderDetail(id) {
 
   // Load files from SharePoint
   loadTenderFiles();
+
+  // Load comments
+  loadTenderComments();
 }
 
 function closeTenderDetail() {
@@ -11468,6 +11474,91 @@ function formatFileSize(bytes) {
   if (bytes < 1024) return bytes + ' B';
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+// ── Tender Comments ──
+async function loadTenderComments() {
+  if (!currentTender) return;
+  const container = document.getElementById('detailCommentsList');
+  if (!container) return;
+
+  try {
+    const comments = await api.get(`/api/tender-comments?tender_id=${currentTender.id}`);
+
+    // Show original comment as the first item if it exists
+    const items = [];
+    if (currentTender.comments && currentTender.comments.trim()) {
+      items.push({
+        id: 'initial',
+        comment: currentTender.comments,
+        created_by: currentTender.created_by || '—',
+        created_at: currentTender.created_at,
+        isInitial: true
+      });
+    }
+    items.push(...(comments || []));
+
+    if (!items.length) {
+      container.innerHTML = '<div style="font-size:12px;color:var(--subtle);padding:8px 0">No comments yet</div>';
+      return;
+    }
+
+    container.innerHTML = items.map(c => {
+      const date = c.created_at ? new Date(c.created_at) : null;
+      const dateStr = date ? `${date.toLocaleDateString('en-GB')} ${date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}` : '';
+      const deleteBtn = c.isInitial ? '' : `<button class="tiny-btn" onclick="deleteTenderComment(${c.id})" style="padding:2px 6px;font-size:10px;background:transparent;color:var(--subtle);border:none;cursor:pointer" title="Delete">✕</button>`;
+      return `
+        <div style="padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+            <div style="font-size:12px;color:var(--accent2);font-weight:600">${c.created_by || '—'}${c.isInitial ? ' <span style="color:var(--subtle);font-weight:400">(initial)</span>' : ''}</div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <div style="font-size:11px;color:var(--subtle)">${dateStr}</div>
+              ${deleteBtn}
+            </div>
+          </div>
+          <div style="font-size:13px;color:var(--text);white-space:pre-wrap">${escapeHtml(c.comment)}</div>
+        </div>
+      `;
+    }).join('');
+  } catch (err) {
+    container.innerHTML = '<div style="font-size:12px;color:var(--red);padding:8px">Failed to load comments</div>';
+  }
+}
+
+function escapeHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function addTenderComment() {
+  if (!currentTender) return;
+  const input = document.getElementById('newCommentInput');
+  const text = (input.value || '').trim();
+  if (!text) { toast('Please enter a comment', 'error'); return; }
+
+  try {
+    await api.post('/api/tender-comments', {
+      tender_id: currentTender.id,
+      comment: text,
+      created_by: currentManagerUser || AUTH.getUserName() || 'unknown'
+    });
+    input.value = '';
+    toast('Comment added ✓', 'success');
+    loadTenderComments();
+  } catch (err) {
+    toast('Failed to add comment: ' + err.message, 'error');
+  }
+}
+
+async function deleteTenderComment(id) {
+  if (!confirm('Delete this comment?')) return;
+  try {
+    await api.delete(`/api/tender-comments/${id}`);
+    toast('Comment deleted', 'success');
+    loadTenderComments();
+  } catch (err) {
+    toast('Failed to delete: ' + err.message, 'error');
+  }
 }
 
 // ── File Upload ──
@@ -11663,7 +11754,6 @@ function openEditTenderModal() {
   if (!currentTender) return;
   document.getElementById('etTenderId').value = currentTender.id;
   document.getElementById('etProjectName').value = currentTender.project_name || '';
-  document.getElementById('etComments').value = currentTender.comments || '';
   document.getElementById('etStatus').value = currentTender.status || 'tender';
   document.getElementById('editTenderModal').classList.add('active');
 }
@@ -11675,13 +11765,12 @@ function closeEditTenderModal() {
 async function submitEditTender() {
   const id = document.getElementById('etTenderId').value;
   const projectName = document.getElementById('etProjectName').value.trim();
-  const comments = document.getElementById('etComments').value.trim();
   const status = document.getElementById('etStatus').value;
 
   if (!projectName) { toast('Project name is required', 'error'); return; }
 
   try {
-    const updated = await api.put(`/api/tenders/${id}`, { project_name: projectName, comments, status });
+    const updated = await api.put(`/api/tenders/${id}`, { project_name: projectName, status });
 
     const idx = tendersData.findIndex(t => String(t.id) === String(id));
     if (idx >= 0) Object.assign(tendersData[idx], updated);
