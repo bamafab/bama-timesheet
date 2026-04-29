@@ -254,7 +254,7 @@ function normaliseEmployee(row) {
     annualDays: parseFloat(row.holiday_entitlement) || 28,
     holidayBalance: parseFloat(row.holiday_balance) || 0,
     carryoverDays: 0,
-    startDate: '',
+    startDate: row.start_date ? (typeof row.start_date === 'string' ? row.start_date.split('T')[0] : new Date(row.start_date).toISOString().split('T')[0]) : '',
     active: row.is_active === undefined ? true : !!row.is_active,
     addedAt: row.created_at || new Date().toISOString()
   };
@@ -1737,7 +1737,7 @@ function renderClockLog(clockings) {
       // Inline edit mode
       if (c._editing) {
         const times = [];
-        for (let h = 5; h <= 22; h++) { times.push(`${String(h).padStart(2,'0')}:00`); times.push(`${String(h).padStart(2,'0')}:30`); }
+        for (let h = 4; h <= 23; h++) { times.push(`${String(h).padStart(2,'0')}:00`); times.push(`${String(h).padStart(2,'0')}:30`); }
         // Include the actual clock times if they're not standard 30-min slots
         const actualIn = c.clockIn || '';
         const actualOut = c.clockOut || '';
@@ -5605,10 +5605,20 @@ function renderStaffList() {
                   </select>
                 </div>
               </div>
-              <input type="number" class="field-input" id="edit-rate-${emp.id}" value="${emp.rate||''}"
-                placeholder="Hourly rate (£)" min="0" step="0.50" style="padding:6px 10px;font-size:12px;margin-bottom:6px">
-              <input type="password" class="field-input" id="edit-pin-${emp.id}" value=""
-                placeholder="${emp.hasPin ? 'PIN set — leave blank to keep' : 'Set PIN (4-6 digits)'}" maxlength="6" style="padding:6px 10px;font-size:12px;margin-bottom:6px">
+              <div style="margin-bottom:6px">
+                <div class="field-label" style="margin-bottom:3px">HOURLY RATE (£)</div>
+                <input type="number" class="field-input" id="edit-rate-${emp.id}" value="${emp.rate||''}"
+                  placeholder="e.g. 14.50" min="0" step="0.50" style="padding:6px 10px;font-size:12px">
+              </div>
+              <div style="margin-bottom:6px">
+                <div class="field-label" style="margin-bottom:3px">PIN ${emp.hasPin ? '<span style="color:var(--green);font-weight:400">● set</span>' : '<span style="color:var(--amber);font-weight:400">● not set</span>'}</div>
+                <div style="display:flex;gap:6px;align-items:center">
+                  <input type="password" class="field-input" id="edit-pin-${emp.id}" value=""
+                    placeholder="Leave blank to keep current" maxlength="6" style="padding:6px 10px;font-size:12px;flex:1;letter-spacing:3px">
+                  ${emp.hasPin ? `<button type="button" class="btn btn-ghost" style="padding:5px 10px;font-size:11px;flex-shrink:0" onclick="revealEmployeePin('${emp.id}')">👁 View</button>` : ''}
+                </div>
+                <div style="font-size:11px;color:var(--subtle);margin-top:3px">4–6 digits. Leave blank to keep current PIN.</div>
+              </div>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px">
                 <div>
                   <div class="field-label" style="margin-bottom:3px">ANNUAL DAYS</div>
@@ -5694,14 +5704,19 @@ async function addEmployee() {
   const staffType = staffTypeInput ? staffTypeInput.value : 'workshop';
   const erpRole = erpRoleInput ? erpRoleInput.value : 'employee';
 
-  try {
+    const startDateInput = document.getElementById('newEmpStartDate');
+    const payTypeInput = document.getElementById('newEmpPayType');
+    const startDate = startDateInput ? startDateInput.value || null : null;
+
+    try {
     const result = await api.post('/api/employees', {
       name,
       pin: pin || '0000',
       rate,
       staff_type: staffType,
       erp_role: erpRole,
-      holiday_entitlement: annualDays
+      holiday_entitlement: annualDays,
+      start_date: startDate
     });
 
     // Add to local state
@@ -5717,8 +5732,6 @@ async function addEmployee() {
     pinInput2.value = '';
     daysInput.value = '20';
     const carryoverInput = document.getElementById('newEmpCarryover');
-    const startDateInput = document.getElementById('newEmpStartDate');
-    const payTypeInput = document.getElementById('newEmpPayType');
     if (carryoverInput) carryoverInput.value = '0';
     if (startDateInput) startDateInput.value = '';
     if (staffTypeInput) staffTypeInput.value = 'workshop';
@@ -5747,6 +5760,30 @@ function cancelEdit(id) {
   renderStaffList();
 }
 
+async function revealEmployeePin(id) {
+  try {
+    const result = await api.get(`/api/employees/${id}/pin`);
+    const pinEl = document.getElementById(`edit-pin-${id}`);
+    const btn = pinEl?.parentElement?.querySelector('button');
+    if (pinEl) {
+      pinEl.type = 'text';
+      pinEl.value = result.pin || '';
+      pinEl.style.letterSpacing = '3px';
+    }
+    if (btn) {
+      btn.textContent = '🙈 Hide';
+      btn.onclick = () => {
+        pinEl.type = 'password';
+        pinEl.value = '';
+        btn.textContent = '👁 View';
+        btn.onclick = () => revealEmployeePin(id);
+      };
+    }
+  } catch (err) {
+    toast('Could not retrieve PIN', 'error');
+  }
+}
+
 async function saveEmployee(id) {
   const emp = state.timesheetData.employees.find(e => String(e.id) === String(id));
   if (!emp) return;
@@ -5762,7 +5799,11 @@ async function saveEmployee(id) {
   const newStaffType = document.getElementById(`edit-stafftype-${id}`)?.value || emp.staffType || 'workshop';
   const newErpRole = document.getElementById(`edit-erprole-${id}`)?.value || emp.erpRole || 'employee';
 
-  try {
+    const newCarryover = parseFloat(document.getElementById(`edit-carryover-${id}`).value) || 0;
+    const newStartDate = document.getElementById(`edit-startdate-${id}`).value || '';
+    const newPayType = document.getElementById(`edit-paytype-${id}`)?.value || emp.payType || 'payee';
+
+    try {
     // Build update body — only include PIN if user typed a new one.
     // Empty field means "leave PIN alone"; the API also defends against this.
     const updateBody = {
@@ -5770,7 +5811,9 @@ async function saveEmployee(id) {
       rate: newRate,
       staff_type: newStaffType,
       erp_role: newErpRole,
-      holiday_entitlement: newDays
+      holiday_entitlement: newDays,
+      start_date: newStartDate || null,
+      pay_type: newPayType
     };
     if (newPin) updateBody.pin = newPin;
 
@@ -5784,9 +5827,6 @@ async function saveEmployee(id) {
     emp.annualDays = newDays;
     emp.staffType = newStaffType;
     emp.erpRole = newErpRole;
-    const newCarryover = parseFloat(document.getElementById(`edit-carryover-${id}`).value) || 0;
-    const newStartDate = document.getElementById(`edit-startdate-${id}`).value || '';
-    const newPayType = document.getElementById(`edit-paytype-${id}`)?.value || emp.payType || 'payee';
     emp.carryoverDays = newCarryover;
     emp.startDate = newStartDate;
     emp.payType = newPayType;

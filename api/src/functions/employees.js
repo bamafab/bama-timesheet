@@ -61,23 +61,24 @@ app.http('employees-create', {
 
         try {
             const body = await request.json();
-            const { name, pin, rate, staff_type, erp_role, holiday_entitlement } = body;
+            const { name, pin, rate, staff_type, erp_role, holiday_entitlement, start_date } = body;
 
             if (!name || !pin || rate === undefined) {
                 return badRequest('name, pin, and rate are required', request);
             }
 
             const result = await query(
-                `INSERT INTO Employees (name, pin, rate, staff_type, erp_role, holiday_balance, holiday_entitlement)
+                `INSERT INTO Employees (name, pin, rate, staff_type, erp_role, holiday_balance, holiday_entitlement, start_date)
                  OUTPUT INSERTED.*
-                 VALUES (@name, @pin, @rate, @staffType, @erpRole, @holidayEntitlement, @holidayEntitlement)`,
+                 VALUES (@name, @pin, @rate, @staffType, @erpRole, @holidayEntitlement, @holidayEntitlement, @startDate)`,
                 {
                     name,
                     pin,
                     rate: parseFloat(rate),
                     staffType: staff_type || 'workshop',
                     erpRole: erp_role || 'employee',
-                    holidayEntitlement: parseFloat(holiday_entitlement || 28)
+                    holidayEntitlement: parseFloat(holiday_entitlement || 28),
+                    startDate: start_date || null
                 }
             );
 
@@ -119,6 +120,8 @@ app.http('employees-update', {
             if (body.holiday_balance !== undefined) { fields.push('holiday_balance = @holidayBalance'); params.holidayBalance = parseFloat(body.holiday_balance); }
             if (body.holiday_entitlement !== undefined) { fields.push('holiday_entitlement = @holidayEntitlement'); params.holidayEntitlement = parseFloat(body.holiday_entitlement); }
             if (body.is_active !== undefined) { fields.push('is_active = @isActive'); params.isActive = body.is_active ? 1 : 0; }
+            if ('start_date' in body) { fields.push('start_date = @startDate'); params.startDate = body.start_date || null; }
+            if (body.pay_type !== undefined) { fields.push('pay_type = @payType'); params.payType = body.pay_type; }
 
             if (fields.length === 0) return badRequest('No fields to update', request);
 
@@ -132,6 +135,30 @@ app.http('employees-update', {
         } catch (err) {
             context.error('Error updating employee:', err);
             return serverError('Failed to update employee', request);
+        }
+    }
+});
+
+// GET /api/employees/:id/pin — reveal PIN for a specific employee (manager only)
+app.http('employees-get-pin', {
+    methods: ['GET'],
+    authLevel: 'anonymous',
+    route: 'employees/{id}/pin',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const id = parseInt(request.params.id);
+            const result = await query(
+                'SELECT pin FROM Employees WHERE id = @id',
+                { id }
+            );
+            if (result.recordset.length === 0) return notFound('Employee not found', request);
+            return ok({ pin: result.recordset[0].pin || null }, request);
+        } catch (err) {
+            context.error('Error fetching PIN:', err);
+            return serverError('Failed to fetch PIN', request);
         }
     }
 });
