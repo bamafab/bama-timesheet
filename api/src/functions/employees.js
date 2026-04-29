@@ -61,16 +61,16 @@ app.http('employees-create', {
 
         try {
             const body = await request.json();
-            const { name, pin, rate, staff_type, erp_role, holiday_entitlement, start_date } = body;
+            const { name, pin, rate, staff_type, erp_role, holiday_entitlement, start_date, pay_type, carryover_days } = body;
 
             if (!name || !pin || rate === undefined) {
                 return badRequest('name, pin, and rate are required', request);
             }
 
             const result = await query(
-                `INSERT INTO Employees (name, pin, rate, staff_type, erp_role, holiday_balance, holiday_entitlement, start_date)
+                `INSERT INTO Employees (name, pin, rate, staff_type, erp_role, holiday_balance, holiday_entitlement, start_date, pay_type, carryover_days)
                  OUTPUT INSERTED.*
-                 VALUES (@name, @pin, @rate, @staffType, @erpRole, @holidayEntitlement, @holidayEntitlement, @startDate)`,
+                 VALUES (@name, @pin, @rate, @staffType, @erpRole, @holidayEntitlement, @holidayEntitlement, @startDate, @payType, @carryoverDays)`,
                 {
                     name,
                     pin,
@@ -78,7 +78,9 @@ app.http('employees-create', {
                     staffType: staff_type || 'workshop',
                     erpRole: erp_role || 'employee',
                     holidayEntitlement: parseFloat(holiday_entitlement || 28),
-                    startDate: start_date || null
+                    startDate: start_date || null,
+                    payType: pay_type || 'payee',
+                    carryoverDays: parseFloat(carryover_days || 0)
                 }
             );
 
@@ -121,6 +123,8 @@ app.http('employees-update', {
             if (body.holiday_entitlement !== undefined) { fields.push('holiday_entitlement = @holidayEntitlement'); params.holidayEntitlement = parseFloat(body.holiday_entitlement); }
             if (body.is_active !== undefined) { fields.push('is_active = @isActive'); params.isActive = body.is_active ? 1 : 0; }
             if ('start_date' in body) { fields.push('start_date = @startDate'); params.startDate = body.start_date || null; }
+            if (body.pay_type !== undefined) { fields.push('pay_type = @payType'); params.payType = body.pay_type; }
+            if (body.carryover_days !== undefined) { fields.push('carryover_days = @carryoverDays'); params.carryoverDays = parseFloat(body.carryover_days) || 0; }
 
             if (fields.length === 0) return badRequest('No fields to update', request);
 

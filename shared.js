@@ -253,7 +253,7 @@ function normaliseEmployee(row) {
     rate: parseFloat(row.rate) || 0,
     annualDays: parseFloat(row.holiday_entitlement) || 28,
     holidayBalance: parseFloat(row.holiday_balance) || 0,
-    carryoverDays: 0,
+    carryoverDays: parseFloat(row.carryover_days) || 0,
     startDate: row.start_date ? (typeof row.start_date === 'string' ? row.start_date.split('T')[0] : new Date(row.start_date).toISOString().split('T')[0]) : '',
     active: row.is_active === undefined ? true : !!row.is_active,
     addedAt: row.created_at || new Date().toISOString()
@@ -1945,6 +1945,7 @@ async function saveClockEdit(id) {
     await api.put(`/api/clockings/${id}`, {
       clock_in: clockInDT,
       clock_out: clockOutDT,
+      break_mins: newBreakMins,
       amended_by: currentManagerUser || 'manager'
     });
 
@@ -2037,6 +2038,7 @@ async function saveMgrClocking() {
       employee_id: empId,
       clock_in: `${date}T${clockIn}:00`,
       clock_out: `${date}T${clockOut}:00`,
+      break_mins: breakMins,
       amended_by: currentManagerUser || 'manager'
     });
 
@@ -5708,6 +5710,10 @@ async function addEmployee() {
     const payTypeInput = document.getElementById('newEmpPayType');
     const startDate = startDateInput ? startDateInput.value || null : null;
 
+    const carryoverInput = document.getElementById('newEmpCarryover');
+    const carryover = carryoverInput ? parseFloat(carryoverInput.value) || 0 : 0;
+    const payType = payTypeInput ? payTypeInput.value || 'payee' : 'payee';
+
     try {
     const result = await api.post('/api/employees', {
       name,
@@ -5716,7 +5722,9 @@ async function addEmployee() {
       staff_type: staffType,
       erp_role: erpRole,
       holiday_entitlement: annualDays,
-      start_date: startDate
+      start_date: startDate,
+      pay_type: payType,
+      carryover_days: carryover
     });
 
     // Add to local state
@@ -5811,7 +5819,9 @@ async function saveEmployee(id) {
       rate: newRate,
       staff_type: newStaffType,
       erp_role: newErpRole,
-      holiday_entitlement: newDays
+      holiday_entitlement: newDays,
+      pay_type: newPayType,
+      carryover_days: newCarryover
     };
     if (newPin) updateBody.pin = newPin;
     if (newStartDate) updateBody.start_date = newStartDate;

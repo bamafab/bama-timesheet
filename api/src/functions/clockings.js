@@ -191,7 +191,7 @@ app.http('clockings-update', {
         try {
             const id = parseInt(request.params.id);
             const body = await request.json();
-            const { clock_in, clock_out, amended_by } = body;
+            const { clock_in, clock_out, amended_by, break_mins } = body;
 
             const fields = ['is_amended = 1'];
             const params = { id };
@@ -199,6 +199,7 @@ app.http('clockings-update', {
             if (clock_in) { fields.push('clock_in = @clockIn'); params.clockIn = new Date(clock_in); }
             if (clock_out) { fields.push('clock_out = @clockOut'); params.clockOut = new Date(clock_out); }
             if (amended_by) { fields.push('amended_by = @amendedBy'); params.amendedBy = amended_by; }
+            if (break_mins !== undefined) { fields.push('break_mins = @breakMins'); params.breakMins = parseInt(break_mins) || 0; }
 
             const result = await query(
                 `UPDATE ClockEntries SET ${fields.join(', ')} OUTPUT INSERTED.* WHERE id = @id`,
@@ -225,7 +226,7 @@ app.http('clockings-create', {
 
         try {
             const body = await request.json();
-            const { employee_id, clock_in, clock_out, amended_by } = body;
+            const { employee_id, clock_in, clock_out, amended_by, break_mins } = body;
 
             if (!employee_id || !clock_in) {
                 return badRequest('employee_id and clock_in are required', request);
@@ -236,19 +237,20 @@ app.http('clockings-create', {
                 clockIn: new Date(clock_in),
                 source: 'manual',
                 isAmended: amended_by ? 1 : 0,
-                amendedBy: amended_by || null
+                amendedBy: amended_by || null,
+                breakMins: parseInt(break_mins) || 0
             };
 
             let sqlText;
             if (clock_out) {
                 params.clockOut = new Date(clock_out);
-                sqlText = `INSERT INTO ClockEntries (employee_id, clock_in, clock_out, source, is_amended, amended_by)
+                sqlText = `INSERT INTO ClockEntries (employee_id, clock_in, clock_out, source, is_amended, amended_by, break_mins)
                            OUTPUT INSERTED.*
-                           VALUES (@employeeId, @clockIn, @clockOut, @source, @isAmended, @amendedBy)`;
+                           VALUES (@employeeId, @clockIn, @clockOut, @source, @isAmended, @amendedBy, @breakMins)`;
             } else {
-                sqlText = `INSERT INTO ClockEntries (employee_id, clock_in, source, is_amended, amended_by)
+                sqlText = `INSERT INTO ClockEntries (employee_id, clock_in, source, is_amended, amended_by, break_mins)
                            OUTPUT INSERTED.*
-                           VALUES (@employeeId, @clockIn, @source, @isAmended, @amendedBy)`;
+                           VALUES (@employeeId, @clockIn, @source, @isAmended, @amendedBy, @breakMins)`;
             }
 
             const result = await query(sqlText, params);
