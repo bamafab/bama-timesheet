@@ -228,6 +228,41 @@
       </div>
     </div>
 
+    <!-- Client Detail View -->
+    <div class="tab-content" id="tab-clientDetail" style="display:none">
+      <div style="margin-bottom:16px">
+        <button class="btn btn-ghost" onclick="closeClientDetail()" style="padding:6px 14px;font-size:12px">&#8592; Back to clients</button>
+      </div>
+      <div class="card" style="margin-bottom:20px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
+          <div>
+            <div style="font-size:24px;font-weight:700;font-family:var(--font-display);letter-spacing:1px" id="clientDetailName">—</div>
+            <div style="font-size:13px;color:var(--muted)" id="clientDetailAddress">—</div>
+          </div>
+          <button class="btn btn-ghost" onclick="openEditClientFromDetail()" style="padding:4px 12px;font-size:11px">✏️ Edit Client</button>
+        </div>
+      </div>
+
+      <!-- Contacts -->
+      <div class="card" style="margin-bottom:20px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <div class="card-title" style="margin-bottom:0"><span class="icon">👥</span> Contacts</div>
+          <button class="btn btn-primary" onclick="openAddContactModal()" style="padding:6px 14px;font-size:12px">+ Add Contact</button>
+        </div>
+        <div id="clientContactsList">
+          <div class="empty-state"><div class="spinner"></div></div>
+        </div>
+      </div>
+
+      <!-- Tenders for this client -->
+      <div class="card">
+        <div class="card-title"><span class="icon">📋</span> Tenders &amp; Quotes</div>
+        <div id="clientTendersList">
+          <div class="empty-state"><div class="spinner"></div></div>
+        </div>
+      </div>
+    </div>
+
   </div><!-- end mgr-content -->
 </div><!-- end mgr-layout -->
 
@@ -443,6 +478,46 @@
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeEditClientModal()">Cancel</button>
       <button class="btn btn-primary" onclick="submitEditClient()">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     ADD/EDIT CONTACT MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="contactModal">
+  <div class="modal" style="max-width:440px;width:95vw">
+    <div class="modal-title" id="contactModalTitle">👤 Add Contact</div>
+    <input type="hidden" id="ctcId">
+    <input type="hidden" id="ctcClientId">
+    <div style="margin-bottom:12px">
+      <div class="field-label">CONTACT NAME</div>
+      <input type="text" class="field-input" id="ctcName">
+    </div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">ROLE / TITLE (OPTIONAL)</div>
+      <input type="text" class="field-input" id="ctcRole" placeholder="e.g. Project Manager, Site Foreman">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <div class="field-label">EMAIL</div>
+        <input type="email" class="field-input" id="ctcEmail">
+      </div>
+      <div>
+        <div class="field-label">PHONE</div>
+        <input type="text" class="field-input" id="ctcPhone">
+      </div>
+    </div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">NOTES (OPTIONAL)</div>
+      <textarea class="field-input" id="ctcNotes" rows="2"></textarea>
+    </div>
+    <div class="modal-actions" style="justify-content:space-between">
+      <button class="btn" id="ctcDeleteBtn" style="background:var(--red);color:#fff;display:none" onclick="deleteContactFromModal()">🗑️ Delete</button>
+      <div style="display:flex;gap:8px;margin-left:auto">
+        <button class="btn btn-ghost" onclick="closeContactModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitContactModal()">Save</button>
+      </div>
     </div>
   </div>
 </div>

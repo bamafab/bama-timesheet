@@ -202,6 +202,11 @@ Core tables:
   SharePoint folder names + DB records to find the next free number.
   Contact fields (name/email/phone) stored on the tender, not the client,
   since they vary per project even with the same client.
+- `ClientContacts(id, client_id, contact_name, contact_email, contact_phone,
+  role, notes, created_at, updated_at)` — multiple contacts per client
+  (e.g. project manager, foreman, accounts). ON DELETE CASCADE. Auto-populated
+  when a tender is created with contact details, deduplicated by case-insensitive
+  match on (contact_name + contact_email).
 - `TenderComments(id, tender_id, comment, created_by, created_at)` — threaded
   comments on a tender. ON DELETE CASCADE so removing a tender drops its
   comments. The original `comments` field on Tenders is rendered as the
@@ -343,6 +348,9 @@ hub.html and steel-database.html have no modals.
 - `newTenderModal` — create new tender with client autocomplete
 - `editTenderModal` — edit tender details and status
 - `newClientModal` — add a new client to the database
+- `editClientModal` — edit client details
+- `contactModal` — add/edit/delete a contact for a client (used in client detail)
+- `tenderPinModal` — PIN entry on tenders page
 - `uploadProgressModal` — file upload progress indicator
 
 ## Roadmap / queued
