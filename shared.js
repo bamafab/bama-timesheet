@@ -11236,7 +11236,7 @@ function renderQuoteList() {
 
   const search = (document.getElementById('quoteSearch')?.value || '').toLowerCase();
   const statusFilter = document.getElementById('quoteStatusFilter')?.value || '';
-  let list = tendersData.filter(t => ['quote', 'won', 'lost'].includes(t.status));
+  let list = tendersData.filter(t => ['quote', 'won', 'lost', 'too_late', 'not_interested'].includes(t.status));
 
   if (statusFilter) list = list.filter(t => t.status === statusFilter);
 
@@ -11252,20 +11252,47 @@ function renderQuoteList() {
     return;
   }
 
-  // On quotes page, click opens quote detail; on tenders page, opens tender detail
   const onClickFn = CURRENT_PAGE === 'quotes' ? 'openQuoteDetail' : 'openTenderDetail';
 
-  container.innerHTML = list.map(t => `
-    <div class="tender-row" onclick="${onClickFn}(${t.id})">
-      <div style="font-family:var(--font-mono);font-weight:600;font-size:14px;min-width:80px;color:var(--accent)">${t.reference}</div>
-      <div style="flex:1">
-        <div style="font-weight:500">${t.project_name}</div>
-        <div style="font-size:12px;color:var(--muted)">${t.company_name}</div>
-      </div>
-      ${renderDeadlineBadge(t.deadline_date, t.status)}
-      <span class="tag tag-${t.status === 'quote' ? 'approved' : t.status === 'won' ? 'approved' : 'rejected'}">${t.status}</span>
-    </div>
-  `).join('');
+  const statusMeta = {
+    quote:          { label: 'Quote',          cls: 'tag-approved' },
+    won:            { label: 'Won',            cls: 'tag-approved' },
+    lost:           { label: 'Lost',           cls: 'tag-rejected' },
+    too_late:       { label: 'Too Late',       cls: 'tag-rejected' },
+    not_interested: { label: 'Not Interested', cls: 'tag-pending'  }
+  };
+
+  const rows = list.map(t => {
+    const meta = statusMeta[t.status] || { label: t.status, cls: 'tag-pending' };
+    const value = t.quote_value != null ? `£${parseFloat(t.quote_value).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
+    const sentDate = t.sent_date ? fmtDateStr(String(t.sent_date).split('T')[0]) : '—';
+    const chasingDate = t.chasing_date ? fmtDateStr(String(t.chasing_date).split('T')[0]) : '—';
+
+    // Chasing date highlight — amber if within 3 days, red if past
+    let chasingStyle = 'color:var(--muted)';
+    if (t.chasing_date && !['won','lost','too_late','not_interested'].includes(t.status)) {
+      const today = new Date(); today.setHours(0,0,0,0);
+      const cd = new Date(String(t.chasing_date).split('T')[0] + 'T00:00:00');
+      const diff = Math.round((cd - today) / 86400000);
+      if (diff < 0) chasingStyle = 'color:var(--red);font-weight:600';
+      else if (diff <= 3) chasingStyle = 'color:var(--amber);font-weight:600';
+    }
+
+    return `
+      <div class="quote-row" onclick="${onClickFn}(${t.id})">
+        <div class="quote-col-ref">${t.reference}</div>
+        <div class="quote-col-project">
+          <div style="font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(t.project_name)}</div>
+          <div style="font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(t.company_name)}</div>
+        </div>
+        <div class="quote-col-value" style="font-family:var(--font-mono);font-size:13px">${value}</div>
+        <div class="quote-col-date" style="color:var(--muted);font-size:12px">${sentDate}</div>
+        <div class="quote-col-date" style="font-size:12px;${chasingStyle}">${chasingDate}</div>
+        <div class="quote-col-status"><span class="tag ${meta.cls}">${meta.label}</span></div>
+      </div>`;
+  }).join('');
+
+  container.innerHTML = rows;
 }
 
 // ── Render Client List ──

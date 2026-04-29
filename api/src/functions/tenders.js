@@ -174,7 +174,7 @@ app.http('tenders-update', {
             const allowed = ['project_name', 'comments', 'status', 'quote_handler_id',
                            'sharepoint_folder_id', 'sharepoint_tender_folder_id',
                            'converted_by', 'contact_name', 'contact_email', 'contact_phone',
-                           'deadline_date'];
+                           'deadline_date', 'quote_value', 'sent_date', 'chasing_date'];
 
             for (const key of allowed) {
                 if (body[key] !== undefined) {
