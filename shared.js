@@ -5811,11 +5811,10 @@ async function saveEmployee(id) {
       rate: newRate,
       staff_type: newStaffType,
       erp_role: newErpRole,
-      holiday_entitlement: newDays,
-      start_date: newStartDate || null,
-      pay_type: newPayType
+      holiday_entitlement: newDays
     };
     if (newPin) updateBody.pin = newPin;
+    if (newStartDate) updateBody.start_date = newStartDate;
 
     await api.put(`/api/employees/${id}`, updateBody);
 
