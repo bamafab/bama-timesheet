@@ -13,6 +13,12 @@ management, and a standalone UK steel section reference.
   load-bearing for every authenticated page. Changes here have broken prod before.
 - **Chart.js is loaded in office.html only.** Reports (with charts) have moved from
   manager to office. Don't add the CDN tag to other pages.
+- **Tender ↔ Quote financial separation.** The Tender page and Tender list must
+  NEVER show financial details (pricing, costs, margins, quote values). Those
+  belong exclusively on the Quote page (`quotes.html`), gated by `viewQuotes` /
+  `editQuotes` permissions. Staff with only `tenders` permission must not see
+  any monetary information. Always confirm with the user before adding any new
+  info display to the Tender page or Tender list.
 - **Bump the cache-bust version when shipping UI changes** to `shared.js` or
   `bama.css`. Format: `?v=YYYYMMDD` + letter (`a`/`b`/`c`/… for same-day pushes).
   Example: first push on 2026-03-26 → `?v=20260326a`; hotfix same day → `?v=20260326b`.
@@ -42,7 +48,7 @@ Labour Log, drawings PDFs/BOM JSON) and sending mail. All relational data lives 
 ├── manager.html          — Manager dashboard (settings, user access)
 ├── office.html           — Office dashboard (staff, holidays, payroll, reports, archive, etc.)
 ├── projects.html         — Projects + drawings + draftsman mode
-├── tenders.html          — Tenders & quotes management, client database
+├── tenders.html          — Tender management + client database
 ├── quotes.html           — Quotations: financial-sensitive view (separate from tenders)
 ├── steel-database.html   — Standalone UK steel section reference (no shared.js, no auth)
 ├── shared.js             — ~9700 LOC. Page-aware; every page except hub/steel loads it.
@@ -370,9 +376,12 @@ none of this is built yet.
 - **Full project tracker in-app** — replace the SharePoint PROJECT TRACKER.xlsx
   dependency. Projects, statuses, and the Labour Log move into SQL. `loadProjects()`
   and `writeApprovedToLabourLog()` / `writeUnproductiveTimeLog()` will retire.
-- **Quote → project workflow** — tender system is built (`tenders.html`). Next:
-  wire up the Quote pricing/editing workflow, then auto-create a Project when
-  a quote is marked as "won". Depends on the project tracker migration below.
+- **Quote → project workflow** — Tender system built (`tenders.html`) + dedicated
+  Quote page exists (`quotes.html`) with own login + permission gate. Quote detail
+  is currently a placeholder. Next: build the financial workflow (line items,
+  pricing, margin tracking, customer-facing PDF) inside the Quote detail view,
+  then auto-create a Project when a quote is marked as "won". Depends on the
+  project tracker migration below.
 - **RBAC** — real role-based permissions enforced server-side. Current
   `UserPermissions` flags become the source of truth the API checks, not just
   what the UI hides. Blocker: move PIN verification server-side first.
