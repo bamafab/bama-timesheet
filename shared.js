@@ -11084,7 +11084,7 @@ function renderTenderList() {
       <div style="font-family:var(--font-mono);font-weight:600;font-size:14px;min-width:80px;color:var(--accent)">${t.reference}</div>
       <div style="flex:1">
         <div style="font-weight:500">${t.project_name}</div>
-        <div style="font-size:12px;color:var(--muted)">${t.company_name}${t.contact_name ? ' · ' + (t.contact_name.split(',')[0].trim()) : ''}</div>
+        <div style="font-size:12px;color:var(--muted)">${t.company_name}${t.contact_name ? ' · ' + String(t.contact_name).split(',')[0].trim() : ''}</div>
       </div>
       ${renderDeadlineBadge(t.deadline_date, t.status)}
       <span class="tag tag-${t.status === 'tender' ? 'pending' : t.status === 'quote' ? 'approved' : t.status === 'won' ? 'approved' : t.status === 'lost' ? 'rejected' : 'pending'}">${t.status}</span>
@@ -12023,7 +12023,15 @@ function openEditTenderModal() {
     deadlineStr = String(currentTender.deadline_date).split('T')[0];
   }
   document.getElementById('etDeadline').value = deadlineStr;
-  document.getElementById('etStatus').value = currentTender.status || 'tender';
+
+  // Only show status dropdown for tender/cancelled statuses
+  const statusContainer = document.getElementById('etStatus').parentElement;
+  const isEditableStatus = ['tender', 'cancelled'].includes(currentTender.status);
+  statusContainer.style.display = isEditableStatus ? '' : 'none';
+  if (isEditableStatus) {
+    document.getElementById('etStatus').value = currentTender.status || 'tender';
+  }
+
   document.getElementById('editTenderModal').classList.add('active');
 }
 
@@ -12035,16 +12043,21 @@ async function submitEditTender() {
   const id = document.getElementById('etTenderId').value;
   const projectName = document.getElementById('etProjectName').value.trim();
   const deadline = document.getElementById('etDeadline').value;
-  const status = document.getElementById('etStatus').value;
 
   if (!projectName) { toast('Project name is required', 'error'); return; }
 
+  // Only include status in payload if it was shown (tender/cancelled only)
+  const statusContainer = document.getElementById('etStatus').parentElement;
+  const payload = {
+    project_name: projectName,
+    deadline_date: deadline || null
+  };
+  if (statusContainer.style.display !== 'none') {
+    payload.status = document.getElementById('etStatus').value;
+  }
+
   try {
-    const updated = await api.put(`/api/tenders/${id}`, {
-      project_name: projectName,
-      status,
-      deadline_date: deadline || null
-    });
+    const updated = await api.put(`/api/tenders/${id}`, payload);
 
     const idx = tendersData.findIndex(t => String(t.id) === String(id));
     if (idx >= 0) Object.assign(tendersData[idx], updated);
@@ -12252,7 +12265,7 @@ function renderClientTendersList(clientId) {
       <div style="font-family:var(--font-mono);font-weight:600;font-size:14px;min-width:80px;color:var(--accent)">${t.reference}</div>
       <div style="flex:1">
         <div style="font-weight:500">${t.project_name}</div>
-        <div style="font-size:12px;color:var(--muted)">${t.contact_name ? (t.contact_name.split(',')[0].trim()) : '—'}</div>
+        <div style="font-size:12px;color:var(--muted)">${t.contact_name ? String(t.contact_name).split(',')[0].trim() : '—'}</div>
       </div>
       ${renderDeadlineBadge(t.deadline_date, t.status)}
       <span class="tag tag-${t.status === 'tender' ? 'pending' : t.status === 'quote' ? 'approved' : t.status === 'won' ? 'approved' : t.status === 'lost' ? 'rejected' : 'pending'}">${t.status}</span>
