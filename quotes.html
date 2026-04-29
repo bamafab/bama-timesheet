@@ -63,10 +63,14 @@
   <!-- Sidebar -->
   <nav class="mgr-sidebar" id="quotesSidebar">
     <div class="sidebar-nav-group">
-      <button class="sidebar-nav-item active" data-tab="quotes" onclick="switchQuotesTab('quotes')">
-        <span class="sidebar-nav-icon">📊</span> Quotes
+      <button class="sidebar-nav-item" id="sidebarBtnTenders" data-tab="tenders" onclick="navToTenders()">
+        <span class="sidebar-nav-icon">📋</span> Tenders
       </button>
-      <button class="sidebar-nav-item" data-tab="clients" onclick="switchQuotesTab('clients')">
+      <button class="sidebar-nav-item active" data-tab="quotes" onclick="switchQuotesTab('quotes')">
+        <span class="sidebar-nav-icon">📊</span> Quotations
+      </button>
+      <hr class="sidebar-nav-divider">
+      <button class="sidebar-nav-item sidebar-secondary-item" data-tab="clients" onclick="switchQuotesTab('clients')">
         <span class="sidebar-nav-icon">🏢</span> Clients
       </button>
     </div>
@@ -87,16 +91,18 @@
     <!-- Tab: Quotes List -->
     <div class="tab-content active" id="tab-quotes">
       <div class="card">
-        <div class="card-title"><span class="icon">📊</span> All Quotes</div>
-        <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
-          <input type="text" class="field-input" id="quoteSearch" placeholder="Search quotes..."
-            style="max-width:260px" oninput="renderQuoteList()">
-          <select class="field-input" id="quoteStatusFilter" style="max-width:160px" onchange="renderQuoteList()">
-            <option value="">All Statuses</option>
-            <option value="quote">Quote</option>
-            <option value="won">Won</option>
-            <option value="lost">Lost</option>
-          </select>
+        <div class="card-frozen-top">
+          <div class="card-title"><span class="icon">📊</span> All Quotes</div>
+          <div style="display:flex;gap:10px;margin-bottom:0;flex-wrap:wrap">
+            <input type="text" class="field-input" id="quoteSearch" placeholder="Search quotes..."
+              style="max-width:260px" oninput="renderQuoteList()">
+            <select class="field-input" id="quoteStatusFilter" style="max-width:160px" onchange="renderQuoteList()">
+              <option value="">All Statuses</option>
+              <option value="quote">Quote</option>
+              <option value="won">Won</option>
+              <option value="lost">Lost</option>
+            </select>
+          </div>
         </div>
         <div id="quoteListContainer">
           <div class="empty-state"><div class="spinner"></div></div>
@@ -107,10 +113,12 @@
     <!-- Tab: Clients (read-only on quotes page) -->
     <div class="tab-content" id="tab-clients">
       <div class="card">
-        <div class="card-title"><span class="icon">🏢</span> Client Database</div>
-        <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
-          <input type="text" class="field-input" id="clientSearch" placeholder="Search clients..."
-            style="max-width:260px" oninput="renderClientList()">
+        <div class="card-frozen-top">
+          <div class="card-title"><span class="icon">🏢</span> Client Database</div>
+          <div style="display:flex;gap:10px;margin-bottom:0;flex-wrap:wrap">
+            <input type="text" class="field-input" id="clientSearch" placeholder="Search clients..."
+              style="max-width:260px" oninput="renderClientList()">
+          </div>
         </div>
         <div id="clientListContainer">
           <div class="empty-state"><div class="spinner"></div></div>
@@ -179,6 +187,37 @@
 </div><!-- end mgr-layout -->
 
 <style>
+  /* ── Frozen layout ── */
+  html, body { overflow: hidden; height: 100%; }
+  .mgr-layout { height: calc(100vh - 53px); }
+  .mgr-content { overflow-y: auto; height: 100%; padding-top: 0 !important; }
+  .mgr-header {
+    position: sticky; top: 0; z-index: 10;
+    background: #0e0e0e;
+    padding: 28px 0 16px;
+    margin-bottom: 12px !important;
+  }
+  .card-frozen-top {
+    position: sticky;
+    top: 108px;
+    z-index: 9;
+    background: var(--card, #1e1e1e);
+    border-radius: 12px 12px 0 0;
+    padding: 18px 20px 14px;
+    margin: -20px -20px 0;
+    border-bottom: 1px solid var(--border, #2a2a2a);
+  }
+  .card-frozen-top .card-title { margin-bottom: 12px; }
+
+  /* ── Secondary sidebar item (Clients) ── */
+  .sidebar-secondary-item {
+    opacity: 0.55;
+    font-size: 12px !important;
+  }
+  .sidebar-secondary-item.active {
+    opacity: 1;
+  }
+
   .tender-row {
     display: flex; align-items: center; gap: 12px; padding: 12px 16px;
     border-bottom: 1px solid var(--border); cursor: pointer; transition: background .15s;
@@ -188,6 +227,6 @@
   .client-header:hover { background: var(--surface2); }
 </style>
 
-<script src="shared.js?v=20260428a"></script>
+<script src="shared.js?v=20260429a"></script>
 </body>
 </html>

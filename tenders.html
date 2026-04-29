@@ -69,7 +69,11 @@
       <button class="sidebar-nav-item active" data-tab="tenders" onclick="switchTenderTab('tenders')">
         <span class="sidebar-nav-icon">📋</span> Tenders
       </button>
-      <button class="sidebar-nav-item" data-tab="clients" onclick="switchTenderTab('clients')">
+      <button class="sidebar-nav-item" id="sidebarBtnQuotations" data-tab="quotations" onclick="navToQuotes()">
+        <span class="sidebar-nav-icon">📊</span> Quotations
+      </button>
+      <hr class="sidebar-nav-divider">
+      <button class="sidebar-nav-item sidebar-secondary-item" data-tab="clients" onclick="switchTenderTab('clients')">
         <span class="sidebar-nav-icon">🏢</span> Clients
       </button>
     </div>
@@ -91,18 +95,20 @@
     <!-- Tab: Tenders List -->
     <div class="tab-content active" id="tab-tenders">
       <div class="card">
-        <div class="card-title"><span class="icon">📋</span> All Tenders</div>
-        <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
-          <input type="text" class="field-input" id="tenderSearch" placeholder="Search tenders..."
-            style="max-width:260px" oninput="renderTenderList()">
-          <select class="field-input" id="tenderStatusFilter" style="max-width:160px" onchange="renderTenderList()">
-            <option value="">All Statuses</option>
-            <option value="tender">Tender</option>
-            <option value="quote">Quote</option>
-            <option value="won">Won</option>
-            <option value="lost">Lost</option>
-            <option value="cancelled">Cancelled</option>
-          </select>
+        <div class="card-frozen-top">
+          <div class="card-title"><span class="icon">📋</span> All Tenders</div>
+          <div style="display:flex;gap:10px;margin-bottom:0;flex-wrap:wrap">
+            <input type="text" class="field-input" id="tenderSearch" placeholder="Search tenders..."
+              style="max-width:260px" oninput="renderTenderList()">
+            <select class="field-input" id="tenderStatusFilter" style="max-width:160px" onchange="renderTenderList()">
+              <option value="">All Statuses</option>
+              <option value="tender">Tender</option>
+              <option value="quote">Quote</option>
+              <option value="won">Won</option>
+              <option value="lost">Lost</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+          </div>
         </div>
         <div id="tenderListContainer">
           <div class="empty-state"><div class="spinner"></div></div>
@@ -113,11 +119,13 @@
     <!-- Tab: Clients -->
     <div class="tab-content" id="tab-clients">
       <div class="card">
-        <div class="card-title"><span class="icon">🏢</span> Client Database</div>
-        <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
-          <input type="text" class="field-input" id="clientSearch" placeholder="Search clients..."
-            style="max-width:260px" oninput="renderClientList()">
-          <button class="btn btn-primary" onclick="openNewClientModal()">+ Add Client</button>
+        <div class="card-frozen-top">
+          <div class="card-title"><span class="icon">🏢</span> Client Database</div>
+          <div style="display:flex;gap:10px;margin-bottom:0;flex-wrap:wrap">
+            <input type="text" class="field-input" id="clientSearch" placeholder="Search clients..."
+              style="max-width:260px" oninput="renderClientList()">
+            <button class="btn btn-primary" onclick="openNewClientModal()">+ Add Client</button>
+          </div>
         </div>
         <div id="clientListContainer">
           <div class="empty-state"><div class="spinner"></div></div>
@@ -530,6 +538,37 @@
 </div>
 
 <style>
+  /* ── Frozen layout ── */
+  html, body { overflow: hidden; height: 100%; }
+  .mgr-layout { height: calc(100vh - 53px); }
+  .mgr-content { overflow-y: auto; height: 100%; padding-top: 0 !important; }
+  .mgr-header {
+    position: sticky; top: 0; z-index: 10;
+    background: #0e0e0e;
+    padding: 28px 0 16px;
+    margin-bottom: 12px !important;
+  }
+  .card-frozen-top {
+    position: sticky;
+    top: 108px;
+    z-index: 9;
+    background: var(--card, #1e1e1e);
+    border-radius: 12px 12px 0 0;
+    padding: 18px 20px 14px;
+    margin: -20px -20px 0;
+    border-bottom: 1px solid var(--border, #2a2a2a);
+  }
+  .card-frozen-top .card-title { margin-bottom: 12px; }
+
+  /* ── Secondary sidebar item (Clients) ── */
+  .sidebar-secondary-item {
+    opacity: 0.55;
+    font-size: 12px !important;
+  }
+  .sidebar-secondary-item.active {
+    opacity: 1;
+  }
+
   .autocomplete-dropdown {
     position: absolute; top: 100%; left: 0; right: 0; z-index: 200;
     background: var(--card); border: 1px solid var(--border); border-radius: 8px;
@@ -563,6 +602,6 @@
   }
 </style>
 
-<script src="shared.js?v=20260428a"></script>
+<script src="shared.js?v=20260429a"></script>
 </body>
 </html>

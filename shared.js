@@ -10899,6 +10899,7 @@ async function loadTendersData() {
     clientsData = clients || [];
     renderTenderList();
     renderClientList();
+    updateTenderSidebarCrossNav();
 
     // Backfill ClientContacts from existing tenders (one-time per session)
     backfillContactsFromTenders();
@@ -11032,6 +11033,47 @@ async function verifyTenderPin() {
     document.getElementById('tenderPinError').textContent = 'PIN verification failed';
     document.getElementById('tenderPinInput').value = '';
   }
+}
+
+// ── Cross-page navigation (Tenders ↔ Quotations) ──
+function navToQuotes() {
+  const perms = getUserPermissions(currentManagerUser) || {};
+  if (!perms.viewQuotes && !perms.editQuotes) {
+    toast('You don\'t have permission to access Quotations', 'error');
+    return;
+  }
+  window.location.href = 'quotes.html';
+}
+
+function navToTenders() {
+  const perms = getUserPermissions(currentManagerUser) || {};
+  if (!perms.tenders) {
+    toast('You don\'t have permission to access Tenders', 'error');
+    return;
+  }
+  window.location.href = 'tenders.html';
+}
+
+function updateTenderSidebarCrossNav() {
+  const perms = getUserPermissions(currentManagerUser) || {};
+  const btn = document.getElementById('sidebarBtnQuotations');
+  if (!btn) return;
+  const hasAccess = !!(perms.viewQuotes || perms.editQuotes);
+  btn.disabled = !hasAccess;
+  btn.style.opacity = hasAccess ? '' : '0.35';
+  btn.style.cursor = hasAccess ? '' : 'not-allowed';
+  btn.title = hasAccess ? '' : 'You don\'t have permission to access Quotations';
+}
+
+function updateQuotesSidebarCrossNav() {
+  const perms = getUserPermissions(currentManagerUser) || {};
+  const btn = document.getElementById('sidebarBtnTenders');
+  if (!btn) return;
+  const hasAccess = !!perms.tenders;
+  btn.disabled = !hasAccess;
+  btn.style.opacity = hasAccess ? '' : '0.35';
+  btn.style.cursor = hasAccess ? '' : 'not-allowed';
+  btn.title = hasAccess ? '' : 'You don\'t have permission to access Tenders';
 }
 
 // ── Tab switching ──
@@ -12474,6 +12516,7 @@ async function loadQuotesData() {
     clientsData = clients || [];
     renderQuoteList();
     renderClientList();
+    updateQuotesSidebarCrossNav();
   } catch (err) {
     console.error('Failed to load quotes data:', err);
     toast('Failed to load data', 'error');
