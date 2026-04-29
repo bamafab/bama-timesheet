@@ -25,9 +25,12 @@ app.http('clock-in', {
             );
             if (emp.recordset.length === 0) return notFound('Employee not found or inactive', request);
 
-            // Check if already clocked in (has an open entry with no clock_out)
+            // Check if already clocked in today (open entry with no clock_out for today)
             const open = await query(
-                'SELECT id FROM ClockEntries WHERE employee_id = @id AND clock_out IS NULL',
+                `SELECT id FROM ClockEntries
+                 WHERE employee_id = @id
+                   AND clock_out IS NULL
+                   AND CAST(clock_in AS DATE) = CAST(GETDATE() AS DATE)`,
                 { id: parseInt(employee_id) }
             );
             if (open.recordset.length > 0) {
