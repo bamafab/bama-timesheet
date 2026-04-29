@@ -85,12 +85,66 @@
     <div class="mgr-header">
       <div>
         <div class="mgr-title">BABCOCK QUOTES</div>
-        <div style="color:var(--muted);font-size:13px">BAMA Fabrication · Semi-automated Quote Generator</div>
+        <div style="color:var(--muted);font-size:13px">BAMA Fabrication · Quote Tracker</div>
       </div>
       <div style="display:flex;gap:10px;align-items:center">
+        <button class="btn btn-primary" id="babcockNewQuoteBtn" onclick="showBabcockGenerator()">+ New Quote</button>
         <a href="hub.html" style="text-decoration:none"><button class="btn btn-ghost">Exit</button></a>
       </div>
     </div>
+
+    <!-- ═════════════════════════════════════════
+         TRACKER VIEW (default landing)
+    ══════════════════════════════════════════ -->
+    <div id="babcockTrackerView">
+      <!-- Filters / search -->
+      <div class="card" style="margin-bottom:16px;padding:14px 16px">
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+          <input type="text" class="field-input" id="babcockTrackerSearch" placeholder="Search reference…"
+                 style="flex:1;min-width:220px;font-size:13px" oninput="renderBabcockTracker()">
+          <select class="field-input" id="babcockTrackerStatusFilter" style="min-width:180px;font-size:13px"
+                  onchange="renderBabcockTracker()">
+            <option value="">All statuses</option>
+            <option value="Quote Sent">Quote Sent</option>
+            <option value="PO Received">PO Received</option>
+            <option value="Invoice Generated">Invoice Generated</option>
+            <option value="Paid">Paid</option>
+          </select>
+          <span id="babcockTrackerCount" style="font-size:12px;color:var(--muted)"></span>
+        </div>
+      </div>
+
+      <!-- Tracker table -->
+      <div class="card" style="padding:0;overflow:hidden">
+        <div style="overflow-x:auto">
+          <table class="babcock-tracker-table" id="babcockTrackerTable">
+            <thead>
+              <tr>
+                <th style="min-width:90px">Quote Ref</th>
+                <th style="min-width:110px">Date Sent</th>
+                <th style="min-width:120px;text-align:right">Total Value</th>
+                <th style="min-width:170px">Status</th>
+                <th style="min-width:130px">Last Updated</th>
+                <th style="width:42px"></th>
+              </tr>
+            </thead>
+            <tbody id="babcockTrackerBody">
+              <tr><td colspan="6" style="padding:30px;text-align:center;color:var(--muted)">
+                <div class="spinner" style="margin:0 auto 10px"></div>Loading quotes…
+              </td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═════════════════════════════════════════
+         GENERATOR VIEW (was the old default)
+    ══════════════════════════════════════════ -->
+    <div id="babcockGeneratorView" style="display:none">
+      <div style="margin-bottom:14px">
+        <button class="btn btn-ghost" onclick="showBabcockTracker()">&#8592; Back to Tracker</button>
+      </div>
 
     <!-- ── Step 1: Upload Schedule ── -->
     <div class="card" style="margin-bottom:20px" id="babcockUploadCard">
@@ -181,13 +235,16 @@
         <div class="card-title" style="margin-bottom:0"><span class="icon">📄</span> Generated Quote</div>
         <div style="display:flex;gap:8px">
           <button class="btn btn-ghost" style="font-size:12px" onclick="document.getElementById('babcockQuoteCard').style.display='none'">← Back to Preview</button>
-          <button class="btn btn-primary" onclick="exportBabcockQuote()">⬇️ Export Quote</button>
+          <button class="btn btn-primary" id="babcockSaveBtn" onclick="saveBabcockQuoteToTracker()">💾 Save to Tracker</button>
+          <button class="btn btn-ghost" onclick="exportBabcockQuote()">⬇️ Export</button>
         </div>
       </div>
       <div id="babcockQuoteContent">
         <!-- Populated by JS -->
       </div>
     </div>
+
+    </div><!-- end babcockGeneratorView -->
 
   </div><!-- end mgr-content -->
 </div><!-- end mgr-layout -->
@@ -220,6 +277,64 @@
     border-color: var(--accent);
     background: rgba(255,107,0,.04);
   }
+
+  /* ── Tracker table ── */
+  .babcock-tracker-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .babcock-tracker-table th {
+    background: var(--surface);
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    padding: 12px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .babcock-tracker-table td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    vertical-align: middle;
+  }
+  .babcock-tracker-table tr:last-child td { border-bottom: none; }
+  .babcock-tracker-table tr:hover td { background: var(--surface2); }
+  .babcock-tracker-table .ref-cell {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    color: var(--accent);
+  }
+  .babcock-tracker-table .num-cell {
+    font-family: var(--font-mono);
+    text-align: right;
+    color: var(--accent2);
+  }
+  .babcock-tracker-table .status-select {
+    background: var(--surface2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 12px;
+    font-family: inherit;
+    min-width: 160px;
+  }
+  .babcock-tracker-table .status-select:focus { outline: 1px solid var(--accent); }
+  .babcock-tracker-table .row-action {
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 16px;
+    padding: 4px 8px;
+    border-radius: 4px;
+  }
+  .babcock-tracker-table .row-action:hover { background: var(--surface2); color: var(--red); }
 
   /* ── Preview table ── */
   .babcock-preview-table {

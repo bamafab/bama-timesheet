@@ -12889,6 +12889,8 @@ async function deleteQuoteComment(id) {
 let _babcockWorkbook = null;    // parsed XLSX workbook
 let _babcockRawData = null;     // array of row objects after mapping
 let _pendingBabcockUser = null;
+let _babcockQuotes = [];        // tracker list (loaded from API)
+let _babcockLastGenerated = null; // cached payload for "Save to Tracker"
 
 async function initBabcockPage() {
   const authed = sessionStorage.getItem('bama_mgr_authed');
@@ -12898,6 +12900,7 @@ async function initBabcockPage() {
     if (perms && perms.tenders) {
       document.getElementById('screenBabcockSelect').style.display = 'none';
       document.getElementById('babcockLayout').style.display = 'flex';
+      loadBabcockTracker();
       return;
     }
   }
@@ -12959,6 +12962,7 @@ async function verifyBabcockPin() {
     }
     document.getElementById('screenBabcockSelect').style.display = 'none';
     document.getElementById('babcockLayout').style.display = 'flex';
+    loadBabcockTracker();
   } catch (err) {
     document.getElementById('babcockPinError').textContent = 'PIN verification failed';
     document.getElementById('babcockPinInput').value = '';
@@ -13156,12 +13160,38 @@ function generateBabcockQuote() {
     return { num: i + 1, description: r.description, quantity: r.quantity, unit: r.unit, ourPrice };
   });
 
-  const quoteRef = `BBC-${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}-${String(Math.floor(Math.random()*900)+100)}`;
+  // Get next ref from server. Falls back to a temporary local ref if the API is unreachable —
+  // the real ref will be allocated server-side when Save to Tracker is clicked.
+  let quoteRef = `B-pending`;
+  api.get('/api/babcock-quote-next-ref').then(r => {
+    if (r && r.reference) {
+      quoteRef = r.reference;
+      const refEl = document.getElementById('babcockGeneratedRef');
+      if (refEl) refEl.textContent = quoteRef;
+      if (_babcockLastGenerated) _babcockLastGenerated.quote_ref = quoteRef;
+    }
+  }).catch(() => { /* leave as B-pending; server will allocate on save */ });
+
+  // Cache the full payload so saveBabcockQuoteToTracker() can ship it.
+  _babcockLastGenerated = {
+    quote_ref: quoteRef,
+    total_value: grandTotal,
+    markup_pct: markup,
+    line_items: lines.map(l => ({
+      num: l.num,
+      description: l.description,
+      quantity: l.quantity,
+      unit: l.unit,
+      ourPrice: l.ourPrice
+    })),
+    source_filename: document.getElementById('babcockFileName')?.textContent || null,
+    saved_id: null
+  };
 
   document.getElementById('babcockQuoteContent').innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:16px;margin-bottom:24px;padding:0 4px">
       <div>
-        <div style="font-family:var(--font-display);font-size:28px;letter-spacing:1px;color:var(--accent)">${quoteRef}</div>
+        <div id="babcockGeneratedRef" style="font-family:var(--font-display);font-size:28px;letter-spacing:1px;color:var(--accent)">${quoteRef}</div>
         <div style="font-size:13px;color:var(--muted);margin-top:4px">Babcock International · ${new Date().toLocaleDateString('en-GB', {day:'numeric',month:'long',year:'numeric'})}</div>
         <div style="font-size:12px;color:var(--subtle);margin-top:2px">${markup}% margin applied to all line items</div>
       </div>
@@ -13189,7 +13219,171 @@ function generateBabcockQuote() {
 
   document.getElementById('babcockQuoteCard').style.display = '';
   document.getElementById('babcockQuoteCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  // Reset Save button state — fresh generated quote, not yet saved
+  const saveBtn = document.getElementById('babcockSaveBtn');
+  if (saveBtn) {
+    saveBtn.disabled = false;
+    saveBtn.textContent = '💾 Save to Tracker';
+  }
   toast(`Quote generated — ${lines.length} items, total ${fmtGBP(grandTotal)}`, 'success');
+}
+
+// ── Tracker view switching ──
+function showBabcockTracker() {
+  document.getElementById('babcockTrackerView').style.display = '';
+  document.getElementById('babcockGeneratorView').style.display = 'none';
+  const btn = document.getElementById('babcockNewQuoteBtn');
+  if (btn) btn.style.display = '';
+  loadBabcockTracker();
+}
+
+function showBabcockGenerator() {
+  document.getElementById('babcockTrackerView').style.display = 'none';
+  document.getElementById('babcockGeneratorView').style.display = '';
+  const btn = document.getElementById('babcockNewQuoteBtn');
+  if (btn) btn.style.display = 'none';
+  // Start from a clean slate every time the generator is opened
+  clearBabcockFile();
+  _babcockLastGenerated = null;
+}
+
+// ── Load tracker list from API ──
+async function loadBabcockTracker() {
+  const tbody = document.getElementById('babcockTrackerBody');
+  if (!tbody) return;
+  try {
+    const list = await api.get('/api/babcock-quotes');
+    _babcockQuotes = Array.isArray(list) ? list : [];
+    renderBabcockTracker();
+  } catch (err) {
+    console.warn('Babcock tracker load failed:', err);
+    tbody.innerHTML = `<tr><td colspan="6" style="padding:30px;text-align:center;color:var(--red)">
+      Failed to load quotes. ${escapeHtml(err.message || '')}
+    </td></tr>`;
+  }
+}
+
+// ── Render tracker table (filters + search) ──
+function renderBabcockTracker() {
+  const tbody = document.getElementById('babcockTrackerBody');
+  const countEl = document.getElementById('babcockTrackerCount');
+  if (!tbody) return;
+
+  const search = (document.getElementById('babcockTrackerSearch')?.value || '').toLowerCase();
+  const statusFilter = document.getElementById('babcockTrackerStatusFilter')?.value || '';
+
+  const list = _babcockQuotes.filter(q => {
+    if (statusFilter && q.status !== statusFilter) return false;
+    if (search && !(q.quote_ref || '').toLowerCase().includes(search)) return false;
+    return true;
+  });
+
+  if (countEl) countEl.textContent = `${list.length} quote${list.length === 1 ? '' : 's'}`;
+
+  if (!list.length) {
+    tbody.innerHTML = `<tr><td colspan="6" style="padding:40px;text-align:center;color:var(--muted)">
+      <div style="font-size:32px;margin-bottom:8px">📋</div>
+      No quotes yet. Click <b>+ New Quote</b> to create one.
+    </td></tr>`;
+    return;
+  }
+
+  const fmtGBP = v => (v === null || v === undefined || v === '') ? '—'
+    : `£${Number(v).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const fmtDate = v => {
+    if (!v) return '—';
+    const s = String(v).split('T')[0];
+    return fmtDateStr(s);
+  };
+  const statusOpts = ['Quote Sent', 'PO Received', 'Invoice Generated', 'Paid'];
+
+  tbody.innerHTML = list.map(q => `
+    <tr>
+      <td class="ref-cell">${escapeHtml(q.quote_ref || '')}</td>
+      <td>${fmtDate(q.date_sent || q.created_at)}</td>
+      <td class="num-cell">${fmtGBP(q.total_value)}</td>
+      <td>
+        <select class="status-select" onchange="updateBabcockQuoteStatus(${q.id}, this.value)">
+          ${statusOpts.map(s => `<option value="${s}"${s === q.status ? ' selected' : ''}>${s}</option>`).join('')}
+        </select>
+      </td>
+      <td style="font-size:12px;color:var(--muted)">${fmtDate(q.updated_at)}</td>
+      <td style="text-align:right">
+        <button class="row-action" title="Delete" onclick="deleteBabcockQuote(${q.id}, '${escapeHtml(q.quote_ref || '')}')">🗑</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+// ── Save the just-generated quote to the tracker ──
+async function saveBabcockQuoteToTracker() {
+  if (!_babcockLastGenerated) { toast('No quote to save — generate one first', 'error'); return; }
+  if (_babcockLastGenerated.saved_id) { toast('This quote has already been saved', 'info'); return; }
+
+  const btn = document.getElementById('babcockSaveBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+  try {
+    // Don't send the placeholder ref — let the server allocate the next sequential B####.
+    const refIsPending = !_babcockLastGenerated.quote_ref ||
+                         _babcockLastGenerated.quote_ref === 'B-pending';
+
+    const payload = {
+      total_value: _babcockLastGenerated.total_value,
+      markup_pct: _babcockLastGenerated.markup_pct,
+      line_items: _babcockLastGenerated.line_items,
+      source_filename: _babcockLastGenerated.source_filename,
+      date_sent: new Date().toISOString().split('T')[0],
+      status: 'Quote Sent',
+      created_by: currentManagerUser || null
+    };
+    if (!refIsPending) payload.quote_ref = _babcockLastGenerated.quote_ref;
+
+    const saved = await api.post('/api/babcock-quotes', payload);
+    _babcockLastGenerated.saved_id = saved.id;
+    _babcockLastGenerated.quote_ref = saved.quote_ref;
+
+    // Reflect the real ref in the displayed quote header
+    const refEl = document.getElementById('babcockGeneratedRef');
+    if (refEl) refEl.textContent = saved.quote_ref;
+
+    if (btn) { btn.textContent = '✓ Saved'; btn.disabled = true; }
+    toast(`Saved as ${saved.quote_ref}`, 'success');
+
+    // Refresh tracker list in the background so it's up-to-date when user navigates back
+    loadBabcockTracker();
+  } catch (err) {
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Save to Tracker'; }
+    toast('Save failed: ' + (err.message || 'unknown error'), 'error');
+  }
+}
+
+// ── Inline status change from tracker row ──
+async function updateBabcockQuoteStatus(id, newStatus) {
+  try {
+    const updated = await api.put(`/api/babcock-quotes/${id}`, { status: newStatus });
+    // Patch local state
+    const idx = _babcockQuotes.findIndex(q => q.id === id);
+    if (idx !== -1) _babcockQuotes[idx] = { ..._babcockQuotes[idx], ...updated };
+    toast(`${updated.quote_ref} → ${newStatus}`, 'success');
+    renderBabcockTracker();
+  } catch (err) {
+    toast('Status update failed: ' + (err.message || 'unknown error'), 'error');
+    loadBabcockTracker(); // resync on failure
+  }
+}
+
+// ── Delete from tracker (with confirm) ──
+async function deleteBabcockQuote(id, ref) {
+  if (!confirm(`Delete ${ref}? This cannot be undone.`)) return;
+  try {
+    await api.delete(`/api/babcock-quotes/${id}`);
+    _babcockQuotes = _babcockQuotes.filter(q => q.id !== id);
+    renderBabcockTracker();
+    toast(`Deleted ${ref}`, 'success');
+  } catch (err) {
+    toast('Delete failed: ' + (err.message || 'unknown error'), 'error');
+  }
 }
 
 function exportBabcockQuote() {
