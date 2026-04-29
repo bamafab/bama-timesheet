@@ -69,9 +69,6 @@
       <button class="sidebar-nav-item active" data-tab="tenders" onclick="switchTenderTab('tenders')">
         <span class="sidebar-nav-icon">📋</span> Tenders
       </button>
-      <button class="sidebar-nav-item" data-tab="quotes" onclick="switchTenderTab('quotes')">
-        <span class="sidebar-nav-icon">📊</span> Quotes
-      </button>
       <button class="sidebar-nav-item" data-tab="clients" onclick="switchTenderTab('clients')">
         <span class="sidebar-nav-icon">🏢</span> Clients
       </button>
@@ -108,20 +105,6 @@
           </select>
         </div>
         <div id="tenderListContainer">
-          <div class="empty-state"><div class="spinner"></div></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Tab: Quotes List -->
-    <div class="tab-content" id="tab-quotes">
-      <div class="card">
-        <div class="card-title"><span class="icon">📊</span> Quotes</div>
-        <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
-          <input type="text" class="field-input" id="quoteSearch" placeholder="Search quotes..."
-            style="max-width:260px" oninput="renderQuoteList()">
-        </div>
-        <div id="quoteListContainer">
           <div class="empty-state"><div class="spinner"></div></div>
         </div>
       </div>

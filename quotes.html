@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BAMA Quotations</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="bama.css">
+</head>
+<body>
+<div class="loading-bar" id="loadingBar" style="width:0"></div>
+
+<!-- TOP BAR -->
+<div class="topbar">
+  <div class="logo"><span style="color:#D0021B">BAMA</span> <span style="color:#D0021B">FABRICATION</span><span> QUOTATIONS</span></div>
+  <div style="position:absolute;left:50%;transform:translate(-50%,-50%);top:50%">
+    <div class="clock-display" id="liveClock" style="font-size:15px;font-weight:700;letter-spacing:.5px">--:-- --</div>
+  </div>
+  <div class="topbar-right">
+    <a href="hub.html" style="text-decoration:none"><button class="manager-btn">&#8592; Hub</button></a>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<!-- ═══════════════════════════════════════
+     LOGIN SCREEN
+══════════════════════════════════════════ -->
+<div class="screen active" id="screenQuotesSelect">
+  <div class="mgr-select-wrap">
+    <div class="mgr-select-title">QUOTATIONS</div>
+    <div class="mgr-select-sub">Select your name to log in</div>
+    <div class="mgr-emp-grid" id="quotesEmployeeGrid">
+      <div class="empty-state"><div class="spinner"></div></div>
+    </div>
+    <div style="text-align:center;margin-top:24px">
+      <button class="btn btn-ghost" onclick="window.location.href='hub.html'">&#8592; Back to Hub</button>
+    </div>
+  </div>
+</div>
+
+<!-- PIN MODAL -->
+<div class="modal-overlay" id="quotesPinModal">
+  <div class="modal" style="max-width:340px;text-align:center">
+    <div class="modal-title">🔐 Enter PIN</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:16px" id="quotesPinUser">—</div>
+    <input type="password" class="field-input" id="quotesPinInput" maxlength="6"
+      style="text-align:center;font-size:24px;letter-spacing:8px;max-width:180px;margin:0 auto"
+      onkeydown="if(event.key==='Enter')verifyQuotesPin()">
+    <div id="quotesPinError" style="color:var(--red);font-size:12px;margin-top:8px;min-height:18px"></div>
+    <div class="modal-actions" style="margin-top:16px">
+      <button class="btn btn-ghost" onclick="document.getElementById('quotesPinModal').classList.remove('active')">Cancel</button>
+      <button class="btn btn-primary" onclick="verifyQuotesPin()">Unlock</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     MAIN LAYOUT (hidden until logged in)
+══════════════════════════════════════════ -->
+<div class="mgr-layout" id="quotesLayout" style="display:none">
+  <!-- Sidebar -->
+  <nav class="mgr-sidebar" id="quotesSidebar">
+    <div class="sidebar-nav-group">
+      <button class="sidebar-nav-item active" data-tab="quotes" onclick="switchQuotesTab('quotes')">
+        <span class="sidebar-nav-icon">📊</span> Quotes
+      </button>
+      <button class="sidebar-nav-item" data-tab="clients" onclick="switchQuotesTab('clients')">
+        <span class="sidebar-nav-icon">🏢</span> Clients
+      </button>
+    </div>
+  </nav>
+
+  <!-- Content -->
+  <div class="mgr-content">
+    <div class="mgr-header">
+      <div>
+        <div class="mgr-title" id="quotesPageTitle">QUOTES</div>
+        <div style="color:var(--muted);font-size:13px">BAMA Fabrication · Quote Management</div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center">
+        <a href="hub.html" style="text-decoration:none"><button class="btn btn-ghost">Exit</button></a>
+      </div>
+    </div>
+
+    <!-- Tab: Quotes List -->
+    <div class="tab-content active" id="tab-quotes">
+      <div class="card">
+        <div class="card-title"><span class="icon">📊</span> All Quotes</div>
+        <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+          <input type="text" class="field-input" id="quoteSearch" placeholder="Search quotes..."
+            style="max-width:260px" oninput="renderQuoteList()">
+          <select class="field-input" id="quoteStatusFilter" style="max-width:160px" onchange="renderQuoteList()">
+            <option value="">All Statuses</option>
+            <option value="quote">Quote</option>
+            <option value="won">Won</option>
+            <option value="lost">Lost</option>
+          </select>
+        </div>
+        <div id="quoteListContainer">
+          <div class="empty-state"><div class="spinner"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab: Clients (read-only on quotes page) -->
+    <div class="tab-content" id="tab-clients">
+      <div class="card">
+        <div class="card-title"><span class="icon">🏢</span> Client Database</div>
+        <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+          <input type="text" class="field-input" id="clientSearch" placeholder="Search clients..."
+            style="max-width:260px" oninput="renderClientList()">
+        </div>
+        <div id="clientListContainer">
+          <div class="empty-state"><div class="spinner"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quote Detail View (placeholder — same data as tender for now) -->
+    <div class="tab-content" id="tab-quoteDetail" style="display:none">
+      <div style="margin-bottom:16px">
+        <button class="btn btn-ghost" onclick="closeQuoteDetail()" style="padding:6px 14px;font-size:12px">&#8592; Back to list</button>
+      </div>
+      <div class="card" style="margin-bottom:20px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
+          <div>
+            <div style="font-size:24px;font-weight:700;font-family:var(--font-display);letter-spacing:1px" id="quoteDetailReference">—</div>
+            <div style="font-size:15px;color:var(--muted)" id="quoteDetailProjectName">—</div>
+            <div id="quoteDetailDeadline" style="margin-top:8px"></div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span class="tag" id="quoteDetailStatusBadge">—</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-title"><span class="icon">🏢</span> Client Details</div>
+        <div id="quoteDetailClientInfo" style="font-size:13px;color:var(--muted)">—</div>
+      </div>
+
+      <div class="card" style="background:rgba(255,107,0,.06);border:1px solid rgba(255,107,0,.2);text-align:center;padding:30px">
+        <div style="font-size:32px;margin-bottom:10px">🚧</div>
+        <div style="font-weight:600;font-size:15px;color:var(--accent);margin-bottom:6px">Quote Workflow Coming Soon</div>
+        <div style="font-size:13px;color:var(--muted);max-width:520px;margin:0 auto">Pricing, line items, margin tracking, customer-facing PDF generation, and won/lost transition will be built into this page.</div>
+      </div>
+    </div>
+
+    <!-- Client Detail View (read-only on quotes page) -->
+    <div class="tab-content" id="tab-clientDetail" style="display:none">
+      <div style="margin-bottom:16px">
+        <button class="btn btn-ghost" onclick="closeClientDetail()" style="padding:6px 14px;font-size:12px">&#8592; Back to clients</button>
+      </div>
+      <div class="card" style="margin-bottom:20px">
+        <div>
+          <div style="font-size:24px;font-weight:700;font-family:var(--font-display);letter-spacing:1px" id="clientDetailName">—</div>
+          <div style="font-size:13px;color:var(--muted)" id="clientDetailAddress">—</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-title" style="margin-bottom:14px"><span class="icon">👥</span> Contacts</div>
+        <div id="clientContactsList">
+          <div class="empty-state"><div class="spinner"></div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title"><span class="icon">📋</span> Tenders &amp; Quotes</div>
+        <div id="clientTendersList">
+          <div class="empty-state"><div class="spinner"></div></div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- end mgr-content -->
+</div><!-- end mgr-layout -->
+
+<style>
+  .tender-row {
+    display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+    border-bottom: 1px solid var(--border); cursor: pointer; transition: background .15s;
+  }
+  .tender-row:hover { background: var(--surface2); }
+  .tender-row:last-child { border-bottom: none; }
+  .client-header:hover { background: var(--surface2); }
+</style>
+
+<script src="shared.js?v=20260428a"></script>
+</body>
+</html>

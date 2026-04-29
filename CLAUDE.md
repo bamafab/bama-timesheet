@@ -43,6 +43,7 @@ Labour Log, drawings PDFs/BOM JSON) and sending mail. All relational data lives 
 ├── office.html           — Office dashboard (staff, holidays, payroll, reports, archive, etc.)
 ├── projects.html         — Projects + drawings + draftsman mode
 ├── tenders.html          — Tenders & quotes management, client database
+├── quotes.html           — Quotations: financial-sensitive view (separate from tenders)
 ├── steel-database.html   — Standalone UK steel section reference (no shared.js, no auth)
 ├── shared.js             — ~9700 LOC. Page-aware; every page except hub/steel loads it.
 ├── bama.css              — Single shared stylesheet. Dark theme, CSS variables.
@@ -346,12 +347,17 @@ hub.html and steel-database.html have no modals.
 
 **tenders.html**
 - `newTenderModal` — create new tender with client autocomplete
-- `editTenderModal` — edit tender details and status
+- `editTenderModal` — edit tender details and status (tender ↔ cancelled only)
 - `newClientModal` — add a new client to the database
 - `editClientModal` — edit client details
 - `contactModal` — add/edit/delete a contact for a client (used in client detail)
 - `tenderPinModal` — PIN entry on tenders page
 - `uploadProgressModal` — file upload progress indicator
+
+**quotes.html**
+- `quotesPinModal` — PIN entry on quotes page
+- (Reuses `editClientModal`, `contactModal` from shared)
+- Other quote-specific modals will be added as the financial workflow is built
 
 ## Roadmap / queued
 

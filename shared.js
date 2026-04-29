@@ -10875,7 +10875,6 @@ async function initTendersPage() {
   const authed = sessionStorage.getItem('bama_mgr_authed');
   if (authed) {
     currentManagerUser = authed;
-    // Check tenders permission
     const perms = getUserPermissions(currentManagerUser);
     if (perms && perms.tenders) {
       document.getElementById('screenTenderSelect').style.display = 'none';
@@ -10887,6 +10886,8 @@ async function initTendersPage() {
   // Show employee selection grid
   renderTenderEmployeeGrid();
 }
+
+// Removed applyTenderTabPermissions — tenders page only shows Tenders + Clients tabs now
 
 async function loadTendersData() {
   try {
@@ -11035,6 +11036,10 @@ async function verifyTenderPin() {
 
 // ── Tab switching ──
 function switchTenderTab(tab) {
+  // Permission gate
+  const perms = getUserPermissions(currentManagerUser) || {};
+  if (tab === 'tenders' && !perms.tenders) { toast('No permission to view Tenders', 'error'); return; }
+
   document.querySelectorAll('#tenderLayout .tab-content').forEach(el => {
     el.classList.remove('active');
     el.style.display = 'none';
@@ -11046,14 +11051,14 @@ function switchTenderTab(tab) {
     el.classList.toggle('active', el.dataset.tab === tab);
   });
 
-  const titles = { tenders: 'TENDERS', quotes: 'QUOTES', clients: 'CLIENT DATABASE' };
+  const titles = { tenders: 'TENDERS', clients: 'CLIENT DATABASE' };
   const titleEl = document.getElementById('tenderPageTitle');
   if (titleEl) titleEl.textContent = titles[tab] || 'TENDERS';
 
+  // Hide "+ New Tender" button when not on tenders tab
   const newBtn = document.getElementById('btnNewTender');
-  if (newBtn) newBtn.style.display = tab === 'tenders' ? '' : 'none';
+  if (newBtn) newBtn.style.display = (tab === 'tenders' && perms.tenders) ? '' : 'none';
 
-  if (tab === 'quotes') renderQuoteList();
   if (tab === 'clients') renderClientList();
 }
 
@@ -11139,7 +11144,10 @@ function renderQuoteList() {
   if (!container) return;
 
   const search = (document.getElementById('quoteSearch')?.value || '').toLowerCase();
+  const statusFilter = document.getElementById('quoteStatusFilter')?.value || '';
   let list = tendersData.filter(t => ['quote', 'won', 'lost'].includes(t.status));
+
+  if (statusFilter) list = list.filter(t => t.status === statusFilter);
 
   if (search) {
     list = list.filter(t => {
@@ -11153,8 +11161,11 @@ function renderQuoteList() {
     return;
   }
 
+  // On quotes page, click opens quote detail; on tenders page, opens tender detail
+  const onClickFn = CURRENT_PAGE === 'quotes' ? 'openQuoteDetail' : 'openTenderDetail';
+
   container.innerHTML = list.map(t => `
-    <div class="tender-row" onclick="openTenderDetail(${t.id})">
+    <div class="tender-row" onclick="${onClickFn}(${t.id})">
       <div style="font-family:var(--font-mono);font-weight:600;font-size:14px;min-width:80px;color:var(--accent)">${t.reference}</div>
       <div style="flex:1">
         <div style="font-weight:500">${t.project_name}</div>
@@ -12185,8 +12196,9 @@ async function openClientDetail(id) {
 
   currentClient = client;
 
-  // Hide other tabs, show detail
-  document.querySelectorAll('#tenderLayout .tab-content').forEach(el => {
+  // Page-aware: tenders.html uses #tenderLayout, quotes.html uses #quotesLayout
+  const layoutSelector = CURRENT_PAGE === 'quotes' ? '#quotesLayout' : '#tenderLayout';
+  document.querySelectorAll(`${layoutSelector} .tab-content`).forEach(el => {
     el.classList.remove('active');
     el.style.display = 'none';
   });
@@ -12208,7 +12220,11 @@ function closeClientDetail() {
   currentClient = null;
   document.getElementById('tab-clientDetail').style.display = 'none';
   document.getElementById('tab-clientDetail').classList.remove('active');
-  switchTenderTab('clients');
+  if (CURRENT_PAGE === 'quotes') {
+    switchQuotesTab('clients');
+  } else {
+    switchTenderTab('clients');
+  }
 }
 
 function openEditClientFromDetail() {
@@ -12357,6 +12373,207 @@ async function deleteContactFromModal() {
   }
 }
 
+// ═══════════════════════════════════════════
+// QUOTES PAGE (separate from tenders, financial-sensitive)
+// ═══════════════════════════════════════════
+let _pendingQuotesUser = null;
+
+async function initQuotesPage() {
+  // Check if already logged in from office/manager
+  const authed = sessionStorage.getItem('bama_mgr_authed');
+  if (authed) {
+    currentManagerUser = authed;
+    const perms = getUserPermissions(currentManagerUser);
+    if (perms && (perms.viewQuotes || perms.editQuotes)) {
+      document.getElementById('screenQuotesSelect').style.display = 'none';
+      document.getElementById('quotesLayout').style.display = 'flex';
+      loadQuotesData();
+      return;
+    }
+  }
+  renderQuotesEmployeeGrid();
+}
+
+function renderQuotesEmployeeGrid() {
+  const grid = document.getElementById('quotesEmployeeGrid');
+  if (!grid) return;
+  const empList = (state.timesheetData.employees || []).filter(e => e.active !== false && (e.staffType || 'workshop') === 'office');
+  if (!empList.length) {
+    grid.innerHTML = '<div class="empty-state" style="padding:30px"><div style="font-size:28px;margin-bottom:10px">&#128101;</div><div>No office staff set up yet.</div></div>';
+    return;
+  }
+  grid.innerHTML = empList.map(emp => {
+    const ini = (emp.name || '').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+    const col = empColor(emp.name);
+    return `
+      <div class="emp-btn" onclick="selectQuotesEmployee('${emp.name.replace(/'/g, "\\\\'")}')" style="padding:22px 14px 16px">
+        <div class="emp-avatar" style="width:48px;height:48px;font-size:19px;background:linear-gradient(135deg,${col},#3e1a00)">${ini}</div>
+        <div class="emp-name" style="font-size:13px">${emp.name}</div>
+        <div style="font-size:10px;color:var(--subtle);margin-top:3px">${emp.hasPin ? '&#128274; PIN set' : '&#128275; No PIN'}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+function selectQuotesEmployee(name) {
+  const emp = (state.timesheetData.employees || []).find(e => e.name === name);
+  if (!emp) return;
+  if (!emp.hasPin) { toast('No PIN set for this user. Set one in Staff management first.', 'error'); return; }
+  _pendingQuotesUser = { name, empId: emp.id };
+  document.getElementById('quotesPinUser').textContent = name;
+  document.getElementById('quotesPinInput').value = '';
+  document.getElementById('quotesPinError').textContent = '';
+  document.getElementById('quotesPinModal').classList.add('active');
+  setTimeout(() => document.getElementById('quotesPinInput').focus(), 200);
+}
+
+async function verifyQuotesPin() {
+  if (!_pendingQuotesUser) return;
+  const pin = document.getElementById('quotesPinInput').value;
+  if (!pin) return;
+
+  try {
+    const result = await api.post('/api/auth/verify-pin', {
+      employee_id: _pendingQuotesUser.empId,
+      pin
+    });
+    if (!result || !result.valid) {
+      document.getElementById('quotesPinError').textContent = (result && result.reason) || 'Incorrect PIN';
+      document.getElementById('quotesPinInput').value = '';
+      return;
+    }
+
+    currentManagerUser = _pendingQuotesUser.name;
+    sessionStorage.setItem('bama_mgr_authed', currentManagerUser);
+    document.getElementById('quotesPinModal').classList.remove('active');
+
+    const perms = getUserPermissions(currentManagerUser);
+    if (!perms || !(perms.viewQuotes || perms.editQuotes)) {
+      toast('You don\'t have permission to access Quotes. Contact your admin.', 'error');
+      currentManagerUser = null;
+      sessionStorage.removeItem('bama_mgr_authed');
+      return;
+    }
+
+    document.getElementById('screenQuotesSelect').style.display = 'none';
+    document.getElementById('quotesLayout').style.display = 'flex';
+    loadQuotesData();
+  } catch (err) {
+    document.getElementById('quotesPinError').textContent = 'PIN verification failed';
+    document.getElementById('quotesPinInput').value = '';
+  }
+}
+
+async function loadQuotesData() {
+  try {
+    const [tenders, clients] = await Promise.all([
+      api.get('/api/tenders'),
+      api.get('/api/clients')
+    ]);
+    tendersData = tenders || [];
+    clientsData = clients || [];
+    renderQuoteList();
+    renderClientList();
+  } catch (err) {
+    console.error('Failed to load quotes data:', err);
+    toast('Failed to load data', 'error');
+  }
+}
+
+function switchQuotesTab(tab) {
+  const perms = getUserPermissions(currentManagerUser) || {};
+  if (tab === 'quotes' && !(perms.viewQuotes || perms.editQuotes)) { toast('No permission to view Quotes', 'error'); return; }
+
+  document.querySelectorAll('#quotesLayout .tab-content').forEach(el => {
+    el.classList.remove('active');
+    el.style.display = 'none';
+  });
+  const target = document.getElementById(`tab-${tab}`);
+  if (target) { target.classList.add('active'); target.style.display = ''; }
+
+  document.querySelectorAll('#quotesSidebar .sidebar-nav-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.tab === tab);
+  });
+
+  const titles = { quotes: 'QUOTES', clients: 'CLIENT DATABASE' };
+  const titleEl = document.getElementById('quotesPageTitle');
+  if (titleEl) titleEl.textContent = titles[tab] || 'QUOTES';
+
+  if (tab === 'clients') renderClientList();
+  if (tab === 'quotes') renderQuoteList();
+}
+
+// Quote detail — placeholder for now (just shows reference, project, client, deadline)
+async function openQuoteDetail(id) {
+  let tender = tendersData.find(t => String(t.id) === String(id));
+  if (!tender) { toast('Quote not found', 'error'); return; }
+
+  try {
+    const full = await api.get(`/api/tenders/${id}`);
+    Object.assign(tender, full);
+  } catch (e) { console.warn('Could not refresh quote:', e); }
+
+  currentTender = tender;
+
+  document.querySelectorAll('#quotesLayout .tab-content').forEach(el => {
+    el.classList.remove('active');
+    el.style.display = 'none';
+  });
+  const detailEl = document.getElementById('tab-quoteDetail');
+  detailEl.style.display = '';
+  detailEl.classList.add('active');
+
+  document.getElementById('quoteDetailReference').textContent = tender.reference || '—';
+  document.getElementById('quoteDetailProjectName').textContent = tender.project_name || '—';
+
+  const badge = document.getElementById('quoteDetailStatusBadge');
+  badge.textContent = tender.status;
+  badge.className = `tag tag-${tender.status === 'quote' ? 'approved' : tender.status === 'won' ? 'approved' : tender.status === 'lost' ? 'rejected' : 'pending'}`;
+
+  const deadlineEl = document.getElementById('quoteDetailDeadline');
+  if (deadlineEl) {
+    if (tender.deadline_date) {
+      deadlineEl.innerHTML = `<span style="font-size:12px;color:var(--subtle);margin-right:8px">DEADLINE</span>${renderDeadlineBadge(tender.deadline_date, tender.status)}`;
+    } else {
+      deadlineEl.innerHTML = '';
+    }
+  }
+
+  // Client info — same clean rendering used on tenders page
+  const clientInfo = document.getElementById('quoteDetailClientInfo');
+  const addressLine = [tender.address_line1, tender.address_line2, tender.city, tender.county, tender.postcode].filter(Boolean).join(', ');
+  const splitDedupe = v => v ? [...new Set(String(v).split(',').map(s => s.trim()).filter(Boolean))] : [];
+  const names = splitDedupe(tender.contact_name);
+  const emails = splitDedupe(tender.contact_email);
+  const phones = splitDedupe(tender.contact_phone);
+  const numContacts = Math.max(names.length, emails.length, phones.length);
+  let contactsHtml = '';
+  for (let i = 0; i < numContacts; i++) {
+    const lbl = numContacts > 1 ? `Contact ${i + 1}` : 'Contact';
+    contactsHtml += `
+      <div style="margin-top:${i > 0 ? '10px' : '0'};padding-top:${i > 0 ? '10px' : '0'};${i > 0 ? 'border-top:1px solid var(--border);' : ''}">
+        <div style="font-size:11px;color:var(--accent2);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">${lbl}</div>
+        <div style="display:grid;grid-template-columns:auto 1fr;gap:4px 16px;font-size:13px">
+          ${names[i] ? `<div style="color:var(--subtle);font-weight:600">Name</div><div>${escapeHtml(names[i])}</div>` : ''}
+          ${emails[i] ? `<div style="color:var(--subtle);font-weight:600">Email</div><div><a href="mailto:${escapeHtml(emails[i])}" style="color:var(--accent2);text-decoration:none">${escapeHtml(emails[i])}</a></div>` : ''}
+          ${phones[i] ? `<div style="color:var(--subtle);font-weight:600">Phone</div><div><a href="tel:${escapeHtml(phones[i])}" style="color:var(--accent2);text-decoration:none">${escapeHtml(phones[i])}</a></div>` : ''}
+        </div>
+      </div>
+    `;
+  }
+  clientInfo.innerHTML = `
+    <div style="font-weight:600;font-size:15px;color:var(--text);margin-bottom:6px">${tender.company_name || '—'}</div>
+    ${addressLine ? `<div style="margin-bottom:14px;color:var(--muted)">${escapeHtml(addressLine)}</div>` : ''}
+    ${contactsHtml || '<div style="font-size:12px;color:var(--subtle)">No contact details</div>'}
+  `;
+}
+
+function closeQuoteDetail() {
+  currentTender = null;
+  document.getElementById('tab-quoteDetail').style.display = 'none';
+  document.getElementById('tab-quoteDetail').classList.remove('active');
+  switchQuotesTab('quotes');
+}
 
 // PAGE DETECTION
 // ═══════════════════════════════════════════
@@ -12366,6 +12583,7 @@ const CURRENT_PAGE = (() => {
   if (path.includes('office')) return 'office';
   if (path.includes('templates')) return 'templates';
   if (path.includes('tenders')) return 'tenders';
+  if (path.includes('quotes')) return 'quotes';
   if (path.includes('projects') || path.includes('project')) return 'projects';
   if (path.includes('hub')) return 'hub';
   return 'index'; // default kiosk
@@ -12419,7 +12637,7 @@ async function init() {
     : Promise.resolve();
 
   // User access needed on manager and office pages (still from SharePoint for now)
-  const userAccessPromise = (CURRENT_PAGE === 'manager' || CURRENT_PAGE === 'office' || CURRENT_PAGE === 'projects' || CURRENT_PAGE === 'tenders')
+  const userAccessPromise = (CURRENT_PAGE === 'manager' || CURRENT_PAGE === 'office' || CURRENT_PAGE === 'projects' || CURRENT_PAGE === 'tenders' || CURRENT_PAGE === 'quotes')
     ? Promise.race([
         loadUserAccessData(),
         new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 6000))
@@ -12427,7 +12645,7 @@ async function init() {
     : Promise.resolve();
 
   // Office tasks only needed on office page (still from SharePoint for now)
-  const officeTasksPromise = (CURRENT_PAGE === 'office' || CURRENT_PAGE === 'tenders')
+  const officeTasksPromise = (CURRENT_PAGE === 'office' || CURRENT_PAGE === 'tenders' || CURRENT_PAGE === 'quotes')
     ? Promise.race([
         loadOfficeTasksData(),
         new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 6000))
@@ -12480,6 +12698,8 @@ async function init() {
     initTemplatesPage();
   } else if (CURRENT_PAGE === 'tenders') {
     initTendersPage();
+  } else if (CURRENT_PAGE === 'quotes') {
+    initQuotesPage();
   } else if (CURRENT_PAGE === 'hub') {
     // hub has its own simple rendering
   } else {
