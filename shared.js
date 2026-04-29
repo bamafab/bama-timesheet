@@ -1745,7 +1745,8 @@ function renderClockLog(clockings) {
         if (actualOut && !times.includes(actualOut)) times.push(actualOut);
         times.sort();
         const inOpts = times.map(t => `<option value="${t}" ${t === actualIn ? 'selected' : ''}>${t}</option>`).join('');
-        const outOpts = times.map(t => `<option value="${t}" ${t === actualOut ? 'selected' : ''}>${t}</option>`).join('');
+        const outEmpty = !c.clockOut ? '<option value="">— still in —</option>' : '';
+        const outOpts = outEmpty + times.map(t => `<option value="${t}" ${t === actualOut ? 'selected' : ''}>${t}</option>`).join('');
         return {
           html: `<td style="text-align:center;padding:6px 4px;vertical-align:top;min-width:110px">
             <select id="edit-in-${c.id}" class="field-input" style="font-size:10px;padding:3px 4px;margin-bottom:3px;width:100%" onchange="markClockDirty('${c.id}')">${inOpts}</select>
@@ -1938,9 +1939,9 @@ async function saveClockEdit(id) {
   const newBreakMins = parseInt(document.getElementById(`edit-break-${id}`).value) || 0;
 
   try {
-    // Build full datetime from date + time
-    const clockInDT = `${clocking.date}T${newClockIn}:00`;
-    const clockOutDT = newClockOut ? `${clocking.date}T${newClockOut}:00` : null;
+    // Use browser Date to convert local time → UTC ISO string (handles BST correctly)
+    const clockInDT = new Date(`${clocking.date}T${newClockIn}:00`).toISOString();
+    const clockOutDT = newClockOut ? new Date(`${clocking.date}T${newClockOut}:00`).toISOString() : null;
 
     await api.put(`/api/clockings/${id}`, {
       clock_in: clockInDT,
@@ -2036,8 +2037,8 @@ async function saveMgrClocking() {
   try {
     const result = await api.post('/api/clockings', {
       employee_id: empId,
-      clock_in: `${date}T${clockIn}:00`,
-      clock_out: `${date}T${clockOut}:00`,
+      clock_in: new Date(`${date}T${clockIn}:00`).toISOString(),
+      clock_out: new Date(`${date}T${clockOut}:00`).toISOString(),
       break_mins: breakMins,
       amended_by: currentManagerUser || 'manager'
     });
@@ -2287,8 +2288,8 @@ async function approveAmendment(id) {
   try {
     // Apply changes via API
     const updateBody = { amended_by: currentManagerUser || 'manager' };
-    if (amendment.requestedIn) updateBody.clock_in = `${clocking.date}T${amendment.requestedIn}:00`;
-    if (amendment.requestedOut) updateBody.clock_out = `${clocking.date}T${amendment.requestedOut}:00`;
+    if (amendment.requestedIn) updateBody.clock_in = new Date(`${clocking.date}T${amendment.requestedIn}:00`).toISOString();
+    if (amendment.requestedOut) updateBody.clock_out = new Date(`${clocking.date}T${amendment.requestedOut}:00`).toISOString();
 
     await api.put(`/api/clockings/${clocking.id}`, updateBody);
 
