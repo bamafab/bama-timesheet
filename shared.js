@@ -10898,10 +10898,54 @@ async function loadTendersData() {
     clientsData = clients || [];
     renderTenderList();
     renderClientList();
+
+    // Backfill ClientContacts from existing tenders (one-time per session)
+    backfillContactsFromTenders();
   } catch (err) {
     console.error('Failed to load tenders data:', err);
     toast('Failed to load tenders data', 'error');
   }
+}
+
+async function backfillContactsFromTenders() {
+  // Build a unique set of (client_id, name, email, phone) tuples from tenders,
+  // splitting comma-separated values, then post each one to /api/client-contacts
+  // which auto-dedupes against existing entries.
+  const seen = new Set();
+  const toPost = [];
+
+  const splitDedupe = v => v ? [...new Set(String(v).split(',').map(s => s.trim()).filter(Boolean))] : [];
+
+  for (const t of tendersData) {
+    if (!t.client_id) continue;
+    const names = splitDedupe(t.contact_name);
+    const emails = splitDedupe(t.contact_email);
+    const phones = splitDedupe(t.contact_phone);
+    const n = Math.max(names.length, emails.length, phones.length);
+
+    for (let i = 0; i < n; i++) {
+      const name = names[i] || '';
+      const email = emails[i] || '';
+      const phone = phones[i] || '';
+      if (!name && !email && !phone) continue;
+
+      const key = `${t.client_id}|${name.toLowerCase()}|${email.toLowerCase()}|${phone}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      toPost.push({
+        client_id: t.client_id,
+        contact_name: name || null,
+        contact_email: email || null,
+        contact_phone: phone || null
+      });
+    }
+  }
+
+  // Fire all backfill posts in parallel (the API handles dedup)
+  await Promise.allSettled(toPost.map(payload =>
+    api.post('/api/client-contacts', payload).catch(() => null)
+  ));
 }
 
 function renderTenderEmployeeGrid() {
@@ -11101,20 +11145,112 @@ function renderClientList() {
   }
 
   container.innerHTML = list.map(c => `
-    <div class="tender-row" onclick="openClientDetail(${c.id})">
-      <div style="flex:1">
-        <div style="font-weight:600">${c.company_name}</div>
-        <div style="font-size:12px;color:var(--muted)">${[c.address_line1, c.city, c.postcode].filter(Boolean).join(', ')}</div>
+    <div class="client-collapsible" data-client-id="${c.id}" style="border-bottom:1px solid var(--border)">
+      <div class="client-header" onclick="toggleClientCollapse(${c.id})" style="display:flex;align-items:center;gap:12px;padding:14px 16px;cursor:pointer;transition:background .15s">
+        <div style="flex:1">
+          <div style="font-weight:600">${escapeHtml(c.company_name)}</div>
+          <div style="font-size:12px;color:var(--muted)">${escapeHtml([c.address_line1, c.city, c.postcode].filter(Boolean).join(', '))}</div>
+        </div>
+        <button class="tiny-btn" onclick="event.stopPropagation();openClientDetail(${c.id})" style="padding:4px 12px;font-size:11px;background:var(--surface2);color:var(--muted);border:1px solid var(--border)" title="Open full client page">↗ Open</button>
+        <button class="tiny-btn" onclick="event.stopPropagation();openEditClientModal(${c.id})" style="padding:4px 10px;font-size:11px;background:var(--surface2);color:var(--muted);border:1px solid var(--border)" title="Edit client">✏️</button>
+        <div class="client-chevron" id="chevron-${c.id}" style="font-size:22px;color:var(--accent);transition:transform .2s;width:28px;text-align:center">▾</div>
       </div>
-      <div style="text-align:right;font-size:12px">
-        <div>${c.contact_name || '—'}</div>
-        <div style="color:var(--muted)">${c.contact_email || ''}</div>
-        <div style="color:var(--muted)">${c.contact_phone || ''}</div>
+      <div class="client-body" id="client-body-${c.id}" style="display:none;padding:0 16px 16px 16px;background:rgba(0,0,0,.15)">
+        <div id="client-contacts-${c.id}" style="margin-top:8px">
+          <div style="font-size:12px;color:var(--subtle);padding:8px">Loading contacts...</div>
+        </div>
       </div>
-      <button class="tiny-btn" onclick="event.stopPropagation();openEditClientModal(${c.id})" style="padding:2px 8px;font-size:11px;background:var(--surface2);color:var(--muted);border:1px solid var(--border);margin-left:8px" title="Edit">✏️</button>
     </div>
   `).join('');
 }
+
+async function toggleClientCollapse(clientId) {
+  const body = document.getElementById(`client-body-${clientId}`);
+  const chevron = document.getElementById(`chevron-${clientId}`);
+  if (!body || !chevron) return;
+
+  if (body.style.display === 'none') {
+    body.style.display = '';
+    chevron.style.transform = 'rotate(180deg)';
+    // Load contacts inline
+    await renderInlineClientContacts(clientId);
+  } else {
+    body.style.display = 'none';
+    chevron.style.transform = '';
+  }
+}
+
+async function renderInlineClientContacts(clientId) {
+  const container = document.getElementById(`client-contacts-${clientId}`);
+  if (!container) return;
+
+  try {
+    const contacts = await api.get(`/api/client-contacts?client_id=${clientId}`);
+
+    if (!contacts || !contacts.length) {
+      container.innerHTML = `
+        <div style="font-size:13px;color:var(--subtle);padding:16px;text-align:center">
+          No contacts yet for this client.
+          <button class="tiny-btn" onclick="quickAddContactToClient(${clientId})" style="padding:4px 12px;font-size:11px;margin-left:8px;background:var(--accent);color:#fff;border:none">+ Add Contact</button>
+        </div>
+      `;
+      return;
+    }
+
+    container.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div style="font-size:11px;color:var(--accent2);font-weight:600;text-transform:uppercase;letter-spacing:.5px">Contacts (${contacts.length})</div>
+        <button class="tiny-btn" onclick="quickAddContactToClient(${clientId})" style="padding:3px 10px;font-size:11px;background:var(--surface2);color:var(--muted);border:1px solid var(--border)">+ Add</button>
+      </div>
+      ${contacts.map((c, i) => `
+        <div style="padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
+              <div style="font-weight:600;font-size:13px">${escapeHtml(c.contact_name || '—')}</div>
+              ${c.role ? `<div style="font-size:11px;color:var(--accent2);background:rgba(255,107,0,.08);padding:2px 8px;border-radius:4px">${escapeHtml(c.role)}</div>` : ''}
+            </div>
+            <div style="display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:12px;margin-top:4px">
+              ${c.contact_email ? `<div style="color:var(--subtle);font-weight:600">Email</div><div><a href="mailto:${escapeHtml(c.contact_email)}" style="color:var(--accent2);text-decoration:none">${escapeHtml(c.contact_email)}</a></div>` : ''}
+              ${c.contact_phone ? `<div style="color:var(--subtle);font-weight:600">Phone</div><div><a href="tel:${escapeHtml(c.contact_phone)}" style="color:var(--accent2);text-decoration:none">${escapeHtml(c.contact_phone)}</a></div>` : ''}
+            </div>
+            ${c.notes ? `<div style="font-size:12px;color:var(--muted);margin-top:6px;font-style:italic">${escapeHtml(c.notes)}</div>` : ''}
+          </div>
+          <button class="tiny-btn" onclick="quickEditContact(${clientId}, ${c.id})" style="padding:4px 10px;font-size:11px;background:var(--surface2);color:var(--muted);border:1px solid var(--border)" title="Edit">✏️</button>
+        </div>
+      `).join('')}
+    `;
+  } catch (err) {
+    container.innerHTML = '<div style="font-size:12px;color:var(--red);padding:8px">Failed to load contacts</div>';
+  }
+}
+
+// Quick add/edit contact helpers — set up the modal then it'll refresh inline contacts when saved
+async function quickAddContactToClient(clientId) {
+  // Set currentClient to this client so the modal works
+  let client = clientsData.find(c => String(c.id) === String(clientId));
+  if (!client) return;
+  currentClient = client;
+  // Pre-load contacts cache so submitContactModal's loadClientContacts works,
+  // but also override to refresh the inline list
+  currentClientContacts = [];
+  openAddContactModal();
+  // Override the close behaviour to refresh inline list too
+  _contactModalRefreshFn = () => renderInlineClientContacts(clientId);
+}
+
+async function quickEditContact(clientId, contactId) {
+  let client = clientsData.find(c => String(c.id) === String(clientId));
+  if (!client) return;
+  currentClient = client;
+  // Need to load contacts first so openEditContactModal can find it
+  try {
+    currentClientContacts = await api.get(`/api/client-contacts?client_id=${clientId}`) || [];
+  } catch (e) { currentClientContacts = []; }
+  openEditContactModal(contactId);
+  _contactModalRefreshFn = () => renderInlineClientContacts(clientId);
+}
+
+let _contactModalRefreshFn = null;
 
 // ── Client Autocomplete ──
 function onClientSearch(value) {
@@ -11343,14 +11479,29 @@ async function submitNewTender() {
 
     const clientInfo = document.getElementById('detailClientInfo');
     const addrLine = [document.getElementById('ntAddress1').value, document.getElementById('ntAddress2').value, document.getElementById('ntCity').value, document.getElementById('ntCounty').value, document.getElementById('ntPostcode').value].filter(v => v && v.trim()).join(', ');
+    const splitDedupe2 = v => v ? [...new Set(String(v).split(',').map(s => s.trim()).filter(Boolean))] : [];
+    const ns = splitDedupe2(tender.contact_name);
+    const es = splitDedupe2(tender.contact_email);
+    const ps = splitDedupe2(tender.contact_phone);
+    const nc = Math.max(ns.length, es.length, ps.length);
+    let cHtml = '';
+    for (let i = 0; i < nc; i++) {
+      const lbl = nc > 1 ? `Contact ${i + 1}` : 'Contact';
+      cHtml += `
+        <div style="margin-top:${i > 0 ? '10px' : '0'};padding-top:${i > 0 ? '10px' : '0'};${i > 0 ? 'border-top:1px solid var(--border);' : ''}">
+          <div style="font-size:11px;color:var(--accent2);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">${lbl}</div>
+          <div style="display:grid;grid-template-columns:auto 1fr;gap:4px 16px;font-size:13px">
+            ${ns[i] ? `<div style="color:var(--subtle);font-weight:600">Name</div><div>${escapeHtml(ns[i])}</div>` : ''}
+            ${es[i] ? `<div style="color:var(--subtle);font-weight:600">Email</div><div><a href="mailto:${escapeHtml(es[i])}" style="color:var(--accent2);text-decoration:none">${escapeHtml(es[i])}</a></div>` : ''}
+            ${ps[i] ? `<div style="color:var(--subtle);font-weight:600">Phone</div><div><a href="tel:${escapeHtml(ps[i])}" style="color:var(--accent2);text-decoration:none">${escapeHtml(ps[i])}</a></div>` : ''}
+          </div>
+        </div>
+      `;
+    }
     clientInfo.innerHTML = `
       <div style="font-weight:600;font-size:15px;color:var(--text);margin-bottom:6px">${escapeHtml(companyName)}</div>
-      ${addrLine ? `<div style="margin-bottom:10px">${escapeHtml(addrLine)}</div>` : ''}
-      <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:13px">
-        ${tender.contact_name ? `<div style="color:var(--subtle);font-weight:600">Contact</div><div>${escapeHtml(tender.contact_name)}</div>` : ''}
-        ${tender.contact_email ? `<div style="color:var(--subtle);font-weight:600">Email</div><div><a href="mailto:${escapeHtml(tender.contact_email)}" style="color:var(--accent2);text-decoration:none">${escapeHtml(tender.contact_email)}</a></div>` : ''}
-        ${tender.contact_phone ? `<div style="color:var(--subtle);font-weight:600">Phone</div><div><a href="tel:${escapeHtml(tender.contact_phone)}" style="color:var(--accent2);text-decoration:none">${escapeHtml(tender.contact_phone)}</a></div>` : ''}
-      </div>
+      ${addrLine ? `<div style="margin-bottom:14px;color:var(--muted)">${escapeHtml(addrLine)}</div>` : ''}
+      ${cHtml || '<div style="font-size:12px;color:var(--subtle)">No contact details</div>'}
     `;
 
     document.getElementById('convertToQuoteSection').style.display = '';
@@ -11413,17 +11564,40 @@ async function openTenderDetail(id) {
   badge.textContent = tender.status;
   badge.className = `tag tag-${tender.status === 'tender' ? 'pending' : tender.status === 'quote' ? 'approved' : tender.status === 'won' ? 'approved' : tender.status === 'lost' ? 'rejected' : 'pending'}`;
 
-  // Client info
+  // Client info — split comma-separated contact fields into Contact 1, 2, 3
   const clientInfo = document.getElementById('detailClientInfo');
   const addressLine = [tender.address_line1, tender.address_line2, tender.city, tender.county, tender.postcode].filter(Boolean).join(', ');
+
+  // Split + dedupe each contact field
+  const splitDedupe = v => v ? [...new Set(String(v).split(',').map(s => s.trim()).filter(Boolean))] : [];
+  const names = splitDedupe(tender.contact_name);
+  const emails = splitDedupe(tender.contact_email);
+  const phones = splitDedupe(tender.contact_phone);
+  const numContacts = Math.max(names.length, emails.length, phones.length);
+
+  let contactsHtml = '';
+  for (let i = 0; i < numContacts; i++) {
+    const name = names[i] || '';
+    const email = emails[i] || '';
+    const phone = phones[i] || '';
+    if (!name && !email && !phone) continue;
+    const label = numContacts > 1 ? `Contact ${i + 1}` : 'Contact';
+    contactsHtml += `
+      <div style="margin-top:${i > 0 ? '10px' : '0'};padding-top:${i > 0 ? '10px' : '0'};${i > 0 ? 'border-top:1px solid var(--border);' : ''}">
+        <div style="font-size:11px;color:var(--accent2);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">${label}</div>
+        <div style="display:grid;grid-template-columns:auto 1fr;gap:4px 16px;font-size:13px">
+          ${name ? `<div style="color:var(--subtle);font-weight:600">Name</div><div>${escapeHtml(name)}</div>` : ''}
+          ${email ? `<div style="color:var(--subtle);font-weight:600">Email</div><div><a href="mailto:${escapeHtml(email)}" style="color:var(--accent2);text-decoration:none">${escapeHtml(email)}</a></div>` : ''}
+          ${phone ? `<div style="color:var(--subtle);font-weight:600">Phone</div><div><a href="tel:${escapeHtml(phone)}" style="color:var(--accent2);text-decoration:none">${escapeHtml(phone)}</a></div>` : ''}
+        </div>
+      </div>
+    `;
+  }
+
   clientInfo.innerHTML = `
     <div style="font-weight:600;font-size:15px;color:var(--text);margin-bottom:6px">${tender.company_name || '—'}</div>
-    ${addressLine ? `<div style="margin-bottom:10px">${escapeHtml(addressLine)}</div>` : ''}
-    <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 16px;font-size:13px">
-      ${tender.contact_name ? `<div style="color:var(--subtle);font-weight:600">Contact</div><div>${escapeHtml(tender.contact_name)}</div>` : ''}
-      ${tender.contact_email ? `<div style="color:var(--subtle);font-weight:600">Email</div><div><a href="mailto:${escapeHtml(tender.contact_email)}" style="color:var(--accent2);text-decoration:none">${escapeHtml(tender.contact_email)}</a></div>` : ''}
-      ${tender.contact_phone ? `<div style="color:var(--subtle);font-weight:600">Phone</div><div><a href="tel:${escapeHtml(tender.contact_phone)}" style="color:var(--accent2);text-decoration:none">${escapeHtml(tender.contact_phone)}</a></div>` : ''}
-    </div>
+    ${addressLine ? `<div style="margin-bottom:14px;color:var(--muted)">${escapeHtml(addressLine)}</div>` : ''}
+    ${contactsHtml || '<div style="font-size:12px;color:var(--subtle)">No contact details</div>'}
   `;
 
   // Show/hide convert button
@@ -12064,6 +12238,7 @@ async function submitContactModal() {
     }
     closeContactModal();
     loadClientContacts(clientId);
+    if (_contactModalRefreshFn) { _contactModalRefreshFn(); _contactModalRefreshFn = null; }
   } catch (err) {
     toast('Failed: ' + err.message, 'error');
   }
@@ -12080,6 +12255,7 @@ async function deleteContactFromModal() {
     closeContactModal();
     toast('Contact deleted', 'success');
     loadClientContacts(clientId);
+    if (_contactModalRefreshFn) { _contactModalRefreshFn(); _contactModalRefreshFn = null; }
   } catch (err) {
     toast('Failed to delete: ' + err.message, 'error');
   }
