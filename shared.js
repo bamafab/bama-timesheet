@@ -260,6 +260,26 @@ function normaliseEmployee(row) {
   };
 }
 
+// Normalise API amendment row
+function normaliseAmendment(row) {
+  return {
+    id: String(row.id),
+    clockingId: String(row.clocking_id),
+    employeeName: row.employee_name || empNameById(row.employee_id) || `Employee #${row.employee_id}`,
+    employee_id: row.employee_id,
+    date: row.clocking_date ? (typeof row.clocking_date === 'string' ? row.clocking_date.split('T')[0] : new Date(row.clocking_date).toISOString().split('T')[0]) : '',
+    originalIn:   row.original_in   || null,
+    originalOut:  row.original_out  || null,
+    requestedIn:  row.requested_in  || null,
+    requestedOut: row.requested_out || null,
+    reason: row.reason || '',
+    status: row.status || 'pending',
+    resolvedBy: row.resolved_by || null,
+    resolvedAt: row.resolved_at || null,
+    submittedAt: row.submitted_at || new Date().toISOString()
+  };
+}
+
 // Normalise API clocking row to the shape the UI expects
 function normaliseClocking(row) {
   const clockIn = row.clock_in ? new Date(row.clock_in) : null;
@@ -315,13 +335,14 @@ function normaliseHoliday(row) {
 }
 
 async function loadTimesheetData() {
-  // Load employees, clockings, project hours, holidays, settings in parallel from API
-  const [employees, clockings, entries, holidays, settings] = await Promise.all([
+  // Load employees, clockings, project hours, holidays, settings, amendments in parallel from API
+  const [employees, clockings, entries, holidays, settings, amendments] = await Promise.all([
     api.get('/api/employees?all=true').catch(e => { console.warn('Employee load failed:', e.message); return []; }),
     api.get('/api/clockings').catch(e => { console.warn('Clockings load failed:', e.message); return []; }),
     api.get('/api/project-hours').catch(e => { console.warn('Project hours load failed:', e.message); return []; }),
     api.get('/api/holidays').catch(e => { console.warn('Holidays load failed:', e.message); return []; }),
     api.get('/api/settings').catch(e => { console.warn('Settings load failed:', e.message); return {}; }),
+    api.get('/api/amendments').catch(e => { console.warn('Amendments load failed:', e.message); return []; }),
   ]);
 
   // Normalise employees first (needed for name lookups)
@@ -333,8 +354,9 @@ async function loadTimesheetData() {
   state.timesheetData.entries = (Array.isArray(entries) ? entries : []).map(normaliseEntry);
   state.timesheetData.holidays = (Array.isArray(holidays) ? holidays : []).map(normaliseHoliday);
   state.timesheetData.settings = (settings && typeof settings === 'object') ? settings : {};
+  state.timesheetData.amendments = (Array.isArray(amendments) ? amendments : []).map(normaliseAmendment);
 
-  console.log(`API loaded: ${state.timesheetData.employees.length} employees, ${state.timesheetData.clockings.length} clockings, ${state.timesheetData.entries.length} entries, ${state.timesheetData.holidays.length} holidays`);
+  console.log(`API loaded: ${state.timesheetData.employees.length} employees, ${state.timesheetData.clockings.length} clockings, ${state.timesheetData.entries.length} entries, ${state.timesheetData.holidays.length} holidays, ${state.timesheetData.amendments.length} amendments`);
 }
 
 // saveTimesheetData is NO LONGER USED — each action calls its own API endpoint.
@@ -2250,32 +2272,34 @@ async function submitAmendment() {
   const clocking = state.timesheetData.clockings.find(c => String(c.id) === String(_amendmentClockingId));
   if (!clocking) return;
 
-  if (!state.timesheetData.amendments) state.timesheetData.amendments = [];
+  const empId = empIdByName(state.currentEmployee);
+  if (!empId) { toast('Employee not found', 'error'); return; }
 
-  // Remove any previous rejected amendment for this clocking (allow re-submit)
-  state.timesheetData.amendments = state.timesheetData.amendments.filter(
-    a => !(String(a.clockingId) === String(_amendmentClockingId) && a.status === 'rejected')
-  );
+  try {
+    const result = await api.post('/api/amendments', {
+      clocking_id:   clocking.id,
+      employee_id:   empId,
+      clocking_date: clocking.date,
+      original_in:   clocking.clockIn  || null,
+      original_out:  clocking.clockOut || null,
+      requested_in:  newIn  || null,
+      requested_out: newOut || null,
+      reason
+    });
 
-  state.timesheetData.amendments.push({
-    id: Date.now().toString(),
-    clockingId: _amendmentClockingId,
-    employeeName: clocking.employeeName,
-    date: clocking.date,
-    originalIn: clocking.clockIn,
-    originalOut: clocking.clockOut,
-    requestedIn: newIn || null,
-    requestedOut: newOut || null,
-    reason,
-    status: 'pending',
-    submittedAt: new Date().toISOString()
-  });
+    if (!state.timesheetData.amendments) state.timesheetData.amendments = [];
+    // Remove any previous amendment for this clocking from local state
+    state.timesheetData.amendments = state.timesheetData.amendments.filter(
+      a => String(a.clockingId) !== String(clocking.id)
+    );
+    state.timesheetData.amendments.push(normaliseAmendment({ ...result, employee_name: state.currentEmployee }));
 
-  // TODO: Amendments don't have their own API table yet — stored in local state only
-  // Will need an Amendments table in SQL for full persistence
-  closeAmendmentModal();
-  toast('Amendment request submitted', 'success');
-  renderMyWeek(state.currentEmployee);
+    closeAmendmentModal();
+    toast('Amendment request submitted ✓', 'success');
+    renderMyWeek(state.currentEmployee);
+  } catch (err) {
+    toast('Failed to submit amendment: ' + err.message, 'error');
+  }
 }
 
 async function approveAmendment(id) {
@@ -2286,21 +2310,26 @@ async function approveAmendment(id) {
   if (!clocking) return;
 
   try {
-    // Apply changes via API
+    // Apply the time change to the clocking
     const updateBody = { amended_by: currentManagerUser || 'manager' };
-    if (amendment.requestedIn) updateBody.clock_in = new Date(`${clocking.date}T${amendment.requestedIn}:00`).toISOString();
+    if (amendment.requestedIn)  updateBody.clock_in  = new Date(`${clocking.date}T${amendment.requestedIn}:00`).toISOString();
     if (amendment.requestedOut) updateBody.clock_out = new Date(`${clocking.date}T${amendment.requestedOut}:00`).toISOString();
-
     await api.put(`/api/clockings/${clocking.id}`, updateBody);
 
+    // Mark amendment as approved in DB
+    await api.put(`/api/amendments/${id}`, {
+      status: 'approved',
+      resolved_by: currentManagerUser || 'manager'
+    });
+
     // Update local state
-    if (amendment.requestedIn) clocking.clockIn = amendment.requestedIn;
+    if (amendment.requestedIn)  clocking.clockIn  = amendment.requestedIn;
     if (amendment.requestedOut) clocking.clockOut = amendment.requestedOut;
     clocking.manuallyEdited = true;
     amendment.status = 'approved';
     amendment.resolvedAt = new Date().toISOString();
 
-    toast('Amendment approved — clocking updated', 'success');
+    toast('Amendment approved — clocking updated ✓', 'success');
     renderManagerView();
   } catch (err) { toast('Save failed: ' + err.message, 'error'); }
 }
@@ -2309,12 +2338,18 @@ async function rejectAmendment(id) {
   const amendment = (state.timesheetData.amendments || []).find(a => String(a.id) === String(id));
   if (!amendment) return;
 
-  amendment.status = 'rejected';
-  amendment.resolvedAt = new Date().toISOString();
+  try {
+    await api.put(`/api/amendments/${id}`, {
+      status: 'rejected',
+      resolved_by: currentManagerUser || 'manager'
+    });
 
-  // TODO: Persist amendment status to API when Amendments table exists
-  toast('Amendment rejected', 'info');
-  renderManagerView();
+    amendment.status = 'rejected';
+    amendment.resolvedAt = new Date().toISOString();
+
+    toast('Amendment rejected', 'info');
+    renderManagerView();
+  } catch (err) { toast('Failed to reject: ' + err.message, 'error'); }
 }
 
 
