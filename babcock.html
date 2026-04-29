@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BAMA Babcock Quotes</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="bama.css">
+</head>
+<body>
+<div class="loading-bar" id="loadingBar" style="width:0"></div>
+
+<!-- TOP BAR -->
+<div class="topbar">
+  <div class="logo"><span style="color:#D0021B">BAMA</span> <span style="color:#D0021B">FABRICATION</span><span> BABCOCK QUOTES</span></div>
+  <div style="position:absolute;left:50%;transform:translate(-50%,-50%);top:50%">
+    <div class="clock-display" id="liveClock" style="font-size:15px;font-weight:700;letter-spacing:.5px">--:-- --</div>
+  </div>
+  <div class="topbar-right">
+    <a href="hub.html" style="text-decoration:none"><button class="manager-btn">&#8592; Hub</button></a>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<!-- ═══════════════════════════════════════
+     LOGIN SCREEN
+══════════════════════════════════════════ -->
+<div class="screen active" id="screenBabcockSelect">
+  <div class="mgr-select-wrap">
+    <div class="mgr-select-title">BABCOCK QUOTES</div>
+    <div class="mgr-select-sub">Select your name to log in</div>
+    <div class="mgr-emp-grid" id="babcockEmployeeGrid">
+      <div class="empty-state"><div class="spinner"></div></div>
+    </div>
+    <div style="text-align:center;margin-top:24px">
+      <button class="btn btn-ghost" onclick="window.location.href='hub.html'">&#8592; Back to Hub</button>
+    </div>
+  </div>
+</div>
+
+<!-- PIN MODAL -->
+<div class="modal-overlay" id="babcockPinModal">
+  <div class="modal" style="max-width:340px;text-align:center">
+    <div class="modal-title">🔐 Enter PIN</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:16px" id="babcockPinUser">—</div>
+    <input type="password" class="field-input" id="babcockPinInput" maxlength="6"
+      style="text-align:center;font-size:24px;letter-spacing:8px;max-width:180px;margin:0 auto"
+      onkeydown="if(event.key==='Enter')verifyBabcockPin()">
+    <div id="babcockPinError" style="color:var(--red);font-size:12px;margin-top:8px;min-height:18px"></div>
+    <div class="modal-actions" style="margin-top:16px">
+      <button class="btn btn-ghost" onclick="document.getElementById('babcockPinModal').classList.remove('active')">Cancel</button>
+      <button class="btn btn-primary" onclick="verifyBabcockPin()">Unlock</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     MAIN LAYOUT
+══════════════════════════════════════════ -->
+<div class="mgr-layout" id="babcockLayout" style="display:none">
+
+  <!-- Sidebar -->
+  <nav class="mgr-sidebar" id="babcockSidebar">
+    <div class="sidebar-nav-group">
+      <button class="sidebar-nav-item" id="sidebarBtnTendersBabcock" onclick="navToTenders()">
+        <span class="sidebar-nav-icon">📋</span> Tenders
+      </button>
+      <button class="sidebar-nav-item" id="sidebarBtnQuotesBabcock" onclick="navToQuotes()">
+        <span class="sidebar-nav-icon">📊</span> Quotations
+      </button>
+      <button class="sidebar-nav-item active" data-tab="babcock">
+        <span class="sidebar-nav-icon">⚙️</span> Babcock Quotes
+      </button>
+      <hr class="sidebar-nav-divider">
+      <button class="sidebar-nav-item sidebar-secondary-item" onclick="navToTenders()">
+        <span class="sidebar-nav-icon">🏢</span> Clients
+      </button>
+    </div>
+  </nav>
+
+  <!-- Content -->
+  <div class="mgr-content">
+    <div class="mgr-header">
+      <div>
+        <div class="mgr-title">BABCOCK QUOTES</div>
+        <div style="color:var(--muted);font-size:13px">BAMA Fabrication · Semi-automated Quote Generator</div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center">
+        <a href="hub.html" style="text-decoration:none"><button class="btn btn-ghost">Exit</button></a>
+      </div>
+    </div>
+
+    <!-- ── Step 1: Upload Schedule ── -->
+    <div class="card" style="margin-bottom:20px" id="babcockUploadCard">
+      <div class="card-title"><span class="icon">📤</span> Upload Babcock Schedule</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:16px">
+        Upload the Babcock pricing schedule spreadsheet (.xlsx or .xls). The system will read all line items, apply a 10% margin, and generate a BAMA quote.
+      </div>
+      <div class="babcock-upload-zone" id="babcockUploadZone"
+           ondragover="event.preventDefault();this.classList.add('drag-over')"
+           ondragleave="this.classList.remove('drag-over')"
+           ondrop="event.preventDefault();this.classList.remove('drag-over');handleBabcockDrop(event)">
+        <div style="text-align:center;padding:40px 20px">
+          <div style="font-size:48px;margin-bottom:12px">📊</div>
+          <div style="font-size:15px;font-weight:600;margin-bottom:6px">Drop your spreadsheet here</div>
+          <div style="font-size:13px;color:var(--muted);margin-bottom:20px">Supports .xlsx and .xls files</div>
+          <button class="btn btn-primary" onclick="document.getElementById('babcockFileInput').click()">
+            Choose File
+          </button>
+          <input type="file" id="babcockFileInput" accept=".xlsx,.xls" style="display:none"
+                 onchange="handleBabcockFileSelect(this.files[0])">
+        </div>
+      </div>
+      <div id="babcockFileInfo" style="display:none;margin-top:12px;padding:10px 14px;background:var(--surface);border-radius:8px;border:1px solid var(--border);display:none">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:20px">📄</span>
+          <div style="flex:1">
+            <div style="font-weight:600;font-size:13px" id="babcockFileName">—</div>
+            <div style="font-size:12px;color:var(--muted)" id="babcockFileSize">—</div>
+          </div>
+          <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="clearBabcockFile()">✕ Clear</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Step 2: Sheet / Column Mapping ── -->
+    <div class="card" style="margin-bottom:20px;display:none" id="babcockMappingCard">
+      <div class="card-title"><span class="icon">🗂️</span> Configure Import</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+        <div>
+          <div class="field-label" style="margin-bottom:4px">SHEET</div>
+          <select class="field-input" id="babcockSheetSelect" onchange="onBabcockSheetChange()"></select>
+        </div>
+        <div>
+          <div class="field-label" style="margin-bottom:4px">HEADER ROW</div>
+          <input type="number" class="field-input" id="babcockHeaderRow" value="1" min="1" max="20"
+                 style="max-width:100px" onchange="onBabcockSheetChange()">
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px" id="babcockColumnMapping">
+        <!-- Populated by JS -->
+      </div>
+      <button class="btn btn-primary" onclick="loadBabcockPreview()">Preview Data →</button>
+    </div>
+
+    <!-- ── Step 3: Preview ── -->
+    <div class="card" style="margin-bottom:20px;display:none" id="babcockPreviewCard">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px">
+        <div class="card-title" style="margin-bottom:0"><span class="icon">📋</span> Schedule Preview</div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <span id="babcockRowCount" style="font-size:12px;color:var(--muted)"></span>
+          <button class="btn btn-ghost" style="padding:6px 14px;font-size:12px" onclick="clearBabcockFile()">← Start Over</button>
+          <button class="btn btn-primary" onclick="generateBabcockQuote()">⚙️ Generate Quote</button>
+        </div>
+      </div>
+
+      <!-- Markup setting -->
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;padding:12px 16px;background:var(--surface);border-radius:8px;border:1px solid var(--border)">
+        <span style="font-size:13px;color:var(--muted)">Apply markup:</span>
+        <div style="display:flex;align-items:center;gap:6px">
+          <input type="number" class="field-input" id="babcockMarkup" value="10" min="0" max="100" step="0.5"
+                 style="max-width:80px;padding:4px 8px;font-size:13px" onchange="onBabcockMarkupChange()">
+          <span style="font-size:13px;color:var(--muted)">%</span>
+        </div>
+        <span style="font-size:12px;color:var(--subtle)">Applied to every line item value</span>
+      </div>
+
+      <div style="overflow-x:auto">
+        <table class="babcock-preview-table" id="babcockPreviewTable">
+          <thead id="babcockPreviewHead"></thead>
+          <tbody id="babcockPreviewBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── Step 4: Generated Quote ── -->
+    <div class="card" style="margin-bottom:20px;display:none" id="babcockQuoteCard">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px">
+        <div class="card-title" style="margin-bottom:0"><span class="icon">📄</span> Generated Quote</div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-ghost" style="font-size:12px" onclick="document.getElementById('babcockQuoteCard').style.display='none'">← Back to Preview</button>
+          <button class="btn btn-primary" onclick="exportBabcockQuote()">⬇️ Export Quote</button>
+        </div>
+      </div>
+      <div id="babcockQuoteContent">
+        <!-- Populated by JS -->
+      </div>
+    </div>
+
+  </div><!-- end mgr-content -->
+</div><!-- end mgr-layout -->
+
+<style>
+  /* ── Frozen layout ── */
+  html, body { overflow: hidden; height: 100%; }
+  .mgr-layout { height: calc(100vh - 53px); }
+  .mgr-content { overflow-y: auto; height: 100%; padding-top: 0 !important; }
+  .mgr-header {
+    position: sticky; top: 0; z-index: 10;
+    background: #0e0e0e;
+    padding: 28px 0 16px;
+    margin-bottom: 12px !important;
+  }
+
+  /* ── Sidebar secondary ── */
+  .sidebar-secondary-item { opacity: 0.55; font-size: 12px !important; }
+  .sidebar-secondary-item.active { opacity: 1; }
+
+  /* ── Upload zone ── */
+  .babcock-upload-zone {
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    transition: border-color .2s, background .2s;
+    cursor: pointer;
+  }
+  .babcock-upload-zone:hover,
+  .babcock-upload-zone.drag-over {
+    border-color: var(--accent);
+    background: rgba(255,107,0,.04);
+  }
+
+  /* ── Preview table ── */
+  .babcock-preview-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  .babcock-preview-table th {
+    background: var(--surface);
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    padding: 8px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  .babcock-preview-table td {
+    padding: 7px 12px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .babcock-preview-table tr:last-child td { border-bottom: none; }
+  .babcock-preview-table tr:hover td { background: var(--surface2); }
+  .babcock-preview-table td.num-cell {
+    font-family: var(--font-mono);
+    text-align: right;
+    color: var(--accent2);
+  }
+  .babcock-preview-table td.markup-cell {
+    font-family: var(--font-mono);
+    text-align: right;
+    color: var(--green);
+    font-weight: 600;
+  }
+
+  /* ── Quote output ── */
+  .babcock-quote-line {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 16px;
+    align-items: center;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .babcock-quote-line:last-child { border-bottom: none; }
+  .babcock-quote-line:hover { background: var(--surface2); }
+  .babcock-quote-total {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 20px;
+    padding: 14px 14px;
+    background: var(--surface);
+    border-top: 2px solid var(--border);
+    font-size: 15px;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    color: var(--green);
+    margin-top: 4px;
+    border-radius: 0 0 8px 8px;
+  }
+</style>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="shared.js?v=20260429f"></script>
+</body>
+</html>

@@ -11103,26 +11103,43 @@ function navToTenders() {
   window.location.href = 'tenders.html';
 }
 
+function navToBabcock() {
+  const perms = getUserPermissions(currentManagerUser) || {};
+  if (!perms.tenders) {
+    toast('You don\'t have permission to access Babcock Quotes', 'error');
+    return;
+  }
+  window.location.href = 'babcock.html';
+}
+
 function updateTenderSidebarCrossNav() {
   const perms = getUserPermissions(currentManagerUser) || {};
-  const btn = document.getElementById('sidebarBtnQuotations');
-  if (!btn) return;
-  const hasAccess = !!(perms.viewQuotes || perms.editQuotes);
-  btn.disabled = !hasAccess;
-  btn.style.opacity = hasAccess ? '' : '0.35';
-  btn.style.cursor = hasAccess ? '' : 'not-allowed';
-  btn.title = hasAccess ? '' : 'You don\'t have permission to access Quotations';
+  const qBtn = document.getElementById('sidebarBtnQuotations');
+  if (qBtn) {
+    const hasAccess = !!(perms.viewQuotes || perms.editQuotes);
+    qBtn.disabled = !hasAccess;
+    qBtn.style.opacity = hasAccess ? '' : '0.35';
+    qBtn.style.cursor = hasAccess ? '' : 'not-allowed';
+    qBtn.title = hasAccess ? '' : 'You don\'t have permission to access Quotations';
+  }
+  // Babcock uses same tenders permission — always enabled if on tenders page
 }
 
 function updateQuotesSidebarCrossNav() {
   const perms = getUserPermissions(currentManagerUser) || {};
-  const btn = document.getElementById('sidebarBtnTenders');
-  if (!btn) return;
-  const hasAccess = !!perms.tenders;
-  btn.disabled = !hasAccess;
-  btn.style.opacity = hasAccess ? '' : '0.35';
-  btn.style.cursor = hasAccess ? '' : 'not-allowed';
-  btn.title = hasAccess ? '' : 'You don\'t have permission to access Tenders';
+  const tBtn = document.getElementById('sidebarBtnTenders');
+  if (tBtn) {
+    tBtn.disabled = !perms.tenders;
+    tBtn.style.opacity = perms.tenders ? '' : '0.35';
+    tBtn.style.cursor = perms.tenders ? '' : 'not-allowed';
+    tBtn.title = perms.tenders ? '' : 'You don\'t have permission to access Tenders';
+  }
+  const bBtn = document.getElementById('sidebarBtnBabcockQuotes');
+  if (bBtn) {
+    bBtn.disabled = !perms.tenders;
+    bBtn.style.opacity = perms.tenders ? '' : '0.35';
+    bBtn.style.cursor = perms.tenders ? '' : 'not-allowed';
+  }
 }
 
 // ── Tab switching ──
@@ -12623,6 +12640,67 @@ function switchQuotesTab(tab) {
 }
 
 // Quote detail — placeholder for now (just shows reference, project, client, deadline)
+let _quoteDetailDirty = false;
+
+function markQuoteDirty() {
+  if (_quoteDetailDirty) return;
+  _quoteDetailDirty = true;
+  const saveBtn = document.getElementById('qdSaveBtn');
+  const discardBtn = document.getElementById('qdDiscardBtn');
+  if (saveBtn) saveBtn.style.display = '';
+  if (discardBtn) discardBtn.style.display = '';
+}
+
+function _populateQuoteDetailFields(tender) {
+  document.getElementById('quoteDetailReference').textContent = tender.reference || '—';
+
+  const pn = document.getElementById('qd-projectName');
+  if (pn) pn.value = tender.project_name || '';
+
+  const st = document.getElementById('qd-status');
+  if (st) st.value = tender.status || 'quote';
+
+  const dl = document.getElementById('qd-deadline');
+  if (dl) dl.value = tender.deadline_date ? String(tender.deadline_date).split('T')[0] : '';
+
+  const val = document.getElementById('qd-value');
+  if (val) val.value = tender.quote_value != null ? parseFloat(tender.quote_value) : '';
+
+  const sd = document.getElementById('qd-sentDate');
+  if (sd) sd.value = tender.sent_date ? String(tender.sent_date).split('T')[0] : '';
+
+  const cd = document.getElementById('qd-chasingDate');
+  if (cd) cd.value = tender.chasing_date ? String(tender.chasing_date).split('T')[0] : '';
+
+  // Client info
+  const clientInfo = document.getElementById('quoteDetailClientInfo');
+  if (clientInfo) {
+    const addressLine = [tender.address_line1, tender.address_line2, tender.city, tender.county, tender.postcode].filter(Boolean).join(', ');
+    const splitDedupe = v => v ? [...new Set(String(v).split(',').map(s => s.trim()).filter(Boolean))] : [];
+    const names = splitDedupe(tender.contact_name);
+    const emails = splitDedupe(tender.contact_email);
+    const phones = splitDedupe(tender.contact_phone);
+    const numContacts = Math.max(names.length, emails.length, phones.length);
+    let contactsHtml = '';
+    for (let i = 0; i < numContacts; i++) {
+      const lbl = numContacts > 1 ? `Contact ${i + 1}` : 'Contact';
+      contactsHtml += `
+        <div style="margin-top:${i > 0 ? '10px' : '0'};padding-top:${i > 0 ? '10px' : '0'};${i > 0 ? 'border-top:1px solid var(--border);' : ''}">
+          <div style="font-size:11px;color:var(--accent2);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">${lbl}</div>
+          <div style="display:grid;grid-template-columns:auto 1fr;gap:4px 16px;font-size:13px">
+            ${names[i] ? `<div style="color:var(--subtle);font-weight:600">Name</div><div>${escapeHtml(names[i])}</div>` : ''}
+            ${emails[i] ? `<div style="color:var(--subtle);font-weight:600">Email</div><div><a href="mailto:${escapeHtml(emails[i])}" style="color:var(--accent2);text-decoration:none">${escapeHtml(emails[i])}</a></div>` : ''}
+            ${phones[i] ? `<div style="color:var(--subtle);font-weight:600">Phone</div><div><a href="tel:${escapeHtml(phones[i])}" style="color:var(--accent2);text-decoration:none">${escapeHtml(phones[i])}</a></div>` : ''}
+          </div>
+        </div>`;
+    }
+    clientInfo.innerHTML = `
+      <div style="font-weight:600;font-size:15px;color:var(--text);margin-bottom:6px">${escapeHtml(tender.company_name || '—')}</div>
+      ${addressLine ? `<div style="margin-bottom:14px;color:var(--muted)">${escapeHtml(addressLine)}</div>` : ''}
+      ${contactsHtml || '<div style="font-size:12px;color:var(--subtle)">No contact details</div>'}`;
+  }
+}
+
 async function openQuoteDetail(id) {
   let tender = tendersData.find(t => String(t.id) === String(id));
   if (!tender) { toast('Quote not found', 'error'); return; }
@@ -12633,58 +12711,450 @@ async function openQuoteDetail(id) {
   } catch (e) { console.warn('Could not refresh quote:', e); }
 
   currentTender = tender;
+  _quoteDetailDirty = false;
 
   document.querySelectorAll('#quotesLayout .tab-content').forEach(el => {
-    el.classList.remove('active');
-    el.style.display = 'none';
+    el.classList.remove('active'); el.style.display = 'none';
   });
   const detailEl = document.getElementById('tab-quoteDetail');
-  detailEl.style.display = '';
-  detailEl.classList.add('active');
+  detailEl.style.display = ''; detailEl.classList.add('active');
 
-  document.getElementById('quoteDetailReference').textContent = tender.reference || '—';
-  document.getElementById('quoteDetailProjectName').textContent = tender.project_name || '—';
+  const saveBtn = document.getElementById('qdSaveBtn');
+  const discardBtn = document.getElementById('qdDiscardBtn');
+  if (saveBtn) saveBtn.style.display = 'none';
+  if (discardBtn) discardBtn.style.display = 'none';
 
-  const badge = document.getElementById('quoteDetailStatusBadge');
-  badge.textContent = tender.status;
-  badge.className = `tag tag-${tender.status === 'quote' ? 'approved' : tender.status === 'won' ? 'approved' : tender.status === 'lost' ? 'rejected' : 'pending'}`;
+  _populateQuoteDetailFields(tender);
+  loadQuoteComments();
+  loadTenderFiles();
+}
 
-  const deadlineEl = document.getElementById('quoteDetailDeadline');
-  if (deadlineEl) {
-    if (tender.deadline_date) {
-      deadlineEl.innerHTML = `<span style="font-size:12px;color:var(--subtle);margin-right:8px">DEADLINE</span>${renderDeadlineBadge(tender.deadline_date, tender.status)}`;
-    } else {
-      deadlineEl.innerHTML = '';
+async function saveQuoteChanges() {
+  if (!currentTender) return;
+
+  const body = {
+    project_name: document.getElementById('qd-projectName')?.value.trim() || currentTender.project_name,
+    status:       document.getElementById('qd-status')?.value || currentTender.status,
+    deadline_date: document.getElementById('qd-deadline')?.value || null,
+    quote_value:  document.getElementById('qd-value')?.value !== '' ? parseFloat(document.getElementById('qd-value').value) : null,
+    sent_date:    document.getElementById('qd-sentDate')?.value || null,
+    chasing_date: document.getElementById('qd-chasingDate')?.value || null
+  };
+
+  try {
+    const updated = await api.put(`/api/tenders/${currentTender.id}`, body);
+    Object.assign(currentTender, body);
+    // Sync back into tendersData list
+    const idx = tendersData.findIndex(t => String(t.id) === String(currentTender.id));
+    if (idx !== -1) Object.assign(tendersData[idx], body);
+
+    _quoteDetailDirty = false;
+    document.getElementById('qdSaveBtn').style.display = 'none';
+    document.getElementById('qdDiscardBtn').style.display = 'none';
+    toast('Quote saved ✓', 'success');
+  } catch (err) {
+    toast('Save failed: ' + err.message, 'error');
+  }
+}
+
+function discardQuoteChanges() {
+  if (!currentTender) return;
+  _populateQuoteDetailFields(currentTender);
+  _quoteDetailDirty = false;
+  document.getElementById('qdSaveBtn').style.display = 'none';
+  document.getElementById('qdDiscardBtn').style.display = 'none';
+}
+
+async function loadQuoteComments() {
+  if (!currentTender) return;
+  const container = document.getElementById('quoteDetailCommentsList');
+  if (!container) return;
+
+  try {
+    const comments = await api.get(`/api/tender-comments?tender_id=${currentTender.id}`);
+    const items = [];
+    if (currentTender.comments?.trim()) {
+      items.push({ id: 'initial', comment: currentTender.comments, created_by: currentTender.created_by || '—', created_at: currentTender.created_at, isInitial: true });
+    }
+    items.push(...(comments || []));
+
+    if (!items.length) {
+      container.innerHTML = '<div style="font-size:12px;color:var(--subtle);padding:8px 0">No comments yet</div>';
+      return;
+    }
+
+    container.innerHTML = items.map(c => {
+      const date = c.created_at ? new Date(c.created_at) : null;
+      const dateStr = date ? `${date.toLocaleDateString('en-GB')} ${date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}` : '';
+      const deleteBtn = c.isInitial ? '' : `<button class="tiny-btn" onclick="deleteQuoteComment(${c.id})" style="padding:2px 6px;font-size:10px;background:transparent;color:var(--subtle);border:none;cursor:pointer" title="Delete">✕</button>`;
+      return `
+        <div style="padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+            <div style="font-size:12px;color:var(--accent2);font-weight:600">${escapeHtml(c.created_by || '—')}${c.isInitial ? ' <span style="color:var(--subtle);font-weight:400">(initial)</span>' : ''}</div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <div style="font-size:11px;color:var(--subtle)">${dateStr}</div>
+              ${deleteBtn}
+            </div>
+          </div>
+          <div style="font-size:13px;color:var(--text);white-space:pre-wrap">${escapeHtml(c.comment)}</div>
+        </div>`;
+    }).join('');
+  } catch (err) {
+    container.innerHTML = '<div style="font-size:12px;color:var(--red);padding:8px">Failed to load comments</div>';
+  }
+}
+
+async function addQuoteComment() {
+  if (!currentTender) return;
+  const input = document.getElementById('quoteCommentInput');
+  const text = (input?.value || '').trim();
+  if (!text) { toast('Please enter a comment', 'error'); return; }
+
+  try {
+    await api.post('/api/tender-comments', {
+      tender_id: currentTender.id,
+      comment: text,
+      created_by: currentManagerUser || 'unknown'
+    });
+    input.value = '';
+    toast('Comment added ✓', 'success');
+    loadQuoteComments();
+  } catch (err) {
+    toast('Failed to add comment: ' + err.message, 'error');
+  }
+}
+
+async function deleteQuoteComment(id) {
+  if (!confirm('Delete this comment?')) return;
+  try {
+    await api.delete(`/api/tender-comments/${id}`);
+    toast('Comment deleted', 'success');
+    loadQuoteComments();
+  } catch (err) {
+    toast('Failed to delete: ' + err.message, 'error');
+  }
+}
+
+// ═══════════════════════════════════════════
+// BABCOCK QUOTES PAGE
+// ═══════════════════════════════════════════
+
+let _babcockWorkbook = null;    // parsed XLSX workbook
+let _babcockRawData = null;     // array of row objects after mapping
+let _pendingBabcockUser = null;
+
+async function initBabcockPage() {
+  const authed = sessionStorage.getItem('bama_mgr_authed');
+  if (authed) {
+    currentManagerUser = authed;
+    const perms = getUserPermissions(currentManagerUser);
+    if (perms && perms.tenders) {
+      document.getElementById('screenBabcockSelect').style.display = 'none';
+      document.getElementById('babcockLayout').style.display = 'flex';
+      return;
     }
   }
+  renderBabcockEmployeeGrid();
+}
 
-  // Client info — same clean rendering used on tenders page
-  const clientInfo = document.getElementById('quoteDetailClientInfo');
-  const addressLine = [tender.address_line1, tender.address_line2, tender.city, tender.county, tender.postcode].filter(Boolean).join(', ');
-  const splitDedupe = v => v ? [...new Set(String(v).split(',').map(s => s.trim()).filter(Boolean))] : [];
-  const names = splitDedupe(tender.contact_name);
-  const emails = splitDedupe(tender.contact_email);
-  const phones = splitDedupe(tender.contact_phone);
-  const numContacts = Math.max(names.length, emails.length, phones.length);
-  let contactsHtml = '';
-  for (let i = 0; i < numContacts; i++) {
-    const lbl = numContacts > 1 ? `Contact ${i + 1}` : 'Contact';
-    contactsHtml += `
-      <div style="margin-top:${i > 0 ? '10px' : '0'};padding-top:${i > 0 ? '10px' : '0'};${i > 0 ? 'border-top:1px solid var(--border);' : ''}">
-        <div style="font-size:11px;color:var(--accent2);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">${lbl}</div>
-        <div style="display:grid;grid-template-columns:auto 1fr;gap:4px 16px;font-size:13px">
-          ${names[i] ? `<div style="color:var(--subtle);font-weight:600">Name</div><div>${escapeHtml(names[i])}</div>` : ''}
-          ${emails[i] ? `<div style="color:var(--subtle);font-weight:600">Email</div><div><a href="mailto:${escapeHtml(emails[i])}" style="color:var(--accent2);text-decoration:none">${escapeHtml(emails[i])}</a></div>` : ''}
-          ${phones[i] ? `<div style="color:var(--subtle);font-weight:600">Phone</div><div><a href="tel:${escapeHtml(phones[i])}" style="color:var(--accent2);text-decoration:none">${escapeHtml(phones[i])}</a></div>` : ''}
-        </div>
-      </div>
-    `;
+function renderBabcockEmployeeGrid() {
+  const grid = document.getElementById('babcockEmployeeGrid');
+  if (!grid) return;
+  const empList = (state.timesheetData.employees || []).filter(e => e.active !== false && (e.staffType || 'workshop') === 'office');
+  if (!empList.length) {
+    grid.innerHTML = '<div class="empty-state" style="padding:30px"><div style="font-size:28px;margin-bottom:10px">&#128101;</div><div>No office staff set up yet.</div></div>';
+    return;
   }
-  clientInfo.innerHTML = `
-    <div style="font-weight:600;font-size:15px;color:var(--text);margin-bottom:6px">${tender.company_name || '—'}</div>
-    ${addressLine ? `<div style="margin-bottom:14px;color:var(--muted)">${escapeHtml(addressLine)}</div>` : ''}
-    ${contactsHtml || '<div style="font-size:12px;color:var(--subtle)">No contact details</div>'}
-  `;
+  grid.innerHTML = empList.map(emp => {
+    const ini = (emp.name || '').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+    const col = empColor(emp.name);
+    return `
+      <div class="emp-btn" onclick="selectBabcockEmployee('${emp.name.replace(/'/g, "\\\\'")}')">
+        <div class="emp-avatar" style="width:48px;height:48px;font-size:19px;background:linear-gradient(135deg,${col},#3e1a00)">${ini}</div>
+        <div class="emp-name" style="font-size:13px">${emp.name}</div>
+        <div style="font-size:10px;color:var(--subtle);margin-top:3px">${emp.hasPin ? '&#128274; PIN set' : '&#128275; No PIN'}</div>
+      </div>`;
+  }).join('');
+}
+
+function selectBabcockEmployee(name) {
+  const emp = (state.timesheetData.employees || []).find(e => e.name === name);
+  if (!emp) return;
+  if (!emp.hasPin) { toast('No PIN set for this user.', 'error'); return; }
+  _pendingBabcockUser = { name, empId: emp.id };
+  document.getElementById('babcockPinUser').textContent = name;
+  document.getElementById('babcockPinInput').value = '';
+  document.getElementById('babcockPinError').textContent = '';
+  document.getElementById('babcockPinModal').classList.add('active');
+  setTimeout(() => document.getElementById('babcockPinInput').focus(), 200);
+}
+
+async function verifyBabcockPin() {
+  if (!_pendingBabcockUser) return;
+  const pin = document.getElementById('babcockPinInput').value;
+  if (!pin) return;
+  try {
+    const result = await api.post('/api/auth/verify-pin', { employee_id: _pendingBabcockUser.empId, pin });
+    if (!result || !result.valid) {
+      document.getElementById('babcockPinError').textContent = (result && result.reason) || 'Incorrect PIN';
+      document.getElementById('babcockPinInput').value = '';
+      return;
+    }
+    currentManagerUser = _pendingBabcockUser.name;
+    sessionStorage.setItem('bama_mgr_authed', currentManagerUser);
+    document.getElementById('babcockPinModal').classList.remove('active');
+    const perms = getUserPermissions(currentManagerUser);
+    if (!perms || !perms.tenders) {
+      toast('You don\'t have permission to access Babcock Quotes.', 'error');
+      currentManagerUser = null;
+      sessionStorage.removeItem('bama_mgr_authed');
+      return;
+    }
+    document.getElementById('screenBabcockSelect').style.display = 'none';
+    document.getElementById('babcockLayout').style.display = 'flex';
+  } catch (err) {
+    document.getElementById('babcockPinError').textContent = 'PIN verification failed';
+    document.getElementById('babcockPinInput').value = '';
+  }
+}
+
+// ── File handling ──
+function handleBabcockDrop(event) {
+  const file = event.dataTransfer?.files?.[0];
+  if (file) handleBabcockFileSelect(file);
+}
+
+function handleBabcockFileSelect(file) {
+  if (!file) return;
+  const ext = file.name.split('.').pop().toLowerCase();
+  if (!['xlsx', 'xls'].includes(ext)) {
+    toast('Please upload an .xlsx or .xls file', 'error');
+    return;
+  }
+
+  // Show file info
+  document.getElementById('babcockFileInfo').style.display = '';
+  document.getElementById('babcockFileName').textContent = file.name;
+  document.getElementById('babcockFileSize').textContent = formatFileSize(file.size);
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      _babcockWorkbook = XLSX.read(e.target.result, { type: 'array' });
+      populateBabcockSheetSelect();
+      document.getElementById('babcockMappingCard').style.display = '';
+      document.getElementById('babcockPreviewCard').style.display = 'none';
+      document.getElementById('babcockQuoteCard').style.display = 'none';
+      toast(`Loaded: ${file.name}`, 'success');
+    } catch (err) {
+      toast('Failed to read spreadsheet: ' + err.message, 'error');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function clearBabcockFile() {
+  _babcockWorkbook = null;
+  _babcockRawData = null;
+  document.getElementById('babcockFileInput').value = '';
+  document.getElementById('babcockFileInfo').style.display = 'none';
+  document.getElementById('babcockMappingCard').style.display = 'none';
+  document.getElementById('babcockPreviewCard').style.display = 'none';
+  document.getElementById('babcockQuoteCard').style.display = 'none';
+}
+
+function populateBabcockSheetSelect() {
+  if (!_babcockWorkbook) return;
+  const sel = document.getElementById('babcockSheetSelect');
+  sel.innerHTML = _babcockWorkbook.SheetNames.map((n, i) =>
+    `<option value="${i}">${escapeHtml(n)}</option>`
+  ).join('');
+  onBabcockSheetChange();
+}
+
+function onBabcockSheetChange() {
+  if (!_babcockWorkbook) return;
+  const sheetIdx = parseInt(document.getElementById('babcockSheetSelect').value) || 0;
+  const headerRow = Math.max(1, parseInt(document.getElementById('babcockHeaderRow').value) || 1);
+  const sheet = _babcockWorkbook.Sheets[_babcockWorkbook.SheetNames[sheetIdx]];
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+  if (rows.length < headerRow) return;
+
+  const headers = rows[headerRow - 1].map((h, i) => h ? String(h).trim() : `Column ${i + 1}`);
+  const mappingDiv = document.getElementById('babcockColumnMapping');
+
+  // Show column mapping dropdowns
+  const colFields = [
+    { key: 'description', label: 'DESCRIPTION / ITEM', hint: 'Line item description' },
+    { key: 'quantity',    label: 'QUANTITY',            hint: 'Number of units' },
+    { key: 'unit',        label: 'UNIT (optional)',     hint: 'e.g. nr, m, kg' },
+    { key: 'unitPrice',   label: 'UNIT PRICE (£)',      hint: 'Price per unit' },
+    { key: 'total',       label: 'LINE TOTAL (£)',      hint: 'Qty × Unit price' },
+  ];
+
+  mappingDiv.innerHTML = colFields.map(f => {
+    const opts = [`<option value="">— Not mapped —</option>`,
+      ...headers.map((h, i) => `<option value="${i}">${escapeHtml(h)}</option>`)
+    ].join('');
+    return `
+      <div>
+        <div class="field-label" style="margin-bottom:4px">${f.label}</div>
+        <select class="field-input" id="babcockCol_${f.key}" style="font-size:12px">
+          ${opts}
+        </select>
+        <div style="font-size:11px;color:var(--subtle);margin-top:3px">${f.hint}</div>
+      </div>`;
+  }).join('');
+
+  // Auto-detect columns by common header names
+  const autoMap = {
+    description: ['description', 'item', 'desc', 'work', 'scope', 'activity', 'trade'],
+    quantity:    ['quantity', 'qty', 'no.', 'number', 'nos', 'count'],
+    unit:        ['unit', 'uom', 'measure'],
+    unitPrice:   ['unit price', 'rate', 'unit rate', 'price', 'unit cost'],
+    total:       ['total', 'amount', 'value', 'line total', 'net', 'sum'],
+  };
+  for (const [field, keywords] of Object.entries(autoMap)) {
+    const sel = document.getElementById(`babcockCol_${field}`);
+    if (!sel) continue;
+    const match = headers.findIndex(h =>
+      keywords.some(k => h.toLowerCase().includes(k))
+    );
+    if (match !== -1) sel.value = String(match);
+  }
+}
+
+function loadBabcockPreview() {
+  if (!_babcockWorkbook) return;
+  const sheetIdx = parseInt(document.getElementById('babcockSheetSelect').value) || 0;
+  const headerRow = Math.max(1, parseInt(document.getElementById('babcockHeaderRow').value) || 1);
+  const sheet = _babcockWorkbook.Sheets[_babcockWorkbook.SheetNames[sheetIdx]];
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+
+  const getCol = key => {
+    const v = document.getElementById(`babcockCol_${key}`)?.value;
+    return v !== '' && v !== undefined ? parseInt(v) : null;
+  };
+  const cols = {
+    description: getCol('description'),
+    quantity:    getCol('quantity'),
+    unit:        getCol('unit'),
+    unitPrice:   getCol('unitPrice'),
+    total:       getCol('total'),
+  };
+
+  if (cols.description === null) { toast('Please map at least the Description column', 'error'); return; }
+
+  // Extract data rows (skip header)
+  const dataRows = rows.slice(headerRow).filter(r => r.some(c => c !== ''));
+  _babcockRawData = dataRows.map(r => ({
+    description: cols.description !== null ? r[cols.description] : '',
+    quantity:    cols.quantity    !== null ? parseFloat(r[cols.quantity]) || '' : '',
+    unit:        cols.unit        !== null ? r[cols.unit] : '',
+    unitPrice:   cols.unitPrice   !== null ? parseFloat(r[cols.unitPrice]) || '' : '',
+    total:       cols.total       !== null ? parseFloat(r[cols.total]) || '' : '',
+  })).filter(r => r.description);
+
+  if (!_babcockRawData.length) { toast('No data rows found. Check your header row setting.', 'error'); return; }
+
+  // Render preview table
+  const markup = parseFloat(document.getElementById('babcockMarkup').value) || 10;
+  renderBabcockPreviewTable(markup);
+
+  document.getElementById('babcockPreviewCard').style.display = '';
+  document.getElementById('babcockRowCount').textContent = `${_babcockRawData.length} line items`;
+  document.getElementById('babcockPreviewCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function renderBabcockPreviewTable(markup) {
+  if (!_babcockRawData) return;
+  const factor = 1 + (markup / 100);
+
+  const fmtGBP = v => typeof v === 'number' ? `£${v.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
+
+  document.getElementById('babcockPreviewHead').innerHTML = `<tr>
+    <th style="min-width:240px">Description</th>
+    <th style="text-align:right">Qty</th>
+    <th>Unit</th>
+    <th style="text-align:right">Unit Price</th>
+    <th style="text-align:right">Line Total</th>
+    <th style="text-align:right;color:var(--green)">+${markup}% → Our Price</th>
+  </tr>`;
+
+  document.getElementById('babcockPreviewBody').innerHTML = _babcockRawData.map(r => {
+    const lineTotal = r.total !== '' ? r.total : (r.quantity !== '' && r.unitPrice !== '' ? r.quantity * r.unitPrice : '');
+    const ourPrice  = typeof lineTotal === 'number' ? lineTotal * factor : '';
+    return `<tr>
+      <td title="${escapeHtml(String(r.description))}">${escapeHtml(String(r.description))}</td>
+      <td class="num-cell">${r.quantity !== '' ? r.quantity : '—'}</td>
+      <td style="color:var(--muted)">${r.unit || '—'}</td>
+      <td class="num-cell">${fmtGBP(r.unitPrice)}</td>
+      <td class="num-cell">${fmtGBP(lineTotal)}</td>
+      <td class="markup-cell">${fmtGBP(ourPrice)}</td>
+    </tr>`;
+  }).join('');
+}
+
+function generateBabcockQuote() {
+  if (!_babcockRawData) return;
+  const markup = parseFloat(document.getElementById('babcockMarkup').value) || 10;
+  const factor = 1 + (markup / 100);
+  const fmtGBP = v => typeof v === 'number' ? `£${v.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
+
+  let grandTotal = 0;
+  const lines = _babcockRawData.map((r, i) => {
+    const lineTotal = r.total !== '' ? r.total : (r.quantity !== '' && r.unitPrice !== '' ? r.quantity * r.unitPrice : '');
+    const ourPrice  = typeof lineTotal === 'number' ? lineTotal * factor : null;
+    if (ourPrice) grandTotal += ourPrice;
+    return { num: i + 1, description: r.description, quantity: r.quantity, unit: r.unit, ourPrice };
+  });
+
+  const quoteRef = `BBC-${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}-${String(Math.floor(Math.random()*900)+100)}`;
+
+  document.getElementById('babcockQuoteContent').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:16px;margin-bottom:24px;padding:0 4px">
+      <div>
+        <div style="font-family:var(--font-display);font-size:28px;letter-spacing:1px;color:var(--accent)">${quoteRef}</div>
+        <div style="font-size:13px;color:var(--muted);margin-top:4px">Babcock International · ${new Date().toLocaleDateString('en-GB', {day:'numeric',month:'long',year:'numeric'})}</div>
+        <div style="font-size:12px;color:var(--subtle);margin-top:2px">${markup}% margin applied to all line items</div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:12px;color:var(--subtle);margin-bottom:2px">TOTAL VALUE</div>
+        <div style="font-family:var(--font-display);font-size:32px;color:var(--green)">${fmtGBP(grandTotal)}</div>
+      </div>
+    </div>
+    <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
+      <div style="display:grid;grid-template-columns:40px 1fr auto auto;gap:12px;padding:8px 14px;background:var(--surface);font-size:10px;font-weight:700;letter-spacing:1px;color:var(--subtle);text-transform:uppercase;border-bottom:1px solid var(--border)">
+        <div>#</div><div>Description</div><div style="text-align:right">Qty</div><div style="text-align:right">Our Price</div>
+      </div>
+      ${lines.map(l => `
+        <div style="display:grid;grid-template-columns:40px 1fr auto auto;gap:12px;padding:10px 14px;border-bottom:1px solid var(--border);font-size:13px;transition:background .15s" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
+          <div style="color:var(--subtle);font-family:var(--font-mono)">${l.num}</div>
+          <div style="font-weight:500">${escapeHtml(String(l.description))}</div>
+          <div style="text-align:right;color:var(--muted)">${l.quantity !== '' ? `${l.quantity}${l.unit ? ' '+l.unit : ''}` : '—'}</div>
+          <div style="text-align:right;font-family:var(--font-mono);color:var(--green);font-weight:600">${fmtGBP(l.ourPrice)}</div>
+        </div>`).join('')}
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:14px;background:var(--surface)">
+        <div style="font-size:12px;color:var(--subtle)">${lines.length} line items · ${markup}% margin</div>
+        <div style="font-family:var(--font-mono);font-size:18px;font-weight:700;color:var(--green)">${fmtGBP(grandTotal)}</div>
+      </div>
+    </div>`;
+
+  document.getElementById('babcockQuoteCard').style.display = '';
+  document.getElementById('babcockQuoteCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  toast(`Quote generated — ${lines.length} items, total ${fmtGBP(grandTotal)}`, 'success');
+}
+
+function exportBabcockQuote() {
+  // Placeholder — full PDF/Excel export to follow once template details are confirmed
+  toast('Export functionality coming soon — template details to be confirmed', 'info');
+}
+
+// ── Recalculate preview when markup changes ──
+function onBabcockMarkupChange() {
+  if (!_babcockRawData) return;
+  const markup = parseFloat(document.getElementById('babcockMarkup').value) || 10;
+  renderBabcockPreviewTable(markup);
 }
 
 function closeQuoteDetail() {
@@ -12701,6 +13171,7 @@ const CURRENT_PAGE = (() => {
   if (path.includes('manager')) return 'manager';
   if (path.includes('office')) return 'office';
   if (path.includes('templates')) return 'templates';
+  if (path.includes('babcock')) return 'babcock';
   if (path.includes('tenders')) return 'tenders';
   if (path.includes('quotes')) return 'quotes';
   if (path.includes('projects') || path.includes('project')) return 'projects';
@@ -12756,7 +13227,7 @@ async function init() {
     : Promise.resolve();
 
   // User access needed on manager and office pages (still from SharePoint for now)
-  const userAccessPromise = (CURRENT_PAGE === 'manager' || CURRENT_PAGE === 'office' || CURRENT_PAGE === 'projects' || CURRENT_PAGE === 'tenders' || CURRENT_PAGE === 'quotes')
+  const userAccessPromise = (CURRENT_PAGE === 'manager' || CURRENT_PAGE === 'office' || CURRENT_PAGE === 'projects' || CURRENT_PAGE === 'tenders' || CURRENT_PAGE === 'quotes' || CURRENT_PAGE === 'babcock')
     ? Promise.race([
         loadUserAccessData(),
         new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 6000))
@@ -12819,6 +13290,8 @@ async function init() {
     initTendersPage();
   } else if (CURRENT_PAGE === 'quotes') {
     initQuotesPage();
+  } else if (CURRENT_PAGE === 'babcock') {
+    initBabcockPage();
   } else if (CURRENT_PAGE === 'hub') {
     // hub has its own simple rendering
   } else {

@@ -69,6 +69,9 @@
       <button class="sidebar-nav-item active" data-tab="quotes" onclick="switchQuotesTab('quotes')">
         <span class="sidebar-nav-icon">📊</span> Quotations
       </button>
+      <button class="sidebar-nav-item" id="sidebarBtnBabcockQuotes" data-tab="babcock" onclick="navToBabcock()">
+        <span class="sidebar-nav-icon">⚙️</span> Babcock Quotes
+      </button>
       <hr class="sidebar-nav-divider">
       <button class="sidebar-nav-item sidebar-secondary-item" data-tab="clients" onclick="switchQuotesTab('clients')">
         <span class="sidebar-nav-icon">🏢</span> Clients
@@ -136,33 +139,108 @@
       </div>
     </div>
 
-    <!-- Quote Detail View (placeholder — same data as tender for now) -->
+    <!-- Quote Detail View -->
     <div class="tab-content" id="tab-quoteDetail" style="display:none">
-      <div style="margin-bottom:16px">
+      <div style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
         <button class="btn btn-ghost" onclick="closeQuoteDetail()" style="padding:6px 14px;font-size:12px">&#8592; Back to list</button>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-ghost" onclick="discardQuoteChanges()" id="qdDiscardBtn" style="display:none;font-size:12px">Discard</button>
+          <button class="btn btn-primary" onclick="saveQuoteChanges()" id="qdSaveBtn" style="display:none;font-size:12px">💾 Save Changes</button>
+        </div>
       </div>
+
+      <!-- Header: Reference, Project Name, Status, Deadline -->
       <div class="card" style="margin-bottom:20px">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
-          <div>
-            <div style="font-size:24px;font-weight:700;font-family:var(--font-display);letter-spacing:1px" id="quoteDetailReference">—</div>
-            <div style="font-size:15px;color:var(--muted)" id="quoteDetailProjectName">—</div>
-            <div id="quoteDetailDeadline" style="margin-top:8px"></div>
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:16px">
+          <div style="flex:1;min-width:200px">
+            <div style="font-size:22px;font-weight:700;font-family:var(--font-display);letter-spacing:1px;color:var(--accent);margin-bottom:8px" id="quoteDetailReference">—</div>
+            <div class="field-label" style="margin-bottom:4px">PROJECT NAME</div>
+            <input type="text" class="field-input" id="qd-projectName" placeholder="Project name" oninput="markQuoteDirty()">
           </div>
-          <div style="display:flex;gap:8px;align-items:center">
-            <span class="tag" id="quoteDetailStatusBadge">—</span>
+          <div style="display:flex;flex-direction:column;gap:10px;min-width:180px">
+            <div>
+              <div class="field-label" style="margin-bottom:4px">STATUS</div>
+              <select class="field-input" id="qd-status" onchange="markQuoteDirty()">
+                <option value="quote">Quote</option>
+                <option value="won">Won ✓</option>
+                <option value="lost">Lost</option>
+                <option value="too_late">Too Late</option>
+                <option value="not_interested">Not Interested</option>
+              </select>
+            </div>
+            <div>
+              <div class="field-label" style="margin-bottom:4px">DEADLINE</div>
+              <input type="date" class="field-input" id="qd-deadline" onchange="markQuoteDirty()">
+            </div>
           </div>
         </div>
       </div>
 
+      <!-- Quote financials: Value, Sent Date, Chasing Date -->
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-title"><span class="icon">💰</span> Quote Details</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:16px">
+          <div>
+            <div class="field-label" style="margin-bottom:4px">VALUE (£)</div>
+            <input type="number" class="field-input" id="qd-value" min="0" step="0.01" placeholder="0.00" oninput="markQuoteDirty()">
+          </div>
+          <div>
+            <div class="field-label" style="margin-bottom:4px">SENT DATE</div>
+            <input type="date" class="field-input" id="qd-sentDate" onchange="markQuoteDirty()">
+          </div>
+          <div>
+            <div class="field-label" style="margin-bottom:4px">CHASING DATE</div>
+            <input type="date" class="field-input" id="qd-chasingDate" onchange="markQuoteDirty()">
+          </div>
+        </div>
+      </div>
+
+      <!-- Client Details -->
       <div class="card" style="margin-bottom:20px">
         <div class="card-title"><span class="icon">🏢</span> Client Details</div>
         <div id="quoteDetailClientInfo" style="font-size:13px;color:var(--muted)">—</div>
       </div>
 
-      <div class="card" style="background:rgba(255,107,0,.06);border:1px solid rgba(255,107,0,.2);text-align:center;padding:30px">
-        <div style="font-size:32px;margin-bottom:10px">🚧</div>
-        <div style="font-weight:600;font-size:15px;color:var(--accent);margin-bottom:6px">Quote Workflow Coming Soon</div>
-        <div style="font-size:13px;color:var(--muted);max-width:520px;margin:0 auto">Pricing, line items, margin tracking, customer-facing PDF generation, and won/lost transition will be built into this page.</div>
+      <!-- Comments -->
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-title"><span class="icon">💬</span> Comments</div>
+        <div id="quoteDetailCommentsList" style="margin-bottom:14px"></div>
+        <div style="display:flex;gap:8px;align-items:flex-start">
+          <textarea class="field-input" id="quoteCommentInput" rows="2" placeholder="Add a comment..." style="flex:1;resize:vertical;min-height:38px"></textarea>
+          <button class="btn btn-primary" onclick="addQuoteComment()" style="padding:8px 16px;font-size:13px;white-space:nowrap">+ Add</button>
+        </div>
+      </div>
+
+      <!-- Files -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
+        <div class="card">
+          <div class="card-title"><span class="icon">📁</span> Quote Folder</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Correspondence, emails and general documents.</div>
+          <div id="quoteFolderFiles" style="margin-bottom:12px"></div>
+          <div class="upload-zone" ondragover="event.preventDefault();this.classList.add('drag-over')"
+               ondragleave="this.classList.remove('drag-over')"
+               ondrop="event.preventDefault();this.classList.remove('drag-over');handleTenderUpload(event,'quote')">
+            <div style="text-align:center;padding:20px;cursor:pointer" onclick="document.getElementById('quoteFolderInput').click()">
+              <div style="font-size:24px;margin-bottom:8px">📎</div>
+              <div style="font-size:13px;color:var(--muted)">Drop files or click to upload</div>
+            </div>
+            <input type="file" id="quoteFolderInput" multiple style="display:none" onchange="handleTenderFileSelect(this.files,'quote')">
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title"><span class="icon">📦</span> 00 - Tender Pack</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Tender pack documents and folder structures.</div>
+          <div id="tenderPackFiles" style="margin-bottom:12px"></div>
+          <div class="upload-zone" ondragover="event.preventDefault();this.classList.add('drag-over')"
+               ondragleave="this.classList.remove('drag-over')"
+               ondrop="event.preventDefault();this.classList.remove('drag-over');handleTenderUpload(event,'tender')">
+            <div style="text-align:center;padding:20px;cursor:pointer" onclick="document.getElementById('tenderPackInput').click()">
+              <div style="font-size:24px;margin-bottom:8px">📎</div>
+              <div style="font-size:13px;color:var(--muted)">Drop files/folders or click to upload</div>
+            </div>
+            <input type="file" id="tenderPackInput" webkitdirectory multiple style="display:none" onchange="handleTenderFileSelect(this.files,'tender')">
+          </div>
+        </div>
       </div>
     </div>
 
@@ -254,6 +332,16 @@
   }
   .quote-header:hover { background: var(--card); }
 
+  .upload-zone {
+    border: 2px dashed var(--border); border-radius: 10px; transition: border-color .2s;
+  }
+  .upload-zone.drag-over { border-color: var(--accent); background: rgba(255,107,0,.04); }
+  .file-chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+    font-size: 12px; margin: 2px;
+  }
+
   .tender-row {
     display: flex; align-items: center; gap: 12px; padding: 12px 16px;
     border-bottom: 1px solid var(--border); cursor: pointer; transition: background .15s;
@@ -263,6 +351,6 @@
   .client-header:hover { background: var(--surface2); }
 </style>
 
-<script src="shared.js?v=20260429e"></script>
+<script src="shared.js?v=20260429f"></script>
 </body>
 </html>
