@@ -10998,7 +10998,7 @@ async function verifyTenderPin() {
   if (!pin) return;
 
   try {
-    const result = await api.post('/api/verify-pin', {
+    const result = await api.post('/api/auth/verify-pin', {
       employee_id: _pendingTenderUser.empId,
       pin
     });
