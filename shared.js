@@ -284,6 +284,12 @@ function normaliseAmendment(row) {
 function normaliseClocking(row) {
   const clockIn = row.clock_in ? new Date(row.clock_in) : null;
   const clockOut = row.clock_out ? new Date(row.clock_out) : null;
+  // approvalStatus only applies to amended clockings.
+  //   is_amended = 0                  -> null  (original kiosk entry, nothing to approve)
+  //   is_amended = 1, is_approved = 1 -> 'approved'
+  //   is_amended = 1, is_approved = 0 -> 'pending'
+  let approvalStatus = null;
+  if (row.is_amended) approvalStatus = row.is_approved ? 'approved' : 'pending';
   return {
     id: row.id,
     employeeName: row.employee_name || empNameById(row.employee_id) || `Employee #${row.employee_id}`,
@@ -295,7 +301,8 @@ function normaliseClocking(row) {
     source: row.source || 'kiosk',
     addedByManager: row.source === 'manual',
     manuallyEdited: !!row.is_amended,
-    approvalStatus: row.is_amended ? 'pending' : null,
+    approvalStatus,
+    approvedBy: row.approved_by || null,
     _raw: row // keep raw data for API updates
   };
 }
@@ -1989,10 +1996,14 @@ async function approveClocking(id) {
   const c = state.timesheetData.clockings.find(c => String(c.id) === String(id));
   if (!c) return;
   try {
+    const approver = currentManagerUser || 'manager';
     await api.put(`/api/clockings/${id}`, {
-      amended_by: currentManagerUser || 'manager'
+      is_approved: true,
+      approved_by: approver,
+      amended_by: c._raw && c._raw.amended_by ? c._raw.amended_by : approver
     });
     c.approvalStatus = 'approved';
+    c.approvedBy = approver;
     toast('Clocking approved ✓', 'success');
     renderManagerView();
   } catch (err) { toast('Save failed: ' + err.message, 'error'); }

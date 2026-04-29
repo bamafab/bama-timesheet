@@ -191,7 +191,7 @@ app.http('clockings-update', {
         try {
             const id = parseInt(request.params.id);
             const body = await request.json();
-            const { clock_in, clock_out, amended_by, break_mins } = body;
+            const { clock_in, clock_out, amended_by, break_mins, is_approved, approved_by } = body;
 
             const fields = ['is_amended = 1'];
             const params = { id };
@@ -200,6 +200,20 @@ app.http('clockings-update', {
             if (clock_out) { fields.push('clock_out = @clockOut'); params.clockOut = new Date(clock_out); }
             if (amended_by) { fields.push('amended_by = @amendedBy'); params.amendedBy = amended_by; }
             if (break_mins !== undefined) { fields.push('break_mins = @breakMins'); params.breakMins = parseInt(break_mins) || 0; }
+
+            // Approval flag — persists across reloads so an approved amendment
+            // stays approved. If the caller is editing clock times without
+            // explicitly approving, reset is_approved = 0 so the new edit
+            // requires a fresh approval.
+            if (is_approved !== undefined) {
+                fields.push('is_approved = @isApproved');
+                params.isApproved = is_approved ? 1 : 0;
+                fields.push('approved_by = @approvedBy');
+                params.approvedBy = is_approved ? (approved_by || amended_by || null) : null;
+            } else if (clock_in || clock_out || break_mins !== undefined) {
+                fields.push('is_approved = 0');
+                fields.push('approved_by = NULL');
+            }
 
             const result = await query(
                 `UPDATE ClockEntries SET ${fields.join(', ')} OUTPUT INSERTED.* WHERE id = @id`,
