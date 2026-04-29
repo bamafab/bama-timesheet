@@ -11084,12 +11084,53 @@ function renderTenderList() {
       <div style="font-family:var(--font-mono);font-weight:600;font-size:14px;min-width:80px;color:var(--accent)">${t.reference}</div>
       <div style="flex:1">
         <div style="font-weight:500">${t.project_name}</div>
-        <div style="font-size:12px;color:var(--muted)">${t.company_name}${t.contact_name ? ' · ' + t.contact_name : ''}</div>
+        <div style="font-size:12px;color:var(--muted)">${t.company_name}${t.contact_name ? ' · ' + (t.contact_name.split(',')[0].trim()) : ''}</div>
       </div>
+      ${renderDeadlineBadge(t.deadline_date, t.status)}
       <span class="tag tag-${t.status === 'tender' ? 'pending' : t.status === 'quote' ? 'approved' : t.status === 'won' ? 'approved' : t.status === 'lost' ? 'rejected' : 'pending'}">${t.status}</span>
       <div style="font-size:11px;color:var(--subtle);min-width:75px;text-align:right">${fmtDateStr(t.created_at?.split('T')[0] || '')}</div>
     </div>
   `).join('');
+}
+
+// Returns a styled deadline badge based on how close/past the deadline is
+function renderDeadlineBadge(deadlineDate, status) {
+  if (!deadlineDate) return '<div style="min-width:90px"></div>';
+  const dateStr = String(deadlineDate).split('T')[0];
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const dl = new Date(dateStr + 'T00:00:00');
+  const diffDays = Math.round((dl - today) / 86400000);
+
+  // Don't highlight if status is finalised (won, lost, cancelled)
+  const isFinalised = ['won', 'lost', 'cancelled'].includes(status);
+
+  let bg = 'transparent';
+  let color = 'var(--muted)';
+  let border = '1px solid var(--border)';
+  let label = fmtDateStr(dateStr);
+
+  if (!isFinalised) {
+    if (diffDays < 0) {
+      // Overdue — red
+      bg = 'rgba(220,38,38,.12)';
+      color = '#fca5a5';
+      border = '1px solid rgba(220,38,38,.4)';
+      label = `${fmtDateStr(dateStr)} (${Math.abs(diffDays)}d overdue)`;
+    } else if (diffDays === 0) {
+      bg = 'rgba(220,38,38,.12)';
+      color = '#fca5a5';
+      border = '1px solid rgba(220,38,38,.4)';
+      label = `${fmtDateStr(dateStr)} (today)`;
+    } else if (diffDays <= 3) {
+      // Within 3 days — yellow/amber
+      bg = 'rgba(234,179,8,.12)';
+      color = '#fde047';
+      border = '1px solid rgba(234,179,8,.4)';
+      label = `${fmtDateStr(dateStr)} (${diffDays}d left)`;
+    }
+  }
+
+  return `<div style="font-size:11px;font-weight:600;padding:4px 10px;border-radius:6px;background:${bg};color:${color};border:${border};min-width:90px;text-align:center;white-space:nowrap" title="Deadline: ${dateStr}">${label}</div>`;
 }
 
 // ── Render Quote List (status=quote/won/lost) ──
@@ -11119,6 +11160,7 @@ function renderQuoteList() {
         <div style="font-weight:500">${t.project_name}</div>
         <div style="font-size:12px;color:var(--muted)">${t.company_name}</div>
       </div>
+      ${renderDeadlineBadge(t.deadline_date, t.status)}
       <span class="tag tag-${t.status === 'quote' ? 'approved' : t.status === 'won' ? 'approved' : 'rejected'}">${t.status}</span>
     </div>
   `).join('');
@@ -11313,6 +11355,11 @@ async function openNewTenderModal() {
   });
   document.getElementById('ntClientSuggestions').style.display = 'none';
 
+  // Set deadline to today as default
+  const today = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+  document.getElementById('ntDeadline').value = todayStr;
+
   // Generate next reference by scanning SharePoint + database
   try {
     const ref = await getNextTenderReference();
@@ -11379,10 +11426,12 @@ function closeNewTenderModal() {
 async function submitNewTender() {
   const companyName = document.getElementById('ntCompanyName').value.trim();
   const projectName = document.getElementById('ntProjectName').value.trim();
+  const deadline = document.getElementById('ntDeadline').value;
   const reference = document.getElementById('ntReference').textContent;
 
   if (!companyName) { toast('Company name is required', 'error'); return; }
   if (!projectName) { toast('Project name is required', 'error'); return; }
+  if (!deadline) { toast('Deadline date is required', 'error'); return; }
   if (!reference || reference === '—') { toast('Reference could not be generated', 'error'); return; }
 
   try {
@@ -11430,13 +11479,15 @@ async function submitNewTender() {
       created_by: currentManagerUser || AUTH.getUserName() || 'unknown',
       contact_name: document.getElementById('ntContactName').value.trim() || null,
       contact_email: document.getElementById('ntContactEmail').value.trim() || null,
-      contact_phone: document.getElementById('ntContactPhone').value.trim() || null
+      contact_phone: document.getElementById('ntContactPhone').value.trim() || null,
+      deadline_date: deadline
     });
 
     tender.company_name = companyName;
     tender.contact_name = document.getElementById('ntContactName').value.trim() || null;
     tender.contact_email = document.getElementById('ntContactEmail').value.trim() || null;
     tender.contact_phone = document.getElementById('ntContactPhone').value.trim() || null;
+    tender.deadline_date = deadline;
     tendersData.unshift(tender);
 
     // Auto-save contact to client database (deduped by name + email match)
@@ -11476,6 +11527,16 @@ async function submitNewTender() {
     const badge = document.getElementById('detailStatusBadge');
     badge.textContent = tender.status;
     badge.className = 'tag tag-pending';
+
+    // Show deadline
+    const deadlineEl = document.getElementById('detailDeadline');
+    if (deadlineEl) {
+      if (tender.deadline_date) {
+        deadlineEl.innerHTML = `<span style="font-size:12px;color:var(--subtle);margin-right:8px">DEADLINE</span>${renderDeadlineBadge(tender.deadline_date, tender.status)}`;
+      } else {
+        deadlineEl.innerHTML = '';
+      }
+    }
 
     const clientInfo = document.getElementById('detailClientInfo');
     const addrLine = [document.getElementById('ntAddress1').value, document.getElementById('ntAddress2').value, document.getElementById('ntCity').value, document.getElementById('ntCounty').value, document.getElementById('ntPostcode').value].filter(v => v && v.trim()).join(', ');
@@ -11563,6 +11624,16 @@ async function openTenderDetail(id) {
   const badge = document.getElementById('detailStatusBadge');
   badge.textContent = tender.status;
   badge.className = `tag tag-${tender.status === 'tender' ? 'pending' : tender.status === 'quote' ? 'approved' : tender.status === 'won' ? 'approved' : tender.status === 'lost' ? 'rejected' : 'pending'}`;
+
+  // Deadline
+  const deadlineEl = document.getElementById('detailDeadline');
+  if (deadlineEl) {
+    if (tender.deadline_date) {
+      deadlineEl.innerHTML = `<span style="font-size:12px;color:var(--subtle);margin-right:8px">DEADLINE</span>${renderDeadlineBadge(tender.deadline_date, tender.status)}`;
+    } else {
+      deadlineEl.innerHTML = '';
+    }
+  }
 
   // Client info — split comma-separated contact fields into Contact 1, 2, 3
   const clientInfo = document.getElementById('detailClientInfo');
@@ -11946,6 +12017,12 @@ function openEditTenderModal() {
   if (!currentTender) return;
   document.getElementById('etTenderId').value = currentTender.id;
   document.getElementById('etProjectName').value = currentTender.project_name || '';
+  // Date input expects YYYY-MM-DD format
+  let deadlineStr = '';
+  if (currentTender.deadline_date) {
+    deadlineStr = String(currentTender.deadline_date).split('T')[0];
+  }
+  document.getElementById('etDeadline').value = deadlineStr;
   document.getElementById('etStatus').value = currentTender.status || 'tender';
   document.getElementById('editTenderModal').classList.add('active');
 }
@@ -11957,12 +12034,17 @@ function closeEditTenderModal() {
 async function submitEditTender() {
   const id = document.getElementById('etTenderId').value;
   const projectName = document.getElementById('etProjectName').value.trim();
+  const deadline = document.getElementById('etDeadline').value;
   const status = document.getElementById('etStatus').value;
 
   if (!projectName) { toast('Project name is required', 'error'); return; }
 
   try {
-    const updated = await api.put(`/api/tenders/${id}`, { project_name: projectName, status });
+    const updated = await api.put(`/api/tenders/${id}`, {
+      project_name: projectName,
+      status,
+      deadline_date: deadline || null
+    });
 
     const idx = tendersData.findIndex(t => String(t.id) === String(id));
     if (idx >= 0) Object.assign(tendersData[idx], updated);
@@ -12170,8 +12252,9 @@ function renderClientTendersList(clientId) {
       <div style="font-family:var(--font-mono);font-weight:600;font-size:14px;min-width:80px;color:var(--accent)">${t.reference}</div>
       <div style="flex:1">
         <div style="font-weight:500">${t.project_name}</div>
-        <div style="font-size:12px;color:var(--muted)">${t.contact_name || '—'}</div>
+        <div style="font-size:12px;color:var(--muted)">${t.contact_name ? (t.contact_name.split(',')[0].trim()) : '—'}</div>
       </div>
+      ${renderDeadlineBadge(t.deadline_date, t.status)}
       <span class="tag tag-${t.status === 'tender' ? 'pending' : t.status === 'quote' ? 'approved' : t.status === 'won' ? 'approved' : t.status === 'lost' ? 'rejected' : 'pending'}">${t.status}</span>
       <div style="font-size:11px;color:var(--subtle);min-width:75px;text-align:right">${fmtDateStr((t.created_at || '').split('T')[0])}</div>
     </div>

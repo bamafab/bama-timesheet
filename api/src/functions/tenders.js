@@ -114,20 +114,21 @@ app.http('tenders-create', {
             const body = await request.json();
             const { reference, client_id, project_name, comments,
                     sharepoint_folder_id, sharepoint_tender_folder_id, created_by,
-                    contact_name, contact_email, contact_phone } = body;
+                    contact_name, contact_email, contact_phone, deadline_date } = body;
 
             if (!reference) return badRequest('reference is required', request);
             if (!client_id) return badRequest('client_id is required', request);
             if (!project_name) return badRequest('project_name is required', request);
+            if (!deadline_date) return badRequest('deadline_date is required', request);
 
             const result = await query(
                 `INSERT INTO Tenders (reference, client_id, project_name, comments, status,
                     sharepoint_folder_id, sharepoint_tender_folder_id, created_by,
-                    contact_name, contact_email, contact_phone)
+                    contact_name, contact_email, contact_phone, deadline_date)
                  OUTPUT INSERTED.*
                  VALUES (@reference, @client_id, @project_name, @comments, 'tender',
                     @sharepoint_folder_id, @sharepoint_tender_folder_id, @created_by,
-                    @contact_name, @contact_email, @contact_phone)`,
+                    @contact_name, @contact_email, @contact_phone, @deadline_date)`,
                 {
                     reference,
                     client_id: parseInt(client_id),
@@ -138,7 +139,8 @@ app.http('tenders-create', {
                     created_by: created_by || null,
                     contact_name: contact_name || null,
                     contact_email: contact_email || null,
-                    contact_phone: contact_phone || null
+                    contact_phone: contact_phone || null,
+                    deadline_date
                 }
             );
 
@@ -171,7 +173,8 @@ app.http('tenders-update', {
 
             const allowed = ['project_name', 'comments', 'status', 'quote_handler_id',
                            'sharepoint_folder_id', 'sharepoint_tender_folder_id',
-                           'converted_by', 'contact_name', 'contact_email', 'contact_phone'];
+                           'converted_by', 'contact_name', 'contact_email', 'contact_phone',
+                           'deadline_date'];
 
             for (const key of allowed) {
                 if (body[key] !== undefined) {

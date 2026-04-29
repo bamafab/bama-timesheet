@@ -152,6 +152,7 @@
           <div>
             <div style="font-size:24px;font-weight:700;font-family:var(--font-display);letter-spacing:1px" id="detailReference">—</div>
             <div style="font-size:15px;color:var(--muted)" id="detailProjectName">—</div>
+            <div id="detailDeadline" style="margin-top:8px"></div>
           </div>
           <div style="display:flex;gap:8px;align-items:center">
             <span class="tag" id="detailStatusBadge">—</span>
@@ -327,6 +328,11 @@
       <input type="text" class="field-input" id="ntProjectName" placeholder="e.g. Warehouse Steelwork">
     </div>
     <div style="margin-bottom:12px">
+      <div class="field-label">DEADLINE DATE *</div>
+      <input type="date" class="field-input" id="ntDeadline">
+      <div style="font-size:11px;color:var(--subtle);margin-top:4px">When the tender response is due</div>
+    </div>
+    <div style="margin-bottom:12px">
       <div class="field-label">INITIAL COMMENT (OPTIONAL)</div>
       <textarea class="field-input" id="ntComments" rows="3" placeholder="Any notes about this tender... (more can be added later)"></textarea>
     </div>
@@ -353,6 +359,10 @@
     <div style="margin-bottom:12px">
       <div class="field-label">PROJECT NAME</div>
       <input type="text" class="field-input" id="etProjectName">
+    </div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">DEADLINE DATE</div>
+      <input type="date" class="field-input" id="etDeadline">
     </div>
     <div style="margin-bottom:12px">
       <div class="field-label">STATUS</div>
