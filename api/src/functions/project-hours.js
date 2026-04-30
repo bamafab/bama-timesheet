@@ -31,9 +31,9 @@ app.http('project-hours-create', {
             }
 
             const result = await query(
-                `INSERT INTO ProjectHours (employee_id, project_number, date, hours, week_commencing)
+                `INSERT INTO ProjectHours (employee_id, project_number, date, hours, week_commencing, is_approved)
                  OUTPUT INSERTED.*
-                 VALUES (@employeeId, @projectNumber, @date, @hours, @weekCommencing)`,
+                 VALUES (@employeeId, @projectNumber, @date, @hours, @weekCommencing, 1)`,
                 {
                     employeeId: parseInt(employee_id),
                     projectNumber: project_number,

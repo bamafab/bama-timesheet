@@ -384,9 +384,8 @@
       </div>
       <div class="approval-section">
         <div class="approve-all-bar">
-          <span id="pendingCount">0 entries pending approval</span>
+          <span style="color:var(--muted);font-size:13px">Project hours are saved automatically. Use the bin icon below to remove an incorrect entry.</span>
           <div style="display:flex;gap:8px">
-            <button class="btn btn-success" style="padding:8px 16px;font-size:12px" onclick="approveAll()">✓ Approve All Pending</button>
             <button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="writeToSharePoint()">↑ Sync to SharePoint</button>
           </div>
         </div>
@@ -398,12 +397,11 @@
               <th>EMPLOYEE</th>
               <th>DATE</th>
               <th>HRS</th>
-              <th>STATUS</th>
-              <th>ACTION</th>
+              <th></th>
             </tr>
           </thead>
           <tbody id="projectTableBody">
-            <tr><td colspan="7"><div class="empty-state"><div class="spinner"></div></div></td></tr>
+            <tr><td colspan="6"><div class="empty-state"><div class="spinner"></div></div></td></tr>
           </tbody>
         </table>
       </div>
@@ -1099,6 +1097,6 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-<script src="shared.js?v=20260430c"></script>
+<script src="shared.js?v=20260430d"></script>
 </body>
 </html>

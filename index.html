@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Workshop Timesheet</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260430c">
+<link rel="stylesheet" href="bama.css?v=20260430d">
 </head>
 <body>
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
@@ -325,11 +325,7 @@
 <div class="modal-overlay" id="editEntryModal">
   <div class="modal">
     <div class="modal-title">Edit Hours</div>
-    <div style="color:var(--muted);font-size:13px;margin-bottom:6px" id="editEntryProject"></div>
-    <div style="margin-bottom:20px">
-      <span class="manually-edited-badge">PENDING APPROVAL</span>
-      <span style="font-size:12px;color:var(--subtle);margin-left:8px">Your manager will approve this change</span>
-    </div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:18px" id="editEntryProject"></div>
     <div>
       <div class="field-label">HOURS</div>
       <input type="number" class="field-input" id="editEntryHours" min="0.5" max="24" step="0.5"
@@ -343,7 +339,7 @@
     </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeEditEntry()">Cancel</button>
-      <button class="btn btn-primary" onclick="saveEditEntry()">Submit for Approval</button>
+      <button class="btn btn-primary" onclick="saveEditEntry()">Save Changes</button>
     </div>
   </div>
 </div>
@@ -451,6 +447,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260430c"></script>
+<script src="shared.js?v=20260430d"></script>
 </body>
 </html>

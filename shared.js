@@ -1671,14 +1671,10 @@ function renderManagerView() {
 
   const emps = new Set(weekEntries.map(e => e.employeeName)).size;
 
-  // Sub-label below the search box: total project entries needing approval (separate concern)
-  const pendingEntries = weekEntries.filter(e => e.status === 'pending').length;
-
   const el = (id, val) => { const e = document.getElementById(id); if (e) e.textContent = val; };
   el('stat-pending', pending);
   el('stat-approved', approved);
   el('stat-emps', emps);
-  el('pendingCount', `${pendingEntries} entr${pendingEntries === 1 ? 'y' : 'ies'} pending approval`);
 
   // Project table
   renderProjectTable(weekEntries);
@@ -1691,7 +1687,7 @@ function renderProjectTable(entries) {
   const tbody = document.getElementById('projectTableBody');
   if (!tbody) return;
   if (!entries.length) {
-    tbody.innerHTML = '<tr><td colspan="7"><div class="empty-state"><div class="icon">📋</div>No entries this week</div></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6"><div class="empty-state"><div class="icon">📋</div>No entries this week</div></td></tr>';
     return;
   }
 
@@ -1702,14 +1698,8 @@ function renderProjectTable(entries) {
       <td>${e.employeeName}</td>
       <td class="mono" style="font-size:12px">${fmtDateStr(e.date)}</td>
       <td class="mono"><b>${e.hours}h</b></td>
-      <td><span class="tag tag-${e.status}">${e.status}</span></td>
-      <td>
-        ${e.status === 'pending' ? `
-          <div class="approve-row">
-            <button class="tiny-btn tiny-approve" onclick="setEntryStatus('${e.id}','approved')">✓ Approve</button>
-            <button class="tiny-btn tiny-reject" onclick="setEntryStatus('${e.id}','rejected')">✕ Reject</button>
-          </div>
-        ` : `<span style="color:var(--subtle);font-size:12px">—</span>`}
+      <td style="text-align:right">
+        <button class="tiny-btn tiny-reject" onclick="deleteProjectEntry('${e.id}')" title="Remove this entry">🗑 Delete</button>
       </td>
     </tr>
   `).join('');
@@ -2409,54 +2399,40 @@ async function rejectAmendment(id) {
 }
 
 
-async function setEntryStatus(id, status) {
+// Delete a project hours entry from the office view.
+// Project hours no longer require manager approval — they're saved as-is and
+// can be removed by the office team if logged in error.
+async function deleteProjectEntry(id) {
   const entry = state.timesheetData.entries.find(e => String(e.id) === String(id));
   if (!entry) return;
+  const label = `${entry.projectId} \u2014 ${entry.hours}h on ${fmtDateStr(entry.date)} (${entry.employeeName})`;
+  if (!confirm(`Delete this entry?\n\n${label}\n\nThis cannot be undone.`)) return;
   try {
-    await api.put(`/api/project-hours/${id}`, {
-      is_approved: status === 'approved'
-    });
-    entry.status = status;
-    entry.is_approved = status === 'approved';
+    await api.delete(`/api/project-hours/${id}`);
+    state.timesheetData.entries = state.timesheetData.entries.filter(
+      e => String(e.id) !== String(id)
+    );
+    toast('Entry deleted', 'success');
     renderManagerView();
-  } catch (err) { toast('Save failed: ' + err.message, 'error'); }
-}
-
-async function approveAll() {
-  const { mon, sun } = getWeekDates(state.currentWeekOffset);
-  const pending = state.timesheetData.entries.filter(
-    e => e.status === 'pending' && e.date >= dateStr(mon) && e.date <= dateStr(sun)
-  );
-  if (!pending.length) { toast('No pending entries', 'info'); return; }
-
-  try {
-    // Approve each entry via API
-    await Promise.all(pending.map(e =>
-      api.put(`/api/project-hours/${e.id}`, { is_approved: true })
-    ));
-    pending.forEach(e => { e.status = 'approved'; e.is_approved = true; });
-    toast(`${pending.length} entries approved`, 'success');
-    renderManagerView();
-  } catch (err) { toast('Save failed: ' + err.message, 'error'); }
+  } catch (err) { toast('Delete failed: ' + err.message, 'error'); }
 }
 
 async function writeToSharePoint() {
   const { mon, sun } = getWeekDates(state.currentWeekOffset);
-  const approved = state.timesheetData.entries.filter(
-    e => e.status === 'approved' &&
-         e.date >= dateStr(mon) && e.date <= dateStr(sun) &&
+  // All entries this week that haven't been synced yet (approval workflow removed)
+  const toSync = state.timesheetData.entries.filter(
+    e => e.date >= dateStr(mon) && e.date <= dateStr(sun) &&
          !e.synced &&
          e.projectId !== 'S000'  // Never write unproductive time to Project Tracker
   );
 
-  if (!approved.length) {
-    toast('No newly approved entries to sync', 'info'); return;
+  if (!toSync.length) {
+    toast('No new entries to sync', 'info'); return;
   }
 
   // Write S000 unproductive time to separate sheet
   const s000Entries = state.timesheetData.entries.filter(
-    e => e.status === 'approved' &&
-         e.date >= dateStr(mon) && e.date <= dateStr(sun) &&
+    e => e.date >= dateStr(mon) && e.date <= dateStr(sun) &&
          !e.synced &&
          e.projectId === 'S000'
   );
@@ -2464,18 +2440,11 @@ async function writeToSharePoint() {
     await writeUnproductiveTimeLog(s000Entries);
   }
 
-  const ok = await writeApprovedToLabourLog(approved);
+  const ok = await writeApprovedToLabourLog(toSync);
   if (ok) {
-    // Mark entries as synced via API
-    try {
-      await Promise.all([
-        ...approved.map(e => api.put(`/api/project-hours/${e.id}`, { is_approved: true })),
-        ...s000Entries.map(e => api.put(`/api/project-hours/${e.id}`, { is_approved: true }))
-      ]);
-    } catch (e) { console.warn('Sync flag update failed:', e.message); }
-    approved.forEach(e => e.synced = true);
+    toSync.forEach(e => e.synced = true);
     s000Entries.forEach(e => e.synced = true);
-    toast(`${approved.length} entries written to PROJECT TRACKER ✓`, 'success');
+    toast(`${toSync.length} entries written to PROJECT TRACKER ✓`, 'success');
     renderManagerView();
   }
 }
@@ -2837,15 +2806,13 @@ async function saveEditEntry() {
   try {
     await api.put(`/api/project-hours/${_editEntryId}`, {
       hours: newHours,
-      is_approved: false,
       edit_reason: reason,
       edited_by: state.currentEmployee
+      // is_approved kept as-is — project hours no longer require approval
     });
 
     entry.originalHours = entry.originalHours || entry.hours;
     entry.hours = newHours;
-    entry.status = 'pending';
-    entry.is_approved = false;
     entry.manuallyEdited = true;
     entry.editReason = reason;
     entry.editedAt = new Date().toISOString();
@@ -2887,7 +2854,7 @@ async function saveEditEntry() {
 
     closeEditEntry();
     renderMyWeek(state.currentEmployee);
-    toast('Hours updated — pending manager approval ✓', 'success');
+    toast('Hours updated ✓', 'success');
   } catch (err) { toast('Save failed: ' + err.message, 'error'); }
 }
 
