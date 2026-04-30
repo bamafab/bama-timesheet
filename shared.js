@@ -5931,25 +5931,17 @@ async function emailPayrollReport() {
     try { comments = await api.get(`/api/payroll-comments?week_commencing=${monStr}`) || []; }
     catch (e) { /* non-fatal */ }
 
-    // Tidy plain-text email layout: trim trailing whitespace from the
-    // template body, then append clearly delineated sections with consistent
-    // spacing. Bare URL on its own line so mail clients auto-linkify it.
+    // Plain-text body: template text, optional Payroll Instructions list,
+    // then a short closing line with the file URL on its own line so mail
+    // clients auto-linkify it.
     body = body.replace(/\s+$/g, '');
-    const SEP = '\n\n────────────────────────────\n';
 
     if (comments.length) {
-      body += SEP + 'PAYROLL INSTRUCTIONS\n────────────────────────────\n\n';
-      body += comments.map((c, i) => {
-        const when = new Date(c.created_at).toLocaleString('en-GB', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' });
-        return `${i + 1}. ${c.comment}\n   — ${c.created_by}, ${when}`;
-      }).join('\n\n');
+      body += '\n\nPayroll Instructions:\n';
+      body += comments.map(c => `- ${c.comment}`).join('\n');
     }
 
-    body += SEP + 'PAYROLL DOCUMENT\n────────────────────────────\n\n';
-    body += `File:  ${fileName}\n\n${uploaded.webUrl}`;
-    if (nextRevision > 0) {
-      body += `\n\n(Revision ${nextRevision} — previous versions are kept on SharePoint in the same folder.)`;
-    }
+    body += `\n\nPlease find the below payroll file ready for processing:\n${uploaded.webUrl}`;
 
     _payrollExtras.weekKey = null;
     await renderPayrollExtras();
