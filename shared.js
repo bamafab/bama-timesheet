@@ -2927,7 +2927,10 @@ function closeNoProjectModal() {
 
 async function confirmNoProjectClockOut() {
   if (!_pendingClockOutData) return;
-  const { emp, today, clockOut, breakMins, clocking } = _pendingClockOutData;
+  // Snapshot the data — closeNoProjectModal() below clears _pendingClockOutData,
+  // and finishClockOut still needs it.
+  const data = _pendingClockOutData;
+  const { emp, today, clockOut, breakMins, clocking } = data;
 
   // Log full shift as WGD
   const clockedHrs = calcHours(clocking.clockIn, clockOut, breakMins) || 0;
@@ -2957,8 +2960,8 @@ async function confirmNoProjectClockOut() {
   }
 
   closeNoProjectModal();
-  // Proceed with clock-out
-  await finishClockOut(_pendingClockOutData);
+  // Proceed with clock-out (use the snapshot — closeNoProjectModal nulled the global)
+  await finishClockOut(data);
 }
 
 // ═══════════════════════════════════════════
