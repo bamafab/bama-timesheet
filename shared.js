@@ -5693,13 +5693,26 @@ async function findOrCreatePayrollYearFolder(year) {
   return folder;
 }
 
-async function renderPayrollPDFBlob(weekStr) {
-  if (typeof html2pdf === 'undefined') throw new Error('PDF library not loaded — refresh the page');
+// Renders the payroll PDF using the SAME mechanism as the Export to PDF
+// button — a real browser window that natively renders the HTML — and uses
+// html2pdf inside that window to capture a Blob. This is far more reliable
+// than rasterising an off-screen iframe in the parent document context,
+// which suffered from layout cropping, dark backgrounds bleeding from
+// bama.css, and host-page coordinate confusion in html2canvas.
+//
+// `popupWin` MUST be opened by the caller synchronously inside the user's
+// click handler — popup blockers will reject window.open() if it's called
+// after any awaits. The caller should pass the resulting Window in.
+async function renderPayrollPDFBlob(weekStr, popupWin) {
+  if (!popupWin) throw new Error('Render window not provided — cannot generate PDF');
 
   const { mon, sun } = getWeekDates(payrollWeekOffset);
   const employees = (state.timesheetData.employees || []).filter(e => e.active !== false && (e.payType || 'payee') !== 'cis');
   const results = employees.map(e => calculatePayroll(e.name, mon, sun)).filter(Boolean);
-  if (!results.length) throw new Error('No payroll data this week');
+  if (!results.length) {
+    try { popupWin.close(); } catch (e) {}
+    throw new Error('No payroll data this week');
+  }
 
   const totals = {
     basic: results.reduce((s, r) => s + r.basicPay, 0),
@@ -5709,90 +5722,81 @@ async function renderPayrollPDFBlob(weekStr) {
   };
 
   await loadLogoDataUri();
-  const html = buildPayrollHTML({ results, totals, weekStr });
+  const baseHtml = buildPayrollHTML({ results, totals, weekStr });
 
-  // Render into an off-screen iframe. Two reasons we use an iframe rather
-  // than a <div> with the HTML's body content injected directly:
-  //   1. The full <html><head><body> document gets parsed correctly, so the
-  //      body { padding } / * { } rules apply to the actual <body>.
-  //   2. The host page's stylesheet (bama.css) doesn't bleed into the render
-  //      and zero out the layout — which is what was producing 794x0
-  //      blank canvases (verified via html2canvas console: "719x0").
-  const iframe = document.createElement('iframe');
-  iframe.id = '__payroll_pdf_render__';
-  // 794px ≈ A4 width at 96dpi. height set after content loads.
-  iframe.style.cssText = 'position:fixed;left:-10000px;top:0;width:794px;height:1123px;border:0;visibility:hidden;';
-  document.body.appendChild(iframe);
+  // Inject the html2pdf library + a tiny capture bridge into the document
+  // BEFORE writing it so it executes after the body parses. The bridge
+  // signals back to us via a global flag once the PDF Blob is ready.
+  const captureScript = `
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"><\/script>
+    <script>
+      window.__pdfReady = false;
+      window.__pdfBlob = null;
+      window.__pdfError = null;
+      async function __capturePDF() {
+        try {
+          // Wait for fonts.
+          if (document.fonts && document.fonts.ready) {
+            try { await document.fonts.ready; } catch (e) {}
+          }
+          // Wait for images.
+          const imgs = Array.from(document.images);
+          await Promise.all(imgs.map(img => {
+            if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+            return new Promise(res => {
+              img.addEventListener('load', res, { once: true });
+              img.addEventListener('error', res, { once: true });
+              setTimeout(res, 3000);
+            });
+          }));
+          // Let layout settle.
+          await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+          const blob = await html2pdf().set({
+            margin: [10, 10, 10, 10],
+            filename: 'payroll.pdf',
+            image: { type: 'jpeg', quality: 0.95 },
+            html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
+            jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+          }).from(document.body).outputPdf('blob');
+          window.__pdfBlob = blob;
+        } catch (err) {
+          window.__pdfError = err && err.message ? err.message : String(err);
+        } finally {
+          window.__pdfReady = true;
+        }
+      }
+      window.addEventListener('load', __capturePDF);
+    <\/script>
+  `;
 
-  try {
-    // Write the full document into the iframe and wait for load.
-    const idoc = iframe.contentDocument || iframe.contentWindow.document;
-    idoc.open();
-    idoc.write(html);
-    idoc.close();
+  // Splice the capture script in just before </body>.
+  const html = baseHtml.replace(/<\/body>/i, captureScript + '</body>');
 
-    // Wait for the iframe document to signal it's done loading. If it's
-    // already complete, this resolves on the next tick.
-    await new Promise(resolve => {
-      if (idoc.readyState === 'complete') { resolve(); return; }
-      iframe.addEventListener('load', resolve, { once: true });
-      // Hard timeout — 5 s is generous for this small doc.
-      setTimeout(resolve, 5000);
-    });
+  popupWin.document.open();
+  popupWin.document.write(html);
+  popupWin.document.close();
 
-    // Wait for fonts inside the iframe.
-    if (idoc.fonts && idoc.fonts.ready) {
-      try { await idoc.fonts.ready; } catch (e) { /* non-fatal */ }
+  // Poll for the bridge to signal completion. 30 s ceiling is generous —
+  // a normal capture is < 2 s.
+  const start = Date.now();
+  while (!popupWin.__pdfReady) {
+    if (Date.now() - start > 30000) {
+      try { popupWin.close(); } catch (e) {}
+      throw new Error('PDF render timed out after 30 s');
     }
-    // Wait for images (logo) — 3s safety per image.
-    const imgs = Array.from(idoc.querySelectorAll('img'));
-    await Promise.all(imgs.map(img => {
-      if (img.complete && img.naturalWidth > 0) return Promise.resolve();
-      return new Promise(resolve => {
-        img.addEventListener('load', resolve, { once: true });
-        img.addEventListener('error', resolve, { once: true });
-        setTimeout(resolve, 3000);
-      });
-    }));
-
-    // Resize iframe to actual content height so html2canvas captures everything.
-    const fullHeight = Math.max(
-      idoc.body.scrollHeight,
-      idoc.body.offsetHeight,
-      idoc.documentElement.scrollHeight,
-      idoc.documentElement.offsetHeight
-    );
-    iframe.style.height = fullHeight + 'px';
-
-    // Two animation frames so layout settles after the resize.
-    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-
-    if (fullHeight === 0) {
-      console.warn('[payroll PDF] iframe content height is 0 — capture will be blank');
-    } else {
-      console.info('[payroll PDF] capturing', { width: 794, height: fullHeight });
-    }
-
-    // html2pdf can take any DOM element. Pass the iframe's body so it
-    // captures the rendered document, not the (visibility:hidden) iframe.
-    return await html2pdf().set({
-      margin: [10, 10, 10, 10],
-      filename: 'payroll.pdf',
-      image: { type: 'jpeg', quality: 0.95 },
-      html2canvas: {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: '#ffffff',
-        // height/windowHeight ensure the off-screen body is fully captured.
-        height: fullHeight,
-        windowHeight: fullHeight,
-        windowWidth: 794
-      },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-    }).from(idoc.body).outputPdf('blob');
-  } finally {
-    document.body.removeChild(iframe);
+    await new Promise(r => setTimeout(r, 100));
   }
+
+  if (popupWin.__pdfError) {
+    const errMsg = popupWin.__pdfError;
+    try { popupWin.close(); } catch (e) {}
+    throw new Error('PDF render failed: ' + errMsg);
+  }
+
+  const blob = popupWin.__pdfBlob;
+  try { popupWin.close(); } catch (e) {}
+  if (!blob) throw new Error('PDF render produced no blob');
+  return blob;
 }
 
 function fillPayrollEmailTemplate(tpl, ctx) {
@@ -5818,21 +5822,35 @@ async function emailPayrollReport() {
     console.warn('Failed to load revisions:', e);
   }
 
+  // Open the render window inside the modal's confirm-click handler so it's
+  // a fresh user gesture (popup blockers reject window.open after awaits).
+  // The window is positioned mostly off-screen so it doesn't disturb the user.
+  const openRenderWindow = () => {
+    const w = window.open('', '_blank',
+      'width=860,height=400,left=' + (screen.width || 1200) + ',top=0,noopener=no');
+    if (w) {
+      try { w.document.write('<!DOCTYPE html><html><head><title>Generating payroll PDF…</title><style>body{font-family:sans-serif;color:#666;padding:40px;text-align:center}</style></head><body>Generating payroll PDF…</body></html>'); } catch (e) {}
+    }
+    return w;
+  };
+
+  let popupWin = null;
   if (revisions.length > 0) {
     // Already generated → confirm override (BAMA-styled)
     const lastRev = revisions[revisions.length - 1];
     const lastLabel = lastRev.revision_number === 0 ? 'the original' : `rev${lastRev.revision_number}`;
-    const ok = await showConfirmAsync(
+    const result = await showConfirmAsync(
       'Override existing payroll?',
       `<div style="margin-bottom:14px">Payroll for <b>${escapeHtml(weekStr)}</b> has already been generated (${escapeHtml(lastLabel)}, by <b>${escapeHtml(lastRev.created_by)}</b>).</div>
        <div style="margin-bottom:14px">Do you want to override and generate a <b>new revision</b>?</div>
        <div style="font-size:12px;color:var(--subtle)">The original file will be kept on SharePoint.</div>`,
-      { okLabel: 'Generate revision', cancelLabel: 'Cancel' }
+      { okLabel: 'Generate revision', cancelLabel: 'Cancel', onConfirmSync: openRenderWindow }
     );
-    if (!ok) return;
+    if (!result.ok) return;
+    popupWin = result.data;
   } else {
     // First-time generation → confirm to prevent accidental click
-    const ok = await showConfirmAsync(
+    const result = await showConfirmAsync(
       'Email payroll report?',
       `<div style="margin-bottom:14px">This will:</div>
        <ul style="margin:0 0 14px 18px;padding:0;color:var(--muted);font-size:13px;line-height:1.7">
@@ -5841,9 +5859,15 @@ async function emailPayrollReport() {
          <li>Open an email draft with the file link</li>
        </ul>
        <div style="font-size:12px;color:var(--subtle)">Continue?</div>`,
-      { okLabel: 'Generate & email', cancelLabel: 'Cancel' }
+      { okLabel: 'Generate & email', cancelLabel: 'Cancel', onConfirmSync: openRenderWindow }
     );
-    if (!ok) return;
+    if (!result.ok) return;
+    popupWin = result.data;
+  }
+
+  if (!popupWin) {
+    toast('Popup blocked — allow pop-ups for this site and try again', 'error');
+    return;
   }
 
   const nextRevision = revisions.length === 0
@@ -5855,7 +5879,7 @@ async function emailPayrollReport() {
   setLoading(true);
 
   try {
-    const pdfBlob = await renderPayrollPDFBlob(weekStrFull);
+    const pdfBlob = await renderPayrollPDFBlob(weekStrFull, popupWin);
 
     const year = mon.getFullYear();
     const yearFolder = await findOrCreatePayrollYearFolder(year);
@@ -5929,6 +5953,7 @@ async function emailPayrollReport() {
     window.location.href = mailto;
   } catch (err) {
     setLoading(false);
+    try { if (popupWin && !popupWin.closed) popupWin.close(); } catch (e) {}
     console.error('Payroll email flow failed:', err);
     toast('Failed: ' + err.message, 'error');
   }
@@ -10713,13 +10738,25 @@ function showConfirmAsync(title, htmlMessage, options = {}) {
         newBtn.classList.remove('btn-primary');
         newBtn.classList.add('btn-danger');
       }
-      newBtn.onclick = () => finish(true);
+      newBtn.onclick = () => {
+        // onConfirmSync runs inside the user-gesture click stack, before
+        // the promise resolves. Useful for window.open() which would
+        // otherwise be blocked by popup blockers if it ran after an await.
+        // The return value is passed through as the second value, so the
+        // caller can do: const { ok, data } = await showConfirmAsync(...)
+        let syncResult;
+        if (typeof options.onConfirmSync === 'function') {
+          try { syncResult = options.onConfirmSync(); }
+          catch (e) { console.error('onConfirmSync threw:', e); }
+        }
+        finish(options.onConfirmSync ? { ok: true, data: syncResult } : true);
+      };
       btnEl.parentNode.replaceChild(newBtn, btnEl);
     }
     if (cancelBtn) {
       const newCancel = cancelBtn.cloneNode(true);
       if (options.cancelLabel) newCancel.textContent = options.cancelLabel;
-      newCancel.onclick = () => finish(false);
+      newCancel.onclick = () => finish(options.onConfirmSync ? { ok: false, data: null } : false);
       cancelBtn.parentNode.replaceChild(newCancel, cancelBtn);
     }
 
