@@ -5697,6 +5697,7 @@ async function renderPayrollPDFBlob(weekStr) {
   if (typeof html2pdf === 'undefined') throw new Error('PDF library not loaded — refresh the page');
 
   const { mon, sun } = getWeekDates(payrollWeekOffset);
+  const monStr = dateStr(mon);
   const employees = (state.timesheetData.employees || []).filter(e => e.active !== false && (e.payType || 'payee') !== 'cis');
   const results = employees.map(e => calculatePayroll(e.name, mon, sun)).filter(Boolean);
   if (!results.length) throw new Error('No payroll data this week');
@@ -5708,8 +5709,17 @@ async function renderPayrollPDFBlob(weekStr) {
     grand: results.reduce((s, r) => s + r.totalPay, 0)
   };
 
+  // Include payroll instructions in the SharePoint-saved PDF too.
+  let comments = [];
+  if (_payrollExtras.weekKey === monStr) {
+    comments = _payrollExtras.comments || [];
+  } else {
+    try { comments = await api.get(`/api/payroll-comments?week_commencing=${monStr}`) || []; }
+    catch (e) { console.warn('Could not load payroll comments for PDF:', e); }
+  }
+
   await loadLogoDataUri();
-  const html = buildPayrollHTML({ results, totals, weekStr });
+  const html = buildPayrollHTML({ results, totals, weekStr, comments });
   const container = document.createElement('div');
   container.style.cssText = 'position:fixed;left:-10000px;top:0;width:794px;background:#fff;';
   container.innerHTML = html.replace(/^[\s\S]*?<body[^>]*>|<\/body>[\s\S]*$/g, '');
@@ -5843,6 +5853,7 @@ async function emailPayrollReport() {
 
 async function generatePayrollPDF() {
   const { mon, sun } = getWeekDates(payrollWeekOffset);
+  const monStr = dateStr(mon);
   const employees = (state.timesheetData.employees || []).filter(e => e.active !== false && (e.payType || 'payee') !== 'cis');
   const results = employees.map(e => calculatePayroll(e.name, mon, sun)).filter(Boolean);
 
@@ -5859,7 +5870,17 @@ async function generatePayrollPDF() {
   // Ensure logo is loaded into cache so it embeds in the print window
   await loadLogoDataUri();
 
-  const html = buildPayrollHTML({ results, totals, weekStr });
+  // Pull payroll instruction comments for this week. Use cached value when
+  // it matches the visible week; otherwise fetch fresh. Non-fatal on failure.
+  let comments = [];
+  if (_payrollExtras.weekKey === monStr) {
+    comments = _payrollExtras.comments || [];
+  } else {
+    try { comments = await api.get(`/api/payroll-comments?week_commencing=${monStr}`) || []; }
+    catch (e) { console.warn('Could not load payroll comments for PDF:', e); }
+  }
+
+  const html = buildPayrollHTML({ results, totals, weekStr, comments });
   const printWin = window.open('', '_blank');
   printWin.document.write(html + `<script>window.onload = function() { window.print(); }<\/script>`);
   printWin.document.close();
@@ -10913,7 +10934,11 @@ function getMockPayrollData() {
       { employeeName: 'Tom Wilson', rate: 16.00, totalHours: 38, basicHours: 38, basicPay: 608.00,
         overtimeHours: 0, overtimePay: 0, doubleHours: 0, doublePay: 0, totalPay: 608.00, doubleTimeApplies: false }
     ],
-    totals: { basic: 2228.00, ot: 267.38, dt: 88.00, grand: 2583.38 }
+    totals: { basic: 2228.00, ot: 267.38, dt: 88.00, grand: 2583.38 },
+    comments: [
+      { comment: 'Sarah worked Sat & Sun call-out — double time approved.', created_by: 'office', created_at: '2024-08-19T08:14:00Z' },
+      { comment: 'Tom\u2019s missing Wed afternoon clock-out has been added manually (16:30).', created_by: 'office', created_at: '2024-08-19T08:18:00Z' }
+    ]
   };
 }
 function getMockAttendanceData() {
@@ -11110,6 +11135,22 @@ function buildPayrollHTML(data, settingsOverride) {
       <td class="mono total-pay">\u00a3${r.totalPay.toFixed(2)}</td>
     </tr>`).join('');
 
+  const comments = Array.isArray(data.comments) ? data.comments : [];
+  const fmtCommentDate = iso => {
+    if (!iso) return '';
+    try {
+      return new Date(iso).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    } catch (e) { return ''; }
+  };
+  const instructionsHtml = comments.length ? `
+      <div class="instructions-title">Payroll Instructions</div>
+      ${comments.map(c => `
+        <div class="instruction">
+          <div class="instruction-text">${escapeHtml(c.comment || '')}</div>
+          <div class="instruction-meta">${escapeHtml(c.created_by || '')}${c.created_at ? ' \u00b7 ' + escapeHtml(fmtCommentDate(c.created_at)) : ''}${c.updated_at && c.updated_by ? ' (edited by ' + escapeHtml(c.updated_by) + ' \u00b7 ' + escapeHtml(fmtCommentDate(c.updated_at)) + ')' : ''}</div>
+        </div>`).join('')}
+    ` : '';
+
   return `<!DOCTYPE html><html><head>
     <title>${escapeHtml(g.companyName)} Payroll \u2013 ${escapeHtml(data.weekStr)}</title>
     <style>
@@ -11134,6 +11175,12 @@ function buildPayrollHTML(data, settingsOverride) {
       tfoot td { font-weight: 700; border-top: 2px solid #ddd; border-bottom: none; background: #fafafa; }
       .grand { font-size: 17px; color: ${accent}; }
       .badge { display:inline-block; padding:1px 6px; border-radius:3px; font-size:10px; background:#d1fae5; color:#065f46; margin-left:6px; font-family:sans-serif; }
+      .instructions-title { font-size: 12px; text-transform: uppercase; letter-spacing: 1.5px; color: #888;
+        margin: 24px 0 10px; border-bottom: 1px solid #eee; padding-bottom: 6px; }
+      .instruction { border-left: 3px solid ${accent}; background: #fafafa; padding: 10px 14px;
+        margin-bottom: 8px; border-radius: 0 6px 6px 0; page-break-inside: avoid; }
+      .instruction-text { font-size: 13px; color: #222; white-space: pre-wrap; line-height: 1.5; }
+      .instruction-meta { font-size: 10px; color: #999; margin-top: 6px; }
       .footer { margin-top: 32px; font-size: 11px; color: #aaa; border-top: 1px solid #eee; padding-top: 12px; white-space: pre-line; }
       @media print { body { padding: 16px; } button { display: none; } }
     </style></head>
@@ -11161,6 +11208,7 @@ function buildPayrollHTML(data, settingsOverride) {
           <td class="mono grand">\u00a3${data.totals.grand.toFixed(2)}</td>
         </tr></tfoot>
       </table>
+      ${instructionsHtml}
       <div class="footer">${escapeHtml(t.footerText)} &nbsp;|&nbsp; ${new Date().toLocaleString('en-GB')}${t.payRulesText ? '\n'+escapeHtml(t.payRulesText) : ''}</div>
     </body></html>`;
 }
