@@ -5710,11 +5710,43 @@ async function renderPayrollPDFBlob(weekStr) {
 
   await loadLogoDataUri();
   const html = buildPayrollHTML({ results, totals, weekStr });
+
+  // Extract the <style> block AND the body content, and inject them together
+  // into the off-screen container. Previously only the body was injected
+  // (the regex stripped the head, taking the styles with it) which left text
+  // unstyled and could produce a blank canvas if the browser failed to lay
+  // out the unstyled fragment in time for html2canvas to snapshot it.
+  const styleMatch = html.match(/<style[\s\S]*?<\/style>/i);
+  const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+  const styleBlock = styleMatch ? styleMatch[0] : '';
+  const bodyContent = bodyMatch ? bodyMatch[1] : '';
+
   const container = document.createElement('div');
-  container.style.cssText = 'position:fixed;left:-10000px;top:0;width:794px;background:#fff;';
-  container.innerHTML = html.replace(/^[\s\S]*?<body[^>]*>|<\/body>[\s\S]*$/g, '');
+  container.style.cssText = 'position:fixed;left:-10000px;top:0;width:794px;background:#fff;color:#111;';
+  container.innerHTML = styleBlock + bodyContent;
   document.body.appendChild(container);
+
   try {
+    // Wait for any fonts referenced in the injected <style> to load —
+    // html2canvas snapshots immediately and would otherwise capture blank
+    // text if the @import url(...) hadn't finished fetching.
+    if (document.fonts && document.fonts.ready) {
+      try { await document.fonts.ready; } catch (e) { /* non-fatal */ }
+    }
+    // Wait for images (the logo) to finish loading.
+    const imgs = Array.from(container.querySelectorAll('img'));
+    await Promise.all(imgs.map(img => {
+      if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+      return new Promise(resolve => {
+        img.addEventListener('load', resolve, { once: true });
+        img.addEventListener('error', resolve, { once: true });
+        // Hard timeout so a stuck image can never block the whole flow.
+        setTimeout(resolve, 3000);
+      });
+    }));
+    // One more frame so layout is fully settled before snapshot.
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
     return await html2pdf().set({
       margin: [10, 10, 10, 10],
       filename: 'payroll.pdf',
