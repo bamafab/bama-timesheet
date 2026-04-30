@@ -2,22 +2,18 @@
 --
 -- PayrollComments: free-text instructions tied to a specific payroll week.
 -- Visible below the payroll table for that week, included in the email body
--- when the payroll is sent. They are wiped/scoped per week (when you change
--- weeks, you only see that week's comments).
+-- when the payroll is sent. Wiped/scoped per week.
 --
 -- PayrollRevisions: audit log of every time a payroll PDF was generated for
--- a given week. Revision 0 is the original, 1 is rev1, 2 is rev2, etc. The
--- system auto-increments based on the highest existing revision_number for
--- the week.
+-- a given week. Revision 0 is the original, 1 is rev1, etc. Auto-incremented
+-- by the API based on the highest existing revision_number for the week.
 --
--- Idempotent: safe to run multiple times.
---
--- Note: CREATE INDEX statements are wrapped in EXEC() so SQL Server defers
--- their compilation to runtime — otherwise the batch would fail to parse on
--- a fresh database where the table doesn't yet exist.
+-- Each statement is independently guarded so the migration is fully
+-- idempotent and won't fail half-way through.
 
-IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'PayrollComments')
-BEGIN
+-- ── PayrollComments ────────────────────────────────────────────────────────
+
+IF OBJECT_ID('PayrollComments', 'U') IS NULL
     CREATE TABLE PayrollComments (
         id              INT IDENTITY(1,1) PRIMARY KEY,
         week_commencing DATE NOT NULL,
@@ -27,20 +23,30 @@ BEGIN
         updated_by      NVARCHAR(255) NULL,
         updated_at      DATETIME2 NULL
     );
-    EXEC('CREATE INDEX IX_PayrollComments_week ON PayrollComments(week_commencing)');
-END
+GO
 
-IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'PayrollRevisions')
-BEGIN
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_PayrollComments_week' AND object_id = OBJECT_ID('PayrollComments'))
+    CREATE INDEX IX_PayrollComments_week ON PayrollComments(week_commencing);
+GO
+
+-- ── PayrollRevisions ───────────────────────────────────────────────────────
+
+IF OBJECT_ID('PayrollRevisions', 'U') IS NULL
     CREATE TABLE PayrollRevisions (
         id              INT IDENTITY(1,1) PRIMARY KEY,
         week_commencing DATE NOT NULL,
-        revision_number INT  NOT NULL,    -- 0 = original, 1 = rev1, etc.
+        revision_number INT  NOT NULL,
         file_name       NVARCHAR(500) NOT NULL,
-        file_url        NVARCHAR(1000) NULL,    -- SharePoint webUrl
+        file_url        NVARCHAR(1000) NULL,
         created_by      NVARCHAR(255) NOT NULL,
         created_at      DATETIME2 NOT NULL DEFAULT GETUTCDATE()
     );
-    EXEC('CREATE INDEX IX_PayrollRevisions_week ON PayrollRevisions(week_commencing)');
-    EXEC('CREATE UNIQUE INDEX UX_PayrollRevisions_week_rev ON PayrollRevisions(week_commencing, revision_number)');
-END
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_PayrollRevisions_week' AND object_id = OBJECT_ID('PayrollRevisions'))
+    CREATE INDEX IX_PayrollRevisions_week ON PayrollRevisions(week_commencing);
+GO
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'UX_PayrollRevisions_week_rev' AND object_id = OBJECT_ID('PayrollRevisions'))
+    CREATE UNIQUE INDEX UX_PayrollRevisions_week_rev ON PayrollRevisions(week_commencing, revision_number);
+GO
