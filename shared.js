@@ -5711,51 +5711,87 @@ async function renderPayrollPDFBlob(weekStr) {
   await loadLogoDataUri();
   const html = buildPayrollHTML({ results, totals, weekStr });
 
-  // Extract the <style> block AND the body content, and inject them together
-  // into the off-screen container. Previously only the body was injected
-  // (the regex stripped the head, taking the styles with it) which left text
-  // unstyled and could produce a blank canvas if the browser failed to lay
-  // out the unstyled fragment in time for html2canvas to snapshot it.
-  const styleMatch = html.match(/<style[\s\S]*?<\/style>/i);
-  const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-  const styleBlock = styleMatch ? styleMatch[0] : '';
-  const bodyContent = bodyMatch ? bodyMatch[1] : '';
-
-  const container = document.createElement('div');
-  container.style.cssText = 'position:fixed;left:-10000px;top:0;width:794px;background:#fff;color:#111;';
-  container.innerHTML = styleBlock + bodyContent;
-  document.body.appendChild(container);
+  // Render into an off-screen iframe. Two reasons we use an iframe rather
+  // than a <div> with the HTML's body content injected directly:
+  //   1. The full <html><head><body> document gets parsed correctly, so the
+  //      body { padding } / * { } rules apply to the actual <body>.
+  //   2. The host page's stylesheet (bama.css) doesn't bleed into the render
+  //      and zero out the layout — which is what was producing 794x0
+  //      blank canvases (verified via html2canvas console: "719x0").
+  const iframe = document.createElement('iframe');
+  iframe.id = '__payroll_pdf_render__';
+  // 794px ≈ A4 width at 96dpi. height set after content loads.
+  iframe.style.cssText = 'position:fixed;left:-10000px;top:0;width:794px;height:1123px;border:0;visibility:hidden;';
+  document.body.appendChild(iframe);
 
   try {
-    // Wait for any fonts referenced in the injected <style> to load —
-    // html2canvas snapshots immediately and would otherwise capture blank
-    // text if the @import url(...) hadn't finished fetching.
-    if (document.fonts && document.fonts.ready) {
-      try { await document.fonts.ready; } catch (e) { /* non-fatal */ }
+    // Write the full document into the iframe and wait for load.
+    const idoc = iframe.contentDocument || iframe.contentWindow.document;
+    idoc.open();
+    idoc.write(html);
+    idoc.close();
+
+    // Wait for the iframe document to signal it's done loading. If it's
+    // already complete, this resolves on the next tick.
+    await new Promise(resolve => {
+      if (idoc.readyState === 'complete') { resolve(); return; }
+      iframe.addEventListener('load', resolve, { once: true });
+      // Hard timeout — 5 s is generous for this small doc.
+      setTimeout(resolve, 5000);
+    });
+
+    // Wait for fonts inside the iframe.
+    if (idoc.fonts && idoc.fonts.ready) {
+      try { await idoc.fonts.ready; } catch (e) { /* non-fatal */ }
     }
-    // Wait for images (the logo) to finish loading.
-    const imgs = Array.from(container.querySelectorAll('img'));
+    // Wait for images (logo) — 3s safety per image.
+    const imgs = Array.from(idoc.querySelectorAll('img'));
     await Promise.all(imgs.map(img => {
       if (img.complete && img.naturalWidth > 0) return Promise.resolve();
       return new Promise(resolve => {
         img.addEventListener('load', resolve, { once: true });
         img.addEventListener('error', resolve, { once: true });
-        // Hard timeout so a stuck image can never block the whole flow.
         setTimeout(resolve, 3000);
       });
     }));
-    // One more frame so layout is fully settled before snapshot.
+
+    // Resize iframe to actual content height so html2canvas captures everything.
+    const fullHeight = Math.max(
+      idoc.body.scrollHeight,
+      idoc.body.offsetHeight,
+      idoc.documentElement.scrollHeight,
+      idoc.documentElement.offsetHeight
+    );
+    iframe.style.height = fullHeight + 'px';
+
+    // Two animation frames so layout settles after the resize.
     await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
 
+    if (fullHeight === 0) {
+      console.warn('[payroll PDF] iframe content height is 0 — capture will be blank');
+    } else {
+      console.info('[payroll PDF] capturing', { width: 794, height: fullHeight });
+    }
+
+    // html2pdf can take any DOM element. Pass the iframe's body so it
+    // captures the rendered document, not the (visibility:hidden) iframe.
     return await html2pdf().set({
       margin: [10, 10, 10, 10],
       filename: 'payroll.pdf',
       image: { type: 'jpeg', quality: 0.95 },
-      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
+      html2canvas: {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#ffffff',
+        // height/windowHeight ensure the off-screen body is fully captured.
+        height: fullHeight,
+        windowHeight: fullHeight,
+        windowWidth: 794
+      },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-    }).from(container).outputPdf('blob');
+    }).from(idoc.body).outputPdf('blob');
   } finally {
-    document.body.removeChild(container);
+    document.body.removeChild(iframe);
   }
 }
 
