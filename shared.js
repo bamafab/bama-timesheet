@@ -5859,6 +5859,16 @@ async function generatePayrollPDF() {
 
   if (!results.length) { toast('No payroll data to export', 'error'); return; }
 
+  // IMPORTANT: open the print window synchronously while we're still inside
+  // the user-gesture stack, otherwise popup blockers will silently kill it
+  // after the awaits below.
+  const printWin = window.open('', '_blank');
+  if (!printWin) {
+    toast('Popup blocked — allow pop-ups for this site and try again', 'error');
+    return;
+  }
+  printWin.document.write('<!DOCTYPE html><html><head><title>Generating payroll…</title><style>body{font-family:sans-serif;color:#666;padding:40px;text-align:center}</style></head><body>Generating payroll PDF…</body></html>');
+
   const totals = {
     basic: results.reduce((s, r) => s + r.basicPay, 0),
     ot: results.reduce((s, r) => s + r.overtimePay, 0),
@@ -5881,7 +5891,8 @@ async function generatePayrollPDF() {
   }
 
   const html = buildPayrollHTML({ results, totals, weekStr, comments });
-  const printWin = window.open('', '_blank');
+  // Replace the placeholder content with the real PDF view.
+  printWin.document.open();
   printWin.document.write(html + `<script>window.onload = function() { window.print(); }<\/script>`);
   printWin.document.close();
 }
