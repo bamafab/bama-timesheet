@@ -5707,6 +5707,7 @@ async function renderPayrollPDFBlob(weekStr, popupWin) {
   if (!popupWin) throw new Error('Render window not provided — cannot generate PDF');
 
   const { mon, sun } = getWeekDates(payrollWeekOffset);
+  const monStr = dateStr(mon);
   const employees = (state.timesheetData.employees || []).filter(e => e.active !== false && (e.payType || 'payee') !== 'cis');
   const results = employees.map(e => calculatePayroll(e.name, mon, sun)).filter(Boolean);
   if (!results.length) {
@@ -5721,8 +5722,18 @@ async function renderPayrollPDFBlob(weekStr, popupWin) {
     grand: results.reduce((s, r) => s + r.totalPay, 0)
   };
 
+  // Pull payroll instruction comments for this week so they appear in the
+  // PDF saved to SharePoint, same as the Export to PDF button.
+  let comments = [];
+  if (_payrollExtras.weekKey === monStr) {
+    comments = _payrollExtras.comments || [];
+  } else {
+    try { comments = await api.get(`/api/payroll-comments?week_commencing=${monStr}`) || []; }
+    catch (e) { console.warn('Could not load payroll comments for PDF:', e); }
+  }
+
   await loadLogoDataUri();
-  const baseHtml = buildPayrollHTML({ results, totals, weekStr });
+  const baseHtml = buildPayrollHTML({ results, totals, weekStr, comments });
 
   // Inject the html2pdf library + a tiny capture bridge into the document
   // BEFORE writing it so it executes after the body parses. The bridge
