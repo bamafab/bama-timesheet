@@ -1654,16 +1654,31 @@ function renderManagerView() {
   );
 
   // Stats
+  // "Pending" = anything in this week that still needs a manager decision:
+  //   - amended clockings awaiting approval (approvalStatus === 'pending')
+  //   - employee-submitted amendment requests still pending
+  // "Approved" = amended clockings that the manager has signed off this week.
+  // Plain unaltered clockings don't count — there's nothing to approve.
   const totalHrs = weekEntries.reduce((s, e) => s + e.hours, 0);
-  const pending = weekEntries.filter(e => e.status === 'pending').length;
-  const approved = weekEntries.filter(e => e.status === 'approved').length;
+
+  const pendingClockings = weekClockings.filter(c => c.approvalStatus === 'pending').length;
+  const pendingAmendments = (state.timesheetData.amendments || []).filter(a =>
+    a.status === 'pending' && a.date >= monStr && a.date <= sunStr
+  ).length;
+  const pending = pendingClockings + pendingAmendments;
+
+  const approved = weekClockings.filter(c => c.approvalStatus === 'approved').length;
+
   const emps = new Set(weekEntries.map(e => e.employeeName)).size;
+
+  // Sub-label below the search box: total project entries needing approval (separate concern)
+  const pendingEntries = weekEntries.filter(e => e.status === 'pending').length;
 
   const el = (id, val) => { const e = document.getElementById(id); if (e) e.textContent = val; };
   el('stat-pending', pending);
   el('stat-approved', approved);
   el('stat-emps', emps);
-  el('pendingCount', `${pending} entr${pending === 1 ? 'y' : 'ies'} pending approval`);
+  el('pendingCount', `${pendingEntries} entr${pendingEntries === 1 ? 'y' : 'ies'} pending approval`);
 
   // Project table
   renderProjectTable(weekEntries);
