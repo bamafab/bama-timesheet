@@ -5815,7 +5815,9 @@ function fillPayrollEmailTemplate(tpl, ctx) {
   return tpl
     .replace(/\{weekRange\}/g, ctx.weekRange || '')
     .replace(/\{totalPay\}/g, ctx.totalPay || '')
-    .replace(/\{totalEmployees\}/g, ctx.totalEmployees != null ? String(ctx.totalEmployees) : '');
+    .replace(/\{totalEmployees\}/g, ctx.totalEmployees != null ? String(ctx.totalEmployees) : '')
+    .replace(/\{url\}/g, ctx.url || '')
+    .replace(/\{instructions\}/g, ctx.instructions || '');
 }
 
 async function emailPayrollReport() {
@@ -5916,10 +5918,26 @@ async function emailPayrollReport() {
     const employees = (state.timesheetData.employees || []).filter(e => e.active !== false && (e.payType || 'payee') !== 'cis');
     const results = employees.map(e => calculatePayroll(e.name, mon, sun)).filter(Boolean);
     const grandTotal = results.reduce((s, r) => s + r.totalPay, 0);
+
+    // Fetch comments first so they're available for the {instructions}
+    // template placeholder.
+    let comments = [];
+    try { comments = await api.get(`/api/payroll-comments?week_commencing=${monStr}`) || []; }
+    catch (e) { /* non-fatal */ }
+
+    // Format instructions as a bulleted list. Empty string if there are
+    // none — keeps the template clean (avoids 'Payroll instructions:' with
+    // no items underneath).
+    const instructionsText = comments.length
+      ? comments.map(c => `- ${c.comment}`).join('\n')
+      : '';
+
     const ctx = {
       weekRange: weekStrFull,
       totalPay: '\u00a3' + grandTotal.toFixed(2),
-      totalEmployees: results.length
+      totalEmployees: results.length,
+      url: uploaded.webUrl,
+      instructions: instructionsText
     };
 
     const subjectTpl = tplGet('payroll', 'emailSubject') || 'BAMA Payroll Report \u2014 Week {weekRange}';
@@ -5927,21 +5945,16 @@ async function emailPayrollReport() {
     const subject = fillPayrollEmailTemplate(subjectTpl, ctx);
     let body = fillPayrollEmailTemplate(bodyTpl, ctx);
 
-    let comments = [];
-    try { comments = await api.get(`/api/payroll-comments?week_commencing=${monStr}`) || []; }
-    catch (e) { /* non-fatal */ }
-
-    // Plain-text body: template text, optional Payroll Instructions list,
-    // then a short closing line with the file URL on its own line so mail
-    // clients auto-linkify it.
+    // Backward-compatible fallback: if the user's template doesn't include
+    // {url}, append the URL at the end (so old templates still produce a
+    // working email). Same for {instructions}.
     body = body.replace(/\s+$/g, '');
-
-    if (comments.length) {
-      body += '\n\nPayroll Instructions:\n';
-      body += comments.map(c => `- ${c.comment}`).join('\n');
+    if (!/\{url\}/.test(bodyTpl)) {
+      if (instructionsText && !/\{instructions\}/.test(bodyTpl)) {
+        body += '\n\nPayroll Instructions:\n' + instructionsText;
+      }
+      body += `\n\nPlease find the below payroll file ready for processing:\n${uploaded.webUrl}`;
     }
-
-    body += `\n\nPlease find the below payroll file ready for processing:\n${uploaded.webUrl}`;
 
     _payrollExtras.weekKey = null;
     await renderPayrollExtras();
@@ -10989,7 +11002,7 @@ function renderTemplateEditor(key) {
       <div class="tpl-section">
         <div class="tpl-section-title">Email to Payroll</div>
         ${field('emailSubject', 'Email subject', 'text', 'use {weekRange} placeholder for the date range')}
-        ${field('emailBody', 'Email body', 'textarea', 'this is the message that opens in Outlook. {weekRange} placeholder available. Comments and the PDF link are auto-appended below your text.')}
+        ${field('emailBody', 'Email body', 'textarea', 'opens in Outlook when you click Email to Payroll. Placeholders: {weekRange}, {url}, {instructions}, {totalPay}, {totalEmployees}. If {url} is omitted, the file link is appended automatically.')}
       </div>`;
   } else if (key === 'attendance') {
     html = `
