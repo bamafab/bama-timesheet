@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Workshop Timesheet</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260429j">
+<link rel="stylesheet" href="bama.css?v=20260429k">
 </head>
 <body>
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
@@ -60,6 +60,9 @@
       <div class="panel-name" id="empPanelName"></div>
     </div>
 
+    <!-- HOLIDAY BALANCE (populated by renderEmpHolidayBalance) -->
+    <div id="empHolidayBalance" style="margin-bottom:12px"></div>
+
     <!-- STATUS BAR (shown if clocked in) -->
     <div class="status-bar" id="statusBar" style="display:none">
       <div class="dot"></div>
@@ -68,7 +71,10 @@
 
     <!-- ── CLOCK IN/OUT CARD ── -->
     <div class="card" id="clockCard">
-      <div class="card-title"><span class="icon">🕐</span> Shift Times</div>
+      <div class="card-title" style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+        <span><span class="icon">🕐</span> Shift Times</span>
+        <span id="shiftDateLabel" style="font-family:var(--font-mono);font-size:11px;color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0"></span>
+      </div>
       <div id="clockInSection">
         <button class="btn btn-success btn-full" onclick="doClock('in')" style="padding:18px;font-size:16px;letter-spacing:1px">⏰ Clock In Now</button>
       </div>
@@ -123,7 +129,10 @@
 
     <!-- ── MY WEEK CARD ── -->
     <div class="card" id="myWeekCard">
-      <div class="card-title"><span class="icon">📅</span> My Week</div>
+      <div class="card-title" style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+        <span><span class="icon">📅</span> My Week</span>
+        <span id="myWeekTotal" style="font-family:var(--font-mono);font-size:13px;font-weight:600;letter-spacing:0;text-transform:none"></span>
+      </div>
       <div class="week-grid" id="myWeekGrid">
         <div class="empty-state" style="grid-column:span 7;padding:16px"><div class="spinner"></div></div>
       </div>
@@ -433,6 +442,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260429j"></script>
+<script src="shared.js?v=20260429k"></script>
 </body>
 </html>

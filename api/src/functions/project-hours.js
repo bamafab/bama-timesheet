@@ -138,6 +138,12 @@ app.http('project-hours-update', {
             if (body.hours !== undefined) { fields.push('hours = @hours'); params.hours = parseFloat(body.hours); }
             if (body.date !== undefined) { fields.push('date = @date'); params.date = body.date; }
             if (body.is_approved !== undefined) { fields.push('is_approved = @isApproved'); params.isApproved = body.is_approved ? 1 : 0; }
+            if (body.edit_reason !== undefined) { fields.push('edit_reason = @editReason'); params.editReason = body.edit_reason || null; }
+            if (body.edited_by !== undefined)   { fields.push('edited_by = @editedBy');     params.editedBy   = body.edited_by   || null; }
+            // edited_at: stamp automatically whenever an edit-audit field is set
+            if (body.edit_reason !== undefined || body.edited_by !== undefined) {
+                fields.push('edited_at = GETUTCDATE()');
+            }
 
             if (fields.length === 0) return badRequest('No fields to update', request);
 

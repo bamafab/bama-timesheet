@@ -320,7 +320,12 @@ function normaliseEntry(row) {
     status: row.is_approved ? 'approved' : 'pending',
     is_approved: !!row.is_approved,
     week_commencing: row.week_commencing,
-    submittedAt: row.created_at || new Date().toISOString()
+    submittedAt: row.created_at || new Date().toISOString(),
+    // Edit-audit fields (added via add-projecthours-edit-audit.sql)
+    editReason: row.edit_reason || null,
+    editedAt:   row.edited_at   || null,
+    editedBy:   row.edited_by   || null,
+    manuallyEdited: !!row.edit_reason || !!row.edited_at
   };
 }
 
@@ -2809,7 +2814,9 @@ async function saveEditEntry() {
   try {
     await api.put(`/api/project-hours/${_editEntryId}`, {
       hours: newHours,
-      is_approved: false
+      is_approved: false,
+      edit_reason: reason,
+      edited_by: state.currentEmployee
     });
 
     entry.originalHours = entry.originalHours || entry.hours;
