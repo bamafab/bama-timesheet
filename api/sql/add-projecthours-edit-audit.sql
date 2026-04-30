@@ -10,7 +10,14 @@
 --   edited_at     — UTC timestamp of when the edit was submitted
 --   edited_by     — name of the person who submitted the edit (employee or manager)
 -- Approval state already exists via is_approved (added separately).
+--
+-- Idempotent: safe to run multiple times. Each ALTER is guarded by a check.
 
-ALTER TABLE ProjectHours ADD edit_reason NVARCHAR(1000) NULL;
-ALTER TABLE ProjectHours ADD edited_at   DATETIME2      NULL;
-ALTER TABLE ProjectHours ADD edited_by   NVARCHAR(255)  NULL;
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('ProjectHours') AND name = 'edit_reason')
+    ALTER TABLE ProjectHours ADD edit_reason NVARCHAR(1000) NULL;
+
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('ProjectHours') AND name = 'edited_at')
+    ALTER TABLE ProjectHours ADD edited_at DATETIME2 NULL;
+
+IF NOT EXISTS (SELECT 1 FROM sys.columns WHERE object_id = OBJECT_ID('ProjectHours') AND name = 'edited_by')
+    ALTER TABLE ProjectHours ADD edited_by NVARCHAR(255) NULL;
