@@ -2486,7 +2486,7 @@ function switchTab(name) {
   if (name === 'staff') renderStaffList();
   if (name === 'clockinout') { clockLogWeekOffset = 0; renderClockLogForWeek(); }
   if (name === 'holidays') setTimeout(() => renderHolidayTab(), 50);
-  if (name === 'payroll') { renderPayroll(); checkArchiveReminder(); }
+  if (name === 'payroll') { renderPayroll(); renderPayrollExtras(); checkArchiveReminder(); }
   if (name === 'archive') renderArchive();
   if (name === 'reports') setTimeout(() => renderReports(), 50);
   if (name === 'settings') { loadEmailSettings(); renderOfficeStaffList(); }
@@ -5486,6 +5486,7 @@ function renderPayroll() {
 function changePayrollWeek(dir) {
   payrollWeekOffset += dir;
   renderPayroll();
+  renderPayrollExtras();
 }
 
 function jumpToPayrollWeek(dateValue) {
@@ -5502,101 +5503,361 @@ function jumpToPayrollWeek(dateValue) {
   const diffWeeks = Math.round((pickedMon - todayMon) / (7 * 24 * 60 * 60 * 1000));
   payrollWeekOffset = diffWeeks;
   renderPayroll();
+  renderPayrollExtras();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PAYROLL COMMENTS + REVISIONS
+// ═══════════════════════════════════════════════════════════════════════════
+
+let _payrollExtras = { weekKey: null, comments: [], revisions: [] };
+let _editingPayrollCommentId = null;
+
+// Year folder name pattern: 2026 -> "00 - 2026", 2027 -> "01 - 2027", etc.
+function getPayrollYearFolderName(year) {
+  const offset = year - 2026;
+  return `${String(offset).padStart(2, '0')} - ${year}`;
+}
+
+// "27 Apr 2026 \u2013 03 May 2026" + optional " rev{N}"
+function getPayrollFileName(monDate, sunDate, revisionNumber) {
+  const fmt = d => d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  const base = `${fmt(monDate)} \u2013 ${fmt(sunDate)}`;
+  const suffix = revisionNumber > 0 ? ` rev${revisionNumber}` : '';
+  return `${base}${suffix}.pdf`;
+}
+
+// Load comments + revisions for the currently-viewed week
+async function loadPayrollExtras(weekCommencing) {
+  try {
+    const [comments, revisions] = await Promise.all([
+      api.get(`/api/payroll-comments?week_commencing=${weekCommencing}`).catch(() => []),
+      api.get(`/api/payroll-revisions?week_commencing=${weekCommencing}`).catch(() => [])
+    ]);
+    _payrollExtras = { weekKey: weekCommencing, comments: comments || [], revisions: revisions || [] };
+  } catch (err) {
+    console.warn('Failed to load payroll extras:', err);
+    _payrollExtras = { weekKey: weekCommencing, comments: [], revisions: [] };
+  }
+}
+
+// Render the comments + revisions block below the payroll table
+async function renderPayrollExtras() {
+  const container = document.getElementById('payrollExtras');
+  if (!container) return;
+  const { mon } = getWeekDates(payrollWeekOffset);
+  const monStr = dateStr(mon);
+
+  if (_payrollExtras.weekKey !== monStr) {
+    container.innerHTML = '<div class="empty-state" style="padding:12px"><div class="spinner"></div></div>';
+    await loadPayrollExtras(monStr);
+  }
+
+  const { comments, revisions } = _payrollExtras;
+  const fmtDateTime = iso => {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toLocaleString('en-GB', { day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' });
+  };
+
+  let commentsHtml = '';
+  if (!comments.length) {
+    commentsHtml = `<div style="color:var(--subtle);font-size:13px;padding:12px;text-align:center">No instructions for this payroll week. Click <b>+ Add Payroll Instructions</b> to leave a note.</div>`;
+  } else {
+    commentsHtml = comments.map(c => {
+      const wasEdited = c.updated_at && c.updated_by;
+      return `
+        <div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--accent2);border-radius:8px;padding:12px 14px;margin-bottom:8px">
+          <div style="font-size:13px;color:var(--text);white-space:pre-wrap;margin-bottom:6px">${escapeHtml(c.comment)}</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--muted)">
+            <div>
+              <span><b>${escapeHtml(c.created_by)}</b> &middot; ${fmtDateTime(c.created_at)}</span>
+              ${wasEdited ? `<span style="margin-left:10px;color:var(--subtle)">(edited by ${escapeHtml(c.updated_by)} &middot; ${fmtDateTime(c.updated_at)})</span>` : ''}
+            </div>
+            <div style="display:flex;gap:6px">
+              <button class="tiny-btn" style="padding:3px 10px;font-size:11px" onclick="editPayrollComment(${c.id})">Edit</button>
+              <button class="tiny-btn tiny-reject" style="padding:3px 10px;font-size:11px" onclick="deletePayrollComment(${c.id})">Delete</button>
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  let revisionsHtml = '';
+  if (revisions.length > 0) {
+    revisionsHtml = `
+      <div class="card" style="margin-top:14px">
+        <div class="card-title" style="font-size:13px"><span class="icon">\u{1F4DC}</span> Revision History</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:10px">
+          This week's payroll has been generated ${revisions.length} time${revisions.length !== 1 ? 's' : ''}. Each generation is preserved on SharePoint.
+        </div>
+        <table class="summary-table" style="font-size:12px">
+          <thead><tr><th>VERSION</th><th>FILE</th><th>BY</th><th>WHEN</th></tr></thead>
+          <tbody>
+            ${revisions.map(r => `
+              <tr>
+                <td><b>${r.revision_number === 0 ? 'Original' : `rev${r.revision_number}`}</b></td>
+                <td class="mono" style="font-size:11px">
+                  ${r.file_url
+                    ? `<a href="${escapeHtml(r.file_url)}" target="_blank" style="color:var(--accent2)">${escapeHtml(r.file_name)}</a>`
+                    : escapeHtml(r.file_name)}
+                </td>
+                <td>${escapeHtml(r.created_by)}</td>
+                <td>${fmtDateTime(r.created_at)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  }
+
+  container.innerHTML = `
+    <div class="card">
+      <div class="card-title" style="font-size:13px"><span class="icon">\u{1F4DD}</span> Payroll Instructions</div>
+      ${commentsHtml}
+    </div>
+    ${revisionsHtml}
+  `;
+}
+
+function openPayrollCommentModal() {
+  _editingPayrollCommentId = null;
+  document.getElementById('payrollCommentModalTitle').textContent = 'Add Payroll Instruction';
+  document.getElementById('payrollCommentSaveBtn').textContent = 'Save';
+  document.getElementById('payrollCommentText').value = '';
+  const { mon, sun } = getWeekDates(payrollWeekOffset);
+  document.getElementById('payrollCommentWeekLabel').textContent =
+    `Week: ${fmtDate(mon)} \u2013 ${fmtDate(sun)}`;
+  document.getElementById('payrollCommentModal').classList.add('active');
+  setTimeout(() => document.getElementById('payrollCommentText').focus(), 100);
+}
+
+function editPayrollComment(id) {
+  const c = (_payrollExtras.comments || []).find(x => x.id === id);
+  if (!c) return;
+  _editingPayrollCommentId = id;
+  document.getElementById('payrollCommentModalTitle').textContent = 'Edit Payroll Instruction';
+  document.getElementById('payrollCommentSaveBtn').textContent = 'Save Changes';
+  document.getElementById('payrollCommentText').value = c.comment;
+  const { mon, sun } = getWeekDates(payrollWeekOffset);
+  document.getElementById('payrollCommentWeekLabel').textContent =
+    `Week: ${fmtDate(mon)} \u2013 ${fmtDate(sun)}`;
+  document.getElementById('payrollCommentModal').classList.add('active');
+  setTimeout(() => document.getElementById('payrollCommentText').focus(), 100);
+}
+
+function closePayrollCommentModal() {
+  document.getElementById('payrollCommentModal').classList.remove('active');
+  _editingPayrollCommentId = null;
+}
+
+async function savePayrollComment() {
+  const text = document.getElementById('payrollCommentText').value.trim();
+  if (!text) { toast('Please enter a comment', 'error'); return; }
+  const author = currentManagerUser || 'office';
+  const { mon } = getWeekDates(payrollWeekOffset);
+  const monStr = dateStr(mon);
+
+  try {
+    if (_editingPayrollCommentId) {
+      await api.put(`/api/payroll-comments/${_editingPayrollCommentId}`, {
+        comment: text, updated_by: author
+      });
+      toast('Comment updated \u2713', 'success');
+    } else {
+      await api.post('/api/payroll-comments', {
+        week_commencing: monStr, comment: text, created_by: author
+      });
+      toast('Comment added \u2713', 'success');
+    }
+    closePayrollCommentModal();
+    _payrollExtras.weekKey = null;
+    await renderPayrollExtras();
+  } catch (err) {
+    toast('Save failed: ' + err.message, 'error');
+  }
+}
+
+async function deletePayrollComment(id) {
+  if (!confirm('Delete this payroll instruction?')) return;
+  try {
+    await api.delete(`/api/payroll-comments/${id}`);
+    toast('Comment deleted', 'info');
+    _payrollExtras.weekKey = null;
+    await renderPayrollExtras();
+  } catch (err) {
+    toast('Delete failed: ' + err.message, 'error');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EMAIL TO PAYROLL — generate PDF, save to SharePoint, open Outlook draft
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function findOrCreatePayrollYearFolder(year) {
+  const token = await getToken();
+  const payrollPath = '01 - Accounts/02 - Payroll';
+  const lookup = await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/root:/${encodeURIComponent(payrollPath)}`,
+    { headers: { 'Authorization': `Bearer ${token}` } }
+  );
+  if (!lookup.ok) {
+    throw new Error(`Cannot find SharePoint folder "01 - Accounts/02 - Payroll" (status ${lookup.status})`);
+  }
+  const parent = await lookup.json();
+  const yearFolderName = getPayrollYearFolderName(year);
+  const folder = await getOrCreateSubfolder(parent.id, yearFolderName, BAMA_DRIVE_ID);
+  if (!folder) throw new Error(`Could not create year folder "${yearFolderName}"`);
+  return folder;
+}
+
+async function renderPayrollPDFBlob(weekStr) {
+  if (typeof html2pdf === 'undefined') throw new Error('PDF library not loaded — refresh the page');
+
+  const { mon, sun } = getWeekDates(payrollWeekOffset);
+  const employees = (state.timesheetData.employees || []).filter(e => e.active !== false && (e.payType || 'payee') !== 'cis');
+  const results = employees.map(e => calculatePayroll(e.name, mon, sun)).filter(Boolean);
+  if (!results.length) throw new Error('No payroll data this week');
+
+  const totals = {
+    basic: results.reduce((s, r) => s + r.basicPay, 0),
+    ot:    results.reduce((s, r) => s + r.overtimePay, 0),
+    dt:    results.reduce((s, r) => s + r.doublePay, 0),
+    grand: results.reduce((s, r) => s + r.totalPay, 0)
+  };
+
+  await loadLogoDataUri();
+  const html = buildPayrollHTML({ results, totals, weekStr });
+  const container = document.createElement('div');
+  container.style.cssText = 'position:fixed;left:-10000px;top:0;width:794px;background:#fff;';
+  container.innerHTML = html.replace(/^[\s\S]*?<body[^>]*>|<\/body>[\s\S]*$/g, '');
+  document.body.appendChild(container);
+  try {
+    return await html2pdf().set({
+      margin: [10, 10, 10, 10],
+      filename: 'payroll.pdf',
+      image: { type: 'jpeg', quality: 0.95 },
+      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    }).from(container).outputPdf('blob');
+  } finally {
+    document.body.removeChild(container);
+  }
+}
+
+function fillPayrollEmailTemplate(tpl, ctx) {
+  if (!tpl) return '';
+  return tpl
+    .replace(/\{weekRange\}/g, ctx.weekRange || '')
+    .replace(/\{totalPay\}/g, ctx.totalPay || '')
+    .replace(/\{totalEmployees\}/g, ctx.totalEmployees != null ? String(ctx.totalEmployees) : '');
 }
 
 async function emailPayrollReport() {
   const { mon, sun } = getWeekDates(payrollWeekOffset);
-  const employees = (state.timesheetData.employees || []).filter(e => e.active !== false && (e.payType || 'payee') !== 'cis');
-  const days = [];
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(mon); d.setDate(mon.getDate() + i);
-    days.push({ label: ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][i], date: dateStr(d) });
+  const monStr = dateStr(mon);
+  const weekStr = `${fmtDate(mon)} \u2013 ${fmtDate(sun)}`;
+  const fmtFull = d => d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  const weekStrFull = `${fmtFull(mon)} \u2013 ${fmtFull(sun)}`;
+  const author = currentManagerUser || 'office';
+
+  let revisions = [];
+  try {
+    revisions = await api.get(`/api/payroll-revisions?week_commencing=${monStr}`) || [];
+  } catch (e) {
+    console.warn('Failed to load revisions:', e);
   }
 
-  const results = employees.map(e => {
-    const payroll = calculatePayroll(e.name, mon, sun);
-    const dayHrs = days.map(d => getDayHoursForEmployee(e.name, d.date));
-    const totalHrs = dayHrs.reduce((s, h) => s + h, 0);
-    return { emp: e, payroll, dayHrs, totalHrs };
-  }).filter(r => r.totalHrs > 0);
+  if (revisions.length > 0) {
+    const lastRev = revisions[revisions.length - 1];
+    const lastLabel = lastRev.revision_number === 0 ? 'the original' : `rev${lastRev.revision_number}`;
+    const ok = confirm(
+      `Payroll for ${weekStr} has already been generated (${lastLabel}, by ${lastRev.created_by}).\n\n` +
+      `Do you want to override and generate a new revision?\n\nThe original file will be kept on SharePoint.`
+    );
+    if (!ok) return;
+  }
 
-  if (!results.length) { toast('No payroll data to email', 'error'); return; }
+  const nextRevision = revisions.length === 0
+    ? 0
+    : Math.max(...revisions.map(r => r.revision_number)) + 1;
+  const fileName = getPayrollFileName(mon, sun, nextRevision);
 
-  const grandTotal = results.reduce((s, r) => s + (r.payroll?.totalPay || 0), 0);
-  const weekStr = `${fmtDate(mon)} – ${fmtDate(sun)}`;
-  const payrollEmail = state.timesheetData.settings?.payrollEmail || 'daniel@bamafabrication.co.uk';
-
-  const tableRows = results.map(r => `
-    <tr style="border-bottom:1px solid #eee">
-      <td style="padding:8px 10px;font-weight:600">${r.emp.name}</td>
-      <td style="padding:8px 10px;font-family:monospace;color:#888">£${(r.emp.rate||0).toFixed(2)}/hr</td>
-      ${r.dayHrs.map(h => `<td style="padding:8px 10px;text-align:center;font-family:monospace">${h > 0 ? h.toFixed(1) : '—'}</td>`).join('')}
-      <td style="padding:8px 10px;text-align:center;font-weight:700;font-family:monospace">${r.totalHrs.toFixed(1)}</td>
-      <td style="padding:8px 10px;font-family:monospace">${r.payroll?.basicHours||0}h / £${(r.payroll?.basicPay||0).toFixed(2)}</td>
-      <td style="padding:8px 10px;font-family:monospace;color:#f59e0b">${r.payroll?.overtimeHours > 0 ? r.payroll.overtimeHours+'h / £'+r.payroll.overtimePay.toFixed(2) : '—'}</td>
-      <td style="padding:8px 10px;font-family:monospace;color:#ef4444">${r.payroll?.doubleHours > 0 ? r.payroll.doubleHours+'h / £'+r.payroll.doublePay.toFixed(2) : '—'}</td>
-      <td style="padding:8px 10px;font-weight:700;color:#ff6b00;font-family:monospace">£${(r.payroll?.totalPay||0).toFixed(2)}</td>
-    </tr>
-  `).join('');
-
-  const emailBody = {
-    message: {
-      subject: `BAMA Payroll Report — Week ${weekStr}`,
-      body: {
-        contentType: 'HTML',
-        content: `
-          <h2 style="color:#ff6b00;font-family:sans-serif">BAMA FABRICATION — Payroll Report</h2>
-          <p style="font-family:sans-serif;font-size:13px;color:#888">Week: <b>${weekStr}</b></p>
-          <table style="width:100%;border-collapse:collapse;font-family:sans-serif;font-size:12px">
-            <thead>
-              <tr style="background:#f5f5f5">
-                <th style="padding:8px;text-align:left">Employee</th>
-                <th style="padding:8px">Rate</th>
-                ${days.map(d => `<th style="padding:8px;text-align:center">${d.label}</th>`).join('')}
-                <th style="padding:8px;text-align:center">Total</th>
-                <th style="padding:8px">Basic</th>
-                <th style="padding:8px;color:#f59e0b">OT ×1.5</th>
-                <th style="padding:8px;color:#ef4444">DBL ×2</th>
-                <th style="padding:8px;color:#ff6b00">Total Pay</th>
-              </tr>
-            </thead>
-            <tbody>${tableRows}</tbody>
-            <tfoot>
-              <tr style="background:#fff3e0;font-weight:700">
-                <td colspan="9" style="padding:8px;text-align:right;font-family:sans-serif">Total Payroll:</td>
-                <td style="padding:8px;color:#ff6b00;font-size:16px;font-family:monospace">£${grandTotal.toFixed(2)}</td>
-              </tr>
-            </tfoot>
-          </table>
-          <p style="margin-top:20px;font-family:sans-serif;font-size:11px;color:#aaa">
-            Generated by BAMA Workshop Timesheet — ${new Date().toLocaleString('en-GB')}
-          </p>
-        `
-      },
-      toRecipients: [{ emailAddress: { address: payrollEmail } }]
-    },
-    saveToSentItems: true
-  };
+  toast(`Generating payroll PDF (${nextRevision === 0 ? 'original' : 'rev' + nextRevision})...`, 'info');
+  setLoading(true);
 
   try {
+    const pdfBlob = await renderPayrollPDFBlob(weekStrFull);
+
+    const year = mon.getFullYear();
+    const yearFolder = await findOrCreatePayrollYearFolder(year);
+
     const token = await getToken();
-    const res = await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(emailBody)
+    const uploadUrl = `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/items/${yearFolder.id}:/${encodeURIComponent(fileName)}:/content`;
+    const upRes = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/pdf' },
+      body: pdfBlob
     });
-    if (res.ok || res.status === 202) {
-      toast(`Payroll report emailed to ${payrollEmail} ✓`, 'success');
-    } else {
-      const err = await res.text();
-      console.error('Payroll email error:', err);
-      toast('Email failed — check console', 'error');
+    if (!upRes.ok) throw new Error(`SharePoint upload failed: ${upRes.status}`);
+    const uploaded = await upRes.json();
+
+    await api.post('/api/payroll-revisions', {
+      week_commencing: monStr,
+      revision_number: nextRevision,
+      file_name: fileName,
+      file_url: uploaded.webUrl,
+      created_by: author
+    });
+
+    const employees = (state.timesheetData.employees || []).filter(e => e.active !== false && (e.payType || 'payee') !== 'cis');
+    const results = employees.map(e => calculatePayroll(e.name, mon, sun)).filter(Boolean);
+    const grandTotal = results.reduce((s, r) => s + r.totalPay, 0);
+    const ctx = {
+      weekRange: weekStrFull,
+      totalPay: '\u00a3' + grandTotal.toFixed(2),
+      totalEmployees: results.length
+    };
+
+    const subjectTpl = tplGet('payroll', 'emailSubject') || 'BAMA Payroll Report \u2014 Week {weekRange}';
+    const bodyTpl    = tplGet('payroll', 'emailBody') || '';
+    const subject = fillPayrollEmailTemplate(subjectTpl, ctx);
+    let body = fillPayrollEmailTemplate(bodyTpl, ctx);
+
+    let comments = [];
+    try { comments = await api.get(`/api/payroll-comments?week_commencing=${monStr}`) || []; }
+    catch (e) { /* non-fatal */ }
+    if (comments.length) {
+      body += '\n\n--- PAYROLL INSTRUCTIONS ---\n';
+      body += comments.map(c => {
+        const when = new Date(c.created_at).toLocaleString('en-GB', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' });
+        return `\u2022 ${c.comment}\n  (${c.created_by} \u2014 ${when})`;
+      }).join('\n');
     }
-  } catch (e) {
-    console.error('Email error:', e);
-    toast('Failed to send email', 'error');
+
+    body += `\n\n--- PAYROLL DOCUMENT ---\nFile: ${fileName}\nLink: ${uploaded.webUrl}`;
+    if (nextRevision > 0) {
+      body += `\n\n(This is revision ${nextRevision}. Previous versions are kept on SharePoint in the same folder.)`;
+    }
+
+    _payrollExtras.weekKey = null;
+    await renderPayrollExtras();
+
+    setLoading(false);
+    toast(`PDF saved to SharePoint as ${fileName} \u2713`, 'success');
+
+    const mailto = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    if (mailto.length > 2000) {
+      console.info('Long mailto URL — some email clients may truncate. Body length:', body.length);
+    }
+    window.location.href = mailto;
+  } catch (err) {
+    setLoading(false);
+    console.error('Payroll email flow failed:', err);
+    toast('Failed: ' + err.message, 'error');
   }
 }
+
 
 async function generatePayrollPDF() {
   const { mon, sun } = getWeekDates(payrollWeekOffset);
@@ -10363,7 +10624,9 @@ const TEMPLATE_DEFAULTS = {
     showLogo: true,
     showCompanyDetails: true,
     footerText: 'Generated by BAMA Workshop Timesheet',
-    payRulesText: 'Pay rules: Standard rate for first 40hrs. Overtime \u00d71.5 for hours over 40. Sunday \u00d72 only if Saturday also worked.'
+    payRulesText: 'Pay rules: Standard rate for first 40hrs. Overtime \u00d71.5 for hours over 40. Sunday \u00d72 only if Saturday also worked.',
+    emailSubject: 'BAMA Payroll Report \u2014 Week {weekRange}',
+    emailBody: ''
   },
   attendance: {
     title: 'Workshop Report',
@@ -10540,6 +10803,11 @@ function renderTemplateEditor(key) {
         <div class="tpl-section-title">Footer</div>
         ${field('footerText', 'Footer text', 'textarea')}
         ${field('payRulesText', 'Pay rules note', 'textarea', 'displayed below footer')}
+      </div>
+      <div class="tpl-section">
+        <div class="tpl-section-title">Email to Payroll</div>
+        ${field('emailSubject', 'Email subject', 'text', 'use {weekRange} placeholder for the date range')}
+        ${field('emailBody', 'Email body', 'textarea', 'this is the message that opens in Outlook. {weekRange} placeholder available. Comments and the PDF link are auto-appended below your text.')}
       </div>`;
   } else if (key === 'attendance') {
     html = `

@@ -466,11 +466,15 @@
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:20px;flex-wrap:wrap">
           <button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="generatePayrollPDF()">&#8595; Export PDF</button>
           <button class="btn btn-success" style="padding:8px 16px;font-size:12px" onclick="emailPayrollReport()">📧 Email to Payroll</button>
+          <button class="btn btn-ghost" style="padding:8px 16px;font-size:12px;border-color:var(--accent2);color:var(--accent2)" onclick="openPayrollCommentModal()">+ Add Payroll Instructions</button>
           <button class="btn btn-ghost" style="padding:8px 16px;font-size:12px" onclick="archiveWeek()">&#128190; Archive This Week</button>
         </div>
         <div id="payrollSummary">
           <div class="empty-state"><div class="spinner"></div></div>
         </div>
+
+        <!-- Payroll comments + revisions for the currently-viewed week -->
+        <div id="payrollExtras" style="margin-top:24px"></div>
       </div>
     </div>
 
@@ -1061,6 +1065,26 @@
 </div>
 
 <!-- ═══════════════════════════════════════
+     PAYROLL COMMENT MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="payrollCommentModal">
+  <div class="modal" style="width:520px;max-width:95vw">
+    <div class="modal-title" id="payrollCommentModalTitle">Add Payroll Instruction</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:12px" id="payrollCommentModalSub">
+      This note is tied to the currently selected payroll week and will be included in the email to payroll.
+    </div>
+    <div id="payrollCommentWeekLabel" style="font-family:var(--font-mono);font-size:13px;color:var(--accent2);margin-bottom:14px"></div>
+    <textarea class="field-input" id="payrollCommentText" rows="5"
+      placeholder="e.g. Please pay John an extra 2h overtime this week — pre-approved by Daniel."
+      style="resize:vertical;font-size:13px"></textarea>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closePayrollCommentModal()">Cancel</button>
+      <button class="btn btn-primary" id="payrollCommentSaveBtn" onclick="savePayrollComment()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
      CONFIRM MODAL
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="confirmModal">
@@ -1074,6 +1098,7 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260430a"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script src="shared.js?v=20260430b"></script>
 </body>
 </html>
