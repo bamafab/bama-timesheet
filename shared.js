@@ -2655,10 +2655,10 @@ function showHKStep3(name) {
   if (bal) {
     balEl.innerHTML = `
       <div class="holiday-balance-bar" style="flex-wrap:wrap">
-        <div class="hbal-item"><div class="hbal-value" style="color:var(--green)">${bal.remainingDays}</div><div class="hbal-label">Remaining</div></div>
-        <div class="hbal-item"><div class="hbal-value">${bal.usedDays}</div><div class="hbal-label">Used</div></div>
-        ${bal.pendingDays > 0 ? `<div class="hbal-item"><div class="hbal-value" style="color:var(--amber)">${bal.pendingDays}</div><div class="hbal-label">Pending</div></div>` : ''}
-        <div class="hbal-item"><div class="hbal-value" style="color:var(--muted)">${bal.totalAllowance}</div><div class="hbal-label">Total</div></div>
+        <div class="hbal-item"><div class="hbal-value" style="color:var(--green)">${bal.remainingDays}</div><div class="hbal-label">Holidays Available</div></div>
+        <div class="hbal-item"><div class="hbal-value">${bal.usedDays}</div><div class="hbal-label">Holidays Used</div></div>
+        <div class="hbal-item"><div class="hbal-value" style="color:var(--accent2)">${bal.accruedDays}</div><div class="hbal-label">Holidays Accrued</div></div>
+        <div class="hbal-item"><div class="hbal-value" style="color:var(--muted)">${bal.totalAllowance}</div><div class="hbal-label">Holiday Allowance</div></div>
       </div>
     `;
   }
@@ -3445,12 +3445,28 @@ function calculateHolidayBalance(employeeName) {
   );
   const pendingDays = pending.reduce((s, h) => s + (h.workingDays || countWorkingDays(h.dateFrom, h.dateTo)), 0);
 
+  // Holidays accrued — what they've earned so far based on time worked this year.
+  // Formula: allocation × (working days worked since accrual-start ÷ working days
+  // from accrual-start to year-end). Accrual-start is whichever is later: their
+  // start_date or the holiday year start. Result rounded to nearest 0.5 day.
+  const today = todayStr();
+  const accrualStart = (emp.startDate && emp.startDate > yearStart) ? emp.startDate : yearStart;
+  let accruedDays = 0;
+  if (accrualStart <= today) {
+    const totalAccrualWindow = countWorkingDays(accrualStart, yearEndStr);
+    const workedSoFar = countWorkingDays(accrualStart, today);
+    if (totalAccrualWindow > 0) {
+      accruedDays = Math.round((allocation * workedSoFar / totalAccrualWindow) * 2) / 2;
+    }
+  }
+
   return {
     allocation,
     carryover,
     totalAllowance,
     usedDays,
     pendingDays,
+    accruedDays,
     remainingDays: totalAllowance - usedDays,
     yearStart,
     yearEndStr
@@ -3468,20 +3484,19 @@ function renderEmpHolidayBalance(employeeName) {
     <div class="holiday-balance-bar">
       <div class="hbal-item">
         <div class="hbal-value" style="color:var(--green)">${bal.remainingDays}</div>
-        <div class="hbal-label">Days Remaining</div>
+        <div class="hbal-label">Holidays Available</div>
       </div>
       <div class="hbal-item">
         <div class="hbal-value">${bal.usedDays}</div>
-        <div class="hbal-label">Days Used</div>
+        <div class="hbal-label">Holidays Used</div>
       </div>
-      ${bal.pendingDays > 0 ? `
       <div class="hbal-item">
-        <div class="hbal-value" style="color:var(--amber)">${bal.pendingDays}</div>
-        <div class="hbal-label">Days Pending</div>
-      </div>` : ''}
+        <div class="hbal-value" style="color:var(--accent2)">${bal.accruedDays}</div>
+        <div class="hbal-label">Holidays Accrued</div>
+      </div>
       <div class="hbal-item">
         <div class="hbal-value" style="color:var(--muted)">${bal.totalAllowance}</div>
-        <div class="hbal-label">Total Allowance</div>
+        <div class="hbal-label">Holiday Allowance</div>
       </div>
       ${bal.carryover > 0 ? `
       <div class="hbal-item">
