@@ -2,6 +2,22 @@ const { app } = require('@azure/functions');
 const { query, sql } = require('../db');
 const { requireAuth } = require('../auth');
 const { ok, created, badRequest, notFound, serverError, preflight } = require('../responses');
+const { isBankHoliday } = require('../bank-holidays');
+
+// Format a Date as YYYY-MM-DD in local time (matches how dates are stored
+// and compared throughout the system).
+function dateOnly(d) {
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+}
+
+// Guard: reject clock-ins/clockings on UK bank holidays. The workshop is
+// closed on bank holidays — see docs/SPEC-holiday-payroll.md.
+function bankHolidayBlocked(date) {
+    return isBankHoliday(dateOnly(date));
+}
 
 // POST /api/clock-in — record a clock-in
 app.http('clock-in', {
@@ -17,6 +33,12 @@ app.http('clock-in', {
             const { employee_id, timestamp, source } = body;
 
             if (!employee_id) return badRequest('employee_id is required', request);
+
+            const clockTime = timestamp ? new Date(timestamp) : new Date();
+
+            if (bankHolidayBlocked(clockTime)) {
+                return badRequest('The workshop is closed on bank holidays. If this is wrong, speak to the office.', request);
+            }
 
             // Check employee exists and is active
             const emp = await query(
@@ -36,8 +58,6 @@ app.http('clock-in', {
             if (open.recordset.length > 0) {
                 return badRequest('Employee is already clocked in', request);
             }
-
-            const clockTime = timestamp ? new Date(timestamp) : new Date();
 
             const result = await query(
                 `INSERT INTO ClockEntries (employee_id, clock_in, source)
@@ -199,6 +219,13 @@ app.http('clockings-update', {
             const body = await request.json();
             const { clock_in, clock_out, amended_by, break_mins, is_approved, approved_by } = body;
 
+            if (clock_in && bankHolidayBlocked(new Date(clock_in))) {
+                return badRequest('Cannot move a clocking onto a bank holiday — the workshop is closed.', request);
+            }
+            if (clock_out && bankHolidayBlocked(new Date(clock_out))) {
+                return badRequest('Cannot move a clocking onto a bank holiday — the workshop is closed.', request);
+            }
+
             const fields = ['is_amended = 1'];
             const params = { id };
 
@@ -252,9 +279,17 @@ app.http('clockings-create', {
                 return badRequest('employee_id and clock_in are required', request);
             }
 
+            const clockInDate = new Date(clock_in);
+            if (bankHolidayBlocked(clockInDate)) {
+                return badRequest('Cannot add a clocking on a bank holiday — the workshop is closed.', request);
+            }
+            if (clock_out && bankHolidayBlocked(new Date(clock_out))) {
+                return badRequest('Cannot add a clocking on a bank holiday — the workshop is closed.', request);
+            }
+
             const params = {
                 employeeId: parseInt(employee_id),
-                clockIn: new Date(clock_in),
+                clockIn: clockInDate,
                 source: 'manual',
                 isAmended: amended_by ? 1 : 0,
                 amendedBy: amended_by || null,

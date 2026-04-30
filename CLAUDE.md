@@ -221,25 +221,46 @@ Core tables:
 
 ## Payroll rules (BAMA-specific)
 
-Implemented in [payroll.js](api/src/functions/payroll.js) `payroll-approve`:
-- First 40 hours per week = basic (rate × 1)
-- Hours over 40 = overtime (rate × 1.5)
+Implemented in [payroll.js](api/src/functions/payroll.js) `payroll-approve`,
+mirrored on the frontend in `calculatePayroll` (shared.js). Both must stay
+in sync — same bucket math both sides.
+
+- First 40 hours per week = basic (rate × 1).
+- Hours over 40 = overtime (rate × 1.5).
 - **Double time only applies to Sunday hours, and only if the employee worked
-  Saturday AND Sunday in the same week.** Otherwise Sunday hours count toward the
-  normal 40/overtime split.
-- All totals rounded to 2 dp. Write + `UPDATE ProjectHours SET is_approved=1` runs
-  in a single `mssql` transaction; rollback on error.
+  Saturday AND Sunday in the same week.** Otherwise Sunday hours count toward
+  the normal 40/overtime split.
+- **Booked paid holidays** (`Holidays.status='approved'`, `type` in
+  `'paid'`/`'half'`) credit 8h (or 4h for half-day) at basic rate. They fill
+  the 40h bucket BEFORE worked hours, pushing worked hours into overtime if
+  the combined total exceeds 40. Holiday hours themselves are always paid at
+  basic rate (never OT, never double).
+- **Bank holidays** auto-credit 8h × basic rate to every active payee (CIS
+  excluded), no booking required. Same 40h-bucket interaction as booked
+  holiday. Stored in `PayrollArchive.bank_holiday_hours` / `bank_holiday_pay`
+  separately from booked holiday so the two can be reported on independently.
+- **Clock-ins on bank holidays are blocked** at every entry point (kiosk,
+  manager add-clocking, kiosk add-missing, API POST/PUT). The workshop is
+  closed.
+- All totals rounded to 2 dp. Write + `UPDATE ProjectHours SET is_approved=1`
+  runs in a single `mssql` transaction; rollback on error.
 
 ## Holiday rules
 
 - Holiday year starts `2026-03-30` (`HOLIDAY_YEAR_START` in shared.js).
 - Default annual entitlement is 28 working days (20 + 8 bank) — see
   `DEFAULT_ANNUAL_DAYS = 20`. Per-employee override via `holiday_entitlement`.
-- UK bank holidays are hardcoded in `UK_BANK_HOLIDAYS`.
-- `working_days` is computed client-side (`countWorkingDays`) excluding weekends
-  and bank holidays, then sent to the API.
-- Paid holidays decrement `holiday_balance` only on approval; deleting an approved
-  paid holiday restores the balance.
+- UK bank holidays are hardcoded in `UK_BANK_HOLIDAYS` (shared.js) and
+  mirrored in `api/src/bank-holidays.js`. **Update both** when the calendar
+  changes. Roadmap: move to a Settings/DB row.
+- `working_days` is computed client-side (`countWorkingDays`) excluding
+  weekends and bank holidays, then sent to the API. Bank holidays therefore
+  don't deduct from `holiday_balance` (consistent with the 28 = 20 + 8
+  entitlement model).
+- Paid holidays decrement `holiday_balance` only on approval; deleting an
+  approved paid holiday restores the balance.
+- See [docs/SPEC-holiday-payroll.md](docs/SPEC-holiday-payroll.md) for the
+  full design and worked examples.
 
 ## Projects & drawings
 
@@ -385,6 +406,16 @@ none of this is built yet.
 - **RBAC** — real role-based permissions enforced server-side. Current
   `UserPermissions` flags become the source of truth the API checks, not just
   what the UI hides. Blocker: move PIN verification server-side first.
+- **Sickness / SSP integration** — Sickness and absence entries on the
+  `Holidays` table (type other than `paid`/`half`/`unpaid`) are currently
+  ignored by payroll. Build SSP triggering: track qualifying days, apply the
+  SSP rate after the 3-day waiting period, surface on the payroll page
+  alongside holiday pay. Depends on a Settings entry for the current SSP
+  weekly rate and a per-employee earnings threshold check.
+- **Bank holiday list to Settings** — UK bank holiday dates are duplicated
+  in `UK_BANK_HOLIDAYS` (shared.js) and `api/src/bank-holidays.js`. Move to
+  a `BankHolidays` table or Settings row, editable from manager.html.
+  Avoids a code deploy each year. Current list runs out at the end of 2027.
 
 ## Local dev
 

@@ -1135,6 +1135,13 @@ async function doClock(direction) {
   if (!empId) { toast('Employee not found in system', 'error'); return; }
 
   if (direction === 'in') {
+    // Hard block: workshop is closed on bank holidays.
+    // See docs/SPEC-holiday-payroll.md.
+    if (isBankHoliday(today)) {
+      toast('The workshop is closed today (bank holiday). If this is wrong, speak to the office.', 'error');
+      return;
+    }
+
     // Check if already clocked in (local check for instant feedback)
     const existing = state.timesheetData.clockings.find(
       c => c.employeeName === emp && c.date === today && !c.clockOut
@@ -1162,11 +1169,6 @@ async function doClock(direction) {
     // Add to local state
     const newClocking = normaliseClocking(result);
     state.timesheetData.clockings.push(newClocking);
-
-    // Check bank holiday
-    if (isBankHoliday(today)) {
-      toast(`⚠️ Today is a bank holiday — clocking in anyway`, 'info');
-    }
 
     // Check if they have an approved holiday today
     const hasApprovedHoliday = (state.timesheetData.holidays || []).some(h =>
@@ -2097,6 +2099,12 @@ async function saveMgrClocking() {
     toast('Please fill in all fields', 'error'); return;
   }
 
+  // Hard block: workshop is closed on bank holidays.
+  if (isBankHoliday(date)) {
+    toast('Cannot add a clocking on a bank holiday — the workshop is closed.', 'error');
+    return;
+  }
+
   const empId = empIdByName(empName);
   if (!empId) { toast('Employee not found in system', 'error'); return; }
 
@@ -2183,10 +2191,15 @@ function renderMyWeek(employeeName) {
       `;
     } else if (!isFuture) {
       const isToday2 = dStr === todayStr();
-      content = `
-        <div style="color:var(--subtle);font-size:11px;margin-top:8px">No clocking</div>
-        ${!isToday2 ? `<button class="week-day-add" onclick="openAddClocking('${dStr}')">+ Add</button>` : ''}
-      `;
+      const isBH = isBankHoliday(dStr);
+      if (isBH) {
+        content = `<div style="color:var(--accent);font-size:11px;margin-top:8px">Bank holiday</div>`;
+      } else {
+        content = `
+          <div style="color:var(--subtle);font-size:11px;margin-top:8px">No clocking</div>
+          ${!isToday2 ? `<button class="week-day-add" onclick="openAddClocking('${dStr}')">+ Add</button>` : ''}
+        `;
+      }
     } else {
       content = `<div style="color:var(--subtle);font-size:11px;margin-top:16px">—</div>`;
     }
@@ -2238,6 +2251,12 @@ async function submitMissingClocking() {
   const breakMins = parseInt(document.getElementById('addClockBreak').value) || 0;
 
   if (!clockIn || !clockOut) { toast('Please select times', 'error'); return; }
+
+  // Hard block: workshop is closed on bank holidays.
+  if (isBankHoliday(_addClockingDate)) {
+    toast('Cannot add a clocking on a bank holiday — the workshop is closed.', 'error');
+    return;
+  }
 
   const empId = empIdByName(state.currentEmployee);
   if (!empId) { toast('Employee not found', 'error'); return; }
@@ -4235,6 +4254,42 @@ function checkHolidayNotifications() {
 // ═══════════════════════════════════════════
 let payrollWeekOffset = 0;
 
+// How many holiday hours does this employee have on this date?
+//   8 → approved 'paid' holiday covering this date
+//   4 → approved 'half' holiday on this date
+//   0 → otherwise
+// Skips weekends and bank holidays (matches `working_days` at booking time).
+function getHolidayHoursForEmployee(empName, ds) {
+  const d = new Date(ds + 'T12:00:00');
+  const dow = d.getDay();
+  if (dow === 0 || dow === 6) return 0;
+  if (isBankHoliday(ds)) return 0;
+
+  const matches = (state.timesheetData.holidays || []).filter(h =>
+    h.employeeName === empName &&
+    h.status === 'approved' &&
+    (h.type === 'paid' || h.type === 'half') &&
+    h.dateFrom <= ds && h.dateTo >= ds
+  );
+  if (!matches.length) return 0;
+  // Half-day takes precedence if both somehow exist (defensive)
+  if (matches.some(h => h.type === 'half')) return 4;
+  return 8;
+}
+
+// Bank-holiday hours for this date (0 or 8). Active payee employees only —
+// CIS contractors and inactive employees get 0.
+function getBankHolidayHoursForEmployee(empName, ds) {
+  const d = new Date(ds + 'T12:00:00');
+  const dow = d.getDay();
+  if (dow === 0 || dow === 6) return 0; // defensive: no BH on weekends in our list
+  if (!isBankHoliday(ds)) return 0;
+  const emp = (state.timesheetData.employees || []).find(e => e.name === empName);
+  if (!emp || emp.active === false) return 0;
+  if ((emp.payType || 'payee') !== 'payee') return 0;
+  return 8;
+}
+
 function calculatePayroll(employeeName, weekMon, weekSun) {
   const monStr = dateStr(weekMon);
   const sunStr = dateStr(weekSun);
@@ -4246,9 +4301,7 @@ function calculatePayroll(employeeName, weekMon, weekSun) {
     c.approvalStatus !== 'rejected'
   );
 
-  if (!clockings.length) return null;
-
-  // Calculate hours per day
+  // Calculate hours per day from clockings
   const dayHours = {};
   let workedSaturday = false;
   let workedSunday = false;
@@ -4264,58 +4317,92 @@ function calculatePayroll(employeeName, weekMon, weekSun) {
     if (dow === 0 && hrs > 0) { workedSunday = true; sundayHours += hrs; }
   });
 
-  const totalHours = Object.values(dayHours).reduce((s, h) => s + h, 0);
-  const doubleTimeApplies = workedSaturday && workedSunday;
+  const workedHours = Object.values(dayHours).reduce((s, h) => s + h, 0);
+
+  // Walk the week to collect holiday + bank-holiday hours
+  const dayHoliday = {};      // date → booked-holiday hours (display)
+  const dayBankHoliday = {};  // date → bank-holiday hours (display)
+  let holidayHours = 0;
+  let bankHolidayHours = 0;
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(weekMon);
+    d.setDate(weekMon.getDate() + i);
+    const ds = dateStr(d);
+    const hh = getHolidayHoursForEmployee(employeeName, ds);
+    if (hh > 0) { dayHoliday[ds] = hh; holidayHours += hh; }
+    const bh = getBankHolidayHoursForEmployee(employeeName, ds);
+    if (bh > 0) { dayBankHoliday[ds] = bh; bankHolidayHours += bh; }
+  }
+
+  // Bail only if everything is zero
+  if (workedHours === 0 && holidayHours === 0 && bankHolidayHours === 0) {
+    return null;
+  }
 
   // Get employee rate
   const emp = (state.timesheetData.employees || []).find(e => e.name === employeeName);
   const rate = emp ? (emp.rate || 0) : 0;
 
-  // Calculate pay breakdown
+  // Calculate pay breakdown.
+  // Holiday + bank-holiday hours fill the 40h bucket FIRST, pushing worked
+  // hours into overtime if combined exceeds 40. Both are always paid at
+  // basic rate (never OT, never double).
+  const nonWorkedPaidHours = holidayHours + bankHolidayHours;
+  const doubleTimeApplies = workedSaturday && workedSunday;
+
   let basicHours, overtimeHours, doubleHours;
-  let basicPay, overtimePay, doublePay;
 
   if (doubleTimeApplies) {
-    // Sunday hours are always double time
-    const nonSundayHours = totalHours - sundayHours;
     doubleHours = sundayHours;
-
-    if (nonSundayHours >= 40) {
-      basicHours = 40;
-      overtimeHours = nonSundayHours - 40;
-    } else {
-      basicHours = nonSundayHours;
+    const nonSundayWorked = workedHours - sundayHours;
+    const nonSundayCombined = nonSundayWorked + nonWorkedPaidHours;
+    if (nonSundayCombined <= 40) {
+      basicHours = nonSundayWorked;
       overtimeHours = 0;
+    } else {
+      const cap = Math.max(0, 40 - nonWorkedPaidHours);
+      basicHours = Math.min(nonSundayWorked, cap);
+      overtimeHours = nonSundayWorked - basicHours;
     }
   } else {
     doubleHours = 0;
-    if (totalHours <= 40) {
-      basicHours = totalHours;
+    if (workedHours + nonWorkedPaidHours <= 40) {
+      basicHours = workedHours;
       overtimeHours = 0;
     } else {
-      basicHours = 40;
-      overtimeHours = totalHours - 40;
+      const cap = Math.max(0, 40 - nonWorkedPaidHours);
+      basicHours = Math.min(workedHours, cap);
+      overtimeHours = workedHours - basicHours;
     }
   }
 
-  basicPay = basicHours * rate;
-  overtimePay = overtimeHours * rate * 1.5;
-  doublePay = doubleHours * rate * 2;
-  const totalPay = basicPay + overtimePay + doublePay;
+  const basicPay        = basicHours        * rate;
+  const overtimePay     = overtimeHours     * rate * 1.5;
+  const doublePay       = doubleHours       * rate * 2;
+  const holidayPay      = holidayHours      * rate;
+  const bankHolidayPay  = bankHolidayHours  * rate;
+  const totalPay = basicPay + overtimePay + doublePay + holidayPay + bankHolidayPay;
+  const totalHours = workedHours + holidayHours + bankHolidayHours;
 
   return {
     employeeName,
     rate,
-    totalHours,
+    totalHours: parseFloat(totalHours.toFixed(2)),
     basicHours: parseFloat(basicHours.toFixed(2)),
     overtimeHours: parseFloat(overtimeHours.toFixed(2)),
     doubleHours: parseFloat(doubleHours.toFixed(2)),
+    holidayHours: parseFloat(holidayHours.toFixed(2)),
+    bankHolidayHours: parseFloat(bankHolidayHours.toFixed(2)),
     basicPay: parseFloat(basicPay.toFixed(2)),
     overtimePay: parseFloat(overtimePay.toFixed(2)),
     doublePay: parseFloat(doublePay.toFixed(2)),
+    holidayPay: parseFloat(holidayPay.toFixed(2)),
+    bankHolidayPay: parseFloat(bankHolidayPay.toFixed(2)),
     totalPay: parseFloat(totalPay.toFixed(2)),
     doubleTimeApplies,
-    dayHours
+    dayHours,
+    dayHoliday,
+    dayBankHoliday
   };
 }
 
@@ -5397,10 +5484,7 @@ function renderPayroll() {
   // Calculate payroll results
   const results = employees.map(e => {
     const payroll = calculatePayroll(e.name, mon, sun);
-    const dayHrs = days.map(d => {
-      const hrs = getDayHoursForEmployee(e.name, d.date);
-      return hrs > 0 ? hrs : 0;
-    });
+    const dayHrs = days.map(d => getDayHoursForEmployee(e.name, d.date) || 0);
     const totalHrs = dayHrs.reduce((s, h) => s + h, 0);
     return { emp: e, payroll, dayHrs, totalHrs };
   }).filter(r => r.totalHrs > 0 || r.payroll);
@@ -5412,12 +5496,32 @@ function renderPayroll() {
 
   const grandTotal = results.reduce((s, r) => s + (r.payroll?.totalPay || 0), 0);
   const totalBasic = results.reduce((s, r) => s + (r.payroll?.basicPay || 0), 0);
-  const totalOT = results.reduce((s, r) => s + (r.payroll?.overtimePay || 0), 0);
-  const totalDT = results.reduce((s, r) => s + (r.payroll?.doublePay || 0), 0);
+  const totalOT    = results.reduce((s, r) => s + (r.payroll?.overtimePay || 0), 0);
+  const totalDT    = results.reduce((s, r) => s + (r.payroll?.doublePay || 0), 0);
+  const totalHol   = results.reduce((s, r) => s + ((r.payroll?.holidayPay || 0) + (r.payroll?.bankHolidayPay || 0)), 0);
+
+  // Render a single day cell. Combines worked + booked-holiday + bank-holiday
+  // into one display. BH and worked never co-occur (clock-in is blocked on
+  // bank holidays). Holiday and worked CAN co-occur on a half-day.
+  const renderDayCell = (r, ds) => {
+    const worked = r.payroll?.dayHours?.[ds] || 0;
+    const hol    = r.payroll?.dayHoliday?.[ds] || 0;
+    const bh     = r.payroll?.dayBankHoliday?.[ds] || 0;
+    const totalHol = hol + bh;
+
+    if (totalHol > 0 && worked === 0) {
+      return `<td class="mono" style="text-align:center;color:var(--accent)">${totalHol.toFixed(1)}<sub style="font-size:9px;color:var(--muted);margin-left:1px">H</sub></td>`;
+    }
+    if (worked > 0 && totalHol > 0) {
+      // Half-day holiday + worked half-day
+      return `<td class="mono" style="text-align:center">${worked.toFixed(1)}<br><span style="font-size:10px;color:var(--accent)">+${totalHol.toFixed(1)}H</span></td>`;
+    }
+    return `<td class="mono" style="text-align:center;color:${worked > 0 ? 'var(--text)' : 'var(--subtle)'}">${worked > 0 ? worked.toFixed(1) : '—'}</td>`;
+  };
 
   container.innerHTML = `
     <div style="overflow-x:auto">
-      <table class="summary-table" style="min-width:900px">
+      <table class="summary-table" style="min-width:980px">
         <thead>
           <tr>
             <th style="min-width:140px">EMPLOYEE</th>
@@ -5426,37 +5530,53 @@ function renderPayroll() {
             <th>STD (£)</th>
             <th>O/T ×1.5 (£)</th>
             <th>DBL ×2 (£)</th>
+            <th style="color:var(--accent)">HOL (£)</th>
             <th style="color:var(--green)">TOTAL PAY</th>
           </tr>
         </thead>
         <tbody>
-          ${results.map(r => `
+          ${results.map(r => {
+            const holHrs = (r.payroll?.holidayHours || 0) + (r.payroll?.bankHolidayHours || 0);
+            const holPay = (r.payroll?.holidayPay   || 0) + (r.payroll?.bankHolidayPay   || 0);
+            const totalAllHrs = r.totalHrs + holHrs; // include holiday in total hours column
+            return `
             <tr>
               <td style="font-weight:600">
                 ${r.emp.name}
                 ${r.payroll?.doubleTimeApplies ? '<span class="manually-edited-badge" style="background:rgba(62,207,142,.15);color:var(--green);border-color:rgba(62,207,142,.3)">SAT+SUN</span>' : ''}
                 <br><span style="font-size:11px;color:var(--muted);font-family:var(--font-mono)">£${(r.emp.rate||0).toFixed(2)}/hr</span>
               </td>
-              ${r.dayHrs.map(h => `<td class="mono" style="text-align:center;color:${h > 0 ? 'var(--text)' : 'var(--subtle)'}">${h > 0 ? h.toFixed(1) : '—'}</td>`).join('')}
-              <td class="mono" style="text-align:center;font-weight:700">${r.totalHrs.toFixed(1)}</td>
+              ${days.map(d => renderDayCell(r, d.date)).join('')}
+              <td class="mono" style="text-align:center;font-weight:700">${totalAllHrs.toFixed(1)}</td>
               <td class="mono">${r.payroll?.basicHours||0}h<br><span style="font-size:11px;color:var(--muted)">£${(r.payroll?.basicPay||0).toFixed(2)}</span></td>
               <td class="mono" style="color:var(--amber)">${r.payroll?.overtimeHours > 0 ? r.payroll.overtimeHours+'h' : '—'}<br><span style="font-size:11px;color:var(--muted)">${r.payroll?.overtimeHours > 0 ? '£'+r.payroll.overtimePay.toFixed(2) : ''}</span></td>
               <td class="mono" style="color:var(--accent)">${r.payroll?.doubleHours > 0 ? r.payroll.doubleHours+'h' : '—'}<br><span style="font-size:11px;color:var(--muted)">${r.payroll?.doubleHours > 0 ? '£'+r.payroll.doublePay.toFixed(2) : ''}</span></td>
+              <td class="mono" style="color:var(--accent)">${holHrs > 0 ? holHrs+'h' : '—'}<br><span style="font-size:11px;color:var(--muted)">${holHrs > 0 ? '£'+holPay.toFixed(2) : ''}</span></td>
               <td class="mono" style="color:var(--green);font-weight:700;font-size:15px">£${(r.payroll?.totalPay||0).toFixed(2)}</td>
             </tr>
-          `).join('')}
+          `;}).join('')}
         </tbody>
         <tfoot>
           <tr style="border-top:2px solid var(--border)">
             <td style="font-weight:700;color:var(--muted);font-size:11px;letter-spacing:1px;text-transform:uppercase">TOTALS</td>
             ${days.map((d, i) => {
-              const dayTotal = results.reduce((s, r) => s + (r.dayHrs[i] || 0), 0);
+              // Day totals include holiday + BH for the day
+              const dayTotal = results.reduce((s, r) => {
+                const w = r.dayHrs[i] || 0;
+                const h = r.payroll?.dayHoliday?.[d.date] || 0;
+                const bh = r.payroll?.dayBankHoliday?.[d.date] || 0;
+                return s + w + h + bh;
+              }, 0);
               return `<td class="mono" style="text-align:center;font-weight:600">${dayTotal > 0 ? dayTotal.toFixed(1) : '—'}</td>`;
             }).join('')}
-            <td class="mono" style="text-align:center;font-weight:700">${results.reduce((s,r)=>s+r.totalHrs,0).toFixed(1)}</td>
+            <td class="mono" style="text-align:center;font-weight:700">${results.reduce((s,r)=>{
+              const holHrs = (r.payroll?.holidayHours || 0) + (r.payroll?.bankHolidayHours || 0);
+              return s + r.totalHrs + holHrs;
+            },0).toFixed(1)}</td>
             <td class="mono" style="font-weight:600">£${totalBasic.toFixed(2)}</td>
             <td class="mono" style="font-weight:600;color:var(--amber)">£${totalOT.toFixed(2)}</td>
             <td class="mono" style="font-weight:600;color:var(--accent)">£${totalDT.toFixed(2)}</td>
+            <td class="mono" style="font-weight:600;color:var(--accent)">£${totalHol.toFixed(2)}</td>
             <td class="mono" style="color:var(--green);font-weight:700;font-size:16px">£${grandTotal.toFixed(2)}</td>
           </tr>
         </tfoot>
@@ -5719,6 +5839,7 @@ async function renderPayrollPDFBlob(weekStr, popupWin) {
     basic: results.reduce((s, r) => s + r.basicPay, 0),
     ot:    results.reduce((s, r) => s + r.overtimePay, 0),
     dt:    results.reduce((s, r) => s + r.doublePay, 0),
+    hol:   results.reduce((s, r) => s + (r.holidayPay || 0) + (r.bankHolidayPay || 0), 0),
     grand: results.reduce((s, r) => s + r.totalPay, 0)
   };
 
@@ -5998,6 +6119,7 @@ async function generatePayrollPDF() {
     basic: results.reduce((s, r) => s + r.basicPay, 0),
     ot: results.reduce((s, r) => s + r.overtimePay, 0),
     dt: results.reduce((s, r) => s + r.doublePay, 0),
+    hol: results.reduce((s, r) => s + (r.holidayPay || 0) + (r.bankHolidayPay || 0), 0),
     grand: results.reduce((s, r) => s + r.totalPay, 0)
   };
   const weekStr = `${fmtDate(mon)} – ${fmtDate(sun)}`;
@@ -6051,10 +6173,14 @@ async function archiveWeek() {
         basicHours: r.basic_hours,
         overtimeHours: r.overtime_hours,
         doubleHours: r.double_hours || 0,
+        holidayHours: r.holiday_hours || 0,
+        bankHolidayHours: r.bank_holiday_hours || 0,
         rate: r.rate,
         basicPay: r.basic_pay,
         overtimePay: r.overtime_pay,
         doublePay: r.double_pay || 0,
+        holidayPay: r.holiday_pay || 0,
+        bankHolidayPay: r.bank_holiday_pay || 0,
         totalPay: r.total_pay
       }))
     };
@@ -6110,19 +6236,23 @@ function renderArchive() {
         <div id="archive-detail-${w.weekCommencing}" style="display:none;margin-top:16px">
           <table class="summary-table">
             <thead>
-              <tr><th>EMPLOYEE</th><th>TOTAL HRS</th><th>BASIC</th><th>O/T ×1.5</th><th>DBL ×2</th><th>TOTAL PAY</th></tr>
+              <tr><th>EMPLOYEE</th><th>TOTAL HRS</th><th>BASIC</th><th>O/T ×1.5</th><th>DBL ×2</th><th style="color:var(--accent)">HOL</th><th>TOTAL PAY</th></tr>
             </thead>
             <tbody>
-              ${(w.payroll||[]).map(r => `
+              ${(w.payroll||[]).map(r => {
+                const holHrs = (r.holidayHours || 0) + (r.bankHolidayHours || 0);
+                const holPay = (r.holidayPay   || 0) + (r.bankHolidayPay   || 0);
+                return `
                 <tr>
                   <td style="font-weight:600">${r.employeeName}</td>
                   <td class="mono">${r.totalHours.toFixed(2)}h</td>
                   <td class="mono">${r.basicHours}h &nbsp; £${r.basicPay.toFixed(2)}</td>
                   <td class="mono" style="color:var(--amber)">${r.overtimeHours > 0 ? r.overtimeHours+'h &nbsp; £'+r.overtimePay.toFixed(2) : '—'}</td>
                   <td class="mono" style="color:var(--accent)">${r.doubleHours > 0 ? r.doubleHours+'h &nbsp; £'+r.doublePay.toFixed(2) : '—'}</td>
+                  <td class="mono" style="color:var(--accent)">${holHrs > 0 ? holHrs+'h &nbsp; £'+holPay.toFixed(2) : '—'}</td>
                   <td class="mono" style="color:var(--green);font-weight:700">£${r.totalPay.toFixed(2)}</td>
                 </tr>
-              `).join('')}
+              `;}).join('')}
             </tbody>
           </table>
         </div>
@@ -11120,13 +11250,19 @@ function getMockPayrollData() {
     weekStr: '12 Aug \u2013 18 Aug 2024',
     results: [
       { employeeName: 'John Smith', rate: 18.50, totalHours: 42.5, basicHours: 40, basicPay: 740.00,
-        overtimeHours: 2.5, overtimePay: 69.38, doubleHours: 0, doublePay: 0, totalPay: 809.38, doubleTimeApplies: false },
+        overtimeHours: 2.5, overtimePay: 69.38, doubleHours: 0, doublePay: 0,
+        holidayHours: 0, holidayPay: 0, bankHolidayHours: 0, bankHolidayPay: 0,
+        totalPay: 809.38, doubleTimeApplies: false },
       { employeeName: 'Sarah Jones', rate: 22.00, totalHours: 48, basicHours: 40, basicPay: 880.00,
-        overtimeHours: 6, overtimePay: 198.00, doubleHours: 2, doublePay: 88.00, totalPay: 1166.00, doubleTimeApplies: true },
-      { employeeName: 'Tom Wilson', rate: 16.00, totalHours: 38, basicHours: 38, basicPay: 608.00,
-        overtimeHours: 0, overtimePay: 0, doubleHours: 0, doublePay: 0, totalPay: 608.00, doubleTimeApplies: false }
+        overtimeHours: 6, overtimePay: 198.00, doubleHours: 2, doublePay: 88.00,
+        holidayHours: 0, holidayPay: 0, bankHolidayHours: 0, bankHolidayPay: 0,
+        totalPay: 1166.00, doubleTimeApplies: true },
+      { employeeName: 'Tom Wilson', rate: 16.00, totalHours: 40, basicHours: 32, basicPay: 512.00,
+        overtimeHours: 0, overtimePay: 0, doubleHours: 0, doublePay: 0,
+        holidayHours: 8, holidayPay: 128.00, bankHolidayHours: 0, bankHolidayPay: 0,
+        totalPay: 640.00, doubleTimeApplies: false }
     ],
-    totals: { basic: 2228.00, ot: 267.38, dt: 88.00, grand: 2583.38 },
+    totals: { basic: 2132.00, ot: 267.38, dt: 88.00, hol: 128.00, grand: 2615.38 },
     comments: [
       { comment: 'Sarah worked Sat & Sun call-out — double time approved.', created_by: 'office', created_at: '2024-08-19T08:14:00Z' },
       { comment: 'Tom\u2019s missing Wed afternoon clock-out has been added manually (16:30).', created_by: 'office', created_at: '2024-08-19T08:18:00Z' }
@@ -11316,7 +11452,10 @@ function buildPayrollHTML(data, settingsOverride) {
   const showCo = t.showCompanyDetails !== false;
   const accent = t.accentColor || TEMPLATE_DEFAULTS.payroll.accentColor;
 
-  const rowsHtml = data.results.map(r => `
+  const rowsHtml = data.results.map(r => {
+    const holHrs = (r.holidayHours || 0) + (r.bankHolidayHours || 0);
+    const holPay = (r.holidayPay   || 0) + (r.bankHolidayPay   || 0);
+    return `
     <tr>
       <td class="name">${escapeHtml(r.employeeName)}${r.doubleTimeApplies ? '<span class="badge">SAT+SUN</span>' : ''}</td>
       <td class="mono">\u00a3${r.rate.toFixed(2)}/hr</td>
@@ -11324,8 +11463,10 @@ function buildPayrollHTML(data, settingsOverride) {
       <td class="mono">${r.basicHours}h &nbsp; \u00a3${r.basicPay.toFixed(2)}</td>
       <td class="mono ot">${r.overtimeHours > 0 ? r.overtimeHours+'h &nbsp; \u00a3'+r.overtimePay.toFixed(2) : '\u2014'}</td>
       <td class="mono dt">${r.doubleHours > 0 ? r.doubleHours+'h &nbsp; \u00a3'+r.doublePay.toFixed(2) : '\u2014'}</td>
+      <td class="mono hol">${holHrs > 0 ? holHrs+'h &nbsp; \u00a3'+holPay.toFixed(2) : '\u2014'}</td>
       <td class="mono total-pay">\u00a3${r.totalPay.toFixed(2)}</td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 
   const comments = Array.isArray(data.comments) ? data.comments : [];
   const fmtCommentDate = iso => {
@@ -11363,7 +11504,7 @@ function buildPayrollHTML(data, settingsOverride) {
       .mono { font-family: 'DM Mono', monospace; }
       .name { font-weight: 600; }
       .total-pay { font-weight: 700; font-size: 15px; color: ${accent}; }
-      .ot { color: #f59e0b; } .dt { color: #ef4444; }
+      .ot { color: #f59e0b; } .dt { color: #ef4444; } .hol { color: #6366f1; }
       tfoot td { font-weight: 700; border-top: 2px solid #ddd; border-bottom: none; background: #fafafa; }
       .grand { font-size: 17px; color: ${accent}; }
       .badge { display:inline-block; padding:1px 6px; border-radius:3px; font-size:10px; background:#d1fae5; color:#065f46; margin-left:6px; font-family:sans-serif; }
@@ -11389,7 +11530,7 @@ function buildPayrollHTML(data, settingsOverride) {
       <table>
         <thead><tr>
           <th>Employee</th><th>Rate</th><th>Total Hrs</th><th>Basic (\u226440h)</th>
-          <th>O/T \u00d71.5</th><th>Dbl Time \u00d72</th><th>Total Pay</th>
+          <th>O/T \u00d71.5</th><th>Dbl Time \u00d72</th><th>Holiday</th><th>Total Pay</th>
         </tr></thead>
         <tbody>${rowsHtml}</tbody>
         <tfoot><tr>
@@ -11397,6 +11538,7 @@ function buildPayrollHTML(data, settingsOverride) {
           <td class="mono">\u00a3${data.totals.basic.toFixed(2)}</td>
           <td class="mono ot">\u00a3${data.totals.ot.toFixed(2)}</td>
           <td class="mono dt">\u00a3${data.totals.dt.toFixed(2)}</td>
+          <td class="mono hol">\u00a3${(data.totals.hol || 0).toFixed(2)}</td>
           <td class="mono grand">\u00a3${data.totals.grand.toFixed(2)}</td>
         </tr></tfoot>
       </table>

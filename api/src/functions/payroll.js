@@ -2,6 +2,18 @@ const { app } = require('@azure/functions');
 const { query, getPool, sql } = require('../db');
 const { requireAuth } = require('../auth');
 const { ok, created, badRequest, notFound, serverError, preflight } = require('../responses');
+const { isBankHoliday } = require('../bank-holidays');
+
+// YYYY-MM-DD in local time (matches how dates are compared everywhere else)
+function dateOnly(d) {
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+}
+
+// Round to 2dp (avoids floating-point grime in payroll figures)
+function r2(n) { return Math.round(n * 100) / 100; }
 
 // POST /api/payroll/approve — approve a week and calculate payroll
 app.http('payroll-approve', {
@@ -27,9 +39,25 @@ app.http('payroll-approve', {
                 return badRequest('This week has already been approved', request);
             }
 
-            // Get all project hours for this week
+            // ── Calculate the week's date range (Mon-Sun, inclusive) ──
+            const weekStart = new Date(week_commencing + 'T00:00:00');
+            const weekDates = [];
+            for (let i = 0; i < 7; i++) {
+                const d = new Date(weekStart);
+                d.setDate(weekStart.getDate() + i);
+                weekDates.push(dateOnly(d));
+            }
+            const weekEndStr = weekDates[6];
+
+            // Bank holiday dates that fall in this week
+            const bhInWeek = weekDates.filter(d => {
+                const dow = new Date(d + 'T12:00:00').getDay();
+                return dow !== 0 && dow !== 6 && isBankHoliday(d);
+            });
+
+            // ── Fetch project hours ──
             const hours = await query(
-                `SELECT ph.employee_id, e.name, e.rate,
+                `SELECT ph.employee_id, e.name, e.rate, e.pay_type, e.is_active,
                         ph.date, ph.hours,
                         DATEPART(dw, ph.date) as day_of_week
                  FROM ProjectHours ph
@@ -39,31 +67,61 @@ app.http('payroll-approve', {
                 { wc: week_commencing }
             );
 
-            if (hours.recordset.length === 0) {
-                return badRequest('No project hours found for this week', request);
+            // ── Fetch approved booked holidays overlapping this week ──
+            const holidaysResult = await query(
+                `SELECT h.employee_id, e.name, e.rate, e.pay_type, e.is_active,
+                        h.date_from, h.date_to, h.type, h.working_days
+                 FROM Holidays h
+                 JOIN Employees e ON e.id = h.employee_id
+                 WHERE h.status = 'approved'
+                   AND h.type IN ('paid', 'half')
+                   AND h.date_from <= @weekEnd
+                   AND h.date_to   >= @weekStart`,
+                { weekStart: week_commencing, weekEnd: weekEndStr }
+            );
+
+            // ── Fetch all active payees (for bank holiday auto-pay) ──
+            const payees = bhInWeek.length > 0
+                ? await query(`
+                    SELECT id, name, rate FROM Employees
+                    WHERE is_active = 1 AND pay_type = 'payee'
+                  `)
+                : { recordset: [] };
+
+            // Bail only if absolutely nothing happened this week
+            if (hours.recordset.length === 0
+                && holidaysResult.recordset.length === 0
+                && bhInWeek.length === 0) {
+                return badRequest('No project hours, holidays, or bank holidays for this week', request);
             }
 
-            // Group by employee and calculate payroll
+            // ── Build per-employee record ──
+            // Keyed by employee_id. Created lazily as we encounter each
+            // employee in any of the three sources.
             const employeeData = {};
-            for (const row of hours.recordset) {
-                if (!employeeData[row.employee_id]) {
-                    employeeData[row.employee_id] = {
-                        employee_id: row.employee_id,
-                        name: row.name,
-                        rate: parseFloat(row.rate),
-                        total_hours: 0,
+            function ensure(emp_id, name, rate) {
+                if (!employeeData[emp_id]) {
+                    employeeData[emp_id] = {
+                        employee_id: emp_id,
+                        name,
+                        rate: parseFloat(rate),
+                        worked_hours: 0,
                         saturday_worked: false,
                         sunday_worked: false,
                         sunday_hours: 0,
-                        daily_hours: {}
+                        holiday_hours: 0,
+                        bank_holiday_hours: 0
                     };
                 }
+                return employeeData[emp_id];
+            }
 
-                const emp = employeeData[row.employee_id];
+            // 1) Project hours
+            for (const row of hours.recordset) {
+                const emp = ensure(row.employee_id, row.name, row.rate);
                 const hrs = parseFloat(row.hours);
-                emp.total_hours += hrs;
-
-                // day_of_week: 1=Sunday, 2=Monday, ..., 7=Saturday (SQL Server default)
+                emp.worked_hours += hrs;
+                // SQL Server DATEPART(dw): 1=Sunday, 7=Saturday (default datefirst=7)
                 if (row.day_of_week === 7) emp.saturday_worked = true;
                 if (row.day_of_week === 1) {
                     emp.sunday_worked = true;
@@ -71,43 +129,113 @@ app.http('payroll-approve', {
                 }
             }
 
-            // Calculate pay for each employee using BAMA rules:
-            // - Basic: first 40 hours at rate
-            // - Overtime: hours over 40 at 1.5x rate
-            // - Double time: Sunday hours at 2x rate (only if worked both Saturday AND Sunday)
+            // 2) Booked holidays — walk the in-week portion of each range,
+            //    skip weekends and bank holidays (matches frontend `working_days`)
+            for (const row of holidaysResult.recordset) {
+                const emp = ensure(row.employee_id, row.name, row.rate);
+                if (row.type === 'half') {
+                    // Half-days are always single-day in practice — credit 4h
+                    // if the day falls in this week and is a working day.
+                    const d = dateOnly(new Date(row.date_from));
+                    if (d >= week_commencing && d <= weekEndStr) {
+                        const dow = new Date(d + 'T12:00:00').getDay();
+                        if (dow !== 0 && dow !== 6 && !isBankHoliday(d)) {
+                            emp.holiday_hours += 4;
+                        }
+                    }
+                    continue;
+                }
+                // type === 'paid' — walk every date in [max(start,weekStart), min(end,weekEnd)]
+                const rangeStart = new Date(Math.max(
+                    new Date(row.date_from).getTime(),
+                    weekStart.getTime()
+                ));
+                const rangeEnd = new Date(Math.min(
+                    new Date(row.date_to).getTime(),
+                    new Date(weekEndStr + 'T00:00:00').getTime()
+                ));
+                for (let d = new Date(rangeStart); d <= rangeEnd; d.setDate(d.getDate() + 1)) {
+                    const ds = dateOnly(d);
+                    const dow = d.getDay();
+                    if (dow === 0 || dow === 6) continue;
+                    if (isBankHoliday(ds)) continue;
+                    emp.holiday_hours += 8;
+                }
+            }
+
+            // 3) Bank holidays — auto-pay 8h × basic to every active payee
+            //    for each BH in the week. Creates rows for payees who didn't
+            //    work and didn't book holiday — they're still owed BH pay.
+            if (bhInWeek.length > 0) {
+                const bhHoursTotal = bhInWeek.length * 8;
+                for (const p of payees.recordset) {
+                    const emp = ensure(p.id, p.name, p.rate);
+                    emp.bank_holiday_hours += bhHoursTotal;
+                }
+            }
+
+            // ── Apply BAMA rules per employee ──
+            // - Booked holiday + bank holiday hours fill the 40h bucket FIRST,
+            //   pushing any worked hours that don't fit into overtime.
+            // - Holiday/BH hours are always at basic rate (never OT, never DT).
+            // - Sunday hours stay double if both Sat AND Sun were worked;
+            //   bank holidays always fall on weekdays so don't interact.
             const payrollRecords = [];
 
             for (const emp of Object.values(employeeData)) {
+                const nonWorkedPaidHours = emp.holiday_hours + emp.bank_holiday_hours;
                 const doubleTimeApplies = emp.saturday_worked && emp.sunday_worked;
+
                 let basic_hours, overtime_hours, double_hours;
 
                 if (doubleTimeApplies) {
-                    const nonSundayHours = emp.total_hours - emp.sunday_hours;
-                    basic_hours = Math.min(40, nonSundayHours);
-                    overtime_hours = Math.max(0, nonSundayHours - 40);
                     double_hours = emp.sunday_hours;
+                    const nonSundayWorked = emp.worked_hours - emp.sunday_hours;
+                    const nonSundayCombined = nonSundayWorked + nonWorkedPaidHours;
+
+                    if (nonSundayCombined <= 40) {
+                        basic_hours = nonSundayWorked;
+                        overtime_hours = 0;
+                    } else {
+                        const basicCapacityForWorked = Math.max(0, 40 - nonWorkedPaidHours);
+                        basic_hours = Math.min(nonSundayWorked, basicCapacityForWorked);
+                        overtime_hours = nonSundayWorked - basic_hours;
+                    }
                 } else {
-                    basic_hours = Math.min(40, emp.total_hours);
-                    overtime_hours = Math.max(0, emp.total_hours - 40);
                     double_hours = 0;
+                    if (emp.worked_hours + nonWorkedPaidHours <= 40) {
+                        basic_hours = emp.worked_hours;
+                        overtime_hours = 0;
+                    } else {
+                        const basicCapacityForWorked = Math.max(0, 40 - nonWorkedPaidHours);
+                        basic_hours = Math.min(emp.worked_hours, basicCapacityForWorked);
+                        overtime_hours = emp.worked_hours - basic_hours;
+                    }
                 }
 
-                const basic_pay = Math.round(basic_hours * emp.rate * 100) / 100;
-                const overtime_pay = Math.round(overtime_hours * emp.rate * 1.5 * 100) / 100;
-                const double_pay = Math.round(double_hours * emp.rate * 2 * 100) / 100;
-                const total_pay = Math.round((basic_pay + overtime_pay + double_pay) * 100) / 100;
+                const basic_pay        = r2(basic_hours        * emp.rate);
+                const overtime_pay     = r2(overtime_hours     * emp.rate * 1.5);
+                const double_pay       = r2(double_hours       * emp.rate * 2);
+                const holiday_pay      = r2(emp.holiday_hours      * emp.rate);
+                const bank_holiday_pay = r2(emp.bank_holiday_hours * emp.rate);
+                const total_pay = r2(basic_pay + overtime_pay + double_pay + holiday_pay + bank_holiday_pay);
+                const total_hours = r2(emp.worked_hours + emp.holiday_hours + emp.bank_holiday_hours);
 
                 payrollRecords.push({
                     employee_id: emp.employee_id,
                     week_commencing,
-                    total_hours: Math.round(emp.total_hours * 100) / 100,
-                    basic_hours: Math.round(basic_hours * 100) / 100,
-                    overtime_hours: Math.round(overtime_hours * 100) / 100,
-                    double_hours: Math.round(double_hours * 100) / 100,
+                    total_hours,
+                    basic_hours: r2(basic_hours),
+                    overtime_hours: r2(overtime_hours),
+                    double_hours: r2(double_hours),
+                    holiday_hours: r2(emp.holiday_hours),
+                    bank_holiday_hours: r2(emp.bank_holiday_hours),
                     rate: emp.rate,
                     basic_pay,
                     overtime_pay,
                     double_pay,
+                    holiday_pay,
+                    bank_holiday_pay,
                     total_pay
                 });
             }
@@ -124,12 +252,14 @@ app.http('payroll-approve', {
                     await txRequest.query(`
                         INSERT INTO PayrollArchive
                             (employee_id, week_commencing, total_hours, basic_hours, overtime_hours,
-                             double_hours, rate, basic_pay, overtime_pay, double_pay, total_pay)
+                             double_hours, holiday_hours, bank_holiday_hours, rate,
+                             basic_pay, overtime_pay, double_pay, holiday_pay, bank_holiday_pay, total_pay)
                         VALUES
                             (${record.employee_id}, '${record.week_commencing}', ${record.total_hours},
                              ${record.basic_hours}, ${record.overtime_hours}, ${record.double_hours},
-                             ${record.rate}, ${record.basic_pay}, ${record.overtime_pay},
-                             ${record.double_pay}, ${record.total_pay})
+                             ${record.holiday_hours}, ${record.bank_holiday_hours}, ${record.rate},
+                             ${record.basic_pay}, ${record.overtime_pay}, ${record.double_pay},
+                             ${record.holiday_pay}, ${record.bank_holiday_pay}, ${record.total_pay})
                     `);
                 }
 
@@ -148,7 +278,7 @@ app.http('payroll-approve', {
             return created({
                 week_commencing,
                 employees: payrollRecords.length,
-                total_payroll: Math.round(payrollRecords.reduce((sum, r) => sum + r.total_pay, 0) * 100) / 100,
+                total_payroll: r2(payrollRecords.reduce((sum, r) => sum + r.total_pay, 0)),
                 records: payrollRecords
             });
         } catch (err) {
