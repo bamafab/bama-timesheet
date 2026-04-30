@@ -11,6 +11,10 @@
 -- the week.
 --
 -- Idempotent: safe to run multiple times.
+--
+-- Note: CREATE INDEX statements are wrapped in EXEC() so SQL Server defers
+-- their compilation to runtime — otherwise the batch would fail to parse on
+-- a fresh database where the table doesn't yet exist.
 
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'PayrollComments')
 BEGIN
@@ -23,7 +27,7 @@ BEGIN
         updated_by      NVARCHAR(255) NULL,
         updated_at      DATETIME2 NULL
     );
-    CREATE INDEX IX_PayrollComments_week ON PayrollComments(week_commencing);
+    EXEC('CREATE INDEX IX_PayrollComments_week ON PayrollComments(week_commencing)');
 END
 
 IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'PayrollRevisions')
@@ -37,6 +41,6 @@ BEGIN
         created_by      NVARCHAR(255) NOT NULL,
         created_at      DATETIME2 NOT NULL DEFAULT GETUTCDATE()
     );
-    CREATE INDEX IX_PayrollRevisions_week ON PayrollRevisions(week_commencing);
-    CREATE UNIQUE INDEX UX_PayrollRevisions_week_rev ON PayrollRevisions(week_commencing, revision_number);
+    EXEC('CREATE INDEX IX_PayrollRevisions_week ON PayrollRevisions(week_commencing)');
+    EXEC('CREATE UNIQUE INDEX UX_PayrollRevisions_week_rev ON PayrollRevisions(week_commencing, revision_number)');
 END
