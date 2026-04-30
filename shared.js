@@ -326,6 +326,8 @@ function normaliseEntry(row) {
 
 // Normalise API holiday row
 function normaliseHoliday(row) {
+  const decidedAt = row.decided_at || null;
+  const status = row.status || 'pending';
   return {
     id: row.id,
     employeeName: row.employee_name || empNameById(row.employee_id) || `Employee #${row.employee_id}`,
@@ -334,10 +336,13 @@ function normaliseHoliday(row) {
     dateTo: row.date_to ? (typeof row.date_to === 'string' ? row.date_to.split('T')[0] : new Date(row.date_to).toISOString().split('T')[0]) : '',
     type: row.type || 'paid',
     reason: row.reason || '',
-    status: row.status || 'pending',
+    status,
     workingDays: row.working_days || 0,
     submittedAt: row.submitted_at || new Date().toISOString(),
-    decidedAt: row.decided_at || null
+    decidedAt,
+    // Populated based on status — checkHolidayClockInNotification reads these
+    approvedAt: status === 'approved' ? decidedAt : null,
+    rejectedAt: status === 'rejected' ? decidedAt : null
   };
 }
 
@@ -988,6 +993,11 @@ function openEmployeePanel(name) {
   // Populate project select
   const sel = document.getElementById('projectSelect');
   sel.innerHTML = '<option value="">Select project…</option>';
+  // WGD goes first so it's always available even if SharePoint projects fail to load
+  const wgdOpt = document.createElement('option');
+  wgdOpt.value = 'WGD';
+  wgdOpt.textContent = '🔧 Workshop General Duties';
+  sel.appendChild(wgdOpt);
   state.projects.forEach(p => {
     const opt = document.createElement('option');
     opt.value = p.id;
@@ -1211,9 +1221,10 @@ async function doClock(direction) {
 async function finishClockOut({ emp, today, clockOut, breakMins, clocking }) {
     const empId = empIdByName(emp);
 
-    // Call API to clock out
+    // Call API to clock out — include break_mins so it persists to DB (was lost on refresh before)
     const result = await api.post('/api/clock-out', {
-      employee_id: empId
+      employee_id: empId,
+      break_mins: breakMins
     });
 
     // Update local state
@@ -1274,6 +1285,10 @@ async function submitDay() {
   const empId = empIdByName(state.currentEmployee);
   if (!empId) { toast('Employee not found in system', 'error'); return; }
 
+  // Disable button immediately to prevent double-submission (creates duplicate rows in DB)
+  const submitBtn = document.getElementById('submitDayBtn');
+  if (submitBtn) { submitBtn.disabled = true; submitBtn.style.opacity = '.5'; submitBtn.style.cursor = 'wait'; }
+
   try {
     setLoading(true);
 
@@ -1301,6 +1316,8 @@ async function submitDay() {
   } catch (err) {
     console.error('Submit failed:', err);
     toast('Submit failed — ' + err.message, 'error');
+    // Re-enable button on error so user can fix and retry
+    if (submitBtn) { submitBtn.disabled = false; submitBtn.style.opacity = '1'; submitBtn.style.cursor = 'pointer'; }
   } finally { setLoading(false); }
 }
 
@@ -1713,7 +1730,10 @@ function calcHours(clockIn, clockOut, breakMins) {
   if (!clockIn || !clockOut) return null;
   const [ih, im] = clockIn.split(':').map(Number);
   const [oh, om] = clockOut.split(':').map(Number);
-  const diff = (oh * 60 + om) - (ih * 60 + im) - (breakMins || 0);
+  let diff = (oh * 60 + om) - (ih * 60 + im);
+  // Handle overnight shifts (e.g. 22:00 → 06:00) — add 24h if clock-out earlier than clock-in
+  if (diff < 0) diff += 1440;
+  diff -= (breakMins || 0);
   return diff > 0 ? diff / 60 : 0;
 }
 
@@ -2212,8 +2232,10 @@ async function submitMissingClocking() {
   try {
     const result = await api.post('/api/clockings', {
       employee_id: empId,
-      clock_in: `${_addClockingDate}T${clockIn}:00`,
-      clock_out: `${_addClockingDate}T${clockOut}:00`,
+      // Use ISO with timezone so the server interprets local BST correctly (was off by 1 hour before)
+      clock_in: new Date(`${_addClockingDate}T${clockIn}:00`).toISOString(),
+      clock_out: new Date(`${_addClockingDate}T${clockOut}:00`).toISOString(),
+      break_mins: breakMins,
       amended_by: state.currentEmployee
     });
 
@@ -2909,7 +2931,11 @@ async function confirmNoProjectClockOut() {
           project_name: 'Workshop General Duties'
         }));
       } catch (e) {
-        console.warn('WGD entry save failed:', e.message);
+        // ABORT: if WGD fails to save, do NOT proceed to clock-out — that would
+        // log the entire shift as S000 (Unproductive Time) which is wrong.
+        console.error('WGD entry save failed:', e.message);
+        toast('Could not save Workshop General Duties — please try again', 'error');
+        return;  // user stays on the modal, can retry
       }
     }
   }
@@ -3371,8 +3397,8 @@ function calculateHolidayBalance(employeeName) {
   yearEnd.setDate(yearEnd.getDate() - 1);
   const yearEndStr = dateStr(yearEnd);
 
-  // Fixed 20-day base entitlement per year
-  const BASE_ENTITLEMENT = 20;
+  // Use employee's actual entitlement (was hardcoded to 20 — ignored emp.annualDays)
+  const BASE_ENTITLEMENT = (emp.annualDays && emp.annualDays > 0) ? emp.annualDays : 20;
   let allocation = BASE_ENTITLEMENT;
 
   // Pro-rata only if employee started AFTER the holiday year start

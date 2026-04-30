@@ -160,10 +160,12 @@ app.http('holidays-update', {
                     { id, status }
                 );
 
-                if (status === 'approved' && holiday.type === 'paid') {
+                if (status === 'approved' && (holiday.type === 'paid' || holiday.type === 'half')) {
+                    // half-day requests come in with working_days = 0.5 already
+                    const deduct = holiday.type === 'half' ? 0.5 : holiday.working_days;
                     await query(
                         `UPDATE Employees SET holiday_balance = holiday_balance - @days WHERE id = @employeeId`,
-                        { days: holiday.working_days, employeeId: holiday.employee_id }
+                        { days: deduct, employeeId: holiday.employee_id }
                     );
                 }
 
@@ -182,12 +184,13 @@ app.http('holidays-update', {
                 return badRequest('status must be "pending", "approved", or "rejected"', request);
             }
 
-            // Reverse old balance impact (if was approved + paid, restore days)
-            const oldWasApprovedPaid = holiday.status === 'approved' && holiday.type === 'paid';
-            if (oldWasApprovedPaid) {
+            // Reverse old balance impact (if was approved AND deducted, restore days)
+            const oldWasApprovedDeducted = holiday.status === 'approved' && (holiday.type === 'paid' || holiday.type === 'half');
+            if (oldWasApprovedDeducted) {
+                const restore = holiday.type === 'half' ? 0.5 : holiday.working_days;
                 await query(
                     `UPDATE Employees SET holiday_balance = holiday_balance + @days WHERE id = @employeeId`,
-                    { days: holiday.working_days, employeeId: holiday.employee_id }
+                    { days: restore, employeeId: holiday.employee_id }
                 );
             }
 
@@ -202,12 +205,13 @@ app.http('holidays-update', {
                 { id, dateFrom: newFrom, dateTo: newTo, type: newType, status: newStatus, reason: newReason, workingDays: newDays }
             );
 
-            // Apply new balance impact (if now approved + paid, deduct days)
-            const newIsApprovedPaid = newStatus === 'approved' && newType === 'paid';
-            if (newIsApprovedPaid) {
+            // Apply new balance impact (if now approved + paid/half, deduct days)
+            const newIsApprovedDeducted = newStatus === 'approved' && (newType === 'paid' || newType === 'half');
+            if (newIsApprovedDeducted) {
+                const deduct = newType === 'half' ? 0.5 : newDays;
                 await query(
                     `UPDATE Employees SET holiday_balance = holiday_balance - @days WHERE id = @employeeId`,
-                    { days: newDays, employeeId: holiday.employee_id }
+                    { days: deduct, employeeId: holiday.employee_id }
                 );
             }
 

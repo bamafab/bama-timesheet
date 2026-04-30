@@ -72,32 +72,38 @@ app.http('clock-out', {
 
         try {
             const body = await request.json();
-            const { employee_id, timestamp } = body;
+            const { employee_id, timestamp, break_mins } = body;
 
             if (!employee_id) return badRequest('employee_id is required', request);
 
-            // Find the open clock entry
+            // Find TODAY's open clock entry (date filter prevents closing orphaned previous-day entries)
             const open = await query(
                 `SELECT ce.id, ce.clock_in, e.name as employee_name
                  FROM ClockEntries ce
                  JOIN Employees e ON e.id = ce.employee_id
-                 WHERE ce.employee_id = @id AND ce.clock_out IS NULL`,
+                 WHERE ce.employee_id = @id
+                   AND ce.clock_out IS NULL
+                   AND CAST(ce.clock_in AS DATE) = CAST(GETDATE() AS DATE)`,
                 { id: parseInt(employee_id) }
             );
 
             if (open.recordset.length === 0) {
-                return badRequest('Employee is not clocked in', request);
+                return badRequest('Employee is not clocked in today', request);
             }
 
             const clockTime = timestamp ? new Date(timestamp) : new Date();
+            const breakMinsVal = (break_mins !== undefined && break_mins !== null)
+                ? parseInt(break_mins) || 0
+                : 30;  // default to 30 min standard break
 
             const result = await query(
                 `UPDATE ClockEntries
-                 SET clock_out = @clockOut
+                 SET clock_out = @clockOut, break_mins = @breakMins
                  OUTPUT INSERTED.*
                  WHERE id = @id`,
                 {
                     clockOut: clockTime,
+                    breakMins: breakMinsVal,
                     id: open.recordset[0].id
                 }
             );

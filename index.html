@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Workshop Timesheet</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260326b">
+<link rel="stylesheet" href="bama.css?v=20260429j">
 </head>
 <body>
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
@@ -70,7 +70,6 @@
     <div class="card" id="clockCard">
       <div class="card-title"><span class="icon">🕐</span> Shift Times</div>
       <div id="clockInSection">
-        <input type="hidden" id="clockInTime" value="">
         <button class="btn btn-success btn-full" onclick="doClock('in')" style="padding:18px;font-size:16px;letter-spacing:1px">⏰ Clock In Now</button>
       </div>
       <div id="clockedInSection" style="display:none">
@@ -191,7 +190,6 @@
               <option value="half">Half Day Holiday</option>
               <option value="sick">Sick Leave</option>
               <option value="unpaid">Unpaid Absence</option>
-              <option value="sick">Sick Leave</option>
               <option value="training">Training</option>
             </select>
           </div>
@@ -319,6 +317,12 @@
       <input type="number" class="field-input" id="editEntryHours" min="0.5" max="24" step="0.5"
         style="font-size:20px;text-align:center">
     </div>
+    <div style="margin-top:14px">
+      <div class="field-label">REASON FOR CHANGE <span style="color:var(--red)">*</span></div>
+      <textarea class="field-input" id="editEntryReason" rows="3"
+        placeholder="e.g. Forgot to log additional hour spent on assembly..."
+        style="resize:vertical;font-size:13px"></textarea>
+    </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeEditEntry()">Cancel</button>
       <button class="btn btn-primary" onclick="saveEditEntry()">Submit for Approval</button>
@@ -429,6 +433,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260429i"></script>
+<script src="shared.js?v=20260429j"></script>
 </body>
 </html>
