@@ -5751,11 +5751,29 @@ async function emailPayrollReport() {
   }
 
   if (revisions.length > 0) {
+    // Already generated → confirm override (BAMA-styled)
     const lastRev = revisions[revisions.length - 1];
     const lastLabel = lastRev.revision_number === 0 ? 'the original' : `rev${lastRev.revision_number}`;
-    const ok = confirm(
-      `Payroll for ${weekStr} has already been generated (${lastLabel}, by ${lastRev.created_by}).\n\n` +
-      `Do you want to override and generate a new revision?\n\nThe original file will be kept on SharePoint.`
+    const ok = await showConfirmAsync(
+      'Override existing payroll?',
+      `<div style="margin-bottom:14px">Payroll for <b>${escapeHtml(weekStr)}</b> has already been generated (${escapeHtml(lastLabel)}, by <b>${escapeHtml(lastRev.created_by)}</b>).</div>
+       <div style="margin-bottom:14px">Do you want to override and generate a <b>new revision</b>?</div>
+       <div style="font-size:12px;color:var(--subtle)">The original file will be kept on SharePoint.</div>`,
+      { okLabel: 'Generate revision', cancelLabel: 'Cancel' }
+    );
+    if (!ok) return;
+  } else {
+    // First-time generation → confirm to prevent accidental click
+    const ok = await showConfirmAsync(
+      'Email payroll report?',
+      `<div style="margin-bottom:14px">This will:</div>
+       <ul style="margin:0 0 14px 18px;padding:0;color:var(--muted);font-size:13px;line-height:1.7">
+         <li>Generate a payroll PDF for <b>${escapeHtml(weekStr)}</b></li>
+         <li>Save it to SharePoint (<code style="font-size:12px">01 - Accounts/02 - Payroll</code>)</li>
+         <li>Open an email draft with the file link</li>
+       </ul>
+       <div style="font-size:12px;color:var(--subtle)">Continue?</div>`,
+      { okLabel: 'Generate & email', cancelLabel: 'Cancel' }
     );
     if (!ok) return;
   }
@@ -10595,6 +10613,50 @@ function showConfirm(title, message, onConfirm) {
     btnEl.parentNode.replaceChild(newBtn, btnEl);
   }
   modal.classList.add('active');
+}
+
+// Promise-returning confirm with HTML message support and customisable
+// button labels. Resolves true on confirm, false on cancel/dismiss.
+// Usage: const ok = await showConfirmAsync('Title', '<p>HTML body</p>', { okLabel: 'Generate' });
+function showConfirmAsync(title, htmlMessage, options = {}) {
+  return new Promise(resolve => {
+    const modal = document.getElementById('confirmModal');
+    if (!modal) { resolve(false); return; }
+    const titleEl = document.getElementById('confirmTitle');
+    const msgEl = document.getElementById('confirmMsg');
+    const btnEl = document.getElementById('confirmOk');
+    const cancelBtn = modal.querySelector('.modal-actions .btn-ghost');
+
+    if (titleEl) titleEl.textContent = title;
+    if (msgEl) msgEl.innerHTML = htmlMessage;
+
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      closeModal();
+      resolve(value);
+    };
+
+    if (btnEl) {
+      const newBtn = btnEl.cloneNode(true);
+      if (options.okLabel) newBtn.textContent = options.okLabel;
+      if (options.danger) {
+        newBtn.classList.remove('btn-primary');
+        newBtn.classList.add('btn-danger');
+      }
+      newBtn.onclick = () => finish(true);
+      btnEl.parentNode.replaceChild(newBtn, btnEl);
+    }
+    if (cancelBtn) {
+      const newCancel = cancelBtn.cloneNode(true);
+      if (options.cancelLabel) newCancel.textContent = options.cancelLabel;
+      newCancel.onclick = () => finish(false);
+      cancelBtn.parentNode.replaceChild(newCancel, cancelBtn);
+    }
+
+    modal.classList.add('active');
+  });
 }
 
 function closeModal() {
