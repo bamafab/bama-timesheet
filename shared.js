@@ -5697,7 +5697,6 @@ async function renderPayrollPDFBlob(weekStr) {
   if (typeof html2pdf === 'undefined') throw new Error('PDF library not loaded — refresh the page');
 
   const { mon, sun } = getWeekDates(payrollWeekOffset);
-  const monStr = dateStr(mon);
   const employees = (state.timesheetData.employees || []).filter(e => e.active !== false && (e.payType || 'payee') !== 'cis');
   const results = employees.map(e => calculatePayroll(e.name, mon, sun)).filter(Boolean);
   if (!results.length) throw new Error('No payroll data this week');
@@ -5709,17 +5708,8 @@ async function renderPayrollPDFBlob(weekStr) {
     grand: results.reduce((s, r) => s + r.totalPay, 0)
   };
 
-  // Include payroll instructions in the SharePoint-saved PDF too.
-  let comments = [];
-  if (_payrollExtras.weekKey === monStr) {
-    comments = _payrollExtras.comments || [];
-  } else {
-    try { comments = await api.get(`/api/payroll-comments?week_commencing=${monStr}`) || []; }
-    catch (e) { console.warn('Could not load payroll comments for PDF:', e); }
-  }
-
   await loadLogoDataUri();
-  const html = buildPayrollHTML({ results, totals, weekStr, comments });
+  const html = buildPayrollHTML({ results, totals, weekStr });
   const container = document.createElement('div');
   container.style.cssText = 'position:fixed;left:-10000px;top:0;width:794px;background:#fff;';
   container.innerHTML = html.replace(/^[\s\S]*?<body[^>]*>|<\/body>[\s\S]*$/g, '');
@@ -5819,17 +5809,25 @@ async function emailPayrollReport() {
     let comments = [];
     try { comments = await api.get(`/api/payroll-comments?week_commencing=${monStr}`) || []; }
     catch (e) { /* non-fatal */ }
+
+    // Tidy plain-text email layout: trim trailing whitespace from the
+    // template body, then append clearly delineated sections with consistent
+    // spacing. Bare URL on its own line so mail clients auto-linkify it.
+    body = body.replace(/\s+$/g, '');
+    const SEP = '\n\n────────────────────────────\n';
+
     if (comments.length) {
-      body += '\n\n--- PAYROLL INSTRUCTIONS ---\n';
-      body += comments.map(c => {
+      body += SEP + 'PAYROLL INSTRUCTIONS\n────────────────────────────\n\n';
+      body += comments.map((c, i) => {
         const when = new Date(c.created_at).toLocaleString('en-GB', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' });
-        return `\u2022 ${c.comment}\n  (${c.created_by} \u2014 ${when})`;
-      }).join('\n');
+        return `${i + 1}. ${c.comment}\n   — ${c.created_by}, ${when}`;
+      }).join('\n\n');
     }
 
-    body += `\n\n--- PAYROLL DOCUMENT ---\nFile: ${fileName}\nLink: ${uploaded.webUrl}`;
+    body += SEP + 'PAYROLL DOCUMENT\n────────────────────────────\n\n';
+    body += `File:  ${fileName}\n\n${uploaded.webUrl}`;
     if (nextRevision > 0) {
-      body += `\n\n(This is revision ${nextRevision}. Previous versions are kept on SharePoint in the same folder.)`;
+      body += `\n\n(Revision ${nextRevision} — previous versions are kept on SharePoint in the same folder.)`;
     }
 
     _payrollExtras.weekKey = null;
