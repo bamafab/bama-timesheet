@@ -961,6 +961,9 @@ function openEmployeePanel(name) {
   // Render holiday balance
   renderEmpHolidayBalance(name);
 
+  // Render booked/approved/declined holidays (excludes sick + unpaid)
+  renderMyHolidays(name);
+
   // Reload projects live from PROJECT TRACKER in background
   loadProjects().then(() => {
     // Refresh the project dropdown if already on screen
@@ -2736,6 +2739,11 @@ async function submitHKHoliday() {
     toast(`Holiday request submitted (${workingDays} working days) ✓`, 'success');
     renderHKHolidayList(_hkEmployee);
     showHKStep3(_hkEmployee);
+    // If this modal was opened from the employee panel, refresh that view too
+    if (state.currentEmployee === _hkEmployee) {
+      renderMyHolidays(state.currentEmployee);
+      renderEmpHolidayBalance(state.currentEmployee);
+    }
   } catch (err) { toast('Submit failed: ' + err.message, 'error'); }
 }
 
@@ -3507,6 +3515,99 @@ function renderEmpHolidayBalance(employeeName) {
       </div>
     `).join('')}
   `;
+}
+
+// ── My Holidays card on employee panel ──
+// Shows paid + half-day holidays only (excludes sick / unpaid absence per design)
+function renderMyHolidays(employeeName) {
+  const el = document.getElementById('myHolidaysList');
+  if (!el) return;
+
+  const today = todayStr();
+  const myHols = (state.timesheetData.holidays || [])
+    .filter(h => h.employeeName === employeeName)
+    .filter(h => h.type === 'paid' || h.type === 'half')
+    // Sort: future first (most imminent at top), then past in reverse chronological
+    .sort((a, b) => {
+      const aFuture = a.dateFrom >= today;
+      const bFuture = b.dateFrom >= today;
+      if (aFuture && !bFuture) return -1;
+      if (!aFuture && bFuture) return 1;
+      return aFuture
+        ? a.dateFrom.localeCompare(b.dateFrom)   // future: ascending (soonest first)
+        : b.dateFrom.localeCompare(a.dateFrom);  // past: descending (most recent first)
+    });
+
+  if (!myHols.length) {
+    el.innerHTML = '<div style="color:var(--subtle);font-size:13px;text-align:center;padding:18px">No holiday requests yet — tap <b>+ Request</b> to book one</div>';
+    return;
+  }
+
+  // Cap at 12 most relevant entries to keep the card a sensible size on the kiosk
+  const visible = myHols.slice(0, 12);
+  const hidden = myHols.length - visible.length;
+
+  const dayMs = 1000 * 60 * 60 * 24;
+  const todayDate = new Date(today + 'T12:00:00');
+
+  el.innerHTML = visible.map(h => {
+    const fromDate = new Date(h.dateFrom + 'T12:00:00');
+    const toDate   = new Date(h.dateTo   + 'T12:00:00');
+    const daysUntil = Math.round((fromDate - todayDate) / dayMs);
+
+    // Status colour for the left rail
+    const statusColor = h.status === 'approved' ? 'var(--green)'
+                      : h.status === 'rejected' ? 'var(--red)'
+                      : 'var(--amber)';
+    const statusLabel = h.status === 'approved' ? 'Approved'
+                      : h.status === 'rejected' ? 'Declined'
+                      : 'Pending';
+
+    const typeLabel = h.type === 'half' ? 'Half Day' : 'Paid';
+    const dateRange = h.dateFrom === h.dateTo
+      ? fmtDateStr(h.dateFrom)
+      : `${fmtDateStr(h.dateFrom)} → ${fmtDateStr(h.dateTo)}`;
+
+    // Future-relative label (only for approved/pending — declined doesn't matter)
+    let timing = '';
+    if (h.status !== 'rejected') {
+      if (daysUntil > 0)        timing = `<span style="color:var(--muted);font-size:11px">in ${daysUntil} day${daysUntil !== 1 ? 's' : ''}</span>`;
+      else if (daysUntil === 0) timing = `<span style="color:var(--green);font-size:11px;font-weight:600">today</span>`;
+      else if (daysUntil >= -7 && h.status === 'approved' && toDate >= todayDate) timing = `<span style="color:var(--green);font-size:11px">currently on holiday</span>`;
+    }
+
+    return `
+      <div style="display:flex;align-items:center;gap:12px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-left:3px solid ${statusColor};border-radius:8px;margin-bottom:6px">
+        <div style="flex:1;min-width:0">
+          <div style="font-family:var(--font-mono);font-size:13px;color:var(--text)">${dateRange}</div>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:2px;flex-wrap:wrap">
+            <span style="font-size:11px;color:var(--muted)">${typeLabel} · ${h.workingDays}d</span>
+            ${timing}
+            ${h.reason ? `<span style="font-size:11px;color:var(--subtle);font-style:italic">· ${h.reason}</span>` : ''}
+          </div>
+        </div>
+        <span class="tag tag-${h.status === 'approved' ? 'approved' : h.status === 'rejected' ? 'rejected' : 'pending'}" style="font-size:10px;flex-shrink:0">${statusLabel}</span>
+      </div>
+    `;
+  }).join('') + (hidden > 0
+    ? `<div style="text-align:center;font-size:11px;color:var(--subtle);padding:8px 0 4px">+ ${hidden} older request${hidden !== 1 ? 's' : ''} not shown</div>`
+    : '');
+}
+
+// Opens the holiday kiosk from the employee panel, pre-selecting the current employee
+// (skips the "select your name" step since we already know who they are)
+function openHolidayKioskFromPanel() {
+  if (!state.currentEmployee) {
+    openHolidayKiosk();
+    return;
+  }
+  const emp = (state.timesheetData.employees || []).find(e => e.name === state.currentEmployee);
+  if (!emp) { openHolidayKiosk(); return; }
+
+  document.getElementById('holidayKioskModal').classList.add('active');
+  // They've already PIN-authed to get into the panel — go straight to step 3
+  _hkEmployee = state.currentEmployee;
+  showHKStep3(state.currentEmployee);
 }
 
 async function submitHolidayRequest() {
