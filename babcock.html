@@ -146,11 +146,12 @@
         <button class="btn btn-ghost" onclick="showBabcockTracker()">&#8592; Back to Tracker</button>
       </div>
 
-    <!-- ── Step 1: Upload Schedule ── -->
+    <!-- ── Step 1: Upload completed quote template ── -->
     <div class="card" style="margin-bottom:20px" id="babcockUploadCard">
-      <div class="card-title"><span class="icon">📤</span> Upload Babcock Schedule</div>
+      <div class="card-title"><span class="icon">📤</span> Upload Completed Quote Template</div>
       <div style="font-size:13px;color:var(--muted);margin-bottom:16px">
-        Upload the Babcock pricing schedule spreadsheet (.xlsx or .xls). The system will read all line items, apply a 10% margin, and generate a BAMA quote.
+        Upload the BAMA South West Babcock quote template (.xlsx). The system reads the <b>Quote</b> tab,
+        applies a 10% markup to every line item, and generates a customer-facing PDF.
       </div>
       <div class="babcock-upload-zone" id="babcockUploadZone"
            ondragover="event.preventDefault();this.classList.add('drag-over')"
@@ -159,7 +160,7 @@
         <div style="text-align:center;padding:40px 20px">
           <div style="font-size:48px;margin-bottom:12px">📊</div>
           <div style="font-size:15px;font-weight:600;margin-bottom:6px">Drop your spreadsheet here</div>
-          <div style="font-size:13px;color:var(--muted);margin-bottom:20px">Supports .xlsx and .xls files</div>
+          <div style="font-size:13px;color:var(--muted);margin-bottom:20px">.xlsx — must be the BAMA South West Babcock template</div>
           <button class="btn btn-primary" onclick="document.getElementById('babcockFileInput').click()">
             Choose File
           </button>
@@ -167,7 +168,7 @@
                  onchange="handleBabcockFileSelect(this.files[0])">
         </div>
       </div>
-      <div id="babcockFileInfo" style="display:none;margin-top:12px;padding:10px 14px;background:var(--surface);border-radius:8px;border:1px solid var(--border);display:none">
+      <div id="babcockFileInfo" style="display:none;margin-top:12px;padding:10px 14px;background:var(--surface);border-radius:8px;border:1px solid var(--border)">
         <div style="display:flex;align-items:center;gap:10px">
           <span style="font-size:20px">📄</span>
           <div style="flex:1">
@@ -179,35 +180,61 @@
       </div>
     </div>
 
-    <!-- ── Step 2: Sheet / Column Mapping ── -->
-    <div class="card" style="margin-bottom:20px;display:none" id="babcockMappingCard">
-      <div class="card-title"><span class="icon">🗂️</span> Configure Import</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
-        <div>
-          <div class="field-label" style="margin-bottom:4px">SHEET</div>
-          <select class="field-input" id="babcockSheetSelect" onchange="onBabcockSheetChange()"></select>
-        </div>
-        <div>
-          <div class="field-label" style="margin-bottom:4px">HEADER ROW</div>
-          <input type="number" class="field-input" id="babcockHeaderRow" value="1" min="1" max="20"
-                 style="max-width:100px" onchange="onBabcockSheetChange()">
-        </div>
-      </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px" id="babcockColumnMapping">
-        <!-- Populated by JS -->
-      </div>
-      <button class="btn btn-primary" onclick="loadBabcockPreview()">Preview Data →</button>
-    </div>
-
-    <!-- ── Step 3: Preview ── -->
-    <div class="card" style="margin-bottom:20px;display:none" id="babcockPreviewCard">
+    <!-- ── Step 2: Validate extracted data + markup ── -->
+    <div class="card" style="margin-bottom:20px;display:none" id="babcockValidateCard">
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px">
-        <div class="card-title" style="margin-bottom:0"><span class="icon">📋</span> Schedule Preview</div>
+        <div class="card-title" style="margin-bottom:0"><span class="icon">📋</span> Validate Quote Data</div>
         <div style="display:flex;gap:8px;align-items:center">
           <span id="babcockRowCount" style="font-size:12px;color:var(--muted)"></span>
           <button class="btn btn-ghost" style="padding:6px 14px;font-size:12px" onclick="clearBabcockFile()">← Start Over</button>
-          <button class="btn btn-primary" onclick="generateBabcockQuote()">⚙️ Generate Quote</button>
+          <button class="btn btn-primary" onclick="generateAndSaveBabcockQuote()" id="babcockGenerateBtn">⚙️ Generate &amp; Save</button>
         </div>
+      </div>
+
+      <!-- Header metadata fields (editable) -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:16px">
+        <div>
+          <div class="field-label" style="margin-bottom:4px">QUOTATION NUMBER</div>
+          <input type="text" class="field-input" id="bvQuoteRef" placeholder="Auto (next B####)" style="font-size:13px">
+          <div style="font-size:11px;color:var(--subtle);margin-top:3px">Leave blank to auto-allocate</div>
+        </div>
+        <div>
+          <div class="field-label" style="margin-bottom:4px">QUOTATION DATE</div>
+          <input type="date" class="field-input" id="bvQuoteDate" style="font-size:13px">
+        </div>
+        <div>
+          <div class="field-label" style="margin-bottom:4px">VALID UNTIL</div>
+          <input type="date" class="field-input" id="bvValidUntil" style="font-size:13px">
+        </div>
+        <div>
+          <div class="field-label" style="margin-bottom:4px">CUSTOMER ID</div>
+          <input type="text" class="field-input" id="bvCustomerId" style="font-size:13px">
+        </div>
+        <div>
+          <div class="field-label" style="margin-bottom:4px">WORK ORDER NO.</div>
+          <input type="text" class="field-input" id="bvWorkOrderNo" style="font-size:13px">
+        </div>
+        <div>
+          <div class="field-label" style="margin-bottom:4px">PREPARED BY</div>
+          <input type="text" class="field-input" id="bvPreparedBy" style="font-size:13px">
+        </div>
+        <div>
+          <div class="field-label" style="margin-bottom:4px">QUOTATION FOR</div>
+          <input type="text" class="field-input" id="bvQuoteFor" placeholder="Customer / company" style="font-size:13px">
+        </div>
+        <div>
+          <div class="field-label" style="margin-bottom:4px">AREA</div>
+          <input type="text" class="field-input" id="bvArea" style="font-size:13px">
+        </div>
+        <div style="grid-column:span 2">
+          <div class="field-label" style="margin-bottom:4px">ADDRESS</div>
+          <input type="text" class="field-input" id="bvAddress" style="font-size:13px">
+        </div>
+      </div>
+
+      <div style="margin-bottom:16px">
+        <div class="field-label" style="margin-bottom:4px">COMMENTS / SPECIAL INSTRUCTIONS</div>
+        <textarea class="field-input" id="bvComments" rows="2" style="font-size:13px;resize:vertical;width:100%"></textarea>
       </div>
 
       <!-- Markup setting -->
@@ -218,29 +245,16 @@
                  style="max-width:80px;padding:4px 8px;font-size:13px" onchange="onBabcockMarkupChange()">
           <span style="font-size:13px;color:var(--muted)">%</span>
         </div>
-        <span style="font-size:12px;color:var(--subtle)">Applied to every line item value</span>
+        <span style="font-size:12px;color:var(--subtle)">Default 10%, override allowed</span>
+        <span style="margin-left:auto;font-size:12px;color:var(--muted)">Marked-up total: <b id="babcockMarkedUpTotal" style="color:var(--green);font-family:var(--font-mono)">—</b></span>
       </div>
 
+      <!-- Line items preview (read-only — edits happen in the source file) -->
       <div style="overflow-x:auto">
         <table class="babcock-preview-table" id="babcockPreviewTable">
           <thead id="babcockPreviewHead"></thead>
           <tbody id="babcockPreviewBody"></tbody>
         </table>
-      </div>
-    </div>
-
-    <!-- ── Step 4: Generated Quote ── -->
-    <div class="card" style="margin-bottom:20px;display:none" id="babcockQuoteCard">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px">
-        <div class="card-title" style="margin-bottom:0"><span class="icon">📄</span> Generated Quote</div>
-        <div style="display:flex;gap:8px">
-          <button class="btn btn-ghost" style="font-size:12px" onclick="document.getElementById('babcockQuoteCard').style.display='none'">← Back to Preview</button>
-          <button class="btn btn-primary" id="babcockSaveBtn" onclick="saveBabcockQuoteToTracker()">💾 Save to Tracker</button>
-          <button class="btn btn-ghost" onclick="exportBabcockQuote()">⬇️ Export</button>
-        </div>
-      </div>
-      <div id="babcockQuoteContent">
-        <!-- Populated by JS -->
       </div>
     </div>
 
@@ -407,6 +421,7 @@
 </style>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260505a"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script src="shared.js?v=20260505b"></script>
 </body>
 </html>

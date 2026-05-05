@@ -13790,10 +13790,13 @@ async function deleteQuoteComment(id) {
 // ═══════════════════════════════════════════
 
 let _babcockWorkbook = null;    // parsed XLSX workbook
-let _babcockRawData = null;     // array of row objects after mapping
+let _babcockOriginalFile = null; // raw File object — needed to upload to SharePoint
+let _babcockRawData = null;     // array of line items extracted from Quote tab
+let _babcockHeader = null;      // header metadata extracted from Quote tab
 let _pendingBabcockUser = null;
 let _babcockQuotes = [];        // tracker list (loaded from API)
 let _babcockLastGenerated = null; // cached payload for "Save to Tracker"
+let _babcockNextRefCache = null;  // cached suggested next reference
 
 async function initBabcockPage() {
   const authed = sessionStorage.getItem('bama_mgr_authed');
@@ -13890,17 +13893,32 @@ function handleBabcockFileSelect(file) {
   document.getElementById('babcockFileInfo').style.display = '';
   document.getElementById('babcockFileName').textContent = file.name;
   document.getElementById('babcockFileSize').textContent = formatFileSize(file.size);
+  _babcockOriginalFile = file;
 
   const reader = new FileReader();
   reader.onload = (e) => {
     try {
       _babcockWorkbook = XLSX.read(e.target.result, { type: 'array' });
-      populateBabcockSheetSelect();
-      document.getElementById('babcockMappingCard').style.display = '';
-      document.getElementById('babcockPreviewCard').style.display = 'none';
-      document.getElementById('babcockQuoteCard').style.display = 'none';
-      toast(`Loaded: ${file.name}`, 'success');
+      const parsed = parseBabcockQuoteTab(_babcockWorkbook);
+      _babcockHeader = parsed.header;
+      _babcockRawData = parsed.lineItems;
+
+      if (!_babcockRawData.length) {
+        toast('No line items found on the "Quote" tab. Check the template format.', 'error');
+        return;
+      }
+
+      populateBabcockValidationFields(_babcockHeader);
+      const markup = parseFloat(document.getElementById('babcockMarkup').value) || 10;
+      renderBabcockPreviewTable(markup);
+      updateBabcockMarkedUpTotal(markup);
+      document.getElementById('babcockRowCount').textContent = `${_babcockRawData.length} line item${_babcockRawData.length === 1 ? '' : 's'}`;
+      document.getElementById('babcockValidateCard').style.display = '';
+      document.getElementById('babcockValidateCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+      toast(`Loaded ${file.name} — ${_babcockRawData.length} line items extracted`, 'success');
     } catch (err) {
+      console.error('Babcock parse failed:', err);
       toast('Failed to read spreadsheet: ' + err.message, 'error');
     }
   };
@@ -13909,115 +13927,168 @@ function handleBabcockFileSelect(file) {
 
 function clearBabcockFile() {
   _babcockWorkbook = null;
+  _babcockOriginalFile = null;
   _babcockRawData = null;
+  _babcockHeader = null;
+  _babcockLastGenerated = null;
   document.getElementById('babcockFileInput').value = '';
   document.getElementById('babcockFileInfo').style.display = 'none';
-  document.getElementById('babcockMappingCard').style.display = 'none';
-  document.getElementById('babcockPreviewCard').style.display = 'none';
-  document.getElementById('babcockQuoteCard').style.display = 'none';
+  document.getElementById('babcockValidateCard').style.display = 'none';
+  // Reset markup to default
+  const m = document.getElementById('babcockMarkup');
+  if (m) m.value = 10;
 }
 
-function populateBabcockSheetSelect() {
-  if (!_babcockWorkbook) return;
-  const sel = document.getElementById('babcockSheetSelect');
-  sel.innerHTML = _babcockWorkbook.SheetNames.map((n, i) =>
-    `<option value="${i}">${escapeHtml(n)}</option>`
-  ).join('');
-  onBabcockSheetChange();
-}
+// ── Parse the BAMA South West Babcock template's "Quote" tab ───────
+// The template is rigid: sheet name "Quote", header row at row 14
+// (Item | Description | Unit Price | Quantity | Amount), data from row 15
+// onwards until an empty Description. Header metadata sits in rows 1-9
+// with labels in column D (or A) and values one column to the right.
+//
+// Throws on missing sheet. Returns { header, lineItems } where any
+// missing/blank header field is left as ''.
+function parseBabcockQuoteTab(wb) {
+  const sheet = wb.Sheets['Quote'];
+  if (!sheet) throw new Error('Sheet "Quote" not found — is this the correct template?');
 
-function onBabcockSheetChange() {
-  if (!_babcockWorkbook) return;
-  const sheetIdx = parseInt(document.getElementById('babcockSheetSelect').value) || 0;
-  const headerRow = Math.max(1, parseInt(document.getElementById('babcockHeaderRow').value) || 1);
-  const sheet = _babcockWorkbook.Sheets[_babcockWorkbook.SheetNames[sheetIdx]];
+  // Pull as a 2D array — easiest for fixed-position parsing
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
-  if (rows.length < headerRow) return;
 
-  const headers = rows[headerRow - 1].map((h, i) => h ? String(h).trim() : `Column ${i + 1}`);
-  const mappingDiv = document.getElementById('babcockColumnMapping');
-
-  // Show column mapping dropdowns
-  const colFields = [
-    { key: 'description', label: 'DESCRIPTION / ITEM', hint: 'Line item description' },
-    { key: 'quantity',    label: 'QUANTITY',            hint: 'Number of units' },
-    { key: 'unit',        label: 'UNIT (optional)',     hint: 'e.g. nr, m, kg' },
-    { key: 'unitPrice',   label: 'UNIT PRICE (£)',      hint: 'Price per unit' },
-    { key: 'total',       label: 'LINE TOTAL (£)',      hint: 'Qty × Unit price' },
-  ];
-
-  mappingDiv.innerHTML = colFields.map(f => {
-    const opts = [`<option value="">— Not mapped —</option>`,
-      ...headers.map((h, i) => `<option value="${i}">${escapeHtml(h)}</option>`)
-    ].join('');
-    return `
-      <div>
-        <div class="field-label" style="margin-bottom:4px">${f.label}</div>
-        <select class="field-input" id="babcockCol_${f.key}" style="font-size:12px">
-          ${opts}
-        </select>
-        <div style="font-size:11px;color:var(--subtle);margin-top:3px">${f.hint}</div>
-      </div>`;
-  }).join('');
-
-  // Auto-detect columns by common header names
-  const autoMap = {
-    description: ['description', 'item', 'desc', 'work', 'scope', 'activity', 'trade'],
-    quantity:    ['quantity', 'qty', 'no.', 'number', 'nos', 'count'],
-    unit:        ['unit', 'uom', 'measure'],
-    unitPrice:   ['unit price', 'rate', 'unit rate', 'price', 'unit cost'],
-    total:       ['total', 'amount', 'value', 'line total', 'net', 'sum'],
+  const cell = (r, c) => {
+    const row = rows[r];
+    if (!row) return '';
+    const v = row[c];
+    return v === undefined || v === null ? '' : v;
   };
-  for (const [field, keywords] of Object.entries(autoMap)) {
-    const sel = document.getElementById(`babcockCol_${field}`);
-    if (!sel) continue;
-    const match = headers.findIndex(h =>
-      keywords.some(k => h.toLowerCase().includes(k))
-    );
-    if (match !== -1) sel.value = String(match);
+
+  // Row indices are 0-based here; the spreadsheet rows are 1-based.
+  // Cells are 0-based by column letter (A=0, B=1, C=2, D=3, E=4).
+  const header = {
+    quotationDate:    cell(1, 4), // E2 — value next to D2 "Date"
+    quoteRef:         cell(2, 4), // E3 — Quotation no.
+    customerId:       cell(3, 4), // E4 — Customer ID
+    workOrderNo:      cell(4, 4), // E5 — Work Order no.
+    validUntil:       cell(5, 4), // E6 — Quotation valid until
+    preparedBy:       cell(6, 4), // E7 — Prepared by
+    quoteFor:         cell(4, 1), // B5 — value next to A5 "Quotation For"
+    area:             cell(5, 1), // B6 — value next to A6 "Area"
+    address:          cell(6, 1), // B7 — value next to A7 "Address"
+    // Comments / Special Instructions live in merged cells A10:E10, A11:E11, A12:E12.
+    // SheetJS unmerges into the top-left cell, so reading A10/A11/A12 (col 0) is correct.
+    comments:         [cell(9, 0), cell(10, 0), cell(11, 0)]
+                        .map(s => String(s || '').trim()).filter(Boolean).join('\n')
+  };
+
+  // Normalise dates — Excel may give a JS Date object, a number (serial), or a string.
+  header.quotationDate = excelToISODate(header.quotationDate);
+  header.validUntil    = excelToISODate(header.validUntil);
+
+  // Trim string fields
+  for (const k of ['quoteRef', 'customerId', 'workOrderNo', 'preparedBy', 'quoteFor', 'area', 'address']) {
+    header[k] = String(header[k] || '').trim();
+  }
+
+  // Line items: row 14 (index 13) is the header; data starts at row 15 (index 14).
+  // Read until we hit a row with no description AND no item number — supports
+  // templates that have been extended past the original 14-row capacity.
+  const lineItems = [];
+  for (let r = 14; r < rows.length; r++) {
+    const itemNum    = cell(r, 0);
+    const description = String(cell(r, 1) || '').trim();
+    const unitPrice  = cell(r, 2);
+    const quantity   = cell(r, 3);
+    const amount     = cell(r, 4);
+
+    // Stop when we hit the TOTAL row or the VAT-exclusive note (description column has the note text).
+    if (description === 'All quotes are VAT exclusive' || description === 'TOTAL') break;
+    if (cell(r, 3) === 'TOTAL' || cell(r, 4) === 'TOTAL') break;
+
+    // Skip rows where description is empty AND no numeric data — these are blank template rows.
+    if (!description && unitPrice === '' && quantity === '' && amount === '') continue;
+    // Skip rows with only an item number (e.g. blank line slots 11-14 in the default template)
+    if (!description) continue;
+
+    const qtyNum = quantity === '' ? null : Number(quantity);
+    const upNum  = unitPrice === '' ? null : Number(unitPrice);
+    const amtNum = amount === '' ? null : Number(amount);
+
+    lineItems.push({
+      itemNum:     itemNum === '' ? null : itemNum,
+      description,
+      unitPrice:   isFinite(upNum) ? upNum : null,
+      quantity:    isFinite(qtyNum) ? qtyNum : null,
+      amount:      isFinite(amtNum) ? amtNum : ((isFinite(upNum) && isFinite(qtyNum)) ? upNum * qtyNum : null)
+    });
+  }
+
+  return { header, lineItems };
+}
+
+// Excel cell value → ISO date string ('YYYY-MM-DD'), or '' if not a date.
+// Handles JS Date objects, Excel serial numbers, and ISO/UK-formatted strings.
+function excelToISODate(v) {
+  if (!v && v !== 0) return '';
+  if (v instanceof Date) {
+    return v.toISOString().split('T')[0];
+  }
+  if (typeof v === 'number' && isFinite(v)) {
+    // Excel serial: days since 1899-12-30 (which corrects for the 1900 leap-year bug)
+    const ms = (v - 25569) * 86400 * 1000;
+    const d = new Date(ms);
+    if (!isNaN(d.getTime())) return d.toISOString().split('T')[0];
+  }
+  const s = String(v).trim();
+  // Already ISO?
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  // UK format dd/mm/yyyy
+  const m = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
+  if (m) {
+    let [, d, mo, y] = m;
+    if (y.length === 2) y = (parseInt(y) > 50 ? '19' : '20') + y;
+    return `${y}-${mo.padStart(2,'0')}-${d.padStart(2,'0')}`;
+  }
+  return '';
+}
+
+// Push parsed header values into the Validate card form. Pre-fills the
+// "Quotation number" hint with the next available B#### so Lee can see
+// what the system would auto-allocate (he can override by typing a value).
+function populateBabcockValidationFields(header) {
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val ?? ''; };
+
+  set('bvQuoteRef',    header.quoteRef || '');
+  set('bvQuoteDate',   header.quotationDate || todayStr());
+  set('bvValidUntil',  header.validUntil || '');
+  set('bvCustomerId',  header.customerId || '');
+  set('bvWorkOrderNo', header.workOrderNo || '');
+  set('bvPreparedBy',  header.preparedBy || currentManagerUser || '');
+  set('bvQuoteFor',    header.quoteFor || '');
+  set('bvArea',        header.area || '');
+  set('bvAddress',     header.address || '');
+  set('bvComments',    header.comments || '');
+
+  // Suggest next ref in the placeholder so the user knows what'll be allocated
+  const refEl = document.getElementById('bvQuoteRef');
+  if (refEl && !refEl.value) {
+    api.get('/api/babcock-quote-next-ref').then(r => {
+      if (r && r.reference) {
+        _babcockNextRefCache = r.reference;
+        refEl.placeholder = `Auto: ${r.reference}`;
+      }
+    }).catch(() => { /* leave placeholder as-is */ });
   }
 }
 
-function loadBabcockPreview() {
-  if (!_babcockWorkbook) return;
-  const sheetIdx = parseInt(document.getElementById('babcockSheetSelect').value) || 0;
-  const headerRow = Math.max(1, parseInt(document.getElementById('babcockHeaderRow').value) || 1);
-  const sheet = _babcockWorkbook.Sheets[_babcockWorkbook.SheetNames[sheetIdx]];
-  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
-
-  const getCol = key => {
-    const v = document.getElementById(`babcockCol_${key}`)?.value;
-    return v !== '' && v !== undefined ? parseInt(v) : null;
-  };
-  const cols = {
-    description: getCol('description'),
-    quantity:    getCol('quantity'),
-    unit:        getCol('unit'),
-    unitPrice:   getCol('unitPrice'),
-    total:       getCol('total'),
-  };
-
-  if (cols.description === null) { toast('Please map at least the Description column', 'error'); return; }
-
-  // Extract data rows (skip header)
-  const dataRows = rows.slice(headerRow).filter(r => r.some(c => c !== ''));
-  _babcockRawData = dataRows.map(r => ({
-    description: cols.description !== null ? r[cols.description] : '',
-    quantity:    cols.quantity    !== null ? parseFloat(r[cols.quantity]) || '' : '',
-    unit:        cols.unit        !== null ? r[cols.unit] : '',
-    unitPrice:   cols.unitPrice   !== null ? parseFloat(r[cols.unitPrice]) || '' : '',
-    total:       cols.total       !== null ? parseFloat(r[cols.total]) || '' : '',
-  })).filter(r => r.description);
-
-  if (!_babcockRawData.length) { toast('No data rows found. Check your header row setting.', 'error'); return; }
-
-  // Render preview table
-  const markup = parseFloat(document.getElementById('babcockMarkup').value) || 10;
-  renderBabcockPreviewTable(markup);
-
-  document.getElementById('babcockPreviewCard').style.display = '';
-  document.getElementById('babcockRowCount').textContent = `${_babcockRawData.length} line items`;
-  document.getElementById('babcockPreviewCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+function updateBabcockMarkedUpTotal(markup) {
+  if (!_babcockRawData) return;
+  const factor = 1 + (markup / 100);
+  const total = _babcockRawData.reduce((s, r) => {
+    const lineTotal = r.amount !== null ? r.amount
+                     : (r.unitPrice !== null && r.quantity !== null ? r.unitPrice * r.quantity : 0);
+    return s + (lineTotal * factor);
+  }, 0);
+  const el = document.getElementById('babcockMarkedUpTotal');
+  if (el) el.textContent = `£${total.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function renderBabcockPreviewTable(markup) {
@@ -14027,108 +14098,528 @@ function renderBabcockPreviewTable(markup) {
   const fmtGBP = v => typeof v === 'number' ? `£${v.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
 
   document.getElementById('babcockPreviewHead').innerHTML = `<tr>
+    <th style="width:40px">#</th>
     <th style="min-width:240px">Description</th>
-    <th style="text-align:right">Qty</th>
-    <th>Unit</th>
     <th style="text-align:right">Unit Price</th>
-    <th style="text-align:right">Line Total</th>
+    <th style="text-align:right">Qty</th>
+    <th style="text-align:right">Amount</th>
     <th style="text-align:right;color:var(--green)">+${markup}% → Our Price</th>
   </tr>`;
 
-  document.getElementById('babcockPreviewBody').innerHTML = _babcockRawData.map(r => {
-    const lineTotal = r.total !== '' ? r.total : (r.quantity !== '' && r.unitPrice !== '' ? r.quantity * r.unitPrice : '');
-    const ourPrice  = typeof lineTotal === 'number' ? lineTotal * factor : '';
+  document.getElementById('babcockPreviewBody').innerHTML = _babcockRawData.map((r, i) => {
+    const amount   = r.amount !== null ? r.amount
+                    : (r.unitPrice !== null && r.quantity !== null ? r.unitPrice * r.quantity : null);
+    const ourPrice = amount !== null ? amount * factor : null;
     return `<tr>
+      <td style="color:var(--subtle);font-family:var(--font-mono)">${r.itemNum ?? (i + 1)}</td>
       <td title="${escapeHtml(String(r.description))}">${escapeHtml(String(r.description))}</td>
-      <td class="num-cell">${r.quantity !== '' ? r.quantity : '—'}</td>
-      <td style="color:var(--muted)">${r.unit || '—'}</td>
-      <td class="num-cell">${fmtGBP(r.unitPrice)}</td>
-      <td class="num-cell">${fmtGBP(lineTotal)}</td>
-      <td class="markup-cell">${fmtGBP(ourPrice)}</td>
+      <td class="num-cell">${r.unitPrice !== null ? fmtGBP(r.unitPrice) : '—'}</td>
+      <td class="num-cell">${r.quantity !== null ? r.quantity : '—'}</td>
+      <td class="num-cell">${amount !== null ? fmtGBP(amount) : '—'}</td>
+      <td class="markup-cell">${ourPrice !== null ? fmtGBP(ourPrice) : '—'}</td>
     </tr>`;
   }).join('');
 }
 
-function generateBabcockQuote() {
-  if (!_babcockRawData) return;
+// ── Generate PDF + upload both files to SharePoint + save DB row ───
+// Single button, single user gesture. Flow:
+//   1. Validate at least one line item exists
+//   2. Open render popup synchronously (popup blockers reject post-await)
+//   3. Build PDF in popup via html2pdf
+//   4. Upload original .xlsx to "...Bama South West Quotes/Quotes received/"
+//   5. Upload generated .pdf to "...Bama South West Quotes/"
+//   6. POST to /api/babcock-quotes with all metadata + file links
+async function generateAndSaveBabcockQuote() {
+  if (!_babcockRawData || !_babcockRawData.length) {
+    toast('Upload a quote template first', 'error');
+    return;
+  }
+  if (!_babcockOriginalFile) {
+    toast('Original file not in memory — please re-upload', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('babcockGenerateBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+
+  // Gather form values (overrides over parsed values)
   const markup = parseFloat(document.getElementById('babcockMarkup').value) || 10;
   const factor = 1 + (markup / 100);
-  const fmtGBP = v => typeof v === 'number' ? `£${v.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
 
-  let grandTotal = 0;
-  const lines = _babcockRawData.map((r, i) => {
-    const lineTotal = r.total !== '' ? r.total : (r.quantity !== '' && r.unitPrice !== '' ? r.quantity * r.unitPrice : '');
-    const ourPrice  = typeof lineTotal === 'number' ? lineTotal * factor : null;
-    if (ourPrice) grandTotal += ourPrice;
-    return { num: i + 1, description: r.description, quantity: r.quantity, unit: r.unit, ourPrice };
-  });
-
-  // Get next ref from server. Falls back to a temporary local ref if the API is unreachable —
-  // the real ref will be allocated server-side when Save to Tracker is clicked.
-  let quoteRef = `B-pending`;
-  api.get('/api/babcock-quote-next-ref').then(r => {
-    if (r && r.reference) {
-      quoteRef = r.reference;
-      const refEl = document.getElementById('babcockGeneratedRef');
-      if (refEl) refEl.textContent = quoteRef;
-      if (_babcockLastGenerated) _babcockLastGenerated.quote_ref = quoteRef;
-    }
-  }).catch(() => { /* leave as B-pending; server will allocate on save */ });
-
-  // Cache the full payload so saveBabcockQuoteToTracker() can ship it.
-  _babcockLastGenerated = {
-    quote_ref: quoteRef,
-    total_value: grandTotal,
-    markup_pct: markup,
-    line_items: lines.map(l => ({
-      num: l.num,
-      description: l.description,
-      quantity: l.quantity,
-      unit: l.unit,
-      ourPrice: l.ourPrice
-    })),
-    source_filename: document.getElementById('babcockFileName')?.textContent || null,
-    saved_id: null
+  const formData = {
+    quoteRef:     (document.getElementById('bvQuoteRef').value || '').trim(),
+    quoteDate:    document.getElementById('bvQuoteDate').value || todayStr(),
+    validUntil:   document.getElementById('bvValidUntil').value || '',
+    customerId:   (document.getElementById('bvCustomerId').value || '').trim(),
+    workOrderNo:  (document.getElementById('bvWorkOrderNo').value || '').trim(),
+    preparedBy:   (document.getElementById('bvPreparedBy').value || '').trim(),
+    quoteFor:     (document.getElementById('bvQuoteFor').value || '').trim(),
+    area:         (document.getElementById('bvArea').value || '').trim(),
+    address:      (document.getElementById('bvAddress').value || '').trim(),
+    comments:     (document.getElementById('bvComments').value || '').trim()
   };
 
-  document.getElementById('babcockQuoteContent').innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:16px;margin-bottom:24px;padding:0 4px">
-      <div>
-        <div id="babcockGeneratedRef" style="font-family:var(--font-display);font-size:28px;letter-spacing:1px;color:var(--accent)">${quoteRef}</div>
-        <div style="font-size:13px;color:var(--muted);margin-top:4px">Babcock International · ${new Date().toLocaleDateString('en-GB', {day:'numeric',month:'long',year:'numeric'})}</div>
-        <div style="font-size:12px;color:var(--subtle);margin-top:2px">${markup}% margin applied to all line items</div>
-      </div>
-      <div style="text-align:right">
-        <div style="font-size:12px;color:var(--subtle);margin-bottom:2px">TOTAL VALUE</div>
-        <div style="font-family:var(--font-display);font-size:32px;color:var(--green)">${fmtGBP(grandTotal)}</div>
-      </div>
-    </div>
-    <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden">
-      <div style="display:grid;grid-template-columns:40px 1fr auto auto;gap:12px;padding:8px 14px;background:var(--surface);font-size:10px;font-weight:700;letter-spacing:1px;color:var(--subtle);text-transform:uppercase;border-bottom:1px solid var(--border)">
-        <div>#</div><div>Description</div><div style="text-align:right">Qty</div><div style="text-align:right">Our Price</div>
-      </div>
-      ${lines.map(l => `
-        <div style="display:grid;grid-template-columns:40px 1fr auto auto;gap:12px;padding:10px 14px;border-bottom:1px solid var(--border);font-size:13px;transition:background .15s" onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
-          <div style="color:var(--subtle);font-family:var(--font-mono)">${l.num}</div>
-          <div style="font-weight:500">${escapeHtml(String(l.description))}</div>
-          <div style="text-align:right;color:var(--muted)">${l.quantity !== '' ? `${l.quantity}${l.unit ? ' '+l.unit : ''}` : '—'}</div>
-          <div style="text-align:right;font-family:var(--font-mono);color:var(--green);font-weight:600">${fmtGBP(l.ourPrice)}</div>
-        </div>`).join('')}
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:14px;background:var(--surface)">
-        <div style="font-size:12px;color:var(--subtle)">${lines.length} line items · ${markup}% margin</div>
-        <div style="font-family:var(--font-mono);font-size:18px;font-weight:700;color:var(--green)">${fmtGBP(grandTotal)}</div>
-      </div>
-    </div>`;
+  // If user didn't override, use the cached suggestion; if that's missing, server will allocate.
+  if (!formData.quoteRef && _babcockNextRefCache) formData.quoteRef = _babcockNextRefCache;
 
-  document.getElementById('babcockQuoteCard').style.display = '';
-  document.getElementById('babcockQuoteCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
-  // Reset Save button state — fresh generated quote, not yet saved
-  const saveBtn = document.getElementById('babcockSaveBtn');
-  if (saveBtn) {
-    saveBtn.disabled = false;
-    saveBtn.textContent = '💾 Save to Tracker';
+  // Build marked-up line items + grand total
+  let grandTotal = 0;
+  const markedLines = _babcockRawData.map((r, i) => {
+    const amount   = r.amount !== null ? r.amount
+                    : (r.unitPrice !== null && r.quantity !== null ? r.unitPrice * r.quantity : 0);
+    const ourPrice = amount * factor;
+    grandTotal += ourPrice;
+    return {
+      itemNum:    r.itemNum ?? (i + 1),
+      description: r.description,
+      unitPrice:  r.unitPrice !== null ? r.unitPrice * factor : null,
+      quantity:   r.quantity,
+      amount:     ourPrice
+    };
+  });
+
+  // STEP 1 — open the render window synchronously (must be inside the click)
+  const popupWin = window.open('', '_blank',
+    'width=860,height=600,left=' + (screen.width || 1200) + ',top=0,noopener=no');
+  if (popupWin) {
+    try { popupWin.document.write('<!DOCTYPE html><html><head><title>Generating PDF…</title><style>body{font-family:sans-serif;color:#666;padding:40px;text-align:center}</style></head><body>Generating PDF…</body></html>'); } catch (e) {}
   }
-  toast(`Quote generated — ${lines.length} items, total ${fmtGBP(grandTotal)}`, 'success');
+  if (!popupWin) {
+    toast('Popup blocked — allow pop-ups for this site and try again', 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '⚙️ Generate & Save'; }
+    return;
+  }
+
+  setLoading(true);
+
+  try {
+    // STEP 2 — pre-load the BAMA logo as a data URI (popup can't share auth)
+    await loadLogoDataUri();
+
+    // STEP 3 — render PDF
+    const pdfBlob = await renderBabcockQuotePDF({
+      ...formData,
+      markup,
+      grandTotal,
+      lineItems: markedLines
+    }, popupWin);
+
+    // STEP 4 — upload both files to SharePoint
+    toast('Uploading files to SharePoint…', 'info');
+    const folders = await findOrCreateBabcockFolders();
+    const safeRef = (formData.quoteRef || 'BAMA-quote').replace(/[/\\]/g, '_');
+    const dateForName = (formData.quoteDate || todayStr()).replace(/-/g, '');
+    const originalFileName = `${safeRef} - ${_babcockOriginalFile.name}`;
+    const pdfFileName = `${safeRef} - ${(formData.quoteFor || 'Quote').replace(/[/\\]/g, '_')} - ${dateForName}.pdf`;
+
+    const originalUploaded = await uploadFileToFolder(
+      folders.received.id,
+      originalFileName,
+      await _babcockOriginalFile.arrayBuffer(),
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+
+    const pdfUploaded = await uploadFileToFolder(
+      folders.parent.id,
+      pdfFileName,
+      pdfBlob,
+      'application/pdf'
+    );
+
+    // STEP 5 — save DB row
+    toast('Saving to tracker…', 'info');
+    const payload = {
+      quote_ref:          formData.quoteRef || undefined, // server allocates if empty
+      date_sent:          formData.quoteDate,
+      total_value:        +grandTotal.toFixed(2),
+      markup_pct:         markup,
+      line_items:         markedLines,
+      source_filename:    _babcockOriginalFile.name,
+      created_by:         currentManagerUser || null,
+      quotation_date:     formData.quoteDate || null,
+      customer_id:        formData.customerId || null,
+      work_order_no:      formData.workOrderNo || null,
+      valid_until:        formData.validUntil || null,
+      prepared_by:        formData.preparedBy || null,
+      quote_for_area:     [formData.quoteFor, formData.area].filter(Boolean).join(' — ') || null,
+      quote_for_address:  formData.address || null,
+      comments:           formData.comments || null,
+      original_file_id:   originalUploaded.id,
+      original_file_url:  originalUploaded.webUrl,
+      generated_file_id:  pdfUploaded.id,
+      generated_file_url: pdfUploaded.webUrl
+    };
+
+    const saved = await api.post('/api/babcock-quotes', payload);
+
+    setLoading(false);
+    toast(`Quote ${saved.quote_ref} saved ✓`, 'success');
+
+    // Reset and return to tracker
+    clearBabcockFile();
+    showBabcockTracker();
+  } catch (err) {
+    setLoading(false);
+    try { if (popupWin && !popupWin.closed) popupWin.close(); } catch (e) {}
+    console.error('Babcock generate/save failed:', err);
+    toast('Failed: ' + (err.message || 'unknown error'), 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '⚙️ Generate & Save'; }
+  }
+}
+
+// ── Find/create the SharePoint folder structure for Babcock quotes ─
+// Original uploads → "Quotation/00 - Babcock 2026/Bama South West Quotes/Quotes received"
+// Generated PDFs   → "Quotation/00 - Babcock 2026/Bama South West Quotes"
+// Returns { parent, received } as Graph item objects with .id and .webUrl
+async function findOrCreateBabcockFolders() {
+  const token = await getToken();
+  const basePath = 'Quotation/00 - Babcock 2026/Bama South West Quotes';
+  const lookup = await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/root:/${encodeURIComponent(basePath)}`,
+    { headers: { 'Authorization': `Bearer ${token}` } }
+  );
+  if (!lookup.ok) {
+    throw new Error(`Cannot find SharePoint folder "${basePath}" (status ${lookup.status})`);
+  }
+  const parent = await lookup.json();
+  const received = await getOrCreateSubfolder(parent.id, 'Quotes received', BAMA_DRIVE_ID);
+  if (!received) throw new Error('Could not find or create "Quotes received" subfolder');
+  return { parent, received };
+}
+
+// ── Build the quote PDF in a popup window using html2pdf ──────────
+// Mirrors the payroll PDF approach: write a self-contained HTML doc
+// into the popup, inject html2pdf + a capture bridge, poll for the
+// blob, return it.
+async function renderBabcockQuotePDF(data, popupWin) {
+  if (!popupWin) throw new Error('Render window not provided');
+
+  const baseHtml = buildBabcockQuoteHTML(data);
+
+  const captureScript = `
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"><\/script>
+    <script>
+      window.__pdfReady = false;
+      window.__pdfBlob = null;
+      window.__pdfError = null;
+      async function __capturePDF() {
+        try {
+          if (document.fonts && document.fonts.ready) {
+            try { await document.fonts.ready; } catch (e) {}
+          }
+          const imgs = Array.from(document.images);
+          await Promise.all(imgs.map(img => {
+            if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+            return new Promise(res => {
+              img.addEventListener('load', res, { once: true });
+              img.addEventListener('error', res, { once: true });
+              setTimeout(res, 3000);
+            });
+          }));
+          await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+          const blob = await html2pdf().set({
+            margin: [10, 10, 10, 10],
+            filename: 'babcock-quote.pdf',
+            image: { type: 'jpeg', quality: 0.95 },
+            html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
+            jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+          }).from(document.body).outputPdf('blob');
+          window.__pdfBlob = blob;
+        } catch (err) {
+          window.__pdfError = err && err.message ? err.message : String(err);
+        } finally {
+          window.__pdfReady = true;
+        }
+      }
+      window.addEventListener('load', __capturePDF);
+    <\/script>
+  `;
+
+  const html = baseHtml.replace(/<\/body>/i, captureScript + '</body>');
+
+  popupWin.document.open();
+  popupWin.document.write(html);
+  popupWin.document.close();
+
+  const start = Date.now();
+  while (!popupWin.__pdfReady) {
+    if (Date.now() - start > 30000) {
+      try { popupWin.close(); } catch (e) {}
+      throw new Error('PDF render timed out after 30 s');
+    }
+    await new Promise(r => setTimeout(r, 100));
+  }
+
+  if (popupWin.__pdfError) {
+    const errMsg = popupWin.__pdfError;
+    try { popupWin.close(); } catch (e) {}
+    throw new Error('PDF render failed: ' + errMsg);
+  }
+
+  const blob = popupWin.__pdfBlob;
+  try { popupWin.close(); } catch (e) {}
+  if (!blob) throw new Error('PDF render produced no blob');
+  return blob;
+}
+
+// ── HTML template for the Babcock quote PDF ────────────────────────
+// Self-contained — must not depend on bama.css since it renders in a
+// fresh popup window. White background, print-friendly typography.
+function buildBabcockQuoteHTML(d) {
+  const fmtGBP = v => typeof v === 'number'
+    ? `£${v.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : '—';
+  const fmtDate = s => {
+    if (!s) return '';
+    const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (!m) return s;
+    return `${m[3]}/${m[2]}/${m[1]}`;
+  };
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+    ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]);
+
+  const logo = _logoDataUriCache || '';
+  const linesHtml = d.lineItems.map(l => `
+    <tr>
+      <td style="text-align:center;padding:6px 8px;border:1px solid #ccc">${l.itemNum ?? ''}</td>
+      <td style="padding:6px 10px;border:1px solid #ccc">${esc(l.description)}</td>
+      <td style="text-align:right;padding:6px 10px;border:1px solid #ccc">${l.unitPrice !== null ? fmtGBP(l.unitPrice) : ''}</td>
+      <td style="text-align:right;padding:6px 10px;border:1px solid #ccc">${l.quantity ?? ''}</td>
+      <td style="text-align:right;padding:6px 10px;border:1px solid #ccc">${fmtGBP(l.amount)}</td>
+    </tr>
+  `).join('');
+
+  // Build with inline styles only — html2pdf rasterises the rendered DOM
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>BAMA Quotation ${esc(d.quoteRef || '')}</title>
+<style>
+  @page { size: A4 portrait; margin: 12mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Helvetica', 'Arial', sans-serif;
+    color: #222;
+    margin: 0;
+    padding: 0;
+    background: #fff;
+    font-size: 11pt;
+    line-height: 1.4;
+  }
+  .header {
+    display: table;
+    width: 100%;
+    margin-bottom: 24px;
+    border-bottom: 3px solid #D0021B;
+    padding-bottom: 16px;
+  }
+  .header-left, .header-right {
+    display: table-cell;
+    vertical-align: top;
+  }
+  .header-right { text-align: right; }
+  .logo-img {
+    max-height: 70px;
+    max-width: 220px;
+    margin-bottom: 8px;
+  }
+  .company-name {
+    font-size: 22pt;
+    font-weight: 700;
+    color: #D0021B;
+    letter-spacing: 1px;
+    margin-bottom: 2px;
+  }
+  .company-address {
+    font-size: 9.5pt;
+    color: #555;
+    line-height: 1.35;
+  }
+  .quotation-title {
+    font-size: 26pt;
+    font-weight: 300;
+    color: #222;
+    letter-spacing: 2px;
+    margin: 0 0 6px 0;
+  }
+  .quote-ref {
+    font-size: 14pt;
+    font-weight: 700;
+    color: #D0021B;
+    margin-bottom: 6px;
+  }
+  .meta-table {
+    border-collapse: collapse;
+    margin-top: 6px;
+    margin-left: auto;
+    font-size: 10pt;
+  }
+  .meta-table td {
+    padding: 2px 6px;
+  }
+  .meta-table .label {
+    color: #666;
+    text-align: right;
+    padding-right: 10px;
+  }
+  .meta-table .value {
+    font-weight: 600;
+    color: #222;
+    text-align: left;
+  }
+  .quote-for {
+    background: #f7f7f7;
+    border-left: 3px solid #D0021B;
+    padding: 12px 16px;
+    margin-bottom: 18px;
+  }
+  .quote-for .label {
+    font-size: 8pt;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #888;
+    margin-bottom: 4px;
+  }
+  .quote-for .value {
+    font-size: 12pt;
+    font-weight: 600;
+    color: #222;
+  }
+  .quote-for .sub {
+    font-size: 10pt;
+    color: #555;
+    margin-top: 2px;
+  }
+  .comments-block {
+    background: #fffbe6;
+    border: 1px solid #f5e1a4;
+    padding: 10px 14px;
+    border-radius: 4px;
+    margin-bottom: 18px;
+    font-size: 10pt;
+    color: #6b5a14;
+    white-space: pre-wrap;
+  }
+  .items-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 10pt;
+    margin-bottom: 16px;
+  }
+  .items-table th {
+    background: #222;
+    color: #fff;
+    padding: 8px 10px;
+    text-align: left;
+    font-size: 9.5pt;
+    letter-spacing: 0.5px;
+    border: 1px solid #222;
+  }
+  .items-table th.num { text-align: right; }
+  .items-table th.center { text-align: center; }
+  .items-table tr:nth-child(even) td {
+    background: #fafafa;
+  }
+  .total-row {
+    margin-top: 8px;
+    display: table;
+    width: 100%;
+  }
+  .total-cell {
+    display: table-cell;
+    text-align: right;
+    padding: 12px 16px;
+    background: #D0021B;
+    color: #fff;
+    font-size: 14pt;
+    font-weight: 700;
+    letter-spacing: 1px;
+  }
+  .total-cell .lbl { font-size: 10pt; font-weight: 400; opacity: 0.8; margin-right: 14px; }
+  .vat-note {
+    text-align: right;
+    font-size: 9pt;
+    color: #888;
+    margin-top: 4px;
+    margin-bottom: 24px;
+  }
+  .footer {
+    border-top: 1px solid #ccc;
+    padding-top: 12px;
+    font-size: 9pt;
+    color: #666;
+    text-align: center;
+    line-height: 1.6;
+  }
+  .footer .contact {
+    color: #D0021B;
+    font-weight: 600;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    ${logo ? `<img class="logo-img" src="${logo}" alt="BAMA Fabrication">` : `<div class="company-name">BAMA FABRICATION</div>`}
+    <div class="company-address">
+      Unit 9 Gwel Avon, Business Park,<br>
+      Saltash PL12 6TW
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="quotation-title">QUOTATION</div>
+    <div class="quote-ref">${esc(d.quoteRef || '')}</div>
+    <table class="meta-table">
+      ${d.quoteDate    ? `<tr><td class="label">Date:</td><td class="value">${esc(fmtDate(d.quoteDate))}</td></tr>` : ''}
+      ${d.customerId   ? `<tr><td class="label">Customer ID:</td><td class="value">${esc(d.customerId)}</td></tr>` : ''}
+      ${d.workOrderNo  ? `<tr><td class="label">Work Order no.:</td><td class="value">${esc(d.workOrderNo)}</td></tr>` : ''}
+      ${d.validUntil   ? `<tr><td class="label">Valid until:</td><td class="value">${esc(fmtDate(d.validUntil))}</td></tr>` : ''}
+      ${d.preparedBy   ? `<tr><td class="label">Prepared by:</td><td class="value">${esc(d.preparedBy)}</td></tr>` : ''}
+    </table>
+  </div>
+</div>
+
+${(d.quoteFor || d.area || d.address) ? `
+<div class="quote-for">
+  <div class="label">Quotation For</div>
+  ${d.quoteFor ? `<div class="value">${esc(d.quoteFor)}</div>` : ''}
+  ${d.area     ? `<div class="sub">Area: ${esc(d.area)}</div>` : ''}
+  ${d.address  ? `<div class="sub">${esc(d.address)}</div>` : ''}
+</div>
+` : ''}
+
+${d.comments ? `<div class="comments-block"><b>Comments / Special Instructions</b><br>${esc(d.comments)}</div>` : ''}
+
+<table class="items-table">
+  <thead>
+    <tr>
+      <th class="center" style="width:36px">#</th>
+      <th>Description</th>
+      <th class="num" style="width:90px">Unit Price</th>
+      <th class="num" style="width:60px">Qty</th>
+      <th class="num" style="width:100px">Amount</th>
+    </tr>
+  </thead>
+  <tbody>${linesHtml}</tbody>
+</table>
+
+<div class="total-row">
+  <div class="total-cell">
+    <span class="lbl">TOTAL</span>${fmtGBP(d.grandTotal)}
+  </div>
+</div>
+<div class="vat-note">All quotes are VAT exclusive</div>
+
+<div class="footer">
+  If you have any questions concerning this quotation, please contact:<br>
+  <span class="contact">info@bamasw.co.uk</span><br><br>
+  Thank you for your business!
+</div>
+
+</body>
+</html>`;
 }
 
 // ── Tracker view switching ──
@@ -14218,49 +14709,6 @@ function renderBabcockTracker() {
   `).join('');
 }
 
-// ── Save the just-generated quote to the tracker ──
-async function saveBabcockQuoteToTracker() {
-  if (!_babcockLastGenerated) { toast('No quote to save — generate one first', 'error'); return; }
-  if (_babcockLastGenerated.saved_id) { toast('This quote has already been saved', 'info'); return; }
-
-  const btn = document.getElementById('babcockSaveBtn');
-  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
-
-  try {
-    // Don't send the placeholder ref — let the server allocate the next sequential B####.
-    const refIsPending = !_babcockLastGenerated.quote_ref ||
-                         _babcockLastGenerated.quote_ref === 'B-pending';
-
-    const payload = {
-      total_value: _babcockLastGenerated.total_value,
-      markup_pct: _babcockLastGenerated.markup_pct,
-      line_items: _babcockLastGenerated.line_items,
-      source_filename: _babcockLastGenerated.source_filename,
-      date_sent: new Date().toISOString().split('T')[0],
-      status: 'Quote Sent',
-      created_by: currentManagerUser || null
-    };
-    if (!refIsPending) payload.quote_ref = _babcockLastGenerated.quote_ref;
-
-    const saved = await api.post('/api/babcock-quotes', payload);
-    _babcockLastGenerated.saved_id = saved.id;
-    _babcockLastGenerated.quote_ref = saved.quote_ref;
-
-    // Reflect the real ref in the displayed quote header
-    const refEl = document.getElementById('babcockGeneratedRef');
-    if (refEl) refEl.textContent = saved.quote_ref;
-
-    if (btn) { btn.textContent = '✓ Saved'; btn.disabled = true; }
-    toast(`Saved as ${saved.quote_ref}`, 'success');
-
-    // Refresh tracker list in the background so it's up-to-date when user navigates back
-    loadBabcockTracker();
-  } catch (err) {
-    if (btn) { btn.disabled = false; btn.textContent = '💾 Save to Tracker'; }
-    toast('Save failed: ' + (err.message || 'unknown error'), 'error');
-  }
-}
-
 // ── Inline status change from tracker row ──
 async function updateBabcockQuoteStatus(id, newStatus) {
   try {
@@ -14289,16 +14737,12 @@ async function deleteBabcockQuote(id, ref) {
   }
 }
 
-function exportBabcockQuote() {
-  // Placeholder — full PDF/Excel export to follow once template details are confirmed
-  toast('Export functionality coming soon — template details to be confirmed', 'info');
-}
-
-// ── Recalculate preview when markup changes ──
+// ── Recalculate preview + marked-up total when markup changes ──
 function onBabcockMarkupChange() {
   if (!_babcockRawData) return;
   const markup = parseFloat(document.getElementById('babcockMarkup').value) || 10;
   renderBabcockPreviewTable(markup);
+  updateBabcockMarkedUpTotal(markup);
 }
 
 function closeQuoteDetail() {

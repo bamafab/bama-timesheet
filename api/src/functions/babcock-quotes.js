@@ -4,7 +4,9 @@ const { query } = require('../db');
 const { ok, created, badRequest, notFound, serverError, preflight } = require('../responses');
 
 const ALLOWED_STATUSES = ['Quote Sent', 'PO Received', 'Invoice Generated', 'Paid'];
-const STARTING_REF_NUMBER = 90; // B0090 — sense-check before go-live
+// First system-allocated number. B0091 was the last manually-created Babcock
+// quote in SharePoint pre-go-live, so the system picks up at B0092.
+const STARTING_REF_NUMBER = 92;
 
 // Build a B#### reference from a number, e.g. 90 → "B0090"
 function formatBabcockRef(n) {
@@ -45,7 +47,11 @@ app.http('babcock-quotes-list', {
         try {
             const status = request.query.get('status') || '';
             let sqlText = `SELECT id, quote_ref, date_sent, total_value, markup_pct,
-                                  source_filename, status, created_by, created_at, updated_at
+                                  source_filename, status, created_by, created_at, updated_at,
+                                  quotation_date, customer_id, work_order_no, valid_until,
+                                  prepared_by, quote_for_area, quote_for_address, comments,
+                                  original_file_id, original_file_url,
+                                  generated_file_id, generated_file_url
                            FROM BabcockQuotes`;
             const params = {};
             if (status) {
@@ -135,7 +141,11 @@ app.http('babcock-quotes-create', {
         try {
             const body = await request.json();
             let { quote_ref, date_sent, total_value, markup_pct, line_items,
-                  source_filename, created_by, status } = body;
+                  source_filename, created_by, status,
+                  quotation_date, customer_id, work_order_no, valid_until,
+                  prepared_by, quote_for_area, quote_for_address, comments,
+                  original_file_id, original_file_url,
+                  generated_file_id, generated_file_url } = body;
 
             // Auto-allocate reference if not supplied — uses same logic as the
             // next-ref endpoint to keep things race-tolerant within a single request.
@@ -161,10 +171,18 @@ app.http('babcock-quotes-create', {
             const result = await query(
                 `INSERT INTO BabcockQuotes
                     (quote_ref, date_sent, total_value, markup_pct, line_items,
-                     source_filename, status, created_by)
+                     source_filename, status, created_by,
+                     quotation_date, customer_id, work_order_no, valid_until,
+                     prepared_by, quote_for_area, quote_for_address, comments,
+                     original_file_id, original_file_url,
+                     generated_file_id, generated_file_url)
                  OUTPUT INSERTED.*
                  VALUES (@quote_ref, @date_sent, @total_value, @markup_pct, @line_items,
-                         @source_filename, @status, @created_by)`,
+                         @source_filename, @status, @created_by,
+                         @quotation_date, @customer_id, @work_order_no, @valid_until,
+                         @prepared_by, @quote_for_area, @quote_for_address, @comments,
+                         @original_file_id, @original_file_url,
+                         @generated_file_id, @generated_file_url)`,
                 {
                     quote_ref,
                     date_sent: date_sent || null,
@@ -173,7 +191,19 @@ app.http('babcock-quotes-create', {
                     line_items: lineItemsJson,
                     source_filename: source_filename || null,
                     status: status || 'Quote Sent',
-                    created_by: created_by || null
+                    created_by: created_by || null,
+                    quotation_date: quotation_date || null,
+                    customer_id: customer_id || null,
+                    work_order_no: work_order_no || null,
+                    valid_until: valid_until || null,
+                    prepared_by: prepared_by || null,
+                    quote_for_area: quote_for_area || null,
+                    quote_for_address: quote_for_address || null,
+                    comments: comments || null,
+                    original_file_id: original_file_id || null,
+                    original_file_url: original_file_url || null,
+                    generated_file_id: generated_file_id || null,
+                    generated_file_url: generated_file_url || null
                 }
             );
 
@@ -210,7 +240,11 @@ app.http('babcock-quotes-update', {
             const params = { id };
 
             const allowed = ['quote_ref', 'date_sent', 'total_value', 'markup_pct',
-                             'line_items', 'source_filename', 'status'];
+                             'line_items', 'source_filename', 'status',
+                             'quotation_date', 'customer_id', 'work_order_no', 'valid_until',
+                             'prepared_by', 'quote_for_area', 'quote_for_address', 'comments',
+                             'original_file_id', 'original_file_url',
+                             'generated_file_id', 'generated_file_url'];
 
             for (const key of allowed) {
                 if (body[key] === undefined) continue;
