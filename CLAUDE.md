@@ -229,7 +229,8 @@ Core tables:
   `project_number` mirrors the source quote with `Q` swapped for `C`
   (`Q260502` → `C260502`). Created automatically when a quote's status
   transitions to `won` via `convertQuoteToProject()` in shared.js.
-  SharePoint folders auto-created under `Projects/{NN - YYYY}/{C-ref - Client - Project}/`
+  SharePoint folders auto-created flat under `Projects/{C-ref - Client - Project}/`
+  (no year folder layer — different from Quotation/ which is grouped per year)
   with 9 standard subfolders (`00 - RAMS` through `08 - Application for payment`)
   and the source quote folder contents copied into `03 - Quote`.
   `source_quote_id` FKs back to the originating Tenders row.
@@ -399,13 +400,18 @@ hub.html and steel-database.html have no modals.
 
 **quotes.html**
 - `quotesPinModal` — PIN entry on quotes page
+- `confirmModal` — generic confirm dialog (used by `showConfirmAsync` for the
+  Won-quote conversion prompt before kicking off the project conversion)
 - (Reuses `editClientModal`, `contactModal` from shared)
 - Other quote-specific modals will be added as the financial workflow is built
 
 **project-tracker.html**
 - `projectTrackerPinModal` — PIN entry on the project tracker page
-- (No other modals yet — project detail edits inline; Won-quote conversion
-  uses a native `confirm()` dialog from the quotes page, not a modal here)
+- `projectContactModal` — add/edit/delete an additional project contact
+  (site foreman, QS, surveyor etc.); separate from client contacts
+- `confirmModal` — generic confirm dialog (used by `showConfirmAsync` for
+  Won-quote conversion confirm and the unsaved-changes prompt on
+  `closeProjectDetail`)
 
 ## Roadmap / queued
 

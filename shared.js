@@ -13880,14 +13880,15 @@ async function saveQuoteChanges() {
   // If transitioning to Won, confirm before kicking off conversion
   if (transitioningToWon) {
     const projectNumber = (currentTender.reference || '').replace(/^Q/i, 'C');
-    const ok = confirm(
-      `Mark this quote as WON?\n\n` +
-      `This will:\n` +
-      `  • Save the quote with status "Won"\n` +
-      `  • Create a new Project (${projectNumber})\n` +
-      `  • Create the SharePoint folder structure under Projects/\n` +
-      `  • Copy the contents of the quote folder into "03 - Quote"\n\n` +
-      `Continue?`
+    const ok = await showConfirmAsync(
+      'Mark quote as WON?',
+      `This will:<br><br>` +
+      `&nbsp;&nbsp;• Save the quote with status <strong>Won</strong><br>` +
+      `&nbsp;&nbsp;• Create a new Project (<strong>${escapeHtml(projectNumber)}</strong>)<br>` +
+      `&nbsp;&nbsp;• Create the SharePoint folder structure under Projects/<br>` +
+      `&nbsp;&nbsp;• Copy the contents of the quote folder into "03 - Quote"<br><br>` +
+      `Continue?`,
+      { okLabel: 'Mark as Won' }
     );
     if (!ok) return;
   }
@@ -14061,18 +14062,11 @@ async function convertQuoteToProject(tender) {
   const projectPart = sanitiseFolderSegment(tender.project_name);
   const folderName = [projectNumber, clientPart, projectPart].filter(Boolean).join(' - ');
 
-  // Year folder name from reference — same scheme as Quotation: "(year - 2023) - YYYY"
-  // Q260502 → 2026 → "03 - 2026"
-  const fullYear = '20' + tender.reference.slice(1, 3);
-  const yearNum = parseInt(fullYear);
-  const yearPrefix = String(yearNum - 2023).padStart(2, '0');
-  const yearFolderName = `${yearPrefix} - ${fullYear}`;
-
-  // 1. Create SharePoint folders
+  // 1. Create SharePoint folders. Projects sit directly under the Projects/ root —
+  // no year folder layer (unlike Quotation/, which is grouped per year).
   const token = await getToken();
   const projectsRoot = await getOrCreateFolderByPath(PROJECTS_FOLDER_PATH, token);
-  const yearFolder = await createFolderInDrive(projectsRoot.id, yearFolderName);
-  const projectFolder = await createFolderInDrive(yearFolder.id, folderName);
+  const projectFolder = await createFolderInDrive(projectsRoot.id, folderName);
 
   // Create the standard subfolders inside the project folder
   const subfolderMap = {};
@@ -14276,6 +14270,65 @@ function _populateProjectDetailFields(project) {
       folderLink.innerHTML = '<span style="font-size:12px;color:var(--subtle)">No folder linked</span>';
     }
   }
+
+  // ── Site Address (toggle defaults to "same as client") ──
+  // mssql returns BIT as boolean; older rows may be null (treat as 1).
+  const sameAsClient = (project.site_same_as_client === false || project.site_same_as_client === 0)
+    ? false : true;
+  const sameToggle = document.getElementById('pd-siteSameAsClient');
+  if (sameToggle) sameToggle.checked = sameAsClient;
+  setVal('pd-siteAddressLine1', project.site_address_line1 || '');
+  setVal('pd-siteAddressLine2', project.site_address_line2 || '');
+  setVal('pd-siteCity',         project.site_city || '');
+  setVal('pd-siteCounty',       project.site_county || '');
+  setVal('pd-sitePostcode',     project.site_postcode || '');
+  setVal('pd-siteContactName',  project.site_contact_name || '');
+  setVal('pd-siteContactEmail', project.site_contact_email || '');
+  setVal('pd-siteContactPhone', project.site_contact_phone || '');
+  _refreshSiteSection(project);
+
+  // ── Additional contacts and comments — fetched async ──
+  loadProjectContacts(project.id).catch(e => console.warn('contacts load failed', e));
+  loadProjectComments(project.id).catch(e => console.warn('comments load failed', e));
+}
+
+// Build the "summary" text shown above the site fields when they're hidden.
+function _siteAddressSummary(project) {
+  if (!project) return 'Same as client address';
+  const sameAsClient = (project.site_same_as_client === false || project.site_same_as_client === 0)
+    ? false : true;
+  if (sameAsClient) return 'Same as client address';
+  const parts = [
+    project.site_address_line1, project.site_address_line2,
+    project.site_city, project.site_county, project.site_postcode
+  ].filter(Boolean);
+  return parts.length ? parts.join(', ') : 'Different from client — no address entered yet';
+}
+
+// Show/hide the site fields panel based on the toggle state. Also updates summary.
+function _refreshSiteSection(project) {
+  const sameToggle = document.getElementById('pd-siteSameAsClient');
+  const fieldsBlock = document.getElementById('pd-siteFields');
+  const summary = document.getElementById('pd-siteSummary');
+  if (!sameToggle || !fieldsBlock) return;
+  fieldsBlock.style.display = sameToggle.checked ? 'none' : '';
+  if (summary) summary.textContent = _siteAddressSummary(project || currentProjectRecord || {});
+}
+
+// Toggle handler — flips visibility, marks dirty, refreshes summary.
+function onSiteSameToggle() {
+  markProjectDirty();
+  // Build a mock object reflecting the current toggle so the summary is fresh.
+  const sameToggle = document.getElementById('pd-siteSameAsClient');
+  const mock = Object.assign({}, currentProjectRecord || {}, {
+    site_same_as_client: sameToggle ? sameToggle.checked : true,
+    site_address_line1: document.getElementById('pd-siteAddressLine1')?.value,
+    site_address_line2: document.getElementById('pd-siteAddressLine2')?.value,
+    site_city:          document.getElementById('pd-siteCity')?.value,
+    site_county:        document.getElementById('pd-siteCounty')?.value,
+    site_postcode:      document.getElementById('pd-sitePostcode')?.value
+  });
+  _refreshSiteSection(mock);
 }
 
 async function openProjectFolder() {
@@ -14304,13 +14357,28 @@ function markProjectDirty() {
 
 async function saveProjectChanges() {
   if (!currentProjectRecord) return;
+  const sameToggle = document.getElementById('pd-siteSameAsClient');
+  const siteSame = sameToggle ? sameToggle.checked : true;
+
   const body = {
     project_name:    document.getElementById('pd-projectName')?.value.trim() || currentProjectRecord.project_name,
     status:          document.getElementById('pd-status')?.value || currentProjectRecord.status,
     deadline_date:   document.getElementById('pd-deadline')?.value || null,
     start_date:      document.getElementById('pd-startDate')?.value || null,
     completion_date: document.getElementById('pd-completionDate')?.value || null,
-    comments:        document.getElementById('pd-comments')?.value.trim() || null
+    comments:        document.getElementById('pd-comments')?.value.trim() || null,
+
+    // Site address — when toggle is ON ("same as client") we still send the
+    // toggle so it persists, but null out the site fields to avoid stale data.
+    site_same_as_client: siteSame,
+    site_address_line1: siteSame ? null : (document.getElementById('pd-siteAddressLine1')?.value.trim() || null),
+    site_address_line2: siteSame ? null : (document.getElementById('pd-siteAddressLine2')?.value.trim() || null),
+    site_city:          siteSame ? null : (document.getElementById('pd-siteCity')?.value.trim() || null),
+    site_county:        siteSame ? null : (document.getElementById('pd-siteCounty')?.value.trim() || null),
+    site_postcode:      siteSame ? null : (document.getElementById('pd-sitePostcode')?.value.trim() || null),
+    site_contact_name:  siteSame ? null : (document.getElementById('pd-siteContactName')?.value.trim() || null),
+    site_contact_email: siteSame ? null : (document.getElementById('pd-siteContactEmail')?.value.trim() || null),
+    site_contact_phone: siteSame ? null : (document.getElementById('pd-siteContactPhone')?.value.trim() || null)
   };
 
   try {
@@ -14322,6 +14390,7 @@ async function saveProjectChanges() {
     _projectDetailDirty = false;
     document.getElementById('pdSaveBtn').style.display = 'none';
     document.getElementById('pdDiscardBtn').style.display = 'none';
+    _refreshSiteSection(currentProjectRecord);
     toast('Project saved ✓', 'success');
   } catch (err) {
     toast('Save failed: ' + err.message, 'error');
@@ -14336,8 +14405,15 @@ function discardProjectChanges() {
   document.getElementById('pdDiscardBtn').style.display = 'none';
 }
 
-function closeProjectDetail() {
-  if (_projectDetailDirty && !confirm('You have unsaved changes. Discard them?')) return;
+async function closeProjectDetail() {
+  if (_projectDetailDirty) {
+    const ok = await showConfirmAsync(
+      'Discard unsaved changes?',
+      'You have unsaved changes on this project. Closing now will lose them.',
+      { okLabel: 'Discard', danger: true }
+    );
+    if (!ok) return;
+  }
   currentProjectRecord = null;
   _projectDetailDirty = false;
   document.querySelectorAll('#projectTrackerLayout .tab-content').forEach(el => {
@@ -14345,6 +14421,215 @@ function closeProjectDetail() {
   });
   const listTab = document.getElementById('tab-projectTrackerList');
   if (listTab) { listTab.style.display = ''; listTab.classList.add('active'); }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Project Contacts (additional people on a project — site foremen, QSs, etc.)
+// Mirrors the tender contactModal CRUD pattern.
+// ─────────────────────────────────────────────────────────────────────────────
+let _projectContactsCache = [];
+
+async function loadProjectContacts(projectId) {
+  if (!projectId) return;
+  try {
+    const rows = await api.get(`/api/project-contacts?project_id=${projectId}`);
+    _projectContactsCache = Array.isArray(rows) ? rows : [];
+  } catch (e) {
+    console.warn('loadProjectContacts failed:', e);
+    _projectContactsCache = [];
+  }
+  renderProjectContacts();
+}
+
+function renderProjectContacts() {
+  const list = document.getElementById('projectContactsList');
+  if (!list) return;
+  if (!_projectContactsCache.length) {
+    list.innerHTML = '<div style="color:var(--subtle);padding:8px 0">No additional contacts yet.</div>';
+    return;
+  }
+  list.innerHTML = _projectContactsCache.map(c => {
+    const head = [c.contact_name, c.role].filter(Boolean).join(' · ');
+    const emailLink = c.contact_email
+      ? `<a href="mailto:${escapeHtml(c.contact_email)}" style="color:var(--accent2);text-decoration:none">${escapeHtml(c.contact_email)}</a>`
+      : '';
+    const bits = [emailLink, c.contact_phone ? escapeHtml(c.contact_phone) : ''].filter(Boolean).join(' · ');
+    return `
+      <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)">
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600;color:var(--text)">${escapeHtml(head || '(unnamed)')}</div>
+          ${bits ? `<div style="font-size:12px;color:var(--muted);margin-top:2px">${bits}</div>` : ''}
+          ${c.notes ? `<div style="font-size:12px;color:var(--subtle);margin-top:4px;white-space:pre-wrap">${escapeHtml(c.notes)}</div>` : ''}
+        </div>
+        <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px" onclick="openEditProjectContact(${c.id})">Edit</button>
+      </div>
+    `;
+  }).join('');
+}
+
+function openAddProjectContact() {
+  if (!currentProjectRecord) return;
+  document.getElementById('projectContactModalTitle').textContent = '👤 Add Contact';
+  document.getElementById('pcId').value = '';
+  document.getElementById('pcProjectId').value = currentProjectRecord.id;
+  document.getElementById('pcName').value = '';
+  document.getElementById('pcRole').value = '';
+  document.getElementById('pcEmail').value = '';
+  document.getElementById('pcPhone').value = '';
+  document.getElementById('pcNotes').value = '';
+  document.getElementById('pcDeleteBtn').style.display = 'none';
+  document.getElementById('projectContactModal').classList.add('active');
+  setTimeout(() => document.getElementById('pcName')?.focus(), 50);
+}
+
+function openEditProjectContact(id) {
+  const c = _projectContactsCache.find(x => String(x.id) === String(id));
+  if (!c) return;
+  document.getElementById('projectContactModalTitle').textContent = '👤 Edit Contact';
+  document.getElementById('pcId').value = c.id;
+  document.getElementById('pcProjectId').value = c.project_id;
+  document.getElementById('pcName').value  = c.contact_name  || '';
+  document.getElementById('pcRole').value  = c.role          || '';
+  document.getElementById('pcEmail').value = c.contact_email || '';
+  document.getElementById('pcPhone').value = c.contact_phone || '';
+  document.getElementById('pcNotes').value = c.notes         || '';
+  document.getElementById('pcDeleteBtn').style.display = '';
+  document.getElementById('projectContactModal').classList.add('active');
+  setTimeout(() => document.getElementById('pcName')?.focus(), 50);
+}
+
+function closeProjectContactModal() {
+  document.getElementById('projectContactModal').classList.remove('active');
+}
+
+async function submitProjectContactModal() {
+  const id        = document.getElementById('pcId').value;
+  const projectId = parseInt(document.getElementById('pcProjectId').value);
+  const body = {
+    contact_name:  document.getElementById('pcName').value.trim()  || null,
+    contact_email: document.getElementById('pcEmail').value.trim() || null,
+    contact_phone: document.getElementById('pcPhone').value.trim() || null,
+    role:          document.getElementById('pcRole').value.trim()  || null,
+    notes:         document.getElementById('pcNotes').value.trim() || null
+  };
+  if (!body.contact_name && !body.contact_email && !body.contact_phone) {
+    toast('Enter at least a name, email, or phone', 'error');
+    return;
+  }
+
+  try {
+    if (id) {
+      await api.put(`/api/project-contacts/${id}`, body);
+    } else {
+      body.project_id = projectId;
+      await api.post('/api/project-contacts', body);
+    }
+    closeProjectContactModal();
+    await loadProjectContacts(projectId || currentProjectRecord?.id);
+    toast(id ? 'Contact updated ✓' : 'Contact added ✓', 'success');
+  } catch (err) {
+    toast('Save failed: ' + err.message, 'error');
+  }
+}
+
+async function deleteProjectContactFromModal() {
+  const id        = document.getElementById('pcId').value;
+  const projectId = parseInt(document.getElementById('pcProjectId').value);
+  if (!id) return;
+  const confirmed = await showConfirmAsync(
+    'Delete contact?',
+    'This contact will be removed from the project. The client record is unaffected.',
+    { okLabel: 'Delete', danger: true }
+  );
+  if (!confirmed) return;
+  try {
+    await api.delete(`/api/project-contacts/${id}`);
+    closeProjectContactModal();
+    await loadProjectContacts(projectId || currentProjectRecord?.id);
+    toast('Contact deleted ✓', 'success');
+  } catch (err) {
+    toast('Delete failed: ' + err.message, 'error');
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Project Comments (threaded, append-only log). Mirrors tender comments UI.
+// ─────────────────────────────────────────────────────────────────────────────
+let _projectCommentsCache = [];
+
+async function loadProjectComments(projectId) {
+  if (!projectId) return;
+  try {
+    const rows = await api.get(`/api/project-comments?project_id=${projectId}`);
+    _projectCommentsCache = Array.isArray(rows) ? rows : [];
+  } catch (e) {
+    console.warn('loadProjectComments failed:', e);
+    _projectCommentsCache = [];
+  }
+  renderProjectComments();
+}
+
+function renderProjectComments() {
+  const list = document.getElementById('projectCommentsList');
+  if (!list) return;
+  if (!_projectCommentsCache.length) {
+    list.innerHTML = '<div style="color:var(--subtle);padding:8px 0">No comments yet.</div>';
+    return;
+  }
+  const me = currentManagerUser || '';
+  list.innerHTML = _projectCommentsCache.map(c => {
+    const when = c.created_at ? new Date(c.created_at).toLocaleString('en-GB', {
+      day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
+    }) : '';
+    const author = c.created_by || 'Unknown';
+    const canDelete = me && (author === me);
+    return `
+      <div style="padding:10px 0;border-bottom:1px solid var(--border)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+          <div style="font-weight:600;font-size:12px;color:var(--text)">${escapeHtml(author)}</div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="font-size:11px;color:var(--subtle)">${escapeHtml(when)}</div>
+            ${canDelete ? `<button class="btn btn-ghost" style="font-size:11px;padding:2px 8px" onclick="deleteProjectComment(${c.id})">Delete</button>` : ''}
+          </div>
+        </div>
+        <div style="white-space:pre-wrap;font-size:13px;color:var(--muted)">${escapeHtml(c.comment || '')}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function addProjectComment() {
+  if (!currentProjectRecord) return;
+  const ta = document.getElementById('pd-newComment');
+  if (!ta) return;
+  const text = ta.value.trim();
+  if (!text) { toast('Type a comment first', 'error'); return; }
+  try {
+    await api.post('/api/project-comments', {
+      project_id: currentProjectRecord.id,
+      comment: text,
+      created_by: currentManagerUser || null
+    });
+    ta.value = '';
+    await loadProjectComments(currentProjectRecord.id);
+  } catch (err) {
+    toast('Could not post comment: ' + err.message, 'error');
+  }
+}
+
+async function deleteProjectComment(id) {
+  const ok = await showConfirmAsync(
+    'Delete this comment?',
+    'This will remove the comment from the project log. Comments cannot be edited, only re-added.',
+    { okLabel: 'Delete', danger: true }
+  );
+  if (!ok) return;
+  try {
+    await api.delete(`/api/project-comments/${id}`);
+    if (currentProjectRecord) await loadProjectComments(currentProjectRecord.id);
+  } catch (err) {
+    toast('Delete failed: ' + err.message, 'error');
+  }
 }
 
 // ── Project Tracker page init ──
@@ -14370,21 +14655,25 @@ function renderProjectTrackerEmployeeGrid() {
   const grid = document.getElementById('projectTrackerEmployeeGrid');
   if (!grid) return;
 
-  // Reuse the same employee tile pattern from manager/office/quotes
-  const employees = (state.timesheetData?.employees || [])
-    .filter(e => e.isActive !== false && e.staffType !== 'CIS' && e.staffType !== 'cis')
-    .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  // Mirror the tender/quotes pattern: office staff only.
+  const empList = (state.timesheetData.employees || []).filter(e => e.active !== false && (e.staffType || 'workshop') === 'office');
 
-  if (!employees.length) {
-    grid.innerHTML = '<div class="empty-state"><div class="icon">👥</div>No staff loaded</div>';
+  if (!empList.length) {
+    grid.innerHTML = '<div class="empty-state" style="padding:30px"><div style="font-size:28px;margin-bottom:10px">&#128101;</div><div>No office staff set up yet.</div><div style="margin-top:8px;font-size:12px;color:var(--subtle)">Go to Manager → Staff to add office employees.</div></div>';
     return;
   }
 
-  grid.innerHTML = employees.map(e => `
-    <div class="mgr-emp-tile" onclick="selectProjectTrackerUser('${escapeHtml(e.name).replace(/'/g, "\\'")}')">
-      <div class="mgr-emp-tile-name">${escapeHtml(e.name)}</div>
-      <div class="mgr-emp-tile-role">${escapeHtml(e.role || e.staffType || '')}</div>
-    </div>`).join('');
+  grid.innerHTML = empList.map(emp => {
+    const ini = (emp.name || '').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+    const col = empColor(emp.name);
+    return `
+      <div class="emp-btn" onclick="selectProjectTrackerUser('${emp.name.replace(/'/g, "\\\\'")}')" style="padding:22px 14px 16px">
+        <div class="emp-avatar" style="width:48px;height:48px;font-size:19px;background:linear-gradient(135deg,${col},#3e1a00)">${ini}</div>
+        <div class="emp-name" style="font-size:13px">${emp.name}</div>
+        <div style="font-size:10px;color:var(--subtle);margin-top:3px">${emp.hasPin ? '&#128274; PIN set' : '&#128275; No PIN'}</div>
+      </div>
+    `;
+  }).join('');
 }
 
 function selectProjectTrackerUser(name) {

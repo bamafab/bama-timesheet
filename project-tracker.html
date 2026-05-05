@@ -5,14 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Project Tracker</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260505i">
+<link rel="stylesheet" href="bama.css?v=20260505j">
 </head>
 <body>
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
 
 <!-- TOP BAR -->
 <div class="topbar">
-  <div class="logo"><span style="color:#D0021B">BAMA</span> <span style="color:#D0021B">FABRICATION</span><span> PROJECT TRACKER</span></div>
+  <a href="hub.html" style="text-decoration:none"><div class="logo"><span style="color:#D0021B">BAMA</span> <span style="color:#D0021B">FABRICATION</span><span> PROJECT TRACKER</span></div></a>
   <div style="position:absolute;left:50%;transform:translate(-50%,-50%);top:50%">
     <div class="clock-display" id="liveClock" style="font-size:15px;font-weight:700;letter-spacing:.5px">--:-- --</div>
   </div>
@@ -185,7 +185,83 @@
         <div id="projectDetailClientInfo" style="font-size:13px;color:var(--muted)">—</div>
       </div>
 
-      <!-- Comments -->
+      <!-- Site Address -->
+      <div class="card" style="margin-bottom:20px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <div class="card-title" style="margin:0"><span class="icon">📍</span> Site Address</div>
+          <label class="perm-switch" title="Toggle off to enter a different site address">
+            <input type="checkbox" id="pd-siteSameAsClient" checked onchange="onSiteSameToggle()">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div id="pd-siteSummary" style="font-size:13px;color:var(--muted);margin-bottom:8px">Same as client address</div>
+
+        <div id="pd-siteFields" style="display:none">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div style="grid-column:1/-1">
+              <div class="field-label">ADDRESS LINE 1</div>
+              <input type="text" class="field-input" id="pd-siteAddressLine1" oninput="markProjectDirty()">
+            </div>
+            <div style="grid-column:1/-1">
+              <div class="field-label">ADDRESS LINE 2</div>
+              <input type="text" class="field-input" id="pd-siteAddressLine2" oninput="markProjectDirty()">
+            </div>
+            <div>
+              <div class="field-label">CITY</div>
+              <input type="text" class="field-input" id="pd-siteCity" oninput="markProjectDirty()">
+            </div>
+            <div>
+              <div class="field-label">COUNTY</div>
+              <input type="text" class="field-input" id="pd-siteCounty" oninput="markProjectDirty()">
+            </div>
+            <div>
+              <div class="field-label">POSTCODE</div>
+              <input type="text" class="field-input" id="pd-sitePostcode" oninput="markProjectDirty()">
+            </div>
+            <div></div>
+            <div style="grid-column:1/-1;border-top:1px solid var(--border);margin-top:6px;padding-top:10px">
+              <div class="field-label">SITE CONTACT</div>
+            </div>
+            <div>
+              <div class="field-label">NAME</div>
+              <input type="text" class="field-input" id="pd-siteContactName" oninput="markProjectDirty()">
+            </div>
+            <div>
+              <div class="field-label">PHONE</div>
+              <input type="text" class="field-input" id="pd-siteContactPhone" oninput="markProjectDirty()">
+            </div>
+            <div style="grid-column:1/-1">
+              <div class="field-label">EMAIL</div>
+              <input type="email" class="field-input" id="pd-siteContactEmail" oninput="markProjectDirty()">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Additional Contacts -->
+      <div class="card" style="margin-bottom:20px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div class="card-title" style="margin:0"><span class="icon">👥</span> Additional Contacts</div>
+          <button class="btn btn-ghost" style="font-size:12px;padding:6px 12px" onclick="openAddProjectContact()">+ Add Contact</button>
+        </div>
+        <div id="projectContactsList" style="font-size:13px">
+          <div style="color:var(--subtle);padding:8px 0">No additional contacts yet.</div>
+        </div>
+      </div>
+
+      <!-- Project Comments (threaded) -->
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-title"><span class="icon">💬</span> Comments</div>
+        <div id="projectCommentsList" style="font-size:13px;margin-bottom:12px">
+          <div style="color:var(--subtle);padding:8px 0">No comments yet.</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:flex-start">
+          <textarea class="field-input" id="pd-newComment" rows="2" placeholder="Add a comment…" style="resize:vertical;flex:1;min-height:48px"></textarea>
+          <button class="btn btn-primary" onclick="addProjectComment()" style="padding:8px 16px">Post</button>
+        </div>
+      </div>
+
+      <!-- Notes (kept for now per user) -->
       <div class="card" style="margin-bottom:20px">
         <div class="card-title"><span class="icon">📝</span> Notes</div>
         <textarea class="field-input" id="pd-comments" rows="4" placeholder="Project notes..." style="resize:vertical;min-height:80px;width:100%" oninput="markProjectDirty()"></textarea>
@@ -252,6 +328,56 @@
   .quote-header:hover { background: var(--card); }
 </style>
 
-<script src="shared.js?v=20260505i"></script>
+<!-- Add / edit a project contact -->
+<div class="modal-overlay" id="projectContactModal">
+  <div class="modal" style="max-width:440px;width:95vw">
+    <div class="modal-title" id="projectContactModalTitle">👤 Add Contact</div>
+    <input type="hidden" id="pcId">
+    <input type="hidden" id="pcProjectId">
+    <div style="margin-bottom:12px">
+      <div class="field-label">CONTACT NAME</div>
+      <input type="text" class="field-input" id="pcName">
+    </div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">ROLE / TITLE (OPTIONAL)</div>
+      <input type="text" class="field-input" id="pcRole" placeholder="e.g. Site Foreman, QS, Surveyor">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <div class="field-label">EMAIL</div>
+        <input type="email" class="field-input" id="pcEmail">
+      </div>
+      <div>
+        <div class="field-label">PHONE</div>
+        <input type="text" class="field-input" id="pcPhone">
+      </div>
+    </div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">NOTES (OPTIONAL)</div>
+      <textarea class="field-input" id="pcNotes" rows="2"></textarea>
+    </div>
+    <div class="modal-actions" style="justify-content:space-between">
+      <button class="btn" id="pcDeleteBtn" style="background:var(--red);color:#fff;display:none" onclick="deleteProjectContactFromModal()">🗑️ Delete</button>
+      <div style="display:flex;gap:8px;margin-left:auto">
+        <button class="btn btn-ghost" onclick="closeProjectContactModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitProjectContactModal()">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Generic confirm dialog (used by showConfirmAsync) -->
+<div class="modal-overlay" id="confirmModal">
+  <div class="modal">
+    <div class="modal-title" id="confirmTitle">Confirm</div>
+    <div id="confirmMsg" style="color:var(--muted);font-size:14px"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" id="confirmOk" onclick="">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<script src="shared.js?v=20260505j"></script>
 </body>
 </html>

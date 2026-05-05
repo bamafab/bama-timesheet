@@ -155,7 +155,12 @@ app.http('projects-update', {
             const allowed = ['project_name', 'client_id', 'status', 'quote_value',
                            'deadline_date', 'comments', 'sharepoint_folder_id',
                            'sharepoint_quote_folder_id', 'project_manager_id',
-                           'start_date', 'completion_date'];
+                           'start_date', 'completion_date',
+                           // Site address + site contact (added with the 2026-05 migration)
+                           'site_same_as_client',
+                           'site_address_line1', 'site_address_line2',
+                           'site_city', 'site_county', 'site_postcode',
+                           'site_contact_name', 'site_contact_email', 'site_contact_phone'];
 
             for (const key of allowed) {
                 if (body[key] !== undefined) {
@@ -221,5 +226,234 @@ app.http('projects-by-quote-preflight', {
     methods: ['OPTIONS'],
     authLevel: 'anonymous',
     route: 'projects-by-quote/{*path}',
+    handler: async (request) => preflight(request)
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Project Contacts — additional people attached to a project (site foreman,
+// surveyor, QS, etc.). Separate from the client's ClientContacts.
+// Mirrors the client-contacts CRUD shape from clients.js.
+// ───────────────────────────────────────────────────────────────────────────
+
+// GET /api/project-contacts?project_id=X
+app.http('project-contacts-list', {
+    methods: ['GET'],
+    authLevel: 'anonymous',
+    route: 'project-contacts',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const projectId = parseInt(request.query.get('project_id'));
+            if (!projectId) return badRequest('project_id is required', request);
+
+            const result = await query(
+                `SELECT * FROM ProjectContacts WHERE project_id = @projectId ORDER BY created_at DESC`,
+                { projectId }
+            );
+            return ok(result.recordset, request);
+        } catch (err) {
+            context.error('Error fetching project contacts:', err);
+            return serverError('Failed to fetch project contacts', request);
+        }
+    }
+});
+
+// POST /api/project-contacts — add a contact
+app.http('project-contacts-create', {
+    methods: ['POST'],
+    authLevel: 'anonymous',
+    route: 'project-contacts',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const body = await request.json();
+            const { project_id, contact_name, contact_email, contact_phone, role, notes } = body;
+            if (!project_id) return badRequest('project_id is required', request);
+
+            if (!contact_name && !contact_email && !contact_phone) {
+                return badRequest('At least one of contact_name, contact_email, or contact_phone is required', request);
+            }
+
+            const result = await query(
+                `INSERT INTO ProjectContacts (project_id, contact_name, contact_email, contact_phone, role, notes)
+                 OUTPUT INSERTED.*
+                 VALUES (@projectId, @name, @email, @phone, @role, @notes)`,
+                {
+                    projectId: parseInt(project_id),
+                    name: contact_name || null,
+                    email: contact_email || null,
+                    phone: contact_phone || null,
+                    role: role || null,
+                    notes: notes || null
+                }
+            );
+
+            return created(result.recordset[0], request);
+        } catch (err) {
+            context.error('Error creating project contact:', err);
+            return serverError('Failed to create project contact', request);
+        }
+    }
+});
+
+// PUT /api/project-contacts/:id
+app.http('project-contacts-update', {
+    methods: ['PUT'],
+    authLevel: 'anonymous',
+    route: 'project-contacts/{id}',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const id = parseInt(request.params.id);
+            const body = await request.json();
+            const fields = [];
+            const params = { id };
+            const allowed = ['contact_name', 'contact_email', 'contact_phone', 'role', 'notes'];
+            for (const key of allowed) {
+                if (body[key] !== undefined) {
+                    fields.push(`${key} = @${key}`);
+                    params[key] = body[key];
+                }
+            }
+            if (fields.length === 0) return badRequest('No fields to update', request);
+
+            fields.push('updated_at = GETUTCDATE()');
+            const result = await query(
+                `UPDATE ProjectContacts SET ${fields.join(', ')} OUTPUT INSERTED.* WHERE id = @id`,
+                params
+            );
+            if (result.recordset.length === 0) return notFound('Project contact not found', request);
+            return ok(result.recordset[0], request);
+        } catch (err) {
+            context.error('Error updating project contact:', err);
+            return serverError('Failed to update project contact', request);
+        }
+    }
+});
+
+// DELETE /api/project-contacts/:id
+app.http('project-contacts-delete', {
+    methods: ['DELETE'],
+    authLevel: 'anonymous',
+    route: 'project-contacts/{id}',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const id = parseInt(request.params.id);
+            const result = await query(
+                `DELETE FROM ProjectContacts OUTPUT DELETED.* WHERE id = @id`,
+                { id }
+            );
+            if (result.recordset.length === 0) return notFound('Project contact not found', request);
+            return ok({ deleted: true, id }, request);
+        } catch (err) {
+            context.error('Error deleting project contact:', err);
+            return serverError('Failed to delete project contact', request);
+        }
+    }
+});
+
+app.http('project-contacts-preflight', {
+    methods: ['OPTIONS'],
+    authLevel: 'anonymous',
+    route: 'project-contacts/{*path}',
+    handler: async (request) => preflight(request)
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Project Comments — threaded comments on a project. Mirrors TenderComments
+// from tenders.js. No edit (intentional — comments are a log).
+// ───────────────────────────────────────────────────────────────────────────
+
+// GET /api/project-comments?project_id=X
+app.http('project-comments-list', {
+    methods: ['GET'],
+    authLevel: 'anonymous',
+    route: 'project-comments',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const projectId = parseInt(request.query.get('project_id'));
+            if (!projectId) return badRequest('project_id is required', request);
+
+            const result = await query(
+                `SELECT * FROM ProjectComments WHERE project_id = @projectId ORDER BY created_at ASC`,
+                { projectId }
+            );
+            return ok(result.recordset, request);
+        } catch (err) {
+            context.error('Error fetching project comments:', err);
+            return serverError('Failed to fetch project comments', request);
+        }
+    }
+});
+
+// POST /api/project-comments — add a comment
+app.http('project-comments-create', {
+    methods: ['POST'],
+    authLevel: 'anonymous',
+    route: 'project-comments',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const body = await request.json();
+            const { project_id, comment, created_by } = body;
+            if (!project_id) return badRequest('project_id is required', request);
+            if (!comment || !comment.trim()) return badRequest('comment is required', request);
+
+            const result = await query(
+                `INSERT INTO ProjectComments (project_id, comment, created_by)
+                 OUTPUT INSERTED.*
+                 VALUES (@projectId, @comment, @createdBy)`,
+                { projectId: parseInt(project_id), comment: comment.trim(), createdBy: created_by || null }
+            );
+            return created(result.recordset[0], request);
+        } catch (err) {
+            context.error('Error creating project comment:', err);
+            return serverError('Failed to create project comment', request);
+        }
+    }
+});
+
+// DELETE /api/project-comments/:id
+app.http('project-comments-delete', {
+    methods: ['DELETE'],
+    authLevel: 'anonymous',
+    route: 'project-comments/{id}',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const id = parseInt(request.params.id);
+            const result = await query(
+                `DELETE FROM ProjectComments OUTPUT DELETED.* WHERE id = @id`,
+                { id }
+            );
+            if (result.recordset.length === 0) return notFound('Project comment not found', request);
+            return ok({ deleted: true, id }, request);
+        } catch (err) {
+            context.error('Error deleting project comment:', err);
+            return serverError('Failed to delete project comment', request);
+        }
+    }
+});
+
+app.http('project-comments-preflight', {
+    methods: ['OPTIONS'],
+    authLevel: 'anonymous',
+    route: 'project-comments/{*path}',
     handler: async (request) => preflight(request)
 });
