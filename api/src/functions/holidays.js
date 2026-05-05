@@ -154,7 +154,7 @@ app.http('holidays-update', {
 
                 const result = await query(
                     `UPDATE Holidays
-                     SET status = @status, decided_at = GETUTCDATE()
+                     SET status = @status, decided_at = GETUTCDATE(), notification_seen = 0
                      OUTPUT INSERTED.*
                      WHERE id = @id`,
                     { id, status }
@@ -194,15 +194,23 @@ app.http('holidays-update', {
                 );
             }
 
+            // Reset notification_seen when status transitions to approved/rejected
+            // so the employee gets notified about the change. If status didn't
+            // change, leave notification_seen alone.
+            const statusChangedToActioned =
+                (newStatus === 'approved' || newStatus === 'rejected') &&
+                newStatus !== holiday.status;
+
             // Update the holiday record
             const result = await query(
                 `UPDATE Holidays
                  SET date_from = @dateFrom, date_to = @dateTo, type = @type,
                      status = @status, reason = @reason, working_days = @workingDays,
-                     decided_at = CASE WHEN @status IN ('approved','rejected') THEN GETUTCDATE() ELSE decided_at END
+                     decided_at = CASE WHEN @status IN ('approved','rejected') THEN GETUTCDATE() ELSE decided_at END,
+                     notification_seen = CASE WHEN @resetNotif = 1 THEN 0 ELSE notification_seen END
                  OUTPUT INSERTED.*
                  WHERE id = @id`,
-                { id, dateFrom: newFrom, dateTo: newTo, type: newType, status: newStatus, reason: newReason, workingDays: newDays }
+                { id, dateFrom: newFrom, dateTo: newTo, type: newType, status: newStatus, reason: newReason, workingDays: newDays, resetNotif: statusChangedToActioned ? 1 : 0 }
             );
 
             // Apply new balance impact (if now approved + paid/half, deduct days)
@@ -219,6 +227,35 @@ app.http('holidays-update', {
         } catch (err) {
             context.error('Error updating holiday:', err);
             return serverError('Failed to update holiday', request);
+        }
+    }
+});
+
+// PUT /api/holidays/:id/notification-seen — mark approval/rejection notification as seen by employee
+app.http('holidays-mark-notification-seen', {
+    methods: ['PUT'],
+    authLevel: 'anonymous',
+    route: 'holidays/{id}/notification-seen',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const id = parseInt(request.params.id);
+            if (!id || Number.isNaN(id)) return badRequest('Invalid holiday id', request);
+
+            const result = await query(
+                `UPDATE Holidays SET notification_seen = 1
+                 OUTPUT INSERTED.id, INSERTED.notification_seen
+                 WHERE id = @id`,
+                { id }
+            );
+
+            if (result.recordset.length === 0) return notFound('Holiday not found', request);
+            return ok(result.recordset[0], request);
+        } catch (err) {
+            context.error('Error marking holiday notification seen:', err);
+            return serverError('Failed to mark notification seen', request);
         }
     }
 });

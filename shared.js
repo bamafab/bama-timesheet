@@ -347,7 +347,11 @@ function normaliseHoliday(row) {
     decidedAt,
     // Populated based on status — checkHolidayClockInNotification reads these
     approvedAt: status === 'approved' ? decidedAt : null,
-    rejectedAt: status === 'rejected' ? decidedAt : null
+    rejectedAt: status === 'rejected' ? decidedAt : null,
+    // notification_seen tracks whether the employee has already dismissed
+    // the approval/rejection popup. Defaults to true server-side for older
+    // rows (so existing approved/rejected holidays don't suddenly trigger).
+    notificationSeen: row.notification_seen === undefined ? true : !!row.notification_seen
   };
 }
 
@@ -957,6 +961,10 @@ function openEmployeePanel(name) {
 
   // Render My Week
   renderMyWeek(name);
+
+  // Render Last Week Review (final chance to flag issues before payroll).
+  // Async — checks payroll-revisions, may hide the card.
+  renderLastWeekReview(name);
 
   // Render holiday balance
   renderEmpHolidayBalance(name);
@@ -2224,6 +2232,103 @@ function renderMyWeek(employeeName) {
   }).join('');
 }
 
+// Employee Last Week Review — final chance to flag wrong clockings before
+// the office presses Email-to-Payroll. Hidden once a row exists in
+// PayrollRevisions for that week's commencing Monday.
+async function renderLastWeekReview(employeeName) {
+  const card = document.getElementById('lastWeekReviewCard');
+  const grid = document.getElementById('lastWeekReviewGrid');
+  const totalEl = document.getElementById('lastWeekReviewTotal');
+  if (!card || !grid) return;
+
+  // Compute last week (Mon-Sun)
+  const today = new Date();
+  const dayOfWeek = today.getDay();
+  const thisMonday = new Date(today);
+  thisMonday.setDate(today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1));
+  const lastMonday = new Date(thisMonday);
+  lastMonday.setDate(thisMonday.getDate() - 7);
+  const lastSunday = new Date(lastMonday);
+  lastSunday.setDate(lastMonday.getDate() + 6);
+  const monStr = dateStr(lastMonday);
+  const sunStr = dateStr(lastSunday);
+
+  // Pull the employee's clockings for last week
+  const weekClockings = (state.timesheetData.clockings || []).filter(c =>
+    c.employeeName === employeeName && c.date >= monStr && c.date <= sunStr
+  );
+
+  // If they didn't work last week (no clockings at all) there's nothing to
+  // review — keep the card hidden to avoid clutter.
+  if (weekClockings.length === 0) {
+    card.style.display = 'none';
+    return;
+  }
+
+  // Check whether payroll has already been generated for this week. Presence
+  // of any payroll-revisions row for this week_commencing means Email-to-Payroll
+  // was pressed → review window is closed → hide the card.
+  // If the API call fails we fall through and SHOW the card — better to let
+  // the employee review than block them on transient server issues.
+  try {
+    const revisions = await api.get(`/api/payroll-revisions?week_commencing=${monStr}`);
+    if (Array.isArray(revisions) && revisions.length > 0) {
+      card.style.display = 'none';
+      return;
+    }
+  } catch (err) {
+    console.warn('Payroll-revisions check failed; showing review card anyway:', err.message);
+  }
+
+  // Render: same shape as renderMyWeek but for last week and read-only on
+  // gaps (no "+ Add" — that flow is for the current week).
+  const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const weekTotalHrs = weekClockings.reduce((s, c) => s + (calcHours(c.clockIn, c.clockOut, c.breakMins) || 0), 0);
+  if (totalEl) {
+    totalEl.textContent = weekTotalHrs > 0 ? `${weekTotalHrs.toFixed(1)}h total` : '';
+    totalEl.style.color = 'var(--accent2)';
+  }
+
+  grid.innerHTML = days.map((day, i) => {
+    const d = new Date(lastMonday);
+    d.setDate(lastMonday.getDate() + i);
+    const dStr = dateStr(d);
+
+    const clocking = weekClockings.find(c => c.date === dStr);
+
+    let content = '';
+    if (clocking) {
+      const hrs = calcHours(clocking.clockIn, clocking.clockOut, clocking.breakMins);
+      const amendment = (state.timesheetData.amendments || []).find(a => String(a.clockingId) === String(clocking.id) && a.status === 'pending');
+      const rejectedAmendment = (state.timesheetData.amendments || []).find(a => String(a.clockingId) === String(clocking.id) && a.status === 'rejected');
+      content = `
+        ${clocking.clockIn ? `<div class="week-day-time in">▲ ${clocking.clockIn}</div>` : '<div class="week-day-time" style="color:var(--subtle)">▲ —</div>'}
+        ${clocking.clockOut ? `<div class="week-day-time out">▼ ${clocking.clockOut}</div>` : '<div class="week-day-time" style="color:var(--subtle)">▼ —</div>'}
+        ${clocking.breakMins ? `<div class="week-day-break">&#9749; ${clocking.breakMins}m</div>` : ''}
+        ${hrs !== null ? `<div class="week-day-total">${hrs.toFixed(1)}h</div>` : ''}
+        ${amendment ? `<div style="margin-top:4px"><span class="tag tag-pending" style="font-size:9px">Amendment pending</span></div>` : ''}
+        ${rejectedAmendment && !amendment ? `<div style="margin-top:4px"><span class="tag tag-rejected" style="font-size:9px">Amendment rejected</span></div>` : ''}
+        ${clocking.clockOut && !amendment ? `<button class="week-day-add" onclick="openAmendmentRequest('${clocking.id}')">&#9998; Request Amendment</button>` : ''}
+      `;
+    } else {
+      const isBH = isBankHoliday(dStr);
+      content = isBH
+        ? `<div style="color:var(--accent);font-size:11px;margin-top:8px">Bank holiday</div>`
+        : `<div style="color:var(--subtle);font-size:11px;margin-top:8px">No clocking</div>`;
+    }
+
+    return `
+      <div class="week-day ${clocking ? 'has-data' : ''}">
+        <div class="week-day-name">${day}</div>
+        <div class="week-day-date">${d.getDate()}/${d.getMonth()+1}</div>
+        ${content}
+      </div>
+    `;
+  }).join('');
+
+  card.style.display = '';
+}
+
 // Employee add missing clocking
 let _addClockingDate = null;
 function openAddClocking(date) {
@@ -2362,6 +2467,7 @@ async function submitAmendment() {
     closeAmendmentModal();
     toast('Amendment request submitted ✓', 'success');
     renderMyWeek(state.currentEmployee);
+    renderLastWeekReview(state.currentEmployee);
   } catch (err) {
     toast('Failed to submit amendment: ' + err.message, 'error');
   }
@@ -2751,24 +2857,28 @@ async function submitHKHoliday() {
 }
 
 // ── Holiday notification on clock-in ──
+// Shows a one-time approval/rejection notification for HOLIDAY requests only
+// (paid + half-day). Sickness, unpaid leave, and other absence types do NOT
+// trigger this popup. The "seen" state is persisted server-side via
+// /api/holidays/:id/notification-seen so the user only sees each one once,
+// across devices and browsers.
 function checkHolidayClockInNotification(employeeName) {
-  // Check for recently approved/rejected holidays (last 7 days)
-  const recentlyActioned = (state.timesheetData.holidays || []).filter(h => {
+  const unseen = (state.timesheetData.holidays || []).filter(h => {
     if (h.employeeName !== employeeName) return false;
-    if (!h.approvedAt && !h.rejectedAt) return false;
-    const actionDate = h.approvedAt || h.rejectedAt;
-    const daysSince = (Date.now() - new Date(actionDate).getTime()) / (1000 * 60 * 60 * 24);
-    return daysSince <= 7 && !h.notificationShown;
+    // Only paid and half-day holidays trigger the notification.
+    if (h.type !== 'paid' && h.type !== 'half') return false;
+    // Only show for actioned (approved/rejected) requests.
+    if (h.status !== 'approved' && h.status !== 'rejected') return false;
+    // Skip if already seen by the employee.
+    if (h.notificationSeen) return false;
+    return true;
   });
 
-  if (!recentlyActioned.length) return;
+  if (!unseen.length) return;
 
-  // Show notification for each
-  recentlyActioned.forEach(h => {
+  // Show notification for each unseen holiday
+  unseen.forEach(h => {
     const approved = h.status === 'approved';
-    const msg = approved
-      ? `&#10003; Holiday APPROVED: ${h.dateFrom}${h.dateFrom !== h.dateTo ? ' → ' + h.dateTo : ''} (${h.workingDays} days)`
-      : `&#10005; Holiday DECLINED: ${h.dateFrom}${h.dateFrom !== h.dateTo ? ' → ' + h.dateTo : ''}`;
     const color = approved ? 'var(--green)' : 'var(--red)';
 
     // Show a full-screen notification overlay
@@ -2782,17 +2892,26 @@ function checkHolidayClockInNotification(employeeName) {
         </div>
         <div style="color:var(--muted);font-size:14px;margin-bottom:8px">${h.dateFrom}${h.dateFrom !== h.dateTo ? ' → ' + h.dateTo : ''}</div>
         <div style="color:var(--text);font-size:16px;margin-bottom:24px">${h.workingDays} working days · ${h.type}</div>
-        <button class="btn btn-primary" style="width:100%" onclick="this.parentElement.parentElement.remove()">OK</button>
+        <button class="btn btn-primary" style="width:100%" data-holiday-id="${h.id}">OK</button>
       </div>
     `;
     document.body.appendChild(overlay);
 
-    // Mark as shown
-    h.notificationShown = true;
+    // Mark seen on dismiss — patch local state immediately so the popup
+    // never re-appears in this session even if the API call fails, then
+    // persist server-side so it survives logout/refresh.
+    const okBtn = overlay.querySelector('button[data-holiday-id]');
+    okBtn.addEventListener('click', async () => {
+      h.notificationSeen = true;
+      overlay.remove();
+      try {
+        await api.put(`/api/holidays/${h.id}/notification-seen`, {});
+      } catch (err) {
+        // Non-fatal: notification will reappear next login if persistence failed.
+        console.warn('Failed to persist holiday notification seen flag:', err);
+      }
+    });
   });
-
-  // Save the notificationShown flags — local only, no persistence needed
-  // (If user reclocks, they'll see the notification again — that's fine)
 }
 
 let _editEntryId = null;
