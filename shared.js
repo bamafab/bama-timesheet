@@ -1965,7 +1965,7 @@ function renderClockLog(clockings) {
         <thead>
           <tr>
             <th style="text-align:left;min-width:140px">EMPLOYEE</th>
-            ${days.map(d => `<th style="text-align:center;min-width:90px">${d.label}<br><span style="font-weight:400;font-size:9px;color:var(--subtle)">${d.date.slice(5)}</span></th>`).join('')}
+            ${days.map(d => `<th style="text-align:center;min-width:90px">${d.label}<br><span style="font-weight:400;font-size:9px;color:var(--muted)">${d.date.slice(5)}</span></th>`).join('')}
             <th style="text-align:center;min-width:60px">TOTAL</th>
           </tr>
         </thead>
@@ -14635,7 +14635,7 @@ async function drawBabcockQuotePDF(jsPDF, d, logoDataUri) {
   let rightY = y;
 
   // LEFT: Company Address
-  setText(RED);
+  setText(TEXT);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10.5);
   doc.text('Company Address', marginL, leftY);
@@ -14652,7 +14652,7 @@ async function drawBabcockQuotePDF(jsPDF, d, logoDataUri) {
 
   // LEFT: Quotation For (only if any of the three values exist)
   if (d.quoteFor || d.area || d.address) {
-    setText(RED);
+    setText(TEXT);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(10.5);
     doc.text('Quotation For', marginL, leftY);
@@ -14670,7 +14670,7 @@ async function drawBabcockQuotePDF(jsPDF, d, logoDataUri) {
     leftY += 3;
   }
 
-  // RIGHT: meta table — labels right-aligned in red, values in black
+  // RIGHT: meta table — labels right-aligned, values in black
   const metaRows = [
     { label: 'Date',                    value: fmtDate(d.quoteDate) },
     { label: 'Quotation #',             value: d.quoteRef || '' },
@@ -14684,7 +14684,7 @@ async function drawBabcockQuotePDF(jsPDF, d, logoDataUri) {
   const labelColW = rightColW * 0.55;
   const valueColX = rightColX + labelColW + 2;
   for (const row of metaRows) {
-    setText(RED);
+    setText(TEXT);
     doc.setFont('helvetica', 'bold');
     doc.text(row.label, labelColX + labelColW, rightY, { align: 'right' });
     setText(TEXT);
@@ -14699,7 +14699,7 @@ async function drawBabcockQuotePDF(jsPDF, d, logoDataUri) {
   // ── Comments block (only if non-empty) ──────────────────
   // Fix #5: skip the section entirely when there are no special notes.
   if (d.comments && String(d.comments).trim()) {
-    setText(RED);
+    setText(TEXT);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(10.5);
     doc.text('Comments or Special Instructions', marginL, y);
@@ -14733,7 +14733,7 @@ async function drawBabcockQuotePDF(jsPDF, d, logoDataUri) {
   // Header row
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
-  setText(RED);
+  setText(TEXT);
   doc.text('Item',        colItem.x + colItem.w / 2,   y, { align: 'center' });
   doc.text('Description', colDesc.x + 1,                y);
   doc.text('Unit Price',  colPrice.x + colPrice.w - 1,  y, { align: 'right' });
@@ -14804,7 +14804,7 @@ async function drawBabcockQuotePDF(jsPDF, d, logoDataUri) {
   }
 
   // ── Footer: VAT note left, TOTAL pill right ────────────────
-  setText(RED);
+  setText(TEXT);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10.5);
   doc.text('All quotes are VAT exclusive', marginL, y + 5);
