@@ -678,7 +678,7 @@ async function writeUnproductiveTimeLog(entries) {
       const clocking = state.timesheetData.clockings.find(
         c => c.employeeName === e.employeeName && c.date === e.date && c.clockOut
       );
-      const clockedHrs = clocking ? (calcHours(clocking.clockIn, clocking.clockOut, clocking.breakMins) || 0) : 0;
+      const clockedHrs = clocking ? (calcHours(clocking.clockIn, clocking.clockOut, clocking.breakMins, clocking.date) || 0) : 0;
       const projectHrs = clockedHrs - e.hours;
 
       // Calculate week commencing (Monday)
@@ -1251,7 +1251,7 @@ async function finishClockOut({ emp, today, clockOut, breakMins, clocking }) {
 
     // Calculate S000 unproductive time
     const clockIn = clocking.clockIn;
-    const clockedHrs = calcHours(clockIn, clockOut, breakMins) || 0;
+    const clockedHrs = calcHours(clockIn, clockOut, breakMins, today) || 0;
     const totalProjectHrs = state.timesheetData.entries
       .filter(e => e.employeeName === emp && e.date === today && e.projectId !== 'S000')
       .reduce((s, e) => s + e.hours, 0);
@@ -1749,14 +1749,22 @@ function renderEmpSummary(entries, clockings) {
   `).join('');
 }
 
-function calcHours(clockIn, clockOut, breakMins) {
+function calcHours(clockIn, clockOut, breakMins, dateStr) {
   if (!clockIn || !clockOut) return null;
   const [ih, im] = clockIn.split(':').map(Number);
   const [oh, om] = clockOut.split(':').map(Number);
   let diff = (oh * 60 + om) - (ih * 60 + im);
   // Handle overnight shifts (e.g. 22:00 → 06:00) — add 24h if clock-out earlier than clock-in
   if (diff < 0) diff += 1440;
-  diff -= (breakMins || 0);
+  // Break is NOT deducted on Saturdays or Sundays (BAMA rule).
+  // dateStr expected as 'YYYY-MM-DD'. If not supplied, fall back to deducting (back-compat).
+  let skipBreak = false;
+  if (dateStr) {
+    const d = new Date(dateStr + 'T12:00:00');
+    const dow = d.getDay(); // 0=Sun, 6=Sat
+    if (dow === 0 || dow === 6) skipBreak = true;
+  }
+  if (!skipBreak) diff -= (breakMins || 0);
   return diff > 0 ? diff / 60 : 0;
 }
 
@@ -1802,15 +1810,20 @@ function renderClockLog(clockings) {
       const c = empMap[emp][d.date];
       if (!c) return { html: '<td style="text-align:center;color:var(--subtle)">—</td>', hrs: 0 };
 
-      const hrs = calcHours(c.clockIn, c.clockOut, c.breakMins) || 0;
+      const hrs = calcHours(c.clockIn, c.clockOut, c.breakMins, c.date) || 0;
       const isPending = c.approvalStatus === 'pending' || (!c.approvalStatus && !c.addedByManager);
       const isEdited = c.manuallyEdited;
 
       // Inline edit mode
       if (c._editing) {
         const times = [];
-        for (let h = 4; h <= 23; h++) { times.push(`${String(h).padStart(2,'0')}:00`); times.push(`${String(h).padStart(2,'0')}:30`); }
-        // Include the actual clock times if they're not standard 30-min slots
+        for (let h = 4; h <= 23; h++) {
+          times.push(`${String(h).padStart(2,'0')}:00`);
+          times.push(`${String(h).padStart(2,'0')}:15`);
+          times.push(`${String(h).padStart(2,'0')}:30`);
+          times.push(`${String(h).padStart(2,'0')}:45`);
+        }
+        // Include the actual clock times if they're not standard 15-min slots
         const actualIn = c.clockIn || '';
         const actualOut = c.clockOut || '';
         if (actualIn && !times.includes(actualIn)) times.push(actualIn);
@@ -1884,13 +1897,13 @@ function renderClockLog(clockings) {
   const dayTotals = days.map((d, i) => {
     const total = Object.values(empMap).reduce((s, emp) => {
       const c = emp[d.date];
-      return s + (c ? calcHours(c.clockIn, c.clockOut, c.breakMins) || 0 : 0);
+      return s + (c ? calcHours(c.clockIn, c.clockOut, c.breakMins, c.date) || 0 : 0);
     }, 0);
     return `<td style="text-align:center;padding:8px 6px;font-family:var(--font-mono);font-size:12px;font-weight:600;color:var(--muted)">${total > 0 ? total.toFixed(1) + 'h' : '—'}</td>`;
   }).join('');
 
   const grandTotal = Object.values(empMap).reduce((s, emp) => {
-    return s + Object.values(emp).reduce((ss, c) => ss + (calcHours(c.clockIn, c.clockOut, c.breakMins) || 0), 0);
+    return s + Object.values(emp).reduce((ss, c) => ss + (calcHours(c.clockIn, c.clockOut, c.breakMins, c.date) || 0), 0);
   }, 0);
 
   // Build amendment requests banner
@@ -1977,7 +1990,8 @@ function markClockDirty(id) {
   const inVal = document.getElementById(`edit-in-${id}`)?.value;
   const outVal = document.getElementById(`edit-out-${id}`)?.value;
   const breakVal = parseInt(document.getElementById(`edit-break-${id}`)?.value) || 0;
-  const hrs = calcHours(inVal, outVal, breakVal);
+  const clocking = state.timesheetData.clockings.find(c => String(c.id) === String(id));
+  const hrs = calcHours(inVal, outVal, breakVal, clocking?.date);
   const totalEl = document.getElementById(`edit-total-${id}`);
   if (totalEl && hrs !== null) totalEl.textContent = hrs.toFixed(2) + 'h';
 }
@@ -2076,6 +2090,137 @@ async function rejectClocking(id) {
   } catch (err) { toast('Save failed: ' + err.message, 'error'); }
 }
 
+// Delete a full day's record for a single employee:
+// - Removes the ClockEntries row
+// - Removes every ProjectHours row for that employee on that date
+// Triggered from the "🗑 Delete Day" button next to "+ Add Manual Clocking"
+// on the office Clocking In/Out review page.
+
+function openDeleteClockingDay() {
+  const sel = document.getElementById('delClockEmp');
+  if (!sel) return;
+  const placeholder = '<option value="">— select employee —</option>';
+  sel.innerHTML = placeholder + (state.timesheetData.employees || [])
+    .filter(e => e.active !== false)
+    .map(e => `<option value="${e.name}">${e.name}</option>`).join('');
+  document.getElementById('delClockDate').value = '';
+  document.getElementById('delClockConfirmBtn').disabled = true;
+  document.getElementById('delClockPreview').innerHTML =
+    '<span style="color:var(--muted)">Pick an employee and date to see what will be deleted.</span>';
+  document.getElementById('deleteClockingDayModal').classList.add('active');
+}
+
+function closeDeleteClockingDay() {
+  document.getElementById('deleteClockingDayModal').classList.remove('active');
+}
+
+function refreshDeleteClockingPreview() {
+  const empName = document.getElementById('delClockEmp').value;
+  const date = document.getElementById('delClockDate').value;
+  const previewEl = document.getElementById('delClockPreview');
+  const btn = document.getElementById('delClockConfirmBtn');
+  btn.disabled = true;
+
+  if (!empName || !date) {
+    previewEl.innerHTML = '<span style="color:var(--muted)">Pick an employee and date to see what will be deleted.</span>';
+    return;
+  }
+
+  const clocking = (state.timesheetData.clockings || []).find(
+    c => c.employeeName === empName && c.date === date
+  );
+  const entries = (state.timesheetData.entries || []).filter(
+    e => e.employeeName === empName && e.date === date
+  );
+
+  if (!clocking && !entries.length) {
+    previewEl.innerHTML = '<span style="color:var(--amber)">No record found for this employee on this date.</span>';
+    return;
+  }
+
+  const dayLabel = new Date(date + 'T12:00:00').toLocaleDateString('en-GB', {
+    weekday: 'long', day: 'numeric', month: 'short', year: 'numeric'
+  });
+  const projHrsTotal = entries.reduce((s, e) => s + (parseFloat(e.hours) || 0), 0);
+
+  let html = `<div style="font-weight:600;color:var(--text);margin-bottom:6px">${empName} — ${dayLabel}</div>`;
+  if (clocking) {
+    html += `<div style="font-family:var(--font-mono);font-size:12px;margin-bottom:4px">Clock: ${clocking.clockIn || '—'} – ${clocking.clockOut || 'still in'}</div>`;
+  } else {
+    html += `<div style="color:var(--muted);font-size:12px;margin-bottom:4px">No clock-in/out record</div>`;
+  }
+  if (entries.length) {
+    html += `<div style="font-size:12px">Project hours: <b>${entries.length}</b> entr${entries.length === 1 ? 'y' : 'ies'} (${projHrsTotal.toFixed(1)}h)</div>`;
+  } else {
+    html += `<div style="color:var(--muted);font-size:12px">No project-hour entries</div>`;
+  }
+  html += `<div style="color:var(--red);font-size:11px;margin-top:8px">⚠ Cannot be undone.</div>`;
+
+  previewEl.innerHTML = html;
+  // Stash for confirm
+  previewEl.dataset.clockingId = clocking ? String(clocking.id) : '';
+  previewEl.dataset.empName = empName;
+  previewEl.dataset.date = date;
+  btn.disabled = false;
+}
+
+async function confirmDeleteClockingDay() {
+  const previewEl = document.getElementById('delClockPreview');
+  const empName = previewEl.dataset.empName;
+  const date = previewEl.dataset.date;
+  const clockingId = previewEl.dataset.clockingId;
+
+  if (!empName || !date) return;
+
+  const btn = document.getElementById('delClockConfirmBtn');
+  btn.disabled = true;
+  btn.textContent = 'Deleting…';
+
+  try {
+    // Delete the clocking row if there is one
+    if (clockingId) {
+      await api.delete(`/api/clockings/${clockingId}`);
+    }
+
+    // Delete each project-hours entry for that employee+date.
+    // No bulk endpoint — small batch per day, parallel deletes.
+    const entries = (state.timesheetData.entries || []).filter(
+      e => e.employeeName === empName && e.date === date
+    );
+    let failed = 0;
+    if (entries.length) {
+      const results = await Promise.allSettled(
+        entries.map(e => api.delete(`/api/project-hours/${e.id}`))
+      );
+      failed = results.filter(r => r.status === 'rejected').length;
+      if (failed) console.warn('Some project-hour deletes failed:', results.filter(r => r.status === 'rejected'));
+    }
+
+    // Patch local state
+    if (clockingId) {
+      state.timesheetData.clockings = state.timesheetData.clockings.filter(
+        x => String(x.id) !== String(clockingId)
+      );
+    }
+    state.timesheetData.entries = (state.timesheetData.entries || []).filter(
+      e => !(e.employeeName === empName && e.date === date)
+    );
+
+    closeDeleteClockingDay();
+    if (failed) {
+      toast(`Deleted, but ${failed} project entr${failed === 1 ? 'y' : 'ies'} failed — refresh and retry`, 'error');
+    } else {
+      toast('Day deleted ✓', 'success');
+    }
+    renderManagerView();
+  } catch (err) {
+    console.error('confirmDeleteClockingDay error:', err);
+    toast('Delete failed: ' + err.message, 'error');
+    btn.disabled = false;
+    btn.textContent = 'Delete Day';
+  }
+}
+
 // Manager add clocking modal
 function openMgrAddClocking() {
   const sel = document.getElementById('mgrClockEmp');
@@ -2156,7 +2301,7 @@ function renderMyWeek(employeeName) {
   const weekClockings = (state.timesheetData.clockings || []).filter(c =>
     c.employeeName === employeeName && c.date >= monStr && c.date <= sunStr
   );
-  const weekTotalHrs = weekClockings.reduce((s, c) => s + (calcHours(c.clockIn, c.clockOut, c.breakMins) || 0), 0);
+  const weekTotalHrs = weekClockings.reduce((s, c) => s + (calcHours(c.clockIn, c.clockOut, c.breakMins, c.date) || 0), 0);
   const totalEl = document.getElementById('myWeekTotal');
   if (totalEl) {
     totalEl.textContent = weekTotalHrs > 0 ? `${weekTotalHrs.toFixed(1)}h this week` : '';
@@ -2181,7 +2326,7 @@ function renderMyWeek(employeeName) {
 
     let content = '';
     if (clocking) {
-      const hrs = calcHours(clocking.clockIn, clocking.clockOut, clocking.breakMins);
+      const hrs = calcHours(clocking.clockIn, clocking.clockOut, clocking.breakMins, clocking.date);
       const isPending = clocking.approvalStatus === 'pending';
       // Check for pending amendment
       const amendment = (state.timesheetData.amendments || []).find(a => String(a.clockingId) === String(clocking.id) && a.status === 'pending');
@@ -2283,7 +2428,7 @@ async function renderLastWeekReview(employeeName) {
   // Render: same shape as renderMyWeek but for last week and read-only on
   // gaps (no "+ Add" — that flow is for the current week).
   const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-  const weekTotalHrs = weekClockings.reduce((s, c) => s + (calcHours(c.clockIn, c.clockOut, c.breakMins) || 0), 0);
+  const weekTotalHrs = weekClockings.reduce((s, c) => s + (calcHours(c.clockIn, c.clockOut, c.breakMins, c.date) || 0), 0);
   if (totalEl) {
     totalEl.textContent = weekTotalHrs > 0 ? `${weekTotalHrs.toFixed(1)}h total` : '';
     totalEl.style.color = 'var(--accent2)';
@@ -2298,7 +2443,7 @@ async function renderLastWeekReview(employeeName) {
 
     let content = '';
     if (clocking) {
-      const hrs = calcHours(clocking.clockIn, clocking.clockOut, clocking.breakMins);
+      const hrs = calcHours(clocking.clockIn, clocking.clockOut, clocking.breakMins, clocking.date);
       const amendment = (state.timesheetData.amendments || []).find(a => String(a.clockingId) === String(clocking.id) && a.status === 'pending');
       const rejectedAmendment = (state.timesheetData.amendments || []).find(a => String(a.clockingId) === String(clocking.id) && a.status === 'rejected');
       content = `
@@ -2963,7 +3108,7 @@ async function saveEditEntry() {
       c => c.employeeName === emp && c.date === today && c.clockOut
     );
     if (clocking && empId) {
-      const clockedHrs = calcHours(clocking.clockIn, clocking.clockOut, clocking.breakMins) || 0;
+      const clockedHrs = calcHours(clocking.clockIn, clocking.clockOut, clocking.breakMins, clocking.date) || 0;
       const totalProjectHrs = state.timesheetData.entries
         .filter(e => e.employeeName === emp && e.date === today && e.projectId !== 'S000')
         .reduce((s, e) => s + e.hours, 0);
@@ -3052,7 +3197,7 @@ async function confirmNoProjectClockOut() {
   const { emp, today, clockOut, breakMins, clocking } = data;
 
   // Log full shift as WGD
-  const clockedHrs = calcHours(clocking.clockIn, clockOut, breakMins) || 0;
+  const clockedHrs = calcHours(clocking.clockIn, clockOut, breakMins, today) || 0;
   if (clockedHrs > 0) {
     const empId = empIdByName(emp);
     if (empId) {
@@ -4430,7 +4575,7 @@ function calculatePayroll(employeeName, weekMon, weekSun) {
   let sundayHours = 0;
 
   clockings.forEach(c => {
-    const hrs = calcHours(c.clockIn, c.clockOut, c.breakMins) || 0;
+    const hrs = calcHours(c.clockIn, c.clockOut, c.breakMins, c.date) || 0;
     dayHours[c.date] = (dayHours[c.date] || 0) + hrs;
 
     const d = new Date(c.date + 'T12:00:00');
@@ -4595,7 +4740,7 @@ function getWeeklyData(empFilter) {
     mon.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1));
     const wk = dateStr(mon);
     if (!weekMap[wk]) weekMap[wk] = { label: wk, clocked: 0, project: 0, unproductive: 0 };
-    const hrs = calcHours(c.clockIn, c.clockOut, c.breakMins) || 0;
+    const hrs = calcHours(c.clockIn, c.clockOut, c.breakMins, c.date) || 0;
     weekMap[wk].clocked = Math.round((weekMap[wk].clocked + hrs) * 10) / 10;
   });
   entries.forEach(e => {
@@ -4619,7 +4764,7 @@ function getPeriodData(empFilter) {
   const entries = (state.timesheetData.entries || [])
     .filter(e => e.date >= from && e.date <= to && (!empFilter || e.employeeName === empFilter));
 
-  const totalClocked = clockings.reduce((s,c) => s + (calcHours(c.clockIn, c.clockOut, c.breakMins)||0), 0);
+  const totalClocked = clockings.reduce((s,c) => s + (calcHours(c.clockIn, c.clockOut, c.breakMins, c.date)||0), 0);
   const totalProject = entries.filter(e => e.projectId !== 'S000' && e.projectId !== 'WGD').reduce((s,e) => s + e.hours, 0);
   const totalWGD = entries.filter(e => e.projectId === 'WGD').reduce((s,e) => s + e.hours, 0);
   const totalUnproductive = entries.filter(e => e.projectId === 'S000').reduce((s,e) => s + e.hours, 0);
@@ -4629,7 +4774,7 @@ function getPeriodData(empFilter) {
   const empMap = {};
   clockings.forEach(c => {
     if (!empMap[c.employeeName]) empMap[c.employeeName] = { clocked: 0, project: 0, wgd: 0, unproductive: 0 };
-    empMap[c.employeeName].clocked = Math.round((empMap[c.employeeName].clocked + (calcHours(c.clockIn, c.clockOut, c.breakMins)||0)) * 10) / 10;
+    empMap[c.employeeName].clocked = Math.round((empMap[c.employeeName].clocked + (calcHours(c.clockIn, c.clockOut, c.breakMins, c.date)||0)) * 10) / 10;
   });
   entries.forEach(e => {
     if (!empMap[e.employeeName]) return;
@@ -4900,7 +5045,7 @@ function getAttendanceData(empFilter) {
       // Calculate shift length from earliest clock with a clock-out
       const completed = empClockings.filter(c => c.date === day && c.clockIn && c.clockOut);
       if (completed.length) {
-        const hrs = completed.reduce((s, c) => s + (calcHours(c.clockIn, c.clockOut, c.breakMins) || 0), 0);
+        const hrs = completed.reduce((s, c) => s + (calcHours(c.clockIn, c.clockOut, c.breakMins, c.date) || 0), 0);
         if (hrs > 0) { totalShiftMins += hrs * 60; shiftCount++; }
       }
 
@@ -5578,7 +5723,7 @@ function getDayHoursForEmployee(empName, dateStr) {
     c.employeeName === empName && c.date === dateStr &&
     c.approvalStatus !== 'rejected'
   );
-  return clockings.reduce((s, c) => s + (calcHours(c.clockIn, c.clockOut, c.breakMins) || 0), 0);
+  return clockings.reduce((s, c) => s + (calcHours(c.clockIn, c.clockOut, c.breakMins, c.date) || 0), 0);
 }
 
 function renderPayroll() {

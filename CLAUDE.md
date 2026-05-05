@@ -349,6 +349,7 @@ the markup it mutates.
 **office.html**
 - `requestAccessModal` — same as manager
 - `mgrAddClockingModal` — manager adds a clocking for any employee
+- `deleteClockingDayModal` — office deletes a full day (clocking + project hours) for one employee
 - `approveWeekModal` — approve week + archive to PayrollArchive
 - `dashCreateTaskModal` — office dashboard: create a task for a colleague
 - `dashSendMessageModal` — office dashboard: internal message

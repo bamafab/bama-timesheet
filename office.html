@@ -441,6 +441,7 @@
           style="width:200px;padding:7px 12px;font-size:13px">
         <span style="color:var(--muted);font-size:13px;flex:1" id="clockLogCount">—</span>
         <button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="openMgrAddClocking()">+ Add Manual Clocking</button>
+        <button class="btn" style="padding:8px 16px;font-size:12px;background:rgba(229,72,77,.1);border-color:rgba(229,72,77,.4);color:var(--red)" onclick="openDeleteClockingDay()">🗑 Delete Day</button>
       </div>
       <div id="clockLogArea"></div>
     </div>
@@ -825,6 +826,33 @@
 </div>
 
 <!-- ═══════════════════════════════════════
+     DELETE CLOCKING DAY MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="deleteClockingDayModal">
+  <div class="modal">
+    <div class="modal-title">🗑 Delete Day</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:20px">
+      Pick an employee and date — this will delete the clock in/out <b>and</b> any project hours logged for that day. Cannot be undone.
+    </div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">EMPLOYEE</div>
+      <select class="field-input" id="delClockEmp" onchange="refreshDeleteClockingPreview()"></select>
+    </div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">DATE</div>
+      <input type="date" class="field-input" id="delClockDate" onchange="refreshDeleteClockingPreview()">
+    </div>
+    <div id="delClockPreview" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:13px;min-height:60px;color:var(--muted)">
+      Pick an employee and date to see what will be deleted.
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeDeleteClockingDay()">Cancel</button>
+      <button class="btn btn-danger" id="delClockConfirmBtn" onclick="confirmDeleteClockingDay()" disabled>Delete Day</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
      APPROVE WEEK MODAL
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="approveWeekModal" style="align-items:center;justify-content:center">
@@ -1097,6 +1125,6 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-<script src="shared.js?v=20260505f"></script>
+<script src="shared.js?v=20260505g"></script>
 </body>
 </html>
