@@ -28,7 +28,8 @@ app.http('user-access-get', {
                         by_project: false, by_employee: false, clocking_in_out: false,
                         payroll: false, archive: false, staff: false, holidays: false,
                         reports: false, settings: false, user_access: false, draftsman_mode: false,
-                        tenders: false, edit_quotes: false, view_quotes: false
+                        tenders: false, edit_quotes: false, view_quotes: false,
+                        edit_projects: false, view_projects: false
                     }, request);
                 }
                 return ok(result.recordset[0], request);
@@ -65,7 +66,8 @@ app.http('user-access-update', {
             const permCols = [
                 'by_project', 'by_employee', 'clocking_in_out', 'payroll',
                 'archive', 'staff', 'holidays', 'reports', 'settings',
-                'user_access', 'draftsman_mode', 'tenders', 'edit_quotes', 'view_quotes'
+                'user_access', 'draftsman_mode', 'tenders', 'edit_quotes', 'view_quotes',
+                'edit_projects', 'view_projects'
             ];
 
             // Map camelCase from frontend to snake_case
@@ -73,7 +75,8 @@ app.http('user-access-update', {
                 byProject: 'by_project', byEmployee: 'by_employee', clockingInOut: 'clocking_in_out',
                 payroll: 'payroll', archive: 'archive', staff: 'staff', holidays: 'holidays',
                 reports: 'reports', settings: 'settings', userAccess: 'user_access', draftsmanMode: 'draftsman_mode',
-                tenders: 'tenders', editQuotes: 'edit_quotes', viewQuotes: 'view_quotes'
+                tenders: 'tenders', editQuotes: 'edit_quotes', viewQuotes: 'view_quotes',
+                editProjects: 'edit_projects', viewProjects: 'view_projects'
             };
 
             // Check if row exists

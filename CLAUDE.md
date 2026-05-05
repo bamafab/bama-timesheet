@@ -47,7 +47,8 @@ Labour Log, drawings PDFs/BOM JSON) and sending mail. All relational data lives 
 ├── index.html            — Workshop kiosk (clock in/out, log hours, holidays, orders)
 ├── manager.html          — Manager dashboard (settings, user access)
 ├── office.html           — Office dashboard (staff, holidays, payroll, reports, archive, etc.)
-├── projects.html         — Projects + drawings + draftsman mode
+├── projects.html         — Drawings & jobs (per-project draftsman/build workflow)
+├── project-tracker.html  — Project register: live SQL projects from won quotes
 ├── tenders.html          — Tender management + client database
 ├── quotes.html           — Quotations: financial-sensitive view (separate from tenders)
 ├── steel-database.html   — Standalone UK steel section reference (no shared.js, no auth)
@@ -75,6 +76,7 @@ Labour Log, drawings PDFs/BOM JSON) and sending mail. All relational data lives 
             ├── keep-warm.js      — timer trigger: every 4 min, Mon–Sat 05:00–20:00
             ├── payroll.js        — week approval + PayrollArchive
             ├── project-hours.js  — CRUD + grouped summary
+            ├── projects.js       — Projects CRUD + Won-quote conversion lookup
             ├── responses.js      — (legacy copy of ../responses.js — not referenced)
             ├── settings.js       — Settings KV + PIN verify + /api/health
             ├── tenders.js        — Tenders CRUD + reference generation + status changes
@@ -144,7 +146,8 @@ on `userAccessData.users[name].permissions`.
 
 Permission keys (`PERMISSION_DEFS` / `PERM_TO_TAB`):
 `byProject, byEmployee, clockingInOut, payroll, archive, staff, holidays, reports,
-settings, userAccess, draftsmanMode, tenders, editQuotes, viewQuotes`.
+settings, userAccess, draftsmanMode, tenders, editQuotes, viewQuotes,
+editProjects, viewProjects`.
 
 ⚠️ When adding new permission keys, update **all four places**:
 1. `PERMISSION_DEFS` array in shared.js
@@ -218,6 +221,18 @@ Core tables:
   comments on a tender. ON DELETE CASCADE so removing a tender drops its
   comments. The original `comments` field on Tenders is rendered as the
   first "(initial)" entry in the thread for backwards compatibility.
+- `Projects(id, project_number, project_name, client_id, status,
+  source_quote_id, quote_value, deadline_date, comments,
+  sharepoint_folder_id, sharepoint_quote_folder_id, project_manager_id,
+  start_date, completion_date, created_by, created_at, updated_at)` —
+  status in {`In Progress`, `On Hold`, `Complete`, `Archived`, `Cancelled`}.
+  `project_number` mirrors the source quote with `Q` swapped for `C`
+  (`Q260502` → `C260502`). Created automatically when a quote's status
+  transitions to `won` via `convertQuoteToProject()` in shared.js.
+  SharePoint folders auto-created under `Projects/{NN - YYYY}/{C-ref - Client - Project}/`
+  with 9 standard subfolders (`00 - RAMS` through `08 - Application for payment`)
+  and the source quote folder contents copied into `03 - Quote`.
+  `source_quote_id` FKs back to the originating Tenders row.
 
 ## Payroll rules (BAMA-specific)
 
@@ -387,6 +402,11 @@ hub.html and steel-database.html have no modals.
 - (Reuses `editClientModal`, `contactModal` from shared)
 - Other quote-specific modals will be added as the financial workflow is built
 
+**project-tracker.html**
+- `projectTrackerPinModal` — PIN entry on the project tracker page
+- (No other modals yet — project detail edits inline; Won-quote conversion
+  uses a native `confirm()` dialog from the quotes page, not a modal here)
+
 ## Roadmap / queued
 
 Tracked here so Claude Code has context when a related question comes up —
@@ -395,15 +415,20 @@ none of this is built yet.
 - **Mobile clock-in page** — PIN-based, no Microsoft login. Standalone page
   aimed at site staff with no work account. Will need a server-side PIN check
   (see the PIN warning under Auth) and its own scoped API surface.
-- **Full project tracker in-app** — replace the SharePoint PROJECT TRACKER.xlsx
-  dependency. Projects, statuses, and the Labour Log move into SQL. `loadProjects()`
-  and `writeApprovedToLabourLog()` / `writeUnproductiveTimeLog()` will retire.
-- **Quote → project workflow** — Tender system built (`tenders.html`) + dedicated
-  Quote page exists (`quotes.html`) with own login + permission gate. Quote detail
-  is currently a placeholder. Next: build the financial workflow (line items,
-  pricing, margin tracking, customer-facing PDF) inside the Quote detail view,
-  then auto-create a Project when a quote is marked as "won". Depends on the
-  project tracker migration below.
+- **Full project tracker in-app (Phase 2+)** — replace the SharePoint
+  PROJECT TRACKER.xlsx dependency entirely. Phase 1 is built: SQL `Projects`
+  table exists, populated automatically when a quote is marked Won, and
+  `loadProjects()` (kiosk) merges SQL projects on top of spreadsheet rows
+  (deduped by project number). Still to do: backfill existing spreadsheet
+  projects into SQL, retire the spreadsheet read in `loadProjects()`, and
+  migrate `writeApprovedToLabourLog()` / `writeUnproductiveTimeLog()` to
+  SQL `LabourLog`. `project-tracker.html` is the new canonical UI for
+  project records.
+- **Quote financial workflow** — Quote detail page (`quotes.html`) exists with
+  basic fields (project name, deadline, value, sent/chasing dates, status).
+  Next: build line items / margin tracking / customer-facing PDF inside the
+  Quote detail view. Status `won` already auto-creates a Project — see the
+  Won → Project conversion in `convertQuoteToProject()` (shared.js).
 - **RBAC** — real role-based permissions enforced server-side. Current
   `UserPermissions` flags become the source of truth the API checks, not just
   what the UI hides. Blocker: move PIN verification server-side first.

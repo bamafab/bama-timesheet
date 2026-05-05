@@ -388,9 +388,18 @@ async function saveTimesheetData() {
 }
 
 // ═══════════════════════════════════════════
-// LOAD PROJECTS FROM PROJECT TRACKER
+// LOAD PROJECTS FROM PROJECT TRACKER + SQL
 // ═══════════════════════════════════════════
+// During the migration from PROJECT TRACKER.xlsx → SQL Projects table, this
+// function reads from BOTH sources and merges them. SQL is treated as canonical;
+// spreadsheet entries are kept for projects not yet in SQL. Dedupe is by
+// project_number (case-insensitive).
 async function loadProjects() {
+  // Kick off SQL load in parallel — it doesn't depend on Graph
+  const sqlPromise = api.get('/api/projects')
+    .then(rows => Array.isArray(rows) ? rows : [])
+    .catch(e => { console.warn('SQL projects load failed (non-fatal):', e.message); return []; });
+
   try {
     const token = await getToken();
 
@@ -441,6 +450,29 @@ async function loadProjects() {
     console.warn('Live project load failed, using fallback:', e.message);
     state.projects = FALLBACK_PROJECTS.filter(p => p.status === 'In Progress');
     if (!state.projects.length) state.projects = FALLBACK_PROJECTS;
+  }
+
+  // Merge SQL projects on top — SQL is canonical
+  try {
+    const sqlProjects = await sqlPromise;
+    if (sqlProjects.length) {
+      const seen = new Set(state.projects.map(p => String(p.id || '').toUpperCase()));
+      const sqlMapped = sqlProjects
+        .filter(p => p.status === 'In Progress')
+        .map(p => ({
+          id: p.project_number,
+          name: p.project_name,
+          status: p.status,
+          client: p.company_name || ''
+        }))
+        .filter(p => !seen.has(String(p.id).toUpperCase()));
+      if (sqlMapped.length) {
+        state.projects = [...sqlMapped, ...state.projects];
+        console.log(`Projects merged: +${sqlMapped.length} from SQL`);
+      }
+    }
+  } catch (e) {
+    console.warn('SQL merge failed (non-fatal):', e.message);
   }
 }
 
@@ -7590,7 +7622,9 @@ async function loadUserAccessData() {
           draftsmanMode: !!row.draftsman_mode,
           tenders: !!row.tenders,
           editQuotes: !!row.edit_quotes,
-          viewQuotes: !!row.view_quotes
+          viewQuotes: !!row.view_quotes,
+          editProjects: !!row.edit_projects,
+          viewProjects: !!row.view_projects
         }
       };
     });
@@ -7645,7 +7679,9 @@ const PERMISSION_DEFS = [
   { key: 'draftsmanMode', label: 'Draftsman Mode', desc: 'Upload drawings and manage jobs in Projects' },
   { key: 'tenders', label: 'Tenders', desc: 'View, add, and amend tenders' },
   { key: 'editQuotes', label: 'Edit Quotes', desc: 'Edit and manage quotes' },
-  { key: 'viewQuotes', label: 'View Quotes', desc: 'View quotes (read-only)' }
+  { key: 'viewQuotes', label: 'View Quotes', desc: 'View quotes (read-only)' },
+  { key: 'editProjects', label: 'Edit Projects', desc: 'Edit project tracker entries (status, dates, comments)' },
+  { key: 'viewProjects', label: 'View Projects', desc: 'View project tracker (read-only)' }
 ];
 
 const PERM_TO_TAB = {
@@ -10941,7 +10977,8 @@ async function toggleUserPermission(empName, permKey, enabled) {
         byProject: false, byEmployee: false, clockingInOut: false,
         payroll: false, archive: false, staff: false, holidays: false,
         reports: false, settings: false, userAccess: false, draftsmanMode: false,
-        tenders: false, editQuotes: false, viewQuotes: false
+        tenders: false, editQuotes: false, viewQuotes: false,
+        editProjects: false, viewProjects: false
       }
     };
   }
@@ -13827,17 +13864,36 @@ async function openQuoteDetail(id) {
 async function saveQuoteChanges() {
   if (!currentTender) return;
 
+  const newStatus = document.getElementById('qd-status')?.value || currentTender.status;
+  const oldStatus = currentTender.status;
+  const transitioningToWon = oldStatus !== 'won' && newStatus === 'won';
+
   const body = {
     project_name: document.getElementById('qd-projectName')?.value.trim() || currentTender.project_name,
-    status:       document.getElementById('qd-status')?.value || currentTender.status,
+    status:       newStatus,
     deadline_date: document.getElementById('qd-deadline')?.value || null,
     quote_value:  document.getElementById('qd-value')?.value !== '' ? parseFloat(document.getElementById('qd-value').value) : null,
     sent_date:    document.getElementById('qd-sentDate')?.value || null,
     chasing_date: document.getElementById('qd-chasingDate')?.value || null
   };
 
+  // If transitioning to Won, confirm before kicking off conversion
+  if (transitioningToWon) {
+    const projectNumber = (currentTender.reference || '').replace(/^Q/i, 'C');
+    const ok = confirm(
+      `Mark this quote as WON?\n\n` +
+      `This will:\n` +
+      `  • Save the quote with status "Won"\n` +
+      `  • Create a new Project (${projectNumber})\n` +
+      `  • Create the SharePoint folder structure under Projects/\n` +
+      `  • Copy the contents of the quote folder into "03 - Quote"\n\n` +
+      `Continue?`
+    );
+    if (!ok) return;
+  }
+
   try {
-    const updated = await api.put(`/api/tenders/${currentTender.id}`, body);
+    await api.put(`/api/tenders/${currentTender.id}`, body);
     Object.assign(currentTender, body);
     // Sync back into tendersData list
     const idx = tendersData.findIndex(t => String(t.id) === String(currentTender.id));
@@ -13847,6 +13903,18 @@ async function saveQuoteChanges() {
     document.getElementById('qdSaveBtn').style.display = 'none';
     document.getElementById('qdDiscardBtn').style.display = 'none';
     toast('Quote saved ✓', 'success');
+
+    // Trigger project conversion AFTER the status save succeeded
+    if (transitioningToWon) {
+      toast('Creating project — this may take a few seconds…', 'info');
+      try {
+        const project = await convertQuoteToProject(currentTender);
+        toast(`Project ${project.project_number} created ✓`, 'success');
+      } catch (convErr) {
+        console.error('Quote-to-project conversion failed:', convErr);
+        toast('Quote saved as Won, but project creation failed: ' + convErr.message, 'error');
+      }
+    }
   } catch (err) {
     toast('Save failed: ' + err.message, 'error');
   }
@@ -13929,6 +13997,452 @@ async function deleteQuoteComment(id) {
     toast('Failed to delete: ' + err.message, 'error');
   }
 }
+
+// ═══════════════════════════════════════════
+// PROJECT TRACKER (Won quotes → Projects)
+// ═══════════════════════════════════════════
+// Note: a separate `currentProject` variable already exists higher up for the
+// drawings/jobs page (projects.html). This module uses `currentProjectRecord`
+// to avoid the name collision.
+
+let projectsData = [];
+let currentProjectRecord = null;
+let _projectDetailDirty = false;
+
+const PROJECTS_FOLDER_PATH = 'Projects'; // root-level in the BAMA drive
+
+// Default subfolder structure for every new project
+const PROJECT_SUBFOLDERS = [
+  '00 - RAMS',
+  '01 - Order',
+  '02 - Drawings',
+  '03 - Quote',
+  '04 - Built Ins',
+  '05 - Conversations',
+  '06 - Survey',
+  '07 - Deliveries',
+  '08 - Application for payment'
+];
+
+// Strip filesystem-illegal chars and clean up whitespace.
+// SharePoint also dislikes trailing dots/spaces and certain leading chars.
+function sanitiseFolderSegment(s) {
+  return String(s || '')
+    .replace(/[\\/:*?"<>|]/g, '-')
+    .replace(/\s+/g, ' ')
+    .replace(/^[.\s]+|[.\s]+$/g, '')
+    .trim();
+}
+
+// ── Quote → Project conversion ──
+// Triggered when a quote's status changes to 'won'.
+// Creates the SharePoint project folder structure, copies the quote folder into 03 - Quote,
+// and inserts the Projects DB row.
+async function convertQuoteToProject(tender) {
+  if (!tender) throw new Error('No tender supplied');
+  if (!/^Q/i.test(tender.reference)) throw new Error('Quote reference must start with Q');
+
+  // Derive project number: Q260502 → C260502
+  const projectNumber = tender.reference.replace(/^Q/i, 'C');
+
+  // Check if project already exists for this quote (idempotent — don't double-create)
+  try {
+    const existing = await api.get(`/api/projects-by-quote/${tender.id}`);
+    if (existing && existing.id) {
+      console.warn('Project already exists for this quote:', existing.project_number);
+      return existing;
+    }
+  } catch (e) {
+    // 404 or empty is fine — proceed to create
+  }
+
+  // Build folder name: "C260502 - Client - Project Name"
+  const clientPart = sanitiseFolderSegment(tender.company_name);
+  const projectPart = sanitiseFolderSegment(tender.project_name);
+  const folderName = [projectNumber, clientPart, projectPart].filter(Boolean).join(' - ');
+
+  // Year folder name from reference — same scheme as Quotation: "(year - 2023) - YYYY"
+  // Q260502 → 2026 → "03 - 2026"
+  const fullYear = '20' + tender.reference.slice(1, 3);
+  const yearNum = parseInt(fullYear);
+  const yearPrefix = String(yearNum - 2023).padStart(2, '0');
+  const yearFolderName = `${yearPrefix} - ${fullYear}`;
+
+  // 1. Create SharePoint folders
+  const token = await getToken();
+  const projectsRoot = await getOrCreateFolderByPath(PROJECTS_FOLDER_PATH, token);
+  const yearFolder = await createFolderInDrive(projectsRoot.id, yearFolderName);
+  const projectFolder = await createFolderInDrive(yearFolder.id, folderName);
+
+  // Create the standard subfolders inside the project folder
+  const subfolderMap = {};
+  for (const sub of PROJECT_SUBFOLDERS) {
+    const sf = await createFolderInDrive(projectFolder.id, sub);
+    subfolderMap[sub] = sf;
+  }
+
+  // 2. Copy quote folder contents into 03 - Quote
+  if (tender.sharepoint_folder_id && subfolderMap['03 - Quote']) {
+    try {
+      await copyFolderContents(tender.sharepoint_folder_id, subfolderMap['03 - Quote'].id, token);
+    } catch (e) {
+      console.warn('Could not copy quote contents into 03 - Quote — folder created but copy failed:', e);
+      // Non-fatal: continue with project creation
+    }
+  }
+
+  // 3. Create the Projects DB row
+  const projectRow = await api.post('/api/projects', {
+    project_number: projectNumber,
+    project_name: tender.project_name,
+    client_id: tender.client_id || null,
+    status: 'In Progress',
+    source_quote_id: tender.id,
+    quote_value: tender.quote_value != null ? parseFloat(tender.quote_value) : null,
+    deadline_date: tender.deadline_date ? String(tender.deadline_date).split('T')[0] : null,
+    comments: tender.comments || null,
+    sharepoint_folder_id: projectFolder.id,
+    sharepoint_quote_folder_id: tender.sharepoint_folder_id || null,
+    created_by: currentManagerUser || (typeof AUTH !== 'undefined' && AUTH.getUserName?.()) || 'unknown'
+  });
+
+  // Cache locally so the project list updates without a refresh
+  projectsData.unshift(projectRow);
+
+  return projectRow;
+}
+
+// Copy children of one drive item into another using Graph /copy.
+// Note: Graph /copy is async — it returns 202 with a Location header to a monitor URL.
+// We don't poll; we trigger and move on. Copies happen server-side on SharePoint.
+async function copyFolderContents(sourceFolderId, targetFolderId, token) {
+  const t = token || await getToken();
+  const listRes = await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/items/${sourceFolderId}/children?$top=999`,
+    { headers: { 'Authorization': `Bearer ${t}` } }
+  );
+  if (!listRes.ok) throw new Error(`List children failed: ${listRes.status}`);
+  const listData = await listRes.json();
+  const items = listData.value || [];
+
+  for (const item of items) {
+    try {
+      const copyRes = await fetch(
+        `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/items/${item.id}/copy`,
+        {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${t}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            parentReference: { driveId: BAMA_DRIVE_ID, id: targetFolderId },
+            name: item.name
+          })
+        }
+      );
+      // 202 is the expected async-accepted response. Other 2xx also OK.
+      if (!copyRes.ok && copyRes.status !== 202) {
+        console.warn(`Copy ${item.name} returned ${copyRes.status}`);
+      }
+    } catch (e) {
+      console.warn(`Failed to copy ${item.name}:`, e.message);
+    }
+  }
+}
+
+// ── Project list page ──
+async function loadProjectsData() {
+  try {
+    const list = await api.get('/api/projects');
+    projectsData = Array.isArray(list) ? list : [];
+  } catch (e) {
+    console.warn('Failed to load projects:', e);
+    projectsData = [];
+  }
+}
+
+function renderProjectTrackerList() {
+  const container = document.getElementById('projectTrackerListContainer');
+  if (!container) return;
+
+  const search = (document.getElementById('projectSearch')?.value || '').toLowerCase();
+  const statusFilter = document.getElementById('projectStatusFilter')?.value || '';
+
+  let list = [...projectsData];
+  if (statusFilter) list = list.filter(p => p.status === statusFilter);
+  if (search) {
+    list = list.filter(p => {
+      const hay = `${p.project_number} ${p.project_name} ${p.company_name || ''} ${p.source_quote_reference || ''}`.toLowerCase();
+      return hay.includes(search);
+    });
+  }
+
+  if (!list.length) {
+    container.innerHTML = '<div class="empty-state" style="padding:24px"><div class="icon">🏗️</div>No projects yet</div>';
+    return;
+  }
+
+  const statusMeta = {
+    'In Progress': { cls: 'tag-approved' },
+    'On Hold':     { cls: 'tag-pending'  },
+    'Complete':    { cls: 'tag-approved' },
+    'Archived':    { cls: 'tag-pending'  },
+    'Cancelled':   { cls: 'tag-rejected' }
+  };
+
+  container.innerHTML = list.map(p => {
+    const meta = statusMeta[p.status] || { cls: 'tag-pending' };
+    const deadline = p.deadline_date ? fmtDateStr(String(p.deadline_date).split('T')[0]) : '—';
+    const quoteRef = p.source_quote_reference || '—';
+    return `
+      <div class="quote-row" onclick="openProjectDetail(${p.id})">
+        <div class="quote-col-ref">${escapeHtml(p.project_number)}</div>
+        <div class="quote-col-project">
+          <div style="font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(p.project_name)}</div>
+          <div style="font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(p.company_name || '—')}</div>
+        </div>
+        <div class="quote-col-date" style="color:var(--muted);font-size:12px">${deadline}</div>
+        <div class="quote-col-date" style="color:var(--muted);font-size:12px;font-family:var(--font-mono)">${escapeHtml(quoteRef)}</div>
+        <div class="quote-col-status"><span class="tag ${meta.cls}">${escapeHtml(p.status)}</span></div>
+      </div>`;
+  }).join('');
+}
+
+// ── Project detail page ──
+async function openProjectDetail(id) {
+  let project = projectsData.find(p => String(p.id) === String(id));
+  if (!project) { toast('Project not found', 'error'); return; }
+
+  try {
+    const full = await api.get(`/api/projects/${id}`);
+    Object.assign(project, full);
+  } catch (e) { console.warn('Could not refresh project:', e); }
+
+  currentProjectRecord = project;
+  _projectDetailDirty = false;
+
+  document.querySelectorAll('#projectTrackerLayout .tab-content').forEach(el => {
+    el.classList.remove('active'); el.style.display = 'none';
+  });
+  const detailEl = document.getElementById('tab-projectDetail');
+  if (detailEl) { detailEl.style.display = ''; detailEl.classList.add('active'); }
+
+  const saveBtn = document.getElementById('pdSaveBtn');
+  const discardBtn = document.getElementById('pdDiscardBtn');
+  if (saveBtn) saveBtn.style.display = 'none';
+  if (discardBtn) discardBtn.style.display = 'none';
+
+  _populateProjectDetailFields(project);
+}
+
+function _populateProjectDetailFields(project) {
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v ?? ''; };
+  const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v ?? '—'; };
+
+  setText('projectDetailNumber', project.project_number);
+  setVal('pd-projectName', project.project_name || '');
+  setVal('pd-status', project.status || 'In Progress');
+  setVal('pd-deadline', project.deadline_date ? String(project.deadline_date).split('T')[0] : '');
+  setVal('pd-startDate', project.start_date ? String(project.start_date).split('T')[0] : '');
+  setVal('pd-completionDate', project.completion_date ? String(project.completion_date).split('T')[0] : '');
+  setVal('pd-comments', project.comments || '');
+
+  // Source quote backlink
+  const quoteLink = document.getElementById('projectDetailQuoteLink');
+  if (quoteLink) {
+    if (project.source_quote_reference) {
+      quoteLink.innerHTML = `<a href="quotes.html" style="color:var(--accent2);text-decoration:none">${escapeHtml(project.source_quote_reference)} ↗</a>`;
+    } else {
+      quoteLink.textContent = '—';
+    }
+  }
+
+  // Client info
+  const clientInfo = document.getElementById('projectDetailClientInfo');
+  if (clientInfo) {
+    const addressLine = [project.address_line1, project.address_line2, project.city, project.county, project.postcode].filter(Boolean).join(', ');
+    clientInfo.innerHTML = `
+      <div style="font-weight:600;font-size:15px;color:var(--text);margin-bottom:6px">${escapeHtml(project.company_name || '—')}</div>
+      ${addressLine ? `<div style="margin-bottom:8px;color:var(--muted)">${escapeHtml(addressLine)}</div>` : ''}
+      ${project.contact_name ? `<div style="font-size:13px"><span style="color:var(--subtle);font-weight:600">Contact:</span> ${escapeHtml(project.contact_name)}</div>` : ''}
+      ${project.contact_email ? `<div style="font-size:13px"><span style="color:var(--subtle);font-weight:600">Email:</span> <a href="mailto:${escapeHtml(project.contact_email)}" style="color:var(--accent2);text-decoration:none">${escapeHtml(project.contact_email)}</a></div>` : ''}
+      ${project.contact_phone ? `<div style="font-size:13px"><span style="color:var(--subtle);font-weight:600">Phone:</span> ${escapeHtml(project.contact_phone)}</div>` : ''}`;
+  }
+
+  // SharePoint folder link
+  const folderLink = document.getElementById('projectDetailFolderLink');
+  if (folderLink) {
+    if (project.sharepoint_folder_id) {
+      folderLink.innerHTML = `<button class="btn btn-ghost" onclick="openProjectFolder()" style="font-size:12px">📁 Open in SharePoint ↗</button>`;
+    } else {
+      folderLink.innerHTML = '<span style="font-size:12px;color:var(--subtle)">No folder linked</span>';
+    }
+  }
+}
+
+async function openProjectFolder() {
+  if (!currentProjectRecord || !currentProjectRecord.sharepoint_folder_id) return;
+  try {
+    const token = await getToken();
+    const res = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/items/${currentProjectRecord.sharepoint_folder_id}`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    if (!res.ok) throw new Error(`Lookup failed: ${res.status}`);
+    const data = await res.json();
+    if (data.webUrl) window.open(data.webUrl, '_blank');
+  } catch (e) {
+    toast('Could not open folder: ' + e.message, 'error');
+  }
+}
+
+function markProjectDirty() {
+  _projectDetailDirty = true;
+  const sb = document.getElementById('pdSaveBtn');
+  const db = document.getElementById('pdDiscardBtn');
+  if (sb) sb.style.display = '';
+  if (db) db.style.display = '';
+}
+
+async function saveProjectChanges() {
+  if (!currentProjectRecord) return;
+  const body = {
+    project_name:    document.getElementById('pd-projectName')?.value.trim() || currentProjectRecord.project_name,
+    status:          document.getElementById('pd-status')?.value || currentProjectRecord.status,
+    deadline_date:   document.getElementById('pd-deadline')?.value || null,
+    start_date:      document.getElementById('pd-startDate')?.value || null,
+    completion_date: document.getElementById('pd-completionDate')?.value || null,
+    comments:        document.getElementById('pd-comments')?.value.trim() || null
+  };
+
+  try {
+    await api.put(`/api/projects/${currentProjectRecord.id}`, body);
+    Object.assign(currentProjectRecord, body);
+    const idx = projectsData.findIndex(p => String(p.id) === String(currentProjectRecord.id));
+    if (idx !== -1) Object.assign(projectsData[idx], body);
+
+    _projectDetailDirty = false;
+    document.getElementById('pdSaveBtn').style.display = 'none';
+    document.getElementById('pdDiscardBtn').style.display = 'none';
+    toast('Project saved ✓', 'success');
+  } catch (err) {
+    toast('Save failed: ' + err.message, 'error');
+  }
+}
+
+function discardProjectChanges() {
+  if (!currentProjectRecord) return;
+  _populateProjectDetailFields(currentProjectRecord);
+  _projectDetailDirty = false;
+  document.getElementById('pdSaveBtn').style.display = 'none';
+  document.getElementById('pdDiscardBtn').style.display = 'none';
+}
+
+function closeProjectDetail() {
+  if (_projectDetailDirty && !confirm('You have unsaved changes. Discard them?')) return;
+  currentProjectRecord = null;
+  _projectDetailDirty = false;
+  document.querySelectorAll('#projectTrackerLayout .tab-content').forEach(el => {
+    el.classList.remove('active'); el.style.display = 'none';
+  });
+  const listTab = document.getElementById('tab-projectTrackerList');
+  if (listTab) { listTab.style.display = ''; listTab.classList.add('active'); }
+}
+
+// ── Project Tracker page init ──
+async function initProjectTrackerPage() {
+  // Re-use the manager PIN gate pattern. The page will require viewProjects permission.
+  const authed = sessionStorage.getItem('bama_mgr_authed');
+  if (authed) {
+    currentManagerUser = authed;
+    const perms = getUserPermissions(currentManagerUser);
+    if (perms && (perms.viewProjects || perms.editProjects)) {
+      document.getElementById('screenProjectTrackerSelect').style.display = 'none';
+      document.getElementById('projectTrackerLayout').style.display = 'flex';
+      await loadProjectsData();
+      renderProjectTrackerList();
+      return;
+    }
+  }
+  // Otherwise show login screen
+  renderProjectTrackerEmployeeGrid();
+}
+
+function renderProjectTrackerEmployeeGrid() {
+  const grid = document.getElementById('projectTrackerEmployeeGrid');
+  if (!grid) return;
+
+  // Reuse the same employee tile pattern from manager/office/quotes
+  const employees = (state.timesheetData?.employees || [])
+    .filter(e => e.isActive !== false && e.staffType !== 'CIS' && e.staffType !== 'cis')
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+  if (!employees.length) {
+    grid.innerHTML = '<div class="empty-state"><div class="icon">👥</div>No staff loaded</div>';
+    return;
+  }
+
+  grid.innerHTML = employees.map(e => `
+    <div class="mgr-emp-tile" onclick="selectProjectTrackerUser('${escapeHtml(e.name).replace(/'/g, "\\'")}')">
+      <div class="mgr-emp-tile-name">${escapeHtml(e.name)}</div>
+      <div class="mgr-emp-tile-role">${escapeHtml(e.role || e.staffType || '')}</div>
+    </div>`).join('');
+}
+
+function selectProjectTrackerUser(name) {
+  _pendingManagerUser = name;
+  document.getElementById('projectTrackerPinUser').textContent = name;
+  document.getElementById('projectTrackerPinInput').value = '';
+  document.getElementById('projectTrackerPinError').textContent = '';
+  document.getElementById('projectTrackerPinModal').classList.add('active');
+  setTimeout(() => document.getElementById('projectTrackerPinInput')?.focus(), 50);
+}
+
+async function verifyProjectTrackerPin() {
+  const name = _pendingManagerUser;
+  const pin = document.getElementById('projectTrackerPinInput').value.trim();
+  const errEl = document.getElementById('projectTrackerPinError');
+  errEl.textContent = '';
+  if (!pin) { errEl.textContent = 'Enter your PIN'; return; }
+
+  try {
+    const employee = (state.timesheetData?.employees || []).find(e => e.name === name);
+    if (!employee) { errEl.textContent = 'Employee not found'; return; }
+    if (String(employee.pin) !== pin) { errEl.textContent = 'Incorrect PIN'; return; }
+
+    const perms = getUserPermissions(name);
+    if (!perms || (!perms.viewProjects && !perms.editProjects)) {
+      errEl.textContent = 'You don\'t have permission to view projects';
+      return;
+    }
+
+    currentManagerUser = name;
+    sessionStorage.setItem('bama_mgr_authed', name);
+    document.getElementById('projectTrackerPinModal').classList.remove('active');
+    document.getElementById('screenProjectTrackerSelect').style.display = 'none';
+    document.getElementById('projectTrackerLayout').style.display = 'flex';
+
+    await loadProjectsData();
+    renderProjectTrackerList();
+  } catch (err) {
+    errEl.textContent = 'PIN verification failed';
+  }
+}
+
+function switchProjectTrackerTab(tab) {
+  document.querySelectorAll('#projectTrackerLayout .sidebar-nav-item').forEach(b => b.classList.remove('active'));
+  document.querySelector(`#projectTrackerLayout .sidebar-nav-item[data-tab="${tab}"]`)?.classList.add('active');
+
+  document.querySelectorAll('#projectTrackerLayout .tab-content').forEach(el => {
+    el.classList.remove('active'); el.style.display = 'none';
+  });
+  const target = document.getElementById(`tab-${tab}`);
+  if (target) { target.style.display = ''; target.classList.add('active'); }
+
+  if (tab === 'projectTrackerList') renderProjectTrackerList();
+}
+
+// Cross-page navigation helpers
+function navFromProjectTrackerToTenders() { window.location.href = 'tenders.html'; }
+function navFromProjectTrackerToQuotes()  { window.location.href = 'quotes.html'; }
 
 // ═══════════════════════════════════════════
 // BABCOCK QUOTES PAGE
@@ -15477,6 +15991,7 @@ const CURRENT_PAGE = (() => {
   if (path.includes('babcock')) return 'babcock';
   if (path.includes('tenders')) return 'tenders';
   if (path.includes('quotes')) return 'quotes';
+  if (path.includes('project-tracker')) return 'projectTracker';
   if (path.includes('projects') || path.includes('project')) return 'projects';
   if (path.includes('hub')) return 'hub';
   return 'index'; // default kiosk
@@ -15530,7 +16045,7 @@ async function init() {
     : Promise.resolve();
 
   // User access needed on manager and office pages (still from SharePoint for now)
-  const userAccessPromise = (CURRENT_PAGE === 'manager' || CURRENT_PAGE === 'office' || CURRENT_PAGE === 'projects' || CURRENT_PAGE === 'tenders' || CURRENT_PAGE === 'quotes' || CURRENT_PAGE === 'babcock')
+  const userAccessPromise = (CURRENT_PAGE === 'manager' || CURRENT_PAGE === 'office' || CURRENT_PAGE === 'projects' || CURRENT_PAGE === 'projectTracker' || CURRENT_PAGE === 'tenders' || CURRENT_PAGE === 'quotes' || CURRENT_PAGE === 'babcock')
     ? Promise.race([
         loadUserAccessData(),
         new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 6000))
@@ -15593,6 +16108,8 @@ async function init() {
     initTendersPage();
   } else if (CURRENT_PAGE === 'quotes') {
     initQuotesPage();
+  } else if (CURRENT_PAGE === 'projectTracker') {
+    initProjectTrackerPage();
   } else if (CURRENT_PAGE === 'babcock') {
     initBabcockPage();
   } else if (CURRENT_PAGE === 'hub') {
