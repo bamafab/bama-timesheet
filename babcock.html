@@ -57,6 +57,132 @@
 </div>
 
 <!-- ═══════════════════════════════════════
+     DETAIL MODAL (read-only, opens on row click)
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="babcockDetailModal">
+  <div class="modal" style="max-width:680px;width:95vw;max-height:90vh;overflow:hidden;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex:0 0 auto">
+      <div class="modal-title" style="margin:0">📄 <span id="bdRef">Quote</span></div>
+      <button class="btn btn-ghost" style="padding:4px 10px;font-size:18px" onclick="closeBabcockDetailModal()">✕</button>
+    </div>
+    <div style="overflow-y:auto;flex:1 1 auto;padding-right:6px" id="bdBody">
+      <!-- populated by openBabcockDetailModal -->
+    </div>
+    <div class="modal-actions" style="flex:0 0 auto;margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
+      <button class="btn btn-ghost" onclick="closeBabcockDetailModal()">Close</button>
+      <button class="btn btn-ghost" id="bdOpenPdfBtn" onclick="openBabcockDetailPdf()" style="display:none">📥 Open PDF</button>
+      <button class="btn btn-ghost" id="bdOpenSourceBtn" onclick="openBabcockDetailSource()" style="display:none">📊 Open Source</button>
+      <button class="btn btn-primary" onclick="editBabcockQuoteFromDetail()">✏️ Edit</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     EDIT MODAL (form, opens on pencil click)
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="babcockEditModal">
+  <div class="modal" style="max-width:560px;width:95vw;max-height:90vh;overflow:hidden;display:flex;flex-direction:column">
+    <div class="modal-title" style="flex:0 0 auto">✏️ Edit Quote <span id="beRefHeader" style="color:var(--accent)"></span></div>
+    <div style="overflow-y:auto;flex:1 1 auto;padding-right:6px">
+      <input type="hidden" id="beQuoteId">
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div>
+          <div class="field-label">QUOTE REFERENCE</div>
+          <input type="text" class="field-input" id="beQuoteRef" style="font-size:13px">
+        </div>
+        <div>
+          <div class="field-label">STATUS</div>
+          <select class="field-input" id="beStatus" style="font-size:13px">
+            <option value="Quote Sent">Quote Sent</option>
+            <option value="PO Received">PO Received</option>
+            <option value="Invoice Generated">Invoice Generated</option>
+            <option value="Paid">Paid</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div>
+          <div class="field-label">DATE SENT</div>
+          <input type="date" class="field-input" id="beDateSent" style="font-size:13px">
+        </div>
+        <div>
+          <div class="field-label">VALID UNTIL</div>
+          <input type="date" class="field-input" id="beValidUntil" style="font-size:13px">
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div>
+          <div class="field-label">CUSTOMER ID</div>
+          <input type="text" class="field-input" id="beCustomerId" style="font-size:13px">
+        </div>
+        <div>
+          <div class="field-label">WORK ORDER NO.</div>
+          <input type="text" class="field-input" id="beWorkOrderNo" style="font-size:13px">
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div>
+          <div class="field-label">PREPARED BY</div>
+          <input type="text" class="field-input" id="bePreparedBy" style="font-size:13px">
+        </div>
+        <div>
+          <div class="field-label">QUOTATION FOR</div>
+          <input type="text" class="field-input" id="beQuoteForArea" style="font-size:13px">
+        </div>
+      </div>
+
+      <div style="margin-bottom:12px">
+        <div class="field-label">ADDRESS</div>
+        <input type="text" class="field-input" id="beAddress" style="font-size:13px">
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div>
+          <div class="field-label">TOTAL VALUE (£)</div>
+          <input type="number" step="0.01" class="field-input" id="beTotalValue" style="font-size:13px">
+        </div>
+        <div>
+          <div class="field-label">MARKUP %</div>
+          <input type="number" step="0.5" class="field-input" id="beMarkupPct" style="font-size:13px">
+        </div>
+      </div>
+
+      <div style="margin-bottom:12px">
+        <div class="field-label">COMMENTS / SPECIAL INSTRUCTIONS</div>
+        <textarea class="field-input" id="beComments" rows="2" style="font-size:13px;resize:vertical;width:100%"></textarea>
+      </div>
+
+      <div style="font-size:11px;color:var(--subtle);background:var(--surface);padding:10px 12px;border-radius:6px;margin-bottom:8px">
+        ℹ️ Editing this record does <b>not</b> regenerate the PDF or update the SharePoint files.
+        It only updates the tracker entry. To produce a corrected PDF, create a new quote.
+      </div>
+    </div>
+    <div class="modal-actions" style="flex:0 0 auto;margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
+      <button class="btn btn-ghost" onclick="closeBabcockEditModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitBabcockEdit()">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     CONFIRM MODAL (used by showConfirmAsync)
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="confirmModal">
+  <div class="modal" style="max-width:440px;width:95vw">
+    <div class="modal-title" id="confirmTitle">Confirm</div>
+    <div id="confirmMsg" style="color:var(--muted);font-size:14px"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="document.getElementById('confirmModal').classList.remove('active')">Cancel</button>
+      <button class="btn btn-primary" id="confirmOk" onclick="">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
      MAIN LAYOUT
 ══════════════════════════════════════════ -->
 <div class="mgr-layout" id="babcockLayout" style="display:none">
@@ -123,13 +249,14 @@
                 <th style="min-width:90px">Quote Ref</th>
                 <th style="min-width:110px">Date Sent</th>
                 <th style="min-width:120px;text-align:right">Total Value</th>
-                <th style="min-width:170px">Status</th>
+                <th style="min-width:140px">Status</th>
+                <th style="min-width:170px">Next Action</th>
                 <th style="min-width:130px">Last Updated</th>
-                <th style="width:42px"></th>
+                <th style="width:80px;text-align:right">Actions</th>
               </tr>
             </thead>
             <tbody id="babcockTrackerBody">
-              <tr><td colspan="6" style="padding:30px;text-align:center;color:var(--muted)">
+              <tr><td colspan="7" style="padding:30px;text-align:center;color:var(--muted)">
                 <div class="spinner" style="margin:0 auto 10px"></div>Loading quotes…
               </td></tr>
             </tbody>
@@ -349,6 +476,23 @@
     border-radius: 4px;
   }
   .babcock-tracker-table .row-action:hover { background: var(--surface2); color: var(--red); }
+  .babcock-tracker-table tr.clickable-row { cursor: pointer; }
+
+  /* ── Status badges ── */
+  .status-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .3px;
+    text-transform: none;
+    white-space: nowrap;
+  }
+  .status-badge.status-sent     { background: rgba(255,107,0,.12);  color: #ff8a3d; border: 1px solid rgba(255,107,0,.3); }
+  .status-badge.status-po       { background: rgba(0,153,255,.12);  color: #45a8ff; border: 1px solid rgba(0,153,255,.3); }
+  .status-badge.status-invoiced { background: rgba(155,89,182,.12); color: #c77dde; border: 1px solid rgba(155,89,182,.3); }
+  .status-badge.status-paid     { background: rgba(46,204,113,.12); color: #6fdf9b; border: 1px solid rgba(46,204,113,.3); }
 
   /* ── Preview table ── */
   .babcock-preview-table {
@@ -422,6 +566,6 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-<script src="shared.js?v=20260505c"></script>
+<script src="shared.js?v=20260505d"></script>
 </body>
 </html>
