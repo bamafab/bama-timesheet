@@ -51,7 +51,7 @@ app.http('babcock-quotes-list', {
                                   quotation_date, customer_id, work_order_no, valid_until,
                                   prepared_by, quote_for_area, quote_for_address, comments,
                                   original_file_id, original_file_url,
-                                  generated_file_id, generated_file_url
+                                  generated_file_id, generated_file_url, revision
                            FROM BabcockQuotes`;
             const params = {};
             if (status) {
@@ -244,7 +244,7 @@ app.http('babcock-quotes-update', {
                              'quotation_date', 'customer_id', 'work_order_no', 'valid_until',
                              'prepared_by', 'quote_for_area', 'quote_for_address', 'comments',
                              'original_file_id', 'original_file_url',
-                             'generated_file_id', 'generated_file_url'];
+                             'generated_file_id', 'generated_file_url', 'revision'];
 
             for (const key of allowed) {
                 if (body[key] === undefined) continue;
@@ -259,6 +259,9 @@ app.http('babcock-quotes-update', {
                 }
                 if ((key === 'total_value' || key === 'markup_pct') && val !== null && val !== undefined) {
                     val = Number(val);
+                }
+                if (key === 'revision' && val !== null && val !== undefined) {
+                    val = parseInt(val, 10) || 0;
                 }
 
                 fields.push(`${key} = @${key}`);

@@ -156,9 +156,11 @@
         <textarea class="field-input" id="beComments" rows="2" style="font-size:13px;resize:vertical;width:100%"></textarea>
       </div>
 
-      <div style="font-size:11px;color:var(--subtle);background:var(--surface);padding:10px 12px;border-radius:6px;margin-bottom:8px">
-        ℹ️ Editing this record does <b>not</b> regenerate the PDF or update the SharePoint files.
-        It only updates the tracker entry. To produce a corrected PDF, create a new quote.
+      <div style="font-size:11px;color:var(--text);background:rgba(255,107,0,.06);border:1px solid rgba(255,107,0,.25);padding:10px 12px;border-radius:6px;margin-bottom:8px">
+        <b style="color:var(--accent)">ℹ️ Editing this quote will regenerate the customer-facing PDF.</b><br>
+        <span style="color:var(--muted)">A new revision (e.g. <span style="font-family:var(--font-mono)">- rev1.pdf</span>) is uploaded to SharePoint
+        and the tracker now points to the new file. The original .xlsx and any earlier revisions stay in place.</span><br>
+        <span style="color:var(--subtle);font-size:10px">Status-only changes don't trigger regeneration.</span>
       </div>
     </div>
     <div class="modal-actions" style="flex:0 0 auto;margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
@@ -565,7 +567,8 @@
 </style>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-<script src="shared.js?v=20260505d"></script>
+<script src="shared.js?v=20260505e"></script>
 </body>
 </html>

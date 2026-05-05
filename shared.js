@@ -14346,26 +14346,62 @@ async function renderBabcockQuotePDF(data, popupWin) {
   // called in the parent function before this).
   const logo = _logoDataUriCache || '';
 
-  // Lazy-load jsPDF if html2pdf bundle hasn't already been initialised
-  // on this page. The bundle exposes window.jspdf.jsPDF.
-  if (typeof window.jspdf === 'undefined' || typeof window.jspdf.jsPDF !== 'function') {
+  // Resolve jsPDF constructor. Tried in order:
+  //   1. window.jspdf.jsPDF — the standalone UMD jspdf script tag we
+  //      include in babcock.html (canonical global).
+  //   2. window.jsPDF        — older standalone builds.
+  //   3. html2pdf bundle internal — html2pdf.bundle.min.js bundles jsPDF
+  //      but exposes it inconsistently across versions; this is a best-
+  //      effort fallback so the page still works if the standalone tag
+  //      ever drops out.
+  //   4. Dynamic load of the standalone UMD as a last resort.
+  function resolveJsPDF() {
+    if (typeof window.jspdf !== 'undefined' && typeof window.jspdf.jsPDF === 'function') {
+      return window.jspdf.jsPDF;
+    }
+    if (typeof window.jsPDF === 'function') {
+      return window.jsPDF;
+    }
+    if (typeof window.html2pdf !== 'undefined') {
+      try {
+        // Some bundle versions hang jsPDF off the html2pdf factory function.
+        if (typeof window.html2pdf.jsPDF === 'function') return window.html2pdf.jsPDF;
+      } catch (e) { /* */ }
+    }
+    return null;
+  }
+
+  let JsPDFCtor = resolveJsPDF();
+  if (!JsPDFCtor) {
+    // Last-resort dynamic load of the standalone UMD build.
     await new Promise((resolve, reject) => {
-      const existing = document.querySelector('script[data-html2pdf-loaded]');
-      if (existing) { resolve(); return; }
+      const existing = document.querySelector('script[data-jspdf-loaded]');
+      if (existing) {
+        // Already-injected tag may still be loading — poll briefly.
+        let tries = 0;
+        const tick = () => {
+          if (resolveJsPDF()) return resolve();
+          if (++tries > 50) return reject(new Error('jsPDF load timed out'));
+          setTimeout(tick, 100);
+        };
+        tick();
+        return;
+      }
       const s = document.createElement('script');
-      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
-      s.dataset.html2pdfLoaded = '1';
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+      s.dataset.jspdfLoaded = '1';
       s.onload = resolve;
-      s.onerror = () => reject(new Error('Failed to load PDF library'));
+      s.onerror = () => reject(new Error('Failed to load jsPDF from CDN'));
       document.head.appendChild(s);
     });
+    JsPDFCtor = resolveJsPDF();
   }
-  if (typeof window.jspdf === 'undefined' || typeof window.jspdf.jsPDF !== 'function') {
-    throw new Error('PDF library failed to load');
-  }
-  const { jsPDF } = window.jspdf;
 
-  const blob = await drawBabcockQuotePDF(jsPDF, data, logo);
+  if (!JsPDFCtor) {
+    throw new Error('PDF library failed to load — check your internet connection and try again');
+  }
+
+  const blob = await drawBabcockQuotePDF(JsPDFCtor, data, logo);
   return blob;
 }
 
@@ -14732,10 +14768,13 @@ function renderBabcockTracker() {
       ? `<button class="btn btn-primary" style="padding:5px 12px;font-size:11px;font-weight:600;letter-spacing:.3px"
               onclick="event.stopPropagation();advanceBabcockQuoteStatus(${q.id})">→ ${escapeHtml(next)}</button>`
       : `<span style="font-size:11px;color:var(--green);font-weight:600">✓ Complete</span>`;
+    const revTag = (q.revision && q.revision > 0)
+      ? ` <span style="font-size:10px;font-family:var(--font-mono);color:var(--accent);background:rgba(255,107,0,.1);padding:1px 5px;border-radius:3px;font-weight:600;vertical-align:middle">rev${q.revision}</span>`
+      : '';
 
     return `
     <tr class="clickable-row" onclick="viewBabcockQuoteDetail(${q.id})">
-      <td class="ref-cell">${escapeHtml(q.quote_ref || '')}</td>
+      <td class="ref-cell">${escapeHtml(q.quote_ref || '')}${revTag}</td>
       <td>${fmtDate(q.date_sent || q.created_at)}</td>
       <td class="num-cell">${fmtGBP(q.total_value)}</td>
       <td>${statusBadge}</td>
@@ -14816,7 +14855,8 @@ async function viewBabcockQuoteDetail(id) {
   }
   _babcockDetailQuoteId = id;
   const body = document.getElementById('bdBody');
-  document.getElementById('bdRef').textContent = summary.quote_ref || `Quote #${id}`;
+  const revLabel = (summary.revision && summary.revision > 0) ? ` <span style="font-size:13px;color:var(--accent);font-family:var(--font-mono);font-weight:600;letter-spacing:.5px">rev${summary.revision}</span>` : '';
+  document.getElementById('bdRef').innerHTML = (summary.quote_ref ? escapeHtml(summary.quote_ref) : `Quote #${id}`) + revLabel;
   body.innerHTML = '<div style="text-align:center;padding:30px;color:var(--muted)"><div class="spinner" style="margin:0 auto 10px"></div>Loading…</div>';
   document.getElementById('babcockDetailModal').classList.add('active');
 
@@ -14905,6 +14945,7 @@ function renderBabcockDetailBody(q) {
     ${lineItemsHtml}
 
     <div style="font-size:11px;color:var(--muted);font-weight:600;letter-spacing:.5px;text-transform:uppercase;margin:18px 0 4px">Audit</div>
+    ${fieldRow('Revision', q.revision && q.revision > 0 ? `rev${q.revision}` : 'Original (rev0)')}
     ${fieldRow('Created By', escOrDash(q.created_by))}
     ${fieldRow('Created At', fmtDate(q.created_at))}
     ${fieldRow('Last Updated', fmtDate(q.updated_at))}
@@ -14934,6 +14975,7 @@ function editBabcockQuoteFromDetail() {
 }
 
 // ── Edit modal (opens from pencil icon or detail-modal Edit button) ──
+let _babcockEditingRecord = null; // full record loaded into edit modal
 async function editBabcockQuote(id) {
   let q;
   try {
@@ -14943,6 +14985,8 @@ async function editBabcockQuote(id) {
     return;
   }
   if (!q) return;
+
+  _babcockEditingRecord = q;
 
   const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val ?? ''; };
   const dateOnly = v => v ? String(v).split('T')[0] : '';
@@ -14967,16 +15011,25 @@ async function editBabcockQuote(id) {
 
 function closeBabcockEditModal() {
   document.getElementById('babcockEditModal').classList.remove('active');
+  _babcockEditingRecord = null;
 }
+
+// Fields whose change requires regenerating the customer-facing PDF.
+// Status-only changes are allowed to slip through with just a DB write.
+const _BABCOCK_PDF_FIELDS = [
+  'quote_ref', 'date_sent', 'valid_until', 'customer_id',
+  'work_order_no', 'prepared_by', 'quote_for_area',
+  'quote_for_address', 'comments', 'total_value', 'markup_pct'
+];
 
 async function submitBabcockEdit() {
   const id = parseInt(document.getElementById('beQuoteId').value, 10);
   if (!id) return;
 
-  const val = id => (document.getElementById(id)?.value || '').trim();
-  const dateVal = id => document.getElementById(id)?.value || null;
-  const numVal = id => {
-    const v = document.getElementById(id)?.value;
+  const val = elId => (document.getElementById(elId)?.value || '').trim();
+  const dateVal = elId => document.getElementById(elId)?.value || null;
+  const numVal = elId => {
+    const v = document.getElementById(elId)?.value;
     if (v === '' || v === null || v === undefined) return null;
     const n = Number(v);
     return isFinite(n) ? n : null;
@@ -15004,15 +15057,118 @@ async function submitBabcockEdit() {
     comments:          val('beComments') || null
   };
 
+  // Diff PDF-affecting fields against the originally-loaded record to
+  // decide whether the customer PDF needs regenerating.
+  const orig = _babcockEditingRecord || {};
+  const norm = v => {
+    if (v === null || v === undefined || v === '') return '';
+    if (typeof v === 'number') return String(v);
+    // Trim time component from datetime strings for comparison
+    return String(v).split('T')[0].trim();
+  };
+  const pdfChanged = _BABCOCK_PDF_FIELDS.some(k => norm(payload[k]) !== norm(orig[k]));
+
+  // ── Path A: no PDF-affecting changes — straight DB save ──
+  if (!pdfChanged) {
+    try {
+      const updated = await api.put(`/api/babcock-quotes/${id}`, payload);
+      const idx = _babcockQuotes.findIndex(q => q.id === id);
+      if (idx !== -1) _babcockQuotes[idx] = { ..._babcockQuotes[idx], ...updated };
+      renderBabcockTracker();
+      closeBabcockEditModal();
+      toast(`${updated.quote_ref} updated`, 'success');
+    } catch (err) {
+      toast('Save failed: ' + (err.message || 'unknown error'), 'error');
+    }
+    return;
+  }
+
+  // ── Path B: PDF must be regenerated ──
+  const nextRev = (parseInt(orig.revision, 10) || 0) + 1;
+  const proceed = await showConfirmAsync(
+    '🔄 Regenerate PDF?',
+    `<p style="margin:0 0 8px">Saving will regenerate the customer-facing PDF.</p>
+     <p style="margin:0;font-size:13px;color:var(--muted)">A new file
+     will be uploaded as <b style="color:var(--accent);font-family:var(--font-mono)">- rev${nextRev}.pdf</b>
+     in SharePoint, and the tracker will point to the new revision.
+     The original .xlsx${(orig.revision || 0) > 0 ? ` and earlier revisions` : ''} stay in place.</p>`,
+    { okLabel: 'Save & Regenerate', cancelLabel: 'Cancel' }
+  );
+  if (!proceed) return;
+
+  // Disable the save button and show progress
+  const saveBtn = document.querySelector('#babcockEditModal .btn-primary');
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Regenerating…'; }
+
   try {
+    setLoading(true);
+
+    // Pre-load logo and rebuild the line-item array. Line items are
+    // stored already marked-up; we use them as-is (markup % only
+    // affects the label in the PDF, not the per-line numbers).
+    await loadLogoDataUri();
+    const lineItems = Array.isArray(orig.line_items) ? orig.line_items
+                    : (typeof orig.line_items === 'string' && orig.line_items
+                        ? (() => { try { return JSON.parse(orig.line_items); } catch { return []; } })()
+                        : []);
+
+    // The grand total comes from payload.total_value (user-editable);
+    // if it's null/missing, fall back to summing line items so we never
+    // produce a quote with a blank total.
+    let grandTotal = payload.total_value;
+    if (grandTotal === null || grandTotal === undefined || !isFinite(grandTotal)) {
+      grandTotal = lineItems.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+    }
+
+    const pdfBlob = await renderBabcockQuotePDF({
+      quoteRef:    payload.quote_ref,
+      quoteDate:   payload.date_sent,
+      validUntil:  payload.valid_until,
+      customerId:  payload.customer_id,
+      workOrderNo: payload.work_order_no,
+      preparedBy:  payload.prepared_by,
+      quoteFor:    payload.quote_for_area,
+      area:        '', // already merged into quote_for_area for this code path
+      address:     payload.quote_for_address,
+      comments:    payload.comments,
+      markup:      payload.markup_pct ?? orig.markup_pct ?? 10,
+      grandTotal,
+      lineItems
+    });
+
+    // Upload the new PDF revision to SharePoint
+    toast('Uploading revised PDF…', 'info');
+    const folders = await findOrCreateBabcockFolders();
+    const safeRef = (payload.quote_ref || 'BAMA-quote').replace(/[/\\]/g, '_');
+    const dateForName = (payload.date_sent || todayStr()).replace(/-/g, '');
+    const safeCustomer = (payload.quote_for_area || 'Quote').replace(/[/\\]/g, '_');
+    const pdfFileName = `${safeRef} - ${safeCustomer} - ${dateForName} - rev${nextRev}.pdf`;
+
+    const pdfUploaded = await uploadFileToFolder(
+      folders.parent.id,
+      pdfFileName,
+      pdfBlob,
+      'application/pdf'
+    );
+
+    // Save row with new file pointers + bumped revision
+    payload.generated_file_id  = pdfUploaded.id;
+    payload.generated_file_url = pdfUploaded.webUrl;
+    payload.revision           = nextRev;
+
     const updated = await api.put(`/api/babcock-quotes/${id}`, payload);
     const idx = _babcockQuotes.findIndex(q => q.id === id);
     if (idx !== -1) _babcockQuotes[idx] = { ..._babcockQuotes[idx], ...updated };
+
+    setLoading(false);
     renderBabcockTracker();
     closeBabcockEditModal();
-    toast(`${updated.quote_ref} updated`, 'success');
+    toast(`${updated.quote_ref} updated — rev${nextRev} saved ✓`, 'success');
   } catch (err) {
+    setLoading(false);
+    console.error('Babcock edit/regen failed:', err);
     toast('Save failed: ' + (err.message || 'unknown error'), 'error');
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Changes'; }
   }
 }
 
