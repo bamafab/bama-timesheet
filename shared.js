@@ -14289,7 +14289,10 @@ async function generateAndSaveBabcockQuote() {
       original_file_id:   originalUploaded.id,
       original_file_url:  originalUploaded.webUrl,
       generated_file_id:  pdfUploaded.id,
-      generated_file_url: pdfUploaded.webUrl
+      generated_file_url: pdfUploaded.webUrl,
+      // Preserve the source spreadsheet's own reference (QP######)
+      // for traceability — does not appear on the customer PDF.
+      original_quote_ref: (_babcockHeader && _babcockHeader.quoteRef) || null
     };
 
     const saved = await api.post('/api/babcock-quotes', payload);
@@ -14816,11 +14819,56 @@ async function advanceBabcockQuoteStatus(id) {
   if (!q) return;
   const next = babcockNextStatus(q.status);
   if (!next) return;
+
+  // Special case: moving to "PO Received" needs the customer's PO
+  // number. Prompt for it inside the confirm modal — required, can't
+  // proceed without one. Stored on the row for later invoice generation.
+  let extraFields = {};
+  if (next === 'PO Received') {
+    let poNumber = '';
+    while (true) {
+      // Kick off the modal first; on the next tick, focus the input
+      // and select any existing text. We don't await yet so this runs
+      // before the user can interact.
+      setTimeout(() => {
+        const inp = document.getElementById('advancePoInput');
+        if (inp) { inp.focus(); inp.select(); }
+      }, 50);
+
+      const result = await showConfirmAsync(
+        '📨 PO Received',
+        `<p style="margin:0 0 10px">Enter the Purchase Order number received from the customer for <b>${escapeHtml(q.quote_ref || '')}</b>:</p>
+         <input type="text" id="advancePoInput" class="field-input" autocomplete="off"
+                value="${escapeHtml(poNumber)}"
+                onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('confirmOk')?.click();}"
+                style="width:100%;font-size:14px;padding:10px;font-family:var(--font-mono);letter-spacing:.5px"
+                placeholder="e.g. PO-12345">
+         <div style="font-size:11px;color:var(--subtle);margin-top:6px">This will be stored on the quote and used when generating the invoice.</div>`,
+        {
+          okLabel: 'Confirm PO',
+          cancelLabel: 'Cancel',
+          onConfirmSync: () => ({
+            poNumber: (document.getElementById('advancePoInput')?.value || '').trim()
+          })
+        }
+      );
+      // Cancel pressed → abort the whole advance
+      if (!result || !result.ok) return;
+      poNumber = result.data?.poNumber || '';
+      if (poNumber) break;
+      // Empty PO — toast and re-prompt with focus
+      toast('PO number is required', 'error');
+    }
+    extraFields.po_number = poNumber;
+  }
+
   try {
-    const updated = await api.put(`/api/babcock-quotes/${id}`, { status: next });
+    const updated = await api.put(`/api/babcock-quotes/${id}`,
+      { status: next, ...extraFields });
     const idx = _babcockQuotes.findIndex(x => x.id === id);
     if (idx !== -1) _babcockQuotes[idx] = { ..._babcockQuotes[idx], ...updated };
-    toast(`${updated.quote_ref} → ${next}`, 'success');
+    const poSuffix = extraFields.po_number ? ` (PO ${extraFields.po_number})` : '';
+    toast(`${updated.quote_ref} → ${next}${poSuffix}`, 'success');
     renderBabcockTracker();
   } catch (err) {
     toast('Status update failed: ' + (err.message || 'unknown error'), 'error');
@@ -14931,10 +14979,12 @@ function renderBabcockDetailBody(q) {
 
     <div style="font-size:11px;color:var(--muted);font-weight:600;letter-spacing:.5px;text-transform:uppercase;margin:14px 0 4px">Quote Information</div>
     ${fieldRow('Quote Ref', escOrDash(q.quote_ref))}
+    ${fieldRow('Original Ref', escOrDash(q.original_quote_ref))}
     ${fieldRow('Date Sent', fmtDate(q.date_sent))}
     ${fieldRow('Valid Until', fmtDate(q.valid_until))}
     ${fieldRow('Customer ID', escOrDash(q.customer_id))}
     ${fieldRow('Work Order No.', escOrDash(q.work_order_no))}
+    ${fieldRow('PO Number', q.po_number ? `<span style="font-family:var(--font-mono);color:var(--accent2)">${escapeHtml(q.po_number)}</span>` : '—')}
     ${fieldRow('Prepared By', escOrDash(q.prepared_by))}
     ${fieldRow('Quotation For', escOrDash(q.quote_for_area))}
     ${fieldRow('Address', escOrDash(q.quote_for_address))}
@@ -15004,6 +15054,8 @@ async function editBabcockQuote(id) {
   set('beAddress',     q.quote_for_address);
   set('beTotalValue',  q.total_value);
   set('beMarkupPct',   q.markup_pct);
+  set('beOriginalQuoteRef', q.original_quote_ref);
+  set('bePoNumber',    q.po_number);
   set('beComments',    q.comments);
 
   document.getElementById('babcockEditModal').classList.add('active');
@@ -15054,6 +15106,7 @@ async function submitBabcockEdit() {
     quote_for_address: val('beAddress') || null,
     total_value:       numVal('beTotalValue'),
     markup_pct:        numVal('beMarkupPct'),
+    po_number:         val('bePoNumber') || null,
     comments:          val('beComments') || null
   };
 

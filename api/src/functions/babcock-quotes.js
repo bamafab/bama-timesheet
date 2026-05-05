@@ -51,7 +51,8 @@ app.http('babcock-quotes-list', {
                                   quotation_date, customer_id, work_order_no, valid_until,
                                   prepared_by, quote_for_area, quote_for_address, comments,
                                   original_file_id, original_file_url,
-                                  generated_file_id, generated_file_url, revision
+                                  generated_file_id, generated_file_url, revision,
+                                  original_quote_ref, po_number
                            FROM BabcockQuotes`;
             const params = {};
             if (status) {
@@ -145,7 +146,8 @@ app.http('babcock-quotes-create', {
                   quotation_date, customer_id, work_order_no, valid_until,
                   prepared_by, quote_for_area, quote_for_address, comments,
                   original_file_id, original_file_url,
-                  generated_file_id, generated_file_url } = body;
+                  generated_file_id, generated_file_url,
+                  original_quote_ref, po_number } = body;
 
             // Auto-allocate reference if not supplied — uses same logic as the
             // next-ref endpoint to keep things race-tolerant within a single request.
@@ -175,14 +177,16 @@ app.http('babcock-quotes-create', {
                      quotation_date, customer_id, work_order_no, valid_until,
                      prepared_by, quote_for_area, quote_for_address, comments,
                      original_file_id, original_file_url,
-                     generated_file_id, generated_file_url)
+                     generated_file_id, generated_file_url,
+                     original_quote_ref, po_number)
                  OUTPUT INSERTED.*
                  VALUES (@quote_ref, @date_sent, @total_value, @markup_pct, @line_items,
                          @source_filename, @status, @created_by,
                          @quotation_date, @customer_id, @work_order_no, @valid_until,
                          @prepared_by, @quote_for_area, @quote_for_address, @comments,
                          @original_file_id, @original_file_url,
-                         @generated_file_id, @generated_file_url)`,
+                         @generated_file_id, @generated_file_url,
+                         @original_quote_ref, @po_number)`,
                 {
                     quote_ref,
                     date_sent: date_sent || null,
@@ -203,7 +207,9 @@ app.http('babcock-quotes-create', {
                     original_file_id: original_file_id || null,
                     original_file_url: original_file_url || null,
                     generated_file_id: generated_file_id || null,
-                    generated_file_url: generated_file_url || null
+                    generated_file_url: generated_file_url || null,
+                    original_quote_ref: original_quote_ref || null,
+                    po_number: po_number || null
                 }
             );
 
@@ -244,7 +250,8 @@ app.http('babcock-quotes-update', {
                              'quotation_date', 'customer_id', 'work_order_no', 'valid_until',
                              'prepared_by', 'quote_for_area', 'quote_for_address', 'comments',
                              'original_file_id', 'original_file_url',
-                             'generated_file_id', 'generated_file_url', 'revision'];
+                             'generated_file_id', 'generated_file_url', 'revision',
+                             'original_quote_ref', 'po_number'];
 
             for (const key of allowed) {
                 if (body[key] === undefined) continue;

@@ -151,6 +151,20 @@
         </div>
       </div>
 
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div>
+          <div class="field-label">ORIGINAL REF (FROM SPREADSHEET)</div>
+          <input type="text" class="field-input" id="beOriginalQuoteRef"
+                 style="font-size:13px;font-family:var(--font-mono);color:var(--subtle);background:var(--surface)" readonly>
+          <div style="font-size:10px;color:var(--subtle);margin-top:3px">QP###### from Bama SW spreadsheet — for traceability only</div>
+        </div>
+        <div>
+          <div class="field-label">PO NUMBER</div>
+          <input type="text" class="field-input" id="bePoNumber" style="font-size:13px;font-family:var(--font-mono)">
+          <div style="font-size:10px;color:var(--subtle);margin-top:3px">Captured when status moves to PO Received</div>
+        </div>
+      </div>
+
       <div style="margin-bottom:12px">
         <div class="field-label">COMMENTS / SPECIAL INSTRUCTIONS</div>
         <textarea class="field-input" id="beComments" rows="2" style="font-size:13px;resize:vertical;width:100%"></textarea>
@@ -569,6 +583,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-<script src="shared.js?v=20260505e"></script>
+<script src="shared.js?v=20260505f"></script>
 </body>
 </html>
