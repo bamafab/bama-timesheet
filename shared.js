@@ -14364,11 +14364,13 @@ async function renderBabcockQuotePDF(data, popupWin) {
 
 // ── HTML template for the Babcock quote PDF ────────────────────────
 // Self-contained — must not depend on bama.css since it renders in a
-// fresh popup window. White background, print-friendly typography.
+// fresh popup window. Mirrors the existing BAMA Quotation document
+// (see B0090 sample): big logo top-left, light "Quotation" wordmark
+// top-right, red field labels, navy total box, white background.
 function buildBabcockQuoteHTML(d) {
-  const fmtGBP = v => typeof v === 'number'
-    ? `£${v.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-    : '—';
+  const fmtNum = v => typeof v === 'number'
+    ? v.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : '';
   const fmtDate = s => {
     if (!s) return '';
     const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -14379,243 +14381,286 @@ function buildBabcockQuoteHTML(d) {
     ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]);
 
   const logo = _logoDataUriCache || '';
-  const linesHtml = d.lineItems.map(l => `
-    <tr>
-      <td style="text-align:center;padding:6px 8px;border:1px solid #ccc">${l.itemNum ?? ''}</td>
-      <td style="padding:6px 10px;border:1px solid #ccc">${esc(l.description)}</td>
-      <td style="text-align:right;padding:6px 10px;border:1px solid #ccc">${l.unitPrice !== null ? fmtGBP(l.unitPrice) : ''}</td>
-      <td style="text-align:right;padding:6px 10px;border:1px solid #ccc">${l.quantity ?? ''}</td>
-      <td style="text-align:right;padding:6px 10px;border:1px solid #ccc">${fmtGBP(l.amount)}</td>
+
+  // Right-side header rows. Each row is { label, value, gapAfter? }
+  // Empty values still show the label so blank fields look intentional.
+  const headerRows = [
+    { label: 'Date',         value: fmtDate(d.quoteDate) },
+    { label: 'Quotation #',  value: d.quoteRef },
+    { label: 'Customer ID',  value: d.customerId },
+    { label: 'Work Order',   value: d.workOrderNo, gapAfter: true },
+    { label: 'Quotation valid until:', value: fmtDate(d.validUntil) },
+    { label: 'Prepared by:', value: d.preparedBy }
+  ];
+
+  const headerRowsHtml = headerRows.map(r => `
+    <tr ${r.gapAfter ? 'class="gap"' : ''}>
+      <td class="lbl">${esc(r.label)}</td>
+      <td class="val">${esc(r.value || '')}</td>
     </tr>
   `).join('');
 
-  // Build with inline styles only — html2pdf rasterises the rendered DOM
+  const linesHtml = d.lineItems.map((l, i) => `
+    <tr>
+      <td class="col-item">${l.itemNum ?? (i + 1)}</td>
+      <td class="col-desc">${esc(l.description)}</td>
+      <td class="col-price">${l.unitPrice !== null ? fmtNum(l.unitPrice) : ''}</td>
+      <td class="col-qty">${l.quantity ?? ''}</td>
+      <td class="col-amt">${fmtNum(l.amount)}</td>
+    </tr>
+  `).join('');
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <title>BAMA Quotation ${esc(d.quoteRef || '')}</title>
 <style>
-  @page { size: A4 portrait; margin: 12mm; }
+  @page { size: A4 portrait; margin: 14mm 14mm 14mm 14mm; }
   * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #fff; }
   body {
-    font-family: 'Helvetica', 'Arial', sans-serif;
+    font-family: 'Calibri', 'Helvetica', 'Arial', sans-serif;
     color: #222;
-    margin: 0;
-    padding: 0;
-    background: #fff;
-    font-size: 11pt;
-    line-height: 1.4;
+    font-size: 10.5pt;
+    line-height: 1.35;
   }
-  .header {
+
+  /* ── Top header: logo left, "Quotation" wordmark right ── */
+  .top {
     display: table;
     width: 100%;
-    margin-bottom: 24px;
-    border-bottom: 3px solid #D0021B;
-    padding-bottom: 16px;
+    margin-bottom: 10mm;
   }
-  .header-left, .header-right {
+  .top-left, .top-right {
+    display: table-cell;
+    vertical-align: top;
+    width: 50%;
+  }
+  .top-right { text-align: right; }
+  .logo-img {
+    max-width: 78mm;
+    max-height: 32mm;
+    display: block;
+  }
+  .logo-fallback {
+    font-weight: 800;
+    font-size: 28pt;
+    color: #D0021B;
+    letter-spacing: 1px;
+  }
+  .quotation-word {
+    font-size: 36pt;
+    font-weight: 300;
+    color: #2b2b2b;
+    letter-spacing: 1px;
+    line-height: 1;
+  }
+
+  /* ── Body header: company / quotation-for on left, meta on right ── */
+  .body-header {
+    display: table;
+    width: 100%;
+    margin-bottom: 8mm;
+  }
+  .bh-left, .bh-right {
     display: table-cell;
     vertical-align: top;
   }
-  .header-right { text-align: right; }
-  .logo-img {
-    max-height: 70px;
-    max-width: 220px;
-    margin-bottom: 8px;
-  }
-  .company-name {
-    font-size: 22pt;
-    font-weight: 700;
+  .bh-left { width: 60%; }
+  .bh-right { width: 40%; padding-left: 6mm; }
+
+  .field-label {
     color: #D0021B;
-    letter-spacing: 1px;
-    margin-bottom: 2px;
+    font-weight: 700;
+    font-size: 10.5pt;
+    margin-bottom: 1mm;
   }
-  .company-address {
-    font-size: 9.5pt;
-    color: #555;
-    line-height: 1.35;
+  .field-block {
+    margin-bottom: 5mm;
   }
-  .quotation-title {
-    font-size: 26pt;
-    font-weight: 300;
+  .field-line {
     color: #222;
-    letter-spacing: 2px;
-    margin: 0 0 6px 0;
+    margin-left: 6mm;
+    margin-bottom: 0.5mm;
   }
-  .quote-ref {
-    font-size: 14pt;
-    font-weight: 700;
-    color: #D0021B;
-    margin-bottom: 6px;
-  }
+
+  /* ── Right-side meta table (Date / Quotation# / etc.) ── */
   .meta-table {
     border-collapse: collapse;
-    margin-top: 6px;
     margin-left: auto;
-    font-size: 10pt;
+    width: 100%;
   }
   .meta-table td {
-    padding: 2px 6px;
+    padding: 1mm 0;
+    vertical-align: top;
   }
-  .meta-table .label {
-    color: #666;
+  .meta-table td.lbl {
     text-align: right;
-    padding-right: 10px;
+    color: #D0021B;
+    font-weight: 700;
+    padding-right: 3mm;
+    white-space: nowrap;
+    width: 50%;
   }
-  .meta-table .value {
-    font-weight: 600;
+  .meta-table td.val {
     color: #222;
     text-align: left;
+    white-space: nowrap;
   }
-  .quote-for {
-    background: #f7f7f7;
-    border-left: 3px solid #D0021B;
-    padding: 12px 16px;
-    margin-bottom: 18px;
+  .meta-table tr.gap td { padding-bottom: 4mm; }
+
+  /* ── Comments block ── */
+  .comments-section {
+    margin-bottom: 8mm;
   }
-  .quote-for .label {
-    font-size: 8pt;
-    text-transform: uppercase;
-    letter-spacing: 1.5px;
-    color: #888;
-    margin-bottom: 4px;
-  }
-  .quote-for .value {
-    font-size: 12pt;
-    font-weight: 600;
+  .comments-text {
     color: #222;
-  }
-  .quote-for .sub {
-    font-size: 10pt;
-    color: #555;
-    margin-top: 2px;
-  }
-  .comments-block {
-    background: #fffbe6;
-    border: 1px solid #f5e1a4;
-    padding: 10px 14px;
-    border-radius: 4px;
-    margin-bottom: 18px;
-    font-size: 10pt;
-    color: #6b5a14;
+    margin-left: 6mm;
+    margin-top: 1mm;
     white-space: pre-wrap;
+    min-height: 12mm;
   }
-  .items-table {
+
+  /* ── Line items table ── */
+  .items {
     width: 100%;
     border-collapse: collapse;
-    font-size: 10pt;
-    margin-bottom: 16px;
+    margin-bottom: 4mm;
   }
-  .items-table th {
-    background: #222;
-    color: #fff;
-    padding: 8px 10px;
+  .items th {
+    color: #D0021B;
+    font-weight: 700;
+    font-size: 11pt;
     text-align: left;
-    font-size: 9.5pt;
-    letter-spacing: 0.5px;
-    border: 1px solid #222;
+    padding: 2mm 3mm;
+    border-bottom: 0.4mm solid #444;
   }
-  .items-table th.num { text-align: right; }
-  .items-table th.center { text-align: center; }
-  .items-table tr:nth-child(even) td {
-    background: #fafafa;
+  .items th.col-item  { width: 14mm; text-align: center; }
+  .items th.col-price { width: 28mm; text-align: right; }
+  .items th.col-qty   { width: 22mm; text-align: center; }
+  .items th.col-amt   { width: 30mm; text-align: right; }
+
+  .items td {
+    padding: 2.2mm 3mm;
+    border-bottom: 0.15mm solid #d4d4d4;
+    color: #222;
+    vertical-align: middle;
   }
-  .total-row {
-    margin-top: 8px;
+  .items td.col-item  { text-align: center; color: #555; }
+  .items td.col-desc  { text-align: left; }
+  .items td.col-price { text-align: right; }
+  .items td.col-qty   { text-align: center; }
+  .items td.col-amt   { text-align: right; }
+
+  /* ── Footer: VAT note + TOTAL pill ── */
+  .footer-row {
     display: table;
     width: 100%;
+    margin-top: 5mm;
   }
-  .total-cell {
+  .footer-row .vat {
     display: table-cell;
-    text-align: right;
-    padding: 12px 16px;
-    background: #D0021B;
-    color: #fff;
-    font-size: 14pt;
-    font-weight: 700;
-    letter-spacing: 1px;
-  }
-  .total-cell .lbl { font-size: 10pt; font-weight: 400; opacity: 0.8; margin-right: 14px; }
-  .vat-note {
-    text-align: right;
-    font-size: 9pt;
-    color: #888;
-    margin-top: 4px;
-    margin-bottom: 24px;
-  }
-  .footer {
-    border-top: 1px solid #ccc;
-    padding-top: 12px;
-    font-size: 9pt;
-    color: #666;
-    text-align: center;
-    line-height: 1.6;
-  }
-  .footer .contact {
+    vertical-align: middle;
     color: #D0021B;
-    font-weight: 600;
+    font-weight: 700;
+  }
+  .footer-row .total-cell {
+    display: table-cell;
+    vertical-align: middle;
+    text-align: right;
+  }
+  .total-label {
+    color: #D0021B;
+    font-weight: 700;
+    font-size: 12pt;
+    margin-right: 3mm;
+  }
+  .total-pill {
+    display: inline-block;
+    background: #1F3552;
+    color: #fff;
+    padding: 2.5mm 7mm;
+    font-weight: 700;
+    font-size: 13pt;
+    min-width: 30mm;
+    text-align: right;
+  }
+
+  .footer-text {
+    margin-top: 3mm;
+    font-size: 9.5pt;
+    color: #444;
+    line-height: 1.6;
   }
 </style>
 </head>
 <body>
 
-<div class="header">
-  <div class="header-left">
-    ${logo ? `<img class="logo-img" src="${logo}" alt="BAMA Fabrication">` : `<div class="company-name">BAMA FABRICATION</div>`}
-    <div class="company-address">
-      Unit 9 Gwel Avon, Business Park,<br>
-      Saltash PL12 6TW
-    </div>
+<div class="top">
+  <div class="top-left">
+    ${logo
+      ? `<img class="logo-img" src="${logo}" alt="BAMA Fabrication">`
+      : `<div class="logo-fallback">BAMA FABRICATION</div>`}
   </div>
-  <div class="header-right">
-    <div class="quotation-title">QUOTATION</div>
-    <div class="quote-ref">${esc(d.quoteRef || '')}</div>
+  <div class="top-right">
+    <div class="quotation-word">Quotation</div>
+  </div>
+</div>
+
+<div class="body-header">
+  <div class="bh-left">
+    <div class="field-block">
+      <div class="field-label">Company Address</div>
+      <div class="field-line">11 Enterprise Way. Enterprise Park, Yaxley, PE7 3WY, Peterborough</div>
+      <div class="field-line">01733 855212</div>
+    </div>
+
+    ${(d.quoteFor || d.area || d.address) ? `
+    <div class="field-block">
+      <div class="field-label">Quotation For</div>
+      ${d.quoteFor ? `<div class="field-line">${esc(d.quoteFor)}</div>` : ''}
+      ${d.area     ? `<div class="field-line">${esc(d.area)}</div>` : ''}
+      ${d.address  ? `<div class="field-line">${esc(d.address)}</div>` : ''}
+    </div>
+    ` : ''}
+  </div>
+
+  <div class="bh-right">
     <table class="meta-table">
-      ${d.quoteDate    ? `<tr><td class="label">Date:</td><td class="value">${esc(fmtDate(d.quoteDate))}</td></tr>` : ''}
-      ${d.customerId   ? `<tr><td class="label">Customer ID:</td><td class="value">${esc(d.customerId)}</td></tr>` : ''}
-      ${d.workOrderNo  ? `<tr><td class="label">Work Order no.:</td><td class="value">${esc(d.workOrderNo)}</td></tr>` : ''}
-      ${d.validUntil   ? `<tr><td class="label">Valid until:</td><td class="value">${esc(fmtDate(d.validUntil))}</td></tr>` : ''}
-      ${d.preparedBy   ? `<tr><td class="label">Prepared by:</td><td class="value">${esc(d.preparedBy)}</td></tr>` : ''}
+      ${headerRowsHtml}
     </table>
   </div>
 </div>
 
-${(d.quoteFor || d.area || d.address) ? `
-<div class="quote-for">
-  <div class="label">Quotation For</div>
-  ${d.quoteFor ? `<div class="value">${esc(d.quoteFor)}</div>` : ''}
-  ${d.area     ? `<div class="sub">Area: ${esc(d.area)}</div>` : ''}
-  ${d.address  ? `<div class="sub">${esc(d.address)}</div>` : ''}
+<div class="comments-section">
+  <div class="field-label">Comments or Special Instructions</div>
+  <div class="comments-text">${esc(d.comments || '')}</div>
 </div>
-` : ''}
 
-${d.comments ? `<div class="comments-block"><b>Comments / Special Instructions</b><br>${esc(d.comments)}</div>` : ''}
-
-<table class="items-table">
+<table class="items">
   <thead>
     <tr>
-      <th class="center" style="width:36px">#</th>
-      <th>Description</th>
-      <th class="num" style="width:90px">Unit Price</th>
-      <th class="num" style="width:60px">Qty</th>
-      <th class="num" style="width:100px">Amount</th>
+      <th class="col-item">Item</th>
+      <th class="col-desc">Description</th>
+      <th class="col-price">Unit Price</th>
+      <th class="col-qty">Quantity</th>
+      <th class="col-amt">Amount</th>
     </tr>
   </thead>
   <tbody>${linesHtml}</tbody>
 </table>
 
-<div class="total-row">
+<div class="footer-row">
+  <div class="vat">All quotes are VAT exclusive</div>
   <div class="total-cell">
-    <span class="lbl">TOTAL</span>${fmtGBP(d.grandTotal)}
+    <span class="total-label">TOTAL</span><span class="total-pill">${fmtNum(d.grandTotal)}</span>
   </div>
 </div>
-<div class="vat-note">All quotes are VAT exclusive</div>
 
-<div class="footer">
-  If you have any questions concerning this quotation, please contact:<br>
-  <span class="contact">info@bamasw.co.uk</span><br><br>
-  Thank you for your business!
+<div class="footer-text">
+  If you have any questions further questions, please contact: info@bamafabrication.co.uk<br>
+  Thank you for your business
 </div>
 
 </body>
