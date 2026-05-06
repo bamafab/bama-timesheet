@@ -214,7 +214,7 @@ app.http('project-quotes-list', {
             const result = await query(
                 `SELECT pq.project_id, pq.tender_id, pq.is_primary, pq.added_at, pq.added_by,
                         t.reference, t.project_name AS quote_project_name, t.status AS quote_status,
-                        t.value AS quote_value, t.comments AS quote_comments,
+                        t.quote_value, t.comments AS quote_comments,
                         t.client_id, c.company_name
                  FROM ProjectQuotes pq
                  INNER JOIN Tenders t ON t.id = pq.tender_id
