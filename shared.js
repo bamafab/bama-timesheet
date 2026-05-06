@@ -12923,11 +12923,6 @@ async function loadTenderComments() {
   }
 }
 
-function escapeHtml(s) {
-  if (!s) return '';
-  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
-
 async function addTenderComment() {
   if (!currentTender) return;
   const input = document.getElementById('newCommentInput');
