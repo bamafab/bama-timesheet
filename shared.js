@@ -14962,6 +14962,301 @@ async function confirmAttachQuote(tenderId) {
   }
 }
 
+// ═══════════════════════════════════════════
+// CREATE NEW PROJECT (manual, no source quote)
+// ═══════════════════════════════════════════
+// Mints the next available C-reference, creates the SharePoint folder
+// structure (same 9 subfolders as the Won-quote path), creates or finds
+// the client, and writes the Project row. Mirrors convertQuoteToProject
+// but starts from form input instead of a tender. source_quote_id is left
+// null and ProjectQuotes is not seeded — a quote can be attached later
+// via the "+ Add Quote" button on the project detail page.
+
+let _npClientSearchTimeout = null;
+
+async function getNextProjectNumber() {
+  const yy = String(new Date().getFullYear()).slice(-2); // "26"
+  const prefix = `C${yy}`;
+  let highest = 0;
+
+  // Scan loaded projectsData (covers both manual and quote-derived projects).
+  // Quote-derived projects come in as e.g. C260502 (from Q260502); manual
+  // projects mint sequentially from the same pool, so we scan all C{yy}*.
+  const re = new RegExp(`^${prefix}(\\d+)$`);
+  (projectsData || []).forEach(p => {
+    const m = String(p.project_number || '').match(re);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (n > highest) highest = n;
+    }
+  });
+
+  return `${prefix}${String(highest + 1).padStart(2, '0')}`;
+}
+
+async function openCreateProjectModal() {
+  const perms = getUserPermissions(currentManagerUser);
+  if (!perms || !perms.editProjects) {
+    toast("You don't have permission to create projects", 'error');
+    return;
+  }
+
+  // Make sure clients are loaded for autocomplete (project-tracker page
+  // doesn't load them by default — only tenders/quotes pages do).
+  if (!clientsData.length) {
+    try {
+      const clients = await api.get('/api/clients');
+      clientsData = clients || [];
+    } catch (e) {
+      console.warn('Failed to load clients for autocomplete:', e);
+    }
+  }
+
+  // Reset all form fields
+  ['npClientId','npCompanyName','npAddress1','npAddress2','npCity','npCounty','npPostcode',
+   'npContactName','npContactEmail','npContactPhone',
+   'npProjectName','npQuoteValue','npComments','npDeadline',
+   'npSiteAddressLine1','npSiteAddressLine2','npSiteCity','npSiteCounty','npSitePostcode',
+   'npSiteContactName','npSiteContactEmail','npSiteContactPhone'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+
+  // Default site-same toggle to ON, hide site fields
+  const siteSame = document.getElementById('npSiteSameAsClient');
+  if (siteSame) siteSame.checked = true;
+  const siteFields = document.getElementById('npSiteFields');
+  if (siteFields) siteFields.style.display = 'none';
+
+  // Default start date to today (matches new-tender default behaviour)
+  const today = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+  const startEl = document.getElementById('npStartDate');
+  if (startEl) startEl.value = todayStr;
+
+  document.getElementById('npClientSuggestions').style.display = 'none';
+
+  // Generate next project number
+  try {
+    const ref = await getNextProjectNumber();
+    document.getElementById('npProjectNumber').textContent = ref;
+  } catch (e) {
+    console.error('Project number generation failed:', e);
+    document.getElementById('npProjectNumber').textContent = '—';
+  }
+
+  document.getElementById('newProjectModal').classList.add('active');
+}
+
+function closeCreateProjectModal() {
+  document.getElementById('newProjectModal').classList.remove('active');
+}
+
+function onNpClientSearch(value) {
+  clearTimeout(_npClientSearchTimeout);
+  const dropdown = document.getElementById('npClientSuggestions');
+
+  if (!value || value.length < 2) {
+    dropdown.style.display = 'none';
+    document.getElementById('npClientId').value = '';
+    return;
+  }
+
+  _npClientSearchTimeout = setTimeout(() => {
+    const matches = clientsData.filter(c =>
+      c.company_name && c.company_name.toLowerCase().includes(value.toLowerCase())
+    );
+
+    if (!matches.length) {
+      dropdown.style.display = 'none';
+      document.getElementById('npClientId').value = '';
+      return;
+    }
+
+    dropdown.innerHTML = matches.map(c => `
+      <div class="autocomplete-item" onclick="selectNpClient(${c.id})">
+        <div class="ac-company">${escapeHtml(c.company_name)}</div>
+        <div class="ac-contact">${escapeHtml(c.contact_name || '')} ${c.contact_email ? '· ' + escapeHtml(c.contact_email) : ''}</div>
+      </div>
+    `).join('');
+    dropdown.style.display = '';
+  }, 200);
+}
+
+function selectNpClient(clientId) {
+  const client = clientsData.find(c => c.id === clientId);
+  if (!client) return;
+
+  document.getElementById('npClientId').value = client.id;
+  document.getElementById('npCompanyName').value = client.company_name;
+  document.getElementById('npAddress1').value = client.address_line1 || '';
+  document.getElementById('npAddress2').value = client.address_line2 || '';
+  document.getElementById('npCity').value = client.city || '';
+  document.getElementById('npCounty').value = client.county || '';
+  document.getElementById('npPostcode').value = client.postcode || '';
+  // Contact fields left blank — they vary per project/site
+  document.getElementById('npContactName').value = '';
+  document.getElementById('npContactEmail').value = '';
+  document.getElementById('npContactPhone').value = '';
+  document.getElementById('npClientSuggestions').style.display = 'none';
+}
+
+function onNpSiteSameToggle() {
+  const same = document.getElementById('npSiteSameAsClient').checked;
+  document.getElementById('npSiteFields').style.display = same ? 'none' : '';
+}
+
+async function submitCreateProject() {
+  const projectNumber = document.getElementById('npProjectNumber').textContent.trim();
+  const companyName   = document.getElementById('npCompanyName').value.trim();
+  const projectName   = document.getElementById('npProjectName').value.trim();
+
+  if (!projectNumber || projectNumber === '—') { toast('Project number could not be generated', 'error'); return; }
+  if (!companyName) { toast('Client / company name is required', 'error'); return; }
+  if (!projectName) { toast('Project name is required', 'error'); return; }
+
+  const submitBtn = document.getElementById('npSubmitBtn');
+  if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Creating…'; }
+
+  try {
+    // Step 1: Create or find client
+    let clientId = document.getElementById('npClientId').value;
+    let clientRecord = null;
+
+    if (!clientId) {
+      // New client — create it
+      clientRecord = await api.post('/api/clients', {
+        company_name:  companyName,
+        address_line1: document.getElementById('npAddress1').value.trim() || null,
+        address_line2: document.getElementById('npAddress2').value.trim() || null,
+        city:          document.getElementById('npCity').value.trim() || null,
+        county:        document.getElementById('npCounty').value.trim() || null,
+        postcode:      document.getElementById('npPostcode').value.trim() || null,
+        contact_name:  document.getElementById('npContactName').value.trim() || null,
+        contact_email: document.getElementById('npContactEmail').value.trim() || null,
+        contact_phone: document.getElementById('npContactPhone').value.trim() || null
+      });
+      clientId = clientRecord.id;
+      clientsData.push(clientRecord);
+    } else {
+      clientRecord = clientsData.find(c => String(c.id) === String(clientId)) || null;
+    }
+
+    // Step 2: Create SharePoint folder structure (non-fatal if Graph fails —
+    // the project still gets created in SQL and folders can be added later).
+    let projectFolderId = null;
+    try {
+      const token = await getToken();
+      const projectsRoot = await getOrCreateFolderByPath(PROJECTS_FOLDER_PATH, token);
+      const clientPart  = sanitiseFolderSegment(companyName);
+      const projectPart = sanitiseFolderSegment(projectName);
+      const folderName  = [projectNumber, clientPart, projectPart].filter(Boolean).join(' - ');
+      const projectFolder = await createFolderInDrive(projectsRoot.id, folderName);
+      projectFolderId = projectFolder.id;
+
+      // Standard 9 subfolders
+      for (const sub of PROJECT_SUBFOLDERS) {
+        try {
+          await createFolderInDrive(projectFolder.id, sub);
+        } catch (e) {
+          console.warn(`Subfolder "${sub}" creation failed:`, e);
+        }
+      }
+    } catch (e) {
+      console.warn('SharePoint folder creation failed (non-fatal):', e);
+      toast('Project created, but SharePoint folders could not be created — check your access', 'warning');
+    }
+
+    // Step 3: Build site address payload (PUT it after the create to set
+    // the site_* columns — the POST handler doesn't accept them, but PUT does).
+    const siteSame = document.getElementById('npSiteSameAsClient').checked;
+    const sitePayload = siteSame
+      ? {
+          site_same_as_client: 1,
+          site_address_line1: null, site_address_line2: null,
+          site_city: null, site_county: null, site_postcode: null,
+          site_contact_name: null, site_contact_email: null, site_contact_phone: null
+        }
+      : {
+          site_same_as_client: 0,
+          site_address_line1: document.getElementById('npSiteAddressLine1').value.trim() || null,
+          site_address_line2: document.getElementById('npSiteAddressLine2').value.trim() || null,
+          site_city:          document.getElementById('npSiteCity').value.trim() || null,
+          site_county:        document.getElementById('npSiteCounty').value.trim() || null,
+          site_postcode:      document.getElementById('npSitePostcode').value.trim() || null,
+          site_contact_name:  document.getElementById('npSiteContactName').value.trim() || null,
+          site_contact_email: document.getElementById('npSiteContactEmail').value.trim() || null,
+          site_contact_phone: document.getElementById('npSiteContactPhone').value.trim() || null
+        };
+
+    // Step 4: Create the Projects DB row
+    const quoteValueRaw = document.getElementById('npQuoteValue').value.trim();
+    const deadline      = document.getElementById('npDeadline').value;
+    const startDate     = document.getElementById('npStartDate').value;
+
+    const created = await api.post('/api/projects', {
+      project_number: projectNumber,
+      project_name:   projectName,
+      client_id:      parseInt(clientId),
+      status:         'In Progress',
+      source_quote_id: null,
+      quote_value:    quoteValueRaw ? parseFloat(quoteValueRaw) : null,
+      deadline_date:  deadline || null,
+      start_date:     startDate || null,
+      comments:       document.getElementById('npComments').value.trim() || null,
+      sharepoint_folder_id: projectFolderId,
+      sharepoint_quote_folder_id: null,
+      created_by:     currentManagerUser || (typeof AUTH !== 'undefined' && AUTH.getUserName?.()) || 'unknown'
+    });
+
+    // Step 5: PUT the site address fields. The PUT handler returns the row
+    // joined with client data (company_name etc), so we use its response.
+    let project = created;
+    try {
+      const updated = await api.put(`/api/projects/${created.id}`, sitePayload);
+      if (updated && updated.id) project = updated;
+    } catch (e) {
+      console.warn('Site address update failed:', e);
+      // Non-fatal — the project exists, the user can edit site fields on the detail page.
+    }
+
+    // Step 6: Auto-save contact to ClientContacts (deduped server-side by name+email).
+    //   Mirrors the behaviour of the new-tender flow.
+    const contactName  = document.getElementById('npContactName').value.trim();
+    const contactEmail = document.getElementById('npContactEmail').value.trim();
+    const contactPhone = document.getElementById('npContactPhone').value.trim();
+    if (contactName || contactEmail || contactPhone) {
+      try {
+        await api.post('/api/client-contacts', {
+          client_id:     parseInt(clientId),
+          contact_name:  contactName  || null,
+          contact_email: contactEmail || null,
+          contact_phone: contactPhone || null
+        });
+      } catch (e) {
+        console.warn('Failed to save contact to client database:', e);
+      }
+    }
+
+    // Step 7: Patch local state and refresh UI. Make sure company_name is
+    // populated so the list row renders correctly without a full refetch.
+    if (!project.company_name) project.company_name = companyName;
+    projectsData.unshift(project);
+
+    closeCreateProjectModal();
+    renderProjectTrackerList();
+    toast(`Project ${projectNumber} created ✓`, 'success');
+
+    // Jump straight to the new project's detail view.
+    setTimeout(() => openProjectDetail(project.id), 100);
+  } catch (err) {
+    console.error('Failed to create project:', err);
+    toast('Failed to create project: ' + (err.message || 'unknown error'), 'error');
+  } finally {
+    if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Create Project'; }
+  }
+}
+
 // ── Project Tracker page init ──
 async function initProjectTrackerPage() {
   // Re-use the manager PIN gate pattern. The page will require viewProjects permission.

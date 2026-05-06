@@ -93,7 +93,7 @@
       <div class="card">
         <div class="card-frozen-top">
           <div class="card-title"><span class="icon">🏗️</span> All Projects</div>
-          <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+          <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
             <input type="text" class="field-input" id="projectSearch" placeholder="Search projects..."
               style="max-width:260px" oninput="renderProjectTrackerList()">
             <select class="field-input" id="projectStatusFilter" style="max-width:180px" onchange="renderProjectTrackerList()">
@@ -104,6 +104,7 @@
               <option value="Archived">Archived</option>
               <option value="Cancelled">Cancelled</option>
             </select>
+            <button class="btn btn-primary" onclick="openCreateProjectModal()" style="margin-left:auto">+ New Project</button>
           </div>
           <div class="quote-row quote-header">
             <div class="quote-col-ref">REF</div>
@@ -363,6 +364,153 @@
   .quote-header:hover { background: var(--card); }
 </style>
 
+<!-- ═══════════════════════════════════════
+     NEW PROJECT MODAL (manual creation)
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="newProjectModal">
+  <div class="modal" style="max-width:620px;width:95vw;max-height:90vh;overflow-y:auto">
+    <div class="modal-title">🏗️ New Project</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:16px">
+      Create a project manually. A quote can be attached later via the project detail page.
+    </div>
+
+    <div style="margin-bottom:16px;padding:12px;background:var(--surface);border-radius:8px;border:1px solid var(--border)">
+      <div style="font-size:12px;color:var(--muted)">Project number will be generated:</div>
+      <div style="font-size:18px;font-weight:700;font-family:var(--font-mono);color:var(--accent)" id="npProjectNumber">—</div>
+    </div>
+
+    <!-- ── CLIENT ── -->
+    <div class="field-label" style="border-top:1px solid var(--border);padding-top:14px;margin-bottom:8px">CLIENT</div>
+
+    <input type="hidden" id="npClientId" value="">
+    <div style="margin-bottom:12px;position:relative">
+      <div class="field-label">COMPANY NAME *</div>
+      <input type="text" class="field-input" id="npCompanyName" placeholder="Start typing..."
+             autocomplete="off" oninput="onNpClientSearch(this.value)">
+      <div id="npClientSuggestions" class="autocomplete-dropdown" style="display:none"></div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <div class="field-label">ADDRESS LINE 1</div>
+        <input type="text" class="field-input" id="npAddress1" placeholder="Street address">
+      </div>
+      <div>
+        <div class="field-label">ADDRESS LINE 2</div>
+        <input type="text" class="field-input" id="npAddress2" placeholder="Optional">
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <div class="field-label">CITY</div>
+        <input type="text" class="field-input" id="npCity">
+      </div>
+      <div>
+        <div class="field-label">COUNTY</div>
+        <input type="text" class="field-input" id="npCounty">
+      </div>
+      <div>
+        <div class="field-label">POSTCODE</div>
+        <input type="text" class="field-input" id="npPostcode">
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <div class="field-label">CONTACT NAME</div>
+        <input type="text" class="field-input" id="npContactName">
+      </div>
+      <div>
+        <div class="field-label">CONTACT EMAIL</div>
+        <input type="email" class="field-input" id="npContactEmail">
+      </div>
+      <div>
+        <div class="field-label">CONTACT PHONE</div>
+        <input type="text" class="field-input" id="npContactPhone">
+      </div>
+    </div>
+
+    <!-- ── PROJECT ── -->
+    <div class="field-label" style="margin-top:8px;padding-top:14px;border-top:1px solid var(--border);margin-bottom:8px">PROJECT DETAILS</div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">PROJECT NAME *</div>
+      <input type="text" class="field-input" id="npProjectName" placeholder="e.g. Warehouse Steelwork">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <div class="field-label">START DATE</div>
+        <input type="date" class="field-input" id="npStartDate">
+      </div>
+      <div>
+        <div class="field-label">DEADLINE</div>
+        <input type="date" class="field-input" id="npDeadline">
+      </div>
+      <div>
+        <div class="field-label">PROJECT VALUE (£)</div>
+        <input type="number" class="field-input" id="npQuoteValue" step="0.01" placeholder="Optional">
+      </div>
+    </div>
+    <div style="margin-bottom:12px">
+      <div class="field-label">NOTES (OPTIONAL)</div>
+      <textarea class="field-input" id="npComments" rows="2" placeholder="Initial notes about this project..."></textarea>
+    </div>
+
+    <!-- ── SITE ADDRESS ── -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:8px;padding-top:14px;border-top:1px solid var(--border)">
+      <div class="field-label" style="margin:0">SITE ADDRESS</div>
+      <label class="perm-switch" title="Toggle off to enter a different site address">
+        <input type="checkbox" id="npSiteSameAsClient" checked onchange="onNpSiteSameToggle()">
+        <span class="slider"></span>
+      </label>
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-top:4px;margin-bottom:8px">Same as client address (toggle off to set differently)</div>
+
+    <div id="npSiteFields" style="display:none">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div style="grid-column:1/-1">
+          <div class="field-label">ADDRESS LINE 1</div>
+          <input type="text" class="field-input" id="npSiteAddressLine1">
+        </div>
+        <div style="grid-column:1/-1">
+          <div class="field-label">ADDRESS LINE 2</div>
+          <input type="text" class="field-input" id="npSiteAddressLine2">
+        </div>
+        <div>
+          <div class="field-label">CITY</div>
+          <input type="text" class="field-input" id="npSiteCity">
+        </div>
+        <div>
+          <div class="field-label">COUNTY</div>
+          <input type="text" class="field-input" id="npSiteCounty">
+        </div>
+        <div>
+          <div class="field-label">POSTCODE</div>
+          <input type="text" class="field-input" id="npSitePostcode">
+        </div>
+      </div>
+      <div class="field-label" style="margin-top:6px">SITE CONTACT</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:6px;margin-bottom:8px">
+        <div>
+          <div class="field-label">NAME</div>
+          <input type="text" class="field-input" id="npSiteContactName">
+        </div>
+        <div>
+          <div class="field-label">EMAIL</div>
+          <input type="email" class="field-input" id="npSiteContactEmail">
+        </div>
+        <div>
+          <div class="field-label">PHONE</div>
+          <input type="text" class="field-input" id="npSiteContactPhone">
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-actions" style="margin-top:18px">
+      <button class="btn btn-ghost" onclick="closeCreateProjectModal()">Cancel</button>
+      <button class="btn btn-primary" id="npSubmitBtn" onclick="submitCreateProject()">Create Project</button>
+    </div>
+  </div>
+</div>
+
 <!-- Attach an existing won quote to this project -->
 <div class="modal-overlay" id="attachQuoteModal">
   <div class="modal" style="max-width:520px;width:95vw">
@@ -431,6 +579,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260505k"></script>
+<script src="shared.js?v=20260506a"></script>
 </body>
 </html>
