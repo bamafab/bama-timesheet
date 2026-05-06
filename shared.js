@@ -451,7 +451,12 @@ async function loadProjects() {
         name:   p.project_name,
         status: p.status,
         client: p.company_name || ''
-      }));
+      }))
+      // Sort once at load time so every dropdown that reads state.projects
+      // (kiosk projectSelect, order-form picker, and any future consumer)
+      // shows the same A→Z order. `numeric: true` gives natural sort so
+      // S9 < S10 instead of the string-only S10 < S9.
+      .sort((a, b) => String(a.id).localeCompare(String(b.id), 'en', { numeric: true, sensitivity: 'base' }));
     state.projects = list;
     console.log(`Projects loaded from SQL: ${list.length} In Progress`);
   } catch (e) {
