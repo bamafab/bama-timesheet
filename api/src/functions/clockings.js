@@ -47,12 +47,14 @@ app.http('clock-in', {
             );
             if (emp.recordset.length === 0) return notFound('Employee not found or inactive', request);
 
-            // Check if already clocked in today (open entry with no clock_out for today)
+            // Check if already clocked in (any open entry with no clock_out).
+            // Don't filter by date: if a worker forgot to clock out yesterday,
+            // letting them clock in today would leave two open shifts. The
+            // worker has to close the existing one first.
             const open = await query(
                 `SELECT id FROM ClockEntries
                  WHERE employee_id = @id
-                   AND clock_out IS NULL
-                   AND CAST(clock_in AS DATE) = CAST(GETDATE() AS DATE)`,
+                   AND clock_out IS NULL`,
                 { id: parseInt(employee_id) }
             );
             if (open.recordset.length > 0) {
@@ -96,19 +98,24 @@ app.http('clock-out', {
 
             if (!employee_id) return badRequest('employee_id is required', request);
 
-            // Find TODAY's open clock entry (date filter prevents closing orphaned previous-day entries)
+            // Find the open clock entry for this employee. There can only be
+            // one — POST /api/clock-in rejects a new clock-in while another
+            // is open. We deliberately don't filter by date: an overnight
+            // shift that started yesterday still needs to be closeable today.
+            // If the worker forgot to clock out, the office can amend the
+            // time afterward.
             const open = await query(
-                `SELECT ce.id, ce.clock_in, e.name as employee_name
+                `SELECT TOP 1 ce.id, ce.clock_in, e.name as employee_name
                  FROM ClockEntries ce
                  JOIN Employees e ON e.id = ce.employee_id
                  WHERE ce.employee_id = @id
                    AND ce.clock_out IS NULL
-                   AND CAST(ce.clock_in AS DATE) = CAST(GETDATE() AS DATE)`,
+                 ORDER BY ce.clock_in DESC`,
                 { id: parseInt(employee_id) }
             );
 
             if (open.recordset.length === 0) {
-                return badRequest('Employee is not clocked in today', request);
+                return badRequest('Employee is not clocked in', request);
             }
 
             const clockTime = timestamp ? new Date(timestamp) : new Date();

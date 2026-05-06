@@ -290,11 +290,16 @@ function normaliseClocking(row) {
   //   is_amended = 1, is_approved = 0 -> 'pending'
   let approvalStatus = null;
   if (row.is_amended) approvalStatus = row.is_approved ? 'approved' : 'pending';
+  // .date is the calendar day the shift STARTED, in local (browser) time.
+  // dateStr() now uses local parts so this works even for early-AM clock-ins
+  // (e.g. Mon 00:30 BST). Overnight shifts (e.g. Mon 17:00 -> Tue 02:00) are
+  // anchored to the clock-in date by design — the whole shift is a "Monday
+  // shift" for the purposes of project hours, S000 and payroll.
   return {
     id: row.id,
     employeeName: row.employee_name || empNameById(row.employee_id) || `Employee #${row.employee_id}`,
     employee_id: row.employee_id,
-    date: clockIn ? clockIn.toISOString().split('T')[0] : '',
+    date: clockIn ? dateStr(clockIn) : '',
     clockIn: clockIn ? `${String(clockIn.getHours()).padStart(2,'0')}:${String(clockIn.getMinutes()).padStart(2,'0')}` : null,
     clockOut: clockOut ? `${String(clockOut.getHours()).padStart(2,'0')}:${String(clockOut.getMinutes()).padStart(2,'0')}` : null,
     breakMins: row.break_mins || 0,
@@ -793,8 +798,13 @@ function getWeekDates(offset = 0) {
   return { mon, sun };
 }
 
+// Stringify a Date as YYYY-MM-DD using LOCAL time. Using toISOString().slice
+// would give the UTC date, which drifts off the local calendar at midnight
+// in BST (00:30 BST = 23:30 UTC the previous day). Every caller in this
+// file passes a locally-constructed Date (new Date(), new Date(yyyy,mm,dd),
+// or copies thereof), so this stays correct in all cases.
 function dateStr(d) {
-  return d.toISOString().slice(0, 10);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
 
 function fmtDate(d) {
@@ -809,6 +819,24 @@ function fmtDateStr(ds) {
 }
 
 function todayStr() { return dateStr(new Date()); }
+
+// Resolve the calendar date "this shift belongs to" for a given employee.
+//   - If the employee has an OPEN clocking, return that clocking's date
+//     (the shift's start date, even if we've crossed midnight).
+//   - Otherwise return today's date.
+//
+// Used wherever the kiosk needs to filter "today's entries" or "today's
+// clocking" — keeps overnight shifts (e.g. Mon 17:00 -> Tue 02:00) anchored
+// to the clock-in date instead of jumping forward at midnight.
+function activeShiftDate(employeeName) {
+  if (employeeName) {
+    const open = (state.timesheetData.clockings || []).find(
+      c => c.employeeName === employeeName && !c.clockOut
+    );
+    if (open && open.date) return open.date;
+  }
+  return todayStr();
+}
 
 // ═══════════════════════════════════════════
 // EMPLOYEE HOME
@@ -830,8 +858,11 @@ function renderHome() {
   }
 
   empList.forEach(name => {
+    // Open shift = no clock_out yet. Don't filter by date — overnight shifts
+    // (started yesterday, still ongoing) must still light up the green
+    // "clocked-in" indicator.
     const clocking = state.timesheetData.clockings.find(
-      c => c.employeeName === name && c.date === today && !c.clockOut
+      c => c.employeeName === name && !c.clockOut
     );
     const initials = name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
     const colors = ['#ff6b00','#e05d00','#c84b00','#a83e00','#ff8c42','#f07030'];
@@ -1060,10 +1091,10 @@ function openEmployeePanel(name) {
     }
   }).catch(() => {});
 
-  // Check clocked in
-  const today = todayStr();
+  // Check clocked in. Don't filter by date — overnight shifts started
+  // yesterday must still show the "clocked in" UI today.
   const clocking = state.timesheetData.clockings.find(
-    c => c.employeeName === name && c.date === today && !c.clockOut
+    c => c.employeeName === name && !c.clockOut
   );
 
   if (clocking) {
@@ -1172,11 +1203,13 @@ function removeEntry(id) {
 
 function renderTodayEntries() {
   const container = document.getElementById('todayEntries');
-  const today = todayStr();
+  // If the worker is on an overnight shift, "today's entries" means
+  // entries against the shift's start date — not the wall-clock date.
+  const shiftDate = activeShiftDate(state.currentEmployee);
 
   // Submitted entries + current session entries
   const submitted = state.timesheetData.entries.filter(
-    e => e.employeeName === state.currentEmployee && e.date === today && e.date === todayStr()
+    e => e.employeeName === state.currentEmployee && e.date === shiftDate
   );
 
   const all = [
@@ -1218,12 +1251,21 @@ async function doClock(direction) {
       return;
     }
 
-    // Check if already clocked in (local check for instant feedback)
+    // Check if already clocked in (local check for instant feedback). Don't
+    // filter by date — an open shift from yesterday means the worker forgot
+    // to clock out and needs to do that first, otherwise they'd end up with
+    // two open shifts.
     const existing = state.timesheetData.clockings.find(
-      c => c.employeeName === emp && c.date === today && !c.clockOut
+      c => c.employeeName === emp && !c.clockOut
     );
     if (existing) {
-      toast(`${emp} is already clocked in today at ${existing.clockIn}`, 'error');
+      const sameDay = existing.date === today;
+      toast(
+        sameDay
+          ? `${emp} is already clocked in today at ${existing.clockIn}`
+          : `${emp} has an open shift from ${fmtDateStr(existing.date)} (clocked in at ${existing.clockIn}). Clock out first.`,
+        'error'
+      );
       return;
     }
 
@@ -1261,10 +1303,17 @@ async function doClock(direction) {
 
   } else {
     // CLOCK OUT
+    // Find the open shift for this employee. Don't filter by date — overnight
+    // shifts (e.g. Mon 17:00 -> Tue 02:00) need to remain closeable after
+    // midnight, when today != the clock-in date.
     const clocking = state.timesheetData.clockings.find(
-      c => c.employeeName === emp && c.date === today && !c.clockOut
+      c => c.employeeName === emp && !c.clockOut
     );
-    if (!clocking) { toast('Not clocked in today — cannot clock out', 'error'); return; }
+    if (!clocking) { toast('Not clocked in — cannot clock out', 'error'); return; }
+
+    // The shift belongs to its START date. Everything downstream (entry
+    // filters, S000 recompute, toast text) is keyed off this, not today.
+    const shiftDate = clocking.date;
 
     const breakEl = document.getElementById('breakDuration');
     let breakMins = breakEl ? (parseInt(breakEl.value) || 30) : 30;
@@ -1273,20 +1322,20 @@ async function doClock(direction) {
     const now = new Date();
     const clockOut = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
 
-    // Check if any project hours logged today (excluding S000 and WGD auto entries)
+    // Check if any project hours logged for this shift (excluding S000 and WGD auto entries)
     const allEntries = state.timesheetData.entries || [];
     const currentEntries = state.currentEntries || [];
     const todayProjectHrs = [
-      ...allEntries.filter(e => e.employeeName === emp && e.date === today && e.projectId !== 'S000' && e.projectId !== 'WGD'),
+      ...allEntries.filter(e => e.employeeName === emp && e.date === shiftDate && e.projectId !== 'S000' && e.projectId !== 'WGD'),
       ...currentEntries.filter(e => e.projectId !== 'S000' && e.projectId !== 'WGD')
     ];
     const todayWGDHrs = [
-      ...allEntries.filter(e => e.employeeName === emp && e.date === today && e.projectId === 'WGD'),
+      ...allEntries.filter(e => e.employeeName === emp && e.date === shiftDate && e.projectId === 'WGD'),
       ...currentEntries.filter(e => e.projectId === 'WGD')
     ];
 
     if (todayProjectHrs.length === 0 && todayWGDHrs.length === 0) {
-      _pendingClockOutData = { emp, today, clockOut, breakMins, clocking };
+      _pendingClockOutData = { emp, today: shiftDate, clockOut, breakMins, clocking };
       const modal = document.getElementById('noProjectModal');
       if (modal) {
         modal.classList.add('active');
@@ -1296,7 +1345,7 @@ async function doClock(direction) {
       return;
     }
 
-    await finishClockOut({ emp, today, clockOut, breakMins, clocking });
+    await finishClockOut({ emp, today: shiftDate, clockOut, breakMins, clocking });
   }
   } catch (err) {
     console.error('doClock error:', err);
@@ -1304,6 +1353,11 @@ async function doClock(direction) {
   }
 }
 
+// Finalises a clock-out. NOTE: `today` here is the shift's START date
+// (clocking.date), NOT necessarily the current calendar date — they differ
+// for overnight shifts. Everything keyed off it (S000 recompute, entry
+// filters) treats the whole shift as a single logical day anchored to the
+// clock-in date.
 async function finishClockOut({ emp, today, clockOut, breakMins, clocking }) {
     const empId = empIdByName(emp);
 
@@ -1363,7 +1417,10 @@ async function submitDay() {
   if (!state.currentEntries.length) {
     toast('No new entries to submit', 'error'); return;
   }
-  const today = todayStr();
+  // For overnight shifts, file entries against the shift's start date, not
+  // the wall-clock date at the moment of submit. activeShiftDate falls back
+  // to todayStr() if the worker isn't currently clocked in.
+  const today = activeShiftDate(state.currentEmployee);
   const empId = empIdByName(state.currentEmployee);
   if (!empId) { toast('Employee not found in system', 'error'); return; }
 
