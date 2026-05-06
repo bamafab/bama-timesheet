@@ -1,7 +1,9 @@
 # SPEC: Quote Line Items + Project Tracker (multi-session build)
 
 > Captured from the Q260422 example quote to keep context across sessions.
-> Status: design only, not built yet.
+> **Status: Sessions 2 + 3 BUILT (commit pending). Session 4 (AFPs) still
+> design-only.** See bottom of this doc for which open questions were
+> decided and which still need user input.
 
 ## The Quote template
 
@@ -122,19 +124,33 @@ To be designed in detail — model open questions:
 
 ## UI build order (across sessions)
 
-| Session | Scope |
-|---------|-------|
-| 1 (this) | Push queued fixes; add SQL migration scripts only |
-| 2 | Quote detail page — line items editor (read existing quote, allow inline edit) |
-| 3 | Project Tracker rebuild — 3 tiles + per-quote line items + % complete |
-| 4 | Invoices & AFPs — generation, PDF, numbering, storage |
+| Session | Scope | Status |
+|---------|-------|--------|
+| 1 | Push queued fixes; add SQL migration scripts only | ✅ done (commit 5574cc1) |
+| 2 | Quote detail page — line items editor (read existing quote, allow inline edit) | ✅ done |
+| 3 | Project Tracker rebuild — 3 tiles + per-quote line items + % complete | ✅ done |
+| 4 | Invoices & AFPs — generation, PDF, numbering, storage | ⏳ design only |
 
-## Open questions for next session
-1. **Strict vs inclusive labour set** — which 3 (or 5) lines count?
-2. **Importing existing quotes** — do we backfill QuoteLineItems for already-won
-   quotes by reading their xlsx files? Or only new quotes from Session 2 onwards
-   get line items?
-3. **AFP visibility** — same `viewQuotes`/`editQuotes` permission, or new
-   `viewProjectFinancials`/`generateInvoices` permissions?
-4. **Running cost source** — purchase orders, supplier invoices, both?
-   Schema for that table is its own design exercise.
+## Decisions made (from Session 2/3 build)
+
+1. **Strict vs inclusive labour set** — went with **inclusive** as the default
+   (`is_labour=1` on Approval & Fab Pack, Survey, Fabrication, Painting,
+   Installation; `is_labour=0` on Prelims, Material, Galvanising, Delivery).
+   Per-line override is editable on the quote — flip the Labour checkbox to
+   change it for a specific quote without touching code.
+2. **Importing existing quotes** — **don't backfill**. Old won quotes get
+   the 9 default rows (zeroed) on first open of the quote detail page;
+   filling them in is a manual job per quote. The seed endpoint is idempotent.
+3. **AFP visibility** — riding on existing `viewQuotes` / `editQuotes`
+   permissions for now. Splitting out a `viewProjectFinancials` is queued
+   for Session 4 if/when it becomes needed.
+4. **Running cost source** — deferred to Session 4. Tile renders "—" until
+   the underlying POs / supplier-invoices schema is designed.
+
+## Open questions for Session 4 (AFPs)
+1. Cumulative vs delta AFPs — likely cumulative with a generated AFP
+   storing a snapshot of `percent_complete` at issue time
+2. Sequential numbering scheme — per-project? global?
+3. Storage — PDF in SharePoint under the project's `08 - Application for
+   payment` subfolder
+4. Running cost source — purchase orders, supplier invoices, both?

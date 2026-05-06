@@ -13859,6 +13859,8 @@ async function openQuoteDetail(id) {
   _populateQuoteDetailFields(tender);
   loadQuoteComments();
   loadTenderFiles();
+  // Line items editor — Session 2 of the financial dashboard build.
+  loadQuoteLineItems(tender.id).catch(e => console.warn('line items load failed', e));
 }
 
 async function saveQuoteChanges() {
@@ -13899,6 +13901,11 @@ async function saveQuoteChanges() {
     // Sync back into tendersData list
     const idx = tendersData.findIndex(t => String(t.id) === String(currentTender.id));
     if (idx !== -1) Object.assign(tendersData[idx], body);
+
+    // Persist any pending edits to the line items table in a single bulk PUT.
+    // Fire-and-await — if the user changed nothing in line items this is a no-op.
+    try { await saveQuoteLineItems(); }
+    catch (lineErr) { console.warn('line items save failed:', lineErr); toast('Line items did not save: ' + lineErr.message, 'error'); }
 
     _quoteDetailDirty = false;
     document.getElementById('qdSaveBtn').style.display = 'none';
@@ -14103,6 +14110,30 @@ async function convertQuoteToProject(tender) {
   // Cache locally so the project list updates without a refresh
   projectsData.unshift(projectRow);
 
+  // 4. Wire up the multi-quote link table — the originating quote is primary.
+  //    Independently of whether the user later adds more quotes, this row
+  //    means the project's Contract Value tile can read from ProjectQuotes
+  //    instead of legacy Projects.source_quote_id.
+  try {
+    await api.post('/api/project-quotes', {
+      project_id: projectRow.id,
+      tender_id: tender.id,
+      is_primary: true,
+      added_by: currentManagerUser || 'system'
+    });
+  } catch (e) {
+    // Non-fatal — the project still exists, the user can attach manually later.
+    console.warn('ProjectQuotes link insert failed (non-fatal):', e);
+  }
+
+  // 5. Seed the 9 default line items if the source quote doesn't have any yet.
+  //    Idempotent — the seed endpoint returns existing rows if already populated.
+  try {
+    await api.post(`/api/quote-line-items/seed/${tender.id}`, {});
+  } catch (e) {
+    console.warn('Quote line item seed failed (non-fatal):', e);
+  }
+
   return projectRow;
 }
 
@@ -14290,6 +14321,9 @@ function _populateProjectDetailFields(project) {
   // ── Additional contacts and comments — fetched async ──
   loadProjectContacts(project.id).catch(e => console.warn('contacts load failed', e));
   loadProjectComments(project.id).catch(e => console.warn('comments load failed', e));
+
+  // ── Financial dashboard — attached quotes + line items + progress ──
+  loadProjectFinancials(project.id).catch(e => console.warn('financials load failed', e));
 }
 
 // Build the "summary" text shown above the site fields when they're hidden.
@@ -14629,6 +14663,302 @@ async function deleteProjectComment(id) {
     if (currentProjectRecord) await loadProjectComments(currentProjectRecord.id);
   } catch (err) {
     toast('Delete failed: ' + err.message, 'error');
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Project Financial Dashboard (Session 3 of the Issue 6 build)
+// Loads attached quotes, their line items, and per-line progress; renders the
+// 3 tiles (Contract / Labour / Running) plus a per-quote table.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Cache shape:
+//   _projectFinancials = {
+//     quotes:   [ { project_id, tender_id, is_primary, reference, ..., _lineItems: [...] }, ... ],
+//     progress: { [quote_line_item_id]: percent_complete }
+//   }
+let _projectFinancials = { quotes: [], progress: {} };
+
+async function loadProjectFinancials(projectId) {
+  if (!projectId) return;
+
+  // Reset UI to loading.
+  const container = document.getElementById('ptQuotesContainer');
+  if (container) container.innerHTML = '<div style="padding:14px;text-align:center;color:var(--subtle);font-size:12px">Loading…</div>';
+
+  let quotes = [];
+  let progress = [];
+  try {
+    [quotes, progress] = await Promise.all([
+      api.get(`/api/project-quotes?project_id=${projectId}`),
+      api.get(`/api/project-line-progress?project_id=${projectId}`)
+    ]);
+  } catch (e) {
+    console.warn('financials fetch failed:', e);
+    if (container) container.innerHTML = '<div style="padding:14px;color:var(--subtle);font-size:12px">Could not load financials.</div>';
+    return;
+  }
+
+  // For each attached quote, fetch (and seed if needed) its line items.
+  const withLines = await Promise.all((quotes || []).map(async q => {
+    let lines = [];
+    try {
+      lines = await api.get(`/api/quote-line-items?tender_id=${q.tender_id}`);
+      if (!Array.isArray(lines) || lines.length === 0) {
+        lines = await api.post(`/api/quote-line-items/seed/${q.tender_id}`, {});
+      }
+    } catch (e) {
+      console.warn(`line items fetch failed for tender ${q.tender_id}:`, e);
+    }
+    return Object.assign({}, q, { _lineItems: (lines || []).slice().sort((a, b) => a.line_no - b.line_no) });
+  }));
+
+  // Index progress by quote_line_item_id.
+  const progressMap = {};
+  for (const p of (progress || [])) {
+    progressMap[p.quote_line_item_id] = parseFloat(p.percent_complete) || 0;
+  }
+
+  _projectFinancials = { quotes: withLines, progress: progressMap };
+  renderProjectFinancialDashboard();
+}
+
+// Sum (qty × unit_price) across all line items of all quotes; optional filter.
+function _sumLineItems(filterFn) {
+  let total = 0;
+  for (const q of _projectFinancials.quotes) {
+    for (const li of (q._lineItems || [])) {
+      if (filterFn && !filterFn(li, q)) continue;
+      const qty   = parseFloat(li.quantity)   || 0;
+      const price = parseFloat(li.unit_price) || 0;
+      total += qty * price;
+    }
+  }
+  return total;
+}
+
+// Weighted progress: progress * line value, divided by total line value.
+// Lines with zero value contribute nothing — the user can still set their
+// % but it doesn't move the headline number, which is what we want.
+function _weightedProjectProgress() {
+  let weightedSum = 0, totalWeight = 0;
+  for (const q of _projectFinancials.quotes) {
+    for (const li of (q._lineItems || [])) {
+      const qty   = parseFloat(li.quantity)   || 0;
+      const price = parseFloat(li.unit_price) || 0;
+      const value = qty * price;
+      const pct   = _projectFinancials.progress[li.id] || 0;
+      weightedSum += value * pct;
+      totalWeight += value;
+    }
+  }
+  return totalWeight > 0 ? (weightedSum / totalWeight) : 0;
+}
+
+function renderProjectFinancialDashboard() {
+  const fmt = n => '£' + (n || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  // Tiles
+  const contract = _sumLineItems();
+  const labour   = _sumLineItems(li => !!li.is_labour);
+  const setText = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+  setText('ptTileContractValue', fmt(contract));
+  setText('ptTileLabourValue',   fmt(labour));
+  setText('ptTileRunningValue',  '—');
+
+  const meta = `${_projectFinancials.quotes.length} ${_projectFinancials.quotes.length === 1 ? 'quote' : 'quotes'} attached`;
+  setText('ptTileContractMeta', meta);
+  const progressPct = _weightedProjectProgress();
+  setText('ptTileLabourMeta', `${progressPct.toFixed(0)}% project progress (value-weighted)`);
+
+  // Per-quote tables
+  const container = document.getElementById('ptQuotesContainer');
+  if (!container) return;
+  if (!_projectFinancials.quotes.length) {
+    container.innerHTML = `
+      <div style="padding:18px;text-align:center;color:var(--subtle);font-size:13px">
+        No quotes attached. Use <strong>+ Add Quote</strong> to attach won quotes
+        and feed the financial tiles.
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = _projectFinancials.quotes.map(q => {
+    const scope = (q.quote_comments || '').trim();
+    const lines = q._lineItems || [];
+    const linesHtml = lines.map(li => {
+      const qty   = parseFloat(li.quantity)   || 0;
+      const price = parseFloat(li.unit_price) || 0;
+      const excl  = qty * price;
+      const pct   = _projectFinancials.progress[li.id] || 0;
+      const earned = excl * (pct / 100);
+      const labelTag = li.is_labour
+        ? '<span style="font-size:10px;color:var(--accent2);margin-left:6px">LABOUR</span>'
+        : '';
+      return `
+        <div class="pt-line-grid pt-line-row${li.is_labour ? ' pt-line-labour' : ''}" data-line-id="${li.id}">
+          <div class="pt-num">${li.line_no}</div>
+          <div>${escapeHtml(li.description || '')}${labelTag}</div>
+          <div class="pt-amount">${qty.toFixed(2)}</div>
+          <div class="pt-amount">£${price.toFixed(2)}</div>
+          <div class="pt-amount">£${excl.toFixed(2)}</div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div class="pt-progress-bar" style="flex:1"><div class="pt-progress-fill" style="width:${pct}%"></div></div>
+            <input type="number" class="pt-progress-input" min="0" max="100" step="1" value="${pct}" onchange="onProjectLineProgressChange(${li.id}, this.value)" title="${escapeHtml('£' + earned.toFixed(2) + ' earned')}">
+          </div>
+          <div style="text-align:right;color:var(--subtle);font-family:var(--font-mono)">${pct.toFixed(0)}%</div>
+        </div>
+      `;
+    }).join('');
+
+    const exclTotal = lines.reduce((sum, li) => sum + ((parseFloat(li.quantity) || 0) * (parseFloat(li.unit_price) || 0)), 0);
+    const labourTotal = lines.filter(li => li.is_labour).reduce((sum, li) => sum + ((parseFloat(li.quantity) || 0) * (parseFloat(li.unit_price) || 0)), 0);
+
+    return `
+      <div class="pt-quote-block" data-tender-id="${q.tender_id}">
+        <div class="pt-quote-block-head">
+          <div>
+            <span class="pt-quote-ref">${escapeHtml(q.reference || 'Q?')}</span>
+            ${q.is_primary ? '<span style="font-size:10px;color:var(--accent);margin-left:8px;letter-spacing:.5px">PRIMARY</span>' : ''}
+            <span style="font-size:12px;color:var(--muted);margin-left:8px">${escapeHtml(q.quote_project_name || '')}</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:11px;color:var(--subtle)">Excl. £${exclTotal.toFixed(2)} • Labour £${labourTotal.toFixed(2)}</span>
+            ${q.is_primary
+              ? ''
+              : `<button class="btn btn-ghost" style="font-size:11px;padding:4px 10px" onclick="detachProjectQuote(${q.tender_id})">Detach</button>`}
+          </div>
+        </div>
+        ${scope ? `<div class="pt-quote-scope">${escapeHtml(scope)}</div>` : ''}
+        <div class="pt-line-grid pt-line-header">
+          <div>#</div><div>Line</div>
+          <div style="text-align:right">Qty</div>
+          <div style="text-align:right">Unit</div>
+          <div style="text-align:right">Excl.</div>
+          <div>Progress</div>
+          <div style="text-align:right">%</div>
+        </div>
+        ${linesHtml || '<div style="padding:12px;color:var(--subtle);font-size:12px">No line items captured for this quote.</div>'}
+      </div>
+    `;
+  }).join('');
+}
+
+// Throttled saver — when the user fiddles with a progress slider quickly we
+// don't want to hammer the API on every keystroke.
+const _progressSaveTimers = {};
+async function onProjectLineProgressChange(quoteLineItemId, value) {
+  if (!currentProjectRecord) return;
+  const pct = Math.max(0, Math.min(100, parseFloat(value) || 0));
+  _projectFinancials.progress[quoteLineItemId] = pct;
+
+  // Cheap re-render of the affected row's bar + tiles only.
+  const row = document.querySelector(`#ptQuotesContainer .pt-line-row[data-line-id="${quoteLineItemId}"]`);
+  if (row) {
+    const fill = row.querySelector('.pt-progress-fill');
+    if (fill) fill.style.width = pct + '%';
+    const numCell = row.children[6];
+    if (numCell) numCell.textContent = pct.toFixed(0) + '%';
+  }
+  // Update the labour tile's secondary text (project progress).
+  const projPct = _weightedProjectProgress();
+  const meta = document.getElementById('ptTileLabourMeta');
+  if (meta) meta.textContent = `${projPct.toFixed(0)}% project progress (value-weighted)`;
+
+  // Debounce the network write — 600ms after the last change.
+  clearTimeout(_progressSaveTimers[quoteLineItemId]);
+  _progressSaveTimers[quoteLineItemId] = setTimeout(async () => {
+    try {
+      await api.put('/api/project-line-progress', {
+        project_id: currentProjectRecord.id,
+        quote_line_item_id: quoteLineItemId,
+        percent_complete: pct,
+        last_updated_by: currentManagerUser || null
+      });
+    } catch (err) {
+      toast('Could not save progress: ' + err.message, 'error');
+    }
+  }, 600);
+}
+
+async function detachProjectQuote(tenderId) {
+  if (!currentProjectRecord) return;
+  const q = _projectFinancials.quotes.find(x => x.tender_id === tenderId);
+  if (q && q.is_primary) { toast('Cannot detach the primary quote', 'error'); return; }
+  const ok = await showConfirmAsync(
+    'Detach this quote?',
+    `Quote <strong>${escapeHtml(q?.reference || '')}</strong> will be removed from this project. Its line items remain on the quote — only the link is removed. Per-line progress on this project will be orphaned.`,
+    { okLabel: 'Detach', danger: true }
+  );
+  if (!ok) return;
+  try {
+    await api.delete(`/api/project-quotes/${currentProjectRecord.id}/${tenderId}`);
+    await loadProjectFinancials(currentProjectRecord.id);
+    toast('Quote detached', 'success');
+  } catch (err) {
+    toast('Detach failed: ' + err.message, 'error');
+  }
+}
+
+// ── Attach Quote modal ──
+let _attachQuoteCandidates = [];
+
+async function openAttachQuoteModal() {
+  if (!currentProjectRecord) return;
+  document.getElementById('aqSearch').value = '';
+  document.getElementById('aqList').innerHTML = '<div style="padding:14px;text-align:center;color:var(--subtle);font-size:12px">Loading…</div>';
+  document.getElementById('attachQuoteModal').classList.add('active');
+
+  // Pull won quotes that aren't already attached.
+  let allWon = [];
+  try {
+    allWon = await api.get('/api/tenders?status=won');
+  } catch (e) {
+    document.getElementById('aqList').innerHTML = '<div style="padding:14px;color:var(--subtle);font-size:12px">Could not load quotes.</div>';
+    return;
+  }
+  const attachedIds = new Set(_projectFinancials.quotes.map(q => q.tender_id));
+  _attachQuoteCandidates = (allWon || []).filter(t => !attachedIds.has(t.id));
+  renderAttachQuoteList();
+}
+
+function renderAttachQuoteList() {
+  const term = (document.getElementById('aqSearch')?.value || '').toLowerCase().trim();
+  const filtered = _attachQuoteCandidates.filter(t => {
+    if (!term) return true;
+    const hay = `${t.reference || ''} ${t.project_name || ''} ${t.company_name || ''}`.toLowerCase();
+    return hay.includes(term);
+  });
+  const list = document.getElementById('aqList');
+  if (!list) return;
+  if (!filtered.length) {
+    list.innerHTML = '<div style="padding:14px;text-align:center;color:var(--subtle);font-size:12px">No matching won quotes available to attach.</div>';
+    return;
+  }
+  list.innerHTML = filtered.map(t => `
+    <div class="aq-row" onclick="confirmAttachQuote(${t.id})">
+      <div><span class="aq-ref">${escapeHtml(t.reference || '')}</span> <span style="color:var(--text);font-size:13px">${escapeHtml(t.project_name || '')}</span></div>
+      <div class="aq-meta">${escapeHtml(t.company_name || '')} • Value £${(parseFloat(t.value) || 0).toFixed(2)}</div>
+    </div>
+  `).join('');
+}
+function filterAttachQuoteList() { renderAttachQuoteList(); }
+function closeAttachQuoteModal() { document.getElementById('attachQuoteModal').classList.remove('active'); }
+
+async function confirmAttachQuote(tenderId) {
+  if (!currentProjectRecord) return;
+  try {
+    await api.post('/api/project-quotes', {
+      project_id: currentProjectRecord.id,
+      tender_id: tenderId,
+      is_primary: false,
+      added_by: currentManagerUser || null
+    });
+    closeAttachQuoteModal();
+    await loadProjectFinancials(currentProjectRecord.id);
+    toast('Quote attached ✓', 'success');
+  } catch (err) {
+    toast('Attach failed: ' + err.message, 'error');
   }
 }
 
@@ -16265,9 +16595,162 @@ function onBabcockMarkupChange() {
 
 function closeQuoteDetail() {
   currentTender = null;
+  _quoteLineItemsCache = [];
   document.getElementById('tab-quoteDetail').style.display = 'none';
   document.getElementById('tab-quoteDetail').classList.remove('active');
   switchQuotesTab('quotes');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Quote Line Items — the 9 fixed categories editor on quote detail.
+// Loads on demand, edits in-memory, bulk-saves on the parent quote save.
+// ─────────────────────────────────────────────────────────────────────────────
+let _quoteLineItemsCache = [];
+
+async function loadQuoteLineItems(tenderId) {
+  if (!tenderId) return;
+  let rows = [];
+  try {
+    rows = await api.get(`/api/quote-line-items?tender_id=${tenderId}`);
+  } catch (e) {
+    console.warn('Could not fetch line items:', e);
+    rows = [];
+  }
+  // Auto-seed if the quote has no line items yet — covers any quote (won or
+  // not) opened after the migration. Only seed once.
+  if (!Array.isArray(rows) || rows.length === 0) {
+    try {
+      rows = await api.post(`/api/quote-line-items/seed/${tenderId}`, {});
+    } catch (e) {
+      console.warn('Could not seed line items:', e);
+      rows = [];
+    }
+  }
+  _quoteLineItemsCache = (rows || []).slice().sort((a, b) => a.line_no - b.line_no);
+  renderQuoteLineItems();
+}
+
+function renderQuoteLineItems() {
+  const wrap = document.getElementById('qliRows');
+  if (!wrap) return;
+  if (!_quoteLineItemsCache.length) {
+    wrap.innerHTML = '<div style="padding:14px;text-align:center;color:var(--subtle);font-size:12px">No line items.</div>';
+    _refreshQuoteLineItemTotals();
+    return;
+  }
+  wrap.innerHTML = _quoteLineItemsCache.map((li, idx) => {
+    const qty   = parseFloat(li.quantity)   || 0;
+    const price = parseFloat(li.unit_price) || 0;
+    const rate  = parseFloat(li.vat_rate)   || 0;
+    const excl  = qty * price;
+    const vatOn = !!li.vat_applies && (li.vat_applies !== 0);
+    const vat   = vatOn ? (excl * (rate / 100)) : 0;
+    const total = excl + vat;
+    return `
+      <div class="qli-row qli-grid" data-idx="${idx}" data-id="${li.id}">
+        <div class="qli-num">${li.line_no}</div>
+        <div>
+          <input type="text" data-field="description" value="${escapeHtml(li.description || '')}" oninput="onQuoteLineItemEdit(${idx}, 'description', this.value)">
+        </div>
+        <div><input type="number" data-field="quantity" min="0" step="0.01" value="${qty}" oninput="onQuoteLineItemEdit(${idx}, 'quantity', this.value)"></div>
+        <div><input type="number" data-field="unit_price" min="0" step="0.01" value="${price.toFixed(2)}" oninput="onQuoteLineItemEdit(${idx}, 'unit_price', this.value)"></div>
+        <div style="text-align:center"><input type="checkbox" data-field="is_labour" ${li.is_labour ? 'checked' : ''} onchange="onQuoteLineItemEdit(${idx}, 'is_labour', this.checked ? 1 : 0)"></div>
+        <div style="text-align:center"><input type="checkbox" data-field="vat_applies" ${vatOn ? 'checked' : ''} onchange="onQuoteLineItemEdit(${idx}, 'vat_applies', this.checked ? 1 : 0)"></div>
+        <div><input type="number" data-field="vat_rate" min="0" max="100" step="0.5" value="${rate}" oninput="onQuoteLineItemEdit(${idx}, 'vat_rate', this.value)" ${vatOn ? '' : 'disabled style="opacity:.4"'}></div>
+        <div class="qli-derived" data-derived="excl">£${excl.toFixed(2)}</div>
+        <div class="qli-derived" data-derived="vat">£${vat.toFixed(2)}</div>
+        <div class="qli-derived" data-derived="total">£${total.toFixed(2)}</div>
+      </div>
+    `;
+  }).join('');
+  _refreshQuoteLineItemTotals();
+}
+
+// In-place edit handler — updates the cache and just re-derives the affected
+// row, then refreshes totals. Avoids re-rendering the whole grid (which would
+// blur the input the user is currently typing in).
+function onQuoteLineItemEdit(idx, field, value) {
+  const item = _quoteLineItemsCache[idx];
+  if (!item) return;
+
+  if (field === 'description') {
+    item.description = String(value);
+  } else if (field === 'is_labour' || field === 'vat_applies') {
+    item[field] = value ? 1 : 0;
+  } else {
+    // numeric — coerce, keeping 0 valid
+    const num = parseFloat(value);
+    item[field] = Number.isNaN(num) ? 0 : num;
+  }
+  item._dirty = true;
+  markQuoteDirty();
+
+  // Re-derive numbers in the current row only.
+  const row = document.querySelector(`#qliRows .qli-row[data-idx="${idx}"]`);
+  if (row) {
+    const qty   = parseFloat(item.quantity)   || 0;
+    const price = parseFloat(item.unit_price) || 0;
+    const rate  = parseFloat(item.vat_rate)   || 0;
+    const vatOn = !!item.vat_applies && (item.vat_applies !== 0);
+    const excl  = qty * price;
+    const vat   = vatOn ? (excl * (rate / 100)) : 0;
+    const total = excl + vat;
+    row.querySelector('[data-derived="excl"]').textContent  = '£' + excl.toFixed(2);
+    row.querySelector('[data-derived="vat"]').textContent   = '£' + vat.toFixed(2);
+    row.querySelector('[data-derived="total"]').textContent = '£' + total.toFixed(2);
+    // VAT% input: enable/disable based on the toggle.
+    if (field === 'vat_applies') {
+      const rateInp = row.querySelector('input[data-field="vat_rate"]');
+      if (rateInp) {
+        rateInp.disabled = !vatOn;
+        rateInp.style.opacity = vatOn ? '' : '.4';
+      }
+    }
+  }
+
+  _refreshQuoteLineItemTotals();
+}
+
+function _refreshQuoteLineItemTotals() {
+  let totalExcl = 0, totalVAT = 0, labourSubtotal = 0;
+  for (const li of _quoteLineItemsCache) {
+    const qty   = parseFloat(li.quantity)   || 0;
+    const price = parseFloat(li.unit_price) || 0;
+    const rate  = parseFloat(li.vat_rate)   || 0;
+    const excl  = qty * price;
+    const vatOn = !!li.vat_applies && (li.vat_applies !== 0);
+    const vat   = vatOn ? (excl * (rate / 100)) : 0;
+    totalExcl += excl;
+    totalVAT  += vat;
+    if (li.is_labour) labourSubtotal += excl;
+  }
+  const totalIncl = totalExcl + totalVAT;
+  const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+  set('qliTotalExcl', '£' + totalExcl.toFixed(2));
+  set('qliTotalVAT',  '£' + totalVAT.toFixed(2));
+  set('qliTotalIncl', '£' + totalIncl.toFixed(2));
+  set('qliLabourSubtotal', '£' + labourSubtotal.toFixed(2));
+  set('qliTotalsSummary', `Excl. £${totalExcl.toFixed(2)} • Incl. £${totalIncl.toFixed(2)}`);
+}
+
+// Bulk-save anything dirty. Called from saveQuoteChanges. No-op if nothing
+// changed (the bulk endpoint short-circuits an empty items array as a
+// validation error, so we just bail before calling).
+async function saveQuoteLineItems() {
+  const dirty = _quoteLineItemsCache.filter(li => li._dirty);
+  if (!dirty.length) return;
+  const items = dirty.map(li => ({
+    id:           li.id,
+    description:  li.description,
+    quantity:     parseFloat(li.quantity)   || 0,
+    unit_price:   parseFloat(li.unit_price) || 0,
+    vat_applies:  li.vat_applies ? 1 : 0,
+    vat_rate:     parseFloat(li.vat_rate)   || 0,
+    is_labour:    li.is_labour ? 1 : 0
+  }));
+  await api.put('/api/quote-line-items-bulk', { items });
+  // Mark clean so re-saving without further edits is a no-op.
+  for (const li of dirty) delete li._dirty;
 }
 
 // PAGE DETECTION

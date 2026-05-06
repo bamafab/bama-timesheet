@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Project Tracker</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260505j">
+<link rel="stylesheet" href="bama.css?v=20260505k">
 </head>
 <body>
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
@@ -179,6 +179,41 @@
         </div>
       </div>
 
+      <!-- Financial dashboard tiles -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-bottom:20px">
+        <div class="card pt-tile" id="ptTile-contract">
+          <div style="font-size:11px;color:var(--subtle);text-transform:uppercase;letter-spacing:.5px">Contract Value</div>
+          <div style="font-size:24px;font-weight:700;font-family:var(--font-mono);color:var(--accent);margin-top:6px" id="ptTileContractValue">—</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px" id="ptTileContractMeta">Excl. VAT, summed across attached quotes</div>
+        </div>
+        <div class="card pt-tile" id="ptTile-labour">
+          <div style="font-size:11px;color:var(--subtle);text-transform:uppercase;letter-spacing:.5px">Labour Cost</div>
+          <div style="font-size:24px;font-weight:700;font-family:var(--font-mono);color:var(--accent2);margin-top:6px" id="ptTileLabourValue">—</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px" id="ptTileLabourMeta">Sum of lines flagged Labour on each quote</div>
+        </div>
+        <div class="card pt-tile" id="ptTile-running">
+          <div style="font-size:11px;color:var(--subtle);text-transform:uppercase;letter-spacing:.5px">Running Cost</div>
+          <div style="font-size:24px;font-weight:700;font-family:var(--font-mono);color:var(--text);margin-top:6px" id="ptTileRunningValue">—</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px">Phase 4 — POs / supplier invoices</div>
+        </div>
+      </div>
+
+      <!-- Attached quotes + per-line progress -->
+      <div class="card" style="margin-bottom:20px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:8px;flex-wrap:wrap">
+          <div class="card-title" style="margin:0"><span class="icon">📑</span> Attached Quotes & Line Progress</div>
+          <button class="btn btn-ghost" style="font-size:12px;padding:6px 12px" onclick="openAttachQuoteModal()">+ Add Quote</button>
+        </div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:10px">
+          Each won quote on this project. The scope-of-works comments are
+          shown above each table; line-by-line % complete drives the project
+          progress bar.
+        </div>
+        <div id="ptQuotesContainer">
+          <div style="padding:14px;text-align:center;color:var(--subtle);font-size:12px">Loading…</div>
+        </div>
+      </div>
+
       <!-- Client Details -->
       <div class="card" style="margin-bottom:20px">
         <div class="card-title"><span class="icon">🏢</span> Client Details</div>
@@ -328,6 +363,24 @@
   .quote-header:hover { background: var(--card); }
 </style>
 
+<!-- Attach an existing won quote to this project -->
+<div class="modal-overlay" id="attachQuoteModal">
+  <div class="modal" style="max-width:520px;width:95vw">
+    <div class="modal-title">📑 Attach Quote</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">
+      Add an additional quote to this project. Only quotes already marked
+      <strong>Won</strong> are eligible. Their values feed the financial tiles.
+    </div>
+    <div style="margin-bottom:10px">
+      <input type="text" class="field-input" id="aqSearch" placeholder="Search by reference, project, or client..." oninput="filterAttachQuoteList()">
+    </div>
+    <div id="aqList" style="max-height:340px;overflow-y:auto;border:1px solid var(--border);border-radius:8px"></div>
+    <div class="modal-actions" style="margin-top:14px">
+      <button class="btn btn-ghost" onclick="closeAttachQuoteModal()">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- Add / edit a project contact -->
 <div class="modal-overlay" id="projectContactModal">
   <div class="modal" style="max-width:440px;width:95vw">
@@ -378,6 +431,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260505j"></script>
+<script src="shared.js?v=20260505k"></script>
 </body>
 </html>

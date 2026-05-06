@@ -1247,3 +1247,128 @@
     font-size: 12px;
   }
   .dn-history-item:hover { border-color: rgba(255,107,0,.3); }
+
+/* ── Quote line items editor (quotes.html) ── */
+.qli-grid {
+  display: grid;
+  /* #  category  qty  unit  labour  vat?  vat%  excl  vat£  total */
+  grid-template-columns: 28px 1.6fr 70px 90px 64px 56px 70px 100px 90px 110px;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 4px;
+  font-size: 12px;
+}
+.qli-header {
+  font-weight: 700;
+  color: var(--subtle);
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+  margin-bottom: 4px;
+}
+.qli-row {
+  border-bottom: 1px solid rgba(255,255,255,.04);
+}
+.qli-row:hover { background: rgba(255,255,255,.02); }
+.qli-row .qli-num {
+  color: var(--subtle); font-family: var(--font-mono); font-size: 11px;
+}
+.qli-row input[type="text"],
+.qli-row input[type="number"] {
+  width: 100%; padding: 6px 8px; font-size: 12px;
+  background: var(--input-bg, rgba(0,0,0,.25));
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  font-family: var(--font-mono);
+}
+.qli-row input[type="number"] { text-align: right; }
+.qli-row .qli-derived { text-align: right; font-family: var(--font-mono); font-size: 12px; }
+.qli-row input[type="checkbox"] { transform: scale(1.1); cursor: pointer; }
+.qli-totals {
+  border-top: 1px solid var(--border);
+  margin-top: 6px;
+  padding-top: 10px;
+  font-family: var(--font-mono);
+}
+
+/* ── Project tracker tiles + per-quote progress (project-tracker.html) ── */
+.pt-tile {
+  position: relative;
+  padding: 16px 18px;
+  background: linear-gradient(135deg, rgba(255,107,0,.04), rgba(0,0,0,.18));
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  min-width: 0;
+}
+.pt-tile #ptTileLabourValue { color: var(--accent2); }
+.pt-quote-block {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  background: rgba(0,0,0,.12);
+}
+.pt-quote-block-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; margin-bottom: 10px; flex-wrap: wrap;
+}
+.pt-quote-ref {
+  font-family: var(--font-mono); font-size: 14px; font-weight: 700;
+  color: var(--accent);
+}
+.pt-quote-scope {
+  font-size: 12px; color: var(--muted); margin-bottom: 10px;
+  white-space: pre-wrap;
+  background: rgba(255,255,255,.02);
+  padding: 8px 10px; border-radius: 6px;
+  border-left: 3px solid var(--accent);
+}
+.pt-line-grid {
+  display: grid;
+  grid-template-columns: 28px 1.5fr 90px 90px 90px 1.5fr 60px;
+  gap: 6px; align-items: center;
+  font-size: 12px; padding: 6px 4px;
+}
+.pt-line-grid.pt-line-header {
+  font-weight: 700; color: var(--subtle);
+  text-transform: uppercase; letter-spacing: .4px;
+  border-bottom: 1px solid var(--border);
+}
+.pt-line-row { border-bottom: 1px solid rgba(255,255,255,.04); }
+.pt-line-row .pt-num { color: var(--subtle); font-family: var(--font-mono); font-size: 11px; }
+.pt-line-row .pt-amount { font-family: var(--font-mono); text-align: right; }
+.pt-line-row.pt-line-labour {
+  background: linear-gradient(90deg, rgba(255,107,0,.04), transparent 60%);
+}
+.pt-progress-bar {
+  position: relative;
+  height: 8px; border-radius: 4px;
+  background: rgba(255,255,255,.06);
+  overflow: hidden;
+}
+.pt-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+  transition: width .2s ease;
+}
+.pt-progress-num {
+  font-family: var(--font-mono); font-size: 11px; color: var(--text);
+  text-align: right;
+}
+.pt-progress-input {
+  width: 60px; padding: 4px 6px; font-size: 12px;
+  background: rgba(0,0,0,.25);
+  border: 1px solid var(--border); color: var(--text);
+  border-radius: 6px; font-family: var(--font-mono); text-align: right;
+}
+
+/* Attach-quote modal candidate list */
+.aq-row {
+  padding: 10px 12px; cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+.aq-row:hover { background: rgba(255,107,0,.06); }
+.aq-row .aq-ref { font-family: var(--font-mono); font-weight: 700; color: var(--accent); }
+.aq-row .aq-meta { font-size: 11px; color: var(--subtle); margin-top: 2px; }

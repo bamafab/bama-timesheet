@@ -409,6 +409,8 @@ hub.html and steel-database.html have no modals.
 - `projectTrackerPinModal` — PIN entry on the project tracker page
 - `projectContactModal` — add/edit/delete an additional project contact
   (site foreman, QS, surveyor etc.); separate from client contacts
+- `attachQuoteModal` — searchable list of won quotes not already attached
+  to this project; click a row to attach via `confirmAttachQuote()`
 - `confirmModal` — generic confirm dialog (used by `showConfirmAsync` for
   Won-quote conversion confirm and the unsaved-changes prompt on
   `closeProjectDetail`)
@@ -430,11 +432,20 @@ none of this is built yet.
   migrate `writeApprovedToLabourLog()` / `writeUnproductiveTimeLog()` to
   SQL `LabourLog`. `project-tracker.html` is the new canonical UI for
   project records.
-- **Quote financial workflow** — Quote detail page (`quotes.html`) exists with
-  basic fields (project name, deadline, value, sent/chasing dates, status).
-  Next: build line items / margin tracking / customer-facing PDF inside the
-  Quote detail view. Status `won` already auto-creates a Project — see the
-  Won → Project conversion in `convertQuoteToProject()` (shared.js).
+- **Quote financial workflow** — **Phase 1 done**. The 9 fixed line item
+  categories per quote (Prelims through Delivery) are now editable on the
+  Quote detail page (`quotes.html`) — see `loadQuoteLineItems()` /
+  `renderQuoteLineItems()` / `saveQuoteLineItems()` in shared.js. The
+  Project Tracker (`project-tracker.html`) shows a financial dashboard:
+  3 tiles (Contract Value, Labour Cost, Running Cost stub) + per-quote
+  line-item tables with per-line % complete sliders. Multi-quote per
+  project supported via the `ProjectQuotes` link table — primary quote
+  is the originating won quote and cannot be detached. Per-line % drives
+  a value-weighted project progress figure shown on the Labour tile.
+  **Still to do (Phase 2+)**: AFP / invoice generation (PDF, sequential
+  numbering, SharePoint storage in `08 - Application for payment`),
+  Running Cost source (POs / supplier invoices — schema TBD), and
+  optional `viewProjectFinancials` permission split.
 - **RBAC** — real role-based permissions enforced server-side. Current
   `UserPermissions` flags become the source of truth the API checks, not just
   what the UI hides. Blocker: move PIN verification server-side first.
