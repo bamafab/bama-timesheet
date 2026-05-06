@@ -23,6 +23,14 @@ management, and a standalone UK steel section reference.
   `bama.css`. Format: `?v=YYYYMMDD` + letter (`a`/`b`/`c`/… for same-day pushes).
   Example: first push on 2026-03-26 → `?v=20260326a`; hotfix same day → `?v=20260326b`.
   Update every HTML file that references the changed asset.
+- **Never delete from `ClockEntries`.** This table is the raw audit trail of
+  every kiosk clock-in / clock-out event — it's the source of truth that
+  payroll, ProjectHours, and any future dispute resolution relies on. Other
+  derived tables (ProjectHours, payroll runs, etc.) can be wiped safely if
+  the user requests it; ClockEntries cannot, even on a "full reset". If the
+  user asks for a labour-data wipe, default to deleting ProjectHours only
+  and explicitly confirm before touching anything else. Don't suggest
+  deleting ClockEntries even as a "full reset" option.
 
 ## Architecture at a glance
 
