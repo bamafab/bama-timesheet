@@ -429,199 +429,33 @@ async function saveTimesheetData() {
 }
 
 // ═══════════════════════════════════════════
-// LOAD PROJECTS FROM PROJECT TRACKER + SQL
+// LOAD PROJECTS FROM SQL
 // ═══════════════════════════════════════════
-// During the migration from PROJECT TRACKER.xlsx → SQL Projects table, this
-// function reads from BOTH sources and merges them. SQL is treated as canonical;
-// spreadsheet entries are kept for projects not yet in SQL. Dedupe is by
-// project_number (case-insensitive).
+// Source of truth for the kiosk project picker. Reads /api/projects and
+// filters to status === 'In Progress'. The legacy PROJECT TRACKER.xlsx
+// read and the hard-coded FALLBACK_PROJECTS list have both been retired —
+// every project that should appear here must exist in the SQL Projects
+// table (added via the Project Tracker page or auto-created when a quote
+// is marked Won).
 async function loadProjects() {
-  // Kick off SQL load in parallel — it doesn't depend on Graph
-  const sqlPromise = api.get('/api/projects')
-    .then(rows => Array.isArray(rows) ? rows : [])
-    .catch(e => { console.warn('SQL projects load failed (non-fatal):', e.message); return []; });
-
   try {
-    const token = await getToken();
-
-    // Get worksheets
-    const wsRes = await fetch(
-      `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.projectTrackerItemId}/workbook/worksheets`,
-      { headers: { 'Authorization': `Bearer ${token}` } }
-    );
-    if (!wsRes.ok) throw new Error(`Worksheets fetch failed: ${wsRes.status}`);
-    const wsData = await wsRes.json();
-
-    // Find the Hours Summary or Projects sheet — it has the Status column
-    const sheet = wsData.value.find(s =>
-      s.name.toLowerCase().includes('hour') ||
-      s.name.toLowerCase() === 'projects' ||
-      (s.name.toLowerCase().includes('project') && !s.name.toLowerCase().includes('detail'))
-    ) || wsData.value[0];
-
-    // Read the sheet data
-    const rangeRes = await fetch(
-      `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.projectTrackerItemId}/workbook/worksheets/${encodeURIComponent(sheet.name)}/usedRange`,
-      { headers: { 'Authorization': `Bearer ${token}` } }
-    );
-    if (!rangeRes.ok) throw new Error(`Range fetch failed: ${rangeRes.status}`);
-    const rangeData = await rangeRes.json();
-
-    parseProjectsFromRange(rangeData.values || []);
-
-    if (state.projects.length === 0) {
-      console.warn('No In Progress projects found in sheet, trying all sheets...');
-      // Try other sheets
-      for (const s of wsData.value) {
-        if (s.name === sheet.name) continue;
-        try {
-          const r2 = await fetch(
-            `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.projectTrackerItemId}/workbook/worksheets/${encodeURIComponent(s.name)}/usedRange`,
-            { headers: { 'Authorization': `Bearer ${token}` } }
-          );
-          if (!r2.ok) continue;
-          const d2 = await r2.json();
-          parseProjectsFromRange(d2.values || []);
-          if (state.projects.length > 0) break;
-        } catch {}
-      }
-    }
-
+    const rows = await api.get('/api/projects');
+    const list = (Array.isArray(rows) ? rows : [])
+      .filter(p => p.status === 'In Progress')
+      .map(p => ({
+        id:     p.project_number,
+        name:   p.project_name,
+        status: p.status,
+        client: p.company_name || ''
+      }));
+    state.projects = list;
+    console.log(`Projects loaded from SQL: ${list.length} In Progress`);
   } catch (e) {
-    console.warn('Live project load failed, using fallback:', e.message);
-    state.projects = FALLBACK_PROJECTS.filter(p => p.status === 'In Progress');
-    if (!state.projects.length) state.projects = FALLBACK_PROJECTS;
-  }
-
-  // Merge SQL projects on top — SQL is canonical
-  try {
-    const sqlProjects = await sqlPromise;
-    if (sqlProjects.length) {
-      const seen = new Set(state.projects.map(p => String(p.id || '').toUpperCase()));
-      const sqlMapped = sqlProjects
-        .filter(p => p.status === 'In Progress')
-        .map(p => ({
-          id: p.project_number,
-          name: p.project_name,
-          status: p.status,
-          client: p.company_name || ''
-        }))
-        .filter(p => !seen.has(String(p.id).toUpperCase()));
-      if (sqlMapped.length) {
-        state.projects = [...sqlMapped, ...state.projects];
-        console.log(`Projects merged: +${sqlMapped.length} from SQL`);
-      }
-    }
-  } catch (e) {
-    console.warn('SQL merge failed (non-fatal):', e.message);
+    console.warn('SQL projects load failed:', e.message);
+    state.projects = [];
   }
 }
 
-function parseProjectsFromRange(rows) {
-  const projects = [];
-  let idCol = -1, nameCol = -1, statusCol = -1, clientCol = -1;
-
-  // Find header row
-  for (let r = 0; r < Math.min(rows.length, 10); r++) {
-    const row = rows[r].map(c => String(c).toLowerCase().trim());
-    const iIdx = row.findIndex(c => c.includes('project id') || c === 'id');
-    const nIdx = row.findIndex(c => c.includes('project name') || c === 'name');
-    const sIdx = row.findIndex(c => c === 'status');
-    const cIdx = row.findIndex(c => c.includes('client') || c.includes('customer'));
-    if (iIdx >= 0 && nIdx >= 0) {
-      idCol = iIdx; nameCol = nIdx; statusCol = sIdx; clientCol = cIdx;
-      break;
-    }
-  }
-
-  for (let r = 1; r < rows.length; r++) {
-    const id = String(rows[r][idCol >= 0 ? idCol : 0] || '').trim();
-    const name = String(rows[r][nameCol >= 0 ? nameCol : 1] || '').trim();
-    const status = statusCol >= 0 ? String(rows[r][statusCol] || '').trim() : '';
-    const client = clientCol >= 0 ? String(rows[r][clientCol] || '').trim() : '';
-
-    if (!id || !/^S\d{3,}/i.test(id)) continue;
-
-    if (status.toLowerCase() === 'in progress') {
-      projects.push({ id, name, status, client });
-    }
-  }
-
-  // If no In Progress found, fall back to all projects with IDs
-  if (projects.length === 0) {
-    for (let r = 1; r < rows.length; r++) {
-      const id = String(rows[r][idCol >= 0 ? idCol : 0] || '').trim();
-      const name = String(rows[r][nameCol >= 0 ? nameCol : 1] || '').trim();
-      const client = clientCol >= 0 ? String(rows[r][clientCol] || '').trim() : '';
-      if (id && /^S\d{3,}/i.test(id) && name) {
-        projects.push({ id, name, status: 'Unknown', client });
-      }
-    }
-  }
-
-  state.projects = projects.length > 0 ? projects : FALLBACK_PROJECTS;
-  console.log(`Projects loaded: ${state.projects.length} In Progress`);
-}
-
-// Fallback project list (from what we read from the tracker)
-const FALLBACK_PROJECTS = [
-  { id: 'S1901', name: 'Essex - Grill', status: 'Active' },
-  { id: 'S1903', name: 'Hethersett Canopies', status: 'Active' },
-  { id: 'S1904', name: 'Belfast Road', status: 'Active' },
-  { id: 'S1905', name: 'Fairview', status: 'Active' },
-  { id: 'S1906', name: 'Windpost', status: 'Active' },
-  { id: 'S1907', name: 'Essex Stairs', status: 'Active' },
-  { id: 'S1908', name: 'DS Developments', status: 'Active' },
-  { id: 'S1909', name: 'Harrow School', status: 'Active' },
-  { id: 'S1910', name: 'Palmerston Road', status: 'Active' },
-  { id: 'S1911', name: 'Ben-Stairs', status: 'Active' },
-  { id: 'S1912', name: 'Valour General Conversions', status: 'Active' },
-  { id: 'S1913', name: 'Valour General Conversions', status: 'Active' },
-  { id: 'S1914', name: 'Devonport Ph1 Temporary Works', status: 'Active' },
-  { id: 'S1915', name: 'Screwfix Goalpost', status: 'Active' },
-  { id: 'S1916', name: 'Eyebrook Gardens', status: 'Active' },
-  { id: 'S1917', name: 'Sally Tomlinson', status: 'Active' },
-  { id: 'S1918', name: '7 Cross Lane', status: 'Active' },
-  { id: 'S1919', name: 'BBC', status: 'Active' },
-  { id: 'S1920', name: 'Pembroke College', status: 'Active' },
-  { id: 'S1921', name: 'Narayan T', status: 'Active' },
-  { id: 'S1922', name: "St Paul's Girls School", status: 'Active' },
-  { id: 'S1923', name: 'Stoneguard', status: 'Active' },
-  { id: 'S1924', name: 'QLCH / Mary Wing', status: 'Active' },
-  { id: 'S1925', name: 'Thomas School', status: 'Active' },
-  { id: 'S1926', name: 'Needhams Contracts', status: 'Active' },
-  { id: 'S1927', name: 'West Barn / Michael McDermid', status: 'Active' },
-  { id: 'S1928', name: 'Manor High Sports Hall', status: 'Active' },
-  { id: 'S1929', name: 'FPF Kentish Town', status: 'Active' },
-  { id: 'S1930', name: 'Mill Barn', status: 'Active' },
-  { id: 'S1931', name: 'Junction 17 / Trolleys', status: 'Active' },
-  { id: 'S1932', name: 'FPF Slippers Place London', status: 'Active' },
-  { id: 'S1933', name: 'Hertford Balustrades', status: 'Active' },
-  { id: 'S1940', name: 'Virtue Staircase', status: 'Active' },
-  { id: 'S1941', name: 'Gosling Racing', status: 'Active' },
-  { id: 'S1944', name: 'Drakes Wall / Devonport', status: 'Active' },
-  { id: 'S1945', name: 'Pentaco Shoreline Plates', status: 'Active' },
-  { id: 'S1946', name: 'Saddlebank', status: 'Active' },
-  { id: 'S1947', name: 'Chris Ord', status: 'Active' },
-  { id: 'S1948', name: 'Mike Thomas', status: 'Active' },
-  { id: 'S1949', name: 'Duct Alterations', status: 'Active' },
-  { id: 'S1952', name: 'Gorton Market', status: 'Active' },
-  { id: 'S1953', name: 'Bama Office Extension', status: 'Active' },
-  { id: 'S1954', name: 'Earls Burton', status: 'Active' },
-  { id: 'S1956', name: 'Christ College', status: 'Active' },
-  { id: 'S1957', name: 'Multifab', status: 'Active' },
-  { id: 'S1958', name: 'Corby Single Spine Staircase', status: 'Active' },
-  { id: 'S1959', name: 'Orton Southgate', status: 'Active' },
-  { id: 'S1961', name: 'Lifting Beam', status: 'Active' },
-  { id: 'S1962', name: 'Alconbury / Orton Winstow', status: 'Active' },
-  { id: 'S1963', name: 'Georgian House', status: 'Active' },
-  { id: 'S1964', name: '9 Jones Hill Steelwork', status: 'Active' },
-  { id: 'S1965', name: 'Brookhurst Farm', status: 'Active' },
-  { id: 'S1966', name: 'Essex Projects Balustrades', status: 'Active' },
-  { id: 'S1968', name: '12 Ash Grove', status: 'Active' },
-  { id: 'S1969', name: 'Linford Wood Place Conversion - Steelwork', status: 'Active' },
-  { id: 'S1977', name: '5 Basin', status: 'Active' }
-];
 
 // ═══════════════════════════════════════════
 // WRITE APPROVED HOURS TO LABOUR LOG
@@ -1071,7 +905,7 @@ function openEmployeePanel(name) {
   // Render booked/approved/declined holidays (excludes sick + unpaid)
   renderMyHolidays(name);
 
-  // Reload projects live from PROJECT TRACKER in background
+  // Reload projects live from SQL in background
   loadProjects().then(() => {
     // Refresh the project dropdown if already on screen
     const sel = document.getElementById('projectSelect');
@@ -17457,7 +17291,7 @@ async function init() {
     ? Promise.race([
         loadProjects(),
         new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 8000))
-      ]).catch(e => { console.warn('Project load skipped, using fallback:', e.message); state.projects = FALLBACK_PROJECTS; })
+      ]).catch(e => { console.warn('Project load skipped, using fallback:', e.message); state.projects = []; })
     : Promise.resolve();
 
   // User access needed on manager and office pages (still from SharePoint for now)
