@@ -14365,12 +14365,51 @@ async function openProjectDetail(id) {
   _populateProjectDetailFields(project);
 }
 
+// Build the SharePoint-style folder name from the currently-loaded project +
+// whatever the user has typed in the project-name input. Format matches the
+// folder structure created on new-project submit:
+//   "<NUMBER> - <CLIENT> - <PROJECT NAME>"
+function _buildProjectFolderName() {
+  const p = currentProjectRecord || {};
+  const number  = (p.project_number || '').trim();
+  const company = (p.company_name   || '').trim();
+  const nameEl  = document.getElementById('pd-projectName');
+  const name    = (nameEl ? nameEl.value : (p.project_name || '')).trim();
+  return [number, company, name].filter(Boolean).join(' - ');
+}
+
+function updateProjectFolderNamePreview() {
+  const el = document.getElementById('projectDetailFolderName');
+  if (!el) return;
+  const name = _buildProjectFolderName();
+  el.textContent = name || '—';
+}
+
+async function copyProjectFolderName() {
+  const name = _buildProjectFolderName();
+  if (!name) { toast('Nothing to copy', 'warning'); return; }
+  try {
+    await navigator.clipboard.writeText(name);
+    toast('Folder name copied ✓', 'success');
+  } catch (e) {
+    // Fallback for older browsers / non-secure contexts
+    const ta = document.createElement('textarea');
+    ta.value = name;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); toast('Folder name copied ✓', 'success'); }
+    catch (_) { toast('Copy failed — copy manually: ' + name, 'error'); }
+    document.body.removeChild(ta);
+  }
+}
+
 function _populateProjectDetailFields(project) {
   const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v ?? ''; };
   const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v ?? '—'; };
 
   setText('projectDetailNumber', project.project_number);
   setVal('pd-projectName', project.project_name || '');
+  updateProjectFolderNamePreview();
   setVal('pd-status', project.status || 'In Progress');
   setVal('pd-deadline', project.deadline_date ? String(project.deadline_date).split('T')[0] : '');
   setVal('pd-startDate', project.start_date ? String(project.start_date).split('T')[0] : '');

@@ -134,9 +134,13 @@
       <div class="card" style="margin-bottom:20px">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:16px">
           <div style="flex:1;min-width:200px">
-            <div style="font-size:22px;font-weight:700;font-family:var(--font-display);letter-spacing:1px;color:var(--accent);margin-bottom:8px" id="projectDetailNumber">—</div>
+            <div style="font-size:22px;font-weight:700;font-family:var(--font-display);letter-spacing:1px;color:var(--accent);margin-bottom:4px" id="projectDetailNumber">—</div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+              <div id="projectDetailFolderName" style="font-size:12px;color:var(--muted);font-family:var(--font-mono);word-break:break-word">—</div>
+              <button class="btn btn-ghost" onclick="copyProjectFolderName()" title="Copy folder name to clipboard" style="font-size:11px;padding:2px 8px">📋 Copy</button>
+            </div>
             <div class="field-label" style="margin-bottom:4px">PROJECT NAME</div>
-            <input type="text" class="field-input" id="pd-projectName" placeholder="Project name" oninput="markProjectDirty()">
+            <input type="text" class="field-input" id="pd-projectName" placeholder="Project name" oninput="markProjectDirty(); updateProjectFolderNamePreview()">
           </div>
           <div style="display:flex;flex-direction:column;gap:10px;min-width:180px">
             <div>
@@ -613,6 +617,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260506g"></script>
+<script src="shared.js?v=20260506h"></script>
 </body>
 </html>
