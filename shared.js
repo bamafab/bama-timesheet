@@ -5899,6 +5899,13 @@ function renderPayroll() {
   const totalDT    = results.reduce((s, r) => s + (r.payroll?.doublePay || 0), 0);
   const totalHol   = results.reduce((s, r) => s + ((r.payroll?.holidayPay || 0) + (r.payroll?.bankHolidayPay || 0)), 0);
 
+  // Format hours: show up to 2dp (so .25/.75 quarters render correctly) but
+  // always at least 1dp for visual consistency (12 → "12.0", 9.75 → "9.75").
+  const fmtHrs = (n) => {
+    const s = (Math.round(n * 100) / 100).toString();
+    return s.includes('.') ? s : s + '.0';
+  };
+
   // Render a single day cell. Combines worked + booked-holiday + bank-holiday
   // into one display. BH and worked never co-occur (clock-in is blocked on
   // bank holidays). Holiday and worked CAN co-occur on a half-day.
@@ -5909,13 +5916,13 @@ function renderPayroll() {
     const totalHol = hol + bh;
 
     if (totalHol > 0 && worked === 0) {
-      return `<td class="mono" style="text-align:center;color:var(--accent)">${totalHol.toFixed(1)}<sub style="font-size:9px;color:var(--muted);margin-left:1px">H</sub></td>`;
+      return `<td class="mono" style="text-align:center;color:var(--accent)">${fmtHrs(totalHol)}<sub style="font-size:9px;color:var(--muted);margin-left:1px">H</sub></td>`;
     }
     if (worked > 0 && totalHol > 0) {
       // Half-day holiday + worked half-day
-      return `<td class="mono" style="text-align:center">${worked.toFixed(1)}<br><span style="font-size:10px;color:var(--accent)">+${totalHol.toFixed(1)}H</span></td>`;
+      return `<td class="mono" style="text-align:center">${fmtHrs(worked)}<br><span style="font-size:10px;color:var(--accent)">+${fmtHrs(totalHol)}H</span></td>`;
     }
-    return `<td class="mono" style="text-align:center;color:${worked > 0 ? 'var(--text)' : 'var(--subtle)'}">${worked > 0 ? worked.toFixed(1) : '—'}</td>`;
+    return `<td class="mono" style="text-align:center;color:${worked > 0 ? 'var(--text)' : 'var(--subtle)'}">${worked > 0 ? fmtHrs(worked) : '—'}</td>`;
   };
 
   container.innerHTML = `
@@ -5946,7 +5953,7 @@ function renderPayroll() {
                 <br><span style="font-size:11px;color:var(--muted);font-family:var(--font-mono)">£${(r.emp.rate||0).toFixed(2)}/hr</span>
               </td>
               ${days.map(d => renderDayCell(r, d.date)).join('')}
-              <td class="mono" style="text-align:center;font-weight:700">${totalAllHrs.toFixed(1)}</td>
+              <td class="mono" style="text-align:center;font-weight:700">${fmtHrs(totalAllHrs)}</td>
               <td class="mono">${r.payroll?.basicHours||0}h<br><span style="font-size:11px;color:var(--muted)">£${(r.payroll?.basicPay||0).toFixed(2)}</span></td>
               <td class="mono" style="color:var(--amber)">${r.payroll?.overtimeHours > 0 ? r.payroll.overtimeHours+'h' : '—'}<br><span style="font-size:11px;color:var(--muted)">${r.payroll?.overtimeHours > 0 ? '£'+r.payroll.overtimePay.toFixed(2) : ''}</span></td>
               <td class="mono" style="color:var(--accent)">${r.payroll?.doubleHours > 0 ? r.payroll.doubleHours+'h' : '—'}<br><span style="font-size:11px;color:var(--muted)">${r.payroll?.doubleHours > 0 ? '£'+r.payroll.doublePay.toFixed(2) : ''}</span></td>
@@ -5966,12 +5973,12 @@ function renderPayroll() {
                 const bh = r.payroll?.dayBankHoliday?.[d.date] || 0;
                 return s + w + h + bh;
               }, 0);
-              return `<td class="mono" style="text-align:center;font-weight:600">${dayTotal > 0 ? dayTotal.toFixed(1) : '—'}</td>`;
+              return `<td class="mono" style="text-align:center;font-weight:600">${dayTotal > 0 ? fmtHrs(dayTotal) : '—'}</td>`;
             }).join('')}
-            <td class="mono" style="text-align:center;font-weight:700">${results.reduce((s,r)=>{
+            <td class="mono" style="text-align:center;font-weight:700">${fmtHrs(results.reduce((s,r)=>{
               const holHrs = (r.payroll?.holidayHours || 0) + (r.payroll?.bankHolidayHours || 0);
               return s + r.totalHrs + holHrs;
-            },0).toFixed(1)}</td>
+            },0))}</td>
             <td class="mono" style="font-weight:600">£${totalBasic.toFixed(2)}</td>
             <td class="mono" style="font-weight:600;color:var(--amber)">£${totalOT.toFixed(2)}</td>
             <td class="mono" style="font-weight:600;color:var(--accent)">£${totalDT.toFixed(2)}</td>
