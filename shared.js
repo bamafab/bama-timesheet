@@ -14075,7 +14075,7 @@ function renderProjectTrackerList() {
     const deadline = p.deadline_date ? fmtDateStr(String(p.deadline_date).split('T')[0]) : '—';
     const quoteRef = p.source_quote_reference || '—';
     return `
-      <div class="quote-row" onclick="openProjectDetail(${p.id})">
+      <div class="quote-row" onclick="openProjectTrackerDetail(${p.id})">
         <div class="quote-col-ref">${escapeHtml(p.project_number)}</div>
         <div class="quote-col-project">
           <div style="font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(p.project_name)}</div>
@@ -14088,8 +14088,16 @@ function renderProjectTrackerList() {
   }).join('');
 }
 
-// ── Project detail page ──
-async function openProjectDetail(id) {
+// ── Project detail page (Project Tracker / office) ──
+//
+// NOTE: Renamed from openProjectDetail to openProjectTrackerDetail to avoid
+// colliding with the kiosk's openProjectDetail in shared.js (~line 7678).
+// Both files load shared.js, so duplicate function declarations with the
+// same name caused the second definition to silently win — clicks on the
+// kiosk Workshop Projects tiles fired the office function, which couldn't
+// find the project in projectsData (empty on the kiosk page) and returned
+// a 'Project not found' toast at best, or did nothing visible at worst.
+async function openProjectTrackerDetail(id) {
   let project = projectsData.find(p => String(p.id) === String(id));
   if (!project) { toast('Project not found', 'error'); return; }
 
@@ -15347,7 +15355,7 @@ async function submitCreateProject() {
     }
 
     // Jump straight to the new project's detail view.
-    setTimeout(() => openProjectDetail(project.id), 100);
+    setTimeout(() => openProjectTrackerDetail(project.id), 100);
   } catch (err) {
     console.error('Failed to create project:', err);
     toast('Failed to create project: ' + (err.message || 'unknown error'), 'error');
