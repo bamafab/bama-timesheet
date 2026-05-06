@@ -395,6 +395,82 @@
 </div>
 
 <!-- ═══════════════════════════════════════
+     UNSUBMITTED ENTRIES MODAL
+     Shown on clock-out attempt when state.currentEntries
+     has rows that haven't been Submit-Day'd yet.
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="unsubmittedEntriesModal" style="align-items:center;justify-content:center">
+  <div class="modal" style="max-width:480px;width:95vw">
+    <div style="text-align:center">
+      <div style="font-size:52px;margin-bottom:12px">📝</div>
+      <div class="modal-title" style="font-size:22px;margin-bottom:10px">Unsubmitted Hours</div>
+      <div style="color:var(--muted);font-size:14px;line-height:1.6;margin-bottom:18px">
+        You have hours added to this shift that haven't been submitted yet.
+        They will not be saved until you submit them.
+      </div>
+    </div>
+
+    <div id="unsubmittedEntriesList" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:18px;max-height:200px;overflow-y:auto;font-size:13px"></div>
+
+    <button class="btn btn-primary btn-full" onclick="confirmSubmitAndClockOut()" style="padding:14px;font-size:15px;margin-bottom:8px">
+      Submit &amp; Clock Out
+    </button>
+    <button class="btn btn-ghost btn-full" onclick="confirmDiscardAndClockOut()" style="padding:12px;font-size:13px;color:var(--red);margin-bottom:8px">
+      Discard &amp; Clock Out
+    </button>
+    <button class="btn btn-ghost btn-full" onclick="closeUnsubmittedEntriesModal()" style="padding:12px;font-size:13px">
+      Cancel
+    </button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     REMAINING HOURS MODAL
+     Shown on clock-out when total clocked time exceeds
+     allocated project + WGD time. Forces the worker to
+     either allocate the gap to a project, or accept it
+     as Unproductive Time.
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="remainingHoursModal" style="align-items:center;justify-content:center">
+  <div class="modal" style="max-width:500px;width:95vw">
+    <div style="text-align:center">
+      <div style="font-size:52px;margin-bottom:12px">⏱️</div>
+      <div class="modal-title" style="font-size:22px;margin-bottom:6px">Allocate Your Hours</div>
+      <div style="color:var(--muted);font-size:13px;margin-bottom:18px">
+        Some of your shift time isn't allocated to a project yet.
+      </div>
+    </div>
+
+    <!-- Summary tiles -->
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px">
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center">
+        <div style="font-size:11px;color:var(--subtle);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Worked</div>
+        <div id="rhWorked" style="font-size:18px;font-weight:700;color:var(--text)">—</div>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center">
+        <div style="font-size:11px;color:var(--subtle);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Allocated</div>
+        <div id="rhAllocated" style="font-size:18px;font-weight:700;color:var(--green)">—</div>
+      </div>
+      <div style="background:var(--surface);border:2px solid var(--amber);border-radius:8px;padding:12px;text-align:center">
+        <div style="font-size:11px;color:var(--subtle);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Remaining</div>
+        <div id="rhRemaining" style="font-size:18px;font-weight:700;color:var(--amber)">—</div>
+      </div>
+    </div>
+
+    <!-- Per-project breakdown -->
+    <div style="font-size:11px;color:var(--subtle);text-transform:uppercase;letter-spacing:.5px;margin:14px 0 6px">Today's allocation</div>
+    <div id="rhBreakdown" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:18px;max-height:160px;overflow-y:auto;font-size:13px"></div>
+
+    <button class="btn btn-primary btn-full" onclick="rhAllocateNow()" style="padding:14px;font-size:15px;margin-bottom:8px">
+      ← Allocate Remaining Hours
+    </button>
+    <button class="btn btn-ghost btn-full" id="rhAcceptUnproductiveBtn" onclick="rhAcceptUnproductive()" style="padding:12px;font-size:13px;color:var(--amber)">
+      Mark Remaining as Unproductive &amp; Clock Out
+    </button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
      CONFIRM MODAL
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="confirmModal">
@@ -461,6 +537,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260506r"></script>
+<script src="shared.js?v=20260506s"></script>
 </body>
 </html>

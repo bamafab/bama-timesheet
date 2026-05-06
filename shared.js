@@ -581,6 +581,80 @@ function activeShiftDate(employeeName) {
   return todayStr();
 }
 
+// ── Pending project-hours entry persistence ──
+//
+// state.currentEntries holds rows the worker has clicked "Add" on but not yet
+// pressed "Submit Day" for. Without persistence these vanish when the kiosk
+// navigates back to the home screen, the page reloads, or another worker
+// opens their panel — silently losing logged time.
+//
+// We mirror them into sessionStorage keyed by employee + shift date. When
+// openEmployeePanel rehydrates the panel it pulls them back. submitDay()
+// clears them on success. If the shift date has rolled over (worker clocked
+// in yesterday, never submitted, never clocked out — comes back today) the
+// stale key is dropped automatically rather than haunting today's flow.
+//
+// sessionStorage (not localStorage) is intentional: the kiosk PC is shared,
+// staff close the browser at end of day, and we don't want pending entries
+// surviving into the next morning by accident.
+function _pendingEntriesKey(employeeName, shiftDate) {
+  return `bama:pendingEntries:${employeeName}:${shiftDate}`;
+}
+
+function loadPendingEntries(employeeName) {
+  if (!employeeName) return [];
+  const shiftDate = activeShiftDate(employeeName);
+  try {
+    // Drop any stale keys for this employee from earlier shift dates.
+    for (let i = sessionStorage.length - 1; i >= 0; i--) {
+      const k = sessionStorage.key(i);
+      if (k && k.startsWith(`bama:pendingEntries:${employeeName}:`) && k !== _pendingEntriesKey(employeeName, shiftDate)) {
+        sessionStorage.removeItem(k);
+      }
+    }
+    const raw = sessionStorage.getItem(_pendingEntriesKey(employeeName, shiftDate));
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch (e) {
+    console.warn('loadPendingEntries failed:', e.message);
+    return [];
+  }
+}
+
+function savePendingEntries(employeeName) {
+  if (!employeeName) return;
+  const shiftDate = activeShiftDate(employeeName);
+  const key = _pendingEntriesKey(employeeName, shiftDate);
+  try {
+    if (state.currentEntries && state.currentEntries.length) {
+      sessionStorage.setItem(key, JSON.stringify(state.currentEntries));
+    } else {
+      sessionStorage.removeItem(key);
+    }
+  } catch (e) {
+    console.warn('savePendingEntries failed:', e.message);
+  }
+}
+
+function clearPendingEntries(employeeName) {
+  state.currentEntries = [];
+  if (!employeeName) return;
+  // Wipe every pending key for this employee — covers the rare case of
+  // multiple stale shift dates lingering. submitDay() shouldn't have to know
+  // which exact key is current.
+  try {
+    for (let i = sessionStorage.length - 1; i >= 0; i--) {
+      const k = sessionStorage.key(i);
+      if (k && k.startsWith(`bama:pendingEntries:${employeeName}:`)) {
+        sessionStorage.removeItem(k);
+      }
+    }
+  } catch (e) {
+    console.warn('clearPendingEntries failed:', e.message);
+  }
+}
+
 // ═══════════════════════════════════════════
 // EMPLOYEE HOME
 // ═══════════════════════════════════════════
@@ -779,7 +853,10 @@ function closeEmpPinModal() {
 
 function openEmployeePanel(name) {
   state.currentEmployee = name;
-  state.currentEntries = [];
+  // Rehydrate any pending entries saved during a previous panel session
+  // (e.g. worker tapped Add, navigated back, came back to log more). These
+  // live in sessionStorage keyed by employee+shift date.
+  state.currentEntries = loadPendingEntries(name);
 
   document.getElementById('empPanelName').textContent = name;
 
@@ -932,6 +1009,9 @@ function addEntry() {
     projectName: proj ? proj.name : projId,
     hours
   });
+  // Persist so the entry survives navigation, page reload, or another worker
+  // opening their panel between Add and Submit.
+  savePendingEntries(state.currentEmployee);
 
   document.getElementById('hoursInput').value = '';
   document.getElementById('projectSelect').value = '';
@@ -941,6 +1021,7 @@ function addEntry() {
 
 function removeEntry(id) {
   state.currentEntries = state.currentEntries.filter(e => String(e.id) !== String(id));
+  savePendingEntries(state.currentEmployee);
   renderTodayEntries();
 }
 
@@ -1065,35 +1146,75 @@ async function doClock(direction) {
     const now = new Date();
     const clockOut = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
 
-    // Check if any project hours logged for this shift (excluding S000 and WGD auto entries)
-    const allEntries = state.timesheetData.entries || [];
-    const currentEntries = state.currentEntries || [];
-    const todayProjectHrs = [
-      ...allEntries.filter(e => e.employeeName === emp && e.date === shiftDate && e.projectId !== 'S000' && e.projectId !== 'WGD'),
-      ...currentEntries.filter(e => e.projectId !== 'S000' && e.projectId !== 'WGD')
-    ];
-    const todayWGDHrs = [
-      ...allEntries.filter(e => e.employeeName === emp && e.date === shiftDate && e.projectId === 'WGD'),
-      ...currentEntries.filter(e => e.projectId === 'WGD')
-    ];
+    const ctx = { emp, today: shiftDate, clockOut, breakMins, clocking };
 
-    if (todayProjectHrs.length === 0 && todayWGDHrs.length === 0) {
-      _pendingClockOutData = { emp, today: shiftDate, clockOut, breakMins, clocking };
-      const modal = document.getElementById('noProjectModal');
-      if (modal) {
-        modal.classList.add('active');
-      } else {
-        toast('Error: noProjectModal not found in page', 'error');
-      }
+    // Gate 1: unsubmitted pending entries. If the worker hit Add but never
+    // hit Submit Day, those rows live only in JS/sessionStorage — they are
+    // NOT in SQL yet. Letting them clock out now would silently drop the
+    // hours and the server-side S000 recompute would treat the whole shift
+    // as unproductive. Force a decision.
+    if (Array.isArray(state.currentEntries) && state.currentEntries.length > 0) {
+      _pendingClockOutData = ctx;
+      openUnsubmittedEntriesModal();
       return;
     }
 
-    await finishClockOut({ emp, today: shiftDate, clockOut, breakMins, clocking });
+    await proceedWithClockOut(ctx);
   }
   } catch (err) {
     console.error('doClock error:', err);
     toast('Clock error: ' + err.message, 'error');
   }
+}
+
+// Continues the clock-out flow after Gate 1 (unsubmitted entries) has passed.
+// Runs Gate 2 (no project hours at all → noProjectModal) and Gate 3
+// (remaining unallocated hours → remainingHoursModal). Falls through to
+// finishClockOut() if nothing trips.
+async function proceedWithClockOut(ctx) {
+  const { emp, today: shiftDate, clocking } = ctx;
+
+  const allEntries = state.timesheetData.entries || [];
+  // After Gate 1 there should be no pending entries, but include them
+  // defensively in case proceedWithClockOut is called from somewhere new.
+  const pendingEntries = state.currentEntries || [];
+  const todayProjectHrs = [
+    ...allEntries.filter(e => e.employeeName === emp && e.date === shiftDate && e.projectId !== 'S000' && e.projectId !== 'WGD'),
+    ...pendingEntries.filter(e => e.projectId !== 'S000' && e.projectId !== 'WGD')
+  ];
+  const todayWGDHrs = [
+    ...allEntries.filter(e => e.employeeName === emp && e.date === shiftDate && e.projectId === 'WGD'),
+    ...pendingEntries.filter(e => e.projectId === 'WGD')
+  ];
+
+  // Gate 2: no project hours at all (existing flow).
+  if (todayProjectHrs.length === 0 && todayWGDHrs.length === 0) {
+    _pendingClockOutData = ctx;
+    const modal = document.getElementById('noProjectModal');
+    if (modal) {
+      modal.classList.add('active');
+    } else {
+      toast('Error: noProjectModal not found in page', 'error');
+    }
+    return;
+  }
+
+  // Gate 3: remaining unallocated hours. Worker has logged some project /
+  // WGD time, but not enough to cover their full clocked shift. Show them
+  // the breakdown and force a choice — allocate or accept as unproductive.
+  const clockedHrs = calcHours(clocking.clockIn, ctx.clockOut, ctx.breakMins, shiftDate) || 0;
+  const allocatedHrs = [...todayProjectHrs, ...todayWGDHrs].reduce((s, e) => s + (parseFloat(e.hours) || 0), 0);
+  const remainingHrs = parseFloat((clockedHrs - allocatedHrs).toFixed(2));
+
+  // 0.1h tolerance — sub-6-minute gaps are clock-rounding artefacts, not
+  // unaccounted work, and forcing a modal for them would be infuriating.
+  if (remainingHrs > 0.1) {
+    _pendingClockOutData = ctx;
+    openRemainingHoursModal({ clockedHrs, allocatedHrs, remainingHrs, todayProjectHrs, todayWGDHrs });
+    return;
+  }
+
+  await finishClockOut(ctx);
 }
 
 // Finalises a clock-out. NOTE: `today` here is the shift's START date
@@ -1157,15 +1278,27 @@ async function finishClockOut({ emp, today, clockOut, breakMins, clocking }) {
 }
 
 async function submitDay() {
+  await _doSubmitDay({ thenGoHome: true });
+}
+
+// Submits state.currentEntries to /api/project-hours and recomputes S000.
+// Extracted from submitDay() so the unsubmitted-entries-on-clock-out flow
+// can reuse the submit logic without triggering the auto-goHome (which
+// would yank the worker out of the panel mid clock-out).
+async function _doSubmitDay({ thenGoHome }) {
   if (!state.currentEntries.length) {
-    toast('No new entries to submit', 'error'); return;
+    toast('No new entries to submit', 'error');
+    throw new Error('no entries');
   }
   // For overnight shifts, file entries against the shift's start date, not
   // the wall-clock date at the moment of submit. activeShiftDate falls back
   // to todayStr() if the worker isn't currently clocked in.
   const today = activeShiftDate(state.currentEmployee);
   const empId = empIdByName(state.currentEmployee);
-  if (!empId) { toast('Employee not found in system', 'error'); return; }
+  if (!empId) {
+    toast('Employee not found in system', 'error');
+    throw new Error('no employee id');
+  }
 
   // Disable button immediately to prevent double-submission (creates duplicate rows in DB)
   const submitBtn = document.getElementById('submitDayBtn');
@@ -1192,6 +1325,7 @@ async function submitDay() {
     }
 
     state.currentEntries = [];
+    clearPendingEntries(state.currentEmployee);
 
     // After posting entries, recompute today's S000 server-side. This covers
     // the "log entries first, clock out, THEN submit" sequence: the clock-out
@@ -1203,12 +1337,13 @@ async function submitDay() {
 
     renderTodayEntries();
     toast(`Entries submitted ✓`, 'success');
-    setTimeout(goHome, 1500);
+    if (thenGoHome) setTimeout(goHome, 1500);
   } catch (err) {
     console.error('Submit failed:', err);
     toast('Submit failed — ' + err.message, 'error');
     // Re-enable button on error so user can fix and retry
     if (submitBtn) { submitBtn.disabled = false; submitBtn.style.opacity = '1'; submitBtn.style.cursor = 'pointer'; }
+    throw err;
   } finally { setLoading(false); }
 }
 
@@ -2680,6 +2815,11 @@ function showScreen(id) {
 function goHome() {
   clearInterval(workingTimer);
   state.currentEmployee = null;
+  // NOTE: do NOT wipe state.currentEntries here. Pending entries are
+  // persisted in sessionStorage by savePendingEntries() and will be
+  // rehydrated when the worker reopens their panel. submitDay() and the
+  // unsubmitted-entries clock-out modal are the only sanctioned places
+  // that should clear them.
   state.currentEntries = [];
   if (CURRENT_PAGE === 'manager') {
     currentManagerUser = null;
@@ -3108,6 +3248,178 @@ async function confirmNoProjectClockOut() {
   closeNoProjectModal();
   // Proceed with clock-out (use the snapshot — closeNoProjectModal nulled the global)
   await finishClockOut(data);
+}
+
+// ── Unsubmitted entries modal (clock-out Gate 1) ──
+//
+// Opens when the worker hits Clock Out while state.currentEntries still has
+// rows that haven't been Submit Day'd. Three exits:
+//   • Submit & Clock Out  — POST entries, then continue clock-out flow
+//   • Discard & Clock Out — drop pending entries, continue clock-out flow
+//   • Cancel              — back to the panel, stay clocked in
+function openUnsubmittedEntriesModal() {
+  const modal = document.getElementById('unsubmittedEntriesModal');
+  const list = document.getElementById('unsubmittedEntriesList');
+  if (!modal || !list) {
+    toast('Error: unsubmittedEntriesModal not found in page', 'error');
+    return;
+  }
+
+  // Render the pending rows so the worker can see exactly what they'd submit
+  // or discard.
+  const pending = state.currentEntries || [];
+  if (!pending.length) {
+    list.innerHTML = '<div style="color:var(--muted);padding:8px">No pending entries.</div>';
+  } else {
+    const totalH = pending.reduce((s, e) => s + (parseFloat(e.hours) || 0), 0);
+    list.innerHTML = pending.map(e => `
+      <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
+        <span><span style="font-family:var(--font-mono);color:var(--accent2)">${escapeHtml(e.projectId)}</span> <span style="color:var(--muted)">${escapeHtml(e.projectName || '')}</span></span>
+        <span style="font-weight:600">${e.hours}h</span>
+      </div>
+    `).join('') + `
+      <div style="display:flex;justify-content:space-between;padding:8px 0 0;font-weight:700">
+        <span>Total pending</span><span>${totalH.toFixed(2)}h</span>
+      </div>`;
+  }
+
+  modal.classList.add('active');
+}
+
+function closeUnsubmittedEntriesModal() {
+  const modal = document.getElementById('unsubmittedEntriesModal');
+  if (modal) modal.classList.remove('active');
+  _pendingClockOutData = null;
+}
+
+async function confirmSubmitAndClockOut() {
+  const ctx = _pendingClockOutData;
+  if (!ctx) return;
+  // Close the modal first so the user sees forward motion. submitDay() shows
+  // its own toast on success/failure.
+  const modal = document.getElementById('unsubmittedEntriesModal');
+  if (modal) modal.classList.remove('active');
+
+  try {
+    await _doSubmitDay({ thenGoHome: false });
+  } catch (e) {
+    console.error('submit-and-clockout: submitDay failed', e);
+    toast('Submit failed — clock-out cancelled. Please try again.', 'error');
+    _pendingClockOutData = null;
+    return;
+  }
+
+  // submitDay completed; entries are in SQL and S000 has been recomputed.
+  // Continue through the remaining clock-out gates.
+  await proceedWithClockOut(ctx);
+  _pendingClockOutData = null;
+}
+
+async function confirmDiscardAndClockOut() {
+  const ctx = _pendingClockOutData;
+  if (!ctx) return;
+  if (!confirm('Discard all pending entries? They will not be saved and the time will be logged as Unproductive.')) {
+    return;
+  }
+  clearPendingEntries(state.currentEmployee);
+  renderTodayEntries();
+  const modal = document.getElementById('unsubmittedEntriesModal');
+  if (modal) modal.classList.remove('active');
+  await proceedWithClockOut(ctx);
+  _pendingClockOutData = null;
+}
+
+// ── Remaining hours modal (clock-out Gate 3) ──
+//
+// Opens after Gate 1+2 have passed when the worker has logged some, but not
+// all, of their clocked time to projects/WGD. Two exits:
+//   • Allocate Remaining   — close modal, return to panel with hours prefilled
+//   • Mark as Unproductive — proceed to finishClockOut; server-side S000
+//                            recompute then logs the gap as S000.
+//
+// No "skip" path — force allocate or accept (per user's choice).
+function openRemainingHoursModal({ clockedHrs, allocatedHrs, remainingHrs, todayProjectHrs, todayWGDHrs }) {
+  const modal = document.getElementById('remainingHoursModal');
+  if (!modal) {
+    toast('Error: remainingHoursModal not found in page', 'error');
+    return;
+  }
+
+  // Numbers
+  const fmt = n => (Math.round(n * 100) / 100).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1') + 'h';
+  const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+  set('rhWorked', fmt(clockedHrs));
+  set('rhAllocated', fmt(allocatedHrs));
+  set('rhRemaining', fmt(remainingHrs));
+
+  // Per-project breakdown (group P-* and WGD by project_number, sum hours).
+  const byProject = {};
+  [...todayProjectHrs, ...todayWGDHrs].forEach(e => {
+    const k = e.projectId;
+    if (!byProject[k]) byProject[k] = { name: e.projectName || k, hours: 0 };
+    byProject[k].hours += parseFloat(e.hours) || 0;
+  });
+  const rows = Object.entries(byProject)
+    .sort((a, b) => b[1].hours - a[1].hours)
+    .map(([id, v]) => `
+      <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border)">
+        <span><span style="font-family:var(--font-mono);color:var(--accent2)">${escapeHtml(id)}</span> <span style="color:var(--muted)">${escapeHtml(v.name)}</span></span>
+        <span style="font-weight:600">${fmt(v.hours)}</span>
+      </div>`);
+  const breakdownEl = document.getElementById('rhBreakdown');
+  if (breakdownEl) {
+    breakdownEl.innerHTML = rows.length
+      ? rows.join('')
+      : '<div style="color:var(--muted);padding:8px">No allocations yet.</div>';
+  }
+
+  // Update the "accept" button label with the actual hour amount
+  const btn = document.getElementById('rhAcceptUnproductiveBtn');
+  if (btn) btn.textContent = `Mark ${fmt(remainingHrs)} as Unproductive & Clock Out`;
+
+  // Stash for the prefill in rhAllocateNow
+  _rhRemainingPrefill = remainingHrs;
+
+  modal.classList.add('active');
+}
+
+function closeRemainingHoursModal() {
+  const modal = document.getElementById('remainingHoursModal');
+  if (modal) modal.classList.remove('active');
+}
+
+let _rhRemainingPrefill = 0;
+
+function rhAllocateNow() {
+  // Just close — don't drop _pendingClockOutData yet; the worker may come
+  // back and click Clock Out again, and we want a clean re-entry through
+  // the gates rather than resuming mid-flow.
+  closeRemainingHoursModal();
+  _pendingClockOutData = null;
+
+  // Prefill the hours input so the worker just has to pick a project.
+  const hoursInput = document.getElementById('hoursInput');
+  if (hoursInput) {
+    hoursInput.value = (_rhRemainingPrefill > 0)
+      ? (Math.round(_rhRemainingPrefill * 100) / 100).toString()
+      : '';
+  }
+  // Focus the project picker so they can act immediately.
+  const projSel = document.getElementById('projectSelect');
+  if (projSel && typeof projSel.focus === 'function') {
+    setTimeout(() => projSel.focus(), 100);
+  }
+}
+
+async function rhAcceptUnproductive() {
+  const ctx = _pendingClockOutData;
+  if (!ctx) return;
+  closeRemainingHoursModal();
+  // The server-side S000 recompute inside finishClockOut() reads SQL and
+  // computes (clocked - sum of project_hours) as unproductive. No client-side
+  // action needed beyond proceeding.
+  await finishClockOut(ctx);
+  _pendingClockOutData = null;
 }
 
 // ═══════════════════════════════════════════
