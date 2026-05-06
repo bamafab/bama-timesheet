@@ -516,6 +516,35 @@
   </div>
 </div>
 
+<!-- ═══════════════════════════════════════
+     LINK EXISTING SHAREPOINT FOLDER MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="linkFolderModal">
+  <div class="modal" style="max-width:580px;width:95vw">
+    <div class="modal-title">🔗 Link to Existing SharePoint Folder</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:14px;line-height:1.5">
+      Search the BAMA SharePoint drive and pick the folder this project lives in.
+      Useful for legacy projects (S-prefix) where the folder already exists in the tree.
+    </div>
+
+    <div style="display:flex;gap:8px;margin-bottom:14px">
+      <input type="text" class="field-input" id="linkFolderQuery"
+        placeholder="Folder name or project number"
+        onkeydown="onLinkFolderQueryKey(event)" style="flex:1">
+      <button class="btn btn-primary" id="linkFolderSearchBtn"
+        onclick="searchLinkFolderCandidates()" style="flex:none">Search</button>
+    </div>
+
+    <div id="linkFolderResults"
+      style="max-height:340px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;background:var(--surface)">
+    </div>
+
+    <div class="modal-actions" style="margin-top:16px">
+      <button class="btn btn-ghost" onclick="closeLinkFolderModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <!-- Attach an existing won quote to this project -->
 <div class="modal-overlay" id="attachQuoteModal">
   <div class="modal" style="max-width:520px;width:95vw">
@@ -584,6 +613,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260506d"></script>
+<script src="shared.js?v=20260506e"></script>
 </body>
 </html>

@@ -14392,11 +14392,24 @@ function _populateProjectDetailFields(project) {
       ${project.contact_phone ? `<div style="font-size:13px"><span style="color:var(--subtle);font-weight:600">Phone:</span> ${escapeHtml(project.contact_phone)}</div>` : ''}`;
   }
 
-  // SharePoint folder link
+  // SharePoint folder link.
+  // Three possible states:
+  //   1. Folder already linked + user can edit  → "Open in SharePoint" + small re-link
+  //   2. Folder already linked + view-only      → "Open in SharePoint" only
+  //   3. No folder linked + user can edit       → "Link to existing folder" button
+  //   4. No folder linked + view-only           → "No folder linked" subtle text
   const folderLink = document.getElementById('projectDetailFolderLink');
   if (folderLink) {
+    const perms = getUserPermissions(currentManagerUser);
+    const canEdit = !!(perms && perms.editProjects);
+
     if (project.sharepoint_folder_id) {
-      folderLink.innerHTML = `<button class="btn btn-ghost" onclick="openProjectFolder()" style="font-size:12px">📁 Open in SharePoint ↗</button>`;
+      folderLink.innerHTML = `
+        <button class="btn btn-ghost" onclick="openProjectFolder()" style="font-size:12px">📁 Open in SharePoint ↗</button>
+        ${canEdit ? `<button class="btn btn-ghost" onclick="openLinkFolderModal()" title="Re-link to a different folder" style="font-size:12px;padding:4px 8px;margin-left:4px">✎</button>` : ''}
+      `;
+    } else if (canEdit) {
+      folderLink.innerHTML = `<button class="btn btn-ghost" onclick="openLinkFolderModal()" style="font-size:12px">🔗 Link to existing folder</button>`;
     } else {
       folderLink.innerHTML = '<span style="font-size:12px;color:var(--subtle)">No folder linked</span>';
     }
@@ -14478,6 +14491,153 @@ async function openProjectFolder() {
     if (data.webUrl) window.open(data.webUrl, '_blank');
   } catch (e) {
     toast('Could not open folder: ' + e.message, 'error');
+  }
+}
+
+// ═══════════════════════════════════════════
+// LINK EXISTING SHAREPOINT FOLDER TO PROJECT
+// ═══════════════════════════════════════════
+// For S-prefix legacy projects (which never had folders auto-created),
+// or any project where sharepoint_folder_id ended up NULL. Searches the
+// BAMA drive for folders whose name matches the user's query, lists
+// matches with their parent path so the user can disambiguate, and
+// PUTs the chosen item ID onto the project.
+
+function openLinkFolderModal() {
+  if (!currentProjectRecord) return;
+  const perms = getUserPermissions(currentManagerUser);
+  if (!perms || !perms.editProjects) {
+    toast("You don't have permission to edit this project", 'error');
+    return;
+  }
+
+  // Pre-fill the search box with the project number — this is what the
+  // legacy folder name almost always starts with (e.g. "S1953 - Bama - …").
+  const queryInput = document.getElementById('linkFolderQuery');
+  if (queryInput) queryInput.value = currentProjectRecord.project_number || '';
+
+  // Reset results panel
+  const results = document.getElementById('linkFolderResults');
+  if (results) results.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:8px">Click "Search" or press Enter to find folders matching the query above.</div>';
+
+  document.getElementById('linkFolderModal').classList.add('active');
+
+  // Auto-run the initial search since we know the project number is the
+  // best starting query — saves the user a click.
+  setTimeout(() => searchLinkFolderCandidates(), 50);
+}
+
+function closeLinkFolderModal() {
+  document.getElementById('linkFolderModal').classList.remove('active');
+}
+
+function onLinkFolderQueryKey(e) {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    searchLinkFolderCandidates();
+  }
+}
+
+async function searchLinkFolderCandidates() {
+  const queryInput = document.getElementById('linkFolderQuery');
+  const results    = document.getElementById('linkFolderResults');
+  const searchBtn  = document.getElementById('linkFolderSearchBtn');
+  if (!queryInput || !results) return;
+
+  const q = queryInput.value.trim();
+  if (q.length < 2) {
+    results.innerHTML = '<div style="font-size:12px;color:var(--red);padding:8px">Enter at least 2 characters to search.</div>';
+    return;
+  }
+
+  if (searchBtn) { searchBtn.disabled = true; searchBtn.textContent = 'Searching…'; }
+  results.innerHTML = '<div style="font-size:12px;color:var(--muted);padding:8px">Searching SharePoint…</div>';
+
+  try {
+    const token = await getToken();
+    // Graph search across the entire drive. Single quotes inside the query
+    // would break the OData syntax — strip them just in case.
+    const safeQ = q.replace(/'/g, '');
+    const res = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/root/search(q='${encodeURIComponent(safeQ)}')?$top=25`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    if (!res.ok) throw new Error(`Search failed: ${res.status}`);
+    const data = await res.json();
+
+    // Filter to folders only (search returns files too).
+    const folders = (data.value || []).filter(it => it.folder);
+
+    if (!folders.length) {
+      results.innerHTML = `
+        <div style="font-size:12px;color:var(--muted);padding:8px;line-height:1.5">
+          No folders found containing <strong>${escapeHtml(q)}</strong>.<br>
+          Try a different part of the folder name (client name, etc.).
+        </div>`;
+      return;
+    }
+
+    // Render each folder with its parent path so the user can tell two
+    // similarly-named folders apart. parentReference.path looks like
+    // "/drives/{id}/root:/Projects/2024 Archive" — strip the prefix for display.
+    results.innerHTML = folders.map(f => {
+      const parentPath = (f.parentReference && f.parentReference.path) || '';
+      const cleanPath  = parentPath.replace(/^\/drives\/[^/]+\/root:?/, '') || '/';
+      const childCount = (f.folder && f.folder.childCount != null) ? f.folder.childCount : '?';
+      return `
+        <div class="ac-result-row" style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px;border-bottom:1px solid var(--border)">
+          <div style="min-width:0;flex:1">
+            <div style="font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📁 ${escapeHtml(f.name)}</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(cleanPath)}">${escapeHtml(cleanPath)} · ${childCount} item${childCount === 1 ? '' : 's'}</div>
+          </div>
+          <button class="btn btn-primary" style="font-size:12px;padding:6px 12px;flex:none"
+            onclick="confirmLinkFolder('${f.id}', ${JSON.stringify(f.name).replace(/"/g, '&quot;')})">
+            Link this
+          </button>
+        </div>`;
+    }).join('');
+  } catch (e) {
+    console.error('Folder search failed:', e);
+    results.innerHTML = `<div style="font-size:12px;color:var(--red);padding:8px">Search failed: ${escapeHtml(e.message)}</div>`;
+  } finally {
+    if (searchBtn) { searchBtn.disabled = false; searchBtn.textContent = 'Search'; }
+  }
+}
+
+async function confirmLinkFolder(folderId, folderName) {
+  if (!currentProjectRecord || !folderId) return;
+
+  // If a folder is already linked, confirm the swap so re-linking isn't a
+  // silent surprise.
+  if (currentProjectRecord.sharepoint_folder_id &&
+      currentProjectRecord.sharepoint_folder_id !== folderId) {
+    if (!confirm(`Replace the currently linked folder with "${folderName}"?\n\nThe project's existing folder won't be modified — only the link is updated.`)) {
+      return;
+    }
+  }
+
+  try {
+    const updated = await api.put(`/api/projects/${currentProjectRecord.id}`, {
+      sharepoint_folder_id: folderId
+    });
+
+    // Patch local state and refresh the detail view header.
+    if (updated && updated.id) {
+      currentProjectRecord = updated;
+      // Also patch projectsData so the list view doesn't show stale data.
+      const idx = projectsData.findIndex(p => p.id === updated.id);
+      if (idx !== -1) projectsData[idx] = updated;
+    } else {
+      currentProjectRecord.sharepoint_folder_id = folderId;
+    }
+
+    closeLinkFolderModal();
+    // Re-render the detail page so the folder-link area picks up the new state.
+    renderProjectDetail(currentProjectRecord);
+    toast(`Folder linked: ${folderName}`, 'success');
+  } catch (e) {
+    console.error('Link folder failed:', e);
+    toast('Failed to link folder: ' + (e.message || 'unknown error'), 'error');
   }
 }
 
