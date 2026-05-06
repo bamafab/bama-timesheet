@@ -15136,20 +15136,52 @@ async function openCreateProjectModal() {
 
   document.getElementById('npClientSuggestions').style.display = 'none';
 
-  // Generate next project number
+  // Generate next project number (default — user can override for legacy/existing projects)
+  const npRefEl = document.getElementById('npProjectNumber');
   try {
     const ref = await getNextProjectNumber();
-    document.getElementById('npProjectNumber').textContent = ref;
+    npRefEl.value = ref;
   } catch (e) {
     console.error('Project number generation failed:', e);
-    document.getElementById('npProjectNumber').textContent = '—';
+    npRefEl.value = '';
   }
+  onNpProjectNumberChange(); // seed the hint text
 
   document.getElementById('newProjectModal').classList.add('active');
 }
 
 function closeCreateProjectModal() {
   document.getElementById('newProjectModal').classList.remove('active');
+}
+
+// Auto-uppercase + drive the hint that tells the user whether SharePoint
+// folders will be created. S-prefix = legacy/existing project (folders
+// already live somewhere in the SharePoint tree, so we skip creation).
+// Anything else (default C-prefix or a custom value) = brand new project,
+// folder structure gets created automatically.
+function onNpProjectNumberChange() {
+  const el = document.getElementById('npProjectNumber');
+  if (!el) return;
+
+  // Uppercase as the user types, preserving cursor position
+  const upper = el.value.toUpperCase();
+  if (upper !== el.value) {
+    const pos = el.selectionStart;
+    el.value = upper;
+    try { el.setSelectionRange(pos, pos); } catch (_) {}
+  }
+
+  const hint = document.getElementById('npProjectNumberHint');
+  if (!hint) return;
+  const val = el.value.trim();
+
+  if (!val) {
+    hint.innerHTML = '<span style="color:var(--red)">A project number is required.</span>';
+  } else if (/^S/.test(val)) {
+    hint.innerHTML = '<span style="color:var(--accent2)"><strong>Existing project</strong> — SharePoint folders will <strong>not</strong> be created. The folder is assumed to already exist in the legacy tree.</span>';
+  } else {
+    hint.innerHTML = '<span style="color:var(--muted)">New project — the standard SharePoint folder structure will be created automatically.</span>';
+  }
 }
 
 function onNpClientSearch(value) {
@@ -15242,29 +15274,36 @@ async function submitCreateProject() {
       clientRecord = clientsData.find(c => String(c.id) === String(clientId)) || null;
     }
 
-    // Step 2: Create SharePoint folder structure (non-fatal if Graph fails —
-    // the project still gets created in SQL and folders can be added later).
+    // Step 2: Create SharePoint folder structure — but ONLY for new projects.
+    // S-prefix means the project already lives in the legacy folder tree, so
+    // we skip creation and leave sharepoint_folder_id NULL. The project detail
+    // page handles a missing folder ID gracefully (the "Open SharePoint" link
+    // just won't appear).
     let projectFolderId = null;
-    try {
-      const token = await getToken();
-      const projectsRoot = await getOrCreateFolderByPath(PROJECTS_FOLDER_PATH, token);
-      const clientPart  = sanitiseFolderSegment(companyName);
-      const projectPart = sanitiseFolderSegment(projectName);
-      const folderName  = [projectNumber, clientPart, projectPart].filter(Boolean).join(' - ');
-      const projectFolder = await createFolderInDrive(projectsRoot.id, folderName);
-      projectFolderId = projectFolder.id;
+    const isExistingLegacyProject = /^S/i.test(projectNumber);
 
-      // Standard 9 subfolders
-      for (const sub of PROJECT_SUBFOLDERS) {
-        try {
-          await createFolderInDrive(projectFolder.id, sub);
-        } catch (e) {
-          console.warn(`Subfolder "${sub}" creation failed:`, e);
+    if (!isExistingLegacyProject) {
+      try {
+        const token = await getToken();
+        const projectsRoot = await getOrCreateFolderByPath(PROJECTS_FOLDER_PATH, token);
+        const clientPart  = sanitiseFolderSegment(companyName);
+        const projectPart = sanitiseFolderSegment(projectName);
+        const folderName  = [projectNumber, clientPart, projectPart].filter(Boolean).join(' - ');
+        const projectFolder = await createFolderInDrive(projectsRoot.id, folderName);
+        projectFolderId = projectFolder.id;
+
+        // Standard 9 subfolders
+        for (const sub of PROJECT_SUBFOLDERS) {
+          try {
+            await createFolderInDrive(projectFolder.id, sub);
+          } catch (e) {
+            console.warn(`Subfolder "${sub}" creation failed:`, e);
+          }
         }
+      } catch (e) {
+        console.warn('SharePoint folder creation failed (non-fatal):', e);
+        toast('Project created, but SharePoint folders could not be created — check your access', 'warning');
       }
-    } catch (e) {
-      console.warn('SharePoint folder creation failed (non-fatal):', e);
-      toast('Project created, but SharePoint folders could not be created — check your access', 'warning');
     }
 
     // Step 3: Build site address payload (PUT it after the create to set
@@ -15345,7 +15384,11 @@ async function submitCreateProject() {
 
     closeCreateProjectModal();
     renderProjectTrackerList();
-    toast(`Project ${projectNumber} created ✓`, 'success');
+    if (isExistingLegacyProject) {
+      toast(`Existing project ${projectNumber} added ✓`, 'success');
+    } else {
+      toast(`Project ${projectNumber} created ✓`, 'success');
+    }
 
     // Jump straight to the new project's detail view.
     setTimeout(() => openProjectDetail(project.id), 100);
