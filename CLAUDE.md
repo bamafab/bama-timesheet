@@ -31,6 +31,12 @@ management, and a standalone UK steel section reference.
   user asks for a labour-data wipe, default to deleting ProjectHours only
   and explicitly confirm before touching anything else. Don't suggest
   deleting ClockEntries even as a "full reset" option.
+- **Paste SQL migrations inline in chat — never just reference the path.**
+  When a change requires a `.sql` script under `api/sql/`, the user runs it
+  manually against `bama-erp` (Azure portal Query Editor). They expect the
+  full script in the chat reply ready to copy-paste, not "see
+  api/sql/foo.sql". Commit the file to the repo as well, but the chat must
+  contain the runnable SQL. Same applies to any ad-hoc one-off queries.
 
 ## Architecture at a glance
 
