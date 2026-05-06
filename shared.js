@@ -14287,51 +14287,7 @@ async function openProjectFolder() {
     );
     if (!res.ok) throw new Error(`Lookup failed: ${res.status}`);
     const data = await res.json();
-    if (!data.webUrl) throw new Error('No folder URL returned');
-
-    // Open in OneDrive-synced File Explorer window via the odopen:// protocol
-    // handler that the OneDrive client registers on Windows. The handler is
-    // only present on machines with OneDrive installed AND this library
-    // already synced — otherwise the URI does nothing and we surface a
-    // helpful error.
-    //
-    // siteUri = the SharePoint site root, webUri = the specific folder.
-    // Derive siteUri from webUrl by trimming everything from "/Shared Documents"
-    // (or the localised library segment) onwards. Falls back to origin if the
-    // pattern doesn't match — odopen tolerates a too-broad siteUri.
-    const webUrl = data.webUrl;
-    let siteUri = webUrl;
-    const libMatch = webUrl.match(/^(https:\/\/[^/]+\/sites\/[^/]+)\//i);
-    if (libMatch) siteUri = libMatch[1];
-
-    const odopen = `odopen://launch/?siteUri=${encodeURIComponent(siteUri)}&webUri=${encodeURIComponent(webUrl)}`;
-
-    // Detect whether the protocol handler actually fired. When Windows
-    // hands the URL off to OneDrive, the browser tab loses focus
-    // (document.hidden flips to true / the visibilitychange event fires).
-    // If neither happens within the timeout, the handler isn't registered
-    // — show an error so staff aren't left wondering.
-    let handled = false;
-    const onHide = () => { if (document.hidden) handled = true; };
-    document.addEventListener('visibilitychange', onHide);
-    const onBlur = () => { handled = true; };
-    window.addEventListener('blur', onBlur);
-
-    // Trigger the handler. We use an iframe rather than location.assign so
-    // the browser doesn't navigate away on failure.
-    const iframe = document.createElement('iframe');
-    iframe.style.display = 'none';
-    iframe.src = odopen;
-    document.body.appendChild(iframe);
-
-    setTimeout(() => {
-      document.removeEventListener('visibilitychange', onHide);
-      window.removeEventListener('blur', onBlur);
-      if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
-      if (!handled) {
-        toast('Could not open File Explorer — make sure OneDrive is running and this library is synced on this PC.', 'error');
-      }
-    }, 1500);
+    if (data.webUrl) window.open(data.webUrl, '_blank');
   } catch (e) {
     toast('Could not open folder: ' + e.message, 'error');
   }
