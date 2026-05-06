@@ -313,11 +313,11 @@
     <div class="add-clock-grid">
       <div>
         <div class="field-label">CLOCK IN</div>
-        <select class="field-input" id="addClockIn"></select>
+        <input type="time" class="field-input" id="addClockIn" step="60">
       </div>
       <div>
         <div class="field-label">CLOCK OUT</div>
-        <select class="field-input" id="addClockOut"></select>
+        <input type="time" class="field-input" id="addClockOut" step="60">
       </div>
       <div>
         <div class="field-label">BREAK</div>
@@ -435,16 +435,15 @@
     <div class="add-clock-grid" style="margin-bottom:12px">
       <div>
         <div class="field-label">CORRECTED CLOCK IN</div>
-        <select class="field-input" id="amendNewIn">
-          <option value="">No change</option>
-        </select>
+        <input type="time" class="field-input" id="amendNewIn" step="60" placeholder="No change">
       </div>
       <div>
         <div class="field-label">CORRECTED CLOCK OUT</div>
-        <select class="field-input" id="amendNewOut">
-          <option value="">No change</option>
-        </select>
+        <input type="time" class="field-input" id="amendNewOut" step="60" placeholder="No change">
       </div>
+    </div>
+    <div style="font-size:11px;color:var(--muted);margin:-6px 0 12px 0">
+      Leave blank to keep current time
     </div>
 
     <!-- Reason -->
@@ -462,6 +461,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260506k"></script>
+<script src="shared.js?v=20260506l"></script>
 </body>
 </html>

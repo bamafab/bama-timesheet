@@ -1641,6 +1641,28 @@ function calcHours(clockIn, clockOut, breakMins, dateStr) {
   return diff > 0 ? diff / 60 : 0;
 }
 
+// Build the {clock_in, clock_out} ISO datetime strings for a shift, given:
+//   - shiftDate:  the shift's START date as 'YYYY-MM-DD'
+//   - inTime:     'HH:MM' clock-in time (required)
+//   - outTime:    'HH:MM' clock-out time (or '' / null for still-open shift)
+//
+// If outTime is earlier than or equal to inTime (overnight shift, e.g.
+// 17:00 -> 02:00), the clock_out date is bumped forward by one day so the
+// stored datetime is strictly greater than clock_in. Returns {inISO, outISO}
+// where outISO is null for still-open shifts.
+function buildShiftDatetimes(shiftDate, inTime, outTime) {
+  const inISO  = new Date(`${shiftDate}T${inTime}:00`);
+  let outISO = null;
+  if (outTime) {
+    outISO = new Date(`${shiftDate}T${outTime}:00`);
+    if (outISO <= inISO) outISO.setDate(outISO.getDate() + 1);
+  }
+  return {
+    inISO:  inISO.toISOString(),
+    outISO: outISO ? outISO.toISOString() : null
+  };
+}
+
 function renderClockLog(clockings) {
   const area = document.getElementById('clockLogArea');
   if (!area) return;
@@ -1689,26 +1711,16 @@ function renderClockLog(clockings) {
 
       // Inline edit mode
       if (c._editing) {
-        const times = [];
-        for (let h = 4; h <= 23; h++) {
-          times.push(`${String(h).padStart(2,'0')}:00`);
-          times.push(`${String(h).padStart(2,'0')}:15`);
-          times.push(`${String(h).padStart(2,'0')}:30`);
-          times.push(`${String(h).padStart(2,'0')}:45`);
-        }
-        // Include the actual clock times if they're not standard 15-min slots
+        // Native <input type="time"> gives minute granularity, full 24h
+        // range (handles overnight shifts), and a system-native picker on
+        // mobile / desktop. Empty value on clock-out means "still in".
         const actualIn = c.clockIn || '';
         const actualOut = c.clockOut || '';
-        if (actualIn && !times.includes(actualIn)) times.push(actualIn);
-        if (actualOut && !times.includes(actualOut)) times.push(actualOut);
-        times.sort();
-        const inOpts = times.map(t => `<option value="${t}" ${t === actualIn ? 'selected' : ''}>${t}</option>`).join('');
-        const outEmpty = !c.clockOut ? '<option value="">— still in —</option>' : '';
-        const outOpts = outEmpty + times.map(t => `<option value="${t}" ${t === actualOut ? 'selected' : ''}>${t}</option>`).join('');
+        const stillInPlaceholder = !c.clockOut ? 'placeholder="still in"' : '';
         return {
           html: `<td style="text-align:center;padding:6px 4px;vertical-align:top;min-width:110px">
-            <select id="edit-in-${c.id}" class="field-input" style="font-size:10px;padding:3px 4px;margin-bottom:3px;width:100%" onchange="markClockDirty('${c.id}')">${inOpts}</select>
-            <select id="edit-out-${c.id}" class="field-input" style="font-size:10px;padding:3px 4px;margin-bottom:3px;width:100%" onchange="markClockDirty('${c.id}')">${outOpts}</select>
+            <input type="time" step="60" id="edit-in-${c.id}" value="${actualIn}" class="field-input" style="font-size:10px;padding:3px 4px;margin-bottom:3px;width:100%" onchange="markClockDirty('${c.id}')">
+            <input type="time" step="60" id="edit-out-${c.id}" value="${actualOut}" ${stillInPlaceholder} class="field-input" style="font-size:10px;padding:3px 4px;margin-bottom:3px;width:100%" onchange="markClockDirty('${c.id}')">
             <div style="font-size:9px;color:var(--muted);margin-bottom:3px" id="edit-total-${c.id}">${hrs > 0 ? hrs.toFixed(2)+'h' : ''}</div>
             <input type="hidden" id="edit-break-${c.id}" value="${c.breakMins||30}">
             <div style="display:flex;gap:3px;justify-content:center">
@@ -1898,13 +1910,13 @@ async function saveClockEdit(id) {
   const newBreakMins = parseInt(document.getElementById(`edit-break-${id}`).value) || 0;
 
   try {
-    // Use browser Date to convert local time → UTC ISO string (handles BST correctly)
-    const clockInDT = new Date(`${clocking.date}T${newClockIn}:00`).toISOString();
-    const clockOutDT = newClockOut ? new Date(`${clocking.date}T${newClockOut}:00`).toISOString() : null;
+    // Build clock_in / clock_out ISO datetimes; helper bumps clock_out to
+    // next-day for overnight shifts (e.g. 17:00 -> 02:00).
+    const { inISO, outISO } = buildShiftDatetimes(clocking.date, newClockIn, newClockOut);
 
     await api.put(`/api/clockings/${id}`, {
-      clock_in: clockInDT,
-      clock_out: clockOutDT,
+      clock_in: inISO,
+      clock_out: outISO,
       break_mins: newBreakMins,
       amended_by: currentManagerUser || 'manager'
     });
@@ -1950,15 +1962,14 @@ async function rejectClocking(id) {
   const c = state.timesheetData.clockings.find(c => String(c.id) === String(id));
   if (!c) return;
   try {
-    // Revert to original times if available
+    // Revert to original times if available.
     const revertIn = c.originalClockIn || c.clockIn;
     const revertOut = c.originalClockOut || c.clockOut;
-    const clockInDT = `${c.date}T${revertIn}:00`;
-    const clockOutDT = revertOut ? `${c.date}T${revertOut}:00` : null;
+    const { inISO, outISO } = buildShiftDatetimes(c.date, revertIn, revertOut);
 
     const updateBody = { amended_by: currentManagerUser || 'manager' };
-    if (c.originalClockIn) updateBody.clock_in = clockInDT;
-    if (c.originalClockOut) updateBody.clock_out = clockOutDT;
+    if (c.originalClockIn) updateBody.clock_in = inISO;
+    if (c.originalClockOut) updateBody.clock_out = outISO;
 
     await api.put(`/api/clockings/${id}`, updateBody);
 
@@ -2114,11 +2125,9 @@ function openMgrAddClocking() {
     .filter(e => e.active !== false)
     .map(e => `<option value="${e.name}">${e.name}</option>`).join('');
 
-  // Fill time selects
-  ['mgrClockIn','mgrClockOut'].forEach(id => {
-    const el = document.getElementById(id);
-    el.innerHTML = CONFIG.timeSlots.map(s => `<option value="${s.val}">${s.label}</option>`).join('');
-  });
+  // Clear time inputs (markup is <input type="time">). Empty = unfilled.
+  document.getElementById('mgrClockIn').value = '';
+  document.getElementById('mgrClockOut').value = '';
   document.getElementById('mgrClockDate').value = todayStr();
   document.getElementById('mgrAddClockingModal').classList.add('active');
 }
@@ -2148,10 +2157,11 @@ async function saveMgrClocking() {
   if (!empId) { toast('Employee not found in system', 'error'); return; }
 
   try {
+    const { inISO, outISO } = buildShiftDatetimes(date, clockIn, clockOut);
     const result = await api.post('/api/clockings', {
       employee_id: empId,
-      clock_in: new Date(`${date}T${clockIn}:00`).toISOString(),
-      clock_out: new Date(`${date}T${clockOut}:00`).toISOString(),
+      clock_in: inISO,
+      clock_out: outISO,
       break_mins: breakMins,
       amended_by: currentManagerUser || 'manager'
     });
@@ -2371,10 +2381,9 @@ function openAddClocking(date) {
   _addClockingDate = date;
   document.getElementById('addClockingDate').textContent = new Date(date + 'T12:00:00').toLocaleDateString('en-GB', { weekday:'long', day:'numeric', month:'long' });
 
-  ['addClockIn','addClockOut'].forEach(id => {
-    const el = document.getElementById(id);
-    el.innerHTML = CONFIG.timeSlots.map(s => `<option value="${s.val}">${s.label}</option>`).join('');
-  });
+  // Clear time inputs (markup is <input type="time">).
+  document.getElementById('addClockIn').value = '';
+  document.getElementById('addClockOut').value = '';
 
   document.getElementById('addClockingModal').classList.add('active');
 }
@@ -2403,11 +2412,11 @@ async function submitMissingClocking() {
   if (!empId) { toast('Employee not found', 'error'); return; }
 
   try {
+    const { inISO, outISO } = buildShiftDatetimes(_addClockingDate, clockIn, clockOut);
     const result = await api.post('/api/clockings', {
       employee_id: empId,
-      // Use ISO with timezone so the server interprets local BST correctly (was off by 1 hour before)
-      clock_in: new Date(`${_addClockingDate}T${clockIn}:00`).toISOString(),
-      clock_out: new Date(`${_addClockingDate}T${clockOut}:00`).toISOString(),
+      clock_in: inISO,
+      clock_out: outISO,
       break_mins: breakMins,
       amended_by: state.currentEmployee
     });
@@ -2443,13 +2452,12 @@ function openAmendmentRequest(clockingId) {
   document.getElementById('amendCurrentIn').textContent = clocking.clockIn || '—';
   document.getElementById('amendCurrentOut').textContent = clocking.clockOut || '—';
 
-  // Fill time dropdowns
-  ['amendNewIn','amendNewOut'].forEach(id => {
-    const sel = document.getElementById(id);
-    if (!sel) return;
-    sel.innerHTML = '<option value="">No change</option>' +
-      CONFIG.timeSlots.map(s => `<option value="${s.val}">${s.label}</option>`).join('');
-  });
+  // Clear time inputs (markup is <input type="time">). Empty = "no change",
+  // same semantic as the old "No change" select option.
+  const amendIn = document.getElementById('amendNewIn');
+  const amendOut = document.getElementById('amendNewOut');
+  if (amendIn) amendIn.value = '';
+  if (amendOut) amendOut.value = '';
 
   document.getElementById('amendReason').value = '';
   modal.classList.add('active');
@@ -2517,10 +2525,18 @@ async function approveAmendment(id) {
   if (!clocking) return;
 
   try {
-    // Apply the time change to the clocking
+    // Compute the *resulting* shift times after the amendment is applied
+    // (requested values where set, else fall back to the current clocking).
+    // Use the helper so an overnight shift gets clock_out bumped to next-day.
+    const finalIn  = amendment.requestedIn  || clocking.clockIn;
+    const finalOut = amendment.requestedOut || clocking.clockOut;
     const updateBody = { amended_by: currentManagerUser || 'manager' };
-    if (amendment.requestedIn)  updateBody.clock_in  = new Date(`${clocking.date}T${amendment.requestedIn}:00`).toISOString();
-    if (amendment.requestedOut) updateBody.clock_out = new Date(`${clocking.date}T${amendment.requestedOut}:00`).toISOString();
+    if (amendment.requestedIn || amendment.requestedOut) {
+      const { inISO, outISO } = buildShiftDatetimes(clocking.date, finalIn, finalOut);
+      // Only patch fields the amendment actually changes (keeps audit clean).
+      if (amendment.requestedIn)  updateBody.clock_in  = inISO;
+      if (amendment.requestedOut) updateBody.clock_out = outISO;
+    }
     await api.put(`/api/clockings/${clocking.id}`, updateBody);
 
     // Mark amendment as approved in DB
