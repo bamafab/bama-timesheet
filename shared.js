@@ -15406,7 +15406,7 @@ function onNpSiteSameToggle() {
 }
 
 async function submitCreateProject() {
-  const projectNumber = document.getElementById('npProjectNumber').textContent.trim();
+  const projectNumber = document.getElementById('npProjectNumber').value.trim();
   const companyName   = document.getElementById('npCompanyName').value.trim();
   const projectName   = document.getElementById('npProjectName').value.trim();
 
