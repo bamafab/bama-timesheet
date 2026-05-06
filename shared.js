@@ -14432,7 +14432,7 @@ async function confirmLinkFolder(folderId, folderName) {
 
     closeLinkFolderModal();
     // Re-render the detail page so the folder-link area picks up the new state.
-    renderProjectDetail(currentProjectRecord);
+    _populateProjectDetailFields(currentProjectRecord);
     toast(`Folder linked: ${folderName}`, 'success');
   } catch (e) {
     console.error('Link folder failed:', e);
