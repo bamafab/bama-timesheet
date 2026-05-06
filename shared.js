@@ -329,6 +329,42 @@ function normaliseEntry(row) {
   };
 }
 
+// Trigger a server-side recompute of an employee's S000 (Unproductive Time)
+// for a given date and patch local state with the result. The server is the
+// sole source of truth for S000 — see /api/project-hours/recompute-s000.
+//
+// Safe to call on any path that mutates a clocking row, a project-hours row,
+// or a date's break_mins, including paths where there's no clock-out yet
+// (the endpoint no-ops in that case and clears any stale S000 row).
+//
+// Failures are non-fatal: log a warning and carry on. The next mutation on
+// that day will retry.
+async function recomputeS000Local(empName, date) {
+  if (!empName || !date) return;
+  const empId = empIdByName(empName);
+  if (!empId) return;
+  try {
+    const recompute = await api.post('/api/project-hours/recompute-s000', {
+      employee_id: empId,
+      date
+    });
+    // Drop any local S000 row for that emp+date and replace with the
+    // server result (if any).
+    state.timesheetData.entries = (state.timesheetData.entries || []).filter(
+      e => !(e.employeeName === empName && e.date === date && e.projectId === 'S000')
+    );
+    if (recompute && recompute.entry) {
+      state.timesheetData.entries.push(normaliseEntry({
+        ...recompute.entry,
+        employee_name: empName,
+        project_name: 'Unproductive Time'
+      }));
+    }
+  } catch (e) {
+    console.warn(`S000 recompute failed for ${empName} on ${date}:`, e.message);
+  }
+}
+
 // Normalise API holiday row
 function normaliseHoliday(row) {
   const decidedAt = row.decided_at || null;
@@ -1281,35 +1317,31 @@ async function finishClockOut({ emp, today, clockOut, breakMins, clocking }) {
     clocking.clockOut = clockOut;
     clocking.breakMins = breakMins;
 
-    // Calculate S000 unproductive time
-    const clockIn = clocking.clockIn;
-    const clockedHrs = calcHours(clockIn, clockOut, breakMins, today) || 0;
-    const totalProjectHrs = state.timesheetData.entries
-      .filter(e => e.employeeName === emp && e.date === today && e.projectId !== 'S000')
-      .reduce((s, e) => s + e.hours, 0);
-    const unproductiveHrs = parseFloat((clockedHrs - totalProjectHrs).toFixed(2));
-
-    // Remove any existing S000 for today locally
-    state.timesheetData.entries = state.timesheetData.entries.filter(
-      e => !(e.employeeName === emp && e.date === today && e.projectId === 'S000')
-    );
-
-    if (unproductiveHrs > 0 && empId) {
-      // Post S000 unproductive time to API
+    // Server-side S000 recompute. The API is the source of truth for
+    // unproductive hours: it reads ClockEntries + ProjectHours directly,
+    // recomputes, and inserts/deletes the S000 row atomically.
+    let unproductiveHrs = 0;
+    if (empId) {
       try {
-        const s000Result = await api.post('/api/project-hours', {
+        const empName = emp;
+        const recompute = await api.post('/api/project-hours/recompute-s000', {
           employee_id: empId,
-          project_number: 'S000',
-          date: today,
-          hours: unproductiveHrs
+          date: today
         });
-        state.timesheetData.entries.push(normaliseEntry({
-          ...s000Result,
-          employee_name: emp,
-          project_name: 'Unproductive Time'
-        }));
+        unproductiveHrs = (recompute && recompute.hours) || 0;
+        // Drop any local S000 for today and replace with the server's result.
+        state.timesheetData.entries = state.timesheetData.entries.filter(
+          e => !(e.employeeName === empName && e.date === today && e.projectId === 'S000')
+        );
+        if (recompute && recompute.entry) {
+          state.timesheetData.entries.push(normaliseEntry({
+            ...recompute.entry,
+            employee_name: empName,
+            project_name: 'Unproductive Time'
+          }));
+        }
       } catch (e) {
-        console.warn('Failed to save S000 unproductive time:', e.message);
+        console.warn('S000 recompute failed:', e.message);
       }
     }
 
@@ -1360,6 +1392,15 @@ async function submitDay() {
     }
 
     state.currentEntries = [];
+
+    // After posting entries, recompute today's S000 server-side. This covers
+    // the "log entries first, clock out, THEN submit" sequence: the clock-out
+    // recompute saw zero project hours (entries were still in currentEntries
+    // locally) and logged the full shift as unproductive. Now that the entries
+    // exist in the DB, the recompute will subtract them. Endpoint is no-op /
+    // self-clearing if the user isn't clocked out yet for today.
+    await recomputeS000Local(state.currentEmployee, today);
+
     renderTodayEntries();
     toast(`Entries submitted ✓`, 'success');
     setTimeout(goHome, 1500);
@@ -2076,6 +2117,13 @@ async function saveClockEdit(id) {
     clocking.approvalStatus = 'pending';
     clocking._editing = false;
 
+    // Times changed → S000 (Unproductive Time) for that day is stale.
+    // Server recomputes and patches local state. Only meaningful if the
+    // shift is closed (has a clock_out), but the helper is safe regardless.
+    if (clocking.clockOut) {
+      await recomputeS000Local(clocking.employeeName, clocking.date);
+    }
+
     toast('Clocking updated — pending approval ✓', 'success');
     renderManagerView();
   } catch (err) { toast('Save failed: ' + err.message, 'error'); }
@@ -2117,6 +2165,12 @@ async function rejectClocking(id) {
     if (c.originalClockIn) { c.clockIn = c.originalClockIn; c.clockOut = c.originalClockOut; c.breakMins = c.originalBreakMins || 0; }
     c.approvalStatus = 'rejected';
     c.manuallyEdited = false;
+
+    // Times reverted → S000 stale, server recomputes.
+    if (c.clockOut) {
+      await recomputeS000Local(c.employeeName, c.date);
+    }
+
     toast('Change rejected', 'success');
     renderManagerView();
   } catch (err) { toast('Save failed: ' + err.message, 'error'); }
@@ -2308,6 +2362,11 @@ async function saveMgrClocking() {
     newClocking.approvalStatus = 'approved';
     newClocking.breakMins = breakMins;
     state.timesheetData.clockings.push(newClocking);
+
+    // Manager just added a closed clocking out of band → S000 (Unproductive
+    // Time) for that employee+date is stale. Server recomputes against
+    // whatever ProjectHours rows exist for the day.
+    await recomputeS000Local(empName, date);
 
     closeMgrAddClocking();
     toast(`Clocking added for ${empName} ✓`, 'success');
@@ -2714,6 +2773,15 @@ async function deleteProjectEntry(id) {
     state.timesheetData.entries = state.timesheetData.entries.filter(
       e => String(e.id) !== String(id)
     );
+
+    // Deleted entry → S000 (Unproductive Time) for that day is stale.
+    // Skip if the deleted row was itself the S000 — server will rebuild it
+    // from the remaining ProjectHours, but no point round-tripping if the
+    // user was specifically removing the S000 row.
+    if (entry.projectId !== 'S000') {
+      await recomputeS000Local(entry.employeeName, entry.date);
+    }
+
     toast('Entry deleted', 'success');
     renderManagerView();
   } catch (err) { toast('Delete failed: ' + err.message, 'error'); }
@@ -3135,36 +3203,11 @@ async function saveEditEntry() {
     // Recalculate S000 for this day if clocked
     const today = entry.date;
     const emp = entry.employeeName;
-    const empId = empIdByName(emp);
     const clocking = state.timesheetData.clockings.find(
       c => c.employeeName === emp && c.date === today && c.clockOut
     );
-    if (clocking && empId) {
-      const clockedHrs = calcHours(clocking.clockIn, clocking.clockOut, clocking.breakMins, clocking.date) || 0;
-      const totalProjectHrs = state.timesheetData.entries
-        .filter(e => e.employeeName === emp && e.date === today && e.projectId !== 'S000')
-        .reduce((s, e) => s + e.hours, 0);
-      const unproductiveHrs = parseFloat((clockedHrs - totalProjectHrs).toFixed(2));
-
-      // Remove old S000 locally
-      state.timesheetData.entries = state.timesheetData.entries.filter(
-        e => !(e.employeeName === emp && e.date === today && e.projectId === 'S000')
-      );
-      if (unproductiveHrs > 0) {
-        try {
-          const s000Result = await api.post('/api/project-hours', {
-            employee_id: empId,
-            project_number: 'S000',
-            date: today,
-            hours: unproductiveHrs
-          });
-          state.timesheetData.entries.push(normaliseEntry({
-            ...s000Result,
-            employee_name: emp,
-            project_name: 'Unproductive Time'
-          }));
-        } catch (e) { console.warn('S000 update failed:', e.message); }
-      }
+    if (clocking) {
+      await recomputeS000Local(emp, today);
     }
 
     closeEditEntry();

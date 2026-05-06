@@ -186,6 +186,163 @@ app.http('project-hours-delete', {
     }
 });
 
+// POST /api/project-hours/recompute-s000 — server-side recompute of unproductive (S000) hours
+//
+// Body: { employee_id, date }   (date as 'YYYY-MM-DD')
+//
+// Server is the source of truth for the unproductive figure. We:
+//   1. Find the clocking row for this employee+date.
+//   2. Bail if no clock-out yet (still on shift — nothing to derive).
+//   3. Compute clocked_hours from clock_in / clock_out / break_mins,
+//      mirroring shared.js calcHours: overnight wrap at 24h, no break
+//      deducted on Sat/Sun.
+//   4. Sum existing ProjectHours rows for that employee+date excluding S000.
+//   5. unproductive = clocked - project_total, rounded to 2dp.
+//   6. Delete any existing S000 row for that employee+date (idempotent).
+//   7. If unproductive > 0, insert a fresh S000 row.
+//   8. Return { entry, hours, clocked_hours, project_hours }.
+//
+// Manual edits to S000 rows in ProjectHours will be overwritten the next
+// time this endpoint runs — by design (S000 is a derived value).
+app.http('project-hours-recompute-s000', {
+    methods: ['POST'],
+    authLevel: 'anonymous',
+    route: 'project-hours/recompute-s000',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const body = await request.json();
+            const { employee_id, date } = body;
+
+            if (!employee_id || !date) {
+                return badRequest('employee_id and date are required', request);
+            }
+
+            const empId = parseInt(employee_id);
+
+            // 1. Find the (closed) clocking for this employee on this date.
+            //    There can be more than one ClockEntries row per day in theory
+            //    (raw audit trail), but the kiosk produces one closed entry per
+            //    shift. Pick the most recent closed entry for the day.
+            //
+            //    TZ note: we filter on a datetime *range* rather than
+            //    CAST(clock_in AS DATE) = @date because Azure SQL evaluates
+            //    CAST in its server timezone (UTC), which drifts from workshop
+            //    local time (BST in summer) and can miss late-evening or
+            //    early-morning shifts at DST boundaries. The 2h margin either
+            //    side comfortably absorbs any UK ↔ UTC offset (max 1h) plus
+            //    overnight shifts whose clock_in still belongs to @date.
+            const clockRes = await query(
+                `SELECT TOP 1 clock_in, clock_out, break_mins
+                 FROM ClockEntries
+                 WHERE employee_id = @empId
+                   AND clock_in >= DATEADD(HOUR, -2, CAST(@date AS DATETIME2))
+                   AND clock_in <  DATEADD(HOUR, 26, CAST(@date AS DATETIME2))
+                   AND clock_out IS NOT NULL
+                 ORDER BY clock_out DESC`,
+                { empId, date }
+            );
+
+            if (clockRes.recordset.length === 0) {
+                // No closed clocking → nothing to derive. Also remove any stale
+                // S000 row that might exist (e.g. clock-out was reverted).
+                await query(
+                    `DELETE FROM ProjectHours
+                     WHERE employee_id = @empId
+                       AND date = @date
+                       AND project_number = 'S000'`,
+                    { empId, date }
+                );
+                return ok({
+                    entry: null,
+                    hours: 0,
+                    clocked_hours: 0,
+                    project_hours: 0,
+                    reason: 'no closed clocking for this date'
+                }, request);
+            }
+
+            const { clock_in, clock_out, break_mins } = clockRes.recordset[0];
+
+            // 2. Compute clocked hours, mirroring shared.js calcHours().
+            //    Both clock_in and clock_out are full DATETIME2s, so the ms
+            //    diff is already correct across midnight (overnight shifts).
+            //    The wrap below is defensive — if a row is somehow corrupt
+            //    with clock_out earlier than clock_in on the same day, it
+            //    matches the legacy calcHours behaviour rather than returning
+            //    a negative value.
+            const ci = new Date(clock_in);
+            const co = new Date(clock_out);
+            let diffMins = Math.round((co.getTime() - ci.getTime()) / 60000);
+            if (diffMins < 0) diffMins += 1440;
+
+            // Break NOT deducted on Sat/Sun (BAMA rule). Use the date string
+            // as authoritative — same as shared.js, avoids TZ confusion on
+            // the clock_in datetime.
+            const d = new Date(date + 'T12:00:00');
+            const dow = d.getDay(); // 0 = Sun, 6 = Sat
+            const skipBreak = (dow === 0 || dow === 6);
+            if (!skipBreak) diffMins -= (break_mins || 0);
+
+            const clockedHrs = diffMins > 0 ? diffMins / 60 : 0;
+
+            // 3. Sum non-S000 project hours for this employee/date.
+            const sumRes = await query(
+                `SELECT COALESCE(SUM(hours), 0) AS total
+                 FROM ProjectHours
+                 WHERE employee_id = @empId
+                   AND date = @date
+                   AND project_number <> 'S000'`,
+                { empId, date }
+            );
+            const projectHrs = parseFloat(sumRes.recordset[0].total) || 0;
+
+            // 4. Derive unproductive (2dp).
+            const unproductiveHrs = parseFloat((clockedHrs - projectHrs).toFixed(2));
+
+            // 5. Wipe any existing S000 row(s) for the day — idempotent.
+            await query(
+                `DELETE FROM ProjectHours
+                 WHERE employee_id = @empId
+                   AND date = @date
+                   AND project_number = 'S000'`,
+                { empId, date }
+            );
+
+            // 6. Insert fresh S000 row only if there's something to log.
+            let entry = null;
+            if (unproductiveHrs > 0) {
+                // week_commencing = Monday of that week
+                const day = d.getDay();
+                const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+                const monday = new Date(d);
+                monday.setDate(diff);
+                const weekStart = monday.toISOString().split('T')[0];
+
+                const insertRes = await query(
+                    `INSERT INTO ProjectHours (employee_id, project_number, date, hours, week_commencing, is_approved)
+                     OUTPUT INSERTED.*
+                     VALUES (@empId, 'S000', @date, @hours, @weekStart, 1)`,
+                    { empId, date, hours: unproductiveHrs, weekStart }
+                );
+                entry = insertRes.recordset[0];
+            }
+
+            return ok({
+                entry,
+                hours: unproductiveHrs,
+                clocked_hours: parseFloat(clockedHrs.toFixed(2)),
+                project_hours: parseFloat(projectHrs.toFixed(2))
+            }, request);
+        } catch (err) {
+            context.error('Error recomputing S000:', err);
+            return serverError('Failed to recompute unproductive hours', request);
+        }
+    }
+});
+
 // GET /api/project-hours/summary — grouped summary by project or employee
 // ?group_by=project&week_commencing=2026-04-20
 // ?group_by=employee&week_commencing=2026-04-20
