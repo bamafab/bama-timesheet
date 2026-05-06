@@ -3,7 +3,11 @@
 // ═══════════════════════════════════════════
 const API_BASE = 'https://bama-erp-api-deauckd2cja7ebd5.uksouth-01.azurewebsites.net';
 
-// SharePoint config — ONLY used for file operations (PROJECT TRACKER.xlsx, drawing PDFs, emails)
+// SharePoint config — used for file operations (drawing PDFs, BOM JSON, email
+// attachments) only. Tabular project data lives in SQL now; the PROJECT
+// TRACKER.xlsx read/write paths have been retired (see loadProjects + the
+// SQL LabourLog migration). projectTrackerItemId is kept for any legacy
+// file-only references but is no longer read by this codebase.
 const CONFIG = {
   driveId: 'b!CxTKk9lEwkyweUqAo3CRas-huywW4KtLqOk2tNzmx-P7CX86DNhTQo14pLuU_tZu',
   projectTrackerItemId: '012IX7LSI5MG6U55XFORBYNJORV3AQLGU7',
@@ -106,7 +110,7 @@ function empNameById(id) {
 // STATE
 // ═══════════════════════════════════════════
 let state = {
-  projects: [],       // { id, name, status } — from PROJECT TRACKER.xlsx
+  projects: [],       // { id, name, status, client } — from SQL Projects (in-progress only)
   timesheetData: {    // populated from SQL API at startup
     employees: [],    // { id, name, pin, rate, staff_type, erp_role, ... }
     entries: [],      // { id, employee_id, employee_name, project_number, hours, date, ... }
@@ -458,165 +462,65 @@ async function loadProjects() {
 
 
 // ═══════════════════════════════════════════
-// WRITE APPROVED HOURS TO LABOUR LOG
+// SYNC APPROVED HOURS TO LABOUR LOG (SQL)
 // ═══════════════════════════════════════════
+// Posts ProjectHours rows to /api/labour-log. The endpoint upserts on
+// project_hours_id, so re-syncing the same week is safe and reflects any
+// edits the office made between syncs. Both productive (S-prefix, C-prefix)
+// and unproductive (S000) entries flow through this single call — entry_type
+// is derived from project_number.
+//
+// Replaces the legacy writeApprovedToLabourLog + writeUnproductiveTimeLog
+// pair that wrote rows into PROJECT TRACKER.xlsx via Microsoft Graph.
 async function writeApprovedToLabourLog(entries) {
+  if (!Array.isArray(entries) || !entries.length) return true;
   try {
     setLoading(true);
-    const token = await getToken();
+    const syncedBy = currentManagerUser
+      || (typeof AUTH !== 'undefined' && AUTH.getUserName?.())
+      || 'unknown';
 
-    // Find the Labour Log sheet
-    const wsRes = await fetch(
-      `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.projectTrackerItemId}/workbook/worksheets`,
-      { headers: { 'Authorization': `Bearer ${token}` } }
-    );
-    const wsData = await wsRes.json();
-    const labourSheet = wsData.value.find(s =>
-      s.name.toLowerCase().includes('labour') || s.name.toLowerCase().includes('labor')
-    );
+    const payloadEntries = entries.map(e => ({
+      project_hours_id: e.id,
+      entry_date:       e.date,
+      week_commencing:  e.week_commencing || _weekCommencingFor(e.date),
+      employee_id:      e.employee_id || null,
+      employee_name:    e.employeeName,
+      project_number:   e.projectId,
+      project_name:     e.projectName || e.projectId,
+      hours:            parseFloat(e.hours) || 0,
+      entry_type:       (e.projectId === 'S000' ? 'unproductive' : 'productive')
+    }));
 
-    if (!labourSheet) {
-      toast('Could not find Labour Log sheet in PROJECT TRACKER', 'error');
-      return false;
+    const result = await api.post('/api/labour-log', {
+      entries: payloadEntries,
+      synced_by: syncedBy
+    });
+
+    if (result?.errors?.length) {
+      console.warn('LabourLog sync had per-row errors:', result.errors);
+      toast(`Labour Log: ${result.total} synced, ${result.errors.length} failed`, 'warning');
     }
-
-    const sheetName = encodeURIComponent(labourSheet.name);
-
-    // Read the Labour Log sheet to find the first empty row starting from row 5
-    // We read column A from row 5 downwards to find empty cells before TOTALS
-    const rangeRes = await fetch(
-      `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.projectTrackerItemId}/workbook/worksheets/${sheetName}/range(address='A5:A1000')`,
-      { headers: { 'Authorization': `Bearer ${token}` } }
-    );
-    const rangeData = await rangeRes.json();
-    const colA = rangeData.values || [];
-
-    // Find first empty row in column A (that isn't the TOTALS row)
-    let insertRow = 5;
-    for (let i = 0; i < colA.length; i++) {
-      const cellVal = String(colA[i][0] || '').trim().toUpperCase();
-      if (cellVal === '' || cellVal === '0') {
-        insertRow = 5 + i;
-        break;
-      }
-      // Stop if we hit TOTALS
-      if (cellVal === 'TOTALS') break;
-    }
-
-    // Write each entry one by one into consecutive empty rows
-    for (let i = 0; i < entries.length; i++) {
-      const e = entries[i];
-      const row = insertRow + i;
-      // Write A-E only (date, projectId, projectName, employeeName, hours)
-      // Columns F (Rate) and G (Cost) are left alone — they have spreadsheet formulas
-      const rangeAddr = `A${row}:E${row}`;
-      const rowData = [[
-        e.date,
-        e.projectId,
-        e.projectName,
-        e.employeeName,
-        e.hours
-      ]];
-
-      // Write notes to column H separately
-      await fetch(
-        `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.projectTrackerItemId}/workbook/worksheets/${sheetName}/range(address='H${row}')`,
-        {
-          method: 'PATCH',
-          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ values: [['Timesheet App']] })
-        }
-      );
-
-      await fetch(
-        `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.projectTrackerItemId}/workbook/worksheets/${sheetName}/range(address='${rangeAddr}')`,
-        {
-          method: 'PATCH',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ values: rowData })
-        }
-      );
-    }
-
     return true;
   } catch (e) {
-    console.error('writeApprovedToLabourLog error:', e);
-    toast(`SharePoint sync error: ${e.message}`, 'error');
+    console.error('writeApprovedToLabourLog (SQL) error:', e);
+    toast(`Labour Log sync error: ${e.message}`, 'error');
     return false;
   } finally {
     setLoading(false);
   }
 }
 
-// ═══════════════════════════════════════════
-// WRITE UNPRODUCTIVE TIME TO SEPARATE SHEET
-// ═══════════════════════════════════════════
-async function writeUnproductiveTimeLog(entries) {
-  try {
-    const token = await getToken();
-    const baseUrl = `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.projectTrackerItemId}/workbook`;
-    const sheetName = 'Unproductive%20Time';
-
-    // Find first empty row (starting from row 4)
-    const rangeRes = await fetch(
-      `${baseUrl}/worksheets/${sheetName}/range(address='A5:A500')`,
-      { headers: { 'Authorization': `Bearer ${token}` } }
-    );
-    const rangeData = await rangeRes.json();
-    const colA = rangeData.values || [];
-
-    let insertRow = 5;
-    for (let i = 0; i < colA.length; i++) {
-      if (!String(colA[i][0] || '').trim()) {
-        insertRow = 5 + i;
-        break;
-      }
-    }
-
-    // Write each S000 entry
-    for (let i = 0; i < entries.length; i++) {
-      const e = entries[i];
-      const row = insertRow + i;
-
-      // Get clocked hours for this day
-      const clocking = state.timesheetData.clockings.find(
-        c => c.employeeName === e.employeeName && c.date === e.date && c.clockOut
-      );
-      const clockedHrs = clocking ? (calcHours(clocking.clockIn, clocking.clockOut, clocking.breakMins, clocking.date) || 0) : 0;
-      const projectHrs = clockedHrs - e.hours;
-
-      // Calculate week commencing (Monday)
-      const d = new Date(e.date + 'T12:00:00');
-      const dow = d.getDay();
-      const mon = new Date(d);
-      mon.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1));
-      const weekCommencing = dateStr(mon);
-
-      await fetch(
-        `${baseUrl}/worksheets/${sheetName}/range(address='A${row}:G${row}')`,
-        {
-          method: 'PATCH',
-          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ values: [[
-            e.date,
-            e.employeeName,
-            clockedHrs,
-            parseFloat(projectHrs.toFixed(2)),
-            e.hours,
-            weekCommencing,
-            'Timesheet App'
-          ]] })
-        }
-      );
-    }
-    return true;
-  } catch (e) {
-    console.error('Unproductive time log write failed:', e.message);
-    return false;
-  }
+// Compute the Monday of the week containing the given YYYY-MM-DD date,
+// returning a YYYY-MM-DD string. Used as a client-side fallback when an
+// entry came in without week_commencing populated.
+function _weekCommencingFor(dateStr0) {
+  if (!dateStr0) return null;
+  const d = new Date(dateStr0 + 'T12:00:00');
+  const dow = d.getDay();
+  const mon = new Date(d);
+  mon.setDate(d.getDate() - (dow === 0 ? 6 : dow - 1));
+  return dateStr(mon);
 }
 
 // ═══════════════════════════════════════════
@@ -2678,34 +2582,25 @@ async function deleteProjectEntry(id) {
   } catch (err) { toast('Delete failed: ' + err.message, 'error'); }
 }
 
+// Sync this week's approved hours to the SQL LabourLog. Productive (S/C-prefix)
+// and unproductive (S000) entries are sent in a single request now — the
+// /api/labour-log endpoint handles both. The legacy split into two separate
+// SharePoint sheets (and the writeUnproductiveTimeLog helper) is gone.
 async function writeToSharePoint() {
   const { mon, sun } = getWeekDates(state.currentWeekOffset);
-  // All entries this week that haven't been synced yet (approval workflow removed)
+
   const toSync = state.timesheetData.entries.filter(
-    e => e.date >= dateStr(mon) && e.date <= dateStr(sun) &&
-         !e.synced &&
-         e.projectId !== 'S000'  // Never write unproductive time to Project Tracker
+    e => e.date >= dateStr(mon) && e.date <= dateStr(sun) && !e.synced
   );
 
   if (!toSync.length) {
     toast('No new entries to sync', 'info'); return;
   }
 
-  // Write S000 unproductive time to separate sheet
-  const s000Entries = state.timesheetData.entries.filter(
-    e => e.date >= dateStr(mon) && e.date <= dateStr(sun) &&
-         !e.synced &&
-         e.projectId === 'S000'
-  );
-  if (s000Entries.length) {
-    await writeUnproductiveTimeLog(s000Entries);
-  }
-
   const ok = await writeApprovedToLabourLog(toSync);
   if (ok) {
     toSync.forEach(e => e.synced = true);
-    s000Entries.forEach(e => e.synced = true);
-    toast(`${toSync.length} entries written to PROJECT TRACKER ✓`, 'success');
+    toast(`${toSync.length} ${toSync.length === 1 ? 'entry' : 'entries'} synced to Labour Log ✓`, 'success');
     renderManagerView();
   }
 }

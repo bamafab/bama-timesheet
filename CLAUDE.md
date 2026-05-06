@@ -431,15 +431,21 @@ none of this is built yet.
 - **Mobile clock-in page** — PIN-based, no Microsoft login. Standalone page
   aimed at site staff with no work account. Will need a server-side PIN check
   (see the PIN warning under Auth) and its own scoped API surface.
-- **Full project tracker in-app (Phase 2+)** — replace the SharePoint
-  PROJECT TRACKER.xlsx dependency entirely. Phase 1 is built: SQL `Projects`
-  table exists, populated automatically when a quote is marked Won, and
-  `loadProjects()` (kiosk) merges SQL projects on top of spreadsheet rows
-  (deduped by project number). Still to do: backfill existing spreadsheet
-  projects into SQL, retire the spreadsheet read in `loadProjects()`, and
-  migrate `writeApprovedToLabourLog()` / `writeUnproductiveTimeLog()` to
-  SQL `LabourLog`. `project-tracker.html` is the new canonical UI for
-  project records.
+- **Full project tracker in-app (Phase 2 done)** — the SharePoint
+  PROJECT TRACKER.xlsx dependency has been retired in code. SQL `Projects`
+  is now the sole source for the kiosk project picker (via `loadProjects()`,
+  filtered to `status='In Progress'`); the legacy spreadsheet read and the
+  hardcoded `FALLBACK_PROJECTS` array are gone. The Labour Log + Unproductive
+  Time sheets have been replaced by the SQL `LabourLog` table — see
+  `api/sql/create-labour-log.sql` and `api/src/functions/labour-log.js`.
+  `writeApprovedToLabourLog()` (shared.js) now POSTs both productive and
+  unproductive entries to `/api/labour-log`, which idempotently upserts
+  keyed on `project_hours_id`. The "Sync to SharePoint" button in
+  office.html is now "Sync to Labour Log". `project-tracker.html` is the
+  canonical UI for project records.
+  Still queued: pointing the project-tracker financial dashboard's
+  Labour Cost tile at LabourLog data (currently shows the labour budget
+  from quote line items, not actual hours logged).
 - **Quote financial workflow** — **Phase 1 done**. The 9 fixed line item
   categories per quote (Prelims through Delivery) are now editable on the
   Quote detail page (`quotes.html`) — see `loadQuoteLineItems()` /
