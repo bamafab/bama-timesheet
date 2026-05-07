@@ -1495,6 +1495,13 @@ function filterSidebarTabs(perms) {
     }
   });
 
+  // Generic any-of-perms gating: any element with data-perm-any="permA,permB"
+  // is shown only if the user has at least one of the listed permissions.
+  // Used for cross-app launchers (e.g. Project Tracker on the office dashboard)
+  // and any future similar links. Scoped to the whole document, not just the
+  // sidebar, so it covers dashboard cards too.
+  applyPermAnyVisibility(perms);
+
   // On office page, hide collapsible group labels if no child items are visible
   if (CURRENT_PAGE === 'office') {
     sidebar.querySelectorAll('.sidebar-nav-subitems').forEach(sub => {
@@ -1512,6 +1519,26 @@ function filterSidebarTabs(perms) {
       }
     });
   }
+}
+
+// Hide elements tagged with data-perm-any="permA,permB,..." unless the user
+// holds at least one of those permissions. Also hides the parent dash-modules
+// row entirely if every launcher inside it ended up hidden, so we don't leave
+// a lonely "MODULES" label with nothing under it.
+function applyPermAnyVisibility(perms) {
+  const safePerms = perms || {};
+  document.querySelectorAll('[data-perm-any]').forEach(el => {
+    const required = (el.getAttribute('data-perm-any') || '')
+      .split(',').map(s => s.trim()).filter(Boolean);
+    const hasAny = required.some(p => safePerms[p] === true);
+    el.style.display = hasAny ? '' : 'none';
+  });
+  document.querySelectorAll('.dash-modules').forEach(row => {
+    const grid = row.querySelector('.dash-modules-grid');
+    if (!grid) return;
+    const anyVisible = Array.from(grid.children).some(c => c.style.display !== 'none');
+    row.style.display = anyVisible ? '' : 'none';
+  });
 }
 
 function findFirstAllowedTab(perms) {
@@ -12413,6 +12440,18 @@ function navToBabcock() {
   window.location.href = 'babcock.html';
 }
 
+// Cross-page navigation to Project Tracker. Gated by viewProjects/editProjects.
+// Session is preserved via sessionStorage.bama_mgr_authed so no second PIN
+// prompt — the project tracker page reads that and skips its login screen.
+function navToProjectTracker() {
+  const perms = getUserPermissions(currentManagerUser) || {};
+  if (!perms.viewProjects && !perms.editProjects) {
+    toast('You don\'t have permission to access Project Tracker', 'error');
+    return;
+  }
+  window.location.href = 'project-tracker.html';
+}
+
 function updateTenderSidebarCrossNav() {
   const perms = getUserPermissions(currentManagerUser) || {};
   const qBtn = document.getElementById('sidebarBtnQuotations');
@@ -12422,6 +12461,14 @@ function updateTenderSidebarCrossNav() {
     qBtn.style.opacity = hasAccess ? '' : '0.35';
     qBtn.style.cursor = hasAccess ? '' : 'not-allowed';
     qBtn.title = hasAccess ? '' : 'You don\'t have permission to access Quotations';
+  }
+  const ptBtn = document.getElementById('sidebarBtnProjectTracker');
+  if (ptBtn) {
+    const hasAccess = !!(perms.viewProjects || perms.editProjects);
+    ptBtn.disabled = !hasAccess;
+    ptBtn.style.opacity = hasAccess ? '' : '0.35';
+    ptBtn.style.cursor = hasAccess ? '' : 'not-allowed';
+    ptBtn.title = hasAccess ? '' : 'You don\'t have permission to access Project Tracker';
   }
   // Babcock uses same tenders permission — always enabled if on tenders page
 }
@@ -12440,6 +12487,14 @@ function updateQuotesSidebarCrossNav() {
     bBtn.disabled = !perms.tenders;
     bBtn.style.opacity = perms.tenders ? '' : '0.35';
     bBtn.style.cursor = perms.tenders ? '' : 'not-allowed';
+  }
+  const ptBtn = document.getElementById('sidebarBtnProjectTracker');
+  if (ptBtn) {
+    const hasAccess = !!(perms.viewProjects || perms.editProjects);
+    ptBtn.disabled = !hasAccess;
+    ptBtn.style.opacity = hasAccess ? '' : '0.35';
+    ptBtn.style.cursor = hasAccess ? '' : 'not-allowed';
+    ptBtn.title = hasAccess ? '' : 'You don\'t have permission to access Project Tracker';
   }
 }
 

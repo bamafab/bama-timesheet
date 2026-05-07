@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Office</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260507a">
+<link rel="stylesheet" href="bama.css?v=20260507b">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 </head>
 <body>
@@ -240,6 +240,25 @@
           </div>
         </div>
       </div>
+
+      <!-- ── Modules ── Linked apps gated by permission. PIN handover via
+           sessionStorage.bama_mgr_authed means no second PIN prompt as long
+           as the user has the relevant viewX/editX permission. -->
+      <div class="dash-modules" id="dashModulesRow">
+        <div class="dash-modules-label">MODULES</div>
+        <div class="dash-modules-grid">
+          <button class="dash-module-card" id="dashOpenProjectTracker"
+                  data-perm-any="viewProjects,editProjects"
+                  onclick="navToProjectTracker()">
+            <div class="dash-module-icon">🏗️</div>
+            <div class="dash-module-body">
+              <div class="dash-module-title">PROJECT TRACKER</div>
+              <div class="dash-module-desc">Live projects, deadlines, financials and progress</div>
+            </div>
+            <div class="dash-module-arrow">→</div>
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- Tab: Staff Management -->
@@ -385,9 +404,6 @@
       <div class="approval-section">
         <div class="approve-all-bar">
           <span style="color:var(--muted);font-size:13px">Project hours are saved automatically. Use the bin icon below to remove an incorrect entry.</span>
-          <div style="display:flex;gap:8px">
-            <button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="writeToSharePoint()">↑ Sync to Labour Log</button>
-          </div>
         </div>
         <table class="summary-table" id="projectTable">
           <thead>
@@ -1125,6 +1141,6 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-<script src="shared.js?v=20260507a"></script>
+<script src="shared.js?v=20260507b"></script>
 </body>
 </html>
