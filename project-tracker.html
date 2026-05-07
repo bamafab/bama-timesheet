@@ -63,15 +63,21 @@
   <!-- Sidebar -->
   <nav class="mgr-sidebar" id="projectTrackerSidebar">
     <div class="sidebar-nav-group">
+      <button class="sidebar-nav-item" id="sidebarBtnTenders" onclick="navFromProjectTrackerToTenders()">
+        <span class="sidebar-nav-icon">📋</span> Tenders
+      </button>
+      <button class="sidebar-nav-item" id="sidebarBtnQuotations" onclick="navFromProjectTrackerToQuotes()">
+        <span class="sidebar-nav-icon">📊</span> Quotations
+      </button>
+      <button class="sidebar-nav-item" id="sidebarBtnBabcockQuotes" onclick="navFromProjectTrackerToBabcock()">
+        <span class="sidebar-nav-icon">⚓</span> Babcock Quotes
+      </button>
       <button class="sidebar-nav-item active" data-tab="projectTrackerList" onclick="switchProjectTrackerTab('projectTrackerList')">
-        <span class="sidebar-nav-icon">🏗️</span> Projects
+        <span class="sidebar-nav-icon">🏗️</span> Project Tracker
       </button>
       <hr class="sidebar-nav-divider">
       <button class="sidebar-nav-item sidebar-secondary-item" onclick="navFromProjectTrackerToTenders()">
-        <span class="sidebar-nav-icon">📋</span> Tenders
-      </button>
-      <button class="sidebar-nav-item sidebar-secondary-item" onclick="navFromProjectTrackerToQuotes()">
-        <span class="sidebar-nav-icon">📊</span> Quotations
+        <span class="sidebar-nav-icon">🏢</span> Clients
       </button>
     </div>
   </nav>
@@ -666,6 +672,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260507e"></script>
+<script src="shared.js?v=20260507f"></script>
 </body>
 </html>

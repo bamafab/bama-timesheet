@@ -12522,51 +12522,31 @@ function navToProjectTracker() {
   window.location.href = 'project-tracker.html';
 }
 
-function updateTenderSidebarCrossNav() {
+// ── Shared cross-nav sidebar perm-gate ──
+// Used by Tenders / Quotes / Babcock / Project Tracker pages. The pages all
+// share the same canonical sidebar (Tenders, Quotations, Babcock Quotes,
+// Project Tracker, ─, Clients). This helper greys out any cross-nav button
+// the current user lacks permission for. The button for the *current* page
+// is fine to leave alone — it has the .active class and isn't a cross-link.
+function updateCrossNavSidebar() {
   const perms = getUserPermissions(currentManagerUser) || {};
-  const qBtn = document.getElementById('sidebarBtnQuotations');
-  if (qBtn) {
-    const hasAccess = !!(perms.viewQuotes || perms.editQuotes);
-    qBtn.disabled = !hasAccess;
-    qBtn.style.opacity = hasAccess ? '' : '0.35';
-    qBtn.style.cursor = hasAccess ? '' : 'not-allowed';
-    qBtn.title = hasAccess ? '' : 'You don\'t have permission to access Quotations';
-  }
-  const ptBtn = document.getElementById('sidebarBtnProjectTracker');
-  if (ptBtn) {
-    const hasAccess = !!(perms.viewProjects || perms.editProjects);
-    ptBtn.disabled = !hasAccess;
-    ptBtn.style.opacity = hasAccess ? '' : '0.35';
-    ptBtn.style.cursor = hasAccess ? '' : 'not-allowed';
-    ptBtn.title = hasAccess ? '' : 'You don\'t have permission to access Project Tracker';
-  }
-  // Babcock uses same tenders permission — always enabled if on tenders page
+  const set = (id, hasAccess, label) => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    btn.disabled = !hasAccess;
+    btn.style.opacity = hasAccess ? '' : '0.35';
+    btn.style.cursor = hasAccess ? '' : 'not-allowed';
+    btn.title = hasAccess ? '' : `You don't have permission to access ${label}`;
+  };
+  set('sidebarBtnTenders',         !!perms.tenders,                              'Tenders');
+  set('sidebarBtnQuotations',      !!(perms.viewQuotes || perms.editQuotes),    'Quotations');
+  set('sidebarBtnBabcockQuotes',   !!perms.tenders,                              'Babcock Quotes');
+  set('sidebarBtnProjectTracker',  !!(perms.viewProjects || perms.editProjects),'Project Tracker');
 }
 
-function updateQuotesSidebarCrossNav() {
-  const perms = getUserPermissions(currentManagerUser) || {};
-  const tBtn = document.getElementById('sidebarBtnTenders');
-  if (tBtn) {
-    tBtn.disabled = !perms.tenders;
-    tBtn.style.opacity = perms.tenders ? '' : '0.35';
-    tBtn.style.cursor = perms.tenders ? '' : 'not-allowed';
-    tBtn.title = perms.tenders ? '' : 'You don\'t have permission to access Tenders';
-  }
-  const bBtn = document.getElementById('sidebarBtnBabcockQuotes');
-  if (bBtn) {
-    bBtn.disabled = !perms.tenders;
-    bBtn.style.opacity = perms.tenders ? '' : '0.35';
-    bBtn.style.cursor = perms.tenders ? '' : 'not-allowed';
-  }
-  const ptBtn = document.getElementById('sidebarBtnProjectTracker');
-  if (ptBtn) {
-    const hasAccess = !!(perms.viewProjects || perms.editProjects);
-    ptBtn.disabled = !hasAccess;
-    ptBtn.style.opacity = hasAccess ? '' : '0.35';
-    ptBtn.style.cursor = hasAccess ? '' : 'not-allowed';
-    ptBtn.title = hasAccess ? '' : 'You don\'t have permission to access Project Tracker';
-  }
-}
+// Back-compat aliases — call sites are scattered.
+function updateTenderSidebarCrossNav() { updateCrossNavSidebar(); }
+function updateQuotesSidebarCrossNav() { updateCrossNavSidebar(); }
 
 // ── Tab switching ──
 function switchTenderTab(tab) {
@@ -16008,6 +15988,7 @@ async function initProjectTrackerPage() {
     if (perms && (perms.viewProjects || perms.editProjects)) {
       document.getElementById('screenProjectTrackerSelect').style.display = 'none';
       document.getElementById('projectTrackerLayout').style.display = 'flex';
+      updateCrossNavSidebar();
       await loadProjectsData();
       renderProjectTrackerList();
       return;
@@ -16075,6 +16056,7 @@ async function verifyProjectTrackerPin() {
     document.getElementById('screenProjectTrackerSelect').style.display = 'none';
     document.getElementById('projectTrackerLayout').style.display = 'flex';
 
+    updateCrossNavSidebar();
     await loadProjectsData();
     renderProjectTrackerList();
   } catch (err) {
@@ -16098,6 +16080,7 @@ function switchProjectTrackerTab(tab) {
 // Cross-page navigation helpers
 function navFromProjectTrackerToTenders() { window.location.href = 'tenders.html'; }
 function navFromProjectTrackerToQuotes()  { window.location.href = 'quotes.html'; }
+function navFromProjectTrackerToBabcock() { window.location.href = 'babcock.html'; }
 
 // ═══════════════════════════════════════════
 // BABCOCK QUOTES PAGE
@@ -17058,6 +17041,7 @@ function showBabcockGenerator() {
 
 // ── Load tracker list from API ──
 async function loadBabcockTracker() {
+  updateCrossNavSidebar();
   const tbody = document.getElementById('babcockTrackerBody');
   if (!tbody) return;
   try {
