@@ -16184,16 +16184,43 @@ function clearBabcockFile() {
 }
 
 // ── Parse the BAMA South West Babcock template's "Quote" tab ───────
-// The template is rigid: sheet name "Quote", header row at row 14
-// (Item | Description | Unit Price | Quantity | Amount), data from row 15
-// onwards until an empty Description. Header metadata sits in rows 1-9
-// with labels in column D (or A) and values one column to the right.
+// The template is rigid: a sheet that's effectively the "Quote" tab,
+// header row at row 14 (Item | Description | Unit Price | Quantity | Amount),
+// data from row 15 onwards until an empty Description. Header metadata sits
+// in rows 1-9 with labels in column D (or A) and values one column to the right.
 //
-// Throws on missing sheet. Returns { header, lineItems } where any
-// missing/blank header field is left as ''.
+// Sheet-name resolution is forgiving:
+//   1. exact "Quote" wins
+//   2. otherwise any sheet whose trimmed lowercase name == "quote" or "quotation"
+//   3. otherwise any sheet whose name contains "quote" (e.g. "Quote v2", "Quotes")
+// If nothing matches, throws an error listing the sheets that ARE present —
+// usually that's enough to spot a renamed tab or the wrong file.
+//
+// Returns { header, lineItems } where any missing/blank header field is left as ''.
 function parseBabcockQuoteTab(wb) {
-  const sheet = wb.Sheets['Quote'];
-  if (!sheet) throw new Error('Sheet "Quote" not found — is this the correct template?');
+  const sheetNames = wb.SheetNames || [];
+
+  let resolvedName = null;
+  if (wb.Sheets['Quote']) {
+    resolvedName = 'Quote';
+  } else {
+    const norm = s => String(s || '').trim().toLowerCase();
+    const exact = sheetNames.find(n => norm(n) === 'quote' || norm(n) === 'quotation');
+    if (exact) {
+      resolvedName = exact;
+    } else {
+      const fuzzy = sheetNames.find(n => norm(n).includes('quote'));
+      if (fuzzy) resolvedName = fuzzy;
+    }
+  }
+
+  if (!resolvedName) {
+    const list = sheetNames.length ? sheetNames.map(n => `"${n}"`).join(', ') : '(none)';
+    throw new Error(`Sheet "Quote" not found. This file has: ${list}. Is this the correct Babcock template?`);
+  }
+
+  const sheet = wb.Sheets[resolvedName];
+  if (!sheet) throw new Error(`Sheet "${resolvedName}" could not be read.`);
 
   // Pull as a 2D array — easiest for fixed-position parsing
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
