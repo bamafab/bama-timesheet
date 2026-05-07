@@ -17963,26 +17963,220 @@ async function advanceBabcockQuoteStatus(id) {
   const next = babcockNextStatus(q.status);
   if (!next) return;
 
-  // NOTE: Several transitions in the new lifecycle have side-effect
-  // modals attached (PDF generation, email composer, project conversion,
-  // file upload + OCR, Bama SW invoice generation). Those are wired up
-  // in substages 1c–1i of the workflow rebuild. For now, this handler
-  // just does the plain status PUT — that means the row moves through
-  // the lifecycle correctly, but the user has to handle the side-effect
-  // (e.g. emailing the quote) outside the system until those substages ship.
-  let extraFields = {};
+  // Each transition in the lifecycle that needs a side-effect (PDF
+  // generation + email, project conversion, file upload + OCR, etc.)
+  // has its own handler. Transitions without a registered handler fall
+  // through to the plain status PUT — the row still moves correctly,
+  // just without the bells and whistles.
+  const handler = _babcockAdvanceHandlers[q.status];
+  if (handler) {
+    return handler(q, next);
+  }
 
   try {
-    const updated = await api.put(`/api/babcock-quotes/${id}`,
-      { status: next, ...extraFields });
+    const updated = await api.put(`/api/babcock-quotes/${id}`, { status: next });
     const idx = _babcockQuotes.findIndex(x => x.id === id);
     if (idx !== -1) _babcockQuotes[idx] = { ..._babcockQuotes[idx], ...updated };
-    toast(`${updated.quote_ref} → ${next}`, 'success');
+    toast(`${updated.quote_ref} \u2192 ${next}`, 'success');
     renderBabcockTracker();
   } catch (err) {
     toast('Status update failed: ' + (err.message || 'unknown error'), 'error');
     loadBabcockTracker();
   }
+}
+
+// Registry of side-effect handlers keyed on the CURRENT status.
+// Each handler receives (currentRow, nextStatus) and is responsible for:
+//   - Doing whatever work the transition needs (modals, file uploads, etc.)
+//   - PUTing the new status to the API on success
+//   - Patching _babcockQuotes locally and calling renderBabcockTracker()
+//   - Not calling the API at all on Cancel — the row should stay put
+// Substages 1f-1i will fill in the rest of this map.
+const _babcockAdvanceHandlers = {
+  'Quote Received': handleAdvanceFromQuoteReceived
+  // 'Quote Sent':       handleAdvanceFromQuoteSent,        // 1f
+  // 'Live Project':     handleAdvanceFromLiveProject,      // 1f (final step)
+  // 'Project Complete': handleAdvanceFromProjectComplete,  // 1g
+  // 'Approved to Pay':  handleAdvanceFromApprovedToPay,    // simple status flip
+  // 'Payment Received': handleAdvanceFromPaymentReceived,  // 1h
+  // 'Sent to Bama SW':  handleAdvanceFromSentToBamaSw      // 1i
+};
+
+// ── Helper: convert a Blob to base64 (no data: prefix) ──
+// Used to encode PDFs as attachments for the Graph sendMail payload.
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result || '';
+      // FileReader returns "data:<mime>;base64,<payload>" — strip the prefix
+      const i = String(result).indexOf(',');
+      resolve(i >= 0 ? String(result).slice(i + 1) : '');
+    };
+    reader.onerror = () => reject(new Error('Failed to encode attachment'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+// ── Helper: pull contact name out of the merged "Contact — Area" string ──
+// generateAndSaveBabcockQuote stores the contact and area joined as
+// "<quoteFor> \u2014 <area>" in quote_for_area. This recovers the contact
+// portion (the bit before the first em-dash) for the email template's
+// {{contact_name}} token. If there's no separator, returns the whole
+// string trimmed.
+function babcockExtractContactName(quoteForArea) {
+  if (!quoteForArea) return '';
+  const s = String(quoteForArea);
+  // Match either em-dash with optional surrounding whitespace, or a
+  // hyphen-with-spaces (which some users may type instead of em-dash).
+  const m = s.split(/\s[\u2014-]\s/);
+  return (m[0] || '').trim();
+}
+
+// ── Helper: format a YYYY-MM-DD date as UK long ("14 June 2026") ──
+function fmtDateLong(s) {
+  if (!s) return '';
+  const isoDate = String(s).split('T')[0];
+  const d = new Date(isoDate + 'T00:00:00');
+  if (isNaN(d.getTime())) return String(s);
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
+}
+
+// ── Handler: Quote Received → Quote Sent ──
+// Re-renders the customer-facing PDF from the stored DB row, then opens
+// the email composer with the PDF pre-attached, recipient pre-filled
+// from customer_email, subject + body resolved from the emailQuoteSent
+// template. On Send: PUTs status='Quote Sent' and stamps date_sent=today.
+// On Cancel: row stays at Quote Received so the user can retry.
+async function handleAdvanceFromQuoteReceived(qSummary, next) {
+  // Sanity-check: we need a customer email to send to. Should always be
+  // present (Fix 1b made it required at create time) but legacy rows
+  // pre-Fix-1b may have it empty.
+  if (!qSummary.customer_email) {
+    toast('No customer email on this quote \u2014 add one via Edit before sending', 'error');
+    editBabcockQuote(qSummary.id);
+    return;
+  }
+  if (!isPlausibleEmail(qSummary.customer_email)) {
+    toast('Customer email looks invalid \u2014 fix it via Edit before sending', 'error');
+    editBabcockQuote(qSummary.id);
+    return;
+  }
+
+  // The list endpoint doesn't include line_items — fetch the full row
+  // so the PDF can be re-rendered with all line-item data.
+  let q;
+  try {
+    q = await api.get(`/api/babcock-quotes/${qSummary.id}`);
+  } catch (err) {
+    toast('Failed to load quote: ' + (err.message || 'unknown error'), 'error');
+    return;
+  }
+  if (!q) return;
+
+  setLoading(true);
+  let pdfBlob;
+  try {
+    // Re-render the PDF from the stored row. Mirrors the logic in the
+    // edit-modal regen flow so output is byte-identical.
+    await loadLogoDataUri();
+    const lineItems = Array.isArray(q.line_items) ? q.line_items
+                    : (typeof q.line_items === 'string' && q.line_items
+                        ? (() => { try { return JSON.parse(q.line_items); } catch { return []; } })()
+                        : []);
+    let grandTotal = q.total_value;
+    if (grandTotal === null || grandTotal === undefined || !isFinite(grandTotal)) {
+      grandTotal = lineItems.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+    }
+    pdfBlob = await renderBabcockQuotePDF({
+      quoteRef:    q.quote_ref,
+      quoteDate:   q.date_sent || q.quotation_date,
+      validUntil:  q.valid_until,
+      customerId:  q.customer_id,
+      workOrderNo: q.work_order_no,
+      preparedBy:  q.prepared_by,
+      quoteFor:    q.quote_for_area,
+      area:        '', // already merged into quote_for_area
+      address:     q.quote_for_address,
+      comments:    q.comments,
+      markup:      q.markup_pct ?? 10,
+      grandTotal,
+      lineItems
+    });
+  } catch (err) {
+    setLoading(false);
+    console.error('PDF render failed:', err);
+    toast('Failed to render PDF: ' + (err.message || 'unknown error'), 'error');
+    return;
+  }
+  setLoading(false);
+
+  // Encode the PDF for the email attachment + build a friendly filename
+  let pdfBase64;
+  try {
+    pdfBase64 = await blobToBase64(pdfBlob);
+  } catch (err) {
+    toast('Failed to encode PDF for email', 'error');
+    return;
+  }
+  const safeRef    = (q.quote_ref || 'BAMA-quote').replace(/[/\\]/g, '_');
+  const safeCust   = (q.customer_id || 'Customer').replace(/[/\\]/g, '_');
+  const safeWO     = (q.work_order_no || 'WO').replace(/[/\\]/g, '_');
+  const pdfFileName = `${safeRef} - ${safeCust} - ${safeWO}.pdf`;
+
+  // Build the tokens used by the emailQuoteSent template
+  const fmtGBP = v => (v === null || v === undefined || v === '')
+    ? '\u00a30.00'
+    : `\u00a3${Number(v).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  const tokens = {
+    contact_name:  babcockExtractContactName(q.quote_for_area) || 'Sir or Madam',
+    quote_ref:     q.quote_ref || '',
+    project_name:  q.quote_for_area || '',
+    customer_id:   q.customer_id || '',
+    work_order_no: q.work_order_no || '',
+    valid_until:   fmtDateLong(q.valid_until),
+    total_value:   fmtGBP(q.total_value)
+  };
+
+  // Open the composer. Promise resolves on send (with result) or cancel (null).
+  await openBabcockEmailModal({
+    title: 'Email Quote',
+    templateKey: 'emailQuoteSent',
+    tokens,
+    to: q.customer_email,
+    attachment: {
+      name: pdfFileName,
+      contentType: 'application/pdf',
+      contentBase64: pdfBase64
+    },
+    // Fires after the Graph send succeeds; modal is still up so toasts
+    // and DB writes happen synchronously before the user sees it close.
+    onSent: async () => {
+      try {
+        const today = todayStr();
+        const updated = await api.put(`/api/babcock-quotes/${q.id}`, {
+          status: next,
+          date_sent: today
+        });
+        const idx = _babcockQuotes.findIndex(x => x.id === q.id);
+        if (idx !== -1) _babcockQuotes[idx] = { ..._babcockQuotes[idx], ...updated };
+        renderBabcockTracker();
+      } catch (err) {
+        // Email DID go out — only the status update failed. Tell the
+        // user explicitly so they can fix the row state manually. We
+        // don't unsend the email obviously.
+        console.error('Status update after email failed:', err);
+        toast(
+          'Email sent OK but couldn\u2019t update status \u2014 please refresh and edit the row to set status=Quote Sent',
+          'error'
+        );
+        loadBabcockTracker();
+      }
+    }
+  });
+  // If user cancelled, the modal resolves with null and we leave the
+  // row untouched — no API call made.
 }
 
 // Legacy: kept for backward compat in case any code still calls it.
