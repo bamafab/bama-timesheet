@@ -77,6 +77,10 @@
   .tpl-field .color-row { display: flex; align-items: center; gap: 10px; }
   .tpl-field .color-row span { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
   .tpl-field textarea { resize: vertical; min-height: 60px; line-height: 1.4; }
+  /* Email body + signature templates need more vertical room than the
+     other textareas (which mostly hold one-line footer notes). */
+  .tpl-field textarea[data-field="body"]      { min-height: 180px; font-family: 'Segoe UI', system-ui, sans-serif; }
+  .tpl-field textarea[data-field="html"]      { min-height: 220px; font-family: var(--font-mono); font-size: 11.5px; line-height: 1.5; }
   .tpl-field .checkbox-row { display: flex; align-items: center; gap: 8px; }
   .tpl-field .checkbox-row input { width: 16px; height: 16px; accent-color: var(--accent); }
   .tpl-field .checkbox-row label { margin: 0; font-weight: 400; font-size: 13px; cursor: pointer; }
@@ -204,6 +208,19 @@
       <div class="tpl-item" data-template="deliveryNote" onclick="selectTemplate('deliveryNote')">
         <div>Delivery Note</div>
         <div class="tpl-item-sub">Job material dispatch</div>
+      </div>
+      <h3 style="margin-top:22px">Email</h3>
+      <div class="tpl-item" data-template="emailQuoteSent" onclick="selectTemplate('emailQuoteSent')">
+        <div>Babcock Quote (to client)</div>
+        <div class="tpl-item-sub">Sent at "Generate Quote"</div>
+      </div>
+      <div class="tpl-item" data-template="emailBamaSwInvoice" onclick="selectTemplate('emailBamaSwInvoice')">
+        <div>Bama SW Invoice</div>
+        <div class="tpl-item-sub">Sent at "Generate Bama SW Invoice"</div>
+      </div>
+      <div class="tpl-item" data-template="emailSignature" onclick="selectTemplate('emailSignature')">
+        <div>Email Signature</div>
+        <div class="tpl-item-sub">Shared by all Babcock emails</div>
       </div>
     </div>
 

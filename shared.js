@@ -11537,6 +11537,57 @@ const TEMPLATE_DEFAULTS = {
     showCompanyDetails: true,
     showSignatureBlock: true,
     termsText: ''
+  },
+
+  // ── Email templates (Babcock workflow) ──
+  // Body uses {{token}} placeholders that get substituted at send time
+  // (see renderTemplate() below). Subject is a template too for these
+  // entries — the user can rephrase but tokens still substitute.
+  // Signatures are kept as a separate template so both Babcock-quote
+  // and Bama-SW-invoice emails can share one signature block.
+  emailQuoteSent: {
+    subject: 'Quote {{quote_ref}} — {{project_name}}',
+    body: 'Dear {{contact_name}},\n\n' +
+          'Please find attached our quote ref {{quote_ref}} for {{project_name}}.\n\n' +
+          'The quote is valid until {{valid_until}}.\n\n' +
+          'If you have any questions, please don\u2019t hesitate to get in touch.'
+  },
+  emailBamaSwInvoice: {
+    subject: 'Invoice {{bama_sw_invoice_number}} — Project {{project_number}}',
+    body: 'Hi,\n\n' +
+          'Please find attached our invoice {{bama_sw_invoice_number}} for project {{project_number}}.\n\n' +
+          'Original quote value: {{original_value}}\n' +
+          'Project costs deducted: {{deductions_total}}\n' +
+          'Net invoice total: {{net_invoice_total}}\n\n' +
+          'Payment due {{bama_sw_invoice_due_date}} as per agreed terms.\n\n' +
+          'Many thanks.'
+  },
+  emailSignature: {
+    // HTML content — appended to every Babcock workflow email after the
+    // body. Logos can be embedded as <img src="data:..."> when ready.
+    // Default below mirrors the standard Natasza Laucis signature.
+    html:
+      '<p style="margin:18px 0 4px 0">Kind regards</p>' +
+      '<p style="margin:0;font-weight:bold;font-size:14px">Natasza Laucis</p>' +
+      '<p style="margin:0 0 12px 0;color:#D0021B;font-size:12px">Office Coordinator — BAMA Fabrication</p>' +
+      '<table style="border-collapse:collapse;font-size:12px;color:#333"><tr>' +
+      '<td style="padding-right:14px;vertical-align:top">' +
+      '<span style="display:inline-block;background:#D0021B;color:#fff;padding:6px 14px;font-weight:bold;letter-spacing:1px;border-radius:3px">BAMA</span>' +
+      '</td>' +
+      '<td style="vertical-align:top;line-height:1.6">' +
+      '<b style="color:#D0021B">E:</b> <a href="mailto:accounts@bamafabrication.co.uk" style="color:#1f6feb">accounts@bamafabrication.co.uk</a>&nbsp;&nbsp;' +
+      '<b style="color:#D0021B">W:</b> <a href="https://www.bamafabrication.co.uk" style="color:#1f6feb">www.bamafabrication.co.uk</a><br>' +
+      '<b style="color:#D0021B">O:</b> 01733 855212<br>' +
+      '<b style="color:#D0021B">A:</b> 11 Enterprise Way, Enterprise Park, Yaxley, Peterborough, PE7 3WY' +
+      '</td></tr></table>' +
+      '<p style="margin:14px 0 0 0;font-size:10px;color:#666;line-height:1.5">' +
+      'This e-mail, its content and any files transmitted with it are intended solely for the person(s) ' +
+      'or entity to which it is addressed and may contain confidential and/or privileged material. Access ' +
+      'by any other party is unauthorised without the express written permission of the sender. If you ' +
+      'have received this e-mail in error, you may not copy, forward or use the contents, attachments or ' +
+      'information in any way. Although any attachments to this e-mail have been virus checked, the ' +
+      'sender cannot accept liability in respect of any virus which has not been detected.' +
+      '</p>'
   }
 };
 
@@ -11566,6 +11617,81 @@ function tplCloneSettings() {
   for (const k of Object.keys(TEMPLATE_DEFAULTS)) {
     out[k] = Object.assign({}, TEMPLATE_DEFAULTS[k], saved[k] || {});
   }
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// EMAIL TEMPLATE TOKEN ENGINE
+// ─────────────────────────────────────────────────────────────────────
+// Email templates (subject + body + signature) use {{token_name}}
+// placeholders that get substituted from a tokens object at send time.
+// Anything not in the tokens object is left as the literal placeholder
+// so it's visible in the sent email — better than silently dropping it.
+//
+// Tokens are case-insensitive. Whitespace inside the braces is allowed,
+// so {{ quote_ref }} works the same as {{quote_ref}}. Unknown tokens
+// stay as-is so a missed substitution is loudly visible rather than
+// silently swallowed.
+
+// Token definitions for each email template — used by the editor's
+// "Available tokens" hint panel and by the live-preview sample
+// substitution. The `sample` value is what shows in the preview pane.
+const EMAIL_TOKEN_DEFS = {
+  emailQuoteSent: [
+    { token: 'contact_name',    label: 'Contact name',           sample: 'John Smith' },
+    { token: 'quote_ref',       label: 'Quote reference',         sample: 'B0011' },
+    { token: 'project_name',    label: 'Project name / area',     sample: 'Plant Room Refurb' },
+    { token: 'customer_id',     label: 'Customer ID',             sample: 'CUST-123' },
+    { token: 'work_order_no',   label: 'Work Order number',       sample: 'WO-99821' },
+    { token: 'valid_until',     label: 'Quote valid-until date',  sample: '14 June 2026' },
+    { token: 'total_value',     label: 'Quote total (\u00a3)',    sample: '\u00a31,100.00' },
+    { token: 'sender_name',     label: 'Logged-in user name',     sample: 'Lee Kirtley' },
+    { token: 'sender_email',    label: 'Logged-in user email',    sample: 'lee@bamafabrication.co.uk' },
+    { token: 'date_today',      label: 'Today\u2019s date',       sample: '07 May 2026' }
+  ],
+  emailBamaSwInvoice: [
+    { token: 'bama_sw_invoice_number',  label: 'Bama SW invoice number',     sample: 'INV-BSW-0042' },
+    { token: 'project_number',          label: 'Project number',             sample: 'BC0011' },
+    { token: 'project_name',            label: 'Project name',               sample: 'Plant Room Refurb' },
+    { token: 'original_value',          label: 'Original quote total',       sample: '\u00a31,000.00' },
+    { token: 'deductions_total',        label: 'Project costs deducted',     sample: '\u00a3120.00' },
+    { token: 'net_invoice_total',       label: 'Net invoice total',          sample: '\u00a3880.00' },
+    { token: 'bama_sw_po_number',       label: 'Bama SW PO number',          sample: 'BSW-PO-12345' },
+    { token: 'bama_sw_invoice_due_date',label: 'Invoice due date',           sample: '06 June 2026' },
+    { token: 'sender_name',             label: 'Logged-in user name',        sample: 'Lee Kirtley' },
+    { token: 'sender_email',            label: 'Logged-in user email',       sample: 'lee@bamafabrication.co.uk' },
+    { token: 'date_today',              label: 'Today\u2019s date',          sample: '07 May 2026' }
+  ],
+  emailSignature: [
+    { token: 'sender_name',  label: 'Logged-in user name',  sample: 'Natasza Laucis' },
+    { token: 'sender_role',  label: 'Logged-in user role',  sample: 'Office Coordinator' },
+    { token: 'sender_email', label: 'Logged-in user email', sample: 'accounts@bamafabrication.co.uk' },
+    { token: 'date_today',   label: 'Today\u2019s date',    sample: '07 May 2026' }
+  ]
+};
+
+// Substitute {{token}} placeholders in `text` with values from `tokens`.
+// Unknown tokens are left as-is (visible) so missed substitutions are
+// caught at send time rather than silently dropped. Token names are
+// matched case-insensitively and whitespace inside the braces is OK.
+function renderTemplate(text, tokens) {
+  if (text == null) return '';
+  if (!tokens || typeof tokens !== 'object') tokens = {};
+  // Normalise the tokens object once to lower-case keys for matching
+  const lookup = {};
+  for (const k of Object.keys(tokens)) lookup[k.toLowerCase()] = tokens[k];
+  return String(text).replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (full, name) => {
+    const key = name.toLowerCase();
+    return lookup[key] !== undefined && lookup[key] !== null ? String(lookup[key]) : full;
+  });
+}
+
+// Build a sample-tokens object for live-preview rendering.
+// Picks .sample for every token defined for the given template key.
+function getEmailPreviewTokens(templateKey) {
+  const defs = EMAIL_TOKEN_DEFS[templateKey] || [];
+  const out = {};
+  for (const d of defs) out[d.token] = d.sample;
   return out;
 }
 
@@ -11735,8 +11861,74 @@ function renderTemplateEditor(key) {
         ${field('showSignatureBlock', 'Show signature block (Delivered by / Received by)', 'checkbox')}
         ${field('termsText', 'Terms / notes', 'textarea', 'optional &mdash; e.g. returns policy')}
       </div>`;
+  } else if (key === 'emailQuoteSent') {
+    html = `
+      <h2>Babcock Quote — Email to Client</h2>
+      <div class="tpl-desc">Sent at the <b>Generate Quote</b> step of the Babcock workflow. The PDF is attached automatically; this template controls the subject line and message body.</div>
+      <div class="tpl-section">
+        <div class="tpl-section-title">Subject</div>
+        ${field('subject', 'Subject line', 'text', 'tokens like {{quote_ref}} are substituted at send time')}
+      </div>
+      <div class="tpl-section">
+        <div class="tpl-section-title">Body</div>
+        ${field('body', 'Message body', 'textarea', 'plain text; the signature is appended automatically — edit it from "Email Signature"')}
+      </div>
+      ${renderEmailTokensHint('emailQuoteSent')}`;
+  } else if (key === 'emailBamaSwInvoice') {
+    html = `
+      <h2>Bama SW Invoice — Email</h2>
+      <div class="tpl-desc">Sent at the <b>Generate Bama SW Invoice</b> step. Used to send the system-generated invoice (original quote minus project costs) to Bama South West.</div>
+      <div class="tpl-section">
+        <div class="tpl-section-title">Subject</div>
+        ${field('subject', 'Subject line', 'text', 'tokens like {{bama_sw_invoice_number}} are substituted at send time')}
+      </div>
+      <div class="tpl-section">
+        <div class="tpl-section-title">Body</div>
+        ${field('body', 'Message body', 'textarea', 'plain text; the signature is appended automatically — edit it from "Email Signature"')}
+      </div>
+      ${renderEmailTokensHint('emailBamaSwInvoice')}`;
+  } else if (key === 'emailSignature') {
+    html = `
+      <h2>Email Signature</h2>
+      <div class="tpl-desc">Appended to every Babcock workflow email (after the body) and sent as HTML so logos, links and formatting render in the recipient\u2019s mail client.</div>
+      <div class="tpl-section">
+        <div class="tpl-section-title">HTML signature block</div>
+        ${field('html', 'Signature HTML', 'textarea', 'edit the markup directly &mdash; tokens like {{sender_name}} are substituted at send time')}
+      </div>
+      ${renderEmailTokensHint('emailSignature')}`;
   }
   editor.innerHTML = html;
+}
+
+// Render a "tokens you can use" panel for an email template editor.
+// Read by the editor branches above.
+function renderEmailTokensHint(templateKey) {
+  const defs = EMAIL_TOKEN_DEFS[templateKey] || [];
+  if (!defs.length) return '';
+  const rows = defs.map(d =>
+    `<tr>
+       <td style="padding:5px 10px;font-family:var(--font-mono);font-size:12px;color:var(--accent);white-space:nowrap">{{${d.token}}}</td>
+       <td style="padding:5px 10px;font-size:12px;color:var(--text)">${d.label}</td>
+       <td style="padding:5px 10px;font-size:11px;color:var(--subtle);font-family:var(--font-mono)">${escapeHtml(String(d.sample))}</td>
+     </tr>`
+  ).join('');
+  return `
+    <div class="tpl-section" style="background:rgba(255,107,0,.04);border:1px solid rgba(255,107,0,.2)">
+      <div class="tpl-section-title" style="color:var(--accent)">Available tokens</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px">
+        Drop these into the subject or body \u2014 they\u2019ll be replaced with the real value when the email is sent. Unknown tokens stay as-is (visible) so missed substitutions are easy to spot.
+      </div>
+      <table style="width:100%;border-collapse:collapse">
+        <thead>
+          <tr style="background:var(--surface);color:var(--muted);font-size:10px;letter-spacing:.5px;text-transform:uppercase">
+            <th style="padding:6px 10px;text-align:left">Token</th>
+            <th style="padding:6px 10px;text-align:left">What it means</th>
+            <th style="padding:6px 10px;text-align:left">Sample value</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
 }
 
 // ── Live-update field handler ──
@@ -11810,8 +12002,89 @@ function refreshTemplatePreview() {
   } else if (tplCurrent === 'deliveryNote') {
     html = buildDeliveryNoteHTMLCore(getMockDeliveryNote(), getMockBomJob(), getMockProject(), getMockJob(), tplDraft);
     if (label) label.textContent = 'Delivery Note \u2014 sample data';
+  } else if (tplCurrent === 'emailQuoteSent' || tplCurrent === 'emailBamaSwInvoice') {
+    html = buildEmailPreviewHTML(tplCurrent, tplDraft);
+    if (label) label.textContent = (tplCurrent === 'emailQuoteSent' ? 'Babcock Quote Email' : 'Bama SW Invoice Email') + ' \u2014 sample data';
+  } else if (tplCurrent === 'emailSignature') {
+    // For the signature alone, show it inside an envelope so the user
+    // sees what it looks like at the bottom of an actual email body.
+    html = buildEmailSignaturePreviewHTML(tplDraft);
+    if (label) label.textContent = 'Email Signature \u2014 in context';
   }
   iframe.srcdoc = html;
+}
+
+// Render a full email preview (subject + body + signature) with sample
+// token substitutions, for the live preview pane.
+function buildEmailPreviewHTML(templateKey, draft) {
+  const tpl = (draft && draft[templateKey]) || {};
+  const sigTpl = (draft && draft.emailSignature) || {};
+  const tokens = getEmailPreviewTokens(templateKey);
+  // Signature uses its own tokens (user-side, not message-side)
+  const sigTokens = getEmailPreviewTokens('emailSignature');
+
+  const subject = renderTemplate(tpl.subject || '', tokens);
+  // Body is plain-text; convert newlines to <br> for the preview
+  const bodyText = renderTemplate(tpl.body || '', tokens);
+  const bodyHtml = escapeHtml(bodyText).replace(/\n/g, '<br>');
+  const signatureHtml = renderTemplate(sigTpl.html || '', sigTokens);
+
+  const sampleTo = templateKey === 'emailQuoteSent'
+    ? 'john.smith@babcock-customer.com'
+    : 'accounts@bamasouthwest.co.uk';
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+    body { margin:0; padding:24px; background:#f4f5f7; font-family:'Segoe UI', system-ui, sans-serif; color:#222; }
+    .email { max-width:680px; margin:0 auto; background:#fff; border:1px solid #d8dde2; border-radius:6px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,.05); }
+    .email-head { background:#fafbfc; border-bottom:1px solid #e6e9ee; padding:14px 22px; font-size:12px; color:#495057; }
+    .email-head .row { display:grid; grid-template-columns:60px 1fr; gap:6px; padding:2px 0; }
+    .email-head .lbl { color:#868e96; font-weight:600; }
+    .email-head .subject { padding:10px 0 0; border-top:1px dashed #e6e9ee; margin-top:8px; font-size:14px; color:#222; font-weight:600; }
+    .email-attach { padding:10px 22px; background:#fff8ec; border-bottom:1px solid #f0d99a; font-size:12px; color:#7a5b00; }
+    .email-attach .pill { display:inline-block; padding:4px 10px; background:#fff; border:1px solid #e0c270; border-radius:14px; font-family:'Consolas', monospace; font-size:11px; color:#5a4500; }
+    .email-body { padding:22px; line-height:1.6; font-size:14px; color:#222; }
+    .email-body .text { white-space:normal; }
+    .email-sig { padding:0 22px 22px; border-top:1px solid #f1f3f5; margin-top:6px; }
+  </style></head><body>
+    <div class="email">
+      <div class="email-head">
+        <div class="row"><span class="lbl">From</span> <span>BAMA Fabrication &lt;{{sender_email}}&gt;</span></div>
+        <div class="row"><span class="lbl">To</span> <span>${escapeHtml(sampleTo)}</span></div>
+        <div class="subject">${escapeHtml(subject || '(no subject)')}</div>
+      </div>
+      <div class="email-attach">
+        \uD83D\uDCCE <span class="pill">${templateKey === 'emailQuoteSent' ? 'B0011 - Babcock Estates - C2601361.pdf' : 'INV-BSW-0042.pdf'}</span>
+        <span style="color:#a08200;font-size:11px;margin-left:6px">attached</span>
+      </div>
+      <div class="email-body">
+        <div class="text">${bodyHtml || '<i style="color:#999">(empty body)</i>'}</div>
+      </div>
+      <div class="email-sig">${signatureHtml}</div>
+    </div>
+  </body></html>`;
+}
+
+// Show the signature in a minimal envelope so the user can see how it
+// renders at the bottom of an outgoing email — without flooding the
+// preview pane with body content from another template.
+function buildEmailSignaturePreviewHTML(draft) {
+  const sigTpl = (draft && draft.emailSignature) || {};
+  const sigTokens = getEmailPreviewTokens('emailSignature');
+  const signatureHtml = renderTemplate(sigTpl.html || '', sigTokens);
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+    body { margin:0; padding:24px; background:#f4f5f7; font-family:'Segoe UI', system-ui, sans-serif; color:#222; }
+    .email { max-width:680px; margin:0 auto; background:#fff; border:1px solid #d8dde2; border-radius:6px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,.05); }
+    .email-body { padding:22px; line-height:1.6; font-size:14px; color:#444; }
+    .email-body .placeholder { color:#999; font-style:italic; }
+    .email-sig { padding:0 22px 22px; border-top:1px solid #f1f3f5; margin-top:6px; }
+  </style></head><body>
+    <div class="email">
+      <div class="email-body">
+        <p class="placeholder">[ \u2026 the body of the email goes here \u2026 ]</p>
+      </div>
+      <div class="email-sig">${signatureHtml}</div>
+    </div>
+  </body></html>`;
 }
 
 // ── Mock data for preview ──
