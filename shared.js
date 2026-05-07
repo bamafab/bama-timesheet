@@ -16237,10 +16237,14 @@ function clearBabcockFile() {
 }
 
 // ── Parse the BAMA South West Babcock template's "Quote" tab ───────
-// The template is rigid: a sheet that's effectively the "Quote" tab,
-// header row at row 14 (Item | Description | Unit Price | Quantity | Amount),
-// data from row 15 onwards until an empty Description. Header metadata sits
-// in rows 1-9 with labels in column D (or A) and values one column to the right.
+// Parse the BAMA SW Babcock template's "Quote" tab.
+//
+// Uses LABEL-ANCHORED lookups: each header field is found by scanning for
+// its label text (case-insensitive, colon-stripped) and reading the cell
+// to its right. This way the spreadsheet template can move blocks around,
+// add or remove rows, etc., without breaking the parser — labels are the
+// contract, not coordinates. Multiple alternate spellings per field are
+// supported via HEADER_FIELDS[…].labels.
 //
 // Sheet-name resolution is forgiving:
 //   1. exact "Quote" wins
@@ -16249,7 +16253,16 @@ function clearBabcockFile() {
 // If nothing matches, throws an error listing the sheets that ARE present —
 // usually that's enough to spot a renamed tab or the wrong file.
 //
-// Returns { header, lineItems } where any missing/blank header field is left as ''.
+// Required fields (Customer ID, Work Order no., Quotation For) throw if
+// missing — the validation form would otherwise silently get blank
+// mandatory fields. Optional fields (Area, Address, Email, Comments)
+// fall back to ''.
+//
+// Line items are anchored on the row containing all five column headers
+// (Item, Description, Unit Price, Quantity, Amount) — table can move
+// vertically as the spreadsheet evolves.
+//
+// Returns { header, lineItems } where any missing/blank optional field is ''.
 function parseBabcockQuoteTab(wb) {
   const sheetNames = wb.SheetNames || [];
 
@@ -16275,7 +16288,7 @@ function parseBabcockQuoteTab(wb) {
   const sheet = wb.Sheets[resolvedName];
   if (!sheet) throw new Error(`Sheet "${resolvedName}" could not be read.`);
 
-  // Pull as a 2D array — easiest for fixed-position parsing
+  // Pull as a 2D array — easiest for label-anchored scanning
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
 
   const cell = (r, c) => {
@@ -16285,51 +16298,155 @@ function parseBabcockQuoteTab(wb) {
     return v === undefined || v === null ? '' : v;
   };
 
-  // Row indices are 0-based here; the spreadsheet rows are 1-based.
-  // Cells are 0-based by column letter (A=0, B=1, C=2, D=3, E=4).
-  const header = {
-    quotationDate:    cell(1, 4), // E2 — value next to D2 "Date"
-    quoteRef:         cell(2, 4), // E3 — Quotation no.
-    customerId:       cell(3, 4), // E4 — Customer ID
-    workOrderNo:      cell(4, 4), // E5 — Work Order no.
-    validUntil:       cell(5, 4), // E6 — Quotation valid until
-    preparedBy:       cell(6, 4), // E7 — Prepared by
-    quoteFor:         cell(4, 1), // B5 — value next to A5 "Quotation For"
-    area:             cell(5, 1), // B6 — value next to A6 "Area"
-    address:          cell(6, 1), // B7 — value next to A7 "Address"
-    // Comments / Special Instructions live in merged cells A10:E10, A11:E11, A12:E12.
-    // SheetJS unmerges into the top-left cell, so reading A10/A11/A12 (col 0) is correct.
-    comments:         [cell(9, 0), cell(10, 0), cell(11, 0)]
-                        .map(s => String(s || '').trim()).filter(Boolean).join('\n')
+  // ── Label-anchored lookup ──
+  // Old parser used hard-coded coordinates (cell(2,4) etc.) which broke if
+  // anyone shifted the header block. Now: each field declares its label(s),
+  // we scan every cell to find the match, then read the adjacent value cell.
+  // Labels are matched case-insensitively and ignore trailing colons/whitespace.
+  // Direction defaults to 'right' (most labels have their value in the next
+  // column). 'below' supported for stacked layouts.
+  const normaliseLabel = s => String(s || '').trim().replace(/[:：]\s*$/, '').toLowerCase();
+
+  // Build an index of every non-empty text cell once, for O(1) lookups
+  // during the field scan rather than re-walking the sheet per field.
+  const labelIndex = new Map(); // normalised label → [{r, c}, ...]
+  for (let r = 0; r < rows.length; r++) {
+    const row = rows[r] || [];
+    for (let c = 0; c < row.length; c++) {
+      const v = row[c];
+      if (v === undefined || v === null || v === '') continue;
+      // Only index text-ish cells (numbers can't be labels; dates aren't either)
+      if (typeof v === 'number' || v instanceof Date) continue;
+      const key = normaliseLabel(v);
+      if (!key) continue;
+      if (!labelIndex.has(key)) labelIndex.set(key, []);
+      labelIndex.get(key).push({ r, c });
+    }
+  }
+
+  // Find the value cell adjacent to a label. Tries every alternate label
+  // (case-insensitive, colon-stripped) until one matches. If a label
+  // occurs more than once on the sheet, we take the first. Returns the
+  // cell value, or '' if no label match.
+  function findValueByLabel(labels, direction = 'right') {
+    const tries = Array.isArray(labels) ? labels : [labels];
+    for (const lbl of tries) {
+      const hits = labelIndex.get(normaliseLabel(lbl));
+      if (!hits || !hits.length) continue;
+      const { r, c } = hits[0];
+      if (direction === 'right') return cell(r, c + 1);
+      if (direction === 'below') return cell(r + 1, c);
+      if (direction === 'left')  return cell(r, c - 1);
+      if (direction === 'above') return cell(r - 1, c);
+    }
+    return '';
+  }
+
+  // Header field map. `alternates` lets the spreadsheet's wording drift
+  // slightly without breaking the parse — add new variants here as needed.
+  const HEADER_FIELDS = {
+    quotationDate:    { labels: ['Date'] },
+    quoteRef:         { labels: ['Quotation no.', 'Quotation Number', 'Quote no.', 'Quote Number'] },
+    customerId:       { labels: ['Customer ID', 'Customer Id'] },
+    workOrderNo:      { labels: ['Work Order no.', 'Work Order Number', 'Work Order'] },
+    validUntil:       { labels: ['Quotation valid until', 'Valid until', 'Quote valid until'] },
+    preparedBy:       { labels: ['Prepared by'] },
+    quoteFor:         { labels: ['Quotation For', 'Quote For'] },
+    customerEmail:    { labels: ['Email', 'E-mail'] },
+    area:             { labels: ['Area'] },
+    address:          { labels: ['Address'] },
   };
+
+  const header = {};
+  for (const [key, def] of Object.entries(HEADER_FIELDS)) {
+    header[key] = findValueByLabel(def.labels, def.direction || 'right');
+  }
+
+  // Comments block — the heading "Comments or Special Instructions" sits
+  // above a 3-row merged area. SheetJS unmerges into the top-left cell.
+  // Read the 3 cells immediately below the heading.
+  const commentsHits = labelIndex.get(normaliseLabel('Comments or Special Instructions'));
+  if (commentsHits && commentsHits.length) {
+    const { r: cr, c: cc } = commentsHits[0];
+    header.comments = [cell(cr + 1, cc), cell(cr + 2, cc), cell(cr + 3, cc)]
+      .map(s => String(s || '').trim()).filter(Boolean).join('\n');
+  } else {
+    header.comments = '';
+  }
+
+  // Required header fields — fail loudly if any are missing so the user
+  // sees a precise error instead of a row of blanks on the validation form.
+  const REQUIRED = ['customerId', 'workOrderNo', 'quoteFor'];
+  const missing = REQUIRED.filter(k => !String(header[k] || '').trim());
+  if (missing.length) {
+    const labelsList = missing.map(k => `"${HEADER_FIELDS[k].labels[0]}"`).join(', ');
+    throw new Error(
+      `Couldn't find or read the required ${labelsList} cell${missing.length === 1 ? '' : 's'} on the Quote tab. ` +
+      `Has the template been changed? Each label must sit in a cell with its value in the cell immediately to the right.`
+    );
+  }
 
   // Normalise dates — Excel may give a JS Date object, a number (serial), or a string.
   header.quotationDate = excelToISODate(header.quotationDate);
   header.validUntil    = excelToISODate(header.validUntil);
 
   // Trim string fields
-  for (const k of ['quoteRef', 'customerId', 'workOrderNo', 'preparedBy', 'quoteFor', 'area', 'address']) {
+  for (const k of ['quoteRef', 'customerId', 'workOrderNo', 'preparedBy',
+                   'quoteFor', 'area', 'address', 'customerEmail']) {
     header[k] = String(header[k] || '').trim();
   }
 
-  // Line items: row 14 (index 13) is the header; data starts at row 15 (index 14).
-  // Read until we hit a row with no description AND no item number — supports
-  // templates that have been extended past the original 14-row capacity.
-  const lineItems = [];
-  for (let r = 14; r < rows.length; r++) {
-    const itemNum    = cell(r, 0);
-    const description = String(cell(r, 1) || '').trim();
-    const unitPrice  = cell(r, 2);
-    const quantity   = cell(r, 3);
-    const amount     = cell(r, 4);
+  // ── Line items table ──
+  // Anchored on the row containing all five column headers (Item, Description,
+  // Unit Price, Quantity, Amount). This row could move up or down as the
+  // spreadsheet evolves; finding it dynamically makes the parser robust.
+  function findLineItemsHeaderRow() {
+    const want = ['item', 'description', 'unit price', 'quantity', 'amount'];
+    for (let r = 0; r < rows.length; r++) {
+      const row = (rows[r] || []).map(v => normaliseLabel(v));
+      // Need every wanted heading to appear somewhere in this row, in order
+      let cursor = 0;
+      const colMap = {};
+      for (let c = 0; c < row.length; c++) {
+        if (cursor >= want.length) break;
+        if (row[c] === want[cursor]) {
+          colMap[want[cursor]] = c;
+          cursor++;
+        }
+      }
+      if (cursor === want.length) return { r, colMap };
+    }
+    return null;
+  }
 
-    // Stop when we hit the TOTAL row or the VAT-exclusive note (description column has the note text).
+  const liHeader = findLineItemsHeaderRow();
+  if (!liHeader) {
+    throw new Error(
+      'Could not find the line items table on the Quote tab. ' +
+      'Expected a row with headers: Item, Description, Unit Price, Quantity, Amount.'
+    );
+  }
+  const C_ITEM   = liHeader.colMap['item'];
+  const C_DESC   = liHeader.colMap['description'];
+  const C_PRICE  = liHeader.colMap['unit price'];
+  const C_QTY    = liHeader.colMap['quantity'];
+  const C_AMT    = liHeader.colMap['amount'];
+
+  const lineItems = [];
+  for (let r = liHeader.r + 1; r < rows.length; r++) {
+    const itemNum     = cell(r, C_ITEM);
+    const description = String(cell(r, C_DESC) || '').trim();
+    const unitPrice   = cell(r, C_PRICE);
+    const quantity    = cell(r, C_QTY);
+    const amount      = cell(r, C_AMT);
+
+    // Stop when we hit the TOTAL row or the VAT-exclusive note.
     if (description === 'All quotes are VAT exclusive' || description === 'TOTAL') break;
-    if (cell(r, 3) === 'TOTAL' || cell(r, 4) === 'TOTAL') break;
+    if (cell(r, C_QTY) === 'TOTAL' || cell(r, C_AMT) === 'TOTAL') break;
 
     // Skip rows where description is empty AND no numeric data — these are blank template rows.
     if (!description && unitPrice === '' && quantity === '' && amount === '') continue;
-    // Skip rows with only an item number (e.g. blank line slots 11-14 in the default template)
+    // Skip rows with only an item number (e.g. blank line slots in the default template)
     if (!description) continue;
 
     const qtyNum = quantity === '' ? null : Number(quantity);
