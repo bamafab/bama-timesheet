@@ -3,7 +3,21 @@ const { requireAuth } = require('../auth');
 const { query } = require('../db');
 const { ok, created, badRequest, notFound, serverError, preflight } = require('../responses');
 
-const ALLOWED_STATUSES = ['Quote Sent', 'PO Received', 'Invoice Generated', 'Paid'];
+// Status values for the full Babcock workflow lifecycle.
+// Order here matches the workflow order — handy for any client-side
+// "next status" logic. The DB column is plain NVARCHAR(50); validation
+// is API-side only via this array.
+const ALLOWED_STATUSES = [
+    'Quote Received',
+    'Quote Sent',
+    'Live Project',
+    'Project Complete',
+    'Approved to Pay',
+    'Payment Received',
+    'Sent to Bama SW',
+    'Bama SW Awaiting Payment',
+    'Cancelled'
+];
 // First system-allocated number. B0091 was the last manually-created Babcock
 // quote in SharePoint pre-go-live, so the system picks up at B0092.
 const STARTING_REF_NUMBER = 92;
@@ -52,7 +66,15 @@ app.http('babcock-quotes-list', {
                                   prepared_by, quote_for_area, quote_for_address, comments,
                                   original_file_id, original_file_url,
                                   generated_file_id, generated_file_url, revision,
-                                  original_quote_ref, po_number
+                                  original_quote_ref, po_number,
+                                  customer_email, linked_project_id,
+                                  coupa_invoice_pdf_url, coupa_invoice_pdf_id,
+                                  coupa_invoice_number, coupa_invoice_due_date,
+                                  coupa_invoice_gross_total, coupa_po_ref,
+                                  payment_received_at,
+                                  bama_sw_invoice_pdf_url, bama_sw_invoice_pdf_id,
+                                  bama_sw_invoice_number, bama_sw_po_number,
+                                  bama_sw_invoice_due_date, bama_sw_invoice_sent_at
                            FROM BabcockQuotes`;
             const params = {};
             if (status) {
@@ -147,7 +169,15 @@ app.http('babcock-quotes-create', {
                   prepared_by, quote_for_area, quote_for_address, comments,
                   original_file_id, original_file_url,
                   generated_file_id, generated_file_url,
-                  original_quote_ref, po_number } = body;
+                  original_quote_ref, po_number,
+                  customer_email, linked_project_id,
+                  coupa_invoice_pdf_url, coupa_invoice_pdf_id,
+                  coupa_invoice_number, coupa_invoice_due_date,
+                  coupa_invoice_gross_total, coupa_po_ref,
+                  payment_received_at,
+                  bama_sw_invoice_pdf_url, bama_sw_invoice_pdf_id,
+                  bama_sw_invoice_number, bama_sw_po_number,
+                  bama_sw_invoice_due_date, bama_sw_invoice_sent_at } = body;
 
             // Auto-allocate reference if not supplied — uses same logic as the
             // next-ref endpoint to keep things race-tolerant within a single request.
@@ -178,7 +208,15 @@ app.http('babcock-quotes-create', {
                      prepared_by, quote_for_area, quote_for_address, comments,
                      original_file_id, original_file_url,
                      generated_file_id, generated_file_url,
-                     original_quote_ref, po_number)
+                     original_quote_ref, po_number,
+                     customer_email, linked_project_id,
+                     coupa_invoice_pdf_url, coupa_invoice_pdf_id,
+                     coupa_invoice_number, coupa_invoice_due_date,
+                     coupa_invoice_gross_total, coupa_po_ref,
+                     payment_received_at,
+                     bama_sw_invoice_pdf_url, bama_sw_invoice_pdf_id,
+                     bama_sw_invoice_number, bama_sw_po_number,
+                     bama_sw_invoice_due_date, bama_sw_invoice_sent_at)
                  OUTPUT INSERTED.*
                  VALUES (@quote_ref, @date_sent, @total_value, @markup_pct, @line_items,
                          @source_filename, @status, @created_by,
@@ -186,7 +224,15 @@ app.http('babcock-quotes-create', {
                          @prepared_by, @quote_for_area, @quote_for_address, @comments,
                          @original_file_id, @original_file_url,
                          @generated_file_id, @generated_file_url,
-                         @original_quote_ref, @po_number)`,
+                         @original_quote_ref, @po_number,
+                         @customer_email, @linked_project_id,
+                         @coupa_invoice_pdf_url, @coupa_invoice_pdf_id,
+                         @coupa_invoice_number, @coupa_invoice_due_date,
+                         @coupa_invoice_gross_total, @coupa_po_ref,
+                         @payment_received_at,
+                         @bama_sw_invoice_pdf_url, @bama_sw_invoice_pdf_id,
+                         @bama_sw_invoice_number, @bama_sw_po_number,
+                         @bama_sw_invoice_due_date, @bama_sw_invoice_sent_at)`,
                 {
                     quote_ref,
                     date_sent: date_sent || null,
@@ -194,7 +240,9 @@ app.http('babcock-quotes-create', {
                     markup_pct: markup_pct !== undefined && markup_pct !== null ? Number(markup_pct) : null,
                     line_items: lineItemsJson,
                     source_filename: source_filename || null,
-                    status: status || 'Quote Sent',
+                    // New default: rows start at 'Quote Received'. Caller can override
+                    // (e.g. backfill of an already-emailed quote starts at 'Quote Sent').
+                    status: status || 'Quote Received',
                     created_by: created_by || null,
                     quotation_date: quotation_date || null,
                     customer_id: customer_id || null,
@@ -209,7 +257,22 @@ app.http('babcock-quotes-create', {
                     generated_file_id: generated_file_id || null,
                     generated_file_url: generated_file_url || null,
                     original_quote_ref: original_quote_ref || null,
-                    po_number: po_number || null
+                    po_number: po_number || null,
+                    customer_email: customer_email || null,
+                    linked_project_id: linked_project_id != null ? Number(linked_project_id) : null,
+                    coupa_invoice_pdf_url: coupa_invoice_pdf_url || null,
+                    coupa_invoice_pdf_id: coupa_invoice_pdf_id || null,
+                    coupa_invoice_number: coupa_invoice_number || null,
+                    coupa_invoice_due_date: coupa_invoice_due_date || null,
+                    coupa_invoice_gross_total: coupa_invoice_gross_total != null ? Number(coupa_invoice_gross_total) : null,
+                    coupa_po_ref: coupa_po_ref || null,
+                    payment_received_at: payment_received_at || null,
+                    bama_sw_invoice_pdf_url: bama_sw_invoice_pdf_url || null,
+                    bama_sw_invoice_pdf_id: bama_sw_invoice_pdf_id || null,
+                    bama_sw_invoice_number: bama_sw_invoice_number || null,
+                    bama_sw_po_number: bama_sw_po_number || null,
+                    bama_sw_invoice_due_date: bama_sw_invoice_due_date || null,
+                    bama_sw_invoice_sent_at: bama_sw_invoice_sent_at || null
                 }
             );
 
@@ -251,7 +314,15 @@ app.http('babcock-quotes-update', {
                              'prepared_by', 'quote_for_area', 'quote_for_address', 'comments',
                              'original_file_id', 'original_file_url',
                              'generated_file_id', 'generated_file_url', 'revision',
-                             'original_quote_ref', 'po_number'];
+                             'original_quote_ref', 'po_number',
+                             'customer_email', 'linked_project_id',
+                             'coupa_invoice_pdf_url', 'coupa_invoice_pdf_id',
+                             'coupa_invoice_number', 'coupa_invoice_due_date',
+                             'coupa_invoice_gross_total', 'coupa_po_ref',
+                             'payment_received_at',
+                             'bama_sw_invoice_pdf_url', 'bama_sw_invoice_pdf_id',
+                             'bama_sw_invoice_number', 'bama_sw_po_number',
+                             'bama_sw_invoice_due_date', 'bama_sw_invoice_sent_at'];
 
             for (const key of allowed) {
                 if (body[key] === undefined) continue;
@@ -264,11 +335,15 @@ app.http('babcock-quotes-update', {
                 if (key === 'line_items' && val !== null && typeof val !== 'string') {
                     val = JSON.stringify(val);
                 }
-                if ((key === 'total_value' || key === 'markup_pct') && val !== null && val !== undefined) {
+                if ((key === 'total_value' || key === 'markup_pct' || key === 'coupa_invoice_gross_total') && val !== null && val !== undefined) {
                     val = Number(val);
                 }
                 if (key === 'revision' && val !== null && val !== undefined) {
                     val = parseInt(val, 10) || 0;
+                }
+                if (key === 'linked_project_id' && val !== null && val !== undefined) {
+                    val = parseInt(val, 10);
+                    if (isNaN(val)) val = null;
                 }
 
                 fields.push(`${key} = @${key}`);

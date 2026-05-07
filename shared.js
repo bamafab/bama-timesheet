@@ -17241,10 +17241,11 @@ function renderBabcockTracker() {
 
   tbody.innerHTML = list.map(q => {
     const next = babcockNextStatus(q.status);
-    const statusBadge = `<span class="status-badge status-${babcockStatusClass(q.status)}">${escapeHtml(q.status || 'Quote Sent')}</span>`;
+    const advanceLabel = babcockAdvanceLabel(q.status);
+    const statusBadge = `<span class="status-badge status-${babcockStatusClass(q.status)}">${escapeHtml(q.status || 'Quote Received')}</span>`;
     const nextBtn = next
       ? `<button class="btn btn-primary" style="padding:5px 12px;font-size:11px;font-weight:600;letter-spacing:.3px"
-              onclick="event.stopPropagation();advanceBabcockQuoteStatus(${q.id})">→ ${escapeHtml(next)}</button>`
+              onclick="event.stopPropagation();advanceBabcockQuoteStatus(${q.id})">${escapeHtml(advanceLabel || '→ ' + next)}</button>`
       : `<span style="font-size:11px;color:var(--green);font-weight:600">✓ Complete</span>`;
     const revTag = (q.revision && q.revision > 0)
       ? ` <span style="font-size:10px;font-family:var(--font-mono);color:var(--accent);background:rgba(255,107,0,.1);padding:1px 5px;border-radius:3px;font-weight:600;vertical-align:middle">rev${q.revision}</span>`
@@ -17267,25 +17268,67 @@ function renderBabcockTracker() {
 }
 
 // Map a status to the next status in the workflow.
-// Returns null if there is no next action (Paid is terminal).
+// Returns null if there is no next action (terminal states).
+//
+// Note: this powers the inline "→ Next" advance button on the tracker.
+// Some transitions need extra side-effects (e.g. opening a modal,
+// uploading a file, generating a PDF) — those are handled by
+// advanceBabcockQuoteStatus(), not just by this map. For statuses
+// that require a non-trivial transition flow we still return the next
+// status here; the advance handler is responsible for short-circuiting
+// to the right modal rather than just doing a status PUT.
 function babcockNextStatus(current) {
   const flow = {
-    'Quote Sent':        'PO Received',
-    'PO Received':       'Invoice Generated',
-    'Invoice Generated': 'Paid',
-    'Paid':              null
+    'Quote Received':            'Quote Sent',           // generate PDF + email modal
+    'Quote Sent':                'Live Project',          // convert-to-project modal
+    'Live Project':              'Project Complete',      // mark complete
+    'Project Complete':          'Approved to Pay',       // upload approved invoice + OCR
+    'Approved to Pay':           'Payment Received',      // user confirms payment landed
+    'Payment Received':          'Sent to Bama SW',       // generate Bama SW invoice + email modal
+    'Sent to Bama SW':           'Bama SW Awaiting Payment', // capture Bama SW PO
+    'Bama SW Awaiting Payment':  null,                    // terminal — for now
+    'Cancelled':                 null
   };
-  return flow[current || 'Quote Sent'];
+  return flow[current || 'Quote Received'];
 }
 
 // CSS class suffix for the status badge colour.
+// Each status gets a distinct colour so the eye can scan the tracker
+// quickly. The colours roughly follow the workflow's mood:
+//   amber/yellow for in-progress states (early lifecycle),
+//   blue for active project work,
+//   purple/violet for invoicing,
+//   green when money's in,
+//   teal for outbound Bama SW,
+//   grey for cancelled.
 function babcockStatusClass(status) {
   return ({
-    'Quote Sent':        'sent',
-    'PO Received':       'po',
-    'Invoice Generated': 'invoiced',
-    'Paid':              'paid'
-  })[status || 'Quote Sent'] || 'sent';
+    'Quote Received':            'received',
+    'Quote Sent':                'sent',
+    'Live Project':              'live',
+    'Project Complete':          'pcomplete',
+    'Approved to Pay':           'approved',
+    'Payment Received':          'paid',
+    'Sent to Bama SW':           'bsw-sent',
+    'Bama SW Awaiting Payment':  'bsw-pending',
+    'Cancelled':                 'cancelled'
+  })[status || 'Quote Received'] || 'received';
+}
+
+// Friendly label for the inline "advance" button. Most are just "→ Next",
+// but a few have action-oriented verbs that read better than the bare
+// status name. e.g. moving from "Quote Sent" to "Live Project" is more
+// naturally labelled "Convert to Project" than "→ Live Project".
+function babcockAdvanceLabel(currentStatus) {
+  return ({
+    'Quote Received':   'Generate Quote',
+    'Quote Sent':       'Convert to Project',
+    'Live Project':     'Complete Project',
+    'Project Complete': 'Approved to Pay',
+    'Approved to Pay':  'Payment Received',
+    'Payment Received': 'Generate Bama SW Invoice',
+    'Sent to Bama SW':  'Bama SW PO Received'
+  })[currentStatus] || null;
 }
 
 // Advance a quote to the next status in the workflow (one-click button).
@@ -17295,55 +17338,21 @@ async function advanceBabcockQuoteStatus(id) {
   const next = babcockNextStatus(q.status);
   if (!next) return;
 
-  // Special case: moving to "PO Received" needs the customer's PO
-  // number. Prompt for it inside the confirm modal — required, can't
-  // proceed without one. Stored on the row for later invoice generation.
+  // NOTE: Several transitions in the new lifecycle have side-effect
+  // modals attached (PDF generation, email composer, project conversion,
+  // file upload + OCR, Bama SW invoice generation). Those are wired up
+  // in substages 1c–1i of the workflow rebuild. For now, this handler
+  // just does the plain status PUT — that means the row moves through
+  // the lifecycle correctly, but the user has to handle the side-effect
+  // (e.g. emailing the quote) outside the system until those substages ship.
   let extraFields = {};
-  if (next === 'PO Received') {
-    let poNumber = '';
-    while (true) {
-      // Kick off the modal first; on the next tick, focus the input
-      // and select any existing text. We don't await yet so this runs
-      // before the user can interact.
-      setTimeout(() => {
-        const inp = document.getElementById('advancePoInput');
-        if (inp) { inp.focus(); inp.select(); }
-      }, 50);
-
-      const result = await showConfirmAsync(
-        '📨 PO Received',
-        `<p style="margin:0 0 10px">Enter the Purchase Order number received from the customer for <b>${escapeHtml(q.quote_ref || '')}</b>:</p>
-         <input type="text" id="advancePoInput" class="field-input" autocomplete="off"
-                value="${escapeHtml(poNumber)}"
-                onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('confirmOk')?.click();}"
-                style="width:100%;font-size:14px;padding:10px;font-family:var(--font-mono);letter-spacing:.5px"
-                placeholder="e.g. PO-12345">
-         <div style="font-size:11px;color:var(--subtle);margin-top:6px">This will be stored on the quote and used when generating the invoice.</div>`,
-        {
-          okLabel: 'Confirm PO',
-          cancelLabel: 'Cancel',
-          onConfirmSync: () => ({
-            poNumber: (document.getElementById('advancePoInput')?.value || '').trim()
-          })
-        }
-      );
-      // Cancel pressed → abort the whole advance
-      if (!result || !result.ok) return;
-      poNumber = result.data?.poNumber || '';
-      if (poNumber) break;
-      // Empty PO — toast and re-prompt with focus
-      toast('PO number is required', 'error');
-    }
-    extraFields.po_number = poNumber;
-  }
 
   try {
     const updated = await api.put(`/api/babcock-quotes/${id}`,
       { status: next, ...extraFields });
     const idx = _babcockQuotes.findIndex(x => x.id === id);
     if (idx !== -1) _babcockQuotes[idx] = { ..._babcockQuotes[idx], ...updated };
-    const poSuffix = extraFields.po_number ? ` (PO ${extraFields.po_number})` : '';
-    toast(`${updated.quote_ref} → ${next}${poSuffix}`, 'success');
+    toast(`${updated.quote_ref} → ${next}`, 'success');
     renderBabcockTracker();
   } catch (err) {
     toast('Status update failed: ' + (err.message || 'unknown error'), 'error');
@@ -17443,7 +17452,7 @@ function renderBabcockDetailBody(q) {
        </table>`
     : '<div style="font-size:12px;color:var(--muted);font-style:italic;padding:10px 0">No line items recorded.</div>';
 
-  const statusBadge = `<span class="status-badge status-${babcockStatusClass(q.status)}">${escapeHtml(q.status || 'Quote Sent')}</span>`;
+  const statusBadge = `<span class="status-badge status-${babcockStatusClass(q.status)}">${escapeHtml(q.status || 'Quote Received')}</span>`;
   const totalBig = `<span style="font-family:var(--font-mono);font-size:18px;color:var(--green);font-weight:700">${fmtGBP(q.total_value)}</span>`;
 
   return `
@@ -17519,7 +17528,7 @@ async function editBabcockQuote(id) {
   document.getElementById('beQuoteId').value    = q.id;
   document.getElementById('beRefHeader').textContent = q.quote_ref || `#${q.id}`;
   set('beQuoteRef',    q.quote_ref);
-  set('beStatus',      q.status || 'Quote Sent');
+  set('beStatus',      q.status || 'Quote Received');
   set('beDateSent',    dateOnly(q.date_sent));
   set('beValidUntil',  dateOnly(q.valid_until));
   set('beCustomerId',  q.customer_id);
@@ -17571,7 +17580,7 @@ async function submitBabcockEdit() {
 
   const payload = {
     quote_ref:         newRef,
-    status:            val('beStatus') || 'Quote Sent',
+    status:            val('beStatus') || 'Quote Received',
     date_sent:         dateVal('beDateSent'),
     valid_until:       dateVal('beValidUntil'),
     customer_id:       val('beCustomerId') || null,

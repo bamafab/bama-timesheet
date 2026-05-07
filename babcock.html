@@ -94,10 +94,15 @@
         <div>
           <div class="field-label">STATUS</div>
           <select class="field-input" id="beStatus" style="font-size:13px">
+            <option value="Quote Received">Quote Received</option>
             <option value="Quote Sent">Quote Sent</option>
-            <option value="PO Received">PO Received</option>
-            <option value="Invoice Generated">Invoice Generated</option>
-            <option value="Paid">Paid</option>
+            <option value="Live Project">Live Project</option>
+            <option value="Project Complete">Project Complete</option>
+            <option value="Approved to Pay">Approved to Pay</option>
+            <option value="Payment Received">Payment Received</option>
+            <option value="Sent to Bama SW">Sent to Bama SW</option>
+            <option value="Bama SW Awaiting Payment">Bama SW Awaiting Payment</option>
+            <option value="Cancelled">Cancelled</option>
           </select>
         </div>
       </div>
@@ -250,10 +255,15 @@
           <select class="field-input" id="babcockTrackerStatusFilter" style="min-width:180px;font-size:13px"
                   onchange="renderBabcockTracker()">
             <option value="">All statuses</option>
+            <option value="Quote Received">Quote Received</option>
             <option value="Quote Sent">Quote Sent</option>
-            <option value="PO Received">PO Received</option>
-            <option value="Invoice Generated">Invoice Generated</option>
-            <option value="Paid">Paid</option>
+            <option value="Live Project">Live Project</option>
+            <option value="Project Complete">Project Complete</option>
+            <option value="Approved to Pay">Approved to Pay</option>
+            <option value="Payment Received">Payment Received</option>
+            <option value="Sent to Bama SW">Sent to Bama SW</option>
+            <option value="Bama SW Awaiting Payment">Bama SW Awaiting Payment</option>
+            <option value="Cancelled">Cancelled</option>
           </select>
           <span id="babcockTrackerCount" style="font-size:12px;color:var(--muted)"></span>
         </div>
@@ -508,10 +518,18 @@
     text-transform: none;
     white-space: nowrap;
   }
-  .status-badge.status-sent     { background: rgba(255,107,0,.12);  color: #ff8a3d; border: 1px solid rgba(255,107,0,.3); }
-  .status-badge.status-po       { background: rgba(0,153,255,.12);  color: #45a8ff; border: 1px solid rgba(0,153,255,.3); }
-  .status-badge.status-invoiced { background: rgba(155,89,182,.12); color: #c77dde; border: 1px solid rgba(155,89,182,.3); }
-  .status-badge.status-paid     { background: rgba(46,204,113,.12); color: #6fdf9b; border: 1px solid rgba(46,204,113,.3); }
+  /* Lifecycle palette — colour shifts roughly track money flow:
+     amber/orange (waiting on client) → blue/purple (work + invoicing) →
+     green (paid) → magenta/teal (Bama SW outbound) → grey (cancelled).  */
+  .status-badge.status-received    { background: rgba(255,193,7,.12);   color: #ffc945; border: 1px solid rgba(255,193,7,.3); }
+  .status-badge.status-sent        { background: rgba(255,107,0,.12);   color: #ff8a3d; border: 1px solid rgba(255,107,0,.3); }
+  .status-badge.status-live        { background: rgba(0,153,255,.12);   color: #45a8ff; border: 1px solid rgba(0,153,255,.3); }
+  .status-badge.status-pcomplete   { background: rgba(155,89,182,.12);  color: #c77dde; border: 1px solid rgba(155,89,182,.3); }
+  .status-badge.status-approved    { background: rgba(26,188,156,.12);  color: #4cd5b6; border: 1px solid rgba(26,188,156,.3); }
+  .status-badge.status-paid        { background: rgba(46,204,113,.12);  color: #6fdf9b; border: 1px solid rgba(46,204,113,.3); }
+  .status-badge.status-bsw-sent    { background: rgba(231,76,153,.12);  color: #ee82b8; border: 1px solid rgba(231,76,153,.3); }
+  .status-badge.status-bsw-pending { background: rgba(91,170,225,.12);  color: #92c5e8; border: 1px solid rgba(91,170,225,.3); }
+  .status-badge.status-cancelled   { background: rgba(127,140,141,.12); color: #95a5a6; border: 1px solid rgba(127,140,141,.3); }
 
   /* ── Preview table ── */
   .babcock-preview-table {
@@ -586,6 +604,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-<script src="shared.js?v=20260507h"></script>
+<script src="shared.js?v=20260507i"></script>
 </body>
 </html>
