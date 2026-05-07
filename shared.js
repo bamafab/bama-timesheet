@@ -1799,6 +1799,9 @@ function calcHours(clockIn, clockOut, breakMins, dateStr) {
     const dow = d.getDay(); // 0=Sun, 6=Sat
     if (dow === 0 || dow === 6) skipBreak = true;
   }
+  // Break is only deducted if the worker worked 6 or more hours (pre-break).
+  // Under 6 hours: no break deduction, regardless of weekday/weekend.
+  if (diff < 360) skipBreak = true;
   if (!skipBreak) diff -= (breakMins || 0);
   return diff > 0 ? diff / 60 : 0;
 }
