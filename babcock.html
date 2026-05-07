@@ -145,6 +145,13 @@
         <input type="text" class="field-input" id="beAddress" style="font-size:13px">
       </div>
 
+      <div style="margin-bottom:12px">
+        <div class="field-label">EMAIL <span style="color:var(--red)">*</span></div>
+        <input type="email" class="field-input" id="beCustomerEmail"
+               placeholder="client@example.com" style="font-size:13px">
+        <div style="font-size:10px;color:var(--subtle);margin-top:3px">Used as the To: address when emailing this quote</div>
+      </div>
+
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
         <div>
           <div class="field-label">TOTAL VALUE (£)</div>
@@ -164,9 +171,9 @@
           <div style="font-size:10px;color:var(--subtle);margin-top:3px">QP###### from Bama SW spreadsheet — for traceability only</div>
         </div>
         <div>
-          <div class="field-label">PO NUMBER</div>
+          <div class="field-label">CLIENT PO NUMBER</div>
           <input type="text" class="field-input" id="bePoNumber" style="font-size:13px;font-family:var(--font-mono)">
-          <div style="font-size:10px;color:var(--subtle);margin-top:3px">Captured when status moves to PO Received</div>
+          <div style="font-size:10px;color:var(--subtle);margin-top:3px">Captured when the quote is converted to a project</div>
         </div>
       </div>
 
@@ -377,6 +384,14 @@
         <div>
           <div class="field-label" style="margin-bottom:4px">QUOTATION FOR</div>
           <input type="text" class="field-input" id="bvQuoteFor" placeholder="Customer / company" style="font-size:13px">
+        </div>
+        <div style="grid-column:span 2">
+          <div class="field-label" style="margin-bottom:4px">EMAIL <span style="color:var(--red)">*</span></div>
+          <input type="email" class="field-input" id="bvCustomerEmail"
+                 placeholder="client@example.com"
+                 style="font-size:13px"
+                 oninput="onBabcockEmailChange()">
+          <div id="bvCustomerEmailHint" style="font-size:11px;color:var(--subtle);margin-top:3px">Required — used to send the quote.</div>
         </div>
         <div>
           <div class="field-label" style="margin-bottom:4px">AREA</div>
@@ -604,6 +619,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-<script src="shared.js?v=20260507i"></script>
+<script src="shared.js?v=20260507j"></script>
 </body>
 </html>

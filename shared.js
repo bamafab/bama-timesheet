@@ -16128,6 +16128,23 @@ let _babcockQuotes = [];        // tracker list (loaded from API)
 let _babcockLastGenerated = null; // cached payload for "Save to Tracker"
 let _babcockNextRefCache = null;  // cached suggested next reference
 
+// Lightweight email validator. Not RFC-perfect by design — we just want
+// to catch obvious typos before pushing the value to the DB / using it
+// as a "To:" recipient. Rules: must contain @, must contain . after the
+// @, no internal whitespace.
+function isPlausibleEmail(s) {
+  if (!s) return false;
+  const trimmed = String(s).trim();
+  if (!trimmed) return false;
+  if (/\s/.test(trimmed)) return false;
+  const at = trimmed.indexOf('@');
+  if (at < 1) return false; // need at least one char before @
+  const domain = trimmed.slice(at + 1);
+  if (!domain.includes('.')) return false;
+  if (domain.endsWith('.')) return false;
+  return true;
+}
+
 async function initBabcockPage() {
   const authed = sessionStorage.getItem('bama_mgr_authed');
   if (authed) {
@@ -16267,6 +16284,17 @@ function clearBabcockFile() {
   // Reset markup to default
   const m = document.getElementById('babcockMarkup');
   if (m) m.value = 10;
+  // Clear the email input + hint, and re-enable the Generate button so
+  // the next upload starts from a clean slate.
+  const emailEl = document.getElementById('bvCustomerEmail');
+  if (emailEl) emailEl.value = '';
+  const hintEl = document.getElementById('bvCustomerEmailHint');
+  if (hintEl) {
+    hintEl.textContent = 'Required — used to send the quote.';
+    hintEl.style.color = 'var(--subtle)';
+  }
+  const btn = document.getElementById('babcockGenerateBtn');
+  if (btn) { btn.disabled = false; btn.title = ''; }
 }
 
 // ── Parse the BAMA South West Babcock template's "Quote" tab ───────
@@ -16542,9 +16570,15 @@ function populateBabcockValidationFields(header) {
   set('bvWorkOrderNo', header.workOrderNo || '');
   set('bvPreparedBy',  header.preparedBy || currentManagerUser || '');
   set('bvQuoteFor',    header.quoteFor || '');
+  set('bvCustomerEmail', header.customerEmail || '');
   set('bvArea',        header.area || '');
   set('bvAddress',     header.address || '');
   set('bvComments',    header.comments || '');
+
+  // Re-paint the email field's hint colour and (de)activate the
+  // Generate & Save button based on whether the spreadsheet supplied
+  // a plausible email value. If not, the user has to type one in.
+  onBabcockEmailChange();
 
   // Fetch + display the next available B#### ref. We pre-fill the input
   // (rather than just the placeholder) so the user can see what they're
@@ -16639,10 +16673,24 @@ async function generateAndSaveBabcockQuote() {
     workOrderNo:  (document.getElementById('bvWorkOrderNo').value || '').trim(),
     preparedBy:   (document.getElementById('bvPreparedBy').value || '').trim(),
     quoteFor:     (document.getElementById('bvQuoteFor').value || '').trim(),
+    customerEmail:(document.getElementById('bvCustomerEmail').value || '').trim(),
     area:         (document.getElementById('bvArea').value || '').trim(),
     address:      (document.getElementById('bvAddress').value || '').trim(),
     comments:     (document.getElementById('bvComments').value || '').trim()
   };
+
+  // ── Email is hard-required ──
+  // Unlike the other "required" fields below (which let the user override
+  // via "Generate Anyway"), email is a hard-block — we can't email the
+  // quote at step 1 without it, and that's the whole point of capturing it.
+  if (!isPlausibleEmail(formData.customerEmail)) {
+    toast(formData.customerEmail
+      ? 'Customer email doesn\u2019t look valid — please correct it'
+      : 'Customer email is required', 'error');
+    const el = document.getElementById('bvCustomerEmail');
+    if (el) { el.focus(); el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+    return;
+  }
 
   // ── Required-field check ───────────────────────────────────────
   // These six fields are needed for a properly formatted quote that
@@ -16764,6 +16812,9 @@ async function generateAndSaveBabcockQuote() {
       original_file_url:  originalUploaded.webUrl,
       generated_file_id:  pdfUploaded.id,
       generated_file_url: pdfUploaded.webUrl,
+      // Captured from the spreadsheet (or typed by the user) — used at
+      // step 1 of the lifecycle to email the quote to the client.
+      customer_email:     formData.customerEmail || null,
       // Preserve the source spreadsheet's own reference (QP######)
       // for traceability — does not appear on the customer PDF.
       original_quote_ref: (_babcockHeader && _babcockHeader.quoteRef) || null
@@ -17471,6 +17522,9 @@ function renderBabcockDetailBody(q) {
     ${fieldRow('PO Number', q.po_number ? `<span style="font-family:var(--font-mono);color:var(--accent2)">${escapeHtml(q.po_number)}</span>` : '—')}
     ${fieldRow('Prepared By', escOrDash(q.prepared_by))}
     ${fieldRow('Quotation For', escOrDash(q.quote_for_area))}
+    ${fieldRow('Email', q.customer_email
+      ? `<a href="mailto:${escapeHtml(q.customer_email)}" style="color:var(--accent2);text-decoration:none">${escapeHtml(q.customer_email)}</a>`
+      : '—')}
     ${fieldRow('Address', escOrDash(q.quote_for_address))}
     ${fieldRow('Markup %', q.markup_pct !== null && q.markup_pct !== undefined ? `${q.markup_pct}%` : '—')}
     ${q.comments ? fieldRow('Comments', `<div style="white-space:pre-wrap">${escapeHtml(q.comments)}</div>`) : ''}
@@ -17536,6 +17590,7 @@ async function editBabcockQuote(id) {
   set('bePreparedBy',  q.prepared_by);
   set('beQuoteForArea', q.quote_for_area);
   set('beAddress',     q.quote_for_address);
+  set('beCustomerEmail', q.customer_email);
   set('beTotalValue',  q.total_value);
   set('beMarkupPct',   q.markup_pct);
   set('beOriginalQuoteRef', q.original_quote_ref);
@@ -17578,6 +17633,26 @@ async function submitBabcockEdit() {
     return;
   }
 
+  // Email is required and must look plausible — same rule as the
+  // upload-time validation form. Allow blank only if the source row
+  // had no email either (legacy rows pre-Fix 1b).
+  const newEmail = val('beCustomerEmail');
+  const origEmail = (_babcockEditingRecord && _babcockEditingRecord.customer_email) || '';
+  if (newEmail && !isPlausibleEmail(newEmail)) {
+    toast('Customer email doesn\u2019t look valid', 'error');
+    const el = document.getElementById('beCustomerEmail');
+    if (el) el.focus();
+    return;
+  }
+  if (!newEmail && origEmail) {
+    // Don't let the user blank-out an existing email — that's almost
+    // always a slip, and the email is needed for the lifecycle.
+    toast('Customer email is required', 'error');
+    const el = document.getElementById('beCustomerEmail');
+    if (el) el.focus();
+    return;
+  }
+
   const payload = {
     quote_ref:         newRef,
     status:            val('beStatus') || 'Quote Received',
@@ -17588,6 +17663,7 @@ async function submitBabcockEdit() {
     prepared_by:       val('bePreparedBy') || null,
     quote_for_area:    val('beQuoteForArea') || null,
     quote_for_address: val('beAddress') || null,
+    customer_email:    newEmail || null,
     total_value:       numVal('beTotalValue'),
     markup_pct:        numVal('beMarkupPct'),
     po_number:         val('bePoNumber') || null,
@@ -17797,6 +17873,37 @@ function onBabcockMarkupChange() {
   const markup = parseFloat(document.getElementById('babcockMarkup').value) || 10;
   renderBabcockPreviewTable(markup);
   updateBabcockMarkedUpTotal(markup);
+}
+
+// ── Live email-field state updater (validation form) ──
+// Toggles the hint colour (red when invalid/empty, muted when ok) and
+// disables the Generate & Save button so the user can't proceed without
+// a plausible email. We don't show toast errors on every keystroke — the
+// hint text + button state is enough feedback while typing.
+function onBabcockEmailChange() {
+  const inp = document.getElementById('bvCustomerEmail');
+  const hint = document.getElementById('bvCustomerEmailHint');
+  const btn = document.getElementById('babcockGenerateBtn');
+  if (!inp) return;
+  const val = (inp.value || '').trim();
+  const valid = isPlausibleEmail(val);
+
+  if (hint) {
+    if (!val) {
+      hint.textContent = 'Required — used to send the quote.';
+      hint.style.color = 'var(--red)';
+    } else if (!valid) {
+      hint.textContent = 'Doesn\u2019t look like a valid email address.';
+      hint.style.color = 'var(--red)';
+    } else {
+      hint.textContent = 'Used as the To: address when emailing this quote.';
+      hint.style.color = 'var(--subtle)';
+    }
+  }
+  if (btn) {
+    btn.disabled = !valid;
+    btn.title = valid ? '' : 'Enter a valid customer email before generating';
+  }
 }
 
 function closeQuoteDetail() {
