@@ -197,6 +197,104 @@
 </div>
 
 <!-- ═══════════════════════════════════════
+     EMAIL COMPOSER MODAL (Babcock workflow)
+     Reusable for any step that needs to send an email
+     (Generate Quote, Bama SW Invoice, Bama SW Final Invoice).
+     Populated by openBabcockEmailModal(...) in shared.js.
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="babcockEmailModal">
+  <div class="modal" style="max-width:720px;width:95vw;max-height:90vh;overflow:hidden;display:flex;flex-direction:column">
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex:0 0 auto">
+      <div class="modal-title" style="margin:0">✉️ <span id="bemailTitle">New Email</span></div>
+      <button class="btn btn-ghost" style="padding:4px 10px;font-size:18px"
+              onclick="closeBabcockEmailModal()">✕</button>
+    </div>
+
+    <div style="overflow-y:auto;flex:1 1 auto;padding-right:6px">
+
+      <!-- From (read-only) -->
+      <div class="bemail-row">
+        <div class="bemail-row-label">From</div>
+        <div class="bemail-row-value">
+          <span id="bemailFrom" style="color:var(--text);font-size:13px">Loading…</span>
+        </div>
+      </div>
+
+      <!-- To -->
+      <div class="bemail-row">
+        <div class="bemail-row-label">To <span style="color:var(--red)">*</span></div>
+        <div class="bemail-row-value">
+          <input type="email" class="field-input" id="bemailTo"
+                 placeholder="recipient@example.com"
+                 style="font-size:13px;width:100%">
+        </div>
+      </div>
+
+      <!-- Cc -->
+      <div class="bemail-row">
+        <div class="bemail-row-label">Cc</div>
+        <div class="bemail-row-value">
+          <input type="text" class="field-input" id="bemailCc"
+                 placeholder="optional, comma-separated"
+                 style="font-size:13px;width:100%">
+        </div>
+      </div>
+
+      <!-- Subject -->
+      <div class="bemail-row">
+        <div class="bemail-row-label">Subject <span style="color:var(--red)">*</span></div>
+        <div class="bemail-row-value">
+          <input type="text" class="field-input" id="bemailSubject"
+                 style="font-size:13px;width:100%">
+        </div>
+      </div>
+
+      <!-- Body -->
+      <div style="margin:14px 0 8px">
+        <textarea class="field-input" id="bemailBody" rows="12"
+                  style="font-size:13px;width:100%;resize:vertical;line-height:1.5;min-height:200px"></textarea>
+      </div>
+
+      <!-- Signature (collapsed by default) -->
+      <div style="margin-bottom:14px">
+        <button type="button" class="btn btn-ghost"
+                style="padding:5px 10px;font-size:11px"
+                onclick="toggleBabcockEmailSignature()">
+          <span id="bemailSigToggleArrow">▸</span>
+          <span id="bemailSigToggleText">Show signature</span>
+        </button>
+        <div id="bemailSigPreview" style="display:none;margin-top:10px;padding:14px;background:#fff;color:#222;border:1px solid var(--border);border-radius:6px;font-family:'Segoe UI',system-ui,sans-serif">
+          <!-- populated at open time -->
+        </div>
+        <div style="font-size:10px;color:var(--subtle);margin-top:6px">
+          Signature is appended automatically. Edit it on the
+          <a href="templates.html" target="_blank" style="color:var(--accent2);text-decoration:none">Templates page</a>.
+        </div>
+      </div>
+
+      <!-- Attachment -->
+      <div style="padding:12px 14px;background:rgba(255,107,0,.04);border:1px solid rgba(255,107,0,.25);border-radius:6px;margin-bottom:8px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:18px">📎</span>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600;font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"
+                 id="bemailAttachName">No attachment</div>
+            <div style="font-size:11px;color:var(--muted)" id="bemailAttachSize">—</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="modal-actions" style="flex:0 0 auto;margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
+      <button class="btn btn-ghost" onclick="closeBabcockEmailModal()">Cancel</button>
+      <button class="btn btn-primary" id="bemailSendBtn" onclick="sendBabcockEmail()">Send Email</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
      CONFIRM MODAL (used by showConfirmAsync)
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="confirmModal">
@@ -614,11 +712,33 @@
     margin-top: 4px;
     border-radius: 0 0 8px 8px;
   }
+
+  /* ── Email composer modal ── */
+  .bemail-row {
+    display: grid;
+    grid-template-columns: 70px 1fr;
+    gap: 10px;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .bemail-row:first-of-type { padding-top: 4px; }
+  .bemail-row-label {
+    font-size: 11px;
+    color: var(--muted);
+    font-weight: 600;
+    letter-spacing: .5px;
+    text-transform: uppercase;
+  }
+  .bemail-row-value {
+    font-size: 13px;
+    color: var(--text);
+  }
 </style>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-<script src="shared.js?v=20260507k"></script>
+<script src="shared.js?v=20260507l"></script>
 </body>
 </html>

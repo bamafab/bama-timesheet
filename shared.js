@@ -16418,6 +16418,307 @@ function isPlausibleEmail(s) {
   return true;
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// EMAIL COMPOSER (Babcock workflow)
+// ─────────────────────────────────────────────────────────────────────
+// Reusable in-app New Email window — used by every Babcock workflow
+// step that sends mail (Generate Quote → client; Bama SW Invoice →
+// Bama SW; Bama SW Final Invoice → Bama SW). On Send, the email goes
+// via Microsoft Graph sendMail, attachment included as a base64 blob.
+// The email lands in the user's actual Outlook Sent folder as if they'd
+// composed it themselves — no Outlook desktop window opens.
+//
+// Caller API:
+//   await openBabcockEmailModal({
+//     title: 'Email Quote',                     // modal heading
+//     templateKey: 'emailQuoteSent',            // which body template
+//     tokens: { quote_ref: 'B0011', ... },      // values to substitute
+//     to: 'john@babcock.com',                   // initial To (editable)
+//     cc: '',                                   // initial Cc (optional)
+//     attachment: {                             // optional but expected
+//       name: 'B0011 - ....pdf',
+//       contentType: 'application/pdf',
+//       contentBase64: 'JVBERi0xLjQK...'        // raw base64, no data: prefix
+//     },
+//     onSent: (result) => { ... }               // called after success
+//   });
+// Returns the result object on send, null on cancel.
+
+// Cached state for the active modal session — populated by open(),
+// consumed by send(). Cleared by close().
+let _bemailContext = null;
+
+// One-shot cache of the logged-in Microsoft user's display name + email.
+// Pulled from Graph /me on first need; null until then. Used to populate
+// the From: line and the {{sender_email}} token. Falls back gracefully
+// if the call ever fails — we'd rather send the email with the address
+// missing than block on it.
+let _meCache = null;
+async function getCurrentMicrosoftUser() {
+  if (_meCache) return _meCache;
+  try {
+    const token = await getToken();
+    const res = await fetch('https://graph.microsoft.com/v1.0/me', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (!res.ok) return null;
+    const me = await res.json();
+    _meCache = {
+      name:  me.displayName || '',
+      email: me.mail || me.userPrincipalName || ''
+    };
+    return _meCache;
+  } catch (e) {
+    console.warn('Graph /me lookup failed (non-fatal):', e.message);
+    return null;
+  }
+}
+
+// Build the full token map used for Subject/Body/Signature substitution.
+// The caller passes per-email tokens (quote_ref, project_name, etc.);
+// we layer on the user-side tokens (sender_*, date_today). User-side
+// tokens are async because of the Graph /me call.
+async function buildBabcockEmailTokens(callerTokens) {
+  const me = await getCurrentMicrosoftUser();
+  // Pull role from the BAMA Employees row matching currentManagerUser.
+  // Falls back to the Microsoft display name if we don't have an
+  // Employees row — useful in dev / first-run scenarios.
+  let senderName = currentManagerUser || (me && me.name) || '';
+  let senderRole = '';
+  if (currentManagerUser && state.timesheetData && state.timesheetData.employees) {
+    const emp = state.timesheetData.employees.find(e => e.name === currentManagerUser);
+    if (emp && emp.erpRole) senderRole = emp.erpRole;
+  }
+  // Today's date in UK format ("07 May 2026") — matches the rest of the app.
+  const todayLong = new Date().toLocaleDateString('en-GB', {
+    day: '2-digit', month: 'long', year: 'numeric'
+  });
+  return Object.assign({}, callerTokens || {}, {
+    sender_name:  senderName,
+    sender_role:  senderRole,
+    sender_email: (me && me.email) || '',
+    date_today:   todayLong
+  });
+}
+
+// Read a template's draft value (subject / body / html) from saved
+// Settings, falling back to the in-code TEMPLATE_DEFAULTS. This is
+// what we render on Send — never read from tplDraft (that's the
+// editor's working copy on the templates page only).
+function getEmailTemplateField(templateKey, field) {
+  const tpls = (state.timesheetData.settings && state.timesheetData.settings.templates) || {};
+  const block = tpls[templateKey] || {};
+  if (block[field] !== undefined && block[field] !== null && block[field] !== '') return block[field];
+  return TEMPLATE_DEFAULTS[templateKey] ? (TEMPLATE_DEFAULTS[templateKey][field] || '') : '';
+}
+
+async function openBabcockEmailModal(opts) {
+  if (!opts || !opts.templateKey) {
+    console.error('openBabcockEmailModal: templateKey is required');
+    return null;
+  }
+
+  // Build the resolved tokens (caller tokens + sender_*, date_today)
+  const tokens = await buildBabcockEmailTokens(opts.tokens || {});
+
+  // Resolve subject and body from templates with substitution
+  const subjectTpl = getEmailTemplateField(opts.templateKey, 'subject');
+  const bodyTpl    = getEmailTemplateField(opts.templateKey, 'body');
+  const sigHtmlTpl = getEmailTemplateField('emailSignature', 'html');
+
+  const resolvedSubject = renderTemplate(subjectTpl, tokens);
+  const resolvedBody    = renderTemplate(bodyTpl, tokens);
+  const resolvedSig     = renderTemplate(sigHtmlTpl, tokens);
+
+  // Wire up the From: row using the cached Graph user
+  const me = await getCurrentMicrosoftUser();
+  const fromText = me
+    ? `${me.name || 'BAMA Fabrication'} <${me.email || ''}>`
+    : 'BAMA Fabrication (sending from your account)';
+
+  // Stash everything we'll need on Send
+  _bemailContext = {
+    templateKey: opts.templateKey,
+    tokens,
+    resolvedSubject,
+    resolvedBody,
+    resolvedSig,
+    attachment: opts.attachment || null,
+    fromName: (me && me.name) || 'BAMA Fabrication',
+    fromEmail: (me && me.email) || '',
+    onSent: typeof opts.onSent === 'function' ? opts.onSent : null,
+    // Promise plumbing — openBabcockEmailModal can be awaited
+    _resolve: null,
+    sentResult: null
+  };
+
+  // Populate the modal
+  document.getElementById('bemailTitle').textContent  = opts.title || 'New Email';
+  document.getElementById('bemailFrom').textContent   = fromText;
+  document.getElementById('bemailTo').value           = opts.to || '';
+  document.getElementById('bemailCc').value           = opts.cc || '';
+  document.getElementById('bemailSubject').value      = resolvedSubject;
+  document.getElementById('bemailBody').value         = resolvedBody;
+
+  // Signature preview (collapsed by default — toggle expands)
+  const sigPreview = document.getElementById('bemailSigPreview');
+  sigPreview.innerHTML = resolvedSig;
+  sigPreview.style.display = 'none';
+  document.getElementById('bemailSigToggleArrow').textContent = '\u25B8';
+  document.getElementById('bemailSigToggleText').textContent  = 'Show signature';
+
+  // Attachment row
+  const atName = document.getElementById('bemailAttachName');
+  const atSize = document.getElementById('bemailAttachSize');
+  if (opts.attachment && opts.attachment.name) {
+    atName.textContent = opts.attachment.name;
+    // base64-encoded → original byte size = b64.length * 3/4 (minus padding).
+    // Good enough for a UI hint without decoding.
+    if (opts.attachment.contentBase64) {
+      const padding = (opts.attachment.contentBase64.match(/=+$/) || [''])[0].length;
+      const bytes   = Math.floor(opts.attachment.contentBase64.length * 3 / 4) - padding;
+      atSize.textContent = formatFileSize(bytes);
+    } else {
+      atSize.textContent = '';
+    }
+  } else {
+    atName.textContent = 'No attachment';
+    atSize.textContent = '—';
+  }
+
+  // Reset the Send button (in case a previous send left it disabled)
+  const btn = document.getElementById('bemailSendBtn');
+  if (btn) { btn.disabled = false; btn.textContent = 'Send Email'; }
+
+  document.getElementById('babcockEmailModal').classList.add('active');
+  setTimeout(() => document.getElementById('bemailTo')?.focus(), 80);
+
+  // Return a promise that resolves on send/cancel — enables `await`
+  return await new Promise(resolve => { _bemailContext._resolve = resolve; });
+}
+
+function closeBabcockEmailModal() {
+  document.getElementById('babcockEmailModal').classList.remove('active');
+  if (_bemailContext && _bemailContext._resolve) {
+    _bemailContext._resolve(_bemailContext.sentResult || null);
+  }
+  _bemailContext = null;
+}
+
+function toggleBabcockEmailSignature() {
+  const div    = document.getElementById('bemailSigPreview');
+  const arrow  = document.getElementById('bemailSigToggleArrow');
+  const text   = document.getElementById('bemailSigToggleText');
+  const open   = div.style.display !== 'none';
+  div.style.display = open ? 'none' : '';
+  arrow.textContent = open ? '\u25B8' : '\u25BE';
+  text.textContent  = open ? 'Show signature' : 'Hide signature';
+}
+
+// Send via Graph /me/sendMail. Body is plain-text from the textarea —
+// converted to HTML (newlines → <br>, escaped) and concatenated with
+// the signature HTML. Attachment is included as base64 if present.
+async function sendBabcockEmail() {
+  if (!_bemailContext) return;
+
+  const to       = (document.getElementById('bemailTo').value || '').trim();
+  const ccRaw    = (document.getElementById('bemailCc').value || '').trim();
+  const subject  = (document.getElementById('bemailSubject').value || '').trim();
+  const bodyText = document.getElementById('bemailBody').value || '';
+
+  // Validate required fields
+  if (!isPlausibleEmail(to)) {
+    toast(to ? 'Recipient email doesn\u2019t look valid' : 'Recipient email is required', 'error');
+    document.getElementById('bemailTo').focus();
+    return;
+  }
+  if (!subject) {
+    toast('Subject line is required', 'error');
+    document.getElementById('bemailSubject').focus();
+    return;
+  }
+
+  // Parse Cc (comma-separated). Silently drop invalid entries — not
+  // worth blocking the send, but warn in console for debugging.
+  const ccList = ccRaw
+    ? ccRaw.split(',').map(s => s.trim()).filter(Boolean)
+    : [];
+  const ccRecipients = [];
+  for (const cc of ccList) {
+    if (isPlausibleEmail(cc)) {
+      ccRecipients.push({ emailAddress: { address: cc } });
+    } else {
+      console.warn('Skipping invalid Cc address:', cc);
+    }
+  }
+
+  // Build HTML body: escape user text + convert newlines + append signature
+  const escapedBody = escapeHtml(bodyText).replace(/\n/g, '<br>');
+  const htmlBody = `
+    <div style="font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;color:#222;line-height:1.6">
+      ${escapedBody}
+    </div>
+    ${_bemailContext.resolvedSig || ''}
+  `;
+
+  // Build the Graph payload
+  const message = {
+    subject: subject,
+    body: { contentType: 'HTML', content: htmlBody },
+    toRecipients: [{ emailAddress: { address: to } }]
+  };
+  if (ccRecipients.length) message.ccRecipients = ccRecipients;
+  if (_bemailContext.attachment && _bemailContext.attachment.contentBase64) {
+    message.attachments = [{
+      '@odata.type':    '#microsoft.graph.fileAttachment',
+      name:             _bemailContext.attachment.name || 'attachment',
+      contentType:      _bemailContext.attachment.contentType || 'application/octet-stream',
+      contentBytes:     _bemailContext.attachment.contentBase64
+    }];
+  }
+
+  // Disable the button + show progress
+  const btn = document.getElementById('bemailSendBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending\u2026'; }
+
+  try {
+    const token = await getToken();
+    const res = await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, saveToSentItems: true })
+    });
+
+    if (res.ok || res.status === 202) {
+      const result = {
+        ok: true,
+        to,
+        cc: ccList,
+        subject,
+        sentAt: new Date().toISOString()
+      };
+      _bemailContext.sentResult = result;
+      toast(`Email sent to ${to} \u2713`, 'success');
+      // Fire the caller callback BEFORE close so it can do follow-up
+      // work (e.g. a status PUT) without the modal disappearing yet.
+      if (_bemailContext.onSent) {
+        try { await _bemailContext.onSent(result); }
+        catch (cbErr) { console.error('onSent callback failed:', cbErr); }
+      }
+      closeBabcockEmailModal();
+    } else {
+      const errText = await res.text().catch(() => '');
+      console.error('sendMail failed:', res.status, errText);
+      toast(`Email failed: ${res.status} \u2014 check console`, 'error');
+      if (btn) { btn.disabled = false; btn.textContent = 'Send Email'; }
+    }
+  } catch (e) {
+    console.error('sendMail error:', e);
+    toast('Email failed: ' + (e.message || 'unknown error'), 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Send Email'; }
+  }
+}
+
 async function initBabcockPage() {
   const authed = sessionStorage.getItem('bama_mgr_authed');
   if (authed) {
