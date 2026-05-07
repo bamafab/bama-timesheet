@@ -14354,18 +14354,41 @@ function renderProjectTrackerList() {
 
   const search = (document.getElementById('projectSearch')?.value || '').toLowerCase();
   const statusFilter = document.getElementById('projectStatusFilter')?.value || '';
+  const deadlineFilter = document.getElementById('projectDeadlineFilter')?.value || '';
 
   let list = [...projectsData];
   if (statusFilter) list = list.filter(p => p.status === statusFilter);
   if (search) {
     list = list.filter(p => {
-      const hay = `${p.project_number} ${p.project_name} ${p.company_name || ''} ${p.source_quote_reference || ''}`.toLowerCase();
+      const hay = `${p.project_number} ${p.project_name} ${p.company_name || ''}`.toLowerCase();
       return hay.includes(search);
     });
   }
 
+  // Deadline filter — buckets relative to today (UTC midnight to dodge TZ drift)
+  if (deadlineFilter) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const dayMs = 86400000;
+    list = list.filter(p => {
+      const raw = p.deadline_date ? String(p.deadline_date).split('T')[0] : null;
+      if (deadlineFilter === 'none') return !raw;
+      if (!raw) return false;
+      const d = new Date(raw + 'T00:00:00');
+      const diffDays = Math.floor((d - today) / dayMs);
+      switch (deadlineFilter) {
+        case 'overdue':  return diffDays < 0 && p.status !== 'Complete' && p.status !== 'Archived' && p.status !== 'Cancelled';
+        case '7':        return diffDays >= 0 && diffDays <= 7;
+        case '30':       return diffDays >= 0 && diffDays <= 30;
+        case '90':       return diffDays >= 0 && diffDays <= 90;
+        case 'future':   return diffDays > 90;
+        default:         return true;
+      }
+    });
+  }
+
   if (!list.length) {
-    container.innerHTML = '<div class="empty-state" style="padding:24px"><div class="icon">🏗️</div>No projects yet</div>';
+    container.innerHTML = '<div class="empty-state" style="padding:24px"><div class="icon">🏗️</div>No projects match the current filters</div>';
     return;
   }
 
@@ -14377,10 +14400,21 @@ function renderProjectTrackerList() {
     'Cancelled':   { cls: 'tag-rejected' }
   };
 
+  // Today (UTC midnight) for "overdue" highlight on the deadline cell
+  const todayMid = new Date();
+  todayMid.setHours(0, 0, 0, 0);
+
   container.innerHTML = list.map(p => {
     const meta = statusMeta[p.status] || { cls: 'tag-pending' };
-    const deadline = p.deadline_date ? fmtDateStr(String(p.deadline_date).split('T')[0]) : '—';
-    const quoteRef = p.source_quote_reference || '—';
+    const rawDate = p.deadline_date ? String(p.deadline_date).split('T')[0] : '';
+    const deadline = rawDate ? fmtDateStr(rawDate) : '—';
+    let deadlineColor = 'var(--muted)';
+    if (rawDate) {
+      const d = new Date(rawDate + 'T00:00:00');
+      const isLive = p.status !== 'Complete' && p.status !== 'Archived' && p.status !== 'Cancelled';
+      if (d < todayMid && isLive) deadlineColor = 'var(--red)';
+    }
+    const pct = Math.max(0, Math.min(100, parseFloat(p.progress_pct) || 0));
     return `
       <div class="quote-row" onclick="openProjectTrackerDetail(${p.id})">
         <div class="quote-col-ref">${escapeHtml(p.project_number)}</div>
@@ -14388,8 +14422,13 @@ function renderProjectTrackerList() {
           <div style="font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(p.project_name)}</div>
           <div style="font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(p.company_name || '—')}</div>
         </div>
-        <div class="quote-col-date" style="color:var(--muted);font-size:12px">${deadline}</div>
-        <div class="quote-col-date" style="color:var(--muted);font-size:12px;font-family:var(--font-mono)">${escapeHtml(quoteRef)}</div>
+        <div class="quote-col-date" style="color:${deadlineColor};font-size:12px">${deadline}</div>
+        <div class="quote-col-progress">
+          <div class="pt-list-progress">
+            <div class="pt-list-progress-bar"><div class="pt-list-progress-fill" style="width:${pct}%"></div></div>
+            <div class="pt-list-progress-num">${pct.toFixed(0)}%</div>
+          </div>
+        </div>
         <div class="quote-col-status"><span class="tag ${meta.cls}">${escapeHtml(p.status)}</span></div>
       </div>`;
   }).join('');
@@ -14479,17 +14518,13 @@ function _populateProjectDetailFields(project) {
   setVal('pd-deadline', project.deadline_date ? String(project.deadline_date).split('T')[0] : '');
   setVal('pd-startDate', project.start_date ? String(project.start_date).split('T')[0] : '');
   setVal('pd-completionDate', project.completion_date ? String(project.completion_date).split('T')[0] : '');
-  setVal('pd-comments', project.comments || '');
 
-  // Source quote backlink
-  const quoteLink = document.getElementById('projectDetailQuoteLink');
-  if (quoteLink) {
-    if (project.source_quote_reference) {
-      quoteLink.innerHTML = `<a href="quotes.html" style="color:var(--accent2);text-decoration:none">${escapeHtml(project.source_quote_reference)} ↗</a>`;
-    } else {
-      quoteLink.textContent = '—';
-    }
-  }
+  // Re-lock lockable fields after setting values (project name, dates).
+  // The user must press the pencil button again to edit.
+  _relockProjectDetailFields();
+
+  // Default to Client tab on every open
+  switchProjectCapTab('client');
 
   // Client info
   const clientInfo = document.getElementById('projectDetailClientInfo');
@@ -14771,7 +14806,6 @@ async function saveProjectChanges() {
     deadline_date:   document.getElementById('pd-deadline')?.value || null,
     start_date:      document.getElementById('pd-startDate')?.value || null,
     completion_date: document.getElementById('pd-completionDate')?.value || null,
-    comments:        document.getElementById('pd-comments')?.value.trim() || null,
 
     // Site address — when toggle is ON ("same as client") we still send the
     // toggle so it persists, but null out the site fields to avoid stale data.
@@ -14796,6 +14830,7 @@ async function saveProjectChanges() {
     document.getElementById('pdSaveBtn').style.display = 'none';
     document.getElementById('pdDiscardBtn').style.display = 'none';
     _refreshSiteSection(currentProjectRecord);
+    _relockProjectDetailFields();
     toast('Project saved ✓', 'success');
   } catch (err) {
     toast('Save failed: ' + err.message, 'error');
@@ -14808,6 +14843,72 @@ function discardProjectChanges() {
   _projectDetailDirty = false;
   document.getElementById('pdSaveBtn').style.display = 'none';
   document.getElementById('pdDiscardBtn').style.display = 'none';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lockable detail fields (project name, dates) — pencil-button toggle.
+// Fields are readonly/disabled by default; clicking the pencil unlocks them
+// for one editing session. Save / discard re-locks via _relockProjectDetailFields.
+// ─────────────────────────────────────────────────────────────────────────────
+function togglePdFieldEdit(inputId, btn) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  const isDate = input.type === 'date';
+  const isLocked = isDate ? input.disabled : input.hasAttribute('readonly');
+
+  if (isLocked) {
+    if (isDate) input.disabled = false;
+    else        input.removeAttribute('readonly');
+    input.classList.add('pd-editing');
+    if (btn) {
+      btn.classList.add('pd-editing');
+      btn.textContent = '✓';
+      btn.title = 'Lock field';
+    }
+    setTimeout(() => {
+      input.focus();
+      // Date inputs: try to open the picker for a frictionless edit.
+      if (isDate) { try { input.showPicker?.(); } catch (_) { /* not all browsers */ } }
+    }, 10);
+  } else {
+    if (isDate) input.disabled = true;
+    else        input.setAttribute('readonly', '');
+    input.classList.remove('pd-editing');
+    if (btn) {
+      btn.classList.remove('pd-editing');
+      btn.textContent = '✎';
+      btn.title = 'Edit field';
+    }
+  }
+}
+
+function _relockProjectDetailFields() {
+  // Re-lock all .pd-locked-input elements + reset their pencil buttons
+  document.querySelectorAll('.pd-locked-input').forEach(input => {
+    if (input.type === 'date') input.disabled = true;
+    else                       input.setAttribute('readonly', '');
+    input.classList.remove('pd-editing');
+  });
+  document.querySelectorAll('.pd-edit-btn').forEach(btn => {
+    btn.classList.remove('pd-editing');
+    btn.textContent = '✎';
+    btn.title = 'Edit field';
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Contacts & Addresses tabbed card — switch between Client / Site / Other Contacts.
+// (Replaces the old three separate cards.)
+// ─────────────────────────────────────────────────────────────────────────────
+function switchProjectCapTab(tabName) {
+  document.querySelectorAll('[data-cap-tab]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.capTab === tabName);
+  });
+  document.querySelectorAll('[data-cap-pane]').forEach(pane => {
+    const isActive = pane.dataset.capPane === tabName;
+    pane.classList.toggle('active', isActive);
+    pane.style.display = isActive ? '' : 'none';
+  });
 }
 
 async function closeProjectDetail() {
@@ -14848,6 +14949,8 @@ async function loadProjectContacts(projectId) {
 
 function renderProjectContacts() {
   const list = document.getElementById('projectContactsList');
+  const badge = document.getElementById('projectContactsCount');
+  if (badge) badge.textContent = String(_projectContactsCache.length);
   if (!list) return;
   if (!_projectContactsCache.length) {
     list.innerHTML = '<div style="color:var(--subtle);padding:8px 0">No additional contacts yet.</div>';
@@ -15091,6 +15194,11 @@ async function loadProjectFinancials(projectId) {
   }
 
   _projectFinancials = { quotes: withLines, progress: progressMap };
+
+  // Load running labour hours from the LabourLog for this project.
+  // Keyed by project_number — same string format used in the kiosk feed.
+  await _loadLabourHoursLogged(currentProjectRecord ? currentProjectRecord.project_number : null);
+
   renderProjectFinancialDashboard();
 }
 
@@ -15126,21 +15234,108 @@ function _weightedProjectProgress() {
   return totalWeight > 0 ? (weightedSum / totalWeight) : 0;
 }
 
-function renderProjectFinancialDashboard() {
-  const fmt = n => '£' + (n || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// Sum hours (qty) on Labour-flagged lines across all attached quotes.
+function _sumLabourHoursScheduled() {
+  let total = 0;
+  for (const q of _projectFinancials.quotes) {
+    for (const li of (q._lineItems || [])) {
+      if (!li.is_labour) continue;
+      total += parseFloat(li.quantity) || 0;
+    }
+  }
+  return total;
+}
 
-  // Tiles
-  const contract = _sumLineItems();
-  const labour   = _sumLineItems(li => !!li.is_labour);
+// Cache of running (logged) labour hours for the current project.
+// Refreshed each time loadProjectFinancials runs.
+let _projectLabourHoursLogged = 0;
+
+async function _loadLabourHoursLogged(projectNumber) {
+  if (!projectNumber) { _projectLabourHoursLogged = 0; return 0; }
+  try {
+    const rows = await api.get(`/api/labour-log?project_number=${encodeURIComponent(projectNumber)}`);
+    const total = (Array.isArray(rows) ? rows : []).reduce((sum, r) => sum + (parseFloat(r.hours) || 0), 0);
+    _projectLabourHoursLogged = total;
+    return total;
+  } catch (e) {
+    console.warn('labour-log fetch failed:', e);
+    _projectLabourHoursLogged = 0;
+    return 0;
+  }
+}
+
+function renderProjectFinancialDashboard() {
+  const fmtMoney = n => '£' + (n || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtHrs   = n => (n || 0).toLocaleString('en-GB', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + ' h';
+
+  // Tile values
+  const contract       = _sumLineItems();
+  const labour         = _sumLineItems(li => !!li.is_labour);
+  const hoursScheduled = _sumLabourHoursScheduled();
+  const hoursLogged    = _projectLabourHoursLogged;
   const setText = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
-  setText('ptTileContractValue', fmt(contract));
-  setText('ptTileLabourValue',   fmt(labour));
+
+  setText('ptTileContractValue', fmtMoney(contract));
+  setText('ptTileLabourValue',   fmtMoney(labour));
+  setText('ptTileHoursBudgetValue', hoursScheduled > 0 ? fmtHrs(hoursScheduled) : '—');
+  setText('ptTileHoursActualValue', fmtHrs(hoursLogged));
   setText('ptTileRunningValue',  '—');
 
-  const meta = `${_projectFinancials.quotes.length} ${_projectFinancials.quotes.length === 1 ? 'quote' : 'quotes'} attached`;
-  setText('ptTileContractMeta', meta);
+  // Tile meta
+  const nq = _projectFinancials.quotes.length;
+  setText('ptTileContractMeta', `${nq} ${nq === 1 ? 'quote' : 'quotes'} attached`);
+
   const progressPct = _weightedProjectProgress();
   setText('ptTileLabourMeta', `${progressPct.toFixed(0)}% project progress (value-weighted)`);
+
+  // Project progress bar inside Labour Cost tile (always shown when there's a budget)
+  const progWrap = document.getElementById('ptTileProgressWrap');
+  const progFill = document.getElementById('ptTileProgressFill');
+  const progNum  = document.getElementById('ptTileProgressNum');
+  if (progWrap && progFill && progNum) {
+    if (contract > 0) {
+      progWrap.style.display = '';
+      progFill.style.width = Math.max(0, Math.min(100, progPct(progressPct))) + '%';
+      progNum.textContent  = progressPct.toFixed(0) + '%';
+    } else {
+      progWrap.style.display = 'none';
+    }
+  }
+
+  // Hours scheduled meta (sum across N labour lines)
+  let labourLineCount = 0;
+  for (const q of _projectFinancials.quotes) {
+    for (const li of (q._lineItems || [])) if (li.is_labour) labourLineCount++;
+  }
+  setText('ptTileHoursBudgetMeta', hoursScheduled > 0
+    ? `Across ${labourLineCount} labour ${labourLineCount === 1 ? 'line' : 'lines'}`
+    : 'No labour-flagged lines yet');
+
+  // Hours logged tile — variance vs scheduled, plus over-budget flag
+  const hoursActualTile = document.getElementById('ptTile-hoursActual');
+  const variancePct = hoursScheduled > 0 ? (hoursLogged / hoursScheduled) * 100 : 0;
+  setText('ptTileHoursActualMeta', hoursScheduled > 0
+    ? `${variancePct.toFixed(0)}% of scheduled hours used`
+    : (hoursLogged > 0 ? 'No scheduled hours to compare' : 'Awaiting labour log entries'));
+
+  const varWrap = document.getElementById('ptTileHoursVarianceWrap');
+  const varFill = document.getElementById('ptTileHoursVarianceFill');
+  const varNum  = document.getElementById('ptTileHoursVarianceNum');
+  if (varWrap && varFill && varNum) {
+    if (hoursScheduled > 0) {
+      varWrap.style.display = '';
+      // The bar fills up to 100% of scheduled. Anything over flips the tile red
+      // but the visual bar still pegs at 100% to convey "over budget".
+      const pct = Math.min(100, variancePct);
+      varFill.style.width = pct + '%';
+      varNum.textContent  = variancePct.toFixed(0) + '%';
+    } else {
+      varWrap.style.display = 'none';
+    }
+  }
+  if (hoursActualTile) {
+    hoursActualTile.classList.toggle('over-budget', hoursScheduled > 0 && hoursLogged > hoursScheduled);
+  }
 
   // Per-quote tables
   const container = document.getElementById('ptQuotesContainer');
@@ -15215,6 +15410,9 @@ function renderProjectFinancialDashboard() {
   }).join('');
 }
 
+// Tiny clamp helper for the progress fill
+function progPct(v) { return Math.max(0, Math.min(100, v)); }
+
 // Throttled saver — when the user fiddles with a progress slider quickly we
 // don't want to hammer the API on every keystroke.
 const _progressSaveTimers = {};
@@ -15231,10 +15429,14 @@ async function onProjectLineProgressChange(quoteLineItemId, value) {
     const numCell = row.children[6];
     if (numCell) numCell.textContent = pct.toFixed(0) + '%';
   }
-  // Update the labour tile's secondary text (project progress).
+  // Update the labour tile's secondary text + project progress bar inside the tile.
   const projPct = _weightedProjectProgress();
   const meta = document.getElementById('ptTileLabourMeta');
   if (meta) meta.textContent = `${projPct.toFixed(0)}% project progress (value-weighted)`;
+  const tileFill = document.getElementById('ptTileProgressFill');
+  const tileNum  = document.getElementById('ptTileProgressNum');
+  if (tileFill) tileFill.style.width = Math.max(0, Math.min(100, projPct)) + '%';
+  if (tileNum)  tileNum.textContent  = projPct.toFixed(0) + '%';
 
   // Debounce the network write — 600ms after the last change.
   clearTimeout(_progressSaveTimers[quoteLineItemId]);

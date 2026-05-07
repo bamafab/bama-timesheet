@@ -12,6 +12,12 @@ app.http('projects-preflight', {
 });
 
 // GET /api/projects — list all projects with client + source quote info
+//
+// Includes a value-weighted progress_pct per project, computed across all
+// attached quotes (ProjectQuotes) and their line items (QuoteLineItems),
+// using the per-line ProjectLineProgress overrides. Mirrors the formula in
+// _weightedProjectProgress() on the frontend so the list and the detail
+// dashboard stay in sync.
 app.http('projects-list', {
     methods: ['GET'],
     authLevel: 'anonymous',
@@ -22,11 +28,32 @@ app.http('projects-list', {
 
         try {
             const status = request.query.get('status') || '';
-            let sqlText = `SELECT p.*, c.company_name, c.contact_name, c.contact_email, c.contact_phone,
-                                  t.reference AS source_quote_reference
-                           FROM Projects p
-                           LEFT JOIN Clients c ON c.id = p.client_id
-                           LEFT JOIN Tenders t ON t.id = p.source_quote_id`;
+            let sqlText = `
+                SELECT p.*,
+                       c.company_name, c.contact_name, c.contact_email, c.contact_phone,
+                       t.reference AS source_quote_reference,
+                       prog.progress_pct
+                FROM Projects p
+                LEFT JOIN Clients c ON c.id = p.client_id
+                LEFT JOIN Tenders t ON t.id = p.source_quote_id
+                LEFT JOIN (
+                    SELECT pq.project_id,
+                           CASE
+                               WHEN SUM(qli.quantity * qli.unit_price) > 0
+                                   THEN CAST(
+                                       SUM(qli.quantity * qli.unit_price * COALESCE(plp.percent_complete, 0))
+                                       / SUM(qli.quantity * qli.unit_price)
+                                       AS DECIMAL(5,2))
+                               ELSE 0
+                           END AS progress_pct
+                    FROM ProjectQuotes pq
+                    LEFT JOIN QuoteLineItems qli
+                        ON qli.tender_id = pq.tender_id
+                    LEFT JOIN ProjectLineProgress plp
+                        ON plp.project_id = pq.project_id
+                       AND plp.quote_line_item_id = qli.id
+                    GROUP BY pq.project_id
+                ) prog ON prog.project_id = p.id`;
             const params = {};
 
             if (status) {

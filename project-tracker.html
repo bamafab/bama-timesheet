@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Project Tracker</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260505k">
+<link rel="stylesheet" href="bama.css?v=20260507a">
 </head>
 <body>
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
@@ -95,8 +95,8 @@
           <div class="card-title"><span class="icon">🏗️</span> All Projects</div>
           <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
             <input type="text" class="field-input" id="projectSearch" placeholder="Search projects..."
-              style="max-width:260px" oninput="renderProjectTrackerList()">
-            <select class="field-input" id="projectStatusFilter" style="max-width:180px" onchange="renderProjectTrackerList()">
+              style="max-width:240px" oninput="renderProjectTrackerList()">
+            <select class="field-input" id="projectStatusFilter" style="max-width:160px" onchange="renderProjectTrackerList()">
               <option value="">All Statuses</option>
               <option value="In Progress">In Progress</option>
               <option value="On Hold">On Hold</option>
@@ -104,13 +104,22 @@
               <option value="Archived">Archived</option>
               <option value="Cancelled">Cancelled</option>
             </select>
+            <select class="field-input" id="projectDeadlineFilter" style="max-width:170px" onchange="renderProjectTrackerList()" title="Filter by deadline">
+              <option value="">Any Deadline</option>
+              <option value="overdue">⚠ Overdue</option>
+              <option value="7">Next 7 days</option>
+              <option value="30">Next 30 days</option>
+              <option value="90">Next 90 days</option>
+              <option value="future">Future (90+ days)</option>
+              <option value="none">No deadline set</option>
+            </select>
             <button class="btn btn-primary" onclick="openCreateProjectModal()" style="margin-left:auto">+ New Project</button>
           </div>
           <div class="quote-row quote-header">
             <div class="quote-col-ref">REF</div>
             <div class="quote-col-project">PROJECT / CLIENT</div>
             <div class="quote-col-date">DEADLINE</div>
-            <div class="quote-col-date">SOURCE QUOTE</div>
+            <div class="quote-col-progress">PROGRESS</div>
             <div class="quote-col-status">STATUS</div>
           </div>
         </div>
@@ -140,7 +149,10 @@
               <button class="btn btn-ghost" onclick="copyProjectFolderName()" title="Copy folder name to clipboard" style="font-size:11px;padding:2px 8px">📋 Copy</button>
             </div>
             <div class="field-label" style="margin-bottom:4px">PROJECT NAME</div>
-            <input type="text" class="field-input" id="pd-projectName" placeholder="Project name" oninput="markProjectDirty(); updateProjectFolderNamePreview()">
+            <div class="pd-lockable">
+              <input type="text" class="field-input pd-locked-input" id="pd-projectName" placeholder="Project name" readonly oninput="markProjectDirty(); updateProjectFolderNamePreview()">
+              <button type="button" class="pd-edit-btn" onclick="togglePdFieldEdit('pd-projectName', this)" title="Edit project name">✎</button>
+            </div>
           </div>
           <div style="display:flex;flex-direction:column;gap:10px;min-width:180px">
             <div>
@@ -161,21 +173,23 @@
         </div>
       </div>
 
-      <!-- Dates + Source Quote -->
+      <!-- Dates + Folder -->
       <div class="card" style="margin-bottom:20px">
-        <div class="card-title" style="margin-bottom:12px"><span class="icon">📅</span> Schedule & Source</div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px">
+        <div class="card-title" style="margin-bottom:12px"><span class="icon">📅</span> Schedule</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px">
           <div>
             <div class="field-label" style="margin-bottom:4px">START DATE</div>
-            <input type="date" class="field-input" id="pd-startDate" onchange="markProjectDirty()">
+            <div class="pd-lockable">
+              <input type="date" class="field-input pd-locked-input" id="pd-startDate" disabled onchange="markProjectDirty()">
+              <button type="button" class="pd-edit-btn" onclick="togglePdFieldEdit('pd-startDate', this)" title="Edit start date">✎</button>
+            </div>
           </div>
           <div>
             <div class="field-label" style="margin-bottom:4px">COMPLETION DATE</div>
-            <input type="date" class="field-input" id="pd-completionDate" onchange="markProjectDirty()">
-          </div>
-          <div>
-            <div class="field-label" style="margin-bottom:4px">SOURCE QUOTE</div>
-            <div id="projectDetailQuoteLink" style="padding:8px 0;font-family:var(--font-mono);font-size:13px">—</div>
+            <div class="pd-lockable">
+              <input type="date" class="field-input pd-locked-input" id="pd-completionDate" disabled onchange="markProjectDirty()">
+              <button type="button" class="pd-edit-btn" onclick="togglePdFieldEdit('pd-completionDate', this)" title="Edit completion date">✎</button>
+            </div>
           </div>
           <div>
             <div class="field-label" style="margin-bottom:4px">PROJECT FOLDER</div>
@@ -185,21 +199,48 @@
       </div>
 
       <!-- Financial dashboard tiles -->
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-bottom:20px">
-        <div class="card pt-tile" id="ptTile-contract">
-          <div style="font-size:11px;color:var(--subtle);text-transform:uppercase;letter-spacing:.5px">Contract Value</div>
-          <div style="font-size:24px;font-weight:700;font-family:var(--font-mono);color:var(--accent);margin-top:6px" id="ptTileContractValue">—</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:4px" id="ptTileContractMeta">Excl. VAT, summed across attached quotes</div>
+      <div class="pt-tile-grid">
+        <div class="pt-tile pt-tile-contract" id="ptTile-contract">
+          <div class="pt-tile-icon">💷</div>
+          <div class="pt-tile-label">Contract Value</div>
+          <div class="pt-tile-value" id="ptTileContractValue">—</div>
+          <div class="pt-tile-meta" id="ptTileContractMeta">Excl. VAT, summed across attached quotes</div>
         </div>
-        <div class="card pt-tile" id="ptTile-labour">
-          <div style="font-size:11px;color:var(--subtle);text-transform:uppercase;letter-spacing:.5px">Labour Cost</div>
-          <div style="font-size:24px;font-weight:700;font-family:var(--font-mono);color:var(--accent2);margin-top:6px" id="ptTileLabourValue">—</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:4px" id="ptTileLabourMeta">Sum of lines flagged Labour on each quote</div>
+
+        <div class="pt-tile pt-tile-labour" id="ptTile-labour">
+          <div class="pt-tile-icon">👷</div>
+          <div class="pt-tile-label">Labour Cost</div>
+          <div class="pt-tile-value" id="ptTileLabourValue">—</div>
+          <div class="pt-tile-meta" id="ptTileLabourMeta">Sum of lines flagged Labour on each quote</div>
+          <div class="pt-tile-progress" id="ptTileProgressWrap" style="display:none">
+            <div class="pt-tile-progress-bar"><div class="pt-tile-progress-fill" id="ptTileProgressFill" style="width:0%"></div></div>
+            <div class="pt-tile-progress-num" id="ptTileProgressNum">0%</div>
+          </div>
         </div>
-        <div class="card pt-tile" id="ptTile-running">
-          <div style="font-size:11px;color:var(--subtle);text-transform:uppercase;letter-spacing:.5px">Running Cost</div>
-          <div style="font-size:24px;font-weight:700;font-family:var(--font-mono);color:var(--text);margin-top:6px" id="ptTileRunningValue">—</div>
-          <div style="font-size:11px;color:var(--muted);margin-top:4px">Phase 4 — POs / supplier invoices</div>
+
+        <div class="pt-tile pt-tile-hours-budget" id="ptTile-hoursBudget">
+          <div class="pt-tile-icon">🕒</div>
+          <div class="pt-tile-label">Hours Scheduled</div>
+          <div class="pt-tile-value" id="ptTileHoursBudgetValue">—</div>
+          <div class="pt-tile-meta" id="ptTileHoursBudgetMeta">Sum of qty on Labour-flagged lines</div>
+        </div>
+
+        <div class="pt-tile pt-tile-hours-actual" id="ptTile-hoursActual">
+          <div class="pt-tile-icon">⏱️</div>
+          <div class="pt-tile-label">Hours Logged</div>
+          <div class="pt-tile-value" id="ptTileHoursActualValue">—</div>
+          <div class="pt-tile-meta" id="ptTileHoursActualMeta">Approved labour log for this project</div>
+          <div class="pt-tile-progress" id="ptTileHoursVarianceWrap" style="display:none">
+            <div class="pt-tile-progress-bar"><div class="pt-tile-progress-fill" id="ptTileHoursVarianceFill" style="width:0%"></div></div>
+            <div class="pt-tile-progress-num" id="ptTileHoursVarianceNum">0%</div>
+          </div>
+        </div>
+
+        <div class="pt-tile pt-tile-running" id="ptTile-running">
+          <div class="pt-tile-icon">📦</div>
+          <div class="pt-tile-label">Running Cost</div>
+          <div class="pt-tile-value" id="ptTileRunningValue">—</div>
+          <div class="pt-tile-meta">Phase 4 — POs / supplier invoices</div>
         </div>
       </div>
 
@@ -219,73 +260,86 @@
         </div>
       </div>
 
-      <!-- Client Details -->
+      <!-- Contacts & Addresses (merged Client / Site / Contacts) -->
       <div class="card" style="margin-bottom:20px">
-        <div class="card-title"><span class="icon">🏢</span> Client Details</div>
-        <div id="projectDetailClientInfo" style="font-size:13px;color:var(--muted)">—</div>
-      </div>
-
-      <!-- Site Address -->
-      <div class="card" style="margin-bottom:20px">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-          <div class="card-title" style="margin:0"><span class="icon">📍</span> Site Address</div>
-          <label class="perm-switch" title="Toggle off to enter a different site address">
-            <input type="checkbox" id="pd-siteSameAsClient" checked onchange="onSiteSameToggle()">
-            <span class="slider"></span>
-          </label>
+        <div class="pt-cap-head">
+          <div class="card-title" style="margin:0"><span class="icon">🏢</span> Contacts & Addresses</div>
+          <div class="pt-cap-tabs" role="tablist">
+            <button type="button" class="pt-cap-tab active" data-cap-tab="client"   onclick="switchProjectCapTab('client')">Client</button>
+            <button type="button" class="pt-cap-tab"        data-cap-tab="site"     onclick="switchProjectCapTab('site')">Site</button>
+            <button type="button" class="pt-cap-tab"        data-cap-tab="contacts" onclick="switchProjectCapTab('contacts')">
+              Other Contacts <span class="pt-cap-badge" id="projectContactsCount">0</span>
+            </button>
+          </div>
         </div>
-        <div id="pd-siteSummary" style="font-size:13px;color:var(--muted);margin-bottom:8px">Same as client address</div>
 
-        <div id="pd-siteFields" style="display:none">
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-            <div style="grid-column:1/-1">
-              <div class="field-label">ADDRESS LINE 1</div>
-              <input type="text" class="field-input" id="pd-siteAddressLine1" oninput="markProjectDirty()">
-            </div>
-            <div style="grid-column:1/-1">
-              <div class="field-label">ADDRESS LINE 2</div>
-              <input type="text" class="field-input" id="pd-siteAddressLine2" oninput="markProjectDirty()">
-            </div>
-            <div>
-              <div class="field-label">CITY</div>
-              <input type="text" class="field-input" id="pd-siteCity" oninput="markProjectDirty()">
-            </div>
-            <div>
-              <div class="field-label">COUNTY</div>
-              <input type="text" class="field-input" id="pd-siteCounty" oninput="markProjectDirty()">
-            </div>
-            <div>
-              <div class="field-label">POSTCODE</div>
-              <input type="text" class="field-input" id="pd-sitePostcode" oninput="markProjectDirty()">
-            </div>
-            <div></div>
-            <div style="grid-column:1/-1;border-top:1px solid var(--border);margin-top:6px;padding-top:10px">
-              <div class="field-label">SITE CONTACT</div>
-            </div>
-            <div>
-              <div class="field-label">NAME</div>
-              <input type="text" class="field-input" id="pd-siteContactName" oninput="markProjectDirty()">
-            </div>
-            <div>
-              <div class="field-label">PHONE</div>
-              <input type="text" class="field-input" id="pd-siteContactPhone" oninput="markProjectDirty()">
-            </div>
-            <div style="grid-column:1/-1">
-              <div class="field-label">EMAIL</div>
-              <input type="email" class="field-input" id="pd-siteContactEmail" oninput="markProjectDirty()">
+        <!-- Client pane -->
+        <div class="pt-cap-pane active" data-cap-pane="client">
+          <div id="projectDetailClientInfo" style="font-size:13px;color:var(--muted)">—</div>
+        </div>
+
+        <!-- Site pane -->
+        <div class="pt-cap-pane" data-cap-pane="site" style="display:none">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:10px;flex-wrap:wrap">
+            <div style="font-size:12px;color:var(--muted)">Toggle off to enter a different site address</div>
+            <label class="perm-switch" title="Site is at the client address">
+              <input type="checkbox" id="pd-siteSameAsClient" checked onchange="onSiteSameToggle()">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div id="pd-siteSummary" style="font-size:13px;color:var(--muted);margin-bottom:8px">Same as client address</div>
+
+          <div id="pd-siteFields" style="display:none">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <div style="grid-column:1/-1">
+                <div class="field-label">ADDRESS LINE 1</div>
+                <input type="text" class="field-input" id="pd-siteAddressLine1" oninput="markProjectDirty()">
+              </div>
+              <div style="grid-column:1/-1">
+                <div class="field-label">ADDRESS LINE 2</div>
+                <input type="text" class="field-input" id="pd-siteAddressLine2" oninput="markProjectDirty()">
+              </div>
+              <div>
+                <div class="field-label">CITY</div>
+                <input type="text" class="field-input" id="pd-siteCity" oninput="markProjectDirty()">
+              </div>
+              <div>
+                <div class="field-label">COUNTY</div>
+                <input type="text" class="field-input" id="pd-siteCounty" oninput="markProjectDirty()">
+              </div>
+              <div>
+                <div class="field-label">POSTCODE</div>
+                <input type="text" class="field-input" id="pd-sitePostcode" oninput="markProjectDirty()">
+              </div>
+              <div></div>
+              <div style="grid-column:1/-1;border-top:1px solid var(--border);margin-top:6px;padding-top:10px">
+                <div class="field-label">SITE CONTACT</div>
+              </div>
+              <div>
+                <div class="field-label">NAME</div>
+                <input type="text" class="field-input" id="pd-siteContactName" oninput="markProjectDirty()">
+              </div>
+              <div>
+                <div class="field-label">PHONE</div>
+                <input type="text" class="field-input" id="pd-siteContactPhone" oninput="markProjectDirty()">
+              </div>
+              <div style="grid-column:1/-1">
+                <div class="field-label">EMAIL</div>
+                <input type="email" class="field-input" id="pd-siteContactEmail" oninput="markProjectDirty()">
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      <!-- Additional Contacts -->
-      <div class="card" style="margin-bottom:20px">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-          <div class="card-title" style="margin:0"><span class="icon">👥</span> Additional Contacts</div>
-          <button class="btn btn-ghost" style="font-size:12px;padding:6px 12px" onclick="openAddProjectContact()">+ Add Contact</button>
-        </div>
-        <div id="projectContactsList" style="font-size:13px">
-          <div style="color:var(--subtle);padding:8px 0">No additional contacts yet.</div>
+        <!-- Contacts pane -->
+        <div class="pt-cap-pane" data-cap-pane="contacts" style="display:none">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:8px;flex-wrap:wrap">
+            <div style="font-size:12px;color:var(--muted)">Site foremen, QSs, surveyors etc. — separate from client contacts</div>
+            <button class="btn btn-ghost" style="font-size:12px;padding:6px 12px" onclick="openAddProjectContact()">+ Add Contact</button>
+          </div>
+          <div id="projectContactsList" style="font-size:13px">
+            <div style="color:var(--subtle);padding:8px 0">No additional contacts yet.</div>
+          </div>
         </div>
       </div>
 
@@ -299,12 +353,6 @@
           <textarea class="field-input" id="pd-newComment" rows="2" placeholder="Add a comment…" style="resize:vertical;flex:1;min-height:48px"></textarea>
           <button class="btn btn-primary" onclick="addProjectComment()" style="padding:8px 16px">Post</button>
         </div>
-      </div>
-
-      <!-- Notes (kept for now per user) -->
-      <div class="card" style="margin-bottom:20px">
-        <div class="card-title"><span class="icon">📝</span> Notes</div>
-        <textarea class="field-input" id="pd-comments" rows="4" placeholder="Project notes..." style="resize:vertical;min-height:80px;width:100%" oninput="markProjectDirty()"></textarea>
       </div>
     </div>
 
@@ -344,7 +392,7 @@
   /* ── Project table layout (reuses .quote-row from bama.css) ── */
   .quote-row {
     display: grid;
-    grid-template-columns: 90px 1fr 110px 110px 130px;
+    grid-template-columns: 90px 1fr 110px 160px 130px;
     align-items: center;
     gap: 10px;
     padding: 11px 16px;
@@ -366,6 +414,7 @@
     background: var(--card);
   }
   .quote-header:hover { background: var(--card); }
+  .quote-col-progress { font-family: var(--font-mono); }
 </style>
 
 <!-- ═══════════════════════════════════════
@@ -617,6 +666,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260506s"></script>
+<script src="shared.js?v=20260507a"></script>
 </body>
 </html>

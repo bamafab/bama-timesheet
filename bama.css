@@ -1294,15 +1294,250 @@
 }
 
 /* ── Project tracker tiles + per-quote progress (project-tracker.html) ── */
+
+/* Tile grid — 5 tiles, auto-fits responsively */
+.pt-tile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+/* The tile itself: dark card with a colored accent stripe on the left,
+   a large faded icon on the right for visual interest, big mono number,
+   small label/meta. Hover lifts subtly. */
 .pt-tile {
   position: relative;
   padding: 16px 18px;
-  background: linear-gradient(135deg, rgba(255,107,0,.04), rgba(0,0,0,.18));
+  background:
+    radial-gradient(circle at 100% 0%, rgba(255,255,255,.025), transparent 60%),
+    linear-gradient(180deg, var(--card) 0%, #181818 100%);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 14px;
+  min-width: 0;
+  overflow: hidden;
+  transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+.pt-tile::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 4px;
+  background: var(--tile-accent, var(--accent));
+  border-radius: 14px 0 0 14px;
+}
+.pt-tile:hover {
+  transform: translateY(-2px);
+  border-color: var(--tile-accent, var(--accent));
+  box-shadow: 0 8px 24px rgba(0,0,0,.35);
+}
+.pt-tile-icon {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  font-size: 38px;
+  opacity: .12;
+  filter: grayscale(.2);
+  transition: opacity .18s ease, transform .18s ease;
+  pointer-events: none;
+}
+.pt-tile:hover .pt-tile-icon { opacity: .28; transform: scale(1.08); }
+.pt-tile-label {
+  font-size: 10px;
+  color: var(--subtle);
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+.pt-tile-value {
+  font-size: 28px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--tile-accent, var(--accent));
+  letter-spacing: -.5px;
+  line-height: 1.15;
+  margin-top: 4px;
+  /* keep room for the faded icon top-right */
+  padding-right: 30px;
+  word-break: break-word;
+}
+.pt-tile-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 6px;
+  line-height: 1.4;
+}
+.pt-tile-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.pt-tile-progress-bar {
+  flex: 1;
+  height: 6px;
+  background: rgba(255,255,255,.06);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.pt-tile-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--tile-accent, var(--accent)), var(--accent2));
+  border-radius: 3px;
+  transition: width .25s ease, background .25s ease;
+}
+.pt-tile-progress-num {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text);
+  min-width: 38px;
+  text-align: right;
+}
+
+/* Per-tile accent colors — assign to --tile-accent so stripe + value + bar all match */
+.pt-tile-contract       { --tile-accent: var(--accent); }
+.pt-tile-labour         { --tile-accent: var(--accent2); }
+.pt-tile-hours-budget   { --tile-accent: #4ea1ff; }
+.pt-tile-hours-actual   { --tile-accent: var(--green); }
+.pt-tile-running        { --tile-accent: var(--subtle); }
+
+/* Variance state on Hours Logged tile — flips to red if logged > scheduled */
+.pt-tile-hours-actual.over-budget                  { --tile-accent: var(--red); }
+.pt-tile-hours-actual.over-budget .pt-tile-value   { color: var(--red); }
+
+/* Backwards-compat: the old #ptTileLabourValue color rule isn't needed any more
+   because .pt-tile-value uses --tile-accent. */
+
+/* ── Lockable detail fields (project name, dates) ──
+   Pencil button toggles between locked (readonly/disabled, looks like flat text)
+   and unlocked (full input with focus ring). */
+.pd-lockable {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+.pd-lockable .pd-locked-input {
+  flex: 1;
   min-width: 0;
 }
-.pt-tile #ptTileLabourValue { color: var(--accent2); }
+.pd-lockable .pd-locked-input[readonly],
+.pd-lockable .pd-locked-input:disabled {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text);
+  cursor: default;
+  opacity: 1;
+  padding-left: 4px;
+}
+.pd-lockable .pd-locked-input.pd-editing {
+  background: var(--surface);
+  border-color: var(--accent);
+  padding-left: 14px;
+}
+.pd-edit-btn {
+  flex: none;
+  width: 36px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: color .15s, border-color .15s, background .15s;
+}
+.pd-edit-btn:hover { color: var(--accent); border-color: var(--accent); }
+.pd-edit-btn.pd-editing {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* ── Contacts & Addresses tabbed card ── */
+.pt-cap-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.pt-cap-tabs {
+  display: flex;
+  gap: 4px;
+  background: rgba(0,0,0,.25);
+  padding: 4px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+.pt-cap-tab {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .3px;
+  padding: 7px 14px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.pt-cap-tab:hover { color: var(--text); }
+.pt-cap-tab.active {
+  background: var(--accent);
+  color: #fff;
+}
+.pt-cap-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: rgba(255,255,255,.12);
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+}
+.pt-cap-tab.active .pt-cap-badge { background: rgba(0,0,0,.25); }
+
+/* ── Project list inline progress (column in the project list table) ── */
+.pt-list-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.pt-list-progress-bar {
+  flex: 1;
+  height: 6px;
+  background: rgba(255,255,255,.06);
+  border-radius: 3px;
+  overflow: hidden;
+  min-width: 60px;
+}
+.pt-list-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
+  border-radius: 3px;
+  transition: width .25s ease;
+}
+.pt-list-progress-num {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 11px;
+  color: var(--text);
+  min-width: 30px;
+  text-align: right;
+}
+
 .pt-quote-block {
   border: 1px solid var(--border);
   border-radius: 10px;
