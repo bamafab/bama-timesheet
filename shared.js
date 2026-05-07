@@ -1849,12 +1849,74 @@ function renderClockLog(clockings) {
     days.push({ label: ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][i], date: dateStr(d) });
   }
 
-  // Group clockings by employee
+  // Group clockings by employee → date → array of shifts.
+  // Multiple ClockEntries on the same day are legitimate (e.g. AM shift +
+  // evening callout) and must all be visible — never collapse them.
   const empMap = {};
   clockings.forEach(c => {
     if (!empMap[c.employeeName]) empMap[c.employeeName] = {};
-    empMap[c.employeeName][c.date] = c;
+    if (!empMap[c.employeeName][c.date]) empMap[c.employeeName][c.date] = [];
+    empMap[c.employeeName][c.date].push(c);
   });
+  // Sort each day's shifts by clock-in time so they render top→bottom in order.
+  Object.values(empMap).forEach(byDate => {
+    Object.values(byDate).forEach(arr => arr.sort((a, b) => (a.clockIn || '').localeCompare(b.clockIn || '')));
+  });
+
+  // Render a single shift cell (used once per shift; multiple shifts stack
+  // inside the same <td>). Returns { html, hrs } where html is the inner
+  // contents (no <td> wrapper) so the caller can stack siblings.
+  const renderShift = (c) => {
+    const hrs = calcHours(c.clockIn, c.clockOut, c.breakMins, c.date) || 0;
+    const isPending = c.approvalStatus === 'pending' || (!c.approvalStatus && !c.addedByManager);
+    const isEdited = c.manuallyEdited;
+
+    if (c._editing) {
+      const actualIn = c.clockIn || '';
+      const actualOut = c.clockOut || '';
+      const stillInPlaceholder = !c.clockOut ? 'placeholder="still in"' : '';
+      return {
+        html: `<div style="min-width:110px">
+          <input type="time" step="60" id="edit-in-${c.id}" value="${actualIn}" class="field-input" style="font-size:10px;padding:3px 4px;margin-bottom:3px;width:100%" onchange="markClockDirty('${c.id}')">
+          <input type="time" step="60" id="edit-out-${c.id}" value="${actualOut}" ${stillInPlaceholder} class="field-input" style="font-size:10px;padding:3px 4px;margin-bottom:3px;width:100%" onchange="markClockDirty('${c.id}')">
+          <div style="font-size:9px;color:var(--muted);margin-bottom:3px" id="edit-total-${c.id}">${hrs > 0 ? hrs.toFixed(2)+'h' : ''}</div>
+          <input type="hidden" id="edit-break-${c.id}" value="${c.breakMins||30}">
+          <div style="display:flex;gap:3px;justify-content:center">
+            <button id="save-btn-${c.id}" class="tiny-btn tiny-approve" onclick="saveClockEdit('${c.id}')" style="font-size:9px;padding:2px 6px">Save</button>
+            <button class="tiny-btn" onclick="cancelClockEdit('${c.id}')" style="font-size:9px;padding:2px 5px;color:var(--muted)">✕</button>
+          </div>
+        </div>`,
+        hrs
+      };
+    }
+
+    const statusBadge = isPending
+      ? `<div style="margin-top:3px"><span class="tag tag-pending" style="font-size:9px">pending</span>
+         <button class="tiny-btn tiny-approve" onclick="approveClocking('${c.id}')" style="font-size:9px;padding:1px 5px">✓</button>
+         <button class="tiny-btn tiny-reject" onclick="rejectClocking('${c.id}')" style="font-size:9px;padding:1px 5px">✕</button></div>`
+      : c.approvalStatus === 'rejected'
+      ? `<div style="margin-top:3px"><span class="tag tag-rejected" style="font-size:9px">rejected</span></div>`
+      : `<div style="margin-top:3px"><span class="tag" style="font-size:9px;background:rgba(62,207,142,.15);color:var(--green);border:1px solid rgba(62,207,142,.3)">${c.approvedBy ? 'approved by ' + c.approvedBy : 'approved'}</span></div>`;
+
+    const editedBadge = isEdited ? `<span style="color:var(--amber);font-size:9px"> ✎</span>` : '';
+
+    return {
+      html: `<div>
+        <div style="font-family:var(--font-mono);font-size:11px;color:var(--text)">
+          ${c.clockIn || '—'} – ${c.clockOut || '<span style="color:var(--amber)">in</span>'}${editedBadge}
+        </div>
+        <div style="font-size:11px;color:${hrs >= 8 ? 'var(--green)' : 'var(--accent2)'};font-family:var(--font-mono);margin-top:2px">
+          ${hrs > 0 ? hrs.toFixed(1) + 'h' : ''}
+        </div>
+        ${statusBadge}
+        <div style="margin-top:4px">
+          <button class="tiny-btn" onclick="editClockingInline('${c.id}')"
+            style="font-size:9px;padding:1px 6px;background:rgba(255,255,255,.05);border-color:var(--subtle);color:var(--subtle)">edit</button>
+        </div>
+      </div>`,
+      hrs
+    };
+  };
 
   // Apply search filter
   const q = (document.getElementById('clockSearchBox')?.value || '').toLowerCase();
@@ -1867,61 +1929,31 @@ function renderClockLog(clockings) {
 
   const rows = employees.map(emp => {
     const dayData = days.map(d => {
-      const c = empMap[emp][d.date];
-      if (!c) return { html: '<td style="text-align:center;color:var(--subtle)">—</td>', hrs: 0 };
-
-      const hrs = calcHours(c.clockIn, c.clockOut, c.breakMins, c.date) || 0;
-      const isPending = c.approvalStatus === 'pending' || (!c.approvalStatus && !c.addedByManager);
-      const isEdited = c.manuallyEdited;
-
-      // Inline edit mode
-      if (c._editing) {
-        // Native <input type="time"> gives minute granularity, full 24h
-        // range (handles overnight shifts), and a system-native picker on
-        // mobile / desktop. Empty value on clock-out means "still in".
-        const actualIn = c.clockIn || '';
-        const actualOut = c.clockOut || '';
-        const stillInPlaceholder = !c.clockOut ? 'placeholder="still in"' : '';
-        return {
-          html: `<td style="text-align:center;padding:6px 4px;vertical-align:top;min-width:110px">
-            <input type="time" step="60" id="edit-in-${c.id}" value="${actualIn}" class="field-input" style="font-size:10px;padding:3px 4px;margin-bottom:3px;width:100%" onchange="markClockDirty('${c.id}')">
-            <input type="time" step="60" id="edit-out-${c.id}" value="${actualOut}" ${stillInPlaceholder} class="field-input" style="font-size:10px;padding:3px 4px;margin-bottom:3px;width:100%" onchange="markClockDirty('${c.id}')">
-            <div style="font-size:9px;color:var(--muted);margin-bottom:3px" id="edit-total-${c.id}">${hrs > 0 ? hrs.toFixed(2)+'h' : ''}</div>
-            <input type="hidden" id="edit-break-${c.id}" value="${c.breakMins||30}">
-            <div style="display:flex;gap:3px;justify-content:center">
-              <button id="save-btn-${c.id}" class="tiny-btn tiny-approve" onclick="saveClockEdit('${c.id}')" style="font-size:9px;padding:2px 6px">Save</button>
-              <button class="tiny-btn" onclick="cancelClockEdit('${c.id}')" style="font-size:9px;padding:2px 5px;color:var(--muted)">✕</button>
-            </div>
-          </td>`,
-          hrs
-        };
+      const shifts = empMap[emp][d.date];
+      if (!shifts || shifts.length === 0) {
+        return { html: '<td style="text-align:center;color:var(--subtle)">—</td>', hrs: 0 };
       }
 
-      const statusBadge = isPending
-        ? `<div style="margin-top:3px"><span class="tag tag-pending" style="font-size:9px">pending</span>
-           <button class="tiny-btn tiny-approve" onclick="approveClocking('${c.id}')" style="font-size:9px;padding:1px 5px">✓</button>
-           <button class="tiny-btn tiny-reject" onclick="rejectClocking('${c.id}')" style="font-size:9px;padding:1px 5px">✕</button></div>`
-        : c.approvalStatus === 'rejected'
-        ? `<div style="margin-top:3px"><span class="tag tag-rejected" style="font-size:9px">rejected</span></div>`
-        : `<div style="margin-top:3px"><span class="tag" style="font-size:9px;background:rgba(62,207,142,.15);color:var(--green);border:1px solid rgba(62,207,142,.3)">${c.approvedBy ? 'approved by ' + c.approvedBy : 'approved'}</span></div>`;
+      const rendered = shifts.map(renderShift);
+      const dayHrs = rendered.reduce((s, r) => s + r.hrs, 0);
 
-      const editedBadge = isEdited ? `<span style="color:var(--amber);font-size:9px"> ✎</span>` : '';
+      // Stack multiple shifts vertically with a thin divider; on a normal
+      // single-shift day this is just the original cell content.
+      const multi = shifts.length > 1;
+      const inner = rendered.map((r, idx) => {
+        const sep = (idx > 0)
+          ? `<div style="border-top:1px dashed var(--border);margin:6px 0"></div>`
+          : '';
+        return sep + r.html;
+      }).join('');
+
+      const dayTotalLabel = multi
+        ? `<div style="font-size:10px;color:var(--muted);margin-bottom:4px;font-weight:600">${shifts.length} shifts · ${dayHrs.toFixed(1)}h total</div>`
+        : '';
 
       return {
-        html: `<td style="text-align:center;padding:8px 6px;vertical-align:top">
-          <div style="font-family:var(--font-mono);font-size:11px;color:var(--text)">
-            ${c.clockIn || '—'} – ${c.clockOut || '<span style="color:var(--amber)">in</span>'}${editedBadge}
-          </div>
-          <div style="font-size:11px;color:${hrs >= 8 ? 'var(--green)' : 'var(--accent2)'};font-family:var(--font-mono);margin-top:2px">
-            ${hrs > 0 ? hrs.toFixed(1) + 'h' : ''}
-          </div>
-          ${statusBadge}
-          <div style="margin-top:4px">
-            <button class="tiny-btn" onclick="editClockingInline('${c.id}')"
-              style="font-size:9px;padding:1px 6px;background:rgba(255,255,255,.05);border-color:var(--subtle);color:var(--subtle)">edit</button>
-          </div>
-        </td>`,
-        hrs
+        html: `<td style="text-align:center;padding:8px 6px;vertical-align:top">${dayTotalLabel}${inner}</td>`,
+        hrs: dayHrs
       };
     });
 
@@ -1945,15 +1977,17 @@ function renderClockLog(clockings) {
 
   // Day totals footer
   const dayTotals = days.map((d, i) => {
-    const total = Object.values(empMap).reduce((s, emp) => {
-      const c = emp[d.date];
-      return s + (c ? calcHours(c.clockIn, c.clockOut, c.breakMins, c.date) || 0 : 0);
+    const total = Object.values(empMap).reduce((s, byDate) => {
+      const shifts = byDate[d.date] || [];
+      return s + shifts.reduce((ss, c) => ss + (calcHours(c.clockIn, c.clockOut, c.breakMins, c.date) || 0), 0);
     }, 0);
     return `<td style="text-align:center;padding:8px 6px;font-family:var(--font-mono);font-size:12px;font-weight:600;color:var(--muted)">${total > 0 ? total.toFixed(1) + 'h' : '—'}</td>`;
   }).join('');
 
-  const grandTotal = Object.values(empMap).reduce((s, emp) => {
-    return s + Object.values(emp).reduce((ss, c) => ss + (calcHours(c.clockIn, c.clockOut, c.breakMins, c.date) || 0), 0);
+  const grandTotal = Object.values(empMap).reduce((s, byDate) => {
+    return s + Object.values(byDate).reduce((ss, shifts) => {
+      return ss + shifts.reduce((sss, c) => sss + (calcHours(c.clockIn, c.clockOut, c.breakMins, c.date) || 0), 0);
+    }, 0);
   }, 0);
 
   // Build amendment requests banner
@@ -2381,9 +2415,12 @@ function renderMyWeek(employeeName) {
     const isToday = dStr === todayStr();
     const isFuture = d > today;
 
-    const clocking = state.timesheetData.clockings.find(
-      c => c.employeeName === employeeName && c.date === dStr
-    );
+    // All clockings for this day, sorted by clock-in. A worker can have
+    // more than one shift on a day (AM + evening callout, manager-added
+    // amendment row, etc.) — show every one rather than picking one.
+    const dayClockings = state.timesheetData.clockings
+      .filter(c => c.employeeName === employeeName && c.date === dStr)
+      .sort((a, b) => (a.clockIn || '').localeCompare(b.clockIn || ''));
 
     // Project entries for this day
     const dayEntries = (state.timesheetData.entries || []).filter(
@@ -2391,23 +2428,36 @@ function renderMyWeek(employeeName) {
     );
 
     let content = '';
-    if (clocking) {
-      const hrs = calcHours(clocking.clockIn, clocking.clockOut, clocking.breakMins, clocking.date);
-      const isPending = clocking.approvalStatus === 'pending';
-      // Check for pending amendment
-      const amendment = (state.timesheetData.amendments || []).find(a => String(a.clockingId) === String(clocking.id) && a.status === 'pending');
-      const rejectedAmendment = (state.timesheetData.amendments || []).find(a => String(a.clockingId) === String(clocking.id) && a.status === 'rejected');
-      content = `
-        ${clocking.clockIn ? `<div class="week-day-time in">▲ ${clocking.clockIn}</div>` : '<div class="week-day-time" style="color:var(--subtle)">▲ —</div>'}
-        ${clocking.clockOut ? `<div class="week-day-time out">▼ ${clocking.clockOut}</div>` : '<div class="week-day-time" style="color:var(--subtle)">▼ —</div>'}
-        ${clocking.breakMins ? `<div class="week-day-break">&#9749; ${clocking.breakMins}m</div>` : ''}
-        ${hrs !== null ? `<div class="week-day-total">${hrs.toFixed(1)}h</div>` : ''}
-        ${isPending ? `<div style="margin-top:4px"><span class="tag tag-pending" style="font-size:9px">Pending</span></div>` : ''}
-        ${clocking.manuallyEdited && !isPending ? `<div style="margin-top:4px"><span class="manually-edited-badge" style="font-size:9px">Edited</span></div>` : ''}
-        ${amendment ? `<div style="margin-top:4px"><span class="tag tag-pending" style="font-size:9px">Amendment pending</span></div>` : ''}
-        ${rejectedAmendment && !amendment ? `<div style="margin-top:4px"><span class="tag tag-rejected" style="font-size:9px">Amendment rejected</span></div>` : ''}
-        ${!isFuture && clocking.clockOut && !amendment ? `<button class="week-day-add" onclick="openAmendmentRequest('${clocking.id}')">&#9998; Request Amendment</button>` : ''}
-      `;
+    if (dayClockings.length > 0) {
+      const dayTotalHrs = dayClockings.reduce(
+        (s, c) => s + (calcHours(c.clockIn, c.clockOut, c.breakMins, c.date) || 0), 0
+      );
+      const multi = dayClockings.length > 1;
+
+      const shiftBlocks = dayClockings.map((clocking, idx) => {
+        const hrs = calcHours(clocking.clockIn, clocking.clockOut, clocking.breakMins, clocking.date);
+        const isPending = clocking.approvalStatus === 'pending';
+        const amendment = (state.timesheetData.amendments || []).find(a => String(a.clockingId) === String(clocking.id) && a.status === 'pending');
+        const rejectedAmendment = (state.timesheetData.amendments || []).find(a => String(a.clockingId) === String(clocking.id) && a.status === 'rejected');
+        const sep = idx > 0 ? `<div style="border-top:1px dashed var(--border);margin:6px 0"></div>` : '';
+        return sep + `
+          ${clocking.clockIn ? `<div class="week-day-time in">▲ ${clocking.clockIn}</div>` : '<div class="week-day-time" style="color:var(--subtle)">▲ —</div>'}
+          ${clocking.clockOut ? `<div class="week-day-time out">▼ ${clocking.clockOut}</div>` : '<div class="week-day-time" style="color:var(--subtle)">▼ —</div>'}
+          ${clocking.breakMins ? `<div class="week-day-break">&#9749; ${clocking.breakMins}m</div>` : ''}
+          ${hrs !== null ? `<div class="week-day-total">${hrs.toFixed(1)}h</div>` : ''}
+          ${isPending ? `<div style="margin-top:4px"><span class="tag tag-pending" style="font-size:9px">Pending</span></div>` : ''}
+          ${clocking.manuallyEdited && !isPending ? `<div style="margin-top:4px"><span class="manually-edited-badge" style="font-size:9px">Edited</span></div>` : ''}
+          ${amendment ? `<div style="margin-top:4px"><span class="tag tag-pending" style="font-size:9px">Amendment pending</span></div>` : ''}
+          ${rejectedAmendment && !amendment ? `<div style="margin-top:4px"><span class="tag tag-rejected" style="font-size:9px">Amendment rejected</span></div>` : ''}
+          ${!isFuture && clocking.clockOut && !amendment ? `<button class="week-day-add" onclick="openAmendmentRequest('${clocking.id}')">&#9998; Request Amendment</button>` : ''}
+        `;
+      }).join('');
+
+      const header = multi
+        ? `<div style="font-size:10px;color:var(--muted);margin-bottom:4px;font-weight:600">${dayClockings.length} shifts · ${dayTotalHrs.toFixed(1)}h total</div>`
+        : '';
+
+      content = header + shiftBlocks;
     } else if (!isFuture) {
       const isToday2 = dStr === todayStr();
       const isBH = isBankHoliday(dStr);
@@ -2433,7 +2483,7 @@ function renderMyWeek(employeeName) {
     ` : '';
 
     return `
-      <div class="week-day ${isToday ? 'today' : ''} ${clocking ? 'has-data' : ''}">
+      <div class="week-day ${isToday ? 'today' : ''} ${dayClockings.length > 0 ? 'has-data' : ''}">
         <div class="week-day-name">${day}</div>
         <div class="week-day-date">${d.getDate()}/${d.getMonth()+1}</div>
         ${content}
@@ -2505,22 +2555,39 @@ async function renderLastWeekReview(employeeName) {
     d.setDate(lastMonday.getDate() + i);
     const dStr = dateStr(d);
 
-    const clocking = weekClockings.find(c => c.date === dStr);
+    // All clockings for this day (multi-shift days legitimately exist).
+    const dayClockings = weekClockings
+      .filter(c => c.date === dStr)
+      .sort((a, b) => (a.clockIn || '').localeCompare(b.clockIn || ''));
 
     let content = '';
-    if (clocking) {
-      const hrs = calcHours(clocking.clockIn, clocking.clockOut, clocking.breakMins, clocking.date);
-      const amendment = (state.timesheetData.amendments || []).find(a => String(a.clockingId) === String(clocking.id) && a.status === 'pending');
-      const rejectedAmendment = (state.timesheetData.amendments || []).find(a => String(a.clockingId) === String(clocking.id) && a.status === 'rejected');
-      content = `
-        ${clocking.clockIn ? `<div class="week-day-time in">▲ ${clocking.clockIn}</div>` : '<div class="week-day-time" style="color:var(--subtle)">▲ —</div>'}
-        ${clocking.clockOut ? `<div class="week-day-time out">▼ ${clocking.clockOut}</div>` : '<div class="week-day-time" style="color:var(--subtle)">▼ —</div>'}
-        ${clocking.breakMins ? `<div class="week-day-break">&#9749; ${clocking.breakMins}m</div>` : ''}
-        ${hrs !== null ? `<div class="week-day-total">${hrs.toFixed(1)}h</div>` : ''}
-        ${amendment ? `<div style="margin-top:4px"><span class="tag tag-pending" style="font-size:9px">Amendment pending</span></div>` : ''}
-        ${rejectedAmendment && !amendment ? `<div style="margin-top:4px"><span class="tag tag-rejected" style="font-size:9px">Amendment rejected</span></div>` : ''}
-        ${clocking.clockOut && !amendment ? `<button class="week-day-add" onclick="openAmendmentRequest('${clocking.id}')">&#9998; Request Amendment</button>` : ''}
-      `;
+    if (dayClockings.length > 0) {
+      const dayTotalHrs = dayClockings.reduce(
+        (s, c) => s + (calcHours(c.clockIn, c.clockOut, c.breakMins, c.date) || 0), 0
+      );
+      const multi = dayClockings.length > 1;
+
+      const shiftBlocks = dayClockings.map((clocking, idx) => {
+        const hrs = calcHours(clocking.clockIn, clocking.clockOut, clocking.breakMins, clocking.date);
+        const amendment = (state.timesheetData.amendments || []).find(a => String(a.clockingId) === String(clocking.id) && a.status === 'pending');
+        const rejectedAmendment = (state.timesheetData.amendments || []).find(a => String(a.clockingId) === String(clocking.id) && a.status === 'rejected');
+        const sep = idx > 0 ? `<div style="border-top:1px dashed var(--border);margin:6px 0"></div>` : '';
+        return sep + `
+          ${clocking.clockIn ? `<div class="week-day-time in">▲ ${clocking.clockIn}</div>` : '<div class="week-day-time" style="color:var(--subtle)">▲ —</div>'}
+          ${clocking.clockOut ? `<div class="week-day-time out">▼ ${clocking.clockOut}</div>` : '<div class="week-day-time" style="color:var(--subtle)">▼ —</div>'}
+          ${clocking.breakMins ? `<div class="week-day-break">&#9749; ${clocking.breakMins}m</div>` : ''}
+          ${hrs !== null ? `<div class="week-day-total">${hrs.toFixed(1)}h</div>` : ''}
+          ${amendment ? `<div style="margin-top:4px"><span class="tag tag-pending" style="font-size:9px">Amendment pending</span></div>` : ''}
+          ${rejectedAmendment && !amendment ? `<div style="margin-top:4px"><span class="tag tag-rejected" style="font-size:9px">Amendment rejected</span></div>` : ''}
+          ${clocking.clockOut && !amendment ? `<button class="week-day-add" onclick="openAmendmentRequest('${clocking.id}')">&#9998; Request Amendment</button>` : ''}
+        `;
+      }).join('');
+
+      const header = multi
+        ? `<div style="font-size:10px;color:var(--muted);margin-bottom:4px;font-weight:600">${dayClockings.length} shifts · ${dayTotalHrs.toFixed(1)}h total</div>`
+        : '';
+
+      content = header + shiftBlocks;
     } else {
       const isBH = isBankHoliday(dStr);
       content = isBH
@@ -2529,7 +2596,7 @@ async function renderLastWeekReview(employeeName) {
     }
 
     return `
-      <div class="week-day ${clocking ? 'has-data' : ''}">
+      <div class="week-day ${dayClockings.length > 0 ? 'has-data' : ''}">
         <div class="week-day-name">${day}</div>
         <div class="week-day-date">${d.getDate()}/${d.getMonth()+1}</div>
         ${content}
