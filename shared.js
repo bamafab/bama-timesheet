@@ -14453,6 +14453,36 @@ async function loadProjectsData() {
   }
 }
 
+// Source filter for the Project Tracker list.
+// 'all' shows everything. 'bama' shows projects whose number starts with C
+// (and not BC) — the existing main quote-conversion flow. 'babcock' shows
+// projects whose number starts with BC — the Babcock conversion flow.
+// Persists across re-renders within the session via this module-level var.
+let _projectSourceFilter = 'all';
+
+function projectSourceClass(project) {
+  const num = String(project.project_number || '').toUpperCase();
+  if (num.startsWith('BC')) return 'babcock';
+  if (num.startsWith('C'))  return 'bama';
+  return 'other';
+}
+
+function setProjectSourceFilter(source) {
+  _projectSourceFilter = source || 'all';
+  document.querySelectorAll('#projectSourceFilter .source-filter-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.source === _projectSourceFilter);
+  });
+  const titleEl = document.getElementById('projectListTitle');
+  if (titleEl) {
+    titleEl.textContent = ({
+      all:     'All Projects',
+      bama:    'BAMA Projects',
+      babcock: 'Babcock Projects'
+    })[_projectSourceFilter] || 'All Projects';
+  }
+  renderProjectTrackerList();
+}
+
 function renderProjectTrackerList() {
   const container = document.getElementById('projectTrackerListContainer');
   if (!container) return;
@@ -14462,6 +14492,9 @@ function renderProjectTrackerList() {
   const deadlineFilter = document.getElementById('projectDeadlineFilter')?.value || '';
 
   let list = [...projectsData];
+  if (_projectSourceFilter && _projectSourceFilter !== 'all') {
+    list = list.filter(p => projectSourceClass(p) === _projectSourceFilter);
+  }
   if (statusFilter) list = list.filter(p => p.status === statusFilter);
   if (search) {
     list = list.filter(p => {

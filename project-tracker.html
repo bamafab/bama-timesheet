@@ -98,8 +98,13 @@
     <div class="tab-content active" id="tab-projectTrackerList">
       <div class="card">
         <div class="card-frozen-top">
-          <div class="card-title"><span class="icon">🏗️</span> All Projects</div>
+          <div class="card-title"><span class="icon">🏗️</span> <span id="projectListTitle">All Projects</span></div>
           <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
+            <div class="source-filter-group" id="projectSourceFilter" role="tablist" aria-label="Filter by project source">
+              <button type="button" class="source-filter-btn active" data-source="all"     onclick="setProjectSourceFilter('all')">All</button>
+              <button type="button" class="source-filter-btn"        data-source="bama"    onclick="setProjectSourceFilter('bama')">BAMA</button>
+              <button type="button" class="source-filter-btn"        data-source="babcock" onclick="setProjectSourceFilter('babcock')">Babcock</button>
+            </div>
             <input type="text" class="field-input" id="projectSearch" placeholder="Search projects..."
               style="max-width:240px" oninput="renderProjectTrackerList()">
             <select class="field-input" id="projectStatusFilter" style="max-width:160px" onchange="renderProjectTrackerList()">
@@ -421,6 +426,42 @@
   }
   .quote-header:hover { background: var(--card); }
   .quote-col-progress { font-family: var(--font-mono); }
+
+  /* ── Source filter (All / BAMA / Babcock) ── */
+  .source-filter-group {
+    display: inline-flex;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 3px;
+    gap: 2px;
+  }
+  .source-filter-btn {
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    padding: 6px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: .3px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background .15s, color .15s;
+    white-space: nowrap;
+  }
+  .source-filter-btn:hover {
+    background: rgba(255,107,0,.06);
+    color: var(--text);
+  }
+  .source-filter-btn.active {
+    background: var(--accent);
+    color: #fff;
+  }
+  .source-filter-btn.active:hover {
+    background: var(--accent);
+    color: #fff;
+  }
 </style>
 
 <!-- ═══════════════════════════════════════
@@ -672,6 +713,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260507g"></script>
+<script src="shared.js?v=20260507h"></script>
 </body>
 </html>
