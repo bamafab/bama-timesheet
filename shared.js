@@ -12136,7 +12136,7 @@ const TEMPLATE_DEFAULTS = {
       '<p style="margin:0 0 12px 0;color:#D0021B;font-size:12px">Office Coordinator — BAMA Fabrication</p>' +
       '<table style="border-collapse:collapse;font-size:12px;color:#333"><tr>' +
       '<td style="padding-right:14px;vertical-align:top">' +
-      '<span style="display:inline-block;background:#D0021B;color:#fff;padding:6px 14px;font-weight:bold;letter-spacing:1px;border-radius:3px">BAMA</span>' +
+      '{{logo_img}}' +
       '</td>' +
       '<td style="vertical-align:top;line-height:1.6">' +
       '<b style="color:#D0021B">E:</b> <a href="mailto:accounts@bamafabrication.co.uk" style="color:#1f6feb">accounts@bamafabrication.co.uk</a>&nbsp;&nbsp;' +
@@ -12230,7 +12230,8 @@ const EMAIL_TOKEN_DEFS = {
     { token: 'sender_name',  label: 'Logged-in user name',  sample: 'Natasza Laucis' },
     { token: 'sender_role',  label: 'Logged-in user role',  sample: 'Office Coordinator' },
     { token: 'sender_email', label: 'Logged-in user email', sample: 'accounts@bamafabrication.co.uk' },
-    { token: 'date_today',   label: 'Today\u2019s date',    sample: '07 May 2026' }
+    { token: 'date_today',   label: "Today's date",    sample: '07 May 2026' },
+    { token: 'logo_img',     label: 'Company logo image',   sample: '<span style="display:inline-block;background:#D0021B;color:#fff;padding:6px 14px;font-weight:bold;letter-spacing:1px;border-radius:3px">BAMA</span>' }
   ]
 };
 
@@ -17209,11 +17210,19 @@ async function buildBabcockEmailTokens(callerTokens) {
   const todayLong = new Date().toLocaleDateString('en-GB', {
     day: '2-digit', month: 'long', year: 'numeric'
   });
+  // Logo: load the SharePoint data URI so the signature renders with the
+  // actual image rather than the red BAMA text fallback. Silently falls
+  // back to the red span if no logo is uploaded or the fetch fails.
+  const logoDataUri = await loadLogoDataUri();
+  const logoImg = logoDataUri
+    ? `<img src="${logoDataUri}" alt="BAMA Fabrication" style="height:48px;width:auto;display:block">`
+    : `<span style="display:inline-block;background:#D0021B;color:#fff;padding:6px 14px;font-weight:bold;letter-spacing:1px;border-radius:3px">BAMA</span>`;
   return Object.assign({}, callerTokens || {}, {
     sender_name:  senderName,
     sender_role:  senderRole,
     sender_email: (me && me.email) || '',
-    date_today:   todayLong
+    date_today:   todayLong,
+    logo_img:     logoImg
   });
 }
 
