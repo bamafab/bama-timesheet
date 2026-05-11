@@ -1850,6 +1850,9 @@ function renderClockLog(clockings) {
 
   // Build week days Mon-Sun based on current clock log week
   const { mon } = getWeekDates(clockLogWeekOffset);
+  const monStr = dateStr(mon);
+  const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+  const sunStr = dateStr(sun);
   const days = [];
   for (let i = 0; i < 7; i++) {
     const d = new Date(mon);
