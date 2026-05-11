@@ -104,8 +104,8 @@
       </div>
     </div>
 
-    <!-- Period selector -->
-    <div style="display:flex;gap:10px;align-items:center;margin-bottom:24px;flex-wrap:wrap">
+    <!-- Period selector (hidden for Babcock report, which uses its own FY toggle) -->
+    <div id="rptPeriodToolbar" style="display:flex;gap:10px;align-items:center;margin-bottom:24px;flex-wrap:wrap">
       <div style="display:flex;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden">
         <button id="rpt-btn-week" class="btn" onclick="setReportPeriod('week')"
           style="border-radius:0;border:none;padding:8px 18px;font-size:13px;background:var(--accent);color:#fff">Week</button>
@@ -153,6 +153,11 @@
         <div class="report-picker-icon">&#128197;</div>
         <div class="report-picker-name">Attendance</div>
         <div class="report-picker-desc">Late arrivals, absences, patterns</div>
+      </div>
+      <div class="report-picker-card" data-report="babcock" onclick="selectReport('babcock')">
+        <div class="report-picker-icon">&#9875;</div>
+        <div class="report-picker-name">Babcock overview</div>
+        <div class="report-picker-desc">Quotes, projects, invoices &amp; cashflow</div>
       </div>
       <div class="report-picker-card disabled" data-report="costanalysis">
         <div class="report-picker-badge">Coming soon</div>
@@ -219,6 +224,65 @@
       </div>
     </div>
 
+    <!-- Report: Babcock Overview -->
+    <div class="report-panel" id="rptPanel-babcock">
+      <!-- FY toggle -->
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:18px;flex-wrap:wrap">
+        <div style="display:flex;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden">
+          <button id="bbk-fy-current" class="btn" onclick="setBabcockFY('current')"
+            style="border-radius:0;border:none;padding:8px 16px;font-size:12px;background:var(--accent);color:#fff">This FY</button>
+          <button id="bbk-fy-last" class="btn" onclick="setBabcockFY('last')"
+            style="border-radius:0;border:none;padding:8px 16px;font-size:12px;background:var(--surface);color:var(--muted)">Last FY</button>
+        </div>
+        <span style="font-size:12px;color:var(--muted)" id="bbkFyLabel"></span>
+        <span style="margin-left:auto;font-size:11px;color:var(--subtle);font-style:italic">UK financial year: 1 Apr &rarr; 31 Mar</span>
+      </div>
+
+      <!-- KPI tiles row 1 — financial overview -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:14px" id="bbkKpisFinancial"></div>
+
+      <!-- KPI tiles row 2 — workflow state -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:24px" id="bbkKpisWorkflow"></div>
+
+      <!-- Charts grid: 2x2 -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px" id="bbkChartsGrid">
+        <div class="card" style="padding:20px">
+          <div class="card-title" style="margin-bottom:4px"><span class="icon">&#128200;</span> Monthly trend</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Quote count (bars) &amp; total value (line) per month</div>
+          <canvas id="bbkChartMonthlyTrend" style="width:100%;height:240px;max-height:240px"></canvas>
+        </div>
+        <div class="card" style="padding:20px">
+          <div class="card-title" style="margin-bottom:4px"><span class="icon">&#127953;</span> Pipeline funnel</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Quote count by status (current snapshot)</div>
+          <canvas id="bbkChartFunnel" style="width:100%;height:240px;max-height:240px"></canvas>
+        </div>
+        <div class="card" style="padding:20px">
+          <div class="card-title" style="margin-bottom:4px"><span class="icon">&#128181;</span> Cash flow</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Money in (COUPA paid) vs money out (Bama SW invoices)</div>
+          <canvas id="bbkChartCashflow" style="width:100%;height:240px;max-height:240px"></canvas>
+        </div>
+        <div class="card" style="padding:20px">
+          <div class="card-title" style="margin-bottom:4px"><span class="icon">&#127971;</span> Top areas</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Top 10 areas by total quote value</div>
+          <canvas id="bbkChartTopAreas" style="width:100%;height:240px;max-height:240px"></canvas>
+        </div>
+      </div>
+
+      <!-- Overdue / Due-soon table -->
+      <div class="card" style="padding:20px;margin-bottom:16px">
+        <div class="card-title" style="margin-bottom:4px"><span class="icon">&#9888;&#65039;</span> Invoices needing attention</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Approved-to-Pay invoices grouped by how close to due</div>
+        <div id="bbkAgingTable"></div>
+      </div>
+
+      <!-- Empty-state for when there's no data at all -->
+      <div id="bbkEmptyState" style="display:none;text-align:center;padding:60px 20px;color:var(--muted)">
+        <div style="font-size:48px;margin-bottom:14px">&#9875;</div>
+        <div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:6px">No Babcock quotes yet</div>
+        <div style="font-size:13px">Once quotes are added, the analytics will populate automatically.</div>
+      </div>
+    </div>
+
   </div><!-- end mgr-content -->
 </div><!-- end mgr-layout -->
 
@@ -243,6 +307,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260511a"></script>
+<script src="shared.js?v=20260511b"></script>
 </body>
 </html>

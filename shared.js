@@ -3036,6 +3036,14 @@ function selectReport(name) {
   document.querySelectorAll('.report-panel').forEach(panel => {
     panel.classList.toggle('active', panel.id === `rptPanel-${name}`);
   });
+  // Babcock has its own FY toggle + its own KPI grid — hide the generic
+  // period toolbar and the shared KPI row so they don't visually clash.
+  // (Both elements only exist on reports.html; harmless no-op elsewhere.)
+  const isBabcock = name === 'babcock';
+  const periodBar = document.getElementById('rptPeriodToolbar');
+  if (periodBar) periodBar.style.display = isBabcock ? 'none' : '';
+  const sharedKpi = document.getElementById('rptKpiRow');
+  if (sharedKpi) sharedKpi.style.display = isBabcock ? 'none' : '';
   renderReports();
 }
 
@@ -5223,6 +5231,14 @@ function getPeriodData(empFilter) {
 }
 
 function renderReports() {
+  // Babcock Overview has its own data model (quote-level not employee-hour-
+  // level) and FY toggle. Delegate entirely — none of the period/employee
+  // wiring below applies to it.
+  if (activeReport === 'babcock') {
+    renderBabcockReport();
+    return;
+  }
+
   const empFilter = document.getElementById('rptEmployeeFilter')?.value || '';
 
   // Populate employee filter
@@ -5391,6 +5407,460 @@ function renderReports() {
 
   // ── Attendance report ──
   if (activeReport === 'attendance') renderAttendanceReport(empFilter);
+}
+
+// ═══════════════════════════════════════════
+// BABCOCK OVERVIEW REPORT (reports.html)
+// ═══════════════════════════════════════════
+// Quote-level analytics that complement the operational Babcock tracker.
+// All metrics are computed client-side against /api/babcock-quotes — the
+// volume is small (single-digit to low-hundreds of rows lifetime), so
+// no server-side aggregation is needed for v1.
+//
+// Status buckets (for tile counts):
+//   Open quotes:        Quote Received, Quote Sent (not yet converted)
+//   Open projects:      Live Project (work in progress)
+//   Closed projects:    Project Complete, Approved to Pay, Payment Received,
+//                       Sent to Bama SW, Bama SW Awaiting Payment (project
+//                       work finished; finance lifecycle may still be open)
+//   Cancelled:          Cancelled (terminal failure)
+
+// FY toggle state — 'current' or 'last' (last full UK financial year)
+let _bbkFY = 'current';
+let _bbkCharts = {};   // separate from rptCharts so destroys don't collide
+let _bbkQuotesCache = null; // cached list to avoid refetch when toggling FY
+
+const BABCOCK_OPEN_QUOTE_STATUSES   = ['Quote Received', 'Quote Sent'];
+const BABCOCK_OPEN_PROJECT_STATUSES = ['Live Project'];
+const BABCOCK_CLOSED_PROJECT_STATUSES = [
+  'Project Complete', 'Approved to Pay', 'Payment Received',
+  'Sent to Bama SW', 'Bama SW Awaiting Payment'
+];
+
+function setBabcockFY(which) {
+  _bbkFY = which;
+  document.getElementById('bbk-fy-current')?.style.setProperty('background', which === 'current' ? 'var(--accent)' : 'var(--surface)');
+  document.getElementById('bbk-fy-current')?.style.setProperty('color',      which === 'current' ? '#fff' : 'var(--muted)');
+  document.getElementById('bbk-fy-last')?.style.setProperty('background',    which === 'last'    ? 'var(--accent)' : 'var(--surface)');
+  document.getElementById('bbk-fy-last')?.style.setProperty('color',         which === 'last'    ? '#fff' : 'var(--muted)');
+  renderBabcockReport();
+}
+
+// Return UK financial year boundaries for the requested year-token.
+// UK FY runs 1 Apr → 31 Mar. 'current' = the FY that contains today.
+// 'last' = the FY immediately before that. Inclusive of both ends.
+function getBabcockFYRange(which) {
+  const today = new Date();
+  // Current FY starts on 1 April of whichever calendar year we're in,
+  // or 1 April of the *previous* calendar year if today is Jan/Feb/Mar.
+  let fyStart = today.getMonth() >= 3
+    ? new Date(today.getFullYear(), 3, 1)
+    : new Date(today.getFullYear() - 1, 3, 1);
+  if (which === 'last') {
+    fyStart = new Date(fyStart.getFullYear() - 1, 3, 1);
+  }
+  const fyEnd = new Date(fyStart.getFullYear() + 1, 2, 31); // 31 Mar next yr
+  return { fyStart, fyEnd, fyLabel: `FY ${fyStart.getFullYear()}/${String((fyStart.getFullYear() + 1) % 100).padStart(2, '0')}` };
+}
+
+// Pull a usable "date" off a Babcock-quote row for time-bucketing.
+// Prefers `date_sent` (when we actually sent the quote out) then falls
+// back to `quotation_date` then `created_at`. Returns a Date or null.
+function babcockRowDate(q) {
+  const raw = q.date_sent || q.quotation_date || q.created_at;
+  if (!raw) return null;
+  const d = new Date(String(raw).split('T')[0] + 'T00:00:00');
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function inRange(d, from, to) {
+  if (!d) return false;
+  return d >= from && d <= to;
+}
+
+function fmtMoneyShort(n) {
+  if (n == null || !isFinite(Number(n))) return '£0';
+  const abs = Math.abs(Number(n));
+  if (abs >= 1_000_000) return '£' + (Number(n) / 1_000_000).toFixed(1) + 'M';
+  if (abs >= 10_000)    return '£' + Math.round(Number(n) / 1_000) + 'k';
+  return '£' + Number(n).toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+}
+function fmtMoneyFull(n) {
+  if (n == null || !isFinite(Number(n))) return '£0.00';
+  return '£' + Number(n).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+async function renderBabcockReport() {
+  // Fetch (cache so FY toggles don't re-hit the API)
+  if (!_bbkQuotesCache) {
+    try {
+      _bbkQuotesCache = await api.get('/api/babcock-quotes');
+    } catch (err) {
+      console.error('Babcock report fetch failed:', err);
+      toast('Failed to load Babcock data: ' + (err.message || 'unknown'), 'error');
+      return;
+    }
+  }
+  const all = Array.isArray(_bbkQuotesCache) ? _bbkQuotesCache : [];
+
+  // Empty-state — nothing to report
+  const emptyEl = document.getElementById('bbkEmptyState');
+  const finKpis = document.getElementById('bbkKpisFinancial');
+  const wfKpis  = document.getElementById('bbkKpisWorkflow');
+  const grid    = document.getElementById('bbkChartsGrid');
+  const aging   = document.getElementById('bbkAgingTable')?.parentElement;
+  if (!all.length) {
+    if (emptyEl) emptyEl.style.display = '';
+    [finKpis, wfKpis, grid, aging].forEach(el => { if (el) el.style.display = 'none'; });
+    return;
+  }
+  if (emptyEl) emptyEl.style.display = 'none';
+  [finKpis, wfKpis, grid, aging].forEach(el => { if (el) el.style.display = '' });
+
+  // FY range
+  const { fyStart, fyEnd, fyLabel } = getBabcockFYRange(_bbkFY);
+  const fyLabelEl = document.getElementById('bbkFyLabel');
+  if (fyLabelEl) {
+    fyLabelEl.textContent = `${fyLabel} \u00b7 ${fyStart.toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' })} \u2192 ${fyEnd.toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' })}`;
+  }
+
+  // Filter into FY scope, with sensible fallbacks for rows that have no date
+  const inFY = all.filter(q => inRange(babcockRowDate(q), fyStart, fyEnd));
+
+  // ─── Financial KPIs (FY-scoped) ───
+  const quotesValue = inFY.reduce((s, q) => s + (Number(q.total_value) || 0), 0);
+  // What Babcock paid us (COUPA-side). Treat rows at or beyond Approved-to-Pay
+  // as "invoiced"; treat rows at or beyond Payment Received as "paid".
+  const invoicedPaid = inFY
+    .filter(q => ['Payment Received', 'Sent to Bama SW', 'Bama SW Awaiting Payment'].includes(q.status))
+    .reduce((s, q) => s + (Number(q.coupa_invoice_gross_total) || Number(q.total_value) || 0), 0);
+
+  // Total invoiced (raised), regardless of paid
+  const invoicedTotal = inFY
+    .filter(q => ['Approved to Pay', 'Payment Received', 'Sent to Bama SW', 'Bama SW Awaiting Payment'].includes(q.status))
+    .reduce((s, q) => s + (Number(q.coupa_invoice_gross_total) || Number(q.total_value) || 0), 0);
+
+  // Outstanding pipeline — non-terminal, non-cancelled
+  const TERMINAL = new Set(['Bama SW Awaiting Payment', 'Cancelled']);
+  const outstandingValue = inFY
+    .filter(q => !TERMINAL.has(q.status))
+    .reduce((s, q) => s + (Number(q.total_value) || 0), 0);
+
+  // Margin — sum of (total_value − pretax_original) where markup_pct > 0
+  const margin = inFY.reduce((s, q) => {
+    const tv = Number(q.total_value) || 0;
+    const mu = Number(q.markup_pct) || 0;
+    if (mu <= 0) return s;
+    const pretax = tv / (1 + mu / 100);
+    return s + (tv - pretax);
+  }, 0);
+
+  // Avg days to payment
+  const paidWithDates = inFY.filter(q => q.payment_received_at && q.date_sent);
+  const avgDays = paidWithDates.length
+    ? paidWithDates.reduce((s, q) => {
+        const sent = new Date(String(q.date_sent).split('T')[0]).getTime();
+        const paid = new Date(String(q.payment_received_at).split('T')[0]).getTime();
+        return s + Math.max(0, (paid - sent) / 86_400_000);
+      }, 0) / paidWithDates.length
+    : null;
+
+  // Conversion rate — quotes that reached Live Project or beyond, in FY
+  const reachedProject = inFY.filter(q =>
+    BABCOCK_OPEN_PROJECT_STATUSES.includes(q.status)
+    || BABCOCK_CLOSED_PROJECT_STATUSES.includes(q.status)
+  ).length;
+  const convPct = inFY.length ? (reachedProject / inFY.length) * 100 : 0;
+
+  if (finKpis) {
+    finKpis.innerHTML = [
+      { label: 'Quotes raised',     value: fmtMoneyShort(quotesValue), sub: `${inFY.length} quote${inFY.length === 1 ? '' : 's'}`, color: 'var(--accent2)' },
+      { label: 'Invoiced (paid)',   value: fmtMoneyShort(invoicedPaid), sub: 'Confirmed by Babcock',          color: 'var(--green)' },
+      { label: 'Invoiced (raised)', value: fmtMoneyShort(invoicedTotal), sub: 'Submitted to COUPA',           color: '#6366f1' },
+      { label: 'Outstanding',       value: fmtMoneyShort(outstandingValue), sub: 'Pipeline in flight',        color: 'var(--amber)' },
+      { label: 'Bama SW margin',    value: fmtMoneyShort(margin),       sub: 'Markup kept on quotes',         color: 'var(--accent)' },
+      { label: 'Conversion rate',   value: convPct.toFixed(0) + '%',    sub: `${reachedProject}/${inFY.length} converted`, color: convPct >= 70 ? 'var(--green)' : convPct >= 40 ? 'var(--amber)' : 'var(--red)' },
+      { label: 'Avg days to pay',   value: avgDays != null ? Math.round(avgDays) + 'd' : '—', sub: avgDays != null ? `${paidWithDates.length} paid invoice${paidWithDates.length === 1 ? '' : 's'}` : 'No paid invoices yet', color: avgDays == null ? 'var(--muted)' : avgDays <= 30 ? 'var(--green)' : avgDays <= 60 ? 'var(--amber)' : 'var(--red)' }
+    ].map(k => `
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 16px">
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">${k.label}</div>
+        <div style="font-family:var(--font-display);font-size:24px;color:${k.color};line-height:1.1">${k.value}</div>
+        <div style="font-size:10px;color:var(--subtle);margin-top:4px">${k.sub}</div>
+      </div>
+    `).join('');
+  }
+
+  // ─── Workflow KPIs (current snapshot, not FY-filtered) ───
+  // These reflect "what's on my plate right now" so they intentionally
+  // bypass the FY toggle. A 2-year-old quote that's still Live Project
+  // is still relevant to operations today.
+  const openQuotes      = all.filter(q => BABCOCK_OPEN_QUOTE_STATUSES.includes(q.status));
+  const openProjects    = all.filter(q => BABCOCK_OPEN_PROJECT_STATUSES.includes(q.status));
+  const closedProjects  = all.filter(q => BABCOCK_CLOSED_PROJECT_STATUSES.includes(q.status));
+  const invoicesDue     = all.filter(q => q.status === 'Approved to Pay');
+  const invoicesDueVal  = invoicesDue.reduce((s, q) => s + (Number(q.coupa_invoice_gross_total) || Number(q.total_value) || 0), 0);
+  const openQuotesVal   = openQuotes.reduce((s, q) => s + (Number(q.total_value) || 0), 0);
+  const openProjectsVal = openProjects.reduce((s, q) => s + (Number(q.total_value) || 0), 0);
+
+  if (wfKpis) {
+    wfKpis.innerHTML = [
+      { label: 'Open quotes',     value: String(openQuotes.length),     sub: fmtMoneyShort(openQuotesVal) + ' in pipeline', color: 'var(--accent2)' },
+      { label: 'Open projects',   value: String(openProjects.length),   sub: fmtMoneyShort(openProjectsVal) + ' active',    color: '#6366f1' },
+      { label: 'Closed projects', value: String(closedProjects.length), sub: 'Awaiting / in finance',                       color: 'var(--muted)' },
+      { label: 'Invoices due',    value: String(invoicesDue.length),    sub: fmtMoneyShort(invoicesDueVal) + ' total',      color: invoicesDue.length ? 'var(--amber)' : 'var(--green)' }
+    ].map(k => `
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 16px">
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">${k.label}</div>
+        <div style="font-family:var(--font-display);font-size:30px;color:${k.color};line-height:1.1">${k.value}</div>
+        <div style="font-size:10px;color:var(--subtle);margin-top:4px">${k.sub}</div>
+      </div>
+    `).join('');
+  }
+
+  // ─── Destroy old charts before redraw ───
+  Object.values(_bbkCharts).forEach(c => { try { c.destroy(); } catch {} });
+  _bbkCharts = {};
+
+  // ─── Monthly trend (FY-scoped, bar count + line value) ───
+  // 12-month buckets from fyStart. Each month bucket includes rows whose
+  // babcockRowDate falls in that calendar month.
+  const months = [];
+  for (let i = 0; i < 12; i++) {
+    const m = new Date(fyStart.getFullYear(), fyStart.getMonth() + i, 1);
+    months.push({
+      label: m.toLocaleDateString('en-GB', { month: 'short' }) + ' ' + String(m.getFullYear() % 100).padStart(2, '0'),
+      key:   `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, '0')}`,
+      count: 0,
+      value: 0
+    });
+  }
+  const monthIdx = (d) => {
+    if (!d) return -1;
+    return months.findIndex(b => b.key === `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+  };
+  for (const q of inFY) {
+    const idx = monthIdx(babcockRowDate(q));
+    if (idx < 0) continue;
+    months[idx].count += 1;
+    months[idx].value += Number(q.total_value) || 0;
+  }
+  const monthlyCtx = document.getElementById('bbkChartMonthlyTrend');
+  if (monthlyCtx) {
+    _bbkCharts.monthly = new Chart(monthlyCtx, {
+      data: {
+        labels: months.map(b => b.label),
+        datasets: [
+          { type: 'bar',  label: 'Quote count', data: months.map(b => b.count), backgroundColor: 'rgba(255,107,0,.55)', borderColor: 'var(--accent)', yAxisID: 'yCount', borderRadius: 4 },
+          { type: 'line', label: 'Total value', data: months.map(b => b.value), borderColor: 'var(--accent2)', backgroundColor: 'rgba(0,179,238,.15)', tension: .35, yAxisID: 'yValue', pointRadius: 3, fill: false }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: 'bottom', labels: { color: 'var(--muted)', font: { size: 11 } } } },
+        scales: {
+          x:      { ticks: { color: 'var(--muted)', font: { size: 10 } }, grid: { display: false } },
+          yCount: { position: 'left',  beginAtZero: true, ticks: { color: 'var(--accent)',  precision: 0, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,.05)' }, title: { display: true, text: 'Count',  color: 'var(--muted)', font: { size: 10 } } },
+          yValue: { position: 'right', beginAtZero: true, ticks: { color: 'var(--accent2)', font: { size: 10 }, callback: v => fmtMoneyShort(v) }, grid: { display: false }, title: { display: true, text: 'Value', color: 'var(--muted)', font: { size: 10 } } }
+        }
+      }
+    });
+  }
+
+  // ─── Pipeline funnel (status counts, current snapshot — not FY-filtered) ───
+  const STATUS_ORDER = [
+    'Quote Received', 'Quote Sent', 'Live Project', 'Project Complete',
+    'Approved to Pay', 'Payment Received', 'Sent to Bama SW',
+    'Bama SW Awaiting Payment', 'Cancelled'
+  ];
+  // Status colour map mirrors the badge palette in babcock.html so users
+  // recognise statuses across pages.
+  const STATUS_COLOURS = {
+    'Quote Received':            'rgba(255,193,7,.7)',   // amber
+    'Quote Sent':                'rgba(255,107,0,.7)',   // orange
+    'Live Project':              'rgba(0,153,255,.7)',   // blue
+    'Project Complete':          'rgba(155,89,182,.7)',  // purple
+    'Approved to Pay':           'rgba(26,188,156,.7)',  // teal
+    'Payment Received':          'rgba(46,204,113,.7)',  // green
+    'Sent to Bama SW':           'rgba(231,76,153,.7)',  // magenta
+    'Bama SW Awaiting Payment':  'rgba(91,170,225,.7)',  // light blue
+    'Cancelled':                 'rgba(127,140,141,.7)'  // grey
+  };
+  const funnelCounts = STATUS_ORDER.map(s => all.filter(q => q.status === s).length);
+  const funnelCtx = document.getElementById('bbkChartFunnel');
+  if (funnelCtx) {
+    _bbkCharts.funnel = new Chart(funnelCtx, {
+      type: 'bar',
+      data: {
+        labels: STATUS_ORDER,
+        datasets: [{
+          label: 'Quotes',
+          data: funnelCounts,
+          backgroundColor: STATUS_ORDER.map(s => STATUS_COLOURS[s]),
+          borderColor: STATUS_ORDER.map(s => STATUS_COLOURS[s]),
+          borderRadius: 4
+        }]
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { beginAtZero: true, ticks: { color: 'var(--muted)', precision: 0, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,.05)' } },
+          y: { ticks: { color: 'var(--muted)', font: { size: 10 } }, grid: { display: false } }
+        }
+      }
+    });
+  }
+
+  // ─── Cash flow (money in vs money out per month, FY-scoped) ───
+  const cashMonths = months.map(m => ({ label: m.label, key: m.key, moneyIn: 0, moneyOut: 0 }));
+  // Money in = COUPA payment received in that month
+  // Money out = Bama SW invoice sent in that month
+  // (Both timestamps are stored on the BabcockQuotes row.)
+  for (const q of all) {
+    if (q.payment_received_at) {
+      const d = new Date(String(q.payment_received_at).split('T')[0] + 'T00:00:00');
+      if (inRange(d, fyStart, fyEnd)) {
+        const idx = cashMonths.findIndex(b => b.key === `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+        if (idx >= 0) cashMonths[idx].moneyIn += (Number(q.coupa_invoice_gross_total) || Number(q.total_value) || 0);
+      }
+    }
+    if (q.bama_sw_invoice_sent_at) {
+      const d = new Date(String(q.bama_sw_invoice_sent_at).split('T')[0] + 'T00:00:00');
+      if (inRange(d, fyStart, fyEnd)) {
+        const idx = cashMonths.findIndex(b => b.key === `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+        if (idx >= 0) {
+          const tv = Number(q.total_value) || 0;
+          const mu = Number(q.markup_pct) || 0;
+          // Bama SW gets the original pre-markup value (per the invoice flow)
+          cashMonths[idx].moneyOut += mu > 0 ? tv / (1 + mu / 100) : tv;
+        }
+      }
+    }
+  }
+  const cashCtx = document.getElementById('bbkChartCashflow');
+  if (cashCtx) {
+    _bbkCharts.cash = new Chart(cashCtx, {
+      type: 'bar',
+      data: {
+        labels: cashMonths.map(b => b.label),
+        datasets: [
+          { label: 'In (COUPA paid)',  data: cashMonths.map(b => b.moneyIn),  backgroundColor: 'rgba(46,204,113,.7)',  borderRadius: 4 },
+          { label: 'Out (Bama SW)',    data: cashMonths.map(b => b.moneyOut), backgroundColor: 'rgba(231,76,153,.7)', borderRadius: 4 }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: 'bottom', labels: { color: 'var(--muted)', font: { size: 11 } } } },
+        scales: {
+          x: { ticks: { color: 'var(--muted)', font: { size: 10 } }, grid: { display: false } },
+          y: { beginAtZero: true, ticks: { color: 'var(--muted)', font: { size: 10 }, callback: v => fmtMoneyShort(v) }, grid: { color: 'rgba(255,255,255,.05)' } }
+        }
+      }
+    });
+  }
+
+  // ─── Top areas (FY-scoped, top 10 by total value) ───
+  const areaMap = new Map();
+  for (const q of inFY) {
+    const area = (q.quote_for_area || '(unspecified)').toString().trim() || '(unspecified)';
+    const existing = areaMap.get(area) || { count: 0, value: 0 };
+    existing.count += 1;
+    existing.value += Number(q.total_value) || 0;
+    areaMap.set(area, existing);
+  }
+  const topAreas = [...areaMap.entries()]
+    .map(([area, v]) => ({ area, ...v }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 10);
+  const topCtx = document.getElementById('bbkChartTopAreas');
+  if (topCtx) {
+    _bbkCharts.areas = new Chart(topCtx, {
+      type: 'bar',
+      data: {
+        labels: topAreas.map(a => a.area.length > 30 ? a.area.slice(0, 28) + '\u2026' : a.area),
+        datasets: [{
+          label: 'Value',
+          data: topAreas.map(a => a.value),
+          backgroundColor: 'rgba(255,107,0,.65)',
+          borderColor: 'var(--accent)',
+          borderRadius: 4
+        }]
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: ctx => `${fmtMoneyFull(ctx.parsed.x)} (${topAreas[ctx.dataIndex].count} quote${topAreas[ctx.dataIndex].count === 1 ? '' : 's'})` } }
+        },
+        scales: {
+          x: { beginAtZero: true, ticks: { color: 'var(--muted)', font: { size: 10 }, callback: v => fmtMoneyShort(v) }, grid: { color: 'rgba(255,255,255,.05)' } },
+          y: { ticks: { color: 'var(--muted)', font: { size: 10 } }, grid: { display: false } }
+        }
+      }
+    });
+  }
+
+  // ─── Aging table — invoices needing attention ───
+  // Group Approved-to-Pay rows by how close to / past their due date.
+  // Non-FY-filtered — overdue invoices need attention regardless of FY.
+  const agingEl = document.getElementById('bbkAgingTable');
+  if (agingEl) {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const rows = invoicesDue.map(q => {
+      const dueRaw = q.coupa_invoice_due_date ? String(q.coupa_invoice_due_date).split('T')[0] : null;
+      const due = dueRaw ? new Date(dueRaw + 'T00:00:00') : null;
+      const daysToDue = due ? Math.round((due - today) / 86_400_000) : null;
+      let bucket, bucketColor;
+      if (daysToDue == null) { bucket = 'No due date'; bucketColor = 'var(--muted)'; }
+      else if (daysToDue < 0)   { bucket = `Overdue ${-daysToDue}d`;  bucketColor = 'var(--red)'; }
+      else if (daysToDue <= 7)  { bucket = `Due in ${daysToDue}d`;    bucketColor = 'var(--amber)'; }
+      else                       { bucket = `Due in ${daysToDue}d`;    bucketColor = 'var(--muted)'; }
+      return {
+        quote_ref: q.quote_ref, due, daysToDue, bucket, bucketColor,
+        value: Number(q.coupa_invoice_gross_total) || Number(q.total_value) || 0,
+        customer: q.quote_for_area || '—',
+        invoiceNumber: q.coupa_invoice_number || '—'
+      };
+    }).sort((a, b) => {
+      // Sort: overdue first (most overdue first), then due-soon, then no-date
+      if (a.daysToDue == null && b.daysToDue == null) return 0;
+      if (a.daysToDue == null) return 1;
+      if (b.daysToDue == null) return -1;
+      return a.daysToDue - b.daysToDue;
+    });
+    if (!rows.length) {
+      agingEl.innerHTML = `<div style="text-align:center;padding:30px 10px;color:var(--muted);font-size:13px">
+        <span style="font-size:28px;display:block;margin-bottom:10px">\u2705</span>
+        No invoices currently approved-to-pay.
+      </div>`;
+    } else {
+      agingEl.innerHTML = `
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead>
+            <tr style="color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.5px">
+              <th style="text-align:left;padding:8px 10px;border-bottom:1px solid var(--border)">Quote</th>
+              <th style="text-align:left;padding:8px 10px;border-bottom:1px solid var(--border)">Invoice</th>
+              <th style="text-align:left;padding:8px 10px;border-bottom:1px solid var(--border)">Customer / area</th>
+              <th style="text-align:left;padding:8px 10px;border-bottom:1px solid var(--border)">Status</th>
+              <th style="text-align:right;padding:8px 10px;border-bottom:1px solid var(--border)">Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(r => `
+              <tr>
+                <td style="padding:8px 10px;border-bottom:1px solid var(--border);font-family:var(--font-mono);color:var(--accent)">${escapeHtml(r.quote_ref || '')}</td>
+                <td style="padding:8px 10px;border-bottom:1px solid var(--border);font-family:var(--font-mono);color:var(--muted)">${escapeHtml(r.invoiceNumber)}</td>
+                <td style="padding:8px 10px;border-bottom:1px solid var(--border)">${escapeHtml(r.customer)}</td>
+                <td style="padding:8px 10px;border-bottom:1px solid var(--border);color:${r.bucketColor};font-weight:600">${r.bucket}</td>
+                <td style="padding:8px 10px;border-bottom:1px solid var(--border);text-align:right;font-family:var(--font-mono)">${fmtMoneyFull(r.value)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>`;
+    }
+  }
 }
 
 // ═══════════════════════════════════════════
