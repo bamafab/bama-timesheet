@@ -18567,14 +18567,14 @@ function renderBabcockTracker() {
 
   const list = _babcockQuotes.filter(q => {
     if (statusFilter && q.status !== statusFilter) return false;
-    if (search && !(q.quote_ref || '').toLowerCase().includes(search)) return false;
+    if (search && !`${q.quote_ref || ''} ${q.work_order_no || ''}`.toLowerCase().includes(search)) return false;
     return true;
   });
 
   if (countEl) countEl.textContent = `${list.length} quote${list.length === 1 ? '' : 's'}`;
 
   if (!list.length) {
-    tbody.innerHTML = `<tr><td colspan="7" style="padding:40px;text-align:center;color:var(--muted)">
+    tbody.innerHTML = `<tr><td colspan="8" style="padding:40px;text-align:center;color:var(--muted)">
       <div style="font-size:32px;margin-bottom:8px">📋</div>
       No quotes yet. Click <b>+ New Quote</b> to create one.
     </td></tr>`;
@@ -18621,6 +18621,7 @@ function renderBabcockTracker() {
     return `
     <tr class="clickable-row" onclick="viewBabcockQuoteDetail(${q.id})">
       <td class="ref-cell">${escapeHtml(q.quote_ref || '')}${revTag}</td>
+      <td style="font-family:var(--font-mono);font-size:12px;color:var(--muted)">${escapeHtml(q.work_order_no || '—')}</td>
       <td>${fmtDate(q.date_sent || q.created_at)}</td>
       <td class="num-cell">${fmtGBP(q.total_value)}</td>
       <td>${statusBadge}${dueDateInline}</td>
