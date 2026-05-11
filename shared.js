@@ -5599,7 +5599,7 @@ async function renderBabcockReport() {
       { label: 'Conversion rate',   value: convPct.toFixed(0) + '%',    sub: `${reachedProject}/${inFY.length} converted`, color: convPct >= 70 ? 'var(--green)' : convPct >= 40 ? 'var(--amber)' : 'var(--red)' },
       { label: 'Avg days to pay',   value: avgDays != null ? Math.round(avgDays) + 'd' : '—', sub: avgDays != null ? `${paidWithDates.length} paid invoice${paidWithDates.length === 1 ? '' : 's'}` : 'No paid invoices yet', color: avgDays == null ? 'var(--muted)' : avgDays <= 30 ? 'var(--green)' : avgDays <= 60 ? 'var(--amber)' : 'var(--red)' }
     ].map(k => `
-      <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 12px;width:150px;flex:0 0 auto">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 12px">
         <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px">${k.label}</div>
         <div style="font-family:var(--font-display);font-size:20px;color:${k.color};line-height:1.1">${k.value}</div>
         <div style="font-size:10px;color:var(--subtle);margin-top:3px">${k.sub}</div>
@@ -5626,7 +5626,7 @@ async function renderBabcockReport() {
       { label: 'Closed projects', value: String(closedProjects.length), sub: 'Awaiting / in finance',                       color: 'var(--muted)' },
       { label: 'Invoices due',    value: String(invoicesDue.length),    sub: fmtMoneyShort(invoicesDueVal) + ' total',      color: invoicesDue.length ? 'var(--amber)' : 'var(--green)' }
     ].map(k => `
-      <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 12px;width:150px;flex:0 0 auto">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 12px">
         <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px">${k.label}</div>
         <div style="font-family:var(--font-display);font-size:24px;color:${k.color};line-height:1.1">${k.value}</div>
         <div style="font-size:10px;color:var(--subtle);margin-top:3px">${k.sub}</div>

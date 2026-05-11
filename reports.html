@@ -240,10 +240,10 @@
 
       <!-- KPI tiles row 1 — financial overview. Compact — minmax(140px,220px)
            keeps tiles small instead of stretching to fill the row width. -->
-      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px" id="bbkKpisFinancial"></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:12px" id="bbkKpisFinancial"></div>
 
       <!-- KPI tiles row 2 — workflow state -->
-      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:24px" id="bbkKpisWorkflow"></div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:24px" id="bbkKpisWorkflow"></div>
 
       <!-- Pipeline funnel — full width, directly under the tiles -->
       <div class="card" style="padding:20px;margin-bottom:16px">
@@ -298,6 +298,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260511c"></script>
+<script src="shared.js?v=20260511d"></script>
 </body>
 </html>
