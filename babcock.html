@@ -197,6 +197,82 @@
 </div>
 
 <!-- ═══════════════════════════════════════
+     GENERATE BAMA SW INVOICE MODAL (Babcock 1h)
+     Reads the SharePoint Invoice tracker for the next number, lets
+     user review/edit, then generates the PDF + uploads to SharePoint
+     + appends a row to the tracker + opens the email composer.
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="babcockBswInvoiceModal">
+  <div class="modal" style="max-width:600px;width:95vw;max-height:90vh;overflow-y:auto">
+    <div class="modal-title">🧾 Generate Bama SW Invoice</div>
+
+    <div style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.5">
+      Creates an invoice from Bama Fabrication to Bama South West.
+      The invoice number is read from the SharePoint <b>Invoice tracker</b>
+      and the tracker is updated automatically.
+    </div>
+
+    <!-- Invoice number row -->
+    <div style="margin-bottom:14px">
+      <div class="field-label">INVOICE NUMBER <span style="color:var(--red)">*</span></div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="text" class="field-input" id="bswInvoiceNumber"
+               style="font-size:14px;font-family:var(--font-mono);letter-spacing:.5px;flex:1"
+               placeholder="Loading from tracker…">
+        <button type="button" class="btn btn-ghost" style="padding:6px 10px;font-size:11px"
+                onclick="refreshBswInvoiceNumber()" title="Re-read from tracker">⟳ Refresh</button>
+      </div>
+      <div id="bswInvoiceNumberHint" style="font-size:11px;color:var(--subtle);margin-top:4px">
+        Auto-suggested from the latest entry in the SharePoint tracker.
+      </div>
+    </div>
+
+    <!-- Cost calculation block -->
+    <div style="background:rgba(255,107,0,.04);border:1px solid rgba(255,107,0,.2);border-radius:6px;padding:14px;margin-bottom:14px">
+      <div style="font-size:11px;font-weight:600;letter-spacing:.5px;color:var(--accent);text-transform:uppercase;margin-bottom:8px">
+        Invoice Total Calculation
+      </div>
+      <div id="bswCalcRows" style="font-family:var(--font-mono);font-size:13px;line-height:1.8">
+        <div style="display:grid;grid-template-columns:1fr auto;gap:10px">
+          <span style="color:var(--muted)">Original quote (pre-markup)</span>
+          <span id="bswOriginalAmt" style="font-weight:600">£—</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr auto;gap:10px">
+          <span style="color:var(--muted)">Project costs deducted</span>
+          <span id="bswCostsAmt" style="color:var(--subtle)">−£0.00</span>
+        </div>
+        <div style="border-top:1px solid var(--border);margin-top:6px;padding-top:6px;display:grid;grid-template-columns:1fr auto;gap:10px">
+          <span style="color:var(--text);font-weight:600">Net invoice total</span>
+          <span id="bswNetTotal" style="font-weight:700;color:var(--green);font-size:15px">£—</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr auto;gap:10px;font-size:11px;color:var(--subtle);margin-top:4px">
+          <span>VAT — reverse charge applies, 0%</span>
+          <span>£0.00</span>
+        </div>
+      </div>
+      <div id="bswCostsNote" style="font-size:10px;color:var(--subtle);margin-top:10px;font-style:italic">
+        Note: project costs deductions will come from PO tracking once that module is built. For now, deductions = £0.
+      </div>
+    </div>
+
+    <!-- Due date -->
+    <div style="margin-bottom:14px">
+      <div class="field-label">DUE DATE <span style="color:var(--red)">*</span></div>
+      <input type="date" class="field-input" id="bswDueDate" style="font-size:13px">
+      <div style="font-size:11px;color:var(--subtle);margin-top:4px">Defaults to 30 days from today.</div>
+    </div>
+
+    <!-- Tracker status banner -->
+    <div id="bswTrackerStatus" style="font-size:11px;padding:8px 12px;border-radius:6px;margin-bottom:14px"></div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeBabcockBswInvoiceModal()">Cancel</button>
+      <button class="btn btn-primary" id="bswConfirmBtn" onclick="confirmBabcockBswInvoice()" disabled>Generate &amp; Email</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
      APPROVED-TO-PAY UPLOAD MODAL (Babcock 1g)
      User picks the COUPA-approved invoice PDF; PDF.js extracts the
      invoice number / due date / gross total / customer PO ref; user
@@ -852,6 +928,6 @@
 <!-- PDF.js: used by the "Approved to Pay" step to OCR the uploaded COUPA invoice -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
-<script src="shared.js?v=20260507o"></script>
+<script src="shared.js?v=20260507p"></script>
 </body>
 </html>

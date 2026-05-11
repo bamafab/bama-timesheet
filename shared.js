@@ -18014,8 +18014,8 @@ const _babcockAdvanceHandlers = {
   'Quote Sent':       handleAdvanceFromQuoteSent,         // 1f
   'Live Project':     handleAdvanceFromLiveProject,       // 1f
   'Project Complete': handleAdvanceFromProjectComplete,   // 1g — COUPA upload + OCR
-  'Approved to Pay':  handleAdvanceFromApprovedToPay      // 1g — payment landed
-  // 'Payment Received': handleAdvanceFromPaymentReceived,  // 1h
+  'Approved to Pay':  handleAdvanceFromApprovedToPay,     // 1g — payment landed
+  'Payment Received': handleAdvanceFromPaymentReceived    // 1h — Bama SW invoice
   // 'Sent to Bama SW':  handleAdvanceFromSentToBamaSw      // 1i
 };
 
@@ -18784,6 +18784,639 @@ async function handleAdvanceFromApprovedToPay(q, next) {
     toast('Update failed: ' + (err.message || 'unknown error'), 'error');
     loadBabcockTracker();
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// BAMA SW INVOICE GENERATION (1h)
+// ─────────────────────────────────────────────────────────────────────
+//
+// At "Payment Received", the customer has paid. Now Bama Fabrication
+// raises an invoice to Bama South West for the original (pre-markup)
+// quote value, minus any project costs incurred via PO tracking
+// (currently always 0 — PO tracking module doesn't exist yet).
+//
+// The invoice number is read from a SharePoint XLSX tracker (the
+// company-wide invoice tracker). After successful generation we
+// append a new row to the tracker so the next user sees the new
+// number. This integration is temporary — the ERP will own
+// invoicing entirely once that module ships.
+//
+// Outputs:
+//   - PDF in SharePoint Babcock folder
+//   - Updated row in shared Invoice tracker
+//   - Email to info@bamasw.co.uk with PDF attached
+//   - BabcockQuotes row updated with bama_sw_invoice_* fields and
+//     status='Sent to Bama SW'
+
+// Tracker file SharePoint share link — used to resolve the file via
+// Graph /shares endpoint without hardcoding a path.
+const BAMA_INVOICE_TRACKER_SHARE_URL =
+  'https://bamafabrication.sharepoint.com/:x:/s/BAMA/IQDWoXELa3RPRqgdSz8VM3TZAa2a8yDw_r_AVcpPFZT_5DM';
+
+// Default recipient for Bama SW invoices. Cc is freely editable in the
+// email composer so additional addresses can be added per-send.
+const BAMA_SW_INVOICE_DEFAULT_TO = 'info@bamasw.co.uk';
+
+// Module-level state for the open invoice modal session
+let _bswContext = null;
+// { quote, next, originalAmount, deductionsAmount, netTotal,
+//   suggestedInvoiceNumber, trackerItem (Graph driveItem), trackerEtag }
+
+function closeBabcockBswInvoiceModal() {
+  document.getElementById('babcockBswInvoiceModal').classList.remove('active');
+  _bswContext = null;
+}
+
+// ── Graph: resolve the tracker file via the share link ──
+// Microsoft Graph /shares accepts a base64url-encoded URL prefixed with
+// 'u!'. We use this rather than the file path so the integration keeps
+// working if the file gets moved within the site.
+async function resolveSharedDriveItem(shareUrl) {
+  const token = await getToken();
+  // Encode the URL: base64 → url-safe → prefix 'u!'
+  // btoa works on ASCII, share URLs are ASCII so we're fine
+  const b64 = btoa(shareUrl).replace(/=+$/, '').replace(/\//g, '_').replace(/\+/g, '-');
+  const shareToken = 'u!' + b64;
+  const res = await fetch(
+    `https://graph.microsoft.com/v1.0/shares/${shareToken}/driveItem`,
+    { headers: { 'Authorization': `Bearer ${token}` } }
+  );
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`Couldn't resolve shared link: ${res.status} ${errText}`);
+  }
+  return await res.json();
+}
+
+// ── Download the tracker XLSX as an ArrayBuffer ──
+async function downloadDriveItemContent(driveItem) {
+  const token = await getToken();
+  const driveId = driveItem.parentReference?.driveId;
+  const url = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${driveItem.id}/content`;
+  const res = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
+  if (!res.ok) throw new Error(`Couldn't download tracker: ${res.status}`);
+  return await res.arrayBuffer();
+}
+
+// ── Upload arbitrary bytes back to a drive item (replace contents) ──
+// If etag is provided, uses If-Match for optimistic concurrency control —
+// the write fails with 412 if someone else's edit landed since we read.
+async function uploadDriveItemContent(driveItem, bytes, etag) {
+  const token = await getToken();
+  const driveId = driveItem.parentReference?.driveId;
+  const url = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${driveItem.id}/content`;
+  const headers = {
+    'Authorization': `Bearer ${token}`,
+    'Content-Type': 'application/octet-stream'
+  };
+  if (etag) headers['If-Match'] = etag;
+  const res = await fetch(url, { method: 'PUT', headers, body: bytes });
+  if (!res.ok) {
+    if (res.status === 412) {
+      throw new Error('Tracker was modified by someone else — please refresh and try again');
+    }
+    const errText = await res.text().catch(() => '');
+    throw new Error(`Tracker write failed: ${res.status} ${errText}`);
+  }
+  return await res.json();
+}
+
+// ── Parse the tracker: find the next INV#### number ──
+// Reads the "Sales Invoices" tab, scans column A for INV#### entries,
+// returns the highest seen + 1. If no entries found returns 'INV0001'.
+function nextInvoiceNumberFromTracker(arrayBuffer) {
+  const wb = XLSX.read(arrayBuffer, { type: 'array' });
+  const sheetName = wb.SheetNames.find(n => /sales\s*invoices?/i.test(n));
+  if (!sheetName) throw new Error('Sales Invoices tab not found in tracker');
+  const sheet = wb.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+
+  let highest = 0;
+  for (let r = 0; r < rows.length; r++) {
+    const cell = rows[r] && rows[r][0]; // column A
+    if (!cell) continue;
+    const m = String(cell).match(/^INV(\d+)$/i);
+    if (!m) continue;
+    const n = parseInt(m[1], 10);
+    if (isFinite(n) && n > highest) highest = n;
+  }
+  const nextN = highest + 1;
+  return {
+    next: 'INV' + String(nextN).padStart(4, '0'),
+    highestExisting: highest > 0 ? 'INV' + String(highest).padStart(4, '0') : null,
+    sheetName
+  };
+}
+
+// ── Append a row to the Sales Invoices tab and re-serialise the workbook ──
+// We re-read the file in memory and append the new row to the same sheet,
+// then write back the whole workbook. SheetJS preserves the existing
+// formulas + formatting in untouched rows.
+function appendRowToInvoiceTracker(arrayBuffer, rowData) {
+  const wb = XLSX.read(arrayBuffer, { type: 'array', cellStyles: true });
+  const sheetName = wb.SheetNames.find(n => /sales\s*invoices?/i.test(n));
+  if (!sheetName) throw new Error('Sales Invoices tab not found in tracker');
+  const sheet = wb.Sheets[sheetName];
+
+  // Find next empty row in column A by scanning the existing range
+  const ref = sheet['!ref'];
+  const range = XLSX.utils.decode_range(ref);
+  let nextRowIdx = range.e.r + 1; // append after the last existing row
+
+  // But check if there are pre-existing empty placeholder rows below the
+  // last data row (the screenshot showed rows 256, 257, 258 as blank
+  // template rows with VAT formulas). If so, prefer the first one that
+  // has an empty column A.
+  for (let r = range.e.r; r >= 0; r--) {
+    const aCell = sheet[XLSX.utils.encode_cell({ r, c: 0 })];
+    if (aCell && aCell.v) {
+      // Found the last data row in A; next is r+1
+      nextRowIdx = r + 1;
+      break;
+    }
+  }
+
+  // Write each column
+  const setCell = (col, value, type) => {
+    const addr = XLSX.utils.encode_cell({ r: nextRowIdx, c: col });
+    if (value === null || value === undefined || value === '') {
+      // leave blank (don't overwrite any existing cell)
+      if (!sheet[addr]) return;
+      return;
+    }
+    sheet[addr] = { t: type || 's', v: value };
+  };
+
+  // A: Invoice No, B: Date, C: Due Date, D: Customer, E: VAT (blank for
+  // reverse charge), F: Cost, G: Reverse charge (20% of cost), H: Retention,
+  // I: VAT (blank for reverse charge), J: Total, K: Date Received,
+  // L: Outstanding, M: Retention Due Date
+  setCell(0, rowData.invoiceNumber, 's');
+  if (rowData.invoiceDate)  setCell(1, rowData.invoiceDate, 'd');  // Date type
+  if (rowData.dueDate)      setCell(2, rowData.dueDate, 'd');      // Date type
+  setCell(3, rowData.customer, 's');
+  // E (VAT yes/no) — blank for Babcock reverse charge
+  setCell(5, rowData.cost, 'n');
+  setCell(6, rowData.reverseCharge, 'n');
+  // H (Retention) — leave blank for now
+  // I (VAT collected) — blank for reverse charge
+  setCell(9, rowData.total, 'n');
+  // K (Date Received) — blank
+  setCell(11, rowData.outstanding, 'n');
+  // M (Retention Due Date) — blank
+
+  // Extend the sheet range to include the new row
+  if (nextRowIdx > range.e.r) {
+    range.e.r = nextRowIdx;
+    sheet['!ref'] = XLSX.utils.encode_range(range);
+  }
+
+  // Serialise back to a binary array buffer
+  const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellStyles: true });
+  return out;
+}
+
+// ── Build the Bama SW invoice PDF ──
+// Mirrors the customer-facing quote PDF's visual style (BAMA red header,
+// table, footer) but with "Invoice" branding and a single summary row
+// rather than itemised lines — Bama SW just needs to know the net total.
+async function renderBamaSwInvoicePDF(data) {
+  await loadLogoDataUri();
+  const logo = _logoDataUriCache || '';
+  const JsPDFCtor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
+  if (!JsPDFCtor) throw new Error('jsPDF not loaded');
+
+  const doc = new JsPDFCtor({ unit: 'mm', format: 'a4' });
+  const W = doc.internal.pageSize.getWidth();
+  const M = 18; // left margin
+  let y = 18;
+
+  // Logo top-left
+  if (logo) {
+    try { doc.addImage(logo, 'PNG', M, y, 38, 17); } catch (e) { /* ignore image errors */ }
+  }
+
+  // Title top-right
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(26);
+  doc.setTextColor(208, 2, 27); // red
+  doc.text('INVOICE', W - M, y + 12, { align: 'right' });
+  doc.setTextColor(0);
+
+  y += 26;
+  doc.setDrawColor(208, 2, 27);
+  doc.setLineWidth(0.6);
+  doc.line(M, y, W - M, y);
+  y += 6;
+
+  // Two-column header block: From (left) / To (right)
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+  doc.text('FROM', M, y);
+  doc.text('TO', W / 2 + 8, y);
+  y += 4;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+  const fromLines = [
+    'BAMA Fabrication Ltd',
+    '11 Enterprise Way, Enterprise Park',
+    'Yaxley, Peterborough, PE7 3WY',
+    'United Kingdom'
+  ];
+  const toLines = [
+    'Bama South West',
+    'Unit 9 Gwel Avon, Business Park',
+    'Saltash, PL12 6TW',
+    'United Kingdom'
+  ];
+  fromLines.forEach((l, i) => doc.text(l, M, y + i * 4.2));
+  toLines.forEach((l, i) => doc.text(l, W / 2 + 8, y + i * 4.2));
+  y += Math.max(fromLines.length, toLines.length) * 4.2 + 4;
+
+  // Invoice meta box
+  doc.setFillColor(245, 245, 245);
+  doc.rect(M, y, W - M * 2, 22, 'F');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+  const metaCols = [
+    { label: 'INVOICE NUMBER', value: data.invoiceNumber || '' },
+    { label: 'INVOICE DATE',   value: data.invoiceDate || '' },
+    { label: 'DUE DATE',       value: data.dueDate || '' },
+    { label: 'PROJECT',        value: data.projectNumber || '' }
+  ];
+  const colW = (W - M * 2) / metaCols.length;
+  metaCols.forEach((c, i) => {
+    const cx = M + i * colW + 4;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
+    doc.setTextColor(120);
+    doc.text(c.label, cx, y + 7);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(11);
+    doc.setTextColor(0);
+    doc.text(String(c.value), cx, y + 14);
+  });
+  y += 28;
+
+  // Line items table — header
+  doc.setFillColor(208, 2, 27);
+  doc.rect(M, y, W - M * 2, 8, 'F');
+  doc.setTextColor(255); doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
+  doc.text('DESCRIPTION', M + 4, y + 5.5);
+  doc.text('AMOUNT', W - M - 4, y + 5.5, { align: 'right' });
+  y += 8;
+  doc.setTextColor(0);
+
+  // Single description row
+  const descLines = [
+    `Project ${data.projectNumber || ''}`,
+    data.projectName ? data.projectName : ''
+  ].filter(Boolean);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+  const rowH = Math.max(10, descLines.length * 4.5 + 4);
+  doc.line(M, y + rowH, W - M, y + rowH); // bottom border
+  descLines.forEach((l, i) => doc.text(l, M + 4, y + 5 + i * 4.5));
+  doc.text(fmtCurrency(data.netTotal), W - M - 4, y + 5, { align: 'right' });
+  y += rowH + 6;
+
+  // Totals block (right-aligned)
+  const totalsX = W - M - 70;
+  const totalsW = 70;
+  const totalsRow = (label, value, bold) => {
+    doc.setFont('helvetica', bold ? 'bold' : 'normal');
+    doc.setFontSize(bold ? 11 : 10);
+    doc.text(label, totalsX, y);
+    doc.text(value, totalsX + totalsW, y, { align: 'right' });
+    y += 5;
+  };
+  totalsRow('Net total', fmtCurrency(data.netTotal));
+  totalsRow('VAT (Reverse charge)', '£0.00');
+  doc.setDrawColor(208, 2, 27);
+  doc.line(totalsX, y, totalsX + totalsW, y); y += 1.5;
+  totalsRow('TOTAL DUE', fmtCurrency(data.netTotal), true);
+
+  y += 8;
+
+  // Reverse charge notice
+  doc.setFillColor(255, 248, 235);
+  doc.rect(M, y, W - M * 2, 14, 'F');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+  doc.setTextColor(150, 100, 0);
+  doc.text('VAT REVERSE CHARGE', M + 4, y + 5.5);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
+  doc.text('The recipient is liable for the VAT on this supply at the standard rate (20%). No VAT charged.', M + 4, y + 10.5);
+  doc.setTextColor(0);
+  y += 18;
+
+  // Payment terms footer
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+  doc.text('PAYMENT DETAILS', M, y); y += 5;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+  doc.text(`Payment due by ${data.dueDate || '—'} as per agreed terms.`, M, y); y += 4;
+  doc.text('Bank: Starling Bank   Account: 46374865   Sort code: 60-83-71', M, y); y += 4;
+  doc.text('Beneficiary: BAMA Fabrication Ltd', M, y);
+
+  return doc.output('blob');
+}
+
+function fmtCurrency(n) {
+  if (n === null || n === undefined || n === '' || !isFinite(Number(n))) return '£0.00';
+  return '£' + Number(n).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Re-read the tracker (used by the modal's ⟳ Refresh button)
+async function refreshBswInvoiceNumber() {
+  if (!_bswContext) return;
+  const inp = document.getElementById('bswInvoiceNumber');
+  const status = document.getElementById('bswTrackerStatus');
+  inp.disabled = true;
+  inp.value = 'Loading…';
+  setTrackerStatus('Reading SharePoint tracker…', 'info');
+  try {
+    const item = await resolveSharedDriveItem(BAMA_INVOICE_TRACKER_SHARE_URL);
+    const buf = await downloadDriveItemContent(item);
+    const { next, highestExisting } = nextInvoiceNumberFromTracker(buf);
+    _bswContext.trackerItem = item;
+    _bswContext.trackerEtag = item.eTag || item['@odata.etag'] || null;
+    _bswContext.trackerBuffer = buf;
+    _bswContext.suggestedInvoiceNumber = next;
+    inp.value = next;
+    inp.disabled = false;
+    document.getElementById('bswConfirmBtn').disabled = false;
+    setTrackerStatus(
+      `✓ Tracker read — last used: ${highestExisting || '(none)'} • next suggested: ${next}`,
+      'success'
+    );
+  } catch (err) {
+    console.error('Tracker read failed:', err);
+    inp.value = '';
+    inp.disabled = false;
+    document.getElementById('bswConfirmBtn').disabled = true;
+    setTrackerStatus(
+      `⚠ Couldn\u2019t read tracker — ${err.message || 'unknown error'}. You can still type a number manually; the tracker won\u2019t be updated.`,
+      'warn'
+    );
+  }
+}
+
+function setTrackerStatus(text, kind) {
+  const el = document.getElementById('bswTrackerStatus');
+  if (!el) return;
+  el.textContent = text;
+  if (kind === 'success') {
+    el.style.background = 'rgba(46,204,113,.08)';
+    el.style.color = 'var(--green)';
+    el.style.border = '1px solid rgba(46,204,113,.25)';
+  } else if (kind === 'warn') {
+    el.style.background = 'rgba(255,193,7,.08)';
+    el.style.color = '#ffc945';
+    el.style.border = '1px solid rgba(255,193,7,.25)';
+  } else {
+    el.style.background = 'rgba(255,107,0,.08)';
+    el.style.color = 'var(--accent)';
+    el.style.border = '1px solid rgba(255,107,0,.2)';
+  }
+}
+
+// ── Handler: Payment Received → Sent to Bama SW ──
+async function handleAdvanceFromPaymentReceived(q, next) {
+  // Need the linked Project to derive the project number (BC####)
+  if (!q.linked_project_id) {
+    toast('No linked project on this row — was it converted properly?', 'error');
+    return;
+  }
+
+  // Pre-compute the cost figures
+  const total      = Number(q.total_value || 0);
+  const markupPct  = Number(q.markup_pct || 0);
+  // Original pretax = marked-up total divided back. If markup is 0 (or
+  // missing) the original IS the total — no division by zero.
+  const original   = markupPct > 0 ? total / (1 + markupPct / 100) : total;
+  const deductions = 0; // TODO: pull from PO module when it exists
+  const netTotal   = Math.max(0, original - deductions);
+
+  // Open modal
+  _bswContext = {
+    quote: q,
+    next,
+    originalAmount: original,
+    deductionsAmount: deductions,
+    netTotal,
+    suggestedInvoiceNumber: null,
+    trackerItem: null,
+    trackerEtag: null,
+    trackerBuffer: null
+  };
+
+  // Populate the calc block
+  document.getElementById('bswOriginalAmt').textContent = fmtCurrency(original);
+  document.getElementById('bswCostsAmt').textContent    = '\u2212' + fmtCurrency(deductions);
+  document.getElementById('bswNetTotal').textContent    = fmtCurrency(netTotal);
+
+  // Default due date: today + 30 days
+  const due = new Date(); due.setDate(due.getDate() + 30);
+  document.getElementById('bswDueDate').value = due.toISOString().split('T')[0];
+
+  document.getElementById('bswInvoiceNumber').value = '';
+  document.getElementById('bswConfirmBtn').disabled = true;
+  document.getElementById('bswConfirmBtn').textContent = 'Generate & Email';
+
+  document.getElementById('babcockBswInvoiceModal').classList.add('active');
+
+  // Kick off the tracker read
+  refreshBswInvoiceNumber();
+}
+
+// ── Confirm: generate PDF + upload SP + append tracker + open email ──
+async function confirmBabcockBswInvoice() {
+  if (!_bswContext) return;
+
+  const invoiceNumber = (document.getElementById('bswInvoiceNumber').value || '').trim();
+  const dueDateIso    = (document.getElementById('bswDueDate').value || '').trim();
+
+  if (!invoiceNumber) {
+    toast('Invoice number is required', 'error');
+    document.getElementById('bswInvoiceNumber').focus();
+    return;
+  }
+  if (!/^INV\d+$/i.test(invoiceNumber)) {
+    toast('Invoice number must look like INV0257', 'error');
+    document.getElementById('bswInvoiceNumber').focus();
+    return;
+  }
+  if (!dueDateIso) {
+    toast('Due date is required', 'error');
+    document.getElementById('bswDueDate').focus();
+    return;
+  }
+
+  const q = _bswContext.quote;
+  const next = _bswContext.next;
+  const netTotal = _bswContext.netTotal;
+  const reverseCharge = netTotal * 0.2;
+
+  const btn = document.getElementById('bswConfirmBtn');
+  btn.disabled = true;
+  btn.textContent = 'Generating…';
+
+  let projectNumber = '';
+  try {
+    // Fetch linked project for its project_number (BC####)
+    const proj = (projectsData || []).find(p => p.id === q.linked_project_id);
+    projectNumber = (proj && proj.project_number) || babcockProjectNumberFor(q.quote_ref || '');
+  } catch (e) {
+    projectNumber = babcockProjectNumberFor(q.quote_ref || '');
+  }
+
+  // 1. Generate PDF
+  let pdfBlob;
+  try {
+    pdfBlob = await renderBamaSwInvoicePDF({
+      invoiceNumber,
+      invoiceDate:   fmtDateStr(todayStr()),
+      dueDate:       fmtDateStr(dueDateIso),
+      projectNumber,
+      projectName:   q.quote_for_area || '',
+      netTotal
+    });
+  } catch (err) {
+    console.error('Bama SW invoice PDF render failed:', err);
+    toast('PDF render failed: ' + (err.message || 'unknown error'), 'error');
+    btn.disabled = false;
+    btn.textContent = 'Generate & Email';
+    return;
+  }
+
+  // 2. Upload PDF to SharePoint
+  let pdfUploaded = null;
+  try {
+    btn.textContent = 'Uploading PDF…';
+    const folders = await findOrCreateBabcockFolders();
+    const bswFolder = await getOrCreateSubfolder(folders.parent.id, 'Bama SW Invoices', BAMA_DRIVE_ID);
+    if (!bswFolder) throw new Error('Could not create Bama SW Invoices folder');
+    const fileName = `${invoiceNumber} - ${(q.quote_ref || 'Babcock').replace(/[/\\]/g, '_')}.pdf`;
+    pdfUploaded = await uploadFileToFolder(
+      bswFolder.id, fileName,
+      await pdfBlob.arrayBuffer(), 'application/pdf'
+    );
+  } catch (err) {
+    console.error('Bama SW invoice upload failed:', err);
+    toast('SharePoint upload failed: ' + (err.message || 'unknown error'), 'error');
+    btn.disabled = false;
+    btn.textContent = 'Generate & Email';
+    return;
+  }
+
+  // 3. Update Invoice tracker (best-effort — non-fatal)
+  let trackerUpdated = false;
+  if (_bswContext.trackerItem && _bswContext.trackerBuffer) {
+    try {
+      btn.textContent = 'Updating tracker…';
+      // Re-read tracker buffer for fresh data + collision check
+      const freshItem   = await resolveSharedDriveItem(BAMA_INVOICE_TRACKER_SHARE_URL);
+      const freshEtag   = freshItem.eTag || null;
+      const freshBuffer = await downloadDriveItemContent(freshItem);
+      // Re-check the suggested number is still next — protect against a
+      // race where someone else added INV0257 between our load and now.
+      const { next: freshNext } = nextInvoiceNumberFromTracker(freshBuffer);
+      if (freshNext !== invoiceNumber) {
+        // Allow the user to use a non-sequential number if they want —
+        // just warn rather than block. We append anyway.
+        console.warn(`Tracker advanced — suggested ${freshNext}, using ${invoiceNumber}`);
+      }
+      const newBuffer = appendRowToInvoiceTracker(freshBuffer, {
+        invoiceNumber,
+        invoiceDate: new Date(),
+        dueDate:     new Date(dueDateIso + 'T00:00:00'),
+        customer:    'Babcock',
+        cost:        Number(netTotal.toFixed(2)),
+        reverseCharge: Number(reverseCharge.toFixed(2)),
+        total:       Number(netTotal.toFixed(2)),
+        outstanding: Number(netTotal.toFixed(2))
+      });
+      await uploadDriveItemContent(freshItem, newBuffer, freshEtag);
+      trackerUpdated = true;
+    } catch (err) {
+      // Non-fatal — the invoice exists, the email will go out, but the
+      // user needs to add the row manually. Tell them explicitly.
+      console.warn('Tracker update failed (non-fatal):', err);
+      toast(
+        `Couldn\u2019t update tracker (${err.message}) — please add ${invoiceNumber} manually`,
+        'warn'
+      );
+    }
+  }
+
+  // 4. Open email composer with the PDF
+  btn.textContent = 'Opening email…';
+  let pdfBase64;
+  try {
+    pdfBase64 = await blobToBase64(pdfBlob);
+  } catch (err) {
+    toast('Failed to encode PDF for email', 'error');
+    btn.disabled = false;
+    btn.textContent = 'Generate & Email';
+    return;
+  }
+
+  // Close the invoice modal so the email composer is the only thing visible
+  document.getElementById('babcockBswInvoiceModal').classList.remove('active');
+
+  // Save state needed by onSent before clearing _bswContext
+  const originalAmountSnapshot = _bswContext.originalAmount;
+  const sentCtx = {
+    quote: q,
+    next,
+    invoiceNumber,
+    dueDateIso,
+    netTotal,
+    projectNumber,
+    pdfUploaded,
+    trackerUpdated,
+    originalAmount: originalAmountSnapshot
+  };
+  _bswContext = null;
+
+  await openBabcockEmailModal({
+    title: 'Email Bama SW Invoice',
+    templateKey: 'emailBamaSwInvoice',
+    tokens: {
+      bama_sw_invoice_number:   invoiceNumber,
+      project_number:           projectNumber,
+      project_name:             q.quote_for_area || '',
+      original_value:           fmtCurrency(originalAmountSnapshot),
+      deductions_total:         fmtCurrency(0),
+      net_invoice_total:        fmtCurrency(netTotal),
+      bama_sw_invoice_due_date: fmtDateStr(dueDateIso)
+    },
+    to: BAMA_SW_INVOICE_DEFAULT_TO,
+    cc: '',
+    attachment: {
+      name: `${invoiceNumber} - ${(q.quote_ref || 'Babcock').replace(/[/\\]/g, '_')}.pdf`,
+      contentType: 'application/pdf',
+      contentBase64: pdfBase64
+    },
+    onSent: async () => {
+      try {
+        const updated = await api.put(`/api/babcock-quotes/${sentCtx.quote.id}`, {
+          status: sentCtx.next,
+          bama_sw_invoice_number:    sentCtx.invoiceNumber,
+          bama_sw_invoice_due_date:  sentCtx.dueDateIso,
+          bama_sw_invoice_pdf_url:   sentCtx.pdfUploaded?.webUrl || null,
+          bama_sw_invoice_pdf_id:    sentCtx.pdfUploaded?.id || null,
+          bama_sw_invoice_sent_at:   new Date().toISOString()
+        });
+        const idx = _babcockQuotes.findIndex(x => x.id === sentCtx.quote.id);
+        if (idx !== -1) _babcockQuotes[idx] = { ..._babcockQuotes[idx], ...updated };
+        renderBabcockTracker();
+        const trackerMsg = sentCtx.trackerUpdated
+          ? '' : ' (remember to add to SharePoint tracker)';
+        toast(`Invoice ${sentCtx.invoiceNumber} sent${trackerMsg}`, 'success');
+      } catch (err) {
+        console.error('Status update after Bama SW invoice send failed:', err);
+        toast(
+          `Email sent OK but couldn\u2019t update status \u2014 please refresh and edit to set status=Sent to Bama SW`,
+          'error'
+        );
+        loadBabcockTracker();
+      }
+    }
+  });
 }
 
 // Legacy: kept for backward compat in case any code still calls it.
