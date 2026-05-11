@@ -395,11 +395,16 @@
 
     <!-- Tab: By Project -->
     <div class="tab-content" id="tab-project">
-      <div style="margin-bottom:14px">
+      <div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+        <div class="week-nav">
+          <button class="nav-btn" onclick="changeWeek(-1)">&#8592;</button>
+          <div class="week-label" id="weekLabel">—</div>
+          <button class="nav-btn" onclick="changeWeek(1)">&#8594;</button>
+        </div>
         <input type="text" class="field-input" id="projectSearchBox"
           placeholder="&#128269; Search by project or employee..."
           oninput="filterProjectTable()"
-          style="width:100%;max-width:400px;padding:9px 14px;font-size:13px">
+          style="flex:1;min-width:200px;max-width:400px;padding:9px 14px;font-size:13px">
       </div>
       <div class="approval-section">
         <div class="approve-all-bar">
@@ -425,11 +430,16 @@
 
     <!-- Tab: By Employee -->
     <div class="tab-content" id="tab-employee">
-      <div style="margin-bottom:14px">
+      <div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+        <div class="week-nav">
+          <button class="nav-btn" onclick="changeWeek(-1)">&#8592;</button>
+          <div class="week-label" id="weekLabelEmployee">—</div>
+          <button class="nav-btn" onclick="changeWeek(1)">&#8594;</button>
+        </div>
         <input type="text" class="field-input" id="employeeSearchBox"
           placeholder="&#128269; Search by employee or project..."
           oninput="filterEmployeeTable()"
-          style="width:100%;max-width:400px;padding:9px 14px;font-size:13px">
+          style="flex:1;min-width:200px;max-width:400px;padding:9px 14px;font-size:13px">
       </div>
       <div id="empSummaryArea"></div>
     </div>

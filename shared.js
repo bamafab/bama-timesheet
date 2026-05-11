@@ -1690,6 +1690,8 @@ function renderManagerView() {
   const { mon, sun } = getWeekDates(state.currentWeekOffset);
   const weekLabelEl = document.getElementById('weekLabel');
   if (weekLabelEl) weekLabelEl.textContent = `${fmtDate(mon)} – ${fmtDate(sun)}`;
+  const weekLabelEmpEl = document.getElementById('weekLabelEmployee');
+  if (weekLabelEmpEl) weekLabelEmpEl.textContent = `${fmtDate(mon)} – ${fmtDate(sun)}`;
 
   // Check holiday notifications
   checkHolidayNotifications();
@@ -2892,6 +2894,7 @@ function switchTab(name) {
   if (name === 'useraccess') renderUserAccessTab();
   if (name === 'welding') renderWeldingTab();
   if (name === 'suppliers') renderSuppliersTab();
+  if (name === 'project' || name === 'employee') renderManagerView();
 }
 
 let activeReport = 'overview';
@@ -20508,7 +20511,7 @@ async function init() {
     : Promise.resolve();
 
   // User access needed on manager and office pages (still from SharePoint for now)
-  const userAccessPromise = (CURRENT_PAGE === 'manager' || CURRENT_PAGE === 'office' || CURRENT_PAGE === 'projects' || CURRENT_PAGE === 'projectTracker' || CURRENT_PAGE === 'tenders' || CURRENT_PAGE === 'quotes' || CURRENT_PAGE === 'babcock')
+  const userAccessPromise = (CURRENT_PAGE === 'manager' || CURRENT_PAGE === 'office' || CURRENT_PAGE === 'projects' || CURRENT_PAGE === 'projectTracker' || CURRENT_PAGE === 'tenders' || CURRENT_PAGE === 'quotes' || CURRENT_PAGE === 'babcock' || CURRENT_PAGE === 'reports')
     ? Promise.race([
         loadUserAccessData(),
         new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 6000))
