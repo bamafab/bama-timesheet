@@ -12117,6 +12117,7 @@ const TEMPLATE_DEFAULTS = {
           'If you have any questions, please don\u2019t hesitate to get in touch.'
   },
   emailBamaSwInvoice: {
+    to: 'info@bamasw.co.uk',
     subject: 'Invoice {{bama_sw_invoice_number}} — Project {{project_number}}',
     body: 'Hi,\n\n' +
           'Please find attached our invoice {{bama_sw_invoice_number}} for project {{project_number}}.\n\n' +
@@ -12443,6 +12444,10 @@ function renderTemplateEditor(key) {
     html = `
       <h2>Bama SW Invoice — Email</h2>
       <div class="tpl-desc">Sent at the <b>Generate Bama SW Invoice</b> step. Used to send the system-generated invoice (original quote minus project costs) to Bama South West.</div>
+      <div class="tpl-section">
+        <div class="tpl-section-title">Default recipient (To:)</div>
+        ${field('to', 'Recipient email', 'text', 'pre-filled in the email composer — editable before sending')}
+      </div>
       <div class="tpl-section">
         <div class="tpl-section-title">Subject</div>
         ${field('subject', 'Subject line', 'text', 'tokens like {{bama_sw_invoice_number}} are substituted at send time')}
@@ -19032,8 +19037,8 @@ async function convertBabcockQuoteToProject(q, opts) {
 
   // Build folder name: "BC0011 - <Customer ID> - <Project Name>"
   const custPart    = sanitiseFolderSegment(q.customer_id || 'Babcock');
-  const projectPart = sanitiseFolderSegment(projectName);
-  const folderName  = [projectNumber, custPart, projectPart].filter(Boolean).join(' - ');
+  const woPart      = sanitiseFolderSegment(q.work_order_no || projectName);
+  const folderName  = [projectNumber, custPart, woPart].filter(Boolean).join(' - ');
 
   // 1. Create SharePoint folders. Projects sit under the Projects/ root,
   //    same as the tender-side conversion — no separate Babcock projects
@@ -20114,7 +20119,7 @@ async function confirmBabcockBswInvoice() {
       net_invoice_total:        fmtCurrency(netTotal),
       bama_sw_invoice_due_date: fmtDateStr(dueDateIso)
     },
-    to: BAMA_SW_INVOICE_DEFAULT_TO,
+    to: tplGet('emailBamaSwInvoice', 'to') || 'info@bamasw.co.uk',
     cc: '',
     attachment: {
       name: `${invoiceNumber} - ${(q.quote_ref || 'Babcock').replace(/[/\\]/g, '_')}.pdf`,
@@ -20322,7 +20327,7 @@ async function confirmBabcockBswPo() {
       bama_sw_po_number:        poNumber,
       bama_sw_invoice_due_date: fmtDateStr(dueDateIso)
     },
-    to: BAMA_SW_INVOICE_DEFAULT_TO,
+    to: tplGet('emailBamaSwInvoice', 'to') || 'info@bamasw.co.uk',
     cc: '',
     attachment: {
       name: `${q.bama_sw_invoice_number} - ${(q.quote_ref || 'Babcock').replace(/[/\\]/g, '_')} - rev1.pdf`,
