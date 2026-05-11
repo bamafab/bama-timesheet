@@ -2071,7 +2071,133 @@ function renderClockLog(clockings) {
         </tfoot>
       </table>
     </div>
+    ${renderAmendmentAuditLog(monStr, sunStr)}
   `;
+}
+
+// ═══════════════════════════════════════════
+// AMENDMENT AUDIT LOG
+// ═══════════════════════════════════════════
+function renderAmendmentAuditLog(monStr, sunStr) {
+  const fmtDateShort = s => {
+    const d = new Date(s + 'T12:00:00');
+    return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+  };
+
+  const weekClockings = (state.timesheetData.clockings || []).filter(
+    c => c.date >= monStr && c.date <= sunStr && c.manuallyEdited
+  );
+  const weekAmendments = (state.timesheetData.amendments || []).filter(
+    a => a.date >= monStr && a.date <= sunStr
+  );
+
+  const amendByClockId = {};
+  weekAmendments.forEach(a => {
+    if (!amendByClockId[a.clockingId]) amendByClockId[a.clockingId] = [];
+    amendByClockId[a.clockingId].push(a);
+  });
+
+  if (!weekClockings.length && !weekAmendments.length) return '';
+
+  const clockingIds = new Set(weekClockings.map(c => String(c.id)));
+  const standaloneAmendments = weekAmendments.filter(a => !clockingIds.has(a.clockingId));
+
+  const statusPill = (status, by) => {
+    if (status === 'approved' || status === null) {
+      return '<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;background:rgba(62,207,142,.15);color:var(--green);border:1px solid rgba(62,207,142,.3)">'
+        + '\u2713 ' + (by ? 'Approved \u00b7 ' + by : 'Applied') + '</span>';
+    }
+    if (status === 'pending') {
+      return '<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;background:rgba(245,158,11,.15);color:var(--amber);border:1px solid rgba(245,158,11,.3)">'
+        + '\u23f3 Pending</span>';
+    }
+    if (status === 'rejected') {
+      return '<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;background:rgba(229,72,77,.15);color:var(--red);border:1px solid rgba(229,72,77,.3)">'
+        + '\u2715 ' + (by ? 'Rejected \u00b7 ' + by : 'Rejected') + '</span>';
+    }
+    return '';
+  };
+
+  const clockingRows = weekClockings
+    .slice().sort((a, b) => a.date.localeCompare(b.date) || a.employeeName.localeCompare(b.employeeName))
+    .map(c => {
+      const linked = amendByClockId[String(c.id)] || [];
+      const req = linked[0] || null;
+      const amendedBy = (c._raw && c._raw.amended_by) ? c._raw.amended_by : (req && req.resolvedBy ? req.resolvedBy : '\u2014');
+      const approvedBy = (c._raw && c._raw.approved_by) ? c._raw.approved_by : (c.approvedBy || null);
+      let pillStatus = c.approvalStatus;
+      let pillBy = approvedBy;
+      if (req) { pillStatus = req.status; pillBy = req.resolvedBy || approvedBy; }
+      const timesHtml = req
+        ? '<div style="font-family:var(--font-mono);font-size:11px">'
+          + '<span style="color:var(--subtle)">Was: \u25b2 ' + (req.originalIn || '\u2014') + ' \u25bc ' + (req.originalOut || '\u2014') + '</span><br>'
+          + '<span style="color:var(--accent)">Now: \u25b2 ' + (c.clockIn || req.requestedIn || '\u2014') + ' \u25bc ' + (c.clockOut || req.requestedOut || '\u2014') + '</span>'
+          + '</div>'
+        : '<div style="font-family:var(--font-mono);font-size:11px;color:var(--text)">'
+          + '\u25b2 ' + (c.clockIn || '\u2014') + ' \u25bc ' + (c.clockOut || '\u2014')
+          + '<span style="font-size:9px;color:var(--subtle);margin-left:4px">(original not stored)</span>'
+          + '</div>';
+      const typeTag = req
+        ? '<span style="display:inline-block;padding:1px 6px;border-radius:6px;font-size:9px;background:rgba(255,107,0,.12);color:var(--accent);border:1px solid rgba(255,107,0,.25)">Employee request</span>'
+        : '<span style="display:inline-block;padding:1px 6px;border-radius:6px;font-size:9px;background:rgba(255,255,255,.05);color:var(--muted);border:1px solid var(--border)">Direct edit</span>';
+      const reasonHtml = (req && req.reason)
+        ? '<div style="font-size:11px;color:var(--muted);margin-top:4px"><span style="color:var(--subtle)">Reason:</span> ' + escapeHtml(req.reason) + '</div>'
+        : '';
+      return '<tr style="border-bottom:1px solid var(--border)">'
+        + '<td style="padding:10px 12px;vertical-align:top"><div style="font-weight:600;font-size:13px">' + escapeHtml(c.employeeName) + '</div>'
+        + '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + fmtDateShort(c.date) + '</div></td>'
+        + '<td style="padding:10px 12px;vertical-align:top">' + typeTag + '</td>'
+        + '<td style="padding:10px 12px;vertical-align:top">' + timesHtml + reasonHtml + '</td>'
+        + '<td style="padding:10px 12px;vertical-align:top;font-size:12px;color:var(--muted)">' + escapeHtml(amendedBy) + '</td>'
+        + '<td style="padding:10px 12px;vertical-align:top">' + statusPill(pillStatus, pillBy) + '</td>'
+        + '</tr>';
+    }).join('');
+
+  const requestRows = standaloneAmendments
+    .slice().sort((a, b) => a.date.localeCompare(b.date))
+    .map(a => {
+      return '<tr style="border-bottom:1px solid var(--border)">'
+        + '<td style="padding:10px 12px;vertical-align:top"><div style="font-weight:600;font-size:13px">' + escapeHtml(a.employeeName) + '</div>'
+        + '<div style="font-size:11px;color:var(--muted);margin-top:2px">' + fmtDateShort(a.date) + '</div></td>'
+        + '<td style="padding:10px 12px;vertical-align:top"><span style="display:inline-block;padding:1px 6px;border-radius:6px;font-size:9px;background:rgba(255,107,0,.12);color:var(--accent);border:1px solid rgba(255,107,0,.25)">Employee request</span></td>'
+        + '<td style="padding:10px 12px;vertical-align:top">'
+        + '<div style="font-family:var(--font-mono);font-size:11px">'
+        + '<span style="color:var(--subtle)">Was: \u25b2 ' + (a.originalIn || '\u2014') + ' \u25bc ' + (a.originalOut || '\u2014') + '</span><br>'
+        + '<span style="color:var(--accent)">Req: \u25b2 ' + (a.requestedIn || 'no change') + ' \u25bc ' + (a.requestedOut || 'no change') + '</span>'
+        + '</div>'
+        + (a.reason ? '<div style="font-size:11px;color:var(--muted);margin-top:4px"><span style="color:var(--subtle)">Reason:</span> ' + escapeHtml(a.reason) + '</div>' : '')
+        + '</td>'
+        + '<td style="padding:10px 12px;vertical-align:top;font-size:12px;color:var(--muted)">' + escapeHtml(a.employeeName) + '</td>'
+        + '<td style="padding:10px 12px;vertical-align:top">' + statusPill(a.status, a.resolvedBy) + '</td>'
+        + '</tr>';
+    }).join('');
+
+  const allRows = clockingRows + requestRows;
+  const totalCount = weekClockings.length + standaloneAmendments.length;
+  if (!totalCount) return '';
+
+  return '<div style="margin-top:24px">'
+    + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;cursor:pointer;user-select:none"'
+    + ' onclick="var p=this.nextElementSibling;p.style.display=p.style.display===\'none\'?\'\':\'none\';this.querySelector(\'.audit-chevron\').textContent=p.style.display===\'none\'?\'\u25b6\':\'\u25bc\'">'
+    + '<span style="font-size:14px;font-weight:700;letter-spacing:.5px;color:var(--muted);text-transform:uppercase">\ud83d\udccb Amendment Audit Log</span>'
+    + '<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:rgba(255,107,0,.12);color:var(--accent);border:1px solid rgba(255,107,0,.25)">' + totalCount + '</span>'
+    + '<span class="audit-chevron" style="font-size:11px;color:var(--subtle);margin-left:auto">\u25bc</span>'
+    + '</div>'
+    + '<div>'
+    + '<div style="overflow-x:auto">'
+    + '<table class="summary-table" style="width:100%">'
+    + '<thead><tr>'
+    + '<th style="text-align:left;min-width:140px">EMPLOYEE</th>'
+    + '<th style="text-align:left;min-width:100px">TYPE</th>'
+    + '<th style="text-align:left;min-width:220px">TIMES &amp; REASON</th>'
+    + '<th style="text-align:left;min-width:100px">AMENDED BY</th>'
+    + '<th style="text-align:left;min-width:140px">STATUS</th>'
+    + '</tr></thead>'
+    + '<tbody>' + allRows + '</tbody>'
+    + '</table>'
+    + '</div>'
+    + '</div>'
+    + '</div>';
 }
 
 
