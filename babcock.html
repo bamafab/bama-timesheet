@@ -197,6 +197,72 @@
 </div>
 
 <!-- ═══════════════════════════════════════
+     APPROVED-TO-PAY UPLOAD MODAL (Babcock 1g)
+     User picks the COUPA-approved invoice PDF; PDF.js extracts the
+     invoice number / due date / gross total / customer PO ref; user
+     reviews & confirms; we upload to SharePoint and PUT the DB row.
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="babcockApprovedToPayModal">
+  <div class="modal" style="max-width:560px;width:95vw;max-height:90vh;overflow-y:auto">
+    <div class="modal-title">📄 Confirm Approved Invoice</div>
+
+    <div id="bapInstructions" style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.5">
+      Pick the COUPA-approved invoice PDF — we'll read the key fields automatically
+      and let you review them before saving.
+    </div>
+
+    <div id="bapDropZone" style="border:2px dashed var(--border);border-radius:8px;padding:24px;text-align:center;cursor:pointer;margin-bottom:14px;transition:border-color .15s"
+         onclick="document.getElementById('bapFileInput').click()">
+      <div style="font-size:32px;margin-bottom:8px">📎</div>
+      <div style="font-size:13px;color:var(--text);font-weight:600" id="bapDropZoneText">Click to pick PDF</div>
+      <div style="font-size:11px;color:var(--subtle);margin-top:4px">or drag &amp; drop the file here</div>
+    </div>
+    <input type="file" id="bapFileInput" accept="application/pdf" style="display:none"
+           onchange="onBabcockApprovedFilePicked(this.files[0])">
+
+    <!-- OCR fields — hidden until a file is picked. All editable. -->
+    <div id="bapFields" style="display:none">
+
+      <div id="bapOcrStatus" style="font-size:11px;padding:8px 12px;border-radius:6px;margin-bottom:14px"></div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div>
+          <div class="field-label">INVOICE NUMBER <span style="color:var(--red)">*</span></div>
+          <input type="text" class="field-input" id="bapInvoiceNumber"
+                 style="font-size:13px;font-family:var(--font-mono);letter-spacing:.5px"
+                 placeholder="INV00248">
+        </div>
+        <div>
+          <div class="field-label">DUE DATE <span style="color:var(--red)">*</span></div>
+          <input type="date" class="field-input" id="bapDueDate" style="font-size:13px">
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div>
+          <div class="field-label">GROSS TOTAL (£) <span style="color:var(--red)">*</span></div>
+          <input type="number" step="0.01" class="field-input" id="bapGrossTotal"
+                 style="font-size:13px;font-family:var(--font-mono)"
+                 placeholder="984.00">
+        </div>
+        <div>
+          <div class="field-label">COUPA PO REF</div>
+          <input type="text" class="field-input" id="bapCoupaPoRef"
+                 style="font-size:13px;font-family:var(--font-mono);letter-spacing:.5px"
+                 placeholder="CP00145959-1">
+        </div>
+      </div>
+
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeBabcockApprovedToPayModal()">Cancel</button>
+      <button class="btn btn-primary" id="bapConfirmBtn" onclick="confirmBabcockApprovedToPay()" disabled>Confirm &amp; Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
      CONVERT TO PROJECT MODAL (Babcock)
      Captures the client PO + final project name before creating
      the Project row. Used by handleAdvanceFromQuoteSent in shared.js.
@@ -783,6 +849,9 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-<script src="shared.js?v=20260507n"></script>
+<!-- PDF.js: used by the "Approved to Pay" step to OCR the uploaded COUPA invoice -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
+<script src="shared.js?v=20260507o"></script>
 </body>
 </html>

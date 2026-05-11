@@ -17868,6 +17868,23 @@ function renderBabcockTracker() {
     const next = babcockNextStatus(q.status);
     const advanceLabel = babcockAdvanceLabel(q.status);
     const statusBadge = `<span class="status-badge status-${babcockStatusClass(q.status)}">${escapeHtml(q.status || 'Quote Received')}</span>`;
+
+    // For Approved-to-Pay rows, show the COUPA invoice due date below
+    // the badge so the user can see at a glance which invoices are
+    // approaching their due date without opening the row.
+    let dueDateInline = '';
+    if (q.status === 'Approved to Pay' && q.coupa_invoice_due_date) {
+      const due = String(q.coupa_invoice_due_date).split('T')[0];
+      const dueObj = new Date(due + 'T00:00:00');
+      const today = new Date(); today.setHours(0,0,0,0);
+      const daysToDue = Math.round((dueObj - today) / 86400000);
+      let dueColour = 'var(--subtle)';
+      let dueLabel  = `Due ${fmtDateStr(due)}`;
+      if (daysToDue < 0)        { dueColour = 'var(--red)';   dueLabel = `⚠ Overdue (was ${fmtDateStr(due)})`; }
+      else if (daysToDue <= 7)  { dueColour = '#ffc945';      dueLabel = `Due in ${daysToDue}d (${fmtDateStr(due)})`; }
+      dueDateInline = `<div style="font-size:10px;color:${dueColour};margin-top:4px;font-weight:600">${dueLabel}</div>`;
+    }
+
     const nextBtn = next
       ? `<button class="btn btn-primary" style="padding:5px 12px;font-size:11px;font-weight:600;letter-spacing:.3px"
               onclick="event.stopPropagation();advanceBabcockQuoteStatus(${q.id})">${escapeHtml(advanceLabel || '→ ' + next)}</button>`
@@ -17881,7 +17898,7 @@ function renderBabcockTracker() {
       <td class="ref-cell">${escapeHtml(q.quote_ref || '')}${revTag}</td>
       <td>${fmtDate(q.date_sent || q.created_at)}</td>
       <td class="num-cell">${fmtGBP(q.total_value)}</td>
-      <td>${statusBadge}</td>
+      <td>${statusBadge}${dueDateInline}</td>
       <td>${nextBtn}</td>
       <td style="font-size:12px;color:var(--muted)">${fmtDate(q.updated_at)}</td>
       <td style="text-align:right;white-space:nowrap">
@@ -17993,11 +18010,11 @@ async function advanceBabcockQuoteStatus(id) {
 //   - Not calling the API at all on Cancel — the row should stay put
 // Substages 1f-1i will fill in the rest of this map.
 const _babcockAdvanceHandlers = {
-  'Quote Received': handleAdvanceFromQuoteReceived,
-  'Quote Sent':     handleAdvanceFromQuoteSent,     // 1f — Convert to Project
-  'Live Project':   handleAdvanceFromLiveProject    // 1f — Complete Project
-  // 'Project Complete': handleAdvanceFromProjectComplete,  // 1g
-  // 'Approved to Pay':  handleAdvanceFromApprovedToPay,    // simple status flip
+  'Quote Received':   handleAdvanceFromQuoteReceived,
+  'Quote Sent':       handleAdvanceFromQuoteSent,         // 1f
+  'Live Project':     handleAdvanceFromLiveProject,       // 1f
+  'Project Complete': handleAdvanceFromProjectComplete,   // 1g — COUPA upload + OCR
+  'Approved to Pay':  handleAdvanceFromApprovedToPay      // 1g — payment landed
   // 'Payment Received': handleAdvanceFromPaymentReceived,  // 1h
   // 'Sent to Bama SW':  handleAdvanceFromSentToBamaSw      // 1i
 };
@@ -18451,6 +18468,316 @@ async function handleAdvanceFromLiveProject(q, next) {
 
     setLoading(false);
     toast(`${updated.quote_ref} \u2192 Project Complete`, 'success');
+    renderBabcockTracker();
+  } catch (err) {
+    setLoading(false);
+    toast('Update failed: ' + (err.message || 'unknown error'), 'error');
+    loadBabcockTracker();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// APPROVED TO PAY — COUPA invoice upload + OCR (1g)
+// ─────────────────────────────────────────────────────────────────────
+//
+// User clicks "Approved to Pay" on a Project Complete row. We open a
+// modal, they pick the COUPA-approved invoice PDF, PDF.js extracts the
+// invoice number / due date / gross total / customer PO ref via regex
+// over the text content, user reviews + edits, hits Confirm — we then
+// upload the PDF to SharePoint and PUT the row with the new fields.
+//
+// OCR fields (per the sample COUPA invoice analysed earlier):
+//   Invoice Number       → `Invoice Number\s+(INV\d+)` (also appears in header)
+//   Payment Due Date     → `Payment Due Date\s+(\d{1,2}\s+\w+\s+\d{4})`
+//   Gross Total          → `Gross Total\s+([\d,]+\.\d{2})\s+GBP`
+//   COUPA PO Ref         → `CP\d+(-\d+)?` from the line-item column
+//
+// On OCR failure (regex misses), modal still opens with empty fields
+// and a "couldn't auto-fill" notice — user types them manually.
+
+// Module-level state for the open modal session
+let _bapContext = null; // { quote, next, file, parsed }
+
+function closeBabcockApprovedToPayModal() {
+  document.getElementById('babcockApprovedToPayModal').classList.remove('active');
+  _bapContext = null;
+}
+
+// Open the modal, fresh state. Called from handleAdvanceFromProjectComplete.
+function openBabcockApprovedToPayModal(quote, next) {
+  _bapContext = { quote, next, file: null, parsed: null };
+
+  // Reset UI
+  document.getElementById('bapFields').style.display = 'none';
+  document.getElementById('bapDropZoneText').textContent = 'Click to pick PDF';
+  document.getElementById('bapFileInput').value = '';
+  document.getElementById('bapConfirmBtn').disabled = true;
+  document.getElementById('bapConfirmBtn').textContent = 'Confirm & Save';
+
+  for (const id of ['bapInvoiceNumber', 'bapDueDate', 'bapGrossTotal', 'bapCoupaPoRef']) {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  }
+
+  // Wire drag-and-drop on the drop zone (idempotent — checks _wired flag)
+  const dz = document.getElementById('bapDropZone');
+  if (dz && !dz._dragWired) {
+    dz._dragWired = true;
+    dz.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dz.style.borderColor = 'var(--accent)';
+    });
+    dz.addEventListener('dragleave', () => {
+      dz.style.borderColor = '';
+    });
+    dz.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dz.style.borderColor = '';
+      const file = e.dataTransfer.files && e.dataTransfer.files[0];
+      if (file) onBabcockApprovedFilePicked(file);
+    });
+  }
+
+  document.getElementById('babcockApprovedToPayModal').classList.add('active');
+}
+
+// Triggered when the user picks a PDF in the modal. Runs OCR, populates
+// the fields, surfaces a coloured status banner depending on how much
+// was extracted.
+async function onBabcockApprovedFilePicked(file) {
+  if (!file || !_bapContext) return;
+  if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+    toast('Please pick a PDF file', 'error');
+    return;
+  }
+
+  _bapContext.file = file;
+  document.getElementById('bapDropZoneText').textContent = file.name;
+  document.getElementById('bapFields').style.display = '';
+
+  const statusEl = document.getElementById('bapOcrStatus');
+  statusEl.textContent = 'Reading PDF…';
+  statusEl.style.background = 'rgba(255,107,0,.08)';
+  statusEl.style.color = 'var(--accent)';
+  statusEl.style.border = '1px solid rgba(255,107,0,.2)';
+
+  let parsed;
+  try {
+    parsed = await extractCoupaInvoiceFields(file);
+    _bapContext.parsed = parsed;
+  } catch (err) {
+    console.error('PDF OCR failed:', err);
+    parsed = { invoiceNumber: '', dueDateIso: '', grossTotal: '', coupaPoRef: '', failed: true };
+  }
+
+  // Populate
+  if (parsed.invoiceNumber) document.getElementById('bapInvoiceNumber').value = parsed.invoiceNumber;
+  if (parsed.dueDateIso)    document.getElementById('bapDueDate').value       = parsed.dueDateIso;
+  if (parsed.grossTotal)    document.getElementById('bapGrossTotal').value    = parsed.grossTotal;
+  if (parsed.coupaPoRef)    document.getElementById('bapCoupaPoRef').value    = parsed.coupaPoRef;
+
+  // Status banner: count what we got
+  const fieldsFound = ['invoiceNumber', 'dueDateIso', 'grossTotal', 'coupaPoRef']
+    .filter(k => parsed[k]).length;
+
+  if (parsed.failed || fieldsFound === 0) {
+    statusEl.textContent = '⚠ Couldn\u2019t auto-fill — please enter the fields manually below.';
+    statusEl.style.background = 'rgba(220,53,69,.08)';
+    statusEl.style.color = 'var(--red)';
+    statusEl.style.border = '1px solid rgba(220,53,69,.25)';
+  } else if (fieldsFound < 4) {
+    statusEl.textContent = `Found ${fieldsFound} of 4 fields — please check and fill any blanks.`;
+    statusEl.style.background = 'rgba(255,193,7,.08)';
+    statusEl.style.color = '#ffc945';
+    statusEl.style.border = '1px solid rgba(255,193,7,.25)';
+  } else {
+    statusEl.textContent = '✓ All four fields extracted — review and confirm.';
+    statusEl.style.background = 'rgba(46,204,113,.08)';
+    statusEl.style.color = 'var(--green)';
+    statusEl.style.border = '1px solid rgba(46,204,113,.25)';
+  }
+
+  document.getElementById('bapConfirmBtn').disabled = false;
+}
+
+// ── PDF.js text extraction + COUPA-specific regex parsing ──
+// Returns { invoiceNumber, dueDateIso, grossTotal, coupaPoRef }.
+// Any field that the regex can't match comes back empty — UI shows
+// the "couldn't auto-fill" banner when none match.
+async function extractCoupaInvoiceFields(file) {
+  if (typeof pdfjsLib === 'undefined') {
+    throw new Error('PDF.js not loaded');
+  }
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  let fullText = '';
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    fullText += content.items.map(it => it.str).join(' ') + '\n';
+  }
+
+  // Normalise whitespace for stabler regex matches
+  const text = fullText.replace(/\s+/g, ' ');
+
+  // Invoice number — matches the "Invoice Number" labelled row.
+  // The COUPA sample has it appearing twice; we capture the first.
+  let invoiceNumber = '';
+  const invMatch = text.match(/Invoice Number\s+(INV\d+)/i)
+                || text.match(/\b(INV\d{4,})\b/);  // fallback to bare INV-prefix
+  if (invMatch) invoiceNumber = invMatch[1];
+
+  // Payment due date — matches "Payment Due Date 04 June 2026" style
+  let dueDateIso = '';
+  const dueMatch = text.match(/Payment Due Date\s+(\d{1,2}\s+[A-Za-z]+\s+\d{4})/);
+  if (dueMatch) dueDateIso = parseUkLongDateToIso(dueMatch[1]);
+
+  // Gross total — matches "Gross Total 984.00 GBP" style
+  let grossTotal = '';
+  const totMatch = text.match(/Gross Total\s+([\d,]+\.\d{2})\s+GBP/i);
+  if (totMatch) grossTotal = totMatch[1].replace(/,/g, '');
+
+  // COUPA PO ref — pattern CP##### or CP#####-#
+  let coupaPoRef = '';
+  const poMatch = text.match(/\b(CP\d+(?:-\d+)?)\b/);
+  if (poMatch) coupaPoRef = poMatch[1];
+
+  return { invoiceNumber, dueDateIso, grossTotal, coupaPoRef };
+}
+
+// Helper: parse "04 June 2026" → "2026-06-04" (ISO date)
+function parseUkLongDateToIso(s) {
+  if (!s) return '';
+  const months = { jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11,
+                   january:0,february:1,march:2,april:3,june:5,july:6,august:7,
+                   september:8,october:9,november:10,december:11 };
+  const m = String(s).trim().match(/^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$/);
+  if (!m) return '';
+  const day = parseInt(m[1], 10);
+  const mon = months[m[2].toLowerCase()];
+  const year = parseInt(m[3], 10);
+  if (mon === undefined || isNaN(day) || isNaN(year)) return '';
+  const dd = String(day).padStart(2, '0');
+  const mm = String(mon + 1).padStart(2, '0');
+  return `${year}-${mm}-${dd}`;
+}
+
+// ── Confirm: validate, upload PDF, PUT row ──
+async function confirmBabcockApprovedToPay() {
+  if (!_bapContext || !_bapContext.file) {
+    toast('Pick a PDF first', 'error');
+    return;
+  }
+
+  const invoiceNumber = (document.getElementById('bapInvoiceNumber').value || '').trim();
+  const dueDateIso    = (document.getElementById('bapDueDate').value || '').trim();
+  const grossTotalRaw = (document.getElementById('bapGrossTotal').value || '').trim();
+  const coupaPoRef    = (document.getElementById('bapCoupaPoRef').value || '').trim();
+
+  // Validate the three required fields
+  if (!invoiceNumber) {
+    toast('Invoice number is required', 'error');
+    document.getElementById('bapInvoiceNumber').focus();
+    return;
+  }
+  if (!dueDateIso) {
+    toast('Due date is required', 'error');
+    document.getElementById('bapDueDate').focus();
+    return;
+  }
+  if (!grossTotalRaw) {
+    toast('Gross total is required', 'error');
+    document.getElementById('bapGrossTotal').focus();
+    return;
+  }
+  const grossTotalNum = parseFloat(grossTotalRaw);
+  if (isNaN(grossTotalNum) || grossTotalNum <= 0) {
+    toast('Gross total must be a positive number', 'error');
+    document.getElementById('bapGrossTotal').focus();
+    return;
+  }
+
+  const q = _bapContext.quote;
+  const next = _bapContext.next;
+  const file = _bapContext.file;
+
+  // Lock the button + show progress
+  const btn = document.getElementById('bapConfirmBtn');
+  btn.disabled = true;
+  btn.textContent = 'Uploading…';
+
+  try {
+    // Upload to SharePoint. Filename: "<quote-ref> - <invoice-number>.pdf"
+    // so files sort naturally by quote ref in the Approved Invoices folder.
+    const folders = await findOrCreateBabcockFolders();
+    const approvedFolder = await getOrCreateSubfolder(folders.parent.id, 'Approved Invoices', BAMA_DRIVE_ID);
+    if (!approvedFolder) throw new Error('Could not create Approved Invoices folder');
+
+    const safeRef = (q.quote_ref || 'Babcock').replace(/[/\\]/g, '_');
+    const safeInv = (invoiceNumber || 'INV').replace(/[/\\]/g, '_');
+    const fileName = `${safeRef} - ${safeInv}.pdf`;
+
+    const uploaded = await uploadFileToFolder(
+      approvedFolder.id,
+      fileName,
+      await file.arrayBuffer(),
+      'application/pdf'
+    );
+
+    // PUT the Babcock row with all the new fields
+    btn.textContent = 'Saving…';
+    const updated = await api.put(`/api/babcock-quotes/${q.id}`, {
+      status: next,
+      coupa_invoice_pdf_url: uploaded.webUrl || null,
+      coupa_invoice_pdf_id:  uploaded.id || null,
+      coupa_invoice_number:  invoiceNumber,
+      coupa_invoice_due_date: dueDateIso,
+      coupa_invoice_gross_total: grossTotalNum,
+      coupa_po_ref:          coupaPoRef || null
+    });
+    const idx = _babcockQuotes.findIndex(x => x.id === q.id);
+    if (idx !== -1) _babcockQuotes[idx] = { ..._babcockQuotes[idx], ...updated };
+
+    toast(`${updated.quote_ref} \u2192 Approved to Pay`, 'success');
+    closeBabcockApprovedToPayModal();
+    renderBabcockTracker();
+  } catch (err) {
+    console.error('Approved-to-pay save failed:', err);
+    toast('Save failed: ' + (err.message || 'unknown error'), 'error');
+    btn.disabled = false;
+    btn.textContent = 'Confirm & Save';
+  }
+}
+
+// ── Handler: Project Complete → Approved to Pay ──
+async function handleAdvanceFromProjectComplete(q, next) {
+  openBabcockApprovedToPayModal(q, next);
+}
+
+// ── Handler: Approved to Pay → Payment Received ──
+// Simple status flip + stamps payment_received_at = now so we know
+// when the money landed. Useful for reporting / chasing dashboards.
+async function handleAdvanceFromApprovedToPay(q, next) {
+  const confirmed = await showConfirmAsync(
+    '💰 Payment Received',
+    `<p style="margin:0">Mark <b>${escapeHtml(q.quote_ref || '')}</b> as paid?</p>
+     <p style="margin:8px 0 0;font-size:12px;color:var(--muted)">
+       The next step will be to generate the Bama SW invoice (original quote minus project costs).
+     </p>`,
+    { okLabel: 'Confirm Payment', cancelLabel: 'Cancel' }
+  );
+  if (!confirmed || !confirmed.ok) return;
+
+  setLoading(true);
+  try {
+    const updated = await api.put(`/api/babcock-quotes/${q.id}`, {
+      status: next,
+      payment_received_at: new Date().toISOString()
+    });
+    const idx = _babcockQuotes.findIndex(x => x.id === q.id);
+    if (idx !== -1) _babcockQuotes[idx] = { ..._babcockQuotes[idx], ...updated };
+    setLoading(false);
+    toast(`${updated.quote_ref} \u2192 Payment Received`, 'success');
     renderBabcockTracker();
   } catch (err) {
     setLoading(false);
