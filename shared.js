@@ -18966,7 +18966,7 @@ function openBabcockConvertModal(quote) {
 
   // Reset inputs
   document.getElementById('bcvPoNumber').value = quote.po_number || '';
-  document.getElementById('bcvProjectName').value = babcockSuggestProjectName(quote.quote_for_area);
+  document.getElementById('bcvProjectName').value = quote.work_order_no || babcockSuggestProjectName(quote.quote_for_area);
   document.getElementById('bcvProjectNumberPreview').textContent = _bcvProjectNumber;
   document.getElementById('bcvConfirmBtn').disabled = false;
   document.getElementById('bcvConfirmBtn').textContent = 'Convert';
