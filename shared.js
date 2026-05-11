@@ -12967,7 +12967,6 @@ function updateCrossNavSidebar() {
   set('sidebarBtnQuotations',      !!(perms.viewQuotes || perms.editQuotes),    'Quotations');
   set('sidebarBtnBabcockQuotes',   !!perms.tenders,                              'Babcock Quotes');
   set('sidebarBtnProjectTracker',  !!(perms.viewProjects || perms.editProjects),'Project Tracker');
-  set('sidebarBtnReports',         !!perms.reports,                              'Reports');
 }
 
 // Back-compat aliases — call sites are scattered.
