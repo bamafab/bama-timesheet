@@ -1542,8 +1542,14 @@ function applyPermAnyVisibility(perms) {
 }
 
 function findFirstAllowedTab(perms) {
+  // Reports used to be a tab on office.html; it's now a standalone page,
+  // so it no longer belongs in this list. The /api/me-style 'first
+  // allowed destination' logic still works — a user with only `reports`
+  // permission will fall through to the dashboard fallback and then can
+  // navigate to reports.html from the sidebar (provided they have nav
+  // perms on the destination page).
   const tabOrder = CURRENT_PAGE === 'office'
-    ? ['dashboard','staff','holidays','project','employee','clockinout','payroll','archive','welding','suppliers','reports']
+    ? ['dashboard','staff','holidays','project','employee','clockinout','payroll','archive','welding','suppliers']
     : ['settings','useraccess','templates'];
   for (const tab of tabOrder) {
     const permKey = Object.keys(PERM_TO_TAB).find(k => PERM_TO_TAB[k] === tab);
@@ -12795,6 +12801,15 @@ function navToProjectTracker() {
   window.location.href = 'project-tracker.html';
 }
 
+function navToReports() {
+  const perms = getUserPermissions(currentManagerUser) || {};
+  if (!perms.reports) {
+    toast('You don\'t have permission to access Reports', 'error');
+    return;
+  }
+  window.location.href = 'reports.html';
+}
+
 // ── Shared cross-nav sidebar perm-gate ──
 // Used by Tenders / Quotes / Babcock / Project Tracker pages. The pages all
 // share the same canonical sidebar (Tenders, Quotations, Babcock Quotes,
@@ -12815,6 +12830,7 @@ function updateCrossNavSidebar() {
   set('sidebarBtnQuotations',      !!(perms.viewQuotes || perms.editQuotes),    'Quotations');
   set('sidebarBtnBabcockQuotes',   !!perms.tenders,                              'Babcock Quotes');
   set('sidebarBtnProjectTracker',  !!(perms.viewProjects || perms.editProjects),'Project Tracker');
+  set('sidebarBtnReports',         !!perms.reports,                              'Reports');
 }
 
 // Back-compat aliases — call sites are scattered.
@@ -16387,6 +16403,114 @@ function switchProjectTrackerTab(tab) {
 function navFromProjectTrackerToTenders() { window.location.href = 'tenders.html'; }
 function navFromProjectTrackerToQuotes()  { window.location.href = 'quotes.html'; }
 function navFromProjectTrackerToBabcock() { window.location.href = 'babcock.html'; }
+function navFromProjectTrackerToReports() { window.location.href = 'reports.html'; }
+
+// ═══════════════════════════════════════════
+// REPORTS PAGE (standalone — was a tab on office.html)
+// ═══════════════════════════════════════════
+
+function navFromReportsToTenders()        { window.location.href = 'tenders.html'; }
+function navFromReportsToQuotes()         { window.location.href = 'quotes.html'; }
+function navFromReportsToBabcock()        { window.location.href = 'babcock.html'; }
+function navFromReportsToProjectTracker() { window.location.href = 'project-tracker.html'; }
+
+let _pendingReportsUser = null;
+
+async function initReportsPage() {
+  // Session-authed already? Check perm and bounce or show.
+  const authed = sessionStorage.getItem('bama_mgr_authed');
+  if (authed) {
+    currentManagerUser = authed;
+    const perms = getUserPermissions(currentManagerUser);
+    if (perms && perms.reports) {
+      showReportsLayout();
+      return;
+    }
+    // Session was authed but the user lacks `reports`. Per the chosen
+    // contract: bounce them out rather than show a permission message.
+    toast('You don\u2019t have permission to view Reports', 'error');
+    setTimeout(() => { window.location.href = 'index.html'; }, 800);
+    return;
+  }
+  // Otherwise show the PIN-gate employee grid
+  renderReportsEmployeeGrid();
+}
+
+function showReportsLayout() {
+  document.getElementById('screenReportsSelect').style.display = 'none';
+  document.getElementById('reportsLayout').style.display = 'flex';
+  // Grey out cross-nav buttons the user lacks permission for
+  updateCrossNavSidebar();
+  // The reports tab inside office.html ran `renderReports()` on selectTab;
+  // mirror that here so the default Overview card paints on first load.
+  // renderReports() auto-populates the employee filter on first invocation.
+  setTimeout(() => { try { renderReports(); } catch (e) { console.warn('renderReports failed', e); } }, 50);
+}
+
+function renderReportsEmployeeGrid() {
+  const grid = document.getElementById('reportsEmployeeGrid');
+  if (!grid) return;
+  // Show any active employee — permission check happens at PIN-verify time.
+  // (Mirrors the babcock page's approach: grid is informational, gate is on submit.)
+  const empList = (state.timesheetData.employees || []).filter(e => e.active !== false);
+  if (!empList.length) {
+    grid.innerHTML = '<div class="empty-state" style="padding:30px"><div style="font-size:28px;margin-bottom:10px">&#128101;</div><div>No employees set up yet.</div></div>';
+    return;
+  }
+  grid.innerHTML = empList.map(emp => {
+    const ini = (emp.name || '').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+    const col = empColor(emp.name);
+    return `
+      <div class="emp-btn" onclick="selectReportsEmployee('${emp.name.replace(/'/g, "\\\\'")}')">
+        <div class="emp-avatar" style="width:48px;height:48px;font-size:19px;background:linear-gradient(135deg,${col},#3e1a00)">${ini}</div>
+        <div class="emp-name" style="font-size:13px">${emp.name}</div>
+        <div style="font-size:10px;color:var(--subtle);margin-top:3px">${emp.hasPin ? '&#128274; PIN set' : '&#128275; No PIN'}</div>
+      </div>`;
+  }).join('');
+}
+
+function selectReportsEmployee(name) {
+  const emp = (state.timesheetData.employees || []).find(e => e.name === name);
+  if (!emp) return;
+  if (!emp.hasPin) { toast('No PIN set for this user.', 'error'); return; }
+  _pendingReportsUser = { name, empId: emp.id };
+  document.getElementById('reportsPinUser').textContent = name;
+  document.getElementById('reportsPinInput').value = '';
+  document.getElementById('reportsPinError').textContent = '';
+  document.getElementById('reportsPinModal').classList.add('active');
+  setTimeout(() => document.getElementById('reportsPinInput').focus(), 200);
+}
+
+async function verifyReportsPin() {
+  if (!_pendingReportsUser) return;
+  const pin = document.getElementById('reportsPinInput').value;
+  if (!pin) return;
+  try {
+    const result = await api.post('/api/auth/verify-pin', { employee_id: _pendingReportsUser.empId, pin });
+    if (!result || !result.valid) {
+      document.getElementById('reportsPinError').textContent = (result && result.reason) || 'Incorrect PIN';
+      document.getElementById('reportsPinInput').value = '';
+      return;
+    }
+    currentManagerUser = _pendingReportsUser.name;
+    sessionStorage.setItem('bama_mgr_authed', currentManagerUser);
+    document.getElementById('reportsPinModal').classList.remove('active');
+    const perms = getUserPermissions(currentManagerUser);
+    if (!perms || !perms.reports) {
+      // Bounce — per the chosen contract.
+      toast('You don\u2019t have permission to view Reports', 'error');
+      // Note: we DON'T clear sessionStorage here because the user may
+      // legitimately have access elsewhere; we just don't want them on
+      // this page. index.html re-runs its own gate.
+      setTimeout(() => { window.location.href = 'index.html'; }, 800);
+      return;
+    }
+    showReportsLayout();
+  } catch (err) {
+    document.getElementById('reportsPinError').textContent = 'PIN verification failed';
+    document.getElementById('reportsPinInput').value = '';
+  }
+}
 
 // ═══════════════════════════════════════════
 // BABCOCK QUOTES PAGE
@@ -20295,6 +20419,7 @@ const CURRENT_PAGE = (() => {
   if (path.includes('tenders')) return 'tenders';
   if (path.includes('quotes')) return 'quotes';
   if (path.includes('project-tracker')) return 'projectTracker';
+  if (path.includes('reports')) return 'reports';
   if (path.includes('projects') || path.includes('project')) return 'projects';
   if (path.includes('hub')) return 'hub';
   return 'index'; // default kiosk
@@ -20415,6 +20540,8 @@ async function init() {
     initProjectTrackerPage();
   } else if (CURRENT_PAGE === 'babcock') {
     initBabcockPage();
+  } else if (CURRENT_PAGE === 'reports') {
+    initReportsPage();
   } else if (CURRENT_PAGE === 'hub') {
     // hub has its own simple rendering
   } else {
