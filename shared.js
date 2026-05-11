@@ -12801,10 +12801,15 @@ function navToProjectTracker() {
   window.location.href = 'project-tracker.html';
 }
 
-function navToReports() {
+async function navToReports() {
   const perms = getUserPermissions(currentManagerUser) || {};
   if (!perms.reports) {
-    toast('You don\'t have permission to access Reports', 'error');
+    const confirmed = await showConfirmAsync(
+      '🔒 No Permission',
+      '<p style="color:var(--muted);margin:0 0 8px">You do not have permission to view <b>Reports</b>.</p><p style="color:var(--subtle);font-size:13px;margin:0">You can request access and an admin will be notified.</p>',
+      { okLabel: 'Request Access', cancelLabel: 'Cancel' }
+    );
+    if (confirmed) openRequestAccessModal();
     return;
   }
   window.location.href = 'reports.html';
@@ -16426,10 +16431,8 @@ async function initReportsPage() {
       showReportsLayout();
       return;
     }
-    // Session was authed but the user lacks `reports`. Per the chosen
-    // contract: bounce them out rather than show a permission message.
-    toast('You don\u2019t have permission to view Reports', 'error');
-    setTimeout(() => { window.location.href = 'index.html'; }, 800);
+    // Session was authed but the user lacks `reports` — show permission denied screen.
+    showReportsPermDenied();
     return;
   }
   // Otherwise show the PIN-gate employee grid
@@ -16445,6 +16448,27 @@ function showReportsLayout() {
   // mirror that here so the default Overview card paints on first load.
   // renderReports() auto-populates the employee filter on first invocation.
   setTimeout(() => { try { renderReports(); } catch (e) { console.warn('renderReports failed', e); } }, 50);
+}
+
+function showReportsPermDenied() {
+  const screen = document.getElementById('screenReportsSelect');
+  if (!screen) return;
+  screen.style.display = '';
+  screen.innerHTML = `
+    <div class="mgr-select-wrap" style="text-align:center;max-width:460px">
+      <div style="font-size:52px;margin-bottom:16px">🔒</div>
+      <div class="mgr-select-title" style="margin-bottom:8px">No Permission</div>
+      <div style="color:var(--muted);font-size:15px;margin-bottom:8px">
+        You do not have permission to view <b>Reports</b>.
+      </div>
+      <div style="color:var(--subtle);font-size:13px;margin-bottom:32px">
+        Contact your system admin or use the button below to request access.
+      </div>
+      <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
+        <button class="btn btn-primary" onclick="openRequestAccessModal()">📧 Request Access</button>
+        <button class="btn btn-ghost" onclick="window.location.href='hub.html'">&#8592; Back to Hub</button>
+      </div>
+    </div>`;
 }
 
 function renderReportsEmployeeGrid() {
@@ -16497,12 +16521,7 @@ async function verifyReportsPin() {
     document.getElementById('reportsPinModal').classList.remove('active');
     const perms = getUserPermissions(currentManagerUser);
     if (!perms || !perms.reports) {
-      // Bounce — per the chosen contract.
-      toast('You don\u2019t have permission to view Reports', 'error');
-      // Note: we DON'T clear sessionStorage here because the user may
-      // legitimately have access elsewhere; we just don't want them on
-      // this page. index.html re-runs its own gate.
-      setTimeout(() => { window.location.href = 'index.html'; }, 800);
+      showReportsPermDenied();
       return;
     }
     showReportsLayout();

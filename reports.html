@@ -222,6 +222,27 @@
   </div><!-- end mgr-content -->
 </div><!-- end mgr-layout -->
 
-<script src="shared.js?v=20260507r"></script>
+<!-- ═══════════════════════════════════════
+     REQUEST ACCESS MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="requestAccessModal">
+  <div class="modal" style="max-width:440px;width:95vw">
+    <div class="modal-title">📧 Request Access</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:20px">
+      Your request will be emailed to the system admin. Please describe why you need access.
+    </div>
+    <div style="margin-bottom:16px">
+      <div class="field-label">REASON <span style="color:var(--red)">*</span></div>
+      <textarea class="field-input" id="accessRequestReason" rows="4" placeholder="e.g. I need access to the Reports section to view analytics..."
+        style="resize:vertical;min-height:80px"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeRequestAccessModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitAccessRequest()">Send Request</button>
+    </div>
+  </div>
+</div>
+
+<script src="shared.js?v=20260511a"></script>
 </body>
 </html>
