@@ -5532,7 +5532,10 @@ async function renderBabcockReport() {
     return;
   }
   if (emptyEl) emptyEl.style.display = 'none';
-  [finKpis, wfKpis, grid, aging].forEach(el => { if (el) el.style.display = '' });
+  if (finKpis) finKpis.style.display = 'grid';
+  if (wfKpis)  wfKpis.style.display  = 'grid';
+  if (grid)    grid.style.display    = '';
+  if (aging)   aging.style.display   = '';
 
   // FY range
   const { fyStart, fyEnd, fyLabel } = getBabcockFYRange(_bbkFY);
