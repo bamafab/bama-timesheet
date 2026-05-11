@@ -238,34 +238,25 @@
         <span style="margin-left:auto;font-size:11px;color:var(--subtle);font-style:italic">UK financial year: 1 Apr &rarr; 31 Mar</span>
       </div>
 
-      <!-- KPI tiles row 1 — financial overview -->
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:14px" id="bbkKpisFinancial"></div>
+      <!-- KPI tiles row 1 — financial overview. Compact — minmax(140px,220px)
+           keeps tiles small instead of stretching to fill the row width. -->
+      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:12px" id="bbkKpisFinancial"></div>
 
       <!-- KPI tiles row 2 — workflow state -->
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:24px" id="bbkKpisWorkflow"></div>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:24px" id="bbkKpisWorkflow"></div>
 
-      <!-- Charts grid: 2x2 -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px" id="bbkChartsGrid">
-        <div class="card" style="padding:20px">
-          <div class="card-title" style="margin-bottom:4px"><span class="icon">&#128200;</span> Monthly trend</div>
-          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Quote count (bars) &amp; total value (line) per month</div>
-          <canvas id="bbkChartMonthlyTrend" style="width:100%;height:240px;max-height:240px"></canvas>
-        </div>
-        <div class="card" style="padding:20px">
-          <div class="card-title" style="margin-bottom:4px"><span class="icon">&#127953;</span> Pipeline funnel</div>
-          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Quote count by status (current snapshot)</div>
-          <canvas id="bbkChartFunnel" style="width:100%;height:240px;max-height:240px"></canvas>
-        </div>
-        <div class="card" style="padding:20px">
-          <div class="card-title" style="margin-bottom:4px"><span class="icon">&#128181;</span> Cash flow</div>
-          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Money in (COUPA paid) vs money out (Bama SW invoices)</div>
-          <canvas id="bbkChartCashflow" style="width:100%;height:240px;max-height:240px"></canvas>
-        </div>
-        <div class="card" style="padding:20px">
-          <div class="card-title" style="margin-bottom:4px"><span class="icon">&#127971;</span> Top areas</div>
-          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Top 10 areas by total quote value</div>
-          <canvas id="bbkChartTopAreas" style="width:100%;height:240px;max-height:240px"></canvas>
-        </div>
+      <!-- Pipeline funnel — full width, directly under the tiles -->
+      <div class="card" style="padding:20px;margin-bottom:16px">
+        <div class="card-title" style="margin-bottom:4px"><span class="icon">&#127953;</span> Pipeline funnel</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Quote count by status (current snapshot)</div>
+        <canvas id="bbkChartFunnel" style="width:100%;height:280px;max-height:280px"></canvas>
+      </div>
+
+      <!-- Cash flow — full width below funnel -->
+      <div class="card" style="padding:20px;margin-bottom:16px">
+        <div class="card-title" style="margin-bottom:4px"><span class="icon">&#128181;</span> Cash flow</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Money in (COUPA paid) vs money out (Bama SW invoices) per month</div>
+        <canvas id="bbkChartCashflow" style="width:100%;height:240px;max-height:240px"></canvas>
       </div>
 
       <!-- Overdue / Due-soon table -->
@@ -307,6 +298,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260511b"></script>
+<script src="shared.js?v=20260511c"></script>
 </body>
 </html>

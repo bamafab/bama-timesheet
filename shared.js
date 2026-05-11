@@ -5430,6 +5430,23 @@ let _bbkFY = 'current';
 let _bbkCharts = {};   // separate from rptCharts so destroys don't collide
 let _bbkQuotesCache = null; // cached list to avoid refetch when toggling FY
 
+// Resolve a CSS custom-property name to its computed colour value.
+// Chart.js does not parse CSS variables — passing 'var(--muted)' literally
+// to a canvas context falls back to the canvas default (black), which is
+// invisible on our dark theme. This helper grabs the resolved hex/rgb
+// from the page so all chart text + axis ticks render in the correct
+// theme colour. Cached per-name so we only hit getComputedStyle once.
+const _resolvedCssColours = {};
+function cssVar(name, fallback) {
+  if (_resolvedCssColours[name]) return _resolvedCssColours[name];
+  try {
+    const v = getComputedStyle(document.documentElement)
+      .getPropertyValue(name).trim();
+    if (v) { _resolvedCssColours[name] = v; return v; }
+  } catch (e) { /* ignore */ }
+  return fallback || '#999';
+}
+
 const BABCOCK_OPEN_QUOTE_STATUSES   = ['Quote Received', 'Quote Sent'];
 const BABCOCK_OPEN_PROJECT_STATUSES = ['Live Project'];
 const BABCOCK_CLOSED_PROJECT_STATUSES = [
@@ -5582,10 +5599,10 @@ async function renderBabcockReport() {
       { label: 'Conversion rate',   value: convPct.toFixed(0) + '%',    sub: `${reachedProject}/${inFY.length} converted`, color: convPct >= 70 ? 'var(--green)' : convPct >= 40 ? 'var(--amber)' : 'var(--red)' },
       { label: 'Avg days to pay',   value: avgDays != null ? Math.round(avgDays) + 'd' : '—', sub: avgDays != null ? `${paidWithDates.length} paid invoice${paidWithDates.length === 1 ? '' : 's'}` : 'No paid invoices yet', color: avgDays == null ? 'var(--muted)' : avgDays <= 30 ? 'var(--green)' : avgDays <= 60 ? 'var(--amber)' : 'var(--red)' }
     ].map(k => `
-      <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 16px">
-        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">${k.label}</div>
-        <div style="font-family:var(--font-display);font-size:24px;color:${k.color};line-height:1.1">${k.value}</div>
-        <div style="font-size:10px;color:var(--subtle);margin-top:4px">${k.sub}</div>
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 12px;width:150px;flex:0 0 auto">
+        <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px">${k.label}</div>
+        <div style="font-family:var(--font-display);font-size:20px;color:${k.color};line-height:1.1">${k.value}</div>
+        <div style="font-size:10px;color:var(--subtle);margin-top:3px">${k.sub}</div>
       </div>
     `).join('');
   }
@@ -5609,10 +5626,10 @@ async function renderBabcockReport() {
       { label: 'Closed projects', value: String(closedProjects.length), sub: 'Awaiting / in finance',                       color: 'var(--muted)' },
       { label: 'Invoices due',    value: String(invoicesDue.length),    sub: fmtMoneyShort(invoicesDueVal) + ' total',      color: invoicesDue.length ? 'var(--amber)' : 'var(--green)' }
     ].map(k => `
-      <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 16px">
-        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">${k.label}</div>
-        <div style="font-family:var(--font-display);font-size:30px;color:${k.color};line-height:1.1">${k.value}</div>
-        <div style="font-size:10px;color:var(--subtle);margin-top:4px">${k.sub}</div>
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 12px;width:150px;flex:0 0 auto">
+        <div style="font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:4px">${k.label}</div>
+        <div style="font-family:var(--font-display);font-size:24px;color:${k.color};line-height:1.1">${k.value}</div>
+        <div style="font-size:10px;color:var(--subtle);margin-top:3px">${k.sub}</div>
       </div>
     `).join('');
   }
@@ -5621,50 +5638,28 @@ async function renderBabcockReport() {
   Object.values(_bbkCharts).forEach(c => { try { c.destroy(); } catch {} });
   _bbkCharts = {};
 
-  // ─── Monthly trend (FY-scoped, bar count + line value) ───
-  // 12-month buckets from fyStart. Each month bucket includes rows whose
-  // babcockRowDate falls in that calendar month.
+  // ─── Month buckets (still used by cash flow chart below) ───
+  // 12-month bucket array starting from fyStart. Pre-computed once and
+  // reused by the cash-flow chart further down. The monthly-trend chart
+  // that used to use this directly has been removed.
   const months = [];
   for (let i = 0; i < 12; i++) {
     const m = new Date(fyStart.getFullYear(), fyStart.getMonth() + i, 1);
     months.push({
       label: m.toLocaleDateString('en-GB', { month: 'short' }) + ' ' + String(m.getFullYear() % 100).padStart(2, '0'),
-      key:   `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, '0')}`,
-      count: 0,
-      value: 0
+      key:   `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, '0')}`
     });
   }
-  const monthIdx = (d) => {
-    if (!d) return -1;
-    return months.findIndex(b => b.key === `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
-  };
-  for (const q of inFY) {
-    const idx = monthIdx(babcockRowDate(q));
-    if (idx < 0) continue;
-    months[idx].count += 1;
-    months[idx].value += Number(q.total_value) || 0;
-  }
-  const monthlyCtx = document.getElementById('bbkChartMonthlyTrend');
-  if (monthlyCtx) {
-    _bbkCharts.monthly = new Chart(monthlyCtx, {
-      data: {
-        labels: months.map(b => b.label),
-        datasets: [
-          { type: 'bar',  label: 'Quote count', data: months.map(b => b.count), backgroundColor: 'rgba(255,107,0,.55)', borderColor: 'var(--accent)', yAxisID: 'yCount', borderRadius: 4 },
-          { type: 'line', label: 'Total value', data: months.map(b => b.value), borderColor: 'var(--accent2)', backgroundColor: 'rgba(0,179,238,.15)', tension: .35, yAxisID: 'yValue', pointRadius: 3, fill: false }
-        ]
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { position: 'bottom', labels: { color: 'var(--muted)', font: { size: 11 } } } },
-        scales: {
-          x:      { ticks: { color: 'var(--muted)', font: { size: 10 } }, grid: { display: false } },
-          yCount: { position: 'left',  beginAtZero: true, ticks: { color: 'var(--accent)',  precision: 0, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,.05)' }, title: { display: true, text: 'Count',  color: 'var(--muted)', font: { size: 10 } } },
-          yValue: { position: 'right', beginAtZero: true, ticks: { color: 'var(--accent2)', font: { size: 10 }, callback: v => fmtMoneyShort(v) }, grid: { display: false }, title: { display: true, text: 'Value', color: 'var(--muted)', font: { size: 10 } } }
-        }
-      }
-    });
-  }
+
+  // Resolved theme colours for chart text — Chart.js does NOT parse CSS
+  // variables (they fall through to its default of black, invisible on
+  // our dark theme). Resolve once up-front and reuse across all charts.
+  const cMuted   = cssVar('--muted',   '#888');
+  const cText    = cssVar('--text',    '#eee');
+  const cAccent  = cssVar('--accent',  '#ff6b00');
+  const cAccent2 = cssVar('--accent2', '#00b3ee');
+  const cGreen   = cssVar('--green',   '#2ecc71');
+  const cBorder  = 'rgba(255,255,255,.06)';
 
   // ─── Pipeline funnel (status counts, current snapshot — not FY-filtered) ───
   const STATUS_ORDER = [
@@ -5705,8 +5700,8 @@ async function renderBabcockReport() {
         responsive: true, maintainAspectRatio: false,
         plugins: { legend: { display: false } },
         scales: {
-          x: { beginAtZero: true, ticks: { color: 'var(--muted)', precision: 0, font: { size: 10 } }, grid: { color: 'rgba(255,255,255,.05)' } },
-          y: { ticks: { color: 'var(--muted)', font: { size: 10 } }, grid: { display: false } }
+          x: { beginAtZero: true, ticks: { color: cMuted, precision: 0, font: { size: 10 } }, grid: { color: cBorder } },
+          y: { ticks: { color: cMuted, font: { size: 10 } }, grid: { display: false } }
         }
       }
     });
@@ -5751,52 +5746,10 @@ async function renderBabcockReport() {
       },
       options: {
         responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { position: 'bottom', labels: { color: 'var(--muted)', font: { size: 11 } } } },
+        plugins: { legend: { position: 'bottom', labels: { color: cMuted, font: { size: 11 } } } },
         scales: {
-          x: { ticks: { color: 'var(--muted)', font: { size: 10 } }, grid: { display: false } },
-          y: { beginAtZero: true, ticks: { color: 'var(--muted)', font: { size: 10 }, callback: v => fmtMoneyShort(v) }, grid: { color: 'rgba(255,255,255,.05)' } }
-        }
-      }
-    });
-  }
-
-  // ─── Top areas (FY-scoped, top 10 by total value) ───
-  const areaMap = new Map();
-  for (const q of inFY) {
-    const area = (q.quote_for_area || '(unspecified)').toString().trim() || '(unspecified)';
-    const existing = areaMap.get(area) || { count: 0, value: 0 };
-    existing.count += 1;
-    existing.value += Number(q.total_value) || 0;
-    areaMap.set(area, existing);
-  }
-  const topAreas = [...areaMap.entries()]
-    .map(([area, v]) => ({ area, ...v }))
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 10);
-  const topCtx = document.getElementById('bbkChartTopAreas');
-  if (topCtx) {
-    _bbkCharts.areas = new Chart(topCtx, {
-      type: 'bar',
-      data: {
-        labels: topAreas.map(a => a.area.length > 30 ? a.area.slice(0, 28) + '\u2026' : a.area),
-        datasets: [{
-          label: 'Value',
-          data: topAreas.map(a => a.value),
-          backgroundColor: 'rgba(255,107,0,.65)',
-          borderColor: 'var(--accent)',
-          borderRadius: 4
-        }]
-      },
-      options: {
-        indexAxis: 'y',
-        responsive: true, maintainAspectRatio: false,
-        plugins: {
-          legend: { display: false },
-          tooltip: { callbacks: { label: ctx => `${fmtMoneyFull(ctx.parsed.x)} (${topAreas[ctx.dataIndex].count} quote${topAreas[ctx.dataIndex].count === 1 ? '' : 's'})` } }
-        },
-        scales: {
-          x: { beginAtZero: true, ticks: { color: 'var(--muted)', font: { size: 10 }, callback: v => fmtMoneyShort(v) }, grid: { color: 'rgba(255,255,255,.05)' } },
-          y: { ticks: { color: 'var(--muted)', font: { size: 10 } }, grid: { display: false } }
+          x: { ticks: { color: cMuted, font: { size: 10 } }, grid: { display: false } },
+          y: { beginAtZero: true, ticks: { color: cMuted, font: { size: 10 }, callback: v => fmtMoneyShort(v) }, grid: { color: cBorder } }
         }
       }
     });
