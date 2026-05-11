@@ -15682,17 +15682,33 @@ function _sumLabourHoursScheduled() {
 // Refreshed each time loadProjectFinancials runs.
 let _projectLabourHoursLogged = 0;
 
+// Reads actual hours from ProjectHours directly (live data), falling back
+// to LabourLog if the primary call fails. ProjectHours is the source of
+// truth for the project tracker — LabourLog only has data after a manual
+// "Sync to Labour Log" on the payroll page, which would otherwise leave
+// the actual-hours tile empty until that step is taken.
 async function _loadLabourHoursLogged(projectNumber) {
   if (!projectNumber) { _projectLabourHoursLogged = 0; return 0; }
   try {
-    const rows = await api.get(`/api/labour-log?project_number=${encodeURIComponent(projectNumber)}`);
-    const total = (Array.isArray(rows) ? rows : []).reduce((sum, r) => sum + (parseFloat(r.hours) || 0), 0);
+    const rows = await api.get(`/api/project-hours?project_number=${encodeURIComponent(projectNumber)}`);
+    const total = (Array.isArray(rows) ? rows : [])
+      .filter(r => r.project_number !== 'S000')
+      .reduce((sum, r) => sum + (parseFloat(r.hours) || 0), 0);
     _projectLabourHoursLogged = total;
     return total;
   } catch (e) {
-    console.warn('labour-log fetch failed:', e);
-    _projectLabourHoursLogged = 0;
-    return 0;
+    console.warn('project-hours fetch failed, falling back to labour-log:', e);
+    // Fallback: try LabourLog if project-hours endpoint is unavailable
+    try {
+      const rows = await api.get(`/api/labour-log?project_number=${encodeURIComponent(projectNumber)}`);
+      const total = (Array.isArray(rows) ? rows : []).reduce((sum, r) => sum + (parseFloat(r.hours) || 0), 0);
+      _projectLabourHoursLogged = total;
+      return total;
+    } catch (e2) {
+      console.warn('labour-log fallback also failed:', e2);
+      _projectLabourHoursLogged = 0;
+      return 0;
+    }
   }
 }
 
@@ -15748,7 +15764,7 @@ function renderProjectFinancialDashboard() {
   const variancePct = hoursScheduled > 0 ? (hoursLogged / hoursScheduled) * 100 : 0;
   setText('ptTileHoursActualMeta', hoursScheduled > 0
     ? `${variancePct.toFixed(0)}% of scheduled hours used`
-    : (hoursLogged > 0 ? 'No scheduled hours to compare' : 'Awaiting labour log entries'));
+    : (hoursLogged > 0 ? 'No scheduled hours to compare' : 'No hours logged yet'));
 
   const varWrap = document.getElementById('ptTileHoursVarianceWrap');
   const varFill = document.getElementById('ptTileHoursVarianceFill');
