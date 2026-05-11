@@ -197,6 +197,50 @@
 </div>
 
 <!-- ═══════════════════════════════════════
+     CONVERT TO PROJECT MODAL (Babcock)
+     Captures the client PO + final project name before creating
+     the Project row. Used by handleAdvanceFromQuoteSent in shared.js.
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="babcockConvertModal">
+  <div class="modal" style="max-width:520px;width:95vw">
+    <div class="modal-title">🏗️ Convert to Project</div>
+
+    <div style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.5">
+      This will create a live project on the Project Tracker and move the
+      quote to <b>Live Project</b> status. The new project number will be
+      <b><span id="bcvProjectNumberPreview" style="font-family:var(--font-mono);color:var(--accent)">BC????</span></b>.
+    </div>
+
+    <div style="margin-bottom:12px">
+      <div class="field-label">CLIENT PO NUMBER <span style="color:var(--red)">*</span></div>
+      <input type="text" class="field-input" id="bcvPoNumber"
+             style="font-size:14px;font-family:var(--font-mono);letter-spacing:.5px"
+             placeholder="e.g. CP00145959-1"
+             autocomplete="off"
+             onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('bcvConfirmBtn')?.click();}">
+      <div style="font-size:11px;color:var(--subtle);margin-top:4px">
+        The PO number provided by the client to authorise the work.
+      </div>
+    </div>
+
+    <div style="margin-bottom:14px">
+      <div class="field-label">PROJECT NAME</div>
+      <input type="text" class="field-input" id="bcvProjectName"
+             style="font-size:13px"
+             placeholder="(pre-filled — edit if needed)">
+      <div style="font-size:11px;color:var(--subtle);margin-top:4px">
+        Used in the SharePoint folder name and on the project tracker.
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeBabcockConvertModal()">Cancel</button>
+      <button class="btn btn-primary" id="bcvConfirmBtn" onclick="confirmBabcockConvert()">Convert</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
      EMAIL COMPOSER MODAL (Babcock workflow)
      Reusable for any step that needs to send an email
      (Generate Quote, Bama SW Invoice, Bama SW Final Invoice).
@@ -739,6 +783,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-<script src="shared.js?v=20260507m"></script>
+<script src="shared.js?v=20260507n"></script>
 </body>
 </html>

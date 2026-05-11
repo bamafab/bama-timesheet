@@ -17993,9 +17993,9 @@ async function advanceBabcockQuoteStatus(id) {
 //   - Not calling the API at all on Cancel — the row should stay put
 // Substages 1f-1i will fill in the rest of this map.
 const _babcockAdvanceHandlers = {
-  'Quote Received': handleAdvanceFromQuoteReceived
-  // 'Quote Sent':       handleAdvanceFromQuoteSent,        // 1f
-  // 'Live Project':     handleAdvanceFromLiveProject,      // 1f (final step)
+  'Quote Received': handleAdvanceFromQuoteReceived,
+  'Quote Sent':     handleAdvanceFromQuoteSent,     // 1f — Convert to Project
+  'Live Project':   handleAdvanceFromLiveProject    // 1f — Complete Project
   // 'Project Complete': handleAdvanceFromProjectComplete,  // 1g
   // 'Approved to Pay':  handleAdvanceFromApprovedToPay,    // simple status flip
   // 'Payment Received': handleAdvanceFromPaymentReceived,  // 1h
@@ -18177,6 +18177,286 @@ async function handleAdvanceFromQuoteReceived(qSummary, next) {
   });
   // If user cancelled, the modal resolves with null and we leave the
   // row untouched — no API call made.
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// CONVERT TO PROJECT — modal + conversion (used by 1f handlers)
+// ─────────────────────────────────────────────────────────────────────
+
+// Module-level promise resolver for the convert modal — same Promise-
+// based pattern as openBabcockEmailModal. Set when the modal opens.
+let _bcvResolve = null;
+let _bcvProjectNumber = null; // cached so confirmBabcockConvert can use it
+
+// Derive the project number for a Babcock quote: B0011 → BC0011.
+// Insert C immediately after the leading B. If the ref doesn't start
+// with B, fall back to prefixing with BC for safety.
+function babcockProjectNumberFor(quoteRef) {
+  const s = String(quoteRef || '');
+  const m = s.match(/^B(\d.*)$/i);
+  if (m) return 'BC' + m[1];
+  return 'BC' + s;
+}
+
+// Suggest a project name from the merged "Contact — Area" string.
+// Take the part AFTER the em-dash (the area); if no separator, return
+// the full string. So "John Smith — Plant Room Refurb" → "Plant Room
+// Refurb"; bare "Plant Room" → "Plant Room".
+function babcockSuggestProjectName(quoteForArea) {
+  if (!quoteForArea) return '';
+  const s = String(quoteForArea);
+  const parts = s.split(/\s[\u2014-]\s/);
+  if (parts.length >= 2) return parts.slice(1).join(' \u2014 ').trim();
+  return s.trim();
+}
+
+// Open the convert modal. Pre-fills the project number preview and
+// suggests a project name. Returns a Promise resolving to
+// {poNumber, projectName} on Convert, or null on Cancel.
+function openBabcockConvertModal(quote) {
+  _bcvProjectNumber = babcockProjectNumberFor(quote.quote_ref);
+
+  // Reset inputs
+  document.getElementById('bcvPoNumber').value = quote.po_number || '';
+  document.getElementById('bcvProjectName').value = babcockSuggestProjectName(quote.quote_for_area);
+  document.getElementById('bcvProjectNumberPreview').textContent = _bcvProjectNumber;
+  document.getElementById('bcvConfirmBtn').disabled = false;
+  document.getElementById('bcvConfirmBtn').textContent = 'Convert';
+
+  document.getElementById('babcockConvertModal').classList.add('active');
+  setTimeout(() => document.getElementById('bcvPoNumber')?.focus(), 60);
+
+  return new Promise(resolve => { _bcvResolve = resolve; });
+}
+
+function closeBabcockConvertModal() {
+  document.getElementById('babcockConvertModal').classList.remove('active');
+  if (_bcvResolve) {
+    const r = _bcvResolve;
+    _bcvResolve = null;
+    r(null);
+  }
+}
+
+function confirmBabcockConvert() {
+  const poNumber = (document.getElementById('bcvPoNumber').value || '').trim();
+  const projectName = (document.getElementById('bcvProjectName').value || '').trim();
+  if (!poNumber) {
+    toast('Client PO number is required', 'error');
+    document.getElementById('bcvPoNumber').focus();
+    return;
+  }
+  if (!projectName) {
+    toast('Project name is required', 'error');
+    document.getElementById('bcvProjectName').focus();
+    return;
+  }
+  // Resolve before closing so the caller can see the values
+  document.getElementById('babcockConvertModal').classList.remove('active');
+  if (_bcvResolve) {
+    const r = _bcvResolve;
+    _bcvResolve = null;
+    r({ poNumber, projectName, projectNumber: _bcvProjectNumber });
+  }
+}
+
+// ── Convert a Babcock quote to a Project ──
+// Mirrors convertQuoteToProject for the main tender flow, with these
+// differences:
+//  - Project number is B0011 → BC0011 (insert C, not swap)
+//  - Writes source_babcock_quote_id (Fix 1a column) not source_quote_id
+//  - No ProjectQuotes link table insert (that's tender-side only)
+//  - No quote-line-items seed (Babcock quotes don't use the 9 categories)
+// Idempotent: if a Project already exists for this Babcock quote, returns
+// the existing row without creating duplicates.
+async function convertBabcockQuoteToProject(q, opts) {
+  if (!q) throw new Error('No Babcock quote supplied');
+  const { poNumber, projectName, projectNumber } = opts || {};
+  if (!projectNumber) throw new Error('projectNumber required');
+  if (!projectName)   throw new Error('projectName required');
+  if (!poNumber)      throw new Error('poNumber required');
+
+  // Idempotency check — has this quote already been converted?
+  try {
+    const existing = await api.get(`/api/projects-by-babcock-quote/${q.id}`);
+    if (existing && existing.id) {
+      console.warn('Project already exists for this Babcock quote:', existing.project_number);
+      return existing;
+    }
+  } catch (e) {
+    // 404/empty fine — proceed
+  }
+
+  // Build folder name: "BC0011 - <Customer ID> - <Project Name>"
+  const custPart    = sanitiseFolderSegment(q.customer_id || 'Babcock');
+  const projectPart = sanitiseFolderSegment(projectName);
+  const folderName  = [projectNumber, custPart, projectPart].filter(Boolean).join(' - ');
+
+  // 1. Create SharePoint folders. Projects sit under the Projects/ root,
+  //    same as the tender-side conversion — no separate Babcock projects
+  //    folder, the BC prefix is the differentiator.
+  const token = await getToken();
+  const projectsRoot = await getOrCreateFolderByPath(PROJECTS_FOLDER_PATH, token);
+  const projectFolder = await createFolderInDrive(projectsRoot.id, folderName);
+
+  // Create the standard 9 subfolders
+  const subfolderMap = {};
+  for (const sub of PROJECT_SUBFOLDERS) {
+    const sf = await createFolderInDrive(projectFolder.id, sub);
+    subfolderMap[sub] = sf;
+  }
+
+  // 2. Copy the Babcock quote PDF + original .xlsx into 03 - Quote
+  //    The Babcock quote uploads live in the Quotation tree, not under
+  //    Projects. We copy individual files (not a whole folder) since
+  //    the parent Babcock folder may contain other quotes too.
+  const quoteSubfolder = subfolderMap['03 - Quote'];
+  if (quoteSubfolder) {
+    const fileIdsToCopy = [q.original_file_id, q.generated_file_id].filter(Boolean);
+    for (const fileId of fileIdsToCopy) {
+      try {
+        await fetch(
+          `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/items/${fileId}/copy`,
+          {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              parentReference: { driveId: BAMA_DRIVE_ID, id: quoteSubfolder.id }
+            })
+          }
+        );
+      } catch (e) {
+        console.warn('Failed to copy file to 03 - Quote (non-fatal):', e);
+      }
+    }
+  }
+
+  // 3. Create the Projects DB row
+  const projectRow = await api.post('/api/projects', {
+    project_number: projectNumber,
+    project_name:   projectName,
+    client_id:      null,  // Babcock doesn't currently use the Clients table — quotes are standalone
+    status:         'In Progress',
+    source_babcock_quote_id: q.id,
+    quote_value:    q.total_value != null ? parseFloat(q.total_value) : null,
+    deadline_date:  q.valid_until ? String(q.valid_until).split('T')[0] : null,
+    comments:       q.comments || null,
+    sharepoint_folder_id: projectFolder.id,
+    sharepoint_quote_folder_id: null,  // Babcock quotes live in a different tree
+    created_by:     currentManagerUser || (typeof AUTH !== 'undefined' && AUTH.getUserName?.()) || 'unknown'
+  });
+
+  // Cache locally so the Project Tracker picks it up without reload
+  if (Array.isArray(projectsData)) projectsData.unshift(projectRow);
+
+  return projectRow;
+}
+
+// ── Handler: Quote Sent → Live Project (Convert to Project) ──
+async function handleAdvanceFromQuoteSent(q, next) {
+  // Permission gate — converting writes to the Projects table, which
+  // sits behind the editProjects permission on the main app.
+  const perms = getUserPermissions(currentManagerUser) || {};
+  if (!perms.editProjects) {
+    toast('You don\u2019t have permission to create projects', 'error');
+    return;
+  }
+
+  const result = await openBabcockConvertModal(q);
+  if (!result) return; // user cancelled
+
+  setLoading(true);
+  let projectRow;
+  try {
+    projectRow = await convertBabcockQuoteToProject(q, result);
+  } catch (err) {
+    setLoading(false);
+    console.error('Convert to Project failed:', err);
+    toast('Convert failed: ' + (err.message || 'unknown error'), 'error');
+    return;
+  }
+
+  // Patch the Babcock quote with new status + PO + linked project id
+  try {
+    const updated = await api.put(`/api/babcock-quotes/${q.id}`, {
+      status: next,
+      po_number: result.poNumber,
+      linked_project_id: projectRow.id
+    });
+    const idx = _babcockQuotes.findIndex(x => x.id === q.id);
+    if (idx !== -1) _babcockQuotes[idx] = { ..._babcockQuotes[idx], ...updated };
+    setLoading(false);
+    toast(`Project ${projectRow.project_number} created \u2713`, 'success');
+    renderBabcockTracker();
+  } catch (err) {
+    setLoading(false);
+    // Project DID get created — only the status update failed. Tell the
+    // user so they can fix the row manually rather than retry-and-duplicate.
+    console.error('Status update after convert failed:', err);
+    toast(
+      `Project ${projectRow.project_number} created but couldn\u2019t update quote \u2014 refresh and edit to set status=Live Project, PO=${result.poNumber}`,
+      'error'
+    );
+    loadBabcockTracker();
+  }
+}
+
+// ── Handler: Live Project → Project Complete ──
+// Marks both the BabcockQuotes row and its linked Project row complete.
+async function handleAdvanceFromLiveProject(q, next) {
+  // Confirm modal — destructive-ish, deserves a yes/no gate
+  const confirmed = await showConfirmAsync(
+    '🏁 Complete Project',
+    `<p style="margin:0">Mark project as complete?</p>
+     <p style="margin:8px 0 0;font-size:12px;color:var(--muted)">
+       This will set both <b>${escapeHtml(q.quote_ref || '')}</b> and its linked project to <b>Complete</b>.
+       You can still raise the COUPA invoice and continue the workflow afterwards.
+     </p>`,
+    { okLabel: 'Mark Complete', cancelLabel: 'Cancel' }
+  );
+  if (!confirmed || !confirmed.ok) return;
+
+  setLoading(true);
+  try {
+    // Update the linked Project row first (if there is one). Non-fatal
+    // if it's missing — the Babcock quote is still the source of truth
+    // for the workflow state.
+    if (q.linked_project_id) {
+      try {
+        await api.put(`/api/projects/${q.linked_project_id}`, {
+          status: 'Complete',
+          completion_date: todayStr()
+        });
+        // Also patch projectsData if present so Project Tracker reflects it
+        if (Array.isArray(projectsData)) {
+          const pIdx = projectsData.findIndex(p => p.id === q.linked_project_id);
+          if (pIdx !== -1) {
+            projectsData[pIdx] = {
+              ...projectsData[pIdx],
+              status: 'Complete',
+              completion_date: todayStr()
+            };
+          }
+        }
+      } catch (err) {
+        // Log but don't block — the Babcock row state is still authoritative
+        console.warn('Linked project completion update failed (non-fatal):', err);
+      }
+    }
+
+    // Update the Babcock quote
+    const updated = await api.put(`/api/babcock-quotes/${q.id}`, { status: next });
+    const idx = _babcockQuotes.findIndex(x => x.id === q.id);
+    if (idx !== -1) _babcockQuotes[idx] = { ..._babcockQuotes[idx], ...updated };
+
+    setLoading(false);
+    toast(`${updated.quote_ref} \u2192 Project Complete`, 'success');
+    renderBabcockTracker();
+  } catch (err) {
+    setLoading(false);
+    toast('Update failed: ' + (err.message || 'unknown error'), 'error');
+    loadBabcockTracker();
+  }
 }
 
 // Legacy: kept for backward compat in case any code still calls it.

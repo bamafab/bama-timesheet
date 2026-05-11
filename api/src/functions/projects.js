@@ -114,6 +114,7 @@ app.http('projects-create', {
             const body = await request.json();
             const {
                 project_number, project_name, client_id, source_quote_id,
+                source_babcock_quote_id,
                 quote_value, deadline_date, comments,
                 sharepoint_folder_id, sharepoint_quote_folder_id,
                 project_manager_id, start_date, created_by, status
@@ -125,12 +126,14 @@ app.http('projects-create', {
             const result = await query(
                 `INSERT INTO Projects (
                     project_number, project_name, client_id, status, source_quote_id,
+                    source_babcock_quote_id,
                     quote_value, deadline_date, comments,
                     sharepoint_folder_id, sharepoint_quote_folder_id,
                     project_manager_id, start_date, created_by
                  ) OUTPUT INSERTED.*
                  VALUES (
                     @project_number, @project_name, @client_id, @status, @source_quote_id,
+                    @source_babcock_quote_id,
                     @quote_value, @deadline_date, @comments,
                     @sharepoint_folder_id, @sharepoint_quote_folder_id,
                     @project_manager_id, @start_date, @created_by
@@ -141,6 +144,7 @@ app.http('projects-create', {
                     client_id: client_id ? parseInt(client_id) : null,
                     status: status || 'In Progress',
                     source_quote_id: source_quote_id ? parseInt(source_quote_id) : null,
+                    source_babcock_quote_id: source_babcock_quote_id ? parseInt(source_babcock_quote_id) : null,
                     quote_value: quote_value != null ? parseFloat(quote_value) : null,
                     deadline_date: deadline_date || null,
                     comments: comments || null,
@@ -253,6 +257,38 @@ app.http('projects-by-quote-preflight', {
     methods: ['OPTIONS'],
     authLevel: 'anonymous',
     route: 'projects-by-quote/{*path}',
+    handler: async (request) => preflight(request)
+});
+
+// GET /api/projects-by-babcock-quote/:quoteId — find a project created from
+// a given Babcock quote. Mirrors projects-by-quote but for the BabcockQuotes
+// source. Used for idempotency in the Babcock convert-to-project flow.
+app.http('projects-by-babcock-quote', {
+    methods: ['GET'],
+    authLevel: 'anonymous',
+    route: 'projects-by-babcock-quote/{quoteId}',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const quoteId = parseInt(request.params.quoteId);
+            const result = await query(
+                `SELECT * FROM Projects WHERE source_babcock_quote_id = @quoteId`,
+                { quoteId }
+            );
+            return ok(result.recordset[0] || null, request);
+        } catch (err) {
+            context.error('Error fetching project by Babcock quote:', err);
+            return serverError('Failed to fetch project', request);
+        }
+    }
+});
+
+app.http('projects-by-babcock-quote-preflight', {
+    methods: ['OPTIONS'],
+    authLevel: 'anonymous',
+    route: 'projects-by-babcock-quote/{*path}',
     handler: async (request) => preflight(request)
 });
 
