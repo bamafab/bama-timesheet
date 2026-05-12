@@ -7785,10 +7785,43 @@ function exportWeekCSV() {
 // ═══════════════════════════════════════════
 // OFFICE DASHBOARD — Tasks & Messages
 // ═══════════════════════════════════════════
+// Tasks → SQL via /api/office-tasks  (migrated from SharePoint JSON)
+// Messages → SharePoint JSON          (unchanged)
 const OFFICE_TASKS_FILE = 'office-tasks.json';
 let officeTasksData = { tasks: [], messages: [] };
 
+// Normalise a SQL OfficeTasks row into the shape renderDashboard() expects
+function normaliseTask(row) {
+  return {
+    id: String(row.id),
+    title: row.title || '',
+    description: row.description || null,
+    assignedTo: row.assigned_to || null,
+    assignedBy: row.assigned_by || null,
+    dueDate: row.due_date ? String(row.due_date).slice(0, 10) : null,
+    priority: row.priority || 'normal',
+    status: row.status || 'open',
+    source: row.source || 'manual',
+    sourceRef: row.source_ref || null,
+    createdAt: row.created_at || new Date().toISOString(),
+    completedAt: row.completed_at || null
+  };
+}
+
 async function loadOfficeTasksData() {
+  // ── Tasks from SQL ──
+  try {
+    const result = await api.get('/api/office-tasks');
+    officeTasksData.tasks = (result && Array.isArray(result.tasks))
+      ? result.tasks.map(normaliseTask)
+      : [];
+    console.log('Office tasks loaded from SQL:', officeTasksData.tasks.length);
+  } catch (e) {
+    console.warn('Office tasks SQL load failed:', e.message);
+    officeTasksData.tasks = [];
+  }
+
+  // ── Messages from SharePoint JSON (unchanged) ──
   try {
     const token = await getToken();
     const pathEnc = encodeURIComponent('01 - Accounts/DANIEL/Project Tracker/' + OFFICE_TASKS_FILE);
@@ -7797,26 +7830,26 @@ async function loadOfficeTasksData() {
       { headers: { Authorization: `Bearer ${token}` } }
     );
     if (res.status === 404) {
-      console.log('No office-tasks.json yet — will create on first save');
-      return;
+      officeTasksData.messages = [];
+    } else if (res.ok) {
+      const json = await res.json();
+      officeTasksData.messages = json.messages || [];
     }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    officeTasksData = await res.json();
-    officeTasksData.tasks = officeTasksData.tasks || [];
-    officeTasksData.messages = officeTasksData.messages || [];
-    console.log('Office tasks loaded:', officeTasksData.tasks.length, 'tasks,', officeTasksData.messages.length, 'messages');
   } catch (e) {
-    console.warn('Office tasks load failed:', e.message);
+    console.warn('Office messages load failed:', e.message);
+    officeTasksData.messages = [];
   }
 }
 
+// saveOfficeTasksData now only persists messages — tasks go through their own API calls
 async function saveOfficeTasksData() {
   const token = await getToken();
   const pathEnc = encodeURIComponent('01 - Accounts/DANIEL/Project Tracker/' + OFFICE_TASKS_FILE);
+  const payload = { messages: officeTasksData.messages || [] };
   const res = await fetch(
     `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/root:/${pathEnc}:/content`,
     { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(officeTasksData, null, 2) }
+      body: JSON.stringify(payload, null, 2) }
   );
   if (!res.ok) throw new Error(`Save failed: HTTP ${res.status}`);
 }
@@ -8094,56 +8127,52 @@ async function submitDashTask() {
   if (!title) { toast('Task title is required', 'error'); return; }
   if (!assignTo) { toast('Select someone to assign the task to', 'error'); return; }
 
-  const task = {
-    id: 'task_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-    title,
-    description: description || null,
-    assignedTo: assignTo,
-    assignedBy: currentManagerUser,
-    dueDate: dueDate || null,
-    priority,
-    status: 'open',
-    createdAt: new Date().toISOString()
-  };
-
-  officeTasksData.tasks.push(task);
   try {
-    await saveOfficeTasksData();
+    const row = await api.post('/api/office-tasks', {
+      title,
+      description: description || null,
+      assigned_to: assignTo,
+      assigned_by: currentManagerUser,
+      due_date: dueDate || null,
+      priority
+    });
+    officeTasksData.tasks.push(normaliseTask(row));
     toast(`Task assigned to ${assignTo}`, 'success');
     closeDashTaskModal();
     renderDashboard();
   } catch (e) {
     toast('Failed to save task: ' + e.message, 'error');
-    officeTasksData.tasks.pop();
   }
 }
 
 async function completeTask(taskId) {
   const task = officeTasksData.tasks.find(t => t.id === taskId);
   if (!task) return;
+  const prev = { status: task.status, completedAt: task.completedAt };
   task.status = 'complete';
   task.completedAt = new Date().toISOString();
   try {
-    await saveOfficeTasksData();
+    await api.put(`/api/office-tasks/${taskId}`, { status: 'complete' });
     toast('Task completed', 'success');
     renderDashboard();
   } catch (e) {
     toast('Failed to save: ' + e.message, 'error');
-    task.status = 'open';
-    delete task.completedAt;
+    task.status = prev.status;
+    task.completedAt = prev.completedAt;
   }
 }
 
 async function dismissAssignedTask(taskId) {
   const task = officeTasksData.tasks.find(t => t.id === taskId);
   if (!task) return;
+  const prev = task.status;
   task.status = 'dismissed';
   try {
-    await saveOfficeTasksData();
+    await api.put(`/api/office-tasks/${taskId}`, { status: 'dismissed' });
     renderDashboard();
   } catch (e) {
     toast('Failed to clear: ' + e.message, 'error');
-    task.status = task.completedAt ? 'complete' : 'open';
+    task.status = prev;
   }
 }
 
@@ -14365,21 +14394,20 @@ async function convertToQuote() {
     Object.assign(currentTender, updated);
 
     // Create office task for quote handler
-    const task = {
-      id: 'task_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
-      title: `Quote: ${currentTender.reference} — ${currentTender.project_name}`,
-      description: `Tender ${currentTender.reference} (${currentTender.company_name}) has been converted to a Quote. Please review and prepare the quotation.`,
-      assignedTo: handlerName,
-      assignedBy: currentManagerUser || AUTH.getUserName() || 'System',
-      dueDate: null,
-      priority: 'high',
-      status: 'open',
-      createdAt: new Date().toISOString()
-    };
-
-    officeTasksData.tasks = officeTasksData.tasks || [];
-    officeTasksData.tasks.push(task);
-    await saveOfficeTasksData();
+    try {
+      await api.post('/api/office-tasks', {
+        title: `Quote: ${currentTender.reference} — ${currentTender.project_name}`,
+        description: `Tender ${currentTender.reference} (${currentTender.company_name}) has been converted to a Quote. Please review and prepare the quotation.`,
+        assigned_to: handlerName,
+        assigned_by: currentManagerUser || AUTH.getUserName() || 'System',
+        priority: 'high',
+        source: 'quote_handler',
+        source_ref: currentTender.reference
+      });
+    } catch (taskErr) {
+      console.warn('Failed to create quote handler task:', taskErr.message);
+      // Non-fatal — conversion already succeeded
+    }
 
     // Send email notification
     if (handlerEmail) {
@@ -21802,6 +21830,233 @@ async function openPoEditModal(poId) {
 }
 
 // ── Cross-page nav ──
+// ── Instant PO ────────────────────────────────────────────────────────────────
+// Phone-to-supplier shortcut: allocates a PO ref immediately with minimal input.
+// Creates a stub PO + follow-up office task assigned to the current user.
+// ─────────────────────────────────────────────────────────────────────────────
+
+let _instantPoState = {
+  scope: null,        // 'project' | 'overhead'
+  projectId: null,
+  supplierId: null,
+  newSupplierMode: false
+};
+
+function openInstantPoModal() {
+  _instantPoState = { scope: null, projectId: null, supplierId: null, newSupplierMode: false };
+
+  // Reset fields
+  document.getElementById('instantPoSupplierSearch').value = '';
+  document.getElementById('instantPoSupplierDropdown').innerHTML = '';
+  document.getElementById('instantPoSupplierSelected').textContent = '';
+  document.getElementById('instantPoProjectSearch').value = '';
+  document.getElementById('instantPoProjectDropdown').innerHTML = '';
+  document.getElementById('instantPoProjectSelected').textContent = '';
+  document.getElementById('instantPoCostCentre').value = '';
+  document.getElementById('instantPoDescription').value = '';
+  document.getElementById('instantPoError').textContent = '';
+
+  // New supplier sub-form
+  document.getElementById('instantPoNewSupplierWrap').style.display = 'none';
+  document.getElementById('instantPoNewSupplierName').value = '';
+  document.getElementById('instantPoNewSupplierContact').value = '';
+  document.getElementById('instantPoNewSupplierPhone').value = '';
+  document.getElementById('instantPoNewSupplierEmail').value = '';
+
+  setInstantPoScope('project');
+  document.getElementById('instantPoModal').classList.add('active');
+}
+
+function closeInstantPoModal() {
+  document.getElementById('instantPoModal').classList.remove('active');
+}
+
+function setInstantPoScope(scope) {
+  _instantPoState.scope = scope;
+  _instantPoState.projectId = null;
+
+  const projBtn = document.getElementById('instantPoScopeProjectBtn');
+  const ohBtn   = document.getElementById('instantPoScopeOverheadBtn');
+  const projWrap = document.getElementById('instantPoProjectWrap');
+  const ohWrap   = document.getElementById('instantPoOverheadWrap');
+
+  if (scope === 'project') {
+    projBtn.classList.add('btn-primary'); projBtn.classList.remove('btn-ghost');
+    ohBtn.classList.add('btn-ghost');     ohBtn.classList.remove('btn-primary');
+    projWrap.style.display = 'block';
+    ohWrap.style.display   = 'none';
+  } else {
+    ohBtn.classList.add('btn-primary');   ohBtn.classList.remove('btn-ghost');
+    projBtn.classList.add('btn-ghost');   projBtn.classList.remove('btn-primary');
+    projWrap.style.display = 'none';
+    ohWrap.style.display   = 'block';
+  }
+}
+
+function filterInstantPoProjects(q) {
+  const dd = document.getElementById('instantPoProjectDropdown');
+  const term = q.toLowerCase().trim();
+  const matches = (_poProjectsCache || []).filter(p =>
+    !term ||
+    (p.project_number || '').toLowerCase().includes(term) ||
+    (p.project_name   || '').toLowerCase().includes(term)
+  ).slice(0, 8);
+
+  if (!matches.length) { dd.innerHTML = ''; return; }
+
+  dd.innerHTML = `<div class="po-dropdown">${matches.map(p =>
+    `<div class="po-dropdown-item" onclick="selectInstantPoProject(${p.id})">
+       <strong>${escapeHtml(p.project_number)}</strong>
+       <span style="color:var(--muted);margin-left:8px">${escapeHtml(p.project_name)}</span>
+     </div>`
+  ).join('')}</div>`;
+}
+
+function selectInstantPoProject(projectId) {
+  const proj = (_poProjectsCache || []).find(p => p.id === projectId);
+  if (!proj) return;
+  _instantPoState.projectId = projectId;
+  document.getElementById('instantPoProjectSearch').value = `${proj.project_number} — ${proj.project_name}`;
+  document.getElementById('instantPoProjectDropdown').innerHTML = '';
+  document.getElementById('instantPoProjectSelected').textContent = proj.project_name;
+}
+
+function filterInstantPoSuppliers(q) {
+  const dd = document.getElementById('instantPoSupplierDropdown');
+  const term = q.toLowerCase().trim();
+  const matches = (_poSuppliersCache || []).filter(s =>
+    !term || (s.supplier_name || '').toLowerCase().includes(term)
+  ).slice(0, 8);
+
+  let html = matches.length
+    ? `<div class="po-dropdown">${matches.map(s =>
+        `<div class="po-dropdown-item" onclick="selectInstantPoSupplier(${s.id})">
+           ${escapeHtml(s.supplier_name)}
+         </div>`
+      ).join('')}`
+    : '<div class="po-dropdown">';
+
+  // Always show "Add new" option at the bottom of the dropdown
+  html += `<div class="po-dropdown-item po-dropdown-add" onclick="showInstantPoNewSupplier()">
+              ＋ Add "${escapeHtml(q || 'new supplier')}"
+           </div></div>`;
+
+  dd.innerHTML = term || matches.length ? html : '';
+}
+
+function selectInstantPoSupplier(supplierId) {
+  const sup = (_poSuppliersCache || []).find(s => s.id === supplierId);
+  if (!sup) return;
+  _instantPoState.supplierId = supplierId;
+  _instantPoState.newSupplierMode = false;
+  document.getElementById('instantPoSupplierSearch').value = sup.supplier_name;
+  document.getElementById('instantPoSupplierDropdown').innerHTML = '';
+  document.getElementById('instantPoSupplierSelected').textContent = sup.supplier_name;
+  document.getElementById('instantPoNewSupplierWrap').style.display = 'none';
+}
+
+function showInstantPoNewSupplier() {
+  const q = document.getElementById('instantPoSupplierSearch').value.trim();
+  _instantPoState.supplierId = null;
+  _instantPoState.newSupplierMode = true;
+  document.getElementById('instantPoSupplierDropdown').innerHTML = '';
+  document.getElementById('instantPoSupplierSelected').textContent = '';
+  document.getElementById('instantPoNewSupplierWrap').style.display = 'block';
+  if (q) document.getElementById('instantPoNewSupplierName').value = q;
+  document.getElementById('instantPoNewSupplierName').focus();
+}
+
+async function saveInstantPo() {
+  const btn = document.getElementById('instantPoSaveBtn');
+  const errEl = document.getElementById('instantPoError');
+  errEl.textContent = '';
+
+  // ── Validate ──
+  if (!_instantPoState.supplierId && !_instantPoState.newSupplierMode) {
+    errEl.textContent = 'Select a supplier or add a new one.';
+    return;
+  }
+  if (_instantPoState.newSupplierMode) {
+    const nm = document.getElementById('instantPoNewSupplierName').value.trim();
+    if (!nm) { errEl.textContent = 'Supplier name is required.'; return; }
+  }
+  if (_instantPoState.scope === 'project' && !_instantPoState.projectId) {
+    errEl.textContent = 'Select a project, or switch to Overhead PO.';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+
+  try {
+    // ── 1. Create supplier if new ──
+    let supplierId = _instantPoState.supplierId;
+    if (_instantPoState.newSupplierMode) {
+      const newSup = await api.post('/api/suppliers', {
+        supplier_name: document.getElementById('instantPoNewSupplierName').value.trim(),
+        contact_name:  document.getElementById('instantPoNewSupplierContact').value.trim() || null,
+        telephone:     document.getElementById('instantPoNewSupplierPhone').value.trim() || null,
+        email:         document.getElementById('instantPoNewSupplierEmail').value.trim() || null
+      });
+      supplierId = newSup.id;
+      // Add to cache so it shows in future searches this session
+      _poSuppliersCache.push(newSup);
+    }
+
+    // ── 2. Allocate PO ref and create stub PO ──
+    const poPayload = {
+      supplier_id:  supplierId,
+      status:       'Open',
+      total_value:  0,
+      vat_rate:     20,
+      vat_amount:   0,
+      description:  document.getElementById('instantPoDescription').value.trim() || null,
+      created_by:   currentPoUser || currentManagerUser
+    };
+
+    if (_instantPoState.scope === 'project' && _instantPoState.projectId) {
+      poPayload.project_id = _instantPoState.projectId;
+      const proj = (_poProjectsCache || []).find(p => p.id === _instantPoState.projectId);
+      if (proj) poPayload.job_number = proj.project_number;
+    } else {
+      const cc = document.getElementById('instantPoCostCentre').value.trim();
+      if (cc) poPayload.cost_centre = cc;
+    }
+
+    const newPo = await api.post('/api/purchase-orders', poPayload);
+    const poRef = newPo.reference;
+
+    // ── 3. Create follow-up office task assigned to the person who raised it ──
+    const taskOwner = currentPoUser || currentManagerUser;
+    const supplierName = _instantPoState.newSupplierMode
+      ? document.getElementById('instantPoNewSupplierName').value.trim()
+      : ((_poSuppliersCache || []).find(s => s.id === supplierId) || {}).supplier_name || 'supplier';
+
+    try {
+      await api.post('/api/office-tasks', {
+        title: `Complete PO ${poRef} — ${supplierName}`,
+        description: `Instant PO raised by ${taskOwner}. Add line items, value and delivery details.`,
+        assigned_to: taskOwner,
+        assigned_by: taskOwner,
+        priority: 'high',
+        source: 'instant_po',
+        source_ref: poRef
+      });
+    } catch (taskErr) {
+      console.warn('Instant PO task creation failed (non-fatal):', taskErr.message);
+    }
+
+    toast(`⚡ PO ${poRef} created — complete it from your task queue`, 'success');
+    closeInstantPoModal();
+    await loadPoTracker();
+  } catch (e) {
+    errEl.textContent = e.message || 'Save failed';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '⚡ Get PO Number';
+  }
+}
+
 function navToPoTracker() {
   const perms = getUserPermissions(currentManagerUser) || {};
   if (!perms.viewPurchaseOrders && !perms.editPurchaseOrders) {
