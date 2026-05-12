@@ -21962,8 +21962,87 @@ function showInstantPoNewSupplier() {
   document.getElementById('instantPoSupplierDropdown').innerHTML = '';
   document.getElementById('instantPoSupplierSelected').textContent = '';
   document.getElementById('instantPoNewSupplierWrap').style.display = 'block';
+  document.getElementById('instantPoParsePanel').style.display = 'none';
   if (q) document.getElementById('instantPoNewSupplierName').value = q;
   document.getElementById('instantPoNewSupplierName').focus();
+}
+
+function toggleInstantPoParsePanel() {
+  const panel = document.getElementById('instantPoParsePanel');
+  const isHidden = panel.style.display === 'none';
+  panel.style.display = isHidden ? 'block' : 'none';
+  if (isHidden) document.getElementById('instantPoParseText').focus();
+}
+
+async function parseInstantPoSupplier() {
+  const text = document.getElementById('instantPoParseText').value.trim();
+  if (!text) return;
+
+  const btn    = document.getElementById('instantPoParseRunBtn');
+  const status = document.getElementById('instantPoParseStatus');
+  btn.disabled = true;
+  btn.textContent = 'Parsing…';
+  status.textContent = '';
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        system: `You extract supplier contact details from pasted text (email signatures, quote headers, invoice footers, website footers, etc.).
+
+Return ONLY a JSON object with these fields — use null for anything not found:
+{
+  "supplier_name": string | null,
+  "contact_name":  string | null,
+  "telephone":     string | null,
+  "email":         string | null
+}
+
+Rules:
+- supplier_name: the company/trading name, not a person's name
+- contact_name: the individual's name (first + last if available)
+- telephone: include country code if present, keep formatting as-is
+- email: only a real email address, not a website URL
+- Do not invent or guess values — only extract what is explicitly present in the text
+- Return only the JSON object, no explanation, no markdown`,
+        messages: [{ role: 'user', content: text }]
+      })
+    });
+
+    const data = await res.json();
+    const raw = (data.content || []).find(b => b.type === 'text')?.text || '';
+    const clean = raw.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(clean);
+
+    // Pre-fill fields — only overwrite if the parsed value is non-null
+    if (parsed.supplier_name) document.getElementById('instantPoNewSupplierName').value    = parsed.supplier_name;
+    if (parsed.contact_name)  document.getElementById('instantPoNewSupplierContact').value = parsed.contact_name;
+    if (parsed.telephone)     document.getElementById('instantPoNewSupplierPhone').value   = parsed.telephone;
+    if (parsed.email)         document.getElementById('instantPoNewSupplierEmail').value   = parsed.email;
+
+    const found = [parsed.supplier_name, parsed.contact_name, parsed.telephone, parsed.email]
+      .filter(Boolean).length;
+    status.textContent = found ? `✓ ${found} field${found > 1 ? 's' : ''} filled — review and adjust` : 'Nothing found — paste more detail';
+    status.style.color = found ? 'var(--green)' : 'var(--orange, #e67e22)';
+
+    // Collapse the parse panel so the user focuses on reviewing the filled fields
+    if (found) {
+      setTimeout(() => {
+        document.getElementById('instantPoParsePanel').style.display = 'none';
+        status.textContent = '';
+      }, 2000);
+    }
+  } catch (e) {
+    status.textContent = 'Parse failed — check console';
+    status.style.color = 'var(--red)';
+    console.error('Supplier parse error:', e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Parse';
+  }
 }
 
 async function saveInstantPo() {

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Purchase Orders</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260512e">
+<link rel="stylesheet" href="bama.css?v=20260512f">
 </head>
 <body>
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
@@ -294,7 +294,26 @@
       <!-- New supplier sub-form (revealed when user clicks Add) -->
       <div id="instantPoNewSupplierWrap" style="display:none;margin-top:10px;padding:12px;
            background:var(--bg-darker);border-radius:8px;border:1px solid var(--border)">
-        <div style="font-size:12px;color:var(--muted);margin-bottom:8px;font-weight:600">NEW SUPPLIER</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div style="font-size:12px;color:var(--muted);font-weight:600">NEW SUPPLIER</div>
+          <button type="button" class="btn btn-ghost" id="instantPoParseBtn"
+                  onclick="toggleInstantPoParsePanel()"
+                  style="font-size:11px;padding:3px 10px">🔍 Parse from quote</button>
+        </div>
+
+        <!-- Parse panel — hidden by default -->
+        <div id="instantPoParsePanel" style="display:none;margin-bottom:10px">
+          <label class="field-label">Paste supplier details from their quote</label>
+          <textarea class="field-input" id="instantPoParseText" rows="4"
+                    style="font-family:inherit;font-size:12px;resize:vertical"
+                    placeholder="Paste any text containing the supplier's name, address, contact details…"></textarea>
+          <div style="display:flex;gap:8px;margin-top:6px;align-items:center">
+            <button type="button" class="btn btn-primary" onclick="parseInstantPoSupplier()"
+                    id="instantPoParseRunBtn" style="font-size:12px;padding:5px 14px">Parse</button>
+            <div id="instantPoParseStatus" style="font-size:12px;color:var(--muted)"></div>
+          </div>
+        </div>
+
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <div style="grid-column:1/-1">
             <label class="field-label">Company Name *</label>
@@ -440,6 +459,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260512e"></script>
+<script src="shared.js?v=20260512f"></script>
 </body>
 </html>
