@@ -8454,7 +8454,9 @@ async function loadUserAccessData() {
           editQuotes: !!row.edit_quotes,
           viewQuotes: !!row.view_quotes,
           editProjects: !!row.edit_projects,
-          viewProjects: !!row.view_projects
+          viewProjects: !!row.view_projects,
+          viewPurchaseOrders: !!row.view_purchase_orders,
+          editPurchaseOrders: !!row.edit_purchase_orders
         }
       };
     });
@@ -8511,7 +8513,9 @@ const PERMISSION_DEFS = [
   { key: 'editQuotes', label: 'Edit Quotes', desc: 'Edit and manage quotes' },
   { key: 'viewQuotes', label: 'View Quotes', desc: 'View quotes (read-only)' },
   { key: 'editProjects', label: 'Edit Projects', desc: 'Edit project tracker entries (status, dates, comments)' },
-  { key: 'viewProjects', label: 'View Projects', desc: 'View project tracker (read-only)' }
+  { key: 'viewProjects', label: 'View Projects', desc: 'View project tracker (read-only)' },
+  { key: 'viewPurchaseOrders', label: 'View Purchase Orders', desc: 'View the PO tracker (read-only)' },
+  { key: 'editPurchaseOrders', label: 'Edit Purchase Orders', desc: 'Raise, edit, approve and send purchase orders' }
 ];
 
 const PERM_TO_TAB = {
@@ -11808,7 +11812,8 @@ async function toggleUserPermission(empName, permKey, enabled) {
         payroll: false, archive: false, staff: false, holidays: false,
         reports: false, settings: false, userAccess: false, draftsmanMode: false,
         tenders: false, editQuotes: false, viewQuotes: false,
-        editProjects: false, viewProjects: false
+        editProjects: false, viewProjects: false,
+        viewPurchaseOrders: false, editPurchaseOrders: false
       }
     };
   }
@@ -13399,6 +13404,7 @@ function updateCrossNavSidebar() {
   set('sidebarBtnQuotations',      !!(perms.viewQuotes || perms.editQuotes),    'Quotations');
   set('sidebarBtnBabcockQuotes',   !!perms.tenders,                              'Babcock Quotes');
   set('sidebarBtnProjectTracker',  !!(perms.viewProjects || perms.editProjects),'Project Tracker');
+  set('sidebarBtnPurchaseOrders',  !!(perms.viewPurchaseOrders || perms.editPurchaseOrders), 'Purchase Orders');
 }
 
 // Back-compat aliases — call sites are scattered.
@@ -21074,6 +21080,733 @@ async function saveQuoteLineItems() {
   for (const li of dirty) delete li._dirty;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// PURCHASE ORDERS — Tracker page logic (po-tracker.html)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Phase 1a: list + create + edit (basic). Phase 1b will layer in PDF
+// generation, SharePoint upload, delivery note, and supplier email.
+//
+// Conventions follow Babcock: shared PIN gate via bama_mgr_authed,
+// shared cross-nav sidebar, in-page modals for new/detail.
+// ═══════════════════════════════════════════════════════════════════════════
+
+let _poList            = [];
+let _poProjectsCache   = [];   // populated from /api/projects on init
+let _poSuppliersCache  = [];   // populated from /api/suppliers on init
+let _poCostCentres     = [];   // populated from /api/settings/purchase_order_cost_centres
+let _poNewState        = null; // { scope, projectId, supplierId, jobNumber, lineItems[] }
+let _poPendingPinUser  = null;
+let _poEditingId       = null; // when set, savePoNew() updates instead of creating
+let _poProjectBudgets  = {};   // { projectId: { contractValue, poSpend } } — for budget warn
+
+// ── Page entry ──
+async function initPoTrackerPage() {
+  const authed = sessionStorage.getItem('bama_mgr_authed');
+  if (authed) {
+    currentManagerUser = authed;
+    const perms = getUserPermissions(currentManagerUser) || {};
+    if (perms.viewPurchaseOrders || perms.editPurchaseOrders) {
+      document.getElementById('screenPoSelect').style.display = 'none';
+      document.getElementById('poLayout').style.display = 'flex';
+      updateCrossNavSidebar();
+      await loadPoSupportData();
+      await loadPoTracker();
+      return;
+    }
+  }
+  renderPoEmployeeGrid();
+}
+
+function renderPoEmployeeGrid() {
+  const grid = document.getElementById('poEmployeeGrid');
+  if (!grid) return;
+  const empList = (state.timesheetData.employees || [])
+    .filter(e => e.active !== false && (e.staffType || 'workshop') === 'office');
+  if (!empList.length) {
+    grid.innerHTML = '<div class="empty-state" style="padding:30px"><div style="font-size:28px;margin-bottom:10px">&#128101;</div><div>No office staff set up yet.</div></div>';
+    return;
+  }
+  grid.innerHTML = empList.map(emp => {
+    const ini = (emp.name || '').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+    const col = empColor(emp.name);
+    return `
+      <div class="emp-btn" onclick="selectPoEmployee('${emp.name.replace(/'/g, "\\\\'")}')">
+        <div class="emp-avatar" style="width:48px;height:48px;font-size:19px;background:linear-gradient(135deg,${col},#3e1a00)">${ini}</div>
+        <div class="emp-name" style="font-size:13px">${emp.name}</div>
+        <div style="font-size:10px;color:var(--subtle);margin-top:3px">${emp.hasPin ? '&#128274; PIN set' : '&#128275; No PIN'}</div>
+      </div>`;
+  }).join('');
+}
+
+function selectPoEmployee(name) {
+  const emp = (state.timesheetData.employees || []).find(e => e.name === name);
+  if (!emp) return;
+  if (!emp.hasPin) { toast('No PIN set for this user.', 'error'); return; }
+  _poPendingPinUser = { name, empId: emp.id };
+  document.getElementById('poPinUser').textContent = name;
+  document.getElementById('poPinInput').value = '';
+  document.getElementById('poPinError').textContent = '';
+  document.getElementById('poPinModal').classList.add('active');
+  setTimeout(() => document.getElementById('poPinInput').focus(), 200);
+}
+
+async function verifyPoPin() {
+  if (!_poPendingPinUser) return;
+  const pin = document.getElementById('poPinInput').value;
+  if (!pin) return;
+  try {
+    const result = await api.post('/api/auth/verify-pin', { employee_id: _poPendingPinUser.empId, pin });
+    if (!result || !result.valid) {
+      document.getElementById('poPinError').textContent = (result && result.reason) || 'Incorrect PIN';
+      document.getElementById('poPinInput').value = '';
+      return;
+    }
+    currentManagerUser = _poPendingPinUser.name;
+    sessionStorage.setItem('bama_mgr_authed', currentManagerUser);
+    document.getElementById('poPinModal').classList.remove('active');
+    const perms = getUserPermissions(currentManagerUser) || {};
+    if (!perms.viewPurchaseOrders && !perms.editPurchaseOrders) {
+      toast('You don\'t have permission to access Purchase Orders.', 'error');
+      currentManagerUser = null;
+      sessionStorage.removeItem('bama_mgr_authed');
+      return;
+    }
+    document.getElementById('screenPoSelect').style.display = 'none';
+    document.getElementById('poLayout').style.display = 'flex';
+    updateCrossNavSidebar();
+    await loadPoSupportData();
+    await loadPoTracker();
+  } catch (err) {
+    document.getElementById('poPinError').textContent = 'PIN verification failed';
+    document.getElementById('poPinInput').value = '';
+  }
+}
+
+// ── Support data: projects, suppliers, cost centres ──
+async function loadPoSupportData() {
+  try {
+    const [projects, suppliers, ccSetting] = await Promise.all([
+      api.get('/api/projects').catch(() => []),
+      api.get('/api/suppliers').catch(() => []),
+      api.get('/api/settings/purchase_order_cost_centres').catch(() => null)
+    ]);
+    _poProjectsCache  = Array.isArray(projects)  ? projects  : [];
+    _poSuppliersCache = Array.isArray(suppliers) ? suppliers : [];
+    let cc = [];
+    if (ccSetting && ccSetting.value) {
+      try { cc = typeof ccSetting.value === 'string' ? JSON.parse(ccSetting.value) : ccSetting.value; }
+      catch (e) { cc = []; }
+    }
+    _poCostCentres = Array.isArray(cc) ? cc : [];
+  } catch (e) {
+    console.warn('PO support data load failed:', e);
+  }
+}
+
+// ── Tracker load + render ──
+async function loadPoTracker() {
+  const tbody = document.getElementById('poTrackerTbody');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="empty-state" style="padding:30px"><div class="spinner"></div></td></tr>';
+  try {
+    _poList = await api.get('/api/purchase-orders');
+    if (!Array.isArray(_poList)) _poList = [];
+  } catch (e) {
+    _poList = [];
+    console.warn('PO list load failed:', e);
+  }
+  renderPoKpis();
+  renderPoTracker();
+}
+
+function renderPoKpis() {
+  const tiles = document.getElementById('poKpiTiles');
+  if (!tiles) return;
+  const open       = _poList.filter(p => p.status === 'Open').length;
+  const received   = _poList.filter(p => p.status === 'Received').length;
+  const closed     = _poList.filter(p => p.status === 'Closed').length;
+
+  // "This month" spend = sum of total_value for POs created in current month
+  const now = new Date();
+  const yyMM = `${String(now.getUTCFullYear()).padStart(4, '0')}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+  const thisMonthTotal = _poList
+    .filter(p => (p.created_at || '').startsWith(yyMM))
+    .reduce((s, p) => s + (Number(p.total_value) || 0), 0);
+
+  // Variance flagged = POs with an invoice_value differing from total_value by > £0.01
+  const variance = _poList.filter(p =>
+    p.invoice_received_at &&
+    Number(p.invoice_value || 0) > 0 &&
+    Math.abs(Number(p.invoice_value) - Number(p.total_value || 0)) > 0.01
+  ).length;
+
+  tiles.innerHTML = `
+    ${kpiTile('🟢 Open',       open,     'open POs awaiting delivery')}
+    ${kpiTile('📦 Received',   received, 'delivered, pending invoice/payment')}
+    ${kpiTile('✅ Closed',     closed,   'paid and complete')}
+    ${kpiTile('⚠️ Variance',   variance, 'invoice ≠ PO total')}
+    ${kpiTile('💷 This Month', `£${thisMonthTotal.toFixed(2)}`, 'POs raised this month')}
+  `;
+}
+
+function kpiTile(label, value, hint) {
+  return `
+    <div class="card" style="padding:12px 14px">
+      <div style="font-size:11px;color:var(--muted);letter-spacing:.5px;text-transform:uppercase">${label}</div>
+      <div style="font-size:22px;font-weight:700;font-family:var(--font-mono);margin-top:4px">${value}</div>
+      <div style="font-size:10px;color:var(--subtle);margin-top:2px">${hint}</div>
+    </div>`;
+}
+
+function renderPoTracker() {
+  const tbody = document.getElementById('poTrackerTbody');
+  if (!tbody) return;
+  const q       = (document.getElementById('poTrackerSearch')?.value || '').toLowerCase().trim();
+  const status  = document.getElementById('poTrackerStatusFilter')?.value || '';
+  const scope   = document.getElementById('poTrackerScopeFilter')?.value  || '';
+
+  const rows = _poList.filter(p => {
+    if (status && p.status !== status) return false;
+    if (scope === 'project'  && !p.project_id) return false;
+    if (scope === 'overhead' &&  p.project_id) return false;
+    if (q) {
+      const hay = `${p.reference || ''} ${p.supplier_name || ''} ${p.project_number || ''} ${p.project_name || ''} ${p.cost_centre || ''} ${p.description || ''}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  document.getElementById('poTrackerCount').textContent =
+    `${rows.length} of ${_poList.length} POs`;
+
+  if (rows.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="8" class="empty-state" style="padding:30px">
+      <div style="font-size:28px;margin-bottom:8px">🧾</div>
+      <div>No purchase orders ${q || status || scope ? 'match the current filters' : 'yet'}.</div>
+    </td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = rows.map(p => {
+    const scopeText = p.project_id
+      ? `<span style="font-family:var(--font-mono)">${escapeHtml(p.project_number || '—')}</span><div style="font-size:11px;color:var(--muted)">${escapeHtml(p.project_name || '')}</div>`
+      : `<span style="color:var(--muted)">Overhead · ${escapeHtml(p.cost_centre || '—')}</span>`;
+    const dateStr = p.created_at ? (p.created_at.slice(0, 10)) : '—';
+    const total   = (p.total_value !== null && p.total_value !== undefined)
+                    ? `£${Number(p.total_value).toFixed(2)}` : '—';
+    return `
+      <tr style="cursor:pointer" onclick="openPoDetailModal(${p.id})">
+        <td style="font-family:var(--font-mono);font-weight:600">${escapeHtml(p.reference || '')}</td>
+        <td>${escapeHtml(p.supplier_name || '—')}</td>
+        <td>${scopeText}</td>
+        <td>${dateStr}</td>
+        <td style="text-align:right;font-family:var(--font-mono)">${total}</td>
+        <td>${poStatusBadge(p)}</td>
+        <td style="font-size:12px;color:var(--muted)">${poNextAction(p)}</td>
+        <td style="text-align:right">
+          <button class="btn btn-ghost" style="padding:3px 8px;font-size:11px" onclick="event.stopPropagation();openPoEditModal(${p.id})">✏️</button>
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+function poStatusBadge(p) {
+  const map = {
+    'Open':      { bg:'#22372d', fg:'#7fdca6' },
+    'Received':  { bg:'#2d2a3e', fg:'#a99dff' },
+    'Closed':    { bg:'#1f2a3a', fg:'#7fb2f0' },
+    'Cancelled': { bg:'#3a2222', fg:'#ff8a8a' }
+  };
+  const s = map[p.status] || { bg:'#333', fg:'#bbb' };
+  return `<span style="background:${s.bg};color:${s.fg};font-size:11px;padding:3px 8px;border-radius:6px;font-weight:600">${escapeHtml(p.status || '—')}</span>`;
+}
+
+function poNextAction(p) {
+  if (p.status === 'Cancelled') return 'Cancelled';
+  if (p.status === 'Closed')    return 'Done';
+  if (!p.approved_at)           return '→ Approve & Generate';
+  if (!p.sent_at)               return '→ Send to supplier';
+  if (!p.delivery_received_at)  return '→ Mark received';
+  if (!p.invoice_received_at)   return '→ Attach invoice';
+  if (!p.paid_at)               return '→ Mark paid';
+  return '—';
+}
+
+// ── New PO modal ──
+function openPoNewModal() {
+  const perms = getUserPermissions(currentManagerUser) || {};
+  if (!perms.editPurchaseOrders) {
+    toast('You don\'t have permission to raise POs.', 'error');
+    return;
+  }
+  _poEditingId = null;
+  _poNewState = { scope: null, projectId: null, supplierId: null, jobNumber: '', lineItems: [] };
+  document.querySelector('#poNewModal .modal-title').textContent = '📝 New Purchase Order';
+  document.getElementById('poNewRef').value = '';
+  document.getElementById('poNewDate').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('poNewProjectSearch').value = '';
+  document.getElementById('poNewProjectDropdown').innerHTML = '';
+  document.getElementById('poNewProjectSelected').textContent = '';
+  document.getElementById('poNewSupplierSearch').value = '';
+  document.getElementById('poNewSupplierDropdown').innerHTML = '';
+  document.getElementById('poNewSupplierSelected').textContent = '';
+  document.getElementById('poNewDeliveryDate').value = '';
+  document.getElementById('poNewDeliveryAddress').value = '11 Enterprise Way, Enterprise Park, Peterborough, PE7 3WY';
+  document.getElementById('poNewDeliveryCharge').value = '';
+  document.getElementById('poNewCollectionCharge').value = '';
+  document.getElementById('poNewTotal').value = '';
+  document.getElementById('poNewDescription').value = '';
+  document.getElementById('poNewJobNumber').value = '';
+  document.getElementById('poNewLineItems').innerHTML = '';
+  document.getElementById('poNewError').textContent = '';
+  document.getElementById('poNewBudgetWarn').textContent = '';
+  document.getElementById('poNewSaveBtn').textContent = 'Create PO';
+
+  // Populate cost-centre dropdown
+  const ccSel = document.getElementById('poNewCostCentre');
+  ccSel.innerHTML = '<option value="">—</option>' +
+    _poCostCentres.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+
+  setPoScope('project'); // default
+
+  // Pre-fetch next reference
+  api.get('/api/purchase-orders-next-reference').then(r => {
+    document.getElementById('poNewRef').value = (r && r.reference) || '';
+  }).catch(() => {});
+
+  document.getElementById('poNewModal').classList.add('active');
+}
+
+function closePoNewModal() {
+  document.getElementById('poNewModal').classList.remove('active');
+  _poEditingId = null;
+  _poNewState = null;
+}
+
+function setPoScope(scope) {
+  if (!_poNewState) return;
+  _poNewState.scope = scope;
+  document.getElementById('poNewProjectWrap').style.display  = scope === 'project'  ? '' : 'none';
+  document.getElementById('poNewOverheadWrap').style.display = scope === 'overhead' ? '' : 'none';
+  // Visual toggle on buttons
+  const projBtn = document.getElementById('poScopeProjectBtn');
+  const ovrBtn  = document.getElementById('poScopeOverheadBtn');
+  if (scope === 'project')  { projBtn.classList.add('btn-primary'); projBtn.classList.remove('btn-ghost');
+                              ovrBtn.classList.remove('btn-primary'); ovrBtn.classList.add('btn-ghost'); }
+  else                       { ovrBtn.classList.add('btn-primary');  ovrBtn.classList.remove('btn-ghost');
+                              projBtn.classList.remove('btn-primary'); projBtn.classList.add('btn-ghost'); }
+  // Clear the *other* scope's selection so we can't get into a bad state
+  if (scope === 'project') {
+    document.getElementById('poNewCostCentre').value = '';
+  } else {
+    _poNewState.projectId = null;
+    _poNewState.jobNumber = '';
+    document.getElementById('poNewProjectSearch').value = '';
+    document.getElementById('poNewProjectSelected').textContent = '';
+    document.getElementById('poNewJobNumber').value = '';
+  }
+  updatePoBudgetWarn();
+}
+
+function filterPoProjects(q) {
+  const dd = document.getElementById('poNewProjectDropdown');
+  if (!q || q.length < 1) { dd.innerHTML = ''; return; }
+  const qLo = q.toLowerCase();
+  const matches = _poProjectsCache
+    .filter(p => `${p.project_number || ''} ${p.project_name || ''}`.toLowerCase().includes(qLo))
+    .filter(p => p.status !== 'Archived' && p.status !== 'Cancelled')
+    .slice(0, 20);
+  if (matches.length === 0) {
+    dd.innerHTML = '<div style="padding:8px;color:var(--subtle);font-size:12px">No projects match</div>';
+    return;
+  }
+  dd.innerHTML = matches.map(p => `
+    <div style="padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--border);background:var(--bg-darker)"
+         onmouseover="this.style.background='var(--bg-darker-2,#22252b)'"
+         onmouseout="this.style.background='var(--bg-darker)'"
+         onclick="selectPoProject(${p.id})">
+      <div style="font-family:var(--font-mono);font-weight:600">${escapeHtml(p.project_number || '')}</div>
+      <div style="font-size:12px;color:var(--muted)">${escapeHtml(p.project_name || '')}</div>
+    </div>`).join('');
+}
+
+function selectPoProject(projectId) {
+  const p = _poProjectsCache.find(x => x.id === projectId);
+  if (!p) return;
+  _poNewState.projectId = p.id;
+  _poNewState.jobNumber = p.project_number || '';
+  document.getElementById('poNewProjectSearch').value = `${p.project_number} — ${p.project_name || ''}`;
+  document.getElementById('poNewProjectDropdown').innerHTML = '';
+  document.getElementById('poNewProjectSelected').textContent =
+    `Selected: ${p.project_number}${p.project_name ? ' · ' + p.project_name : ''}`;
+  document.getElementById('poNewJobNumber').value = p.project_number || '';
+  updatePoBudgetWarn();
+}
+
+function filterPoSuppliers(q) {
+  const dd = document.getElementById('poNewSupplierDropdown');
+  if (!q || q.length < 1) { dd.innerHTML = ''; return; }
+  const qLo = q.toLowerCase();
+  const matches = _poSuppliersCache
+    .filter(s => `${s.supplier_name || ''} ${s.contact_name || ''}`.toLowerCase().includes(qLo))
+    .slice(0, 20);
+  if (matches.length === 0) {
+    dd.innerHTML = '<div style="padding:8px;color:var(--subtle);font-size:12px">No suppliers match</div>';
+    return;
+  }
+  dd.innerHTML = matches.map(s => `
+    <div style="padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--border);background:var(--bg-darker)"
+         onmouseover="this.style.background='var(--bg-darker-2,#22252b)'"
+         onmouseout="this.style.background='var(--bg-darker)'"
+         onclick="selectPoSupplier(${s.id})">
+      <div style="font-weight:600">${escapeHtml(s.supplier_name || '')}</div>
+      <div style="font-size:12px;color:var(--muted)">${escapeHtml((s.address_line1 || '') + (s.city ? ' · ' + s.city : ''))}</div>
+    </div>`).join('');
+}
+
+function selectPoSupplier(supplierId) {
+  const s = _poSuppliersCache.find(x => x.id === supplierId);
+  if (!s) return;
+  _poNewState.supplierId = s.id;
+  document.getElementById('poNewSupplierSearch').value = s.supplier_name || '';
+  document.getElementById('poNewSupplierDropdown').innerHTML = '';
+  document.getElementById('poNewSupplierSelected').textContent =
+    `Selected: ${s.supplier_name}${s.contact_name ? ' · ' + s.contact_name : ''}`;
+}
+
+// ── Line items in the modal ──
+function addPoLineRow(prefill) {
+  const row = prefill || { description: '', quantity: '', unit: '', unit_price: '', line_total: '' };
+  _poNewState.lineItems.push(row);
+  renderPoLineRows();
+}
+
+function removePoLineRow(idx) {
+  _poNewState.lineItems.splice(idx, 1);
+  renderPoLineRows();
+  recalcPoTotal();
+}
+
+function renderPoLineRows() {
+  const wrap = document.getElementById('poNewLineItems');
+  wrap.innerHTML = _poNewState.lineItems.map((li, i) => `
+    <div style="display:grid;grid-template-columns:1.5fr 70px 70px 80px 80px 28px;gap:6px;align-items:center">
+      <input type="text" class="field-input" placeholder="Description" value="${escapeHtml(li.description || '')}"
+             oninput="_poNewState.lineItems[${i}].description=this.value">
+      <input type="number" step="0.001" class="field-input" placeholder="Qty" value="${escapeHtml(li.quantity || '')}"
+             oninput="_poNewState.lineItems[${i}].quantity=this.value;recalcPoLine(${i})">
+      <input type="text" class="field-input" placeholder="Unit" value="${escapeHtml(li.unit || '')}"
+             oninput="_poNewState.lineItems[${i}].unit=this.value">
+      <input type="number" step="0.0001" class="field-input" placeholder="£ unit" value="${escapeHtml(li.unit_price || '')}"
+             oninput="_poNewState.lineItems[${i}].unit_price=this.value;recalcPoLine(${i})">
+      <input type="number" step="0.01" class="field-input" placeholder="£ total"
+             value="${escapeHtml(li.line_total || '')}"
+             oninput="_poNewState.lineItems[${i}].line_total=this.value;recalcPoTotal()"
+             style="font-family:var(--font-mono);font-weight:600">
+      <button type="button" class="btn btn-ghost" style="padding:2px 6px;font-size:14px;color:var(--red)"
+              onclick="removePoLineRow(${i})">×</button>
+    </div>
+  `).join('');
+}
+
+function recalcPoLine(i) {
+  const li = _poNewState.lineItems[i];
+  if (!li) return;
+  const q = Number(li.quantity);
+  const u = Number(li.unit_price);
+  if (!isNaN(q) && !isNaN(u)) {
+    li.line_total = (q * u).toFixed(2);
+    renderPoLineRows();
+  }
+  recalcPoTotal();
+}
+
+function recalcPoTotal() {
+  let sum = 0;
+  for (const li of (_poNewState?.lineItems || [])) {
+    const lt = Number(li.line_total);
+    if (!isNaN(lt)) sum += lt;
+  }
+  const dc = Number(document.getElementById('poNewDeliveryCharge').value) || 0;
+  const cc = Number(document.getElementById('poNewCollectionCharge').value) || 0;
+  const total = sum + dc + cc;
+  if (sum > 0) {
+    document.getElementById('poNewTotal').value = total.toFixed(2);
+  }
+  updatePoBudgetWarn();
+}
+
+// ── Budget soft-warn ──
+function updatePoBudgetWarn() {
+  const el = document.getElementById('poNewBudgetWarn');
+  if (!el) return;
+  el.textContent = '';
+  if (!_poNewState || _poNewState.scope !== 'project' || !_poNewState.projectId) return;
+  const proj = _poProjectsCache.find(p => p.id === _poNewState.projectId);
+  if (!proj || !proj.quote_value) return;
+  const existing = _poList
+    .filter(p => p.project_id === _poNewState.projectId && p.status !== 'Cancelled' && p.id !== _poEditingId)
+    .reduce((s, p) => s + (Number(p.total_value) || 0), 0);
+  const thisTotal = Number(document.getElementById('poNewTotal').value) || 0;
+  const combined = existing + thisTotal;
+  if (combined > Number(proj.quote_value)) {
+    el.textContent = `⚠️ Existing POs (£${existing.toFixed(2)}) + this PO (£${thisTotal.toFixed(2)}) = £${combined.toFixed(2)} — exceeds project quote value of £${Number(proj.quote_value).toFixed(2)}. Soft warning only — you can still raise it.`;
+  }
+}
+
+// ── Save ──
+async function savePoNew() {
+  const errEl = document.getElementById('poNewError');
+  errEl.textContent = '';
+  if (!_poNewState) return;
+
+  // Validate
+  if (!_poNewState.scope) { errEl.textContent = 'Pick a scope (Project or Overhead).'; return; }
+  if (_poNewState.scope === 'project'  && !_poNewState.projectId) { errEl.textContent = 'Select a project.';      return; }
+  if (_poNewState.scope === 'overhead' && !document.getElementById('poNewCostCentre').value) {
+    errEl.textContent = 'Select a cost centre.'; return;
+  }
+  if (!_poNewState.supplierId) { errEl.textContent = 'Select a supplier.'; return; }
+
+  const body = {
+    supplier_id:        _poNewState.supplierId,
+    description:        document.getElementById('poNewDescription').value || null,
+    job_number:         document.getElementById('poNewJobNumber').value || null,
+    delivery_date:      document.getElementById('poNewDeliveryDate').value || null,
+    delivery_address:   document.getElementById('poNewDeliveryAddress').value || null,
+    delivery_charge:    document.getElementById('poNewDeliveryCharge').value || null,
+    collection_charge:  document.getElementById('poNewCollectionCharge').value || null,
+    total_value:        document.getElementById('poNewTotal').value || null,
+    created_by:         currentManagerUser || null,
+    line_items:         (_poNewState.lineItems || []).filter(li => li.description || li.quantity || li.unit_price || li.line_total)
+  };
+  if (_poNewState.scope === 'project') {
+    body.project_id  = _poNewState.projectId;
+  } else {
+    body.cost_centre = document.getElementById('poNewCostCentre').value;
+  }
+
+  const btn = document.getElementById('poNewSaveBtn');
+  btn.disabled = true;
+  btn.textContent = _poEditingId ? 'Saving…' : 'Creating…';
+  try {
+    if (_poEditingId) {
+      await api.put(`/api/purchase-orders/${_poEditingId}`, body);
+      toast('PO updated ✓', 'success');
+    } else {
+      await api.post('/api/purchase-orders', body);
+      toast('PO created ✓', 'success');
+    }
+    closePoNewModal();
+    await loadPoTracker();
+  } catch (e) {
+    console.error('PO save failed:', e);
+    errEl.textContent = (e && e.message) ? e.message : 'Save failed';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = _poEditingId ? 'Save Changes' : 'Create PO';
+  }
+}
+
+// ── Detail modal ──
+async function openPoDetailModal(poId) {
+  document.getElementById('poDetailRef').textContent = '—';
+  document.getElementById('poDetailSub').textContent = 'Loading…';
+  document.getElementById('poDetailBody').innerHTML  = '<div style="padding:20px;text-align:center"><div class="spinner"></div></div>';
+  document.getElementById('poDetailStatusBadge').outerHTML = '<div id="poDetailStatusBadge" style="font-size:11px;padding:4px 10px;border-radius:6px;font-weight:600">—</div>';
+  document.getElementById('poDetailModal').classList.add('active');
+  try {
+    const p = await api.get(`/api/purchase-orders/${poId}`);
+    renderPoDetail(p);
+  } catch (e) {
+    document.getElementById('poDetailBody').innerHTML = `<div style="color:var(--red);padding:20px">Failed to load PO: ${escapeHtml(e.message || '')}</div>`;
+  }
+}
+
+function renderPoDetail(p) {
+  document.getElementById('poDetailRef').textContent  = p.reference || '';
+  const subBits = [];
+  if (p.project_id) subBits.push(`${p.project_number} · ${p.project_name || ''}`);
+  else              subBits.push(`Overhead · ${p.cost_centre || ''}`);
+  subBits.push(p.supplier_name || '');
+  document.getElementById('poDetailSub').textContent = subBits.filter(Boolean).join(' · ');
+
+  // Re-render the status badge (we replaced the node above)
+  const badge = document.getElementById('poDetailStatusBadge');
+  if (badge) badge.outerHTML = poStatusBadge(p).replace('<span', '<span id="poDetailStatusBadge"');
+
+  const lineItemsHtml = (p.line_items && p.line_items.length > 0)
+    ? `<table style="width:100%;font-size:12px;border-collapse:collapse;margin-top:6px">
+         <thead><tr style="border-bottom:1px solid var(--border)">
+           <th style="text-align:left;padding:4px 6px">Description</th>
+           <th style="text-align:right;padding:4px 6px;width:60px">Qty</th>
+           <th style="text-align:left;padding:4px 6px;width:50px">Unit</th>
+           <th style="text-align:right;padding:4px 6px;width:80px">£ Unit</th>
+           <th style="text-align:right;padding:4px 6px;width:90px">£ Total</th>
+         </tr></thead>
+         <tbody>
+           ${p.line_items.map(li => `
+             <tr style="border-bottom:1px solid var(--border)">
+               <td style="padding:4px 6px">${escapeHtml(li.description || '')}</td>
+               <td style="padding:4px 6px;text-align:right;font-family:var(--font-mono)">${li.quantity !== null ? Number(li.quantity) : ''}</td>
+               <td style="padding:4px 6px">${escapeHtml(li.unit || '')}</td>
+               <td style="padding:4px 6px;text-align:right;font-family:var(--font-mono)">${li.unit_price !== null ? Number(li.unit_price).toFixed(4) : ''}</td>
+               <td style="padding:4px 6px;text-align:right;font-family:var(--font-mono)">${li.line_total !== null ? Number(li.line_total).toFixed(2) : ''}</td>
+             </tr>`).join('')}
+         </tbody>
+       </table>`
+    : '<div style="color:var(--subtle);font-size:12px;padding:6px 0">No line items — single-value PO.</div>';
+
+  document.getElementById('poDetailBody').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;font-size:13px">
+      <div>
+        <div style="font-size:11px;color:var(--muted);letter-spacing:.5px;text-transform:uppercase">Delivery</div>
+        <div style="margin-top:3px">${escapeHtml(p.delivery_address || '—')}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px">Date: ${p.delivery_date || '—'}</div>
+      </div>
+      <div>
+        <div style="font-size:11px;color:var(--muted);letter-spacing:.5px;text-transform:uppercase">Job / Project</div>
+        <div style="margin-top:3px;font-family:var(--font-mono)">${escapeHtml(p.job_number || '—')}</div>
+      </div>
+    </div>
+
+    <div style="margin-top:14px">
+      <div style="font-size:11px;color:var(--muted);letter-spacing:.5px;text-transform:uppercase">Description</div>
+      <div style="margin-top:3px">${escapeHtml(p.description || '—')}</div>
+    </div>
+
+    <div style="margin-top:14px">
+      <div style="font-size:11px;color:var(--muted);letter-spacing:.5px;text-transform:uppercase">Line items</div>
+      ${lineItemsHtml}
+    </div>
+
+    <div style="margin-top:14px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:13px">
+      <div><span style="color:var(--muted)">Delivery charge:</span> £${(Number(p.delivery_charge)||0).toFixed(2)}</div>
+      <div><span style="color:var(--muted)">Collection charge:</span> £${(Number(p.collection_charge)||0).toFixed(2)}</div>
+      <div style="text-align:right"><span style="color:var(--muted)">Total:</span> <b style="font-family:var(--font-mono)">£${(Number(p.total_value)||0).toFixed(2)}</b></div>
+    </div>
+
+    <div style="margin-top:14px;padding:10px;background:var(--bg-darker);border-radius:6px;font-size:12px">
+      <div style="font-size:11px;color:var(--muted);letter-spacing:.5px;text-transform:uppercase;margin-bottom:6px">Workflow</div>
+      <div>${p.approved_at ? `✅ Approved by ${escapeHtml(p.approved_by || '')} at ${p.approved_at.slice(0,16).replace('T',' ')}` : '⏳ Not yet approved'}</div>
+      <div>${p.sent_at ? `📨 Sent by ${escapeHtml(p.sent_by || '')} at ${p.sent_at.slice(0,16).replace('T',' ')}` : '⏳ Not sent to supplier'}</div>
+      <div>${p.delivery_received_at ? `📦 Delivery received at ${p.delivery_received_at.slice(0,16).replace('T',' ')}` : '⏳ Awaiting delivery'}</div>
+      <div>${p.invoice_received_at ? `🧾 Invoice ${escapeHtml(p.invoice_ref || '')} received (£${Number(p.invoice_value||0).toFixed(2)})` : '⏳ Awaiting invoice'}</div>
+      <div>${p.paid_at ? `💷 Paid at ${p.paid_at.slice(0,16).replace('T',' ')}` : '⏳ Not paid'}</div>
+    </div>
+
+    <div style="margin-top:10px;font-size:11px;color:var(--subtle)">
+      Raised by ${escapeHtml(p.created_by || '—')} on ${p.created_at ? p.created_at.slice(0,16).replace('T',' ') : '—'}
+    </div>
+  `;
+
+  // Stash id on the edit button so editPoFromDetail() can pick it up
+  document.getElementById('poDetailEditBtn').dataset.poId = p.id;
+  // Hide edit when user lacks the perm
+  const perms = getUserPermissions(currentManagerUser) || {};
+  document.getElementById('poDetailEditBtn').style.display = perms.editPurchaseOrders ? '' : 'none';
+}
+
+function editPoFromDetail() {
+  const id = parseInt(document.getElementById('poDetailEditBtn').dataset.poId || '0', 10);
+  if (!id) return;
+  document.getElementById('poDetailModal').classList.remove('active');
+  openPoEditModal(id);
+}
+
+async function openPoEditModal(poId) {
+  const perms = getUserPermissions(currentManagerUser) || {};
+  if (!perms.editPurchaseOrders) { toast('You don\'t have permission to edit POs.', 'error'); return; }
+  let p;
+  try { p = await api.get(`/api/purchase-orders/${poId}`); }
+  catch (e) { toast('Failed to load PO', 'error'); return; }
+
+  // Open the new-PO modal but pre-fill for edit
+  _poEditingId = poId;
+  _poNewState = {
+    scope:     p.project_id ? 'project' : 'overhead',
+    projectId: p.project_id || null,
+    supplierId: p.supplier_id,
+    jobNumber: p.job_number || '',
+    lineItems: (p.line_items || []).map(li => ({
+      description: li.description || '',
+      quantity:    li.quantity    !== null ? String(li.quantity)    : '',
+      unit:        li.unit         || '',
+      unit_price:  li.unit_price  !== null ? String(li.unit_price)  : '',
+      line_total:  li.line_total  !== null ? String(li.line_total)  : ''
+    }))
+  };
+
+  document.querySelector('#poNewModal .modal-title').textContent = `✏️ Edit ${p.reference}`;
+  document.getElementById('poNewRef').value = p.reference || '';
+  document.getElementById('poNewDate').value = (p.created_at || '').slice(0, 10);
+
+  // Populate cost-centre dropdown first (in case scope is overhead)
+  const ccSel = document.getElementById('poNewCostCentre');
+  ccSel.innerHTML = '<option value="">—</option>' +
+    _poCostCentres.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+
+  setPoScope(_poNewState.scope);
+
+  if (_poNewState.scope === 'project') {
+    const proj = _poProjectsCache.find(x => x.id === p.project_id);
+    if (proj) {
+      document.getElementById('poNewProjectSearch').value = `${proj.project_number} — ${proj.project_name || ''}`;
+      document.getElementById('poNewProjectSelected').textContent =
+        `Selected: ${proj.project_number}${proj.project_name ? ' · ' + proj.project_name : ''}`;
+    }
+    document.getElementById('poNewJobNumber').value = p.job_number || '';
+  } else {
+    ccSel.value = p.cost_centre || '';
+  }
+
+  // Supplier
+  const sup = _poSuppliersCache.find(s => s.id === p.supplier_id);
+  if (sup) {
+    document.getElementById('poNewSupplierSearch').value = sup.supplier_name || '';
+    document.getElementById('poNewSupplierSelected').textContent =
+      `Selected: ${sup.supplier_name}${sup.contact_name ? ' · ' + sup.contact_name : ''}`;
+  }
+
+  document.getElementById('poNewDeliveryDate').value     = p.delivery_date    || '';
+  document.getElementById('poNewDeliveryAddress').value  = p.delivery_address || '';
+  document.getElementById('poNewDeliveryCharge').value   = p.delivery_charge   !== null && p.delivery_charge   !== undefined ? p.delivery_charge   : '';
+  document.getElementById('poNewCollectionCharge').value = p.collection_charge !== null && p.collection_charge !== undefined ? p.collection_charge : '';
+  document.getElementById('poNewTotal').value            = p.total_value       !== null && p.total_value       !== undefined ? p.total_value       : '';
+  document.getElementById('poNewDescription').value      = p.description       || '';
+
+  renderPoLineRows();
+
+  document.getElementById('poNewError').textContent = '';
+  document.getElementById('poNewBudgetWarn').textContent = '';
+  document.getElementById('poNewSaveBtn').textContent = 'Save Changes';
+
+  document.getElementById('poNewModal').classList.add('active');
+  updatePoBudgetWarn();
+}
+
+// ── Cross-page nav ──
+function navToPoTracker() {
+  const perms = getUserPermissions(currentManagerUser) || {};
+  if (!perms.viewPurchaseOrders && !perms.editPurchaseOrders) {
+    toast('You don\'t have permission to access Purchase Orders', 'error');
+    return;
+  }
+  window.location.href = 'po-tracker.html';
+}
+
+// Minimal HTML escape — same impl used across the file. Defined locally as
+// a fallback in case the shared one is hoisted later in the file ordering.
+if (typeof window.escapeHtml !== 'function') {
+  window.escapeHtml = function(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  };
+}
+
+
+// ═══════════════════════════════════════════
 // PAGE DETECTION
 // ═══════════════════════════════════════════
 const CURRENT_PAGE = (() => {
@@ -21085,6 +21818,7 @@ const CURRENT_PAGE = (() => {
   if (path.includes('tenders')) return 'tenders';
   if (path.includes('quotes')) return 'quotes';
   if (path.includes('project-tracker')) return 'projectTracker';
+  if (path.includes('po-tracker')) return 'poTracker';
   if (path.includes('reports')) return 'reports';
   if (path.includes('projects') || path.includes('project')) return 'projects';
   if (path.includes('hub')) return 'hub';
@@ -21139,7 +21873,7 @@ async function init() {
     : Promise.resolve();
 
   // User access needed on manager and office pages (still from SharePoint for now)
-  const userAccessPromise = (CURRENT_PAGE === 'manager' || CURRENT_PAGE === 'office' || CURRENT_PAGE === 'projects' || CURRENT_PAGE === 'projectTracker' || CURRENT_PAGE === 'tenders' || CURRENT_PAGE === 'quotes' || CURRENT_PAGE === 'babcock' || CURRENT_PAGE === 'reports')
+  const userAccessPromise = (CURRENT_PAGE === 'manager' || CURRENT_PAGE === 'office' || CURRENT_PAGE === 'projects' || CURRENT_PAGE === 'projectTracker' || CURRENT_PAGE === 'poTracker' || CURRENT_PAGE === 'tenders' || CURRENT_PAGE === 'quotes' || CURRENT_PAGE === 'babcock' || CURRENT_PAGE === 'reports')
     ? Promise.race([
         loadUserAccessData(),
         new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 6000))
@@ -21204,6 +21938,8 @@ async function init() {
     initQuotesPage();
   } else if (CURRENT_PAGE === 'projectTracker') {
     initProjectTrackerPage();
+  } else if (CURRENT_PAGE === 'poTracker') {
+    initPoTrackerPage();
   } else if (CURRENT_PAGE === 'babcock') {
     initBabcockPage();
   } else if (CURRENT_PAGE === 'reports') {

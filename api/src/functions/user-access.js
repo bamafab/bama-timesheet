@@ -29,7 +29,8 @@ app.http('user-access-get', {
                         payroll: false, archive: false, staff: false, holidays: false,
                         reports: false, settings: false, user_access: false, draftsman_mode: false,
                         tenders: false, edit_quotes: false, view_quotes: false,
-                        edit_projects: false, view_projects: false
+                        edit_projects: false, view_projects: false,
+                        view_purchase_orders: false, edit_purchase_orders: false
                     }, request);
                 }
                 return ok(result.recordset[0], request);
@@ -67,7 +68,8 @@ app.http('user-access-update', {
                 'by_project', 'by_employee', 'clocking_in_out', 'payroll',
                 'archive', 'staff', 'holidays', 'reports', 'settings',
                 'user_access', 'draftsman_mode', 'tenders', 'edit_quotes', 'view_quotes',
-                'edit_projects', 'view_projects'
+                'edit_projects', 'view_projects',
+                'view_purchase_orders', 'edit_purchase_orders'
             ];
 
             // Map camelCase from frontend to snake_case
@@ -76,7 +78,8 @@ app.http('user-access-update', {
                 payroll: 'payroll', archive: 'archive', staff: 'staff', holidays: 'holidays',
                 reports: 'reports', settings: 'settings', userAccess: 'user_access', draftsmanMode: 'draftsman_mode',
                 tenders: 'tenders', editQuotes: 'edit_quotes', viewQuotes: 'view_quotes',
-                editProjects: 'edit_projects', viewProjects: 'view_projects'
+                editProjects: 'edit_projects', viewProjects: 'view_projects',
+                viewPurchaseOrders: 'view_purchase_orders', editPurchaseOrders: 'edit_purchase_orders'
             };
 
             // Check if row exists

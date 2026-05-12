@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BAMA Purchase Orders</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="bama.css?v=20260507b">
+</head>
+<body>
+<div class="loading-bar" id="loadingBar" style="width:0"></div>
+
+<!-- TOP BAR -->
+<div class="topbar">
+  <a href="hub.html" style="text-decoration:none"><div class="logo"><span style="color:#D0021B">BAMA</span> <span style="color:#D0021B">FABRICATION</span><span> PURCHASE ORDERS</span></div></a>
+  <div style="position:absolute;left:50%;transform:translate(-50%,-50%);top:50%">
+    <div class="clock-display" id="liveClock" style="font-size:15px;font-weight:700;letter-spacing:.5px">--:-- --</div>
+  </div>
+  <div class="topbar-right">
+    <a href="hub.html" style="text-decoration:none"><button class="manager-btn">&#8592; Hub</button></a>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<!-- ═══════════════════════════════════════
+     LOGIN SCREEN (employee picker)
+══════════════════════════════════════════ -->
+<div class="screen active" id="screenPoSelect">
+  <div class="mgr-select-wrap">
+    <div class="mgr-select-title">PURCHASE ORDERS</div>
+    <div class="mgr-select-sub">Select your name to log in</div>
+    <div class="mgr-emp-grid" id="poEmployeeGrid">
+      <div class="empty-state"><div class="spinner"></div></div>
+    </div>
+    <div style="text-align:center;margin-top:24px">
+      <button class="btn btn-ghost" onclick="window.location.href='hub.html'">&#8592; Back to Hub</button>
+    </div>
+  </div>
+</div>
+
+<!-- PIN MODAL -->
+<div class="modal-overlay" id="poPinModal">
+  <div class="modal" style="max-width:340px;text-align:center">
+    <div class="modal-title">🔐 Enter PIN</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:16px" id="poPinUser">—</div>
+    <input type="password" class="field-input" id="poPinInput" maxlength="6"
+      style="text-align:center;font-size:24px;letter-spacing:8px;max-width:180px;margin:0 auto"
+      onkeydown="if(event.key==='Enter')verifyPoPin()">
+    <div id="poPinError" style="color:var(--red);font-size:12px;margin-top:8px;min-height:18px"></div>
+    <div class="modal-actions" style="margin-top:16px">
+      <button class="btn btn-ghost" onclick="document.getElementById('poPinModal').classList.remove('active')">Cancel</button>
+      <button class="btn btn-primary" onclick="verifyPoPin()">Unlock</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     CONFIRM MODAL (used by showConfirmAsync)
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="confirmModal">
+  <div class="modal" style="max-width:440px;width:95vw">
+    <div class="modal-title" id="confirmTitle">Confirm</div>
+    <div id="confirmMsg" style="color:var(--muted);font-size:14px"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="document.getElementById('confirmModal').classList.remove('active')">Cancel</button>
+      <button class="btn btn-primary" id="confirmOk" onclick="">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     NEW PO MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="poNewModal">
+  <div class="modal" style="max-width:760px;width:95vw;max-height:90vh;overflow-y:auto">
+    <div class="modal-title">📝 New Purchase Order</div>
+
+    <!-- Reference + scope toggle -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <label class="field-label">PO Reference</label>
+        <input type="text" class="field-input" id="poNewRef" placeholder="auto-allocated" readonly
+               style="background:var(--bg-darker);font-family:var(--font-mono)">
+        <div style="font-size:11px;color:var(--subtle);margin-top:3px">Format: P{YY}{MM}-NNNN, resets monthly</div>
+      </div>
+      <div>
+        <label class="field-label">Date</label>
+        <input type="date" class="field-input" id="poNewDate">
+      </div>
+    </div>
+
+    <!-- Scope toggle: project vs overhead -->
+    <div class="card" style="padding:12px;margin-bottom:12px;background:var(--bg-darker)">
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <button type="button" class="btn btn-ghost" id="poScopeProjectBtn" onclick="setPoScope('project')"
+                style="flex:1;font-size:12px">📁 Project PO</button>
+        <button type="button" class="btn btn-ghost" id="poScopeOverheadBtn" onclick="setPoScope('overhead')"
+                style="flex:1;font-size:12px">🏢 Overhead PO</button>
+      </div>
+
+      <!-- Project picker (visible when scope = project) -->
+      <div id="poNewProjectWrap" style="display:none">
+        <label class="field-label">Project</label>
+        <input type="text" class="field-input" id="poNewProjectSearch"
+               placeholder="Type C-ref or project name…"
+               oninput="filterPoProjects(this.value)"
+               onfocus="filterPoProjects(this.value)">
+        <div id="poNewProjectDropdown" style="position:relative"></div>
+        <div id="poNewProjectSelected" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:18px"></div>
+        <div style="margin-top:8px">
+          <label class="field-label">Job Number (auto-filled from C-ref, editable)</label>
+          <input type="text" class="field-input" id="poNewJobNumber" placeholder="C260502 / S1982 / …">
+        </div>
+      </div>
+
+      <!-- Cost centre picker (visible when scope = overhead) -->
+      <div id="poNewOverheadWrap" style="display:none">
+        <label class="field-label">Cost Centre</label>
+        <select class="field-input" id="poNewCostCentre">
+          <option value="">—</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Supplier -->
+    <div style="margin-bottom:12px">
+      <label class="field-label">Supplier</label>
+      <input type="text" class="field-input" id="poNewSupplierSearch"
+             placeholder="Type supplier name…"
+             oninput="filterPoSuppliers(this.value)"
+             onfocus="filterPoSuppliers(this.value)">
+      <div id="poNewSupplierDropdown" style="position:relative"></div>
+      <div id="poNewSupplierSelected" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:18px"></div>
+    </div>
+
+    <!-- Delivery -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <label class="field-label">Delivery Date</label>
+        <input type="date" class="field-input" id="poNewDeliveryDate">
+      </div>
+      <div>
+        <label class="field-label">Delivery Address</label>
+        <textarea class="field-input" id="poNewDeliveryAddress" rows="2"
+                  style="font-family:inherit;font-size:13px">11 Enterprise Way, Enterprise Park, Peterborough, PE7 3WY</textarea>
+      </div>
+    </div>
+
+    <!-- Line items -->
+    <div style="margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <label class="field-label" style="margin:0">Line Items</label>
+        <button type="button" class="btn btn-ghost" style="padding:4px 10px;font-size:11px"
+                onclick="addPoLineRow()">+ Add Line</button>
+      </div>
+      <div id="poNewLineItems" style="display:flex;flex-direction:column;gap:6px"></div>
+      <div style="font-size:11px;color:var(--subtle);margin-top:6px">
+        Leave empty for single-total POs — enter total below instead.
+      </div>
+    </div>
+
+    <!-- Charges + total -->
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <label class="field-label">Delivery Charge (£)</label>
+        <input type="number" step="0.01" class="field-input" id="poNewDeliveryCharge"
+               oninput="recalcPoTotal()">
+      </div>
+      <div>
+        <label class="field-label">Collection Charge (£)</label>
+        <input type="number" step="0.01" class="field-input" id="poNewCollectionCharge"
+               oninput="recalcPoTotal()">
+      </div>
+      <div>
+        <label class="field-label">Total (£)</label>
+        <input type="number" step="0.01" class="field-input" id="poNewTotal"
+               style="font-weight:700;font-family:var(--font-mono)">
+        <div style="font-size:11px;color:var(--subtle);margin-top:3px">Auto from lines; editable</div>
+      </div>
+    </div>
+
+    <!-- Description / notes -->
+    <div style="margin-bottom:12px">
+      <label class="field-label">Description / Notes</label>
+      <textarea class="field-input" id="poNewDescription" rows="2"
+                style="font-family:inherit;font-size:13px"></textarea>
+    </div>
+
+    <div id="poNewError" style="color:var(--red);font-size:12px;min-height:16px;margin-bottom:6px"></div>
+    <div id="poNewBudgetWarn" style="color:var(--orange,#e67e22);font-size:12px;min-height:16px;margin-bottom:6px"></div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closePoNewModal()">Cancel</button>
+      <button class="btn btn-primary" id="poNewSaveBtn" onclick="savePoNew()">Create PO</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     DETAIL MODAL (read-only for now;
+     edit/approve actions land in Phase 1b–c)
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="poDetailModal">
+  <div class="modal" style="max-width:820px;width:95vw;max-height:90vh;overflow-y:auto">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
+      <div>
+        <div class="modal-title" id="poDetailRef" style="margin-bottom:4px">—</div>
+        <div id="poDetailSub" style="color:var(--muted);font-size:13px">—</div>
+      </div>
+      <div id="poDetailStatusBadge" style="font-size:11px;padding:4px 10px;border-radius:6px;font-weight:600">—</div>
+    </div>
+    <div id="poDetailBody"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="document.getElementById('poDetailModal').classList.remove('active')">Close</button>
+      <button class="btn btn-primary" id="poDetailEditBtn" onclick="editPoFromDetail()">✏️ Edit</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     MAIN LAYOUT
+══════════════════════════════════════════ -->
+<div class="mgr-layout" id="poLayout" style="display:none">
+
+  <!-- Sidebar (cross-nav like Babcock/Tenders/Quotes) -->
+  <nav class="mgr-sidebar" id="poSidebar">
+    <div class="sidebar-nav-group">
+      <button class="sidebar-nav-item" id="sidebarBtnTenders" onclick="navToTenders()">
+        <span class="sidebar-nav-icon">📋</span> Tenders
+      </button>
+      <button class="sidebar-nav-item" id="sidebarBtnQuotations" onclick="navToQuotes()">
+        <span class="sidebar-nav-icon">📊</span> Quotations
+      </button>
+      <button class="sidebar-nav-item" id="sidebarBtnBabcockQuotes" onclick="navToBabcock()">
+        <span class="sidebar-nav-icon">⚓</span> Babcock Quotes
+      </button>
+      <button class="sidebar-nav-item" id="sidebarBtnProjectTracker" onclick="navToProjectTracker()">
+        <span class="sidebar-nav-icon">🏗️</span> Project Tracker
+      </button>
+      <button class="sidebar-nav-item active">
+        <span class="sidebar-nav-icon">🧾</span> Purchase Orders
+      </button>
+      <hr class="sidebar-nav-divider">
+      <button class="sidebar-nav-item sidebar-secondary-item" onclick="navToTenders()">
+        <span class="sidebar-nav-icon">🏢</span> Clients
+      </button>
+    </div>
+  </nav>
+
+  <!-- Content -->
+  <div class="mgr-content">
+    <div class="mgr-header">
+      <div>
+        <div class="mgr-title">PURCHASE ORDERS</div>
+        <div style="color:var(--muted);font-size:13px">BAMA Fabrication · PO Tracker</div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center">
+        <button class="btn btn-primary" id="poNewBtn" onclick="openPoNewModal()">+ New PO</button>
+        <a href="hub.html" style="text-decoration:none"><button class="btn btn-ghost">Exit</button></a>
+      </div>
+    </div>
+
+    <!-- KPI tiles -->
+    <div id="poKpiTiles"
+         style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:16px">
+      <!-- populated by renderPoKpis() -->
+    </div>
+
+    <!-- Filters -->
+    <div class="card" style="margin-bottom:16px;padding:14px 16px">
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <input type="text" class="field-input" id="poTrackerSearch"
+               placeholder="Search reference, supplier, project…"
+               style="flex:1;min-width:220px;font-size:13px"
+               oninput="renderPoTracker()">
+        <select class="field-input" id="poTrackerStatusFilter"
+                style="min-width:160px;font-size:13px"
+                onchange="renderPoTracker()">
+          <option value="">All statuses</option>
+          <option value="Open">Open</option>
+          <option value="Received">Received</option>
+          <option value="Closed">Closed</option>
+          <option value="Cancelled">Cancelled</option>
+        </select>
+        <select class="field-input" id="poTrackerScopeFilter"
+                style="min-width:140px;font-size:13px"
+                onchange="renderPoTracker()">
+          <option value="">All scopes</option>
+          <option value="project">Project</option>
+          <option value="overhead">Overhead</option>
+        </select>
+        <span id="poTrackerCount" style="font-size:12px;color:var(--muted)"></span>
+      </div>
+    </div>
+
+    <!-- Tracker table -->
+    <div class="card" style="padding:0;overflow:hidden">
+      <div style="overflow-x:auto">
+        <table class="babcock-tracker-table" id="poTrackerTable">
+          <thead>
+            <tr>
+              <th style="min-width:110px">PO Ref</th>
+              <th style="min-width:160px">Supplier</th>
+              <th style="min-width:180px">Project / Cost Centre</th>
+              <th style="min-width:110px">Date</th>
+              <th style="min-width:120px;text-align:right">Total (£)</th>
+              <th style="min-width:120px">Status</th>
+              <th style="min-width:140px">Next Action</th>
+              <th style="width:80px;text-align:right">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="poTrackerTbody">
+            <tr><td colspan="8" class="empty-state" style="padding:30px"><div class="spinner"></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script src="shared.js?v=20260512c"></script>
+</body>
+</html>
