@@ -493,6 +493,16 @@ none of this is built yet.
   in `UK_BANK_HOLIDAYS` (shared.js) and `api/src/bank-holidays.js`. Move to
   a `BankHolidays` table or Settings row, editable from manager.html.
   Avoids a code deploy each year. Current list runs out at the end of 2027.
+- **PO from supplier quote (parsed)** — Phase 2 of the Purchase Orders
+  feature. User uploads a supplier's quote (PDF, image, Excel) into the
+  New PO modal; the system extracts line items (description, qty, unit,
+  unit_price, line_total) via Claude API + (for scans) OCR, pre-populates
+  the modal for review, and stores the source file as a `POAttachments`
+  row with `kind = 'supplier_quote'` so the prices are traceable.
+  Reuses the LLM pipeline already wired up for Babcock COUPA OCR.
+  Should also fuzzy-match the supplier name in the parsed quote against
+  `Suppliers` and pre-select. Aim: human reviews and confirms — never
+  auto-creates the PO without confirmation.
 
 ## Local dev
 
