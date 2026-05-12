@@ -175,6 +175,9 @@
                 <option value="Archived">Archived</option>
                 <option value="Cancelled">Cancelled</option>
               </select>
+              <!-- Cascade hint — populated by _populateProjectDetailFields()
+                   only when the project has a source_babcock_quote_id. -->
+              <div id="pd-statusHint" style="display:none;font-size:11px;color:var(--muted);margin-top:6px;line-height:1.35"></div>
             </div>
             <div>
               <div class="field-label" style="margin-bottom:4px">DEADLINE</div>
@@ -713,6 +716,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260512a"></script>
+<script src="shared.js?v=20260512b"></script>
 </body>
 </html>

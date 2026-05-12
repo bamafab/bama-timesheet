@@ -15514,6 +15514,23 @@ function _populateProjectDetailFields(project) {
   setVal('pd-startDate', project.start_date ? String(project.start_date).split('T')[0] : '');
   setVal('pd-completionDate', project.completion_date ? String(project.completion_date).split('T')[0] : '');
 
+  // ── Babcock cascade hint ─────────────────────────────────────────────
+  // If this project came from a Babcock quote, show a subtle note under
+  // the status dropdown so the user knows that marking Complete here
+  // will also advance the Babcock tracker. Backend (projects.js PUT)
+  // owns the actual cascade; this is just messaging.
+  const statusHint = document.getElementById('pd-statusHint');
+  if (statusHint) {
+    if (project.source_babcock_quote_id) {
+      statusHint.textContent =
+        'Linked to Babcock quote — marking Complete will also advance the Babcock tracker.';
+      statusHint.style.display = '';
+    } else {
+      statusHint.style.display = 'none';
+      statusHint.textContent = '';
+    }
+  }
+
   // Re-lock lockable fields after setting values (project name, dates).
   // The user must press the pencil button again to edit.
   _relockProjectDetailFields();

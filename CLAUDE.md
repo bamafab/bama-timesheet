@@ -19,6 +19,20 @@ management, and a standalone UK steel section reference.
   `editQuotes` permissions. Staff with only `tenders` permission must not see
   any monetary information. Always confirm with the user before adding any new
   info display to the Tender page or Tender list.
+- **Babcock ↔ Project Tracker status cascade.** When a Babcock-linked
+  Project (i.e. `Projects.source_babcock_quote_id` is set) is updated to
+  `status = 'Complete'` via `PUT /api/projects/:id`, the API also advances
+  the linked `BabcockQuotes` row to `'Project Complete'` — but only if
+  Babcock is currently at `'Quote Received'`, `'Quote Sent'`, or
+  `'Live Project'`. If Babcock has already passed Project Complete
+  (Approved to Pay / Payment Received / Sent to Bama SW / etc.), the
+  cascade is a no-op so finance state is never regressed. The reverse
+  direction also exists: `handleAdvanceFromLiveProject()` in `shared.js`
+  updates the linked Project to Complete when finance advances Babcock.
+  Only the `Complete` status mirrors — On Hold / Archived / Cancelled
+  changes in Project Tracker do not touch BabcockQuotes. All
+  post-Project-Complete steps (COUPA upload + OCR, Approved to Pay,
+  Payment Received, Bama SW invoice) remain Babcock-tracker-only.
 - **Bump the cache-bust version when shipping UI changes** to `shared.js` or
   `bama.css`. Format: `?v=YYYYMMDD` + letter (`a`/`b`/`c`/… for same-day pushes).
   Example: first push on 2026-03-26 → `?v=20260326a`; hotfix same day → `?v=20260326b`.

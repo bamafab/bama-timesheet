@@ -210,6 +210,75 @@ app.http('projects-update', {
 
             if (result.recordset.length === 0) return notFound('Project not found', request);
 
+            const updatedProject = result.recordset[0];
+
+            // ── Babcock cascade ────────────────────────────────────────────
+            // When a Babcock-linked project is marked Complete from Project
+            // Tracker, mirror the change to the BabcockQuotes workflow so
+            // finance can pick it up on the Babcock tracker. Site team marks
+            // the project complete here; everything after that (COUPA upload,
+            // payment, Bama SW invoice) is managed on babcock.html.
+            //
+            // Rules:
+            //   - Only fires when the project status actually changed to
+            //     'Complete' AND the project has a source_babcock_quote_id.
+            //   - Only advances Babcock if it's currently at 'Live Project'
+            //     or earlier (i.e. has not yet reached 'Project Complete').
+            //     Prevents accidental regression if finance has already
+            //     moved past Project Complete.
+            //   - Non-fatal: if the Babcock update fails, the Project
+            //     update still succeeds. Logged for visibility.
+            if (
+                body.status === 'Complete' &&
+                updatedProject.source_babcock_quote_id
+            ) {
+                try {
+                    const bqResult = await query(
+                        `SELECT id, status, quote_ref FROM BabcockQuotes WHERE id = @bqId`,
+                        { bqId: updatedProject.source_babcock_quote_id }
+                    );
+                    const bq = bqResult.recordset[0];
+                    if (bq) {
+                        // Statuses at-or-before 'Live Project' in the Babcock
+                        // workflow — only these are safe to advance to
+                        // 'Project Complete' from a Project Tracker save.
+                        const advanceableStatuses = [
+                            'Quote Received',
+                            'Quote Sent',
+                            'Live Project'
+                        ];
+                        if (advanceableStatuses.includes(bq.status)) {
+                            await query(
+                                `UPDATE BabcockQuotes
+                                 SET status = @newStatus, updated_at = GETUTCDATE()
+                                 WHERE id = @bqId`,
+                                { newStatus: 'Project Complete', bqId: bq.id }
+                            );
+                            context.log(
+                                `Babcock cascade: ${bq.quote_ref} ` +
+                                `(id=${bq.id}) advanced from '${bq.status}' ` +
+                                `to 'Project Complete' via Project ${id}`
+                            );
+                        } else {
+                            // Already at or past Project Complete — skip
+                            // silently. This is the expected no-op for
+                            // incidental re-saves on already-complete
+                            // projects.
+                            context.log(
+                                `Babcock cascade skipped: ${bq.quote_ref} ` +
+                                `(id=${bq.id}) already at '${bq.status}'`
+                            );
+                        }
+                    }
+                } catch (cascadeErr) {
+                    // Non-fatal — project update has already committed.
+                    context.error(
+                        'Babcock cascade failed (project update still succeeded):',
+                        cascadeErr
+                    );
+                }
+            }
+
             // Re-fetch with joined data
             const full = await query(
                 `SELECT p.*, c.company_name, c.contact_name, c.contact_email, c.contact_phone,
