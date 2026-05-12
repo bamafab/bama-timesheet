@@ -18892,7 +18892,7 @@ async function handleAdvanceFromQuoteReceived(qSummary, next) {
     title: 'Email Quote',
     templateKey: 'emailQuoteSent',
     tokens,
-    to: q.customer_email,
+    to: q.customer_email || 'info@bamasw.co.uk',
     attachment: {
       name: pdfFileName,
       contentType: 'application/pdf',
