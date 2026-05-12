@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Purchase Orders</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260512c">
+<link rel="stylesheet" href="bama.css?v=20260512d">
 </head>
 <body>
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
@@ -161,23 +161,49 @@
       </div>
     </div>
 
-    <!-- Charges + total -->
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+    <!-- Charges -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:8px">
       <div>
-        <label class="field-label">Delivery Charge (£)</label>
+        <label class="field-label">Delivery Charge (£, Nett)</label>
         <input type="number" step="0.01" class="field-input" id="poNewDeliveryCharge"
                oninput="recalcPoTotal()">
       </div>
       <div>
-        <label class="field-label">Collection Charge (£)</label>
+        <label class="field-label">Collection Charge (£, Nett)</label>
         <input type="number" step="0.01" class="field-input" id="poNewCollectionCharge"
                oninput="recalcPoTotal()">
       </div>
-      <div>
-        <label class="field-label">Total (£)</label>
-        <input type="number" step="0.01" class="field-input" id="poNewTotal"
-               style="font-weight:700;font-family:var(--font-mono)">
-        <div style="font-size:11px;color:var(--subtle);margin-top:3px">Auto from lines; editable</div>
+    </div>
+
+    <!-- Nett / VAT / Gross summary -->
+    <div class="card" style="padding:12px;margin-bottom:12px;background:var(--bg-darker)">
+      <div style="display:grid;grid-template-columns:1fr 110px 130px;gap:10px;align-items:end">
+        <div>
+          <label class="field-label">Nett (£)</label>
+          <input type="number" step="0.01" class="field-input" id="poNewNett"
+                 style="font-family:var(--font-mono);font-weight:600" readonly>
+          <div style="font-size:11px;color:var(--subtle);margin-top:3px">= lines + delivery + collection</div>
+        </div>
+        <div>
+          <label class="field-label">VAT Rate (%)</label>
+          <input type="number" step="0.01" min="0" max="100" class="field-input" id="poNewVatRate"
+                 value="20" oninput="recalcPoTotal()" style="font-family:var(--font-mono)">
+        </div>
+        <div>
+          <label class="field-label">VAT (£)</label>
+          <input type="number" step="0.01" class="field-input" id="poNewVatAmount"
+                 style="font-family:var(--font-mono)" readonly>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 130px;gap:10px;align-items:end;margin-top:10px">
+        <div style="text-align:right;font-size:13px;color:var(--muted);padding-bottom:10px">
+          <b>Gross total to pay supplier:</b>
+        </div>
+        <div>
+          <input type="number" step="0.01" class="field-input" id="poNewTotal"
+                 style="font-weight:700;font-family:var(--font-mono);font-size:16px" readonly>
+          <div style="font-size:11px;color:var(--subtle);margin-top:3px;text-align:center">Gross = Nett + VAT</div>
+        </div>
       </div>
     </div>
 
@@ -305,7 +331,7 @@
               <th style="min-width:160px">Supplier</th>
               <th style="min-width:180px">Project / Cost Centre</th>
               <th style="min-width:110px">Date</th>
-              <th style="min-width:120px;text-align:right">Total (£)</th>
+              <th style="min-width:120px;text-align:right">Gross (£)</th>
               <th style="min-width:120px">Status</th>
               <th style="min-width:140px">Next Action</th>
               <th style="width:80px;text-align:right">Actions</th>
@@ -321,6 +347,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260512c"></script>
+<script src="shared.js?v=20260512d"></script>
 </body>
 </html>

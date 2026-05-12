@@ -21354,6 +21354,9 @@ function openPoNewModal() {
   document.getElementById('poNewDeliveryAddress').value = '11 Enterprise Way, Enterprise Park, Peterborough, PE7 3WY';
   document.getElementById('poNewDeliveryCharge').value = '';
   document.getElementById('poNewCollectionCharge').value = '';
+  document.getElementById('poNewVatRate').value = '20';
+  document.getElementById('poNewNett').value = '';
+  document.getElementById('poNewVatAmount').value = '';
   document.getElementById('poNewTotal').value = '';
   document.getElementById('poNewDescription').value = '';
   document.getElementById('poNewJobNumber').value = '';
@@ -21476,7 +21479,7 @@ function selectPoSupplier(supplierId) {
 
 // ── Line items in the modal ──
 function addPoLineRow(prefill) {
-  const row = prefill || { description: '', quantity: '', unit: '', unit_price: '', line_total: '' };
+  const row = prefill || { description: '', quantity: '', unit_price: '', line_total: '' };
   _poNewState.lineItems.push(row);
   renderPoLineRows();
 }
@@ -21490,14 +21493,12 @@ function removePoLineRow(idx) {
 function renderPoLineRows() {
   const wrap = document.getElementById('poNewLineItems');
   wrap.innerHTML = _poNewState.lineItems.map((li, i) => `
-    <div style="display:grid;grid-template-columns:1.5fr 70px 70px 80px 80px 28px;gap:6px;align-items:center">
+    <div style="display:grid;grid-template-columns:1.5fr 80px 90px 90px 28px;gap:6px;align-items:center">
       <input type="text" class="field-input" placeholder="Description" value="${escapeHtml(li.description || '')}"
              oninput="_poNewState.lineItems[${i}].description=this.value">
       <input type="number" step="0.001" class="field-input" placeholder="Qty" value="${escapeHtml(li.quantity || '')}"
              oninput="_poNewState.lineItems[${i}].quantity=this.value;recalcPoLine(${i})">
-      <input type="text" class="field-input" placeholder="Unit" value="${escapeHtml(li.unit || '')}"
-             oninput="_poNewState.lineItems[${i}].unit=this.value">
-      <input type="number" step="0.0001" class="field-input" placeholder="£ unit" value="${escapeHtml(li.unit_price || '')}"
+      <input type="number" step="0.0001" class="field-input" placeholder="£ rate" value="${escapeHtml(li.unit_price || '')}"
              oninput="_poNewState.lineItems[${i}].unit_price=this.value;recalcPoLine(${i})">
       <input type="number" step="0.01" class="field-input" placeholder="£ total"
              value="${escapeHtml(li.line_total || '')}"
@@ -21522,17 +21523,26 @@ function recalcPoLine(i) {
 }
 
 function recalcPoTotal() {
-  let sum = 0;
+  // Sum line item totals
+  let lineSum = 0;
   for (const li of (_poNewState?.lineItems || [])) {
     const lt = Number(li.line_total);
-    if (!isNaN(lt)) sum += lt;
+    if (!isNaN(lt)) lineSum += lt;
   }
+  // Delivery + collection are Nett (VAT-able). HMRC: when goods are
+  // standard-rated, delivery follows the same rate. We add to Nett, then
+  // apply VAT on the whole subtotal.
   const dc = Number(document.getElementById('poNewDeliveryCharge').value) || 0;
   const cc = Number(document.getElementById('poNewCollectionCharge').value) || 0;
-  const total = sum + dc + cc;
-  if (sum > 0) {
-    document.getElementById('poNewTotal').value = total.toFixed(2);
-  }
+  const nett = lineSum + dc + cc;
+  const rateEl = document.getElementById('poNewVatRate');
+  const vr = rateEl && rateEl.value !== '' ? Number(rateEl.value) : 20;
+  const vat   = Math.round(nett * vr) / 100;          // 2dp
+  const gross = Math.round((nett + vat) * 100) / 100; // 2dp
+
+  document.getElementById('poNewNett').value      = nett.toFixed(2);
+  document.getElementById('poNewVatAmount').value = vat.toFixed(2);
+  document.getElementById('poNewTotal').value     = gross.toFixed(2);
   updatePoBudgetWarn();
 }
 
@@ -21576,6 +21586,8 @@ async function savePoNew() {
     delivery_address:   document.getElementById('poNewDeliveryAddress').value || null,
     delivery_charge:    document.getElementById('poNewDeliveryCharge').value || null,
     collection_charge:  document.getElementById('poNewCollectionCharge').value || null,
+    vat_rate:           document.getElementById('poNewVatRate').value || null,
+    vat_amount:         document.getElementById('poNewVatAmount').value || null,
     total_value:        document.getElementById('poNewTotal').value || null,
     created_by:         currentManagerUser || null,
     line_items:         (_poNewState.lineItems || []).filter(li => li.description || li.quantity || li.unit_price || li.line_total)
@@ -21640,16 +21652,14 @@ function renderPoDetail(p) {
          <thead><tr style="border-bottom:1px solid var(--border)">
            <th style="text-align:left;padding:4px 6px">Description</th>
            <th style="text-align:right;padding:4px 6px;width:60px">Qty</th>
-           <th style="text-align:left;padding:4px 6px;width:50px">Unit</th>
-           <th style="text-align:right;padding:4px 6px;width:80px">£ Unit</th>
-           <th style="text-align:right;padding:4px 6px;width:90px">£ Total</th>
+           <th style="text-align:right;padding:4px 6px;width:90px">£ Rate</th>
+           <th style="text-align:right;padding:4px 6px;width:100px">£ Total</th>
          </tr></thead>
          <tbody>
            ${p.line_items.map(li => `
              <tr style="border-bottom:1px solid var(--border)">
                <td style="padding:4px 6px">${escapeHtml(li.description || '')}</td>
                <td style="padding:4px 6px;text-align:right;font-family:var(--font-mono)">${li.quantity !== null ? Number(li.quantity) : ''}</td>
-               <td style="padding:4px 6px">${escapeHtml(li.unit || '')}</td>
                <td style="padding:4px 6px;text-align:right;font-family:var(--font-mono)">${li.unit_price !== null ? Number(li.unit_price).toFixed(4) : ''}</td>
                <td style="padding:4px 6px;text-align:right;font-family:var(--font-mono)">${li.line_total !== null ? Number(li.line_total).toFixed(2) : ''}</td>
              </tr>`).join('')}
@@ -21680,10 +21690,14 @@ function renderPoDetail(p) {
       ${lineItemsHtml}
     </div>
 
-    <div style="margin-top:14px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:13px">
+    <div style="margin-top:14px;display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px">
       <div><span style="color:var(--muted)">Delivery charge:</span> £${(Number(p.delivery_charge)||0).toFixed(2)}</div>
       <div><span style="color:var(--muted)">Collection charge:</span> £${(Number(p.collection_charge)||0).toFixed(2)}</div>
-      <div style="text-align:right"><span style="color:var(--muted)">Total:</span> <b style="font-family:var(--font-mono)">£${(Number(p.total_value)||0).toFixed(2)}</b></div>
+    </div>
+    <div style="margin-top:10px;padding:10px;background:var(--bg-darker);border-radius:6px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:13px">
+      <div><span style="color:var(--muted)">Nett:</span> <b style="font-family:var(--font-mono)">£${(Math.max(0, Number(p.total_value||0) - Number(p.vat_amount||0))).toFixed(2)}</b></div>
+      <div><span style="color:var(--muted)">VAT @ ${Number(p.vat_rate || 0).toFixed(2)}%:</span> <b style="font-family:var(--font-mono)">£${Number(p.vat_amount||0).toFixed(2)}</b></div>
+      <div style="text-align:right"><span style="color:var(--muted)">Gross:</span> <b style="font-family:var(--font-mono);font-size:15px">£${Number(p.total_value||0).toFixed(2)}</b></div>
     </div>
 
     <div style="margin-top:14px;padding:10px;background:var(--bg-darker);border-radius:6px;font-size:12px">
@@ -21731,7 +21745,6 @@ async function openPoEditModal(poId) {
     lineItems: (p.line_items || []).map(li => ({
       description: li.description || '',
       quantity:    li.quantity    !== null ? String(li.quantity)    : '',
-      unit:        li.unit         || '',
       unit_price:  li.unit_price  !== null ? String(li.unit_price)  : '',
       line_total:  li.line_total  !== null ? String(li.line_total)  : ''
     }))
@@ -21772,10 +21785,13 @@ async function openPoEditModal(poId) {
   document.getElementById('poNewDeliveryAddress').value  = p.delivery_address || '';
   document.getElementById('poNewDeliveryCharge').value   = p.delivery_charge   !== null && p.delivery_charge   !== undefined ? p.delivery_charge   : '';
   document.getElementById('poNewCollectionCharge').value = p.collection_charge !== null && p.collection_charge !== undefined ? p.collection_charge : '';
+  document.getElementById('poNewVatRate').value          = (p.vat_rate !== null && p.vat_rate !== undefined) ? p.vat_rate : 20;
+  document.getElementById('poNewVatAmount').value        = (p.vat_amount !== null && p.vat_amount !== undefined) ? Number(p.vat_amount).toFixed(2) : '';
   document.getElementById('poNewTotal').value            = p.total_value       !== null && p.total_value       !== undefined ? p.total_value       : '';
   document.getElementById('poNewDescription').value      = p.description       || '';
 
   renderPoLineRows();
+  recalcPoTotal();  // populate Nett field + reconcile any rounding
 
   document.getElementById('poNewError').textContent = '';
   document.getElementById('poNewBudgetWarn').textContent = '';

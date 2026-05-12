@@ -66,16 +66,36 @@ function num(v) {
     return isNaN(n) ? null : n;
 }
 
-// Re-compute total_value from line items if any exist; otherwise leave
-// total_value as provided. Returns the resolved total.
-async function recomputeTotal(poId, fallback) {
+// Re-compute total_value (Gross) + vat_amount from line items if any exist;
+// otherwise leave total_value as provided. Returns the resolved figures
+// or { gross: fallbackGross, vat_amount: null } if nothing to compute.
+//
+// Calculation: Nett  = sum(line_total) + delivery_charge + collection_charge
+//              VAT   = round(Nett × vat_rate / 100, 2)
+//              Gross = Nett + VAT
+async function recomputeTotal(poId, fallbackGross) {
     const lines = await query(
         `SELECT SUM(line_total) AS t FROM POLineItems WHERE po_id = @poId`,
         { poId }
     );
-    const t = lines.recordset[0]?.t;
-    if (t !== null && t !== undefined) return Number(t);
-    return fallback;
+    const subtotal = lines.recordset[0]?.t;
+    if (subtotal === null || subtotal === undefined) {
+        return { gross: fallbackGross, vat_amount: null };
+    }
+    // Pull current charges + rate so we don't drop them on partial updates
+    const meta = await query(
+        `SELECT delivery_charge, collection_charge, vat_rate
+           FROM PurchaseOrders WHERE id = @id`,
+        { id: poId }
+    );
+    const row = meta.recordset[0] || {};
+    const dc = Number(row.delivery_charge   || 0);
+    const cc = Number(row.collection_charge || 0);
+    const vr = Number(row.vat_rate !== null && row.vat_rate !== undefined ? row.vat_rate : 20);
+    const nett  = Number(subtotal) + dc + cc;
+    const vat   = Math.round(nett * vr) / 100;            // 2dp
+    const gross = Math.round((nett + vat) * 100) / 100;   // 2dp
+    return { gross, vat_amount: vat };
 }
 
 // Persist line items for a PO (full replace).
@@ -229,9 +249,13 @@ app.http('purchase-orders-list', {
 
 // POST /api/purchase-orders
 // Body: { reference?, supplier_id, project_id?, cost_centre?, total_value?,
-//         description?, job_number?, delivery_date?, delivery_address?,
-//         delivery_charge?, collection_charge?, line_items?, created_by? }
+//         vat_rate?, vat_amount?, description?, job_number?, delivery_date?,
+//         delivery_address?, delivery_charge?, collection_charge?,
+//         line_items?, created_by? }
 // If reference is omitted, server allocates next for the current month.
+// total_value is the GROSS figure (= Nett + VAT). vat_rate defaults to 20.
+// vat_amount can be supplied; otherwise the API leaves it NULL and the
+// frontend's computed value (preferred) is stored as part of the same body.
 app.http('purchase-orders-create', {
     methods: ['POST'],
     authLevel: 'anonymous',
@@ -244,6 +268,7 @@ app.http('purchase-orders-create', {
             let {
                 reference, supplier_id, project_id, cost_centre,
                 total_value, description,
+                vat_rate, vat_amount,
                 job_number, delivery_date, delivery_address,
                 delivery_charge, collection_charge,
                 line_items, created_by, status
@@ -287,13 +312,13 @@ app.http('purchase-orders-create', {
             const insert = await query(
                 `INSERT INTO PurchaseOrders
                     (reference, supplier_id, project_id, cost_centre,
-                     total_value, description, status,
+                     total_value, vat_rate, vat_amount, description, status,
                      job_number, delivery_date, delivery_address,
                      delivery_charge, collection_charge,
                      created_by)
                  OUTPUT INSERTED.id
                  VALUES (@reference, @supplier_id, @project_id, @cost_centre,
-                         @total_value, @description, @status,
+                         @total_value, @vat_rate, @vat_amount, @description, @status,
                          @job_number, @delivery_date, @delivery_address,
                          @delivery_charge, @collection_charge,
                          @created_by)`,
@@ -303,6 +328,8 @@ app.http('purchase-orders-create', {
                     project_id:  hasProject ? parseInt(project_id, 10) : null,
                     cost_centre: hasCC ? String(cost_centre).slice(0, 100) : null,
                     total_value: num(total_value),
+                    vat_rate:    vat_rate    !== undefined ? num(vat_rate)    : 20.00,
+                    vat_amount:  num(vat_amount),
                     description: description || null,
                     status: status || 'Open',
                     job_number: resolvedJobNumber,
@@ -316,14 +343,20 @@ app.http('purchase-orders-create', {
 
             const newId = insert.recordset[0].id;
 
-            // Persist line items (if any) and recompute total
+            // Persist line items (if any) and recompute Gross + VAT amount.
+            // We re-update total_value + vat_amount so they stay in sync with
+            // the lines we just wrote, even if the caller sent a stale figure.
             if (Array.isArray(line_items) && line_items.length > 0) {
                 await writeLineItems(newId, line_items);
                 const computed = await recomputeTotal(newId, num(total_value));
-                if (computed !== null) {
+                if (computed.gross !== null && computed.gross !== undefined) {
                     await query(
-                        `UPDATE PurchaseOrders SET total_value = @t, updated_at = GETUTCDATE() WHERE id = @id`,
-                        { id: newId, t: computed }
+                        `UPDATE PurchaseOrders
+                            SET total_value = @t,
+                                vat_amount  = @v,
+                                updated_at  = GETUTCDATE()
+                          WHERE id = @id`,
+                        { id: newId, t: computed.gross, v: computed.vat_amount }
                     );
                 }
             }
@@ -380,7 +413,8 @@ app.http('purchase-orders-update', {
                 'sharepoint_dn_id', 'sharepoint_dn_url'
             ];
             const numericCols = [
-                'total_value', 'delivery_charge', 'collection_charge', 'invoice_value'
+                'total_value', 'delivery_charge', 'collection_charge', 'invoice_value',
+                'vat_rate', 'vat_amount'
             ];
             const intCols   = ['supplier_id', 'project_id'];
             const dateCols  = ['delivery_date'];
@@ -447,13 +481,18 @@ app.http('purchase-orders-update', {
 
             if (replaceLines) {
                 await writeLineItems(poId, body.line_items);
-                // Recompute total from lines (if total wasn't explicitly set in same call)
+                // Recompute total + VAT from lines unless the caller explicitly
+                // supplied total_value in the same body (in which case trust them).
                 if (body.total_value === undefined) {
                     const computed = await recomputeTotal(poId, null);
-                    if (computed !== null) {
+                    if (computed.gross !== null && computed.gross !== undefined) {
                         await query(
-                            `UPDATE PurchaseOrders SET total_value = @t, updated_at = GETUTCDATE() WHERE id = @id`,
-                            { id: poId, t: computed }
+                            `UPDATE PurchaseOrders
+                                SET total_value = @t,
+                                    vat_amount  = @v,
+                                    updated_at  = GETUTCDATE()
+                              WHERE id = @id`,
+                            { id: poId, t: computed.gross, v: computed.vat_amount }
                         );
                     }
                 }
