@@ -1,7 +1,7 @@
 // Purchase Orders API — Phase 1a
 //
 // CRUD for PurchaseOrders + nested POLineItems and POAttachments.
-// Reference allocation is P{YY}{MM}-NNNN, resets monthly, allocated server-side.
+// Reference allocation is P{YY}{MM}{NN}, resets monthly, allocated server-side.
 //
 // Status state machine (UI summary; truth lives in flag/timestamp columns):
 //   Open      → just raised (may or may not be approved/sent yet)
@@ -20,26 +20,27 @@ const { requireAuth } = require('../auth');
 const { ok, created, badRequest, notFound, serverError, preflight } = require('../responses');
 
 // ── Reference allocation ────────────────────────────────────────────────────
-// Format: P{YY}{MM}-{NNNN} (monthly reset). Pads to 4 digits.
+// Format: P{YY}{MM}{NN} (monthly reset). Sequence padded to 2 digits.
+// Example: P260501 (May 2026, first PO of the month).
 
 function formatPORef(year2, month2, seq) {
     const yy = String(year2).padStart(2, '0');
     const mm = String(month2).padStart(2, '0');
-    const nn = String(seq).padStart(4, '0');
-    return `P${yy}${mm}-${nn}`;
+    const nn = String(seq).padStart(2, '0');
+    return `P${yy}${mm}${nn}`;
 }
 
-// Parse "P2605-0001" → { yymm: '2605', seq: 1 } | null on garbage
+// Parse "P260501" → { year2: 26, month2: 5, seq: 1 } | null on garbage
 function parsePORef(ref) {
     if (!ref) return null;
-    const m = String(ref).match(/^P(\d{2})(\d{2})-(\d{4})$/);
+    const m = String(ref).match(/^P(\d{2})(\d{2})(\d{2})$/);
     if (!m) return null;
     return { year2: parseInt(m[1], 10), month2: parseInt(m[2], 10), seq: parseInt(m[3], 10) };
 }
 
 async function nextReferenceForMonth(year2, month2) {
     const yymm = String(year2).padStart(2, '0') + String(month2).padStart(2, '0');
-    const prefix = `P${yymm}-`;
+    const prefix = `P${yymm}`;
     const result = await query(
         `SELECT reference FROM PurchaseOrders WHERE reference LIKE @pattern`,
         { pattern: prefix + '%' }
@@ -266,7 +267,7 @@ app.http('purchase-orders-create', {
                 const now = new Date();
                 reference = await nextReferenceForMonth(now.getUTCFullYear() % 100, now.getUTCMonth() + 1);
             } else if (!parsePORef(reference)) {
-                return badRequest('reference must be in P{YY}{MM}-NNNN format', request);
+                return badRequest('reference must be in P{YY}{MM}{NN} format', request);
             }
 
             if (status && !ALLOWED_STATUSES.includes(status)) {

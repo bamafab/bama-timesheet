@@ -3,8 +3,9 @@
 -- Three tables to model raised POs, optional line items, and uploaded
 -- attachments (delivery notes / supplier invoices / other files).
 --
--- Reference format: P{YY}{MM}-NNNN, resets monthly (e.g. P2605-0001 → P2605-0002
--- → June starts at P2606-0001). Allocated server-side.
+-- Reference format: P{YY}{MM}{NN}, resets monthly (e.g. P260501 → P260502
+-- → June starts at P260601). Allocated server-side. Two-digit sequence
+-- gives up to 99 POs per month before rollover.
 --
 -- project_id is NULL for overhead POs; cost_centre is set in that case.
 -- A check constraint enforces "exactly one of project_id or cost_centre".
