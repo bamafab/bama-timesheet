@@ -334,14 +334,14 @@ app.http('suppliers-create', {
 
         try {
             const body = await request.json();
-            const { supplier_name, address_line1, address_line2, city, county, postcode, telephone, email, contact_name, notes, service_type_ids } = body;
+            const { supplier_name, address_line1, address_line2, city, county, postcode, telephone, email, contact_name, notes, service_type_ids, parse_source_text } = body;
 
             if (!supplier_name) return badRequest('supplier_name is required', request);
 
             const result = await query(
-                `INSERT INTO Suppliers (supplier_name, address_line1, address_line2, city, county, postcode, telephone, email, contact_name, notes)
+                `INSERT INTO Suppliers (supplier_name, address_line1, address_line2, city, county, postcode, telephone, email, contact_name, notes, parse_source_text)
                  OUTPUT INSERTED.*
-                 VALUES (@supplierName, @addressLine1, @addressLine2, @city, @county, @postcode, @telephone, @email, @contactName, @notes)`,
+                 VALUES (@supplierName, @addressLine1, @addressLine2, @city, @county, @postcode, @telephone, @email, @contactName, @notes, @parseSourceText)`,
                 {
                     supplierName: supplier_name,
                     addressLine1: address_line1 || null,
@@ -352,7 +352,8 @@ app.http('suppliers-create', {
                     telephone: telephone || null,
                     email: email || null,
                     contactName: contact_name || null,
-                    notes: notes || null
+                    notes: notes || null,
+                    parseSourceText: parse_source_text || null
                 }
             );
 
@@ -402,6 +403,7 @@ app.http('suppliers-update', {
             if (body.contact_name !== undefined) { fields.push('contact_name = @contactName'); params.contactName = body.contact_name; }
             if (body.notes !== undefined) { fields.push('notes = @notes'); params.notes = body.notes; }
             if (body.is_active !== undefined) { fields.push('is_active = @isActive'); params.isActive = body.is_active ? 1 : 0; }
+            if (body.parse_source_text !== undefined) { fields.push('parse_source_text = @parseSourceText'); params.parseSourceText = body.parse_source_text || null; }
 
             if (fields.length > 0) {
                 fields.push('updated_at = GETUTCDATE()');

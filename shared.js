@@ -21985,13 +21985,29 @@ async function parseInstantPoSupplier() {
   status.textContent = '';
 
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
-        system: `You extract supplier contact details from pasted text (email signatures, quote headers, invoice footers, website footers, etc.).
+    // ── Build few-shot examples from confirmed supplier parsings ──
+    // Any supplier in the cache that has a parse_source_text was created via
+    // this feature and confirmed by a human — use up to 5 as examples.
+    const examples = (_poSuppliersCache || [])
+      .filter(s => s.parse_source_text && s.parse_source_text.trim())
+      .slice(0, 5);
+
+    let fewShotSection = '';
+    if (examples.length) {
+      fewShotSection = '\n\nHere are confirmed examples from this company\'s supplier database:\n\n' +
+        examples.map((s, i) => {
+          const output = JSON.stringify({
+            supplier_name: s.supplier_name || null,
+            contact_name:  s.contact_name  || null,
+            telephone:     s.telephone     || null,
+            email:         s.email         || null
+          });
+          return `Example ${i + 1}:\nINPUT:\n${s.parse_source_text.trim()}\nOUTPUT:\n${output}`;
+        }).join('\n\n');
+    }
+
+    const systemPrompt =
+      `You extract supplier contact details from pasted text (email signatures, quote headers, invoice footers, website footers, etc.).
 
 Return ONLY a JSON object with these fields — use null for anything not found:
 {
@@ -22007,7 +22023,15 @@ Rules:
 - telephone: include country code if present, keep formatting as-is
 - email: only a real email address, not a website URL
 - Do not invent or guess values — only extract what is explicitly present in the text
-- Return only the JSON object, no explanation, no markdown`,
+- Return only the JSON object, no explanation, no markdown` + fewShotSection;
+
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        system: systemPrompt,
         messages: [{ role: 'user', content: text }]
       })
     });
@@ -22025,7 +22049,10 @@ Rules:
 
     const found = [parsed.supplier_name, parsed.contact_name, parsed.telephone, parsed.email]
       .filter(Boolean).length;
-    status.textContent = found ? `✓ ${found} field${found > 1 ? 's' : ''} filled — review and adjust` : 'Nothing found — paste more detail';
+    const exStr = examples.length ? ` (${examples.length} example${examples.length > 1 ? 's' : ''} used)` : '';
+    status.textContent = found
+      ? `✓ ${found} field${found > 1 ? 's' : ''} filled${exStr} — review and adjust`
+      : 'Nothing found — paste more detail';
     status.style.color = found ? 'var(--green)' : 'var(--orange, #e67e22)';
 
     // Collapse the parse panel so the user focuses on reviewing the filled fields
@@ -22033,7 +22060,7 @@ Rules:
       setTimeout(() => {
         document.getElementById('instantPoParsePanel').style.display = 'none';
         status.textContent = '';
-      }, 2000);
+      }, 2500);
     }
   } catch (e) {
     status.textContent = 'Parse failed — check console';
@@ -22071,11 +22098,13 @@ async function saveInstantPo() {
     // ── 1. Create supplier if new ──
     let supplierId = _instantPoState.supplierId;
     if (_instantPoState.newSupplierMode) {
+      const parseText = document.getElementById('instantPoParseText').value.trim();
       const newSup = await api.post('/api/suppliers', {
-        supplier_name: document.getElementById('instantPoNewSupplierName').value.trim(),
-        contact_name:  document.getElementById('instantPoNewSupplierContact').value.trim() || null,
-        telephone:     document.getElementById('instantPoNewSupplierPhone').value.trim() || null,
-        email:         document.getElementById('instantPoNewSupplierEmail').value.trim() || null
+        supplier_name:      document.getElementById('instantPoNewSupplierName').value.trim(),
+        contact_name:       document.getElementById('instantPoNewSupplierContact').value.trim() || null,
+        telephone:          document.getElementById('instantPoNewSupplierPhone').value.trim() || null,
+        email:              document.getElementById('instantPoNewSupplierEmail').value.trim() || null,
+        parse_source_text:  parseText || null   // stored as a confirmed few-shot example
       });
       supplierId = newSup.id;
       // Add to cache so it shows in future searches this session
