@@ -503,6 +503,19 @@ none of this is built yet.
   Should also fuzzy-match the supplier name in the parsed quote against
   `Suppliers` and pre-select. Aim: human reviews and confirms — never
   auto-creates the PO without confirmation.
+- **Instant PO** — "I'm on the phone to a supplier and need a PO number
+  RIGHT NOW" flow. Button on the PO Tracker (and ideally a kiosk
+  shortcut). Asks only for supplier name (autocomplete from `Suppliers`,
+  or free-text if not on file yet), allocates the next sequential PO
+  reference immediately, persists a `PurchaseOrders` row with status =
+  `Open` and a flag (`is_draft_stub` or similar) marking it as
+  incomplete, and creates a follow-up task on the office dashboard
+  ("Complete PO P260507 with Bapp — raised by Mike at 14:32") assigned
+  to office admin (or to whoever's the configured "PO completer").
+  The reference goes back to the caller instantly; admin fills in
+  project link, line items, totals etc. when they get to the task.
+  Should integrate with the existing dashCreateTaskModal / office task
+  system so it shows up in the normal task queue.
 
 ## Local dev
 
