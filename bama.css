@@ -169,7 +169,7 @@
     margin-bottom: 16px;
   }
   .clock-grid3 { grid-template-columns: 1fr 1fr 1fr; }
-  .field-label { font-size: 11px; color: var(--muted); margin-bottom: 6px; font-weight: 500; letter-spacing: .5px; }
+  .field-label { font-size: 11px; color: var(--text); margin-bottom: 6px; font-weight: 500; letter-spacing: .5px; }
   .field-input {
     width: 100%;
     background: var(--surface);
