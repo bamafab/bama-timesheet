@@ -17559,7 +17559,7 @@ function handleBabcockFileSelect(file) {
         return;
       }
 
-      populateBabcockValidationFields(_babcockHeader);
+      populateBabcockValidationFields(_babcockHeader, parsed.missingFields || []);
       const markup = parseFloat(document.getElementById('babcockMarkup').value) || 10;
       renderBabcockPreviewTable(markup);
       updateBabcockMarkedUpTotal(markup);
@@ -17567,7 +17567,15 @@ function handleBabcockFileSelect(file) {
       document.getElementById('babcockValidateCard').style.display = '';
       document.getElementById('babcockValidateCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
 
-      toast(`Loaded ${file.name} — ${_babcockRawData.length} line items extracted`, 'success');
+      if (parsed.missingFields && parsed.missingFields.length) {
+        // Soft warning — the parser couldn't read these from the
+        // spreadsheet, but upload proceeds and the user can fill them in.
+        // The validate form will already show them with a red border.
+        const labels = parsed.missingFields.map(m => m.label).join(', ');
+        toast(`Loaded ${file.name} — please fill in: ${labels}`, 'info');
+      } else {
+        toast(`Loaded ${file.name} — ${_babcockRawData.length} line items extracted`, 'success');
+      }
     } catch (err) {
       console.error('Babcock parse failed:', err);
       toast('Failed to read spreadsheet: ' + err.message, 'error');
@@ -17739,17 +17747,17 @@ function parseBabcockQuoteTab(wb) {
     header.comments = '';
   }
 
-  // Required header fields — fail loudly if any are missing so the user
-  // sees a precise error instead of a row of blanks on the validation form.
-  const REQUIRED = ['customerId', 'workOrderNo', 'quoteFor'];
-  const missing = REQUIRED.filter(k => !String(header[k] || '').trim());
-  if (missing.length) {
-    const labelsList = missing.map(k => `"${HEADER_FIELDS[k].labels[0]}"`).join(', ');
-    throw new Error(
-      `Couldn't find or read the required ${labelsList} cell${missing.length === 1 ? '' : 's'} on the Quote tab. ` +
-      `Has the template been changed? Each label must sit in a cell with its value in the cell immediately to the right.`
-    );
-  }
+  // Soft-required header fields — empty values used to throw, but that
+  // blocked the upload entirely when Lee just needed to fill in a missing
+  // value manually on the validate form. Now we surface the list of
+  // missing fields so the UI can flag them (red border + toast) and let
+  // the user fill them in before pressing Generate & Save. The save-side
+  // handler already has its own "Generate Anyway / Go Back & Fix" prompt
+  // for fields still blank at submit time.
+  const SOFT_REQUIRED = ['customerId', 'workOrderNo', 'quoteFor'];
+  const missingFields = SOFT_REQUIRED
+    .filter(k => !String(header[k] || '').trim())
+    .map(k => ({ key: k, label: HEADER_FIELDS[k].labels[0] }));
 
   // Normalise dates — Excel may give a JS Date object, a number (serial), or a string.
   header.quotationDate = excelToISODate(header.quotationDate);
@@ -17827,7 +17835,7 @@ function parseBabcockQuoteTab(wb) {
     });
   }
 
-  return { header, lineItems };
+  return { header, lineItems, missingFields };
 }
 
 // Excel cell value → ISO date string ('YYYY-MM-DD'), or '' if not a date.
@@ -17859,8 +17867,19 @@ function excelToISODate(v) {
 // Push parsed header values into the Validate card form. Pre-fills the
 // "Quotation number" hint with the next available B#### so Lee can see
 // what the system would auto-allocate (he can override by typing a value).
-function populateBabcockValidationFields(header) {
+function populateBabcockValidationFields(header, missingFields = []) {
   const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val ?? ''; };
+
+  // Clear any prior red-border highlights from a previous upload — important
+  // when the user replaces a bad upload with a corrected one in the same
+  // session and we don't want stale warnings sticking around.
+  for (const id of ['bvCustomerId', 'bvWorkOrderNo', 'bvQuoteFor']) {
+    const el = document.getElementById(id);
+    if (el) {
+      el.style.borderColor = '';
+      el.style.boxShadow = '';
+    }
+  }
 
   // NOTE: header.quoteRef is intentionally ignored. The Bama SW template
   // carries its own internal QP###### reference in cell E3, but Babcock
@@ -17902,6 +17921,29 @@ function populateBabcockValidationFields(header) {
     }).catch(() => {
       refEl.placeholder = 'Auto-allocated on save';
     });
+  }
+
+  // ── Flag fields the spreadsheet couldn't supply ──
+  // The parser surfaces a `missingFields` list (Customer ID / Work Order
+  // no. / Quotation For) when the template's value cells came back empty.
+  // We paint those inputs with a red border so the user spots them, then
+  // clear the highlight on first input so it doesn't linger after fix.
+  const idMap = {
+    customerId:  'bvCustomerId',
+    workOrderNo: 'bvWorkOrderNo',
+    quoteFor:    'bvQuoteFor',
+  };
+  for (const { key } of missingFields) {
+    const el = document.getElementById(idMap[key]);
+    if (!el) continue;
+    el.style.borderColor = 'var(--red)';
+    el.style.boxShadow = '0 0 0 1px var(--red)';
+    const clearWarning = () => {
+      el.style.borderColor = '';
+      el.style.boxShadow = '';
+      el.removeEventListener('input', clearWarning);
+    };
+    el.addEventListener('input', clearWarning);
   }
 }
 
