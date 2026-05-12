@@ -21360,6 +21360,193 @@ function poNextAction(p) {
   return '—';
 }
 
+// ── PO quote parsing — "Parse from supplier quote" in the New PO modal ────────
+//
+// Supports PDF (sent as base64 document to Claude API) and Excel (parsed
+// client-side with SheetJS, sent as structured text to Claude API).
+// On success: line items are pushed into _poNewState and the modal re-renders;
+// supplier name is fuzzy-matched against _poSuppliersCache and auto-selected.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function openPoQuoteFilePicker() {
+  const input = document.getElementById('poQuoteFileInput');
+  if (input) { input.value = ''; input.click(); }
+}
+
+function _poQuoteParseStatus(msg, type) {
+  // type: 'loading' | 'success' | 'error' | 'hidden'
+  const el = document.getElementById('poQuoteParseStatus');
+  if (!el) return;
+  if (type === 'hidden') { el.style.display = 'none'; return; }
+  const colours = { loading: 'var(--muted)', success: 'var(--green)', error: 'var(--red)' };
+  el.style.display = 'block';
+  el.style.color   = colours[type] || 'var(--muted)';
+  el.textContent   = msg;
+}
+
+async function handlePoQuoteFile(file) {
+  if (!file) return;
+  const ext = file.name.split('.').pop().toLowerCase();
+
+  if (ext === 'pdf') {
+    _poQuoteParseStatus('📄 Reading PDF…', 'loading');
+    try {
+      const b64 = await blobToBase64(file);
+      await _parsePoQuoteWithClaude({ type: 'pdf', b64, filename: file.name });
+    } catch (e) {
+      _poQuoteParseStatus('Failed to read PDF: ' + e.message, 'error');
+    }
+  } else if (['xlsx', 'xls'].includes(ext)) {
+    _poQuoteParseStatus('📊 Reading spreadsheet…', 'loading');
+    try {
+      const buf = await file.arrayBuffer();
+      const wb  = XLSX.read(buf, { type: 'array' });
+      // Use the first sheet
+      const sheetName = wb.SheetNames[0];
+      const sheet     = wb.Sheets[sheetName];
+      // Convert to array-of-arrays then to a readable text block
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+      const text = rows
+        .filter(r => r.some(c => c !== ''))
+        .map(r => r.map(c => String(c == null ? '' : c).trim()).join('\t'))
+        .join('\n');
+      await _parsePoQuoteWithClaude({ type: 'excel', text, filename: file.name });
+    } catch (e) {
+      _poQuoteParseStatus('Failed to read spreadsheet: ' + e.message, 'error');
+    }
+  } else {
+    _poQuoteParseStatus('Unsupported file type — use PDF or Excel (.xlsx/.xls)', 'error');
+  }
+}
+
+async function _parsePoQuoteWithClaude({ type, b64, text, filename }) {
+  _poQuoteParseStatus('🤖 Extracting line items…', 'loading');
+
+  const systemPrompt = `You extract purchase order data from supplier quotes.
+
+Return ONLY a JSON object with this shape (use null for anything not found):
+{
+  "supplier_name": string | null,
+  "quote_ref":     string | null,
+  "line_items": [
+    {
+      "description": string,
+      "qty":         number | null,
+      "unit_price":  number | null,
+      "line_total":  number | null
+    }
+  ]
+}
+
+Rules:
+- line_items must only contain actual goods/services being purchased — exclude header rows, totals rows, VAT rows, delivery rows, and blank rows
+- description: the item name/description as written on the quote
+- qty: numeric quantity only — null if not present or not a number
+- unit_price: nett unit price in GBP — null if not present
+- line_total: nett line total in GBP — null if not present
+- All monetary values must be nett (ex-VAT) and numeric only — no £ symbols, no commas
+- supplier_name: the company issuing this quote (not the recipient)
+- quote_ref: the supplier's own reference/quote number if visible
+- Return only the JSON object — no explanation, no markdown fences`;
+
+  const userContent = type === 'pdf'
+    ? [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } },
+        { type: 'text', text: 'Extract the purchase order data from this supplier quote.' }
+      ]
+    : `File: ${filename}\n\n${text}`;
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 2000,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userContent }]
+      })
+    });
+
+    const data  = await res.json();
+    const raw   = (data.content || []).find(b => b.type === 'text')?.text || '';
+    const clean = raw.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(clean);
+
+    _applyParsedPoQuote(parsed);
+  } catch (e) {
+    _poQuoteParseStatus('Parse failed — ' + e.message, 'error');
+    console.error('PO quote parse error:', e);
+  }
+}
+
+function _applyParsedPoQuote(parsed) {
+  const lines = Array.isArray(parsed.line_items) ? parsed.line_items : [];
+
+  if (!lines.length) {
+    _poQuoteParseStatus('No line items found — check the file and try again, or add lines manually.', 'error');
+    return;
+  }
+
+  // ── Populate line items ──
+  _poNewState.lineItems = lines.map(li => ({
+    description: li.description || '',
+    quantity:    li.qty != null    ? String(li.qty)        : '',
+    unit_price:  li.unit_price != null ? String(li.unit_price) : '',
+    line_total:  li.line_total != null ? String(Number(li.line_total).toFixed(2)) : ''
+  }));
+  renderPoLineRows();
+  recalcPoTotal();
+
+  // ── Fuzzy-match supplier ──
+  let supplierNote = '';
+  if (parsed.supplier_name) {
+    const match = _fuzzyMatchPoSupplier(parsed.supplier_name);
+    if (match) {
+      selectPoSupplier(match.id);
+      supplierNote = ` · Supplier matched: ${match.supplier_name}`;
+    } else {
+      // Pre-fill the search box so they can see what was extracted
+      const search = document.getElementById('poNewSupplierSearch');
+      if (search) search.value = parsed.supplier_name;
+      supplierNote = ` · Supplier "${parsed.supplier_name}" not found — select manually`;
+    }
+  }
+
+  const refNote = parsed.quote_ref ? ` · Ref: ${parsed.quote_ref}` : '';
+  _poQuoteParseStatus(
+    `✓ ${lines.length} line${lines.length > 1 ? 's' : ''} imported${refNote}${supplierNote} — review before saving`,
+    'success'
+  );
+}
+
+function _fuzzyMatchPoSupplier(name) {
+  if (!name || !(_poSuppliersCache || []).length) return null;
+  const norm = s => String(s).toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+  const target = norm(name);
+
+  let best = null, bestScore = 0;
+  for (const s of _poSuppliersCache) {
+    const candidate = norm(s.supplier_name || '');
+    if (!candidate) continue;
+    // Score: exact match = 1.0; one contains the other = 0.8; shared words = fraction
+    let score = 0;
+    if (candidate === target) {
+      score = 1.0;
+    } else if (candidate.includes(target) || target.includes(candidate)) {
+      score = 0.8;
+    } else {
+      const tw = new Set(target.split(' '));
+      const cw = candidate.split(' ');
+      const shared = cw.filter(w => w.length > 2 && tw.has(w)).length;
+      score = shared / Math.max(tw.size, cw.length);
+    }
+    if (score > bestScore) { bestScore = score; best = s; }
+  }
+  // Require at least 0.5 to avoid false positives
+  return bestScore >= 0.5 ? best : null;
+}
+
 // ── New PO modal ──
 function openPoNewModal() {
   const perms = getUserPermissions(currentManagerUser) || {};
@@ -21391,6 +21578,7 @@ function openPoNewModal() {
   document.getElementById('poNewLineItems').innerHTML = '';
   document.getElementById('poNewError').textContent = '';
   document.getElementById('poNewBudgetWarn').textContent = '';
+  _poQuoteParseStatus('', 'hidden');
   document.getElementById('poNewSaveBtn').textContent = 'Create PO';
 
   // Populate cost-centre dropdown

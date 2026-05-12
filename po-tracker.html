@@ -152,9 +152,22 @@
     <div style="margin-bottom:12px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
         <label class="field-label" style="margin:0">Line Items</label>
-        <button type="button" class="btn btn-ghost" style="padding:4px 10px;font-size:11px"
-                onclick="addPoLineRow()">+ Add Line</button>
+        <div style="display:flex;gap:6px">
+          <button type="button" class="btn btn-ghost" style="padding:4px 10px;font-size:11px;
+                  border-color:var(--accent);color:var(--accent)" onclick="openPoQuoteFilePicker()">
+            📎 Parse from quote
+          </button>
+          <button type="button" class="btn btn-ghost" style="padding:4px 10px;font-size:11px"
+                  onclick="addPoLineRow()">+ Add Line</button>
+        </div>
       </div>
+      <!-- Hidden file input — accepts PDF and Excel -->
+      <input type="file" id="poQuoteFileInput" accept=".pdf,.xlsx,.xls" style="display:none"
+             onchange="handlePoQuoteFile(this.files[0])">
+      <!-- Parse status strip -->
+      <div id="poQuoteParseStatus" style="display:none;padding:8px 10px;border-radius:6px;
+           font-size:12px;margin-bottom:8px;background:var(--bg-darker);
+           border:1px solid var(--border)"></div>
       <div id="poNewLineItems" style="display:flex;flex-direction:column;gap:6px"></div>
       <div style="font-size:11px;color:var(--subtle);margin-top:6px">
         Leave empty for single-total POs — enter total below instead.
@@ -459,6 +472,7 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260512g"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="shared.js?v=20260512h"></script>
 </body>
 </html>
