@@ -12177,13 +12177,13 @@ const TEMPLATE_DEFAULTS = {
   },
   emailBamaSwInvoice: {
     to: 'info@bamasw.co.uk',
-    subject: 'Invoice {{bama_sw_invoice_number}} — Project {{project_number}}',
+    subject: 'Remittance Advice {{bama_sw_invoice_number}} — Project {{project_number}}',
     body: 'Hi,\n\n' +
-          'Please find attached our invoice {{bama_sw_invoice_number}} for project {{project_number}}.\n\n' +
+          'Please find attached our remittance advice {{bama_sw_invoice_number}} for project {{project_number}}.\n\n' +
           'Original quote value: {{original_value}}\n' +
           'Project costs deducted: {{deductions_total}}\n' +
-          'Net invoice total: {{net_invoice_total}}\n\n' +
-          'Payment due {{bama_sw_invoice_due_date}} as per agreed terms.\n\n' +
+          'Amount payable: {{net_invoice_total}}\n\n' +
+          'Payment of {{net_invoice_total}} will be made by {{bama_sw_invoice_due_date}} as per agreed terms.\n\n' +
           'Many thanks.'
   },
   emailSignature: {
@@ -12501,8 +12501,8 @@ function renderTemplateEditor(key) {
       ${renderEmailTokensHint('emailQuoteSent')}`;
   } else if (key === 'emailBamaSwInvoice') {
     html = `
-      <h2>Bama SW Invoice — Email</h2>
-      <div class="tpl-desc">Sent at the <b>Generate Bama SW Invoice</b> step. Used to send the system-generated invoice (original quote minus project costs) to Bama South West.</div>
+      <h2>Bama SW Remittance — Email</h2>
+      <div class="tpl-desc">Sent at the <b>Create Remittance Advice</b> step. Used to send the remittance advice to Bama South West showing the amount payable for the project.</div>
       <div class="tpl-section">
         <div class="tpl-section-title">Default recipient (To:)</div>
         ${field('to', 'Recipient email', 'text', 'pre-filled in the email composer — editable before sending')}
@@ -12633,7 +12633,7 @@ function refreshTemplatePreview() {
     if (label) label.textContent = 'Delivery Note \u2014 sample data';
   } else if (tplCurrent === 'emailQuoteSent' || tplCurrent === 'emailBamaSwInvoice') {
     html = buildEmailPreviewHTML(tplCurrent, tplDraft);
-    if (label) label.textContent = (tplCurrent === 'emailQuoteSent' ? 'Babcock Quote Email' : 'Bama SW Invoice Email') + ' \u2014 sample data';
+    if (label) label.textContent = (tplCurrent === 'emailQuoteSent' ? 'Babcock Quote Email' : 'Bama SW Remittance Email') + ' \u2014 sample data';
   } else if (tplCurrent === 'emailSignature') {
     // For the signature alone, show it inside an envelope so the user
     // sees what it looks like at the bottom of an actual email body.
@@ -19137,7 +19137,7 @@ function babcockAdvanceLabel(currentStatus) {
     'Live Project':     'Complete Project',
     'Project Complete': 'Approved to Pay',
     'Approved to Pay':  'Payment Received',
-    'Payment Received': 'Generate Bama SW Invoice',
+    'Payment Received': 'Create Remittance Advice',
     'Sent to Bama SW':  'Bama SW PO Received'
   })[currentStatus] || null;
 }
@@ -20423,7 +20423,7 @@ async function handleAdvanceFromPaymentReceived(q, next) {
 
   document.getElementById('bswInvoiceNumber').value = '';
   document.getElementById('bswConfirmBtn').disabled = true;
-  document.getElementById('bswConfirmBtn').textContent = 'Generate & Email';
+  document.getElementById('bswConfirmBtn').textContent = 'Create Remittance Advice';
 
   document.getElementById('babcockBswInvoiceModal').classList.add('active');
 
@@ -20487,7 +20487,7 @@ async function confirmBabcockBswInvoice() {
     console.error('Bama SW invoice PDF render failed:', err);
     toast('PDF render failed: ' + (err.message || 'unknown error'), 'error');
     btn.disabled = false;
-    btn.textContent = 'Generate & Email';
+    btn.textContent = 'Create Remittance Advice';
     return;
   }
 
@@ -20507,7 +20507,7 @@ async function confirmBabcockBswInvoice() {
     console.error('Bama SW invoice upload failed:', err);
     toast('SharePoint upload failed: ' + (err.message || 'unknown error'), 'error');
     btn.disabled = false;
-    btn.textContent = 'Generate & Email';
+    btn.textContent = 'Create Remittance Advice';
     return;
   }
 
@@ -20555,7 +20555,7 @@ async function confirmBabcockBswInvoice() {
   } catch (err) {
     toast('Failed to encode PDF for email', 'error');
     btn.disabled = false;
-    btn.textContent = 'Generate & Email';
+    btn.textContent = 'Create Remittance Advice';
     return;
   }
 
@@ -20578,7 +20578,7 @@ async function confirmBabcockBswInvoice() {
   _bswContext = null;
 
   await openBabcockEmailModal({
-    title: 'Email Bama SW Invoice',
+    title: 'Email Bama SW Remittance',
     templateKey: 'emailBamaSwInvoice',
     tokens: {
       bama_sw_invoice_number:   invoiceNumber,
@@ -20785,7 +20785,7 @@ async function confirmBabcockBswPo() {
   // the same wording, just with the new PO ref noted. The user can
   // tweak the body before sending if they want to call out the rev.
   await openBabcockEmailModal({
-    title: 'Email Revised Bama SW Invoice',
+    title: 'Email Revised Bama SW Remittance',
     templateKey: 'emailBamaSwInvoice',
     tokens: {
       bama_sw_invoice_number:   q.bama_sw_invoice_number,
