@@ -20050,6 +20050,65 @@ async function uploadDriveItemContent(driveItem, bytes, etag) {
   return await res.json();
 }
 
+// ── Append a tracker row using the Excel Graph API ──
+// Uses Excel's calculation engine rather than raw file bytes, so it works
+// even when someone has the tracker open in Excel or a browser tab.
+// A workbook session is created for the operation so the usedRange read
+// and the range write are coherent, then closed immediately afterwards.
+async function appendRowToTrackerViaExcelApi(driveItem, sheetName, rowData) {
+  const token   = await getToken();
+  const driveId = driveItem.parentReference?.driveId;
+  const itemId  = driveItem.id;
+  const base    = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/workbook`;
+  const authHdr = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
+
+  const sessRes = await fetch(`${base}/createSession`,
+    { method: 'POST', headers: authHdr, body: JSON.stringify({ persistChanges: true }) });
+  if (!sessRes.ok) throw new Error(`Workbook session failed: ${sessRes.status}`);
+  const { id: sessionId } = await sessRes.json();
+  const hdr = { ...authHdr, 'workbook-session-id': sessionId };
+
+  try {
+    const enc   = encodeURIComponent(sheetName);
+    const urRes = await fetch(
+      `${base}/worksheets/${enc}/usedRange?$select=rowIndex,rowCount`,
+      { headers: hdr }
+    );
+    if (!urRes.ok) throw new Error(`usedRange failed: ${urRes.status}`);
+    const ur = await urRes.json();
+    const nextExcelRow = ur.rowIndex + ur.rowCount + 1;
+    const address      = `A${nextExcelRow}:M${nextExcelRow}`;
+
+    const toSerial = d => d ? Math.round((d.getTime() - Date.UTC(1899, 11, 30)) / 86400000) : null;
+
+    const values = [[
+      rowData.invoiceNumber,
+      toSerial(rowData.invoiceDate),
+      toSerial(rowData.dueDate),
+      rowData.customer,
+      null,
+      rowData.cost        ?? null,
+      rowData.reverseCharge ?? null,
+      null, null,
+      rowData.total       ?? null,
+      null,
+      rowData.outstanding ?? null,
+      null
+    ]];
+
+    const pRes = await fetch(
+      `${base}/worksheets/${enc}/range(address='${address}')`,
+      { method: 'PATCH', headers: hdr, body: JSON.stringify({ values }) }
+    );
+    if (!pRes.ok) {
+      const txt = await pRes.text().catch(() => '');
+      throw new Error(`Excel write failed: ${pRes.status} ${txt}`);
+    }
+  } finally {
+    await fetch(`${base}/closeSession`, { method: 'POST', headers: hdr }).catch(() => {});
+  }
+}
+
 // ── Parse the tracker: find the next INV#### number ──
 // Reads the "Sales Invoices" tab, scans column A for INV#### entries,
 // returns the highest seen + 1. If no entries found returns 'INV0001'.
@@ -20480,19 +20539,16 @@ async function confirmBabcockBswInvoice() {
   if (_bswContext.trackerItem && _bswContext.trackerBuffer) {
     try {
       btn.textContent = 'Updating tracker…';
-      // Re-read tracker buffer for fresh data + collision check
+      // Re-read fresh to get the correct sheet name and verify number hasn't advanced
       const freshItem   = await resolveSharedDriveItem(BAMA_INVOICE_TRACKER_SHARE_URL);
-      const freshEtag   = freshItem.eTag || null;
       const freshBuffer = await downloadDriveItemContent(freshItem);
-      // Re-check the suggested number is still next — protect against a
-      // race where someone else added INV0257 between our load and now.
-      const { next: freshNext } = nextInvoiceNumberFromTracker(freshBuffer);
+      const { next: freshNext, sheetName: trackerSheet } = nextInvoiceNumberFromTracker(freshBuffer);
       if (freshNext !== invoiceNumber) {
-        // Allow the user to use a non-sequential number if they want —
-        // just warn rather than block. We append anyway.
         console.warn(`Tracker advanced — suggested ${freshNext}, using ${invoiceNumber}`);
       }
-      const newBuffer = appendRowToInvoiceTracker(freshBuffer, {
+      // Use the Excel Graph API instead of raw file upload so this works
+      // even when someone has the tracker open in Excel or a browser tab.
+      await appendRowToTrackerViaExcelApi(freshItem, trackerSheet, {
         invoiceNumber,
         invoiceDate: new Date(),
         dueDate:     new Date(dueDateIso + 'T00:00:00'),
@@ -20502,7 +20558,6 @@ async function confirmBabcockBswInvoice() {
         total:       Number(netTotal.toFixed(2)),
         outstanding: Number(netTotal.toFixed(2))
       });
-      await uploadDriveItemContent(freshItem, newBuffer, freshEtag);
       trackerUpdated = true;
     } catch (err) {
       // Non-fatal — the invoice exists, the email will go out, but the
