@@ -72,7 +72,58 @@
       <button class="btn btn-ghost" onclick="closeBabcockDetailModal()">Close</button>
       <button class="btn btn-ghost" id="bdOpenPdfBtn" onclick="openBabcockDetailPdf()" style="display:none">📥 Open PDF</button>
       <button class="btn btn-ghost" id="bdOpenSourceBtn" onclick="openBabcockDetailSource()" style="display:none">📊 Open Source</button>
+      <button class="btn btn-ghost" onclick="editBabcockLineItemsFromDetail()">📋 Edit Items</button>
       <button class="btn btn-primary" onclick="editBabcockQuoteFromDetail()">✏️ Edit</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     LINE ITEMS EDIT MODAL
+     Opens on the 📋 button in the tracker row or detail modal.
+     Allows editing the individual line items and re-generating the PDF.
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="babcockLineItemsModal">
+  <div class="modal" style="max-width:760px;width:97vw;max-height:92vh;overflow:hidden;display:flex;flex-direction:column">
+    <div class="modal-title" style="flex:0 0 auto">📋 Edit Line Items — <span id="bliRefHeader" style="color:var(--accent)"></span></div>
+    <div style="overflow-y:auto;flex:1 1 auto;padding-right:4px">
+      <input type="hidden" id="bliQuoteId">
+
+      <table style="width:100%;border-collapse:collapse">
+        <thead>
+          <tr style="font-size:11px;color:var(--muted);font-weight:600;letter-spacing:.4px;text-transform:uppercase;border-bottom:2px solid var(--border)">
+            <th style="width:28px;padding:6px 4px;text-align:center">#</th>
+            <th style="padding:6px 4px;text-align:left">Description</th>
+            <th style="width:100px;padding:6px 4px;text-align:right">Unit £</th>
+            <th style="width:80px;padding:6px 4px;text-align:right">Qty</th>
+            <th style="width:100px;padding:6px 4px;text-align:right">Amount £</th>
+            <th style="width:36px"></th>
+          </tr>
+        </thead>
+        <tbody id="bliTableBody">
+          <tr><td colspan="6" style="padding:20px;text-align:center;color:var(--muted)">
+            <div class="spinner" style="margin:0 auto 8px"></div>Loading…
+          </td></tr>
+        </tbody>
+      </table>
+
+      <div style="margin-top:10px;display:flex;align-items:center;gap:16px">
+        <button class="btn btn-ghost" style="padding:5px 14px;font-size:12px" onclick="addBabcockLineItemRow()">+ Add Row</button>
+        <div style="flex:1"></div>
+        <div style="font-size:13px;color:var(--muted);font-weight:600">
+          Total: <span id="bliGrandTotal" style="font-family:var(--font-mono);font-size:15px;color:var(--green);font-weight:700">£0.00</span>
+        </div>
+      </div>
+
+      <div style="margin-top:12px;font-size:11px;color:var(--text);background:rgba(255,107,0,.06);border:1px solid rgba(255,107,0,.25);padding:10px 12px;border-radius:6px">
+        <b style="color:var(--accent)">ℹ️ Saving will regenerate the customer-facing PDF.</b>
+        <span style="color:var(--muted);margin-left:4px">A new revision is uploaded to SharePoint. Original files stay in place.</span>
+        <span style="color:var(--subtle);display:block;margin-top:3px;font-size:10px">Unit × Qty auto-fills Amount. You can also enter Amount directly.</span>
+      </div>
+    </div>
+    <div class="modal-actions" style="flex:0 0 auto;margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
+      <button class="btn btn-ghost" onclick="closeBabcockLineItemsModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitBabcockLineItemsEdit()">Save &amp; Regenerate PDF</button>
     </div>
   </div>
 </div>
@@ -612,18 +663,19 @@
           <table class="babcock-tracker-table" id="babcockTrackerTable">
             <thead>
               <tr>
-                <th style="min-width:90px">Quote Ref</th>
-                <th style="min-width:120px">Work Order</th>
-                <th style="min-width:110px">Date Sent</th>
-                <th style="min-width:120px;text-align:right">Total Value</th>
-                <th style="min-width:140px">Status</th>
+                <th style="min-width:90px;cursor:pointer;user-select:none" onclick="sortBabcockTracker('quote_ref')">Quote Ref<span id="bsi_quote_ref" style="color:var(--subtle)"> ⇅</span></th>
+                <th style="min-width:110px;cursor:pointer;user-select:none" onclick="sortBabcockTracker('po_number')">PO Number<span id="bsi_po_number" style="color:var(--subtle)"> ⇅</span></th>
+                <th style="min-width:120px;cursor:pointer;user-select:none" onclick="sortBabcockTracker('work_order_no')">Work Order<span id="bsi_work_order_no" style="color:var(--subtle)"> ⇅</span></th>
+                <th style="min-width:110px;cursor:pointer;user-select:none" onclick="sortBabcockTracker('date_sent')">Date Sent<span id="bsi_date_sent" style="color:var(--subtle)"> ⇅</span></th>
+                <th style="min-width:120px;text-align:right;cursor:pointer;user-select:none" onclick="sortBabcockTracker('total_value')">Total Value<span id="bsi_total_value" style="color:var(--subtle)"> ⇅</span></th>
+                <th style="min-width:140px;cursor:pointer;user-select:none" onclick="sortBabcockTracker('status')">Status<span id="bsi_status" style="color:var(--subtle)"> ⇅</span></th>
                 <th style="min-width:170px">Next Action</th>
-                <th style="min-width:130px">Last Updated</th>
-                <th style="width:80px;text-align:right">Actions</th>
+                <th style="min-width:130px;cursor:pointer;user-select:none" onclick="sortBabcockTracker('updated_at')">Last Updated<span id="bsi_updated_at" style="color:var(--subtle)"> ⇅</span></th>
+                <th style="width:100px;text-align:right">Actions</th>
               </tr>
             </thead>
             <tbody id="babcockTrackerBody">
-              <tr><td colspan="7" style="padding:30px;text-align:center;color:var(--muted)">
+              <tr><td colspan="9" style="padding:30px;text-align:center;color:var(--muted)">
                 <div class="spinner" style="margin:0 auto 10px"></div>Loading quotes…
               </td></tr>
             </tbody>
@@ -975,6 +1027,6 @@
 <!-- PDF.js: used by the "Approved to Pay" step to OCR the uploaded COUPA invoice -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
-<script src="shared.js?v=20260513c"></script>
+<script src="shared.js?v=20260513d"></script>
 </body>
 </html>

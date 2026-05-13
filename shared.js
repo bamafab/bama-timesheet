@@ -17177,6 +17177,8 @@ let _babcockHeader = null;      // header metadata extracted from Quote tab
 let _pendingBabcockUser = null;
 let _babcockQuotes = [];        // tracker list (loaded from API)
 let _babcockLastGenerated = null; // cached payload for "Save to Tracker"
+let _babcockSort = { col: null, dir: 'asc' }; // tracker column sort state
+let _babcockLineItemsRecord = null; // full record open in line-items edit modal
 let _babcockNextRefCache = null;  // cached suggested next reference
 
 // Lightweight email validator. Not RFC-perfect by design — we just want
@@ -18653,7 +18655,7 @@ async function loadBabcockTracker() {
     renderBabcockTracker();
   } catch (err) {
     console.warn('Babcock tracker load failed:', err);
-    tbody.innerHTML = `<tr><td colspan="6" style="padding:30px;text-align:center;color:var(--red)">
+    tbody.innerHTML = `<tr><td colspan="9" style="padding:30px;text-align:center;color:var(--red)">
       Failed to load quotes. ${escapeHtml(err.message || '')}
     </td></tr>`;
   }
@@ -18670,17 +18672,49 @@ function renderBabcockTracker() {
 
   const list = _babcockQuotes.filter(q => {
     if (statusFilter && q.status !== statusFilter) return false;
-    if (search && !`${q.quote_ref || ''} ${q.work_order_no || ''}`.toLowerCase().includes(search)) return false;
+    if (search && !`${q.quote_ref || ''} ${q.work_order_no || ''} ${q.po_number || ''}`.toLowerCase().includes(search)) return false;
     return true;
   });
+
+  // Apply column sort
+  if (_babcockSort.col) {
+    const { col, dir } = _babcockSort;
+    const statusOrder = ['Quote Received','Quote Sent','Live Project','Project Complete',
+                         'Approved to Pay','Payment Received','Sent to Bama SW',
+                         'Bama SW Awaiting Payment','Cancelled'];
+    list.sort((a, b) => {
+      let va, vb;
+      if (col === 'status') {
+        va = statusOrder.indexOf(a.status || 'Quote Received');
+        vb = statusOrder.indexOf(b.status || 'Quote Received');
+        if (va === -1) va = 99; if (vb === -1) vb = 99;
+      } else if (col === 'total_value') {
+        va = Number(a.total_value) || 0;
+        vb = Number(b.total_value) || 0;
+      } else if (col === 'date_sent') {
+        va = a.date_sent || a.created_at || '';
+        vb = b.date_sent || b.created_at || '';
+      } else if (col === 'updated_at') {
+        va = a.updated_at || '';
+        vb = b.updated_at || '';
+      } else {
+        va = String(a[col] || '').toLowerCase();
+        vb = String(b[col] || '').toLowerCase();
+      }
+      if (va < vb) return dir === 'asc' ? -1 : 1;
+      if (va > vb) return dir === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }
 
   if (countEl) countEl.textContent = `${list.length} quote${list.length === 1 ? '' : 's'}`;
 
   if (!list.length) {
-    tbody.innerHTML = `<tr><td colspan="8" style="padding:40px;text-align:center;color:var(--muted)">
+    tbody.innerHTML = `<tr><td colspan="9" style="padding:40px;text-align:center;color:var(--muted)">
       <div style="font-size:32px;margin-bottom:8px">📋</div>
       No quotes yet. Click <b>+ New Quote</b> to create one.
     </td></tr>`;
+    _updateBabcockSortIndicators();
     return;
   }
 
@@ -18724,6 +18758,7 @@ function renderBabcockTracker() {
     return `
     <tr class="clickable-row" onclick="viewBabcockQuoteDetail(${q.id})">
       <td class="ref-cell">${escapeHtml(q.quote_ref || '')}${revTag}</td>
+      <td style="font-family:var(--font-mono);font-size:12px;color:var(--accent2)">${escapeHtml(q.po_number || '—')}</td>
       <td style="font-family:var(--font-mono);font-size:12px;color:var(--muted)">${escapeHtml(q.work_order_no || '—')}</td>
       <td>${fmtDate(q.date_sent || q.created_at)}</td>
       <td class="num-cell">${fmtGBP(q.total_value)}</td>
@@ -18732,11 +18767,296 @@ function renderBabcockTracker() {
       <td style="font-size:12px;color:var(--muted)">${fmtDate(q.updated_at)}</td>
       <td style="text-align:right;white-space:nowrap">
         <button class="row-action" title="Edit" onclick="event.stopPropagation();editBabcockQuote(${q.id})">✏️</button>
+        <button class="row-action" title="Edit Line Items" onclick="event.stopPropagation();editBabcockLineItems(${q.id})">📋</button>
         <button class="row-action" title="Delete" onclick="event.stopPropagation();deleteBabcockQuote(${q.id}, '${escapeHtml(q.quote_ref || '')}')">🗑</button>
       </td>
     </tr>`;
   }).join('');
+  _updateBabcockSortIndicators();
 }
+
+// ── Babcock tracker column sorting ──────────────────────────────────
+function sortBabcockTracker(col) {
+  if (_babcockSort.col === col) {
+    _babcockSort.dir = _babcockSort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    _babcockSort.col = col;
+    _babcockSort.dir = 'asc';
+  }
+  renderBabcockTracker();
+}
+
+function _updateBabcockSortIndicators() {
+  const sortableCols = ['quote_ref','po_number','work_order_no','date_sent','total_value','status','updated_at'];
+  for (const col of sortableCols) {
+    const el = document.getElementById(`bsi_${col}`);
+    if (!el) continue;
+    if (_babcockSort.col !== col) {
+      el.textContent = ' ⇅';
+      el.style.color = 'var(--subtle)';
+    } else {
+      el.textContent = _babcockSort.dir === 'asc' ? ' ↑' : ' ↓';
+      el.style.color = 'var(--accent)';
+    }
+  }
+}
+
+// ── Babcock line items edit modal ────────────────────────────────────
+let _bliComputedTotal = 0;
+
+async function editBabcockLineItems(id) {
+  const summary = _babcockQuotes.find(q => q.id === id);
+  if (!summary) { toast('Quote not found', 'error'); return; }
+
+  const modal = document.getElementById('babcockLineItemsModal');
+  if (!modal) { toast('Line items editor not available', 'error'); return; }
+
+  document.getElementById('bliQuoteId').value = id;
+  document.getElementById('bliRefHeader').textContent = summary.quote_ref || `#${id}`;
+  document.getElementById('bliTableBody').innerHTML =
+    '<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--muted)"><div class="spinner" style="margin:0 auto 8px"></div>Loading…</td></tr>';
+  modal.classList.add('active');
+
+  let full = summary;
+  try { full = await api.get(`/api/babcock-quotes/${id}`); }
+  catch (err) { console.warn('Line items fetch failed:', err); }
+
+  _babcockLineItemsRecord = full;
+
+  const lineItems = Array.isArray(full.line_items) ? full.line_items
+    : (typeof full.line_items === 'string' && full.line_items
+        ? (() => { try { return JSON.parse(full.line_items); } catch { return []; } })()
+        : []);
+
+  _renderBabcockLineItemsTable(lineItems);
+}
+
+function _renderBabcockLineItemsTable(lineItems) {
+  const tbody = document.getElementById('bliTableBody');
+  if (!tbody) return;
+  if (!lineItems.length) {
+    tbody.innerHTML = `<tr><td colspan="6" style="padding:16px;text-align:center;color:var(--muted);font-style:italic">
+      No line items yet. Click <b>+ Add Row</b> to add one.
+    </td></tr>`;
+    bliUpdateTotal();
+    return;
+  }
+  tbody.innerHTML = lineItems.map((l, i) => _buildBliRowHtml(
+    l.description || '',
+    l.unitPrice !== null && l.unitPrice !== undefined ? l.unitPrice : null,
+    l.quantity   !== null && l.quantity   !== undefined ? l.quantity   : null,
+    l.amount     !== null && l.amount     !== undefined ? l.amount     : null
+  )).join('');
+  _updateBliRowNums();
+  bliUpdateTotal();
+}
+
+function _buildBliRowHtml(description, unitPrice, qty, amount) {
+  const upVal  = unitPrice !== null && unitPrice !== undefined ? unitPrice : '';
+  const qtyVal = qty       !== null && qty       !== undefined ? qty       : '';
+  const amtVal = amount    !== null && amount    !== undefined ? amount    : '';
+  return `<tr>
+    <td style="width:28px;text-align:center;color:var(--subtle);font-size:12px;padding:4px 2px" class="bli-row-num">?</td>
+    <td style="padding:3px 4px"><input type="text" class="field-input bli-desc"
+        value="${escapeHtml(String(description))}"
+        style="font-size:12px;padding:5px 8px;width:100%;min-width:160px"
+        placeholder="Description"></td>
+    <td style="padding:3px 4px"><input type="number" step="0.01" min="0" class="field-input bli-unit"
+        value="${escapeHtml(String(upVal))}"
+        style="font-size:12px;padding:5px 8px;width:90px;text-align:right"
+        placeholder="0.00"
+        oninput="bliAutoCalc(this)"></td>
+    <td style="padding:3px 4px"><input type="number" step="0.01" min="0" class="field-input bli-qty"
+        value="${escapeHtml(String(qtyVal))}"
+        style="font-size:12px;padding:5px 8px;width:70px;text-align:right"
+        placeholder="1"
+        oninput="bliAutoCalc(this)"></td>
+    <td style="padding:3px 4px"><input type="number" step="0.01" min="0" class="field-input bli-amount"
+        value="${escapeHtml(String(amtVal))}"
+        style="font-size:12px;padding:5px 8px;width:90px;text-align:right;color:var(--green)"
+        placeholder="0.00"
+        oninput="bliUpdateTotal()"></td>
+    <td style="width:36px;padding:3px 2px;text-align:center">
+      <button class="row-action" title="Remove row" onclick="removeBabcockLineItemRow(this)"
+              style="padding:4px 7px;font-size:13px">🗑</button>
+    </td>
+  </tr>`;
+}
+
+function bliAutoCalc(input) {
+  const row = input.closest('tr');
+  if (!row) return;
+  const unit = parseFloat(row.querySelector('.bli-unit')?.value);
+  const qty  = parseFloat(row.querySelector('.bli-qty')?.value);
+  const amtInput = row.querySelector('.bli-amount');
+  if (amtInput && isFinite(unit) && isFinite(qty)) {
+    amtInput.value = (unit * qty).toFixed(2);
+  }
+  bliUpdateTotal();
+}
+
+function bliUpdateTotal() {
+  let total = 0;
+  document.querySelectorAll('#bliTableBody .bli-amount').forEach(inp => {
+    total += parseFloat(inp.value) || 0;
+  });
+  _bliComputedTotal = total;
+  const el = document.getElementById('bliGrandTotal');
+  if (el) el.textContent = `£${total.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function addBabcockLineItemRow() {
+  const tbody = document.getElementById('bliTableBody');
+  if (!tbody) return;
+  // Remove the "no items" placeholder if present
+  if (tbody.querySelector('td[colspan]')) tbody.innerHTML = '';
+  tbody.insertAdjacentHTML('beforeend', _buildBliRowHtml('', null, null, null));
+  _updateBliRowNums();
+  bliUpdateTotal();
+  // Focus the new description input
+  const rows = tbody.querySelectorAll('tr');
+  rows[rows.length - 1]?.querySelector('.bli-desc')?.focus();
+}
+
+function removeBabcockLineItemRow(btn) {
+  const row = btn.closest('tr');
+  if (!row) return;
+  const tbody = document.getElementById('bliTableBody');
+  row.remove();
+  if (tbody && !tbody.querySelectorAll('tr').length) {
+    tbody.innerHTML = `<tr><td colspan="6" style="padding:16px;text-align:center;color:var(--muted);font-style:italic">
+      No line items. Click <b>+ Add Row</b> to add one.
+    </td></tr>`;
+  }
+  _updateBliRowNums();
+  bliUpdateTotal();
+}
+
+function _updateBliRowNums() {
+  document.querySelectorAll('#bliTableBody tr').forEach((row, i) => {
+    const numEl = row.querySelector('.bli-row-num');
+    if (numEl) numEl.textContent = i + 1;
+  });
+}
+
+function closeBabcockLineItemsModal() {
+  const modal = document.getElementById('babcockLineItemsModal');
+  if (modal) modal.classList.remove('active');
+  _babcockLineItemsRecord = null;
+  _bliComputedTotal = 0;
+}
+
+async function submitBabcockLineItemsEdit() {
+  const orig = _babcockLineItemsRecord;
+  if (!orig) return;
+  const id = parseInt(document.getElementById('bliQuoteId')?.value, 10);
+  if (!id) return;
+
+  // Collect rows
+  const newLineItems = [];
+  let validationError = false;
+  document.querySelectorAll('#bliTableBody tr').forEach((row, i) => {
+    if (row.querySelector('td[colspan]')) return; // placeholder row
+    const desc   = row.querySelector('.bli-desc')?.value?.trim() || '';
+    const unit   = row.querySelector('.bli-unit')?.value;
+    const qty    = row.querySelector('.bli-qty')?.value;
+    const amount = row.querySelector('.bli-amount')?.value;
+    if (!desc && !amount) return; // skip blank rows silently
+    newLineItems.push({
+      itemNum:   i + 1,
+      description: desc,
+      unitPrice:  unit   !== '' && unit   !== null ? Number(unit)   : null,
+      quantity:   qty    !== '' && qty    !== null ? Number(qty)    : null,
+      amount:     amount !== '' && amount !== null ? Number(amount) : null
+    });
+  });
+
+  if (validationError) return;
+
+  const newTotal = newLineItems.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+  const origTotal = Number(orig.total_value) || 0;
+  const totalChanged = Math.abs(newTotal - origTotal) > 0.001;
+
+  const totalNote = totalChanged
+    ? `<p style="margin:8px 0 0;font-size:12px;background:rgba(255,107,0,.08);border:1px solid rgba(255,107,0,.3);border-radius:5px;padding:8px 10px">
+        <b style="color:var(--accent)">Total value will update</b><br>
+        <span style="color:var(--muted)">
+          Current: <b>£${origTotal.toLocaleString('en-GB',{minimumFractionDigits:2})}</b> →
+          New: <b style="color:var(--green)">£${newTotal.toLocaleString('en-GB',{minimumFractionDigits:2})}</b>
+        </span>
+      </p>`
+    : '';
+
+  const proceed = await showConfirmAsync(
+    '📋 Save Line Items & Regenerate PDF?',
+    `<p style="margin:0 0 6px">Updating line items will regenerate the customer-facing PDF.</p>
+     <p style="margin:0;font-size:13px;color:var(--muted)">A new revision will be uploaded to SharePoint.
+     The original files stay in place.</p>${totalNote}`,
+    { okLabel: 'Save & Regenerate', cancelLabel: 'Cancel' }
+  );
+  if (!proceed) return;
+
+  const saveBtn = document.querySelector('#babcockLineItemsModal .btn-primary');
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Regenerating…'; }
+
+  try {
+    setLoading(true);
+    await loadLogoDataUri();
+
+    const nextRev = (parseInt(orig.revision, 10) || 0) + 1;
+    const grandTotal = newTotal || newLineItems.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+
+    const pdfBlob = await renderBabcockQuotePDF({
+      quoteRef:    orig.quote_ref,
+      quoteDate:   orig.date_sent,
+      validUntil:  orig.valid_until,
+      customerId:  orig.customer_id,
+      workOrderNo: orig.work_order_no,
+      preparedBy:  orig.prepared_by,
+      quoteFor:    orig.quote_for_area,
+      area:        '',
+      address:     orig.quote_for_address,
+      comments:    orig.comments,
+      markup:      orig.markup_pct ?? 10,
+      grandTotal,
+      lineItems:   newLineItems
+    });
+
+    toast('Uploading revised PDF…', 'info');
+    const folders = await findOrCreateBabcockFolders();
+    const safeRef      = sanitizeSpFilename(orig.quote_ref || 'BAMA-quote');
+    const dateForName  = (orig.date_sent || todayStr()).replace(/-/g, '');
+    const safeCustomer = sanitizeSpFilename(orig.quote_for_area || 'Quote');
+    const pdfFileName  = `${safeRef} - ${safeCustomer} - ${dateForName} - rev${nextRev}.pdf`;
+
+    const pdfUploaded = await uploadFileToFolder(
+      folders.parent.id, pdfFileName, pdfBlob, 'application/pdf'
+    );
+
+    const payload = {
+      line_items:          newLineItems,
+      total_value:         totalChanged ? newTotal : orig.total_value,
+      generated_file_id:   pdfUploaded.id,
+      generated_file_url:  pdfUploaded.webUrl,
+      revision:            nextRev
+    };
+
+    const updated = await api.put(`/api/babcock-quotes/${id}`, payload);
+    const idx = _babcockQuotes.findIndex(q => q.id === id);
+    if (idx !== -1) _babcockQuotes[idx] = { ..._babcockQuotes[idx], ...updated };
+
+    setLoading(false);
+    renderBabcockTracker();
+    closeBabcockLineItemsModal();
+    toast(`${orig.quote_ref} line items saved — rev${nextRev} ✓`, 'success');
+  } catch (err) {
+    setLoading(false);
+    console.error('Line items save failed:', err);
+    toast('Save failed: ' + (err.message || 'unknown error'), 'error');
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save & Regenerate PDF'; }
+  }
+}
+
 
 // Map a status to the next status in the workflow.
 // Returns null if there is no next action (terminal states).
@@ -20607,6 +20927,12 @@ function editBabcockQuoteFromDetail() {
   const id = _babcockDetailQuoteId;
   closeBabcockDetailModal();
   if (id) editBabcockQuote(id);
+}
+
+function editBabcockLineItemsFromDetail() {
+  const id = _babcockDetailQuoteId;
+  closeBabcockDetailModal();
+  if (id) editBabcockLineItems(id);
 }
 
 // ── Edit modal (opens from pencil icon or detail-modal Edit button) ──
