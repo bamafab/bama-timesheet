@@ -8615,11 +8615,7 @@ async function uploadFileToFolder(parentItemId, fileName, fileData, contentType,
     headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': contentType || 'application/octet-stream' },
     body: fileData
   });
-  if (!res.ok) {
-    let detail = '';
-    try { const e = await res.json(); detail = ': ' + (e.error?.message || JSON.stringify(e)); } catch {}
-    throw new Error(`Upload failed: ${res.status}${detail}`);
-  }
+  if (!res.ok) throw new Error(`Upload failed: ${res.status} ${res.statusText}`);
   return await res.json();
 }
 
