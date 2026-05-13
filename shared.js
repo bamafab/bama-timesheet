@@ -20720,13 +20720,18 @@ async function submitBabcockEdit() {
   // Diff PDF-affecting fields against the originally-loaded record to
   // decide whether the customer PDF needs regenerating.
   const orig = _babcockEditingRecord || {};
-  const norm = v => {
+  const _PDF_DATE_FIELDS = new Set(['date_sent', 'valid_until']);
+  const norm = (v, key) => {
     if (v === null || v === undefined || v === '') return '';
     if (typeof v === 'number') return String(v);
-    // Trim time component from datetime strings for comparison
-    return String(v).split('T')[0].trim();
+    // Only trim the time component for actual date fields — applying
+    // split('T') to text fields (e.g. comments) silently truncates any
+    // string containing the letter T, making comment changes invisible
+    // to the diff and skipping PDF regeneration.
+    if (_PDF_DATE_FIELDS.has(key)) return String(v).split('T')[0].trim();
+    return String(v).trim();
   };
-  const pdfChanged = _BABCOCK_PDF_FIELDS.some(k => norm(payload[k]) !== norm(orig[k]));
+  const pdfChanged = _BABCOCK_PDF_FIELDS.some(k => norm(payload[k], k) !== norm(orig[k], k));
 
   // ── Path A: no PDF-affecting changes — straight DB save ──
   if (!pdfChanged) {
