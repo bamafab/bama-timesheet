@@ -21793,18 +21793,13 @@ Rules:
     : `File: ${filename}\n\n${text}`;
 
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 2000,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userContent }]
-      })
+    const data  = await api.post('/claude-proxy', {
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 2000,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userContent }]
     });
 
-    const data  = await res.json();
     const raw   = (data.content || []).find(b => b.type === 'text')?.text || '';
     const clean = raw.replace(/```json|```/g, '').trim();
     const parsed = JSON.parse(clean);
@@ -22549,18 +22544,13 @@ Rules:
 - Do not invent or guess values — only extract what is explicitly present in the text
 - Return only the JSON object, no explanation, no markdown` + fewShotSection;
 
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: text }]
-      })
+    const data = await api.post('/claude-proxy', {
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1000,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: text }]
     });
 
-    const data = await res.json();
     const raw = (data.content || []).find(b => b.type === 'text')?.text || '';
     const clean = raw.replace(/```json|```/g, '').trim();
     const parsed = JSON.parse(clean);
