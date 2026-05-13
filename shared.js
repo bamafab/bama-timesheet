@@ -8609,14 +8609,23 @@ async function getOrCreateSubfolder(parentItemId, folderName, driveId) {
 
 async function uploadFileToFolder(parentItemId, fileName, fileData, contentType, driveId) {
   const token = await getToken();
-  const url = `https://graph.microsoft.com/v1.0/drives/${driveId || BAMA_DRIVE_ID}/items/${parentItemId}:/${fileName}:/content`;
+  const url = `https://graph.microsoft.com/v1.0/drives/${driveId || BAMA_DRIVE_ID}/items/${parentItemId}:/${encodeURIComponent(fileName)}:/content`;
   const res = await fetch(url, {
     method: 'PUT',
     headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': contentType || 'application/octet-stream' },
     body: fileData
   });
-  if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+  if (!res.ok) {
+    let detail = '';
+    try { const e = await res.json(); detail = ': ' + (e.error?.message || JSON.stringify(e)); } catch {}
+    throw new Error(`Upload failed: ${res.status}${detail}`);
+  }
   return await res.json();
+}
+
+// Strips characters SharePoint disallows in filenames: ~ " # % & * : < > ? { | } / \
+function sanitizeSpFilename(name) {
+  return (name || '').replace(/[~"#%&*:<>?{|}/\\]/g, '_');
 }
 
 async function deleteFileFromDrive(fileId, driveId) {
@@ -18168,10 +18177,10 @@ async function generateAndSaveBabcockQuote() {
     // STEP 4 — upload both files to SharePoint
     toast('Uploading files to SharePoint…', 'info');
     const folders = await findOrCreateBabcockFolders();
-    const safeRef = (formData.quoteRef || 'BAMA-quote').replace(/[/\\]/g, '_');
+    const safeRef = sanitizeSpFilename(formData.quoteRef || 'BAMA-quote');
     const dateForName = (formData.quoteDate || todayStr()).replace(/-/g, '');
     const originalFileName = `${safeRef} - ${_babcockOriginalFile.name}`;
-    const pdfFileName = `${safeRef} - ${(formData.quoteFor || 'Quote').replace(/[/\\]/g, '_')} - ${dateForName}.pdf`;
+    const pdfFileName = `${safeRef} - ${sanitizeSpFilename(formData.quoteFor || 'Quote')} - ${dateForName}.pdf`;
 
     const originalUploaded = await uploadFileToFolder(
       folders.received.id,
@@ -20794,9 +20803,9 @@ async function submitBabcockEdit() {
     // Upload the new PDF revision to SharePoint
     toast('Uploading revised PDF…', 'info');
     const folders = await findOrCreateBabcockFolders();
-    const safeRef = (payload.quote_ref || 'BAMA-quote').replace(/[/\\]/g, '_');
+    const safeRef = sanitizeSpFilename(payload.quote_ref || 'BAMA-quote');
     const dateForName = (payload.date_sent || todayStr()).replace(/-/g, '');
-    const safeCustomer = (payload.quote_for_area || 'Quote').replace(/[/\\]/g, '_');
+    const safeCustomer = sanitizeSpFilename(payload.quote_for_area || 'Quote');
     const pdfFileName = `${safeRef} - ${safeCustomer} - ${dateForName} - rev${nextRev}.pdf`;
 
     const pdfUploaded = await uploadFileToFolder(
