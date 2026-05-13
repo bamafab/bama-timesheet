@@ -20226,9 +20226,9 @@ async function renderBamaSwInvoicePDF(data) {
 
   // Title top-right
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(26);
+  doc.setFontSize(20);
   doc.setTextColor(208, 2, 27); // red
-  doc.text('INVOICE', W - M, y + 12, { align: 'right' });
+  doc.text('REMITTANCE ADVICE', W - M, y + 12, { align: 'right' });
   doc.setTextColor(0);
 
   y += 26;
@@ -20265,8 +20265,8 @@ async function renderBamaSwInvoicePDF(data) {
   doc.rect(M, y, W - M * 2, 22, 'F');
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
   const metaCols = [
-    { label: 'INVOICE NUMBER', value: data.invoiceNumber || '' },
-    { label: 'INVOICE DATE',   value: data.invoiceDate || '' },
+    { label: 'REFERENCE',      value: data.invoiceNumber || '' },
+    { label: 'DATE',           value: data.invoiceDate || '' },
     { label: 'DUE DATE',       value: data.dueDate || '' },
     { label: 'PROJECT',        value: data.projectNumber || '' }
   ];
@@ -20320,28 +20320,17 @@ async function renderBamaSwInvoicePDF(data) {
   totalsRow('VAT (Reverse charge)', '£0.00');
   doc.setDrawColor(208, 2, 27);
   doc.line(totalsX, y, totalsX + totalsW, y); y += 1.5;
-  totalsRow('TOTAL DUE', fmtCurrency(data.netTotal), true);
+  totalsRow('AMOUNT PAYABLE', fmtCurrency(data.netTotal), true);
 
   y += 8;
 
-  // Reverse charge notice
-  doc.setFillColor(255, 248, 235);
-  doc.rect(M, y, W - M * 2, 14, 'F');
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
-  doc.setTextColor(150, 100, 0);
-  doc.text('VAT REVERSE CHARGE', M + 4, y + 5.5);
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
-  doc.text('The recipient is liable for the VAT on this supply at the standard rate (20%). No VAT charged.', M + 4, y + 10.5);
-  doc.setTextColor(0);
-  y += 18;
-
-  // Payment terms footer
+  // Payment details footer
   doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
   doc.text('PAYMENT DETAILS', M, y); y += 5;
   doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-  doc.text(`Payment due by ${data.dueDate || '—'} as per agreed terms.`, M, y); y += 4;
-  doc.text('Bank: Starling Bank   Account: 46374865   Sort code: 60-83-71', M, y); y += 4;
-  doc.text('Beneficiary: BAMA Fabrication Ltd', M, y);
+  doc.text(`Payment of ${fmtCurrency(data.netTotal)} will be made by ${data.dueDate || '—'} as per agreed terms.`, M, y); y += 4;
+  doc.text('Payment from: Starling Bank   Account: 46374865   Sort code: 60-83-71', M, y); y += 4;
+  doc.text('Account name: BAMA Fabrication Ltd', M, y);
 
   return doc.output('blob');
 }
