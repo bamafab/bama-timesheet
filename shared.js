@@ -20060,52 +20060,44 @@ async function appendRowToTrackerViaExcelApi(driveItem, sheetName, rowData) {
   const driveId = driveItem.parentReference?.driveId;
   const itemId  = driveItem.id;
   const base    = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/workbook`;
-  const authHdr = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
+  // Sessionless — each call uses an implicit transient session that commits
+  // immediately and never holds a file lock, so the tracker stays openable.
+  const hdr = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
 
-  const sessRes = await fetch(`${base}/createSession`,
-    { method: 'POST', headers: authHdr, body: JSON.stringify({ persistChanges: true }) });
-  if (!sessRes.ok) throw new Error(`Workbook session failed: ${sessRes.status}`);
-  const { id: sessionId } = await sessRes.json();
-  const hdr = { ...authHdr, 'workbook-session-id': sessionId };
+  const enc   = encodeURIComponent(sheetName);
+  const urRes = await fetch(
+    `${base}/worksheets/${enc}/usedRange?$select=rowIndex,rowCount`,
+    { headers: hdr }
+  );
+  if (!urRes.ok) throw new Error(`usedRange failed: ${urRes.status}`);
+  const ur = await urRes.json();
+  const nextExcelRow = ur.rowIndex + ur.rowCount + 1;
+  const address      = `A${nextExcelRow}:M${nextExcelRow}`;
 
-  try {
-    const enc   = encodeURIComponent(sheetName);
-    const urRes = await fetch(
-      `${base}/worksheets/${enc}/usedRange?$select=rowIndex,rowCount`,
-      { headers: hdr }
-    );
-    if (!urRes.ok) throw new Error(`usedRange failed: ${urRes.status}`);
-    const ur = await urRes.json();
-    const nextExcelRow = ur.rowIndex + ur.rowCount + 1;
-    const address      = `A${nextExcelRow}:M${nextExcelRow}`;
+  const toSerial = d => d ? Math.round((d.getTime() - Date.UTC(1899, 11, 30)) / 86400000) : null;
 
-    const toSerial = d => d ? Math.round((d.getTime() - Date.UTC(1899, 11, 30)) / 86400000) : null;
+  const values = [[
+    rowData.invoiceNumber,
+    toSerial(rowData.invoiceDate),
+    toSerial(rowData.dueDate),
+    rowData.customer,
+    null,
+    rowData.cost          ?? null,
+    rowData.reverseCharge ?? null,
+    null, null,
+    rowData.total         ?? null,
+    null,
+    rowData.outstanding   ?? null,
+    null
+  ]];
 
-    const values = [[
-      rowData.invoiceNumber,
-      toSerial(rowData.invoiceDate),
-      toSerial(rowData.dueDate),
-      rowData.customer,
-      null,
-      rowData.cost        ?? null,
-      rowData.reverseCharge ?? null,
-      null, null,
-      rowData.total       ?? null,
-      null,
-      rowData.outstanding ?? null,
-      null
-    ]];
-
-    const pRes = await fetch(
-      `${base}/worksheets/${enc}/range(address='${address}')`,
-      { method: 'PATCH', headers: hdr, body: JSON.stringify({ values }) }
-    );
-    if (!pRes.ok) {
-      const txt = await pRes.text().catch(() => '');
-      throw new Error(`Excel write failed: ${pRes.status} ${txt}`);
-    }
-  } finally {
-    await fetch(`${base}/closeSession`, { method: 'POST', headers: hdr }).catch(() => {});
+  const pRes = await fetch(
+    `${base}/worksheets/${enc}/range(address='${address}')`,
+    { method: 'PATCH', headers: hdr, body: JSON.stringify({ values }) }
+  );
+  if (!pRes.ok) {
+    const txt = await pRes.text().catch(() => '');
+    throw new Error(`Excel write failed: ${pRes.status} ${txt}`);
   }
 }
 
@@ -20324,13 +20316,9 @@ async function renderBamaSwInvoicePDF(data) {
 
   y += 8;
 
-  // Payment details footer
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
-  doc.text('PAYMENT DETAILS', M, y); y += 5;
+  // Payment note footer
   doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-  doc.text(`Payment of ${fmtCurrency(data.netTotal)} will be made by ${data.dueDate || '—'} as per agreed terms.`, M, y); y += 4;
-  doc.text('Payment from: Starling Bank   Account: 46374865   Sort code: 60-83-71', M, y); y += 4;
-  doc.text('Account name: BAMA Fabrication Ltd', M, y);
+  doc.text(`Payment of ${fmtCurrency(data.netTotal)} will be made by ${data.dueDate || '—'} as per agreed terms.`, M, y);
 
   return doc.output('blob');
 }
