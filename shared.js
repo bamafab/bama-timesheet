@@ -19025,7 +19025,7 @@ async function submitBabcockLineItemsEdit() {
     toast('Uploading revised PDF…', 'info');
     const folders = await findOrCreateBabcockFolders();
     const safeRef      = sanitizeSpFilename(orig.quote_ref || 'BAMA-quote');
-    const dateForName  = (orig.date_sent || todayStr()).replace(/-/g, '');
+    const dateForName  = ((orig.date_sent || '').split('T')[0] || todayStr()).replace(/-/g, '');
     const safeCustomer = sanitizeSpFilename(orig.quote_for_area || 'Quote');
     const pdfFileName  = `${safeRef} - ${safeCustomer} - ${dateForName} - rev${nextRev}.pdf`;
 
