@@ -252,46 +252,91 @@
      Captures Bama SW's PO number for an already-sent invoice;
      we then regenerate the PDF with the PO on it and re-email.
 ══════════════════════════════════════════ -->
-<div class="modal-overlay" id="babcockBswPoModal">
+<!-- ═══════════════════════════════════════
+     RAISE PO TO BAMA SW MODAL (Babcock 1h)
+     Generates our Purchase Order PDF and emails it to Bama SW.
+════════════════════════════════════════ -->
+<div class="modal-overlay" id="babcockPoToBamaSwModal">
   <div class="modal" style="max-width:520px;width:95vw">
-    <div class="modal-title">📥 Bama SW PO Received</div>
+    <div class="modal-title">📋 Raise PO to Bama SW</div>
 
     <div style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.5">
-      Bama South West has returned a Purchase Order for invoice
-      <b><span id="bpoInvoiceRef" style="font-family:var(--font-mono);color:var(--accent)">INV????</span></b>.
-      We'll regenerate the invoice PDF with their PO number on it, save the
-      revised version to SharePoint, and open the email composer to resend.
+      Generate a Purchase Order for
+      <b><span id="bptbsProjectRef" style="font-family:var(--font-mono);color:var(--accent)">BC####</span></b>
+      — Amount: <b><span id="bptbsAmount">£0.00</span></b>
     </div>
 
     <div style="margin-bottom:14px">
-      <div class="field-label">BAMA SW PO NUMBER <span style="color:var(--red)">*</span></div>
-      <input type="text" class="field-input" id="bpoPoNumber"
+      <div class="field-label">OUR PO NUMBER <span style="color:var(--red)">*</span></div>
+      <input type="text" class="field-input" id="bptbsPoNumber"
              style="font-size:14px;font-family:var(--font-mono);letter-spacing:.5px"
-             placeholder="e.g. BSW-PO-12345"
-             autocomplete="off"
-             onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('bpoConfirmBtn')?.click();}">
+             placeholder="e.g. PO-2026-001" autocomplete="off"
+             onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('bptbsConfirmBtn')?.click();}">
       <div style="font-size:11px;color:var(--subtle);margin-top:4px">
-        The PO number returned by Bama SW for this invoice.
+        Enter manually for now — auto-generation from SQL coming soon.
       </div>
     </div>
 
     <div style="margin-bottom:14px">
-      <div class="field-label">DUE DATE <span style="color:var(--red)">*</span></div>
-      <input type="date" class="field-input" id="bpoDueDate" style="font-size:13px">
-      <div style="font-size:11px;color:var(--subtle);margin-top:4px">
-        Pre-filled from the original invoice — edit if Bama SW has set a different date.
-      </div>
+      <div class="field-label">PAYMENT DUE DATE <span style="color:var(--red)">*</span></div>
+      <input type="date" class="field-input" id="bptbsDueDate" style="font-size:13px">
     </div>
 
     <div class="modal-actions">
-      <button class="btn btn-ghost" onclick="closeBabcockBswPoModal()">Cancel</button>
-      <button class="btn btn-primary" id="bpoConfirmBtn" onclick="confirmBabcockBswPo()">Regenerate &amp; Email</button>
+      <button class="btn btn-ghost" onclick="closeBabcockPoToBamaSwModal()">Cancel</button>
+      <button class="btn btn-primary" id="bptbsConfirmBtn" onclick="confirmRaisePOToBamaSw()">Generate &amp; Email</button>
     </div>
   </div>
 </div>
 
 <!-- ═══════════════════════════════════════
-     GENERATE BAMA SW INVOICE MODAL (Babcock 1h)
+     RECEIVE BAMA SW INVOICE MODAL (Babcock 1i)
+     Upload their invoice PDF, capture number + amount, validate.
+════════════════════════════════════════ -->
+<div class="modal-overlay" id="babcockReceiveInvoiceModal">
+  <div class="modal" style="max-width:520px;width:95vw">
+    <div class="modal-title">📨 Bama SW Invoice Received</div>
+
+    <div style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.5">
+      Expected amount: <b id="briiExpectedAmt">£0.00</b>
+    </div>
+
+    <div id="briiDropZone"
+         style="border:2px dashed var(--border);border-radius:8px;padding:20px;text-align:center;
+                cursor:pointer;margin-bottom:14px;transition:border-color .2s"
+         onclick="document.getElementById('briiFileInput').click()">
+      <div id="briiDropZoneText" style="font-size:13px;color:var(--muted)">Click to upload their invoice PDF</div>
+      <input type="file" id="briiFileInput" accept=".pdf" style="display:none"
+             onchange="onBamaSwInvoiceFilePicked(this.files[0])">
+    </div>
+
+    <div style="margin-bottom:14px">
+      <div class="field-label">THEIR INVOICE NUMBER <span style="color:var(--red)">*</span></div>
+      <input type="text" class="field-input" id="briiInvoiceNumber"
+             style="font-size:14px;font-family:var(--font-mono);letter-spacing:.5px"
+             placeholder="e.g. BSW-INV-00123" autocomplete="off"
+             oninput="checkBriiCanSubmit()">
+    </div>
+
+    <div style="margin-bottom:14px">
+      <div class="field-label">THEIR INVOICE AMOUNT (£) <span style="color:var(--red)">*</span></div>
+      <input type="number" class="field-input" id="briiInvoiceAmount"
+             style="font-size:14px" step="0.01" min="0" placeholder="0.00"
+             oninput="onBriiAmountChange()">
+      <div id="briiAmountWarning"
+           style="display:none;font-size:12px;color:var(--yellow);margin-top:4px"></div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeBamaSwReceiveInvoiceModal()">Cancel</button>
+      <button class="btn btn-primary" id="briiConfirmBtn" onclick="confirmBamaSwInvoiceReceived()" disabled>Save &amp; Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     BAMA SW REMITTANCE MODAL (Babcock 1k)
+     Reads the SharePoint Invoice tracker for the next number, lets
      Reads the SharePoint Invoice tracker for the next number, lets
      user review/edit, then generates the PDF + uploads to SharePoint
      + appends a row to the tracker + opens the email composer.
@@ -1027,6 +1072,6 @@
 <!-- PDF.js: used by the "Approved to Pay" step to OCR the uploaded COUPA invoice -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
-<script src="shared.js?v=20260513m"></script>
+<script src="shared.js?v=20260513n"></script>
 </body>
 </html>

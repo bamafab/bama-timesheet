@@ -5421,8 +5421,8 @@ function renderReports() {
 //   Open quotes:        Quote Received, Quote Sent (not yet converted)
 //   Open projects:      Live Project (work in progress)
 //   Closed projects:    Project Complete, Approved to Pay, Payment Received,
-//                       Sent to Bama SW, Bama SW Awaiting Payment (project
-//                       work finished; finance lifecycle may still be open)
+//                       Bama SW PO Raised, Bama SW Invoice Received,
+//                       Paid to Bama SW, Remittance Sent
 //   Cancelled:          Cancelled (terminal failure)
 
 // FY toggle state — 'current' or 'last' (last full UK financial year)
@@ -5451,7 +5451,7 @@ const BABCOCK_OPEN_QUOTE_STATUSES   = ['Quote Received', 'Quote Sent'];
 const BABCOCK_OPEN_PROJECT_STATUSES = ['Live Project'];
 const BABCOCK_CLOSED_PROJECT_STATUSES = [
   'Project Complete', 'Approved to Pay', 'Payment Received',
-  'Sent to Bama SW', 'Bama SW Awaiting Payment'
+  'Bama SW PO Raised', 'Bama SW Invoice Received', 'Paid to Bama SW', 'Remittance Sent'
 ];
 
 function setBabcockFY(which) {
@@ -5552,16 +5552,16 @@ async function renderBabcockReport() {
   // What Babcock paid us (COUPA-side). Treat rows at or beyond Approved-to-Pay
   // as "invoiced"; treat rows at or beyond Payment Received as "paid".
   const invoicedPaid = inFY
-    .filter(q => ['Payment Received', 'Sent to Bama SW', 'Bama SW Awaiting Payment'].includes(q.status))
+    .filter(q => ['Payment Received', 'Bama SW PO Raised', 'Bama SW Invoice Received', 'Paid to Bama SW', 'Remittance Sent'].includes(q.status))
     .reduce((s, q) => s + (Number(q.coupa_invoice_gross_total) || Number(q.total_value) || 0), 0);
 
   // Total invoiced (raised), regardless of paid
   const invoicedTotal = inFY
-    .filter(q => ['Approved to Pay', 'Payment Received', 'Sent to Bama SW', 'Bama SW Awaiting Payment'].includes(q.status))
+    .filter(q => ['Approved to Pay', 'Payment Received', 'Bama SW PO Raised', 'Bama SW Invoice Received', 'Paid to Bama SW', 'Remittance Sent'].includes(q.status))
     .reduce((s, q) => s + (Number(q.coupa_invoice_gross_total) || Number(q.total_value) || 0), 0);
 
   // Outstanding pipeline — non-terminal, non-cancelled
-  const TERMINAL = new Set(['Bama SW Awaiting Payment', 'Cancelled']);
+  const TERMINAL = new Set(['Remittance Sent', 'Cancelled']);
   const outstandingValue = inFY
     .filter(q => !TERMINAL.has(q.status))
     .reduce((s, q) => s + (Number(q.total_value) || 0), 0);
@@ -5667,8 +5667,8 @@ async function renderBabcockReport() {
   // ─── Pipeline funnel (status counts, current snapshot — not FY-filtered) ───
   const STATUS_ORDER = [
     'Quote Received', 'Quote Sent', 'Live Project', 'Project Complete',
-    'Approved to Pay', 'Payment Received', 'Sent to Bama SW',
-    'Bama SW Awaiting Payment', 'Cancelled'
+    'Approved to Pay', 'Payment Received', 'Bama SW PO Raised',
+    'Bama SW Invoice Received', 'Paid to Bama SW', 'Remittance Sent', 'Cancelled'
   ];
   // Status colour map mirrors the badge palette in babcock.html so users
   // recognise statuses across pages.
@@ -5679,8 +5679,10 @@ async function renderBabcockReport() {
     'Project Complete':          'rgba(155,89,182,.7)',  // purple
     'Approved to Pay':           'rgba(26,188,156,.7)',  // teal
     'Payment Received':          'rgba(46,204,113,.7)',  // green
-    'Sent to Bama SW':           'rgba(231,76,153,.7)',  // magenta
-    'Bama SW Awaiting Payment':  'rgba(91,170,225,.7)',  // light blue
+    'Bama SW PO Raised':         'rgba(52,152,219,.7)',  // blue
+    'Bama SW Invoice Received':  'rgba(230,126,34,.7)',  // orange
+    'Paid to Bama SW':           'rgba(39,174,96,.7)',   // green
+    'Remittance Sent':           'rgba(149,165,166,.7)', // gray
     'Cancelled':                 'rgba(127,140,141,.7)'  // grey
   };
   const funnelCounts = STATUS_ORDER.map(s => all.filter(q => q.status === s).length);
@@ -12175,6 +12177,17 @@ const TEMPLATE_DEFAULTS = {
           'The quote is valid until {{valid_until}}.\n\n' +
           'If you have any questions, please don\u2019t hesitate to get in touch.'
   },
+  emailBamaSwPo: {
+    to: 'info@bamasw.co.uk',
+    subject: 'Purchase Order {{bama_sw_po_number}} — Project {{project_number}}',
+    body: 'Hi,\n\n' +
+          'Please find attached our Purchase Order {{bama_sw_po_number}} for project {{project_number}}.\n\n' +
+          'Project: {{project_name}}\n' +
+          'Amount: {{po_value}}\n' +
+          'Payment due: {{bama_sw_po_due_date}}\n\n' +
+          'Please issue your invoice against this Purchase Order number.\n\n' +
+          'Many thanks.'
+  },
   emailBamaSwInvoice: {
     to: 'info@bamasw.co.uk',
     subject: 'Remittance Advice {{bama_sw_invoice_number}} — Project {{project_number}}',
@@ -12183,7 +12196,7 @@ const TEMPLATE_DEFAULTS = {
           'Original quote value: {{original_value}}\n' +
           'Project costs deducted: {{deductions_total}}\n' +
           'Amount payable: {{net_invoice_total}}\n\n' +
-          'Payment of {{net_invoice_total}} will be made by {{bama_sw_invoice_due_date}} as per agreed terms.\n\n' +
+          'Payment of {{net_invoice_total}} was made on {{bama_sw_paid_date}}.\n\n' +
           'Many thanks.'
   },
   emailSignature: {
@@ -12273,15 +12286,24 @@ const EMAIL_TOKEN_DEFS = {
     { token: 'sender_email',    label: 'Logged-in user email',    sample: 'lee@bamafabrication.co.uk' },
     { token: 'date_today',      label: 'Today\u2019s date',       sample: '07 May 2026' }
   ],
+  emailBamaSwPo: [
+    { token: 'bama_sw_po_number',       label: 'Our PO number',              sample: 'PO-2026-001' },
+    { token: 'project_number',          label: 'Project number',             sample: 'BC0011' },
+    { token: 'project_name',            label: 'Project name',               sample: 'Plant Room Refurb' },
+    { token: 'po_value',                label: 'PO amount (\u00a3)',         sample: '\u00a31,000.00' },
+    { token: 'bama_sw_po_due_date',     label: 'Payment due date',           sample: '06 June 2026' },
+    { token: 'sender_name',             label: 'Logged-in user name',        sample: 'Lee Kirtley' },
+    { token: 'sender_email',            label: 'Logged-in user email',       sample: 'lee@bamafabrication.co.uk' },
+    { token: 'date_today',              label: 'Today\u2019s date',          sample: '07 May 2026' }
+  ],
   emailBamaSwInvoice: [
-    { token: 'bama_sw_invoice_number',  label: 'Bama SW invoice number',     sample: 'INV-BSW-0042' },
+    { token: 'bama_sw_invoice_number',  label: 'Remittance reference',       sample: 'INV-BSW-0042' },
     { token: 'project_number',          label: 'Project number',             sample: 'BC0011' },
     { token: 'project_name',            label: 'Project name',               sample: 'Plant Room Refurb' },
     { token: 'original_value',          label: 'Original quote total',       sample: '\u00a31,000.00' },
     { token: 'deductions_total',        label: 'Project costs deducted',     sample: '\u00a3120.00' },
-    { token: 'net_invoice_total',       label: 'Net invoice total',          sample: '\u00a3880.00' },
-    { token: 'bama_sw_po_number',       label: 'Bama SW PO number',          sample: 'BSW-PO-12345' },
-    { token: 'bama_sw_invoice_due_date',label: 'Invoice due date',           sample: '06 June 2026' },
+    { token: 'net_invoice_total',       label: 'Amount payable',             sample: '\u00a3880.00' },
+    { token: 'bama_sw_paid_date',       label: 'Payment date',               sample: '06 June 2026' },
     { token: 'sender_name',             label: 'Logged-in user name',        sample: 'Lee Kirtley' },
     { token: 'sender_email',            label: 'Logged-in user email',       sample: 'lee@bamafabrication.co.uk' },
     { token: 'date_today',              label: 'Today\u2019s date',          sample: '07 May 2026' }
@@ -12499,6 +12521,23 @@ function renderTemplateEditor(key) {
         ${field('body', 'Message body', 'textarea', 'plain text; the signature is appended automatically — edit it from "Email Signature"')}
       </div>
       ${renderEmailTokensHint('emailQuoteSent')}`;
+  } else if (key === 'emailBamaSwPo') {
+    html = `
+      <h2>Bama SW Purchase Order — Email</h2>
+      <div class="tpl-desc">Sent at the <b>Raise PO to Bama SW</b> step. Emails our Purchase Order PDF to Bama South West with the agreed amount and payment due date.</div>
+      <div class="tpl-section">
+        <div class="tpl-section-title">Default recipient (To:)</div>
+        ${field('to', 'Recipient email', 'text', 'pre-filled in the email composer — editable before sending')}
+      </div>
+      <div class="tpl-section">
+        <div class="tpl-section-title">Subject</div>
+        ${field('subject', 'Subject line', 'text', 'tokens like {{bama_sw_po_number}} are substituted at send time')}
+      </div>
+      <div class="tpl-section">
+        <div class="tpl-section-title">Body</div>
+        ${field('body', 'Message body', 'textarea', 'plain text; the signature is appended automatically')}
+      </div>
+      ${renderEmailTokensHint('emailBamaSwPo')}`;
   } else if (key === 'emailBamaSwInvoice') {
     html = `
       <h2>Bama SW Remittance — Email</h2>
@@ -12631,9 +12670,9 @@ function refreshTemplatePreview() {
   } else if (tplCurrent === 'deliveryNote') {
     html = buildDeliveryNoteHTMLCore(getMockDeliveryNote(), getMockBomJob(), getMockProject(), getMockJob(), tplDraft);
     if (label) label.textContent = 'Delivery Note \u2014 sample data';
-  } else if (tplCurrent === 'emailQuoteSent' || tplCurrent === 'emailBamaSwInvoice') {
+  } else if (tplCurrent === 'emailQuoteSent' || tplCurrent === 'emailBamaSwInvoice' || tplCurrent === 'emailBamaSwPo') {
     html = buildEmailPreviewHTML(tplCurrent, tplDraft);
-    if (label) label.textContent = (tplCurrent === 'emailQuoteSent' ? 'Babcock Quote Email' : 'Bama SW Remittance Email') + ' \u2014 sample data';
+    if (label) label.textContent = (tplCurrent === 'emailQuoteSent' ? 'Babcock Quote Email' : tplCurrent === 'emailBamaSwPo' ? 'Bama SW PO Email' : 'Bama SW Remittance Email') + ' \u2014 sample data';
   } else if (tplCurrent === 'emailSignature') {
     // For the signature alone, show it inside an envelope so the user
     // sees what it looks like at the bottom of an actual email body.
@@ -18700,8 +18739,8 @@ function renderBabcockTracker() {
   if (_babcockSort.col) {
     const { col, dir } = _babcockSort;
     const statusOrder = ['Quote Received','Quote Sent','Live Project','Project Complete',
-                         'Approved to Pay','Payment Received','Sent to Bama SW',
-                         'Bama SW Awaiting Payment','Cancelled'];
+                         'Approved to Pay','Payment Received','Bama SW PO Raised',
+                         'Bama SW Invoice Received','Paid to Bama SW','Remittance Sent','Cancelled'];
     list.sort((a, b) => {
       let va, vb;
       if (col === 'status') {
@@ -19095,9 +19134,11 @@ function babcockNextStatus(current) {
     'Live Project':              'Project Complete',      // mark complete
     'Project Complete':          'Approved to Pay',       // upload approved invoice + OCR
     'Approved to Pay':           'Payment Received',      // user confirms payment landed
-    'Payment Received':          'Sent to Bama SW',       // generate Bama SW invoice + email modal
-    'Sent to Bama SW':           'Bama SW Awaiting Payment', // capture Bama SW PO
-    'Bama SW Awaiting Payment':  null,                    // terminal — for now
+    'Payment Received':          'Bama SW PO Raised',         // generate PO to Bama SW
+    'Bama SW PO Raised':         'Bama SW Invoice Received',   // upload their invoice
+    'Bama SW Invoice Received':  'Paid to Bama SW',            // mark as paid + capture date
+    'Paid to Bama SW':           'Remittance Sent',            // create + email remittance
+    'Remittance Sent':           null,                         // terminal
     'Cancelled':                 null
   };
   return flow[current || 'Quote Received'];
@@ -19120,8 +19161,10 @@ function babcockStatusClass(status) {
     'Project Complete':          'pcomplete',
     'Approved to Pay':           'approved',
     'Payment Received':          'paid',
-    'Sent to Bama SW':           'bsw-sent',
-    'Bama SW Awaiting Payment':  'bsw-pending',
+    'Bama SW PO Raised':         'bsw-po-raised',
+    'Bama SW Invoice Received':  'bsw-inv-rcvd',
+    'Paid to Bama SW':           'bsw-paid',
+    'Remittance Sent':           'bsw-remittance',
     'Cancelled':                 'cancelled'
   })[status || 'Quote Received'] || 'received';
 }
@@ -19137,8 +19180,10 @@ function babcockAdvanceLabel(currentStatus) {
     'Live Project':     'Complete Project',
     'Project Complete': 'Approved to Pay',
     'Approved to Pay':  'Payment Received',
-    'Payment Received': 'Create Remittance Advice',
-    'Sent to Bama SW':  'Bama SW PO Received'
+    'Payment Received':          'Raise PO to Bama SW',
+    'Bama SW PO Raised':         'Upload Bama SW Invoice',
+    'Bama SW Invoice Received':  'Mark as Paid',
+    'Paid to Bama SW':           'Create Remittance Advice'
   })[currentStatus] || null;
 }
 
@@ -19184,8 +19229,10 @@ const _babcockAdvanceHandlers = {
   'Live Project':     handleAdvanceFromLiveProject,       // 1f
   'Project Complete': handleAdvanceFromProjectComplete,   // 1g — COUPA upload + OCR
   'Approved to Pay':  handleAdvanceFromApprovedToPay,     // 1g — payment landed
-  'Payment Received': handleAdvanceFromPaymentReceived,   // 1h — Bama SW invoice
-  'Sent to Bama SW':  handleAdvanceFromSentToBamaSw       // 1i — PO received + final invoice
+  'Payment Received':          handleAdvanceFromPaymentReceived,   // 1h — raise PO to Bama SW
+  'Bama SW PO Raised':         handleAdvanceFromBamaSwPoRaised,    // 1i — upload their invoice
+  'Bama SW Invoice Received':  handleAdvanceFromBamaSwInvoiceReceived, // 1j — mark as paid
+  'Paid to Bama SW':           handleAdvanceFromPaidToBamaSw        // 1k — remittance
 };
 
 // ── Helper: convert a Blob to base64 (no data: prefix) ──
@@ -19956,6 +20003,301 @@ async function handleAdvanceFromApprovedToPay(q, next) {
 }
 
 // ─────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────
+// RAISE PO TO BAMA SW (1h)
+// ─────────────────────────────────────────────────────────────────────
+// At "Payment Received", Babcock has paid us. We now raise a Purchase
+// Order to Bama South West (our subcontractor) for the pre-markup value
+// minus any project expenses, generate a PO PDF, upload to SharePoint
+// and email it to Bama SW.
+
+let _bpoToBswContext = null;
+
+function closeBabcockPoToBamaSwModal() {
+  document.getElementById('babcockPoToBamaSwModal').classList.remove('active');
+  _bpoToBswContext = null;
+}
+
+async function handleAdvanceFromPaymentReceived(q, next) {
+  const total     = Number(q.total_value || 0);
+  const markupPct = Number(q.markup_pct  || 0);
+  const original  = markupPct > 0 ? total / (1 + markupPct / 100) : total;
+  const netTotal  = Math.max(0, original); // TODO: subtract PO expenses when module exists
+
+  let projectNumber = '';
+  try {
+    const proj = (projectsData || []).find(p => p.id === q.linked_project_id);
+    projectNumber = (proj && proj.project_number) || babcockProjectNumberFor(q.quote_ref || '');
+  } catch (e) {
+    projectNumber = babcockProjectNumberFor(q.quote_ref || '');
+  }
+
+  _bpoToBswContext = { quote: q, next, netTotal, projectNumber };
+
+  document.getElementById('bptbsProjectRef').textContent = projectNumber || q.quote_ref || '';
+  document.getElementById('bptbsAmount').textContent     = fmtCurrency(netTotal);
+  document.getElementById('bptbsPoNumber').value         = q.bama_sw_po_number || '';
+  const due = new Date(); due.setDate(due.getDate() + 30);
+  document.getElementById('bptbsDueDate').value          = due.toISOString().split('T')[0];
+  document.getElementById('bptbsConfirmBtn').disabled    = false;
+  document.getElementById('bptbsConfirmBtn').textContent = 'Generate & Email';
+
+  document.getElementById('babcockPoToBamaSwModal').classList.add('active');
+  setTimeout(() => document.getElementById('bptbsPoNumber')?.focus(), 60);
+}
+
+async function confirmRaisePOToBamaSw() {
+  if (!_bpoToBswContext) return;
+
+  const poNumber   = (document.getElementById('bptbsPoNumber').value  || '').trim();
+  const dueDateIso = (document.getElementById('bptbsDueDate').value   || '').trim();
+
+  if (!poNumber)   { toast('PO number is required',  'error'); document.getElementById('bptbsPoNumber').focus();  return; }
+  if (!dueDateIso) { toast('Due date is required',   'error'); document.getElementById('bptbsDueDate').focus();   return; }
+
+  const { quote: q, next, netTotal, projectNumber } = _bpoToBswContext;
+  const btn = document.getElementById('bptbsConfirmBtn');
+  btn.disabled = true; btn.textContent = 'Generating…';
+
+  // 1. Generate PO PDF
+  let pdfBlob;
+  try {
+    pdfBlob = await renderBamaSwPoPDF({
+      poNumber,
+      poDate:        fmtDateStr(todayStr()),
+      dueDate:       fmtDateStr(dueDateIso),
+      projectNumber,
+      projectName:   q.quote_for_area || '',
+      quoteRef:      q.quote_ref || '',
+      netTotal
+    });
+  } catch (err) {
+    console.error('PO PDF render failed:', err);
+    toast('PDF render failed: ' + (err.message || 'unknown error'), 'error');
+    btn.disabled = false; btn.textContent = 'Generate & Email';
+    return;
+  }
+
+  // 2. Upload to SharePoint
+  let pdfUploaded = null;
+  try {
+    btn.textContent = 'Uploading PDF…';
+    const folders   = await findOrCreateBabcockFolders();
+    const poFolder  = await getOrCreateSubfolder(folders.parent.id, 'Bama SW Purchase Orders', BAMA_DRIVE_ID);
+    if (!poFolder) throw new Error('Could not create Bama SW Purchase Orders folder');
+    const safeRef  = (q.quote_ref || 'Babcock').replace(/[/\\]/g, '_');
+    const fileName = `${poNumber} - ${safeRef} - PO.pdf`;
+    pdfUploaded    = await uploadFileToFolder(poFolder.id, fileName, await pdfBlob.arrayBuffer(), 'application/pdf');
+  } catch (err) {
+    console.error('PO PDF upload failed:', err);
+    toast('SharePoint upload failed: ' + (err.message || 'unknown error'), 'error');
+    btn.disabled = false; btn.textContent = 'Generate & Email';
+    return;
+  }
+
+  // 3. Encode for email
+  btn.textContent = 'Opening email…';
+  let pdfBase64;
+  try { pdfBase64 = await blobToBase64(pdfBlob); }
+  catch (err) { toast('Failed to encode PDF for email', 'error'); btn.disabled = false; btn.textContent = 'Generate & Email'; return; }
+
+  document.getElementById('babcockPoToBamaSwModal').classList.remove('active');
+  const sentCtx = { quote: q, next, poNumber, dueDateIso, pdfUploaded, netTotal, projectNumber };
+  _bpoToBswContext = null;
+
+  const safeRefEmail = (q.quote_ref || 'Babcock').replace(/[/\\]/g, '_');
+  await openBabcockEmailModal({
+    title:       'Email PO to Bama SW',
+    templateKey: 'emailBamaSwPo',
+    tokens: {
+      bama_sw_po_number:   poNumber,
+      project_number:      projectNumber,
+      project_name:        q.quote_for_area || '',
+      po_value:            fmtCurrency(netTotal),
+      bama_sw_po_due_date: fmtDateStr(dueDateIso)
+    },
+    to:  tplGet('emailBamaSwPo', 'to') || 'info@bamasw.co.uk',
+    cc:  '',
+    attachment: {
+      name:          `${poNumber} - ${safeRefEmail} - PO.pdf`,
+      contentType:   'application/pdf',
+      contentBase64: pdfBase64
+    },
+    onSent: async () => {
+      try {
+        const updated = await api.put(`/api/babcock-quotes/${sentCtx.quote.id}`, {
+          status:              sentCtx.next,
+          bama_sw_po_number:   sentCtx.poNumber,
+          bama_sw_po_pdf_url:  sentCtx.pdfUploaded?.webUrl || null,
+          bama_sw_po_pdf_id:   sentCtx.pdfUploaded?.id     || null
+        });
+        const idx = _babcockQuotes.findIndex(x => x.id === sentCtx.quote.id);
+        if (idx !== -1) _babcockQuotes[idx] = { ..._babcockQuotes[idx], ...updated };
+        renderBabcockTracker();
+        toast(`${sentCtx.quote.quote_ref} → Bama SW PO Raised`, 'success');
+      } catch (err) {
+        console.error('Status update after PO send failed:', err);
+        toast(`Email sent OK but couldn\'t update status — please refresh and edit to set status=Bama SW PO Raised`, 'error');
+        loadBabcockTracker();
+      }
+    }
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// RECEIVE BAMA SW INVOICE (1i)
+// ─────────────────────────────────────────────────────────────────────
+// Once we've sent the PO, Bama SW sends us their invoice. User uploads
+// the PDF, enters their invoice number + amount. Amount is validated
+// against expected (warn but don't block). PDF saved to SharePoint.
+
+let _briiContext = null;
+
+function closeBamaSwReceiveInvoiceModal() {
+  document.getElementById('babcockReceiveInvoiceModal').classList.remove('active');
+  _briiContext = null;
+}
+
+async function handleAdvanceFromBamaSwPoRaised(q, next) {
+  const total     = Number(q.total_value || 0);
+  const markupPct = Number(q.markup_pct  || 0);
+  const original  = markupPct > 0 ? total / (1 + markupPct / 100) : total;
+  const expected  = Math.max(0, original);
+
+  _briiContext = { quote: q, next, expectedAmount: expected, file: null };
+
+  document.getElementById('briiExpectedAmt').textContent     = fmtCurrency(expected);
+  document.getElementById('briiDropZoneText').textContent    = 'Click to upload their invoice PDF';
+  document.getElementById('briiFileInput').value             = '';
+  document.getElementById('briiInvoiceNumber').value         = q.bama_sw_received_invoice_number || '';
+  document.getElementById('briiInvoiceAmount').value         = '';
+  document.getElementById('briiAmountWarning').style.display = 'none';
+  document.getElementById('briiConfirmBtn').disabled         = true;
+  document.getElementById('briiConfirmBtn').textContent      = 'Save & Confirm';
+
+  document.getElementById('babcockReceiveInvoiceModal').classList.add('active');
+  setTimeout(() => document.getElementById('briiInvoiceNumber')?.focus(), 60);
+}
+
+function onBamaSwInvoiceFilePicked(file) {
+  if (!file || !_briiContext) return;
+  if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+    toast('Please upload a PDF file', 'error'); return;
+  }
+  _briiContext.file = file;
+  document.getElementById('briiDropZoneText').textContent = `✓ ${file.name}`;
+  checkBriiCanSubmit();
+}
+
+function onBriiAmountChange() {
+  if (!_briiContext) return;
+  const val      = parseFloat(document.getElementById('briiInvoiceAmount').value);
+  const expected = _briiContext.expectedAmount;
+  const warn     = document.getElementById('briiAmountWarning');
+  if (!isNaN(val) && Math.abs(val - expected) > 0.01) {
+    warn.textContent    = `⚠ Amount differs from expected ${fmtCurrency(expected)} — verify before confirming`;
+    warn.style.display  = 'block';
+  } else {
+    warn.style.display  = 'none';
+  }
+  checkBriiCanSubmit();
+}
+
+function checkBriiCanSubmit() {
+  if (!_briiContext) return;
+  const ok = !!_briiContext.file
+    && !!(document.getElementById('briiInvoiceNumber').value || '').trim()
+    && !isNaN(parseFloat(document.getElementById('briiInvoiceAmount').value));
+  document.getElementById('briiConfirmBtn').disabled = !ok;
+}
+
+async function confirmBamaSwInvoiceReceived() {
+  if (!_briiContext || !_briiContext.file) return;
+
+  const invoiceNumber = (document.getElementById('briiInvoiceNumber').value || '').trim();
+  const invoiceAmount = parseFloat(document.getElementById('briiInvoiceAmount').value);
+
+  if (!invoiceNumber)                          { toast('Invoice number is required', 'error'); return; }
+  if (isNaN(invoiceAmount) || invoiceAmount <= 0) { toast('Invoice amount is required',  'error'); return; }
+
+  const { quote: q, next, file } = _briiContext;
+  const btn = document.getElementById('briiConfirmBtn');
+  btn.disabled = true; btn.textContent = 'Uploading…';
+
+  try {
+    const folders    = await findOrCreateBabcockFolders();
+    const rcvdFolder = await getOrCreateSubfolder(folders.parent.id, 'Bama SW Received Invoices', BAMA_DRIVE_ID);
+    if (!rcvdFolder) throw new Error('Could not create Bama SW Received Invoices folder');
+
+    const safeRef  = (q.quote_ref     || 'Babcock').replace(/[/\\]/g, '_');
+    const safeInv  = (invoiceNumber   || 'INV').replace(/[/\\]/g, '_');
+    const fileName = `${safeInv} - ${safeRef} - Bama SW Invoice.pdf`;
+    const uploaded = await uploadFileToFolder(rcvdFolder.id, fileName, await file.arrayBuffer(), 'application/pdf');
+
+    btn.textContent = 'Saving…';
+    const updated = await api.put(`/api/babcock-quotes/${q.id}`, {
+      status:                           next,
+      bama_sw_received_invoice_number:  invoiceNumber,
+      bama_sw_received_invoice_amount:  invoiceAmount,
+      bama_sw_received_invoice_pdf_url: uploaded.webUrl || null,
+      bama_sw_received_invoice_pdf_id:  uploaded.id     || null
+    });
+    const idx = _babcockQuotes.findIndex(x => x.id === q.id);
+    if (idx !== -1) _babcockQuotes[idx] = { ..._babcockQuotes[idx], ...updated };
+    toast(`${q.quote_ref} → Bama SW Invoice Received`, 'success');
+    closeBamaSwReceiveInvoiceModal();
+    renderBabcockTracker();
+  } catch (err) {
+    console.error('Receive invoice save failed:', err);
+    toast('Save failed: ' + (err.message || 'unknown error'), 'error');
+    btn.disabled = false; btn.textContent = 'Save & Confirm';
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// MARK AS PAID (1j)
+// ─────────────────────────────────────────────────────────────────────
+// Simple confirm with a date picker. Captures bama_sw_paid_at so the
+// remittance advice can reference the actual payment date.
+
+async function handleAdvanceFromBamaSwInvoiceReceived(q, next) {
+  const total     = Number(q.total_value || 0);
+  const markupPct = Number(q.markup_pct  || 0);
+  const original  = markupPct > 0 ? total / (1 + markupPct / 100) : total;
+  const amount    = fmtCurrency(Number(q.bama_sw_received_invoice_amount || original));
+
+  const confirmed = await showConfirmAsync(
+    '✅ Mark as Paid',
+    `<p style="margin:0">Record payment to Bama South West for <b>${amount}</b>?</p>
+     <div style="margin-top:12px">
+       <div style="font-size:11px;color:var(--muted);margin-bottom:4px;letter-spacing:.5px">PAYMENT DATE</div>
+       <input type="date" id="bswPaidDateInput" value="${todayStr()}"
+              style="width:100%;padding:8px;background:var(--surface-2);border:1px solid var(--border);
+                     border-radius:4px;color:var(--text);font-size:13px">
+     </div>`,
+    { okLabel: 'Confirm Payment', cancelLabel: 'Cancel' }
+  );
+  if (!confirmed) return;
+
+  const paymentDate = document.getElementById('bswPaidDateInput')?.value || todayStr();
+  setLoading(true);
+  try {
+    const updated = await api.put(`/api/babcock-quotes/${q.id}`, {
+      status:           next,
+      bama_sw_paid_at:  new Date(paymentDate + 'T00:00:00').toISOString()
+    });
+    const idx = _babcockQuotes.findIndex(x => x.id === q.id);
+    if (idx !== -1) _babcockQuotes[idx] = { ..._babcockQuotes[idx], ...updated };
+    setLoading(false);
+    toast(`${q.quote_ref} → Paid to Bama SW`, 'success');
+    renderBabcockTracker();
+  } catch (err) {
+    setLoading(false);
+    toast('Update failed: ' + (err.message || 'unknown error'), 'error');
+    loadBabcockTracker();
+  }
+}
+
 // BAMA SW INVOICE GENERATION (1h)
 // ─────────────────────────────────────────────────────────────────────
 //
@@ -19975,7 +20317,7 @@ async function handleAdvanceFromApprovedToPay(q, next) {
 //   - Updated row in shared Invoice tracker
 //   - Email to info@bamasw.co.uk with PDF attached
 //   - BabcockQuotes row updated with bama_sw_invoice_* fields and
-//     status='Sent to Bama SW'
+//     status='Remittance Sent'
 
 // Tracker file SharePoint share link — used to resolve the file via
 // Graph /shares endpoint without hardcoding a path.
@@ -20196,6 +20538,93 @@ function appendRowToInvoiceTracker(arrayBuffer, rowData) {
   return out;
 }
 
+
+// ── Build the Purchase Order PDF sent to Bama South West ──
+async function renderBamaSwPoPDF(data) {
+  await loadLogoDataUri();
+  const logo = _logoDataUriCache || '';
+  const JsPDFCtor = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
+  if (!JsPDFCtor) throw new Error('jsPDF not loaded');
+
+  const doc = new JsPDFCtor({ unit: 'mm', format: 'a4' });
+  const W = doc.internal.pageSize.getWidth();
+  const M = 18;
+  let y = 18;
+
+  // Logo top-left
+  if (logo) { try { doc.addImage(logo, 'PNG', M, y, 38, 17); } catch (e) { /* ignore */ } }
+
+  // Title top-right
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(20); doc.setTextColor(0);
+  doc.text('PURCHASE ORDER', W - M, y + 12, { align: 'right' });
+
+  y += 26;
+  doc.setDrawColor(208, 2, 27); doc.setLineWidth(0.6);
+  doc.line(M, y, W - M, y); y += 6;
+
+  // FROM / TO
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+  doc.text('FROM', M, y); doc.text('TO', W / 2 + 8, y); y += 4;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+  const fromLines = ['BAMA Fabrication Ltd', '11 Enterprise Way, Enterprise Park', 'Yaxley, Peterborough, PE7 3WY', 'United Kingdom'];
+  const toLines   = ['Bama South West', 'Unit 9 Gwel Avon, Business Park', 'Saltash, PL12 6TW', 'United Kingdom'];
+  fromLines.forEach((l, i) => doc.text(l, M,          y + i * 4.2));
+  toLines.forEach(  (l, i) => doc.text(l, W / 2 + 8, y + i * 4.2));
+  y += Math.max(fromLines.length, toLines.length) * 4.2 + 4;
+
+  // Meta box
+  doc.setFillColor(245, 245, 245);
+  doc.rect(M, y, W - M * 2, 22, 'F');
+  const metaCols = [
+    { label: 'PO NUMBER', value: data.poNumber    || '' },
+    { label: 'DATE',      value: data.poDate       || '' },
+    { label: 'PROJECT',   value: data.projectNumber || '' },
+    { label: 'PAY BY',    value: data.dueDate       || '' }
+  ];
+  const colW = (W - M * 2) / metaCols.length;
+  metaCols.forEach((c, i) => {
+    const cx = M + i * colW + 4;
+    doc.setFont('helvetica', 'bold');   doc.setFontSize(8);  doc.setTextColor(120);
+    doc.text(c.label, cx, y + 7);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(11); doc.setTextColor(0);
+    doc.text(String(c.value), cx, y + 14);
+  });
+  y += 28;
+
+  // Line items header
+  doc.setFillColor(50, 50, 50);
+  doc.rect(M, y, W - M * 2, 8, 'F');
+  doc.setTextColor(255); doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
+  doc.text('DESCRIPTION', M + 4, y + 5.5);
+  doc.text('AMOUNT', W - M - 4, y + 5.5, { align: 'right' });
+  y += 8; doc.setTextColor(0);
+
+  // Description row
+  const descLines = [`Works as per quote ${data.quoteRef || ''}`, data.projectName || ''].filter(Boolean);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+  const rowH = Math.max(10, descLines.length * 4.5 + 4);
+  doc.line(M, y + rowH, W - M, y + rowH);
+  descLines.forEach((l, i) => doc.text(l, M + 4, y + 5 + i * 4.5));
+  doc.text(fmtCurrency(data.netTotal), W - M - 4, y + 5, { align: 'right' });
+  y += rowH + 6;
+
+  // Totals
+  const totalsX = W - M - 70; const totalsW = 70;
+  const totalsRow = (label, value, bold) => {
+    doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(bold ? 11 : 10);
+    doc.text(label, totalsX, y); doc.text(value, totalsX + totalsW, y, { align: 'right' }); y += 5;
+  };
+  doc.setDrawColor(60, 60, 60);
+  doc.line(totalsX, y, totalsX + totalsW, y); y += 5;
+  totalsRow('TOTAL PAYABLE', fmtCurrency(data.netTotal), true);
+
+  y += 8;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+  doc.text(`Please issue your invoice against Purchase Order number: ${data.poNumber || ''}`, M, y);
+
+  return doc.output('blob');
+}
+
 // ── Build the Bama SW invoice PDF ──
 // Mirrors the customer-facing quote PDF's visual style (BAMA red header,
 // table, footer) but with "Invoice" branding and a single summary row
@@ -20381,8 +20810,8 @@ function setTrackerStatus(text, kind) {
   }
 }
 
-// ── Handler: Payment Received → Sent to Bama SW ──
-async function handleAdvanceFromPaymentReceived(q, next) {
+// ── Handler: Paid to Bama SW → Remittance Sent (1k) ──
+async function handleAdvanceFromPaidToBamaSw(q, next) {
   // Need the linked Project to derive the project number (BC####)
   if (!q.linked_project_id) {
     toast('No linked project on this row — was it converted properly?', 'error');
@@ -20480,7 +20909,8 @@ async function confirmBabcockBswInvoice() {
       dueDate:       fmtDateStr(dueDateIso),
       projectNumber,
       projectName:   q.quote_for_area || '',
-      netTotal
+      netTotal,
+      paymentDate:   fmtDateStr(String(q.bama_sw_paid_at || '').split('T')[0] || todayStr())
     });
   } catch (err) {
     console.error('Bama SW invoice PDF render failed:', err);
@@ -20614,7 +21044,7 @@ async function confirmBabcockBswInvoice() {
       } catch (err) {
         console.error('Status update after Bama SW invoice send failed:', err);
         toast(
-          `Email sent OK but couldn\u2019t update status \u2014 please refresh and edit to set status=Sent to Bama SW`,
+          `Email sent OK but couldn\u2019t update status \u2014 please refresh and edit to set status=Remittance Sent`,
           'error'
         );
         loadBabcockTracker();
@@ -20624,210 +21054,6 @@ async function confirmBabcockBswInvoice() {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// BAMA SW PO RECEIVED → final invoice email (1i)
-// ─────────────────────────────────────────────────────────────────────
-//
-// At "Sent to Bama SW", Bama SW has been emailed the invoice and we're
-// waiting for their PO. When they return one, the user clicks "Bama SW
-// PO Received":
-//   1. Modal asks for their PO number (and lets the user adjust due date)
-//   2. We regenerate the same invoice PDF with the PO on it — this is
-//      the "official" version they'll process for payment
-//   3. Upload as a revised file to SharePoint (filename gets " - rev1")
-//   4. Open the email composer to send the revised PDF
-//   5. On Send: PUT bama_sw_po_number, updated due date, new pdf url,
-//      and status='Bama SW Awaiting Payment' (terminal for now)
-// The SharePoint Invoice tracker is NOT touched on this step — we kept
-// the same invoice number, the tracker row already exists from 1h.
-
-let _bpoContext = null;
-// { quote, next }
-
-function closeBabcockBswPoModal() {
-  document.getElementById('babcockBswPoModal').classList.remove('active');
-  _bpoContext = null;
-}
-
-async function handleAdvanceFromSentToBamaSw(q, next) {
-  // Sanity-check we have an invoice to revise. Should always be set
-  // (the only way to reach this status is via 1h's onSent callback).
-  if (!q.bama_sw_invoice_number) {
-    toast('No Bama SW invoice number on this row — was 1h completed?', 'error');
-    return;
-  }
-
-  _bpoContext = { quote: q, next };
-
-  // Populate modal
-  document.getElementById('bpoInvoiceRef').textContent = q.bama_sw_invoice_number;
-  document.getElementById('bpoPoNumber').value = q.bama_sw_po_number || '';
-  // Pre-fill due date from the original invoice; user can edit
-  const due = q.bama_sw_invoice_due_date
-    ? String(q.bama_sw_invoice_due_date).split('T')[0]
-    : (() => { const d = new Date(); d.setDate(d.getDate() + 30); return d.toISOString().split('T')[0]; })();
-  document.getElementById('bpoDueDate').value = due;
-  document.getElementById('bpoConfirmBtn').disabled = false;
-  document.getElementById('bpoConfirmBtn').textContent = 'Regenerate & Email';
-
-  document.getElementById('babcockBswPoModal').classList.add('active');
-  setTimeout(() => document.getElementById('bpoPoNumber')?.focus(), 60);
-}
-
-async function confirmBabcockBswPo() {
-  if (!_bpoContext) return;
-
-  const poNumber  = (document.getElementById('bpoPoNumber').value || '').trim();
-  const dueDateIso = (document.getElementById('bpoDueDate').value || '').trim();
-
-  if (!poNumber) {
-    toast('Bama SW PO number is required', 'error');
-    document.getElementById('bpoPoNumber').focus();
-    return;
-  }
-  if (!dueDateIso) {
-    toast('Due date is required', 'error');
-    document.getElementById('bpoDueDate').focus();
-    return;
-  }
-
-  const q = _bpoContext.quote;
-  const next = _bpoContext.next;
-
-  const btn = document.getElementById('bpoConfirmBtn');
-  btn.disabled = true;
-  btn.textContent = 'Regenerating…';
-
-  // Recompute the net total the same way 1h did — original pretax
-  // minus deductions (still 0 until the PO module ships).
-  const total      = Number(q.total_value || 0);
-  const markupPct  = Number(q.markup_pct || 0);
-  const original   = markupPct > 0 ? total / (1 + markupPct / 100) : total;
-  const deductions = 0;
-  const netTotal   = Math.max(0, original - deductions);
-
-  // Resolve project number from the linked project, fall back to deriving
-  // from the quote ref if for some reason the link is missing.
-  let projectNumber = '';
-  try {
-    const proj = (projectsData || []).find(p => p.id === q.linked_project_id);
-    projectNumber = (proj && proj.project_number) || babcockProjectNumberFor(q.quote_ref || '');
-  } catch (e) {
-    projectNumber = babcockProjectNumberFor(q.quote_ref || '');
-  }
-
-  // 1. Regenerate the PDF with the PO on it
-  let pdfBlob;
-  try {
-    pdfBlob = await renderBamaSwInvoicePDF({
-      invoiceNumber: q.bama_sw_invoice_number,
-      invoiceDate:   fmtDateStr(todayStr()),
-      dueDate:       fmtDateStr(dueDateIso),
-      projectNumber,
-      projectName:   q.quote_for_area || '',
-      netTotal,
-      bamaSwPo:      poNumber  // ← the only structural difference vs 1h's PDF
-    });
-  } catch (err) {
-    console.error('Revised invoice PDF render failed:', err);
-    toast('PDF render failed: ' + (err.message || 'unknown error'), 'error');
-    btn.disabled = false;
-    btn.textContent = 'Regenerate & Email';
-    return;
-  }
-
-  // 2. Upload as a rev1 file alongside the original
-  let pdfUploaded = null;
-  try {
-    btn.textContent = 'Uploading PDF…';
-    const folders = await findOrCreateBabcockFolders();
-    const bswFolder = await getOrCreateSubfolder(folders.parent.id, 'Bama SW Invoices', BAMA_DRIVE_ID);
-    if (!bswFolder) throw new Error('Could not find Bama SW Invoices folder');
-    const safeRef = (q.quote_ref || 'Babcock').replace(/[/\\]/g, '_');
-    const fileName = `${q.bama_sw_invoice_number} - ${safeRef} - Remittance - rev1.pdf`;
-    pdfUploaded = await uploadFileToFolder(
-      bswFolder.id, fileName,
-      await pdfBlob.arrayBuffer(), 'application/pdf'
-    );
-  } catch (err) {
-    console.error('Revised invoice upload failed:', err);
-    toast('SharePoint upload failed: ' + (err.message || 'unknown error'), 'error');
-    btn.disabled = false;
-    btn.textContent = 'Regenerate & Email';
-    return;
-  }
-
-  // 3. Open email composer
-  btn.textContent = 'Opening email…';
-  let pdfBase64;
-  try {
-    pdfBase64 = await blobToBase64(pdfBlob);
-  } catch (err) {
-    toast('Failed to encode PDF for email', 'error');
-    btn.disabled = false;
-    btn.textContent = 'Regenerate & Email';
-    return;
-  }
-
-  // Close the PO modal so the email composer takes over the screen
-  document.getElementById('babcockBswPoModal').classList.remove('active');
-
-  const sentCtx = {
-    quote: q,
-    next,
-    poNumber,
-    dueDateIso,
-    pdfUploaded
-  };
-  _bpoContext = null;
-
-  // Re-use the same emailBamaSwInvoice template — Bama SW expects
-  // the same wording, just with the new PO ref noted. The user can
-  // tweak the body before sending if they want to call out the rev.
-  await openBabcockEmailModal({
-    title: 'Email Revised Bama SW Remittance',
-    templateKey: 'emailBamaSwInvoice',
-    tokens: {
-      bama_sw_invoice_number:   q.bama_sw_invoice_number,
-      project_number:           projectNumber,
-      project_name:             q.quote_for_area || '',
-      original_value:           fmtCurrency(original),
-      deductions_total:         fmtCurrency(0),
-      net_invoice_total:        fmtCurrency(netTotal),
-      bama_sw_po_number:        poNumber,
-      bama_sw_invoice_due_date: fmtDateStr(dueDateIso)
-    },
-    to: tplGet('emailBamaSwInvoice', 'to') || 'info@bamasw.co.uk',
-    cc: '',
-    attachment: {
-      name: `${q.bama_sw_invoice_number} - ${(q.quote_ref || 'Babcock').replace(/[/\\]/g, '_')} - Remittance - rev1.pdf`,
-      contentType: 'application/pdf',
-      contentBase64: pdfBase64
-    },
-    onSent: async () => {
-      try {
-        const updated = await api.put(`/api/babcock-quotes/${sentCtx.quote.id}`, {
-          status: sentCtx.next,
-          bama_sw_po_number:        sentCtx.poNumber,
-          bama_sw_invoice_due_date: sentCtx.dueDateIso,
-          bama_sw_invoice_pdf_url:  sentCtx.pdfUploaded?.webUrl || null,
-          bama_sw_invoice_pdf_id:   sentCtx.pdfUploaded?.id || null,
-          bama_sw_invoice_sent_at:  new Date().toISOString()
-        });
-        const idx = _babcockQuotes.findIndex(x => x.id === sentCtx.quote.id);
-        if (idx !== -1) _babcockQuotes[idx] = { ..._babcockQuotes[idx], ...updated };
-        renderBabcockTracker();
-        toast(`Revised invoice sent \u2014 awaiting payment`, 'success');
-      } catch (err) {
-        console.error('Status update after revised invoice send failed:', err);
-        toast(
-          `Email sent OK but couldn\u2019t update status \u2014 please refresh and edit to set status=Bama SW Awaiting Payment`,
-          'error'
-        );
-        loadBabcockTracker();
-      }
-    }
-  });
-}
 
 // Legacy: kept for backward compat in case any code still calls it.
 async function updateBabcockQuoteStatus(id, newStatus) {

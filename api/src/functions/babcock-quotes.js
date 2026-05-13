@@ -14,8 +14,10 @@ const ALLOWED_STATUSES = [
     'Project Complete',
     'Approved to Pay',
     'Payment Received',
-    'Sent to Bama SW',
-    'Bama SW Awaiting Payment',
+    'Bama SW PO Raised',
+    'Bama SW Invoice Received',
+    'Paid to Bama SW',
+    'Remittance Sent',
     'Cancelled'
 ];
 // First system-allocated number. B0091 was the last manually-created Babcock
@@ -74,7 +76,11 @@ app.http('babcock-quotes-list', {
                                   payment_received_at,
                                   bama_sw_invoice_pdf_url, bama_sw_invoice_pdf_id,
                                   bama_sw_invoice_number, bama_sw_po_number,
-                                  bama_sw_invoice_due_date, bama_sw_invoice_sent_at
+                                  bama_sw_invoice_due_date, bama_sw_invoice_sent_at,
+                                  bama_sw_po_pdf_url, bama_sw_po_pdf_id,
+                                  bama_sw_received_invoice_number, bama_sw_received_invoice_amount,
+                                  bama_sw_received_invoice_pdf_url, bama_sw_received_invoice_pdf_id,
+                                  bama_sw_paid_at
                            FROM BabcockQuotes`;
             const params = {};
             if (status) {
@@ -322,7 +328,11 @@ app.http('babcock-quotes-update', {
                              'payment_received_at',
                              'bama_sw_invoice_pdf_url', 'bama_sw_invoice_pdf_id',
                              'bama_sw_invoice_number', 'bama_sw_po_number',
-                             'bama_sw_invoice_due_date', 'bama_sw_invoice_sent_at'];
+                             'bama_sw_invoice_due_date', 'bama_sw_invoice_sent_at',
+                             'bama_sw_po_pdf_url', 'bama_sw_po_pdf_id',
+                             'bama_sw_received_invoice_number', 'bama_sw_received_invoice_amount',
+                             'bama_sw_received_invoice_pdf_url', 'bama_sw_received_invoice_pdf_id',
+                             'bama_sw_paid_at'];
 
             for (const key of allowed) {
                 if (body[key] === undefined) continue;
@@ -335,7 +345,7 @@ app.http('babcock-quotes-update', {
                 if (key === 'line_items' && val !== null && typeof val !== 'string') {
                     val = JSON.stringify(val);
                 }
-                if ((key === 'total_value' || key === 'markup_pct' || key === 'coupa_invoice_gross_total') && val !== null && val !== undefined) {
+                if ((key === 'total_value' || key === 'markup_pct' || key === 'coupa_invoice_gross_total' || key === 'bama_sw_received_invoice_amount') && val !== null && val !== undefined) {
                     val = Number(val);
                 }
                 if (key === 'revision' && val !== null && val !== undefined) {
