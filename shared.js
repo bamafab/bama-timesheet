@@ -8597,14 +8597,34 @@ async function createFolderInDrive(parentItemId, folderName, driveId) {
 
 async function getOrCreateSubfolder(parentItemId, folderName, driveId) {
   const token = await getToken();
-  // Try to get existing
-  const getRes = await fetch(
-    `https://graph.microsoft.com/v1.0/drives/${driveId || BAMA_DRIVE_ID}/items/${parentItemId}:/${folderName}`,
-    { headers: { 'Authorization': `Bearer ${token}` } }
+  const dId = driveId || BAMA_DRIVE_ID;
+
+  // POST-first: attempt creation. 201 = created, 409 = already exists.
+  // Avoids a speculative GET that logs a red 404 in the console every time
+  // the folder doesn't exist yet, and avoids the unreliable $filter-on-children
+  // fallback that SharePoint Graph often returns empty for even when folder exists.
+  const createRes = await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${dId}/items/${parentItemId}/children`,
+    {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: folderName, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' })
+    }
   );
-  if (getRes.ok) return await getRes.json();
-  // Create it
-  return await createFolderInDrive(parentItemId, folderName, driveId);
+
+  if (createRes.status === 201) return await createRes.json();
+
+  if (createRes.status === 409) {
+    // Already exists — fetch directly by path (reliable; $filter on children is not)
+    const getRes = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${dId}/items/${parentItemId}:/${encodeURIComponent(folderName)}`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    if (getRes.ok) return await getRes.json();
+    throw new Error(`Folder "${folderName}" exists (409) but could not be retrieved: ${getRes.status}`);
+  }
+
+  throw new Error(`Create folder "${folderName}" failed: ${createRes.status}`);
 }
 
 async function uploadFileToFolder(parentItemId, fileName, fileData, contentType, driveId) {
