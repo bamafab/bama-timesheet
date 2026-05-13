@@ -20066,7 +20066,7 @@ async function appendRowToTrackerViaExcelApi(driveItem, sheetName, rowData) {
 
   const enc   = encodeURIComponent(sheetName);
   const urRes = await fetch(
-    `${base}/worksheets/${enc}/usedRange?$select=rowIndex,rowCount`,
+    `${base}/worksheets/${enc}/usedRange`,
     { headers: hdr }
   );
   if (!urRes.ok) throw new Error(`usedRange failed: ${urRes.status}`);
@@ -20219,9 +20219,8 @@ async function renderBamaSwInvoicePDF(data) {
   // Title top-right
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(20);
-  doc.setTextColor(208, 2, 27); // red
-  doc.text('REMITTANCE ADVICE', W - M, y + 12, { align: 'right' });
   doc.setTextColor(0);
+  doc.text('REMITTANCE ADVICE', W - M, y + 12, { align: 'right' });
 
   y += 26;
   doc.setDrawColor(208, 2, 27);
@@ -20277,8 +20276,8 @@ async function renderBamaSwInvoicePDF(data) {
   });
   y += 28;
 
-  // Line items table — header
-  doc.setFillColor(208, 2, 27);
+  // Line items table — header (neutral dark, not red)
+  doc.setFillColor(50, 50, 50);
   doc.rect(M, y, W - M * 2, 8, 'F');
   doc.setTextColor(255); doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
   doc.text('DESCRIPTION', M + 4, y + 5.5);
@@ -20310,8 +20309,8 @@ async function renderBamaSwInvoicePDF(data) {
   };
   totalsRow('Net total', fmtCurrency(data.netTotal));
   totalsRow('VAT (Reverse charge)', '£0.00');
-  doc.setDrawColor(208, 2, 27);
-  doc.line(totalsX, y, totalsX + totalsW, y); y += 1.5;
+  doc.setDrawColor(60, 60, 60);
+  doc.line(totalsX, y, totalsX + totalsW, y); y += 5;
   totalsRow('AMOUNT PAYABLE', fmtCurrency(data.netTotal), true);
 
   y += 8;
@@ -20498,7 +20497,7 @@ async function confirmBabcockBswInvoice() {
     const folders = await findOrCreateBabcockFolders();
     const bswFolder = await getOrCreateSubfolder(folders.parent.id, 'Bama SW Invoices', BAMA_DRIVE_ID);
     if (!bswFolder) throw new Error('Could not create Bama SW Invoices folder');
-    const fileName = `${invoiceNumber} - ${(q.quote_ref || 'Babcock').replace(/[/\\]/g, '_')}.pdf`;
+    const fileName = `${invoiceNumber} - ${(q.quote_ref || 'Babcock').replace(/[/\\]/g, '_')} - Remittance.pdf`;
     pdfUploaded = await uploadFileToFolder(
       bswFolder.id, fileName,
       await pdfBlob.arrayBuffer(), 'application/pdf'
@@ -20592,7 +20591,7 @@ async function confirmBabcockBswInvoice() {
     to: tplGet('emailBamaSwInvoice', 'to') || 'info@bamasw.co.uk',
     cc: '',
     attachment: {
-      name: `${invoiceNumber} - ${(q.quote_ref || 'Babcock').replace(/[/\\]/g, '_')}.pdf`,
+      name: `${invoiceNumber} - ${(q.quote_ref || 'Babcock').replace(/[/\\]/g, '_')} - Remittance.pdf`,
       contentType: 'application/pdf',
       contentBase64: pdfBase64
     },
@@ -20744,7 +20743,7 @@ async function confirmBabcockBswPo() {
     const bswFolder = await getOrCreateSubfolder(folders.parent.id, 'Bama SW Invoices', BAMA_DRIVE_ID);
     if (!bswFolder) throw new Error('Could not find Bama SW Invoices folder');
     const safeRef = (q.quote_ref || 'Babcock').replace(/[/\\]/g, '_');
-    const fileName = `${q.bama_sw_invoice_number} - ${safeRef} - rev1.pdf`;
+    const fileName = `${q.bama_sw_invoice_number} - ${safeRef} - Remittance - rev1.pdf`;
     pdfUploaded = await uploadFileToFolder(
       bswFolder.id, fileName,
       await pdfBlob.arrayBuffer(), 'application/pdf'
@@ -20800,7 +20799,7 @@ async function confirmBabcockBswPo() {
     to: tplGet('emailBamaSwInvoice', 'to') || 'info@bamasw.co.uk',
     cc: '',
     attachment: {
-      name: `${q.bama_sw_invoice_number} - ${(q.quote_ref || 'Babcock').replace(/[/\\]/g, '_')} - rev1.pdf`,
+      name: `${q.bama_sw_invoice_number} - ${(q.quote_ref || 'Babcock').replace(/[/\\]/g, '_')} - Remittance - rev1.pdf`,
       contentType: 'application/pdf',
       contentBase64: pdfBase64
     },
