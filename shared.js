@@ -19580,7 +19580,7 @@ async function handleAdvanceFromLiveProject(q, next) {
      </p>`,
     { okLabel: 'Mark Complete', cancelLabel: 'Cancel' }
   );
-  if (!confirmed || !confirmed.ok) return;
+  if (!confirmed) return;
 
   setLoading(true);
   try {
@@ -19915,7 +19915,7 @@ async function handleAdvanceFromApprovedToPay(q, next) {
      </p>`,
     { okLabel: 'Confirm Payment', cancelLabel: 'Cancel' }
   );
-  if (!confirmed || !confirmed.ok) return;
+  if (!confirmed) return;
 
   setLoading(true);
   try {
