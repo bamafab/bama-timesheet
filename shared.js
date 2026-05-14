@@ -20306,23 +20306,18 @@ async function handleAdvanceFromBamaSwInvoiceReceived(q, next) {
 // quote value, minus any project costs incurred via PO tracking
 // (currently always 0 — PO tracking module doesn't exist yet).
 //
-// The invoice number is read from a SharePoint XLSX tracker (the
-// company-wide invoice tracker). After successful generation we
-// append a new row to the tracker so the next user sees the new
-// number. This integration is temporary — the ERP will own
-// invoicing entirely once that module ships.
+// The invoice number is entered manually by the user (the SharePoint
+// tracker integration has been removed — a SQL-backed alternative is TBD).
 //
 // Outputs:
 //   - PDF in SharePoint Babcock folder
-//   - Updated row in shared Invoice tracker
 //   - Email to info@bamasw.co.uk with PDF attached
 //   - BabcockQuotes row updated with bama_sw_invoice_* fields and
 //     status='Remittance Sent'
 
-// Tracker file SharePoint share link — used to resolve the file via
-// Graph /shares endpoint without hardcoding a path.
-const BAMA_INVOICE_TRACKER_SHARE_URL =
-  'https://bamafabrication.sharepoint.com/:x:/s/BAMA/IQDWoXELa3RPRqgdSz8VM3TZAa2a8yDw_r_AVcpPFZT_5DM';
+// TODO: Invoice number source removed (SharePoint tracker link deleted).
+// A replacement solution is needed — e.g. a SQL-backed sequential invoice
+// number sequence. Until then, the user must enter the invoice number manually.
 
 // Default recipient for Bama SW invoices. Cc is freely editable in the
 // email composer so additional addresses can be added per-send.
@@ -20761,34 +20756,11 @@ async function refreshBswInvoiceNumber() {
   if (!_bswContext) return;
   const inp = document.getElementById('bswInvoiceNumber');
   const status = document.getElementById('bswTrackerStatus');
-  inp.disabled = true;
-  inp.value = 'Loading…';
-  setTrackerStatus('Reading SharePoint tracker…', 'info');
-  try {
-    const item = await resolveSharedDriveItem(BAMA_INVOICE_TRACKER_SHARE_URL);
-    const buf = await downloadDriveItemContent(item);
-    const { next, highestExisting } = nextInvoiceNumberFromTracker(buf);
-    _bswContext.trackerItem = item;
-    _bswContext.trackerEtag = item.eTag || item['@odata.etag'] || null;
-    _bswContext.trackerBuffer = buf;
-    _bswContext.suggestedInvoiceNumber = next;
-    inp.value = next;
-    inp.disabled = false;
-    document.getElementById('bswConfirmBtn').disabled = false;
-    setTrackerStatus(
-      `✓ Tracker read — last used: ${highestExisting || '(none)'} • next suggested: ${next}`,
-      'success'
-    );
-  } catch (err) {
-    console.error('Tracker read failed:', err);
-    inp.value = '';
-    inp.disabled = false;
-    document.getElementById('bswConfirmBtn').disabled = true;
-    setTrackerStatus(
-      `⚠ Couldn\u2019t read tracker — ${err.message || 'unknown error'}. You can still type a number manually; the tracker won\u2019t be updated.`,
-      'warn'
-    );
-  }
+  inp.disabled = false;
+  inp.value = '';
+  inp.placeholder = 'Enter invoice number manually';
+  document.getElementById('bswConfirmBtn').disabled = false;
+  setTrackerStatus('Enter the invoice number manually — tracker integration pending replacement.', 'warn');
 }
 
 function setTrackerStatus(text, kind) {
@@ -20940,41 +20912,9 @@ async function confirmBabcockBswInvoice() {
     return;
   }
 
-  // 3. Update Invoice tracker (best-effort — non-fatal)
-  let trackerUpdated = false;
-  if (_bswContext.trackerItem && _bswContext.trackerBuffer) {
-    try {
-      btn.textContent = 'Updating tracker…';
-      // Re-read fresh to get the correct sheet name and verify number hasn't advanced
-      const freshItem   = await resolveSharedDriveItem(BAMA_INVOICE_TRACKER_SHARE_URL);
-      const freshBuffer = await downloadDriveItemContent(freshItem);
-      const { next: freshNext, sheetName: trackerSheet } = nextInvoiceNumberFromTracker(freshBuffer);
-      if (freshNext !== invoiceNumber) {
-        console.warn(`Tracker advanced — suggested ${freshNext}, using ${invoiceNumber}`);
-      }
-      // Use the Excel Graph API instead of raw file upload so this works
-      // even when someone has the tracker open in Excel or a browser tab.
-      await appendRowToTrackerViaExcelApi(freshItem, trackerSheet, {
-        invoiceNumber,
-        invoiceDate: new Date(),
-        dueDate:     new Date(dueDateIso + 'T00:00:00'),
-        customer:    'Babcock',
-        cost:        Number(netTotal.toFixed(2)),
-        reverseCharge: Number(reverseCharge.toFixed(2)),
-        total:       Number(netTotal.toFixed(2)),
-        outstanding: Number(netTotal.toFixed(2))
-      });
-      trackerUpdated = true;
-    } catch (err) {
-      // Non-fatal — the invoice exists, the email will go out, but the
-      // user needs to add the row manually. Tell them explicitly.
-      console.warn('Tracker update failed (non-fatal):', err);
-      toast(
-        `Couldn\u2019t update tracker (${err.message}) — please add ${invoiceNumber} manually`,
-        'warn'
-      );
-    }
-  }
+  // 3. Invoice tracker update removed — pending replacement solution.
+  //    User must update their invoice record manually for now.
+  const trackerUpdated = false;
 
   // 4. Open email composer with the PDF
   btn.textContent = 'Opening email…';

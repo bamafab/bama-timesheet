@@ -336,10 +336,9 @@
 
 <!-- ═══════════════════════════════════════
      BAMA SW REMITTANCE MODAL (Babcock 1k)
-     Reads the SharePoint Invoice tracker for the next number, lets
-     Reads the SharePoint Invoice tracker for the next number, lets
-     user review/edit, then generates the PDF + uploads to SharePoint
-     + appends a row to the tracker + opens the email composer.
+     Generates the remittance PDF + uploads to SharePoint
+     + opens the email composer.
+     Invoice number must be entered manually (tracker integration TBD).
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="babcockBswInvoiceModal">
   <div class="modal" style="max-width:600px;width:95vw;max-height:90vh;overflow-y:auto">
@@ -347,8 +346,7 @@
 
     <div style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.5">
       Creates an invoice from Bama Fabrication to Bama South West.
-      The invoice number is read from the SharePoint <b>Invoice tracker</b>
-      and the tracker is updated automatically.
+      Enter the invoice number manually below — tracker integration is pending a replacement solution.
     </div>
 
     <!-- Invoice number row -->
