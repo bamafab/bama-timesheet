@@ -528,25 +528,18 @@
       </div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Enter 0 for unused lines. Values update automatically.</div>
 
-      <div style="overflow-x:auto">
-        <div class="qli-grid qli-header" style="min-width:560px">
+      <div>
+        <div style="display:grid;grid-template-columns:24px 1fr 64px 90px 36px 36px 54px;gap:6px;padding:8px 6px 6px;font-size:10px;font-weight:700;letter-spacing:1px;color:var(--subtle);text-transform:uppercase;border-bottom:1px solid var(--border)">
           <div>#</div><div>Category</div>
           <div style="text-align:right">Qty</div>
           <div style="text-align:right">Unit £</div>
-          <div style="text-align:center" title="Labour">Lab</div>
+          <div style="text-align:center" title="Labour cost">Lab</div>
           <div style="text-align:center">VAT?</div>
           <div style="text-align:right">VAT %</div>
-          <div style="text-align:right">Excl. £</div>
-          <div style="text-align:right">VAT £</div>
-          <div style="text-align:right">Total £</div>
         </div>
-        <div id="nqQliRows" style="min-width:560px"></div>
-        <div class="qli-grid qli-totals" style="min-width:560px">
-          <div></div><div style="font-weight:700">TOTAL</div>
-          <div></div><div></div><div></div><div></div><div></div>
-          <div id="nqQliTotalExcl" style="text-align:right;font-weight:700">£0.00</div>
-          <div id="nqQliTotalVAT"  style="text-align:right;font-weight:700">£0.00</div>
-          <div id="nqQliTotalIncl" style="text-align:right;font-weight:700;color:var(--accent)">£0.00</div>
+        <div id="nqQliRows"></div>
+        <div style="display:grid;grid-template-columns:24px 1fr 64px 90px 36px 36px 54px;gap:6px;padding:8px 6px;font-size:12px;font-weight:700;border-top:1px solid var(--border);margin-top:4px">
+          <div></div><div>TOTAL</div><div></div><div></div><div></div><div></div><div></div>
         </div>
       </div>
       <div style="margin-top:6px;font-size:11px;color:var(--muted)">
@@ -569,6 +562,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260518g"></script>
+<script src="shared.js?v=20260518h"></script>
 </body>
 </html>

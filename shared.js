@@ -15300,26 +15300,27 @@ function renderNqLineItems() {
     const excl  = qty * price;
     const vat   = vatOn ? (excl * (rate / 100)) : 0;
     const total = excl + vat;
+    const NQ_GRID = 'display:grid;grid-template-columns:24px 1fr 64px 90px 36px 36px 54px;gap:6px;align-items:center;padding:5px 6px;border-bottom:1px solid var(--border)';
     return `
-      <div class="qli-row qli-grid" data-nq-idx="${idx}">
-        <div class="qli-num">${li.line_no}</div>
+      <div style="${NQ_GRID}" data-nq-idx="${idx}">
+        <div style="font-size:11px;color:var(--subtle);text-align:center">${li.line_no}</div>
         <div><input type="text" data-field="description" value="${escapeHtml(li.description || '')}"
-             style="color:var(--text)"
+             style="width:100%;padding:5px 7px;font-size:12px;background:var(--input-bg,rgba(0,0,0,.25));border:1px solid var(--border);color:var(--text);border-radius:6px"
              oninput="onNqLineItemEdit(${idx},'description',this.value)"></div>
         <div><input type="number" data-field="quantity" min="0" step="0.01" value="${qty}"
+             style="width:100%;padding:5px 7px;font-size:12px;text-align:right;background:var(--input-bg,rgba(0,0,0,.25));border:1px solid var(--border);color:var(--text);border-radius:6px;font-family:var(--font-mono)"
              oninput="onNqLineItemEdit(${idx},'quantity',this.value)"></div>
         <div><input type="number" data-field="unit_price" min="0" step="0.01" value="${price.toFixed(2)}"
+             style="width:100%;padding:5px 7px;font-size:12px;text-align:right;background:var(--input-bg,rgba(0,0,0,.25));border:1px solid var(--border);color:var(--text);border-radius:6px;font-family:var(--font-mono)"
              oninput="onNqLineItemEdit(${idx},'unit_price',this.value)"></div>
         <div style="text-align:center"><input type="checkbox" data-field="is_labour" ${li.is_labour ? 'checked' : ''}
              onchange="onNqLineItemEdit(${idx},'is_labour',this.checked?1:0)"></div>
         <div style="text-align:center"><input type="checkbox" data-field="vat_applies" ${vatOn ? 'checked' : ''}
              onchange="onNqLineItemEdit(${idx},'vat_applies',this.checked?1:0)"></div>
         <div><input type="number" data-field="vat_rate" min="0" max="100" step="0.5" value="${rate}"
+             style="width:100%;padding:5px 7px;font-size:12px;text-align:right;background:var(--input-bg,rgba(0,0,0,.25));border:1px solid var(--border);color:var(--text);border-radius:6px;font-family:var(--font-mono)"
              oninput="onNqLineItemEdit(${idx},'vat_rate',this.value)"
              ${vatOn ? '' : 'disabled style="opacity:.4"'}></div>
-        <div class="qli-derived" data-nq-derived="excl">£${excl.toFixed(2)}</div>
-        <div class="qli-derived" data-nq-derived="vat">£${vat.toFixed(2)}</div>
-        <div class="qli-derived" data-nq-derived="total">£${total.toFixed(2)}</div>
       </div>`;
   }).join('');
   _refreshNqLineTotals();
@@ -15347,9 +15348,7 @@ function onNqLineItemEdit(idx, field, value) {
     const excl  = qty * price;
     const vat   = vatOn ? (excl * (rate / 100)) : 0;
     const total = excl + vat;
-    row.querySelector('[data-nq-derived="excl"]').textContent  = '£' + excl.toFixed(2);
-    row.querySelector('[data-nq-derived="vat"]').textContent   = '£' + vat.toFixed(2);
-    row.querySelector('[data-nq-derived="total"]').textContent = '£' + total.toFixed(2);
+    // (derived cells removed from modal grid — totals shown in footer only)
     if (field === 'vat_applies') {
       const rateInp = row.querySelector('input[data-field="vat_rate"]');
       if (rateInp) { rateInp.disabled = !vatOn; rateInp.style.opacity = vatOn ? '' : '.4'; }
@@ -15389,7 +15388,7 @@ function _refreshNqLineTotals() {
   set('nqQliTotalVAT',    '£' + totalVAT.toFixed(2));
   set('nqQliTotalIncl',   '£' + (totalExcl + totalVAT).toFixed(2));
   set('nqQliLabourSub',   '£' + labourSub.toFixed(2));
-  set('nqQliTotalsSummary', `Excl. £${totalExcl.toFixed(2)} • Incl. £${(totalExcl+totalVAT).toFixed(2)}`);
+  set('nqQliTotalsSummary', `Excl. £${totalExcl.toFixed(2)} • VAT £${totalVAT.toFixed(2)} • Incl. £${(totalExcl+totalVAT).toFixed(2)}`);
 }
 
 
