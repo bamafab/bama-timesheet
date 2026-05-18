@@ -15105,7 +15105,7 @@ Return ONLY a valid JSON object with no explanation or markdown fences:
 }
 Use null for any field not found. Dates must be YYYY-MM-DD.`;
 
-    const data = await api.post('/claude-proxy', {
+    const data = await api.post('/api/claude-proxy', {
       model: 'claude-sonnet-4-20250514',
       max_tokens: 800,
       system: systemPrompt,
@@ -22643,7 +22643,7 @@ Rules:
     : `File: ${filename}\n\n${text}`;
 
   try {
-    const data  = await api.post('/claude-proxy', {
+    const data  = await api.post('/api/claude-proxy', {
       model: 'claude-sonnet-4-20250514',
       max_tokens: 2000,
       system: systemPrompt,
@@ -23394,7 +23394,7 @@ Rules:
 - Do not invent or guess values — only extract what is explicitly present in the text
 - Return only the JSON object, no explanation, no markdown` + fewShotSection;
 
-    const data = await api.post('/claude-proxy', {
+    const data = await api.post('/api/claude-proxy', {
       model: 'claude-sonnet-4-20250514',
       max_tokens: 1000,
       system: systemPrompt,
