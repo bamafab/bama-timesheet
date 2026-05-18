@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Babcock Quotes</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260518b">
+<link rel="stylesheet" href="bama.css?v=20260518c">
 </head>
 <body>
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
@@ -297,32 +297,43 @@
      Upload their invoice PDF, capture number + amount, validate.
 ════════════════════════════════════════ -->
 <div class="modal-overlay" id="babcockReceiveInvoiceModal">
-  <div class="modal" style="max-width:520px;width:95vw">
+  <div class="modal" style="max-width:540px;width:95vw">
     <div class="modal-title">📨 Bama SW Invoice Received</div>
 
     <div style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.5">
-      Expected amount: <b id="briiExpectedAmt">£0.00</b>
+      PO value sent: <b id="briiExpectedAmt">£0.00</b>
     </div>
 
     <div id="briiDropZone"
-         style="border:2px dashed var(--border);border-radius:8px;padding:20px;text-align:center;
+         style="border:2px dashed var(--border);border-radius:8px;padding:24px;text-align:center;
                 cursor:pointer;margin-bottom:14px;transition:border-color .2s"
-         onclick="document.getElementById('briiFileInput').click()">
-      <div id="briiDropZoneText" style="font-size:13px;color:var(--muted)">Click to upload their invoice PDF</div>
+         onclick="document.getElementById('briiFileInput').click()"
+         ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
+         ondragleave="this.style.borderColor='var(--border)'"
+         ondrop="onBamaSwInvoiceDrop(event)">
+      <div id="briiDropZoneText" style="font-size:13px;color:var(--muted)">Drop PDF here or click to upload</div>
       <input type="file" id="briiFileInput" accept=".pdf" style="display:none"
              onchange="onBamaSwInvoiceFilePicked(this.files[0])">
     </div>
 
-    <div style="margin-bottom:14px">
-      <div class="field-label">THEIR INVOICE NUMBER <span style="color:var(--red)">*</span></div>
-      <input type="text" class="field-input" id="briiInvoiceNumber"
-             style="font-size:14px;font-family:var(--font-mono);letter-spacing:.5px"
-             placeholder="e.g. BSW-INV-00123" autocomplete="off"
-             oninput="checkBriiCanSubmit()">
+    <div id="briiParseStatus" style="display:none;font-size:12px;color:var(--muted);margin-bottom:10px"></div>
+
+    <!-- Parsed invoice data -->
+    <div id="briiParsedData" style="display:none;background:var(--surface-2);border-radius:6px;padding:12px;margin-bottom:14px;font-size:13px">
+      <div style="font-size:11px;font-weight:600;letter-spacing:.5px;color:var(--accent);text-transform:uppercase;margin-bottom:8px">Parsed from PDF</div>
+      <div style="display:grid;grid-template-columns:auto 1fr;gap:4px 12px;line-height:1.8">
+        <span style="color:var(--muted)">Invoice No.</span><span id="briiInvoiceNumberDisplay" style="font-family:var(--font-mono);font-weight:600">—</span>
+        <span style="color:var(--muted)">Invoice Date</span><span id="briiParsedInvDate">—</span>
+        <span style="color:var(--muted)">Reference</span><span id="briiParsedRef" style="font-family:var(--font-mono)">—</span>
+        <span style="color:var(--muted)">VAT</span><span id="briiParsedVat">—</span>
+      </div>
     </div>
 
+    <!-- PO vs Invoice comparison -->
+    <div id="briiComparison" style="display:none;margin-bottom:14px"></div>
+
     <div style="margin-bottom:14px">
-      <div class="field-label">THEIR INVOICE AMOUNT (£) <span style="color:var(--red)">*</span></div>
+      <div class="field-label">INVOICE AMOUNT (£) — verify before confirming <span style="color:var(--red)">*</span></div>
       <input type="number" class="field-input" id="briiInvoiceAmount"
              style="font-size:14px" step="0.01" min="0" placeholder="0.00"
              oninput="onBriiAmountChange()">
@@ -348,50 +359,36 @@
     <div class="modal-title">🧾 Create Remittance Advice</div>
 
     <div style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.5">
-      Creates an invoice from Bama Fabrication to Bama South West.
-      Enter the invoice number manually below — tracker integration is pending a replacement solution.
+      Generates a remittance advice to Bama South West confirming payment against their invoice.
     </div>
 
-    <!-- Invoice number row -->
-    <div style="margin-bottom:14px">
-      <div class="field-label">INVOICE NUMBER <span style="color:var(--red)">*</span></div>
-      <div style="display:flex;gap:8px;align-items:center">
-        <input type="text" class="field-input" id="bswInvoiceNumber"
-               style="font-size:14px;font-family:var(--font-mono);letter-spacing:.5px;flex:1"
-               placeholder="Loading from tracker…">
-        <button type="button" class="btn btn-ghost" style="padding:6px 10px;font-size:11px"
-                onclick="refreshBswInvoiceNumber()" title="Re-read from tracker">⟳ Refresh</button>
-      </div>
-      <div id="bswInvoiceNumberHint" style="font-size:11px;color:var(--subtle);margin-top:4px">
-        Auto-suggested from the latest entry in the SharePoint tracker.
+    <!-- Bama SW invoice reference (read-only — stored from previous step) -->
+    <div style="background:var(--surface-2);border-radius:6px;padding:12px;margin-bottom:14px;font-size:13px">
+      <div style="font-size:11px;font-weight:600;letter-spacing:.5px;color:var(--accent);text-transform:uppercase;margin-bottom:8px">Bama SW Invoice on File</div>
+      <div style="display:grid;grid-template-columns:auto 1fr;gap:4px 12px;line-height:1.8">
+        <span style="color:var(--muted)">Invoice No.</span><span id="bswStoredInvNumber" style="font-family:var(--font-mono);font-weight:600">—</span>
+        <span style="color:var(--muted)">Invoice Amount</span><span id="bswStoredInvAmount" style="font-family:var(--font-mono);font-weight:600;color:var(--green)">—</span>
       </div>
     </div>
 
     <!-- Cost calculation block -->
     <div style="background:rgba(255,107,0,.04);border:1px solid rgba(255,107,0,.2);border-radius:6px;padding:14px;margin-bottom:14px">
       <div style="font-size:11px;font-weight:600;letter-spacing:.5px;color:var(--accent);text-transform:uppercase;margin-bottom:8px">
-        Invoice Total Calculation
+        Remittance Total
       </div>
       <div id="bswCalcRows" style="font-family:var(--font-mono);font-size:13px;line-height:1.8">
         <div style="display:grid;grid-template-columns:1fr auto;gap:10px">
-          <span style="color:var(--muted)">Original quote (pre-markup)</span>
+          <span style="color:var(--muted)">Bama SW invoice amount</span>
           <span id="bswOriginalAmt" style="font-weight:600">£—</span>
         </div>
-        <div style="display:grid;grid-template-columns:1fr auto;gap:10px">
-          <span style="color:var(--muted)">Project costs deducted</span>
-          <span id="bswCostsAmt" style="color:var(--subtle)">−£0.00</span>
-        </div>
         <div style="border-top:1px solid var(--border);margin-top:6px;padding-top:6px;display:grid;grid-template-columns:1fr auto;gap:10px">
-          <span style="color:var(--text);font-weight:600">Net invoice total</span>
+          <span style="color:var(--text);font-weight:600">Amount to remit</span>
           <span id="bswNetTotal" style="font-weight:700;color:var(--green);font-size:15px">£—</span>
         </div>
         <div style="display:grid;grid-template-columns:1fr auto;gap:10px;font-size:11px;color:var(--subtle);margin-top:4px">
-          <span>VAT — reverse charge applies, 0%</span>
+          <span>VAT — domestic reverse charge applies</span>
           <span>£0.00</span>
         </div>
-      </div>
-      <div id="bswCostsNote" style="font-size:10px;color:var(--subtle);margin-top:10px;font-style:italic">
-        Note: project costs deductions will come from PO tracking once that module is built. For now, deductions = £0.
       </div>
     </div>
 
@@ -401,9 +398,6 @@
       <input type="date" class="field-input" id="bswDueDate" style="font-size:13px">
       <div style="font-size:11px;color:var(--subtle);margin-top:4px">Defaults to 30 days from today.</div>
     </div>
-
-    <!-- Tracker status banner -->
-    <div id="bswTrackerStatus" style="font-size:11px;padding:8px 12px;border-radius:6px;margin-bottom:14px"></div>
 
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeBabcockBswInvoiceModal()">Cancel</button>
@@ -854,7 +848,10 @@
           <span style="font-size:13px;color:var(--muted)">%</span>
         </div>
         <span style="font-size:12px;color:var(--subtle)">Default 10%, override allowed</span>
-        <span style="margin-left:auto;font-size:12px;color:var(--muted)">Marked-up total: <b id="babcockMarkedUpTotal" style="color:var(--green);font-family:var(--font-mono)">—</b></span>
+        <span style="margin-left:auto;font-size:12px;color:var(--muted);display:flex;gap:16px;align-items:center">
+          <span>Original total: <b id="babcockOriginalTotal" style="color:var(--accent);font-family:var(--font-mono)">—</b></span>
+          <span>Marked-up total: <b id="babcockMarkedUpTotal" style="color:var(--green);font-family:var(--font-mono)">—</b></span>
+        </span>
       </div>
 
       <!-- Line items preview (read-only — edits happen in the source file) -->
@@ -1086,6 +1083,6 @@
 <!-- PDF.js: used by the "Approved to Pay" step to OCR the uploaded COUPA invoice -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
-<script src="shared.js?v=20260518b"></script>
+<script src="shared.js?v=20260518c"></script>
 </body>
 </html>

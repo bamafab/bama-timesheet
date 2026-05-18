@@ -12193,11 +12193,8 @@ const TEMPLATE_DEFAULTS = {
     to: 'info@bamasw.co.uk',
     subject: 'Remittance Advice {{bama_sw_invoice_number}} — Project {{project_number}}',
     body: 'Hi,\n\n' +
-          'Please find attached our remittance advice {{bama_sw_invoice_number}} for project {{project_number}}.\n\n' +
-          'Original quote value: {{original_value}}\n' +
-          'Project costs deducted: {{deductions_total}}\n' +
-          'Amount payable: {{net_invoice_total}}\n\n' +
-          'Payment of {{net_invoice_total}} was made on {{bama_sw_paid_date}}.\n\n' +
+          'Please find attached the remittance advice for your invoice {{bama_sw_invoice_number}}, project {{project_number}}.\n\n' +
+          'Invoice amount: {{net_invoice_total}}\n\n' +
           'Many thanks.'
   },
   emailSignature: {
@@ -18068,13 +18065,19 @@ function populateBabcockValidationFields(header, missingFields = []) {
 function updateBabcockMarkedUpTotal(markup) {
   if (!_babcockRawData) return;
   const factor = 1 + (markup / 100);
-  const total = _babcockRawData.reduce((s, r) => {
+  let originalTotal = 0;
+  let markedUpTotal = 0;
+  _babcockRawData.forEach(r => {
     const lineTotal = r.amount !== null ? r.amount
                      : (r.unitPrice !== null && r.quantity !== null ? r.unitPrice * r.quantity : 0);
-    return s + (lineTotal * factor);
-  }, 0);
-  const el = document.getElementById('babcockMarkedUpTotal');
-  if (el) el.textContent = `£${total.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    originalTotal += lineTotal;
+    markedUpTotal += lineTotal * factor;
+  });
+  const fmt = v => `£${v.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const elOrig = document.getElementById('babcockOriginalTotal');
+  const elMkup = document.getElementById('babcockMarkedUpTotal');
+  if (elOrig) elOrig.textContent = fmt(originalTotal);
+  if (elMkup) elMkup.textContent = fmt(markedUpTotal);
 }
 
 function renderBabcockPreviewTable(markup) {
@@ -18468,7 +18471,7 @@ async function drawBabcockQuotePDF(jsPDF, d, logoDataUri) {
   setText([43, 43, 43]);
   doc.text('Quotation', pageW - marginR, y + 16, { align: 'right' });
 
-  y = marginL + 36;  // step past header block
+  y = marginL + 42;  // step past header block (extra gap below logo)
 
   // ── Body header: left = company / quote-for, right = meta table ──
   const leftColW = usableW * 0.6;
@@ -18504,10 +18507,21 @@ async function drawBabcockQuotePDF(jsPDF, d, logoDataUri) {
     setText(TEXT);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(10);
-    if (d.quoteFor) { doc.text(String(d.quoteFor), marginL + 4, leftY); leftY += 4; }
-    if (d.area)     { doc.text(String(d.area),     marginL + 4, leftY); leftY += 4; }
+    if (d.quoteFor) {
+      // quoteFor may contain a combined " — " value from the DB; split back into lines
+      const parts = String(d.quoteFor).split(/\s+—\s+|\n/);
+      parts.forEach(part => {
+        const wrapped = doc.splitTextToSize(part.trim(), leftColW - 4);
+        wrapped.forEach(line => { doc.text(line, marginL + 4, leftY); leftY += 4; });
+      });
+      leftY += 1; // small gap between fields
+    }
+    if (d.area) {
+      const wrapped = doc.splitTextToSize(String(d.area), leftColW - 4);
+      wrapped.forEach(line => { doc.text(line, marginL + 4, leftY); leftY += 4; });
+      leftY += 1;
+    }
     if (d.address) {
-      // Wrap long addresses
       const wrapped = doc.splitTextToSize(String(d.address), leftColW - 4);
       wrapped.forEach(line => { doc.text(line, marginL + 4, leftY); leftY += 4; });
     }
@@ -19856,6 +19870,55 @@ async function onBabcockApprovedFilePicked(file) {
 // Returns { invoiceNumber, dueDateIso, grossTotal, coupaPoRef }.
 // Any field that the regex can't match comes back empty — UI shows
 // the "couldn't auto-fill" banner when none match.
+// ── Extract fields from a Bama SW invoice PDF ──
+// Template: TAX INVOICE from Bama South West Ltd.
+// Key fields: Invoice Number, Invoice Date, Reference (our PO),
+// Total GBP, Due Date, reverse charge flag.
+async function extractBamaSwInvoiceFields(file) {
+  const result = { invoiceNumber: '', invoiceDate: '', reference: '', totalGbp: '', dueDateIso: '', isReverseCharge: false, failed: false };
+  try {
+    if (typeof pdfjsLib === 'undefined') throw new Error('PDF.js not loaded');
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    let fullText = '';
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      fullText += content.items.map(it => it.str).join(' ') + '\n';
+    }
+    const text = fullText.replace(/\s+/g, ' ');
+
+    // Invoice Number — "Invoice Number INV-0007"
+    const invMatch = text.match(/Invoice\s+Number\s+(INV[-\w]+)/i)
+                  || text.match(/\b(INV[-\w]{3,})\b/);
+    if (invMatch) result.invoiceNumber = invMatch[1].trim();
+
+    // Invoice Date — "Invoice Date 14 May 2026"
+    const invDateMatch = text.match(/Invoice\s+Date\s+(\d{1,2}\s+[A-Za-z]+\s+\d{4})/i);
+    if (invDateMatch) result.invoiceDate = invDateMatch[1].trim();
+
+    // Reference (our PO number) — "Reference P260449"
+    const refMatch = text.match(/Reference\s+([A-Z]\d{5,})/i);
+    if (refMatch) result.reference = refMatch[1].trim();
+
+    // Total GBP — "TOTAL GBP 1,173.00"
+    const totalMatch = text.match(/TOTAL\s+GBP\s+([\d,]+\.\d{2})/i);
+    if (totalMatch) result.totalGbp = totalMatch[1].replace(/,/g, '');
+
+    // Due Date — "Due Date: 14 May 2026"
+    const dueMatch = text.match(/Due\s+Date[:\s]+(\d{1,2}\s+[A-Za-z]+\s+\d{4})/i);
+    if (dueMatch) result.dueDateIso = parseUkLongDateToIso(dueMatch[1]);
+
+    // Reverse charge — any mention of domestic reverse charge
+    result.isReverseCharge = /reverse\s+charge/i.test(text);
+
+  } catch (e) {
+    console.error('Bama SW invoice parse failed:', e);
+    result.failed = true;
+  }
+  return result;
+}
+
 async function extractCoupaInvoiceFields(file) {
   if (typeof pdfjsLib === 'undefined') {
     throw new Error('PDF.js not loaded');
@@ -20200,14 +20263,18 @@ async function handleAdvanceFromBamaSwPoRaised(q, next) {
   const original  = markupPct > 0 ? total / (1 + markupPct / 100) : total;
   const expected  = Math.max(0, original);
 
-  _briiContext = { quote: q, next, expectedAmount: expected, file: null };
+  _briiContext = { quote: q, next, expectedAmount: expected, file: null, invoiceNumber: '', parsed: null };
 
   document.getElementById('briiExpectedAmt').textContent     = fmtCurrency(expected);
-  document.getElementById('briiDropZoneText').textContent    = 'Click to upload their invoice PDF';
+  document.getElementById('briiDropZoneText').textContent    = 'Drop PDF here or click to upload';
+  document.getElementById('briiDropZone').style.borderColor  = 'var(--border)';
   document.getElementById('briiFileInput').value             = '';
-  document.getElementById('briiInvoiceNumber').value         = q.bama_sw_received_invoice_number || '';
+  document.getElementById('briiInvoiceNumberDisplay').textContent = '—';
   document.getElementById('briiInvoiceAmount').value         = '';
   document.getElementById('briiAmountWarning').style.display = 'none';
+  document.getElementById('briiParseStatus').style.display   = 'none';
+  document.getElementById('briiParsedData').style.display    = 'none';
+  document.getElementById('briiComparison').style.display    = 'none';
   document.getElementById('briiConfirmBtn').disabled         = true;
   document.getElementById('briiConfirmBtn').textContent      = 'Save & Confirm';
 
@@ -20222,7 +20289,68 @@ function onBamaSwInvoiceFilePicked(file) {
   }
   _briiContext.file = file;
   document.getElementById('briiDropZoneText').textContent = `✓ ${file.name}`;
-  checkBriiCanSubmit();
+  document.getElementById('briiDropZone').style.borderColor = 'var(--green)';
+  document.getElementById('briiParseStatus').textContent = 'Parsing invoice…';
+  document.getElementById('briiParseStatus').style.display = 'block';
+  document.getElementById('briiParsedData').style.display = 'none';
+
+  // Parse the PDF in the background
+  extractBamaSwInvoiceFields(file).then(parsed => {
+    _briiContext.parsed = parsed;
+
+    // Auto-fill invoice number from PDF
+    if (parsed.invoiceNumber) {
+      _briiContext.invoiceNumber = parsed.invoiceNumber;
+      document.getElementById('briiInvoiceNumberDisplay').textContent = parsed.invoiceNumber;
+    } else {
+      document.getElementById('briiInvoiceNumberDisplay').textContent = '(not detected — enter manually)';
+    }
+
+    // Auto-fill amount
+    if (parsed.totalGbp) {
+      document.getElementById('briiInvoiceAmount').value = parsed.totalGbp;
+      onBriiAmountChange();
+    }
+
+    // Show parsed data block
+    document.getElementById('briiParsedInvDate').textContent = parsed.invoiceDate || '—';
+    document.getElementById('briiParsedRef').textContent     = parsed.reference   || '—';
+    document.getElementById('briiParsedVat').textContent     = parsed.isReverseCharge ? 'Domestic Reverse Charge (£0.00)' : '—';
+    document.getElementById('briiParseStatus').style.display = 'none';
+    document.getElementById('briiParsedData').style.display  = 'block';
+
+    // PO vs invoice comparison
+    const poValue  = _briiContext.expectedAmount;
+    const invValue = parseFloat(parsed.totalGbp || '0');
+    const compEl   = document.getElementById('briiComparison');
+    const fmt = v  => `£${Number(v).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    if (parsed.totalGbp) {
+      const match = Math.abs(invValue - poValue) <= 0.01;
+      compEl.innerHTML = `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px">
+          <div style="color:var(--muted)">PO value sent</div>
+          <div style="font-family:var(--font-mono);font-weight:600">${fmt(poValue)}</div>
+          <div style="color:var(--muted)">Invoice amount</div>
+          <div style="font-family:var(--font-mono);font-weight:600;color:${match ? 'var(--green)' : 'var(--yellow)'}">${fmt(invValue)}</div>
+        </div>
+        ${!match ? `<div style="margin-top:8px;padding:8px;background:rgba(255,193,7,.08);border:1px solid rgba(255,193,7,.3);border-radius:4px;font-size:12px;color:var(--yellow)">
+          ⚠ Invoice amount differs from PO by ${fmt(Math.abs(invValue - poValue))} — verify before confirming.
+        </div>` : `<div style="margin-top:6px;font-size:12px;color:var(--green)">✓ Invoice matches PO value</div>`}`;
+      compEl.style.display = 'block';
+    }
+
+    checkBriiCanSubmit();
+  }).catch(err => {
+    document.getElementById('briiParseStatus').textContent = 'Could not parse PDF — please enter details manually.';
+    checkBriiCanSubmit();
+  });
+}
+
+function onBamaSwInvoiceDrop(e) {
+  e.preventDefault();
+  document.getElementById('briiDropZone').style.borderColor = 'var(--border)';
+  const file = e.dataTransfer?.files?.[0];
+  if (file) onBamaSwInvoiceFilePicked(file);
 }
 
 function onBriiAmountChange() {
@@ -20241,20 +20369,20 @@ function onBriiAmountChange() {
 
 function checkBriiCanSubmit() {
   if (!_briiContext) return;
-  const ok = !!_briiContext.file
-    && !!(document.getElementById('briiInvoiceNumber').value || '').trim()
-    && !isNaN(parseFloat(document.getElementById('briiInvoiceAmount').value));
-  document.getElementById('briiConfirmBtn').disabled = !ok;
+  const hasFile    = !!_briiContext.file;
+  const hasInvNum  = !!(_briiContext.invoiceNumber || '').trim();
+  const hasAmount  = !isNaN(parseFloat(document.getElementById('briiInvoiceAmount')?.value));
+  document.getElementById('briiConfirmBtn').disabled = !(hasFile && hasInvNum && hasAmount);
 }
 
 async function confirmBamaSwInvoiceReceived() {
   if (!_briiContext || !_briiContext.file) return;
 
-  const invoiceNumber = (document.getElementById('briiInvoiceNumber').value || '').trim();
+  const invoiceNumber = (_briiContext.invoiceNumber || '').trim();
   const invoiceAmount = parseFloat(document.getElementById('briiInvoiceAmount').value);
 
-  if (!invoiceNumber)                          { toast('Invoice number is required', 'error'); return; }
-  if (isNaN(invoiceAmount) || invoiceAmount <= 0) { toast('Invoice amount is required',  'error'); return; }
+  if (!invoiceNumber)                             { toast('Invoice number could not be parsed — re-upload or try a different PDF', 'error'); return; }
+  if (isNaN(invoiceAmount) || invoiceAmount <= 0) { toast('Invoice amount is required', 'error'); return; }
 
   const { quote: q, next, file } = _briiContext;
   const btn = document.getElementById('briiConfirmBtn');
@@ -20775,10 +20903,6 @@ async function renderBamaSwInvoicePDF(data) {
 
   y += 8;
 
-  // Payment note footer
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-  doc.text(`Payment of ${fmtCurrency(data.netTotal)} will be made by ${data.dueDate || '—'} as per agreed terms.`, M, y);
-
   return doc.output('blob');
 }
 
@@ -20826,62 +20950,48 @@ async function handleAdvanceFromPaidToBamaSw(q, next) {
     return;
   }
 
-  // Pre-compute the cost figures
-  const total      = Number(q.total_value || 0);
-  const markupPct  = Number(q.markup_pct || 0);
-  // Original pretax = marked-up total divided back. If markup is 0 (or
-  // missing) the original IS the total — no division by zero.
-  const original   = markupPct > 0 ? total / (1 + markupPct / 100) : total;
-  const deductions = 0; // TODO: pull from PO module when it exists
-  const netTotal   = Math.max(0, original - deductions);
+  // Use the Bama SW invoice amount stored at the previous step
+  const netTotal = Number(q.bama_sw_received_invoice_amount || 0);
+  const storedInvNumber = q.bama_sw_received_invoice_number || '';
 
   // Open modal
   _bswContext = {
     quote: q,
     next,
-    originalAmount: original,
-    deductionsAmount: deductions,
     netTotal,
-    suggestedInvoiceNumber: null,
+    storedInvNumber,
     trackerItem: null,
     trackerEtag: null,
     trackerBuffer: null
   };
 
+  // Populate the invoice-on-file block
+  document.getElementById('bswStoredInvNumber').textContent = storedInvNumber || '(none on file)';
+  document.getElementById('bswStoredInvAmount').textContent = fmtCurrency(netTotal);
+
   // Populate the calc block
-  document.getElementById('bswOriginalAmt').textContent = fmtCurrency(original);
-  document.getElementById('bswCostsAmt').textContent    = '\u2212' + fmtCurrency(deductions);
+  document.getElementById('bswOriginalAmt').textContent = fmtCurrency(netTotal);
   document.getElementById('bswNetTotal').textContent    = fmtCurrency(netTotal);
 
   // Default due date: today + 30 days
   const due = new Date(); due.setDate(due.getDate() + 30);
   document.getElementById('bswDueDate').value = due.toISOString().split('T')[0];
 
-  document.getElementById('bswInvoiceNumber').value = '';
-  document.getElementById('bswConfirmBtn').disabled = true;
+  document.getElementById('bswConfirmBtn').disabled = !storedInvNumber;
   document.getElementById('bswConfirmBtn').textContent = 'Create Remittance Advice';
 
   document.getElementById('babcockBswInvoiceModal').classList.add('active');
-
-  // Kick off the tracker read
-  refreshBswInvoiceNumber();
 }
 
 // ── Confirm: generate PDF + upload SP + append tracker + open email ──
 async function confirmBabcockBswInvoice() {
   if (!_bswContext) return;
 
-  const invoiceNumber = (document.getElementById('bswInvoiceNumber').value || '').trim();
+  const invoiceNumber = (_bswContext.storedInvNumber || '').trim();
   const dueDateIso    = (document.getElementById('bswDueDate').value || '').trim();
 
   if (!invoiceNumber) {
-    toast('Invoice number is required', 'error');
-    document.getElementById('bswInvoiceNumber').focus();
-    return;
-  }
-  if (!/^INV\d+$/i.test(invoiceNumber)) {
-    toast('Invoice number must look like INV0257', 'error');
-    document.getElementById('bswInvoiceNumber').focus();
+    toast('No Bama SW invoice number on file — ensure the previous step was completed', 'error');
     return;
   }
   if (!dueDateIso) {

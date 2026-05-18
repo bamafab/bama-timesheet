@@ -18,6 +18,7 @@ const ALLOWED_STATUSES = [
     'Bama SW Invoice Received',
     'Paid to Bama SW',
     'Remittance Sent',
+    'Closed',
     'Cancelled'
 ];
 // First system-allocated number. B0091 was the last manually-created Babcock

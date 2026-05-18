@@ -28,6 +28,8 @@ async function query(sqlText, params = {}) {
         for (const [name, value] of Object.entries(params)) {
             if (value === null || value === undefined) {
                 request.input(name, sql.NVarChar, null);
+            } else if (typeof value === 'string') {
+                request.input(name, sql.NVarChar(sql.MAX), value);
             } else {
                 request.input(name, value);
             }
