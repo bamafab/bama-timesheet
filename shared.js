@@ -21086,9 +21086,7 @@ async function confirmBabcockBswInvoice() {
     dueDateIso,
     netTotal,
     projectNumber,
-    pdfUploaded,
-    trackerUpdated,
-    originalAmount: originalAmountSnapshot
+    pdfUploaded
   };
   _bswContext = null;
 
@@ -21099,8 +21097,6 @@ async function confirmBabcockBswInvoice() {
       bama_sw_invoice_number:   invoiceNumber,
       project_number:           projectNumber,
       project_name:             q.quote_for_area || '',
-      original_value:           fmtCurrency(originalAmountSnapshot),
-      deductions_total:         fmtCurrency(0),
       net_invoice_total:        fmtCurrency(netTotal),
       bama_sw_invoice_due_date: fmtDateStr(dueDateIso)
     },
