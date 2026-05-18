@@ -398,12 +398,39 @@ app.http('babcock-quotes-delete', {
             const id = parseInt(request.params.id);
             if (!id) return badRequest('Invalid id', request);
 
-            const result = await query(
-                `DELETE FROM BabcockQuotes OUTPUT DELETED.id WHERE id = @id`,
+            // Fetch the row so we know which SP files to clean up
+            const rowResult = await query(
+                `SELECT generated_file_id, coupa_invoice_pdf_id,
+                        bama_sw_po_pdf_id, bama_sw_received_invoice_pdf_id,
+                        bama_sw_invoice_pdf_id, linked_project_id
+                 FROM BabcockQuotes WHERE id = @id`,
                 { id }
             );
-            if (result.recordset.length === 0) return notFound('Babcock quote not found', request);
-            return ok({ deleted: true, id }, request);
+            if (rowResult.recordset.length === 0) return notFound('Babcock quote not found', request);
+            const row = rowResult.recordset[0];
+
+            // Collect SharePoint file IDs to delete (caller handles the SP deletes
+            // client-side using their Graph token — API has no Graph credentials)
+            const spFileIds = [
+                row.generated_file_id,
+                row.coupa_invoice_pdf_id,
+                row.bama_sw_po_pdf_id,
+                row.bama_sw_received_invoice_pdf_id,
+                row.bama_sw_invoice_pdf_id
+            ].filter(Boolean);
+
+            // Delete linked project first (cascades ProjectQuotes + QuoteLineItems)
+            if (row.linked_project_id) {
+                await query(
+                    `DELETE FROM Projects WHERE id = @pid`,
+                    { pid: row.linked_project_id }
+                );
+            }
+
+            // Delete the quote
+            await query(`DELETE FROM BabcockQuotes WHERE id = @id`, { id });
+
+            return ok({ deleted: true, id, spFileIds }, request);
         } catch (err) {
             context.error('Error deleting Babcock quote:', err);
             return serverError('Failed to delete Babcock quote', request);

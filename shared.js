@@ -21337,6 +21337,48 @@ function closeBabcockEditModal() {
   _babcockEditingRecord = null;
 }
 
+async function deleteBabcockQuote(id) {
+  const q = _babcockEditingRecord || _babcockQuotes.find(x => x.id === id);
+  if (!q) return;
+
+  const confirmed = await showConfirmAsync(
+    '🗑 Delete Quote',
+    `<p style="margin:0">Permanently delete <b>${escapeHtml(q.quote_ref || '')}</b>?</p>
+     <p style="margin:8px 0 0;font-size:12px;color:var(--red)">
+       This will also delete any linked project and all associated SharePoint files.<br>
+       This cannot be undone.
+     </p>`,
+    { okLabel: 'Delete Permanently', cancelLabel: 'Cancel' }
+  );
+  if (!confirmed) return;
+
+  setLoading(true);
+  try {
+    const result = await api.delete(`/api/babcock-quotes/${q.id}`);
+
+    // Delete SharePoint files returned by the API (uses the user's Graph token)
+    if (result.spFileIds && result.spFileIds.length) {
+      const token = await getToken();
+      await Promise.allSettled(result.spFileIds.map(fileId =>
+        fetch(`https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/items/${fileId}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${token}` }
+        })
+      ));
+    }
+
+    // Remove from local state and close modal
+    _babcockQuotes = _babcockQuotes.filter(x => x.id !== q.id);
+    closeBabcockEditModal();
+    setLoading(false);
+    toast(`${q.quote_ref} deleted`, 'success');
+    renderBabcockTracker();
+  } catch (err) {
+    setLoading(false);
+    toast('Delete failed: ' + (err.message || 'unknown error'), 'error');
+  }
+}
+
 // Fields whose change requires regenerating the customer-facing PDF.
 // Status-only changes are allowed to slip through with just a DB write.
 const _BABCOCK_PDF_FIELDS = [
