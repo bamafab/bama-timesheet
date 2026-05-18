@@ -15172,9 +15172,20 @@ Return ONLY a valid JSON object with no explanation or markdown fences:
   "project_name": "project or job description - use comments/special instructions if no explicit name",
   "quote_value": 12345.00,
   "sent_date": "document date in YYYY-MM-DD or null",
-  "deadline": "quotation valid until date in YYYY-MM-DD or null"
+  "deadline": "quotation valid until date in YYYY-MM-DD or null",
+  "line_items": {
+    "prelims": 0,
+    "approval_fab_pack": 5100.00,
+    "survey": 600.00,
+    "material": 34911.00,
+    "fabrication": 18900.00,
+    "painting": 4752.00,
+    "galvanising": 6036.00,
+    "installation": 31944.00,
+    "delivery": 2640.00
+  }
 }
-Use null for any field not found. Dates must be YYYY-MM-DD.`;
+Match each document line row to its category key and set the unit price (excl. VAT). Use 0 for blank/absent lines. Use null for other missing fields. Dates: YYYY-MM-DD.`;
 
     const data = await callClaude({
       model: 'claude-sonnet-4-6',
@@ -15235,6 +15246,25 @@ function _applyParsedQuoteFields(p) {
   if (p.quote_value != null) set('nqValue', String(parseFloat(p.quote_value).toFixed(2)));
   if (p.sent_date) set('nqSentDate', p.sent_date);
   if (p.deadline)  set('nqDeadline', p.deadline);
+
+  // Populate line item prices from parsed document
+  if (p.line_items && typeof p.line_items === 'object') {
+    let anySet = false;
+    _nqLineItems.forEach(li => {
+      const val = p.line_items[li.category];
+      if (val != null && parseFloat(val) > 0) {
+        li.quantity   = 1;
+        li.unit_price = parseFloat(val);
+        anySet = true;
+      }
+    });
+    if (anySet) {
+      renderNqLineItems();
+      // Let line items drive the headline value auto-update
+      const valField = document.getElementById('nqValue');
+      if (valField) valField.dataset.autoSet = '1';
+    }
+  }
 }
 
 
@@ -15274,6 +15304,7 @@ function renderNqLineItems() {
       <div class="qli-row qli-grid" data-nq-idx="${idx}">
         <div class="qli-num">${li.line_no}</div>
         <div><input type="text" data-field="description" value="${escapeHtml(li.description || '')}"
+             style="color:var(--text)"
              oninput="onNqLineItemEdit(${idx},'description',this.value)"></div>
         <div><input type="number" data-field="quantity" min="0" step="0.01" value="${qty}"
              oninput="onNqLineItemEdit(${idx},'quantity',this.value)"></div>
