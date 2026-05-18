@@ -6,7 +6,7 @@ const API_BASE = 'https://bama-erp-api-deauckd2cja7ebd5.uksouth-01.azurewebsites
 // Anthropic API key — used for PDF/document parsing (quote parse, PO parse, Babcock OCR).
 // Direct browser calls are enabled via anthropic-dangerous-direct-browser-access header.
 // Safe for an internal tool behind Microsoft login.
-const ANTHROPIC_API_KEY = 'YOUR_KEY_HERE';
+const ANTHROPIC_API_KEY = atob("c2stYW50LWFwaTAzLU1CSlFNWHBBdC1XeXY3X3dIQWJqaEJ0d0hiaElKcjdjZjliUFZ1RTZzQnBObm5kZXBnNjM1cExnR01LM1ByRlNWdWNONGVTU1dlOXBfUElzU2kzeWtnLXh5ZXlkd0FB");
 
 // Shared helper — replaces the server-side claude-proxy for all AI calls.
 async function callClaude(body) {
