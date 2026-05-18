@@ -15385,6 +15385,7 @@ function _refreshNqLineTotals() {
   }
   const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
   set('nqQliTotalExcl',   '£' + totalExcl.toFixed(2));
+  set('nqQliTotalExclBig', '£' + totalExcl.toLocaleString('en-GB', {minimumFractionDigits:2, maximumFractionDigits:2}));
   set('nqQliTotalVAT',    '£' + totalVAT.toFixed(2));
   set('nqQliTotalIncl',   '£' + (totalExcl + totalVAT).toFixed(2));
   set('nqQliLabourSub',   '£' + labourSub.toFixed(2));
