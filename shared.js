@@ -5422,7 +5422,7 @@ function renderReports() {
 //   Open projects:      Live Project (work in progress)
 //   Closed projects:    Project Complete, Approved to Pay, Payment Received,
 //                       Bama SW PO Raised, Bama SW Invoice Received,
-//                       Paid to Bama SW, Remittance Sent
+//                       Paid to Bama SW, Remittance Sent, Closed
 //   Cancelled:          Cancelled (terminal failure)
 
 // FY toggle state — 'current' or 'last' (last full UK financial year)
@@ -5451,7 +5451,7 @@ const BABCOCK_OPEN_QUOTE_STATUSES   = ['Quote Received', 'Quote Sent'];
 const BABCOCK_OPEN_PROJECT_STATUSES = ['Live Project'];
 const BABCOCK_CLOSED_PROJECT_STATUSES = [
   'Project Complete', 'Approved to Pay', 'Payment Received',
-  'Bama SW PO Raised', 'Bama SW Invoice Received', 'Paid to Bama SW', 'Remittance Sent'
+  'Bama SW PO Raised', 'Bama SW Invoice Received', 'Paid to Bama SW', 'Remittance Sent', 'Closed'
 ];
 
 function setBabcockFY(which) {
@@ -5552,16 +5552,16 @@ async function renderBabcockReport() {
   // What Babcock paid us (COUPA-side). Treat rows at or beyond Approved-to-Pay
   // as "invoiced"; treat rows at or beyond Payment Received as "paid".
   const invoicedPaid = inFY
-    .filter(q => ['Payment Received', 'Bama SW PO Raised', 'Bama SW Invoice Received', 'Paid to Bama SW', 'Remittance Sent'].includes(q.status))
+    .filter(q => ['Payment Received', 'Bama SW PO Raised', 'Bama SW Invoice Received', 'Paid to Bama SW', 'Remittance Sent', 'Closed'].includes(q.status))
     .reduce((s, q) => s + (Number(q.coupa_invoice_gross_total) || Number(q.total_value) || 0), 0);
 
   // Total invoiced (raised), regardless of paid
   const invoicedTotal = inFY
-    .filter(q => ['Approved to Pay', 'Payment Received', 'Bama SW PO Raised', 'Bama SW Invoice Received', 'Paid to Bama SW', 'Remittance Sent'].includes(q.status))
+    .filter(q => ['Approved to Pay', 'Payment Received', 'Bama SW PO Raised', 'Bama SW Invoice Received', 'Paid to Bama SW', 'Remittance Sent', 'Closed'].includes(q.status))
     .reduce((s, q) => s + (Number(q.coupa_invoice_gross_total) || Number(q.total_value) || 0), 0);
 
   // Outstanding pipeline — non-terminal, non-cancelled
-  const TERMINAL = new Set(['Remittance Sent', 'Cancelled']);
+  const TERMINAL = new Set(['Closed', 'Cancelled']);
   const outstandingValue = inFY
     .filter(q => !TERMINAL.has(q.status))
     .reduce((s, q) => s + (Number(q.total_value) || 0), 0);
@@ -5668,7 +5668,7 @@ async function renderBabcockReport() {
   const STATUS_ORDER = [
     'Quote Received', 'Quote Sent', 'Live Project', 'Project Complete',
     'Approved to Pay', 'Payment Received', 'Bama SW PO Raised',
-    'Bama SW Invoice Received', 'Paid to Bama SW', 'Remittance Sent', 'Cancelled'
+    'Bama SW Invoice Received', 'Paid to Bama SW', 'Remittance Sent', 'Closed', 'Cancelled'
   ];
   // Status colour map mirrors the badge palette in babcock.html so users
   // recognise statuses across pages.
@@ -5683,6 +5683,7 @@ async function renderBabcockReport() {
     'Bama SW Invoice Received':  'rgba(230,126,34,.7)',  // orange
     'Paid to Bama SW':           'rgba(39,174,96,.7)',   // green
     'Remittance Sent':           'rgba(149,165,166,.7)', // gray
+    'Closed':                    'rgba(100,100,100,.7)', // dark gray
     'Cancelled':                 'rgba(127,140,141,.7)'  // grey
   };
   const funnelCounts = STATUS_ORDER.map(s => all.filter(q => q.status === s).length);
@@ -18728,8 +18729,10 @@ function renderBabcockTracker() {
 
   const search = (document.getElementById('babcockTrackerSearch')?.value || '').toLowerCase();
   const statusFilter = document.getElementById('babcockTrackerStatusFilter')?.value || '';
+  const showClosed = document.getElementById('babcockShowClosed')?.checked || false;
 
   const list = _babcockQuotes.filter(q => {
+    if (!showClosed && q.status === 'Closed') return false;
     if (statusFilter && q.status !== statusFilter) return false;
     if (search && !`${q.quote_ref || ''} ${q.work_order_no || ''} ${q.po_number || ''}`.toLowerCase().includes(search)) return false;
     return true;
@@ -18740,7 +18743,7 @@ function renderBabcockTracker() {
     const { col, dir } = _babcockSort;
     const statusOrder = ['Quote Received','Quote Sent','Live Project','Project Complete',
                          'Approved to Pay','Payment Received','Bama SW PO Raised',
-                         'Bama SW Invoice Received','Paid to Bama SW','Remittance Sent','Cancelled'];
+                         'Bama SW Invoice Received','Paid to Bama SW','Remittance Sent','Closed','Cancelled'];
     list.sort((a, b) => {
       let va, vb;
       if (col === 'status') {
@@ -19138,7 +19141,8 @@ function babcockNextStatus(current) {
     'Bama SW PO Raised':         'Bama SW Invoice Received',   // upload their invoice
     'Bama SW Invoice Received':  'Paid to Bama SW',            // mark as paid + capture date
     'Paid to Bama SW':           'Remittance Sent',            // create + email remittance
-    'Remittance Sent':           null,                         // terminal
+    'Remittance Sent':           'Closed',                     // mark as closed
+    'Closed':                    null,                         // terminal
     'Cancelled':                 null
   };
   return flow[current || 'Quote Received'];
@@ -19165,6 +19169,7 @@ function babcockStatusClass(status) {
     'Bama SW Invoice Received':  'bsw-inv-rcvd',
     'Paid to Bama SW':           'bsw-paid',
     'Remittance Sent':           'bsw-remittance',
+    'Closed':                    'closed',
     'Cancelled':                 'cancelled'
   })[status || 'Quote Received'] || 'received';
 }
@@ -19183,7 +19188,8 @@ function babcockAdvanceLabel(currentStatus) {
     'Payment Received':          'Raise PO to Bama SW',
     'Bama SW PO Raised':         'Upload Bama SW Invoice',
     'Bama SW Invoice Received':  'Mark as Paid',
-    'Paid to Bama SW':           'Create Remittance Advice'
+    'Paid to Bama SW':           'Create Remittance Advice',
+    'Remittance Sent':           'Mark as Closed'
   })[currentStatus] || null;
 }
 
@@ -19232,8 +19238,38 @@ const _babcockAdvanceHandlers = {
   'Payment Received':          handleAdvanceFromPaymentReceived,   // 1h — raise PO to Bama SW
   'Bama SW PO Raised':         handleAdvanceFromBamaSwPoRaised,    // 1i — upload their invoice
   'Bama SW Invoice Received':  handleAdvanceFromBamaSwInvoiceReceived, // 1j — mark as paid
-  'Paid to Bama SW':           handleAdvanceFromPaidToBamaSw        // 1k — remittance
+  'Paid to Bama SW':           handleAdvanceFromPaidToBamaSw,          // 1k — remittance
+  'Remittance Sent':           handleAdvanceFromRemittanceSent         // 1l — close
 };
+
+// ── Handler: Remittance Sent → Closed (1l) ──
+// Simple confirm — all money has been sent and received. Marks the
+// job as fully closed so it drops off the default tracker view.
+async function handleAdvanceFromRemittanceSent(q, next) {
+  const confirmed = await showConfirmAsync(
+    '🔒 Close Job',
+    `<p style="margin:0">Mark <b>${escapeHtml(q.quote_ref || '')}</b> as Closed?</p>
+     <p style="margin:8px 0 0;font-size:12px;color:var(--muted)">
+       This job will be hidden from the tracker by default. Use the "Show Closed" toggle to view it again.
+     </p>`,
+    { okLabel: 'Mark as Closed', cancelLabel: 'Cancel' }
+  );
+  if (!confirmed) return;
+
+  setLoading(true);
+  try {
+    const updated = await api.put(`/api/babcock-quotes/${q.id}`, { status: next });
+    const idx = _babcockQuotes.findIndex(x => x.id === q.id);
+    if (idx !== -1) _babcockQuotes[idx] = { ..._babcockQuotes[idx], ...updated };
+    setLoading(false);
+    toast(`${updated.quote_ref} → Closed`, 'success');
+    renderBabcockTracker();
+  } catch (err) {
+    setLoading(false);
+    toast('Update failed: ' + (err.message || 'unknown error'), 'error');
+    loadBabcockTracker();
+  }
+}
 
 // ── Helper: convert a Blob to base64 (no data: prefix) ──
 // Used to encode PDFs as attachments for the Graph sendMail payload.

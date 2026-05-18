@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Babcock Quotes</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260512f">
+<link rel="stylesheet" href="bama.css?v=20260518a">
 </head>
 <body>
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
@@ -692,10 +692,18 @@
             <option value="Project Complete">Project Complete</option>
             <option value="Approved to Pay">Approved to Pay</option>
             <option value="Payment Received">Payment Received</option>
-            <option value="Sent to Bama SW">Sent to Bama SW</option>
-            <option value="Bama SW Awaiting Payment">Bama SW Awaiting Payment</option>
+            <option value="Bama SW PO Raised">Bama SW PO Raised</option>
+            <option value="Bama SW Invoice Received">Bama SW Invoice Received</option>
+            <option value="Paid to Bama SW">Paid to Bama SW</option>
+            <option value="Remittance Sent">Remittance Sent</option>
+            <option value="Closed">Closed</option>
             <option value="Cancelled">Cancelled</option>
           </select>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);cursor:pointer;white-space:nowrap">
+            <input type="checkbox" id="babcockShowClosed" onchange="renderBabcockTracker()"
+                   style="accent-color:var(--accent);width:14px;height:14px">
+            Show Closed
+          </label>
           <span id="babcockTrackerCount" style="font-size:12px;color:var(--muted)"></span>
         </div>
       </div>
@@ -961,16 +969,21 @@
   }
   /* Lifecycle palette — colour shifts roughly track money flow:
      amber/orange (waiting on client) → blue/purple (work + invoicing) →
-     green (paid) → magenta/teal (Bama SW outbound) → grey (cancelled).  */
-  .status-badge.status-received    { background: rgba(255,193,7,.12);   color: #ffc945; border: 1px solid rgba(255,193,7,.3); }
-  .status-badge.status-sent        { background: rgba(255,107,0,.12);   color: #ff8a3d; border: 1px solid rgba(255,107,0,.3); }
-  .status-badge.status-live        { background: rgba(0,153,255,.12);   color: #45a8ff; border: 1px solid rgba(0,153,255,.3); }
-  .status-badge.status-pcomplete   { background: rgba(155,89,182,.12);  color: #c77dde; border: 1px solid rgba(155,89,182,.3); }
-  .status-badge.status-approved    { background: rgba(26,188,156,.12);  color: #4cd5b6; border: 1px solid rgba(26,188,156,.3); }
-  .status-badge.status-paid        { background: rgba(46,204,113,.12);  color: #6fdf9b; border: 1px solid rgba(46,204,113,.3); }
-  .status-badge.status-bsw-sent    { background: rgba(231,76,153,.12);  color: #ee82b8; border: 1px solid rgba(231,76,153,.3); }
-  .status-badge.status-bsw-pending { background: rgba(91,170,225,.12);  color: #92c5e8; border: 1px solid rgba(91,170,225,.3); }
-  .status-badge.status-cancelled   { background: rgba(127,140,141,.12); color: #95a5a6; border: 1px solid rgba(127,140,141,.3); }
+     green (paid) → magenta/teal (Bama SW outbound) → grey (closed/cancelled).  */
+  .status-badge.status-received        { background: rgba(255,193,7,.12);   color: #ffc945; border: 1px solid rgba(255,193,7,.3); }
+  .status-badge.status-sent            { background: rgba(255,107,0,.12);   color: #ff8a3d; border: 1px solid rgba(255,107,0,.3); }
+  .status-badge.status-live            { background: rgba(0,153,255,.12);   color: #45a8ff; border: 1px solid rgba(0,153,255,.3); }
+  .status-badge.status-pcomplete       { background: rgba(155,89,182,.12);  color: #c77dde; border: 1px solid rgba(155,89,182,.3); }
+  .status-badge.status-approved        { background: rgba(26,188,156,.12);  color: #4cd5b6; border: 1px solid rgba(26,188,156,.3); }
+  .status-badge.status-paid            { background: rgba(46,204,113,.12);  color: #6fdf9b; border: 1px solid rgba(46,204,113,.3); }
+  .status-badge.status-bsw-po-raised   { background: rgba(52,152,219,.12);  color: #7ab8e8; border: 1px solid rgba(52,152,219,.3); }
+  .status-badge.status-bsw-inv-rcvd    { background: rgba(230,126,34,.12);  color: #e8954a; border: 1px solid rgba(230,126,34,.3); }
+  .status-badge.status-bsw-paid        { background: rgba(39,174,96,.12);   color: #5dd48a; border: 1px solid rgba(39,174,96,.3); }
+  .status-badge.status-bsw-remittance  { background: rgba(149,165,166,.12); color: #aabcbd; border: 1px solid rgba(149,165,166,.3); }
+  .status-badge.status-closed          { background: rgba(80,80,80,.15);    color: #888;    border: 1px solid rgba(80,80,80,.3); }
+  .status-badge.status-bsw-sent        { background: rgba(231,76,153,.12);  color: #ee82b8; border: 1px solid rgba(231,76,153,.3); }
+  .status-badge.status-bsw-pending     { background: rgba(91,170,225,.12);  color: #92c5e8; border: 1px solid rgba(91,170,225,.3); }
+  .status-badge.status-cancelled       { background: rgba(127,140,141,.12); color: #95a5a6; border: 1px solid rgba(127,140,141,.3); }
 
   /* ── Preview table ── */
   .babcock-preview-table {
@@ -1070,6 +1083,6 @@
 <!-- PDF.js: used by the "Approved to Pay" step to OCR the uploaded COUPA invoice -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
-<script src="shared.js?v=20260513n"></script>
+<script src="shared.js?v=20260518a"></script>
 </body>
 </html>
