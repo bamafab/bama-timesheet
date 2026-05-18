@@ -435,7 +435,18 @@
 <div class="modal-overlay" id="newQuoteModal">
   <div class="modal" style="max-width:600px;width:95vw;max-height:90vh;overflow-y:auto">
     <div class="modal-title">📊 New Quote</div>
-    <div style="color:var(--muted);font-size:13px;margin-bottom:16px">Create a quote directly. Start typing a client name to see suggestions.</div>
+
+    <!-- Folder-exists toggle — shown prominently before anything else -->
+    <div id="nqFolderToggleBanner" style="display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:10px;border:2px solid var(--border);margin-bottom:16px;cursor:pointer;user-select:none;transition:border-color .2s" onclick="toggleNqFolderExists()">
+      <div id="nqFolderToggleIcon" style="font-size:20px">📁</div>
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:600;color:var(--text)" id="nqFolderToggleLabel">Folder already exists in SharePoint</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px" id="nqFolderToggleSub">Toggle ON if this quote already has a SharePoint folder — folder creation will be skipped</div>
+      </div>
+      <div id="nqFolderToggleSwitch" style="width:40px;height:22px;border-radius:11px;background:var(--border);position:relative;flex-shrink:0;transition:background .2s">
+        <div id="nqFolderToggleThumb" style="width:18px;height:18px;border-radius:50%;background:#fff;position:absolute;top:2px;left:2px;transition:left .2s"></div>
+      </div>
+    </div>
 
     <!-- PDF Parse Zone -->
     <div id="nqParseZone" style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:18px">
@@ -543,10 +554,12 @@
       </div>
     </div>
 
-    <!-- Reference preview -->
+    <!-- Reference -->
     <div style="margin-bottom:16px;padding:12px;background:var(--surface);border-radius:8px;border:1px solid var(--border)">
-      <div style="font-size:12px;color:var(--muted)">Reference will be generated:</div>
-      <div style="font-size:18px;font-weight:700;font-family:var(--font-mono);color:var(--accent)" id="nqReference">—</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:6px" id="nqRefLabel">Reference (auto-generated — edit if needed):</div>
+      <input type="text" id="nqReference" class="field-input" placeholder="e.g. Q260514"
+             style="font-size:18px;font-weight:700;font-family:var(--font-mono);color:var(--accent);background:transparent;border-color:transparent;padding:0;height:auto"
+             oninput="this.value=this.value.toUpperCase()">
     </div>
 
     <div class="modal-actions">
@@ -556,6 +569,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260518b"></script>
+<script src="shared.js?v=20260518c"></script>
 </body>
 </html>

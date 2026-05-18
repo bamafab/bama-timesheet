@@ -14977,13 +14977,52 @@ async function loadQuotesData() {
 
 let _nqFile = null;
 
+let _nqFolderExists = false;
+
+function toggleNqFolderExists() {
+  _nqFolderExists = !_nqFolderExists;
+  const banner   = document.getElementById('nqFolderToggleBanner');
+  const sw       = document.getElementById('nqFolderToggleSwitch');
+  const thumb    = document.getElementById('nqFolderToggleThumb');
+  const label    = document.getElementById('nqFolderToggleLabel');
+  const sub      = document.getElementById('nqFolderToggleSub');
+  const refLabel = document.getElementById('nqRefLabel');
+  if (_nqFolderExists) {
+    if (banner) banner.style.borderColor = 'var(--accent2)';
+    if (sw)     sw.style.background = 'var(--accent2)';
+    if (thumb)  thumb.style.left = '20px';
+    if (label)  label.textContent = '✓ Folder already exists — creation skipped';
+    if (sub)    sub.textContent = 'SharePoint will be searched for an existing folder matching the reference';
+    if (refLabel) refLabel.textContent = 'Reference (must match existing SharePoint folder):';
+  } else {
+    if (banner) banner.style.borderColor = 'var(--border)';
+    if (sw)     sw.style.background = 'var(--border)';
+    if (thumb)  thumb.style.left = '2px';
+    if (label)  label.textContent = 'Folder already exists in SharePoint';
+    if (sub)    sub.textContent = 'Toggle ON if this quote already has a SharePoint folder — folder creation will be skipped';
+    if (refLabel) refLabel.textContent = 'Reference (auto-generated — edit if needed):';
+  }
+}
+
 async function openNewQuoteModal() {
   const perms = getUserPermissions(currentManagerUser) || {};
   if (!perms.editQuotes) { toast('You need editQuotes permission to create quotes', 'error'); return; }
 
+  _nqFolderExists = false;
+  const _b = document.getElementById('nqFolderToggleBanner');
+  const _s = document.getElementById('nqFolderToggleSwitch');
+  const _t = document.getElementById('nqFolderToggleThumb');
+  const _l = document.getElementById('nqFolderToggleLabel');
+  const _u = document.getElementById('nqFolderToggleSub');
+  if (_b) _b.style.borderColor = 'var(--border)';
+  if (_s) _s.style.background  = 'var(--border)';
+  if (_t) _t.style.left        = '2px';
+  if (_l) _l.textContent = 'Folder already exists in SharePoint';
+  if (_u) _u.textContent = 'Toggle ON if this quote already has a SharePoint folder — folder creation will be skipped';
+
   ['nqClientId','nqCompanyName','nqAddress1','nqAddress2','nqCity','nqCounty',
    'nqPostcode','nqContactName','nqContactEmail','nqContactPhone',
-   'nqProjectName','nqComments','nqValue','nqSentDate','nqDeadline'].forEach(id => {
+   'nqProjectName','nqComments','nqValue','nqSentDate','nqDeadline','nqReference'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
@@ -15000,9 +15039,9 @@ async function openNewQuoteModal() {
 
   try {
     const ref = await getNextTenderReference();
-    document.getElementById('nqReference').textContent = ref;
+    document.getElementById('nqReference').value = ref;
   } catch (e) {
-    document.getElementById('nqReference').textContent = '—';
+    document.getElementById('nqReference').value = '';
   }
 
   _initNqLineItems();
@@ -15051,9 +15090,16 @@ function selectNqClient(id, name) {
 function handleNqFileSelect(files) {
   if (!files || !files.length) return;
   _nqFile = files[0];
-  document.getElementById('nqFileZoneText').textContent = `📄 ${_nqFile.name}`;
+  document.getElementById('nqFileZoneText').textContent = '📄 ' + _nqFile.name;
   document.getElementById('nqParseBtn').style.display = '';
   document.getElementById('nqParseStatus').textContent = '';
+  // Extract reference from filename e.g. Q260514_-_Client_-_Project.pdf
+  const refMatch = _nqFile.name.match(/^(Q\d{4,6})/i);
+  if (refMatch) {
+    const refInput = document.getElementById('nqReference');
+    if (refInput) refInput.value = refMatch[1].toUpperCase();
+    if (!_nqFolderExists) toggleNqFolderExists();
+  }
 }
 
 async function parseNewQuotePDF() {
@@ -15094,14 +15140,15 @@ async function parseNewQuotePDF() {
     const systemPrompt = `You are an assistant extracting structured data from construction/fabrication quote documents.
 Return ONLY a valid JSON object with no explanation or markdown fences:
 {
+  "quote_ref": "quotation reference e.g. Q260514 or null",
   "company_name": "the client/customer company this quote is addressed to (not the sender)",
   "contact_name": "contact person name or null",
   "contact_email": "contact email or null",
   "contact_phone": "contact phone or null",
-  "project_name": "project or job description",
+  "project_name": "project or job description - use comments/special instructions if no explicit name",
   "quote_value": 12345.00,
-  "sent_date": "YYYY-MM-DD or null",
-  "deadline": "YYYY-MM-DD or null"
+  "sent_date": "document date in YYYY-MM-DD or null",
+  "deadline": "quotation valid until date in YYYY-MM-DD or null"
 }
 Use null for any field not found. Dates must be YYYY-MM-DD.`;
 
@@ -15140,6 +15187,13 @@ function _applyParsedQuoteFields(p) {
     const el = document.getElementById(id);
     if (el && val != null) el.value = val;
   };
+
+  // Reference — if extracted from doc, override and auto-toggle folder switch
+  if (p.quote_ref) {
+    const refInput = document.getElementById('nqReference');
+    if (refInput) refInput.value = String(p.quote_ref).toUpperCase();
+    if (!_nqFolderExists) toggleNqFolderExists();
+  }
 
   // Client name & auto-match
   setIfBlank('nqCompanyName', p.company_name);
@@ -15287,11 +15341,11 @@ function _refreshNqLineTotals() {
 async function submitNewQuote() {
   const companyName = document.getElementById('nqCompanyName')?.value.trim();
   const projectName = document.getElementById('nqProjectName')?.value.trim();
-  const reference   = document.getElementById('nqReference')?.textContent;
+  const reference   = (document.getElementById('nqReference')?.value || '').trim().toUpperCase();
 
   if (!companyName)  { toast('Company name is required', 'error'); return; }
   if (!projectName)  { toast('Project name is required', 'error'); return; }
-  if (!reference || reference === '—') { toast('Reference could not be generated', 'error'); return; }
+  if (!reference || !/^Q\d+$/i.test(reference)) { toast('Reference must be in format Q260501 — check and try again', 'error'); return; }
 
   try {
     // Step 1: Create or find client
@@ -15316,10 +15370,50 @@ async function submitNewQuote() {
     const yearPrefix     = String(yearNum - 2023).padStart(2, '0');
     const yearFolderName = `${yearPrefix} - ${fullYear}`;
 
-    const quotationRoot   = await getOrCreateFolderByPath(QUOTATION_FOLDER_PATH, token);
-    const yearFolder      = await createFolderInDrive(quotationRoot.id, yearFolderName);
-    const quoteFolder     = await createFolderInDrive(yearFolder.id, reference);
-    const tenderSubFolder = await createFolderInDrive(quoteFolder.id, '00 - Tender');
+    let quoteFolderId  = null;
+    let tenderFolderId = null;
+
+    if (_nqFolderExists) {
+      // Look up the existing folder — scan the year folder for a name starting with the reference
+      try {
+        const yearFolderPath = `${QUOTATION_FOLDER_PATH}/${yearFolderName}`;
+        const scanRes = await fetch(
+          `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/root:/${encodeURIComponent(yearFolderPath)}:/children?$select=id,name&$top=200`,
+          { headers: { 'Authorization': `Bearer ${token}` } }
+        );
+        if (scanRes.ok) {
+          const scanData = await scanRes.json();
+          const match = (scanData.value || []).find(f => f.name.toUpperCase().startsWith(reference));
+          if (match) {
+            quoteFolderId = match.id;
+            // Look for 00 - Tender inside it
+            const subRes = await fetch(
+              `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/items/${match.id}/children?$select=id,name`,
+              { headers: { 'Authorization': `Bearer ${token}` } }
+            );
+            if (subRes.ok) {
+              const subData = await subRes.json();
+              const tenderSub = (subData.value || []).find(f => f.name === '00 - Tender');
+              tenderFolderId = tenderSub?.id || null;
+            }
+            toast(`Linked to existing folder: ${match.name}`, 'info');
+          } else {
+            toast(`No folder found starting with ${reference} in SharePoint — saving without link`, 'warning');
+          }
+        }
+      } catch (e) {
+        console.warn('Could not scan for existing folder:', e);
+        toast('Could not look up existing folder — saving without SharePoint link', 'warning');
+      }
+    } else {
+      // Create fresh folder structure
+      const quotationRoot   = await getOrCreateFolderByPath(QUOTATION_FOLDER_PATH, token);
+      const yearFolder      = await createFolderInDrive(quotationRoot.id, yearFolderName);
+      const quoteFolder     = await createFolderInDrive(yearFolder.id, reference);
+      const tenderSubFolder = await createFolderInDrive(quoteFolder.id, '00 - Tender');
+      quoteFolderId  = quoteFolder.id;
+      tenderFolderId = tenderSubFolder.id;
+    }
 
     // Step 3: Create Tenders row at status='quote'
     const quoteVal = document.getElementById('nqValue').value;
@@ -15335,8 +15429,8 @@ async function submitNewQuote() {
       quote_value:   quoteVal !== '' ? parseFloat(quoteVal) : null,
       sent_date:     sentDate,
       deadline_date: deadline,
-      sharepoint_folder_id:        quoteFolder.id,
-      sharepoint_tender_folder_id: tenderSubFolder.id,
+      sharepoint_folder_id:        quoteFolderId,
+      sharepoint_tender_folder_id: tenderFolderId,
       created_by:    currentManagerUser || AUTH.getUserName() || 'unknown',
       contact_name:  document.getElementById('nqContactName').value.trim()  || null,
       contact_email: document.getElementById('nqContactEmail').value.trim() || null,
