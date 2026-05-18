@@ -14972,6 +14972,282 @@ async function loadQuotesData() {
   }
 }
 
+
+// ── New Quote (direct creation, bypasses tender step) ──
+
+let _nqFile = null;
+
+async function openNewQuoteModal() {
+  const perms = getUserPermissions(currentManagerUser) || {};
+  if (!perms.editQuotes) { toast('You need editQuotes permission to create quotes', 'error'); return; }
+
+  ['nqClientId','nqCompanyName','nqAddress1','nqAddress2','nqCity','nqCounty',
+   'nqPostcode','nqContactName','nqContactEmail','nqContactPhone',
+   'nqProjectName','nqComments','nqValue','nqSentDate','nqDeadline'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  document.getElementById('nqClientSuggestions').style.display = 'none';
+  document.getElementById('nqParseStatus').textContent = '';
+  document.getElementById('nqFileZoneText').textContent = '📎 Drop a quote PDF/document or click to browse';
+  document.getElementById('nqFileInput').value = '';
+  document.getElementById('nqParseBtn').style.display = 'none';
+  _nqFile = null;
+
+  const today = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+  document.getElementById('nqSentDate').value = todayStr;
+
+  try {
+    const ref = await getNextTenderReference();
+    document.getElementById('nqReference').textContent = ref;
+  } catch (e) {
+    document.getElementById('nqReference').textContent = '—';
+  }
+
+  document.getElementById('newQuoteModal').classList.add('active');
+}
+
+function closeNewQuoteModal() {
+  document.getElementById('newQuoteModal').classList.remove('active');
+  _nqFile = null;
+}
+
+function onNqClientSearch(val) {
+  document.getElementById('nqClientId').value = '';
+  const suggestions = document.getElementById('nqClientSuggestions');
+  const q = val.toLowerCase().trim();
+  if (!q) { suggestions.style.display = 'none'; return; }
+  const matches = (clientsData || []).filter(c => c.company_name && c.company_name.toLowerCase().includes(q)).slice(0, 8);
+  if (!matches.length) { suggestions.style.display = 'none'; return; }
+  suggestions.innerHTML = matches.map(c =>
+    `<div class="autocomplete-item" onclick="selectNqClient(${c.id},'${escapeHtml(c.company_name).replace(/'/g, "\\'")}')">
+      <div style="font-weight:500">${escapeHtml(c.company_name)}</div>
+      ${c.city ? `<div style="font-size:11px;color:var(--muted)">${escapeHtml(c.city)}</div>` : ''}
+    </div>`
+  ).join('');
+  suggestions.style.display = 'block';
+}
+
+function selectNqClient(id, name) {
+  document.getElementById('nqClientId').value = id;
+  document.getElementById('nqCompanyName').value = name;
+  document.getElementById('nqClientSuggestions').style.display = 'none';
+  const client = (clientsData || []).find(c => String(c.id) === String(id));
+  if (client) {
+    ['nqAddress1','nqAddress2','nqCity','nqCounty','nqPostcode'].forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+    });
+    if (document.getElementById('nqAddress1')) document.getElementById('nqAddress1').value = client.address_line1 || '';
+    if (document.getElementById('nqAddress2')) document.getElementById('nqAddress2').value = client.address_line2 || '';
+    if (document.getElementById('nqCity'))     document.getElementById('nqCity').value     = client.city || '';
+    if (document.getElementById('nqCounty'))   document.getElementById('nqCounty').value   = client.county || '';
+    if (document.getElementById('nqPostcode')) document.getElementById('nqPostcode').value = client.postcode || '';
+  }
+}
+
+function handleNqFileSelect(files) {
+  if (!files || !files.length) return;
+  _nqFile = files[0];
+  document.getElementById('nqFileZoneText').textContent = `📄 ${_nqFile.name}`;
+  document.getElementById('nqParseBtn').style.display = '';
+  document.getElementById('nqParseStatus').textContent = '';
+}
+
+async function parseNewQuotePDF() {
+  if (!_nqFile) { toast('No file selected', 'error'); return; }
+  const btn = document.getElementById('nqParseBtn');
+  const statusEl = document.getElementById('nqParseStatus');
+  btn.disabled = true;
+  btn.textContent = '⏳ Parsing…';
+  statusEl.textContent = 'Analysing document…';
+  statusEl.style.color = 'var(--muted)';
+
+  try {
+    const b64 = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result.split(',')[1]);
+      r.onerror = () => reject(new Error('File read failed'));
+      r.readAsDataURL(_nqFile);
+    });
+
+    const isPdf = _nqFile.type === 'application/pdf' || _nqFile.name.toLowerCase().endsWith('.pdf');
+    const isImg = /\.(png|jpe?g)$/i.test(_nqFile.name);
+    let userContent;
+
+    if (isPdf) {
+      userContent = [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } },
+        { type: 'text', text: 'Extract the quote details from this document.' }
+      ];
+    } else if (isImg) {
+      userContent = [
+        { type: 'image', source: { type: 'base64', media_type: _nqFile.type || 'image/jpeg', data: b64 } },
+        { type: 'text', text: 'Extract the quote details from this document.' }
+      ];
+    } else {
+      throw new Error('Unsupported file type — use PDF or image.');
+    }
+
+    const systemPrompt = `You are an assistant extracting structured data from construction/fabrication quote documents.
+Return ONLY a valid JSON object with no explanation or markdown fences:
+{
+  "company_name": "the client/customer company this quote is addressed to (not the sender)",
+  "contact_name": "contact person name or null",
+  "contact_email": "contact email or null",
+  "contact_phone": "contact phone or null",
+  "project_name": "project or job description",
+  "quote_value": 12345.00,
+  "sent_date": "YYYY-MM-DD or null",
+  "deadline": "YYYY-MM-DD or null"
+}
+Use null for any field not found. Dates must be YYYY-MM-DD.`;
+
+    const data = await api.post('/claude-proxy', {
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 800,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userContent }]
+    });
+
+    const raw   = (data.content || []).find(b => b.type === 'text')?.text || '';
+    const clean = raw.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(clean);
+
+    _applyParsedQuoteFields(parsed);
+    statusEl.textContent = '✓ Fields extracted — review and adjust before saving';
+    statusEl.style.color = 'var(--accent2)';
+
+  } catch (err) {
+    statusEl.textContent = 'Parse failed: ' + err.message;
+    statusEl.style.color = 'var(--red)';
+    console.error('Quote parse error:', err);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '⚡ Parse with AI';
+  }
+}
+
+function _applyParsedQuoteFields(p) {
+  if (!p) return;
+  const setIfBlank = (id, val) => {
+    const el = document.getElementById(id);
+    if (el && !el.value && val != null) el.value = val;
+  };
+  const set = (id, val) => {
+    const el = document.getElementById(id);
+    if (el && val != null) el.value = val;
+  };
+
+  // Client name & auto-match
+  setIfBlank('nqCompanyName', p.company_name);
+  if (p.company_name && !document.getElementById('nqClientId').value) {
+    const match = (clientsData || []).find(c =>
+      c.company_name?.toLowerCase() === (p.company_name || '').toLowerCase()
+    );
+    if (match) selectNqClient(match.id, match.company_name);
+  }
+
+  setIfBlank('nqContactName',  p.contact_name);
+  setIfBlank('nqContactEmail', p.contact_email);
+  setIfBlank('nqContactPhone', p.contact_phone);
+  setIfBlank('nqProjectName',  p.project_name);
+  if (p.quote_value != null) set('nqValue', String(parseFloat(p.quote_value).toFixed(2)));
+  if (p.sent_date) set('nqSentDate', p.sent_date);
+  if (p.deadline)  set('nqDeadline', p.deadline);
+}
+
+async function submitNewQuote() {
+  const companyName = document.getElementById('nqCompanyName')?.value.trim();
+  const projectName = document.getElementById('nqProjectName')?.value.trim();
+  const reference   = document.getElementById('nqReference')?.textContent;
+
+  if (!companyName)  { toast('Company name is required', 'error'); return; }
+  if (!projectName)  { toast('Project name is required', 'error'); return; }
+  if (!reference || reference === '—') { toast('Reference could not be generated', 'error'); return; }
+
+  try {
+    // Step 1: Create or find client
+    let clientId = document.getElementById('nqClientId').value;
+    if (!clientId) {
+      const newClient = await api.post('/api/clients', {
+        company_name:  companyName,
+        address_line1: document.getElementById('nqAddress1').value.trim()  || null,
+        address_line2: document.getElementById('nqAddress2').value.trim()  || null,
+        city:          document.getElementById('nqCity').value.trim()      || null,
+        county:        document.getElementById('nqCounty').value.trim()    || null,
+        postcode:      document.getElementById('nqPostcode').value.trim()  || null
+      });
+      clientId = newClient.id;
+      clientsData.push(newClient);
+    }
+
+    // Step 2: SharePoint folders
+    const token = await getToken();
+    const fullYear       = '20' + reference.slice(1, 3);
+    const yearNum        = parseInt(fullYear);
+    const yearPrefix     = String(yearNum - 2023).padStart(2, '0');
+    const yearFolderName = `${yearPrefix} - ${fullYear}`;
+
+    const quotationRoot   = await getOrCreateFolderByPath(QUOTATION_FOLDER_PATH, token);
+    const yearFolder      = await createFolderInDrive(quotationRoot.id, yearFolderName);
+    const quoteFolder     = await createFolderInDrive(yearFolder.id, reference);
+    const tenderSubFolder = await createFolderInDrive(quoteFolder.id, '00 - Tender');
+
+    // Step 3: Create Tenders row at status='quote'
+    const quoteVal = document.getElementById('nqValue').value;
+    const sentDate = document.getElementById('nqSentDate').value || null;
+    const deadline = document.getElementById('nqDeadline').value || null;
+
+    const tender = await api.post('/api/tenders', {
+      reference,
+      client_id:     parseInt(clientId),
+      project_name:  projectName,
+      status:        'quote',
+      comments:      document.getElementById('nqComments').value.trim() || null,
+      quote_value:   quoteVal !== '' ? parseFloat(quoteVal) : null,
+      sent_date:     sentDate,
+      deadline_date: deadline,
+      sharepoint_folder_id:        quoteFolder.id,
+      sharepoint_tender_folder_id: tenderSubFolder.id,
+      created_by:    currentManagerUser || AUTH.getUserName() || 'unknown',
+      contact_name:  document.getElementById('nqContactName').value.trim()  || null,
+      contact_email: document.getElementById('nqContactEmail').value.trim() || null,
+      contact_phone: document.getElementById('nqContactPhone').value.trim() || null
+    });
+
+    tender.company_name  = companyName;
+    tender.contact_name  = document.getElementById('nqContactName').value.trim()  || null;
+    tender.contact_email = document.getElementById('nqContactEmail').value.trim() || null;
+    tender.contact_phone = document.getElementById('nqContactPhone').value.trim() || null;
+    tender.deadline_date = deadline;
+    tendersData.unshift(tender);
+
+    // Auto-save contact to client database
+    if (tender.contact_name || tender.contact_email || tender.contact_phone) {
+      try {
+        await api.post('/api/client-contacts', {
+          client_id:     parseInt(clientId),
+          contact_name:  tender.contact_name,
+          contact_email: tender.contact_email,
+          contact_phone: tender.contact_phone
+        });
+      } catch (e) { console.warn('Failed to save contact:', e); }
+    }
+
+    closeNewQuoteModal();
+    renderQuoteList();
+    toast(`Quote ${reference} created ✓`, 'success');
+    openQuoteDetail(tender.id);
+
+  } catch (err) {
+    toast('Failed to create quote: ' + err.message, 'error');
+    console.error('submitNewQuote error:', err);
+  }
+}
+
+
 function switchQuotesTab(tab) {
   const perms = getUserPermissions(currentManagerUser) || {};
   if (tab === 'quotes' && !(perms.viewQuotes || perms.editQuotes)) { toast('No permission to view Quotes', 'error'); return; }

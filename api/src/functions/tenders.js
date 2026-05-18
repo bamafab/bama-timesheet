@@ -114,33 +114,42 @@ app.http('tenders-create', {
             const body = await request.json();
             const { reference, client_id, project_name, comments,
                     sharepoint_folder_id, sharepoint_tender_folder_id, created_by,
-                    contact_name, contact_email, contact_phone, deadline_date } = body;
+                    contact_name, contact_email, contact_phone, deadline_date,
+                    status, quote_value, sent_date } = body;
 
             if (!reference) return badRequest('reference is required', request);
             if (!client_id) return badRequest('client_id is required', request);
             if (!project_name) return badRequest('project_name is required', request);
-            if (!deadline_date) return badRequest('deadline_date is required', request);
+
+            // Allow 'tender' (default) or 'quote' (direct quote creation bypassing tender step)
+            const allowedStatuses = ['tender', 'quote'];
+            const insertStatus = allowedStatuses.includes(status) ? status : 'tender';
 
             const result = await query(
                 `INSERT INTO Tenders (reference, client_id, project_name, comments, status,
                     sharepoint_folder_id, sharepoint_tender_folder_id, created_by,
-                    contact_name, contact_email, contact_phone, deadline_date)
+                    contact_name, contact_email, contact_phone, deadline_date,
+                    quote_value, sent_date)
                  OUTPUT INSERTED.*
-                 VALUES (@reference, @client_id, @project_name, @comments, 'tender',
+                 VALUES (@reference, @client_id, @project_name, @comments, @status,
                     @sharepoint_folder_id, @sharepoint_tender_folder_id, @created_by,
-                    @contact_name, @contact_email, @contact_phone, @deadline_date)`,
+                    @contact_name, @contact_email, @contact_phone, @deadline_date,
+                    @quote_value, @sent_date)`,
                 {
                     reference,
                     client_id: parseInt(client_id),
                     project_name,
                     comments: comments || null,
+                    status: insertStatus,
                     sharepoint_folder_id: sharepoint_folder_id || null,
                     sharepoint_tender_folder_id: sharepoint_tender_folder_id || null,
                     created_by: created_by || null,
                     contact_name: contact_name || null,
                     contact_email: contact_email || null,
                     contact_phone: contact_phone || null,
-                    deadline_date
+                    deadline_date: deadline_date || null,
+                    quote_value: quote_value != null ? parseFloat(quote_value) : null,
+                    sent_date: sent_date || null
                 }
             );
 
