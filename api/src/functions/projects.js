@@ -361,6 +361,39 @@ app.http('projects-by-babcock-quote-preflight', {
     handler: async (request) => preflight(request)
 });
 
+// GET /api/projects-by-number/:projectNumber — find a project by its number.
+// Used as a secondary idempotency check in the Babcock convert-to-project flow
+// to catch orphaned rows created by a previous failed attempt.
+app.http('projects-by-number', {
+    methods: ['GET'],
+    authLevel: 'anonymous',
+    route: 'projects-by-number/{projectNumber}',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const projectNumber = request.params.projectNumber;
+            if (!projectNumber) return badRequest('projectNumber required', request);
+            const result = await query(
+                `SELECT * FROM Projects WHERE project_number = @projectNumber`,
+                { projectNumber }
+            );
+            return ok(result.recordset[0] || null, request);
+        } catch (err) {
+            context.error('Error fetching project by number:', err);
+            return serverError('Failed to fetch project', request);
+        }
+    }
+});
+
+app.http('projects-by-number-preflight', {
+    methods: ['OPTIONS'],
+    authLevel: 'anonymous',
+    route: 'projects-by-number/{*path}',
+    handler: async (request) => preflight(request)
+});
+
 // ───────────────────────────────────────────────────────────────────────────
 // Project Contacts — additional people attached to a project (site foreman,
 // surveyor, QS, etc.). Separate from the client's ClientContacts.

@@ -8577,22 +8577,24 @@ async function findProjectFolder(projectId) {
 
 async function createFolderInDrive(parentItemId, folderName, driveId) {
   const token = await getToken();
+  const dId = driveId || BAMA_DRIVE_ID;
   const res = await fetch(
-    `https://graph.microsoft.com/v1.0/drives/${driveId || BAMA_DRIVE_ID}/items/${parentItemId}/children`,
+    `https://graph.microsoft.com/v1.0/drives/${dId}/items/${parentItemId}/children`,
     {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: folderName, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' })
     }
   );
+  if (res.status === 201) return await res.json();
   if (res.status === 409) {
-    // Folder already exists, find it
-    const listRes = await fetch(
-      `https://graph.microsoft.com/v1.0/drives/${driveId || BAMA_DRIVE_ID}/items/${parentItemId}/children?$filter=name eq '${folderName}'`,
+    // Folder already exists — fetch by path (reliable; $filter on children is not)
+    const getRes = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${dId}/items/${parentItemId}:/${encodeURIComponent(folderName)}`,
       { headers: { 'Authorization': `Bearer ${token}` } }
     );
-    const listData = await listRes.json();
-    return listData.value?.[0] || null;
+    if (getRes.ok) return await getRes.json();
+    throw new Error(`Folder "${folderName}" exists (409) but could not be retrieved: ${getRes.status}`);
   }
   if (!res.ok) throw new Error(`Create folder failed: ${res.status}`);
   return await res.json();
@@ -19568,6 +19570,19 @@ async function convertBabcockQuoteToProject(q, opts) {
     }
   } catch (e) {
     // 404/empty fine — proceed
+  }
+
+  // Secondary check — catch orphaned project rows with the same number
+  // (e.g. a previous failed conversion that created the DB row but didn't
+  // write linked_project_id back to the quote)
+  try {
+    const orphan = await api.get(`/api/projects-by-number/${encodeURIComponent(projectNumber)}`);
+    if (orphan && orphan.id) {
+      console.warn('Found orphaned project with same number — reusing:', orphan.project_number);
+      return orphan;
+    }
+  } catch (e) {
+    // Not found — proceed to create
   }
 
   // Build folder name: "BC0011 - <Customer ID> - <Project Name>"
