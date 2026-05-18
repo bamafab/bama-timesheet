@@ -3,6 +3,30 @@
 // ═══════════════════════════════════════════
 const API_BASE = 'https://bama-erp-api-deauckd2cja7ebd5.uksouth-01.azurewebsites.net';
 
+// Anthropic API key — used for PDF/document parsing (quote parse, PO parse, Babcock OCR).
+// Direct browser calls are enabled via anthropic-dangerous-direct-browser-access header.
+// Safe for an internal tool behind Microsoft login.
+const ANTHROPIC_API_KEY = 'YOUR_KEY_HERE';
+
+// Shared helper — replaces the server-side claude-proxy for all AI calls.
+async function callClaude(body) {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true'
+    },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error?.message || `Anthropic API error ${res.status}`);
+  }
+  return res.json();
+}
+
 // SharePoint config — used for file operations (drawing PDFs, BOM JSON, email
 // attachments) only. Tabular project data lives in SQL now; the PROJECT
 // TRACKER.xlsx read/write paths have been retired (see loadProjects + the
@@ -15152,7 +15176,7 @@ Return ONLY a valid JSON object with no explanation or markdown fences:
 }
 Use null for any field not found. Dates must be YYYY-MM-DD.`;
 
-    const data = await api.post('/api/claude-proxy', {
+    const data = await callClaude({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 800,
       system: systemPrompt,
@@ -22737,7 +22761,7 @@ Rules:
     : `File: ${filename}\n\n${text}`;
 
   try {
-    const data  = await api.post('/api/claude-proxy', {
+    const data  = await callClaude({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 2000,
       system: systemPrompt,
@@ -23488,7 +23512,7 @@ Rules:
 - Do not invent or guess values — only extract what is explicitly present in the text
 - Return only the JSON object, no explanation, no markdown` + fewShotSection;
 
-    const data = await api.post('/api/claude-proxy', {
+    const data = await callClaude({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 1000,
       system: systemPrompt,
