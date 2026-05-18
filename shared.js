@@ -15177,7 +15177,7 @@ Return ONLY a valid JSON object with no explanation or markdown fences:
 Use null for any field not found. Dates must be YYYY-MM-DD.`;
 
     const data = await callClaude({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 800,
       system: systemPrompt,
       messages: [{ role: 'user', content: userContent }]
@@ -22762,7 +22762,7 @@ Rules:
 
   try {
     const data  = await callClaude({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 2000,
       system: systemPrompt,
       messages: [{ role: 'user', content: userContent }]
@@ -23513,7 +23513,7 @@ Rules:
 - Return only the JSON object, no explanation, no markdown` + fewShotSection;
 
     const data = await callClaude({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 1000,
       system: systemPrompt,
       messages: [{ role: 'user', content: text }]
