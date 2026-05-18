@@ -15005,6 +15005,7 @@ async function openNewQuoteModal() {
     document.getElementById('nqReference').textContent = '—';
   }
 
+  _initNqLineItems();
   document.getElementById('newQuoteModal').classList.add('active');
 }
 
@@ -15158,6 +15159,131 @@ function _applyParsedQuoteFields(p) {
   if (p.deadline)  set('nqDeadline', p.deadline);
 }
 
+
+// ── In-modal line items (new quote) ──
+
+const NQ_DEFAULT_LINE_ITEMS = [
+  { line_no: 1, category: 'prelims',           description: 'Prelims',                       is_labour: 0, quantity: 0, unit_price: 0, vat_applies: 1, vat_rate: 20 },
+  { line_no: 2, category: 'approval_fab_pack', description: 'Approval and Fabrication Pack',  is_labour: 1, quantity: 0, unit_price: 0, vat_applies: 1, vat_rate: 20 },
+  { line_no: 3, category: 'survey',            description: 'Survey',                         is_labour: 1, quantity: 0, unit_price: 0, vat_applies: 1, vat_rate: 20 },
+  { line_no: 4, category: 'material',          description: 'Material cost',                  is_labour: 0, quantity: 0, unit_price: 0, vat_applies: 1, vat_rate: 20 },
+  { line_no: 5, category: 'fabrication',       description: 'Fabrication',                    is_labour: 1, quantity: 0, unit_price: 0, vat_applies: 1, vat_rate: 20 },
+  { line_no: 6, category: 'painting',          description: 'Painting',                       is_labour: 1, quantity: 0, unit_price: 0, vat_applies: 1, vat_rate: 20 },
+  { line_no: 7, category: 'galvanising',       description: 'Galvanising',                    is_labour: 0, quantity: 0, unit_price: 0, vat_applies: 1, vat_rate: 20 },
+  { line_no: 8, category: 'installation',      description: 'Installation',                   is_labour: 1, quantity: 0, unit_price: 0, vat_applies: 1, vat_rate: 20 },
+  { line_no: 9, category: 'delivery',          description: 'Delivery',                       is_labour: 0, quantity: 0, unit_price: 0, vat_applies: 1, vat_rate: 20 }
+];
+
+let _nqLineItems = [];
+
+function _initNqLineItems() {
+  _nqLineItems = NQ_DEFAULT_LINE_ITEMS.map(li => ({ ...li }));
+  renderNqLineItems();
+}
+
+function renderNqLineItems() {
+  const wrap = document.getElementById('nqQliRows');
+  if (!wrap) return;
+  wrap.innerHTML = _nqLineItems.map((li, idx) => {
+    const qty   = parseFloat(li.quantity)   || 0;
+    const price = parseFloat(li.unit_price) || 0;
+    const rate  = parseFloat(li.vat_rate)   || 0;
+    const vatOn = !!li.vat_applies;
+    const excl  = qty * price;
+    const vat   = vatOn ? (excl * (rate / 100)) : 0;
+    const total = excl + vat;
+    return `
+      <div class="qli-row qli-grid" data-nq-idx="${idx}">
+        <div class="qli-num">${li.line_no}</div>
+        <div><input type="text" data-field="description" value="${escapeHtml(li.description || '')}"
+             oninput="onNqLineItemEdit(${idx},'description',this.value)"></div>
+        <div><input type="number" data-field="quantity" min="0" step="0.01" value="${qty}"
+             oninput="onNqLineItemEdit(${idx},'quantity',this.value)"></div>
+        <div><input type="number" data-field="unit_price" min="0" step="0.01" value="${price.toFixed(2)}"
+             oninput="onNqLineItemEdit(${idx},'unit_price',this.value)"></div>
+        <div style="text-align:center"><input type="checkbox" data-field="is_labour" ${li.is_labour ? 'checked' : ''}
+             onchange="onNqLineItemEdit(${idx},'is_labour',this.checked?1:0)"></div>
+        <div style="text-align:center"><input type="checkbox" data-field="vat_applies" ${vatOn ? 'checked' : ''}
+             onchange="onNqLineItemEdit(${idx},'vat_applies',this.checked?1:0)"></div>
+        <div><input type="number" data-field="vat_rate" min="0" max="100" step="0.5" value="${rate}"
+             oninput="onNqLineItemEdit(${idx},'vat_rate',this.value)"
+             ${vatOn ? '' : 'disabled style="opacity:.4"'}></div>
+        <div class="qli-derived" data-nq-derived="excl">£${excl.toFixed(2)}</div>
+        <div class="qli-derived" data-nq-derived="vat">£${vat.toFixed(2)}</div>
+        <div class="qli-derived" data-nq-derived="total">£${total.toFixed(2)}</div>
+      </div>`;
+  }).join('');
+  _refreshNqLineTotals();
+}
+
+function onNqLineItemEdit(idx, field, value) {
+  const item = _nqLineItems[idx];
+  if (!item) return;
+  if (field === 'description') {
+    item.description = String(value);
+  } else if (field === 'is_labour' || field === 'vat_applies') {
+    item[field] = value ? 1 : 0;
+  } else {
+    const num = parseFloat(value);
+    item[field] = Number.isNaN(num) ? 0 : num;
+  }
+
+  // Re-derive just this row
+  const row = document.querySelector(`#nqQliRows .qli-row[data-nq-idx="${idx}"]`);
+  if (row) {
+    const qty   = parseFloat(item.quantity)   || 0;
+    const price = parseFloat(item.unit_price) || 0;
+    const rate  = parseFloat(item.vat_rate)   || 0;
+    const vatOn = !!item.vat_applies;
+    const excl  = qty * price;
+    const vat   = vatOn ? (excl * (rate / 100)) : 0;
+    const total = excl + vat;
+    row.querySelector('[data-nq-derived="excl"]').textContent  = '£' + excl.toFixed(2);
+    row.querySelector('[data-nq-derived="vat"]').textContent   = '£' + vat.toFixed(2);
+    row.querySelector('[data-nq-derived="total"]').textContent = '£' + total.toFixed(2);
+    if (field === 'vat_applies') {
+      const rateInp = row.querySelector('input[data-field="vat_rate"]');
+      if (rateInp) { rateInp.disabled = !vatOn; rateInp.style.opacity = vatOn ? '' : '.4'; }
+    }
+  }
+
+  _refreshNqLineTotals();
+
+  // Auto-update headline value field if it's blank or was previously auto-set
+  const totalExcl = _nqLineItems.reduce((sum, li) => {
+    const q = parseFloat(li.quantity) || 0;
+    const p = parseFloat(li.unit_price) || 0;
+    return sum + q * p;
+  }, 0);
+  const valField = document.getElementById('nqValue');
+  if (valField && (!valField.value || valField.dataset.autoSet === '1')) {
+    valField.value = totalExcl.toFixed(2);
+    valField.dataset.autoSet = '1';
+  }
+}
+
+function _refreshNqLineTotals() {
+  let totalExcl = 0, totalVAT = 0, labourSub = 0;
+  for (const li of _nqLineItems) {
+    const qty   = parseFloat(li.quantity)   || 0;
+    const price = parseFloat(li.unit_price) || 0;
+    const rate  = parseFloat(li.vat_rate)   || 0;
+    const excl  = qty * price;
+    const vatOn = !!li.vat_applies;
+    const vat   = vatOn ? (excl * (rate / 100)) : 0;
+    totalExcl += excl;
+    totalVAT  += vat;
+    if (li.is_labour) labourSub += excl;
+  }
+  const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+  set('nqQliTotalExcl',   '£' + totalExcl.toFixed(2));
+  set('nqQliTotalVAT',    '£' + totalVAT.toFixed(2));
+  set('nqQliTotalIncl',   '£' + (totalExcl + totalVAT).toFixed(2));
+  set('nqQliLabourSub',   '£' + labourSub.toFixed(2));
+  set('nqQliTotalsSummary', `Excl. £${totalExcl.toFixed(2)} • Incl. £${(totalExcl+totalVAT).toFixed(2)}`);
+}
+
+
 async function submitNewQuote() {
   const companyName = document.getElementById('nqCompanyName')?.value.trim();
   const projectName = document.getElementById('nqProjectName')?.value.trim();
@@ -15234,6 +15360,38 @@ async function submitNewQuote() {
           contact_phone: tender.contact_phone
         });
       } catch (e) { console.warn('Failed to save contact:', e); }
+    }
+
+    // Step 4: Seed the 9 default line items, then bulk-save any values the user entered
+    const hasAnyValues = _nqLineItems.some(li => (parseFloat(li.unit_price) || 0) > 0 || (parseFloat(li.quantity) || 0) > 0);
+    try {
+      const seeded = await api.post(`/api/quote-line-items/seed/${tender.id}`, {});
+      if (hasAnyValues && Array.isArray(seeded) && seeded.length) {
+        // Map seeded IDs to our in-modal rows by line_no, then bulk-save dirty ones
+        const dirtyItems = _nqLineItems
+          .map(li => {
+            const seededRow = seeded.find(s => s.line_no === li.line_no);
+            if (!seededRow) return null;
+            const qty   = parseFloat(li.quantity)   || 0;
+            const price = parseFloat(li.unit_price) || 0;
+            if (qty === 0 && price === 0 && li.description === seededRow.description) return null; // unchanged
+            return {
+              id:          seededRow.id,
+              description: li.description,
+              quantity:    qty,
+              unit_price:  price,
+              vat_applies: li.vat_applies ? 1 : 0,
+              vat_rate:    parseFloat(li.vat_rate) || 0,
+              is_labour:   li.is_labour ? 1 : 0
+            };
+          })
+          .filter(Boolean);
+        if (dirtyItems.length) {
+          await api.put('/api/quote-line-items-bulk', { items: dirtyItems });
+        }
+      }
+    } catch (e) {
+      console.warn('Line items save failed (quote still created):', e);
     }
 
     closeNewQuoteModal();
