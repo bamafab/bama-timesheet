@@ -452,14 +452,14 @@
       <div style="overflow-x:auto">
         <table class="babcock-tracker-table" id="poTrackerTable">
           <thead>
-            <tr>
-              <th style="min-width:110px">PO Ref</th>
-              <th style="min-width:160px">Supplier</th>
-              <th style="min-width:200px">Project / Cost Centre</th>
-              <th style="min-width:100px">Order Date</th>
-              <th style="min-width:100px">Delivery Date</th>
-              <th style="min-width:120px;text-align:right">Gross (£)</th>
-              <th style="min-width:120px">Status</th>
+            <tr id="poTrackerHeaderRow">
+              <th style="min-width:110px;cursor:pointer;user-select:none" onclick="sortPoTracker('reference')">PO Ref <span id="poSort-reference"></span></th>
+              <th style="min-width:160px;cursor:pointer;user-select:none" onclick="sortPoTracker('supplier_name')">Supplier <span id="poSort-supplier_name"></span></th>
+              <th style="min-width:200px;cursor:pointer;user-select:none" onclick="sortPoTracker('scope')">Project / Cost Centre <span id="poSort-scope"></span></th>
+              <th style="min-width:100px;cursor:pointer;user-select:none" onclick="sortPoTracker('created_at')">Order Date <span id="poSort-created_at"></span></th>
+              <th style="min-width:100px;cursor:pointer;user-select:none" onclick="sortPoTracker('delivery_date')">Delivery Date <span id="poSort-delivery_date"></span></th>
+              <th style="min-width:120px;text-align:right;cursor:pointer;user-select:none" onclick="sortPoTracker('total_value')">Gross (£) <span id="poSort-total_value"></span></th>
+              <th style="min-width:120px;cursor:pointer;user-select:none" onclick="sortPoTracker('status')">Status <span id="poSort-status"></span></th>
               <th style="min-width:160px">Next Action</th>
               <th style="width:60px;text-align:right">Actions</th>
             </tr>
@@ -475,6 +475,6 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260519c"></script>
+<script src="shared.js?v=20260519d"></script>
 </body>
 </html>

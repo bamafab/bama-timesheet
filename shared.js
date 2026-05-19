@@ -22775,8 +22775,33 @@ function kpiTile(label, value, hint) {
     </div>`;
 }
 
-function renderPoTracker() {
+let _poSortCol = 'created_at';
+let _poSortDir = 'desc';  // 'asc' | 'desc'
+
+function sortPoTracker(col) {
+  if (_poSortCol === col) {
+    _poSortDir = _poSortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    _poSortCol = col;
+    _poSortDir = col === 'created_at' || col === 'total_value' ? 'desc' : 'asc';
+  }
+  renderPoTracker();
+}
+
+function _poSortValue(p, col) {
+  switch (col) {
+    case 'reference':      return p.reference || '';
+    case 'supplier_name':  return (p.supplier_name || '').toLowerCase();
+    case 'scope':          return (p.project_number || p.cost_centre || '').toLowerCase();
+    case 'created_at':     return p.created_at || '';
+    case 'delivery_date':  return p.delivery_date || '';
+    case 'total_value':    return Number(p.total_value) || 0;
+    case 'status':         return p.status || '';
+    default:               return '';
+  }
+}
   const tbody = document.getElementById('poTrackerTbody');
+function renderPoTracker() {
   if (!tbody) return;
   const q       = (document.getElementById('poTrackerSearch')?.value || '').toLowerCase().trim();
   const status  = document.getElementById('poTrackerStatusFilter')?.value || '';
@@ -22791,10 +22816,24 @@ function renderPoTracker() {
       if (!hay.includes(q)) return false;
     }
     return true;
+  }).slice().sort((a, b) => {
+    const av = _poSortValue(a, _poSortCol);
+    const bv = _poSortValue(b, _poSortCol);
+    const cmp = typeof av === 'number'
+      ? av - bv
+      : String(av).localeCompare(String(bv), undefined, { numeric: true });
+    return _poSortDir === 'asc' ? cmp : -cmp;
   });
 
   document.getElementById('poTrackerCount').textContent =
     `${rows.length} of ${_poList.length} POs`;
+
+  // Update sort indicators on headers
+  ['reference','supplier_name','scope','created_at','delivery_date','total_value','status'].forEach(col => {
+    const el = document.getElementById(`poSort-${col}`);
+    if (!el) return;
+    el.textContent = _poSortCol === col ? (_poSortDir === 'asc' ? ' ↑' : ' ↓') : '';
+  });
 
   if (rows.length === 0) {
     tbody.innerHTML = `<tr><td colspan="9" class="empty-state" style="padding:30px">
