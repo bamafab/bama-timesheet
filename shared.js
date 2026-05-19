@@ -22805,25 +22805,47 @@ function renderPoTracker() {
   }
 
   tbody.innerHTML = rows.map(p => {
-    const scopeText = p.project_id
-      ? `<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;max-width:240px" title="${escapeHtml((p.project_number||'') + ' — ' + (p.project_name||''))}"><span style="font-family:var(--font-mono)">${escapeHtml(p.project_number || '—')}</span> <span style="color:var(--muted)">— ${escapeHtml(p.project_name || '')}</span></span>`
-      : `<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;max-width:240px" title="${escapeHtml(p.cost_centre||'')} — ${escapeHtml(_poCostCentres[p.cost_centre]||'')}"><span style="font-family:var(--font-mono)">${escapeHtml(p.cost_centre || '—')}</span>${_poCostCentres[p.cost_centre] ? ` <span style="color:var(--muted)">— ${escapeHtml(_poCostCentres[p.cost_centre])}</span>` : ''}</span>`;
-    const orderDate    = p.created_at   ? p.created_at.slice(0, 10)   : '—';
-    const deliveryDate = p.delivery_date ? p.delivery_date.slice(0, 10) : '—';
-    const total   = (p.total_value !== null && p.total_value !== undefined)
-                    ? `£${Number(p.total_value).toFixed(2)}` : '—';
+    const scope = p.project_id
+      ? `<div style="display:flex;align-items:baseline;gap:5px;min-width:0">
+           <span style="font-family:var(--font-mono);font-size:12px;color:var(--accent);flex-shrink:0">${escapeHtml(p.project_number || '—')}</span>
+           <span style="color:var(--muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(p.project_name || '')}</span>
+         </div>`
+      : `<div style="display:flex;align-items:baseline;gap:5px;min-width:0">
+           <span style="font-family:var(--font-mono);font-size:12px;flex-shrink:0">${escapeHtml(p.cost_centre || '—')}</span>
+           ${_poCostCentres[p.cost_centre] ? `<span style="color:var(--muted);font-size:12px">${escapeHtml(_poCostCentres[p.cost_centre])}</span>` : ''}
+         </div>`;
+    const orderDate    = p.created_at    ? p.created_at.slice(0,10)    : '—';
+    const deliveryDate = p.delivery_date ? p.delivery_date.slice(0,10) : '<span style="color:var(--subtle)">—</span>';
+    const nett  = (p.total_value != null) ? Number(p.total_value) - Number(p.vat_amount || 0) : null;
+    const gross = (p.total_value != null) ? Number(p.total_value) : null;
+    const moneyCell = gross != null
+      ? `<div style="font-family:var(--font-mono);font-size:13px">£${gross.toFixed(2)}</div>
+         <div style="font-family:var(--font-mono);font-size:11px;color:var(--muted)">Nett £${nett.toFixed(2)}</div>`
+      : '<span style="color:var(--subtle)">—</span>';
+    const nextAct = poNextAction(p);
+    const nextCol = p.status === 'Closed'
+      ? `<span style="color:var(--green);font-size:12px">✅ Closed</span>`
+      : p.status === 'Cancelled'
+      ? `<span style="color:var(--subtle);font-size:12px">Cancelled</span>`
+      : `<span style="font-size:12px;color:var(--muted)">${nextAct}</span>`;
     return `
-      <tr style="cursor:pointer" onclick="openPoDetailModal(${p.id})">
-        <td style="font-family:var(--font-mono);font-weight:600">${escapeHtml(p.reference || '')}</td>
-        <td>${escapeHtml(p.supplier_name || '—')}</td>
-        <td style="max-width:240px">${scopeText}</td>
-        <td style="white-space:nowrap">${orderDate}</td>
-        <td style="white-space:nowrap;color:var(--muted);font-size:12px">${deliveryDate}</td>
-        <td style="text-align:right;font-family:var(--font-mono)">${total}</td>
-        <td>${poStatusBadge(p)}</td>
-        <td style="font-size:12px;color:var(--muted)">${poNextAction(p)}</td>
-        <td style="text-align:right">
-          <button class="btn btn-ghost" style="padding:3px 8px;font-size:11px" onclick="event.stopPropagation();openPoEditModal(${p.id})">✏️</button>
+      <tr style="cursor:pointer" onclick="openPoDetailModal(${p.id})"
+          onmouseover="this.style.background='var(--bg-light)'" onmouseout="this.style.background=''">
+        <td style="padding:10px 12px">
+          <div style="font-family:var(--font-mono);font-weight:700;font-size:13px;color:var(--accent)">${escapeHtml(p.reference || '')}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">${orderDate}</div>
+        </td>
+        <td style="padding:10px 12px">
+          <div style="font-size:13px;font-weight:500">${escapeHtml(p.supplier_name || '—')}</div>
+          ${p.description ? `<div style="font-size:11px;color:var(--muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px">${escapeHtml(p.description)}</div>` : ''}
+        </td>
+        <td style="padding:10px 12px;max-width:220px">${scope}</td>
+        <td style="padding:10px 12px;white-space:nowrap;font-size:12px;color:var(--muted)">${deliveryDate}</td>
+        <td style="padding:10px 12px;text-align:right">${moneyCell}</td>
+        <td style="padding:10px 12px">${poStatusBadge(p)}</td>
+        <td style="padding:10px 12px">${nextCol}</td>
+        <td style="padding:10px 12px;text-align:right">
+          <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="event.stopPropagation();openPoEditModal(${p.id})">Edit</button>
         </td>
       </tr>`;
   }).join('');
@@ -23340,71 +23362,117 @@ async function openPoDetailModal(poId) {
 }
 
 function renderPoDetail(p) {
-  document.getElementById('poDetailRef').textContent  = p.reference || '';
-  const subBits = [];
-  if (p.project_id) subBits.push(`${p.project_number} · ${p.project_name || ''}`);
-  else {
-    const ccLabel = _poCostCentres[p.cost_centre] || '';
-    const ccDisplay = ccLabel ? `${p.cost_centre} — ${ccLabel}` : (p.cost_centre || '');
-    subBits.push(`Overhead · ${ccDisplay}`);
-  }
-  subBits.push(p.supplier_name || '');
-  document.getElementById('poDetailSub').textContent = subBits.filter(Boolean).join(' · ');
+  document.getElementById('poDetailRef').textContent = p.reference || '';
+
+  // Sub-header: project/overhead + supplier
+  const ccLabel = _poCostCentres[p.cost_centre] || '';
+  const scopeLine = p.project_id
+    ? `${p.project_number} — ${p.project_name || ''}`
+    : `${p.cost_centre || ''}${ccLabel ? ' — ' + ccLabel : ''}`;
+  document.getElementById('poDetailSub').textContent =
+    [scopeLine, p.supplier_name].filter(Boolean).join('  ·  ');
 
   const badge = document.getElementById('poDetailStatusBadge');
   if (badge) badge.outerHTML = poStatusBadge(p).replace('<span', '<span id="poDetailStatusBadge"');
 
-  const lineItemsHtml = (p.line_items && p.line_items.length > 0)
-    ? `<table style="width:100%;font-size:12px;border-collapse:collapse;margin-top:6px">
-         <thead><tr style="border-bottom:1px solid var(--border)">
-           <th style="text-align:left;padding:4px 6px">Description</th>
-           <th style="text-align:right;padding:4px 6px;width:60px">Qty</th>
-           <th style="text-align:right;padding:4px 6px;width:90px">£ Rate</th>
-           <th style="text-align:right;padding:4px 6px;width:100px">£ Total</th>
-         </tr></thead>
-         <tbody>
-           ${p.line_items.map(li => `
-             <tr style="border-bottom:1px solid var(--border)">
-               <td style="padding:4px 6px">${escapeHtml(li.description || '')}</td>
-               <td style="padding:4px 6px;text-align:right;font-family:var(--font-mono)">${li.quantity !== null ? Number(li.quantity) : ''}</td>
-               <td style="padding:4px 6px;text-align:right;font-family:var(--font-mono)">${li.unit_price !== null ? Number(li.unit_price).toFixed(4) : ''}</td>
-               <td style="padding:4px 6px;text-align:right;font-family:var(--font-mono)">${li.line_total !== null ? Number(li.line_total).toFixed(2) : ''}</td>
-             </tr>`).join('')}
-         </tbody>
-       </table>`
-    : '<div style="color:var(--subtle);font-size:12px;padding:6px 0">No line items — single-value PO.</div>';
+  // ── Line items table ──
+  const nett  = Math.max(0, Number(p.total_value || 0) - Number(p.vat_amount || 0));
+  const gross = Number(p.total_value || 0);
+  const hasLines = p.line_items && p.line_items.length > 0;
+  const lineItemsHtml = hasLines
+    ? `<table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead>
+          <tr style="border-bottom:2px solid var(--border);color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.4px">
+            <th style="text-align:left;padding:6px 8px;font-weight:600">Description</th>
+            <th style="text-align:right;padding:6px 8px;font-weight:600;width:55px">Qty</th>
+            <th style="text-align:right;padding:6px 8px;font-weight:600;width:90px">Unit</th>
+            <th style="text-align:right;padding:6px 8px;font-weight:600;width:95px">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${p.line_items.map((li, i) => `
+            <tr style="border-bottom:1px solid var(--border);background:${i%2===1?'var(--bg-darker)':''}">
+              <td style="padding:7px 8px">${escapeHtml(li.description || '')}</td>
+              <td style="padding:7px 8px;text-align:right;font-family:var(--font-mono)">${li.quantity != null ? Number(li.quantity) : ''}</td>
+              <td style="padding:7px 8px;text-align:right;font-family:var(--font-mono)">${li.unit_price != null ? '£' + Number(li.unit_price).toFixed(2) : ''}</td>
+              <td style="padding:7px 8px;text-align:right;font-family:var(--font-mono);font-weight:600">${li.line_total != null ? '£' + Number(li.line_total).toFixed(2) : ''}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>`
+    : `<div style="color:var(--subtle);font-size:12px;padding:8px 0">No line items — single-value PO.</div>`;
 
+  // ── Project link info ──
   const projInfo = p.project_id
-    ? `<span style="font-family:var(--font-mono)">${escapeHtml(p.project_number || '')} — ${escapeHtml(p.project_name || '')}</span>`
-    : `<span style="color:var(--muted)">Overhead / unlinked</span>`;
+    ? `<span style="font-family:var(--font-mono);color:var(--accent)">${escapeHtml(p.project_number || '')}</span> <span style="color:var(--muted)">— ${escapeHtml(p.project_name || '')}</span>`
+    : `<span style="color:var(--subtle)">Unlinked overhead PO</span>`;
+
+  // ── Workflow step helper ──
+  const wfRow = (done, doneText, pendingText, btnLabel, btnStep, poId, isLast) => `
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 0;${isLast?'':'border-bottom:1px solid var(--border)'}">
+      <div style="width:20px;text-align:center;flex-shrink:0">${done ? '✅' : '⬜'}</div>
+      <div style="flex:1;font-size:13px;color:${done?'var(--text)':'var(--muted)'}">${done ? doneText : pendingText}</div>
+      ${!done && btnStep ? `<button class="btn btn-ghost" style="font-size:11px;padding:4px 12px;flex-shrink:0" onclick="poMarkStep(${poId},'${btnStep}')">${btnLabel}</button>` : ''}
+      ${done && btnStep === 'paid' ? `<button class="btn btn-ghost" style="font-size:11px;padding:4px 12px;flex-shrink:0;color:var(--subtle)" onclick="poMarkStep(${poId},'unpaid')">Undo</button>` : ''}
+    </div>`;
 
   document.getElementById('poDetailBody').innerHTML = `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;font-size:13px">
-      <div>
-        <div style="font-size:11px;color:var(--muted);letter-spacing:.5px;text-transform:uppercase">Delivery</div>
-        <div style="margin-top:3px">${escapeHtml(p.delivery_address || '—')}</div>
-        <div style="font-size:12px;color:var(--muted);margin-top:2px">Date: ${p.delivery_date || '—'}</div>
+
+    <!-- ── Row 1: Key info grid ── -->
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border);border-radius:8px;overflow:hidden;margin-bottom:16px">
+      <div style="background:var(--bg-dark);padding:10px 14px">
+        <div style="font-size:10px;color:var(--muted);letter-spacing:.6px;text-transform:uppercase;margin-bottom:3px">Supplier</div>
+        <div style="font-size:13px;font-weight:600">${escapeHtml(p.supplier_name || '—')}</div>
       </div>
-      <div>
-        <div style="font-size:11px;color:var(--muted);letter-spacing:.5px;text-transform:uppercase">Job Number</div>
-        <div style="margin-top:3px;font-family:var(--font-mono)">${escapeHtml(p.job_number || '—')}</div>
+      <div style="background:var(--bg-dark);padding:10px 14px">
+        <div style="font-size:10px;color:var(--muted);letter-spacing:.6px;text-transform:uppercase;margin-bottom:3px">Order Date</div>
+        <div style="font-size:13px">${p.created_at ? p.created_at.slice(0,10) : '—'}</div>
+      </div>
+      <div style="background:var(--bg-dark);padding:10px 14px">
+        <div style="font-size:10px;color:var(--muted);letter-spacing:.6px;text-transform:uppercase;margin-bottom:3px">Delivery Date</div>
+        <div style="font-size:13px">${p.delivery_date ? p.delivery_date.slice(0,10) : '—'}</div>
+      </div>
+      <div style="background:var(--bg-dark);padding:10px 14px">
+        <div style="font-size:10px;color:var(--muted);letter-spacing:.6px;text-transform:uppercase;margin-bottom:3px">Job Number</div>
+        <div style="font-size:13px;font-family:var(--font-mono)">${escapeHtml(p.job_number || '—')}</div>
+      </div>
+      <div style="background:var(--bg-dark);padding:10px 14px">
+        <div style="font-size:10px;color:var(--muted);letter-spacing:.6px;text-transform:uppercase;margin-bottom:3px">Raised by</div>
+        <div style="font-size:13px">${escapeHtml(p.created_by || '—')}</div>
+      </div>
+      <div style="background:var(--bg-dark);padding:10px 14px">
+        <div style="font-size:10px;color:var(--muted);letter-spacing:.6px;text-transform:uppercase;margin-bottom:3px">Delivery Address</div>
+        <div style="font-size:12px;color:var(--muted);line-height:1.4">${escapeHtml(p.delivery_address || '—')}</div>
       </div>
     </div>
 
-    <div style="margin-top:14px;padding:10px;background:var(--bg-darker);border-radius:6px">
+    <!-- ── Row 2: Description (if set) ── -->
+    ${p.description ? `<div style="margin-bottom:16px;font-size:13px;color:var(--muted)">${escapeHtml(p.description)}</div>` : ''}
+
+    <!-- ── Row 3: Line items + totals ── -->
+    <div style="margin-bottom:16px">
+      ${lineItemsHtml}
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;margin-top:8px;padding:10px 12px;background:var(--bg-darker);border-radius:6px">
+        ${Number(p.delivery_charge||0) > 0 ? `<div style="font-size:12px;color:var(--muted);grid-column:1/-1;margin-bottom:4px">Delivery charge: <b>£${Number(p.delivery_charge).toFixed(2)}</b></div>` : ''}
+        <div style="font-size:12px"><span style="color:var(--muted)">Nett</span><br><b style="font-family:var(--font-mono);font-size:15px">£${nett.toFixed(2)}</b></div>
+        <div style="font-size:12px;text-align:center"><span style="color:var(--muted)">VAT ${Number(p.vat_rate||0).toFixed(0)}%</span><br><b style="font-family:var(--font-mono);font-size:15px">£${Number(p.vat_amount||0).toFixed(2)}</b></div>
+        <div style="font-size:12px;text-align:right"><span style="color:var(--muted)">Gross</span><br><b style="font-family:var(--font-mono);font-size:18px">£${gross.toFixed(2)}</b></div>
+      </div>
+    </div>
+
+    <!-- ── Row 4: Project link ── -->
+    <div style="margin-bottom:16px;padding:10px 14px;background:var(--bg-darker);border-radius:8px">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
         <div>
-          <div style="font-size:11px;color:var(--muted);letter-spacing:.5px;text-transform:uppercase;margin-bottom:4px">Linked Project</div>
-          ${projInfo}
+          <div style="font-size:10px;color:var(--muted);letter-spacing:.6px;text-transform:uppercase;margin-bottom:4px">Linked Project</div>
+          <div style="font-size:13px">${projInfo}</div>
         </div>
         <button id="poDetailReassignBtn" class="btn btn-ghost" style="font-size:12px;padding:5px 12px"
                 onclick="openPoReassignPanel(${p.id})">
-          🔗 ${p.project_id ? 'Change project' : 'Assign to project'}
+          🔗 ${p.project_id ? 'Change' : 'Assign to project'}
         </button>
       </div>
       <div id="poReassignPanel" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)"
            data-po-id="${p.id}">
-        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Search for a project to link this PO:</div>
         <input id="poReassignSearch" type="text" class="input" placeholder="Project number or name…"
                style="width:100%;font-size:13px;margin-bottom:6px"
                oninput="searchPoReassignProjects(this.value)">
@@ -23412,42 +23480,26 @@ function renderPoDetail(p) {
         <div style="margin-top:8px;display:flex;gap:8px">
           <button class="btn btn-ghost" style="font-size:12px"
                   onclick="document.getElementById('poReassignPanel').style.display='none'">Cancel</button>
-          ${p.project_id ? `<button class="btn btn-ghost" style="font-size:12px;color:var(--red)" onclick="confirmPoUnlink(${p.id})">Unlink project</button>` : ''}
+          ${p.project_id ? `<button class="btn btn-ghost" style="font-size:12px;color:var(--red)" onclick="confirmPoUnlink(${p.id})">Unlink</button>` : ''}
         </div>
       </div>
     </div>
 
-    <div style="margin-top:14px">
-      <div style="font-size:11px;color:var(--muted);letter-spacing:.5px;text-transform:uppercase">Description</div>
-      <div style="margin-top:3px">${escapeHtml(p.description || '—')}</div>
-    </div>
-
-    <div style="margin-top:14px">
-      <div style="font-size:11px;color:var(--muted);letter-spacing:.5px;text-transform:uppercase">Line items</div>
-      ${lineItemsHtml}
-    </div>
-
-    <div style="margin-top:14px;display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px">
-      <div><span style="color:var(--muted)">Delivery charge:</span> £${(Number(p.delivery_charge)||0).toFixed(2)}</div>
-      <div><span style="color:var(--muted)">Collection charge:</span> £${(Number(p.collection_charge)||0).toFixed(2)}</div>
-    </div>
-    <div style="margin-top:10px;padding:10px;background:var(--bg-darker);border-radius:6px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:13px">
-      <div><span style="color:var(--muted)">Nett:</span> <b style="font-family:var(--font-mono)">£${(Math.max(0, Number(p.total_value||0) - Number(p.vat_amount||0))).toFixed(2)}</b></div>
-      <div><span style="color:var(--muted)">VAT @ ${Number(p.vat_rate || 0).toFixed(2)}%:</span> <b style="font-family:var(--font-mono)">£${Number(p.vat_amount||0).toFixed(2)}</b></div>
-      <div style="text-align:right"><span style="color:var(--muted)">Gross:</span> <b style="font-family:var(--font-mono);font-size:15px">£${Number(p.total_value||0).toFixed(2)}</b></div>
-    </div>
-
-    <div style="margin-top:14px;padding:10px;background:var(--bg-darker);border-radius:6px;font-size:12px">
-      <div style="font-size:11px;color:var(--muted);letter-spacing:.5px;text-transform:uppercase;margin-bottom:6px">Workflow</div>
-      <div>${p.approved_at ? `✅ Approved by ${escapeHtml(p.approved_by || '')} at ${p.approved_at.slice(0,16).replace('T',' ')}` : '⏳ Not yet approved'}</div>
-      <div>${p.sent_at ? `📨 Sent by ${escapeHtml(p.sent_by || '')} at ${p.sent_at.slice(0,16).replace('T',' ')}` : '⏳ Not sent to supplier'}</div>
-      <div>${p.delivery_received_at ? `📦 Delivery received at ${p.delivery_received_at.slice(0,16).replace('T',' ')}` : '⏳ Awaiting delivery'}</div>
-      <div>${p.invoice_received_at ? `🧾 Invoice ${escapeHtml(p.invoice_ref || '')} received (£${Number(p.invoice_value||0).toFixed(2)})` : '⏳ Awaiting invoice'}</div>
-      <div>${p.paid_at ? `💷 Paid at ${p.paid_at.slice(0,16).replace('T',' ')}` : '⏳ Not paid'}</div>
-    </div>
-
-    <div style="margin-top:10px;font-size:11px;color:var(--subtle)">
-      Raised by ${escapeHtml(p.created_by || '—')} on ${p.created_at ? p.created_at.slice(0,16).replace('T',' ') : '—'}
+    <!-- ── Row 5: Workflow ── -->
+    <div style="padding:10px 14px;background:var(--bg-darker);border-radius:8px">
+      <div style="font-size:10px;color:var(--muted);letter-spacing:.6px;text-transform:uppercase;margin-bottom:4px">Workflow</div>
+      ${wfRow(!!p.approved_at,
+        `Approved by ${escapeHtml(p.approved_by||'')} · ${(p.approved_at||'').slice(0,10)}`,
+        'Awaiting approval', 'Approve', 'approved', p.id, false)}
+      ${wfRow(!!p.delivery_received_at,
+        `Delivery confirmed · ${(p.delivery_received_at||'').slice(0,10)}`,
+        'Awaiting delivery', 'Confirm delivery', 'delivery_received', p.id, false)}
+      ${wfRow(!!p.invoice_received_at,
+        `Invoice ${escapeHtml(p.invoice_ref||'')} received · ${(p.invoice_received_at||'').slice(0,10)}`,
+        'Awaiting invoice', 'Mark invoiced', 'invoice_received', p.id, false)}
+      ${wfRow(!!p.paid_at,
+        `Paid · ${(p.paid_at||'').slice(0,10)}`,
+        'Not yet paid', 'Mark paid & close', 'paid', p.id, true)}
     </div>
   `;
 
@@ -23455,6 +23507,7 @@ function renderPoDetail(p) {
   const perms = getUserPermissions(currentManagerUser) || {};
   document.getElementById('poDetailEditBtn').style.display = perms.editPurchaseOrders ? '' : 'none';
 }
+
 
 // ── PO → Project reassignment ──
 function openPoReassignPanel(poId) {
