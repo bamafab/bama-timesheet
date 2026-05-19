@@ -22724,7 +22724,7 @@ async function loadPoSupportData() {
 // ── Tracker load + render ──
 async function loadPoTracker() {
   const tbody = document.getElementById('poTrackerTbody');
-  if (tbody) tbody.innerHTML = '<tr><td colspan="9" class="empty-state" style="padding:30px"><div class="spinner"></div></td></tr>';
+  if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="empty-state" style="padding:30px"><div class="spinner"></div></td></tr>';
   try {
     _poList = await api.get('/api/purchase-orders');
     if (!Array.isArray(_poList)) _poList = [];
@@ -22836,7 +22836,7 @@ function renderPoTracker() {
   });
 
   if (rows.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="9" class="empty-state" style="padding:30px">
+    tbody.innerHTML = `<tr><td colspan="8" class="empty-state" style="padding:30px">
       <div style="font-size:28px;margin-bottom:8px">🧾</div>
       <div>No purchase orders ${q || status || scope ? 'match the current filters' : 'yet'}.</div>
     </td></tr>`;
@@ -22861,12 +22861,7 @@ function renderPoTracker() {
       ? `<div style="font-family:var(--font-mono);font-size:13px">£${gross.toFixed(2)}</div>
          <div style="font-family:var(--font-mono);font-size:11px;color:var(--muted)">Nett £${nett.toFixed(2)}</div>`
       : '<span style="color:var(--subtle)">—</span>';
-    const nextAct = poNextAction(p);
-    const nextCol = p.status === 'Closed'
-      ? `<span style="color:var(--green);font-size:12px">✅ Closed</span>`
-      : p.status === 'Cancelled'
-      ? `<span style="color:var(--subtle);font-size:12px">Cancelled</span>`
-      : `<span style="font-size:12px;color:var(--muted)">${nextAct}</span>`;
+
     return `
       <tr style="cursor:pointer" onclick="openPoDetailModal(${p.id})"
           onmouseover="this.style.background='var(--bg-light)'" onmouseout="this.style.background=''">
@@ -22882,9 +22877,8 @@ function renderPoTracker() {
         <td style="padding:10px 12px;white-space:nowrap;font-size:12px;color:var(--muted)">${deliveryDate}</td>
         <td style="padding:10px 12px;text-align:right">${moneyCell}</td>
         <td style="padding:10px 12px">${poStatusBadge(p)}</td>
-        <td style="padding:10px 12px">${nextCol}</td>
-        <td style="padding:10px 12px;text-align:right">
-          <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="event.stopPropagation();openPoEditModal(${p.id})">Edit</button>
+        <td style="padding:6px 8px;text-align:right">
+          <button class="btn btn-ghost" style="padding:4px 8px;font-size:14px;line-height:1" title="Edit" onclick="event.stopPropagation();openPoEditModal(${p.id})">✏️</button>
         </td>
       </tr>`;
   }).join('');
