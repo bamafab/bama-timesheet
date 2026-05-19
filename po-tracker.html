@@ -156,7 +156,11 @@
         <div style="display:flex;gap:6px">
           <button type="button" class="btn btn-ghost" style="padding:4px 10px;font-size:11px;
                   border-color:var(--accent);color:var(--accent)" onclick="openPoQuoteFilePicker()">
-            📎 Parse from quote
+            📎 Parse from file
+          </button>
+          <button type="button" class="btn btn-ghost" style="padding:4px 10px;font-size:11px;
+                  border-color:var(--accent);color:var(--accent)" onclick="openPoPasteTextModal()">
+            📧 Paste text
           </button>
           <button type="button" class="btn btn-ghost" style="padding:4px 10px;font-size:11px"
                   onclick="addPoLineRow()">+ Add Line</button>
@@ -255,6 +259,28 @@
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="document.getElementById('poDetailModal').classList.remove('active')">Close</button>
       <button class="btn btn-primary" id="poDetailEditBtn" onclick="editPoFromDetail()">✏️ Edit</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     PASTE TEXT MODAL (parse line items from
+     pasted email body or any free text)
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="poPasteTextModal">
+  <div class="modal" style="max-width:620px;width:95vw">
+    <div class="modal-title">📧 Paste email or quote text</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:12px">
+      Paste a supplier email body, copied quote text, or any list of items.
+      Claude will extract the line items, quantities, and prices.
+    </div>
+    <textarea id="poPasteTextInput" class="field-input" rows="10"
+              style="font-family:inherit;font-size:13px;width:100%;resize:vertical"
+              placeholder="Paste here…&#10;e.g.&#10;Hi, please find below pricing for the bracket order:&#10;10 x M16 anchor bolts @ £4.50 ea&#10;2 x UB 152x89x16, 6m lengths @ £198.40&#10;Delivery £35"></textarea>
+    <div id="poPasteTextError" style="color:var(--red);font-size:12px;min-height:16px;margin-top:6px"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="document.getElementById('poPasteTextModal').classList.remove('active')">Cancel</button>
+      <button class="btn btn-primary" id="poPasteTextParseBtn" onclick="parsePoPastedText()">Parse</button>
     </div>
   </div>
 </div>
@@ -474,6 +500,6 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260519h"></script>
+<script src="shared.js?v=20260519i"></script>
 </body>
 </html>

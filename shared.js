@@ -22975,6 +22975,46 @@ function openPoQuoteFilePicker() {
   if (input) { input.value = ''; input.click(); }
 }
 
+// ── Paste-text path: lets the user paste a supplier email body or quote
+// text directly, no file required. Routes through the same parse-with-Claude
+// pipeline as the file picker, so line items + supplier fuzzy-match work
+// the same way.
+function openPoPasteTextModal() {
+  const modal = document.getElementById('poPasteTextModal');
+  if (!modal) return;
+  document.getElementById('poPasteTextInput').value = '';
+  document.getElementById('poPasteTextError').textContent = '';
+  const btn = document.getElementById('poPasteTextParseBtn');
+  if (btn) { btn.disabled = false; btn.textContent = 'Parse'; }
+  modal.classList.add('active');
+  setTimeout(() => document.getElementById('poPasteTextInput').focus(), 100);
+}
+
+async function parsePoPastedText() {
+  const ta  = document.getElementById('poPasteTextInput');
+  const err = document.getElementById('poPasteTextError');
+  const btn = document.getElementById('poPasteTextParseBtn');
+  err.textContent = '';
+  const text = (ta.value || '').trim();
+  if (text.length < 20) {
+    err.textContent = 'Paste a bit more text — at least a line or two with items and prices.';
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = 'Parsing…';
+  // Close the paste modal so the parse status strip in the New PO modal is visible
+  document.getElementById('poPasteTextModal').classList.remove('active');
+  _poQuoteParseStatus('📧 Extracting from pasted text…', 'loading');
+  try {
+    await _parsePoQuoteWithClaude({ type: 'text', text, filename: 'Pasted text' });
+  } catch (e) {
+    _poQuoteParseStatus('Parse failed — ' + (e.message || ''), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Parse';
+  }
+}
+
 function _poQuoteParseStatus(msg, type) {
   // type: 'loading' | 'success' | 'error' | 'hidden'
   const el = document.getElementById('poQuoteParseStatus');
