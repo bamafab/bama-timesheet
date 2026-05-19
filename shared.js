@@ -3047,7 +3047,126 @@ function switchTab(name) {
   if (name === 'useraccess') renderUserAccessTab();
   if (name === 'welding') renderWeldingTab();
   if (name === 'suppliers') renderSuppliersTab();
+  if (name === 'clients') renderOfficeClientsTab();
   if (name === 'project' || name === 'employee') renderManagerView();
+}
+
+// Office-tab clients renderer. The client management UI was originally
+// built into tenders.html — its functions (renderClientList, openNewClientModal,
+// openEditClientModal, etc.) all live in shared.js and are page-agnostic as
+// long as the DOM contains:
+//   • #clientListContainer / #clientSearch (the in-tab markup, added to office.html)
+//   • #newClientModal / #editClientModal / #contactModal (lazy-injected below)
+//
+// On Office we deliberately don't expose the full client-detail page (which
+// shows per-client tenders + a richer page) — that view is tenders.html-specific.
+// The "↗ Open" button is hidden so users don't navigate into something that
+// doesn't exist here.
+async function renderOfficeClientsTab() {
+  _ensureClientModals();
+  // Load clients if we don't have them yet (e.g. user navigated straight to
+  // Office without going via Tenders first). renderClientList is a no-op if
+  // clientsData is empty, so this fetch is needed every time we open the tab
+  // from a fresh session.
+  if (!clientsData || !clientsData.length) {
+    try {
+      const list = await api.get('/api/clients');
+      clientsData = list || [];
+    } catch (e) {
+      console.warn('Failed to load clients on Office tab:', e);
+      const container = document.getElementById('clientListContainer');
+      if (container) container.innerHTML = '<div class="empty-state" style="padding:24px">Could not load clients</div>';
+      return;
+    }
+  }
+  renderClientList();
+}
+
+// Lazy-inject the three client-related modals (new, edit, contact). They
+// live in tenders.html by default; we copy the same markup into <body>
+// the first time the Office Clients tab is opened. Idempotent.
+function _ensureClientModals() {
+  if (document.getElementById('newClientModal')) return; // already present (e.g. on tenders.html)
+  const wrap = document.createElement('div');
+  wrap.innerHTML = `
+    <div class="modal-overlay" id="newClientModal">
+      <div class="modal" style="max-width:480px;width:95vw">
+        <div class="modal-title">🏢 Add Client</div>
+        <div style="margin-bottom:12px">
+          <div class="field-label">COMPANY NAME</div>
+          <input type="text" class="field-input" id="ncCompanyName">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+          <div><div class="field-label">ADDRESS LINE 1</div><input type="text" class="field-input" id="ncAddress1"></div>
+          <div><div class="field-label">ADDRESS LINE 2</div><input type="text" class="field-input" id="ncAddress2"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+          <div><div class="field-label">CITY</div><input type="text" class="field-input" id="ncCity"></div>
+          <div><div class="field-label">COUNTY</div><input type="text" class="field-input" id="ncCounty"></div>
+          <div><div class="field-label">POSTCODE</div><input type="text" class="field-input" id="ncPostcode"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+          <div><div class="field-label">CONTACT NAME</div><input type="text" class="field-input" id="ncContactName"></div>
+          <div><div class="field-label">CONTACT EMAIL</div><input type="email" class="field-input" id="ncContactEmail"></div>
+          <div><div class="field-label">CONTACT PHONE</div><input type="text" class="field-input" id="ncContactPhone"></div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" onclick="closeNewClientModal()">Cancel</button>
+          <button class="btn btn-primary" onclick="submitNewClient()">Save Client</button>
+        </div>
+      </div>
+    </div>
+    <div class="modal-overlay" id="editClientModal">
+      <div class="modal" style="max-width:480px;width:95vw">
+        <div class="modal-title">✏️ Edit Client</div>
+        <input type="hidden" id="ecClientId">
+        <div style="margin-bottom:12px">
+          <div class="field-label">COMPANY NAME</div>
+          <input type="text" class="field-input" id="ecCompanyName">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+          <div><div class="field-label">ADDRESS LINE 1</div><input type="text" class="field-input" id="ecAddress1"></div>
+          <div><div class="field-label">ADDRESS LINE 2</div><input type="text" class="field-input" id="ecAddress2"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+          <div><div class="field-label">CITY</div><input type="text" class="field-input" id="ecCity"></div>
+          <div><div class="field-label">COUNTY</div><input type="text" class="field-input" id="ecCounty"></div>
+          <div><div class="field-label">POSTCODE</div><input type="text" class="field-input" id="ecPostcode"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+          <div><div class="field-label">CONTACT NAME</div><input type="text" class="field-input" id="ecContactName"></div>
+          <div><div class="field-label">CONTACT EMAIL</div><input type="email" class="field-input" id="ecContactEmail"></div>
+          <div><div class="field-label">CONTACT PHONE</div><input type="text" class="field-input" id="ecContactPhone"></div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" onclick="closeEditClientModal()">Cancel</button>
+          <button class="btn btn-primary" onclick="submitEditClient()">Save Changes</button>
+        </div>
+      </div>
+    </div>
+    <div class="modal-overlay" id="contactModal">
+      <div class="modal" style="max-width:440px;width:95vw">
+        <div class="modal-title" id="contactModalTitle">👤 Add Contact</div>
+        <input type="hidden" id="ctcId">
+        <input type="hidden" id="ctcClientId">
+        <div style="margin-bottom:12px"><div class="field-label">CONTACT NAME</div><input type="text" class="field-input" id="ctcName"></div>
+        <div style="margin-bottom:12px"><div class="field-label">ROLE / TITLE (OPTIONAL)</div><input type="text" class="field-input" id="ctcRole" placeholder="e.g. Project Manager, Site Foreman"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+          <div><div class="field-label">EMAIL</div><input type="email" class="field-input" id="ctcEmail"></div>
+          <div><div class="field-label">PHONE</div><input type="text" class="field-input" id="ctcPhone"></div>
+        </div>
+        <div style="margin-bottom:12px"><div class="field-label">NOTES (OPTIONAL)</div><textarea class="field-input" id="ctcNotes" rows="2"></textarea></div>
+        <div class="modal-actions" style="justify-content:space-between">
+          <button class="btn" id="ctcDeleteBtn" style="background:var(--red);color:#fff;display:none" onclick="deleteContactFromModal()">🗑️ Delete</button>
+          <div style="display:flex;gap:8px;margin-left:auto">
+            <button class="btn btn-ghost" onclick="closeContactModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="submitContactModal()">Save</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  // Append each top-level modal to <body>
+  while (wrap.firstElementChild) document.body.appendChild(wrap.firstElementChild);
 }
 
 let activeReport = 'overview';
@@ -13778,7 +13897,7 @@ function renderClientList() {
           <div style="font-weight:600">${escapeHtml(c.company_name)}</div>
           <div style="font-size:12px;color:var(--muted)">${escapeHtml([c.address_line1, c.city, c.postcode].filter(Boolean).join(', '))}</div>
         </div>
-        <button class="tiny-btn" onclick="event.stopPropagation();openClientDetail(${c.id})" style="padding:4px 12px;font-size:11px;background:var(--surface2);color:var(--muted);border:1px solid var(--border)" title="Open full client page">↗ Open</button>
+        <button class="tiny-btn" onclick="event.stopPropagation();openClientDetail(${c.id})" style="padding:4px 12px;font-size:11px;background:var(--surface2);color:var(--muted);border:1px solid var(--border);${CURRENT_PAGE === 'office' ? 'display:none' : ''}" title="Open full client page">↗ Open</button>
         <button class="tiny-btn" onclick="event.stopPropagation();openEditClientModal(${c.id})" style="padding:4px 10px;font-size:11px;background:var(--surface2);color:var(--muted);border:1px solid var(--border)" title="Edit client">✏️</button>
         <div class="client-chevron" id="chevron-${c.id}" style="font-size:22px;color:var(--accent);transition:transform .2s;width:28px;text-align:center">▾</div>
       </div>

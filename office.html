@@ -140,9 +140,6 @@
           <button class="sidebar-nav-item" data-tab="welding" onclick="switchTab('welding')">
             <span class="sidebar-nav-icon">&#128293;</span> Welding Equipment
           </button>
-          <button class="sidebar-nav-item" data-tab="suppliers" onclick="switchTab('suppliers')">
-            <span class="sidebar-nav-icon">&#128666;</span> Assigned Suppliers
-          </button>
         </div>
       </div>
       <div class="sidebar-nav-divider"></div>
@@ -158,6 +155,12 @@
         </button>
         <button class="sidebar-nav-item" onclick="navToPoTracker()">
           <span class="sidebar-nav-icon">🧾</span> Purchase Orders
+        </button>
+        <button class="sidebar-nav-item" data-tab="suppliers" onclick="switchTab('suppliers')">
+          <span class="sidebar-nav-icon">&#128666;</span> Suppliers
+        </button>
+        <button class="sidebar-nav-item" data-tab="clients" onclick="switchTab('clients')">
+          <span class="sidebar-nav-icon">🏢</span> Clients
         </button>
       </div>
     </nav>
@@ -586,10 +589,10 @@
       </div>
     </div>
 
-    <!-- Tab: Assigned Suppliers -->
+    <!-- Tab: Suppliers -->
     <div class="tab-content" id="tab-suppliers">
       <div class="card" style="margin-bottom:20px">
-        <div class="card-title"><span class="icon">&#128666;</span> Assigned Suppliers</div>
+        <div class="card-title"><span class="icon">&#128666;</span> Suppliers</div>
         <div style="font-size:13px;color:var(--muted);margin-bottom:16px">Manage suppliers and the services they offer.</div>
         <div style="display:flex;gap:10px;margin-bottom:16px">
           <button class="btn btn-primary" onclick="openAddSupplierForm()">+ Add Supplier</button>
@@ -669,6 +672,23 @@
           </div>
         </div>
         <div id="supplierList">
+          <div class="empty-state"><div class="spinner"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab: Clients -->
+    <div class="tab-content" id="tab-clients">
+      <div class="card">
+        <div class="card-frozen-top">
+          <div class="card-title"><span class="icon">🏢</span> Client Database</div>
+          <div style="display:flex;gap:10px;margin-bottom:0;flex-wrap:wrap">
+            <input type="text" class="field-input" id="clientSearch" placeholder="Search clients..."
+              style="max-width:260px" oninput="renderClientList()">
+            <button class="btn btn-primary" onclick="openNewClientModal()">+ Add Client</button>
+          </div>
+        </div>
+        <div id="clientListContainer">
           <div class="empty-state"><div class="spinner"></div></div>
         </div>
       </div>
@@ -1039,6 +1059,6 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-<script src="shared.js?v=20260519i"></script>
+<script src="shared.js?v=20260519j"></script>
 </body>
 </html>
