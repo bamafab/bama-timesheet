@@ -17023,13 +17023,13 @@ function renderProjectPoList(pos) {
 
   if (totalEl) {
     totalEl.textContent = active.length
-      ? `${active.length} PO${active.length !== 1 ? 's' : ''} · Nett £${totalNett.toFixed(2)} · Gross £${totalGross.toFixed(2)}`
+      ? `${active.length} PO${active.length !== 1 ? 's' : ''} · Nett ${fmtMoneyFull(totalNett)} · Gross ${fmtMoneyFull(totalGross)}`
       : '';
   }
 
   // Update Running Cost tile with PO spend
   const runningEl = document.getElementById('ptTileRunningValue');
-  if (runningEl) runningEl.textContent = active.length ? fmtMoney(totalNett) : '—';
+  if (runningEl) runningEl.textContent = active.length ? fmtMoneyFull(totalNett) : '—';
   const runningMeta = document.getElementById('ptTile-running');
   if (runningMeta) {
     const metaEl = runningMeta.querySelector('.pt-tile-meta');
@@ -17069,8 +17069,8 @@ function renderProjectPoList(pos) {
             <td style="padding:7px 8px;font-family:var(--font-mono);color:var(--accent)">${escapeHtml(p.reference)}</td>
             <td style="padding:7px 8px">${escapeHtml(p.supplier_name || '—')}</td>
             <td style="padding:7px 8px;color:var(--muted)">${escapeHtml(p.description || p.job_number || '—')}</td>
-            <td style="padding:7px 8px;text-align:right;font-family:var(--font-mono)">£${nett.toFixed(2)}</td>
-            <td style="padding:7px 8px;text-align:right;font-family:var(--font-mono)">£${gross.toFixed(2)}</td>
+            <td style="padding:7px 8px;text-align:right;font-family:var(--font-mono)">${fmtMoneyFull(nett)}</td>
+            <td style="padding:7px 8px;text-align:right;font-family:var(--font-mono)">${fmtMoneyFull(gross)}</td>
             <td style="padding:7px 8px;text-align:center">
               <span style="font-size:11px;font-weight:600;color:${colour}">${p.status}</span>
             </td>
@@ -17082,8 +17082,8 @@ function renderProjectPoList(pos) {
           <td colspan="3" style="padding:7px 8px;color:var(--muted);font-size:12px">
             ${active.length} active PO${active.length !== 1 ? 's' : ''}
           </td>
-          <td style="padding:7px 8px;text-align:right;font-family:var(--font-mono)">£${totalNett.toFixed(2)}</td>
-          <td style="padding:7px 8px;text-align:right;font-family:var(--font-mono)">£${totalGross.toFixed(2)}</td>
+          <td style="padding:7px 8px;text-align:right;font-family:var(--font-mono)">${fmtMoneyFull(totalNett)}</td>
+          <td style="padding:7px 8px;text-align:right;font-family:var(--font-mono)">${fmtMoneyFull(totalGross)}</td>
           <td></td>
         </tr>
       </tfoot>
@@ -22762,7 +22762,7 @@ function renderPoKpis() {
     ${kpiTile('📦 Received',   received, 'delivered, pending invoice/payment')}
     ${kpiTile('✅ Closed',     closed,   'paid and complete')}
     ${kpiTile('⚠️ Variance',   variance, 'invoice ≠ PO total')}
-    ${kpiTile('💷 This Month', `£${thisMonthTotal.toFixed(2)}`, 'POs raised this month')}
+    ${kpiTile('💷 This Month', fmtMoneyFull(thisMonthTotal), 'POs raised this month')}
   `;
 }
 
@@ -22800,8 +22800,8 @@ function _poSortValue(p, col) {
     default:               return '';
   }
 }
-  const tbody = document.getElementById('poTrackerTbody');
 function renderPoTracker() {
+  const tbody = document.getElementById('poTrackerTbody');
   if (!tbody) return;
   const q       = (document.getElementById('poTrackerSearch')?.value || '').toLowerCase().trim();
   const status  = document.getElementById('poTrackerStatusFilter')?.value || '';
@@ -22858,8 +22858,8 @@ function renderPoTracker() {
     const nett  = (p.total_value != null) ? Number(p.total_value) - Number(p.vat_amount || 0) : null;
     const gross = (p.total_value != null) ? Number(p.total_value) : null;
     const moneyCell = gross != null
-      ? `<div style="font-family:var(--font-mono);font-size:13px">£${gross.toFixed(2)}</div>
-         <div style="font-family:var(--font-mono);font-size:11px;color:var(--muted)">Nett £${nett.toFixed(2)}</div>`
+      ? `<div style="font-family:var(--font-mono);font-size:13px">${fmtMoneyFull(gross)}</div>
+         <div style="font-family:var(--font-mono);font-size:11px;color:var(--muted)">Nett ${fmtMoneyFull(nett)}</div>`
       : '<span style="color:var(--subtle)">—</span>';
 
     return `
@@ -23319,7 +23319,7 @@ function updatePoBudgetWarn() {
   const thisTotal = Number(document.getElementById('poNewTotal').value) || 0;
   const combined = existing + thisTotal;
   if (combined > Number(proj.quote_value)) {
-    el.textContent = `⚠️ Existing POs (£${existing.toFixed(2)}) + this PO (£${thisTotal.toFixed(2)}) = £${combined.toFixed(2)} — exceeds project quote value of £${Number(proj.quote_value).toFixed(2)}. Soft warning only — you can still raise it.`;
+    el.textContent = `⚠️ Existing POs (${fmtMoneyFull(existing)}) + this PO (${fmtMoneyFull(thisTotal)}) = ${fmtMoneyFull(combined)} — exceeds project quote value of ${fmtMoneyFull(proj.quote_value)}. Soft warning only — you can still raise it.`;
   }
 }
 
@@ -23427,8 +23427,8 @@ function renderPoDetail(p) {
             <tr style="border-bottom:1px solid var(--border);background:${i%2===1?'var(--bg-darker)':''}">
               <td style="padding:7px 8px">${escapeHtml(li.description || '')}</td>
               <td style="padding:7px 8px;text-align:right;font-family:var(--font-mono)">${li.quantity != null ? Number(li.quantity) : ''}</td>
-              <td style="padding:7px 8px;text-align:right;font-family:var(--font-mono)">${li.unit_price != null ? '£' + Number(li.unit_price).toFixed(2) : ''}</td>
-              <td style="padding:7px 8px;text-align:right;font-family:var(--font-mono);font-weight:600">${li.line_total != null ? '£' + Number(li.line_total).toFixed(2) : ''}</td>
+              <td style="padding:7px 8px;text-align:right;font-family:var(--font-mono)">${li.unit_price != null ? fmtMoneyFull(li.unit_price) : ''}</td>
+              <td style="padding:7px 8px;text-align:right;font-family:var(--font-mono);font-weight:600">${li.line_total != null ? fmtMoneyFull(li.line_total) : ''}</td>
             </tr>`).join('')}
         </tbody>
       </table>`
@@ -23485,10 +23485,10 @@ function renderPoDetail(p) {
     <div style="margin-bottom:16px">
       ${lineItemsHtml}
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;margin-top:8px;padding:10px 12px;background:var(--bg-darker);border-radius:6px">
-        ${Number(p.delivery_charge||0) > 0 ? `<div style="font-size:12px;color:var(--muted);grid-column:1/-1;margin-bottom:4px">Delivery charge: <b>£${Number(p.delivery_charge).toFixed(2)}</b></div>` : ''}
-        <div style="font-size:12px"><span style="color:var(--muted)">Nett</span><br><b style="font-family:var(--font-mono);font-size:15px">£${nett.toFixed(2)}</b></div>
-        <div style="font-size:12px;text-align:center"><span style="color:var(--muted)">VAT ${Number(p.vat_rate||0).toFixed(0)}%</span><br><b style="font-family:var(--font-mono);font-size:15px">£${Number(p.vat_amount||0).toFixed(2)}</b></div>
-        <div style="font-size:12px;text-align:right"><span style="color:var(--muted)">Gross</span><br><b style="font-family:var(--font-mono);font-size:18px">£${gross.toFixed(2)}</b></div>
+        ${Number(p.delivery_charge||0) > 0 ? `<div style="font-size:12px;color:var(--muted);grid-column:1/-1;margin-bottom:4px">Delivery charge: <b>${fmtMoneyFull(p.delivery_charge)}</b></div>` : ''}
+        <div style="font-size:12px"><span style="color:var(--muted)">Nett</span><br><b style="font-family:var(--font-mono);font-size:15px">${fmtMoneyFull(nett)}</b></div>
+        <div style="font-size:12px;text-align:center"><span style="color:var(--muted)">VAT ${Number(p.vat_rate||0).toFixed(0)}%</span><br><b style="font-family:var(--font-mono);font-size:15px">${fmtMoneyFull(p.vat_amount||0)}</b></div>
+        <div style="font-size:12px;text-align:right"><span style="color:var(--muted)">Gross</span><br><b style="font-family:var(--font-mono);font-size:18px">${fmtMoneyFull(gross)}</b></div>
       </div>
     </div>
 
@@ -23506,7 +23506,7 @@ function renderPoDetail(p) {
       </div>
       <div id="poReassignPanel" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)"
            data-po-id="${p.id}">
-        <input id="poReassignSearch" type="text" class="input" placeholder="Project number or name…"
+        <input id="poReassignSearch" type="text" class="field-input" placeholder="Project number or name…"
                style="width:100%;font-size:13px;margin-bottom:6px"
                oninput="searchPoReassignProjects(this.value)">
         <div id="poReassignDropdown" style="background:var(--bg-dark);border:1px solid var(--border);border-radius:6px;max-height:160px;overflow-y:auto;display:none"></div>
@@ -23580,16 +23580,17 @@ async function selectPoReassignProject(projectId, projectNumber, projectName) {
   document.getElementById('poReassignSearch').value = `${projectNumber} — ${projectName}`;
   document.getElementById('poReassignDropdown').style.display = 'none';
   const btn = document.getElementById('poDetailReassignBtn');
+  const originalLabel = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
   try {
     await api.put(`/api/purchase-orders/${poId}`, { project_id: projectId, cost_centre: null, job_number: projectNumber });
     panel.style.display = 'none';
-    showToast(`PO linked to ${projectNumber} ✓`);
+    toast(`PO linked to ${projectNumber} ✓`, 'success');
     await openPoDetailModal(poId);
     loadPoTracker();
   } catch (e) {
-    showToast('Link failed: ' + (e.message || 'Unknown error'), 'error');
-    if (btn) { btn.disabled = false; btn.textContent = p.project_id ? 'Change project' : 'Assign to project'; }
+    toast('Link failed: ' + (e.message || 'Unknown error'), 'error');
+    if (btn) { btn.disabled = false; btn.textContent = originalLabel || 'Assign to project'; }
   }
 }
 
@@ -23599,11 +23600,11 @@ async function confirmPoUnlink(poId) {
   try {
     const po = _poList.find(x => x.id === poId);
     await api.put(`/api/purchase-orders/${poId}`, { project_id: null, cost_centre: po ? (po.job_number || '8099') : '8099' });
-    showToast('Project link removed');
+    toast('Project link removed', 'success');
     await openPoDetailModal(poId);
     loadPoTracker();
   } catch (e) {
-    showToast('Unlink failed: ' + (e.message || ''), 'error');
+    toast('Unlink failed: ' + (e.message || ''), 'error');
   }
 }
 
