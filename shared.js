@@ -16995,20 +16995,35 @@ function _sumLabourHoursScheduled() {
   return total;
 }
 
-// Cache of running (logged) labour hours for the current project.
+// Cache of running (logged) labour hours + cost for the current project.
 // Refreshed each time loadProjectFinancials runs.
+//
+// Cost is sum(hours × employee.rate) across all ProjectHours rows for the
+// project, excluding S000 (non-productive time). Flat — no OT multiplier;
+// OT is treated as overhead, not project cost, by design. CIS workers ARE
+// included (they're labour on the project even though payroll excludes
+// them from PAYE/NI runs). Roadmap item #7 — Labour Cost tile pointing at
+// actuals instead of the quote-line budget — is closed by this.
 let _projectLabourHoursLogged = 0;
+let _projectLabourCostLogged  = 0;
 
 // ── Purchase Orders for project detail ──────────────────────────────────────
 async function loadProjectPos(projectId) {
   const container = document.getElementById('ptPoList');
   if (!container) return;
   container.innerHTML = '<div style="padding:14px;text-align:center;color:var(--subtle);font-size:12px">Loading…</div>';
+  // Clear the Running Cost tile to a neutral state — renderProjectPoList
+  // will set it definitively (PO total or '—') once the fetch resolves.
+  // This also covers project-switching: stops the previous project's
+  // figure lingering while the new fetch is in flight.
+  const runningEl = document.getElementById('ptTileRunningValue');
+  if (runningEl) runningEl.textContent = '—';
   try {
     const pos = await api.get(`/api/purchase-orders?project_id=${projectId}`);
     renderProjectPoList(pos || []);
   } catch (e) {
     container.innerHTML = '<div style="padding:14px;color:var(--subtle);font-size:12px">Could not load POs.</div>';
+    // Leave Running Cost tile at '—' set above.
   }
 }
 
@@ -17095,26 +17110,54 @@ function renderProjectPoList(pos) {
 // truth for the project tracker — LabourLog only has data after a manual
 // "Sync to Labour Log" on the payroll page, which would otherwise leave
 // the actual-hours tile empty until that step is taken.
+//
+// Also computes labour cost — sum(hours × employee.rate) across the same
+// rows. Rate is looked up via the in-memory employees cache. If a rate
+// can't be resolved for an employee, that employee's hours contribute to
+// the hours total but £0 to the cost total.
 async function _loadLabourHoursLogged(projectNumber) {
-  if (!projectNumber) { _projectLabourHoursLogged = 0; return 0; }
+  if (!projectNumber) {
+    _projectLabourHoursLogged = 0;
+    _projectLabourCostLogged  = 0;
+    return 0;
+  }
+  // Build a name+id → rate lookup once.
+  const employees = state.timesheetData.employees || [];
+  const rateById   = {};
+  const rateByName = {};
+  for (const e of employees) {
+    if (e.id != null)   rateById[e.id]     = Number(e.rate) || 0;
+    if (e.name)         rateByName[e.name] = Number(e.rate) || 0;
+  }
+  const rateFor = row => {
+    if (row.employee_id != null && rateById[row.employee_id] !== undefined) return rateById[row.employee_id];
+    if (row.employee_name && rateByName[row.employee_name] !== undefined)   return rateByName[row.employee_name];
+    return 0;
+  };
+
   try {
     const rows = await api.get(`/api/project-hours?project_number=${encodeURIComponent(projectNumber)}`);
-    const total = (Array.isArray(rows) ? rows : [])
-      .filter(r => r.project_number !== 'S000')
-      .reduce((sum, r) => sum + (parseFloat(r.hours) || 0), 0);
-    _projectLabourHoursLogged = total;
-    return total;
+    const filtered = (Array.isArray(rows) ? rows : []).filter(r => r.project_number !== 'S000');
+    const totalH = filtered.reduce((sum, r) => sum + (parseFloat(r.hours) || 0), 0);
+    const totalC = filtered.reduce((sum, r) => sum + (parseFloat(r.hours) || 0) * rateFor(r), 0);
+    _projectLabourHoursLogged = totalH;
+    _projectLabourCostLogged  = totalC;
+    return totalH;
   } catch (e) {
     console.warn('project-hours fetch failed, falling back to labour-log:', e);
     // Fallback: try LabourLog if project-hours endpoint is unavailable
     try {
       const rows = await api.get(`/api/labour-log?project_number=${encodeURIComponent(projectNumber)}`);
-      const total = (Array.isArray(rows) ? rows : []).reduce((sum, r) => sum + (parseFloat(r.hours) || 0), 0);
-      _projectLabourHoursLogged = total;
-      return total;
+      const list = Array.isArray(rows) ? rows : [];
+      const totalH = list.reduce((sum, r) => sum + (parseFloat(r.hours) || 0), 0);
+      const totalC = list.reduce((sum, r) => sum + (parseFloat(r.hours) || 0) * rateFor(r), 0);
+      _projectLabourHoursLogged = totalH;
+      _projectLabourCostLogged  = totalC;
+      return totalH;
     } catch (e2) {
       console.warn('labour-log fallback also failed:', e2);
       _projectLabourHoursLogged = 0;
+      _projectLabourCostLogged  = 0;
       return 0;
     }
   }
@@ -17126,7 +17169,8 @@ function renderProjectFinancialDashboard() {
 
   // Tile values
   const contract       = _sumLineItems();
-  const labour         = _sumLineItems(li => !!li.is_labour);
+  const labour         = _projectLabourCostLogged;        // actuals: Σ(hours × rate). Roadmap #7.
+  const labourBudget   = _sumLineItems(li => !!li.is_labour); // for variance vs quote, when quotes attached
   const hoursScheduled = _sumLabourHoursScheduled();
   const hoursLogged    = _projectLabourHoursLogged;
   const setText = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
@@ -17135,16 +17179,28 @@ function renderProjectFinancialDashboard() {
   setText('ptTileLabourValue',   fmtMoney(labour));
   setText('ptTileHoursBudgetValue', hoursScheduled > 0 ? fmtHrs(hoursScheduled) : '—');
   setText('ptTileHoursActualValue', fmtHrs(hoursLogged));
-  setText('ptTileRunningValue',  '—');
+  // ⚠️ Do NOT touch ptTileRunningValue here — it's owned by loadProjectPos()
+  // which runs in parallel. Writing '—' clobbers the PO total whenever this
+  // function happens to finish second.
 
   // Tile meta
   const nq = _projectFinancials.quotes.length;
   setText('ptTileContractMeta', `${nq} ${nq === 1 ? 'quote' : 'quotes'} attached`);
 
-  const progressPct = _weightedProjectProgress();
-  setText('ptTileLabourMeta', `${progressPct.toFixed(0)}% project progress (value-weighted)`);
+  // Labour Cost meta — show variance vs quote budget if we have one, else show "actuals from logged hours"
+  let labourMeta;
+  if (labourBudget > 0) {
+    const pctOfBudget = (labour / labourBudget) * 100;
+    labourMeta = `${pctOfBudget.toFixed(0)}% of labour budget (${fmtMoney(labourBudget)})`;
+  } else if (hoursLogged > 0) {
+    labourMeta = `Actual: ${fmtHrs(hoursLogged)} logged @ basic rate`;
+  } else {
+    labourMeta = 'No hours logged yet';
+  }
+  setText('ptTileLabourMeta', labourMeta);
 
-  // Project progress bar inside Labour Cost tile (always shown when there's a budget)
+  // Project progress bar inside Labour Cost tile — shown when contract value exists
+  const progressPct = _weightedProjectProgress();
   const progWrap = document.getElementById('ptTileProgressWrap');
   const progFill = document.getElementById('ptTileProgressFill');
   const progNum  = document.getElementById('ptTileProgressNum');
