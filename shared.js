@@ -22724,7 +22724,7 @@ async function loadPoSupportData() {
 // ── Tracker load + render ──
 async function loadPoTracker() {
   const tbody = document.getElementById('poTrackerTbody');
-  if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="empty-state" style="padding:30px"><div class="spinner"></div></td></tr>';
+  if (tbody) tbody.innerHTML = '<tr><td colspan="9" class="empty-state" style="padding:30px"><div class="spinner"></div></td></tr>';
   try {
     _poList = await api.get('/api/purchase-orders');
     if (!Array.isArray(_poList)) _poList = [];
@@ -22797,7 +22797,7 @@ function renderPoTracker() {
     `${rows.length} of ${_poList.length} POs`;
 
   if (rows.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="8" class="empty-state" style="padding:30px">
+    tbody.innerHTML = `<tr><td colspan="9" class="empty-state" style="padding:30px">
       <div style="font-size:28px;margin-bottom:8px">🧾</div>
       <div>No purchase orders ${q || status || scope ? 'match the current filters' : 'yet'}.</div>
     </td></tr>`;
@@ -22806,17 +22806,19 @@ function renderPoTracker() {
 
   tbody.innerHTML = rows.map(p => {
     const scopeText = p.project_id
-      ? `<span style="font-family:var(--font-mono)">${escapeHtml(p.project_number || '—')}</span><div style="font-size:11px;color:var(--muted)">${escapeHtml(p.project_name || '')}</div>`
-      : `<span style="color:var(--muted)">Overhead · ${escapeHtml(p.cost_centre || '—')}</span>`;
-    const dateStr = p.created_at ? (p.created_at.slice(0, 10)) : '—';
+      ? `<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;max-width:240px" title="${escapeHtml((p.project_number||'') + ' — ' + (p.project_name||''))}"><span style="font-family:var(--font-mono)">${escapeHtml(p.project_number || '—')}</span> <span style="color:var(--muted)">— ${escapeHtml(p.project_name || '')}</span></span>`
+      : `<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block;max-width:240px" title="${escapeHtml(p.cost_centre||'')} — ${escapeHtml(_poCostCentres[p.cost_centre]||'')}"><span style="font-family:var(--font-mono)">${escapeHtml(p.cost_centre || '—')}</span>${_poCostCentres[p.cost_centre] ? ` <span style="color:var(--muted)">— ${escapeHtml(_poCostCentres[p.cost_centre])}</span>` : ''}</span>`;
+    const orderDate    = p.created_at   ? p.created_at.slice(0, 10)   : '—';
+    const deliveryDate = p.delivery_date ? p.delivery_date.slice(0, 10) : '—';
     const total   = (p.total_value !== null && p.total_value !== undefined)
                     ? `£${Number(p.total_value).toFixed(2)}` : '—';
     return `
       <tr style="cursor:pointer" onclick="openPoDetailModal(${p.id})">
         <td style="font-family:var(--font-mono);font-weight:600">${escapeHtml(p.reference || '')}</td>
         <td>${escapeHtml(p.supplier_name || '—')}</td>
-        <td>${scopeText}</td>
-        <td>${dateStr}</td>
+        <td style="max-width:240px">${scopeText}</td>
+        <td style="white-space:nowrap">${orderDate}</td>
+        <td style="white-space:nowrap;color:var(--muted);font-size:12px">${deliveryDate}</td>
         <td style="text-align:right;font-family:var(--font-mono)">${total}</td>
         <td>${poStatusBadge(p)}</td>
         <td style="font-size:12px;color:var(--muted)">${poNextAction(p)}</td>
@@ -22840,10 +22842,10 @@ function poStatusBadge(p) {
 
 function poNextAction(p) {
   if (p.status === 'Cancelled') return 'Cancelled';
-  if (p.status === 'Closed')    return 'Done';
-  if (!p.approved_at)           return '→ Approve & Generate';
+  if (p.status === 'Closed')    return '✅ Done';
+  if (!p.approved_at)           return '→ Approve & send to supplier';
   if (!p.sent_at)               return '→ Send to supplier';
-  if (!p.delivery_received_at)  return '→ Mark received';
+  if (!p.delivery_received_at)  return '→ Confirm delivery';
   if (!p.invoice_received_at)   return '→ Attach invoice';
   if (!p.paid_at)               return '→ Mark paid';
   return '—';
