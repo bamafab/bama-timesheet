@@ -23769,7 +23769,7 @@ function renderPoDetail(p) {
       <div style="font-size:10px;color:var(--muted);letter-spacing:.6px;text-transform:uppercase;margin-bottom:4px">Workflow</div>
       ${wfRow(!!p.approved_at,
         `Approved by ${escapeHtml(p.approved_by||'')} · ${(p.approved_at||'').slice(0,10)}`,
-        'Awaiting approval', 'Approve', 'approved', p.id, false)}
+        'Awaiting approval (legacy)', null, null, p.id, false)}
       ${wfRow(!!p.delivery_received_at,
         `Delivery confirmed · ${(p.delivery_received_at||'').slice(0,10)}`,
         'Awaiting delivery', 'Confirm delivery', 'delivery_received', p.id, false)}

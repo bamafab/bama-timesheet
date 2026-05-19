@@ -315,13 +315,15 @@ app.http('purchase-orders-create', {
                      total_value, vat_rate, vat_amount, description, status,
                      job_number, delivery_date, delivery_address,
                      delivery_charge, collection_charge,
-                     created_by)
+                     created_by,
+                     approved_at, approved_by)
                  OUTPUT INSERTED.id
                  VALUES (@reference, @supplier_id, @project_id, @cost_centre,
                          @total_value, @vat_rate, @vat_amount, @description, @status,
                          @job_number, @delivery_date, @delivery_address,
                          @delivery_charge, @collection_charge,
-                         @created_by)`,
+                         @created_by,
+                         GETUTCDATE(), @created_by)`,
                 {
                     reference,
                     supplier_id: parseInt(supplier_id, 10),
