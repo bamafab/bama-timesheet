@@ -1428,7 +1428,7 @@
   margin-bottom: 2px;
 }
 .pt-tile-value {
-  font-size: 28px;
+  font-size: 24px;
   font-weight: 700;
   font-family: var(--font-mono);
   color: var(--tile-accent, var(--accent));
@@ -1437,7 +1437,10 @@
   margin-top: 4px;
   /* keep room for the faded icon top-right */
   padding-right: 30px;
-  word-break: break-word;
+  /* always single line — values are money/hours, never long enough to need wrapping */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .pt-tile-meta {
   font-size: 11px;

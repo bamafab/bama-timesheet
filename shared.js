@@ -23436,7 +23436,38 @@ async function savePoNew() {
 }
 
 // ── Detail modal ──
+//
+// The #poDetailModal markup lives in po-tracker.html. Other pages
+// (project-tracker.html) also need to open this modal — e.g. when the
+// PO list on a project detail is clicked. To avoid duplicating the
+// markup across HTML files and keeping them in sync, this helper
+// lazily injects the modal into <body> the first time it's needed
+// on a page that doesn't already have it.
+function _ensurePoDetailModal() {
+  if (document.getElementById('poDetailModal')) return;
+  const wrap = document.createElement('div');
+  wrap.innerHTML = `
+    <div class="modal-overlay" id="poDetailModal">
+      <div class="modal" style="max-width:820px;width:95vw;max-height:90vh;overflow-y:auto">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
+          <div>
+            <div class="modal-title" id="poDetailRef" style="margin-bottom:4px">—</div>
+            <div id="poDetailSub" style="color:var(--muted);font-size:13px">—</div>
+          </div>
+          <div id="poDetailStatusBadge" style="font-size:11px;padding:4px 10px;border-radius:6px;font-weight:600">—</div>
+        </div>
+        <div id="poDetailBody"></div>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" onclick="document.getElementById('poDetailModal').classList.remove('active')">Close</button>
+          <button class="btn btn-primary" id="poDetailEditBtn" onclick="editPoFromDetail()">✏️ Edit</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap.firstElementChild);
+}
+
 async function openPoDetailModal(poId) {
+  _ensurePoDetailModal();
   document.getElementById('poDetailRef').textContent = '—';
   document.getElementById('poDetailSub').textContent = 'Loading…';
   document.getElementById('poDetailBody').innerHTML  = '<div style="padding:20px;text-align:center"><div class="spinner"></div></div>';
@@ -23594,7 +23625,13 @@ function renderPoDetail(p) {
 
   document.getElementById('poDetailEditBtn').dataset.poId = p.id;
   const perms = getUserPermissions(currentManagerUser) || {};
-  document.getElementById('poDetailEditBtn').style.display = perms.editPurchaseOrders ? '' : 'none';
+  // Edit button needs both permission AND the New/Edit PO modal markup,
+  // which only lives on po-tracker.html. On other pages (project-tracker.html)
+  // we hide it — the user can open the row from the PO Tracker page if
+  // they need to edit.
+  const hasEditModal = !!document.getElementById('poNewModal');
+  document.getElementById('poDetailEditBtn').style.display =
+    (perms.editPurchaseOrders && hasEditModal) ? '' : 'none';
 }
 
 
