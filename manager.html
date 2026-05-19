@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Manager Dashboard</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260512f">
+<link rel="stylesheet" href="bama.css?v=20260519a">
 </head>
 <body>
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
@@ -186,6 +186,30 @@
         </div>
       </div>
 
+
+      <div class="card" style="margin-bottom:20px">
+        <div class="card-title"><span class="icon">🏷️</span> Overhead Cost Centres</div>
+        <div style="font-size:13px;color:var(--muted);margin-bottom:14px">
+          Cost centre codes used for non-project POs. Each has a numeric code and a label.
+          The default codes are <strong>5099 (Office)</strong> and <strong>8099 (Workshop)</strong>.
+        </div>
+        <div id="costCentreList" style="margin-bottom:14px"></div>
+        <div style="display:grid;grid-template-columns:120px 1fr auto;gap:8px;align-items:flex-end">
+          <div>
+            <div class="field-label">CODE</div>
+            <input type="text" class="field-input" id="newCcCode" placeholder="e.g. 7099" maxlength="20"
+              onkeydown="if(event.key==='Enter') addCostCentre()">
+          </div>
+          <div>
+            <div class="field-label">LABEL</div>
+            <input type="text" class="field-input" id="newCcLabel" placeholder="e.g. Vehicles" maxlength="60"
+              onkeydown="if(event.key==='Enter') addCostCentre()">
+          </div>
+          <button class="btn btn-primary" onclick="addCostCentre()" style="padding:10px 18px">Add</button>
+        </div>
+        <div id="ccSaveMsg" style="font-size:12px;color:var(--green);margin-top:8px;display:none">Saved ✓</div>
+      </div>
+
       <div class="card">
         <div class="card-title"><span class="icon">&#128451;</span> Data Management</div>
         <div style="display:flex;gap:12px;flex-wrap:wrap">
@@ -236,6 +260,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260513n"></script>
+<script src="shared.js?v=20260519a"></script>
 </body>
 </html>

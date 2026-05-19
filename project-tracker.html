@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Project Tracker</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260512f">
+<link rel="stylesheet" href="bama.css?v=20260519a">
 </head>
 <body>
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
@@ -273,6 +273,20 @@
           progress bar.
         </div>
         <div id="ptQuotesContainer">
+          <div style="padding:14px;text-align:center;color:var(--subtle);font-size:12px">Loading…</div>
+        </div>
+      </div>
+
+      <!-- Purchase Orders for this project -->
+      <div class="card" style="margin-bottom:20px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:8px;flex-wrap:wrap">
+          <div class="card-title" style="margin:0"><span class="icon">📋</span> Purchase Orders</div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <span id="ptPoSpendTotal" style="font-size:13px;color:var(--muted)"></span>
+            <a href="po-tracker.html" class="btn btn-ghost" style="font-size:12px;padding:5px 12px">Open PO Tracker ↗</a>
+          </div>
+        </div>
+        <div id="ptPoList">
           <div style="padding:14px;text-align:center;color:var(--subtle);font-size:12px">Loading…</div>
         </div>
       </div>
@@ -719,6 +733,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260513n"></script>
+<script src="shared.js?v=20260519a"></script>
 </body>
 </html>

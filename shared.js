@@ -3043,7 +3043,7 @@ function switchTab(name) {
   if (name === 'payroll') { renderPayroll(); renderPayrollExtras(); checkArchiveReminder(); }
   if (name === 'archive') renderArchive();
   if (name === 'reports') setTimeout(() => renderReports(), 50);
-  if (name === 'settings') { loadEmailSettings(); renderOfficeStaffList(); }
+  if (name === 'settings') { loadEmailSettings(); renderOfficeStaffList(); renderCostCentreList(); }
   if (name === 'useraccess') renderUserAccessTab();
   if (name === 'welding') renderWeldingTab();
   if (name === 'suppliers') renderSuppliersTab();
@@ -3763,6 +3763,59 @@ async function removeOfficeStaff(index) {
     toast(`${name} removed ✓`, 'success');
   } catch (err) { toast('Save failed: ' + err.message, 'error'); }
 }
+
+// ── Overhead Cost Centre management (manager settings) ──
+function renderCostCentreList() {
+  const container = document.getElementById('costCentreList');
+  if (!container) return;
+  const entries = Object.entries(_poCostCentres);
+  if (!entries.length) {
+    container.innerHTML = '<div style="color:var(--subtle);font-size:12px">No cost centres defined.</div>';
+    return;
+  }
+  container.innerHTML = entries.map(([code, label]) => `
+    <div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)">
+      <span style="font-family:var(--font-mono);color:var(--accent);width:70px;flex-shrink:0">${escapeHtml(code)}</span>
+      <span style="flex:1">${escapeHtml(label)}</span>
+      <button class="btn btn-ghost" style="font-size:11px;padding:3px 10px;color:var(--red)"
+              onclick="removeCostCentre(${JSON.stringify(code)})">Remove</button>
+    </div>`).join('');
+}
+
+async function addCostCentre() {
+  const codeEl  = document.getElementById('newCcCode');
+  const labelEl = document.getElementById('newCcLabel');
+  const code  = (codeEl.value  || '').trim();
+  const label = (labelEl.value || '').trim();
+  if (!code || !label) { toast('Enter both a code and a label', 'warning'); return; }
+  if (_poCostCentres[code]) { toast(`Code ${code} already exists`, 'warning'); return; }
+  _poCostCentres[code] = label;
+  await _saveCostCentres();
+  codeEl.value  = '';
+  labelEl.value = '';
+  renderCostCentreList();
+}
+
+async function removeCostCentre(code) {
+  const ok = await showConfirmAsync(`Remove cost centre "${code} — ${_poCostCentres[code]}"?`, 'Remove', 'Cancel');
+  if (!ok) return;
+  delete _poCostCentres[code];
+  await _saveCostCentres();
+  renderCostCentreList();
+}
+
+async function _saveCostCentres() {
+  const msgEl = document.getElementById('ccSaveMsg');
+  try {
+    await api.put('/api/settings', { purchase_order_cost_centres: _poCostCentres });
+    if (msgEl) { msgEl.style.display = ''; setTimeout(() => { msgEl.style.display = 'none'; }, 2500); }
+    toast('Cost centres saved ✓', 'success');
+  } catch (e) {
+    toast('Save failed: ' + (e.message || ''), 'error');
+  }
+}
+
+
 
 // ═══════════════════════════════════════════
 // APPROVE WEEK MODAL
@@ -16276,6 +16329,9 @@ function _populateProjectDetailFields(project) {
 
   // ── Financial dashboard — attached quotes + line items + progress ──
   loadProjectFinancials(project.id).catch(e => console.warn('financials load failed', e));
+
+  // ── Purchase Orders for this project ──
+  loadProjectPos(project.id).catch(e => console.warn('project POs load failed', e));
 }
 
 // Build the "summary" text shown above the site fields when they're hidden.
@@ -16942,6 +16998,97 @@ function _sumLabourHoursScheduled() {
 // Cache of running (logged) labour hours for the current project.
 // Refreshed each time loadProjectFinancials runs.
 let _projectLabourHoursLogged = 0;
+
+// ── Purchase Orders for project detail ──────────────────────────────────────
+async function loadProjectPos(projectId) {
+  const container = document.getElementById('ptPoList');
+  if (!container) return;
+  container.innerHTML = '<div style="padding:14px;text-align:center;color:var(--subtle);font-size:12px">Loading…</div>';
+  try {
+    const pos = await api.get(`/api/purchase-orders?project_id=${projectId}`);
+    renderProjectPoList(pos || []);
+  } catch (e) {
+    container.innerHTML = '<div style="padding:14px;color:var(--subtle);font-size:12px">Could not load POs.</div>';
+  }
+}
+
+function renderProjectPoList(pos) {
+  const container = document.getElementById('ptPoList');
+  const totalEl   = document.getElementById('ptPoSpendTotal');
+  if (!container) return;
+
+  const active = pos.filter(p => p.status !== 'Cancelled');
+  const totalGross = active.reduce((s, p) => s + (Number(p.total_value) || 0), 0);
+  const totalNett  = active.reduce((s, p) => s + (Number(p.total_value) - Number(p.vat_amount || 0) || 0), 0);
+
+  if (totalEl) {
+    totalEl.textContent = active.length
+      ? `${active.length} PO${active.length !== 1 ? 's' : ''} · Nett £${totalNett.toFixed(2)} · Gross £${totalGross.toFixed(2)}`
+      : '';
+  }
+
+  // Update Running Cost tile with PO spend
+  const runningEl = document.getElementById('ptTileRunningValue');
+  if (runningEl) runningEl.textContent = active.length ? fmtMoney(totalNett) : '—';
+  const runningMeta = document.getElementById('ptTile-running');
+  if (runningMeta) {
+    const metaEl = runningMeta.querySelector('.pt-tile-meta');
+    if (metaEl) metaEl.textContent = active.length
+      ? `${active.length} PO${active.length !== 1 ? 's' : ''} · nett spend`
+      : 'No POs raised yet';
+  }
+
+  if (!active.length && !pos.length) {
+    container.innerHTML = '<div style="padding:14px;color:var(--subtle);font-size:12px">No purchase orders raised for this project yet.</div>';
+    return;
+  }
+
+  const statusColour = { Open: 'var(--accent)', Received: 'var(--yellow)', Closed: 'var(--green)', Cancelled: 'var(--subtle)' };
+
+  container.innerHTML = `
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead>
+        <tr style="border-bottom:1px solid var(--border);color:var(--muted);font-size:11px;letter-spacing:.4px;text-transform:uppercase">
+          <th style="text-align:left;padding:6px 8px;font-weight:600">PO Ref</th>
+          <th style="text-align:left;padding:6px 8px;font-weight:600">Supplier</th>
+          <th style="text-align:left;padding:6px 8px;font-weight:600">Description</th>
+          <th style="text-align:right;padding:6px 8px;font-weight:600">Nett</th>
+          <th style="text-align:right;padding:6px 8px;font-weight:600">Gross</th>
+          <th style="text-align:center;padding:6px 8px;font-weight:600">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${pos.map(p => {
+          const nett  = Number(p.total_value || 0) - Number(p.vat_amount || 0);
+          const gross = Number(p.total_value || 0);
+          const colour = statusColour[p.status] || 'var(--muted)';
+          return `<tr style="border-bottom:1px solid var(--border);cursor:pointer"
+                      onclick="openPoDetailModal(${p.id})"
+                      onmouseover="this.style.background='var(--bg-light)'"
+                      onmouseout="this.style.background=''">
+            <td style="padding:7px 8px;font-family:var(--font-mono);color:var(--accent)">${escapeHtml(p.reference)}</td>
+            <td style="padding:7px 8px">${escapeHtml(p.supplier_name || '—')}</td>
+            <td style="padding:7px 8px;color:var(--muted)">${escapeHtml(p.description || p.job_number || '—')}</td>
+            <td style="padding:7px 8px;text-align:right;font-family:var(--font-mono)">£${nett.toFixed(2)}</td>
+            <td style="padding:7px 8px;text-align:right;font-family:var(--font-mono)">£${gross.toFixed(2)}</td>
+            <td style="padding:7px 8px;text-align:center">
+              <span style="font-size:11px;font-weight:600;color:${colour}">${p.status}</span>
+            </td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+      <tfoot>
+        <tr style="border-top:2px solid var(--border);font-weight:600">
+          <td colspan="3" style="padding:7px 8px;color:var(--muted);font-size:12px">
+            ${active.length} active PO${active.length !== 1 ? 's' : ''}
+          </td>
+          <td style="padding:7px 8px;text-align:right;font-family:var(--font-mono)">£${totalNett.toFixed(2)}</td>
+          <td style="padding:7px 8px;text-align:right;font-family:var(--font-mono)">£${totalGross.toFixed(2)}</td>
+          <td></td>
+        </tr>
+      </tfoot>
+    </table>`;
+}
 
 // Reads actual hours from ProjectHours directly (live data), falling back
 // to LabourLog if the primary call fails. ProjectHours is the source of
@@ -22457,7 +22604,7 @@ async function saveQuoteLineItems() {
 let _poList            = [];
 let _poProjectsCache   = [];   // populated from /api/projects on init
 let _poSuppliersCache  = [];   // populated from /api/suppliers on init
-let _poCostCentres     = [];   // populated from /api/settings/purchase_order_cost_centres
+let _poCostCentres     = {};   // { "5099": "Office", "8099": "Workshop", ... } — from settings
 let _poNewState        = null; // { scope, projectId, supplierId, jobNumber, lineItems[] }
 let _poPendingPinUser  = null;
 let _poEditingId       = null; // when set, savePoNew() updates instead of creating
@@ -22556,12 +22703,19 @@ async function loadPoSupportData() {
     ]);
     _poProjectsCache  = Array.isArray(projects)  ? projects  : [];
     _poSuppliersCache = Array.isArray(suppliers) ? suppliers : [];
-    let cc = [];
+    let cc = {};
     if (ccSetting && ccSetting.value) {
-      try { cc = typeof ccSetting.value === 'string' ? JSON.parse(ccSetting.value) : ccSetting.value; }
-      catch (e) { cc = []; }
+      try {
+        const parsed = typeof ccSetting.value === 'string' ? JSON.parse(ccSetting.value) : ccSetting.value;
+        // Support old array format ["Office","Workshop"] and new object {"5099":"Office"}
+        if (Array.isArray(parsed)) {
+          parsed.forEach((label, i) => { cc[String(i + 5099)] = label; });
+        } else if (parsed && typeof parsed === 'object') {
+          cc = parsed;
+        }
+      } catch (e) { cc = {}; }
     }
-    _poCostCentres = Array.isArray(cc) ? cc : [];
+    _poCostCentres = cc;
   } catch (e) {
     console.warn('PO support data load failed:', e);
   }
@@ -22914,7 +23068,9 @@ function openPoNewModal() {
   // Populate cost-centre dropdown
   const ccSel = document.getElementById('poNewCostCentre');
   ccSel.innerHTML = '<option value="">—</option>' +
-    _poCostCentres.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+    Object.entries(_poCostCentres).map(([code, label]) =>
+      `<option value="${escapeHtml(code)}">${escapeHtml(code)} — ${escapeHtml(label)}</option>`
+    ).join('');
 
   setPoScope('project'); // default
 
@@ -23185,11 +23341,14 @@ function renderPoDetail(p) {
   document.getElementById('poDetailRef').textContent  = p.reference || '';
   const subBits = [];
   if (p.project_id) subBits.push(`${p.project_number} · ${p.project_name || ''}`);
-  else              subBits.push(`Overhead · ${p.cost_centre || ''}`);
+  else {
+    const ccLabel = _poCostCentres[p.cost_centre] || '';
+    const ccDisplay = ccLabel ? `${p.cost_centre} — ${ccLabel}` : (p.cost_centre || '');
+    subBits.push(`Overhead · ${ccDisplay}`);
+  }
   subBits.push(p.supplier_name || '');
   document.getElementById('poDetailSub').textContent = subBits.filter(Boolean).join(' · ');
 
-  // Re-render the status badge (we replaced the node above)
   const badge = document.getElementById('poDetailStatusBadge');
   if (badge) badge.outerHTML = poStatusBadge(p).replace('<span', '<span id="poDetailStatusBadge"');
 
@@ -23213,6 +23372,10 @@ function renderPoDetail(p) {
        </table>`
     : '<div style="color:var(--subtle);font-size:12px;padding:6px 0">No line items — single-value PO.</div>';
 
+  const projInfo = p.project_id
+    ? `<span style="font-family:var(--font-mono)">${escapeHtml(p.project_number || '')} — ${escapeHtml(p.project_name || '')}</span>`
+    : `<span style="color:var(--muted)">Overhead / unlinked</span>`;
+
   document.getElementById('poDetailBody').innerHTML = `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;font-size:13px">
       <div>
@@ -23221,8 +23384,34 @@ function renderPoDetail(p) {
         <div style="font-size:12px;color:var(--muted);margin-top:2px">Date: ${p.delivery_date || '—'}</div>
       </div>
       <div>
-        <div style="font-size:11px;color:var(--muted);letter-spacing:.5px;text-transform:uppercase">Job / Project</div>
+        <div style="font-size:11px;color:var(--muted);letter-spacing:.5px;text-transform:uppercase">Job Number</div>
         <div style="margin-top:3px;font-family:var(--font-mono)">${escapeHtml(p.job_number || '—')}</div>
+      </div>
+    </div>
+
+    <div style="margin-top:14px;padding:10px;background:var(--bg-darker);border-radius:6px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+        <div>
+          <div style="font-size:11px;color:var(--muted);letter-spacing:.5px;text-transform:uppercase;margin-bottom:4px">Linked Project</div>
+          ${projInfo}
+        </div>
+        <button id="poDetailReassignBtn" class="btn btn-ghost" style="font-size:12px;padding:5px 12px"
+                onclick="openPoReassignPanel(${p.id})">
+          🔗 ${p.project_id ? 'Change project' : 'Assign to project'}
+        </button>
+      </div>
+      <div id="poReassignPanel" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)"
+           data-po-id="${p.id}">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:6px">Search for a project to link this PO:</div>
+        <input id="poReassignSearch" type="text" class="input" placeholder="Project number or name…"
+               style="width:100%;font-size:13px;margin-bottom:6px"
+               oninput="searchPoReassignProjects(this.value)">
+        <div id="poReassignDropdown" style="background:var(--bg-dark);border:1px solid var(--border);border-radius:6px;max-height:160px;overflow-y:auto;display:none"></div>
+        <div style="margin-top:8px;display:flex;gap:8px">
+          <button class="btn btn-ghost" style="font-size:12px"
+                  onclick="document.getElementById('poReassignPanel').style.display='none'">Cancel</button>
+          ${p.project_id ? `<button class="btn btn-ghost" style="font-size:12px;color:var(--red)" onclick="confirmPoUnlink(${p.id})">Unlink project</button>` : ''}
+        </div>
       </div>
     </div>
 
@@ -23260,11 +23449,74 @@ function renderPoDetail(p) {
     </div>
   `;
 
-  // Stash id on the edit button so editPoFromDetail() can pick it up
   document.getElementById('poDetailEditBtn').dataset.poId = p.id;
-  // Hide edit when user lacks the perm
   const perms = getUserPermissions(currentManagerUser) || {};
   document.getElementById('poDetailEditBtn').style.display = perms.editPurchaseOrders ? '' : 'none';
+}
+
+// ── PO → Project reassignment ──
+function openPoReassignPanel(poId) {
+  const panel = document.getElementById('poReassignPanel');
+  if (!panel) return;
+  panel.style.display = panel.style.display === 'none' ? '' : 'none';
+  if (panel.style.display !== 'none') {
+    document.getElementById('poReassignSearch').value = '';
+    document.getElementById('poReassignDropdown').style.display = 'none';
+  }
+}
+
+function searchPoReassignProjects(q) {
+  const dd = document.getElementById('poReassignDropdown');
+  if (!q || q.length < 2) { dd.style.display = 'none'; dd.innerHTML = ''; return; }
+  const needle = q.toLowerCase();
+  const matches = _poProjectsCache.filter(p =>
+    (p.project_number || '').toLowerCase().includes(needle) ||
+    (p.project_name   || '').toLowerCase().includes(needle)
+  ).slice(0, 12);
+  if (!matches.length) { dd.style.display = 'none'; return; }
+  dd.style.display = '';
+  dd.innerHTML = matches.map(m =>
+    `<div style="padding:7px 10px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)"
+          onmousedown="selectPoReassignProject(${m.id},${JSON.stringify(m.project_number)},${JSON.stringify(m.project_name || '')})"
+          onmouseover="this.style.background='var(--bg-light)'" onmouseout="this.style.background=''">
+       <span style="font-family:var(--font-mono);color:var(--accent)">${escapeHtml(m.project_number)}</span>
+       <span style="color:var(--muted);margin-left:8px">${escapeHtml(m.project_name || '')}</span>
+     </div>`
+  ).join('');
+}
+
+async function selectPoReassignProject(projectId, projectNumber, projectName) {
+  const panel = document.getElementById('poReassignPanel');
+  const poId  = parseInt(panel.dataset.poId || panel.getAttribute('data-po-id') || '0', 10);
+  if (!poId || !projectId) return;
+  document.getElementById('poReassignSearch').value = `${projectNumber} — ${projectName}`;
+  document.getElementById('poReassignDropdown').style.display = 'none';
+  const btn = document.getElementById('poDetailReassignBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  try {
+    await api.put(`/api/purchase-orders/${poId}`, { project_id: projectId, cost_centre: null, job_number: projectNumber });
+    panel.style.display = 'none';
+    showToast(`PO linked to ${projectNumber} ✓`);
+    await openPoDetailModal(poId);
+    loadPoTracker();
+  } catch (e) {
+    showToast('Link failed: ' + (e.message || 'Unknown error'), 'error');
+    if (btn) { btn.disabled = false; btn.textContent = p.project_id ? 'Change project' : 'Assign to project'; }
+  }
+}
+
+async function confirmPoUnlink(poId) {
+  const ok = await showConfirmAsync('Remove project link from this PO and set it to Overhead?', 'Unlink', 'Cancel');
+  if (!ok) return;
+  try {
+    const po = _poList.find(x => x.id === poId);
+    await api.put(`/api/purchase-orders/${poId}`, { project_id: null, cost_centre: po ? (po.job_number || '8099') : '8099' });
+    showToast('Project link removed');
+    await openPoDetailModal(poId);
+    loadPoTracker();
+  } catch (e) {
+    showToast('Unlink failed: ' + (e.message || ''), 'error');
+  }
 }
 
 function editPoFromDetail() {
@@ -23303,7 +23555,9 @@ async function openPoEditModal(poId) {
   // Populate cost-centre dropdown first (in case scope is overhead)
   const ccSel = document.getElementById('poNewCostCentre');
   ccSel.innerHTML = '<option value="">—</option>' +
-    _poCostCentres.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+    Object.entries(_poCostCentres).map(([code, label]) =>
+      `<option value="${escapeHtml(code)}">${escapeHtml(code)} — ${escapeHtml(label)}</option>`
+    ).join('');
 
   setPoScope(_poNewState.scope);
 
