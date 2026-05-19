@@ -23794,6 +23794,103 @@ function renderPoDetail(p) {
 }
 
 
+// ── Workflow step advance / undo ─────────────────────────────────────
+//
+// Backs the four ✅/⬜ buttons in the PO detail modal's Workflow row.
+// The buttons call poMarkStep(poId, step) with step ∈ {
+//   'approved', 'delivery_received', 'invoice_received', 'paid', 'unpaid'
+// }
+//
+// Status enum:
+//   Open     — raised but not delivered yet (approval is just a flag, doesn't move status)
+//   Received — delivered, possibly invoiced, not yet paid
+//   Closed   — paid
+//
+// Server-side: the PUT endpoint accepts both the timestamp columns and a
+// status string; we set both at once for clarity, matching the schema's
+// documented contract (status is a UI-level summary of the underlying
+// timestamps).
+async function poMarkStep(poId, step) {
+  if (!poId || !step) return;
+  const who = currentManagerUser || 'office';
+  const nowIso = new Date().toISOString();
+  let body = {};
+  let confirmMsg = '';
+
+  switch (step) {
+    case 'approved':
+      confirmMsg = 'Mark this PO as approved?';
+      body = { approved_at: nowIso, approved_by: who };
+      break;
+
+    case 'delivery_received':
+      confirmMsg = 'Confirm goods/services received?';
+      body = { delivery_received_at: nowIso, delivery_received_by: who, status: 'Received' };
+      break;
+
+    case 'invoice_received': {
+      // Need invoice ref + value before we can mark
+      const ref = window.prompt('Supplier invoice reference? (e.g. INV-12345)');
+      if (ref === null) return;                          // cancel
+      if (!ref.trim()) { toast('Invoice reference required', 'error'); return; }
+      const rawVal = window.prompt(`Invoice value (gross £)?\n\nLeave blank to use the PO total.`, '');
+      if (rawVal === null) return;                       // cancel
+      const valNum = rawVal.trim() === '' ? null : Number(String(rawVal).replace(/[^\d.\-]/g, ''));
+      if (valNum !== null && (isNaN(valNum) || valNum < 0)) {
+        toast('Invoice value must be a non-negative number', 'error');
+        return;
+      }
+      body = {
+        invoice_received_at: nowIso,
+        invoice_received_by: who,
+        invoice_ref: ref.trim(),
+        status: 'Received'
+      };
+      if (valNum !== null) body.invoice_value = valNum;
+      break;
+    }
+
+    case 'paid':
+      confirmMsg = 'Mark this PO as paid? This closes the PO.';
+      body = { paid_at: nowIso, paid_by: who, status: 'Closed' };
+      break;
+
+    case 'unpaid':
+      confirmMsg = 'Undo the paid status? The PO will return to Received.';
+      body = { paid_at: null, paid_by: null, status: 'Received' };
+      break;
+
+    default:
+      console.warn('Unknown PO workflow step:', step);
+      return;
+  }
+
+  if (confirmMsg) {
+    const ok = await showConfirmAsync(confirmMsg, 'Confirm', 'Cancel');
+    if (!ok) return;
+  }
+
+  try {
+    await api.put(`/api/purchase-orders/${poId}`, body);
+    toast('Workflow updated ✓', 'success');
+    // Re-fetch + re-render detail
+    await openPoDetailModal(poId);
+    // Refresh the tracker list if we're on the PO Tracker page, or the
+    // project's PO panel if we're on Project Tracker. On other pages
+    // (e.g. quickly opened from a deep link) neither refreshes — the
+    // detail modal already reflects the new state.
+    if (document.getElementById('poTrackerTbody') && typeof loadPoTracker === 'function') {
+      loadPoTracker();
+    }
+    if (document.getElementById('ptPoList') && currentProjectRecord && typeof loadProjectPos === 'function') {
+      loadProjectPos(currentProjectRecord.id);
+    }
+  } catch (e) {
+    toast('Update failed: ' + (e.message || ''), 'error');
+  }
+}
+
+
 // ── PO → Project reassignment ──
 function openPoReassignPanel(poId) {
   const panel = document.getElementById('poReassignPanel');
