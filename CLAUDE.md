@@ -51,6 +51,18 @@ management, and a standalone UK steel section reference.
   full script in the chat reply ready to copy-paste, not "see
   api/sql/foo.sql". Commit the file to the repo as well, but the chat must
   contain the runnable SQL. Same applies to any ad-hoc one-off queries.
+- **POs link to Projects via `project_id`, not `job_number`.** A PO that
+  belongs to a project must have `PurchaseOrders.project_id` set to the
+  matching `Projects.id`. `job_number` is just a human-readable mirror
+  (the project_number string) and is **not** what Project Tracker filters
+  on — `loadProjectPos()` calls `/api/purchase-orders?project_id=...`.
+  The DB enforces XOR via `CK_PurchaseOrders_ProjectXorCostCentre`:
+  exactly one of `project_id` / `cost_centre` is set. Bulk PO imports
+  must do the project lookup at insert time (or include a backfill
+  block at the end — see `import-po-tracker-2026.sql` section 4).
+  When fixing this for legacy data, the swap is: set `project_id`,
+  null `cost_centre`. Failing to null `cost_centre` will violate the
+  check constraint and the UPDATE will fail mid-transaction.
 
 ## Architecture at a glance
 
@@ -254,14 +266,24 @@ Core tables:
   sharepoint_folder_id, sharepoint_quote_folder_id, project_manager_id,
   start_date, completion_date, created_by, created_at, updated_at)` —
   status in {`In Progress`, `On Hold`, `Complete`, `Archived`, `Cancelled`}.
-  `project_number` mirrors the source quote with `Q` swapped for `C`
-  (`Q260502` → `C260502`). Created automatically when a quote's status
-  transitions to `won` via `convertQuoteToProject()` in shared.js.
+  `project_number` has three prefix conventions:
+  - **`C######`** — BAMA projects converted from a won Quote
+    (`Q260502` → `C260502`). Created automatically via
+    `convertQuoteToProject()` in shared.js when a quote transitions to
+    `won`. `source_quote_id` FKs to the originating `Tenders` row.
+  - **`BC######`** — Babcock projects converted from a won Babcock
+    Quote (`BQ###` → `BC###`). Created via the Babcock cascade flow.
+  - **`S####`** — legacy / pre-ERP project references (e.g. `S1965 -
+    Brookhurst Farm`, `S1982`, `S1998`). Imported manually or carried
+    over from the spreadsheet era; no `source_quote_id`. Still appear
+    in Project Tracker, kiosk pickers, LabourLog (`S/C-prefix` are
+    "productive"), and PO `job_number`. New S-refs aren't allocated
+    by the ERP — they're only inserted by data imports.
   SharePoint folders auto-created flat under `Projects/{C-ref - Client - Project}/`
   (no year folder layer — different from Quotation/ which is grouped per year)
   with 9 standard subfolders (`00 - RAMS` through `08 - Application for payment`)
-  and the source quote folder contents copied into `03 - Quote`.
-  `source_quote_id` FKs back to the originating Tenders row.
+  and the source quote folder contents copied into `03 - Quote`. S-prefix
+  projects predate the auto-folder convention and may have no SharePoint folder.
 
 ## Payroll rules (BAMA-specific)
 

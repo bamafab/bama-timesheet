@@ -3541,3 +3541,29 @@ IF NOT EXISTS (SELECT 1 FROM dbo.PurchaseOrders WHERE reference = N'P260529')
          N'Mateusz Braczyk', '2026-05-19', GETUTCDATE();
 
 PRINT 'Purchase Orders inserted.';
+
+-- ──────────────────────────────────────────────────────────
+-- 4. LINK POs TO PROJECTS
+-- ──────────────────────────────────────────────────────────
+-- Every PO above was inserted with the project reference stuffed into
+-- cost_centre + job_number, and project_id NULL — because at the time the
+-- import was first written, the matching Projects rows didn't all exist.
+--
+-- Now that the Projects table is populated (including S-prefix legacy
+-- projects), this block links every PO whose job_number matches a real
+-- Projects.project_number. It swaps cost_centre -> NULL because the
+-- CK_PurchaseOrders_ProjectXorCostCentre check constraint requires
+-- exactly one of project_id / cost_centre to be set.
+--
+-- Idempotent: filters to project_id IS NULL only. Safe to re-run.
+-- ──────────────────────────────────────────────────────────
+
+UPDATE po
+   SET po.project_id  = p.id,
+       po.cost_centre = NULL,
+       po.updated_at  = GETUTCDATE()
+  FROM dbo.PurchaseOrders po
+  JOIN dbo.Projects p ON p.project_number = po.job_number
+ WHERE po.project_id IS NULL;
+
+PRINT CONCAT('POs linked to Projects: ', @@ROWCOUNT);
