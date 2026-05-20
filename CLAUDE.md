@@ -470,6 +470,20 @@ hub.html and steel-database.html have no modals.
 Tracked here so Claude Code has context when a related question comes up —
 none of this is built yet.
 
+- **⚠ URGENT — 2dp rounding on all financial calculations** — Floating point
+  accumulation across line items produces values like £1,290.2999... which are
+  stored as `+grandTotal.toFixed(2)` = £1,290.30 but can display incorrectly
+  elsewhere (e.g. £1,291 in some render paths). Fix: every intermediate
+  calculation that feeds a monetary total must round to 2dp at each step
+  (`Math.round(x * 100) / 100`), not just at the final `.toFixed(2)` before
+  storage. Affects: Babcock quote line item accumulation (`grandTotal +=
+  ourPrice` in the generate flow), the marked-up total preview
+  (`updateBabcockMarkedUpTotal`), the edit line items flow, and any other place
+  line items are summed. Also audit `fmtGBP` usage — multiple local definitions
+  exist; consolidate to one shared function. The "PO value sent" in the Bama SW
+  Invoice Received modal derives from `total_value` so fixing at source fixes
+  downstream too.
+
 - **Mobile clock-in page** — PIN-based, no Microsoft login. Standalone page
   aimed at site staff with no work account. Will need a server-side PIN check
   (see the PIN warning under Auth) and its own scoped API surface.
