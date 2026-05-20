@@ -25384,7 +25384,7 @@ async function openNewInvoiceModal() {
 
   // Allocate the next ref so the user sees what they're about to create
   try {
-    const r = await api.get('/api/invoices/next-ref?kind=invoice');
+    const r = await api.get('/api/invoices-next-ref?kind=invoice');
     document.getElementById('invNewRef').value = r?.ref || 'INV????';
   } catch (e) {
     document.getElementById('invNewRef').value = 'INV????';
@@ -25402,7 +25402,7 @@ function closeInvNewModal() {
 async function onInvKindChange() {
   const kind = document.getElementById('invNewKind').value;
   try {
-    const r = await api.get(`/api/invoices/next-ref?kind=${encodeURIComponent(kind)}`);
+    const r = await api.get(`/api/invoices-next-ref?kind=${encodeURIComponent(kind)}`);
     document.getElementById('invNewRef').value = r?.ref || '????';
   } catch (e) { /* show placeholder */ }
 }

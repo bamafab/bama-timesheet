@@ -328,7 +328,7 @@ app.http('invoices-list', {
 app.http('invoices-next-ref', {
     methods: ['GET'],
     authLevel: 'anonymous',
-    route: 'invoices/next-ref',
+    route: 'invoices-next-ref',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
         if (auth.status) return auth;
