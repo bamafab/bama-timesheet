@@ -22911,6 +22911,37 @@ async function loadPoTracker() {
   renderPoTracker();
 }
 
+// Period toggle for the spend KPI tile.
+// 'thisMonth' | 'lastMonth' | 'ytd'
+let _poSpendPeriod = 'thisMonth';
+
+// Return { start, end, label } for the selected period.
+// All boundaries are inclusive on the left, exclusive on the right.
+function _poSpendRange(period) {
+  const now = new Date();
+  const y = now.getUTCFullYear();
+  const m = now.getUTCMonth(); // 0-indexed
+  if (period === 'lastMonth') {
+    const start = new Date(Date.UTC(y, m - 1, 1));
+    const end   = new Date(Date.UTC(y, m, 1));
+    return { start, end, label: 'Last Month' };
+  }
+  if (period === 'ytd') {
+    const start = new Date(Date.UTC(y, 0, 1));
+    const end   = new Date(Date.UTC(y + 1, 0, 1));
+    return { start, end, label: 'YTD ' + y };
+  }
+  // thisMonth (default)
+  const start = new Date(Date.UTC(y, m, 1));
+  const end   = new Date(Date.UTC(y, m + 1, 1));
+  return { start, end, label: 'This Month' };
+}
+
+function setPoSpendPeriod(period) {
+  _poSpendPeriod = period;
+  renderPoKpis();
+}
+
 function renderPoKpis() {
   const tiles = document.getElementById('poKpiTiles');
   if (!tiles) return;
@@ -22918,12 +22949,13 @@ function renderPoKpis() {
   const received   = _poList.filter(p => p.status === 'Received').length;
   const closed     = _poList.filter(p => p.status === 'Closed').length;
 
-  // "This month" spend = sum of total_value for POs created in current month
-  const now = new Date();
-  const yyMM = `${String(now.getUTCFullYear()).padStart(4, '0')}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
-  const thisMonthTotal = _poList
-    .filter(p => (p.created_at || '').startsWith(yyMM))
-    .reduce((s, p) => s + (Number(p.total_value) || 0), 0);
+  // Period-aware spend total (replaces fixed "this month" tile)
+  const { start, end, label } = _poSpendRange(_poSpendPeriod);
+  const spendTotal = _poList.reduce((s, p) => {
+    const d = p.created_at ? new Date(p.created_at) : null;
+    if (!d || isNaN(d)) return s;
+    return (d >= start && d < end) ? s + (Number(p.total_value) || 0) : s;
+  }, 0);
 
   // Variance flagged = POs with an invoice_value differing from total_value by > £0.01
   const variance = _poList.filter(p =>
@@ -22932,12 +22964,33 @@ function renderPoKpis() {
     Math.abs(Number(p.invoice_value) - Number(p.total_value || 0)) > 0.01
   ).length;
 
+  // Build the period toggle: 3 segmented buttons inside the spend tile
+  const seg = (token, txt) => {
+    const active = _poSpendPeriod === token;
+    return `<button type="button" onclick="setPoSpendPeriod('${token}')"
+      style="background:${active ? 'var(--accent)' : 'transparent'};
+             color:${active ? '#fff' : 'var(--muted)'};
+             border:1px solid var(--border);
+             padding:3px 9px;font-size:10px;font-weight:600;
+             border-radius:6px;cursor:pointer;letter-spacing:.3px">${txt}</button>`;
+  };
+  const spendToggleTile = `
+    <div class="card" style="padding:12px 14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:4px">
+        <div style="font-size:11px;color:var(--muted);letter-spacing:.5px;text-transform:uppercase">💷 ${label}</div>
+      </div>
+      <div style="font-size:22px;font-weight:700;font-family:var(--font-mono);margin-top:2px">${fmtMoneyFull(spendTotal)}</div>
+      <div style="display:flex;gap:4px;margin-top:8px">
+        ${seg('thisMonth', 'This Mo')}${seg('lastMonth', 'Last Mo')}${seg('ytd', 'YTD')}
+      </div>
+    </div>`;
+
   tiles.innerHTML = `
     ${kpiTile('🟢 Open',       open,     'open POs awaiting delivery')}
     ${kpiTile('📦 Received',   received, 'delivered, pending invoice/payment')}
     ${kpiTile('✅ Closed',     closed,   'paid and complete')}
     ${kpiTile('⚠️ Variance',   variance, 'invoice ≠ PO total')}
-    ${kpiTile('💷 This Month', fmtMoneyFull(thisMonthTotal), 'POs raised this month')}
+    ${spendToggleTile}
   `;
 }
 
@@ -22975,6 +23028,22 @@ function _poSortValue(p, col) {
     default:               return '';
   }
 }
+function _updatePoSearchClearBtn() {
+  const input = document.getElementById('poTrackerSearch');
+  const btn   = document.getElementById('poTrackerSearchClear');
+  if (!input || !btn) return;
+  btn.style.display = input.value ? '' : 'none';
+}
+
+function clearPoTrackerSearch() {
+  const input = document.getElementById('poTrackerSearch');
+  if (!input) return;
+  input.value = '';
+  _updatePoSearchClearBtn();
+  renderPoTracker();
+  input.focus();
+}
+
 function renderPoTracker() {
   const tbody = document.getElementById('poTrackerTbody');
   if (!tbody) return;

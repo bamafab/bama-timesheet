@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Purchase Orders</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260519c">
+<link rel="stylesheet" href="bama.css?v=20260519d">
 <style>.mgr-content { max-width: none !important; }</style>
 </head>
 <body>
@@ -449,10 +449,18 @@
     <!-- Filters -->
     <div class="card" style="margin-bottom:16px;padding:14px 16px">
       <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
-        <input type="text" class="field-input" id="poTrackerSearch"
-               placeholder="Search reference, supplier, project…"
-               style="flex:1;min-width:220px;font-size:13px"
-               oninput="renderPoTracker()">
+        <div style="flex:1;min-width:220px;position:relative">
+          <input type="text" class="field-input" id="poTrackerSearch"
+                 placeholder="Search reference, supplier, project…"
+                 style="width:100%;font-size:13px;padding-right:34px"
+                 oninput="renderPoTracker();_updatePoSearchClearBtn()">
+          <button type="button" id="poTrackerSearchClear" tabindex="-1"
+                  onclick="clearPoTrackerSearch()"
+                  title="Clear search"
+                  style="display:none;position:absolute;right:6px;top:50%;transform:translateY(-50%);
+                         background:transparent;border:none;color:var(--muted);font-size:18px;
+                         line-height:1;cursor:pointer;padding:4px 8px;border-radius:4px">×</button>
+        </div>
         <select class="field-input" id="poTrackerStatusFilter"
                 style="min-width:160px;font-size:13px"
                 onchange="renderPoTracker()">
@@ -500,6 +508,6 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260519l"></script>
+<script src="shared.js?v=20260519m"></script>
 </body>
 </html>
