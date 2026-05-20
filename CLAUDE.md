@@ -187,7 +187,7 @@ on `userAccessData.users[name].permissions`.
 Permission keys (`PERMISSION_DEFS` / `PERM_TO_TAB`):
 `byProject, byEmployee, clockingInOut, payroll, archive, staff, holidays, reports,
 settings, userAccess, draftsmanMode, tenders, editQuotes, viewQuotes,
-editProjects, viewProjects`.
+editProjects, viewProjects, viewPurchaseOrders, editPurchaseOrders, invoicing`.
 
 ⚠️ When adding new permission keys, update **all four places**:
 1. `PERMISSION_DEFS` array in shared.js
@@ -498,10 +498,36 @@ none of this is built yet.
   project supported via the `ProjectQuotes` link table — primary quote
   is the originating won quote and cannot be detached. Per-line % drives
   a value-weighted project progress figure shown on the Labour tile.
-  **Still to do (Phase 2+)**: AFP / invoice generation (PDF, sequential
-  numbering, SharePoint storage in `08 - Application for payment`),
-  Running Cost source (POs / supplier invoices — schema TBD), and
-  optional `viewProjectFinancials` permission split.
+  **Phase 2 (Invoice Tracker) — Commit 1 done, Commits 2 + 3 queued**.
+  See "Invoice Tracker" section below for the full feature.
+  **Still to do (Phase 2+)**: Running Cost source (POs / supplier
+  invoices — schema landed, needs aggregation tile), and optional
+  `viewProjectFinancials` permission split.
+- **Invoice Tracker** — standalone `invoice-tracker.html` page with four
+  tabs (AFPs · Sales Invoices · Supplier Invoices · Receipts). Gated by
+  the `invoicing` permission. Backed by `Applications`,
+  `ApplicationLineItems`, `Invoices`, `InvoiceLineItems`,
+  `InvoicePayments`, `Receipts`, `InvoiceAttachments` tables (see
+  `api/sql/add-invoicing.sql`) plus `PurchaseOrders.supplier_invoice_*`
+  extension columns. **Commit 1 done** — schema, `invoicing.js` API
+  stubs (GET endpoints functional, mutating endpoints 501), permission
+  wired through all 5 places, page shell with PIN gate, four-tab layout,
+  KPI tiles, empty-state tables, sidebar cross-nav on all tracker
+  pages, Hub tile, INV0257 seed row so the first allocated invoice ref
+  is INV0258. **Commit 2 (queued)** — Sales Invoice CRUD (incl. pro
+  formas + credit notes), Receipts tab (OCR via Claude API), Supplier
+  Invoices tab (PO extension), shared PDF template family (PO + Invoice
+  using the same letterhead, since PO PDF generation was never built).
+  **Commit 3 (queued)** — AFPs full lifecycle (Draft → Submitted →
+  Certified → Invoiced), SOV snapshot from `QuoteLineItems` with manual
+  change-order lines, payment certificate upload + Claude OCR, Generate
+  Invoice flow, AFP PDF rendering. Numbering allocators implemented:
+  `nextInvoiceRef(kind)` (INV / PRO share sequence, CN separate),
+  `nextAfpRef(projectId)` (per-project AFP01, AFP02…). SharePoint paths
+  locked: Sales Invoices → `01 - Accounts/03 - Sales Invoices/YYYY/MM/`,
+  Supplier Invoices → `01 - Accounts/04 - Supplier Invoices/YYYY/MM/`,
+  Receipts → `01 - Accounts/05 - Receipts/YYYY/MM/{category}/`,
+  AFPs → per-project `Valuations/` folder.
 - **RBAC** — real role-based permissions enforced server-side. Current
   `UserPermissions` flags become the source of truth the API checks, not just
   what the UI hides. Blocker: move PIN verification server-side first.

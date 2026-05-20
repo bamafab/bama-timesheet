@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BAMA Invoice Tracker</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="bama.css?v=20260520a">
+<style>
+  .mgr-content { max-width: none !important; }
+
+  /* ── Invoice tracker tab bar ── */
+  .inv-tab-bar {
+    display: flex;
+    gap: 6px;
+    background: var(--surface);
+    padding: 6px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    margin-bottom: 16px;
+    width: fit-content;
+  }
+  .inv-tab-btn {
+    padding: 8px 18px;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background .15s, color .15s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .inv-tab-btn:hover { background: var(--surface2); }
+  .inv-tab-btn.active {
+    background: var(--accent);
+    color: #fff;
+  }
+  .inv-tab-btn .inv-tab-icon { font-size: 15px; }
+  .inv-tab-btn .inv-tab-count {
+    background: rgba(255,255,255,.18);
+    color: inherit;
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 8px;
+    font-weight: 600;
+  }
+</style>
+</head>
+<body>
+<div class="loading-bar" id="loadingBar" style="width:0"></div>
+
+<!-- TOP BAR -->
+<div class="topbar">
+  <a href="hub.html" style="text-decoration:none">
+    <div class="logo">
+      <span style="color:#D0021B">BAMA</span>
+      <span style="color:#D0021B">FABRICATION</span>
+      <span> INVOICE TRACKER</span>
+    </div>
+  </a>
+  <div style="position:absolute;left:50%;transform:translate(-50%,-50%);top:50%">
+    <div class="clock-display" id="liveClock"
+         style="font-size:15px;font-weight:700;letter-spacing:.5px">--:-- --</div>
+  </div>
+  <div class="topbar-right">
+    <a href="hub.html" style="text-decoration:none">
+      <button class="manager-btn">&#8592; Hub</button>
+    </a>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<!-- ═══════════════════════════════════════
+     LOGIN SCREEN (employee picker)
+══════════════════════════════════════════ -->
+<div class="screen active" id="screenInvSelect">
+  <div class="mgr-select-wrap">
+    <div class="mgr-select-title">INVOICE TRACKER</div>
+    <div class="mgr-select-sub">Select your name to log in</div>
+    <div class="mgr-emp-grid" id="invEmployeeGrid">
+      <div class="empty-state"><div class="spinner"></div></div>
+    </div>
+    <div style="text-align:center;margin-top:24px">
+      <button class="btn btn-ghost" onclick="window.location.href='hub.html'">&#8592; Back to Hub</button>
+    </div>
+  </div>
+</div>
+
+<!-- PIN MODAL -->
+<div class="modal-overlay" id="invPinModal">
+  <div class="modal" style="max-width:340px;text-align:center">
+    <div class="modal-title">🔐 Enter PIN</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:16px" id="invPinUser">—</div>
+    <input type="password" class="field-input" id="invPinInput" maxlength="6"
+      style="text-align:center;font-size:24px;letter-spacing:8px;max-width:180px;margin:0 auto"
+      onkeydown="if(event.key==='Enter')verifyInvPin()">
+    <div id="invPinError" style="color:var(--red);font-size:12px;margin-top:8px;min-height:18px"></div>
+    <div class="modal-actions" style="margin-top:16px">
+      <button class="btn btn-ghost"
+              onclick="document.getElementById('invPinModal').classList.remove('active')">Cancel</button>
+      <button class="btn btn-primary" onclick="verifyInvPin()">Unlock</button>
+    </div>
+  </div>
+</div>
+
+<!-- CONFIRM MODAL (used by showConfirmAsync) -->
+<div class="modal-overlay" id="confirmModal">
+  <div class="modal" style="max-width:440px;width:95vw">
+    <div class="modal-title" id="confirmTitle">Confirm</div>
+    <div id="confirmMsg" style="color:var(--muted);font-size:14px"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost"
+              onclick="document.getElementById('confirmModal').classList.remove('active')">Cancel</button>
+      <button class="btn btn-primary" id="confirmOk" onclick="">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     MAIN LAYOUT — appears after PIN
+══════════════════════════════════════════ -->
+<div class="mgr-layout" id="invLayout" style="display:none">
+
+  <!-- Sidebar cross-nav (same canonical sidebar as the rest of the tracker family) -->
+  <nav class="mgr-sidebar" id="invSidebar">
+    <div class="sidebar-nav-group">
+      <button class="sidebar-nav-item" id="sidebarBtnTenders" onclick="navToTenders()">
+        <span class="sidebar-nav-icon">📋</span> Tenders
+      </button>
+      <button class="sidebar-nav-item" id="sidebarBtnQuotations" onclick="navToQuotes()">
+        <span class="sidebar-nav-icon">📊</span> Quotations
+      </button>
+      <button class="sidebar-nav-item" id="sidebarBtnBabcockQuotes" onclick="navToBabcock()">
+        <span class="sidebar-nav-icon">⚓</span> Babcock Quotes
+      </button>
+      <button class="sidebar-nav-item" id="sidebarBtnProjectTracker" onclick="navToProjectTracker()">
+        <span class="sidebar-nav-icon">🏗️</span> Project Tracker
+      </button>
+      <button class="sidebar-nav-item" id="sidebarBtnPurchaseOrders" onclick="navToPoTracker()">
+        <span class="sidebar-nav-icon">🧾</span> Purchase Orders
+      </button>
+      <button class="sidebar-nav-item active">
+        <span class="sidebar-nav-icon">💰</span> Invoice Tracker
+      </button>
+      <hr class="sidebar-nav-divider">
+      <button class="sidebar-nav-item sidebar-secondary-item" onclick="navToTenders()">
+        <span class="sidebar-nav-icon">🏢</span> Clients
+      </button>
+    </div>
+  </nav>
+
+  <!-- Content -->
+  <div class="mgr-content">
+    <div class="mgr-header">
+      <div>
+        <div class="mgr-title">INVOICE TRACKER</div>
+        <div style="color:var(--muted);font-size:13px">
+          BAMA Fabrication · AFPs · Sales Invoices · Supplier Invoices · Receipts
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center">
+        <button class="btn btn-ghost" id="invNewAfpBtn" onclick="openNewAfpModal()"
+                style="border-color:var(--accent);color:var(--accent)">+ New AFP</button>
+        <button class="btn btn-ghost" id="invNewReceiptBtn" onclick="openNewReceiptModal()">+ New Receipt</button>
+        <button class="btn btn-primary" id="invNewInvoiceBtn" onclick="openNewInvoiceModal()">+ New Invoice</button>
+        <a href="hub.html" style="text-decoration:none"><button class="btn btn-ghost">Exit</button></a>
+      </div>
+    </div>
+
+    <!-- KPI tiles -->
+    <div id="invKpiTiles"
+         style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:16px">
+      <!-- populated by renderInvKpis() -->
+    </div>
+
+    <!-- Tab bar -->
+    <div class="inv-tab-bar">
+      <button class="inv-tab-btn" id="invTabBtn-afps" onclick="switchInvTab('afps')">
+        <span class="inv-tab-icon">📄</span> AFPs
+      </button>
+      <button class="inv-tab-btn active" id="invTabBtn-sales" onclick="switchInvTab('sales')">
+        <span class="inv-tab-icon">🧾</span> Sales Invoices
+      </button>
+      <button class="inv-tab-btn" id="invTabBtn-supplier" onclick="switchInvTab('supplier')">
+        <span class="inv-tab-icon">📥</span> Supplier Invoices
+      </button>
+      <button class="inv-tab-btn" id="invTabBtn-receipts" onclick="switchInvTab('receipts')">
+        <span class="inv-tab-icon">💸</span> Receipts
+      </button>
+    </div>
+
+    <!-- ═══ Pane: AFPs ═══ -->
+    <div id="invPane-afps" style="display:none">
+      <div class="card" style="padding:0;overflow:hidden">
+        <div style="overflow-x:auto">
+          <table class="babcock-tracker-table">
+            <thead>
+              <tr>
+                <th style="min-width:80px">AFP Ref</th>
+                <th style="min-width:220px">Project</th>
+                <th style="min-width:120px">Period</th>
+                <th style="min-width:120px;text-align:right">Applied (£)</th>
+                <th style="min-width:120px;text-align:right">Certified (£)</th>
+                <th style="min-width:110px">Status</th>
+                <th style="min-width:100px">Submitted</th>
+                <th style="width:40px"></th>
+              </tr>
+            </thead>
+            <tbody id="invAfpsTbody">
+              <tr><td colspan="8" class="empty-state" style="padding:30px"><div class="spinner"></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ Pane: Sales Invoices ═══ -->
+    <div id="invPane-sales">
+      <div class="card" style="padding:0;overflow:hidden">
+        <div style="overflow-x:auto">
+          <table class="babcock-tracker-table">
+            <thead>
+              <tr>
+                <th style="min-width:110px">Ref</th>
+                <th style="min-width:200px">Customer</th>
+                <th style="min-width:100px">Project</th>
+                <th style="min-width:100px">Date</th>
+                <th style="min-width:100px">Due</th>
+                <th style="min-width:110px;text-align:right">Net (£)</th>
+                <th style="min-width:100px;text-align:right">VAT (£)</th>
+                <th style="min-width:120px;text-align:right">Gross (£)</th>
+                <th style="min-width:120px">Status</th>
+              </tr>
+            </thead>
+            <tbody id="invSalesTbody">
+              <tr><td colspan="9" class="empty-state" style="padding:30px"><div class="spinner"></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ Pane: Supplier Invoices ═══ -->
+    <div id="invPane-supplier" style="display:none">
+      <div class="card" style="padding:0;overflow:hidden">
+        <div style="overflow-x:auto">
+          <table class="babcock-tracker-table">
+            <thead>
+              <tr>
+                <th style="min-width:110px">PO Ref</th>
+                <th style="min-width:130px">Supplier Inv #</th>
+                <th style="min-width:180px">Supplier</th>
+                <th style="min-width:130px">Project / CC</th>
+                <th style="min-width:100px">Inv Date</th>
+                <th style="min-width:120px;text-align:right">Gross (£)</th>
+                <th style="min-width:130px">Reconciliation</th>
+                <th style="min-width:80px">Paid</th>
+              </tr>
+            </thead>
+            <tbody id="invSupplierTbody">
+              <tr><td colspan="8" class="empty-state" style="padding:30px"><div class="spinner"></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ Pane: Receipts ═══ -->
+    <div id="invPane-receipts" style="display:none">
+      <div class="card" style="padding:0;overflow:hidden">
+        <div style="overflow-x:auto">
+          <table class="babcock-tracker-table">
+            <thead>
+              <tr>
+                <th style="min-width:100px">Date</th>
+                <th style="min-width:180px">Supplier</th>
+                <th style="min-width:130px">Category</th>
+                <th style="min-width:140px">Project / CC</th>
+                <th style="min-width:120px">Method</th>
+                <th style="min-width:140px">Paid By</th>
+                <th style="min-width:120px;text-align:right">Gross (£)</th>
+                <th style="min-width:80px">Reconciled</th>
+              </tr>
+            </thead>
+            <tbody id="invReceiptsTbody">
+              <tr><td colspan="8" class="empty-state" style="padding:30px"><div class="spinner"></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script src="shared.js?v=20260520a"></script>
+</body>
+</html>

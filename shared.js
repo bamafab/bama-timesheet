@@ -9029,7 +9029,8 @@ async function loadUserAccessData() {
           editProjects: !!row.edit_projects,
           viewProjects: !!row.view_projects,
           viewPurchaseOrders: !!row.view_purchase_orders,
-          editPurchaseOrders: !!row.edit_purchase_orders
+          editPurchaseOrders: !!row.edit_purchase_orders,
+          invoicing: !!row.invoicing
         }
       };
     });
@@ -9088,7 +9089,8 @@ const PERMISSION_DEFS = [
   { key: 'editProjects', label: 'Edit Projects', desc: 'Edit project tracker entries (status, dates, comments)' },
   { key: 'viewProjects', label: 'View Projects', desc: 'View project tracker (read-only)' },
   { key: 'viewPurchaseOrders', label: 'View Purchase Orders', desc: 'View the PO tracker (read-only)' },
-  { key: 'editPurchaseOrders', label: 'Edit Purchase Orders', desc: 'Raise, edit, approve and send purchase orders' }
+  { key: 'editPurchaseOrders', label: 'Edit Purchase Orders', desc: 'Raise, edit, approve and send purchase orders' },
+  { key: 'invoicing', label: 'Invoicing', desc: 'Full access to the Invoice Tracker (AFPs, Sales / Supplier Invoices, Receipts)' }
 ];
 
 const PERM_TO_TAB = {
@@ -12413,7 +12415,8 @@ async function toggleUserPermission(empName, permKey, enabled) {
         reports: false, settings: false, userAccess: false, draftsmanMode: false,
         tenders: false, editQuotes: false, viewQuotes: false,
         editProjects: false, viewProjects: false,
-        viewPurchaseOrders: false, editPurchaseOrders: false
+        viewPurchaseOrders: false, editPurchaseOrders: false,
+        invoicing: false
       }
     };
   }
@@ -14039,6 +14042,7 @@ function updateCrossNavSidebar() {
   set('sidebarBtnBabcockQuotes',   !!perms.tenders,                              'Babcock Quotes');
   set('sidebarBtnProjectTracker',  !!(perms.viewProjects || perms.editProjects),'Project Tracker');
   set('sidebarBtnPurchaseOrders',  !!(perms.viewPurchaseOrders || perms.editPurchaseOrders), 'Purchase Orders');
+  set('sidebarBtnInvoicing',       !!perms.invoicing,                            'Invoice Tracker');
 }
 
 // Back-compat aliases — call sites are scattered.
@@ -18362,6 +18366,7 @@ function navFromReportsToTenders()        { window.location.href = 'tenders.html
 function navFromReportsToQuotes()         { window.location.href = 'quotes.html'; }
 function navFromReportsToBabcock()        { window.location.href = 'babcock.html'; }
 function navFromReportsToProjectTracker() { window.location.href = 'project-tracker.html'; }
+function navFromReportsToInvoicing()      { window.location.href = 'invoice-tracker.html'; }
 
 let _pendingReportsUser = null;
 
@@ -24793,6 +24798,15 @@ function navToPoTracker() {
   window.location.href = 'po-tracker.html';
 }
 
+function navToInvoicing() {
+  const perms = getUserPermissions(currentManagerUser) || {};
+  if (!perms.invoicing) {
+    toast('You don\'t have permission to access the Invoice Tracker', 'error');
+    return;
+  }
+  window.location.href = 'invoice-tracker.html';
+}
+
 // Minimal HTML escape — same impl used across the file. Defined locally as
 // a fallback in case the shared one is hoisted later in the file ordering.
 if (typeof window.escapeHtml !== 'function') {
@@ -24817,6 +24831,7 @@ const CURRENT_PAGE = (() => {
   if (path.includes('quotes')) return 'quotes';
   if (path.includes('project-tracker')) return 'projectTracker';
   if (path.includes('po-tracker')) return 'poTracker';
+  if (path.includes('invoice-tracker')) return 'invoiceTracker';
   if (path.includes('reports')) return 'reports';
   if (path.includes('projects') || path.includes('project')) return 'projects';
   if (path.includes('hub')) return 'hub';
@@ -24871,7 +24886,7 @@ async function init() {
     : Promise.resolve();
 
   // User access needed on manager and office pages (still from SharePoint for now)
-  const userAccessPromise = (CURRENT_PAGE === 'manager' || CURRENT_PAGE === 'office' || CURRENT_PAGE === 'projects' || CURRENT_PAGE === 'projectTracker' || CURRENT_PAGE === 'poTracker' || CURRENT_PAGE === 'tenders' || CURRENT_PAGE === 'quotes' || CURRENT_PAGE === 'babcock' || CURRENT_PAGE === 'reports')
+  const userAccessPromise = (CURRENT_PAGE === 'manager' || CURRENT_PAGE === 'office' || CURRENT_PAGE === 'projects' || CURRENT_PAGE === 'projectTracker' || CURRENT_PAGE === 'poTracker' || CURRENT_PAGE === 'invoiceTracker' || CURRENT_PAGE === 'tenders' || CURRENT_PAGE === 'quotes' || CURRENT_PAGE === 'babcock' || CURRENT_PAGE === 'reports')
     ? Promise.race([
         loadUserAccessData(),
         new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 6000))
@@ -24938,6 +24953,8 @@ async function init() {
     initProjectTrackerPage();
   } else if (CURRENT_PAGE === 'poTracker') {
     initPoTrackerPage();
+  } else if (CURRENT_PAGE === 'invoiceTracker') {
+    initInvoiceTrackerPage();
   } else if (CURRENT_PAGE === 'babcock') {
     initBabcockPage();
   } else if (CURRENT_PAGE === 'reports') {
@@ -24950,3 +24967,345 @@ async function init() {
 }
 
 init();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// INVOICE TRACKER — page logic (invoice-tracker.html)
+// ═══════════════════════════════════════════════════════════════════════════
+// Phase 1, Commit 1 — page shell only. Login screen + PIN gate + four tabs
+// (AFPs, Sales Invoices, Supplier Invoices, Receipts) wired up to empty
+// placeholder views. Commits 2 + 3 will fill in CRUD, PDFs, OCR and AFP flow.
+// ───────────────────────────────────────────────────────────────────────────
+
+let _invPendingPinUser = null;
+let _invCurrentTab = 'sales';           // 'afps' | 'sales' | 'supplier' | 'receipts'
+let _invAfpList = [];
+let _invInvoiceList = [];
+let _invSupplierPoList = [];            // POs with received supplier invoices
+let _invReceiptList = [];
+let _invProjectsCache = [];
+let _invClientsCache = [];
+
+async function initInvoiceTrackerPage() {
+  const authed = sessionStorage.getItem('bama_mgr_authed');
+  if (authed) {
+    currentManagerUser = authed;
+    const perms = getUserPermissions(currentManagerUser) || {};
+    if (perms.invoicing) {
+      document.getElementById('screenInvSelect').style.display = 'none';
+      document.getElementById('invLayout').style.display = 'flex';
+      updateCrossNavSidebar();
+      await loadInvoicingSupportData();
+      await loadInvoicingData();
+      switchInvTab(_invCurrentTab);
+      return;
+    }
+  }
+  renderInvEmployeeGrid();
+}
+
+function renderInvEmployeeGrid() {
+  const grid = document.getElementById('invEmployeeGrid');
+  if (!grid) return;
+  const empList = (state.timesheetData.employees || [])
+    .filter(e => e.active !== false && (e.staffType || 'workshop') === 'office');
+  if (!empList.length) {
+    grid.innerHTML = '<div class="empty-state" style="padding:30px"><div style="font-size:28px;margin-bottom:10px">&#128101;</div><div>No office staff set up yet.</div></div>';
+    return;
+  }
+  grid.innerHTML = empList.map(emp => {
+    const ini = (emp.name || '').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+    const col = empColor(emp.name);
+    return `
+      <div class="emp-btn" onclick="selectInvEmployee('${emp.name.replace(/'/g, "\\'")}')">
+        <div class="emp-avatar" style="width:48px;height:48px;font-size:19px;background:linear-gradient(135deg,${col},#3e1a00)">${ini}</div>
+        <div class="emp-name" style="font-size:13px">${emp.name}</div>
+        <div style="font-size:10px;color:var(--subtle);margin-top:3px">${emp.hasPin ? '&#128274; PIN set' : '&#128275; No PIN'}</div>
+      </div>`;
+  }).join('');
+}
+
+function selectInvEmployee(name) {
+  const emp = (state.timesheetData.employees || []).find(e => e.name === name);
+  if (!emp) return;
+  if (!emp.hasPin) { toast('No PIN set for this user.', 'error'); return; }
+  _invPendingPinUser = { name, empId: emp.id };
+  document.getElementById('invPinUser').textContent = name;
+  document.getElementById('invPinInput').value = '';
+  document.getElementById('invPinError').textContent = '';
+  document.getElementById('invPinModal').classList.add('active');
+  setTimeout(() => document.getElementById('invPinInput').focus(), 200);
+}
+
+async function verifyInvPin() {
+  if (!_invPendingPinUser) return;
+  const pin = document.getElementById('invPinInput').value;
+  if (!pin) return;
+  try {
+    const result = await api.post('/api/auth/verify-pin', { employee_id: _invPendingPinUser.empId, pin });
+    if (!result || !result.valid) {
+      document.getElementById('invPinError').textContent = (result && result.reason) || 'Incorrect PIN';
+      document.getElementById('invPinInput').value = '';
+      return;
+    }
+    currentManagerUser = _invPendingPinUser.name;
+    sessionStorage.setItem('bama_mgr_authed', currentManagerUser);
+    document.getElementById('invPinModal').classList.remove('active');
+
+    // Bootstrap: if nobody has invoicing perm yet, grant it to the first user in.
+    // Matches the existing pattern from manager/office/quotes bootstraps.
+    const anyHasInvoicing = Object.values(userAccessData.users || {})
+      .some(u => u.permissions && u.permissions.invoicing);
+    if (!anyHasInvoicing) {
+      try {
+        await api.put(`/api/user-access/${_invPendingPinUser.empId}`, { invoicing: true });
+        if (!userAccessData.users[currentManagerUser]) {
+          userAccessData.users[currentManagerUser] = { employee_id: _invPendingPinUser.empId, permissions: {} };
+        }
+        userAccessData.users[currentManagerUser].permissions.invoicing = true;
+        toast('Bootstrap: invoicing permission granted to ' + currentManagerUser, 'success');
+      } catch (e) {
+        console.warn('Bootstrap grant failed:', e);
+      }
+    }
+
+    const perms = getUserPermissions(currentManagerUser) || {};
+    if (!perms.invoicing) {
+      toast("You don't have permission to access the Invoice Tracker.", 'error');
+      currentManagerUser = null;
+      sessionStorage.removeItem('bama_mgr_authed');
+      return;
+    }
+    document.getElementById('screenInvSelect').style.display = 'none';
+    document.getElementById('invLayout').style.display = 'flex';
+    updateCrossNavSidebar();
+    await loadInvoicingSupportData();
+    await loadInvoicingData();
+    switchInvTab(_invCurrentTab);
+  } catch (err) {
+    document.getElementById('invPinError').textContent = 'PIN verification failed';
+    document.getElementById('invPinInput').value = '';
+  }
+}
+
+// ── Support data ──────────────────────────────────────────────────────────
+async function loadInvoicingSupportData() {
+  try {
+    const [projects, clients] = await Promise.all([
+      api.get('/api/projects').catch(() => []),
+      api.get('/api/clients').catch(() => [])
+    ]);
+    _invProjectsCache = Array.isArray(projects) ? projects : [];
+    _invClientsCache  = Array.isArray(clients)  ? clients  : [];
+  } catch (e) {
+    console.warn('Invoice tracker support data load failed:', e);
+  }
+}
+
+// ── Load the four streams ─────────────────────────────────────────────────
+async function loadInvoicingData() {
+  try {
+    const [afps, invoices, pos, receipts] = await Promise.all([
+      api.get('/api/applications').catch(() => []),
+      api.get('/api/invoices').catch(() => []),
+      api.get('/api/purchase-orders').catch(() => []),
+      api.get('/api/receipts').catch(() => [])
+    ]);
+    _invAfpList     = Array.isArray(afps)     ? afps     : [];
+    _invInvoiceList = Array.isArray(invoices) ? invoices : [];
+    // Supplier invoices = POs that have received a supplier invoice
+    _invSupplierPoList = (Array.isArray(pos) ? pos : [])
+      .filter(po => po.supplier_invoice_received_at);
+    _invReceiptList = Array.isArray(receipts) ? receipts : [];
+  } catch (e) {
+    console.warn('Invoice tracker data load failed:', e);
+  }
+  renderInvKpis();
+}
+
+// ── KPI tiles ─────────────────────────────────────────────────────────────
+function renderInvKpis() {
+  const el = document.getElementById('invKpiTiles');
+  if (!el) return;
+
+  const outstandingAR = _invInvoiceList
+    .filter(i => i.kind === 'invoice' && i.status !== 'Paid' && i.status !== 'Cancelled' && i.status !== 'Void')
+    .reduce((s, i) => s + Number(i.total_outstanding || i.gross_amount || 0), 0);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const overdueCount = _invInvoiceList
+    .filter(i => i.kind === 'invoice' && i.status !== 'Paid' && i.status !== 'Cancelled' && i.status !== 'Void'
+                  && i.due_date && i.due_date < today)
+    .length;
+
+  const awaitingCert = _invAfpList.filter(a => a.status === 'Submitted').length;
+
+  const supplierUnpaid = _invSupplierPoList
+    .filter(po => !po.paid_at)
+    .reduce((s, po) => s + Number(po.supplier_invoice_gross || po.total_value || 0), 0);
+
+  const tile = (label, value, hint) => `
+    <div class="card" style="padding:14px 16px">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted)">${escapeHtml(label)}</div>
+      <div style="font-size:22px;font-weight:700;margin-top:4px">${escapeHtml(value)}</div>
+      ${hint ? `<div style="font-size:11px;color:var(--subtle);margin-top:3px">${escapeHtml(hint)}</div>` : ''}
+    </div>`;
+
+  el.innerHTML =
+    tile('Outstanding AR', `£${outstandingAR.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 'Invoices not yet paid') +
+    tile('Overdue', String(overdueCount), 'Past due date, unpaid') +
+    tile('Awaiting Cert', String(awaitingCert), 'AFPs submitted, no certificate yet') +
+    tile('Supplier AP Unpaid', `£${supplierUnpaid.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 'Supplier invoices outstanding');
+}
+
+// ── Tab switching ─────────────────────────────────────────────────────────
+function switchInvTab(tab) {
+  _invCurrentTab = tab;
+  // Tab buttons
+  ['afps','sales','supplier','receipts'].forEach(t => {
+    const btn = document.getElementById('invTabBtn-' + t);
+    if (btn) {
+      btn.classList.toggle('active', t === tab);
+      btn.style.background = (t === tab) ? 'var(--accent)' : '';
+      btn.style.color = (t === tab) ? '#fff' : '';
+    }
+  });
+  // Panels
+  ['afps','sales','supplier','receipts'].forEach(t => {
+    const pane = document.getElementById('invPane-' + t);
+    if (pane) pane.style.display = (t === tab) ? '' : 'none';
+  });
+  // Render the active table
+  if (tab === 'afps')      renderInvAfpsTable();
+  if (tab === 'sales')     renderInvSalesTable();
+  if (tab === 'supplier')  renderInvSupplierTable();
+  if (tab === 'receipts')  renderInvReceiptsTable();
+}
+
+// ── Placeholder renderers (full bodies land in Commits 2 + 3) ────────────
+function renderInvAfpsTable() {
+  const tbody = document.getElementById('invAfpsTbody');
+  if (!tbody) return;
+  if (!_invAfpList.length) {
+    tbody.innerHTML = `<tr><td colspan="8" class="empty-state" style="padding:40px;text-align:center;color:var(--muted)">
+      <div style="font-size:32px;margin-bottom:8px">📄</div>
+      <div style="font-weight:600;margin-bottom:4px">No applications for payment yet</div>
+      <div style="font-size:12px">Click <b>+ New AFP</b> to create your first one. Available in Commit 3.</div>
+    </td></tr>`;
+    return;
+  }
+  tbody.innerHTML = _invAfpList.map(a => `
+    <tr>
+      <td style="font-family:var(--font-mono);font-weight:600">${escapeHtml(a.ref || '')}</td>
+      <td>${escapeHtml(a.project_number || '')} — ${escapeHtml(a.project_name || '')}</td>
+      <td>${escapeHtml(a.period_label || '')}</td>
+      <td style="text-align:right">£${Number(a.applied_gross || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}</td>
+      <td style="text-align:right">£${Number(a.certified_gross || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}</td>
+      <td>${invStatusBadge(a.status)}</td>
+      <td>${a.submitted_at ? new Date(a.submitted_at).toLocaleDateString('en-GB') : ''}</td>
+      <td style="text-align:center;color:var(--subtle)">⋯</td>
+    </tr>`).join('');
+}
+
+function renderInvSalesTable() {
+  const tbody = document.getElementById('invSalesTbody');
+  if (!tbody) return;
+  if (!_invInvoiceList.length) {
+    tbody.innerHTML = `<tr><td colspan="9" class="empty-state" style="padding:40px;text-align:center;color:var(--muted)">
+      <div style="font-size:32px;margin-bottom:8px">🧾</div>
+      <div style="font-weight:600;margin-bottom:4px">No invoices yet</div>
+      <div style="font-size:12px">Click <b>+ New Invoice</b> to create one. Full create flow available in Commit 2.</div>
+    </td></tr>`;
+    return;
+  }
+  tbody.innerHTML = _invInvoiceList.map(i => {
+    const customer = i.client_company_name || i.customer_text || '—';
+    const project  = i.project_number ? `${i.project_number}` : '';
+    const kindBadge = i.kind === 'pro_forma' ? `<span style="display:inline-block;padding:1px 6px;border-radius:8px;font-size:10px;background:rgba(255,165,0,.15);color:#ffa500;margin-right:4px">PRO</span> `
+                   : i.kind === 'credit_note' ? `<span style="display:inline-block;padding:1px 6px;border-radius:8px;font-size:10px;background:rgba(208,2,27,.15);color:var(--red);margin-right:4px">CN</span> `
+                   : '';
+    return `
+      <tr>
+        <td style="font-family:var(--font-mono);font-weight:600">${kindBadge}${escapeHtml(i.ref)}</td>
+        <td>${escapeHtml(customer)}</td>
+        <td>${escapeHtml(project)}</td>
+        <td>${i.invoice_date ? new Date(i.invoice_date).toLocaleDateString('en-GB') : ''}</td>
+        <td>${i.due_date ? new Date(i.due_date).toLocaleDateString('en-GB') : ''}</td>
+        <td style="text-align:right">£${Number(i.net_amount || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}</td>
+        <td style="text-align:right">£${Number(i.vat_amount || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}</td>
+        <td style="text-align:right">£${Number(i.gross_amount || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}</td>
+        <td>${invStatusBadge(i.status)}</td>
+      </tr>`;
+  }).join('');
+}
+
+function renderInvSupplierTable() {
+  const tbody = document.getElementById('invSupplierTbody');
+  if (!tbody) return;
+  if (!_invSupplierPoList.length) {
+    tbody.innerHTML = `<tr><td colspan="8" class="empty-state" style="padding:40px;text-align:center;color:var(--muted)">
+      <div style="font-size:32px;margin-bottom:8px">📥</div>
+      <div style="font-weight:600;margin-bottom:4px">No supplier invoices yet</div>
+      <div style="font-size:12px">Supplier invoices appear here once attached to a received PO. Available in Commit 2.</div>
+    </td></tr>`;
+    return;
+  }
+  tbody.innerHTML = _invSupplierPoList.map(po => `
+    <tr>
+      <td style="font-family:var(--font-mono);font-weight:600">${escapeHtml(po.reference || '')}</td>
+      <td>${escapeHtml(po.supplier_invoice_ref || '')}</td>
+      <td>${escapeHtml(po.supplier_name || '')}</td>
+      <td>${escapeHtml(po.job_number || po.cost_centre || '')}</td>
+      <td>${po.supplier_invoice_date ? new Date(po.supplier_invoice_date).toLocaleDateString('en-GB') : ''}</td>
+      <td style="text-align:right">£${Number(po.supplier_invoice_gross || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}</td>
+      <td>${invStatusBadge(po.reconciliation_status || 'unmatched')}</td>
+      <td>${po.paid_at ? '✓ Paid' : ''}</td>
+    </tr>`).join('');
+}
+
+function renderInvReceiptsTable() {
+  const tbody = document.getElementById('invReceiptsTbody');
+  if (!tbody) return;
+  if (!_invReceiptList.length) {
+    tbody.innerHTML = `<tr><td colspan="8" class="empty-state" style="padding:40px;text-align:center;color:var(--muted)">
+      <div style="font-size:32px;margin-bottom:8px">🧾</div>
+      <div style="font-weight:600;margin-bottom:4px">No receipts yet</div>
+      <div style="font-size:12px">Click <b>+ New Receipt</b> to upload and reconcile. OCR + manual entry available in Commit 2.</div>
+    </td></tr>`;
+    return;
+  }
+  tbody.innerHTML = _invReceiptList.map(r => `
+    <tr>
+      <td>${r.receipt_date ? new Date(r.receipt_date).toLocaleDateString('en-GB') : ''}</td>
+      <td>${escapeHtml(r.supplier_text || '')}</td>
+      <td>${invStatusBadge(r.category || 'Other')}</td>
+      <td>${escapeHtml(r.project_number || r.cost_centre || '')}</td>
+      <td>${escapeHtml(r.payment_method || '')}</td>
+      <td>${escapeHtml(r.paid_by_name || '')}</td>
+      <td style="text-align:right">£${Number(r.gross_amount || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}</td>
+      <td>${r.is_reconciled ? '✓' : ''}</td>
+    </tr>`).join('');
+}
+
+// Inline status badge — colour-coded based on common workflow states.
+function invStatusBadge(status) {
+  if (!status) return '';
+  const s = String(status).toLowerCase();
+  let bg = 'rgba(120,120,120,.15)', fg = 'var(--muted)';
+  if (s === 'paid' || s === 'certified' || s === 'matched')        { bg = 'rgba(62,207,142,.15)'; fg = 'var(--green)'; }
+  else if (s === 'draft' || s === 'unmatched')                      { bg = 'rgba(120,120,120,.15)'; fg = 'var(--muted)'; }
+  else if (s === 'submitted' || s === 'issued' || s === 'partially paid') { bg = 'rgba(59,130,246,.15)'; fg = '#60a5fa'; }
+  else if (s === 'invoiced')                                        { bg = 'rgba(255,165,0,.15)'; fg = '#ffa500'; }
+  else if (s === 'cancelled' || s === 'void' || s === 'discrepancy'){ bg = 'rgba(208,2,27,.15)'; fg = 'var(--red)'; }
+  return `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:${bg};color:${fg}">${escapeHtml(status)}</span>`;
+}
+
+// ── Stub openers — Commit 2/3 fill these in ───────────────────────────────
+function openNewInvoiceModal() {
+  toast('New Invoice flow lands in Commit 2.', 'info');
+}
+function openNewAfpModal() {
+  toast('New AFP flow lands in Commit 3.', 'info');
+}
+function openNewReceiptModal() {
+  toast('New Receipt flow lands in Commit 2.', 'info');
+}

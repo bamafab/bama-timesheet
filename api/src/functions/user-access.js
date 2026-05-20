@@ -30,7 +30,8 @@ app.http('user-access-get', {
                         reports: false, settings: false, user_access: false, draftsman_mode: false,
                         tenders: false, edit_quotes: false, view_quotes: false,
                         edit_projects: false, view_projects: false,
-                        view_purchase_orders: false, edit_purchase_orders: false
+                        view_purchase_orders: false, edit_purchase_orders: false,
+                        invoicing: false
                     }, request);
                 }
                 return ok(result.recordset[0], request);
@@ -69,7 +70,8 @@ app.http('user-access-update', {
                 'archive', 'staff', 'holidays', 'reports', 'settings',
                 'user_access', 'draftsman_mode', 'tenders', 'edit_quotes', 'view_quotes',
                 'edit_projects', 'view_projects',
-                'view_purchase_orders', 'edit_purchase_orders'
+                'view_purchase_orders', 'edit_purchase_orders',
+                'invoicing'
             ];
 
             // Map camelCase from frontend to snake_case
@@ -79,7 +81,8 @@ app.http('user-access-update', {
                 reports: 'reports', settings: 'settings', userAccess: 'user_access', draftsmanMode: 'draftsman_mode',
                 tenders: 'tenders', editQuotes: 'edit_quotes', viewQuotes: 'view_quotes',
                 editProjects: 'edit_projects', viewProjects: 'view_projects',
-                viewPurchaseOrders: 'view_purchase_orders', editPurchaseOrders: 'edit_purchase_orders'
+                viewPurchaseOrders: 'view_purchase_orders', editPurchaseOrders: 'edit_purchase_orders',
+                invoicing: 'invoicing'
             };
 
             // Check if row exists
