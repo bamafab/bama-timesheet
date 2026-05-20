@@ -512,7 +512,7 @@ none of this is built yet.
   project supported via the `ProjectQuotes` link table — primary quote
   is the originating won quote and cannot be detached. Per-line % drives
   a value-weighted project progress figure shown on the Labour tile.
-  **Phase 2 (Invoice Tracker) — Commit 1 done, Commits 2 + 3 queued**.
+  **Phase 2 (Invoice Tracker) — Commits 1 + 2 done, Commit 3 queued**.
   See "Invoice Tracker" section below for the full feature.
   **Still to do (Phase 2+)**: Running Cost source (POs / supplier
   invoices — schema landed, needs aggregation tile), and optional
@@ -523,15 +523,25 @@ none of this is built yet.
   `ApplicationLineItems`, `Invoices`, `InvoiceLineItems`,
   `InvoicePayments`, `Receipts`, `InvoiceAttachments` tables (see
   `api/sql/add-invoicing.sql`) plus `PurchaseOrders.supplier_invoice_*`
-  extension columns. **Commit 1 done** — schema, `invoicing.js` API
-  stubs (GET endpoints functional, mutating endpoints 501), permission
-  wired through all 5 places, page shell with PIN gate, four-tab layout,
-  KPI tiles, empty-state tables, sidebar cross-nav on all tracker
+  extension columns. **Commit 1 done** — schema, page shell with PIN
+  gate, four-tab layout, KPI tiles, sidebar cross-nav on all tracker
   pages, Hub tile, INV0257 seed row so the first allocated invoice ref
-  is INV0258. **Commit 2 (queued)** — Sales Invoice CRUD (incl. pro
-  formas + credit notes), Receipts tab (OCR via Claude API), Supplier
-  Invoices tab (PO extension), shared PDF template family (PO + Invoice
-  using the same letterhead, since PO PDF generation was never built).
+  is INV0258. **Commit 2 done** — full Sales Invoice CRUD (incl. pro
+  formas + credit notes), shared `drawBamaInvoicePDF` renderer mirroring
+  the Babcock quote template (RED + NAVY palette, selectable text via
+  jsPDF, retention/VAT/CIS reverse-charge totals, BAMA bank details
+  footer); issue flow: Draft → render PDF → upload to
+  `01 - Accounts/03 - Sales Invoices/YYYY/MM/` → mark Issued with
+  SharePoint link. Payment recording with auto status update
+  (Issued/Partially Paid/Paid) and retention-release flag. Void flow.
+  Receipts tab with client-side Claude vision OCR pre-filling supplier /
+  date / category / net / VAT / gross; file uploaded to
+  `01 - Accounts/05 - Receipts/YYYY/MM/{category}/`. Supplier invoices
+  tab attaches uploaded supplier invoices to existing POs via Claude
+  vision OCR; PUT `/api/purchase-orders/{id}/supplier-invoice`
+  auto-reconciles (within £1 of PO total = `matched`, else
+  `discrepancy`); files go to `01 - Accounts/04 - Supplier Invoices/`.
+  `auth.email || auth.name` pattern used for `created_by` / `uploaded_by`.
   **Commit 3 (queued)** — AFPs full lifecycle (Draft → Submitted →
   Certified → Invoiced), SOV snapshot from `QuoteLineItems` with manual
   change-order lines, payment certificate upload + Claude OCR, Generate

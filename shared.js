@@ -25213,7 +25213,7 @@ function renderInvSalesTable() {
     tbody.innerHTML = `<tr><td colspan="9" class="empty-state" style="padding:40px;text-align:center;color:var(--muted)">
       <div style="font-size:32px;margin-bottom:8px">🧾</div>
       <div style="font-weight:600;margin-bottom:4px">No invoices yet</div>
-      <div style="font-size:12px">Click <b>+ New Invoice</b> to create one. Full create flow available in Commit 2.</div>
+      <div style="font-size:12px">Click <b>+ New Invoice</b> at the top right to create one.</div>
     </td></tr>`;
     return;
   }
@@ -25224,7 +25224,9 @@ function renderInvSalesTable() {
                    : i.kind === 'credit_note' ? `<span style="display:inline-block;padding:1px 6px;border-radius:8px;font-size:10px;background:rgba(208,2,27,.15);color:var(--red);margin-right:4px">CN</span> `
                    : '';
     return `
-      <tr>
+      <tr style="cursor:pointer" onclick="openInvoiceDetail(${i.id})"
+          onmouseover="this.style.background='var(--surface2)'"
+          onmouseout="this.style.background=''">
         <td style="font-family:var(--font-mono);font-weight:600">${kindBadge}${escapeHtml(i.ref)}</td>
         <td>${escapeHtml(customer)}</td>
         <td>${escapeHtml(project)}</td>
@@ -25245,7 +25247,8 @@ function renderInvSupplierTable() {
     tbody.innerHTML = `<tr><td colspan="8" class="empty-state" style="padding:40px;text-align:center;color:var(--muted)">
       <div style="font-size:32px;margin-bottom:8px">📥</div>
       <div style="font-weight:600;margin-bottom:4px">No supplier invoices yet</div>
-      <div style="font-size:12px">Supplier invoices appear here once attached to a received PO. Available in Commit 2.</div>
+      <div style="font-size:12px;margin-bottom:14px">Click below to attach a supplier invoice to an existing PO.</div>
+      <button class="btn btn-primary" onclick="openAttachSupplierInvoiceModal()">+ Attach Supplier Invoice</button>
     </td></tr>`;
     return;
   }
@@ -25269,7 +25272,7 @@ function renderInvReceiptsTable() {
     tbody.innerHTML = `<tr><td colspan="8" class="empty-state" style="padding:40px;text-align:center;color:var(--muted)">
       <div style="font-size:32px;margin-bottom:8px">🧾</div>
       <div style="font-weight:600;margin-bottom:4px">No receipts yet</div>
-      <div style="font-size:12px">Click <b>+ New Receipt</b> to upload and reconcile. OCR + manual entry available in Commit 2.</div>
+      <div style="font-size:12px">Click <b>+ New Receipt</b> at the top right to upload one — AI will pre-fill the fields.</div>
     </td></tr>`;
     return;
   }
@@ -25299,13 +25302,1297 @@ function invStatusBadge(status) {
   return `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:${bg};color:${fg}">${escapeHtml(status)}</span>`;
 }
 
-// ── Stub openers — Commit 2/3 fill these in ───────────────────────────────
-function openNewInvoiceModal() {
-  toast('New Invoice flow lands in Commit 2.', 'info');
-}
+// ── Stub openers — Commit 3 fills in AFP ─────────────────────────────────
 function openNewAfpModal() {
   toast('New AFP flow lands in Commit 3.', 'info');
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// INVOICE TRACKER — Commit 2 implementation
+// ═══════════════════════════════════════════════════════════════════════════
+// Full CRUD for Sales Invoices, Supplier Invoices (PO extension), Receipts,
+// shared PDF renderer for BAMA invoices and POs, OCR pipelines for receipts
+// and supplier invoices using `callClaude` (vision input).
+// ───────────────────────────────────────────────────────────────────────────
+
+// Module-level state used by the new modals
+let _invEditing = null;          // currently-edited invoice (null = new)
+let _invLineRows = [];           // working line items in the new/edit modal
+let _invSelectedClient = null;   // chosen client object (or null for free-text)
+let _invSelectedProject = null;  // chosen project object (or null)
+let _invDetailCurrent = null;    // currently-open invoice in the detail modal
+let _invReceiptParsed = null;    // OCR result staged for the new-receipt modal
+let _invReceiptFile = null;      // raw File for the receipt upload
+let _invReceiptSelectedProject = null;
+let _invSupInvPo = null;         // PO currently being attached a supplier invoice
+let _invSupInvParsed = null;
+let _invSupInvFile = null;
+
+const RECEIPT_CATEGORIES = [
+  'Fuel', 'Materials', 'Consumables', 'PPE', 'Equipment', 'Rent',
+  'Insurance', 'Professional Services', 'Galvanise', 'Food & Water',
+  'Stationery', 'Travel', 'Other'
+];
+
+// ── Number helpers ────────────────────────────────────────────────────────
+function _invFmt2(v) {
+  return Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function _invToDateStr(d) {
+  if (!d) return '';
+  if (d instanceof Date) return d.toISOString().slice(0, 10);
+  const m = String(d).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : '';
+}
+function _invDueDefault(invDate) {
+  // Default due: invoice date + 30 days
+  if (!invDate) return '';
+  const d = new Date(invDate);
+  if (isNaN(d.getTime())) return '';
+  d.setDate(d.getDate() + 30);
+  return d.toISOString().slice(0, 10);
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// NEW / EDIT INVOICE — open + close
+// ═════════════════════════════════════════════════════════════════════════
+async function openNewInvoiceModal() {
+  _invEditing = null;
+  _invSelectedClient = null;
+  _invSelectedProject = null;
+  _invLineRows = [];
+
+  // Reset form fields
+  document.getElementById('invNewKind').value = 'invoice';
+  document.getElementById('invNewDate').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('invNewDueDate').value = _invDueDefault(document.getElementById('invNewDate').value);
+  document.getElementById('invNewCustomerSearch').value = '';
+  document.getElementById('invNewCustomerSelected').textContent = '';
+  document.getElementById('invNewCustomerDropdown').innerHTML = '';
+  document.getElementById('invNewProjectSearch').value = '';
+  document.getElementById('invNewProjectSelected').textContent = '';
+  document.getElementById('invNewProjectDropdown').innerHTML = '';
+  document.getElementById('invNewVatYes').checked = true;
+  document.getElementById('invNewCisReverse').checked = false;
+  document.getElementById('invNewRetentionMode').value = 'none';
+  document.getElementById('invNewRetentionPct').value = '';
+  document.getElementById('invNewRetentionAmt').value = '';
+  document.getElementById('invNewRetentionDue').value = '';
+  document.getElementById('invNewNotes').value = '';
+  _invToggleRetentionFields();
+  _invAddLineRow();
+
+  // Allocate the next ref so the user sees what they're about to create
+  try {
+    const r = await api.get('/api/invoices/next-ref?kind=invoice');
+    document.getElementById('invNewRef').value = r?.ref || 'INV????';
+  } catch (e) {
+    document.getElementById('invNewRef').value = 'INV????';
+  }
+
+  document.getElementById('invNewModal').classList.add('active');
+  recalcInvoiceTotals();
+}
+
+function closeInvNewModal() {
+  document.getElementById('invNewModal').classList.remove('active');
+}
+
+// When the kind toggle changes, re-fetch the next ref for that kind
+async function onInvKindChange() {
+  const kind = document.getElementById('invNewKind').value;
+  try {
+    const r = await api.get(`/api/invoices/next-ref?kind=${encodeURIComponent(kind)}`);
+    document.getElementById('invNewRef').value = r?.ref || '????';
+  } catch (e) { /* show placeholder */ }
+}
+
+// ── Customer + Project autocomplete (Tenders-style) ──
+function filterInvCustomers(q) {
+  const dropdown = document.getElementById('invNewCustomerDropdown');
+  if (!dropdown) return;
+  const lower = (q || '').toLowerCase().trim();
+  if (!lower) { dropdown.innerHTML = ''; return; }
+  const matches = _invClientsCache
+    .filter(c => (c.company_name || '').toLowerCase().includes(lower))
+    .slice(0, 8);
+  dropdown.innerHTML = `<div style="position:absolute;top:0;left:0;right:0;background:var(--surface);
+       border:1px solid var(--border);border-radius:6px;max-height:240px;overflow:auto;z-index:30">
+    ${matches.map(c => `
+      <div style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)"
+           onmousedown="selectInvCustomer(${c.id})"
+           onmouseover="this.style.background='var(--surface2)'"
+           onmouseout="this.style.background=''">
+        ${escapeHtml(c.company_name || '')}
+      </div>`).join('')}
+    <div style="padding:8px 12px;cursor:pointer;font-size:13px;color:var(--muted);font-style:italic"
+         onmousedown="useInvCustomerFreeText()"
+         onmouseover="this.style.background='var(--surface2)'"
+         onmouseout="this.style.background=''">
+      Use "${escapeHtml(q)}" as free-text (not in clients list)
+    </div>
+  </div>`;
+}
+function selectInvCustomer(id) {
+  const c = _invClientsCache.find(x => x.id === id);
+  if (!c) return;
+  _invSelectedClient = c;
+  document.getElementById('invNewCustomerSearch').value = c.company_name || '';
+  document.getElementById('invNewCustomerSelected').textContent = `✓ ${c.company_name} (from Clients)`;
+  document.getElementById('invNewCustomerDropdown').innerHTML = '';
+}
+function useInvCustomerFreeText() {
+  const q = document.getElementById('invNewCustomerSearch').value;
+  _invSelectedClient = null;
+  document.getElementById('invNewCustomerSelected').textContent = `✓ "${q}" (free-text)`;
+  document.getElementById('invNewCustomerDropdown').innerHTML = '';
+}
+
+function filterInvProjects(q) {
+  const dropdown = document.getElementById('invNewProjectDropdown');
+  if (!dropdown) return;
+  const lower = (q || '').toLowerCase().trim();
+  if (!lower) { dropdown.innerHTML = ''; return; }
+  const matches = _invProjectsCache
+    .filter(p => ((p.project_number || '') + ' ' + (p.project_name || '')).toLowerCase().includes(lower))
+    .slice(0, 8);
+  dropdown.innerHTML = `<div style="position:absolute;top:0;left:0;right:0;background:var(--surface);
+       border:1px solid var(--border);border-radius:6px;max-height:240px;overflow:auto;z-index:30">
+    ${matches.map(p => `
+      <div style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)"
+           onmousedown="selectInvProject(${p.id})"
+           onmouseover="this.style.background='var(--surface2)'"
+           onmouseout="this.style.background=''">
+        <span style="font-family:var(--font-mono);font-weight:600">${escapeHtml(p.project_number || '')}</span>
+        — ${escapeHtml(p.project_name || '')}
+      </div>`).join('')}
+    ${matches.length === 0 ? '<div style="padding:8px 12px;color:var(--subtle);font-size:12px">No matching projects</div>' : ''}
+    <div style="padding:8px 12px;cursor:pointer;font-size:13px;color:var(--muted);font-style:italic"
+         onmousedown="clearInvProject()"
+         onmouseover="this.style.background='var(--surface2)'"
+         onmouseout="this.style.background=''">
+      Clear (no project link)
+    </div>
+  </div>`;
+}
+function selectInvProject(id) {
+  const p = _invProjectsCache.find(x => x.id === id);
+  if (!p) return;
+  _invSelectedProject = p;
+  document.getElementById('invNewProjectSearch').value = `${p.project_number || ''} — ${p.project_name || ''}`;
+  document.getElementById('invNewProjectSelected').textContent = `✓ ${p.project_number || ''}`;
+  document.getElementById('invNewProjectDropdown').innerHTML = '';
+}
+function clearInvProject() {
+  _invSelectedProject = null;
+  document.getElementById('invNewProjectSearch').value = '';
+  document.getElementById('invNewProjectSelected').textContent = '';
+  document.getElementById('invNewProjectDropdown').innerHTML = '';
+}
+
+// ── Line items ──
+function _invAddLineRow(line) {
+  const row = line || { description: '', quantity: 1, unit: '', unit_price: 0 };
+  _invLineRows.push(row);
+  renderInvLineRows();
+}
+function removeInvLineRow(idx) {
+  _invLineRows.splice(idx, 1);
+  renderInvLineRows();
+  recalcInvoiceTotals();
+}
+function renderInvLineRows() {
+  const el = document.getElementById('invNewLineItems');
+  if (!el) return;
+  el.innerHTML = _invLineRows.map((l, i) => `
+    <div style="display:grid;grid-template-columns:1fr 80px 70px 100px 110px 30px;gap:6px;align-items:center">
+      <input type="text" class="field-input" placeholder="Description"
+             value="${escapeHtml(l.description || '')}"
+             oninput="_invLineRows[${i}].description = this.value">
+      <input type="number" step="0.01" class="field-input" placeholder="Qty"
+             value="${l.quantity ?? 1}"
+             oninput="_invLineRows[${i}].quantity = parseFloat(this.value) || 0; recalcInvoiceTotals()">
+      <input type="text" class="field-input" placeholder="Unit"
+             value="${escapeHtml(l.unit || '')}"
+             oninput="_invLineRows[${i}].unit = this.value">
+      <input type="number" step="0.01" class="field-input" placeholder="Unit £"
+             value="${l.unit_price ?? 0}"
+             oninput="_invLineRows[${i}].unit_price = parseFloat(this.value) || 0; recalcInvoiceTotals()">
+      <input type="text" class="field-input" readonly tabindex="-1"
+             style="background:var(--bg-darker);text-align:right"
+             value="£${_invFmt2((l.quantity || 0) * (l.unit_price || 0))}">
+      <button type="button" class="btn btn-ghost"
+              style="padding:4px 8px;color:var(--red);border-color:var(--red)"
+              onclick="removeInvLineRow(${i})">×</button>
+    </div>
+  `).join('');
+}
+function _invToggleRetentionFields() {
+  const mode = document.getElementById('invNewRetentionMode').value;
+  document.getElementById('invRetentionPctWrap').style.display  = (mode === 'pct') ? '' : 'none';
+  document.getElementById('invRetentionAmtWrap').style.display  = (mode === 'amt') ? '' : 'none';
+  document.getElementById('invRetentionDueWrap').style.display  = (mode === 'none') ? 'none' : '';
+  recalcInvoiceTotals();
+}
+
+// ── Totals recalc ──
+function recalcInvoiceTotals() {
+  const net = _invLineRows.reduce((s, l) => s + (Number(l.quantity || 0) * Number(l.unit_price || 0)), 0);
+  const vatApplies = document.getElementById('invNewVatYes').checked;
+  const cisReverse = document.getElementById('invNewCisReverse').checked;
+
+  let retention = 0;
+  const mode = document.getElementById('invNewRetentionMode').value;
+  if (mode === 'pct') {
+    const pct = Number(document.getElementById('invNewRetentionPct').value || 0);
+    retention = +(net * pct / 100).toFixed(2);
+  } else if (mode === 'amt') {
+    retention = +(Number(document.getElementById('invNewRetentionAmt').value || 0)).toFixed(2);
+  }
+
+  // VAT calculated on net minus retention (standard UK practice)
+  const vatBase = net - retention;
+  const vat = vatApplies ? +(vatBase * 0.20).toFixed(2) : 0;
+  const reverseCharge = cisReverse ? +(vatBase * 0.20).toFixed(2) : 0;
+  const gross = +(net - retention + vat).toFixed(2);
+
+  document.getElementById('invTotalNet').textContent       = '£' + _invFmt2(net);
+  document.getElementById('invTotalRetention').textContent = '£' + _invFmt2(retention);
+  document.getElementById('invTotalVat').textContent       = '£' + _invFmt2(vat);
+  document.getElementById('invTotalReverse').textContent   = '£' + _invFmt2(reverseCharge);
+  document.getElementById('invTotalGross').textContent     = '£' + _invFmt2(gross);
+
+  // Hide reverse-charge line when not applicable
+  document.getElementById('invTotalReverseRow').style.display = cisReverse ? '' : 'none';
+}
+
+// ── Save (Draft) — no PDF yet ──
+async function saveInvoiceDraft() {
+  const payload = _buildInvoicePayload();
+  if (!payload) return;
+  const btn = document.getElementById('invSaveDraftBtn');
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    let saved;
+    if (_invEditing) {
+      saved = await api.put(`/api/invoices/${_invEditing.id}`, payload);
+    } else {
+      saved = await api.post('/api/invoices', payload);
+    }
+    toast(`Invoice ${saved.ref} saved as Draft ✓`, 'success');
+    closeInvNewModal();
+    await loadInvoicingData();
+    switchInvTab('sales');
+  } catch (err) {
+    console.error('Save invoice failed', err);
+    toast('Save failed: ' + (err.message || 'unknown'), 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Save Draft'; }
+  }
+}
+
+// ── Save + Issue (Draft → Issued, generates PDF, uploads to SharePoint) ──
+async function saveAndIssueInvoice() {
+  const payload = _buildInvoicePayload();
+  if (!payload) return;
+  const btn = document.getElementById('invIssueBtn');
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Issuing…'; }
+    setLoading(true);
+
+    // 1. Save draft first (DB row needed for ref allocation + FK on attachment)
+    let saved;
+    if (_invEditing) {
+      saved = await api.put(`/api/invoices/${_invEditing.id}`, payload);
+    } else {
+      saved = await api.post('/api/invoices', payload);
+    }
+
+    // 2. Build PDF locally
+    await loadLogoDataUri();
+    const pdfData = await _buildInvoicePdfData(saved);
+    const pdfBlob = await renderBamaInvoicePDF(pdfData);
+    const fileName = sanitizeSpFilename(`${saved.ref}.pdf`);
+
+    // 3. Upload to SharePoint: 01 - Accounts/03 - Sales Invoices/{YYYY}/{MM}/
+    const folder = await _findOrCreateInvoiceFolder(saved.invoice_date);
+    const driveItem = await uploadFileToFolder(folder.id, fileName, pdfBlob, 'application/pdf');
+
+    // 4. Tell the API to mark as Issued and store the SharePoint link
+    await api.post(`/api/invoices/${saved.id}/issue`, {
+      sharepoint_pdf_id: driveItem.id,
+      sharepoint_pdf_url: driveItem.webUrl
+    });
+
+    toast(`Invoice ${saved.ref} issued and uploaded to SharePoint ✓`, 'success');
+    closeInvNewModal();
+    await loadInvoicingData();
+    switchInvTab('sales');
+  } catch (err) {
+    console.error('Issue invoice failed', err);
+    toast('Issue failed: ' + (err.message || 'unknown'), 'error');
+  } finally {
+    setLoading(false);
+    if (btn) { btn.disabled = false; btn.textContent = 'Save & Issue'; }
+  }
+}
+
+function _buildInvoicePayload() {
+  // Validate
+  const kind = document.getElementById('invNewKind').value;
+  const invoiceDate = document.getElementById('invNewDate').value;
+  if (!invoiceDate) { toast('Please pick an invoice date', 'error'); return null; }
+  if (!_invSelectedClient && !document.getElementById('invNewCustomerSearch').value.trim()) {
+    toast('Please pick a customer or enter free-text', 'error'); return null;
+  }
+  if (_invLineRows.length === 0 || _invLineRows.every(l => !l.description.trim())) {
+    toast('Please add at least one line item', 'error'); return null;
+  }
+
+  const vatApplies = document.getElementById('invNewVatYes').checked;
+  const cisReverse = document.getElementById('invNewCisReverse').checked;
+  const mode = document.getElementById('invNewRetentionMode').value;
+
+  const cleanLines = _invLineRows
+    .filter(l => l.description && l.description.trim())
+    .map((l, i) => ({
+      line_no: i + 1,
+      description: l.description.trim(),
+      quantity: Number(l.quantity || 0),
+      unit: l.unit || null,
+      unit_price: Number(l.unit_price || 0),
+      line_total: +(Number(l.quantity || 0) * Number(l.unit_price || 0)).toFixed(2)
+    }));
+
+  const net = cleanLines.reduce((s, l) => s + l.line_total, 0);
+  let retention = 0, retention_pct = null;
+  if (mode === 'pct') {
+    retention_pct = Number(document.getElementById('invNewRetentionPct').value || 0);
+    retention = +(net * retention_pct / 100).toFixed(2);
+  } else if (mode === 'amt') {
+    retention = +(Number(document.getElementById('invNewRetentionAmt').value || 0)).toFixed(2);
+  }
+  const vatBase = net - retention;
+  const vat = vatApplies ? +(vatBase * 0.20).toFixed(2) : 0;
+  const reverseCharge = cisReverse ? +(vatBase * 0.20).toFixed(2) : 0;
+  const gross = +(net - retention + vat).toFixed(2);
+
+  return {
+    kind,
+    invoice_date: invoiceDate,
+    due_date: document.getElementById('invNewDueDate').value || null,
+    client_id: _invSelectedClient ? _invSelectedClient.id : null,
+    customer_text: _invSelectedClient ? null : document.getElementById('invNewCustomerSearch').value.trim(),
+    project_id: _invSelectedProject ? _invSelectedProject.id : null,
+    vat_applies: vatApplies ? 1 : 0,
+    cis_reverse_charge: cisReverse ? 1 : 0,
+    net_amount: +net.toFixed(2),
+    vat_amount: vat,
+    reverse_charge_amount: reverseCharge,
+    retention_pct,
+    retention_amount: retention,
+    retention_due_date: mode === 'none' ? null : (document.getElementById('invNewRetentionDue').value || null),
+    gross_amount: gross,
+    total_outstanding: gross,
+    notes: document.getElementById('invNewNotes').value || null,
+    line_items: cleanLines
+  };
+}
+
+// ── Build the data structure the PDF renderer expects ─────────────────────
+async function _buildInvoicePdfData(inv) {
+  // Re-fetch line items if the saved object doesn't include them
+  let lines = inv.line_items;
+  if (!Array.isArray(lines)) {
+    const detail = await api.get(`/api/invoices/${inv.id}`);
+    lines = detail.line_items || [];
+  }
+  const customer = inv.client_company_name
+    || (_invSelectedClient && _invSelectedClient.company_name)
+    || inv.customer_text
+    || '—';
+  const projectLabel = _invSelectedProject
+    ? `${_invSelectedProject.project_number || ''} — ${_invSelectedProject.project_name || ''}`
+    : (inv.project_number ? `${inv.project_number} — ${inv.project_name || ''}` : '');
+
+  return {
+    kind: inv.kind || 'invoice',
+    ref: inv.ref,
+    invoiceDate: inv.invoice_date,
+    dueDate: inv.due_date,
+    billTo: customer,
+    project: projectLabel,
+    vatApplies: !!inv.vat_applies,
+    cisReverse: !!inv.cis_reverse_charge,
+    retention: Number(inv.retention_amount || 0),
+    retentionDueDate: inv.retention_due_date,
+    net: Number(inv.net_amount || 0),
+    vat: Number(inv.vat_amount || 0),
+    reverseCharge: Number(inv.reverse_charge_amount || 0),
+    gross: Number(inv.gross_amount || 0),
+    notes: inv.notes || '',
+    lineItems: lines.map((l, i) => ({
+      itemNum: i + 1,
+      description: l.description,
+      quantity: l.quantity,
+      unit: l.unit,
+      unitPrice: l.unit_price,
+      amount: l.line_total
+    }))
+  };
+}
+
+// ── SharePoint folder for the invoice PDF ─────────────────────────────────
+async function _findOrCreateInvoiceFolder(invoiceDate) {
+  // 01 - Accounts/03 - Sales Invoices/{YYYY}/{MM}/
+  const base = await _findOrCreateAccountsSubfolder('03 - Sales Invoices');
+  return await _appendYearMonthFolders(base, invoiceDate);
+}
+
+async function _findOrCreateSupplierInvoiceFolder(invoiceDate) {
+  // 01 - Accounts/04 - Supplier Invoices/{YYYY}/{MM}/
+  const base = await _findOrCreateAccountsSubfolder('04 - Supplier Invoices');
+  return await _appendYearMonthFolders(base, invoiceDate);
+}
+
+async function _findOrCreateReceiptFolder(receiptDate, category) {
+  // 01 - Accounts/05 - Receipts/{YYYY}/{MM}/{category}/
+  const base = await _findOrCreateAccountsSubfolder('05 - Receipts');
+  const monthFolder = await _appendYearMonthFolders(base, receiptDate);
+  return await getOrCreateSubfolder(monthFolder.id, sanitizeSpFilename(category || 'Other'), BAMA_DRIVE_ID);
+}
+
+// Looks up "01 - Accounts" at the drive root, then gets or creates the named subfolder.
+// If even "01 - Accounts" doesn't exist, this raises — that's a SharePoint setup issue
+// that needs manual intervention rather than auto-creation.
+async function _findOrCreateAccountsSubfolder(subfolderName) {
+  const token = await getToken();
+  const accountsLookup = await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/root:/${encodeURIComponent('01 - Accounts')}`,
+    { headers: { 'Authorization': `Bearer ${token}` } }
+  );
+  if (!accountsLookup.ok) {
+    throw new Error(`SharePoint "01 - Accounts" folder not found at drive root (status ${accountsLookup.status})`);
+  }
+  const accounts = await accountsLookup.json();
+  return await getOrCreateSubfolder(accounts.id, subfolderName, BAMA_DRIVE_ID);
+}
+
+async function _appendYearMonthFolders(baseFolder, dateStr) {
+  const d = new Date(dateStr);
+  const yyyy = String(d.getFullYear());
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yearFolder = await getOrCreateSubfolder(baseFolder.id, yyyy, BAMA_DRIVE_ID);
+  return await getOrCreateSubfolder(yearFolder.id, mm, BAMA_DRIVE_ID);
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// PDF RENDERER — shared BAMA template family (Invoice, Pro Forma, Credit Note, PO)
+// Mirrors drawBabcockQuotePDF — same letterhead, brand colours, layout.
+// ═════════════════════════════════════════════════════════════════════════
+
+// Resolve the jsPDF constructor (mirrors the renderBabcockQuotePDF path)
+async function _resolveJsPDF() {
+  if (typeof window.jspdf !== 'undefined' && typeof window.jspdf.jsPDF === 'function') return window.jspdf.jsPDF;
+  if (typeof window.jsPDF === 'function') return window.jsPDF;
+  if (typeof window.html2pdf !== 'undefined' && typeof window.html2pdf.jsPDF === 'function') return window.html2pdf.jsPDF;
+
+  // Dynamic load fallback
+  await new Promise((resolve, reject) => {
+    const existing = document.querySelector('script[data-jspdf-loaded]');
+    if (existing) {
+      let tries = 0;
+      const tick = () => {
+        if (window.jspdf && window.jspdf.jsPDF) return resolve();
+        if (++tries > 50) return reject(new Error('jsPDF load timed out'));
+        setTimeout(tick, 100);
+      };
+      tick();
+      return;
+    }
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+    s.dataset.jspdfLoaded = '1';
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('Failed to load jsPDF from CDN'));
+    document.head.appendChild(s);
+  });
+  if (window.jspdf && window.jspdf.jsPDF) return window.jspdf.jsPDF;
+  throw new Error('jsPDF unavailable');
+}
+
+async function renderBamaInvoicePDF(d) {
+  const JsPDFCtor = await _resolveJsPDF();
+  const logo = _logoDataUriCache || '';
+  return drawBamaInvoicePDF(JsPDFCtor, d, logo);
+}
+
+function drawBamaInvoicePDF(jsPDF, d, logoDataUri) {
+  const fmtNum = v => Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtDate = s => {
+    if (!s) return '';
+    const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return m ? `${m[3]}/${m[2]}/${m[1]}` : s;
+  };
+
+  const titleByKind = {
+    invoice:     'Invoice',
+    pro_forma:   'Pro Forma',
+    credit_note: 'Credit Note'
+  };
+  const title = titleByKind[d.kind] || 'Invoice';
+
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  try {
+    doc.setProperties({
+      title: `BAMA ${title} ${d.ref || ''}`.trim(),
+      subject: `${title} for ${d.billTo || ''}`,
+      author: 'BAMA Fabrication',
+      creator: 'BAMA Fabrication ERP'
+    });
+  } catch (e) { /* */ }
+
+  const pageW = 210, pageH = 297;
+  const marginL = 14, marginR = 14, marginB = 14;
+  const usableW = pageW - marginL - marginR;
+
+  const RED = [208, 2, 27], NAVY = [31, 53, 82];
+  const TEXT = [34, 34, 34], MUTED = [85, 85, 85];
+  const RULE = [212, 212, 212], HEADRULE = [68, 68, 68];
+
+  const setText = (rgb) => doc.setTextColor(rgb[0], rgb[1], rgb[2]);
+  const setFill = (rgb) => doc.setFillColor(rgb[0], rgb[1], rgb[2]);
+  const setDraw = (rgb) => doc.setDrawColor(rgb[0], rgb[1], rgb[2]);
+
+  // ── Header: logo left, title right ──
+  let y = marginL;
+  if (logoDataUri) {
+    try { doc.addImage(logoDataUri, 'PNG', marginL, y, 75, 32, undefined, 'FAST'); }
+    catch (e) {
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(22); setText(RED);
+      doc.text('BAMA FABRICATION', marginL, y + 12);
+    }
+  } else {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(22); setText(RED);
+    doc.text('BAMA FABRICATION', marginL, y + 12);
+  }
+
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(34); setText([43, 43, 43]);
+  doc.text(title, pageW - marginR, y + 16, { align: 'right' });
+
+  y = marginL + 42;
+
+  // ── Two-column body header: company / bill-to | meta table ──
+  const leftColW = usableW * 0.6;
+  const rightColX = marginL + leftColW + 4;
+  const rightColW = usableW - leftColW - 4;
+  let leftY = y, rightY = y;
+
+  // LEFT: Company Address
+  setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
+  doc.text('From', marginL, leftY); leftY += 4.5;
+  setText(TEXT); doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+  ['BAMA Fabrication Ltd', '11 Enterprise Way, Enterprise Park, Yaxley,',
+   'PE7 3WY, Peterborough', '01733 855212', 'info@bamafabrication.co.uk']
+    .forEach(line => { doc.text(line, marginL + 4, leftY); leftY += 4; });
+  leftY += 4;
+
+  // LEFT: Bill To
+  setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
+  doc.text('Bill To', marginL, leftY); leftY += 4.5;
+  setText(TEXT); doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+  if (d.billTo) {
+    const wrapped = doc.splitTextToSize(String(d.billTo), leftColW - 4);
+    wrapped.forEach(line => { doc.text(line, marginL + 4, leftY); leftY += 4; });
+  }
+  if (d.project) {
+    leftY += 1;
+    setText(MUTED); doc.setFontSize(9);
+    doc.text(`Project: ${d.project}`, marginL + 4, leftY); leftY += 4;
+    setText(TEXT); doc.setFontSize(10);
+  }
+  leftY += 3;
+
+  // RIGHT: Meta table
+  const metaLabel = title === 'Credit Note' ? 'Credit Note #' : (title === 'Pro Forma' ? 'Pro Forma #' : 'Invoice #');
+  const metaRows = [
+    { label: 'Date',          value: fmtDate(d.invoiceDate) },
+    { label: metaLabel,       value: d.ref || '' },
+    { label: 'Due Date',      value: fmtDate(d.dueDate), gapAfter: true }
+  ];
+  doc.setFontSize(10);
+  const labelColX = rightColX, labelColW = rightColW * 0.55, valueColX = rightColX + labelColW + 2;
+  for (const row of metaRows) {
+    setText(TEXT); doc.setFont('helvetica', 'bold');
+    doc.text(row.label, labelColX + labelColW, rightY, { align: 'right' });
+    setText(TEXT); doc.setFont('helvetica', 'normal');
+    doc.text(String(row.value || ''), valueColX, rightY);
+    rightY += row.gapAfter ? 7.5 : 4.5;
+  }
+
+  y = Math.max(leftY, rightY) + 4;
+
+  // ── Optional notes ──
+  if (d.notes && String(d.notes).trim()) {
+    setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
+    doc.text('Notes', marginL, y); y += 4.5;
+    setText(TEXT); doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+    const wrapped = doc.splitTextToSize(String(d.notes).trim(), usableW - 4);
+    wrapped.forEach(line => {
+      if (y > pageH - marginB - 20) { doc.addPage(); y = marginL; }
+      doc.text(line, marginL + 4, y); y += 4.2;
+    });
+    y += 4;
+  }
+
+  // ── Line items table ──
+  const colItem  = { x: marginL, w: 12, align: 'center' };
+  const colAmt   = { w: 28, align: 'right' };
+  const colQty   = { w: 18, align: 'center' };
+  const colPrice = { w: 26, align: 'right' };
+  const colDesc  = { w: usableW - colItem.w - colPrice.w - colQty.w - colAmt.w, align: 'left' };
+  colDesc.x = colItem.x + colItem.w;
+  colPrice.x = colDesc.x + colDesc.w;
+  colQty.x = colPrice.x + colPrice.w;
+  colAmt.x = colQty.x + colQty.w;
+
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(11); setText(TEXT);
+  doc.text('#',           colItem.x + colItem.w / 2,  y, { align: 'center' });
+  doc.text('Description', colDesc.x + 1,               y);
+  doc.text('Unit £',      colPrice.x + colPrice.w - 1, y, { align: 'right' });
+  doc.text('Qty',         colQty.x + colQty.w / 2,     y, { align: 'center' });
+  doc.text('Amount',      colAmt.x + colAmt.w - 1,     y, { align: 'right' });
+  y += 1.5;
+  setDraw(HEADRULE); doc.setLineWidth(0.4);
+  doc.line(marginL, y, pageW - marginR, y);
+  y += 3;
+
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+  setDraw(RULE); doc.setLineWidth(0.15);
+  for (let i = 0; i < (d.lineItems || []).length; i++) {
+    const l = d.lineItems[i];
+    const desc = String(l.description || '');
+    const descLines = doc.splitTextToSize(desc, colDesc.w - 2);
+    const rowH = Math.max(5, descLines.length * 4.2 + 1);
+    if (y + rowH > pageH - marginB - 50) { doc.addPage(); y = marginL + 6; }
+
+    setText(MUTED);
+    doc.text(String(l.itemNum ?? (i + 1)), colItem.x + colItem.w / 2, y + 3.5, { align: 'center' });
+
+    setText(TEXT);
+    let descY = y + 3.5;
+    for (const line of descLines) { doc.text(line, colDesc.x + 1, descY); descY += 4.2; }
+
+    if (l.unitPrice != null) doc.text(fmtNum(l.unitPrice), colPrice.x + colPrice.w - 1, y + 3.5, { align: 'right' });
+    if (l.quantity  != null) doc.text(String(l.quantity), colQty.x + colQty.w / 2, y + 3.5, { align: 'center' });
+    doc.text(fmtNum(l.amount), colAmt.x + colAmt.w - 1, y + 3.5, { align: 'right' });
+
+    setDraw(RULE); doc.setLineWidth(0.15);
+    doc.line(marginL, y + rowH, pageW - marginR, y + rowH);
+    y += rowH;
+  }
+
+  y += 6;
+
+  // ── Totals block (right-aligned) ──
+  if (y > pageH - marginB - 60) { doc.addPage(); y = marginL + 6; }
+  const tlX = pageW - marginR - 80;
+  const labelX = tlX, amtX = pageW - marginR;
+  const lineH = 6;
+  const drawTotal = (label, value, bold) => {
+    setText(TEXT);
+    doc.setFont('helvetica', bold ? 'bold' : 'normal');
+    doc.setFontSize(bold ? 11 : 10);
+    doc.text(label, labelX, y);
+    doc.text('£' + fmtNum(value), amtX, y, { align: 'right' });
+    y += lineH;
+  };
+  drawTotal('Subtotal (Net)', d.net);
+  if (Number(d.retention) > 0) drawTotal(`Less Retention${d.retentionDueDate ? ` (due ${fmtDate(d.retentionDueDate)})` : ''}`, -d.retention);
+  if (d.vatApplies) drawTotal('VAT (20%)', d.vat);
+  if (d.cisReverse) {
+    setText(MUTED); doc.setFont('helvetica', 'italic'); doc.setFontSize(9);
+    doc.text(`Reverse charge applies — customer to account for £${fmtNum(d.reverseCharge)} VAT to HMRC`,
+             labelX, y);
+    y += lineH;
+  }
+
+  // TOTAL pill
+  y += 2;
+  setFill(NAVY);
+  doc.rect(tlX, y - 2, 80, 9, 'F');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(12); setText([255, 255, 255]);
+  doc.text('TOTAL DUE', tlX + 3, y + 4);
+  doc.setFontSize(13);
+  doc.text('£' + fmtNum(d.gross), amtX - 2, y + 4, { align: 'right' });
+  y += 14;
+
+  // ── Bank details + footer ──
+  if (y > pageH - marginB - 20) { doc.addPage(); y = marginL + 6; }
+  setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
+  doc.text('Payment Details', marginL, y); y += 4.5;
+  setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
+  ['Account name: BAMA Fabrication Ltd',
+   'Sort code: 09-01-29',
+   'Account number: 32519918',
+   'Reference: ' + (d.ref || ''),
+   '',
+   'If you have any questions about this invoice please contact: info@bamafabrication.co.uk'
+  ].forEach(line => { doc.text(line, marginL, y); y += 4; });
+
+  return doc.output('blob');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// INVOICE DETAIL MODAL — view / payments / void / download PDF
+// ═════════════════════════════════════════════════════════════════════════
+async function openInvoiceDetail(id) {
+  try {
+    const inv = await api.get(`/api/invoices/${id}`);
+    _invDetailCurrent = inv;
+    document.getElementById('invDetailRef').textContent = inv.ref;
+    document.getElementById('invDetailKind').textContent =
+      inv.kind === 'pro_forma' ? 'Pro Forma' : (inv.kind === 'credit_note' ? 'Credit Note' : 'Invoice');
+    document.getElementById('invDetailCustomer').textContent =
+      inv.client_company_name || inv.customer_text || '—';
+    document.getElementById('invDetailProject').textContent =
+      inv.project_number ? `${inv.project_number} — ${inv.project_name || ''}` : '—';
+    document.getElementById('invDetailDate').textContent =
+      inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString('en-GB') : '—';
+    document.getElementById('invDetailDue').textContent =
+      inv.due_date ? new Date(inv.due_date).toLocaleDateString('en-GB') : '—';
+    document.getElementById('invDetailNet').textContent      = '£' + _invFmt2(inv.net_amount);
+    document.getElementById('invDetailVat').textContent      = '£' + _invFmt2(inv.vat_amount);
+    document.getElementById('invDetailRet').textContent      = '£' + _invFmt2(inv.retention_amount);
+    document.getElementById('invDetailGross').textContent    = '£' + _invFmt2(inv.gross_amount);
+    document.getElementById('invDetailOutstanding').textContent = '£' + _invFmt2(inv.total_outstanding);
+    document.getElementById('invDetailStatus').innerHTML = invStatusBadge(inv.status);
+
+    // PDF link
+    const pdfBtn = document.getElementById('invDetailPdfBtn');
+    if (inv.sharepoint_pdf_url) {
+      pdfBtn.style.display = '';
+      pdfBtn.onclick = () => window.open(inv.sharepoint_pdf_url, '_blank');
+    } else {
+      pdfBtn.style.display = 'none';
+    }
+
+    // Buttons
+    const issueBtn = document.getElementById('invDetailIssueBtn');
+    const payBtn = document.getElementById('invDetailPayBtn');
+    const voidBtn = document.getElementById('invDetailVoidBtn');
+    issueBtn.style.display = (inv.status === 'Draft')     ? '' : 'none';
+    payBtn.style.display   = (inv.status === 'Issued' || inv.status === 'Partially Paid') ? '' : 'none';
+    voidBtn.style.display  = (inv.status !== 'Void' && inv.status !== 'Cancelled') ? '' : 'none';
+
+    // Line items table
+    document.getElementById('invDetailLines').innerHTML = (inv.line_items || []).map(l => `
+      <tr>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border)">${escapeHtml(l.description || '')}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right">${Number(l.quantity || 0)}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right">£${_invFmt2(l.unit_price)}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right">£${_invFmt2(l.line_total)}</td>
+      </tr>`).join('') || '<tr><td colspan="4" style="padding:10px;color:var(--muted)">No line items</td></tr>';
+
+    // Payments table
+    document.getElementById('invDetailPayments').innerHTML = (inv.payments || []).map(p => `
+      <tr>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border)">${p.payment_date ? new Date(p.payment_date).toLocaleDateString('en-GB') : ''}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border)">${escapeHtml(p.method || '')}${p.is_retention_release ? ' <span style="font-size:10px;color:var(--muted)">(retention)</span>' : ''}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border)">${escapeHtml(p.reference || '')}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right">£${_invFmt2(p.amount)}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:center">
+          <button class="btn btn-ghost" style="padding:2px 6px;font-size:11px;color:var(--red);border-color:var(--red)"
+                  onclick="deleteInvPayment(${p.id})">×</button>
+        </td>
+      </tr>`).join('') || '<tr><td colspan="5" style="padding:10px;color:var(--muted)">No payments recorded</td></tr>';
+
+    document.getElementById('invDetailModal').classList.add('active');
+  } catch (err) {
+    console.error('Open invoice detail failed', err);
+    toast('Failed to load invoice', 'error');
+  }
+}
+
+function closeInvDetail() {
+  document.getElementById('invDetailModal').classList.remove('active');
+  _invDetailCurrent = null;
+}
+
+// ── Issue from detail (Draft → Issued, generates PDF, uploads to SharePoint) ──
+async function issueInvoiceFromDetail() {
+  if (!_invDetailCurrent) return;
+  const inv = _invDetailCurrent;
+  const btn = document.getElementById('invDetailIssueBtn');
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Issuing…'; }
+    setLoading(true);
+    await loadLogoDataUri();
+    const pdfData = await _buildInvoicePdfData(inv);
+    const pdfBlob = await renderBamaInvoicePDF(pdfData);
+    const fileName = sanitizeSpFilename(`${inv.ref}.pdf`);
+    const folder = await _findOrCreateInvoiceFolder(inv.invoice_date);
+    const driveItem = await uploadFileToFolder(folder.id, fileName, pdfBlob, 'application/pdf');
+    await api.post(`/api/invoices/${inv.id}/issue`, {
+      sharepoint_pdf_id: driveItem.id,
+      sharepoint_pdf_url: driveItem.webUrl
+    });
+    toast(`Invoice ${inv.ref} issued ✓`, 'success');
+    closeInvDetail();
+    await loadInvoicingData();
+    switchInvTab('sales');
+  } catch (err) {
+    console.error('Issue failed', err);
+    toast('Issue failed: ' + (err.message || 'unknown'), 'error');
+  } finally {
+    setLoading(false);
+    if (btn) { btn.disabled = false; btn.textContent = 'Issue + PDF'; }
+  }
+}
+
+async function downloadInvoicePdf() {
+  if (!_invDetailCurrent) return;
+  const inv = _invDetailCurrent;
+  try {
+    setLoading(true);
+    await loadLogoDataUri();
+    const pdfData = await _buildInvoicePdfData(inv);
+    const pdfBlob = await renderBamaInvoicePDF(pdfData);
+    const url = URL.createObjectURL(pdfBlob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `${inv.ref}.pdf`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    toast('PDF generation failed: ' + (err.message || 'unknown'), 'error');
+  } finally {
+    setLoading(false);
+  }
+}
+
+// ── Payment recording ──
+function openRecordPaymentModal() {
+  if (!_invDetailCurrent) return;
+  document.getElementById('invPayDate').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('invPayAmount').value = Number(_invDetailCurrent.total_outstanding || 0).toFixed(2);
+  document.getElementById('invPayMethod').value = 'bank_transfer';
+  document.getElementById('invPayRef').value = '';
+  document.getElementById('invPayNotes').value = '';
+  document.getElementById('invPayRetention').checked = false;
+  document.getElementById('invRecordPaymentModal').classList.add('active');
+}
+function closeRecordPaymentModal() {
+  document.getElementById('invRecordPaymentModal').classList.remove('active');
+}
+async function saveInvPayment() {
+  if (!_invDetailCurrent) return;
+  const payload = {
+    payment_date: document.getElementById('invPayDate').value,
+    amount: Number(document.getElementById('invPayAmount').value),
+    method: document.getElementById('invPayMethod').value,
+    reference: document.getElementById('invPayRef').value || null,
+    notes: document.getElementById('invPayNotes').value || null,
+    is_retention_release: document.getElementById('invPayRetention').checked ? 1 : 0
+  };
+  if (!payload.payment_date || !payload.amount || payload.amount <= 0) {
+    toast('Enter a valid date and amount', 'error'); return;
+  }
+  try {
+    await api.post(`/api/invoices/${_invDetailCurrent.id}/payments`, payload);
+    toast('Payment recorded ✓', 'success');
+    closeRecordPaymentModal();
+    // Refresh detail + list
+    await openInvoiceDetail(_invDetailCurrent.id);
+    await loadInvoicingData();
+  } catch (err) {
+    toast('Payment save failed: ' + (err.message || 'unknown'), 'error');
+  }
+}
+async function deleteInvPayment(pid) {
+  if (!_invDetailCurrent) return;
+  const confirmed = await showConfirmAsync('Delete payment', 'Are you sure you want to remove this payment record?');
+  if (!confirmed) return;
+  try {
+    await api.delete(`/api/invoices/${_invDetailCurrent.id}/payments/${pid}`);
+    toast('Payment removed', 'success');
+    await openInvoiceDetail(_invDetailCurrent.id);
+    await loadInvoicingData();
+  } catch (err) {
+    toast('Delete failed: ' + (err.message || 'unknown'), 'error');
+  }
+}
+
+// ── Void ──
+async function voidInvoice() {
+  if (!_invDetailCurrent) return;
+  const confirmed = await showConfirmAsync(
+    'Void invoice?',
+    `<p>Voiding <b>${_invDetailCurrent.ref}</b> marks it as cancelled — it stays in the ledger for audit but counts as zero. You cannot un-void.</p>`,
+    { okLabel: 'Void', cancelLabel: 'Cancel' }
+  );
+  if (!confirmed) return;
+  try {
+    await api.post(`/api/invoices/${_invDetailCurrent.id}/void`, {});
+    toast('Invoice voided', 'success');
+    closeInvDetail();
+    await loadInvoicingData();
+  } catch (err) {
+    toast('Void failed: ' + (err.message || 'unknown'), 'error');
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// RECEIPTS — new modal with OCR pre-fill
+// ═════════════════════════════════════════════════════════════════════════
 function openNewReceiptModal() {
-  toast('New Receipt flow lands in Commit 2.', 'info');
+  _invReceiptFile = null;
+  _invReceiptParsed = null;
+  _invReceiptSelectedProject = null;
+  document.getElementById('invReceiptFile').value = '';
+  document.getElementById('invReceiptOcrStatus').style.display = 'none';
+  document.getElementById('invReceiptDate').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('invReceiptSupplier').value = '';
+  document.getElementById('invReceiptCategory').value = 'Other';
+  document.getElementById('invReceiptNet').value = '';
+  document.getElementById('invReceiptVat').value = '';
+  document.getElementById('invReceiptGross').value = '';
+  document.getElementById('invReceiptMethod').value = 'company_account';
+  document.getElementById('invReceiptPaidBy').value = '';
+  document.getElementById('invReceiptPaidByWrap').style.display = 'none';
+  document.getElementById('invReceiptProjectSearch').value = '';
+  document.getElementById('invReceiptProjectSelected').textContent = '';
+  document.getElementById('invReceiptProjectDropdown').innerHTML = '';
+  document.getElementById('invReceiptNotes').value = '';
+  document.getElementById('invReceiptModal').classList.add('active');
+}
+
+function closeNewReceiptModal() {
+  document.getElementById('invReceiptModal').classList.remove('active');
+}
+
+function toggleReceiptPaidBy() {
+  const method = document.getElementById('invReceiptMethod').value;
+  const wrap = document.getElementById('invReceiptPaidByWrap');
+  wrap.style.display = (method === 'personal') ? '' : 'none';
+  if (method === 'personal') {
+    // Populate employee dropdown if empty
+    const sel = document.getElementById('invReceiptPaidBy');
+    if (sel.options.length <= 1) {
+      const empList = (state.timesheetData.employees || []).filter(e => e.active !== false);
+      sel.innerHTML = '<option value="">— pick employee —</option>'
+        + empList.map(e => `<option value="${e.id}">${escapeHtml(e.name)}</option>`).join('');
+    }
+  }
+}
+
+async function onReceiptFilePicked(file) {
+  if (!file) return;
+  _invReceiptFile = file;
+  const statusEl = document.getElementById('invReceiptOcrStatus');
+  statusEl.style.display = '';
+  statusEl.style.background = 'var(--bg-darker)';
+  statusEl.innerHTML = '<div class="spinner" style="display:inline-block;width:14px;height:14px;vertical-align:middle"></div> Parsing receipt with AI…';
+
+  try {
+    const dataUri = await _fileToDataUri(file);
+    const result = await callClaude({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 800,
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type: 'image',
+            source: file.type.startsWith('image/')
+              ? { type: 'base64', media_type: file.type, data: dataUri.split(',')[1] }
+              : { type: 'base64', media_type: file.type, data: dataUri.split(',')[1] }
+          },
+          {
+            type: 'text',
+            text: `You are extracting structured data from a UK receipt or simple invoice image.
+Return ONLY valid JSON (no markdown, no commentary) with these fields:
+{
+  "supplier": "merchant or trading name",
+  "date": "YYYY-MM-DD",
+  "category": "one of: Fuel, Materials, Consumables, PPE, Equipment, Rent, Insurance, Professional Services, Galvanise, Food & Water, Stationery, Travel, Other",
+  "net_amount": 0,
+  "vat_amount": 0,
+  "gross_amount": 0
+}
+If any field is unclear or absent, set it to null. The category is your best guess from the line items.
+For "Fuel" use petrol stations like BP, Shell, Esso, Texaco etc. Galvanise = galvanising services. Materials = steel/raw material suppliers.`
+          }
+        ]
+      }]
+    });
+    const text = (result.content?.find(b => b.type === 'text')?.text || '').trim();
+    const jsonStart = text.indexOf('{'), jsonEnd = text.lastIndexOf('}');
+    const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
+    _invReceiptParsed = parsed;
+
+    // Pre-fill the form
+    if (parsed.supplier)    document.getElementById('invReceiptSupplier').value = parsed.supplier;
+    if (parsed.date)        document.getElementById('invReceiptDate').value     = parsed.date;
+    if (parsed.category)    document.getElementById('invReceiptCategory').value = parsed.category;
+    if (parsed.net_amount != null) document.getElementById('invReceiptNet').value   = parsed.net_amount;
+    if (parsed.vat_amount != null) document.getElementById('invReceiptVat').value   = parsed.vat_amount;
+    if (parsed.gross_amount != null) document.getElementById('invReceiptGross').value = parsed.gross_amount;
+
+    statusEl.style.background = 'rgba(62,207,142,.1)';
+    statusEl.innerHTML = `✓ Parsed — please review and adjust if needed.`;
+  } catch (err) {
+    console.error('Receipt OCR failed', err);
+    statusEl.style.background = 'rgba(208,2,27,.1)';
+    statusEl.innerHTML = `⚠ Could not parse — please fill in fields manually. (${escapeHtml(err.message || 'unknown')})`;
+  }
+}
+
+function _fileToDataUri(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = () => rej(new Error('Read failed'));
+    r.readAsDataURL(file);
+  });
+}
+
+function filterInvReceiptProjects(q) {
+  // same pattern as filterInvProjects but for the receipt modal
+  const dropdown = document.getElementById('invReceiptProjectDropdown');
+  if (!dropdown) return;
+  const lower = (q || '').toLowerCase().trim();
+  if (!lower) { dropdown.innerHTML = ''; return; }
+  const matches = _invProjectsCache
+    .filter(p => ((p.project_number || '') + ' ' + (p.project_name || '')).toLowerCase().includes(lower))
+    .slice(0, 6);
+  dropdown.innerHTML = `<div style="position:absolute;top:0;left:0;right:0;background:var(--surface);
+       border:1px solid var(--border);border-radius:6px;max-height:200px;overflow:auto;z-index:30">
+    ${matches.map(p => `
+      <div style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)"
+           onmousedown="selectInvReceiptProject(${p.id})"
+           onmouseover="this.style.background='var(--surface2)'"
+           onmouseout="this.style.background=''">
+        <span style="font-family:var(--font-mono);font-weight:600">${escapeHtml(p.project_number || '')}</span>
+        — ${escapeHtml(p.project_name || '')}
+      </div>`).join('')}
+    <div style="padding:8px 12px;cursor:pointer;font-size:13px;color:var(--muted);font-style:italic"
+         onmousedown="clearInvReceiptProject()">Clear</div>
+  </div>`;
+}
+function selectInvReceiptProject(id) {
+  const p = _invProjectsCache.find(x => x.id === id);
+  if (!p) return;
+  _invReceiptSelectedProject = p;
+  document.getElementById('invReceiptProjectSearch').value = `${p.project_number || ''} — ${p.project_name || ''}`;
+  document.getElementById('invReceiptProjectSelected').textContent = `✓ ${p.project_number || ''}`;
+  document.getElementById('invReceiptProjectDropdown').innerHTML = '';
+}
+function clearInvReceiptProject() {
+  _invReceiptSelectedProject = null;
+  document.getElementById('invReceiptProjectSearch').value = '';
+  document.getElementById('invReceiptProjectSelected').textContent = '';
+  document.getElementById('invReceiptProjectDropdown').innerHTML = '';
+}
+
+async function saveReceipt() {
+  const gross = Number(document.getElementById('invReceiptGross').value || 0);
+  if (!gross) { toast('Enter a gross amount', 'error'); return; }
+  const method = document.getElementById('invReceiptMethod').value;
+  const paidByEmpId = (method === 'personal')
+    ? Number(document.getElementById('invReceiptPaidBy').value) || null
+    : null;
+  const payload = {
+    receipt_date:        document.getElementById('invReceiptDate').value,
+    supplier_text:       document.getElementById('invReceiptSupplier').value || null,
+    category:            document.getElementById('invReceiptCategory').value || 'Other',
+    project_id:          _invReceiptSelectedProject ? _invReceiptSelectedProject.id : null,
+    net_amount:          Number(document.getElementById('invReceiptNet').value || 0) || null,
+    vat_amount:          Number(document.getElementById('invReceiptVat').value || 0) || null,
+    gross_amount:        gross,
+    payment_method:      method,
+    paid_by_employee_id: paidByEmpId,
+    notes:               document.getElementById('invReceiptNotes').value || null
+  };
+
+  const btn = document.getElementById('invReceiptSaveBtn');
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    setLoading(true);
+
+    // Upload the receipt file to SharePoint first (if provided), then save the row with attachment ref
+    let attachment = null;
+    if (_invReceiptFile) {
+      const folder = await _findOrCreateReceiptFolder(payload.receipt_date, payload.category);
+      const stamp = (payload.supplier_text || 'receipt').replace(/\s+/g, '_').slice(0, 30);
+      const ext = (_invReceiptFile.name.split('.').pop() || 'jpg').toLowerCase();
+      const fileName = sanitizeSpFilename(`${payload.receipt_date}_${stamp}.${ext}`);
+      const driveItem = await uploadFileToFolder(folder.id, fileName, _invReceiptFile, _invReceiptFile.type || 'application/octet-stream');
+      attachment = {
+        sharepoint_id:  driveItem.id,
+        sharepoint_url: driveItem.webUrl,
+        filename:       fileName
+      };
+    }
+    payload.attachment = attachment;
+
+    const saved = await api.post('/api/receipts', payload);
+    toast(`Receipt saved ${saved.id ? '✓' : ''}`, 'success');
+    closeNewReceiptModal();
+    await loadInvoicingData();
+    switchInvTab('receipts');
+  } catch (err) {
+    console.error('Save receipt failed', err);
+    toast('Save failed: ' + (err.message || 'unknown'), 'error');
+  } finally {
+    setLoading(false);
+    if (btn) { btn.disabled = false; btn.textContent = 'Save Receipt'; }
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// SUPPLIER INVOICES — attach to existing PO + OCR
+// ═════════════════════════════════════════════════════════════════════════
+async function openAttachSupplierInvoiceModal() {
+  // Show a picker for un-attached received POs
+  try {
+    const allPos = await api.get('/api/purchase-orders');
+    const pickList = (allPos || []).filter(po =>
+      !po.supplier_invoice_received_at && po.status !== 'Cancelled'
+    );
+    const sel = document.getElementById('invSupInvPoSelect');
+    sel.innerHTML = '<option value="">— pick a PO —</option>'
+      + pickList.map(po => `<option value="${po.id}">${escapeHtml(po.reference || '')} — ${escapeHtml(po.supplier_name || '')} — £${_invFmt2(po.total_value)}</option>`).join('');
+    _invSupInvPo = null;
+    _invSupInvFile = null;
+    _invSupInvParsed = null;
+    document.getElementById('invSupInvFile').value = '';
+    document.getElementById('invSupInvOcrStatus').style.display = 'none';
+    document.getElementById('invSupInvRef').value = '';
+    document.getElementById('invSupInvDate').value = new Date().toISOString().slice(0, 10);
+    document.getElementById('invSupInvNet').value = '';
+    document.getElementById('invSupInvVat').value = '';
+    document.getElementById('invSupInvGross').value = '';
+    document.getElementById('invSupInvNotes').value = '';
+    document.getElementById('invSupInvModal').classList.add('active');
+  } catch (err) {
+    toast('Failed to load POs', 'error');
+  }
+}
+
+function closeSupInvModal() {
+  document.getElementById('invSupInvModal').classList.remove('active');
+}
+
+function onSupInvPoPicked(poId) {
+  if (!poId) { _invSupInvPo = null; return; }
+  // The latest list was just fetched, but to be safe re-look it up from the cache:
+  // we don't keep a cache, so fetch detail
+  api.get(`/api/purchase-orders/${poId}`).then(po => { _invSupInvPo = po; }).catch(() => {});
+}
+
+async function onSupInvFilePicked(file) {
+  if (!file) return;
+  _invSupInvFile = file;
+  const statusEl = document.getElementById('invSupInvOcrStatus');
+  statusEl.style.display = '';
+  statusEl.style.background = 'var(--bg-darker)';
+  statusEl.innerHTML = '<div class="spinner" style="display:inline-block;width:14px;height:14px;vertical-align:middle"></div> Parsing supplier invoice with AI…';
+
+  try {
+    const dataUri = await _fileToDataUri(file);
+    const isImg = file.type.startsWith('image/');
+    const result = await callClaude({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 800,
+      messages: [{
+        role: 'user',
+        content: [
+          isImg
+            ? { type: 'image',    source: { type: 'base64', media_type: file.type, data: dataUri.split(',')[1] } }
+            : { type: 'document', source: { type: 'base64', media_type: file.type, data: dataUri.split(',')[1] } },
+          {
+            type: 'text',
+            text: `Extract from this UK supplier invoice. Return ONLY JSON, no markdown:
+{
+  "invoice_ref": "supplier's invoice number",
+  "invoice_date": "YYYY-MM-DD",
+  "net_amount": 0,
+  "vat_amount": 0,
+  "gross_amount": 0
+}
+Set fields to null if unclear.`
+          }
+        ]
+      }]
+    });
+    const text = (result.content?.find(b => b.type === 'text')?.text || '').trim();
+    const jsonStart = text.indexOf('{'), jsonEnd = text.lastIndexOf('}');
+    const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
+    _invSupInvParsed = parsed;
+
+    if (parsed.invoice_ref)  document.getElementById('invSupInvRef').value  = parsed.invoice_ref;
+    if (parsed.invoice_date) document.getElementById('invSupInvDate').value = parsed.invoice_date;
+    if (parsed.net_amount   != null) document.getElementById('invSupInvNet').value   = parsed.net_amount;
+    if (parsed.vat_amount   != null) document.getElementById('invSupInvVat').value   = parsed.vat_amount;
+    if (parsed.gross_amount != null) document.getElementById('invSupInvGross').value = parsed.gross_amount;
+
+    statusEl.style.background = 'rgba(62,207,142,.1)';
+    statusEl.innerHTML = '✓ Parsed — please review';
+  } catch (err) {
+    console.error('Supplier invoice OCR failed', err);
+    statusEl.style.background = 'rgba(208,2,27,.1)';
+    statusEl.innerHTML = `⚠ Could not parse — please fill manually. (${escapeHtml(err.message || 'unknown')})`;
+  }
+}
+
+async function saveSupplierInvoice() {
+  const poId = Number(document.getElementById('invSupInvPoSelect').value);
+  if (!poId) { toast('Pick a PO first', 'error'); return; }
+  if (!_invSupInvFile) { toast('Upload the supplier invoice file', 'error'); return; }
+
+  const ref = document.getElementById('invSupInvRef').value.trim();
+  const date = document.getElementById('invSupInvDate').value;
+  const net = Number(document.getElementById('invSupInvNet').value || 0);
+  const vat = Number(document.getElementById('invSupInvVat').value || 0);
+  const gross = Number(document.getElementById('invSupInvGross').value || 0);
+
+  if (!gross) { toast('Enter the gross amount', 'error'); return; }
+
+  const btn = document.getElementById('invSupInvSaveBtn');
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    setLoading(true);
+
+    // 1. Upload to SharePoint
+    const folder = await _findOrCreateSupplierInvoiceFolder(date);
+    const supplierName = (_invSupInvPo && _invSupInvPo.supplier_name) || 'supplier';
+    const stamp = supplierName.replace(/\s+/g, '_').slice(0, 30);
+    const ext = (_invSupInvFile.name.split('.').pop() || 'pdf').toLowerCase();
+    const fileName = sanitizeSpFilename(`${date}_${stamp}_${ref || 'no-ref'}.${ext}`);
+    const driveItem = await uploadFileToFolder(folder.id, fileName, _invSupInvFile, _invSupInvFile.type || 'application/octet-stream');
+
+    // 2. Attach to PO via the new endpoint
+    await api.put(`/api/purchase-orders/${poId}/supplier-invoice`, {
+      supplier_invoice_ref:           ref || null,
+      supplier_invoice_date:          date || null,
+      supplier_invoice_net:           net || null,
+      supplier_invoice_vat:           vat || null,
+      supplier_invoice_gross:         gross,
+      sharepoint_id:                  driveItem.id,
+      sharepoint_url:                 driveItem.webUrl,
+      filename:                       fileName,
+      reconciliation_notes:           document.getElementById('invSupInvNotes').value || null
+    });
+
+    toast(`Supplier invoice attached to PO ${(_invSupInvPo && _invSupInvPo.reference) || poId} ✓`, 'success');
+    closeSupInvModal();
+    await loadInvoicingData();
+    switchInvTab('supplier');
+  } catch (err) {
+    console.error('Save supplier invoice failed', err);
+    toast('Save failed: ' + (err.message || 'unknown'), 'error');
+  } finally {
+    setLoading(false);
+    if (btn) { btn.disabled = false; btn.textContent = 'Attach to PO'; }
+  }
 }

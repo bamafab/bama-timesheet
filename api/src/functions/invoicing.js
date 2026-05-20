@@ -393,7 +393,87 @@ app.http('invoices-create', {
     handler: async (request, context) => {
         const auth = await requireAuth(request);
         if (auth.status) return auth;
-        return { status: 501, body: 'Not implemented yet (lands in Commit 2)', headers: { 'Content-Type': 'text/plain' } };
+        try {
+            const body = await request.json();
+            const kind = body.kind || 'invoice';
+            if (!['invoice','pro_forma','credit_note'].includes(kind)) {
+                return badRequest('Invalid kind', request);
+            }
+            if (!body.invoice_date) return badRequest('invoice_date required', request);
+
+            const ref = await nextInvoiceRef(kind);
+            const createdBy = auth.email || auth.name || null;
+
+            const insertRes = await query(
+                `INSERT INTO Invoices (
+                    ref, kind, source_afp_id, parent_invoice_id, project_id, client_id, customer_text,
+                    invoice_date, due_date,
+                    vat_applies, cis_reverse_charge,
+                    net_amount, vat_amount, reverse_charge_amount,
+                    retention_pct, retention_amount, retention_due_date,
+                    gross_amount, total_outstanding,
+                    status, notes, created_by
+                )
+                OUTPUT INSERTED.*
+                VALUES (
+                    @ref, @kind, @sourceAfpId, @parentInvoiceId, @projectId, @clientId, @customerText,
+                    @invoiceDate, @dueDate,
+                    @vatApplies, @cisReverseCharge,
+                    @netAmount, @vatAmount, @reverseChargeAmount,
+                    @retentionPct, @retentionAmount, @retentionDueDate,
+                    @grossAmount, @totalOutstanding,
+                    'Draft', @notes, @createdBy
+                )`,
+                {
+                    ref,
+                    kind,
+                    sourceAfpId:         body.source_afp_id ?? null,
+                    parentInvoiceId:     body.parent_invoice_id ?? null,
+                    projectId:           body.project_id ?? null,
+                    clientId:            body.client_id ?? null,
+                    customerText:        body.customer_text ?? null,
+                    invoiceDate:         body.invoice_date,
+                    dueDate:             body.due_date ?? null,
+                    vatApplies:          body.vat_applies ? 1 : 0,
+                    cisReverseCharge:    body.cis_reverse_charge ? 1 : 0,
+                    netAmount:           Number(body.net_amount || 0),
+                    vatAmount:           Number(body.vat_amount || 0),
+                    reverseChargeAmount: Number(body.reverse_charge_amount || 0),
+                    retentionPct:        body.retention_pct ?? null,
+                    retentionAmount:     body.retention_amount ?? null,
+                    retentionDueDate:    body.retention_due_date ?? null,
+                    grossAmount:         Number(body.gross_amount || 0),
+                    totalOutstanding:    Number(body.total_outstanding ?? body.gross_amount ?? 0),
+                    notes:               body.notes ?? null,
+                    createdBy
+                }
+            );
+            const newInv = insertRes.recordset[0];
+
+            // Line items
+            if (Array.isArray(body.line_items) && body.line_items.length) {
+                for (const l of body.line_items) {
+                    await query(
+                        `INSERT INTO InvoiceLineItems (invoice_id, line_no, description, quantity, unit, unit_price, line_total)
+                         VALUES (@invoiceId, @lineNo, @description, @quantity, @unit, @unitPrice, @lineTotal)`,
+                        {
+                            invoiceId:   newInv.id,
+                            lineNo:      l.line_no,
+                            description: l.description,
+                            quantity:    Number(l.quantity || 0),
+                            unit:        l.unit ?? null,
+                            unitPrice:   Number(l.unit_price || 0),
+                            lineTotal:   Number(l.line_total || 0)
+                        }
+                    );
+                }
+            }
+
+            return created(newInv, request);
+        } catch (err) {
+            context.error('Error creating invoice:', err);
+            return serverError('Failed to create invoice: ' + err.message, request);
+        }
     }
 });
 
@@ -404,7 +484,84 @@ app.http('invoices-update', {
     handler: async (request, context) => {
         const auth = await requireAuth(request);
         if (auth.status) return auth;
-        return { status: 501, body: 'Not implemented yet (lands in Commit 2)', headers: { 'Content-Type': 'text/plain' } };
+        try {
+            const id = parseInt(request.params.id);
+            const body = await request.json();
+
+            // Only Draft invoices can be edited (per spec)
+            const existing = await query('SELECT status FROM Invoices WHERE id = @id', { id });
+            if (!existing.recordset.length) return notFound('Invoice not found', request);
+            if (existing.recordset[0].status !== 'Draft') {
+                return badRequest('Only Draft invoices can be edited', request);
+            }
+
+            await query(
+                `UPDATE Invoices SET
+                    project_id          = @projectId,
+                    client_id           = @clientId,
+                    customer_text       = @customerText,
+                    invoice_date        = @invoiceDate,
+                    due_date            = @dueDate,
+                    vat_applies         = @vatApplies,
+                    cis_reverse_charge  = @cisReverseCharge,
+                    net_amount          = @netAmount,
+                    vat_amount          = @vatAmount,
+                    reverse_charge_amount = @reverseChargeAmount,
+                    retention_pct       = @retentionPct,
+                    retention_amount    = @retentionAmount,
+                    retention_due_date  = @retentionDueDate,
+                    gross_amount        = @grossAmount,
+                    total_outstanding   = @totalOutstanding,
+                    notes               = @notes,
+                    updated_at          = GETUTCDATE()
+                 WHERE id = @id`,
+                {
+                    id,
+                    projectId:           body.project_id ?? null,
+                    clientId:            body.client_id ?? null,
+                    customerText:        body.customer_text ?? null,
+                    invoiceDate:         body.invoice_date,
+                    dueDate:             body.due_date ?? null,
+                    vatApplies:          body.vat_applies ? 1 : 0,
+                    cisReverseCharge:    body.cis_reverse_charge ? 1 : 0,
+                    netAmount:           Number(body.net_amount || 0),
+                    vatAmount:           Number(body.vat_amount || 0),
+                    reverseChargeAmount: Number(body.reverse_charge_amount || 0),
+                    retentionPct:        body.retention_pct ?? null,
+                    retentionAmount:     body.retention_amount ?? null,
+                    retentionDueDate:    body.retention_due_date ?? null,
+                    grossAmount:         Number(body.gross_amount || 0),
+                    totalOutstanding:    Number(body.total_outstanding ?? body.gross_amount ?? 0),
+                    notes:               body.notes ?? null
+                }
+            );
+
+            // Replace line items wholesale (simple + safe for Draft state)
+            if (Array.isArray(body.line_items)) {
+                await query('DELETE FROM InvoiceLineItems WHERE invoice_id = @id', { id });
+                for (const l of body.line_items) {
+                    await query(
+                        `INSERT INTO InvoiceLineItems (invoice_id, line_no, description, quantity, unit, unit_price, line_total)
+                         VALUES (@invoiceId, @lineNo, @description, @quantity, @unit, @unitPrice, @lineTotal)`,
+                        {
+                            invoiceId:   id,
+                            lineNo:      l.line_no,
+                            description: l.description,
+                            quantity:    Number(l.quantity || 0),
+                            unit:        l.unit ?? null,
+                            unitPrice:   Number(l.unit_price || 0),
+                            lineTotal:   Number(l.line_total || 0)
+                        }
+                    );
+                }
+            }
+
+            const refetched = await query('SELECT * FROM Invoices WHERE id = @id', { id });
+            return ok(refetched.recordset[0], request);
+        } catch (err) {
+            context.error('Error updating invoice:', err);
+            return serverError('Failed to update invoice: ' + err.message, request);
+        }
     }
 });
 
@@ -415,7 +572,34 @@ app.http('invoices-issue', {
     handler: async (request, context) => {
         const auth = await requireAuth(request);
         if (auth.status) return auth;
-        return { status: 501, body: 'Not implemented yet (lands in Commit 2)', headers: { 'Content-Type': 'text/plain' } };
+        try {
+            const id = parseInt(request.params.id);
+            const body = await request.json().catch(() => ({}));
+            const existing = await query('SELECT status FROM Invoices WHERE id = @id', { id });
+            if (!existing.recordset.length) return notFound('Invoice not found', request);
+            if (existing.recordset[0].status !== 'Draft') {
+                return badRequest(`Cannot issue invoice — current status is ${existing.recordset[0].status}`, request);
+            }
+            await query(
+                `UPDATE Invoices SET
+                    status              = 'Issued',
+                    issued_at           = GETUTCDATE(),
+                    sharepoint_pdf_id   = @pdfId,
+                    sharepoint_pdf_url  = @pdfUrl,
+                    updated_at          = GETUTCDATE()
+                 WHERE id = @id`,
+                {
+                    id,
+                    pdfId:  body.sharepoint_pdf_id ?? null,
+                    pdfUrl: body.sharepoint_pdf_url ?? null
+                }
+            );
+            const refetched = await query('SELECT * FROM Invoices WHERE id = @id', { id });
+            return ok(refetched.recordset[0], request);
+        } catch (err) {
+            context.error('Error issuing invoice:', err);
+            return serverError('Failed to issue invoice: ' + err.message, request);
+        }
     }
 });
 
@@ -426,7 +610,61 @@ app.http('invoices-payment-add', {
     handler: async (request, context) => {
         const auth = await requireAuth(request);
         if (auth.status) return auth;
-        return { status: 501, body: 'Not implemented yet (lands in Commit 2)', headers: { 'Content-Type': 'text/plain' } };
+        try {
+            const id = parseInt(request.params.id);
+            const body = await request.json();
+            const createdBy = auth.email || auth.name || null;
+
+            const inv = await query('SELECT gross_amount, status FROM Invoices WHERE id = @id', { id });
+            if (!inv.recordset.length) return notFound('Invoice not found', request);
+            if (inv.recordset[0].status === 'Void' || inv.recordset[0].status === 'Cancelled') {
+                return badRequest('Cannot add payment to a voided/cancelled invoice', request);
+            }
+
+            await query(
+                `INSERT INTO InvoicePayments (invoice_id, payment_date, amount, method,
+                                               is_retention_release, reference, notes, created_by)
+                 VALUES (@invoiceId, @paymentDate, @amount, @method,
+                         @isRetentionRelease, @reference, @notes, @createdBy)`,
+                {
+                    invoiceId:          id,
+                    paymentDate:        body.payment_date,
+                    amount:             Number(body.amount || 0),
+                    method:             body.method ?? null,
+                    isRetentionRelease: body.is_retention_release ? 1 : 0,
+                    reference:          body.reference ?? null,
+                    notes:              body.notes ?? null,
+                    createdBy
+                }
+            );
+
+            // Recompute status + outstanding
+            const sumRes = await query(
+                'SELECT SUM(amount) AS total_paid FROM InvoicePayments WHERE invoice_id = @id',
+                { id }
+            );
+            const totalPaid = Number(sumRes.recordset[0]?.total_paid || 0);
+            const gross = Number(inv.recordset[0].gross_amount || 0);
+            const outstanding = +(gross - totalPaid).toFixed(2);
+            let newStatus;
+            if (outstanding <= 0.005) newStatus = 'Paid';
+            else if (totalPaid > 0)   newStatus = 'Partially Paid';
+            else                      newStatus = inv.recordset[0].status;  // unchanged
+
+            await query(
+                `UPDATE Invoices SET
+                    total_outstanding = @outstanding,
+                    status            = @status,
+                    updated_at        = GETUTCDATE()
+                 WHERE id = @id`,
+                { id, outstanding, status: newStatus }
+            );
+
+            return ok({ id, total_paid: totalPaid, total_outstanding: outstanding, status: newStatus }, request);
+        } catch (err) {
+            context.error('Error adding payment:', err);
+            return serverError('Failed to add payment: ' + err.message, request);
+        }
     }
 });
 
@@ -437,7 +675,43 @@ app.http('invoices-payment-delete', {
     handler: async (request, context) => {
         const auth = await requireAuth(request);
         if (auth.status) return auth;
-        return { status: 501, body: 'Not implemented yet (lands in Commit 2)', headers: { 'Content-Type': 'text/plain' } };
+        try {
+            const id = parseInt(request.params.id);
+            const pid = parseInt(request.params.pid);
+
+            await query('DELETE FROM InvoicePayments WHERE id = @pid AND invoice_id = @id', { id, pid });
+
+            const inv = await query('SELECT gross_amount, status FROM Invoices WHERE id = @id', { id });
+            if (!inv.recordset.length) return notFound('Invoice not found', request);
+
+            const sumRes = await query(
+                'SELECT SUM(amount) AS total_paid FROM InvoicePayments WHERE invoice_id = @id',
+                { id }
+            );
+            const totalPaid = Number(sumRes.recordset[0]?.total_paid || 0);
+            const gross = Number(inv.recordset[0].gross_amount || 0);
+            const outstanding = +(gross - totalPaid).toFixed(2);
+            let newStatus;
+            if (outstanding <= 0.005)       newStatus = 'Paid';
+            else if (totalPaid > 0)         newStatus = 'Partially Paid';
+            else if (inv.recordset[0].status === 'Paid' || inv.recordset[0].status === 'Partially Paid')
+                                            newStatus = 'Issued';
+            else                            newStatus = inv.recordset[0].status;
+
+            await query(
+                `UPDATE Invoices SET
+                    total_outstanding = @outstanding,
+                    status            = @status,
+                    updated_at        = GETUTCDATE()
+                 WHERE id = @id`,
+                { id, outstanding, status: newStatus }
+            );
+
+            return ok({ id, total_outstanding: outstanding, status: newStatus }, request);
+        } catch (err) {
+            context.error('Error deleting payment:', err);
+            return serverError('Failed to delete payment: ' + err.message, request);
+        }
     }
 });
 
@@ -448,7 +722,22 @@ app.http('invoices-void', {
     handler: async (request, context) => {
         const auth = await requireAuth(request);
         if (auth.status) return auth;
-        return { status: 501, body: 'Not implemented yet (lands in Commit 2)', headers: { 'Content-Type': 'text/plain' } };
+        try {
+            const id = parseInt(request.params.id);
+            await query(
+                `UPDATE Invoices SET
+                    status            = 'Void',
+                    voided_at         = GETUTCDATE(),
+                    total_outstanding = 0,
+                    updated_at        = GETUTCDATE()
+                 WHERE id = @id`,
+                { id }
+            );
+            return ok({ id, status: 'Void' }, request);
+        } catch (err) {
+            context.error('Error voiding invoice:', err);
+            return serverError('Failed to void invoice: ' + err.message, request);
+        }
     }
 });
 
@@ -498,18 +787,71 @@ app.http('receipts-create', {
     handler: async (request, context) => {
         const auth = await requireAuth(request);
         if (auth.status) return auth;
-        return { status: 501, body: 'Not implemented yet (lands in Commit 2)', headers: { 'Content-Type': 'text/plain' } };
-    }
-});
+        try {
+            const body = await request.json();
+            if (!body.receipt_date) return badRequest('receipt_date required', request);
+            if (!body.gross_amount) return badRequest('gross_amount required', request);
+            const createdBy = auth.email || auth.name || null;
 
-app.http('receipts-parse', {
-    methods: ['POST'],
-    authLevel: 'anonymous',
-    route: 'receipts/parse',
-    handler: async (request, context) => {
-        const auth = await requireAuth(request);
-        if (auth.status) return auth;
-        return { status: 501, body: 'Not implemented yet (lands in Commit 2)', headers: { 'Content-Type': 'text/plain' } };
+            // Insert the row first
+            const insertRes = await query(
+                `INSERT INTO Receipts (
+                    receipt_date, supplier_text, category, project_id, cost_centre,
+                    net_amount, vat_amount, gross_amount,
+                    payment_method, paid_by_employee_id, notes, created_by
+                )
+                OUTPUT INSERTED.*
+                VALUES (
+                    @receiptDate, @supplierText, @category, @projectId, @costCentre,
+                    @netAmount, @vatAmount, @grossAmount,
+                    @paymentMethod, @paidByEmployeeId, @notes, @createdBy
+                )`,
+                {
+                    receiptDate:      body.receipt_date,
+                    supplierText:     body.supplier_text ?? null,
+                    category:         body.category || 'Other',
+                    projectId:        body.project_id ?? null,
+                    costCentre:       body.cost_centre ?? null,
+                    netAmount:        body.net_amount ?? null,
+                    vatAmount:        body.vat_amount ?? null,
+                    grossAmount:      Number(body.gross_amount || 0),
+                    paymentMethod:    body.payment_method || 'other',
+                    paidByEmployeeId: body.paid_by_employee_id ?? null,
+                    notes:            body.notes ?? null,
+                    createdBy
+                }
+            );
+            const newReceipt = insertRes.recordset[0];
+
+            // Attachment (uploaded by client to SharePoint, just metadata here)
+            if (body.attachment && body.attachment.sharepoint_id) {
+                const attRes = await query(
+                    `INSERT INTO InvoiceAttachments (parent_kind, parent_id, kind, filename, sharepoint_id, sharepoint_url, uploaded_by)
+                     OUTPUT INSERTED.id
+                     VALUES ('receipt', @parentId, 'receipt', @filename, @sharepointId, @sharepointUrl, @uploadedBy)`,
+                    {
+                        parentId:      newReceipt.id,
+                        filename:      body.attachment.filename ?? null,
+                        sharepointId:  body.attachment.sharepoint_id,
+                        sharepointUrl: body.attachment.sharepoint_url ?? null,
+                        uploadedBy:    createdBy
+                    }
+                );
+                const attId = attRes.recordset[0]?.id;
+                if (attId) {
+                    await query(
+                        'UPDATE Receipts SET attachment_id = @attId WHERE id = @id',
+                        { id: newReceipt.id, attId }
+                    );
+                    newReceipt.attachment_id = attId;
+                }
+            }
+
+            return created(newReceipt, request);
+        } catch (err) {
+            context.error('Error creating receipt:', err);
+            return serverError('Failed to create receipt: ' + err.message, request);
+        }
     }
 });
 
@@ -520,7 +862,48 @@ app.http('receipts-update', {
     handler: async (request, context) => {
         const auth = await requireAuth(request);
         if (auth.status) return auth;
-        return { status: 501, body: 'Not implemented yet (lands in Commit 2)', headers: { 'Content-Type': 'text/plain' } };
+        try {
+            const id = parseInt(request.params.id);
+            const body = await request.json();
+
+            await query(
+                `UPDATE Receipts SET
+                    receipt_date        = @receiptDate,
+                    supplier_text       = @supplierText,
+                    category            = @category,
+                    project_id          = @projectId,
+                    cost_centre         = @costCentre,
+                    net_amount          = @netAmount,
+                    vat_amount          = @vatAmount,
+                    gross_amount        = @grossAmount,
+                    payment_method      = @paymentMethod,
+                    paid_by_employee_id = @paidByEmployeeId,
+                    is_reconciled       = @isReconciled,
+                    notes               = @notes,
+                    updated_at          = GETUTCDATE()
+                 WHERE id = @id`,
+                {
+                    id,
+                    receiptDate:      body.receipt_date,
+                    supplierText:     body.supplier_text ?? null,
+                    category:         body.category || 'Other',
+                    projectId:        body.project_id ?? null,
+                    costCentre:       body.cost_centre ?? null,
+                    netAmount:        body.net_amount ?? null,
+                    vatAmount:        body.vat_amount ?? null,
+                    grossAmount:      Number(body.gross_amount || 0),
+                    paymentMethod:    body.payment_method || 'other',
+                    paidByEmployeeId: body.paid_by_employee_id ?? null,
+                    isReconciled:     body.is_reconciled ? 1 : 0,
+                    notes:            body.notes ?? null
+                }
+            );
+            const refetched = await query('SELECT * FROM Receipts WHERE id = @id', { id });
+            return ok(refetched.recordset[0], request);
+        } catch (err) {
+            context.error('Error updating receipt:', err);
+            return serverError('Failed to update receipt: ' + err.message, request);
+        }
     }
 });
 
@@ -531,13 +914,20 @@ app.http('receipts-delete', {
     handler: async (request, context) => {
         const auth = await requireAuth(request);
         if (auth.status) return auth;
-        return { status: 501, body: 'Not implemented yet (lands in Commit 2)', headers: { 'Content-Type': 'text/plain' } };
+        try {
+            const id = parseInt(request.params.id);
+            await query('DELETE FROM Receipts WHERE id = @id', { id });
+            return ok({ id, deleted: true }, request);
+        } catch (err) {
+            context.error('Error deleting receipt:', err);
+            return serverError('Failed to delete receipt: ' + err.message, request);
+        }
     }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Supplier invoice attach (PO extension) — preflight only here.
-// PUT/POST handlers live in purchase-orders.js Commit 2 update.
+// Supplier invoice attach (PO extension)
+// PUT /api/purchase-orders/:id/supplier-invoice — attach + reconcile
 // ─────────────────────────────────────────────────────────────────────────────
 
 app.http('po-supplier-invoice-preflight', {
@@ -545,6 +935,89 @@ app.http('po-supplier-invoice-preflight', {
     authLevel: 'anonymous',
     route: 'purchase-orders/{id}/supplier-invoice/{*path}',
     handler: async (request) => preflight(request)
+});
+
+app.http('po-supplier-invoice-attach', {
+    methods: ['PUT'],
+    authLevel: 'anonymous',
+    route: 'purchase-orders/{id}/supplier-invoice',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+        try {
+            const id = parseInt(request.params.id);
+            const body = await request.json();
+            const uploadedBy = auth.email || auth.name || null;
+
+            // Fetch the PO so we can do auto-reconcile against total_value
+            const poRes = await query('SELECT * FROM PurchaseOrders WHERE id = @id', { id });
+            if (!poRes.recordset.length) return notFound('PO not found', request);
+            const po = poRes.recordset[0];
+
+            // Reconciliation: gross within £1 of PO total = matched, else discrepancy
+            const grossBilled = Number(body.supplier_invoice_gross || 0);
+            const poTotal = Number(po.total_value || 0);
+            let reconciliationStatus = 'unmatched';
+            if (poTotal > 0) {
+                reconciliationStatus = (Math.abs(grossBilled - poTotal) <= 1.00) ? 'matched' : 'discrepancy';
+            }
+
+            // Create attachment row in POAttachments (existing table — note: po_id, sharepoint_file_id, sharepoint_file_url)
+            let attachmentId = null;
+            if (body.sharepoint_id) {
+                const attRes = await query(
+                    `INSERT INTO POAttachments (po_id, kind, filename, sharepoint_file_id, sharepoint_file_url, uploaded_by)
+                     OUTPUT INSERTED.id
+                     VALUES (@poId, 'supplier_invoice', @filename, @sharepointFileId, @sharepointFileUrl, @uploadedBy)`,
+                    {
+                        poId:              id,
+                        filename:          body.filename || 'supplier-invoice.pdf',
+                        sharepointFileId:  body.sharepoint_id,
+                        sharepointFileUrl: body.sharepoint_url ?? null,
+                        uploadedBy
+                    }
+                );
+                attachmentId = attRes.recordset[0]?.id || null;
+            }
+
+            // Update the PO with the supplier invoice fields
+            await query(
+                `UPDATE PurchaseOrders SET
+                    supplier_invoice_ref            = @ref,
+                    supplier_invoice_date           = @invDate,
+                    supplier_invoice_net            = @net,
+                    supplier_invoice_vat            = @vat,
+                    supplier_invoice_gross          = @gross,
+                    supplier_invoice_received_at    = GETUTCDATE(),
+                    supplier_invoice_attachment_id  = @attachmentId,
+                    reconciliation_status           = @reconStatus,
+                    reconciliation_notes            = @notes,
+                    updated_at                      = GETUTCDATE()
+                 WHERE id = @id`,
+                {
+                    id,
+                    ref:         body.supplier_invoice_ref ?? null,
+                    invDate:     body.supplier_invoice_date ?? null,
+                    net:         body.supplier_invoice_net ?? null,
+                    vat:         body.supplier_invoice_vat ?? null,
+                    gross:       grossBilled || null,
+                    attachmentId,
+                    reconStatus: reconciliationStatus,
+                    notes:       body.reconciliation_notes ?? null
+                }
+            );
+
+            const refetched = await query('SELECT * FROM PurchaseOrders WHERE id = @id', { id });
+            return ok({
+                ...refetched.recordset[0],
+                reconciliation_status: reconciliationStatus,
+                attachment_id: attachmentId
+            }, request);
+        } catch (err) {
+            context.error('Error attaching supplier invoice:', err);
+            return serverError('Failed to attach supplier invoice: ' + err.message, request);
+        }
+    }
 });
 
 module.exports = { nextInvoiceRef, nextAfpRef, formatInvoiceRef, formatAfpRef };

@@ -248,6 +248,10 @@
 
     <!-- ═══ Pane: Supplier Invoices ═══ -->
     <div id="invPane-supplier" style="display:none">
+      <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+        <button class="btn btn-ghost" onclick="openAttachSupplierInvoiceModal()"
+                style="border-color:var(--accent);color:var(--accent)">+ Attach Supplier Invoice to PO</button>
+      </div>
       <div class="card" style="padding:0;overflow:hidden">
         <div style="overflow-x:auto">
           <table class="babcock-tracker-table">
@@ -299,6 +303,478 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260520a"></script>
+<!-- ═══════════════════════════════════════
+     NEW / EDIT INVOICE MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="invNewModal">
+  <div class="modal" style="max-width:880px;width:96vw;max-height:92vh;overflow-y:auto">
+    <div class="modal-title">🧾 New Invoice</div>
+
+    <!-- Kind + Ref + Dates -->
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <label class="field-label">Document Kind</label>
+        <select class="field-input" id="invNewKind" onchange="onInvKindChange()">
+          <option value="invoice">Invoice</option>
+          <option value="pro_forma">Pro Forma</option>
+          <option value="credit_note">Credit Note</option>
+        </select>
+      </div>
+      <div>
+        <label class="field-label">Reference</label>
+        <input type="text" class="field-input" id="invNewRef" readonly
+               style="background:var(--bg-darker);font-family:var(--font-mono)">
+      </div>
+      <div>
+        <label class="field-label">Invoice Date</label>
+        <input type="date" class="field-input" id="invNewDate"
+               onchange="document.getElementById('invNewDueDate').value = (function(d){if(!d) return ''; const x = new Date(d); x.setDate(x.getDate()+30); return x.toISOString().slice(0,10);})(this.value)">
+      </div>
+      <div>
+        <label class="field-label">Due Date</label>
+        <input type="date" class="field-input" id="invNewDueDate">
+      </div>
+    </div>
+
+    <!-- Customer + Project -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <label class="field-label">Customer</label>
+        <input type="text" class="field-input" id="invNewCustomerSearch"
+               placeholder="Type customer name…"
+               oninput="filterInvCustomers(this.value)"
+               onfocus="filterInvCustomers(this.value)">
+        <div id="invNewCustomerDropdown" style="position:relative"></div>
+        <div id="invNewCustomerSelected" style="font-size:11px;color:var(--muted);margin-top:4px;min-height:14px"></div>
+      </div>
+      <div>
+        <label class="field-label">Project (optional)</label>
+        <input type="text" class="field-input" id="invNewProjectSearch"
+               placeholder="Type C-ref or project name… (leave blank for ad-hoc)"
+               oninput="filterInvProjects(this.value)"
+               onfocus="filterInvProjects(this.value)">
+        <div id="invNewProjectDropdown" style="position:relative"></div>
+        <div id="invNewProjectSelected" style="font-size:11px;color:var(--muted);margin-top:4px;min-height:14px"></div>
+      </div>
+    </div>
+
+    <!-- Line items -->
+    <div style="margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <label class="field-label" style="margin:0">Line Items</label>
+        <button type="button" class="btn btn-ghost" style="padding:4px 10px;font-size:11px"
+                onclick="_invAddLineRow()">+ Add Line</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 80px 70px 100px 110px 30px;gap:6px;
+                  font-size:10px;color:var(--subtle);text-transform:uppercase;letter-spacing:.5px;
+                  padding:0 4px;margin-bottom:4px">
+        <div>Description</div><div>Qty</div><div>Unit</div><div>Unit £</div>
+        <div style="text-align:right">Line £</div><div></div>
+      </div>
+      <div id="invNewLineItems" style="display:flex;flex-direction:column;gap:6px"></div>
+    </div>
+
+    <!-- VAT + CIS + Retention -->
+    <div class="card" style="padding:12px;margin-bottom:12px;background:var(--bg-darker)">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;align-items:end">
+        <div>
+          <label class="field-label">VAT</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding-top:4px">
+            <input type="checkbox" id="invNewVatYes" checked onchange="recalcInvoiceTotals()">
+            Apply standard 20% VAT
+          </label>
+        </div>
+        <div>
+          <label class="field-label">CIS</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding-top:4px">
+            <input type="checkbox" id="invNewCisReverse" onchange="recalcInvoiceTotals()">
+            Reverse charge applies
+          </label>
+        </div>
+        <div>
+          <label class="field-label">Retention</label>
+          <select class="field-input" id="invNewRetentionMode" onchange="_invToggleRetentionFields()">
+            <option value="none">None</option>
+            <option value="pct">By percentage</option>
+            <option value="amt">By amount</option>
+          </select>
+        </div>
+        <div id="invRetentionPctWrap" style="display:none">
+          <label class="field-label">Retention %</label>
+          <input type="number" step="0.01" class="field-input" id="invNewRetentionPct"
+                 placeholder="e.g. 5" oninput="recalcInvoiceTotals()">
+        </div>
+        <div id="invRetentionAmtWrap" style="display:none">
+          <label class="field-label">Retention £</label>
+          <input type="number" step="0.01" class="field-input" id="invNewRetentionAmt"
+                 placeholder="e.g. 1500" oninput="recalcInvoiceTotals()">
+        </div>
+        <div id="invRetentionDueWrap" style="display:none">
+          <label class="field-label">Retention Due Date</label>
+          <input type="date" class="field-input" id="invNewRetentionDue">
+        </div>
+      </div>
+    </div>
+
+    <!-- Totals summary -->
+    <div class="card" style="padding:12px;margin-bottom:12px">
+      <div style="display:grid;grid-template-columns:repeat(5, 1fr);gap:8px;font-size:13px">
+        <div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase">Net</div>
+          <div id="invTotalNet" style="font-weight:600">£0.00</div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase">Less Retention</div>
+          <div id="invTotalRetention" style="font-weight:600">£0.00</div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase">VAT</div>
+          <div id="invTotalVat" style="font-weight:600">£0.00</div>
+        </div>
+        <div id="invTotalReverseRow" style="display:none">
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase">CIS Reverse</div>
+          <div id="invTotalReverse" style="font-weight:600;color:var(--muted)">£0.00</div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase">Gross Total</div>
+          <div id="invTotalGross" style="font-weight:700;font-size:16px;color:var(--accent)">£0.00</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Notes -->
+    <div style="margin-bottom:12px">
+      <label class="field-label">Notes (optional)</label>
+      <textarea class="field-input" id="invNewNotes" rows="2"
+                style="font-family:inherit;font-size:13px"
+                placeholder="Any extra notes shown on the PDF…"></textarea>
+    </div>
+
+    <div class="modal-actions" style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-ghost" onclick="closeInvNewModal()">Cancel</button>
+      <button class="btn btn-ghost" id="invSaveDraftBtn" onclick="saveInvoiceDraft()">Save Draft</button>
+      <button class="btn btn-primary" id="invIssueBtn" onclick="saveAndIssueInvoice()">Save & Issue</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     INVOICE DETAIL MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="invDetailModal">
+  <div class="modal" style="max-width:900px;width:96vw;max-height:92vh;overflow-y:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <div>
+        <div class="modal-title" style="margin:0">
+          <span style="font-size:11px;color:var(--muted);text-transform:uppercase" id="invDetailKind">Invoice</span><br>
+          <span id="invDetailRef" style="font-family:var(--font-mono)">INV????</span>
+        </div>
+      </div>
+      <div style="text-align:right">
+        <div id="invDetailStatus" style="margin-bottom:6px"></div>
+        <button class="btn btn-ghost" id="invDetailPdfBtn"
+                style="padding:4px 10px;font-size:11px;display:none">📄 Open PDF</button>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px;
+                font-size:13px">
+      <div>
+        <div style="color:var(--muted);font-size:11px;text-transform:uppercase">Customer</div>
+        <div id="invDetailCustomer" style="font-weight:600"></div>
+      </div>
+      <div>
+        <div style="color:var(--muted);font-size:11px;text-transform:uppercase">Project</div>
+        <div id="invDetailProject"></div>
+      </div>
+      <div>
+        <div style="color:var(--muted);font-size:11px;text-transform:uppercase">Invoice Date</div>
+        <div id="invDetailDate"></div>
+      </div>
+      <div>
+        <div style="color:var(--muted);font-size:11px;text-transform:uppercase">Due Date</div>
+        <div id="invDetailDue"></div>
+      </div>
+    </div>
+
+    <!-- Line items table -->
+    <div style="margin-bottom:14px">
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;margin-bottom:4px">Line Items</div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead>
+          <tr style="border-bottom:1px solid var(--border)">
+            <th style="text-align:left;padding:6px 8px;font-size:11px;color:var(--muted)">Description</th>
+            <th style="text-align:right;padding:6px 8px;font-size:11px;color:var(--muted)">Qty</th>
+            <th style="text-align:right;padding:6px 8px;font-size:11px;color:var(--muted)">Unit £</th>
+            <th style="text-align:right;padding:6px 8px;font-size:11px;color:var(--muted)">Line £</th>
+          </tr>
+        </thead>
+        <tbody id="invDetailLines"></tbody>
+      </table>
+    </div>
+
+    <!-- Totals + outstanding -->
+    <div class="card" style="padding:12px;margin-bottom:14px">
+      <div style="display:grid;grid-template-columns:repeat(5, 1fr);gap:8px;font-size:13px;text-align:right">
+        <div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase">Net</div>
+          <div id="invDetailNet" style="font-weight:600">£0.00</div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase">Retention</div>
+          <div id="invDetailRet" style="font-weight:600">£0.00</div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase">VAT</div>
+          <div id="invDetailVat" style="font-weight:600">£0.00</div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase">Gross</div>
+          <div id="invDetailGross" style="font-weight:700;font-size:15px">£0.00</div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase">Outstanding</div>
+          <div id="invDetailOutstanding" style="font-weight:700;font-size:15px;color:var(--accent)">£0.00</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Payments table -->
+    <div style="margin-bottom:14px">
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;margin-bottom:4px">Payments</div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead>
+          <tr style="border-bottom:1px solid var(--border)">
+            <th style="text-align:left;padding:6px 8px;font-size:11px;color:var(--muted)">Date</th>
+            <th style="text-align:left;padding:6px 8px;font-size:11px;color:var(--muted)">Method</th>
+            <th style="text-align:left;padding:6px 8px;font-size:11px;color:var(--muted)">Reference</th>
+            <th style="text-align:right;padding:6px 8px;font-size:11px;color:var(--muted)">Amount</th>
+            <th style="width:30px"></th>
+          </tr>
+        </thead>
+        <tbody id="invDetailPayments"></tbody>
+      </table>
+    </div>
+
+    <div class="modal-actions" style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
+      <button class="btn btn-ghost" onclick="closeInvDetail()">Close</button>
+      <button class="btn btn-ghost" onclick="downloadInvoicePdf()">📄 Download PDF</button>
+      <button class="btn btn-ghost" id="invDetailVoidBtn"
+              style="border-color:var(--red);color:var(--red)"
+              onclick="voidInvoice()">Void</button>
+      <button class="btn btn-ghost" id="invDetailPayBtn" onclick="openRecordPaymentModal()">+ Record Payment</button>
+      <button class="btn btn-primary" id="invDetailIssueBtn" onclick="issueInvoiceFromDetail()">Issue + PDF</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     RECORD PAYMENT MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="invRecordPaymentModal">
+  <div class="modal" style="max-width:480px;width:95vw">
+    <div class="modal-title">💷 Record Payment</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <label class="field-label">Payment Date</label>
+        <input type="date" class="field-input" id="invPayDate">
+      </div>
+      <div>
+        <label class="field-label">Amount (£)</label>
+        <input type="number" step="0.01" class="field-input" id="invPayAmount">
+      </div>
+      <div>
+        <label class="field-label">Method</label>
+        <select class="field-input" id="invPayMethod">
+          <option value="bank_transfer">Bank Transfer</option>
+          <option value="cheque">Cheque</option>
+          <option value="cash">Cash</option>
+          <option value="card">Card</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div>
+        <label class="field-label">Reference</label>
+        <input type="text" class="field-input" id="invPayRef" placeholder="their payment ref">
+      </div>
+    </div>
+    <div style="margin-bottom:12px">
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px">
+        <input type="checkbox" id="invPayRetention">
+        Mark as retention release
+      </label>
+    </div>
+    <div style="margin-bottom:12px">
+      <label class="field-label">Notes</label>
+      <textarea class="field-input" id="invPayNotes" rows="2"
+                style="font-family:inherit;font-size:13px"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeRecordPaymentModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveInvPayment()">Record</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     NEW RECEIPT MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="invReceiptModal">
+  <div class="modal" style="max-width:700px;width:96vw;max-height:92vh;overflow-y:auto">
+    <div class="modal-title">💸 New Receipt</div>
+
+    <!-- File upload + OCR -->
+    <div class="card" style="padding:12px;margin-bottom:12px;background:var(--bg-darker)">
+      <label class="field-label">Receipt File (image or PDF)</label>
+      <input type="file" class="field-input" id="invReceiptFile" accept="image/*,application/pdf"
+             onchange="onReceiptFilePicked(this.files[0])">
+      <div id="invReceiptOcrStatus" style="display:none;padding:8px 10px;border-radius:6px;
+           font-size:12px;margin-top:8px;background:var(--bg-darker);border:1px solid var(--border)"></div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <label class="field-label">Date</label>
+        <input type="date" class="field-input" id="invReceiptDate">
+      </div>
+      <div>
+        <label class="field-label">Supplier</label>
+        <input type="text" class="field-input" id="invReceiptSupplier" placeholder="e.g. BP, Travis Perkins…">
+      </div>
+      <div>
+        <label class="field-label">Category</label>
+        <select class="field-input" id="invReceiptCategory">
+          <option>Fuel</option><option>Materials</option><option>Consumables</option><option>PPE</option>
+          <option>Equipment</option><option>Rent</option><option>Insurance</option>
+          <option>Professional Services</option><option>Galvanise</option>
+          <option>Food &amp; Water</option><option>Stationery</option><option>Travel</option>
+          <option selected>Other</option>
+        </select>
+      </div>
+      <div>
+        <label class="field-label">Project (optional)</label>
+        <input type="text" class="field-input" id="invReceiptProjectSearch"
+               placeholder="Type C-ref / project name…"
+               oninput="filterInvReceiptProjects(this.value)"
+               onfocus="filterInvReceiptProjects(this.value)">
+        <div id="invReceiptProjectDropdown" style="position:relative"></div>
+        <div id="invReceiptProjectSelected" style="font-size:11px;color:var(--muted);margin-top:4px;min-height:14px"></div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <label class="field-label">Net £</label>
+        <input type="number" step="0.01" class="field-input" id="invReceiptNet">
+      </div>
+      <div>
+        <label class="field-label">VAT £</label>
+        <input type="number" step="0.01" class="field-input" id="invReceiptVat">
+      </div>
+      <div>
+        <label class="field-label">Gross £ <span style="color:var(--red)">*</span></label>
+        <input type="number" step="0.01" class="field-input" id="invReceiptGross">
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <label class="field-label">Paid By</label>
+        <select class="field-input" id="invReceiptMethod" onchange="toggleReceiptPaidBy()">
+          <option value="company_account">Company Account</option>
+          <option value="credit_card">Credit Card</option>
+          <option value="cash">Cash</option>
+          <option value="personal">Personal (to reimburse)</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div id="invReceiptPaidByWrap" style="display:none">
+        <label class="field-label">Employee</label>
+        <select class="field-input" id="invReceiptPaidBy">
+          <option value="">— pick employee —</option>
+        </select>
+      </div>
+    </div>
+
+    <div style="margin-bottom:12px">
+      <label class="field-label">Notes</label>
+      <textarea class="field-input" id="invReceiptNotes" rows="2"
+                style="font-family:inherit;font-size:13px"></textarea>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeNewReceiptModal()">Cancel</button>
+      <button class="btn btn-primary" id="invReceiptSaveBtn" onclick="saveReceipt()">Save Receipt</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     SUPPLIER INVOICE — ATTACH TO PO MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="invSupInvModal">
+  <div class="modal" style="max-width:700px;width:96vw;max-height:92vh;overflow-y:auto">
+    <div class="modal-title">📥 Attach Supplier Invoice to PO</div>
+
+    <div style="margin-bottom:12px">
+      <label class="field-label">Purchase Order</label>
+      <select class="field-input" id="invSupInvPoSelect" onchange="onSupInvPoPicked(this.value)">
+        <option value="">— pick a PO —</option>
+      </select>
+      <div style="font-size:11px;color:var(--subtle);margin-top:4px">
+        Only POs without an attached supplier invoice are shown.
+      </div>
+    </div>
+
+    <div class="card" style="padding:12px;margin-bottom:12px;background:var(--bg-darker)">
+      <label class="field-label">Invoice File (PDF or image)</label>
+      <input type="file" class="field-input" id="invSupInvFile" accept="image/*,application/pdf"
+             onchange="onSupInvFilePicked(this.files[0])">
+      <div id="invSupInvOcrStatus" style="display:none;padding:8px 10px;border-radius:6px;
+           font-size:12px;margin-top:8px;background:var(--bg-darker);border:1px solid var(--border)"></div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <label class="field-label">Supplier's Invoice Reference</label>
+        <input type="text" class="field-input" id="invSupInvRef">
+      </div>
+      <div>
+        <label class="field-label">Invoice Date</label>
+        <input type="date" class="field-input" id="invSupInvDate">
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <label class="field-label">Net £</label>
+        <input type="number" step="0.01" class="field-input" id="invSupInvNet">
+      </div>
+      <div>
+        <label class="field-label">VAT £</label>
+        <input type="number" step="0.01" class="field-input" id="invSupInvVat">
+      </div>
+      <div>
+        <label class="field-label">Gross £ <span style="color:var(--red)">*</span></label>
+        <input type="number" step="0.01" class="field-input" id="invSupInvGross">
+      </div>
+    </div>
+
+    <div style="margin-bottom:12px">
+      <label class="field-label">Notes</label>
+      <textarea class="field-input" id="invSupInvNotes" rows="2"
+                style="font-family:inherit;font-size:13px"
+                placeholder="e.g. partial billing for PO, discrepancy reasons…"></textarea>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeSupInvModal()">Cancel</button>
+      <button class="btn btn-primary" id="invSupInvSaveBtn" onclick="saveSupplierInvoice()">Attach to PO</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="shared.js?v=20260520b"></script>
 </body>
 </html>
