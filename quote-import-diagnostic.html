@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quote Import Diagnostic — BAMA ERP</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', sans-serif; background: #0f1117; color: #e0e0e0; padding: 24px; }
+  h1 { font-size: 20px; font-weight: 600; color: #fff; margin-bottom: 4px; }
+  .subtitle { font-size: 13px; color: #888; margin-bottom: 24px; }
+  .card { background: #1a1d27; border: 1px solid #2a2d3e; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+  .card h2 { font-size: 14px; font-weight: 600; color: #aaa; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 14px; }
+  .stat-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
+  .stat { flex: 1; min-width: 140px; background: #12141e; border-radius: 6px; padding: 14px 18px; }
+  .stat .num { font-size: 32px; font-weight: 700; color: #fff; line-height: 1; }
+  .stat .lbl { font-size: 12px; color: #888; margin-top: 4px; }
+  .stat.green .num { color: #4caf8c; }
+  .stat.amber .num { color: #f5a623; }
+  .stat.red   .num  { color: #e05c5c; }
+  .stat.blue  .num  { color: #5b9cf6; }
+
+  #runBtn { background: #5b9cf6; color: #fff; border: none; border-radius: 6px; padding: 10px 28px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  #runBtn:disabled { background: #2a2d3e; color: #555; cursor: not-allowed; }
+  #runBtn:hover:not(:disabled) { background: #4a8ae5; }
+
+  .log { font-family: monospace; font-size: 12px; background: #12141e; border-radius: 6px; padding: 14px; max-height: 200px; overflow-y: auto; color: #aaa; }
+  .log .ok   { color: #4caf8c; }
+  .log .warn { color: #f5a623; }
+  .log .err  { color: #e05c5c; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; padding: 8px 10px; color: #888; font-weight: 600; border-bottom: 1px solid #2a2d3e; }
+  td { padding: 7px 10px; border-bottom: 1px solid #1e2130; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  .tag { display: inline-block; font-size: 11px; border-radius: 3px; padding: 2px 7px; font-weight: 600; }
+  .tag.green { background: #1a3028; color: #4caf8c; }
+  .tag.amber { background: #2e2310; color: #f5a623; }
+  .tag.red   { background: #2e1414; color: #e05c5c; }
+  .tag.blue  { background: #162040; color: #5b9cf6; }
+  .tag.grey  { background: #1e2130; color: #888; }
+
+  .section-toggle { font-size: 12px; color: #5b9cf6; cursor: pointer; margin-left: 8px; }
+  .hidden { display: none; }
+  #exportBtn { background: #2a2d3e; color: #aaa; border: 1px solid #3a3d4e; border-radius: 6px; padding: 8px 20px; font-size: 13px; cursor: pointer; margin-left: 12px; }
+  #exportBtn:hover { background: #3a3d4e; }
+  #exportBtn:disabled { opacity: .4; cursor: not-allowed; }
+</style>
+</head>
+<body>
+
+<h1>Quote Import Diagnostic</h1>
+<p class="subtitle">Read-only feasibility check — no data will be written. Source: QUOTE_TRACKER_NEW.xlsx (2026 sheet)</p>
+
+<div class="card">
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+    <button id="runBtn" onclick="runDiagnostic()">▶ Run Diagnostic</button>
+    <button id="exportBtn" onclick="exportReport()" disabled>⬇ Export Report</button>
+    <span id="statusMsg" style="font-size:13px;color:#888;"></span>
+  </div>
+</div>
+
+<div id="statsArea" class="hidden">
+  <div class="card">
+    <h2>Summary</h2>
+    <div class="stat-row">
+      <div class="stat blue">  <div class="num" id="sTotal">—</div>  <div class="lbl">Tracker rows (2026)</div></div>
+      <div class="stat green"> <div class="num" id="sImport">—</div> <div class="lbl">Ready to import</div></div>
+      <div class="stat amber"> <div class="num" id="sExist">—</div>  <div class="lbl">Already in ERP (skip)</div></div>
+      <div class="stat amber"> <div class="num" id="sSPMatch">—</div><div class="lbl">SP folder match</div></div>
+      <div class="stat blue">  <div class="num" id="sPDF">—</div>    <div class="lbl">PDFs found for parsing</div></div>
+      <div class="stat red">   <div class="num" id="sSkip">—</div>   <div class="lbl">Skipped (Plymouth/revision)</div></div>
+    </div>
+  </div>
+
+  <div class="card" id="clientCard">
+    <h2>Client Deduplication Preview
+      <span class="section-toggle" onclick="toggleSection('clientTable')">[toggle]</span>
+    </h2>
+    <div id="clientTable">
+      <table>
+        <thead><tr><th>Canonical Name (proposed)</th><th>Variants found in tracker</th><th>In ERP already?</th></tr></thead>
+        <tbody id="clientTbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Per-Quote Breakdown
+      <span class="section-toggle" onclick="toggleSection('quoteTable')">[toggle]</span>
+    </h2>
+    <div id="quoteTable">
+      <table>
+        <thead><tr><th>Ref</th><th>Company</th><th>Project</th><th>Value</th><th>WIN</th><th>ERP</th><th>SP Folder</th><th>PDF</th></tr></thead>
+        <tbody id="quoteTbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Skip Lists
+      <span class="section-toggle" onclick="toggleSection('skipTable')">[toggle]</span>
+    </h2>
+    <div id="skipTable">
+      <table>
+        <thead><tr><th>Ref</th><th>Reason</th><th>Detail</th></tr></thead>
+        <tbody id="skipTbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Log</h2>
+  <div class="log" id="log"><span class="ok">Ready — click Run Diagnostic to start.</span></div>
+</div>
+
+<script>
+// ─── Auth (same pattern as ERP) ───────────────────────────────────────────────
+const AUTH = {
+  clientId:    '04b702fd-c53c-4f38-94bc-0334ce91d954',
+  tenantId:    'c92626f5-e391-499a-9059-0113bd07da2d',
+  redirectUri: 'https://proud-dune-0dee63110.2.azurestaticapps.net',
+  scopes:      'https://graph.microsoft.com/Files.ReadWrite https://graph.microsoft.com/Sites.ReadWrite.All',
+  getStoredToken() {
+    const t = sessionStorage.getItem('bama_token');
+    const e = parseInt(sessionStorage.getItem('bama_token_expiry') || '0');
+    return (t && Date.now() < e) ? t : null;
+  },
+  handleRedirect() {
+    if (!window.location.hash) return false;
+    const p = new URLSearchParams(window.location.hash.replace('#','?'));
+    const t = p.get('access_token');
+    if (!t) return false;
+    const exp = parseInt(p.get('expires_in') || '3600');
+    sessionStorage.setItem('bama_token', t);
+    sessionStorage.setItem('bama_token_expiry', (Date.now() + (exp-60)*1000).toString());
+    window.history.replaceState({}, '', window.location.pathname);
+    return true;
+  },
+  login() {
+    sessionStorage.setItem('bama_return_page', window.location.pathname);
+    const u = new URL(`https://login.microsoftonline.com/${this.tenantId}/oauth2/v2.0/authorize`);
+    u.searchParams.set('client_id', this.clientId);
+    u.searchParams.set('response_type', 'token');
+    u.searchParams.set('redirect_uri', this.redirectUri);
+    u.searchParams.set('scope', this.scopes);
+    u.searchParams.set('response_mode', 'fragment');
+    u.searchParams.set('nonce', Math.random().toString(36).slice(2));
+    window.location.href = u.toString();
+  },
+  async getToken() {
+    const s = this.getStoredToken();
+    if (s) return s;
+    this.login();
+    await new Promise(() => {});
+  }
+};
+if (AUTH.handleRedirect()) window.location.reload();
+
+const API_BASE    = 'https://bama-erp-api-deauckd2cja7ebd5.uksouth-01.azurewebsites.net';
+const DRIVE_ID    = 'b!CxTKk9lEwkyweUqAo3CRas-huywW4KtLqOk2tNzmx-P7CX86DNhTQo14pLuU_tZu';
+const SP_YEAR_PATH = 'Quotation/03 - 2026';
+
+// ─── Tracker data (pre-parsed from QUOTE_TRACKER_NEW.xlsx 2026 sheet) ─────────
+// Excel serial date → JS Date
+function excelDate(serial) {
+  if (!serial || isNaN(serial)) return null;
+  const d = new Date(Math.round((serial - 25569) * 86400 * 1000));
+  return d.toISOString().split('T')[0];
+}
+
+const TRACKER = [
+  // [ref, company, project, value, win, dueSerial, sentSerial, chasingSerial, contactEmail, comments]
+  ["Q260101","7formation Ltd","Abbey College - Ramsey",431313.27,"No",46043,46049,null,"mitchell@7formation.co.uk",""],
+  ["Q260102","Cocksedge","Cambridge Arts Theatre - Structural Steelwork",0,"",46045,null,null,"mashworth@cocksedge.com","too late"],
+  ["Q260103","Abbott Building","Moss Mill, Rochdale",0,"",46043,null,null,"mark@abbottbuilding.co.uk","too late"],
+  ["Q260104","Abbott Building","Store G - Landlord Enabling Works",30904,"",45697,46066,null,"mark@abbottbuilding.co.uk",""],
+  ["Q260105","Probus Construction","Driby Farmhouse, South Ormsby Estate",9454.45,"",46038,46049,null,"Jack.Gillan@probusconstruction.co.uk",""],
+  ["Q260106","Probus Construction","Unit A1, Grantham",19421,"",46048,46049,null,"Jack.Gillan@probusconstruction.co.uk",""],
+  ["Q260107","Messenger BCR","Grimsthorpe Castle - Metalwork",62334,"",46042,46043,null,"joe.stieger-white@messengerbcr.co.uk","awaiting instruction"],
+  ["Q260109","Lingfield Rececourse","Bridge Works",16267,"",46038,46038,null,"",""],
+  ["Q260110","RG Carter","Pagabo MW - Barnet Elizabethans",61150,"",46052,46056,null,"",""],
+  ["Q260114","Camel Construction","33 High Street Girton, Additional Steel",1450,"Yes",45671,46036,null,"","supply only"],
+  ["Q260115","Antvic Ltd","8 Elm Tree Road - Stairs",145000,"",46043,46049,null,"",""],
+  ["Q260116","Abbott Building","Salford - Bracing",5512,"",46038,46038,null,"mark@abbottbuilding.co.uk",""],
+  ["Q260117","Hawk Developments","Structural Steel",4446,"Yes",46038,46038,null,"hawkdevelopmentsuk@gmail.com",""],
+  ["Q260118","RG Carter","NHC Construction Centre, Stevenage",25658,"Yes",46043,46044,null,"",""],
+  ["Q260119","Viktorija","53 Waterlow Road",550,"No",46039,46039,null,"",""],
+  ["Q260120","ARC Build","38 Queens St, Yaxley",2593,"",46043,46044,46101,"arcprobuild@gmail.com",""],
+  ["Q260121","MOS Projects","HMP Maidstone - S/S Grills",18408,"",46043,46044,46100,"","Awaiting confirmation"],
+  ["Q260123","MOS Projects","Wallis Road - Metalwork",257787,"No",46043,46043,null,"Ian.Lake@rgcarter.co.uk",""],
+  ["Q260124","RG Carter","Linfordwood - Brackets",1442,"Yes",46044,46044,null,"thomas@smd-ltd.com",""],
+  ["Q260125","SMD","United Reformed Church, Welwyn Garden City",0,"",46059,null,null,"","not interested"],
+  ["Q260126","ABS Construction","Tesco Dunstable",10501,"",46045,46056,null,"r.beatson@asbconstruction.co.uk",""],
+  ["Q260127","ABS Construction","Tesco Bridgwater, TA6 4 YA",8037,"",46045,46056,null,"r.beatson@asbconstruction.co.uk",""],
+  ["Q260128","ABS Construction","Coop, Ancaster, Ermine St",8550,"",46045,46056,null,"","Same As"],
+  ["Q260129","FCM Contractors","Lifting Beam",0,"",46048,null,null,"","not interested"],
+  ["Q260130","Thales Group","Stockport Structural Steel",88285.86,"",45684,46080,null,"",""],
+  ["Q260132","RG Carter","Linfordwood - Additional PFC's",2561,"Yes",46050,46050,null,"Ian.Lake@rgcarter.co.uk",""],
+  ["Q260133","BAM","Upon Thurne Package - Pumping Stations",169932.4,"",46035,46058,null,"",""],
+  ["Q260134","BAM","Copley  Steelwork",101400,"",46045,46058,null,"",""],
+  ["Q260137","Pentaco","Chelmsford",3943.2,"",46080,46085,46101,"estimating@pentaco.co.uk","Awaiting information from client"],
+  ["Q260138","Alexander James","Weymouth Court",184878,"",46059,46059,null,"gleb@alexanderjamesltd.co.uk",""],
+  ["Q260139","RG Carter","Stevenage - Structural, Stairs, Handrails",51912,"Yes",46052,46052,null,"Ian.Lake@rgcarter.co.uk",""],
+  ["Q260140","RG Carter","Maggie's Addenbrookes: External Metal Stairs",27000,"",46065,46071,null,"Ian.Lake@rgcarter.co.uk",""],
+  ["Q260141","Alexander James","Westwood - High Wycombe",558000,"",46072,46087,null,"gleb@alexanderjamesltd.co.uk",""],
+  ["Q260201","RG Carter","Pagabo MW - Southfield Renewal Project",202525,"",46066,46077,null,"Ian.Lake@rgcarter.co.uk",""],
+  ["Q260202","Kaja Services","Structural Fabrication",1850,"Yes",46057,46057,null,"terry@kajasteelservices.co.uk",""],
+  ["Q260203","BMS","New Workshop - Leicester",579549,"",46066,46071,null,"gerard@bmsmarketingltd.co.uk",""],
+  ["Q260204","BMS","Westermans Extension",223748,"",46066,46066,null,"gerard@bmsmarketingltd.co.uk",""],
+  ["Q260205","Stoneguard","Merlin Place, Cycle Store",3222,"Yes",46059,46062,null,"moj@stoneguard.co.uk",""],
+  ["Q260206","RG Carter","Linfordwood - Cat Ladder",4774,"Yes",46058,46058,null,"Ian.Lake@rgcarter.co.uk",""],
+  ["Q260207","Savvy Construction","Aluminium Balustrades - Oxford, OX2 7EN",29000,"",46070,46079,null,"dom.russell@savvyconstruction.co.uk",""],
+  ["Q260208","Quinn London","London Diocese St Mary's Primary School",260866,"",46063,46065,null,"",""],
+  ["Q260210","Construct1","New Farm Shop",179671.32,"",46071,46073,46097,"anjali.sunitha@construct1services.com","Client waiting for information"],
+  ["Q260211","Quinn London","The Vale",121509.5,"Yes",46065,46065,null,"",""],
+  ["Q260212","Kaja Services","West Tofts - Platform",2940,"Yes",46065,46065,null,"terry@kajasteelservices.co.uk",""],
+  ["Q260213","Quinn London","Brunei Hall",446410,"",46069,46071,null,"",""],
+  ["Q260214","Stoneguard","Hutchison Steel Screen",4199,"Yes",46066,46066,null,"moj@stoneguard.co.uk",""],
+  ["Q260216","Abbott Building","37&38 Merry Hill",20600,"",46072,46077,46100,"mark@abbottbuilding.co.uk","Client waiting for instruction"],
+  ["Q260217","Messenger BCR","Grimsthorpe Castle - Hopper",91993,"",46077,46084,null,"joe.stieger-white@messengerbcr.co.uk","Awaiting instruction"],
+  ["Q260218","Hawk Developments","45 Kings Road. Berkhamsted",10000,"Yes",46072,46072,null,"hawkdevelopmentsuk@gmail.com",""],
+  ["Q260219","RG Carter","Linfordwood - Wing A Hatch",2929,"Yes",46072,46072,null,"Ian.Lake@rgcarter.co.uk",""],
+  ["Q260220","Bailey & Jones","Harspden Woodhouse",10563.7,"",46080,46083,null,"luke@baileyandjones.co.uk",""],
+  ["Q260221","RG Carter","Old Cavendish East wing Issue 6",14207,"",46083,46084,null,"Ian.Lake@rgcarter.co.uk",""],
+  ["Q260222","RG Carter","Old Cavendish East wing Issue 6",0,"",46083,null,null,"","same as Q260221"],
+  ["Q260223","JBL Bricklaying","Mill Barn",1141,"Yes",46077,46077,null,"",""],
+  ["Q260224","Stoneguard","Evelina Project",67879,"Yes",46080,46080,null,"moj@stoneguard.co.uk",""],
+  ["Q260225","Probus Construction","North Bridge Depot",22267,"",46076,46077,null,"Jack.Gillan@probusconstruction.co.uk",""],
+  ["Q260226","Quinn London","HCA, Plant Box",52849,"",46069,46079,null,"",""],
+  ["Q260228","Elkins Construction","Mountbatten House",21167,"",46072,46077,null,"",""],
+  ["Q260229","RG Carter","Werrington Health Centre refurbishment",3633,"",46091,46085,null,"Ian.Lake@rgcarter.co.uk",""],
+  ["Q260230","RG Carter","Premier Inn Wellingborough Extension",12900,"",46094,46085,null,"Ian.Lake@rgcarter.co.uk",""],
+  ["Q260231","Probus Construction","Customs House, PE30 1HP",3091,"",46099,46099,null,"Jack.Gillan@probusconstruction.co.uk",""],
+  ["Q260232","Quinn London","Greystar - Chapter Kings Cross - Amenity Refurb",1900,"No",46087,46087,null,"Jack.Gillan@probusconstruction.co.uk",""],
+  ["Q260301","Camel Construction","33 High Street, Knapwell",4536,"",46089,46085,null,"",""],
+  ["Q260302","Hill Partnership","Harewood Road, Metalwork and structural",185759.05,"",46087,46085,null,"AmyBarnett@hill.co.uk","MCD 2.5% applies"],
+  ["Q260303","Weston Housing","Stowmarket - Arch",11500,"No",46085,46087,null,"Santiago.Garrido@westonehousing.co.uk",""],
+  ["Q260304","SMD","Brocks Hill Teaching Block",31442,"",46101,46101,null,"thomas@smd-ltd.com",""],
+  ["Q260305","SMD","Colchester Institute EV Motorworkshop",70748,"",46101,46101,null,"thomas@smd-ltd.com",""],
+  ["Q260306","RG Carter","NHC Construction Centre, Stevenage, additional handrails",5338,"",46087,46087,null,"Ian.Lake@rgcarter.co.uk",""],
+  ["Q260307","Bailey & Jones","Sibford, Plates",450,"Yes",46090,46091,null,"luke@baileyandjones.co.uk","supply only"],
+  ["Q260308","Harrison Fabrication","Staircase",5500,"",46087,46087,null,"",""],
+  ["Q260309","Hive Construction","Shaden House",4100,"",46091,46091,null,"",""],
+  ["Q260310","Tilbury Douglas","South Molton, Platforms",70322,"",46094,46094,null,"Iain.Macnaughtan@tilburydouglas.co.uk",""],
+  ["Q260311","Balfour Beatty","Benacre, Pumping Station",150740,"",46108,46111,null,"Christopher.Burt@balfourbeatty.com",""],
+  ["Q260312","A & E Elkins","Susan Road Project 179915",0,"",46097,null,null,"","Too Late"],
+  ["Q260313","RG Carter","RG Carter - Chelmer Foods New Storage Building Metalwork",94276,"",46104,46104,null,"Ian.Lake@rgcarter.co.uk",""],
+  ["Q260314","RG Carter","RG Carter - Chelmer Foods New Storage Building Balustrade",31915,"",46104,46104,null,"Ian.Lake@rgcarter.co.uk",""],
+  ["Q260315","RG Carter","Maggies Addenbrookes - Metal Planter",2397,"",46094,46094,null,"Malcolm.Greenstock@rgcarter.co.uk",""],
+  ["Q260316","RG Carter","10 Station Road, Cambridge - Handrails",1125,"",46094,46094,null,"Matthew.Cullingworth@rgcarter.co.uk",""],
+  ["Q260317","RG Carter","10 Station Road, Cambridge - Trims",4402,"",46094,46098,null,"Matthew.Cullingworth@rgcarter.co.uk","Same As"],
+  ["Q260318","Quinn London","Lock Keepers Cottage, Queen Mary University of London Mile End Rd",0,"",46298,null,null,"",""],
+  ["Q260319","Quinn London","Hackney School Steel - Architectural",0,"",46113,null,null,"","Same As"],
+  ["Q260320","Quinn London","Hackney School Steel - Structual",8347,"",46113,46113,null,"",""],
+  ["Q260321","Quinn London","The Law Society - 60 Carey Street",21845,"",46115,46114,null,"joss.williams@quinnlondon.co.uk",""],
+  ["Q260322","RG Carter","Linford Wood - Canopy",6477,"",46100,46100,null,"Michael.Hartley@rgcarter.co.uk","Same As"],
+  ["Q260323","Quinn London","83 New Kent Road",171890,"",46108,46108,null,"sean.haugh@quinnlondon.co.uk",""],
+  ["Q260324","Bailey & Jones","Sibford, Plates and drop bolts",1130,"Yes",46100,46100,null,"macaulay@baileyandjones.co.uk","S1989"],
+  ["Q260325","Stoneguard","Evelina Project - Secondary Steel",2250,"",46101,46101,null,"christian@stoneguard.co.uk",""],
+  ["Q260326","Bailey & Jones","Rise One, Harris Lane, Abbots Leigh, Bristol",8559,"",46108,46108,null,"macaulay@baileyandjones.co.uk",""],
+  ["Q260327","Roger Builder","23 Kingfisher, Orton Winnstow",2700,"",46101,46101,null,"",""],
+  ["Q260328","RG Carter","Repair Works to Fire Damaged Barn at Somerset Farm",6579,"",46126,46129,null,"Andrew.Beard@rgcarter.co.uk",""],
+  ["Q260329","Babcock","SRC Maintanance",240149.55,"",46107,46107,null,"Shane.rawlins@babcockinternational.com",""],
+  ["Q260330","AES","Trim, Spalding",0,"",46111,null,null,"ops@allemergencyservices.com","Too Late"],
+  ["Q260331","RG Carter","Linfordwood Trims",5725,"",46113,46123,null,"Matthew.Cullingworth@rgcarter.co.uk",""],
+  ["Q260332","Stoneguard","TWG Cadillac, NN12 8FU",29998,"",46108,46108,null,"moj@stoneguard.co.uk",""],
+  ["Q260333","Savvy Construction","Abingdon Abbey, OX14 3JB - Metalwork",23053,"",46127,46132,null,"dom.russell@savvyconstruction.co.uk",""],
+  ["Q260334","Savvy Construction","Abingdon Abbey, OX14 3JB - Balustrades",0,"",46127,null,null,"dom.russell@savvyconstruction.co.uk","Not Interested"],
+  ["Q260335","RG Carter","Refurb of Balfour, Cockcroft & Austin Buildings E25CAM0042",25270,"",46122,46123,null,"Ian.Lake@rgcarter.co.uk",""],
+  ["Q260336","RG Carter","Phoenix Building - E26CAM0054",60565,"",46129,46132,null,"Ian.Lake@rgcarter.co.uk",""],
+  ["Q260401","SMD","Westgate School, Slough SL1 5AH",0,"",46139,null,null,"martin@smd-ltd.com","Too Late"],
+  ["Q260402","RG Carter","Manhole Cover",350,"Yes",46113,46113,null,"Luke.Waldock@rgcarter.co.uk",""],
+  ["Q260403","JPSE","Baustrades",38950,"",46114,46121,null,"simon@jpse.uk",""],
+  ["Q260404","RG Carter","Stevenage - Balustrades and Handrails",15425,"Yes",46113,46113,null,"Matthew.Cullingworth@rgcarter.co.uk",""],
+  ["Q260405","ICON","UCB Summer Row Restaurant",33588,"",46136,46140,null,"adam.lazaroy@iconprojects.co.uk",""],
+  ["Q260406","Quinn London","The Mill Art and Events Centre",16269.75,"",46136,46136,null,"",""],
+  ["Q260407","RG Carter","CBC - Forest End, Cranfield",3360,"",46122,46123,null,"malcolm.greenstock@rgcarter.co.uk",""],
+  ["Q260408","RG Carter","CBC - Church End, Cranfield",3360,"",46122,46123,null,"malcolm.greenstock@rgcarter.co.uk",""],
+  ["Q260409","Stoneguard","Hutchison, Brackets",150,"Yes",46122,46122,null,"moj@stoneguard.co.uk",""],
+  ["Q260410","Abbott Building","Opal Way, Stone",283522,"",46129,46132,null,"mark@abbottbuilding.co.uk",""],
+  ["Q260411","RMR Construction","Aluminium Brackets",2479,"No",46132,46132,null,"andrew@rmrgroup.co.uk",""],
+  ["Q260412","Probus Construction","Southchurch Drive, Nottingham",66899,"",46132,46132,null,"Dave.Nutt@probusconstruction.co.uk",""],
+  ["Q260413","Britannia Alarms","Aluminium Plates",90,"No",46122,46122,null,"MarkS@britanniaalarms.co.uk",""],
+  ["Q260414","Ermine Construction","Somerset Farm Repair Works, Wisbech Road",6579,"",46128,46129,null,"tom.dixon@ermine.co.uk",""],
+  ["Q260415","C & N Fabrication","Newark Castle Pavilion",3850,"Yes",46126,46126,null,"",""],
+  ["Q260416","Ermine Construction","Milton Road & Victoria Street, Harwich Ref 379",38605,"",46143,46143,null,"tom.dixon@ermine.co.uk",""],
+  ["Q260417","RG Carter","Linfordwood - Goal Posts",2399,"Yes",46133,46133,null,"Harry.Wheatcroft@rgcarter.co.uk",""],
+  ["Q260418","RG Carter","Kingsland Secondary School - Flashings",4530,"",46135,46135,null,"",""],
+  ["Q260419","Warden Construction","Gorton Market - Phase 2 - Stalls",68315,"",46143,46143,null,"don.shevon@warden.co.uk",""],
+  ["Q260420","Bailey & Jones","Brookhurst Farm - Galvanised Posts",15186,"Yes",46135,46135,null,"george@baileyandjones.co.uk",""],
+  ["Q260421","Stoneguard","Merlin Place - 8no. Brackets",168,"Yes",46136,46136,null,"moj@stoneguard.co.uk",""],
+  ["Q260422","Stoneguard","Hutchison - Panel and Brackets",540,"Yes",46136,46136,null,"moj@stoneguard.co.uk",""],
+  ["Q260423","Kaja Services","Stockmans Barn - Fabrication",3465,"Yes",46136,46136,null,"terry@kajasteelservices.co.uk",""],
+  ["Q260424","Thomas","Gate and Railings",3050,"Yes",46136,46136,null,"",""],
+  ["Q260425","SMD","Welland Park",25292,"",46147,46147,null,"estimating@smd-ltd.com",""],
+  ["Q260426","Chris Ord","Dog Cages",2650,"Yes",46139,46139,null,"",""],
+  ["Q260501","Offsite Supplies Ltd","Chartwell House, Yaxley",8626,"",46147,46147,null,"bruce@offsitesupplies.co.uk",""],
+  ["Q260502","RW Armstrong","Shatwell Yard - Steelwork",201670.5,"",46148,45784,null,"BenSmith@rwarmstrong.co.uk",""],
+  ["Q260503","Camel Construction","Great Shelford",3697,"",46150,46155,null,"stuart@camelcs.co.uk",""],
+  ["Q260504","Warden Construction","Gorton Market - Balustrades",28675,"",46150,46155,null,"don.shevon@warden.co.uk",""],
+  ["Q260505","Venture Construction","Canterbury Car Dealership",0,"",46164,null,null,"info@ventureconstruction.co.uk",""],
+  ["Q260506","Hill Partnership","Harewood Road, structural",83664.2,"",46157,46149,null,"lukewebster@hill.co.uk",""],
+  ["Q260507","Fenland Stonework","Galv Brackets",10,"Yes",46150,46150,null,"fenlandstoneworks@btinternet.com",""],
+  ["Q260508","TMV Architects","Balustrade - Sawtry",1270,"",46150,46150,null,"tm@tmvarchitects.co.uk",""],
+  ["Q260509","ASB Construction","Fire Escape, Essex",12655,"",46153,46155,null,"r.beatson@asbconstruction.co.uk",""],
+  ["Q260510","RG Carter","St Cath - Structural",13160,"",46160,46160,null,"Andrew.Beard@rgcarter.co.uk",""],
+  ["Q260511","RG Carter","Linfordwood - 2 no. PFC",2141,"",46154,46155,null,"Michael.Hartley@rgcarter.co.uk",""],
+  ["Q260512","Quinn London","Royal Brompton, Private Patients Cath Lab",0,"",46170,null,null,"jeremy.ruffle@quinnlondon.co.uk",""],
+  ["Q260513","Venture Construction","Polestar Erdington",0,"",46164,null,null,"info@ventureconstruction.co.uk",""],
+  ["Q260514","Ascot Property Soluion","6 River Meadow",161383,"",46157,46160,null,"info@ascotpropertysolutions.co.uk",""],
+  ["Q260515","Quinn London","Jay Mews - Royal College of Music",0,"",46169,null,null,"alex.mcneill@quinnlondon.co.uk",""],
+  ["Q260516","P Woods Construction Ltd","High St, Cambridge CB22 - Structural",0,"",46174,null,null,"ryan@pwoodsconstruction.co.uk",""],
+  ["Q260517","Bell Building Projects Ltd","Farmfoods, Porth - Steelwork",0,"",46168,null,null,"jcumming@bellbuildingprojects.co.uk",""],
+  ["Q260518","Bell Building Projects Ltd","Farmfoods, Porth - Steel Doors",0,"",46168,null,null,"jcumming@bellbuildingprojects.co.uk",""],
+  ["Q260519","GSK","CP006 B5 Chillers",0,"",46171,null,null,"paul.d.white@gsk.com",""],
+  ["Q260520","Taziker Industrial Ltd","A96, Iverness IV2 3UB",0,"",46164,null,null,"greig.aird@taziker.com",""],
+  ["Q260522","TMV Architects","Stairs",0,"",46161,null,null,"tmvarchitects.co.uk",""],
+  ["Q260523","P Woods Construction Ltd","New Barn, Little Shelfors House",0,"",46174,null,null,"ryan@pwoodsconstruction.co.uk",""],
+  ["Q260524","Probus Construction","Branston Mash Amanity",0,"",46175,null,null,"Dave.Nutt@probusconstruction.co.uk",""],
+  ["Q260525","Quinn London","14 Bolton St - SHS Posts",1832,"",46161,46161,null,"mick.pennell@quinnlondon.co.uk",""],
+];
+
+// ─── Client canonical name map ───────────────────────────────────────────────
+const CANONICAL = {
+  'rg carter': 'RG Carter',
+  'r g carter': 'RG Carter',
+  'r g carters': 'RG Carter',
+  'rg carters': 'RG Carter',
+  'abbott building': 'Abbott Building',
+  'abbott building limited': 'Abbott Building',
+  'abs construction': 'ABS Construction',
+  'asb construction': 'ASB Construction',
+  'alexander james': 'Alexander James',
+  'alexander james contracts': 'Alexander James',
+  'alexander james ltd': 'Alexander James',
+  'quinn london': 'Quinn London',
+  'probus construction': 'Probus Construction',
+  'stoneguard': 'Stoneguard',
+  'bam': 'BAM',
+  'babcock': 'Babcock',
+  'bailey & jones': 'Bailey & Jones',
+  'balfour beatty': 'Balfour Beatty',
+  'hill partnership': 'Hill Partnership',
+  'elkins construction': 'Elkins Construction',
+  'a & e elkins': 'A&E Elkins',
+  'savvy construction': 'Savvy Construction',
+  'smd': 'SMD',
+  'kaja services': 'Kaja Services',
+  'warden construction': 'Warden Construction',
+  'camel construction': 'Camel Construction',
+  'icon': 'ICON Projects',
+  'messenger bcr': 'Messenger BCR',
+  'hawk developments': 'Hawk Developments',
+  'ermine construction': 'Ermine Construction',
+  'pentaco': 'Pentaco',
+};
+function canonical(name) {
+  return CANONICAL[name.toLowerCase()] || name;
+}
+
+// ─── Skip lists ───────────────────────────────────────────────────────────────
+const SKIP_PLYMOUTH  = ["Q260108","Q260111","Q260112","Q260113","Q260122","Q260131","Q260135","Q260136","Q260227"];
+const SKIP_REVISIONS = ["Q260128 rev1","Q260128 rev2","Q260317 rev1","Q260317 rev2","Q260322 rev1"];
+
+// ─── Logging ─────────────────────────────────────────────────────────────────
+let logEl;
+function log(msg, cls='') {
+  if (!logEl) logEl = document.getElementById('log');
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  line.textContent = msg;
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ─── Report state ─────────────────────────────────────────────────────────────
+let reportData = null;
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
+async function runDiagnostic() {
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true;
+  document.getElementById('statusMsg').textContent = 'Running…';
+  logEl = document.getElementById('log');
+  logEl.innerHTML = '';
+
+  try {
+    log('Getting auth token…');
+    const token = await AUTH.getToken();
+    log('✓ Authenticated', 'ok');
+
+    // 1. Fetch existing tenders from ERP
+    log('Fetching existing tenders from ERP…');
+    const erpRes = await fetch(`${API_BASE}/api/tenders`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (!erpRes.ok) throw new Error(`ERP API ${erpRes.status}`);
+    const erpTenders = await erpRes.json();
+    const erpRefs = new Set(erpTenders.map(t => t.reference?.toUpperCase()));
+    log(`✓ ERP has ${erpTenders.length} tenders, ${erpRefs.size} unique refs`, 'ok');
+
+    // Also fetch existing clients
+    log('Fetching existing clients from ERP…');
+    const cliRes = await fetch(`${API_BASE}/api/clients`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    const erpClients = cliRes.ok ? await cliRes.json() : [];
+    const erpClientNames = new Set(erpClients.map(c => c.company_name?.toLowerCase()));
+    log(`✓ ERP has ${erpClients.length} clients`, 'ok');
+
+    // 2. Fetch SharePoint folder listing
+    log('Listing SharePoint Quotation/03 - 2026 folder…');
+    const spRes = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/root:/${encodeURIComponent(SP_YEAR_PATH)}:/children?$select=id,name&$top=500`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    if (!spRes.ok) throw new Error(`SharePoint ${spRes.status}: ${await spRes.text()}`);
+    const spData = await spRes.json();
+    const spFolders = spData.value || [];
+    log(`✓ Found ${spFolders.length} folders in SP 2026 year folder`, 'ok');
+
+    // Build SP folder map: quoteRef → {id, name}
+    const spMap = {};
+    for (const f of spFolders) {
+      const m = f.name.match(/^(Q26\d+)/i);
+      if (m) spMap[m[1].toUpperCase()] = { id: f.id, name: f.name };
+    }
+    log(`✓ ${Object.keys(spMap).length} folders matched a Q26xxxx reference`, 'ok');
+
+    // 3. For each SP-matched folder, look for PDFs
+    log('Scanning SP folders for PDFs (this may take a moment)…');
+    const pdfMap = {}; // ref → [{name, id}]
+    const spMatchedRefs = Object.keys(spMap);
+    let scanned = 0;
+    for (const ref of spMatchedRefs) {
+      const folderId = spMap[ref].id;
+      try {
+        const childRes = await fetch(
+          `https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/items/${folderId}/children?$select=id,name,file&$top=200`,
+          { headers: { 'Authorization': `Bearer ${token}` } }
+        );
+        if (!childRes.ok) continue;
+        const childData = await childRes.json();
+        const items = childData.value || [];
+        const pdfs = items.filter(i => i.name?.toLowerCase().endsWith('.pdf'));
+        // Also look one level deeper (00 - Tender subfolder)
+        const subfolders = items.filter(i => !i.file);
+        for (const sf of subfolders) {
+          try {
+            const sfRes = await fetch(
+              `https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/items/${sf.id}/children?$select=id,name,file&$top=100`,
+              { headers: { 'Authorization': `Bearer ${token}` } }
+            );
+            if (sfRes.ok) {
+              const sfData = await sfRes.json();
+              (sfData.value || []).filter(i => i.name?.toLowerCase().endsWith('.pdf')).forEach(p => pdfs.push(p));
+            }
+          } catch {}
+        }
+        if (pdfs.length) pdfMap[ref] = pdfs;
+      } catch {}
+      scanned++;
+      if (scanned % 10 === 0) log(`  …scanned ${scanned}/${spMatchedRefs.length} folders`);
+    }
+    const pdfCount = Object.values(pdfMap).reduce((s, a) => s + a.length, 0);
+    log(`✓ PDF scan complete — ${Object.keys(pdfMap).length} folders have PDFs (${pdfCount} total)`, 'ok');
+
+    // 4. Build result rows
+    const results = [];
+    for (const row of TRACKER) {
+      const [ref, company, project, value, win] = row;
+      const refUpper = ref.toUpperCase();
+      const canonName = canonical(company);
+      const inERP  = erpRefs.has(refUpper);
+      const inSP   = !!spMap[refUpper];
+      const pdfs   = pdfMap[refUpper] || [];
+      const clientInERP = erpClientNames.has(canonName.toLowerCase());
+
+      let action;
+      if (inERP) action = 'skip-erp';
+      else action = 'import';
+
+      results.push({ ref, company: canonName, project, value, win, inERP, inSP, pdfs, clientInERP, action });
+    }
+
+    // 5. Counts
+    const toImport   = results.filter(r => r.action === 'import');
+    const alreadyERP = results.filter(r => r.action === 'skip-erp');
+    const spMatched  = results.filter(r => r.inSP);
+    const hasPDFs    = results.filter(r => r.pdfs.length > 0);
+
+    document.getElementById('sTotal').textContent  = TRACKER.length;
+    document.getElementById('sImport').textContent = toImport.length;
+    document.getElementById('sExist').textContent  = alreadyERP.length;
+    document.getElementById('sSPMatch').textContent = spMatched.length;
+    document.getElementById('sPDF').textContent    = hasPDFs.length;
+    document.getElementById('sSkip').textContent   = SKIP_PLYMOUTH.length + SKIP_REVISIONS.length;
+
+    // 6. Client dedup table
+    const clientVariants = {};
+    for (const row of TRACKER) {
+      const orig = row[1];
+      const canon = canonical(orig);
+      if (!clientVariants[canon]) clientVariants[canon] = new Set();
+      clientVariants[canon].add(orig);
+    }
+    const ctbody = document.getElementById('clientTbody');
+    ctbody.innerHTML = '';
+    for (const [canon, variants] of Object.entries(clientVariants).sort()) {
+      const inERP = erpClientNames.has(canon.toLowerCase());
+      const varStr = [...variants].join(', ');
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><strong>${canon}</strong></td>
+        <td style="color:#aaa">${varStr}</td>
+        <td>${inERP ? '<span class="tag green">In ERP</span>' : '<span class="tag amber">New</span>'}</td>`;
+      ctbody.appendChild(tr);
+    }
+
+    // 7. Per-quote table
+    const qtbody = document.getElementById('quoteTbody');
+    qtbody.innerHTML = '';
+    for (const r of results) {
+      const winTag = r.win === 'Yes' ? '<span class="tag green">Won</span>'
+                   : r.win === 'No'  ? '<span class="tag red">Lost</span>'
+                   : '<span class="tag grey">Open</span>';
+      const erpTag = r.inERP ? '<span class="tag amber">Skip</span>' : '<span class="tag green">Import</span>';
+      const spTag  = r.inSP  ? '<span class="tag green">✓</span>'   : '<span class="tag grey">—</span>';
+      const pdfTag = r.pdfs.length ? `<span class="tag blue">${r.pdfs.length} PDF${r.pdfs.length>1?'s':''}</span>` : '<span class="tag grey">—</span>';
+      const val    = r.value ? `£${Number(r.value).toLocaleString('en-GB', {minimumFractionDigits:0})}` : '—';
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${r.ref}</td><td>${r.company}</td><td style="color:#aaa;max-width:260px">${r.project}</td><td style="white-space:nowrap">${val}</td><td>${winTag}</td><td>${erpTag}</td><td>${spTag}</td><td>${pdfTag}</td>`;
+      qtbody.appendChild(tr);
+    }
+
+    // 8. Skip table
+    const stbody = document.getElementById('skipTbody');
+    stbody.innerHTML = '';
+    for (const ref of SKIP_PLYMOUTH) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${ref}</td><td><span class="tag grey">Plymouth</span></td><td>No client/project data — Plymouth office</td>`;
+      stbody.appendChild(tr);
+    }
+    for (const ref of SKIP_REVISIONS) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${ref}</td><td><span class="tag amber">Revision</span></td><td>Revision of existing quote — base ref already imported</td>`;
+      stbody.appendChild(tr);
+    }
+
+    // Store for export
+    reportData = { results, toImport, alreadyERP, spMatched, hasPDFs };
+
+    document.getElementById('statsArea').classList.remove('hidden');
+    document.getElementById('exportBtn').disabled = false;
+    document.getElementById('statusMsg').textContent = 'Complete ✓';
+    log(`\n✅ Diagnostic complete — ${toImport.length} quotes ready to import, ${alreadyERP.length} already in ERP`, 'ok');
+
+  } catch (err) {
+    log(`❌ Error: ${err.message}`, 'err');
+    document.getElementById('statusMsg').textContent = 'Error — see log';
+    document.getElementById('runBtn').disabled = false;
+  }
+}
+
+function exportReport() {
+  if (!reportData) return;
+  const { results } = reportData;
+  const lines = [
+    'Ref,Company,Project,Value,WIN,Action,SP Folder,PDFs',
+    ...results.map(r => `${r.ref},"${r.company}","${r.project}",${r.value||0},${r.win||''},${r.action},${r.inSP?'Yes':'No'},${r.pdfs.length}`)
+  ];
+  const skipLines = [
+    '\nSkip List - Plymouth',
+    ...SKIP_PLYMOUTH.map(r => `${r},Plymouth`),
+    '\nSkip List - Revisions',
+    ...SKIP_REVISIONS.map(r => `${r},Revision`)
+  ];
+  const blob = new Blob([[...lines, ...skipLines].join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'quote-import-diagnostic.csv';
+  a.click();
+}
+
+function toggleSection(id) {
+  document.getElementById(id).classList.toggle('hidden');
+}
+</script>
+</body>
+</html>
