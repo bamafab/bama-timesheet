@@ -3179,14 +3179,14 @@ function selectReport(name) {
   document.querySelectorAll('.report-panel').forEach(panel => {
     panel.classList.toggle('active', panel.id === `rptPanel-${name}`);
   });
-  // Babcock has its own FY toggle + its own KPI grid — hide the generic
-  // period toolbar and the shared KPI row so they don't visually clash.
+  // Babcock and Cost Analysis each bring their own toolbars + KPI rows.
+  // Hide the generic shared chrome so they don't visually clash.
   // (Both elements only exist on reports.html; harmless no-op elsewhere.)
-  const isBabcock = name === 'babcock';
+  const ownsChrome = (name === 'babcock' || name === 'costanalysis');
   const periodBar = document.getElementById('rptPeriodToolbar');
-  if (periodBar) periodBar.style.display = isBabcock ? 'none' : '';
+  if (periodBar) periodBar.style.display = ownsChrome ? 'none' : '';
   const sharedKpi = document.getElementById('rptKpiRow');
-  if (sharedKpi) sharedKpi.style.display = isBabcock ? 'none' : '';
+  if (sharedKpi) sharedKpi.style.display = ownsChrome ? 'none' : '';
   renderReports();
 }
 
@@ -5434,6 +5434,12 @@ function renderReports() {
     renderBabcockReport();
     return;
   }
+  // Cost & PO Analysis: own period toggle + own KPI row + own datasource
+  // (purchase orders + project hours, not employee clock entries).
+  if (activeReport === 'costanalysis') {
+    renderCostAnalysisReport();
+    return;
+  }
 
   const empFilter = document.getElementById('rptEmployeeFilter')?.value || '';
 
@@ -5702,6 +5708,345 @@ function fmtMoneyFull(n) {
   if (n == null || !isFinite(Number(n))) return '£0.00';
   return '£' + Number(n).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
+
+// ═══════════════════════════════════════════
+// COST & PO ANALYSIS REPORT
+// ═══════════════════════════════════════════
+//
+// A spend-analytics report driven by PurchaseOrders + ProjectHours.
+// Independent from the kiosk-hours reports that share #rptKpiRow and the
+// global Week/Month/Year toolbar.
+//
+// Data sources, loaded lazily on first render:
+//   • /api/purchase-orders   — every PO, with project_id/cost_centre/created_at/total_value/vat_amount
+//   • /api/project-hours     — every ProjectHours row across the entire DB
+// We don't filter at the API level by date; the dataset is small enough
+// (≤500 POs, low thousands of hours rows) that an in-memory filter is fine
+// and avoids a round-trip per toggle change.
+//
+// Period semantics (matches PO Tracker spend tile):
+//   thisMonth — current calendar month (UTC)
+//   lastMonth — previous calendar month
+//   ytd       — Jan 1 → today (current calendar year)
+//
+// Workshop vs Office split is by cost_centre string match ('8099'/'5099'),
+// confirmed in CLAUDE.md / project schema. POs assigned to a project
+// (project_id NOT NULL, cost_centre NULL) don't contribute to either —
+// they go into the project-totals charts instead.
+
+let _caPeriod = 'thisMonth';
+let _caCharts = {};      // separate from rptCharts so chart-destroy in other reports doesn't kill ours
+let _caData   = null;    // { pos: [], hours: [] } cached after first fetch
+
+function setCaPeriod(period) {
+  _caPeriod = period;
+  renderCostAnalysisReport();
+}
+
+// Return { start, end, label } for the chosen period.
+function _caRange(period) {
+  const now = new Date();
+  const y = now.getUTCFullYear();
+  const m = now.getUTCMonth();
+  if (period === 'lastMonth') {
+    const start = new Date(Date.UTC(y, m - 1, 1));
+    const end   = new Date(Date.UTC(y, m, 1));
+    return { start, end, label: 'Last Month — ' + start.toLocaleString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }) };
+  }
+  if (period === 'ytd') {
+    const start = new Date(Date.UTC(y, 0, 1));
+    const end   = new Date(Date.UTC(y + 1, 0, 1));
+    return { start, end, label: `YTD ${y} — Jan 1 onwards` };
+  }
+  // thisMonth (default)
+  const start = new Date(Date.UTC(y, m, 1));
+  const end   = new Date(Date.UTC(y, m + 1, 1));
+  return { start, end, label: 'This Month — ' + start.toLocaleString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }) };
+}
+
+async function _caEnsureData() {
+  if (_caData) return _caData;
+  try {
+    const [pos, hours] = await Promise.all([
+      api.get('/api/purchase-orders'),
+      api.get('/api/project-hours')
+    ]);
+    _caData = {
+      pos:   Array.isArray(pos)   ? pos   : [],
+      hours: Array.isArray(hours) ? hours : []
+    };
+  } catch (e) {
+    console.warn('Cost analysis: data fetch failed:', e);
+    _caData = { pos: [], hours: [] };
+  }
+  return _caData;
+}
+
+// Render the period toggle (This Mo / Last Mo / YTD) into #caPeriodToggle.
+function _caRenderToggle() {
+  const wrap = document.getElementById('caPeriodToggle');
+  if (!wrap) return;
+  const btn = (token, txt) => {
+    const active = _caPeriod === token;
+    return `<button class="btn" onclick="setCaPeriod('${token}')"
+      style="border-radius:0;border:none;padding:8px 18px;font-size:13px;
+             background:${active ? 'var(--accent)' : 'var(--surface)'};
+             color:${active ? '#fff' : 'var(--muted)'};cursor:pointer">${txt}</button>`;
+  };
+  wrap.innerHTML = btn('thisMonth', 'This Month') + btn('lastMonth', 'Last Month') + btn('ytd', 'YTD');
+}
+
+// Compute nett (ex-VAT) value for a PO. Falls back to total - vat_amount,
+// else total / (1 + vat_rate/100), else total. Matches the math used in
+// the PO Tracker render.
+function _caNett(p) {
+  const total = Number(p.total_value) || 0;
+  if (Number(p.vat_amount) >= 0) return total - Number(p.vat_amount);
+  const rate = Number(p.vat_rate);
+  if (rate > 0)                  return total / (1 + rate / 100);
+  return total;
+}
+
+async function renderCostAnalysisReport() {
+  _caRenderToggle();
+  const { start, end, label } = _caRange(_caPeriod);
+  const labelEl = document.getElementById('caRangeLabel');
+  if (labelEl) labelEl.textContent = label;
+
+  // Tear down any prior charts for this report
+  Object.values(_caCharts).forEach(c => { try { c.destroy(); } catch {} });
+  _caCharts = {};
+
+  const { pos, hours } = await _caEnsureData();
+
+  // Filter POs to the selected period using created_at
+  const posInPeriod = pos.filter(p => {
+    const d = p.created_at ? new Date(p.created_at) : null;
+    if (!d || isNaN(d)) return false;
+    return d >= start && d < end;
+  });
+
+  // Filter ProjectHours to the selected period using the `date` column.
+  // S000 is non-productive time — excluded from labour cost (matches the
+  // Project Tracker labour-cost convention).
+  const hoursInPeriod = hours.filter(r => {
+    if (r.project_number === 'S000') return false;
+    const d = r.date ? new Date(r.date) : null;
+    if (!d || isNaN(d)) return false;
+    return d >= start && d < end;
+  });
+
+  // Build employee_id → rate map from in-memory cache
+  const employees = state.timesheetData.employees || [];
+  const rateById = {};
+  const rateByName = {};
+  for (const e of employees) {
+    if (e.id != null) rateById[e.id] = Number(e.rate) || 0;
+    if (e.name)       rateByName[e.name] = Number(e.rate) || 0;
+  }
+  const rateFor = r => {
+    if (r.employee_id != null && rateById[r.employee_id] !== undefined) return rateById[r.employee_id];
+    if (r.employee_name && rateByName[r.employee_name] !== undefined)   return rateByName[r.employee_name];
+    return 0;
+  };
+
+  // KPI totals
+  const totalPoSpend     = posInPeriod.reduce((s, p) => s + _caNett(p), 0);
+  const totalLabourCost  = hoursInPeriod.reduce((s, r) => s + (Number(r.hours) || 0) * rateFor(r), 0);
+  const workshopSpend    = posInPeriod.filter(p => p.cost_centre === '8099').reduce((s, p) => s + _caNett(p), 0);
+  const officeSpend      = posInPeriod.filter(p => p.cost_centre === '5099').reduce((s, p) => s + _caNett(p), 0);
+
+  // KPI tiles
+  const kpis = [
+    { label: 'PO Spend',       value: fmtMoneyFull(totalPoSpend),    color: 'var(--accent)' },
+    { label: 'Labour Cost',    value: fmtMoneyFull(totalLabourCost), color: 'var(--accent2)' },
+    { label: 'Workshop (8099)',value: fmtMoneyFull(workshopSpend),   color: '#6366f1' },
+    { label: 'Office (5099)',  value: fmtMoneyFull(officeSpend),     color: '#3ecf8e' },
+  ];
+  const kpiRow = document.getElementById('caKpiRow');
+  if (kpiRow) {
+    kpiRow.innerHTML = kpis.map(k => `
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px 18px">
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">${k.label}</div>
+        <div style="font-family:var(--font-display);font-size:26px;color:${k.color};word-break:break-all">${k.value}</div>
+      </div>
+    `).join('');
+  }
+
+  // ── Top 5 projects by PO spend ──
+  // Aggregate by project_id, label by project_number (fall back to id)
+  const poByProj = {};
+  for (const p of posInPeriod) {
+    if (!p.project_id) continue;   // skip overhead POs
+    const k = p.project_id;
+    if (!poByProj[k]) poByProj[k] = { id: k, label: p.project_number || `#${k}`, name: p.project_name || '', total: 0 };
+    poByProj[k].total += _caNett(p);
+  }
+  const topPo = Object.values(poByProj).sort((a, b) => b.total - a.total).slice(0, 5);
+
+  const topPoCtx = document.getElementById('caTopPoBar');
+  if (topPoCtx && typeof Chart !== 'undefined') {
+    _caCharts.topPo = new Chart(topPoCtx, {
+      type: 'bar',
+      data: {
+        labels: topPo.map(p => p.label),
+        datasets: [{
+          label: 'Nett spend (£)',
+          data: topPo.map(p => Math.round(p.total * 100) / 100),
+          backgroundColor: 'rgba(255,107,0,.65)',
+          borderColor:     'rgba(255,107,0,1)',
+          borderWidth: 1
+        }]
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true, maintainAspectRatio: true,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: ctx => ` ${topPo[ctx.dataIndex]?.name || ''}: £${ctx.parsed.x.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` } }
+        },
+        scales: {
+          x: { ticks: { color: '#888', callback: v => '£' + Number(v).toLocaleString('en-GB') }, grid: { color: 'rgba(255,255,255,.05)' }, beginAtZero: true },
+          y: { ticks: { color: '#888' }, grid: { color: 'rgba(255,255,255,.05)' } }
+        }
+      }
+    });
+  }
+
+  // ── Top 5 projects by labour cost ──
+  const labByProj = {};
+  for (const r of hoursInPeriod) {
+    const pn = r.project_number;
+    if (!pn) continue;
+    if (!labByProj[pn]) labByProj[pn] = { label: pn, total: 0 };
+    labByProj[pn].total += (Number(r.hours) || 0) * rateFor(r);
+  }
+  const topLab = Object.values(labByProj).sort((a, b) => b.total - a.total).slice(0, 5);
+
+  const topLabCtx = document.getElementById('caTopLabourBar');
+  if (topLabCtx && typeof Chart !== 'undefined') {
+    _caCharts.topLab = new Chart(topLabCtx, {
+      type: 'bar',
+      data: {
+        labels: topLab.map(p => p.label),
+        datasets: [{
+          label: 'Labour cost (£)',
+          data: topLab.map(p => Math.round(p.total * 100) / 100),
+          backgroundColor: 'rgba(62,207,142,.65)',
+          borderColor:     'rgba(62,207,142,1)',
+          borderWidth: 1
+        }]
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true, maintainAspectRatio: true,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: ctx => ` £${ctx.parsed.x.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` } }
+        },
+        scales: {
+          x: { ticks: { color: '#888', callback: v => '£' + Number(v).toLocaleString('en-GB') }, grid: { color: 'rgba(255,255,255,.05)' }, beginAtZero: true },
+          y: { ticks: { color: '#888' }, grid: { color: 'rgba(255,255,255,.05)' } }
+        }
+      }
+    });
+  }
+
+  // ── Workshop + Office spend over time (line) ──
+  // Bucketing strategy:
+  //   • month-scope periods (thisMonth, lastMonth) → daily buckets
+  //   • year-scope period (ytd)                    → monthly buckets
+  const useMonthly = (_caPeriod === 'ytd');
+  const buckets = [];  // [{ key, label, start, end }]
+  if (useMonthly) {
+    // Month buckets from start to end (exclusive)
+    const cur = new Date(start);
+    while (cur < end) {
+      const bs = new Date(cur);
+      const be = new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth() + 1, 1));
+      buckets.push({
+        key:   `${bs.getUTCFullYear()}-${String(bs.getUTCMonth() + 1).padStart(2, '0')}`,
+        label: bs.toLocaleString('en-GB', { month: 'short', timeZone: 'UTC' }),
+        start: bs, end: be
+      });
+      cur.setUTCMonth(cur.getUTCMonth() + 1);
+    }
+  } else {
+    // Day buckets from start to end (exclusive)
+    const cur = new Date(start);
+    while (cur < end) {
+      const bs = new Date(cur);
+      const be = new Date(cur); be.setUTCDate(be.getUTCDate() + 1);
+      buckets.push({
+        key:   bs.toISOString().slice(0, 10),
+        label: String(bs.getUTCDate()),
+        start: bs, end: be
+      });
+      cur.setUTCDate(cur.getUTCDate() + 1);
+    }
+  }
+
+  const bucketize = (filteredPos) => {
+    const data = buckets.map(() => 0);
+    for (const p of filteredPos) {
+      const d = new Date(p.created_at);
+      const idx = buckets.findIndex(b => d >= b.start && d < b.end);
+      if (idx >= 0) data[idx] += _caNett(p);
+    }
+    return data;
+  };
+  const workshopData = bucketize(posInPeriod.filter(p => p.cost_centre === '8099'));
+  const officeData   = bucketize(posInPeriod.filter(p => p.cost_centre === '5099'));
+
+  const _lineOptions = {
+    responsive: true, maintainAspectRatio: true,
+    plugins: {
+      legend: { display: false },
+      tooltip: { callbacks: { label: ctx => ` £${ctx.parsed.y.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` } }
+    },
+    scales: {
+      x: { ticks: { color: '#888' }, grid: { color: 'rgba(255,255,255,.05)' } },
+      y: { ticks: { color: '#888', callback: v => '£' + Number(v).toLocaleString('en-GB') }, grid: { color: 'rgba(255,255,255,.05)' }, beginAtZero: true }
+    }
+  };
+
+  const wsCtx = document.getElementById('caWorkshopLine');
+  if (wsCtx && typeof Chart !== 'undefined') {
+    _caCharts.workshop = new Chart(wsCtx, {
+      type: 'line',
+      data: {
+        labels: buckets.map(b => b.label),
+        datasets: [{
+          label: 'Workshop spend (£)',
+          data: workshopData,
+          borderColor:     '#6366f1',
+          backgroundColor: 'rgba(99,102,241,.15)',
+          fill: true, tension: 0.25, pointRadius: 3
+        }]
+      },
+      options: _lineOptions
+    });
+  }
+  const ofCtx = document.getElementById('caOfficeLine');
+  if (ofCtx && typeof Chart !== 'undefined') {
+    _caCharts.office = new Chart(ofCtx, {
+      type: 'line',
+      data: {
+        labels: buckets.map(b => b.label),
+        datasets: [{
+          label: 'Office spend (£)',
+          data: officeData,
+          borderColor:     '#3ecf8e',
+          backgroundColor: 'rgba(62,207,142,.15)',
+          fill: true, tension: 0.25, pointRadius: 3
+        }]
+      },
+      options: _lineOptions
+    });
+  }
+}
+
+
 
 async function renderBabcockReport() {
   // Fetch (cache so FY toggles don't re-hit the API)

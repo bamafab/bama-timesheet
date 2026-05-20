@@ -159,11 +159,10 @@
         <div class="report-picker-name">Babcock overview</div>
         <div class="report-picker-desc">Quotes, projects, invoices &amp; cashflow</div>
       </div>
-      <div class="report-picker-card disabled" data-report="costanalysis">
-        <div class="report-picker-badge">Coming soon</div>
+      <div class="report-picker-card" data-report="costanalysis" onclick="selectReport('costanalysis')">
         <div class="report-picker-icon">💷</div>
-        <div class="report-picker-name">Cost analysis</div>
-        <div class="report-picker-desc">Labour cost per project with margins</div>
+        <div class="report-picker-name">Cost &amp; PO analysis</div>
+        <div class="report-picker-desc">Top projects, labour cost, workshop vs office spend</div>
       </div>
     </div>
 
@@ -274,6 +273,48 @@
       </div>
     </div>
 
+    <!-- Report: Cost & PO Analysis -->
+    <div class="report-panel" id="rptPanel-costanalysis">
+      <!-- Dedicated period toggle (separate from the global Week/Month/Year toolbar) -->
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:18px;flex-wrap:wrap">
+        <div id="caPeriodToggle" style="display:flex;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden">
+          <!-- populated by renderCostAnalysisReport() -->
+        </div>
+        <span id="caRangeLabel" style="font-size:13px;color:var(--muted)"></span>
+      </div>
+
+      <!-- KPI row (dedicated to this report, separate from #rptKpiRow) -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:24px" id="caKpiRow"></div>
+
+      <!-- Two top-5 charts side by side -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:16px;margin-bottom:16px">
+        <div class="card" style="padding:20px">
+          <div class="card-title" style="margin-bottom:4px"><span class="icon">🏗️</span> Top 5 Projects — PO Spend</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Nett spend by project from purchase orders in selected period</div>
+          <canvas id="caTopPoBar" style="width:100%;height:260px;max-height:260px"></canvas>
+        </div>
+        <div class="card" style="padding:20px">
+          <div class="card-title" style="margin-bottom:4px"><span class="icon">👷</span> Top 5 Projects — Labour Cost</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">Σ(hours × basic rate) per project from logged kiosk hours</div>
+          <canvas id="caTopLabourBar" style="width:100%;height:260px;max-height:260px"></canvas>
+        </div>
+      </div>
+
+      <!-- Workshop vs Office spend over time, side by side -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(380px,1fr));gap:16px">
+        <div class="card" style="padding:20px">
+          <div class="card-title" style="margin-bottom:4px"><span class="icon">🔧</span> Workshop Spend (cost centre 8099)</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">PO nett spend bucketed over the selected period</div>
+          <canvas id="caWorkshopLine" style="width:100%;height:240px;max-height:240px"></canvas>
+        </div>
+        <div class="card" style="padding:20px">
+          <div class="card-title" style="margin-bottom:4px"><span class="icon">🖥️</span> Office Spend (cost centre 5099)</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:16px">PO nett spend bucketed over the selected period</div>
+          <canvas id="caOfficeLine" style="width:100%;height:240px;max-height:240px"></canvas>
+        </div>
+      </div>
+    </div>
+
   </div><!-- end mgr-content -->
 </div><!-- end mgr-layout -->
 
@@ -298,6 +339,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260519m"></script>
+<script src="shared.js?v=20260519n"></script>
 </body>
 </html>
