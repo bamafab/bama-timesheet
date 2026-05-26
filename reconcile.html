@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Reconcile</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260526b">
+<link rel="stylesheet" href="bama.css?v=20260526c">
 <style>
 .mgr-content { max-width: none !important; }
 
@@ -483,6 +483,83 @@
   </div><!-- /mgr-content -->
 </div><!-- /mgr-layout -->
 
-<script src="shared.js?v=20260526b"></script>
+<!-- ═══════════════════════════════════════
+     UPLOAD STATEMENT MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="recUploadStmtModal">
+  <div class="modal" style="max-width:860px;width:96vw;max-height:92vh;overflow-y:auto">
+    <div class="modal-title" id="recUploadStmtTitle">📂 Upload Bank Statement</div>
+
+    <!-- Step 1: Pick file -->
+    <div id="recStmtStep1">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+        <div>
+          <label class="field-label">Bank Account <span style="color:var(--red)">*</span></label>
+          <select class="field-input" id="recStmtBankSelect"></select>
+        </div>
+        <div>
+          <label class="field-label">Statement File <span style="color:var(--red)">*</span></label>
+          <input type="file" class="field-input" id="recStmtFileInput"
+                 accept=".csv,.xls,.xlsx,.pdf,image/*"
+                 onchange="onRecStmtFilePicked(this.files[0])">
+          <div style="font-size:11px;color:var(--muted);margin-top:3px">CSV · XLS · XLSX · PDF · image</div>
+        </div>
+      </div>
+      <div id="recStmtParseStatus" style="display:none;padding:10px 12px;border-radius:7px;font-size:13px;
+           background:var(--bg-darker);border:1px solid var(--border);margin-bottom:14px"></div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" onclick="closeRecUploadStmtModal()">Cancel</button>
+        <button class="btn btn-primary" id="recStmtParseBtn" onclick="parseRecStatement()" disabled>Parse Statement</button>
+      </div>
+    </div>
+
+    <!-- Step 2: Preview + duplicate check -->
+    <div id="recStmtStep2" style="display:none">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div style="font-size:13px;color:var(--muted)" id="recStmtPreviewMeta"></div>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-ghost" style="font-size:12px" onclick="recStmtSelectAll(true)">Select all</button>
+          <button class="btn btn-ghost" style="font-size:12px" onclick="recStmtSelectAll(false)">Deselect all</button>
+        </div>
+      </div>
+      <div style="max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:7px;margin-bottom:14px">
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead>
+            <tr style="position:sticky;top:0;background:var(--surface)">
+              <th style="padding:7px 10px;text-align:left;border-bottom:1px solid var(--border);width:32px"></th>
+              <th style="padding:7px 10px;text-align:left;border-bottom:1px solid var(--border)">Date</th>
+              <th style="padding:7px 10px;text-align:left;border-bottom:1px solid var(--border)">Description</th>
+              <th style="padding:7px 10px;text-align:right;border-bottom:1px solid var(--border)">Amount</th>
+              <th style="padding:7px 10px;text-align:left;border-bottom:1px solid var(--border)">Type</th>
+              <th style="padding:7px 10px;text-align:left;border-bottom:1px solid var(--border)">Status</th>
+            </tr>
+          </thead>
+          <tbody id="recStmtPreviewTbody"></tbody>
+        </table>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" onclick="recStmtBackToStep1()">← Back</button>
+        <button class="btn btn-primary" id="recStmtStep2Btn" onclick="recStmtGoToStep3()">Review auto-clears →</button>
+      </div>
+    </div>
+
+    <!-- Step 3: Auto-clear suggestions -->
+    <div id="recStmtStep3" style="display:none">
+      <div style="font-size:13px;color:var(--muted);margin-bottom:12px" id="recStmtAutoClearMeta"></div>
+      <div style="max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:7px;margin-bottom:14px;padding:4px 0"
+           id="recStmtAutoClearList"></div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" onclick="recStmtBackToStep2()">← Back</button>
+        <button class="btn btn-primary" id="recStmtConfirmBtn" onclick="confirmRecStatementImport()">
+          ✓ Import Statement
+        </button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="shared.js?v=20260526c"></script>
 </body>
 </html>

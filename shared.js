@@ -27589,6 +27589,7 @@ function drawBamaAfpPDF(jsPDF, d, logoDataUri) {
 // ─────────────────────────────────────────────────────────────────────────
 
 let _recBankList        = [];   // loaded from /api/bank-accounts
+let _recStmtList        = [];   // statements for selected bank
 let _recSelectedBankId  = null; // currently active tile
 let _recSelectedStmtId  = null; // currently active statement
 let _recTxnList         = [];   // transactions for current statement view
@@ -27837,30 +27838,100 @@ async function selectRecBank(bankId) {
     '<div class="rec-empty"><div class="rec-empty-icon">💳</div>Select a statement to view transactions</div>';
   document.getElementById('recShowMore').style.display = 'none';
 
-  // Load statements (Commit 2 — placeholder for now)
-  renderRecStmtList([]);
+  // Load statements from API
+  await loadRecStatements(bankId);
 }
 
-function renderRecStmtList(stmts) {
+async function loadRecStatements(bankAccountId) {
   const el = document.getElementById('recStmtList');
-  if (!stmts.length) {
-    el.innerHTML = '<div class="rec-empty"><div class="rec-empty-icon">📄</div>No statements uploaded yet</div>';
+  try {
+    const res = await api.get(`/api/bank-statements?bank_account_id=${bankAccountId}`);
+    _recStmtList = Array.isArray(res) ? res : [];
+    renderRecStmtList();
+  } catch (err) {
+    if (el) el.innerHTML = '<div class="rec-empty" style="color:var(--red)">Failed to load statements</div>';
+  }
+}
+
+function renderRecStmtList() {
+  const el = document.getElementById('recStmtList');
+  if (!el) return;
+  const bank = _recBankList.find(b => b.id === _recSelectedBankId);
+  if (!_recStmtList.length) {
+    el.innerHTML = '<div class="rec-empty"><div class="rec-empty-icon">📄</div>No statements yet<br><span style="font-size:11px">Click Upload to add one</span></div>';
     return;
   }
-  el.innerHTML = stmts.map(s => `
-    <div class="stmt-row${_recSelectedStmtId === s.id ? ' active' : ''}" onclick="selectRecStmt(${s.id})">
-      <div class="sr-name">${escapeHtml(s.label || 'Statement')}</div>
-      <div class="sr-meta">${s.total_transactions} txns · ${s.matched_count} matched · ${s.total_transactions - s.matched_count} unmatched</div>
-    </div>
-  `).join('');
+  el.innerHTML = _recStmtList.map(s => {
+    const unmatched = (s.total_transactions || 0) - (s.matched_count || 0);
+    const label = s.date_from && s.date_to
+      ? `${_fmtRecDate(s.date_from)} – ${_fmtRecDate(s.date_to)}`
+      : escapeHtml(s.filename || 'Statement');
+    return `
+      <div class="stmt-row${_recSelectedStmtId === s.id ? ' active' : ''}" onclick="selectRecStmt(${s.id})">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div class="sr-name">${label}</div>
+          <button class="row-icon-btn" style="font-size:12px;color:var(--red)" title="Delete statement"
+                  onclick="event.stopPropagation();deleteRecStatement(${s.id})">🗑</button>
+        </div>
+        <div class="sr-meta">${s.total_transactions} txns · ${s.matched_count} matched · ${unmatched} unmatched</div>
+      </div>`;
+  }).join('');
 }
 
 async function selectRecStmt(stmtId) {
   _recSelectedStmtId = stmtId;
   _recTxnOffset = 0;
   _recSelectedTxnIds.clear();
-  // Will be wired to API in Commit 2
-  renderRecTxnTable();
+  clearRecSelection();
+
+  const stmt = _recStmtList.find(s => s.id === stmtId);
+  if (stmt) {
+    document.getElementById('recTxnPaneTitle').textContent =
+      `${stmt.date_from ? _fmtRecDate(stmt.date_from) + ' – ' + _fmtRecDate(stmt.date_to) : escapeHtml(stmt.filename)}`;
+  }
+
+  renderRecStmtList(); // re-render to update active state
+
+  // Load transactions
+  document.getElementById('recTxnTableWrap').innerHTML =
+    '<div class="rec-empty"><div class="spinner"></div></div>';
+  try {
+    const res = await api.get(`/api/bank-transactions?bank_account_id=${_recSelectedBankId}&statement_id=${stmtId}`);
+    _recTxnList = Array.isArray(res) ? res : [];
+    _recTxnOffset = 0;
+    renderRecTxnTable();
+  } catch (err) {
+    document.getElementById('recTxnTableWrap').innerHTML =
+      `<div class="rec-empty" style="color:var(--red)">Failed to load transactions: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function deleteRecStatement(stmtId) {
+  const stmt = _recStmtList.find(s => s.id === stmtId);
+  if (!stmt) return;
+  const label = stmt.date_from ? `${_fmtRecDate(stmt.date_from)} – ${_fmtRecDate(stmt.date_to)}` : stmt.filename;
+  if (!await showConfirmAsync(`Delete statement "${label}" and all its transactions?`, 'Delete')) return;
+  try {
+    await api.delete(`/api/bank-statements/${stmtId}`);
+    if (_recSelectedStmtId === stmtId) {
+      _recSelectedStmtId = null;
+      _recTxnList = [];
+      renderRecTxnTable();
+    }
+    toast('Statement deleted', 'success');
+    await loadRecStatements(_recSelectedBankId);
+    await refreshRecTileStats();
+  } catch (err) {
+    toast('Delete failed: ' + err.message, 'error');
+  }
+}
+
+function _fmtRecDate(d) {
+  if (!d) return '';
+  const s = String(d).split('T')[0];
+  const [y, m, day] = s.split('-');
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${parseInt(day, 10)} ${months[parseInt(m, 10) - 1]} ${y}`;
 }
 
 // ── Transaction table ─────────────────────────────────────────────────────
@@ -28209,9 +28280,529 @@ function onRecDocFilePicked(file) {
   // Full implementation in Commit 3
 }
 
-// ── Statement upload stub (Commit 2 implementation) ───────────────────────
+// ═════════════════════════════════════════════════════════════════════════
+// STATEMENT UPLOAD — parse, preview, duplicate check, auto-clear, import
+// ═════════════════════════════════════════════════════════════════════════
+
+let _recStmtFile       = null;
+let _recStmtParsed     = [];   // parsed transactions array
+let _recStmtSelected   = [];   // bool[] — which rows are ticked in preview
+let _recStmtAutoClear  = [];   // { idx, reason, checked }[]
+
 function openUploadStatementModal() {
-  toast('Statement upload coming in Commit 2', 'info');
+  if (!_recSelectedBankId) { toast('Select a bank first', 'error'); return; }
+
+  // Populate bank select
+  const sel = document.getElementById('recStmtBankSelect');
+  if (sel) {
+    sel.innerHTML = _recBankList.map(b =>
+      `<option value="${b.id}" ${b.id === _recSelectedBankId ? 'selected' : ''}>${escapeHtml(b.bank_name)}</option>`
+    ).join('');
+  }
+
+  // Reset state
+  _recStmtFile = null;
+  _recStmtParsed = [];
+  _recStmtSelected = [];
+  _recStmtAutoClear = [];
+  document.getElementById('recStmtFileInput').value = '';
+  document.getElementById('recStmtParseStatus').style.display = 'none';
+  document.getElementById('recStmtParseBtn').disabled = true;
+  _recStmtShowStep(1);
+  document.getElementById('recUploadStmtModal').classList.add('active');
+}
+
+function closeRecUploadStmtModal() {
+  document.getElementById('recUploadStmtModal').classList.remove('active');
+}
+
+function _recStmtShowStep(n) {
+  [1,2,3].forEach(i => {
+    const el = document.getElementById(`recStmtStep${i}`);
+    if (el) el.style.display = i === n ? '' : 'none';
+  });
+}
+
+function onRecStmtFilePicked(file) {
+  if (!file) return;
+  _recStmtFile = file;
+  document.getElementById('recStmtParseBtn').disabled = false;
+  const status = document.getElementById('recStmtParseStatus');
+  status.style.display = '';
+  status.style.background = 'var(--bg-darker)';
+  status.style.color = 'var(--muted)';
+  status.textContent = `📎 ${file.name} (${(file.size / 1024).toFixed(1)} KB) — click Parse to continue`;
+}
+
+async function parseRecStatement() {
+  if (!_recStmtFile) return;
+  const btn = document.getElementById('recStmtParseBtn');
+  const status = document.getElementById('recStmtParseStatus');
+  btn.disabled = true;
+  btn.textContent = 'Parsing…';
+  status.style.display = '';
+  status.style.color = 'var(--accent)';
+  status.textContent = '⏳ Reading file…';
+
+  try {
+    const ext = _recStmtFile.name.split('.').pop().toLowerCase();
+    let transactions = [];
+
+    if (['xlsx','xls','csv'].includes(ext)) {
+      transactions = await _parseRecStatementStructured(_recStmtFile, ext);
+      status.textContent = `✓ Parsed ${transactions.length} transactions from ${ext.toUpperCase()}`;
+    } else {
+      // PDF or image — send to Claude
+      status.textContent = '⏳ Sending to Claude for extraction…';
+      transactions = await _parseRecStatementClaude(_recStmtFile);
+      status.textContent = `✓ Claude extracted ${transactions.length} transactions`;
+    }
+
+    status.style.color = 'var(--green)';
+    _recStmtParsed = transactions;
+    _recStmtSelected = transactions.map(() => true);
+
+    // Check for duplicates
+    status.textContent = `✓ ${transactions.length} transactions — checking for duplicates…`;
+    const bankId = Number(document.getElementById('recStmtBankSelect').value);
+    let dupeIndices = [];
+    try {
+      const dupeRes = await api.post('/api/bank-transactions/check-duplicates', {
+        bank_account_id: bankId,
+        transactions: transactions.map(t => ({
+          transaction_date: t.transaction_date,
+          amount: t.amount,
+          description: t.description
+        }))
+      });
+      dupeIndices = dupeRes.dupeIndices || [];
+    } catch { /* non-fatal */ }
+
+    if (dupeIndices.length) {
+      status.textContent = `✓ ${transactions.length} transactions — ${dupeIndices.length} duplicates flagged`;
+      // Pre-deselect duplicates
+      dupeIndices.forEach(i => { _recStmtSelected[i] = false; });
+    } else {
+      status.textContent = `✓ ${transactions.length} transactions — no duplicates found`;
+    }
+
+    _recRenderStmtPreview(dupeIndices);
+    _recStmtShowStep(2);
+
+    const selected = _recStmtSelected.filter(Boolean).length;
+    document.getElementById('recStmtPreviewMeta').textContent =
+      `${transactions.length} parsed · ${dupeIndices.length} duplicates pre-deselected · ${selected} selected to import`;
+
+  } catch (err) {
+    status.style.color = 'var(--red)';
+    status.textContent = '✗ ' + err.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Parse Statement';
+  }
+}
+
+function _recRenderStmtPreview(dupeIndices = []) {
+  const tbody = document.getElementById('recStmtPreviewTbody');
+  if (!tbody) return;
+  tbody.innerHTML = _recStmtParsed.map((t, i) => {
+    const isDupe = dupeIndices.includes(i);
+    const isCredit = Number(t.amount) >= 0;
+    const amtStr = (isCredit ? '+' : '') + '£' + Math.abs(Number(t.amount)).toLocaleString('en-GB', { minimumFractionDigits: 2 });
+    const amtClass = isCredit ? 'color:var(--green)' : 'color:var(--red)';
+    const rowBg = isDupe ? 'background:rgba(245,158,11,.08)' : '';
+    return `
+      <tr style="${rowBg}" data-idx="${i}">
+        <td style="padding:6px 10px">
+          <input type="checkbox" class="rec-cb rec-stmt-cb" data-idx="${i}"
+                 ${_recStmtSelected[i] ? 'checked' : ''}
+                 onchange="recStmtToggleRow(${i}, this.checked)">
+        </td>
+        <td style="padding:6px 10px;white-space:nowrap">${escapeHtml(t.transaction_date || '')}</td>
+        <td style="padding:6px 10px">
+          <div>${escapeHtml(t.description || '')}</div>
+          ${t.cardholder ? `<div style="font-size:10px;color:var(--muted)">${escapeHtml(t.cardholder)}</div>` : ''}
+        </td>
+        <td style="padding:6px 10px;text-align:right;font-family:var(--font-mono);${amtClass}">${amtStr}</td>
+        <td style="padding:6px 10px;font-size:11px;color:var(--muted)">${escapeHtml(t.transaction_type || '')}</td>
+        <td style="padding:6px 10px">
+          ${isDupe ? '<span style="font-size:11px;padding:2px 7px;border-radius:10px;background:rgba(245,158,11,.15);color:var(--warn)">Duplicate</span>' : ''}
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+function recStmtToggleRow(idx, checked) {
+  _recStmtSelected[idx] = checked;
+  const sel = _recStmtSelected.filter(Boolean).length;
+  document.getElementById('recStmtPreviewMeta').textContent =
+    `${_recStmtParsed.length} parsed · ${sel} selected to import`;
+}
+
+function recStmtSelectAll(checked) {
+  _recStmtSelected = _recStmtParsed.map(() => checked);
+  document.querySelectorAll('.rec-stmt-cb').forEach(cb => cb.checked = checked);
+  const sel = _recStmtSelected.filter(Boolean).length;
+  document.getElementById('recStmtPreviewMeta').textContent =
+    `${_recStmtParsed.length} parsed · ${sel} selected to import`;
+}
+
+function recStmtBackToStep1() { _recStmtShowStep(1); }
+function recStmtBackToStep2() { _recStmtShowStep(2); }
+
+function recStmtGoToStep3() {
+  // Build auto-clear suggestions from the selected transactions
+  const selected = _recStmtParsed.filter((_, i) => _recStmtSelected[i]);
+  _recStmtAutoClear = [];
+
+  const PATTERNS = [
+    { re: /wages?|salary|payroll|week\s*\d/i,        reason: 'Wages' },
+    { re: /transfer|bama\s*fab|internal|tfr/i,        reason: 'Internal transfer' },
+    { re: /direct\s*debit|dd$/i,                      reason: 'Direct debit' },
+    { re: /bank\s*charge|service\s*charge|interest/i, reason: 'Bank charge' },
+    { re: /card\s*payment|virtual.*transfer|settlement/i, reason: 'Card payment settlement' },
+    { re: /standing\s*order|s\.?o\.?/i,               reason: 'Standing order' },
+    { re: /hmrc|paye|vat|tax/i,                       reason: 'HMRC / Tax' },
+    { re: /pension|nest|aviva/i,                      reason: 'Pension' },
+  ];
+
+  _recStmtParsed.forEach((t, i) => {
+    if (!_recStmtSelected[i]) return;
+    const desc = (t.description || '') + ' ' + (t.transaction_type || '') + ' ' + (t.reference || '');
+    for (const p of PATTERNS) {
+      if (p.re.test(desc)) {
+        _recStmtAutoClear.push({ idx: i, reason: p.reason, checked: true });
+        break;
+      }
+    }
+  });
+
+  const el = document.getElementById('recStmtAutoClearList');
+  const meta = document.getElementById('recStmtAutoClearMeta');
+
+  if (!_recStmtAutoClear.length) {
+    meta.textContent = 'No auto-clear suggestions for this statement.';
+    el.innerHTML = '<div style="padding:14px;color:var(--muted);font-size:13px;text-align:center">No transactions matched the auto-clear patterns.</div>';
+  } else {
+    meta.textContent = `${_recStmtAutoClear.length} transaction${_recStmtAutoClear.length !== 1 ? 's' : ''} suggested for auto-clear — untick any you want to keep as unmatched.`;
+    el.innerHTML = _recStmtAutoClear.map((ac, n) => {
+      const t = _recStmtParsed[ac.idx];
+      const amtStr = '£' + Math.abs(Number(t.amount)).toLocaleString('en-GB', { minimumFractionDigits: 2 });
+      return `
+        <label style="display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid var(--border);cursor:pointer">
+          <input type="checkbox" class="rec-cb rec-autoclear-cb" data-n="${n}" checked
+                 onchange="_recStmtAutoClear[${n}].checked = this.checked">
+          <span style="flex:1;font-size:12px">${escapeHtml(t.description)}</span>
+          <span style="font-family:var(--font-mono);font-size:12px;color:var(--muted)">${amtStr}</span>
+          <span style="font-size:11px;color:var(--muted);white-space:nowrap">${escapeHtml(t.transaction_date || '')}</span>
+          <input type="text" class="field-input" value="${escapeHtml(ac.reason)}"
+                 style="width:160px;font-size:11px;padding:3px 6px"
+                 oninput="_recStmtAutoClear[${n}].reason = this.value"
+                 onclick="event.stopPropagation()">
+        </label>`;
+    }).join('');
+  }
+
+  _recStmtShowStep(3);
+}
+
+async function confirmRecStatementImport() {
+  const bankId = Number(document.getElementById('recStmtBankSelect').value);
+  const toImport = _recStmtParsed.filter((_, i) => _recStmtSelected[i]);
+
+  if (!toImport.length) { toast('No transactions selected', 'error'); return; }
+
+  const btn = document.getElementById('recStmtConfirmBtn');
+  btn.disabled = true;
+  btn.textContent = 'Importing…';
+
+  try {
+    // 1. Get date range from transactions
+    const dates = toImport.map(t => t.transaction_date).filter(Boolean).sort();
+    const dateFrom = dates[0] || null;
+    const dateTo   = dates[dates.length - 1] || null;
+
+    // 2. POST statement + transactions
+    const result = await api.post('/api/bank-statements', {
+      bank_account_id: bankId,
+      filename:        _recStmtFile.name,
+      date_from:       dateFrom,
+      date_to:         dateTo,
+      transactions:    toImport
+    });
+
+    const stmtId = result.statement?.id;
+
+    // 3. Apply auto-clears
+    if (stmtId) {
+      const autoClearItems = _recStmtAutoClear.filter(ac => ac.checked && _recStmtSelected[ac.idx]);
+      // Map back to inserted transactions by date+amount+description
+      if (autoClearItems.length) {
+        const txnRes = await api.get(`/api/bank-transactions?bank_account_id=${bankId}&statement_id=${stmtId}`);
+        const txns = Array.isArray(txnRes) ? txnRes : [];
+        for (const ac of autoClearItems) {
+          const t = _recStmtParsed[ac.idx];
+          const match = txns.find(tx =>
+            tx.transaction_date === t.transaction_date &&
+            Math.abs(Number(tx.amount) - Number(t.amount)) < 0.01 &&
+            tx.description === t.description
+          );
+          if (match) {
+            await api.put(`/api/bank-transactions/${match.id}/match`, {
+              status: 'cleared',
+              clear_reason: ac.reason || null,
+              matched_by: currentManagerUser
+            }).catch(() => {});
+          }
+        }
+      }
+    }
+
+    closeRecUploadStmtModal();
+    toast(`Imported ${result.inserted} transactions`, 'success');
+
+    // Refresh
+    await loadRecStatements(bankId);
+    if (stmtId) await selectRecStmt(stmtId);
+    await refreshRecTileStats();
+
+  } catch (err) {
+    toast('Import failed: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '✓ Import Statement';
+  }
+}
+
+// ── Structured parser (XLSX / XLS / CSV) ─────────────────────────────────
+async function _parseRecStatementStructured(file, ext) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = new Uint8Array(e.target.result);
+        const wb   = XLSX.read(data, { type: 'array', cellDates: true });
+        const ws   = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+        if (rows.length < 2) { reject(new Error('No data rows found')); return; }
+
+        const headers = rows[0].map(h => String(h || '').trim().toLowerCase());
+        const fmt = _detectRecBankFormat(headers);
+        const transactions = [];
+
+        for (let i = 1; i < rows.length; i++) {
+          const row = rows[i];
+          const t = fmt.parseRow(row, headers);
+          if (!t || !t.transaction_date || t.amount === null || t.amount === undefined) continue;
+          // Normalise date to YYYY-MM-DD
+          t.transaction_date = _normaliseRecDate(t.transaction_date);
+          if (!t.transaction_date) continue;
+          transactions.push(t);
+        }
+        resolve(transactions);
+      } catch (err) {
+        reject(new Error('Failed to parse file: ' + err.message));
+      }
+    };
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+// ── Bank format detector ──────────────────────────────────────────────────
+function _detectRecBankFormat(headers) {
+  const h = headers.join('|');
+
+  // Starling: Date | Counter Party | Reference | Type | Amount (GBP) | Balance (GBP) | Spending Category
+  if (headers.includes('counter party') && headers.includes('amount (gbp)')) {
+    return {
+      name: 'Starling',
+      parseRow: (row, hdrs) => {
+        const get = (name) => row[hdrs.indexOf(name)] ?? '';
+        const amt = Number(get('amount (gbp)'));
+        return {
+          transaction_date:  get('date'),
+          description:       String(get('counter party')),
+          reference:         String(get('reference')),
+          transaction_type:  String(get('type')),
+          amount:            isNaN(amt) ? null : amt,
+          spending_category: String(get('spending category')),
+          cardholder:        null,
+          original_amount:   null,
+          original_currency: null
+        };
+      }
+    };
+  }
+
+  // Capital On Tap: Clearance Date | Authorisation Date | Description | Amount | Merchant Name | Card Ending | Cardholder Name | Transaction Type | Category
+  if (headers.includes('clearance date') && headers.includes('cardholder name')) {
+    return {
+      name: 'Capital On Tap',
+      parseRow: (row, hdrs) => {
+        const get = (name) => row[hdrs.indexOf(name)] ?? '';
+        const amt = Number(get('amount'));
+        const origAmt = Number(get('original amount'));
+        const origCcy = String(get('original currency')).trim();
+        return {
+          transaction_date:  get('clearance date'),
+          description:       String(get('merchant name') || get('description')),
+          reference:         String(get('description')),
+          transaction_type:  String(get('transaction type')),
+          amount:            isNaN(amt) ? null : (amt > 0 ? -amt : -amt), // CoT amounts are positive for purchases
+          original_amount:   isNaN(origAmt) ? null : origAmt,
+          original_currency: (origCcy && origCcy !== 'GBP' && origCcy !== '') ? origCcy : null,
+          spending_category: String(get('category')),
+          cardholder:        String(get('cardholder name'))
+        };
+      }
+    };
+  }
+
+  // Lloyds CSV: Date | Description | Type | Money In | Money Out | Balance
+  if ((headers.includes('money in') || headers.includes('money in (£)')) &&
+      (headers.includes('money out') || headers.includes('money out (£)'))) {
+    const inKey  = headers.includes('money in (£)') ? 'money in (£)' : 'money in';
+    const outKey = headers.includes('money out (£)') ? 'money out (£)' : 'money out';
+    return {
+      name: 'Lloyds',
+      parseRow: (row, hdrs) => {
+        const get = (name) => row[hdrs.indexOf(name)] ?? '';
+        const moneyIn  = Number(String(get(inKey)).replace(/[£,]/g, '')) || 0;
+        const moneyOut = Number(String(get(outKey)).replace(/[£,]/g, '')) || 0;
+        const amt = moneyIn > 0 ? moneyIn : (moneyOut > 0 ? -moneyOut : null);
+        if (amt === null) return null;
+        return {
+          transaction_date:  get('date'),
+          description:       String(get('description')),
+          reference:         null,
+          transaction_type:  String(get('type')),
+          amount:            amt,
+          original_amount:   null,
+          original_currency: null,
+          spending_category: null,
+          cardholder:        null
+        };
+      }
+    };
+  }
+
+  // Generic fallback: look for date-like, description-like, amount-like columns
+  const dateCol   = headers.findIndex(h => /date/i.test(h));
+  const descCol   = headers.findIndex(h => /desc|narrat|payee|merchant|counter|name/i.test(h));
+  const amtCol    = headers.findIndex(h => /amount|value|debit|credit/i.test(h));
+  return {
+    name: 'Generic',
+    parseRow: (row) => {
+      if (dateCol < 0 || amtCol < 0) return null;
+      const amt = Number(String(row[amtCol] || '').replace(/[£,$,]/g, ''));
+      return {
+        transaction_date:  row[dateCol],
+        description:       descCol >= 0 ? String(row[descCol]) : 'Transaction',
+        reference:         null,
+        transaction_type:  null,
+        amount:            isNaN(amt) ? null : amt,
+        original_amount:   null,
+        original_currency: null,
+        spending_category: null,
+        cardholder:        null
+      };
+    }
+  };
+}
+
+function _normaliseRecDate(val) {
+  if (!val) return null;
+  // Already a JS Date object (from SheetJS cellDates)
+  if (val instanceof Date) {
+    if (isNaN(val.getTime())) return null;
+    const y = val.getFullYear();
+    const m = String(val.getMonth() + 1).padStart(2, '0');
+    const d = String(val.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  const s = String(val).trim();
+  // YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  // DD/MM/YYYY or DD-MM-YYYY
+  const dmy = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+  if (dmy) {
+    const [, d, m, y] = dmy;
+    const year = y.length === 2 ? '20' + y : y;
+    return `${year}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+  }
+  // DD Mon YY or DD Mon YYYY (e.g. "02 Apr 26")
+  const dmy2 = s.match(/^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{2,4})/);
+  if (dmy2) {
+    const months = { jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12 };
+    const [, d, mon, y] = dmy2;
+    const m = months[mon.toLowerCase()];
+    if (!m) return null;
+    const year = y.length === 2 ? '20' + y : y;
+    return `${year}-${String(m).padStart(2, '0')}-${d.padStart(2, '0')}`;
+  }
+  return null;
+}
+
+// ── Claude parser (PDF / image) ───────────────────────────────────────────
+async function _parseRecStatementClaude(file) {
+  const base64 = await new Promise((res, rej) => {
+    const reader = new FileReader();
+    reader.onload = () => res(reader.result.split(',')[1]);
+    reader.onerror = () => rej(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
+
+  const isImage = file.type.startsWith('image/');
+  const mediaType = isImage ? (file.type || 'image/jpeg') : 'application/pdf';
+  const contentType = isImage ? 'image' : 'document';
+
+  const response = await fetch('/api/claude-proxy', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${await getToken()}`
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 4000,
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type: contentType,
+            source: { type: 'base64', media_type: mediaType, data: base64 }
+          },
+          {
+            type: 'text',
+            text: `Extract ALL transactions from this bank statement. Return ONLY a JSON array, no markdown, no explanation.
+Each item must have these exact fields:
+- transaction_date: "YYYY-MM-DD"
+- description: string (payee/merchant name)
+- reference: string or null
+- transaction_type: string or null (e.g. "FASTER PAYMENT", "DIRECT DEBIT")
+- amount: number (negative for debits/money out, positive for credits/money in)
+- spending_category: string or null
+- cardholder: string or null (for credit card statements)
+- original_amount: number or null (for foreign currency)
+- original_currency: string or null (e.g. "EUR", "USD")
+
+Return ONLY the JSON array starting with [ and ending with ].`
+          }
+        ]
+      }]
+    })
+  });
+
+  if (!response.ok) throw new Error(`Claude API error: ${response.status}`);
+  const data = await response.json();
+  const text = (data.content || []).map(c => c.text || '').join('').trim();
+  const clean = text.replace(/^```json\s*/,'').replace(/\s*```$/,'').trim();
+
+  let parsed;
+  try { parsed = JSON.parse(clean); } catch { throw new Error('Claude returned invalid JSON'); }
+  if (!Array.isArray(parsed)) throw new Error('Claude did not return an array');
+  return parsed;
 }
 
 // ── Preview / edit stubs (Commit 3) ──────────────────────────────────────
