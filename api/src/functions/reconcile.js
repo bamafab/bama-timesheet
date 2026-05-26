@@ -47,9 +47,9 @@ app.http('bank-accounts-list', {
           ba.is_active,
           ba.created_at,
           COUNT(bt.id)                                          AS total_transactions,
-          SUM(CASE WHEN bt.status IN ('matched','manual_match','cleared') THEN 1 ELSE 0 END)
+          COALESCE(SUM(CASE WHEN bt.status IN ('matched','manual_match','cleared') THEN 1 ELSE 0 END), 0)
                                                                 AS resolved_transactions,
-          SUM(CASE WHEN bt.status = 'unmatched'                THEN 1 ELSE 0 END)
+          COALESCE(SUM(CASE WHEN bt.status = 'unmatched'                THEN 1 ELSE 0 END), 0)
                                                                 AS unmatched_transactions
         FROM dbo.BankAccounts ba
         LEFT JOIN dbo.BankTransactions bt ON bt.bank_account_id = ba.id

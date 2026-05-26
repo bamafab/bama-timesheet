@@ -27717,7 +27717,8 @@ function updateRecSidebar() {
 // ── Load + render bank tiles ───────────────────────────────────────────────
 async function loadRecBanks() {
   try {
-    _recBankList = await api.get('/api/bank-accounts');
+    const res = await api.get('/api/bank-accounts');
+    _recBankList = Array.isArray(res) ? res : [];
     renderRecTiles();
   } catch (err) {
     toast('Failed to load bank accounts: ' + err.message, 'error');
