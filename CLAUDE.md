@@ -51,6 +51,16 @@ management, and a standalone UK steel section reference.
   full script in the chat reply ready to copy-paste, not "see
   api/sql/foo.sql". Commit the file to the repo as well, but the chat must
   contain the runnable SQL. Same applies to any ad-hoc one-off queries.
+- **Restart the Function App after `ALTER TABLE ADD COLUMN`.** Even after
+  the migration runs cleanly and `sys.columns` confirms the column exists,
+  the running Function App can hold a cached query plan on the OLD schema
+  in its `mssql` connection pool. Symptom: backend throws `Invalid column
+  name '<newcol>'` for several minutes despite the column existing. Fix:
+  portal.azure.com → Function App `bama-erp-api…` → top toolbar → Restart,
+  wait ~60s. Always include this in the smoke-test plan when shipping a
+  schema change. Don't reserve `exists` as a column alias in verification
+  queries either — it's a SQL Server reserved word; use `column_count` or
+  similar instead.
 - **POs link to Projects via `project_id`, not `job_number`.** A PO that
   belongs to a project must have `PurchaseOrders.project_id` set to the
   matching `Projects.id`. `job_number` is just a human-readable mirror

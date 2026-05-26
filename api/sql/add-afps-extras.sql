@@ -48,9 +48,9 @@ IF NOT EXISTS (
 GO
 
 -- ─── Verification queries ─────────────────────────────────────────────────────
--- Run these after the migration to confirm 5 results = 1:
+-- Run these after the migration to confirm 6 results = 1:
 --
--- SELECT 'Applications.is_final'                AS check_name, COUNT(*) AS exists
+-- SELECT 'Applications.is_final'                AS check_name, COUNT(*) AS column_count
 --   FROM sys.columns
 --   WHERE Name = 'is_final' AND Object_ID = Object_ID('dbo.Applications')
 -- UNION ALL
