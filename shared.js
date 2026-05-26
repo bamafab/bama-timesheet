@@ -20002,7 +20002,7 @@ async function loadBabcockTracker() {
     renderBabcockTracker();
   } catch (err) {
     console.warn('Babcock tracker load failed:', err);
-    tbody.innerHTML = `<tr><td colspan="11" style="padding:30px;text-align:center;color:var(--red)">
+    tbody.innerHTML = `<tr><td colspan="10" style="padding:30px;text-align:center;color:var(--red)">
       Failed to load quotes. ${escapeHtml(err.message || '')}
     </td></tr>`;
   }
@@ -20059,7 +20059,7 @@ function renderBabcockTracker() {
   if (countEl) countEl.textContent = `${list.length} quote${list.length === 1 ? '' : 's'}`;
 
   if (!list.length) {
-    tbody.innerHTML = `<tr><td colspan="11" style="padding:40px;text-align:center;color:var(--muted)">
+    tbody.innerHTML = `<tr><td colspan="10" style="padding:40px;text-align:center;color:var(--muted)">
       <div style="font-size:32px;margin-bottom:8px">📋</div>
       No quotes yet. Click <b>+ New Quote</b> to create one.
     </td></tr>`;
@@ -20105,7 +20105,7 @@ function renderBabcockTracker() {
       : '';
 
     return `
-    <tr class="clickable-row" onclick="viewBabcockQuoteDetail(${q.id})">
+    <tr class="clickable-row" onclick="viewBabcockQuoteDetail(${q.id})" title="Last updated: ${fmtDate(q.updated_at)}">
       <td class="ref-cell">${escapeHtml(q.quote_ref || '')}${revTag}</td>
       <td style="font-family:var(--font-mono);font-size:12px;color:var(--accent2)">${escapeHtml(q.bama_sw_po_number || '—')}</td>
       <td style="font-family:var(--font-mono);font-size:12px;color:var(--accent2)">${escapeHtml(q.po_number || '—')}</td>
@@ -20115,7 +20115,6 @@ function renderBabcockTracker() {
       <td class="num-cell">${fmtGBP(q.bama_sw_received_invoice_amount)}</td>
       <td>${statusBadge}${dueDateInline}</td>
       <td>${nextBtn}</td>
-      <td style="font-size:12px;color:var(--muted)">${fmtDate(q.updated_at)}</td>
       <td style="text-align:right;white-space:nowrap">
         <button class="row-action" title="Edit" onclick="event.stopPropagation();editBabcockQuote(${q.id})">✏️</button>
         <button class="row-action" title="Edit Line Items" onclick="event.stopPropagation();editBabcockLineItems(${q.id})">📋</button>
