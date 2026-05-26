@@ -24925,7 +24925,7 @@ async function init() {
     : Promise.resolve();
 
   // User access needed on manager and office pages (still from SharePoint for now)
-  const userAccessPromise = (CURRENT_PAGE === 'manager' || CURRENT_PAGE === 'office' || CURRENT_PAGE === 'projects' || CURRENT_PAGE === 'projectTracker' || CURRENT_PAGE === 'poTracker' || CURRENT_PAGE === 'invoiceTracker' || CURRENT_PAGE === 'tenders' || CURRENT_PAGE === 'quotes' || CURRENT_PAGE === 'babcock' || CURRENT_PAGE === 'reports')
+  const userAccessPromise = (CURRENT_PAGE === 'manager' || CURRENT_PAGE === 'office' || CURRENT_PAGE === 'projects' || CURRENT_PAGE === 'projectTracker' || CURRENT_PAGE === 'poTracker' || CURRENT_PAGE === 'invoiceTracker' || CURRENT_PAGE === 'tenders' || CURRENT_PAGE === 'quotes' || CURRENT_PAGE === 'babcock' || CURRENT_PAGE === 'reports' || CURRENT_PAGE === 'reconcile')
     ? Promise.race([
         loadUserAccessData(),
         new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 6000))
@@ -24998,6 +24998,8 @@ async function init() {
     initBabcockPage();
   } else if (CURRENT_PAGE === 'reports') {
     initReportsPage();
+  } else if (CURRENT_PAGE === 'reconcile') {
+    initReconcilePage();
   } else if (CURRENT_PAGE === 'hub') {
     // hub has its own simple rendering
   } else {
@@ -27590,16 +27592,10 @@ let _recClearTargetId   = null; // single-clear target
 let _recPendingPinUser  = null;
 
 // ── Init ─────────────────────────────────────────────────────────────────
-if (CURRENT_PAGE === 'reconcile') {
-  document.addEventListener('DOMContentLoaded', initReconcilePage);
-}
+// initReconcilePage() is called from init() in shared.js when CURRENT_PAGE === 'reconcile'
 
 async function initReconcilePage() {
-  setLoadingBar(20);
-  await loadTimesheetData();
-  setLoadingBar(60);
-
-  // Build employee grid
+  // Data already loaded by init() — just build the employee grid
   const grid = document.getElementById('recEmployeeGrid');
   if (grid) {
     const emps = (state.timesheetData.employees || []).filter(e => e.active !== false);
@@ -27616,7 +27612,15 @@ async function initReconcilePage() {
       `).join('');
     }
   }
-  setLoadingBar(100);
+
+  // If already logged in via another tracker page, skip straight in
+  const authed = sessionStorage.getItem('bama_mgr_authed');
+  if (authed) {
+    currentManagerUser = authed;
+    enterReconcilePage();
+  } else {
+    showScreen('screenRecSelect');
+  }
 }
 
 function recSelectEmployee(empId) {
