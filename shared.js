@@ -9030,7 +9030,8 @@ async function loadUserAccessData() {
           viewProjects: !!row.view_projects,
           viewPurchaseOrders: !!row.view_purchase_orders,
           editPurchaseOrders: !!row.edit_purchase_orders,
-          invoicing: !!row.invoicing
+          invoicing: !!row.invoicing,
+          afps: !!row.afps
         }
       };
     });
@@ -9090,7 +9091,8 @@ const PERMISSION_DEFS = [
   { key: 'viewProjects', label: 'View Projects', desc: 'View project tracker (read-only)' },
   { key: 'viewPurchaseOrders', label: 'View Purchase Orders', desc: 'View the PO tracker (read-only)' },
   { key: 'editPurchaseOrders', label: 'Edit Purchase Orders', desc: 'Raise, edit, approve and send purchase orders' },
-  { key: 'invoicing', label: 'Invoicing', desc: 'Full access to the Invoice Tracker (AFPs, Sales / Supplier Invoices, Receipts)' }
+  { key: 'invoicing', label: 'Invoicing', desc: 'Full access to the Invoice Tracker (AFPs aside, Sales / Supplier Invoices, Receipts)' },
+  { key: 'afps', label: 'AFPs (Applications for Payment)', desc: 'Create, submit, certify and invoice Applications for Payment on projects' }
 ];
 
 const PERM_TO_TAB = {
@@ -12416,7 +12418,7 @@ async function toggleUserPermission(empName, permKey, enabled) {
         tenders: false, editQuotes: false, viewQuotes: false,
         editProjects: false, viewProjects: false,
         viewPurchaseOrders: false, editPurchaseOrders: false,
-        invoicing: false
+        invoicing: false, afps: false
       }
     };
   }
@@ -25182,28 +25184,177 @@ function switchInvTab(tab) {
 }
 
 // ── Placeholder renderers (full bodies land in Commits 2 + 3) ────────────
+// ═════════════════════════════════════════════════════════════════════════
+// AFP TWO-PANE RENDER
+// ═════════════════════════════════════════════════════════════════════════
+let _afpSelectedProjectId = null;  // currently-selected project in the sidebar
+
 function renderInvAfpsTable() {
-  const tbody = document.getElementById('invAfpsTbody');
-  if (!tbody) return;
-  if (!_invAfpList.length) {
-    tbody.innerHTML = `<tr><td colspan="8" class="empty-state" style="padding:40px;text-align:center;color:var(--muted)">
-      <div style="font-size:32px;margin-bottom:8px">📄</div>
-      <div style="font-weight:600;margin-bottom:4px">No applications for payment yet</div>
-      <div style="font-size:12px">Click <b>+ New AFP</b> to create your first one. Available in Commit 3.</div>
-    </td></tr>`;
+  // Now a two-pane render. This is called from switchInvTab('afps').
+  renderAfpProjectSidebar();
+  renderAfpRightPane();
+}
+
+function _afpsForProject(projectId) {
+  const showCancelled = document.getElementById('afpShowCancelled')?.checked;
+  return _invAfpList
+    .filter(a => a.project_id === projectId && (showCancelled || a.status !== 'Cancelled'))
+    .sort((a, b) => b.application_no - a.application_no);
+}
+
+function renderAfpProjectSidebar() {
+  const wrap = document.getElementById('afpProjectSidebar');
+  if (!wrap) return;
+  const q = (document.getElementById('afpProjectSearch')?.value || '').toLowerCase().trim();
+  const showCancelled = document.getElementById('afpShowCancelled')?.checked;
+
+  // Group AFPs by project; build a list of projects that have at least 1 AFP
+  // (or all AFPs are cancelled if showCancelled is off, in which case they're hidden)
+  const visibleAfps = _invAfpList.filter(a => showCancelled || a.status !== 'Cancelled');
+  const projectIds = [...new Set(visibleAfps.map(a => a.project_id))];
+
+  // Build entries with project info + counts
+  let projects = projectIds.map(pid => {
+    const sample = visibleAfps.find(a => a.project_id === pid);
+    const afps = visibleAfps.filter(a => a.project_id === pid);
+    return {
+      id: pid,
+      project_number: sample?.project_number || '',
+      project_name:   sample?.project_name || '(unnamed)',
+      afp_count:      afps.length,
+      submitted:      afps.filter(a => a.status === 'Submitted').length,
+      certified:      afps.filter(a => a.status === 'Certified').length
+    };
+  });
+
+  // Filter by search
+  if (q) {
+    projects = projects.filter(p =>
+      (p.project_number + ' ' + p.project_name).toLowerCase().includes(q)
+    );
+  }
+
+  // Sort alphabetically by project name
+  projects.sort((a, b) => (a.project_name || '').localeCompare(b.project_name || ''));
+
+  if (!projects.length) {
+    wrap.innerHTML = '<div style="padding:20px 8px;color:var(--subtle);font-size:12px;text-align:center">' +
+                     (q ? 'No matches' : 'No AFPs yet — click + New AFP') +
+                     '</div>';
     return;
   }
-  tbody.innerHTML = _invAfpList.map(a => `
-    <tr>
-      <td style="font-family:var(--font-mono);font-weight:600">${escapeHtml(a.ref || '')}</td>
-      <td>${escapeHtml(a.project_number || '')} — ${escapeHtml(a.project_name || '')}</td>
-      <td>${escapeHtml(a.period_label || '')}</td>
-      <td style="text-align:right">£${Number(a.applied_gross || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}</td>
-      <td style="text-align:right">£${Number(a.certified_gross || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}</td>
-      <td>${invStatusBadge(a.status)}</td>
-      <td>${a.submitted_at ? new Date(a.submitted_at).toLocaleDateString('en-GB') : ''}</td>
-      <td style="text-align:center;color:var(--subtle)">⋯</td>
-    </tr>`).join('');
+
+  wrap.innerHTML = projects.map(p => {
+    const isSelected = p.id === _afpSelectedProjectId;
+    const badges = [];
+    if (p.submitted) badges.push(`<span style="display:inline-block;padding:1px 6px;border-radius:8px;font-size:9px;background:rgba(59,130,246,.2);color:#60a5fa">${p.submitted} cert?</span>`);
+    if (p.certified) badges.push(`<span style="display:inline-block;padding:1px 6px;border-radius:8px;font-size:9px;background:rgba(255,165,0,.2);color:#ffa500">${p.certified} inv?</span>`);
+    return `
+      <div onclick="selectAfpProject(${p.id})"
+           style="padding:8px 10px;border-radius:6px;cursor:pointer;
+                  ${isSelected ? 'background:var(--surface2);border-left:3px solid var(--accent)' : 'border-left:3px solid transparent'};
+                  font-size:13px"
+           onmouseover="if(${p.id}!==_afpSelectedProjectId) this.style.background='var(--surface2)'"
+           onmouseout="if(${p.id}!==_afpSelectedProjectId) this.style.background=''">
+        <div style="font-family:var(--font-mono);font-weight:600;font-size:11px;color:var(--muted)">${escapeHtml(p.project_number || '')}</div>
+        <div style="font-weight:600;margin:2px 0">${escapeHtml(p.project_name)}</div>
+        <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center">
+          <span style="font-size:10px;color:var(--subtle)">${p.afp_count} AFP${p.afp_count !== 1 ? 's' : ''}</span>
+          ${badges.join(' ')}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function selectAfpProject(projectId) {
+  _afpSelectedProjectId = projectId;
+  renderAfpProjectSidebar();
+  renderAfpRightPane();
+}
+
+function renderAfpRightPane() {
+  const pane = document.getElementById('afpRightPane');
+  if (!pane) return;
+
+  if (!_afpSelectedProjectId) {
+    pane.innerHTML = `
+      <div class="card" style="padding:60px;text-align:center;color:var(--muted)">
+        <div style="font-size:48px;margin-bottom:12px">📋</div>
+        <div style="font-weight:600;margin-bottom:6px">Select a project</div>
+        <div style="font-size:13px">Pick a project from the left to view its AFPs, or click <b>+ New AFP</b> to start a new application.</div>
+      </div>`;
+    return;
+  }
+
+  const afps = _afpsForProject(_afpSelectedProjectId);
+  const projectInfo = _invAfpList.find(a => a.project_id === _afpSelectedProjectId);
+  const projectLabel = projectInfo
+    ? `${projectInfo.project_number || ''} — ${projectInfo.project_name || ''}`
+    : '';
+
+  if (!afps.length) {
+    pane.innerHTML = `
+      <div class="card" style="padding:14px 16px;margin-bottom:14px">
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase">Project</div>
+        <div style="font-weight:700;font-size:16px">${escapeHtml(projectLabel)}</div>
+      </div>
+      <div class="card" style="padding:40px;text-align:center;color:var(--muted)">
+        <div style="font-size:36px;margin-bottom:10px">📄</div>
+        <div style="font-weight:600;margin-bottom:6px">No AFPs for this project yet</div>
+        <button class="btn btn-primary" onclick="openNewAfpModal(${_afpSelectedProjectId})">+ Create First AFP</button>
+      </div>`;
+    return;
+  }
+
+  pane.innerHTML = `
+    <div class="card" style="padding:14px 16px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase">Project</div>
+        <div style="font-weight:700;font-size:16px">${escapeHtml(projectLabel)}</div>
+      </div>
+      <button class="btn btn-primary" onclick="openNewAfpModal(${_afpSelectedProjectId})">+ New AFP</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      ${afps.map(_renderAfpCard).join('')}
+    </div>`;
+}
+
+function _renderAfpCard(a) {
+  const cancelled = a.status === 'Cancelled';
+  const period = a.period_start && a.period_end
+    ? `${new Date(a.period_start).toLocaleDateString('en-GB')} – ${new Date(a.period_end).toLocaleDateString('en-GB')}`
+    : (a.period_label || '');
+  const finalBadge = a.is_final
+    ? `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;background:rgba(208,2,27,.15);color:var(--red)">FINAL</span>`
+    : '';
+  return `
+    <div class="card" style="padding:12px 14px;cursor:pointer;${cancelled ? 'opacity:.5' : ''}"
+         onclick="openAfpDetail(${a.id})"
+         onmouseover="this.style.background='var(--surface2)'"
+         onmouseout="this.style.background=''">
+      <div style="display:grid;grid-template-columns:90px 1fr 130px 130px 110px;gap:10px;align-items:center">
+        <div>
+          <div style="font-family:var(--font-mono);font-weight:700;font-size:15px">${escapeHtml(a.ref || '')}</div>
+          <div style="display:flex;gap:4px;margin-top:3px">${finalBadge}</div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase">Period</div>
+          <div style="font-size:13px">${escapeHtml(period) || '—'}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase">Applied Gross</div>
+          <div style="font-weight:600">£${Number(a.applied_gross || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:11px;color:var(--muted);text-transform:uppercase">Certified</div>
+          <div style="font-weight:600">${a.certified_gross != null ? '£' + Number(a.certified_gross).toLocaleString('en-GB', { minimumFractionDigits: 2 }) : '—'}</div>
+        </div>
+        <div style="text-align:right">
+          ${invStatusBadge(a.status)}
+          ${a.invoice_ref ? `<div style="font-size:10px;color:var(--subtle);margin-top:3px">→ ${escapeHtml(a.invoice_ref)}</div>` : ''}
+        </div>
+      </div>
+    </div>`;
 }
 
 function renderInvSalesTable() {
@@ -25302,9 +25453,752 @@ function invStatusBadge(status) {
   return `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:${bg};color:${fg}">${escapeHtml(status)}</span>`;
 }
 
-// ── Stub openers — Commit 3 fills in AFP ─────────────────────────────────
-function openNewAfpModal() {
-  toast('New AFP flow lands in Commit 3.', 'info');
+// ═══════════════════════════════════════════════════════════════════════════
+// AFP (Applications for Payment) — Commit 3 implementation
+// ═══════════════════════════════════════════════════════════════════════════
+// Two-pane layout, SOV snapshot from QuoteLineItems (AFP01) or prior AFP
+// (AFP02+), per-line previous % carry-forward from most-recent Certified AFP,
+// Submit → render AFP PDF → upload to ProjectFolder/Application for Payment/,
+// Cert upload + Claude vision OCR (header + per-line), Confirm Certified
+// Figures → status=Certified, Generate Invoice → new Draft Invoice with
+// source_afp_id, lines + retention copied across.
+// ───────────────────────────────────────────────────────────────────────────
+
+// Module-level state for the AFP modals
+let _afpEditing = null;            // currently-edited AFP (null = new)
+let _afpModalProjectId = null;     // project locked for the modal
+let _afpLineRows = [];             // working SOV rows in the modal
+let _afpDetailCurrent = null;      // currently-open AFP in the detail modal
+let _afpCertFile = null;           // raw File for the cert upload
+let _afpCertParsed = null;         // OCR result staged
+
+// ── Project picker (opens when user clicks + New AFP without selecting one) ──
+function openAfpProjectPicker() {
+  if (_afpSelectedProjectId) {
+    openNewAfpModal(_afpSelectedProjectId);
+    return;
+  }
+  const sel = document.getElementById('afpPickerProjectSelect');
+  const projects = (_invProjectsCache || []).slice().sort((a, b) =>
+    (a.project_name || '').localeCompare(b.project_name || '')
+  );
+  sel.innerHTML = '<option value="">— pick a project —</option>'
+    + projects.map(p => `<option value="${p.id}">${escapeHtml(p.project_number || '')} — ${escapeHtml(p.project_name || '')}</option>`).join('');
+  document.getElementById('afpProjectPickerModal').classList.add('active');
+}
+function closeAfpProjectPicker() {
+  document.getElementById('afpProjectPickerModal').classList.remove('active');
+}
+function confirmAfpProjectPick() {
+  const pid = parseInt(document.getElementById('afpPickerProjectSelect').value);
+  if (!pid) { toast('Please pick a project', 'error'); return; }
+  closeAfpProjectPicker();
+  openNewAfpModal(pid);
+}
+
+// ── New / Edit AFP modal ──
+async function openNewAfpModal(projectId) {
+  _afpEditing = null;
+  _afpModalProjectId = projectId;
+  _afpLineRows = [];
+
+  const project = (_invProjectsCache || []).find(p => p.id === projectId);
+  if (!project) { toast('Project not found', 'error'); return; }
+
+  document.getElementById('afpNewProjectLabel').textContent =
+    `${project.project_number || ''} — ${project.project_name || ''}`;
+
+  // Default period = current calendar month
+  const today = new Date();
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
+  const monthEnd   = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().slice(0, 10);
+  document.getElementById('afpNewPeriodStart').value = monthStart;
+  document.getElementById('afpNewPeriodEnd').value   = monthEnd;
+  document.getElementById('afpNewIsFinal').checked = false;
+  document.getElementById('afpNewRetentionPct').value = '5';
+  document.getElementById('afpNewVatApplies').checked = true;
+  document.getElementById('afpNewNotes').value = '';
+
+  // Allocate the next AFP ref for this project
+  try {
+    const r = await api.get(`/api/applications-next-ref?project_id=${projectId}`);
+    document.getElementById('afpNewRef').value = r?.ref || 'AFP??';
+  } catch (e) {
+    document.getElementById('afpNewRef').value = 'AFP??';
+  }
+
+  // Pre-populate SOV (handles AFP01 from quote lines OR AFP02+ from prior AFP)
+  await _afpPopulateSov(projectId);
+
+  document.getElementById('afpNewModal').classList.add('active');
+  recalcAfpTotals();
+}
+
+function closeAfpNewModal() {
+  document.getElementById('afpNewModal').classList.remove('active');
+}
+
+async function _afpPopulateSov(projectId) {
+  // All non-cancelled AFPs in this project, most-recent first
+  const projectAfps = _invAfpList
+    .filter(a => a.project_id === projectId && a.status !== 'Cancelled')
+    .sort((a, b) => b.application_no - a.application_no);
+
+  // Find the most-recent CERTIFIED (or Invoiced) AFP for previous_pct carry-forward
+  const lastCertified = projectAfps.find(a => a.status === 'Certified' || a.status === 'Invoiced');
+  let lastCertifiedLines = [];
+  if (lastCertified) {
+    try {
+      const detail = await api.get(`/api/applications/${lastCertified.id}`);
+      lastCertifiedLines = detail.line_items || [];
+    } catch (e) { /* fall through with empty */ }
+  }
+
+  const findPrevPct = (sourceQliId, description) => {
+    let match = null;
+    if (sourceQliId) {
+      match = lastCertifiedLines.find(l => l.source_quote_line_item_id === sourceQliId);
+    }
+    if (!match) {
+      match = lastCertifiedLines.find(l => (l.description || '').trim() === (description || '').trim());
+    }
+    return match ? Number(match.this_app_pct_complete || 0) : 0;
+  };
+
+  if (projectAfps.length === 0) {
+    // AFP01 — pull from all quote line items for the project
+    try {
+      const projectQuotes = await api.get(`/api/project-quotes?project_id=${projectId}`);
+      const tenderIds = (projectQuotes || []).map(pq => pq.tender_id);
+      let allLines = [];
+      for (const tid of tenderIds) {
+        const items = await api.get(`/api/quote-line-items?tender_id=${tid}`).catch(() => []);
+        allLines = allLines.concat(items);
+      }
+      _afpLineRows = allLines.map((l, i) => ({
+        line_no: i + 1,
+        source_quote_line_item_id: l.id,
+        description: l.description || l.category || `Line ${i + 1}`,
+        contract_value: Number(l.quantity || 0) * Number(l.unit_price || 0),
+        previous_pct_complete: 0,
+        this_app_pct_complete: 0
+      }));
+    } catch (e) {
+      console.warn('Could not pull quote lines:', e);
+      _afpLineRows = [];
+    }
+  } else {
+    // AFP02+ — pull from most recent AFP's lines, fill prev % from last CERTIFIED
+    const prevAfp = projectAfps[0];
+    try {
+      const detail = await api.get(`/api/applications/${prevAfp.id}`);
+      _afpLineRows = (detail.line_items || []).map((l, i) => ({
+        line_no: i + 1,
+        source_quote_line_item_id: l.source_quote_line_item_id,
+        description: l.description,
+        contract_value: Number(l.contract_value || 0),
+        previous_pct_complete: findPrevPct(l.source_quote_line_item_id, l.description),
+        this_app_pct_complete: 0
+      }));
+    } catch (e) {
+      _afpLineRows = [];
+    }
+  }
+
+  // Banner: "no certified prior AFP" warning
+  const banner = document.getElementById('afpNewPrevPctBanner');
+  if (banner) {
+    banner.style.display = (projectAfps.length > 0 && !lastCertified) ? '' : 'none';
+  }
+  renderAfpLineRows();
+}
+
+function toggleAfpFinal() {
+  if (document.getElementById('afpNewIsFinal').checked) {
+    _afpLineRows.forEach(l => { l.this_app_pct_complete = 100; });
+    renderAfpLineRows();
+    recalcAfpTotals();
+  }
+}
+
+function _afpAddLineRow() {
+  _afpLineRows.push({
+    line_no: _afpLineRows.length + 1,
+    source_quote_line_item_id: null,
+    description: '',
+    contract_value: 0,
+    previous_pct_complete: 0,
+    this_app_pct_complete: 0
+  });
+  renderAfpLineRows();
+}
+
+function removeAfpLineRow(idx) {
+  _afpLineRows.splice(idx, 1);
+  _afpLineRows.forEach((l, i) => { l.line_no = i + 1; });
+  renderAfpLineRows();
+  recalcAfpTotals();
+}
+
+function renderAfpLineRows() {
+  const el = document.getElementById('afpNewLineItems');
+  if (!el) return;
+  el.innerHTML = _afpLineRows.map((l, i) => {
+    const thisAppValue = Number(l.contract_value || 0) * (Number(l.this_app_pct_complete || 0) - Number(l.previous_pct_complete || 0)) / 100;
+    return `
+      <div style="display:grid;grid-template-columns:1fr 110px 70px 70px 100px 30px;gap:6px;align-items:center">
+        <input type="text" class="field-input" placeholder="Description"
+               value="${escapeHtml(l.description || '')}"
+               oninput="_afpLineRows[${i}].description = this.value">
+        <input type="number" step="0.01" class="field-input" placeholder="Contract £"
+               value="${l.contract_value || 0}"
+               oninput="_afpLineRows[${i}].contract_value = parseFloat(this.value) || 0; renderAfpLineRows(); recalcAfpTotals()">
+        <input type="number" step="0.01" class="field-input" placeholder="Prev %" readonly tabindex="-1"
+               style="background:var(--bg-darker);text-align:center"
+               value="${Number(l.previous_pct_complete || 0).toFixed(1)}">
+        <input type="number" step="0.01" class="field-input" placeholder="This %"
+               value="${l.this_app_pct_complete || 0}"
+               oninput="_afpLineRows[${i}].this_app_pct_complete = parseFloat(this.value) || 0; renderAfpLineRows(); recalcAfpTotals()">
+        <input type="text" class="field-input" readonly tabindex="-1"
+               style="background:var(--bg-darker);text-align:right"
+               value="£${Number(thisAppValue).toLocaleString('en-GB', { minimumFractionDigits: 2 })}">
+        <button type="button" class="btn btn-ghost"
+                style="padding:4px 8px;color:var(--red);border-color:var(--red)"
+                onclick="removeAfpLineRow(${i})">×</button>
+      </div>`;
+  }).join('');
+}
+
+function recalcAfpTotals() {
+  const net = _afpLineRows.reduce((s, l) => {
+    return s + Number(l.contract_value || 0) * (Number(l.this_app_pct_complete || 0) - Number(l.previous_pct_complete || 0)) / 100;
+  }, 0);
+  const retentionPct = Number(document.getElementById('afpNewRetentionPct').value || 0);
+  const retention = +(net * retentionPct / 100).toFixed(2);
+  const vatBase = net - retention;
+  const vatApplies = document.getElementById('afpNewVatApplies').checked;
+  const vat = vatApplies ? +(vatBase * 0.20).toFixed(2) : 0;
+  const gross = +(net - retention + vat).toFixed(2);
+
+  document.getElementById('afpTotalNet').textContent       = '£' + Number(net).toLocaleString('en-GB', { minimumFractionDigits: 2 });
+  document.getElementById('afpTotalRetention').textContent = '£' + Number(retention).toLocaleString('en-GB', { minimumFractionDigits: 2 });
+  document.getElementById('afpTotalVat').textContent       = '£' + Number(vat).toLocaleString('en-GB', { minimumFractionDigits: 2 });
+  document.getElementById('afpTotalGross').textContent     = '£' + Number(gross).toLocaleString('en-GB', { minimumFractionDigits: 2 });
+}
+
+function _afpFormatPeriodLabel(start, end) {
+  if (!start || !end) return '';
+  const s = new Date(start), e = new Date(end);
+  const dd = (d) => d.toLocaleDateString('en-GB');
+  return `${dd(s)} – ${dd(e)}`;
+}
+
+function _buildAfpPayload() {
+  if (_afpLineRows.length === 0 || _afpLineRows.every(l => !l.description.trim())) {
+    toast('Please add at least one line item', 'error'); return null;
+  }
+  if (!document.getElementById('afpNewPeriodStart').value || !document.getElementById('afpNewPeriodEnd').value) {
+    toast('Period start and end dates required', 'error'); return null;
+  }
+  const cleanLines = _afpLineRows
+    .filter(l => l.description && l.description.trim())
+    .map((l, i) => {
+      const cv = Number(l.contract_value || 0);
+      const thisPct = Number(l.this_app_pct_complete || 0);
+      const prevPct = Number(l.previous_pct_complete || 0);
+      const thisVal = +(cv * (thisPct - prevPct) / 100).toFixed(2);
+      const cumVal  = +(cv * thisPct / 100).toFixed(2);
+      return {
+        line_no: i + 1,
+        source_quote_line_item_id: l.source_quote_line_item_id || null,
+        description: l.description.trim(),
+        contract_value: cv,
+        previous_pct_complete: prevPct,
+        this_app_pct_complete: thisPct,
+        this_app_value: thisVal,
+        cumulative_value: cumVal
+      };
+    });
+  const net = cleanLines.reduce((s, l) => s + l.this_app_value, 0);
+  const retentionPct = Number(document.getElementById('afpNewRetentionPct').value || 0);
+  const retention = +(net * retentionPct / 100).toFixed(2);
+  const vatBase = net - retention;
+  const vatApplies = document.getElementById('afpNewVatApplies').checked;
+  const vat = vatApplies ? +(vatBase * 0.20).toFixed(2) : 0;
+  const gross = +(net - retention + vat).toFixed(2);
+
+  return {
+    project_id:        _afpModalProjectId,
+    period_start:      document.getElementById('afpNewPeriodStart').value,
+    period_end:        document.getElementById('afpNewPeriodEnd').value,
+    period_label:      _afpFormatPeriodLabel(
+                          document.getElementById('afpNewPeriodStart').value,
+                          document.getElementById('afpNewPeriodEnd').value
+                       ),
+    is_final:          document.getElementById('afpNewIsFinal').checked ? 1 : 0,
+    applied_value_net: +net.toFixed(2),
+    applied_vat:       vat,
+    applied_retention: retention,
+    applied_gross:     gross,
+    notes:             document.getElementById('afpNewNotes').value || null,
+    line_items:        cleanLines
+  };
+}
+
+async function saveAfpDraft() {
+  const payload = _buildAfpPayload();
+  if (!payload) return;
+  const btn = document.getElementById('afpSaveDraftBtn');
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    let saved;
+    if (_afpEditing) {
+      saved = await api.put(`/api/applications/${_afpEditing.id}`, payload);
+    } else {
+      saved = await api.post('/api/applications', payload);
+    }
+    toast(`AFP ${saved.ref} saved as Draft ✓`, 'success');
+    closeAfpNewModal();
+    await loadInvoicingData();
+    _afpSelectedProjectId = payload.project_id;
+    renderInvAfpsTable();
+  } catch (err) {
+    console.error('Save AFP failed', err);
+    toast('Save failed: ' + (err.message || 'unknown'), 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Save Draft'; }
+  }
+}
+
+async function saveAndSubmitAfp() {
+  const payload = _buildAfpPayload();
+  if (!payload) return;
+  const btn = document.getElementById('afpSubmitBtn');
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Submitting…'; }
+    setLoading(true);
+    let saved;
+    if (_afpEditing) {
+      saved = await api.put(`/api/applications/${_afpEditing.id}`, payload);
+    } else {
+      saved = await api.post('/api/applications', payload);
+    }
+    const full = await api.get(`/api/applications/${saved.id}`);
+    await loadLogoDataUri();
+    const pdfData = _buildAfpPdfData(full);
+    const pdfBlob = await renderBamaAfpPDF(pdfData);
+    const project = (_invProjectsCache || []).find(p => p.id === saved.project_id);
+    if (!project || !project.sharepoint_folder_id) {
+      throw new Error('Project has no SharePoint folder set — set it in Projects tracker first.');
+    }
+    const afpFolder = await getOrCreateSubfolder(project.sharepoint_folder_id, 'Application for Payment', BAMA_DRIVE_ID);
+    const fileName = sanitizeSpFilename(`${saved.ref}.pdf`);
+    const driveItem = await uploadFileToFolder(afpFolder.id, fileName, pdfBlob, 'application/pdf');
+    await api.post(`/api/applications/${saved.id}/submit`, {
+      sharepoint_pdf_id:  driveItem.id,
+      sharepoint_pdf_url: driveItem.webUrl
+    });
+    toast(`AFP ${saved.ref} submitted ✓`, 'success');
+    closeAfpNewModal();
+    await loadInvoicingData();
+    _afpSelectedProjectId = saved.project_id;
+    renderInvAfpsTable();
+  } catch (err) {
+    console.error('Submit AFP failed', err);
+    toast('Submit failed: ' + (err.message || 'unknown'), 'error');
+  } finally {
+    setLoading(false);
+    if (btn) { btn.disabled = false; btn.textContent = 'Save & Submit'; }
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// AFP DETAIL MODAL
+// ═════════════════════════════════════════════════════════════════════════
+async function openAfpDetail(id) {
+  try {
+    const afp = await api.get(`/api/applications/${id}`);
+    _afpDetailCurrent = afp;
+
+    document.getElementById('afpDetailRef').textContent = afp.ref;
+    document.getElementById('afpDetailStatus').innerHTML = invStatusBadge(afp.status);
+    document.getElementById('afpDetailProject').textContent =
+      `${afp.project_number || ''} — ${afp.project_name || ''}`;
+    document.getElementById('afpDetailPeriod').textContent =
+      _afpFormatPeriodLabel(afp.period_start, afp.period_end) || afp.period_label || '—';
+    document.getElementById('afpDetailFinal').textContent = afp.is_final ? 'YES (Final Application)' : 'No';
+
+    // Applied totals
+    document.getElementById('afpDetailAppliedNet').textContent      = '£' + Number(afp.applied_value_net || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 });
+    document.getElementById('afpDetailAppliedRet').textContent      = '£' + Number(afp.applied_retention || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 });
+    document.getElementById('afpDetailAppliedVat').textContent      = '£' + Number(afp.applied_vat || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 });
+    document.getElementById('afpDetailAppliedGross').textContent    = '£' + Number(afp.applied_gross || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 });
+
+    // Certified totals (blank if not yet certified)
+    const isCert = (afp.status === 'Certified' || afp.status === 'Invoiced');
+    document.getElementById('afpDetailCertifiedNet').textContent    = isCert ? '£' + Number(afp.certified_value_net || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 }) : '—';
+    document.getElementById('afpDetailCertifiedRet').textContent    = isCert ? '£' + Number(afp.certified_retention || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 }) : '—';
+    document.getElementById('afpDetailCertifiedVat').textContent    = isCert ? '£' + Number(afp.certified_vat || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 }) : '—';
+    document.getElementById('afpDetailCertifiedGross').textContent  = isCert ? '£' + Number(afp.certified_gross || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 }) : '—';
+
+    // Line items table
+    document.getElementById('afpDetailLines').innerHTML = (afp.line_items || []).map(l => `
+      <tr>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border)">${escapeHtml(l.description || '')}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right">£${Number(l.contract_value || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:center">${Number(l.previous_pct_complete || 0).toFixed(1)}%</td>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:center">${Number(l.this_app_pct_complete || 0).toFixed(1)}%</td>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right">£${Number(l.this_app_value || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right">£${Number(l.cumulative_value || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right">${l.certified_this_app_value != null ? '£' + Number(l.certified_this_app_value).toLocaleString('en-GB', { minimumFractionDigits: 2 }) : '—'}</td>
+      </tr>`).join('') || '<tr><td colspan="7" style="padding:10px;color:var(--muted)">No line items</td></tr>';
+
+    // PDF + Cert links
+    const pdfBtn  = document.getElementById('afpDetailPdfBtn');
+    const certBtn = document.getElementById('afpDetailCertOpenBtn');
+    if (afp.sharepoint_pdf_url) {
+      pdfBtn.style.display = '';
+      pdfBtn.onclick = () => window.open(afp.sharepoint_pdf_url, '_blank');
+    } else { pdfBtn.style.display = 'none'; }
+
+    const certAtt = (afp.attachments || []).find(a => a.kind === 'certificate');
+    if (certAtt) {
+      certBtn.style.display = '';
+      certBtn.onclick = () => window.open(certAtt.sharepoint_url, '_blank');
+    } else { certBtn.style.display = 'none'; }
+
+    // Action buttons gated by status
+    const editBtn        = document.getElementById('afpDetailEditBtn');
+    const submitBtn      = document.getElementById('afpDetailSubmitBtn');
+    const certUploadBtn  = document.getElementById('afpDetailCertUploadBtn');
+    const genInvBtn      = document.getElementById('afpDetailGenInvBtn');
+    const cancelBtn      = document.getElementById('afpDetailCancelBtn');
+
+    editBtn.style.display       = (afp.status === 'Draft') ? '' : 'none';
+    submitBtn.style.display     = (afp.status === 'Draft') ? '' : 'none';
+    certUploadBtn.style.display = (afp.status === 'Submitted') ? '' : 'none';
+    genInvBtn.style.display     = (afp.status === 'Certified') ? '' : 'none';
+    cancelBtn.style.display     = (afp.status !== 'Cancelled' && afp.status !== 'Invoiced') ? '' : 'none';
+
+    // Linked invoice ref
+    const invLink = document.getElementById('afpDetailInvLink');
+    if (afp.invoice_ref) {
+      invLink.style.display = '';
+      invLink.innerHTML = `Generated invoice: <a href="javascript:openInvoiceDetail(${afp.invoice_id})" style="color:var(--accent);font-family:var(--font-mono);font-weight:600">${escapeHtml(afp.invoice_ref)}</a>`;
+    } else { invLink.style.display = 'none'; }
+
+    document.getElementById('afpDetailModal').classList.add('active');
+  } catch (err) {
+    console.error('Open AFP detail failed', err);
+    toast('Failed to load AFP: ' + (err.message || 'unknown'), 'error');
+  }
+}
+
+function closeAfpDetail() {
+  document.getElementById('afpDetailModal').classList.remove('active');
+  _afpDetailCurrent = null;
+}
+
+async function editAfpFromDetail() {
+  if (!_afpDetailCurrent) return;
+  const afp = _afpDetailCurrent;
+  closeAfpDetail();
+  _afpEditing = afp;
+  _afpModalProjectId = afp.project_id;
+  const project = (_invProjectsCache || []).find(p => p.id === afp.project_id);
+  if (project) {
+    document.getElementById('afpNewProjectLabel').textContent =
+      `${project.project_number || ''} — ${project.project_name || ''}`;
+  }
+  document.getElementById('afpNewRef').value = afp.ref;
+  document.getElementById('afpNewPeriodStart').value = afp.period_start ? String(afp.period_start).slice(0, 10) : '';
+  document.getElementById('afpNewPeriodEnd').value   = afp.period_end   ? String(afp.period_end).slice(0, 10)   : '';
+  document.getElementById('afpNewIsFinal').checked   = !!afp.is_final;
+  document.getElementById('afpNewRetentionPct').value =
+    afp.applied_retention && afp.applied_value_net
+      ? (Number(afp.applied_retention) / Number(afp.applied_value_net) * 100).toFixed(2)
+      : '5';
+  document.getElementById('afpNewVatApplies').checked = Number(afp.applied_vat || 0) > 0;
+  document.getElementById('afpNewNotes').value = afp.notes || '';
+
+  _afpLineRows = (afp.line_items || []).map(l => ({
+    line_no: l.line_no,
+    source_quote_line_item_id: l.source_quote_line_item_id,
+    description: l.description,
+    contract_value: Number(l.contract_value || 0),
+    previous_pct_complete: Number(l.previous_pct_complete || 0),
+    this_app_pct_complete: Number(l.this_app_pct_complete || 0)
+  }));
+  renderAfpLineRows();
+  recalcAfpTotals();
+  document.getElementById('afpNewModal').classList.add('active');
+}
+
+async function submitAfpFromDetail() {
+  if (!_afpDetailCurrent) return;
+  const afp = _afpDetailCurrent;
+  const btn = document.getElementById('afpDetailSubmitBtn');
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Submitting…'; }
+    setLoading(true);
+    await loadLogoDataUri();
+    const pdfData = _buildAfpPdfData(afp);
+    const pdfBlob = await renderBamaAfpPDF(pdfData);
+    const project = (_invProjectsCache || []).find(p => p.id === afp.project_id);
+    if (!project || !project.sharepoint_folder_id) {
+      throw new Error('Project has no SharePoint folder set');
+    }
+    const afpFolder = await getOrCreateSubfolder(project.sharepoint_folder_id, 'Application for Payment', BAMA_DRIVE_ID);
+    const fileName = sanitizeSpFilename(`${afp.ref}.pdf`);
+    const driveItem = await uploadFileToFolder(afpFolder.id, fileName, pdfBlob, 'application/pdf');
+    await api.post(`/api/applications/${afp.id}/submit`, {
+      sharepoint_pdf_id:  driveItem.id,
+      sharepoint_pdf_url: driveItem.webUrl
+    });
+    toast(`AFP ${afp.ref} submitted ✓`, 'success');
+    closeAfpDetail();
+    await loadInvoicingData();
+    renderInvAfpsTable();
+  } catch (err) {
+    toast('Submit failed: ' + (err.message || 'unknown'), 'error');
+  } finally {
+    setLoading(false);
+    if (btn) { btn.disabled = false; btn.textContent = 'Submit + PDF'; }
+  }
+}
+
+async function cancelAfp() {
+  if (!_afpDetailCurrent) return;
+  const afp = _afpDetailCurrent;
+  const confirmed = await showConfirmAsync(
+    'Cancel AFP?',
+    `<p>Cancelling <b>${escapeHtml(afp.ref)}</b> burns its number — the next AFP for this project will skip it. This is irreversible.</p>`,
+    { okLabel: 'Cancel AFP', cancelLabel: 'Keep' }
+  );
+  if (!confirmed) return;
+  try {
+    await api.post(`/api/applications/${afp.id}/cancel`, {});
+    toast('AFP cancelled', 'success');
+    closeAfpDetail();
+    await loadInvoicingData();
+    renderInvAfpsTable();
+  } catch (err) {
+    toast('Cancel failed: ' + (err.message || 'unknown'), 'error');
+  }
+}
+
+async function downloadAfpPdf() {
+  if (!_afpDetailCurrent) return;
+  const afp = _afpDetailCurrent;
+  try {
+    setLoading(true);
+    await loadLogoDataUri();
+    const pdfData = _buildAfpPdfData(afp);
+    const pdfBlob = await renderBamaAfpPDF(pdfData);
+    const url = URL.createObjectURL(pdfBlob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `${afp.ref}.pdf`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    toast('PDF generation failed: ' + (err.message || 'unknown'), 'error');
+  } finally {
+    setLoading(false);
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// CERTIFICATE UPLOAD + CONFIRMATION
+// ═════════════════════════════════════════════════════════════════════════
+function openCertUploadModal() {
+  if (!_afpDetailCurrent) return;
+  _afpCertFile = null;
+  _afpCertParsed = null;
+  document.getElementById('afpCertFile').value = '';
+  document.getElementById('afpCertOcrStatus').style.display = 'none';
+  document.getElementById('afpCertRef').value = '';
+  document.getElementById('afpCertDate').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('afpCertNetVal').value = '';
+  document.getElementById('afpCertVat').value = '';
+  document.getElementById('afpCertRet').value = '';
+  document.getElementById('afpCertGross').value = '';
+  renderAfpCertLineFields();
+  document.getElementById('afpCertModal').classList.add('active');
+}
+
+function closeCertUploadModal() {
+  document.getElementById('afpCertModal').classList.remove('active');
+}
+
+function renderAfpCertLineFields() {
+  const wrap = document.getElementById('afpCertLineFields');
+  if (!wrap || !_afpDetailCurrent) return;
+  wrap.innerHTML = (_afpDetailCurrent.line_items || []).map((l, i) => `
+    <div style="display:grid;grid-template-columns:1fr 100px 100px;gap:6px;align-items:center;font-size:12px">
+      <div style="overflow:hidden;text-overflow:ellipsis">${escapeHtml(l.description || '')}</div>
+      <div style="text-align:right;color:var(--muted)">Applied £${Number(l.this_app_value || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}</div>
+      <input type="number" step="0.01" class="field-input" placeholder="Cert £"
+             data-line-id="${l.id}" data-line-idx="${i}"
+             style="font-size:12px;padding:4px 6px">
+    </div>
+  `).join('');
+}
+
+async function onCertFilePicked(file) {
+  if (!file || !_afpDetailCurrent) return;
+  _afpCertFile = file;
+  const statusEl = document.getElementById('afpCertOcrStatus');
+  statusEl.style.display = '';
+  statusEl.style.background = 'var(--bg-darker)';
+  statusEl.innerHTML = '<div class="spinner" style="display:inline-block;width:14px;height:14px;vertical-align:middle"></div> Parsing certificate with AI…';
+
+  try {
+    const dataUri = await _fileToDataUri(file);
+    const isImg = file.type.startsWith('image/');
+    const linesDesc = (_afpDetailCurrent.line_items || [])
+      .map((l, i) => `  ${i + 1}. ${l.description} (applied £${Number(l.this_app_value || 0).toFixed(2)})`)
+      .join('\n');
+    const result = await callClaude({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1500,
+      messages: [{
+        role: 'user',
+        content: [
+          isImg
+            ? { type: 'image',    source: { type: 'base64', media_type: file.type, data: dataUri.split(',')[1] } }
+            : { type: 'document', source: { type: 'base64', media_type: file.type, data: dataUri.split(',')[1] } },
+          {
+            type: 'text',
+            text: `Extract from this UK construction payment certificate. Return ONLY JSON:
+{
+  "certificate_ref": "their cert reference, e.g. PCERT-001",
+  "certificate_date": "YYYY-MM-DD",
+  "certified_value_net": 0,
+  "certified_retention": 0,
+  "certified_vat": 0,
+  "certified_gross": 0,
+  "line_items": [
+    { "line_index": 1, "certified_value": 0 }
+  ]
+}
+The line_items array should match this AFP's applied lines by description / order:
+${linesDesc}
+
+For each AFP line you can match, return {line_index: <1-based>, certified_value: <£>}.
+If the certificate doesn't break down by line, return an empty line_items array.
+If any header field is unclear, set it to null.`
+          }
+        ]
+      }]
+    });
+    const text = (result.content?.find(b => b.type === 'text')?.text || '').trim();
+    const jsonStart = text.indexOf('{'), jsonEnd = text.lastIndexOf('}');
+    const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
+    _afpCertParsed = parsed;
+
+    if (parsed.certificate_ref)         document.getElementById('afpCertRef').value    = parsed.certificate_ref;
+    if (parsed.certificate_date)        document.getElementById('afpCertDate').value   = parsed.certificate_date;
+    if (parsed.certified_value_net != null) document.getElementById('afpCertNetVal').value = parsed.certified_value_net;
+    if (parsed.certified_vat       != null) document.getElementById('afpCertVat').value    = parsed.certified_vat;
+    if (parsed.certified_retention != null) document.getElementById('afpCertRet').value    = parsed.certified_retention;
+    if (parsed.certified_gross     != null) document.getElementById('afpCertGross').value  = parsed.certified_gross;
+
+    if (Array.isArray(parsed.line_items)) {
+      parsed.line_items.forEach(item => {
+        const inp = document.querySelector(`#afpCertLineFields input[data-line-idx="${item.line_index - 1}"]`);
+        if (inp && item.certified_value != null) inp.value = item.certified_value;
+      });
+    }
+    statusEl.style.background = 'rgba(62,207,142,.1)';
+    statusEl.innerHTML = '✓ Parsed — please review headers + per-line, then click "Upload & Confirm"';
+  } catch (err) {
+    console.error('Cert OCR failed', err);
+    statusEl.style.background = 'rgba(208,2,27,.1)';
+    statusEl.innerHTML = `⚠ Could not parse — please fill manually. (${escapeHtml(err.message || 'unknown')})`;
+  }
+}
+
+async function uploadCertAndContinue() {
+  if (!_afpDetailCurrent) return;
+  if (!_afpCertFile) { toast('Please upload the certificate file first', 'error'); return; }
+  const afp = _afpDetailCurrent;
+  const btn = document.getElementById('afpCertUploadContinueBtn');
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Uploading…'; }
+    setLoading(true);
+
+    const project = (_invProjectsCache || []).find(p => p.id === afp.project_id);
+    if (!project || !project.sharepoint_folder_id) {
+      throw new Error('Project has no SharePoint folder set');
+    }
+    const afpFolder = await getOrCreateSubfolder(project.sharepoint_folder_id, 'Application for Payment', BAMA_DRIVE_ID);
+    const ext = (_afpCertFile.name.split('.').pop() || 'pdf').toLowerCase();
+    const fileName = sanitizeSpFilename(`${afp.ref}-Certificate.${ext}`);
+    const driveItem = await uploadFileToFolder(afpFolder.id, fileName, _afpCertFile, _afpCertFile.type || 'application/octet-stream');
+
+    await api.post(`/api/applications/${afp.id}/certificate`, {
+      sharepoint_id:  driveItem.id,
+      sharepoint_url: driveItem.webUrl,
+      filename:       fileName
+    });
+
+    const perLineFields = document.querySelectorAll('#afpCertLineFields input');
+    const lineItems = [];
+    perLineFields.forEach(inp => {
+      const lineId = parseInt(inp.dataset.lineId);
+      const val = parseFloat(inp.value);
+      if (lineId && !isNaN(val)) {
+        lineItems.push({ id: lineId, certified_this_app_value: val });
+      }
+    });
+
+    await api.put(`/api/applications/${afp.id}/certificate`, {
+      certificate_ref:      document.getElementById('afpCertRef').value || null,
+      certificate_date:     document.getElementById('afpCertDate').value || null,
+      certified_value_net:  Number(document.getElementById('afpCertNetVal').value) || 0,
+      certified_vat:        Number(document.getElementById('afpCertVat').value) || 0,
+      certified_retention:  Number(document.getElementById('afpCertRet').value) || 0,
+      certified_gross:      Number(document.getElementById('afpCertGross').value) || 0,
+      line_items:           lineItems
+    });
+
+    toast(`AFP ${afp.ref} certified ✓`, 'success');
+    closeCertUploadModal();
+    closeAfpDetail();
+    await loadInvoicingData();
+    renderInvAfpsTable();
+  } catch (err) {
+    console.error('Cert upload failed', err);
+    toast('Cert upload failed: ' + (err.message || 'unknown'), 'error');
+  } finally {
+    setLoading(false);
+    if (btn) { btn.disabled = false; btn.textContent = 'Upload & Confirm'; }
+  }
+}
+
+async function generateInvoiceFromAfp() {
+  if (!_afpDetailCurrent) return;
+  const afp = _afpDetailCurrent;
+  const confirmed = await showConfirmAsync(
+    'Generate Invoice from AFP?',
+    `<p>This will create a new Draft invoice based on the certified figures from <b>${escapeHtml(afp.ref)}</b>.</p>
+     <p>Retention £${Number(afp.certified_retention || 0).toFixed(2)} will carry over. Review + Issue from the Sales Invoices tab afterwards.</p>`,
+    { okLabel: 'Generate', cancelLabel: 'Cancel' }
+  );
+  if (!confirmed) return;
+  const btn = document.getElementById('afpDetailGenInvBtn');
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Generating…'; }
+    const result = await api.post(`/api/applications/${afp.id}/generate-invoice`, {});
+    toast(`Invoice ${result.invoice.ref} generated as Draft — review in Sales tab ✓`, 'success');
+    closeAfpDetail();
+    await loadInvoicingData();
+    renderInvAfpsTable();
+  } catch (err) {
+    toast('Generate failed: ' + (err.message || 'unknown'), 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Generate Invoice'; }
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -26595,4 +27489,269 @@ async function saveSupplierInvoice() {
     setLoading(false);
     if (btn) { btn.disabled = false; btn.textContent = 'Attach to PO'; }
   }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// AFP PDF RENDERER — same letterhead family as Invoice / Quote PDFs
+// Title: "Application for Payment"; banner "FINAL APPLICATION" if is_final;
+// 7-column SOV table: # | Description | Contract £ | Prev Cum £ | This App £
+//                     | Cum to Date £ | % To Date
+// ═════════════════════════════════════════════════════════════════════════
+
+function _buildAfpPdfData(afp) {
+  return {
+    ref:           afp.ref,
+    submittedDate: afp.submitted_at,
+    periodStart:   afp.period_start,
+    periodEnd:     afp.period_end,
+    isFinal:       !!afp.is_final,
+    project:       `${afp.project_number || ''} — ${afp.project_name || ''}`,
+    client:        afp.client_company_name || '',
+    net:           Number(afp.applied_value_net || 0),
+    vat:           Number(afp.applied_vat || 0),
+    retention:     Number(afp.applied_retention || 0),
+    gross:         Number(afp.applied_gross || 0),
+    notes:         afp.notes || '',
+    lineItems:     (afp.line_items || []).map((l, i) => {
+      const cv = Number(l.contract_value || 0);
+      const prevPct = Number(l.previous_pct_complete || 0);
+      const thisPct = Number(l.this_app_pct_complete || 0);
+      return {
+        itemNum: i + 1,
+        description: l.description,
+        contractValue: cv,
+        prevCumValue: cv * prevPct / 100,
+        thisAppValue: Number(l.this_app_value || 0),
+        cumulativeValue: Number(l.cumulative_value || 0),
+        pctToDate: thisPct
+      };
+    })
+  };
+}
+
+async function renderBamaAfpPDF(d) {
+  const JsPDFCtor = await _resolveJsPDF();
+  const logo = _logoDataUriCache || '';
+  return drawBamaAfpPDF(JsPDFCtor, d, logo);
+}
+
+function drawBamaAfpPDF(jsPDF, d, logoDataUri) {
+  const fmtNum = v => Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtDate = s => {
+    if (!s) return '';
+    const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return m ? `${m[3]}/${m[2]}/${m[1]}` : s;
+  };
+
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  try {
+    doc.setProperties({
+      title:   `BAMA Application for Payment ${d.ref || ''}`.trim(),
+      subject: `Application for Payment for ${d.project || ''}`,
+      author:  'BAMA Fabrication',
+      creator: 'BAMA Fabrication ERP'
+    });
+  } catch (e) { /* */ }
+
+  const pageW = 210, pageH = 297;
+  const marginL = 14, marginR = 14, marginB = 14;
+  const usableW = pageW - marginL - marginR;
+
+  const RED = [208, 2, 27], NAVY = [31, 53, 82];
+  const TEXT = [34, 34, 34], MUTED = [85, 85, 85];
+  const RULE = [212, 212, 212], HEADRULE = [68, 68, 68];
+
+  const setText = (rgb) => doc.setTextColor(rgb[0], rgb[1], rgb[2]);
+  const setFill = (rgb) => doc.setFillColor(rgb[0], rgb[1], rgb[2]);
+  const setDraw = (rgb) => doc.setDrawColor(rgb[0], rgb[1], rgb[2]);
+
+  // ── Header: logo left, title right ──
+  let y = marginL;
+  if (logoDataUri) {
+    try { doc.addImage(logoDataUri, 'PNG', marginL, y, 75, 32, undefined, 'FAST'); }
+    catch (e) {
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(22); setText(RED);
+      doc.text('BAMA FABRICATION', marginL, y + 12);
+    }
+  } else {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(22); setText(RED);
+    doc.text('BAMA FABRICATION', marginL, y + 12);
+  }
+
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(22); setText([43, 43, 43]);
+  doc.text('Application for Payment', pageW - marginR, y + 14, { align: 'right' });
+
+  // FINAL banner under title
+  if (d.isFinal) {
+    setFill(RED);
+    doc.rect(pageW - marginR - 60, y + 18, 60, 6, 'F');
+    setText([255, 255, 255]);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
+    doc.text('FINAL APPLICATION', pageW - marginR - 30, y + 22.2, { align: 'center' });
+  }
+
+  y = marginL + 42;
+
+  // ── Two-column header (left = from + to; right = meta) ──
+  const leftColW = usableW * 0.6;
+  const rightColX = marginL + leftColW + 4;
+  const rightColW = usableW - leftColW - 4;
+  let leftY = y, rightY = y;
+
+  // LEFT: From
+  setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
+  doc.text('From', marginL, leftY); leftY += 4.5;
+  setText(TEXT); doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+  ['BAMA Fabrication Ltd', '11 Enterprise Way, Enterprise Park, Yaxley,',
+   'PE7 3WY, Peterborough', '01733 855212', 'info@bamafabrication.co.uk']
+    .forEach(line => { doc.text(line, marginL + 4, leftY); leftY += 4; });
+  leftY += 4;
+
+  // LEFT: To
+  setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
+  doc.text('To', marginL, leftY); leftY += 4.5;
+  setText(TEXT); doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+  if (d.client) {
+    const wrapped = doc.splitTextToSize(String(d.client), leftColW - 4);
+    wrapped.forEach(line => { doc.text(line, marginL + 4, leftY); leftY += 4; });
+  }
+  if (d.project) {
+    leftY += 1;
+    setText(MUTED); doc.setFontSize(9);
+    doc.text(`Project: ${d.project}`, marginL + 4, leftY); leftY += 4;
+    setText(TEXT); doc.setFontSize(10);
+  }
+  leftY += 3;
+
+  // RIGHT: Meta table
+  const dateStr = d.submittedDate ? fmtDate(d.submittedDate) : 'Draft';
+  const periodStr = (d.periodStart && d.periodEnd)
+    ? `${fmtDate(d.periodStart)} – ${fmtDate(d.periodEnd)}`
+    : '—';
+  const metaRows = [
+    { label: 'Date',         value: dateStr },
+    { label: 'AFP #',        value: d.ref || '' },
+    { label: 'Period',       value: periodStr, gapAfter: true }
+  ];
+  doc.setFontSize(10);
+  const labelColX = rightColX, labelColW = rightColW * 0.45, valueColX = rightColX + labelColW + 2;
+  for (const row of metaRows) {
+    setText(TEXT); doc.setFont('helvetica', 'bold');
+    doc.text(row.label, labelColX + labelColW, rightY, { align: 'right' });
+    setText(TEXT); doc.setFont('helvetica', 'normal');
+    // wrap long values (period range)
+    const wrapped = doc.splitTextToSize(String(row.value || ''), rightColW - labelColW - 4);
+    wrapped.forEach((line, idx) => {
+      doc.text(line, valueColX, rightY + idx * 4);
+    });
+    rightY += Math.max(4.5, wrapped.length * 4) + (row.gapAfter ? 3 : 0);
+  }
+
+  y = Math.max(leftY, rightY) + 4;
+
+  // ── Notes (optional) ──
+  if (d.notes && String(d.notes).trim()) {
+    setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
+    doc.text('Notes', marginL, y); y += 4.5;
+    setText(TEXT); doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+    const wrapped = doc.splitTextToSize(String(d.notes).trim(), usableW - 4);
+    wrapped.forEach(line => {
+      if (y > pageH - marginB - 20) { doc.addPage(); y = marginL; }
+      doc.text(line, marginL + 4, y); y += 4.2;
+    });
+    y += 4;
+  }
+
+  // ── SOV table: # | Description | Contract £ | Prev Cum £ | This App £ | Cum to Date £ | % To Date ──
+  const colItem = { x: marginL,  w: 8,  align: 'center' };
+  const colPct  = { w: 18, align: 'center' };
+  const colCum  = { w: 26, align: 'right' };
+  const colThis = { w: 26, align: 'right' };
+  const colPrev = { w: 26, align: 'right' };
+  const colCv   = { w: 26, align: 'right' };
+  const colDesc = { w: usableW - colItem.w - colCv.w - colPrev.w - colThis.w - colCum.w - colPct.w, align: 'left' };
+  colDesc.x = colItem.x + colItem.w;
+  colCv.x   = colDesc.x + colDesc.w;
+  colPrev.x = colCv.x   + colCv.w;
+  colThis.x = colPrev.x + colPrev.w;
+  colCum.x  = colThis.x + colThis.w;
+  colPct.x  = colCum.x  + colCum.w;
+
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9); setText(TEXT);
+  doc.text('#',           colItem.x + colItem.w / 2, y, { align: 'center' });
+  doc.text('Description', colDesc.x + 1,             y);
+  doc.text('Contract £',  colCv.x   + colCv.w   - 1, y, { align: 'right' });
+  doc.text('Prev Cum £',  colPrev.x + colPrev.w - 1, y, { align: 'right' });
+  doc.text('This App £',  colThis.x + colThis.w - 1, y, { align: 'right' });
+  doc.text('Cum £',       colCum.x  + colCum.w  - 1, y, { align: 'right' });
+  doc.text('% Date',      colPct.x  + colPct.w / 2,  y, { align: 'center' });
+  y += 1.5;
+  setDraw(HEADRULE); doc.setLineWidth(0.4);
+  doc.line(marginL, y, pageW - marginR, y);
+  y += 3;
+
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+  setDraw(RULE); doc.setLineWidth(0.15);
+  for (let i = 0; i < (d.lineItems || []).length; i++) {
+    const l = d.lineItems[i];
+    const desc = String(l.description || '');
+    const descLines = doc.splitTextToSize(desc, colDesc.w - 2);
+    const rowH = Math.max(5, descLines.length * 3.8 + 1);
+    if (y + rowH > pageH - marginB - 50) { doc.addPage(); y = marginL + 6; }
+
+    setText(MUTED);
+    doc.text(String(l.itemNum), colItem.x + colItem.w / 2, y + 3.3, { align: 'center' });
+
+    setText(TEXT);
+    let descY = y + 3.3;
+    for (const line of descLines) { doc.text(line, colDesc.x + 1, descY); descY += 3.8; }
+
+    doc.text(fmtNum(l.contractValue),   colCv.x   + colCv.w   - 1, y + 3.3, { align: 'right' });
+    doc.text(fmtNum(l.prevCumValue),    colPrev.x + colPrev.w - 1, y + 3.3, { align: 'right' });
+    doc.text(fmtNum(l.thisAppValue),    colThis.x + colThis.w - 1, y + 3.3, { align: 'right' });
+    doc.text(fmtNum(l.cumulativeValue), colCum.x  + colCum.w  - 1, y + 3.3, { align: 'right' });
+    doc.text(Number(l.pctToDate || 0).toFixed(1) + '%', colPct.x + colPct.w / 2, y + 3.3, { align: 'center' });
+
+    setDraw(RULE); doc.setLineWidth(0.15);
+    doc.line(marginL, y + rowH, pageW - marginR, y + rowH);
+    y += rowH;
+  }
+
+  y += 6;
+
+  // ── Totals block ──
+  if (y > pageH - marginB - 60) { doc.addPage(); y = marginL + 6; }
+  const tlX = pageW - marginR - 80;
+  const labelX = tlX, amtX = pageW - marginR;
+  const lineH = 6;
+  const drawTotal = (label, value, bold) => {
+    setText(TEXT);
+    doc.setFont('helvetica', bold ? 'bold' : 'normal');
+    doc.setFontSize(bold ? 11 : 10);
+    doc.text(label, labelX, y);
+    doc.text('£' + fmtNum(value), amtX, y, { align: 'right' });
+    y += lineH;
+  };
+  drawTotal('Subtotal (Net)', d.net);
+  if (Number(d.retention) > 0) drawTotal('Less Retention', -d.retention);
+  if (Number(d.vat) > 0) drawTotal('VAT (20%)', d.vat);
+
+  // TOTAL APPLIED pill
+  y += 2;
+  setFill(NAVY);
+  doc.rect(tlX, y - 2, 80, 9, 'F');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(12); setText([255, 255, 255]);
+  doc.text('TOTAL APPLIED', tlX + 3, y + 4);
+  doc.setFontSize(13);
+  doc.text('£' + fmtNum(d.gross), amtX - 2, y + 4, { align: 'right' });
+  y += 14;
+
+  // ── Footer: signature areas + contact ──
+  if (y > pageH - marginB - 30) { doc.addPage(); y = marginL + 6; }
+  setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
+  doc.text('This application is submitted for payment in accordance with the contract terms.', marginL, y);
+  y += 5;
+  doc.text('Any queries: info@bamafabrication.co.uk', marginL, y);
+
+  return doc.output('blob');
 }

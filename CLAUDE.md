@@ -512,7 +512,7 @@ none of this is built yet.
   project supported via the `ProjectQuotes` link table — primary quote
   is the originating won quote and cannot be detached. Per-line % drives
   a value-weighted project progress figure shown on the Labour tile.
-  **Phase 2 (Invoice Tracker) — Commits 1 + 2 done, Commit 3 queued**.
+  **Phase 2 (Invoice Tracker) — Commits 1, 2 + 3 done**.
   See "Invoice Tracker" section below for the full feature.
   **Still to do (Phase 2+)**: Running Cost source (POs / supplier
   invoices — schema landed, needs aggregation tile), and optional
@@ -542,16 +542,44 @@ none of this is built yet.
   auto-reconciles (within £1 of PO total = `matched`, else
   `discrepancy`); files go to `01 - Accounts/04 - Supplier Invoices/`.
   `auth.email || auth.name` pattern used for `created_by` / `uploaded_by`.
-  **Commit 3 (queued)** — AFPs full lifecycle (Draft → Submitted →
-  Certified → Invoiced), SOV snapshot from `QuoteLineItems` with manual
-  change-order lines, payment certificate upload + Claude OCR, Generate
-  Invoice flow, AFP PDF rendering. Numbering allocators implemented:
+  **Commit 3 done** — full AFP lifecycle (Draft → Submitted → Certified →
+  Invoiced → Cancelled), separate `afps` permission (wired through all 5
+  places, separate from `invoicing`). Two-pane AFP tab layout: left sidebar
+  lists projects with AFPs alphabetically with action-pending badges
+  (`N cert?`, `N inv?`), right pane shows the project's AFP01, AFP02… stack
+  as clickable cards. Show-cancelled toggle hides Cancelled by default
+  (numbers are burned via unique index `(project_id, application_no)`).
+  New AFP modal: SOV pre-populated from quote line items (AFP01) or prior
+  AFP's lines (AFP02+); `previous_pct_complete` carried forward from the
+  most-recent CERTIFIED AFP per line (matched by `source_quote_line_item_id`
+  then by description); Final Application checkbox snaps all lines to 100%.
+  Save Draft + Save & Submit (renders AFP PDF → uploads to
+  `<ProjectFolder>/Application for Payment/AFPxx.pdf` → marks Submitted).
+  `drawBamaAfpPDF` renderer mirrors the Invoice PDF letterhead with
+  "Application for Payment" title, FINAL APPLICATION red banner if Final,
+  7-column SOV table (# | Description | Contract £ | Prev Cum £ | This App £
+  | Cum £ | % Date), navy TOTAL APPLIED pill. Certificate upload modal:
+  client-side Claude vision OCR extracts BOTH header (cert ref/date,
+  certified net/VAT/retention/gross) AND per-line certified £ values
+  (matched to AFP lines by description). Upload & Confirm: cert PDF saved
+  to `<ProjectFolder>/Application for Payment/AFPxx-Certificate.<ext>`,
+  cert metadata + per-line certified values persisted, status → Certified.
+  Generate Invoice flow: creates Draft Invoice with `source_afp_id`,
+  retention copied from AFP, lines copied (uses `certified_this_app_value`
+  if set, else `this_app_value`), AFP → Invoiced. Schema additions in
+  `add-afps-extras.sql`: `Applications.is_final`, `period_start`/`_end`;
+  `ApplicationLineItems.cumulative_value`, `certified_this_app_value`;
+  `UserPermissions.afps`. New API endpoints in `invoicing.js`:
+  `applications-create`, `-update`, `-submit`, `-certificate` (POST+PUT),
+  `-generate-invoice`, `-cancel`, `applications-next-ref` (flat route to
+  avoid `{id}` collision per the lesson from the invoices-next-ref hotfix).
+  Numbering allocators implemented:
   `nextInvoiceRef(kind)` (INV / PRO share sequence, CN separate),
   `nextAfpRef(projectId)` (per-project AFP01, AFP02…). SharePoint paths
   locked: Sales Invoices → `01 - Accounts/03 - Sales Invoices/YYYY/MM/`,
   Supplier Invoices → `01 - Accounts/04 - Supplier Invoices/YYYY/MM/`,
   Receipts → `01 - Accounts/05 - Receipts/YYYY/MM/{category}/`,
-  AFPs → per-project `Valuations/` folder.
+  AFPs → `<ProjectFolder>/Application for Payment/`.
 - **RBAC** — real role-based permissions enforced server-side. Current
   `UserPermissions` flags become the source of truth the API checks, not just
   what the UI hides. Blocker: move PIN verification server-side first.
