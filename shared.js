@@ -92,7 +92,14 @@ async function apiCall(method, endpoint, body = null, _isRetry = false) {
     throw err;
   }
 
-  return res.json();
+  // Handle empty bodies (204, or 200/201 with no content)
+  const text = await res.text();
+  if (!text || !text.trim()) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`API ${method} ${endpoint} returned non-JSON response`);
+  }
 }
 
 // Convenience wrappers
