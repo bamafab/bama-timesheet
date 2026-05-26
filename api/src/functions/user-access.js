@@ -134,7 +134,9 @@ app.http('user-access-update', {
             }
         } catch (err) {
             context.error('Error updating user access:', err);
-            return serverError('Failed to update user access', request);
+            // Expose the actual error message so the frontend can show it
+            // (helps diagnose schema / column / type issues in prod)
+            return serverError(`Failed to update user access: ${err.message || err.code || 'unknown'}`, request);
         }
     }
 });
