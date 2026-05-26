@@ -37,7 +37,7 @@ app.http('bank-accounts-list', {
     if (auth.status) return auth;
 
     try {
-      const rows = await query(`
+      const result = await query(`
         SELECT
           ba.id,
           ba.bank_name,
@@ -58,7 +58,7 @@ app.http('bank-accounts-list', {
                  ba.account_type, ba.is_active, ba.created_at
         ORDER BY ba.bank_name
       `);
-      return ok(rows);
+      return ok(result.recordset);
     } catch (err) {
       return serverError(err.message);
     }
@@ -92,7 +92,7 @@ app.http('bank-accounts-create', {
         sort_code:      (sort_code || '').trim() || null,
         account_type:   acctType
       });
-      return created(result[0]);
+      return created(result.recordset[0]);
     } catch (err) {
       return serverError(err.message);
     }
@@ -121,7 +121,7 @@ app.http('bank-account-update', {
 
     try {
       const existing = await query('SELECT id FROM dbo.BankAccounts WHERE id = @id', { id });
-      if (!existing.length) return notFound('Bank account not found');
+      if (!existing.recordset.length) return notFound('Bank account not found');
 
       const setClause = Object.keys(fields).map(k => `${k} = @${k}`).join(', ');
       const params = { id, ...fields };
@@ -129,7 +129,7 @@ app.http('bank-account-update', {
         `UPDATE dbo.BankAccounts SET ${setClause} OUTPUT INSERTED.* WHERE id = @id`,
         params
       );
-      return ok(updated[0]);
+      return ok(updated.recordset[0]);
     } catch (err) {
       return serverError(err.message);
     }
