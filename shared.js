@@ -18332,7 +18332,8 @@ async function verifyProjectTrackerPin() {
   try {
     const employee = (state.timesheetData?.employees || []).find(e => e.name === name);
     if (!employee) { errEl.textContent = 'Employee not found'; return; }
-    if (String(employee.pin) !== pin) { errEl.textContent = 'Incorrect PIN'; return; }
+    const result = await api.post('/api/auth/verify-pin', { employee_id: employee.id, pin });
+    if (!result.valid) { errEl.textContent = 'Incorrect PIN'; return; }
 
     const perms = getUserPermissions(name);
     if (!perms || (!perms.viewProjects && !perms.editProjects)) {
@@ -27657,7 +27658,7 @@ async function verifyRecPin() {
   if (!pin) { document.getElementById('recPinError').textContent = 'Enter your PIN'; return; }
 
   try {
-    const res = await api.post('/api/verify-pin', { employeeId: _recPendingPinUser.empId, pin });
+    const res = await api.post('/api/auth/verify-pin', { employee_id: _recPendingPinUser.empId, pin });
     if (!res.valid) { document.getElementById('recPinError').textContent = 'Incorrect PIN'; return; }
   } catch {
     document.getElementById('recPinError').textContent = 'Could not verify PIN';
