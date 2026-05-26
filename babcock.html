@@ -149,10 +149,10 @@
             <option value="Quote Sent">Quote Sent</option>
             <option value="Live Project">Live Project</option>
             <option value="Project Complete">Project Complete</option>
-            <option value="Approved to Pay">Approved to Pay</option>
-            <option value="Payment Received">Payment Received</option>
             <option value="Bama SW PO Raised">Bama SW PO Raised</option>
             <option value="Bama SW Invoice Received">Bama SW Invoice Received</option>
+            <option value="Approved to Pay">Approved to Pay</option>
+            <option value="Payment Received">Payment Received</option>
             <option value="Paid to Bama SW">Paid to Bama SW</option>
             <option value="Remittance Sent">Remittance Sent</option>
             <option value="Closed">Closed</option>
@@ -394,11 +394,10 @@
       </div>
     </div>
 
-    <!-- Due date -->
-    <div style="margin-bottom:14px">
-      <div class="field-label">DUE DATE <span style="color:var(--red)">*</span></div>
-      <input type="date" class="field-input" id="bswDueDate" style="font-size:13px">
-      <div style="font-size:11px;color:var(--subtle);margin-top:4px">Defaults to 30 days from today.</div>
+    <!-- Payment date reminder (read-only — captured in previous step) -->
+    <div style="background:var(--surface-2);border-radius:6px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:var(--muted)">
+      Remittance will be dated <b id="bswRemitDateDisplay" style="color:var(--text)">—</b>
+      <span style="color:var(--subtle)">&nbsp;(payment date captured at the previous step)</span>
     </div>
 
     <div class="modal-actions">
@@ -692,10 +691,10 @@
             <option value="Quote Sent">Quote Sent</option>
             <option value="Live Project">Live Project</option>
             <option value="Project Complete">Project Complete</option>
-            <option value="Approved to Pay">Approved to Pay</option>
-            <option value="Payment Received">Payment Received</option>
             <option value="Bama SW PO Raised">Bama SW PO Raised</option>
             <option value="Bama SW Invoice Received">Bama SW Invoice Received</option>
+            <option value="Approved to Pay">Approved to Pay</option>
+            <option value="Payment Received">Payment Received</option>
             <option value="Paid to Bama SW">Paid to Bama SW</option>
             <option value="Remittance Sent">Remittance Sent</option>
             <option value="Closed">Closed</option>
@@ -717,10 +716,12 @@
             <thead>
               <tr>
                 <th style="min-width:90px;cursor:pointer;user-select:none" onclick="sortBabcockTracker('quote_ref')">Quote Ref<span id="bsi_quote_ref" style="color:var(--subtle)"> ⇅</span></th>
-                <th style="min-width:110px;cursor:pointer;user-select:none" onclick="sortBabcockTracker('po_number')">PO Number<span id="bsi_po_number" style="color:var(--subtle)"> ⇅</span></th>
+                <th style="min-width:110px;cursor:pointer;user-select:none" onclick="sortBabcockTracker('bama_sw_po_number')">Bama PO<span id="bsi_bama_sw_po_number" style="color:var(--subtle)"> ⇅</span></th>
+                <th style="min-width:110px;cursor:pointer;user-select:none" onclick="sortBabcockTracker('po_number')">Babcock PO<span id="bsi_po_number" style="color:var(--subtle)"> ⇅</span></th>
                 <th style="min-width:120px;cursor:pointer;user-select:none" onclick="sortBabcockTracker('work_order_no')">Work Order<span id="bsi_work_order_no" style="color:var(--subtle)"> ⇅</span></th>
                 <th style="min-width:110px;cursor:pointer;user-select:none" onclick="sortBabcockTracker('date_sent')">Date Sent<span id="bsi_date_sent" style="color:var(--subtle)"> ⇅</span></th>
                 <th style="min-width:120px;text-align:right;cursor:pointer;user-select:none" onclick="sortBabcockTracker('total_value')">Total Value<span id="bsi_total_value" style="color:var(--subtle)"> ⇅</span></th>
+                <th style="min-width:130px;text-align:right;cursor:pointer;user-select:none" onclick="sortBabcockTracker('bama_sw_received_invoice_amount')">Bama SW Invoice Due<span id="bsi_bama_sw_received_invoice_amount" style="color:var(--subtle)"> ⇅</span></th>
                 <th style="min-width:140px;cursor:pointer;user-select:none" onclick="sortBabcockTracker('status')">Status<span id="bsi_status" style="color:var(--subtle)"> ⇅</span></th>
                 <th style="min-width:170px">Next Action</th>
                 <th style="min-width:130px;cursor:pointer;user-select:none" onclick="sortBabcockTracker('updated_at')">Last Updated<span id="bsi_updated_at" style="color:var(--subtle)"> ⇅</span></th>
@@ -728,7 +729,7 @@
               </tr>
             </thead>
             <tbody id="babcockTrackerBody">
-              <tr><td colspan="9" style="padding:30px;text-align:center;color:var(--muted)">
+              <tr><td colspan="11" style="padding:30px;text-align:center;color:var(--muted)">
                 <div class="spinner" style="margin:0 auto 10px"></div>Loading quotes…
               </td></tr>
             </tbody>
@@ -1029,6 +1030,6 @@
 <!-- PDF.js: used by the "Approved to Pay" step to OCR the uploaded COUPA invoice -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
-<script src="shared.js?v=20260520d"></script>
+<script src="shared.js?v=20260526a"></script>
 </body>
 </html>

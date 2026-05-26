@@ -5622,9 +5622,10 @@ function renderReports() {
 // Status buckets (for tile counts):
 //   Open quotes:        Quote Received, Quote Sent (not yet converted)
 //   Open projects:      Live Project (work in progress)
-//   Closed projects:    Project Complete, Approved to Pay, Payment Received,
-//                       Bama SW PO Raised, Bama SW Invoice Received,
-//                       Paid to Bama SW, Remittance Sent, Closed
+//   Closed projects:    Project Complete, Bama SW PO Raised,
+//                       Bama SW Invoice Received, Approved to Pay,
+//                       Payment Received, Paid to Bama SW,
+//                       Remittance Sent, Closed
 //   Cancelled:          Cancelled (terminal failure)
 
 // FY toggle state — 'current' or 'last' (last full UK financial year)
@@ -6092,13 +6093,15 @@ async function renderBabcockReport() {
   const quotesValue = inFY.reduce((s, q) => s + (Number(q.total_value) || 0), 0);
   // What Babcock paid us (COUPA-side). Treat rows at or beyond Approved-to-Pay
   // as "invoiced"; treat rows at or beyond Payment Received as "paid".
+  // NOTE: Bama SW PO Raised and Bama SW Invoice Received now sit BEFORE
+  // Approved to Pay in the workflow, so they are NOT counted as invoiced.
   const invoicedPaid = inFY
-    .filter(q => ['Payment Received', 'Bama SW PO Raised', 'Bama SW Invoice Received', 'Paid to Bama SW', 'Remittance Sent', 'Closed'].includes(q.status))
+    .filter(q => ['Payment Received', 'Paid to Bama SW', 'Remittance Sent', 'Closed'].includes(q.status))
     .reduce((s, q) => s + (Number(q.coupa_invoice_gross_total) || Number(q.total_value) || 0), 0);
 
   // Total invoiced (raised), regardless of paid
   const invoicedTotal = inFY
-    .filter(q => ['Approved to Pay', 'Payment Received', 'Bama SW PO Raised', 'Bama SW Invoice Received', 'Paid to Bama SW', 'Remittance Sent', 'Closed'].includes(q.status))
+    .filter(q => ['Approved to Pay', 'Payment Received', 'Paid to Bama SW', 'Remittance Sent', 'Closed'].includes(q.status))
     .reduce((s, q) => s + (Number(q.coupa_invoice_gross_total) || Number(q.total_value) || 0), 0);
 
   // Outstanding pipeline — non-terminal, non-cancelled
@@ -6208,8 +6211,8 @@ async function renderBabcockReport() {
   // ─── Pipeline funnel (status counts, current snapshot — not FY-filtered) ───
   const STATUS_ORDER = [
     'Quote Received', 'Quote Sent', 'Live Project', 'Project Complete',
-    'Approved to Pay', 'Payment Received', 'Bama SW PO Raised',
-    'Bama SW Invoice Received', 'Paid to Bama SW', 'Remittance Sent', 'Closed', 'Cancelled'
+    'Bama SW PO Raised', 'Bama SW Invoice Received', 'Approved to Pay',
+    'Payment Received', 'Paid to Bama SW', 'Remittance Sent', 'Closed', 'Cancelled'
   ];
   // Status colour map mirrors the badge palette in babcock.html so users
   // recognise statuses across pages.
@@ -19988,7 +19991,7 @@ async function loadBabcockTracker() {
     renderBabcockTracker();
   } catch (err) {
     console.warn('Babcock tracker load failed:', err);
-    tbody.innerHTML = `<tr><td colspan="9" style="padding:30px;text-align:center;color:var(--red)">
+    tbody.innerHTML = `<tr><td colspan="11" style="padding:30px;text-align:center;color:var(--red)">
       Failed to load quotes. ${escapeHtml(err.message || '')}
     </td></tr>`;
   }
@@ -20007,7 +20010,7 @@ function renderBabcockTracker() {
   const list = _babcockQuotes.filter(q => {
     if (!showClosed && q.status === 'Closed') return false;
     if (statusFilter && q.status !== statusFilter) return false;
-    if (search && !`${q.quote_ref || ''} ${q.work_order_no || ''} ${q.po_number || ''}`.toLowerCase().includes(search)) return false;
+    if (search && !`${q.quote_ref || ''} ${q.work_order_no || ''} ${q.po_number || ''} ${q.bama_sw_po_number || ''}`.toLowerCase().includes(search)) return false;
     return true;
   });
 
@@ -20015,17 +20018,17 @@ function renderBabcockTracker() {
   if (_babcockSort.col) {
     const { col, dir } = _babcockSort;
     const statusOrder = ['Quote Received','Quote Sent','Live Project','Project Complete',
-                         'Approved to Pay','Payment Received','Bama SW PO Raised',
-                         'Bama SW Invoice Received','Paid to Bama SW','Remittance Sent','Closed','Cancelled'];
+                         'Bama SW PO Raised','Bama SW Invoice Received','Approved to Pay',
+                         'Payment Received','Paid to Bama SW','Remittance Sent','Closed','Cancelled'];
     list.sort((a, b) => {
       let va, vb;
       if (col === 'status') {
         va = statusOrder.indexOf(a.status || 'Quote Received');
         vb = statusOrder.indexOf(b.status || 'Quote Received');
         if (va === -1) va = 99; if (vb === -1) vb = 99;
-      } else if (col === 'total_value') {
-        va = Number(a.total_value) || 0;
-        vb = Number(b.total_value) || 0;
+      } else if (col === 'total_value' || col === 'bama_sw_received_invoice_amount') {
+        va = Number(a[col]) || 0;
+        vb = Number(b[col]) || 0;
       } else if (col === 'date_sent') {
         va = a.date_sent || a.created_at || '';
         vb = b.date_sent || b.created_at || '';
@@ -20045,7 +20048,7 @@ function renderBabcockTracker() {
   if (countEl) countEl.textContent = `${list.length} quote${list.length === 1 ? '' : 's'}`;
 
   if (!list.length) {
-    tbody.innerHTML = `<tr><td colspan="9" style="padding:40px;text-align:center;color:var(--muted)">
+    tbody.innerHTML = `<tr><td colspan="11" style="padding:40px;text-align:center;color:var(--muted)">
       <div style="font-size:32px;margin-bottom:8px">📋</div>
       No quotes yet. Click <b>+ New Quote</b> to create one.
     </td></tr>`;
@@ -20093,10 +20096,12 @@ function renderBabcockTracker() {
     return `
     <tr class="clickable-row" onclick="viewBabcockQuoteDetail(${q.id})">
       <td class="ref-cell">${escapeHtml(q.quote_ref || '')}${revTag}</td>
+      <td style="font-family:var(--font-mono);font-size:12px;color:var(--accent2)">${escapeHtml(q.bama_sw_po_number || '—')}</td>
       <td style="font-family:var(--font-mono);font-size:12px;color:var(--accent2)">${escapeHtml(q.po_number || '—')}</td>
       <td style="font-family:var(--font-mono);font-size:12px;color:var(--muted)">${escapeHtml(q.work_order_no || '—')}</td>
       <td>${fmtDate(q.date_sent || q.created_at)}</td>
       <td class="num-cell">${fmtGBP(q.total_value)}</td>
+      <td class="num-cell">${fmtGBP(q.bama_sw_received_invoice_amount)}</td>
       <td>${statusBadge}${dueDateInline}</td>
       <td>${nextBtn}</td>
       <td style="font-size:12px;color:var(--muted)">${fmtDate(q.updated_at)}</td>
@@ -20122,7 +20127,7 @@ function sortBabcockTracker(col) {
 }
 
 function _updateBabcockSortIndicators() {
-  const sortableCols = ['quote_ref','po_number','work_order_no','date_sent','total_value','status','updated_at'];
+  const sortableCols = ['quote_ref','bama_sw_po_number','po_number','work_order_no','date_sent','total_value','bama_sw_received_invoice_amount','status','updated_at'];
   for (const col of sortableCols) {
     const el = document.getElementById(`bsi_${col}`);
     if (!el) continue;
@@ -20408,14 +20413,14 @@ function babcockNextStatus(current) {
     'Quote Received':            'Quote Sent',           // generate PDF + email modal
     'Quote Sent':                'Live Project',          // convert-to-project modal
     'Live Project':              'Project Complete',      // mark complete
-    'Project Complete':          'Approved to Pay',       // upload approved invoice + OCR
+    'Project Complete':          'Bama SW PO Raised',     // generate PO to Bama SW
+    'Bama SW PO Raised':         'Bama SW Invoice Received',  // upload their invoice
+    'Bama SW Invoice Received':  'Approved to Pay',       // upload COUPA-approved invoice + OCR
     'Approved to Pay':           'Payment Received',      // user confirms payment landed
-    'Payment Received':          'Bama SW PO Raised',         // generate PO to Bama SW
-    'Bama SW PO Raised':         'Bama SW Invoice Received',   // upload their invoice
-    'Bama SW Invoice Received':  'Paid to Bama SW',            // mark as paid + capture date
-    'Paid to Bama SW':           'Remittance Sent',            // create + email remittance
-    'Remittance Sent':           'Closed',                     // mark as closed
-    'Closed':                    null,                         // terminal
+    'Payment Received':          'Paid to Bama SW',       // mark Bama SW as paid + capture date
+    'Paid to Bama SW':           'Remittance Sent',       // create + email remittance
+    'Remittance Sent':           'Closed',                // mark as closed
+    'Closed':                    null,                    // terminal
     'Cancelled':                 null
   };
   return flow[current || 'Quote Received'];
@@ -20456,11 +20461,11 @@ function babcockAdvanceLabel(currentStatus) {
     'Quote Received':   'Generate Quote',
     'Quote Sent':       'Convert to Project',
     'Live Project':     'Complete Project',
-    'Project Complete': 'Approved to Pay',
-    'Approved to Pay':  'Payment Received',
-    'Payment Received':          'Raise PO to Bama SW',
+    'Project Complete':          'Raise PO to Bama SW',
     'Bama SW PO Raised':         'Upload Bama SW Invoice',
-    'Bama SW Invoice Received':  'Mark as Paid',
+    'Bama SW Invoice Received':  'Approved to Pay',
+    'Approved to Pay':           'Payment Received',
+    'Payment Received':          'Mark Bama SW as Paid',
     'Paid to Bama SW':           'Create Remittance Advice',
     'Remittance Sent':           'Mark as Closed'
   })[currentStatus] || null;
@@ -20501,18 +20506,33 @@ async function advanceBabcockQuoteStatus(id) {
 //   - PUTing the new status to the API on success
 //   - Patching _babcockQuotes locally and calling renderBabcockTracker()
 //   - Not calling the API at all on Cancel — the row should stay put
-// Substages 1f-1i will fill in the rest of this map.
+//
+// NOTE: Handler function NAMES retain their historical "FromXxx" labels for
+// stability, but the workflow order was re-ordered so the wiring no longer
+// matches the names 1:1. The mapping below is what's authoritative.
+// New order: Project Complete → Bama SW PO → Bama SW Invoice → Approved
+// to Pay → Payment Received → Paid to Bama SW → Remittance → Closed.
 const _babcockAdvanceHandlers = {
   'Quote Received':   handleAdvanceFromQuoteReceived,
   'Quote Sent':       handleAdvanceFromQuoteSent,         // 1f
   'Live Project':     handleAdvanceFromLiveProject,       // 1f
-  'Project Complete': handleAdvanceFromProjectComplete,   // 1g — COUPA upload + OCR
-  'Approved to Pay':  handleAdvanceFromApprovedToPay,     // 1g — payment landed
-  'Payment Received':          handleAdvanceFromPaymentReceived,   // 1h — raise PO to Bama SW
-  'Bama SW PO Raised':         handleAdvanceFromBamaSwPoRaised,    // 1i — upload their invoice
-  'Bama SW Invoice Received':  handleAdvanceFromBamaSwInvoiceReceived, // 1j — mark as paid
-  'Paid to Bama SW':           handleAdvanceFromPaidToBamaSw,          // 1k — remittance
-  'Remittance Sent':           handleAdvanceFromRemittanceSent         // 1l — close
+  // Project Complete → Bama SW PO Raised — raise PO to Bama SW (handler name
+  // says "FromPaymentReceived" because in the old flow that's where this sat).
+  'Project Complete':          handleAdvanceFromPaymentReceived,
+  // Bama SW PO Raised → Bama SW Invoice Received — upload Bama SW's invoice.
+  'Bama SW PO Raised':         handleAdvanceFromBamaSwPoRaised,
+  // Bama SW Invoice Received → Approved to Pay — COUPA upload + OCR
+  // (handler name says "FromProjectComplete" because in the old flow that's where this sat).
+  'Bama SW Invoice Received':  handleAdvanceFromProjectComplete,
+  // Approved to Pay → Payment Received — Babcock has paid us.
+  'Approved to Pay':           handleAdvanceFromApprovedToPay,
+  // Payment Received → Paid to Bama SW — we've paid Bama SW
+  // (handler name says "FromBamaSwInvoiceReceived" because in the old flow that's where this sat).
+  'Payment Received':          handleAdvanceFromBamaSwInvoiceReceived,
+  // Paid to Bama SW → Remittance Sent — create + email remittance advice.
+  'Paid to Bama SW':           handleAdvanceFromPaidToBamaSw,
+  // Remittance Sent → Closed — mark closed.
+  'Remittance Sent':           handleAdvanceFromRemittanceSent
 };
 
 // ── Handler: Remittance Sent → Closed (1l) ──
@@ -20965,7 +20985,7 @@ async function handleAdvanceFromLiveProject(q, next) {
     `<p style="margin:0">Mark project as complete?</p>
      <p style="margin:8px 0 0;font-size:12px;color:var(--muted)">
        This will set both <b>${escapeHtml(q.quote_ref || '')}</b> and its linked project to <b>Complete</b>.
-       You can still raise the COUPA invoice and continue the workflow afterwards.
+       You can continue the finance workflow (Bama SW PO → Bama SW Invoice → COUPA approval → payment) afterwards.
      </p>`,
     { okLabel: 'Mark Complete', cancelLabel: 'Cancel' }
   );
@@ -21336,7 +21356,9 @@ async function confirmBabcockApprovedToPay() {
   }
 }
 
-// ── Handler: Project Complete → Approved to Pay ──
+// ── Handler: COUPA invoice upload + OCR ──
+// Wired under the new workflow as: Bama SW Invoice Received → Approved to Pay.
+// (Function name retained for stability — see _babcockAdvanceHandlers map.)
 async function handleAdvanceFromProjectComplete(q, next) {
   openBabcockApprovedToPayModal(q, next);
 }
@@ -21347,9 +21369,9 @@ async function handleAdvanceFromProjectComplete(q, next) {
 async function handleAdvanceFromApprovedToPay(q, next) {
   const confirmed = await showConfirmAsync(
     '💰 Payment Received',
-    `<p style="margin:0">Mark <b>${escapeHtml(q.quote_ref || '')}</b> as paid?</p>
+    `<p style="margin:0">Mark <b>${escapeHtml(q.quote_ref || '')}</b> as paid by Babcock?</p>
      <p style="margin:8px 0 0;font-size:12px;color:var(--muted)">
-       The next step will be to generate the Bama SW invoice (original quote minus project costs).
+       The next step will be to mark Bama SW as paid.
      </p>`,
     { okLabel: 'Confirm Payment', cancelLabel: 'Cancel' }
   );
@@ -22118,7 +22140,6 @@ async function renderBamaSwInvoicePDF(data) {
   const metaCols = [
     { label: 'REFERENCE',      value: data.invoiceNumber || '' },
     { label: 'DATE',           value: data.invoiceDate || '' },
-    { label: 'DUE DATE',       value: data.dueDate || '' },
     { label: 'PROJECT',        value: data.projectNumber || '' }
   ];
   if (data.bamaSwPo) {
@@ -22226,12 +22247,17 @@ async function handleAdvanceFromPaidToBamaSw(q, next) {
   const netTotal = Number(q.bama_sw_received_invoice_amount || 0);
   const storedInvNumber = q.bama_sw_received_invoice_number || '';
 
+  // Payment date was captured at the previous step (Mark as Paid).
+  // The remittance is dated on that day — no separate due date.
+  const paymentDateIso = (String(q.bama_sw_paid_at || '').split('T')[0]) || todayStr();
+
   // Open modal
   _bswContext = {
     quote: q,
     next,
     netTotal,
     storedInvNumber,
+    paymentDateIso,
     trackerItem: null,
     trackerEtag: null,
     trackerBuffer: null
@@ -22245,9 +22271,8 @@ async function handleAdvanceFromPaidToBamaSw(q, next) {
   document.getElementById('bswOriginalAmt').textContent = fmtCurrency(netTotal);
   document.getElementById('bswNetTotal').textContent    = fmtCurrency(netTotal);
 
-  // Default due date: today + 30 days
-  const due = new Date(); due.setDate(due.getDate() + 30);
-  document.getElementById('bswDueDate').value = due.toISOString().split('T')[0];
+  // Show the remittance date (= payment date)
+  document.getElementById('bswRemitDateDisplay').textContent = fmtDateStr(paymentDateIso);
 
   document.getElementById('bswConfirmBtn').disabled = !storedInvNumber;
   document.getElementById('bswConfirmBtn').textContent = 'Create Remittance Advice';
@@ -22260,22 +22285,20 @@ async function confirmBabcockBswInvoice() {
   if (!_bswContext) return;
 
   const invoiceNumber = (_bswContext.storedInvNumber || '').trim();
-  const dueDateIso    = (document.getElementById('bswDueDate').value || '').trim();
+  const paymentDateIso = (_bswContext.paymentDateIso || '').trim();
 
   if (!invoiceNumber) {
     toast('No Bama SW invoice number on file — ensure the previous step was completed', 'error');
     return;
   }
-  if (!dueDateIso) {
-    toast('Due date is required', 'error');
-    document.getElementById('bswDueDate').focus();
+  if (!paymentDateIso) {
+    toast('No payment date on file — ensure the previous step was completed', 'error');
     return;
   }
 
   const q = _bswContext.quote;
   const next = _bswContext.next;
   const netTotal = _bswContext.netTotal;
-  const reverseCharge = netTotal * 0.2;
 
   const btn = document.getElementById('bswConfirmBtn');
   btn.disabled = true;
@@ -22290,17 +22313,16 @@ async function confirmBabcockBswInvoice() {
     projectNumber = babcockProjectNumberFor(q.quote_ref || '');
   }
 
-  // 1. Generate PDF
+  // 1. Generate PDF — remittance is dated on the payment date (no separate due date)
   let pdfBlob;
   try {
     pdfBlob = await renderBamaSwInvoicePDF({
       invoiceNumber,
-      invoiceDate:   fmtDateStr(todayStr()),
-      dueDate:       fmtDateStr(dueDateIso),
+      invoiceDate:   fmtDateStr(paymentDateIso),
       projectNumber,
       projectName:   q.quote_for_area || '',
       netTotal,
-      paymentDate:   fmtDateStr(String(q.bama_sw_paid_at || '').split('T')[0] || todayStr())
+      paymentDate:   fmtDateStr(paymentDateIso)
     });
   } catch (err) {
     console.error('Bama SW invoice PDF render failed:', err);
@@ -22349,13 +22371,11 @@ async function confirmBabcockBswInvoice() {
   // Close the invoice modal so the email composer is the only thing visible
   document.getElementById('babcockBswInvoiceModal').classList.remove('active');
 
-  // Save state needed by onSent before clearing _bswContext
-  const originalAmountSnapshot = _bswContext.originalAmount;
   const sentCtx = {
     quote: q,
     next,
     invoiceNumber,
-    dueDateIso,
+    paymentDateIso,
     netTotal,
     projectNumber,
     pdfUploaded
@@ -22370,7 +22390,7 @@ async function confirmBabcockBswInvoice() {
       project_number:           projectNumber,
       project_name:             q.quote_for_area || '',
       net_invoice_total:        fmtCurrency(netTotal),
-      bama_sw_invoice_due_date: fmtDateStr(dueDateIso)
+      bama_sw_invoice_due_date: fmtDateStr(paymentDateIso)
     },
     to: tplGet('emailBamaSwInvoice', 'to') || 'info@bamasw.co.uk',
     cc: '',
@@ -22384,7 +22404,6 @@ async function confirmBabcockBswInvoice() {
         const updated = await api.put(`/api/babcock-quotes/${sentCtx.quote.id}`, {
           status: sentCtx.next,
           bama_sw_invoice_number:    sentCtx.invoiceNumber,
-          bama_sw_invoice_due_date:  sentCtx.dueDateIso,
           bama_sw_invoice_pdf_url:   sentCtx.pdfUploaded?.webUrl || null,
           bama_sw_invoice_pdf_id:    sentCtx.pdfUploaded?.id || null,
           bama_sw_invoice_sent_at:   new Date().toISOString()
@@ -26444,9 +26463,14 @@ function recalcInvoiceTotals() {
     retention = +(Number(document.getElementById('invNewRetentionAmt').value || 0)).toFixed(2);
   }
 
-  // VAT calculated on net minus retention (standard UK practice)
+  // VAT calculated on net minus retention (standard UK practice).
+  // Under CIS domestic reverse charge, the supplier does NOT add VAT to
+  // the gross (the customer accounts for VAT to HMRC). The VAT amount
+  // is still computed and shown for information, but as a "reverse
+  // charge" figure rather than a billable VAT line.
   const vatBase = net - retention;
-  const vat = vatApplies ? +(vatBase * 0.20).toFixed(2) : 0;
+  const standardVat = vatApplies ? +(vatBase * 0.20).toFixed(2) : 0;
+  const vat = cisReverse ? 0 : standardVat;
   const reverseCharge = cisReverse ? +(vatBase * 0.20).toFixed(2) : 0;
   const gross = +(net - retention + vat).toFixed(2);
 
@@ -26456,7 +26480,9 @@ function recalcInvoiceTotals() {
   document.getElementById('invTotalReverse').textContent   = '£' + _invFmt2(reverseCharge);
   document.getElementById('invTotalGross').textContent     = '£' + _invFmt2(gross);
 
-  // Hide reverse-charge line when not applicable
+  // Hide the VAT row entirely when CIS reverse applies — no VAT on the invoice.
+  // Show the reverse-charge row only when CIS reverse is on.
+  document.getElementById('invTotalVatRow').style.display     = cisReverse ? 'none' : '';
   document.getElementById('invTotalReverseRow').style.display = cisReverse ? '' : 'none';
 }
 
@@ -26567,7 +26593,10 @@ function _buildInvoicePayload() {
     retention = +(Number(document.getElementById('invNewRetentionAmt').value || 0)).toFixed(2);
   }
   const vatBase = net - retention;
-  const vat = vatApplies ? +(vatBase * 0.20).toFixed(2) : 0;
+  // CIS domestic reverse charge: VAT is shown for info as reverse charge,
+  // but NOT added to the supplier's gross — customer accounts for it.
+  const standardVat = vatApplies ? +(vatBase * 0.20).toFixed(2) : 0;
+  const vat = cisReverse ? 0 : standardVat;
   const reverseCharge = cisReverse ? +(vatBase * 0.20).toFixed(2) : 0;
   const gross = +(net - retention + vat).toFixed(2);
 
@@ -26903,7 +26932,10 @@ function drawBamaInvoicePDF(jsPDF, d, logoDataUri) {
   };
   drawTotal('Subtotal (Net)', d.net);
   if (Number(d.retention) > 0) drawTotal(`Less Retention${d.retentionDueDate ? ` (due ${fmtDate(d.retentionDueDate)})` : ''}`, -d.retention);
-  if (d.vatApplies) drawTotal('VAT (20%)', d.vat);
+  // VAT line only shown when standard VAT is being charged. Under CIS
+  // domestic reverse charge, no VAT is on the invoice — only the
+  // notice line below ("customer to account for £X VAT to HMRC").
+  if (d.vatApplies && !d.cisReverse) drawTotal('VAT (20%)', d.vat);
   if (d.cisReverse) {
     setText(MUTED); doc.setFont('helvetica', 'italic'); doc.setFontSize(9);
     doc.text(`Reverse charge applies — customer to account for £${fmtNum(d.reverseCharge)} VAT to HMRC`,
