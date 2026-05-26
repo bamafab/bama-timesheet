@@ -432,3 +432,196 @@ app.http('bank-transactions-check-dupes', {
     }
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Commit 3 — Document attach / match / unmatch + transaction edit
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─── CORS preflights ──────────────────────────────────────────────────────────
+app.http('bank-txn-docs-preflight', {
+  methods: ['OPTIONS'], route: 'bank-transactions/{id}/documents',
+  handler: async () => preflight()
+});
+app.http('bank-txn-doc-delete-preflight', {
+  methods: ['OPTIONS'], route: 'bank-transaction-docs/{docId}',
+  handler: async () => preflight()
+});
+app.http('bank-txn-edit-preflight', {
+  methods: ['OPTIONS'], route: 'bank-transactions/{id}/edit',
+  handler: async () => preflight()
+});
+app.http('bank-txn-unmatch-preflight', {
+  methods: ['OPTIONS'], route: 'bank-transactions/{id}/unmatch',
+  handler: async () => preflight()
+});
+
+// ─── GET /api/bank-transactions/:id/documents ─────────────────────────────────
+// Returns all documents attached to a transaction
+app.http('bank-txn-docs-list', {
+  methods: ['GET'], route: 'bank-transactions/{id}/documents',
+  handler: async (request) => {
+    const auth = await requireAuth(request);
+    if (auth.status) return auth;
+    const id = Number(request.params.id);
+    try {
+      const result = await query(`
+        SELECT * FROM dbo.BankTransactionDocs
+        WHERE transaction_id = @id
+        ORDER BY uploaded_at DESC
+      `, { id });
+      return ok(result.recordset);
+    } catch (err) {
+      return serverError(err.message);
+    }
+  }
+});
+
+// ─── POST /api/bank-transactions/:id/documents ────────────────────────────────
+// Attach a parsed document to a transaction and optionally update its status
+// Body: { filename, sharepoint_url, parsed_supplier, parsed_date,
+//         parsed_amount, parsed_net, parsed_vat, uploaded_by,
+//         set_status? ('matched'|'manual_match') }
+app.http('bank-txn-doc-attach', {
+  methods: ['POST'], route: 'bank-transactions/{id}/documents',
+  handler: async (request) => {
+    const auth = await requireAuth(request);
+    if (auth.status) return auth;
+    const id = Number(request.params.id);
+
+    let body;
+    try { body = await request.json(); } catch { return badRequest('Invalid JSON'); }
+
+    try {
+      // Insert the document record
+      const docResult = await query(`
+        INSERT INTO dbo.BankTransactionDocs
+          (transaction_id, filename, sharepoint_url, parsed_supplier,
+           parsed_date, parsed_amount, parsed_net, parsed_vat, uploaded_by)
+        OUTPUT INSERTED.*
+        VALUES (@transaction_id, @filename, @sharepoint_url, @parsed_supplier,
+                @parsed_date, @parsed_amount, @parsed_net, @parsed_vat, @uploaded_by)
+      `, {
+        transaction_id:   id,
+        filename:         body.filename || 'document',
+        sharepoint_url:   body.sharepoint_url || null,
+        parsed_supplier:  body.parsed_supplier || null,
+        parsed_date:      body.parsed_date || null,
+        parsed_amount:    body.parsed_amount != null ? Number(body.parsed_amount) : null,
+        parsed_net:       body.parsed_net != null ? Number(body.parsed_net) : null,
+        parsed_vat:       body.parsed_vat != null ? Number(body.parsed_vat) : null,
+        uploaded_by:      body.uploaded_by || auth.name || 'unknown'
+      });
+
+      // Optionally update transaction status
+      const newStatus = body.set_status;
+      if (newStatus && ['matched', 'manual_match'].includes(newStatus)) {
+        await query(`
+          UPDATE dbo.BankTransactions
+          SET status = @status, matched_at = GETUTCDATE(), matched_by = @matched_by
+          WHERE id = @id
+        `, { id, status: newStatus, matched_by: body.uploaded_by || auth.name || 'unknown' });
+
+        // Update statement matched_count
+        await query(`
+          UPDATE dbo.BankStatements
+          SET matched_count = (
+            SELECT COUNT(*) FROM dbo.BankTransactions
+            WHERE statement_id = (SELECT statement_id FROM dbo.BankTransactions WHERE id = @id)
+            AND status IN ('matched','manual_match','cleared')
+          )
+          WHERE id = (SELECT statement_id FROM dbo.BankTransactions WHERE id = @id)
+        `, { id });
+      }
+
+      return created({ doc: docResult.recordset[0] });
+    } catch (err) {
+      return serverError(err.message);
+    }
+  }
+});
+
+// ─── DELETE /api/bank-transaction-docs/:docId ─────────────────────────────────
+app.http('bank-txn-doc-delete', {
+  methods: ['DELETE'], route: 'bank-transaction-docs/{docId}',
+  handler: async (request) => {
+    const auth = await requireAuth(request);
+    if (auth.status) return auth;
+    const docId = Number(request.params.docId);
+    try {
+      const doc = await query('SELECT transaction_id FROM dbo.BankTransactionDocs WHERE id = @docId', { docId });
+      if (!doc.recordset.length) return notFound('Document not found');
+      await query('DELETE FROM dbo.BankTransactionDocs WHERE id = @docId', { docId });
+      return ok({ deleted: true, transaction_id: doc.recordset[0].transaction_id });
+    } catch (err) {
+      return serverError(err.message);
+    }
+  }
+});
+
+// ─── PUT /api/bank-transactions/:id/unmatch ───────────────────────────────────
+app.http('bank-txn-unmatch', {
+  methods: ['PUT'], route: 'bank-transactions/{id}/unmatch',
+  handler: async (request) => {
+    const auth = await requireAuth(request);
+    if (auth.status) return auth;
+    const id = Number(request.params.id);
+    try {
+      const result = await query(`
+        UPDATE dbo.BankTransactions
+        SET status = 'unmatched', matched_at = NULL, matched_by = NULL,
+            clear_reason = NULL, matched_to_type = NULL, matched_to_id = NULL
+        OUTPUT INSERTED.*
+        WHERE id = @id
+      `, { id });
+      if (!result.recordset.length) return notFound('Transaction not found');
+
+      // Update statement matched_count
+      await query(`
+        UPDATE dbo.BankStatements
+        SET matched_count = (
+          SELECT COUNT(*) FROM dbo.BankTransactions
+          WHERE statement_id = (SELECT statement_id FROM dbo.BankTransactions WHERE id = @id)
+          AND status IN ('matched','manual_match','cleared')
+        )
+        WHERE id = (SELECT statement_id FROM dbo.BankTransactions WHERE id = @id)
+      `, { id });
+
+      return ok(result.recordset[0]);
+    } catch (err) {
+      return serverError(err.message);
+    }
+  }
+});
+
+// ─── PUT /api/bank-transactions/:id/edit ─────────────────────────────────────
+// Inline edit: description, transaction_date, amount, spending_category, cardholder
+app.http('bank-txn-edit', {
+  methods: ['PUT'], route: 'bank-transactions/{id}/edit',
+  handler: async (request) => {
+    const auth = await requireAuth(request);
+    if (auth.status) return auth;
+    const id = Number(request.params.id);
+
+    let body;
+    try { body = await request.json(); } catch { return badRequest('Invalid JSON'); }
+
+    const allowed = ['description', 'transaction_date', 'amount', 'spending_category', 'cardholder', 'reference'];
+    const fields = {};
+    for (const k of allowed) {
+      if (body[k] !== undefined) fields[k] = body[k];
+    }
+    if (!Object.keys(fields).length) return badRequest('No valid fields to update');
+
+    try {
+      const setClause = Object.keys(fields).map(k => `${k} = @${k}`).join(', ');
+      const result = await query(
+        `UPDATE dbo.BankTransactions SET ${setClause} OUTPUT INSERTED.* WHERE id = @id`,
+        { id, ...fields }
+      );
+      if (!result.recordset.length) return notFound('Transaction not found');
+      return ok(result.recordset[0]);
+    } catch (err) {
+      return serverError(err.message);
+    }
+  }
+});

@@ -28264,20 +28264,473 @@ async function saveRecBank() {
   }
 }
 
-// ── Drag-and-drop stubs (Commit 3 implementation) ─────────────────────────
+// ── Drag-and-drop (fully wired) ───────────────────────────────────────────
 function onRecDragOver(e)  { e.preventDefault(); document.getElementById('recDropZone').classList.add('drag-over'); }
 function onRecDragLeave(e) { document.getElementById('recDropZone').classList.remove('drag-over'); }
-function onRecDrop(e)      {
+function onRecDrop(e) {
   e.preventDefault();
   document.getElementById('recDropZone').classList.remove('drag-over');
   const file = e.dataTransfer?.files?.[0];
   if (file) onRecDocFilePicked(file);
 }
-function onRecDocFilePicked(file) {
+
+let _recPendingDocFile  = null;   // file staged for matching
+let _recPendingDocParsed = null;  // Claude/parsed result for staged file
+let _recManualMatchTxnList = [];  // unmatched transactions for manual picker
+let _recPreviewTxnId = null;      // transaction open in preview modal
+
+async function onRecDocFilePicked(file) {
   if (!file) return;
-  if (!_recSelectedBankId) { toast('Select a bank first', 'error'); return; }
-  toast('Document matching coming in Commit 3', 'info');
-  // Full implementation in Commit 3
+  if (!_recSelectedBankId) { toast('Select a bank account first', 'error'); return; }
+
+  _recPendingDocFile = file;
+  _recPendingDocParsed = null;
+
+  const banner = document.getElementById('recMatchBanner');
+  banner.style.display = '';
+  banner.className = 'rec-match-banner';
+  banner.style.background = 'var(--bg-darker)';
+  banner.style.border = '1px solid var(--border)';
+  banner.style.color = 'var(--muted)';
+  banner.innerHTML = `⏳ Reading <strong>${escapeHtml(file.name)}</strong>…`;
+
+  try {
+    // Parse the document via Claude
+    const parsed = await _parseRecDocument(file);
+    _recPendingDocParsed = parsed;
+
+    if (parsed.multiple && parsed.receipts && parsed.receipts.length > 1) {
+      // Multiple receipts — show review step
+      _showMultiReceiptReview(parsed.receipts, file);
+      return;
+    }
+
+    // Single receipt — attempt auto-match
+    const receipt = parsed.receipts ? parsed.receipts[0] : parsed;
+    await _attemptRecAutoMatch(receipt, file);
+
+  } catch (err) {
+    banner.className = 'rec-match-banner warn';
+    banner.innerHTML = `✗ Failed to read document: ${escapeHtml(err.message)}`;
+  }
+}
+
+// ── Claude document parser ────────────────────────────────────────────────
+async function _parseRecDocument(file) {
+  const base64 = await new Promise((res, rej) => {
+    const reader = new FileReader();
+    reader.onload = () => res(reader.result.split(',')[1]);
+    reader.onerror = () => rej(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
+
+  const isImage = file.type.startsWith('image/');
+  const isPdf   = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+  const mediaType = isImage ? (file.type || 'image/jpeg') : 'application/pdf';
+  const contentType = isImage ? 'image' : 'document';
+
+  const response = await fetch('/api/claude-proxy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${await getToken()}` },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 2000,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: contentType, source: { type: 'base64', media_type: mediaType, data: base64 } },
+          { type: 'text', text: `Analyse this document. It may contain one or multiple receipts/invoices.
+
+Return ONLY a JSON object with no markdown, no explanation:
+{
+  "multiple": true/false,
+  "receipts": [
+    {
+      "supplier": "string",
+      "date": "YYYY-MM-DD or null",
+      "total": number or null,
+      "net": number or null,
+      "vat": number or null,
+      "vat_number": "string or null",
+      "currency": "GBP"
+    }
+  ]
+}
+
+If there is only one receipt, "multiple" should be false and "receipts" should have one item.
+All amounts as numbers without currency symbols. Dates as YYYY-MM-DD.` }
+        ]
+      }]
+    })
+  });
+
+  if (!response.ok) throw new Error(`Claude error: ${response.status}`);
+  const data = await response.json();
+  const text = (data.content || []).map(c => c.text || '').join('').trim();
+  const clean = text.replace(/^```json\s*/,'').replace(/\s*```$/,'').trim();
+  try { return JSON.parse(clean); }
+  catch { throw new Error('Claude returned invalid JSON'); }
+}
+
+// ── Auto-match logic ──────────────────────────────────────────────────────
+async function _attemptRecAutoMatch(receipt, file, txnListOverride) {
+  const banner = document.getElementById('recMatchBanner');
+
+  // Load unmatched transactions for this bank if not already loaded
+  const candidates = txnListOverride || _recTxnList.filter(t => t.status === 'unmatched');
+
+  const match = _findBestRecMatch(receipt, candidates);
+
+  if (match && match.confidence >= 0.6) {
+    // Show confirmation banner
+    banner.className = 'rec-match-banner success';
+    banner.innerHTML = `
+      ✓ Auto-matched: <strong>${escapeHtml(match.txn.description)}</strong>
+      · £${Math.abs(Number(match.txn.amount)).toFixed(2)}
+      · ${match.txn.transaction_date}
+      &nbsp;
+      <button class="btn btn-ghost" style="font-size:11px;padding:3px 10px;margin-left:8px"
+              onclick="confirmRecDocMatch(${match.txn.id})">Confirm</button>
+      <button class="btn btn-ghost" style="font-size:11px;padding:3px 10px"
+              onclick="openManualMatchModal()">Pick different</button>`;
+
+    // Highlight matching row
+    document.querySelectorAll('.rec-txn-table tr').forEach(tr => {
+      tr.style.outline = String(tr.dataset.txnId) === String(match.txn.id)
+        ? '2px solid var(--green)' : '';
+    });
+  } else {
+    // No confident match
+    banner.className = 'rec-match-banner warn';
+    banner.innerHTML = `
+      ⚠ No auto-match found for <strong>${escapeHtml(receipt.supplier || file.name)}</strong>
+      · ${receipt.total ? '£' + Number(receipt.total).toFixed(2) : 'unknown amount'}
+      &nbsp;
+      <button class="btn btn-ghost" style="font-size:11px;padding:3px 10px;margin-left:8px"
+              onclick="openManualMatchModal()">Pick manually</button>
+      <button class="btn btn-ghost" style="font-size:11px;padding:3px 10px"
+              onclick="dismissRecMatchBanner()">Dismiss</button>`;
+  }
+}
+
+function _findBestRecMatch(receipt, candidates) {
+  if (!candidates.length) return null;
+  const targetAmt = Number(receipt.total);
+  const targetDate = receipt.date ? new Date(receipt.date) : null;
+  const targetSupplier = (receipt.supplier || '').toLowerCase().trim();
+
+  let best = null, bestScore = 0;
+
+  for (const txn of candidates) {
+    let score = 0;
+    const txnAmt = Math.abs(Number(txn.amount));
+
+    // Amount: exact match = 0.5, within 1% = 0.3
+    if (targetAmt && Math.abs(txnAmt - targetAmt) < 0.01) score += 0.5;
+    else if (targetAmt && Math.abs(txnAmt - targetAmt) / targetAmt < 0.01) score += 0.3;
+    else if (targetAmt) continue; // amount is required, skip if no match
+
+    // Date: within 2 days = 0.3, within 5 days = 0.1
+    if (targetDate) {
+      const txnDate = new Date(txn.transaction_date);
+      const diffDays = Math.abs((txnDate - targetDate) / 86400000);
+      if (diffDays <= 2) score += 0.3;
+      else if (diffDays <= 5) score += 0.1;
+    }
+
+    // Supplier: fuzzy similarity = up to 0.2
+    if (targetSupplier && txn.description) {
+      const txnDesc = txn.description.toLowerCase();
+      const sim = _recStringSimilarity(targetSupplier, txnDesc);
+      score += sim * 0.2;
+    }
+
+    if (score > bestScore) { bestScore = score; best = { txn, confidence: score }; }
+  }
+
+  return best;
+}
+
+function _recStringSimilarity(a, b) {
+  // Checks if any word from a appears in b or vice versa
+  const wordsA = a.split(/\s+/).filter(w => w.length > 2);
+  const wordsB = b.split(/\s+/).filter(w => w.length > 2);
+  if (!wordsA.length || !wordsB.length) return 0;
+  let matches = 0;
+  for (const w of wordsA) {
+    if (wordsB.some(wb => wb.includes(w) || w.includes(wb))) matches++;
+  }
+  return matches / wordsA.length;
+}
+
+async function confirmRecDocMatch(txnId) {
+  if (!_recPendingDocFile || !_recPendingDocParsed) return;
+  const receipt = _recPendingDocParsed.receipts ? _recPendingDocParsed.receipts[0] : _recPendingDocParsed;
+  await _attachDocToTxn(txnId, _recPendingDocFile, receipt, 'matched');
+}
+
+async function _attachDocToTxn(txnId, file, parsedData, status) {
+  const banner = document.getElementById('recMatchBanner');
+  banner.innerHTML = '⏳ Saving…';
+
+  try {
+    // 1. Upload file to SharePoint
+    let sharepointUrl = null;
+    try {
+      const folder = await _findOrCreateAccountsSubfolder('07 - Receipts for Dext');
+      const uploadFolder = await getOrCreateSubfolder(folder.id, 'Upload to Dext', BAMA_DRIVE_ID);
+      const uploaded = await uploadFileToFolder(uploadFolder.id, file.name, await file.arrayBuffer(), file.type, BAMA_DRIVE_ID);
+      sharepointUrl = uploaded?.webUrl || null;
+    } catch (spErr) {
+      console.warn('[Reconcile] SharePoint upload failed (non-fatal):', spErr.message);
+    }
+
+    // 2. POST document to API
+    await api.post(`/api/bank-transactions/${txnId}/documents`, {
+      filename:        file.name,
+      sharepoint_url:  sharepointUrl,
+      parsed_supplier: parsedData.supplier || null,
+      parsed_date:     parsedData.date || null,
+      parsed_amount:   parsedData.total || null,
+      parsed_net:      parsedData.net || null,
+      parsed_vat:      parsedData.vat || null,
+      uploaded_by:     currentManagerUser,
+      set_status:      status
+    });
+
+    // 3. Update local state
+    const txn = _recTxnList.find(t => t.id === txnId);
+    if (txn) { txn.status = status; txn.doc_count = (txn.doc_count || 0) + 1; }
+
+    // Clear pending
+    _recPendingDocFile = null;
+    _recPendingDocParsed = null;
+
+    // Clear highlight
+    document.querySelectorAll('.rec-txn-table tr').forEach(tr => tr.style.outline = '');
+
+    banner.className = 'rec-match-banner success';
+    banner.innerHTML = `✓ Document attached and transaction matched`;
+    setTimeout(() => { banner.style.display = 'none'; }, 3000);
+
+    renderRecTxnTable();
+    await refreshRecTileStats();
+    toast('Document matched', 'success');
+
+  } catch (err) {
+    banner.className = 'rec-match-banner warn';
+    banner.innerHTML = `✗ Failed: ${escapeHtml(err.message)}`;
+  }
+}
+
+function dismissRecMatchBanner() {
+  const banner = document.getElementById('recMatchBanner');
+  banner.style.display = 'none';
+  _recPendingDocFile = null;
+  _recPendingDocParsed = null;
+  document.querySelectorAll('.rec-txn-table tr').forEach(tr => tr.style.outline = '');
+}
+
+// ── Multi-receipt review ──────────────────────────────────────────────────
+let _recMultiReceipts = [];
+
+function _showMultiReceiptReview(receipts, file) {
+  _recMultiReceipts = receipts.map(r => ({ ...r, _file: file, _matched: false, _txnId: null }));
+  const banner = document.getElementById('recMatchBanner');
+  banner.className = 'rec-match-banner';
+  banner.style.background = 'rgba(99,102,241,.08)';
+  banner.style.border = '1px solid rgba(99,102,241,.25)';
+  banner.style.color = 'var(--text)';
+  banner.innerHTML = `
+    📎 <strong>${receipts.length} receipts found</strong> in one file — review each below:
+    ${receipts.map((r, i) => `
+      <div style="display:flex;align-items:center;gap:8px;margin-top:6px;padding:6px 10px;
+                  background:var(--bg-darker);border-radius:6px;font-size:12px">
+        <span style="flex:1">${escapeHtml(r.supplier || 'Unknown')}</span>
+        <span style="font-family:var(--font-mono)">${r.total ? '£'+Number(r.total).toFixed(2) : '—'}</span>
+        <span style="color:var(--muted)">${r.date || '—'}</span>
+        <button class="btn btn-ghost" style="font-size:11px;padding:2px 8px"
+                onclick="matchMultiReceipt(${i})">Match</button>
+      </div>`).join('')}`;
+}
+
+async function matchMultiReceipt(idx) {
+  const receipt = _recMultiReceipts[idx];
+  if (!receipt) return;
+  _recPendingDocParsed = { receipts: [receipt] };
+  _recPendingDocFile = receipt._file;
+  await _attemptRecAutoMatch(receipt, receipt._file);
+}
+
+// ── Manual match picker ───────────────────────────────────────────────────
+function openManualMatchModal() {
+  const unmatched = _recTxnList.filter(t => t.status === 'unmatched');
+  _recManualMatchTxnList = unmatched;
+  _renderManualMatchList(unmatched);
+
+  const parsed = _recPendingDocParsed?.receipts?.[0] || _recPendingDocParsed;
+  const docInfo = parsed
+    ? `${escapeHtml(parsed.supplier || 'Unknown supplier')} · ${parsed.total ? '£'+Number(parsed.total).toFixed(2) : '—'} · ${parsed.date || '—'}`
+    : '';
+  document.getElementById('recManualMatchDoc').innerHTML = docInfo;
+  document.getElementById('recManualMatchSearch').value = '';
+  document.getElementById('recManualMatchModal').classList.add('active');
+}
+
+function closeManualMatchModal() {
+  document.getElementById('recManualMatchModal').classList.remove('active');
+}
+
+function filterManualMatchList(search) {
+  const s = search.toLowerCase();
+  const filtered = s
+    ? _recManualMatchTxnList.filter(t =>
+        (t.description || '').toLowerCase().includes(s) ||
+        String(Math.abs(t.amount)).includes(s) ||
+        (t.transaction_date || '').includes(s))
+    : _recManualMatchTxnList;
+  _renderManualMatchList(filtered);
+}
+
+function _renderManualMatchList(txns) {
+  const el = document.getElementById('recManualMatchList');
+  if (!txns.length) {
+    el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted)">No unmatched transactions found</div>';
+    return;
+  }
+  el.innerHTML = txns.map(t => `
+    <div style="display:flex;align-items:center;gap:10px;padding:9px 14px;
+                border-bottom:1px solid var(--border);cursor:pointer"
+         onclick="selectManualMatch(${t.id})"
+         onmouseover="this.style.background='var(--bg-darker)'"
+         onmouseout="this.style.background=''">
+      <span style="font-size:12px;flex:1">${escapeHtml(t.description || '')}</span>
+      <span style="font-family:var(--font-mono);font-size:12px;
+                   color:${Number(t.amount) >= 0 ? 'var(--green)' : 'var(--red)'}">
+        ${Number(t.amount) >= 0 ? '+' : ''}£${Math.abs(Number(t.amount)).toFixed(2)}
+      </span>
+      <span style="font-size:11px;color:var(--muted)">${t.transaction_date}</span>
+    </div>`).join('');
+}
+
+async function selectManualMatch(txnId) {
+  closeManualMatchModal();
+  if (!_recPendingDocFile) return;
+  const parsed = _recPendingDocParsed?.receipts?.[0] || _recPendingDocParsed || {};
+  await _attachDocToTxn(txnId, _recPendingDocFile, parsed, 'manual_match');
+}
+
+// ── Document preview ──────────────────────────────────────────────────────
+async function previewRecTxnDoc(txnId) {
+  _recPreviewTxnId = txnId;
+  const txn = _recTxnList.find(t => t.id === txnId);
+  const modal = document.getElementById('recDocPreviewModal');
+  const body  = document.getElementById('recDocPreviewBody');
+  const title = document.getElementById('recDocPreviewTitle');
+
+  if (txn) title.textContent = `📎 ${escapeHtml(txn.description)} · £${Math.abs(Number(txn.amount)).toFixed(2)}`;
+  body.innerHTML = '<div style="padding:20px;text-align:center"><div class="spinner"></div></div>';
+  modal.classList.add('active');
+
+  try {
+    const docs = await api.get(`/api/bank-transactions/${txnId}/documents`);
+    const docList = Array.isArray(docs) ? docs : [];
+
+    if (!docList.length) {
+      body.innerHTML = '<div style="padding:30px;text-align:center;color:var(--muted)">No documents attached</div>';
+      return;
+    }
+
+    body.innerHTML = docList.map(doc => `
+      <div style="padding:14px 16px;border-bottom:1px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <span style="font-size:13px;font-weight:600;flex:1">${escapeHtml(doc.filename)}</span>
+          <button class="btn btn-ghost" style="font-size:11px;padding:3px 9px;color:var(--red)"
+                  onclick="deleteRecDoc(${doc.id}, ${txnId})">🗑 Remove</button>
+          ${doc.sharepoint_url ? `<a href="${escapeHtml(doc.sharepoint_url)}" target="_blank"
+            class="btn btn-ghost" style="font-size:11px;padding:3px 9px">📂 Open in SharePoint</a>` : ''}
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;font-size:12px">
+          ${doc.parsed_supplier ? `<div><div style="color:var(--muted);font-size:10px">SUPPLIER</div>${escapeHtml(doc.parsed_supplier)}</div>` : ''}
+          ${doc.parsed_date     ? `<div><div style="color:var(--muted);font-size:10px">DATE</div>${escapeHtml(String(doc.parsed_date).split('T')[0])}</div>` : ''}
+          ${doc.parsed_amount   ? `<div><div style="color:var(--muted);font-size:10px">TOTAL</div>£${Number(doc.parsed_amount).toFixed(2)}</div>` : ''}
+          ${doc.parsed_vat      ? `<div><div style="color:var(--muted);font-size:10px">VAT</div>£${Number(doc.parsed_vat).toFixed(2)}</div>` : ''}
+        </div>
+        <div style="font-size:10px;color:var(--subtle);margin-top:6px">
+          Uploaded ${escapeHtml(String(doc.uploaded_at).split('T')[0])} by ${escapeHtml(doc.uploaded_by || '—')}
+        </div>
+      </div>`).join('');
+
+  } catch (err) {
+    body.innerHTML = `<div style="padding:20px;color:var(--red)">Failed to load: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function deleteRecDoc(docId, txnId) {
+  if (!await showConfirmAsync('Remove this document from the transaction?', 'Remove')) return;
+  try {
+    await api.delete(`/api/bank-transaction-docs/${docId}`);
+    toast('Document removed', 'success');
+    await previewRecTxnDoc(txnId); // reload preview
+    // Reload transaction to update doc_count
+    const txn = _recTxnList.find(t => t.id === txnId);
+    if (txn && txn.doc_count > 0) txn.doc_count--;
+    renderRecTxnTable();
+  } catch (err) {
+    toast('Failed: ' + err.message, 'error');
+  }
+}
+
+async function unmatchRecTxnFromPreview() {
+  if (!_recPreviewTxnId) return;
+  if (!await showConfirmAsync('Unmatch this transaction? It will return to unmatched status.', 'Unmatch')) return;
+  try {
+    await api.put(`/api/bank-transactions/${_recPreviewTxnId}/unmatch`, {});
+    const txn = _recTxnList.find(t => t.id === _recPreviewTxnId);
+    if (txn) txn.status = 'unmatched';
+    document.getElementById('recDocPreviewModal').classList.remove('active');
+    renderRecTxnTable();
+    await refreshRecTileStats();
+    toast('Transaction unmatched', 'success');
+  } catch (err) {
+    toast('Failed: ' + err.message, 'error');
+  }
+}
+
+// ── Transaction inline edit ───────────────────────────────────────────────
+function openRecTxnEdit(txnId) {
+  const txn = _recTxnList.find(t => t.id === txnId);
+  if (!txn) return;
+  document.getElementById('recEditTxnId').value = txnId;
+  document.getElementById('recEditDesc').value = txn.description || '';
+  document.getElementById('recEditDate').value = txn.transaction_date || '';
+  document.getElementById('recEditAmount').value = txn.amount || '';
+  document.getElementById('recEditCategory').value = txn.spending_category || '';
+  document.getElementById('recEditCardholder').value = txn.cardholder || '';
+  document.getElementById('recEditReference').value = txn.reference || '';
+  document.getElementById('recTxnEditModal').classList.add('active');
+}
+
+async function saveRecTxnEdit() {
+  const id = Number(document.getElementById('recEditTxnId').value);
+  const payload = {
+    description:       document.getElementById('recEditDesc').value.trim(),
+    transaction_date:  document.getElementById('recEditDate').value,
+    amount:            Number(document.getElementById('recEditAmount').value),
+    spending_category: document.getElementById('recEditCategory').value.trim() || null,
+    cardholder:        document.getElementById('recEditCardholder').value.trim() || null,
+    reference:         document.getElementById('recEditReference').value.trim() || null
+  };
+  try {
+    const updated = await api.put(`/api/bank-transactions/${id}/edit`, payload);
+    const txn = _recTxnList.find(t => t.id === id);
+    if (txn && updated) Object.assign(txn, updated);
+    document.getElementById('recTxnEditModal').classList.remove('active');
+    renderRecTxnTable();
+    toast('Transaction updated', 'success');
+  } catch (err) {
+    toast('Save failed: ' + err.message, 'error');
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -28805,7 +29258,5 @@ Return ONLY the JSON array starting with [ and ending with ].`
   return parsed;
 }
 
-// ── Preview / edit stubs (Commit 3) ──────────────────────────────────────
-function previewRecTxnDoc(txnId) { toast('Document preview coming in Commit 3', 'info'); }
-function openRecTxnEdit(txnId)   { toast('Transaction edit coming in Commit 3', 'info'); }
+// previewRecTxnDoc and openRecTxnEdit are fully implemented above
 
