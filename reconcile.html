@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BAMA Reconcile</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="bama.css?v=20260526b">
+<style>
+.mgr-content { max-width: none !important; }
+
+/* ── Bank tiles ── */
+.rec-tiles-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+  margin-bottom: 28px;
+}
+.rec-bank-tile {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  cursor: pointer;
+  transition: border-color .15s;
+  position: relative;
+}
+.rec-bank-tile:hover  { border-color: var(--accent); }
+.rec-bank-tile.active { border: 2px solid var(--accent); }
+.rec-bank-tile .tile-name  { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 2px; }
+.rec-bank-tile .tile-meta  { font-size: 11px; color: var(--muted); margin-bottom: 12px; font-family: var(--font-mono); }
+.rec-bank-tile .tile-type  {
+  position: absolute; top: 10px; right: 10px;
+  font-size: 10px; font-weight: 600; padding: 2px 7px;
+  border-radius: 4px; text-transform: uppercase;
+  background: rgba(99,102,241,.12); color: #818cf8;
+  border: 1px solid rgba(99,102,241,.25);
+}
+.rec-bank-tile .tile-type.current     { background: rgba(62,207,142,.1); color: var(--green); border-color: rgba(62,207,142,.25); }
+.rec-bank-tile .tile-type.savings     { background: rgba(59,130,246,.1); color: #60a5fa;      border-color: rgba(59,130,246,.25); }
+.rec-bank-tile .tile-type.credit_card { background: rgba(245,158,11,.1); color: var(--warn);  border-color: rgba(245,158,11,.25); }
+.donut-row { display: flex; align-items: center; gap: 10px; }
+.donut-legend { flex: 1; }
+.donut-legend .dl-row {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 11px; color: var(--muted); margin-bottom: 3px;
+}
+.donut-legend .dl-dot  { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.donut-legend .dl-cnt  { font-weight: 600; color: var(--text); margin-left: auto; font-family: var(--font-mono); }
+.dl-green { background: var(--green); }
+.dl-amber { background: var(--warn); }
+.dl-grey  { background: var(--muted); }
+
+/* ── Two-pane layout ── */
+.rec-two-pane {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 14px;
+  min-height: 460px;
+}
+.rec-pane {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.rec-pane-header {
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+.rec-pane-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.rec-pane-body  { flex: 1; overflow-y: auto; }
+
+/* ── Statement list ── */
+.stmt-row {
+  padding: 9px 14px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  transition: background .1s;
+}
+.stmt-row:hover    { background: var(--bg-darker); }
+.stmt-row.active   { background: rgba(99,102,241,.08); border-left: 3px solid var(--accent); }
+.stmt-row .sr-name { font-size: 12px; font-weight: 600; color: var(--text); }
+.stmt-row .sr-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+/* ── Drop zone ── */
+.rec-drop-zone {
+  margin: 10px;
+  border: 1.5px dashed var(--border);
+  border-radius: 8px;
+  padding: 14px 10px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.rec-drop-zone:hover,
+.rec-drop-zone.drag-over {
+  border-color: var(--accent);
+  background: rgba(99,102,241,.05);
+  color: var(--accent);
+}
+.rec-drop-zone .dz-icon { font-size: 22px; display: block; margin-bottom: 4px; }
+
+/* ── Match banner ── */
+.rec-match-banner {
+  margin: 0 10px 10px;
+  padding: 8px 12px;
+  border-radius: 7px;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.rec-match-banner.success { background: rgba(62,207,142,.12); border: 1px solid rgba(62,207,142,.25); color: var(--green); }
+.rec-match-banner.warn    { background: rgba(245,158,11,.1);  border: 1px solid rgba(245,158,11,.25); color: var(--warn); }
+
+/* ── Transaction table ── */
+.rec-txn-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.rec-txn-table th {
+  padding: 8px 12px; text-align: left; font-size: 11px; font-weight: 600;
+  color: var(--muted); border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; background: var(--surface); z-index: 1;
+  cursor: pointer; user-select: none; white-space: nowrap;
+}
+.rec-txn-table th:hover { color: var(--text); }
+.rec-txn-table th .sort-arrow { margin-left: 3px; opacity: .4; }
+.rec-txn-table th.sorted .sort-arrow { opacity: 1; color: var(--accent); }
+.rec-txn-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--text); vertical-align: middle; }
+.rec-txn-table tr:last-child td { border-bottom: none; }
+.rec-txn-table tr:hover td { background: var(--bg-darker); }
+.rec-txn-table tr.row-matched td { background: rgba(62,207,142,.04); }
+
+/* ── Status pills ── */
+.status-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600;
+  white-space: nowrap;
+}
+.pill-matched  { background: rgba(62,207,142,.15); color: var(--green); }
+.pill-unmatched{ background: rgba(245,158,11,.15);  color: var(--warn); }
+.pill-manual   { background: rgba(99,102,241,.15);  color: #818cf8; }
+.pill-cleared  { background: rgba(150,150,150,.15); color: var(--muted); }
+
+/* ── Filter bar ── */
+.rec-filter-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.rec-search-wrap {
+  position: relative; flex: 1;
+}
+.rec-search-wrap input {
+  width: 100%; padding: 5px 28px 5px 8px;
+  font-size: 12px; border: 1px solid var(--border);
+  border-radius: 6px; background: var(--bg-darker); color: var(--text);
+}
+.rec-search-clear {
+  position: absolute; right: 7px; top: 50%; transform: translateY(-50%);
+  background: none; border: none; color: var(--muted); cursor: pointer; font-size: 14px;
+  display: none;
+}
+.rec-filter-select {
+  font-size: 12px; padding: 5px 8px;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg-darker); color: var(--text);
+}
+
+/* ── Toolbar ── */
+.rec-toolbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 14px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.rec-bulk-clear-btn { display: none; }
+
+/* ── Row action icons ── */
+.row-actions { display: flex; gap: 6px; align-items: center; }
+.row-icon-btn {
+  background: none; border: none; cursor: pointer; padding: 3px 5px;
+  font-size: 14px; color: var(--muted); border-radius: 4px;
+  transition: color .1s, background .1s;
+}
+.row-icon-btn:hover { color: var(--accent); background: var(--bg-darker); }
+.row-icon-btn.dimmed { opacity: .3; cursor: default; }
+.row-icon-btn.dimmed:hover { color: var(--muted); background: none; }
+.attach-btn {
+  font-size: 11px; padding: 3px 9px;
+  border: 1px solid var(--border); border-radius: 5px;
+  background: transparent; color: var(--muted); cursor: pointer;
+}
+.attach-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── Show more ── */
+.rec-show-more {
+  text-align: center; padding: 14px;
+  border-top: 1px solid var(--border); flex-shrink: 0;
+}
+
+/* ── Empty state ── */
+.rec-empty { padding: 40px; text-align: center; color: var(--muted); }
+.rec-empty .rec-empty-icon { font-size: 32px; margin-bottom: 10px; }
+
+/* ── Checkbox ── */
+.rec-cb { width: 14px; height: 14px; cursor: pointer; }
+
+/* ── Amount colours ── */
+.amt-debit  { color: var(--red);   font-family: var(--font-mono); }
+.amt-credit { color: var(--green); font-family: var(--font-mono); }
+.amt-fx     { font-size: 10px; color: var(--muted); margin-top: 2px; }
+</style>
+</head>
+<body>
+<div class="loading-bar" id="loadingBar" style="width:0"></div>
+
+<!-- TOP BAR -->
+<div class="topbar">
+  <a href="hub.html" style="text-decoration:none">
+    <div class="logo"><span style="color:#D0021B">BAMA</span> <span style="color:#D0021B">FABRICATION</span><span> RECONCILE</span></div>
+  </a>
+  <div style="position:absolute;left:50%;transform:translate(-50%,-50%);top:50%">
+    <div class="clock-display" id="liveClock" style="font-size:15px;font-weight:700;letter-spacing:.5px">--:-- --</div>
+  </div>
+  <div class="topbar-right">
+    <a href="hub.html" style="text-decoration:none"><button class="manager-btn">&#8592; Hub</button></a>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<!-- ═══════════════════════════════════════
+     LOGIN SCREEN
+══════════════════════════════════════════ -->
+<div class="screen active" id="screenRecSelect">
+  <div class="mgr-select-wrap">
+    <div class="mgr-select-title">BANK RECONCILIATION</div>
+    <div class="mgr-select-sub">Select your name to log in</div>
+    <div class="mgr-emp-grid" id="recEmployeeGrid">
+      <div class="empty-state"><div class="spinner"></div></div>
+    </div>
+    <div style="text-align:center;margin-top:24px">
+      <button class="btn btn-ghost" onclick="window.location.href='hub.html'">&#8592; Back to Hub</button>
+    </div>
+  </div>
+</div>
+
+<!-- PIN MODAL -->
+<div class="modal-overlay" id="recPinModal">
+  <div class="modal" style="max-width:340px;text-align:center">
+    <div class="modal-title">🔐 Enter PIN</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:16px" id="recPinUser">—</div>
+    <input type="password" class="field-input" id="recPinInput" maxlength="6"
+      style="text-align:center;font-size:24px;letter-spacing:8px;max-width:180px;margin:0 auto"
+      onkeydown="if(event.key==='Enter')verifyRecPin()">
+    <div id="recPinError" style="color:var(--red);font-size:12px;margin-top:8px;min-height:18px"></div>
+    <div class="modal-actions" style="margin-top:16px">
+      <button class="btn btn-ghost" onclick="document.getElementById('recPinModal').classList.remove('active')">Cancel</button>
+      <button class="btn btn-primary" onclick="verifyRecPin()">Unlock</button>
+    </div>
+  </div>
+</div>
+
+<!-- CONFIRM MODAL -->
+<div class="modal-overlay" id="confirmModal">
+  <div class="modal" style="max-width:440px;width:95vw">
+    <div class="modal-title" id="confirmTitle">Confirm</div>
+    <div id="confirmMsg" style="color:var(--muted);font-size:14px"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="document.getElementById('confirmModal').classList.remove('active')">Cancel</button>
+      <button class="btn btn-primary" id="confirmOk">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     ADD / EDIT BANK MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="recBankModal">
+  <div class="modal" style="max-width:460px;width:95vw">
+    <div class="modal-title" id="recBankModalTitle">🏦 Add Bank Account</div>
+    <input type="hidden" id="recBankEditId">
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div style="grid-column:1/-1">
+        <label class="field-label">Bank Name <span style="color:var(--red)">*</span></label>
+        <input type="text" class="field-input" id="recBankName" placeholder="e.g. Barclays Business">
+      </div>
+      <div>
+        <label class="field-label">Account Number</label>
+        <input type="text" class="field-input" id="recBankAcctNo" placeholder="12345678" maxlength="20" style="font-family:var(--font-mono)">
+      </div>
+      <div>
+        <label class="field-label">Sort Code</label>
+        <input type="text" class="field-input" id="recBankSortCode" placeholder="20-00-00" maxlength="10" style="font-family:var(--font-mono)">
+      </div>
+      <div style="grid-column:1/-1">
+        <label class="field-label">Account Type</label>
+        <select class="field-input" id="recBankType">
+          <option value="current">Current Account</option>
+          <option value="savings">Savings Account</option>
+          <option value="credit_card">Credit Card</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeRecBankModal()">Cancel</button>
+      <button class="btn btn-primary" id="recBankSaveBtn" onclick="saveRecBank()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- CLEAR TRANSACTION MODAL -->
+<div class="modal-overlay" id="recClearModal">
+  <div class="modal" style="max-width:460px;width:95vw">
+    <div class="modal-title">✅ Clear Transaction</div>
+    <div id="recClearTxnInfo" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
+    <label class="field-label">Reason <span style="font-size:11px;color:var(--subtle)">(optional)</span></label>
+    <input type="text" class="field-input" id="recClearReason"
+           placeholder="e.g. Internal transfer, Bank charge, Wages…"
+           onkeydown="if(event.key==='Enter')confirmClearTxn()">
+    <div class="modal-actions" style="margin-top:16px">
+      <button class="btn btn-ghost" onclick="document.getElementById('recClearModal').classList.remove('active')">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmClearTxn()">Clear Transaction</button>
+    </div>
+  </div>
+</div>
+
+<!-- BULK CLEAR MODAL -->
+<div class="modal-overlay" id="recBulkClearModal">
+  <div class="modal" style="max-width:560px;width:95vw;max-height:80vh;overflow-y:auto">
+    <div class="modal-title">✅ Bulk Clear Transactions</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:14px" id="recBulkClearCount"></div>
+    <label class="field-label">Reason for all <span style="font-size:11px;color:var(--subtle)">(optional)</span></label>
+    <input type="text" class="field-input" id="recBulkClearReason"
+           placeholder="e.g. Internal transfers, Wages run…" style="margin-bottom:16px">
+    <div id="recBulkClearList" style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="document.getElementById('recBulkClearModal').classList.remove('active')">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmBulkClear()">Clear Selected</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     MAIN LAYOUT
+══════════════════════════════════════════ -->
+<div class="mgr-layout" id="recLayout" style="display:none">
+
+  <!-- Sidebar -->
+  <nav class="mgr-sidebar" id="recSidebar">
+    <div class="sidebar-nav-group">
+      <button class="sidebar-nav-item" id="sidebarBtnTenders" onclick="navToTenders()">
+        <span class="sidebar-nav-icon">📋</span> Tenders
+      </button>
+      <button class="sidebar-nav-item" id="sidebarBtnQuotations" onclick="navToQuotes()">
+        <span class="sidebar-nav-icon">📊</span> Quotations
+      </button>
+      <button class="sidebar-nav-item" id="sidebarBtnBabcockQuotes" onclick="navToBabcock()">
+        <span class="sidebar-nav-icon">⚓</span> Babcock Quotes
+      </button>
+      <button class="sidebar-nav-item" id="sidebarBtnProjectTracker" onclick="navToProjectTracker()">
+        <span class="sidebar-nav-icon">🏗️</span> Project Tracker
+      </button>
+      <button class="sidebar-nav-item" id="sidebarBtnPurchaseOrders" onclick="navToPoTracker()">
+        <span class="sidebar-nav-icon">🧾</span> Purchase Orders
+      </button>
+      <button class="sidebar-nav-item" id="sidebarBtnInvoicing" onclick="navToInvoicing()">
+        <span class="sidebar-nav-icon">💰</span> Invoice Tracker
+      </button>
+      <button class="sidebar-nav-item active">
+        <span class="sidebar-nav-icon">🏦</span> Reconcile
+      </button>
+      <hr class="sidebar-nav-divider">
+      <button class="sidebar-nav-item sidebar-secondary-item" onclick="navToTenders()">
+        <span class="sidebar-nav-icon">🏢</span> Clients
+      </button>
+    </div>
+  </nav>
+
+  <!-- Content -->
+  <div class="mgr-content">
+    <div class="mgr-header">
+      <div>
+        <div class="mgr-title">BANK RECONCILIATION</div>
+        <div style="color:var(--muted);font-size:13px">BAMA Fabrication · Match transactions to receipts &amp; invoices</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn btn-ghost" id="recEditBankBtn" onclick="openEditBankModal()" style="display:none">✏️ Edit Bank</button>
+        <button class="btn btn-primary" onclick="openAddBankModal()">+ Add Bank</button>
+      </div>
+    </div>
+
+    <!-- Bank tiles -->
+    <div class="rec-tiles-grid" id="recTilesGrid">
+      <div class="empty-state"><div class="spinner"></div></div>
+    </div>
+
+    <!-- Two-pane (shown when a bank is selected) -->
+    <div class="rec-two-pane" id="recTwoPane" style="display:none">
+
+      <!-- Left pane: statements + drop zone -->
+      <div class="rec-pane">
+        <div class="rec-pane-header">
+          <span class="rec-pane-title" id="recStmtPaneTitle">Statements</span>
+          <button class="btn btn-ghost" style="padding:3px 10px;font-size:12px" onclick="openUploadStatementModal()">
+            &#8679; Upload
+          </button>
+        </div>
+        <div class="rec-pane-body" id="recStmtList">
+          <div class="rec-empty"><div class="rec-empty-icon">📄</div>No statements yet</div>
+        </div>
+
+        <!-- Drop zone for documents -->
+        <div class="rec-drop-zone" id="recDropZone"
+             ondragover="onRecDragOver(event)" ondragleave="onRecDragLeave(event)" ondrop="onRecDrop(event)"
+             onclick="document.getElementById('recDocFileInput').click()">
+          <span class="dz-icon">📎</span>
+          Drop receipt or invoice here to match<br>
+          <span style="font-size:11px;opacity:.7">PDF · image · any format</span>
+        </div>
+        <input type="file" id="recDocFileInput" accept="image/*,application/pdf,.pdf,.xlsx,.xls,.csv"
+               style="display:none" onchange="onRecDocFilePicked(this.files[0])">
+
+        <!-- Match result banner (shown after OCR attempt) -->
+        <div id="recMatchBanner" style="display:none"></div>
+      </div>
+
+      <!-- Right pane: transaction table -->
+      <div class="rec-pane">
+        <div class="rec-pane-header">
+          <span class="rec-pane-title" id="recTxnPaneTitle">Transactions</span>
+          <span style="font-size:12px;color:var(--muted)" id="recTxnPaneCount"></span>
+        </div>
+
+        <!-- Filter bar -->
+        <div class="rec-filter-bar">
+          <div class="rec-search-wrap">
+            <input type="text" id="recTxnSearch" placeholder="Search date, description, amount…"
+                   oninput="onRecTxnSearch(this.value)">
+            <button class="rec-search-clear" id="recTxnSearchClear" onclick="clearRecTxnSearch()">×</button>
+          </div>
+          <select class="rec-filter-select" id="recTxnStatusFilter" onchange="renderRecTxnTable()">
+            <option value="">All</option>
+            <option value="unmatched" selected>Unmatched</option>
+            <option value="matched">Matched</option>
+            <option value="manual_match">Manual</option>
+            <option value="cleared">Cleared</option>
+          </select>
+        </div>
+
+        <!-- Bulk toolbar (appears when rows checked) -->
+        <div class="rec-toolbar" id="recBulkToolbar" style="display:none">
+          <span id="recBulkCount" style="font-size:12px;color:var(--muted)"></span>
+          <button class="btn btn-ghost" style="font-size:12px;padding:4px 12px" onclick="openBulkClearModal()">
+            ✅ Clear selected
+          </button>
+          <button class="btn btn-ghost" style="font-size:12px;padding:4px 12px;margin-left:auto" onclick="clearRecSelection()">
+            Deselect all
+          </button>
+        </div>
+
+        <!-- Transaction table -->
+        <div class="rec-pane-body" id="recTxnTableWrap">
+          <div class="rec-empty"><div class="rec-empty-icon">💳</div>Select a statement to view transactions</div>
+        </div>
+
+        <!-- Show more -->
+        <div class="rec-show-more" id="recShowMore" style="display:none">
+          <button class="btn btn-ghost" onclick="recLoadMoreTxns()">Show older transactions</button>
+        </div>
+      </div>
+
+    </div><!-- /rec-two-pane -->
+
+  </div><!-- /mgr-content -->
+</div><!-- /mgr-layout -->
+
+<script src="shared.js?v=20260526b"></script>
+</body>
+</html>

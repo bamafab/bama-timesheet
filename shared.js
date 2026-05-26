@@ -9034,7 +9034,8 @@ async function loadUserAccessData() {
           viewPurchaseOrders: !!row.view_purchase_orders,
           editPurchaseOrders: !!row.edit_purchase_orders,
           invoicing: !!row.invoicing,
-          afps: !!row.afps
+          afps: !!row.afps,
+          reconcile: !!row.reconcile
         }
       };
     });
@@ -9094,8 +9095,9 @@ const PERMISSION_DEFS = [
   { key: 'viewProjects', label: 'View Projects', desc: 'View project tracker (read-only)' },
   { key: 'viewPurchaseOrders', label: 'View Purchase Orders', desc: 'View the PO tracker (read-only)' },
   { key: 'editPurchaseOrders', label: 'Edit Purchase Orders', desc: 'Raise, edit, approve and send purchase orders' },
-  { key: 'invoicing', label: 'Invoicing', desc: 'Full access to the Invoice Tracker (AFPs aside, Sales / Supplier Invoices, Receipts)' },
-  { key: 'afps', label: 'AFPs (Applications for Payment)', desc: 'Create, submit, certify and invoice Applications for Payment on projects' }
+  { key: 'invoicing', label: 'Invoicing', desc: 'Full access to the Invoice Tracker (AFPs aside, Sales / Supplier Invoices)' },
+  { key: 'afps', label: 'AFPs (Applications for Payment)', desc: 'Create, submit, certify and invoice Applications for Payment on projects' },
+  { key: 'reconcile', label: 'Bank Reconciliation', desc: 'Upload bank statements, match transactions and reconcile accounts' }
 ];
 
 const PERM_TO_TAB = {
@@ -12421,7 +12423,7 @@ async function toggleUserPermission(empName, permKey, enabled) {
         tenders: false, editQuotes: false, viewQuotes: false,
         editProjects: false, viewProjects: false,
         viewPurchaseOrders: false, editPurchaseOrders: false,
-        invoicing: false, afps: false
+        invoicing: false, afps: false, reconcile: false
       }
     };
   }
@@ -14048,6 +14050,7 @@ function updateCrossNavSidebar() {
   set('sidebarBtnProjectTracker',  !!(perms.viewProjects || perms.editProjects),'Project Tracker');
   set('sidebarBtnPurchaseOrders',  !!(perms.viewPurchaseOrders || perms.editPurchaseOrders), 'Purchase Orders');
   set('sidebarBtnInvoicing',       !!perms.invoicing,                            'Invoice Tracker');
+  set('sidebarBtnReconcile',       !!perms.reconcile,                            'Reconcile');
 }
 
 // Back-compat aliases — call sites are scattered.
@@ -23931,7 +23934,12 @@ function recalcPoLine(i) {
   const u = Number(li.unit_price);
   if (!isNaN(q) && !isNaN(u)) {
     li.line_total = (q * u).toFixed(2);
-    renderPoLineRows();
+    // Update only the line_total input for this row — avoids full re-render which kills focus
+    const rows = document.querySelectorAll('#poNewLineItems > div');
+    if (rows[i]) {
+      const totalInput = rows[i].querySelectorAll('input[type="number"]')[2];
+      if (totalInput) totalInput.value = li.line_total;
+    }
   }
   recalcPoTotal();
 }
@@ -24828,6 +24836,15 @@ function navToInvoicing() {
   window.location.href = 'invoice-tracker.html';
 }
 
+function navToReconcile() {
+  const perms = getUserPermissions(currentManagerUser) || {};
+  if (!perms.reconcile) {
+    toast('You don\'t have permission to access Bank Reconciliation', 'error');
+    return;
+  }
+  window.location.href = 'reconcile.html';
+}
+
 // Minimal HTML escape — same impl used across the file. Defined locally as
 // a fallback in case the shared one is hoisted later in the file ordering.
 if (typeof window.escapeHtml !== 'function') {
@@ -24998,11 +25015,10 @@ init();
 // ───────────────────────────────────────────────────────────────────────────
 
 let _invPendingPinUser = null;
-let _invCurrentTab = 'sales';           // 'afps' | 'sales' | 'supplier' | 'receipts'
+let _invCurrentTab = 'sales';           // 'afps' | 'sales' | 'supplier'
 let _invAfpList = [];
 let _invInvoiceList = [];
 let _invSupplierPoList = [];            // POs with received supplier invoices
-let _invReceiptList = [];
 let _invProjectsCache = [];
 let _invClientsCache = [];
 
@@ -25125,18 +25141,16 @@ async function loadInvoicingSupportData() {
 // ── Load the four streams ─────────────────────────────────────────────────
 async function loadInvoicingData() {
   try {
-    const [afps, invoices, pos, receipts] = await Promise.all([
+    const [afps, invoices, pos] = await Promise.all([
       api.get('/api/applications').catch(() => []),
       api.get('/api/invoices').catch(() => []),
       api.get('/api/purchase-orders').catch(() => []),
-      api.get('/api/receipts').catch(() => [])
     ]);
     _invAfpList     = Array.isArray(afps)     ? afps     : [];
     _invInvoiceList = Array.isArray(invoices) ? invoices : [];
     // Supplier invoices = POs that have received a supplier invoice
     _invSupplierPoList = (Array.isArray(pos) ? pos : [])
       .filter(po => po.supplier_invoice_received_at);
-    _invReceiptList = Array.isArray(receipts) ? receipts : [];
   } catch (e) {
     console.warn('Invoice tracker data load failed:', e);
   }
@@ -25182,7 +25196,7 @@ function renderInvKpis() {
 function switchInvTab(tab) {
   _invCurrentTab = tab;
   // Tab buttons
-  ['afps','sales','supplier','receipts'].forEach(t => {
+  ['afps','sales','supplier'].forEach(t => {
     const btn = document.getElementById('invTabBtn-' + t);
     if (btn) {
       btn.classList.toggle('active', t === tab);
@@ -25191,7 +25205,7 @@ function switchInvTab(tab) {
     }
   });
   // Panels
-  ['afps','sales','supplier','receipts'].forEach(t => {
+  ['afps','sales','supplier'].forEach(t => {
     const pane = document.getElementById('invPane-' + t);
     if (pane) pane.style.display = (t === tab) ? '' : 'none';
   });
@@ -25199,7 +25213,6 @@ function switchInvTab(tab) {
   if (tab === 'afps')      renderInvAfpsTable();
   if (tab === 'sales')     renderInvSalesTable();
   if (tab === 'supplier')  renderInvSupplierTable();
-  if (tab === 'receipts')  renderInvReceiptsTable();
 }
 
 // ── Placeholder renderers (full bodies land in Commits 2 + 3) ────────────
@@ -25435,31 +25448,6 @@ function renderInvSupplierTable() {
     </tr>`).join('');
 }
 
-function renderInvReceiptsTable() {
-  const tbody = document.getElementById('invReceiptsTbody');
-  if (!tbody) return;
-  if (!_invReceiptList.length) {
-    tbody.innerHTML = `<tr><td colspan="8" class="empty-state" style="padding:40px;text-align:center;color:var(--muted)">
-      <div style="font-size:32px;margin-bottom:8px">🧾</div>
-      <div style="font-weight:600;margin-bottom:4px">No receipts yet</div>
-      <div style="font-size:12px">Click <b>+ New Receipt</b> at the top right to upload one — AI will pre-fill the fields.</div>
-    </td></tr>`;
-    return;
-  }
-  tbody.innerHTML = _invReceiptList.map(r => `
-    <tr>
-      <td>${r.receipt_date ? new Date(r.receipt_date).toLocaleDateString('en-GB') : ''}</td>
-      <td>${escapeHtml(r.supplier_text || '')}</td>
-      <td>${invStatusBadge(r.category || 'Other')}</td>
-      <td>${escapeHtml(r.project_number || r.cost_centre || '')}</td>
-      <td>${escapeHtml(r.payment_method || '')}</td>
-      <td>${escapeHtml(r.paid_by_name || '')}</td>
-      <td style="text-align:right">£${Number(r.gross_amount || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}</td>
-      <td>${r.is_reconciled ? '✓' : ''}</td>
-    </tr>`).join('');
-}
-
-// Inline status badge — colour-coded based on common workflow states.
 function invStatusBadge(status) {
   if (!status) return '';
   const s = String(status).toLowerCase();
@@ -25671,13 +25659,13 @@ function renderAfpLineRows() {
                oninput="_afpLineRows[${i}].description = this.value">
         <input type="number" step="0.01" class="field-input" placeholder="Contract £"
                value="${l.contract_value || 0}"
-               oninput="_afpLineRows[${i}].contract_value = parseFloat(this.value) || 0; renderAfpLineRows(); recalcAfpTotals()">
+               oninput="_afpLineRows[${i}].contract_value = parseFloat(this.value) || 0; updateAfpLineRowCalc(${i})">
         <input type="number" step="0.01" class="field-input" placeholder="Prev %" readonly tabindex="-1"
                style="background:var(--bg-darker);text-align:center"
                value="${Number(l.previous_pct_complete || 0).toFixed(1)}">
         <input type="number" step="0.01" class="field-input" placeholder="This %"
                value="${l.this_app_pct_complete || 0}"
-               oninput="_afpLineRows[${i}].this_app_pct_complete = parseFloat(this.value) || 0; renderAfpLineRows(); recalcAfpTotals()">
+               oninput="_afpLineRows[${i}].this_app_pct_complete = parseFloat(this.value) || 0; updateAfpLineRowCalc(${i})">
         <input type="text" class="field-input" readonly tabindex="-1"
                style="background:var(--bg-darker);text-align:right"
                value="£${Number(thisAppValue).toLocaleString('en-GB', { minimumFractionDigits: 2 })}">
@@ -25686,6 +25674,21 @@ function renderAfpLineRows() {
                 onclick="removeAfpLineRow(${i})">×</button>
       </div>`;
   }).join('');
+}
+
+// Targeted update for a single AFP row's calculated £ value — avoids
+// re-rendering the whole list (which kills focus mid-type).
+function updateAfpLineRowCalc(i) {
+  const l = _afpLineRows[i];
+  if (!l) return;
+  const thisAppValue = Number(l.contract_value || 0) * (Number(l.this_app_pct_complete || 0) - Number(l.previous_pct_complete || 0)) / 100;
+  const rows = document.querySelectorAll('#afpNewLineItems > div');
+  if (rows[i]) {
+    // inputs: [0] description, [1] contract_value, [2] prev% (readonly), [3] this%, [4] £ value (readonly)
+    const valueInput = rows[i].querySelectorAll('input')[4];
+    if (valueInput) valueInput.value = '£' + Number(thisAppValue).toLocaleString('en-GB', { minimumFractionDigits: 2 });
+  }
+  recalcAfpTotals();
 }
 
 function recalcAfpTotals() {
@@ -26234,18 +26237,10 @@ let _invLineRows = [];           // working line items in the new/edit modal
 let _invSelectedClient = null;   // chosen client object (or null for free-text)
 let _invSelectedProject = null;  // chosen project object (or null)
 let _invDetailCurrent = null;    // currently-open invoice in the detail modal
-let _invReceiptParsed = null;    // OCR result staged for the new-receipt modal
-let _invReceiptFile = null;      // raw File for the receipt upload
-let _invReceiptSelectedProject = null;
 let _invSupInvPo = null;         // PO currently being attached a supplier invoice
 let _invSupInvParsed = null;
 let _invSupInvFile = null;
 
-const RECEIPT_CATEGORIES = [
-  'Fuel', 'Materials', 'Consumables', 'PPE', 'Equipment', 'Rent',
-  'Insurance', 'Professional Services', 'Galvanise', 'Food & Water',
-  'Stationery', 'Travel', 'Other'
-];
 
 // ── Number helpers ────────────────────────────────────────────────────────
 function _invFmt2(v) {
@@ -26678,12 +26673,6 @@ async function _findOrCreateSupplierInvoiceFolder(invoiceDate) {
   return await _appendYearMonthFolders(base, invoiceDate);
 }
 
-async function _findOrCreateReceiptFolder(receiptDate, category) {
-  // 01 - Accounts/05 - Receipts/{YYYY}/{MM}/{category}/
-  const base = await _findOrCreateAccountsSubfolder('05 - Receipts');
-  const monthFolder = await _appendYearMonthFolders(base, receiptDate);
-  return await getOrCreateSubfolder(monthFolder.id, sanitizeSpFilename(category || 'Other'), BAMA_DRIVE_ID);
-}
 
 // Looks up "01 - Accounts" at the drive root, then gets or creates the named subfolder.
 // If even "01 - Accounts" doesn't exist, this raises — that's a SharePoint setup issue
@@ -27168,214 +27157,6 @@ async function voidInvoice() {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
-// RECEIPTS — new modal with OCR pre-fill
-// ═════════════════════════════════════════════════════════════════════════
-function openNewReceiptModal() {
-  _invReceiptFile = null;
-  _invReceiptParsed = null;
-  _invReceiptSelectedProject = null;
-  document.getElementById('invReceiptFile').value = '';
-  document.getElementById('invReceiptOcrStatus').style.display = 'none';
-  document.getElementById('invReceiptDate').value = new Date().toISOString().slice(0, 10);
-  document.getElementById('invReceiptSupplier').value = '';
-  document.getElementById('invReceiptCategory').value = 'Other';
-  document.getElementById('invReceiptNet').value = '';
-  document.getElementById('invReceiptVat').value = '';
-  document.getElementById('invReceiptGross').value = '';
-  document.getElementById('invReceiptMethod').value = 'company_account';
-  document.getElementById('invReceiptPaidBy').value = '';
-  document.getElementById('invReceiptPaidByWrap').style.display = 'none';
-  document.getElementById('invReceiptProjectSearch').value = '';
-  document.getElementById('invReceiptProjectSelected').textContent = '';
-  document.getElementById('invReceiptProjectDropdown').innerHTML = '';
-  document.getElementById('invReceiptNotes').value = '';
-  document.getElementById('invReceiptModal').classList.add('active');
-}
-
-function closeNewReceiptModal() {
-  document.getElementById('invReceiptModal').classList.remove('active');
-}
-
-function toggleReceiptPaidBy() {
-  const method = document.getElementById('invReceiptMethod').value;
-  const wrap = document.getElementById('invReceiptPaidByWrap');
-  wrap.style.display = (method === 'personal') ? '' : 'none';
-  if (method === 'personal') {
-    // Populate employee dropdown if empty
-    const sel = document.getElementById('invReceiptPaidBy');
-    if (sel.options.length <= 1) {
-      const empList = (state.timesheetData.employees || []).filter(e => e.active !== false);
-      sel.innerHTML = '<option value="">— pick employee —</option>'
-        + empList.map(e => `<option value="${e.id}">${escapeHtml(e.name)}</option>`).join('');
-    }
-  }
-}
-
-async function onReceiptFilePicked(file) {
-  if (!file) return;
-  _invReceiptFile = file;
-  const statusEl = document.getElementById('invReceiptOcrStatus');
-  statusEl.style.display = '';
-  statusEl.style.background = 'var(--bg-darker)';
-  statusEl.innerHTML = '<div class="spinner" style="display:inline-block;width:14px;height:14px;vertical-align:middle"></div> Parsing receipt with AI…';
-
-  try {
-    const dataUri = await _fileToDataUri(file);
-    const result = await callClaude({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 800,
-      messages: [{
-        role: 'user',
-        content: [
-          {
-            type: 'image',
-            source: file.type.startsWith('image/')
-              ? { type: 'base64', media_type: file.type, data: dataUri.split(',')[1] }
-              : { type: 'base64', media_type: file.type, data: dataUri.split(',')[1] }
-          },
-          {
-            type: 'text',
-            text: `You are extracting structured data from a UK receipt or simple invoice image.
-Return ONLY valid JSON (no markdown, no commentary) with these fields:
-{
-  "supplier": "merchant or trading name",
-  "date": "YYYY-MM-DD",
-  "category": "one of: Fuel, Materials, Consumables, PPE, Equipment, Rent, Insurance, Professional Services, Galvanise, Food & Water, Stationery, Travel, Other",
-  "net_amount": 0,
-  "vat_amount": 0,
-  "gross_amount": 0
-}
-If any field is unclear or absent, set it to null. The category is your best guess from the line items.
-For "Fuel" use petrol stations like BP, Shell, Esso, Texaco etc. Galvanise = galvanising services. Materials = steel/raw material suppliers.`
-          }
-        ]
-      }]
-    });
-    const text = (result.content?.find(b => b.type === 'text')?.text || '').trim();
-    const jsonStart = text.indexOf('{'), jsonEnd = text.lastIndexOf('}');
-    const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
-    _invReceiptParsed = parsed;
-
-    // Pre-fill the form
-    if (parsed.supplier)    document.getElementById('invReceiptSupplier').value = parsed.supplier;
-    if (parsed.date)        document.getElementById('invReceiptDate').value     = parsed.date;
-    if (parsed.category)    document.getElementById('invReceiptCategory').value = parsed.category;
-    if (parsed.net_amount != null) document.getElementById('invReceiptNet').value   = parsed.net_amount;
-    if (parsed.vat_amount != null) document.getElementById('invReceiptVat').value   = parsed.vat_amount;
-    if (parsed.gross_amount != null) document.getElementById('invReceiptGross').value = parsed.gross_amount;
-
-    statusEl.style.background = 'rgba(62,207,142,.1)';
-    statusEl.innerHTML = `✓ Parsed — please review and adjust if needed.`;
-  } catch (err) {
-    console.error('Receipt OCR failed', err);
-    statusEl.style.background = 'rgba(208,2,27,.1)';
-    statusEl.innerHTML = `⚠ Could not parse — please fill in fields manually. (${escapeHtml(err.message || 'unknown')})`;
-  }
-}
-
-function _fileToDataUri(file) {
-  return new Promise((res, rej) => {
-    const r = new FileReader();
-    r.onload = () => res(r.result);
-    r.onerror = () => rej(new Error('Read failed'));
-    r.readAsDataURL(file);
-  });
-}
-
-function filterInvReceiptProjects(q) {
-  // same pattern as filterInvProjects but for the receipt modal
-  const dropdown = document.getElementById('invReceiptProjectDropdown');
-  if (!dropdown) return;
-  const lower = (q || '').toLowerCase().trim();
-  if (!lower) { dropdown.innerHTML = ''; return; }
-  const matches = _invProjectsCache
-    .filter(p => ((p.project_number || '') + ' ' + (p.project_name || '')).toLowerCase().includes(lower))
-    .slice(0, 6);
-  dropdown.innerHTML = `<div style="position:absolute;top:0;left:0;right:0;background:var(--surface);
-       border:1px solid var(--border);border-radius:6px;max-height:200px;overflow:auto;z-index:30">
-    ${matches.map(p => `
-      <div style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)"
-           onmousedown="selectInvReceiptProject(${p.id})"
-           onmouseover="this.style.background='var(--surface2)'"
-           onmouseout="this.style.background=''">
-        <span style="font-family:var(--font-mono);font-weight:600">${escapeHtml(p.project_number || '')}</span>
-        — ${escapeHtml(p.project_name || '')}
-      </div>`).join('')}
-    <div style="padding:8px 12px;cursor:pointer;font-size:13px;color:var(--muted);font-style:italic"
-         onmousedown="clearInvReceiptProject()">Clear</div>
-  </div>`;
-}
-function selectInvReceiptProject(id) {
-  const p = _invProjectsCache.find(x => x.id === id);
-  if (!p) return;
-  _invReceiptSelectedProject = p;
-  document.getElementById('invReceiptProjectSearch').value = `${p.project_number || ''} — ${p.project_name || ''}`;
-  document.getElementById('invReceiptProjectSelected').textContent = `✓ ${p.project_number || ''}`;
-  document.getElementById('invReceiptProjectDropdown').innerHTML = '';
-}
-function clearInvReceiptProject() {
-  _invReceiptSelectedProject = null;
-  document.getElementById('invReceiptProjectSearch').value = '';
-  document.getElementById('invReceiptProjectSelected').textContent = '';
-  document.getElementById('invReceiptProjectDropdown').innerHTML = '';
-}
-
-async function saveReceipt() {
-  const gross = Number(document.getElementById('invReceiptGross').value || 0);
-  if (!gross) { toast('Enter a gross amount', 'error'); return; }
-  const method = document.getElementById('invReceiptMethod').value;
-  const paidByEmpId = (method === 'personal')
-    ? Number(document.getElementById('invReceiptPaidBy').value) || null
-    : null;
-  const payload = {
-    receipt_date:        document.getElementById('invReceiptDate').value,
-    supplier_text:       document.getElementById('invReceiptSupplier').value || null,
-    category:            document.getElementById('invReceiptCategory').value || 'Other',
-    project_id:          _invReceiptSelectedProject ? _invReceiptSelectedProject.id : null,
-    net_amount:          Number(document.getElementById('invReceiptNet').value || 0) || null,
-    vat_amount:          Number(document.getElementById('invReceiptVat').value || 0) || null,
-    gross_amount:        gross,
-    payment_method:      method,
-    paid_by_employee_id: paidByEmpId,
-    notes:               document.getElementById('invReceiptNotes').value || null
-  };
-
-  const btn = document.getElementById('invReceiptSaveBtn');
-  try {
-    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
-    setLoading(true);
-
-    // Upload the receipt file to SharePoint first (if provided), then save the row with attachment ref
-    let attachment = null;
-    if (_invReceiptFile) {
-      const folder = await _findOrCreateReceiptFolder(payload.receipt_date, payload.category);
-      const stamp = (payload.supplier_text || 'receipt').replace(/\s+/g, '_').slice(0, 30);
-      const ext = (_invReceiptFile.name.split('.').pop() || 'jpg').toLowerCase();
-      const fileName = sanitizeSpFilename(`${payload.receipt_date}_${stamp}.${ext}`);
-      const driveItem = await uploadFileToFolder(folder.id, fileName, _invReceiptFile, _invReceiptFile.type || 'application/octet-stream');
-      attachment = {
-        sharepoint_id:  driveItem.id,
-        sharepoint_url: driveItem.webUrl,
-        filename:       fileName
-      };
-    }
-    payload.attachment = attachment;
-
-    const saved = await api.post('/api/receipts', payload);
-    toast(`Receipt saved ${saved.id ? '✓' : ''}`, 'success');
-    closeNewReceiptModal();
-    await loadInvoicingData();
-    switchInvTab('receipts');
-  } catch (err) {
-    console.error('Save receipt failed', err);
-    toast('Save failed: ' + (err.message || 'unknown'), 'error');
-  } finally {
-    setLoading(false);
-    if (btn) { btn.disabled = false; btn.textContent = 'Save Receipt'; }
-  }
-}
-
-// ═════════════════════════════════════════════════════════════════════════
 // SUPPLIER INVOICES — attach to existing PO + OCR
 // ═════════════════════════════════════════════════════════════════════════
 async function openAttachSupplierInvoiceModal() {
@@ -27787,3 +27568,626 @@ function drawBamaAfpPDF(jsPDF, d, logoDataUri) {
 
   return doc.output('blob');
 }
+
+
+// ═════════════════════════════════════════════════════════════════════════
+// BANK RECONCILIATION — page logic (reconcile.html)
+// ═════════════════════════════════════════════════════════════════════════
+// Commit 1: PIN gate, bank tiles with donut charts, Add/Edit bank modal.
+// Commit 2 will add statement upload + transaction table.
+// Commit 3 will add document matching.
+// ─────────────────────────────────────────────────────────────────────────
+
+let _recBankList        = [];   // loaded from /api/bank-accounts
+let _recSelectedBankId  = null; // currently active tile
+let _recSelectedStmtId  = null; // currently active statement
+let _recTxnList         = [];   // transactions for current statement view
+let _recTxnOffset       = 0;    // pagination offset
+const REC_TXN_PAGE      = 50;   // rows per page
+let _recSelectedTxnIds  = new Set(); // checked rows for bulk clear
+let _recClearTargetId   = null; // single-clear target
+let _recPendingPinUser  = null;
+
+// ── Init ─────────────────────────────────────────────────────────────────
+if (CURRENT_PAGE === 'reconcile') {
+  document.addEventListener('DOMContentLoaded', initReconcilePage);
+}
+
+async function initReconcilePage() {
+  setLoadingBar(20);
+  await loadTimesheetData();
+  setLoadingBar(60);
+
+  // Build employee grid
+  const grid = document.getElementById('recEmployeeGrid');
+  if (grid) {
+    const emps = (state.timesheetData.employees || []).filter(e => e.active !== false);
+    if (!emps.length) {
+      grid.innerHTML = '<div class="empty-state">No employees found</div>';
+    } else {
+      grid.innerHTML = emps.map(e => `
+        <div class="emp-card" onclick="recSelectEmployee('${e.id}')">
+          <div class="emp-avatar" style="width:48px;height:48px;font-size:20px;margin:0 auto 8px">
+            ${initials(e.name)}
+          </div>
+          <div style="font-size:13px;font-weight:600;text-align:center">${e.name}</div>
+        </div>
+      `).join('');
+    }
+  }
+  setLoadingBar(100);
+}
+
+function recSelectEmployee(empId) {
+  const emp = state.timesheetData.employees.find(e => String(e.id) === String(empId));
+  if (!emp) return;
+
+  // Check if already authed
+  const authed = sessionStorage.getItem('bama_mgr_authed');
+  if (authed) {
+    currentManagerUser = authed;
+    enterReconcilePage();
+    return;
+  }
+
+  _recPendingPinUser = { empId, name: emp.name };
+  document.getElementById('recPinUser').textContent = emp.name;
+  document.getElementById('recPinInput').value = '';
+  document.getElementById('recPinError').textContent = '';
+  document.getElementById('recPinModal').classList.add('active');
+  setTimeout(() => document.getElementById('recPinInput').focus(), 100);
+}
+
+async function verifyRecPin() {
+  if (!_recPendingPinUser) return;
+  const pin = document.getElementById('recPinInput').value.trim();
+  if (!pin) { document.getElementById('recPinError').textContent = 'Enter your PIN'; return; }
+
+  try {
+    const res = await api.post('/api/verify-pin', { employeeId: _recPendingPinUser.empId, pin });
+    if (!res.valid) { document.getElementById('recPinError').textContent = 'Incorrect PIN'; return; }
+  } catch {
+    document.getElementById('recPinError').textContent = 'Could not verify PIN';
+    return;
+  }
+
+  currentManagerUser = _recPendingPinUser.name;
+  sessionStorage.setItem('bama_mgr_authed', currentManagerUser);
+
+  // Bootstrap: if nobody has reconcile perm yet, grant it to the first login
+  await loadUserAccessData();
+  const hasAny = Object.values(userAccessData.users || {})
+    .some(u => u.permissions && u.permissions.reconcile);
+  if (!hasAny) {
+    await api.put(`/api/user-access/${_recPendingPinUser.empId}`, { reconcile: true });
+    if (userAccessData.users[currentManagerUser]) {
+      userAccessData.users[currentManagerUser].permissions.reconcile = true;
+    }
+    toast('Bootstrap: reconcile permission granted to ' + currentManagerUser, 'success');
+  }
+
+  document.getElementById('recPinModal').classList.remove('active');
+  enterReconcilePage();
+}
+
+async function enterReconcilePage() {
+  await loadUserAccessData();
+  const perms = getUserPermissions(currentManagerUser) || {};
+  if (!perms.reconcile) {
+    document.getElementById('recPinError').textContent = 'You do not have reconcile permission';
+    document.getElementById('recPinModal').classList.add('active');
+    return;
+  }
+
+  updateRecSidebar();
+  document.getElementById('screenRecSelect').classList.remove('active');
+  document.getElementById('recLayout').style.display = '';
+
+  await loadRecBanks();
+}
+
+function updateRecSidebar() {
+  const perms = getUserPermissions(currentManagerUser) || {};
+  const set = (id, show, label) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.style.display = show ? '' : 'none';
+    if (!show) el.title = `No ${label} permission`;
+  };
+  set('sidebarBtnTenders',        !!perms.tenders,                                'Tenders');
+  set('sidebarBtnQuotations',     !!(perms.viewQuotes || perms.editQuotes),        'Quotes');
+  set('sidebarBtnBabcockQuotes',  true,                                            'Babcock');
+  set('sidebarBtnProjectTracker', !!(perms.viewProjects || perms.editProjects),    'Projects');
+  set('sidebarBtnPurchaseOrders', !!(perms.viewPurchaseOrders || perms.editPurchaseOrders), 'POs');
+  set('sidebarBtnInvoicing',      !!perms.invoicing,                               'Invoicing');
+}
+
+// ── Load + render bank tiles ───────────────────────────────────────────────
+async function loadRecBanks() {
+  try {
+    _recBankList = await api.get('/api/bank-accounts');
+    renderRecTiles();
+  } catch (err) {
+    toast('Failed to load bank accounts: ' + err.message, 'error');
+  }
+}
+
+function renderRecTiles() {
+  const grid = document.getElementById('recTilesGrid');
+  if (!grid) return;
+
+  if (!_recBankList.length) {
+    grid.innerHTML = `
+      <div class="empty-state" style="grid-column:1/-1;padding:40px">
+        <div style="font-size:32px;margin-bottom:10px">🏦</div>
+        <div>No bank accounts yet</div>
+        <div style="margin-top:8px;font-size:12px;color:var(--subtle)">Click "+ Add Bank" to get started</div>
+      </div>`;
+    return;
+  }
+
+  grid.innerHTML = _recBankList.map(bank => {
+    const total    = Number(bank.total_transactions) || 0;
+    const resolved = Number(bank.resolved_transactions) || 0;
+    const unmatched= Number(bank.unmatched_transactions) || 0;
+    const isActive = _recSelectedBankId === bank.id;
+
+    const typeLabel = { current: 'Current', savings: 'Savings', credit_card: 'Credit Card' }[bank.account_type] || bank.account_type;
+    const metaParts = [bank.sort_code, bank.account_number].filter(Boolean);
+
+    return `
+      <div class="rec-bank-tile${isActive ? ' active' : ''}" onclick="selectRecBank(${bank.id})">
+        <span class="tile-type ${bank.account_type}">${typeLabel}</span>
+        <div class="tile-name">${escapeHtml(bank.bank_name)}</div>
+        <div class="tile-meta">${metaParts.length ? metaParts.join(' · ') : 'No account details'}</div>
+        ${buildRecDonut(total, resolved, unmatched)}
+      </div>`;
+  }).join('');
+}
+
+function buildRecDonut(total, resolved, unmatched) {
+  const cleared  = total - resolved - unmatched;
+  const matched  = resolved - cleared;
+  const r = 20;
+  const circ = 2 * Math.PI * r; // ~125.7
+
+  let matchedArc = 0, clearedArc = 0, unmatchedArc = 0;
+  if (total > 0) {
+    matchedArc  = (matched  / total) * circ;
+    clearedArc  = (cleared  / total) * circ;
+    unmatchedArc= (unmatched/ total) * circ;
+  }
+
+  const pct = total > 0 ? Math.round((resolved / total) * 100) : 0;
+
+  // Build the three arcs: matched (green), cleared (grey), unmatched (amber)
+  // Each arc starts where the previous one ended
+  let offset = circ / 4; // start at top (12 o'clock)
+
+  const matchedDash  = `${matchedArc.toFixed(1)} ${(circ - matchedArc).toFixed(1)}`;
+  const matchedOff   = -offset.toFixed(1);
+  offset += matchedArc;
+
+  const clearedDash  = `${clearedArc.toFixed(1)} ${(circ - clearedArc).toFixed(1)}`;
+  const clearedOff   = -(offset).toFixed(1);
+  offset += clearedArc;
+
+  const unmatchedDash= `${unmatchedArc.toFixed(1)} ${(circ - unmatchedArc).toFixed(1)}`;
+  const unmatchedOff = -(offset).toFixed(1);
+
+  const cx = 26, cy = 26, size = 52;
+  const stroke = 7;
+
+  return `
+    <div class="donut-row">
+      <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+        <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--border)" stroke-width="${stroke}"/>
+        ${matchedArc > 0 ? `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--green)"
+          stroke-width="${stroke}" stroke-dasharray="${matchedDash}" stroke-dashoffset="${matchedOff}"/>` : ''}
+        ${clearedArc > 0 ? `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--muted)"
+          stroke-width="${stroke}" stroke-dasharray="${clearedDash}" stroke-dashoffset="${clearedOff}"/>` : ''}
+        ${unmatchedArc > 0 ? `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--warn)"
+          stroke-width="${stroke}" stroke-dasharray="${unmatchedDash}" stroke-dashoffset="${unmatchedOff}"/>` : ''}
+        <text x="${cx}" y="${cy + 4}" text-anchor="middle" font-size="10" font-weight="600"
+              fill="var(--text)">${pct}%</text>
+      </svg>
+      <div class="donut-legend">
+        <div class="dl-row"><span class="dl-dot dl-green"></span>Matched<span class="dl-cnt">${matched}</span></div>
+        <div class="dl-row"><span class="dl-dot dl-grey"></span>Cleared<span class="dl-cnt">${cleared}</span></div>
+        <div class="dl-row"><span class="dl-dot dl-amber"></span>Unmatched<span class="dl-cnt">${unmatched}</span></div>
+      </div>
+    </div>`;
+}
+
+// ── Select bank tile → show two-pane ─────────────────────────────────────
+async function selectRecBank(bankId) {
+  _recSelectedBankId = bankId;
+  _recSelectedStmtId = null;
+  _recTxnList = [];
+  _recSelectedTxnIds.clear();
+  renderRecTiles();
+
+  const bank = _recBankList.find(b => b.id === bankId);
+  if (!bank) return;
+
+  document.getElementById('recTwoPane').style.display = '';
+  document.getElementById('recStmtPaneTitle').textContent = `${bank.bank_name} — statements`;
+  document.getElementById('recTxnPaneTitle').textContent = 'Transactions';
+  document.getElementById('recTxnPaneCount').textContent = '';
+  document.getElementById('recEditBankBtn').style.display = '';
+
+  // Clear transaction table
+  document.getElementById('recTxnTableWrap').innerHTML =
+    '<div class="rec-empty"><div class="rec-empty-icon">💳</div>Select a statement to view transactions</div>';
+  document.getElementById('recShowMore').style.display = 'none';
+
+  // Load statements (Commit 2 — placeholder for now)
+  renderRecStmtList([]);
+}
+
+function renderRecStmtList(stmts) {
+  const el = document.getElementById('recStmtList');
+  if (!stmts.length) {
+    el.innerHTML = '<div class="rec-empty"><div class="rec-empty-icon">📄</div>No statements uploaded yet</div>';
+    return;
+  }
+  el.innerHTML = stmts.map(s => `
+    <div class="stmt-row${_recSelectedStmtId === s.id ? ' active' : ''}" onclick="selectRecStmt(${s.id})">
+      <div class="sr-name">${escapeHtml(s.label || 'Statement')}</div>
+      <div class="sr-meta">${s.total_transactions} txns · ${s.matched_count} matched · ${s.total_transactions - s.matched_count} unmatched</div>
+    </div>
+  `).join('');
+}
+
+async function selectRecStmt(stmtId) {
+  _recSelectedStmtId = stmtId;
+  _recTxnOffset = 0;
+  _recSelectedTxnIds.clear();
+  // Will be wired to API in Commit 2
+  renderRecTxnTable();
+}
+
+// ── Transaction table ─────────────────────────────────────────────────────
+function renderRecTxnTable() {
+  const wrap = document.getElementById('recTxnTableWrap');
+  if (!_recTxnList.length) {
+    wrap.innerHTML = '<div class="rec-empty"><div class="rec-empty-icon">💳</div>No transactions to show</div>';
+    document.getElementById('recShowMore').style.display = 'none';
+    return;
+  }
+
+  const search = (document.getElementById('recTxnSearch')?.value || '').toLowerCase().trim();
+  const statusFilter = document.getElementById('recTxnStatusFilter')?.value || '';
+
+  let filtered = _recTxnList.filter(t => {
+    if (statusFilter && t.status !== statusFilter) return false;
+    if (search) {
+      const haystack = [t.transaction_date, t.description, String(t.amount), t.reference, t.cardholder]
+        .filter(Boolean).join(' ').toLowerCase();
+      if (!haystack.includes(search)) return false;
+    }
+    return true;
+  });
+
+  // Newest first (already sorted from API — just slice for pagination)
+  const page = filtered.slice(0, _recTxnOffset + REC_TXN_PAGE);
+  const hasMore = filtered.length > page.length;
+
+  const bank = _recBankList.find(b => b.id === _recSelectedBankId);
+  const isCreditCard = bank?.account_type === 'credit_card';
+
+  document.getElementById('recTxnPaneCount').textContent = `${filtered.length} transaction${filtered.length !== 1 ? 's' : ''}`;
+  document.getElementById('recShowMore').style.display = hasMore ? '' : 'none';
+
+  wrap.innerHTML = `
+    <table class="rec-txn-table">
+      <thead>
+        <tr>
+          <th style="width:32px"><input type="checkbox" class="rec-cb" id="recSelectAll" onchange="toggleRecSelectAll(this.checked)"></th>
+          <th onclick="sortRecTxns('transaction_date')" data-col="transaction_date">Date <span class="sort-arrow">↕</span></th>
+          <th onclick="sortRecTxns('description')" data-col="description">Description <span class="sort-arrow">↕</span></th>
+          ${isCreditCard ? '<th onclick="sortRecTxns(\'cardholder\')" data-col="cardholder">Cardholder <span class="sort-arrow">↕</span></th>' : ''}
+          <th onclick="sortRecTxns('amount')" data-col="amount" style="text-align:right">Amount <span class="sort-arrow">↕</span></th>
+          <th onclick="sortRecTxns('status')" data-col="status">Status <span class="sort-arrow">↕</span></th>
+          <th style="width:90px"></th>
+        </tr>
+      </thead>
+      <tbody>
+        ${page.map(t => buildRecTxnRow(t, isCreditCard)).join('')}
+      </tbody>
+    </table>`;
+
+  updateRecBulkToolbar();
+}
+
+function buildRecTxnRow(t, isCreditCard) {
+  const isCredit = Number(t.amount) >= 0;
+  const amtClass = isCredit ? 'amt-credit' : 'amt-debit';
+  const amtStr   = (isCredit ? '+' : '') + '£' + Math.abs(Number(t.amount)).toLocaleString('en-GB', { minimumFractionDigits: 2 });
+  const fxLine   = (t.original_currency && t.original_currency.trim() && t.original_currency.trim() !== 'GBP')
+    ? `<div class="amt-fx">${t.original_currency} ${Number(t.original_amount).toLocaleString('en-GB', { minimumFractionDigits: 2 })}</div>`
+    : '';
+
+  const pillMap = {
+    matched:      '<span class="status-pill pill-matched">✓ Matched</span>',
+    manual_match: '<span class="status-pill pill-manual">Manual</span>',
+    cleared:      `<span class="status-pill pill-cleared" title="${escapeHtml(t.clear_reason || '')}">Cleared</span>`,
+    unmatched:    '<span class="status-pill pill-unmatched">Unmatched</span>'
+  };
+  const pill = pillMap[t.status] || pillMap.unmatched;
+
+  const hasDoc = t.doc_count > 0;
+  const previewBtn = `<button class="row-icon-btn${hasDoc ? '' : ' dimmed'}" title="${hasDoc ? 'View document' : 'No document attached'}"
+    onclick="${hasDoc ? `previewRecTxnDoc(${t.id})` : ''}">📎</button>`;
+  const editBtn = `<button class="row-icon-btn" title="Edit transaction" onclick="openRecTxnEdit(${t.id})">✏️</button>`;
+
+  const actionCell = t.status === 'unmatched'
+    ? `<div class="row-actions">${previewBtn}${editBtn}<button class="attach-btn" onclick="openRecClearModal(${t.id})">Clear</button></div>`
+    : `<div class="row-actions">${previewBtn}${editBtn}</div>`;
+
+  const checked = _recSelectedTxnIds.has(t.id);
+
+  return `
+    <tr class="${t.status === 'matched' || t.status === 'manual_match' ? 'row-matched' : ''}" data-txn-id="${t.id}">
+      <td><input type="checkbox" class="rec-cb rec-row-cb" data-id="${t.id}"
+          ${checked ? 'checked' : ''} onchange="toggleRecRowSelect(${t.id}, this.checked)"></td>
+      <td>${escapeHtml(t.transaction_date || '')}</td>
+      <td>
+        <div style="font-size:12px">${escapeHtml(t.description || '')}</div>
+        ${t.reference ? `<div style="font-size:10px;color:var(--subtle)">${escapeHtml(t.reference)}</div>` : ''}
+        ${t.spending_category ? `<div style="font-size:10px;color:var(--muted)">${escapeHtml(t.spending_category)}</div>` : ''}
+      </td>
+      ${isCreditCard ? `<td style="font-size:11px;color:var(--muted)">${escapeHtml(t.cardholder || '—')}</td>` : ''}
+      <td style="text-align:right">
+        <div class="${amtClass}">${amtStr}</div>${fxLine}
+      </td>
+      <td>${pill}</td>
+      <td>${actionCell}</td>
+    </tr>`;
+}
+
+// ── Sorting ───────────────────────────────────────────────────────────────
+let _recSortCol = 'transaction_date';
+let _recSortDir = 'desc';
+
+function sortRecTxns(col) {
+  if (_recSortCol === col) {
+    _recSortDir = _recSortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    _recSortCol = col;
+    _recSortDir = col === 'transaction_date' ? 'desc' : 'asc';
+  }
+  _recTxnList.sort((a, b) => {
+    let va = a[col] ?? '', vb = b[col] ?? '';
+    if (col === 'amount') { va = Number(va); vb = Number(vb); }
+    if (va < vb) return _recSortDir === 'asc' ? -1 : 1;
+    if (va > vb) return _recSortDir === 'asc' ? 1 : -1;
+    return 0;
+  });
+  renderRecTxnTable();
+
+  // Update sort arrows
+  document.querySelectorAll('.rec-txn-table th[data-col]').forEach(th => {
+    th.classList.toggle('sorted', th.dataset.col === col);
+    const arrow = th.querySelector('.sort-arrow');
+    if (arrow) arrow.textContent = th.dataset.col === col ? (_recSortDir === 'asc' ? '↑' : '↓') : '↕';
+  });
+}
+
+// ── Search ────────────────────────────────────────────────────────────────
+function onRecTxnSearch(val) {
+  document.getElementById('recTxnSearchClear').style.display = val ? '' : 'none';
+  _recTxnOffset = 0;
+  renderRecTxnTable();
+}
+function clearRecTxnSearch() {
+  document.getElementById('recTxnSearch').value = '';
+  document.getElementById('recTxnSearchClear').style.display = 'none';
+  _recTxnOffset = 0;
+  renderRecTxnTable();
+}
+
+// ── Pagination ────────────────────────────────────────────────────────────
+function recLoadMoreTxns() {
+  _recTxnOffset += REC_TXN_PAGE;
+  renderRecTxnTable();
+}
+
+// ── Checkbox / bulk select ─────────────────────────────────────────────────
+function toggleRecRowSelect(id, checked) {
+  if (checked) _recSelectedTxnIds.add(id);
+  else _recSelectedTxnIds.delete(id);
+  updateRecBulkToolbar();
+}
+function toggleRecSelectAll(checked) {
+  document.querySelectorAll('.rec-row-cb').forEach(cb => {
+    const id = Number(cb.dataset.id);
+    cb.checked = checked;
+    if (checked) _recSelectedTxnIds.add(id);
+    else _recSelectedTxnIds.delete(id);
+  });
+  updateRecBulkToolbar();
+}
+function clearRecSelection() {
+  _recSelectedTxnIds.clear();
+  document.querySelectorAll('.rec-row-cb').forEach(cb => cb.checked = false);
+  const sa = document.getElementById('recSelectAll');
+  if (sa) sa.checked = false;
+  updateRecBulkToolbar();
+}
+function updateRecBulkToolbar() {
+  const toolbar = document.getElementById('recBulkToolbar');
+  const cnt     = document.getElementById('recBulkCount');
+  if (!toolbar) return;
+  const n = _recSelectedTxnIds.size;
+  toolbar.style.display = n > 0 ? '' : 'none';
+  if (cnt) cnt.textContent = `${n} selected`;
+}
+
+// ── Single clear modal ─────────────────────────────────────────────────────
+function openRecClearModal(txnId) {
+  const txn = _recTxnList.find(t => t.id === txnId);
+  if (!txn) return;
+  _recClearTargetId = txnId;
+  document.getElementById('recClearTxnInfo').textContent =
+    `${txn.transaction_date}  ·  ${txn.description}  ·  £${Math.abs(txn.amount).toFixed(2)}`;
+  document.getElementById('recClearReason').value = '';
+  document.getElementById('recClearModal').classList.add('active');
+  setTimeout(() => document.getElementById('recClearReason').focus(), 100);
+}
+
+async function confirmClearTxn() {
+  if (!_recClearTargetId) return;
+  const reason = document.getElementById('recClearReason').value.trim();
+  try {
+    await api.put(`/api/bank-transactions/${_recClearTargetId}/match`, {
+      status: 'cleared',
+      clear_reason: reason || null,
+      matched_by: currentManagerUser
+    });
+    const txn = _recTxnList.find(t => t.id === _recClearTargetId);
+    if (txn) { txn.status = 'cleared'; txn.clear_reason = reason; }
+    document.getElementById('recClearModal').classList.remove('active');
+    _recClearTargetId = null;
+    renderRecTxnTable();
+    await refreshRecTileStats();
+    toast('Transaction cleared', 'success');
+  } catch (err) {
+    toast('Clear failed: ' + err.message, 'error');
+  }
+}
+
+// ── Bulk clear modal ───────────────────────────────────────────────────────
+function openBulkClearModal() {
+  const ids = [..._recSelectedTxnIds];
+  if (!ids.length) return;
+  const txns = _recTxnList.filter(t => ids.includes(t.id));
+  document.getElementById('recBulkClearCount').textContent =
+    `${txns.length} transaction${txns.length !== 1 ? 's' : ''} selected`;
+  document.getElementById('recBulkClearReason').value = '';
+  document.getElementById('recBulkClearList').innerHTML = txns.map(t => `
+    <label style="display:flex;align-items:center;gap:8px;font-size:12px;padding:4px 0">
+      <input type="checkbox" class="rec-cb bulk-clear-cb" data-id="${t.id}" checked>
+      <span style="flex:1">${escapeHtml(t.description)}</span>
+      <span style="color:var(--muted);font-family:var(--font-mono)">£${Math.abs(Number(t.amount)).toFixed(2)}</span>
+      <span style="color:var(--muted)">${t.transaction_date}</span>
+    </label>`).join('');
+  document.getElementById('recBulkClearModal').classList.add('active');
+}
+
+async function confirmBulkClear() {
+  const checked = [...document.querySelectorAll('.bulk-clear-cb:checked')].map(cb => Number(cb.dataset.id));
+  if (!checked.length) { toast('No transactions selected', 'error'); return; }
+  const reason = document.getElementById('recBulkClearReason').value.trim();
+
+  let cleared = 0;
+  for (const id of checked) {
+    try {
+      await api.put(`/api/bank-transactions/${id}/match`, {
+        status: 'cleared', clear_reason: reason || null, matched_by: currentManagerUser
+      });
+      const txn = _recTxnList.find(t => t.id === id);
+      if (txn) { txn.status = 'cleared'; txn.clear_reason = reason; }
+      cleared++;
+    } catch { /* continue */ }
+  }
+
+  _recSelectedTxnIds.clear();
+  document.getElementById('recBulkClearModal').classList.remove('active');
+  renderRecTxnTable();
+  await refreshRecTileStats();
+  toast(`${cleared} transaction${cleared !== 1 ? 's' : ''} cleared`, 'success');
+}
+
+// ── Tile stats refresh ─────────────────────────────────────────────────────
+async function refreshRecTileStats() {
+  try {
+    _recBankList = await api.get('/api/bank-accounts');
+    renderRecTiles();
+  } catch { /* silently ignore */ }
+}
+
+// ── Add / Edit bank modal ─────────────────────────────────────────────────
+function openAddBankModal() {
+  document.getElementById('recBankModalTitle').textContent = '🏦 Add Bank Account';
+  document.getElementById('recBankEditId').value = '';
+  document.getElementById('recBankName').value = '';
+  document.getElementById('recBankAcctNo').value = '';
+  document.getElementById('recBankSortCode').value = '';
+  document.getElementById('recBankType').value = 'current';
+  document.getElementById('recBankModal').classList.add('active');
+  setTimeout(() => document.getElementById('recBankName').focus(), 100);
+}
+
+function openEditBankModal() {
+  const bank = _recBankList.find(b => b.id === _recSelectedBankId);
+  if (!bank) return;
+  document.getElementById('recBankModalTitle').textContent = '✏️ Edit Bank Account';
+  document.getElementById('recBankEditId').value = bank.id;
+  document.getElementById('recBankName').value = bank.bank_name;
+  document.getElementById('recBankAcctNo').value = bank.account_number || '';
+  document.getElementById('recBankSortCode').value = bank.sort_code || '';
+  document.getElementById('recBankType').value = bank.account_type || 'current';
+  document.getElementById('recBankModal').classList.add('active');
+  setTimeout(() => document.getElementById('recBankName').focus(), 100);
+}
+
+function closeRecBankModal() {
+  document.getElementById('recBankModal').classList.remove('active');
+}
+
+async function saveRecBank() {
+  const name     = document.getElementById('recBankName').value.trim();
+  const acctNo   = document.getElementById('recBankAcctNo').value.trim();
+  const sortCode = document.getElementById('recBankSortCode').value.trim();
+  const type     = document.getElementById('recBankType').value;
+  const editId   = document.getElementById('recBankEditId').value;
+
+  if (!name) { toast('Bank name is required', 'error'); return; }
+
+  const btn = document.getElementById('recBankSaveBtn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+
+  try {
+    const payload = { bank_name: name, account_number: acctNo || null, sort_code: sortCode || null, account_type: type };
+    if (editId) {
+      await api.put(`/api/bank-accounts/${editId}`, payload);
+      toast('Bank account updated', 'success');
+    } else {
+      await api.post('/api/bank-accounts', payload);
+      toast('Bank account added', 'success');
+    }
+    closeRecBankModal();
+    await loadRecBanks();
+  } catch (err) {
+    toast('Save failed: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Save';
+  }
+}
+
+// ── Drag-and-drop stubs (Commit 3 implementation) ─────────────────────────
+function onRecDragOver(e)  { e.preventDefault(); document.getElementById('recDropZone').classList.add('drag-over'); }
+function onRecDragLeave(e) { document.getElementById('recDropZone').classList.remove('drag-over'); }
+function onRecDrop(e)      {
+  e.preventDefault();
+  document.getElementById('recDropZone').classList.remove('drag-over');
+  const file = e.dataTransfer?.files?.[0];
+  if (file) onRecDocFilePicked(file);
+}
+function onRecDocFilePicked(file) {
+  if (!file) return;
+  if (!_recSelectedBankId) { toast('Select a bank first', 'error'); return; }
+  toast('Document matching coming in Commit 3', 'info');
+  // Full implementation in Commit 3
+}
+
+// ── Statement upload stub (Commit 2 implementation) ───────────────────────
+function openUploadStatementModal() {
+  toast('Statement upload coming in Commit 2', 'info');
+}
+
+// ── Preview / edit stubs (Commit 3) ──────────────────────────────────────
+function previewRecTxnDoc(txnId) { toast('Document preview coming in Commit 3', 'info'); }
+function openRecTxnEdit(txnId)   { toast('Transaction edit coming in Commit 3', 'info'); }
+

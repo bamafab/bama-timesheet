@@ -31,7 +31,7 @@ app.http('user-access-get', {
                         tenders: false, edit_quotes: false, view_quotes: false,
                         edit_projects: false, view_projects: false,
                         view_purchase_orders: false, edit_purchase_orders: false,
-                        invoicing: false, afps: false
+                        invoicing: false, afps: false, reconcile: false
                     }, request);
                 }
                 return ok(result.recordset[0], request);
@@ -71,7 +71,7 @@ app.http('user-access-update', {
                 'user_access', 'draftsman_mode', 'tenders', 'edit_quotes', 'view_quotes',
                 'edit_projects', 'view_projects',
                 'view_purchase_orders', 'edit_purchase_orders',
-                'invoicing', 'afps'
+                'invoicing', 'afps', 'reconcile'
             ];
 
             // Map camelCase from frontend to snake_case
@@ -82,7 +82,7 @@ app.http('user-access-update', {
                 tenders: 'tenders', editQuotes: 'edit_quotes', viewQuotes: 'view_quotes',
                 editProjects: 'edit_projects', viewProjects: 'view_projects',
                 viewPurchaseOrders: 'view_purchase_orders', editPurchaseOrders: 'edit_purchase_orders',
-                invoicing: 'invoicing', afps: 'afps'
+                invoicing: 'invoicing', afps: 'afps', reconcile: 'reconcile'
             };
 
             // Check if row exists
