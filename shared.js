@@ -27718,9 +27718,12 @@ function updateRecSidebar() {
 async function loadRecBanks() {
   try {
     const res = await api.get('/api/bank-accounts');
+    console.log('[Reconcile] loadRecBanks response:', res);
     _recBankList = Array.isArray(res) ? res : [];
+    console.log('[Reconcile] _recBankList length:', _recBankList.length);
     renderRecTiles();
   } catch (err) {
+    console.error('[Reconcile] loadRecBanks error:', err);
     toast('Failed to load bank accounts: ' + err.message, 'error');
   }
 }
@@ -28164,14 +28167,25 @@ async function saveRecBank() {
   try {
     const payload = { bank_name: name, account_number: acctNo || null, sort_code: sortCode || null, account_type: type };
     if (editId) {
-      await api.put(`/api/bank-accounts/${editId}`, payload);
+      const updated = await api.put(`/api/bank-accounts/${editId}`, payload);
+      // Patch local list immediately
+      const idx = _recBankList.findIndex(b => String(b.id) === String(editId));
+      if (idx >= 0 && updated && updated.id) _recBankList[idx] = { ..._recBankList[idx], ...updated };
+      renderRecTiles();
       toast('Bank account updated', 'success');
     } else {
-      await api.post('/api/bank-accounts', payload);
+      const saved = await api.post('/api/bank-accounts', payload);
+      console.log('[Reconcile] saveRecBank POST response:', saved);
+      // Add to local list immediately so tile appears without waiting for GET
+      if (saved && saved.id) {
+        _recBankList.push({ ...saved, total_transactions: 0, resolved_transactions: 0, unmatched_transactions: 0 });
+      }
+      renderRecTiles();
       toast('Bank account added', 'success');
     }
     closeRecBankModal();
-    await loadRecBanks();
+    // Refresh from server in background to get accurate stats
+    loadRecBanks();
   } catch (err) {
     toast('Save failed: ' + err.message, 'error');
   } finally {
