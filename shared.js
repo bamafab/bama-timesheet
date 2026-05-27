@@ -9172,7 +9172,7 @@ const PIN_IDLE_MS = 10 * 60 * 1000; // 10 minutes
 let _pinActivityThrottle = 0;
 
 function pinSessionGet() {
-  const name = pinSessionGet();
+  const name = sessionStorage.getItem('bama_mgr_authed');
   if (!name) return null;
   const ts = parseInt(sessionStorage.getItem('bama_mgr_authed_at') || '0', 10);
   if (Date.now() - ts > PIN_IDLE_MS) { pinSessionClear(); return null; }
@@ -9180,12 +9180,12 @@ function pinSessionGet() {
 }
 
 function pinSessionSet(name) {
-  pinSessionSet(name);
+  sessionStorage.setItem('bama_mgr_authed', name);
   sessionStorage.setItem('bama_mgr_authed_at', String(Date.now()));
 }
 
 function pinSessionClear() {
-  pinSessionClear();
+  sessionStorage.removeItem('bama_mgr_authed');
   sessionStorage.removeItem('bama_mgr_authed_at');
 }
 
