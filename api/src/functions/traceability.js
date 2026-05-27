@@ -464,3 +464,65 @@ app.http('suppliers-delete', {
         }
     }
 });
+
+// POST /api/suppliers/merge — merge one or more duplicate suppliers into a single kept supplier
+// Body: { keep_id: number, merge_ids: number[] }
+// Repoints all PurchaseOrders, deletes services, then soft-deletes the merged rows.
+app.http('suppliers-merge', {
+    methods: ['POST'],
+    authLevel: 'anonymous',
+    route: 'suppliers/merge',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const body = await request.json();
+            const keepId = parseInt(body.keep_id);
+            const mergeIds = (body.merge_ids || []).map(Number).filter(id => id !== keepId);
+
+            if (!keepId || !mergeIds.length) return badRequest('keep_id and at least one merge_id are required', request);
+
+            // Verify the keep supplier exists
+            const keepCheck = await query('SELECT id FROM Suppliers WHERE id = @id AND is_active = 1', { id: keepId });
+            if (!keepCheck.recordset.length) return notFound('Keep supplier not found', request);
+
+            // Build comma-separated id list for IN clause (safe — all are parsed ints)
+            const idList = mergeIds.join(',');
+
+            // 1. Repoint all POs from merged suppliers to the kept supplier
+            const poResult = await query(
+                `UPDATE PurchaseOrders SET supplier_id = @keepId WHERE supplier_id IN (${idList})`,
+                { keepId }
+            );
+            const posMoved = poResult.rowsAffected?.[0] ?? 0;
+
+            // 2. Merge services: insert any services the merged suppliers had that the kept one doesn't
+            await query(
+                `INSERT INTO SupplierServices (supplier_id, service_type_id)
+                 SELECT @keepId, service_type_id
+                 FROM SupplierServices
+                 WHERE supplier_id IN (${idList})
+                   AND service_type_id NOT IN (
+                     SELECT service_type_id FROM SupplierServices WHERE supplier_id = @keepId
+                   )`,
+                { keepId }
+            );
+
+            // 3. Remove old service rows for merged suppliers
+            await query(`DELETE FROM SupplierServices WHERE supplier_id IN (${idList})`, {});
+
+            // 4. Soft-delete the merged supplier rows
+            await query(
+                `UPDATE Suppliers SET is_active = 0, updated_at = GETUTCDATE() WHERE id IN (${idList})`,
+                {}
+            );
+
+            return ok({ merged: mergeIds.length, posMoved }, request);
+        } catch (err) {
+            context.error('Error merging suppliers:', err);
+            return serverError('Failed to merge suppliers', request);
+        }
+    }
+});
+

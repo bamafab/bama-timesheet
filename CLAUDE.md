@@ -613,6 +613,18 @@ none of this is built yet.
   Should also fuzzy-match the supplier name in the parsed quote against
   `Suppliers` and pre-select. Aim: human reviews and confirms — never
   auto-creates the PO without confirmation.
+- **Supplier detail view + invoice upload** — clicking a supplier in the
+  Office → Suppliers tab will open a detail panel showing all POs for
+  that supplier, grouped by status (Open / Received / Matched /
+  Discrepancy / Closed). Each PO row expandable to show line items.
+  A file-upload area on the panel lets office staff attach a supplier
+  invoice directly to the supplier record: the PDF is saved to SharePoint
+  under `01 - Accounts/04 - Supplier Invoices/YYYY/MM/` and linked to the
+  matching PO via the existing `PUT /api/purchase-orders/{id}/supplier-invoice`
+  flow (with Claude vision OCR pre-filling supplier / date / net / VAT /
+  gross for review before saving). Essentially a supplier-first entry
+  point for the supplier invoice workflow that already exists in the
+  Invoice Tracker.
 - **Instant PO** — "I'm on the phone to a supplier and need a PO number
   RIGHT NOW" flow. Button on the PO Tracker (and ideally a kiosk
   shortcut). Asks only for supplier name (autocomplete from `Suppliers`,

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Office</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260526e">
+<link rel="stylesheet" href="bama.css?v=20260527c">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 </head>
 <body>
@@ -596,6 +596,7 @@
         <div style="font-size:13px;color:var(--muted);margin-bottom:16px">Manage suppliers and the services they offer.</div>
         <div style="display:flex;gap:10px;margin-bottom:16px">
           <button class="btn btn-primary" onclick="openAddSupplierForm()">+ Add Supplier</button>
+          <button class="btn btn-ghost" onclick="openMergeSuppliersModal()">⇄ Merge Duplicates</button>
           <button class="btn btn-ghost" onclick="toggleManageServices()">⚙️ Manage Services</button>
         </div>
 
@@ -1059,6 +1060,34 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-<script src="shared.js?v=20260526e"></script>
+<div class="modal-overlay" id="mergeSuppliersModal">
+  <div class="modal" style="width:500px;max-width:95vw">
+    <div class="modal-title">⇄ Merge Duplicate Suppliers</div>
+    <p style="font-size:13px;color:var(--muted);margin:-10px 0 18px 0">Choose the supplier to keep, then tick every duplicate that should be merged into it. All their POs will be repointed and duplicates removed.</p>
+
+    <div style="margin-bottom:14px">
+      <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px">Keep this supplier</label>
+      <select id="mergeKeepSelect" class="field-input" onchange="onMergeKeepChange()" style="width:100%">
+        <option value="">Select supplier to keep…</option>
+      </select>
+    </div>
+
+    <div style="margin-bottom:6px">
+      <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px">Merge these duplicates into it</label>
+      <div id="mergeDuplicateList" style="max-height:240px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:4px">
+        <div style="font-size:12px;color:var(--subtle);padding:10px;text-align:center">Select a supplier to keep first</div>
+      </div>
+    </div>
+
+    <div id="mergeSummary" style="display:none;margin:12px 0;padding:10px 14px;background:rgba(255,107,0,.08);border:1px solid rgba(255,107,0,.3);border-radius:8px;font-size:12px;color:var(--accent)"></div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeMergeSuppliersModal()">Cancel</button>
+      <button class="btn btn-primary" id="mergeConfirmBtn" onclick="confirmMergeSuppliers()" disabled style="background:var(--red);border-color:var(--red)">Merge &amp; Remove Duplicates</button>
+    </div>
+  </div>
+</div>
+
+<script src="shared.js?v=20260527c"></script>
 </body>
 </html>

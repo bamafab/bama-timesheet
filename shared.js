@@ -7139,6 +7139,81 @@ async function deleteSupplier(id, name) {
   } catch (e) { toast('Delete failed', 'error'); }
 }
 
+// ── Merge Duplicate Suppliers ────────────────────────────────────────────────
+function openMergeSuppliersModal() {
+  const sel = document.getElementById('mergeKeepSelect');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">Select supplier to keep…</option>';
+  (_suppliers || []).slice().sort((a, b) => a.supplier_name.localeCompare(b.supplier_name)).forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = s.supplier_name;
+    sel.appendChild(opt);
+  });
+  document.getElementById('mergeDuplicateList').innerHTML =
+    '<div style="font-size:12px;color:var(--subtle);padding:10px;text-align:center">Select a supplier to keep first</div>';
+  document.getElementById('mergeSummary').style.display = 'none';
+  document.getElementById('mergeConfirmBtn').disabled = true;
+  document.getElementById('mergeSuppliersModal').classList.add('active');
+}
+
+function closeMergeSuppliersModal() {
+  document.getElementById('mergeSuppliersModal').classList.remove('active');
+}
+
+function onMergeKeepChange() {
+  const keepId = parseInt(document.getElementById('mergeKeepSelect').value);
+  const list = document.getElementById('mergeDuplicateList');
+  if (!keepId) {
+    list.innerHTML = '<div style="font-size:12px;color:var(--subtle);padding:10px;text-align:center">Select a supplier to keep first</div>';
+    document.getElementById('mergeConfirmBtn').disabled = true;
+    return;
+  }
+  const others = (_suppliers || []).filter(s => s.id !== keepId)
+    .sort((a, b) => a.supplier_name.localeCompare(b.supplier_name));
+  list.innerHTML = others.map(s => `
+    <label style="display:flex;align-items:center;gap:10px;padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--border);font-size:13px" onchange="updateMergeSummary()">
+      <input type="checkbox" value="${s.id}" style="width:15px;height:15px;flex-shrink:0">
+      <span style="flex:1">${s.supplier_name}</span>
+      ${s.city ? `<span style="font-size:11px;color:var(--muted)">${s.city}</span>` : ''}
+    </label>`).join('');
+  updateMergeSummary();
+}
+
+function updateMergeSummary() {
+  const checked = document.querySelectorAll('#mergeDuplicateList input[type=checkbox]:checked');
+  const btn = document.getElementById('mergeConfirmBtn');
+  const summary = document.getElementById('mergeSummary');
+  if (!checked.length) {
+    btn.disabled = true;
+    summary.style.display = 'none';
+    return;
+  }
+  const keepName = document.getElementById('mergeKeepSelect').selectedOptions[0]?.text || '';
+  const names = [...checked].map(cb => cb.closest('label').querySelector('span').textContent.trim());
+  summary.style.display = 'block';
+  summary.innerHTML = `<b>${names.join(', ')}</b> will be merged into <b>${keepName}</b>. Their POs will be repointed and the duplicate entries removed.`;
+  btn.disabled = false;
+}
+
+async function confirmMergeSuppliers() {
+  const keepId = parseInt(document.getElementById('mergeKeepSelect').value);
+  const mergeIds = [...document.querySelectorAll('#mergeDuplicateList input[type=checkbox]:checked')].map(cb => parseInt(cb.value));
+  if (!keepId || !mergeIds.length) return;
+
+  const keepName = document.getElementById('mergeKeepSelect').selectedOptions[0]?.text || '';
+  if (!confirm(`Merge ${mergeIds.length} supplier(s) into "${keepName}"? This cannot be undone.`)) return;
+
+  try {
+    const result = await api.post('/api/suppliers/merge', { keep_id: keepId, merge_ids: mergeIds });
+    closeMergeSuppliersModal();
+    toast(`Merged — ${result.posMoved || 0} PO(s) repointed to ${keepName}`, 'success');
+    renderSuppliersTab();
+  } catch (e) {
+    toast('Merge failed — ' + (e.message || 'unknown error'), 'error');
+  }
+}
+
 // ── Service Type Management ──
 function toggleManageServices() {
   const area = document.getElementById('manageServicesArea');
