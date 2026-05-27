@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Projects & Jobs</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260527n">
+<link rel="stylesheet" href="bama.css?v=20260527o">
 </head>
 <body>
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
@@ -383,6 +383,48 @@
 </div>
 
 <!-- ═══════════════════════════════════════
+     BOM MANUAL REVIEW MODAL (commit 9 — SPEC §6)
+     Loose items OCR'd from supplier slips/quotations
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="bomManualReviewModal">
+  <div class="modal" style="width:720px;max-width:96vw">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:4px">
+      <div class="modal-title" style="margin:0">Review BOM lines</div>
+      <span id="bmrCounter" style="font-size:12px;color:var(--subtle)"></span>
+    </div>
+    <div id="bmrFileName" style="color:var(--muted);font-size:12px;margin-bottom:14px"></div>
+
+    <div style="margin-bottom:14px">
+      <div class="field-label">FINISH (applies to all lines from this PDF)</div>
+      <select class="field-input" id="bmrFinish"></select>
+      <div style="font-size:11px;color:var(--subtle);margin-top:4px">No finish = lines land in <i>Ready for despatch</i>. Pick a finish to send them to a supplier first.</div>
+    </div>
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <div class="field-label" style="margin:0">LINES</div>
+      <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="bmrAddRow()">&#43; Add row</button>
+    </div>
+
+    <div style="background:var(--bg-darker);border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:16px;overflow:auto;max-height:50vh">
+      <table style="width:100%;font-size:12px;border-collapse:collapse;min-width:600px">
+        <thead><tr style="color:var(--subtle);text-align:left">
+          <th style="font-weight:400;padding:4px 6px 4px 0">Description</th>
+          <th style="font-weight:400;padding:4px 6px;text-align:right">Qty</th>
+          <th style="font-weight:400;padding:4px 6px">Extras (read-only — discarded on save)</th>
+          <th></th>
+        </tr></thead>
+        <tbody id="bmrRowsTbody"></tbody>
+      </table>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="bmrSkipCurrent()">Skip this PDF</button>
+      <button class="btn btn-primary" id="bmrSaveBtn" onclick="bmrSaveAndNext()">Save &amp; continue &rarr;</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
      COMPLETE TASK MODAL
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="completeTaskModal">
@@ -626,6 +668,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-<script src="shared.js?v=20260527ae"></script>
+<script src="shared.js?v=20260527af"></script>
 </body>
 </html>

@@ -10302,6 +10302,16 @@ let _assemblyQueue = [];
 let _assemblyReviewIndex = 0;
 let _finishesCache = null;
 
+// BOM flow state (commit 9 — SPEC §6).
+//   _bomItemsByJob: cache keyed by SQL job_id → array of
+//     { ...JobBomItems row, finish_name, supplier_name, source_assembly_mark }
+//   _bomManualQueue: array of pending manual-upload OCR items, one per PDF.
+//     Each: { file, sharepoint:{...}, ocr:{ items:[{description,quantity,...}] } }
+//   _bomManualReviewIndex: which queued PDF is currently in the review modal
+let _bomItemsByJob = {};
+let _bomManualQueue = [];
+let _bomManualReviewIndex = 0;
+
 // ── Load / Save drawings data ──
 async function loadDrawingsData() {
   // STEP 1 — pull the legacy SharePoint blob.
@@ -11036,6 +11046,7 @@ function openJobDetail(projectId, jobId) {
   Promise.all([
     loadBomData(projectId),
     loadJobAssemblies(jobIdInt),
+    loadJobBomItems(jobIdInt),
     loadFinishes()
   ]).then(() => renderAllElements()).catch(() => renderAllElements());
 }
@@ -11463,122 +11474,508 @@ async function confirmAddBomItem() {
   renderBOM();
 }
 
-// ── Render BOM Element ──
+
+// ═══════════════════════════════════════════
+// ELEMENT 1: BOM (job-fabrication rework — see SPEC §6)
+// ═══════════════════════════════════════════
+//
+// The BOM section is now a unified despatch queue driven by SQL
+// (JobBomItems). Two routes in:
+//   - Route A: Manual upload — supplier slip / quotation PDF, OCR'd
+//     to N line items, bulk-saved via /api/job-bom-items/bulk
+//   - Route B: Auto from fabricated assembly — created by the
+//     fabricate endpoint in commit 8
+//
+// Status state machine (see SPEC §6):
+//   pending → at_supplier → ready_for_despatch → despatched
+//   (no-finish items skip to ready_for_despatch on create)
+//
+// Legacy code paths below this function (renderBomTable,
+// openUploadBomModal, openAddBomItemModal, buildDeliveryNoteHTML,
+// the whole materialLists/deliveryNotes machinery) are dead — kept
+// in place for commit 12's wipe sweep, but unreachable from the UI.
+
+async function loadJobBomItems(jobId) {
+  if (!jobId) return [];
+  try {
+    const rows = await api.get(`/api/job-bom-items?job_id=${encodeURIComponent(jobId)}`);
+    _bomItemsByJob[jobId] = Array.isArray(rows) ? rows : [];
+    return _bomItemsByJob[jobId];
+  } catch (e) {
+    console.warn('Load BOM items failed:', e.message);
+    _bomItemsByJob[jobId] = [];
+    return [];
+  }
+}
+
+const BOM_STATUS_LABEL = {
+  pending:             'Pending',
+  at_supplier:         'At supplier',
+  ready_for_despatch:  'Ready for despatch',
+  despatched:          'Despatched'
+};
+
 function renderBOM() {
   const container = document.getElementById('bomContent');
   if (!container) return;
 
-  const bomJob = getBomDataForJob(currentProject?.id, currentJob?.id);
-  const lists = bomJob.materialLists || [];
-  const allItems = lists.flatMap(ml => ml.items || []);
-  const status = document.getElementById('elementBOMStatus');
+  const jobId = currentJob?.id ? parseInt(currentJob.id) : null;
+  const items = (jobId && _bomItemsByJob[jobId]) || [];
 
-  if (allItems.length > 0) {
-    const fabDone = allItems.filter(i => i.fabricated && i.status !== 'not_started').length;
-    const fabTotal = allItems.filter(i => i.fabricated).length;
-    status.textContent = `${allItems.length} items · ${fabDone}/${fabTotal} fabricated`;
-    status.style.cssText = fabDone === fabTotal && fabTotal > 0
-      ? 'color:var(--green);background:rgba(62,207,142,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600'
-      : 'color:var(--accent);background:rgba(255,107,0,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600';
-  } else {
-    const bom = currentJob.bom || { files: [], notes: [] };
-    status.textContent = bom.files?.length > 0 ? `${bom.files.length} file${bom.files.length>1?'s':''}` : 'Empty';
-    status.style.cssText = bom.files?.length > 0
-      ? 'color:var(--green);background:rgba(62,207,142,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600'
-      : 'color:var(--subtle);font-size:11px;font-weight:600';
+  // Header status badge
+  const status = document.getElementById('elementBOMStatus');
+  if (status) {
+    if (items.length === 0) {
+      status.textContent = 'Empty';
+      status.style.cssText = 'color:var(--subtle);font-size:11px;font-weight:600';
+    } else {
+      const pending = items.filter(i => i.status === 'pending').length;
+      const ready   = items.filter(i => i.status === 'ready_for_despatch').length;
+      const done    = items.filter(i => i.status === 'despatched').length;
+      const total   = items.length;
+      const allDone = done === total;
+      status.textContent = `${total} item${total > 1 ? 's' : ''} · ${done}/${total} despatched`;
+      status.style.cssText = allDone
+        ? 'color:var(--green);background:rgba(62,207,142,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600'
+        : 'color:var(--accent);background:rgba(255,107,0,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600';
+    }
   }
 
   let html = '';
 
-  // Toolbar
-  html += '<div class="bom-toolbar">';
-  if (isDraftsman && currentJob.status !== 'closed') {
-    html += `<button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="openUploadBomModal()">&#128196; Upload BOM PDF</button>`;
-    html += `<button class="btn" style="padding:8px 16px;font-size:12px;background:rgba(255,107,0,.08);border:1px solid rgba(255,107,0,.25);color:var(--accent)" onclick="openAddBomItemModal()">&#43; Add Item</button>`;
-  }
-  // Legacy file upload button
-  if (isDraftsman && currentJob.status !== 'closed') {
-    html += `<button class="btn btn-ghost" style="padding:8px 16px;font-size:12px" onclick="openUploadFileModal('bom')">&#128196; Upload File</button>`;
-  }
-  html += '</div>';
-
-  // Show material lists
-  if (allItems.length > 0) {
-    // Progress bar
-    const fabItems = allItems.filter(i => i.fabricated);
-    const fabDone = fabItems.filter(i => i.status !== 'not_started').length;
-    const pct = fabItems.length ? Math.round(fabDone / fabItems.length * 100) : 0;
-    const dispatchedCount = allItems.filter(i => ['dispatched','returned','delivered_to_site','complete'].includes(i.status)).length;
-    html += `<div style="background:var(--surface);border:1.5px solid ${pct === 100 ? 'rgba(62,207,142,.4)' : 'rgba(255,107,0,.25)'};border-radius:12px;padding:16px 20px;margin-bottom:16px">`;
-    html += `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">`;
-    html += `<div style="font-size:14px;font-weight:600">Fabrication Progress</div>`;
-    html += `<div style="font-size:28px;font-weight:700;font-family:var(--font-mono);color:${pct === 100 ? 'var(--green)' : 'var(--accent)'}">${pct}%</div>`;
-    html += `</div>`;
-    html += `<div style="height:12px;background:var(--border);border-radius:6px;overflow:hidden">`;
-    html += `<div style="height:100%;border-radius:6px;width:${pct}%;background:${pct === 100 ? 'var(--green)' : 'var(--accent)'};transition:width .4s"></div>`;
-    html += `</div>`;
-    html += `<div style="display:flex;gap:16px;margin-top:10px;font-size:12px;color:var(--muted)">`;
-    html += `<span>${fabDone}/${fabItems.length} fabricated</span>`;
-    html += `<span>${allItems.length - fabItems.length} non-fab</span>`;
-    html += `<span>${dispatchedCount} dispatched</span>`;
-    html += `</div></div>`;
-
-    // Per-list sections
-    for (const ml of lists) {
-      if (!ml.items?.length) continue;
-      html += `<div class="bom-list-header">`;
-      const displayTitle = ml.fileName || (ml.metadata?.title || 'Material List').substring(0, 60);
-      html += `<div class="bom-list-title">${displayTitle}</div>`;
-      html += `<div class="bom-list-badge">${ml.items.length} items</div>`;
-      if (ml.webUrl) html += `<a href="${ml.webUrl}" target="_blank" style="font-size:11px;color:var(--accent);text-decoration:none">View PDF</a>`;
-      html += `</div>`;
-
-      // Filter bar
-      const coatings = [...new Set(ml.items.map(i => i.coating).filter(Boolean))];
-      const statuses = [...new Set(ml.items.map(i => i.status))];
-      html += `<div class="bom-filter-bar">`;
-      html += `<select onchange="bomFilterCoating=this.value;renderBomTable('${ml.id}')"><option value="">All coatings</option>${coatings.map(c => `<option value="${c}" ${bomFilterCoating===c?'selected':''}>${c}</option>`).join('')}</select>`;
-      html += `<select onchange="bomFilterStatus=this.value;renderBomTable('${ml.id}')"><option value="">All statuses</option>${statuses.map(s => `<option value="${s}" ${bomFilterStatus===s?'selected':''}>${s.replace(/_/g,' ')}</option>`).join('')}</select>`;
-      html += `<select onchange="bomFilterFab=this.value;renderBomTable('${ml.id}')"><option value="">All types</option><option value="true" ${bomFilterFab==='true'?'selected':''}>Fabricated</option><option value="false" ${bomFilterFab==='false'?'selected':''}>Non-fabricated</option></select>`;
-      html += `<input type="text" placeholder="Search mark..." value="${bomFilterMark}" oninput="bomFilterMark=this.value;renderBomTable('${ml.id}')" style="max-width:120px">`;
-      html += `</div>`;
-
-      // Table container
-      html += `<div id="bomTableWrap-${ml.id}" style="max-height:400px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:16px"></div>`;
-    }
-
-    // Bulk actions bar
-    html += `<div id="bomBulkBar" style="display:none" class="bom-select-all-bar">`;
-    html += `<span id="bomSelCount">0 selected</span>`;
-    html += `<div class="bom-bulk-actions">`;
-    html += `<button class="btn btn-success" style="padding:6px 14px;font-size:12px" onclick="bulkMarkFabricated()">&#10003; Mark as fabricated</button>`;
-    if (isDraftsman) {
-      html += `<button class="btn btn-primary" style="padding:6px 14px;font-size:12px" onclick="openGenerateDnModal()">&#128666; Generate Delivery Note</button>`;
-    }
-    html += `</div></div>`;
-  } else {
-    // Legacy file list
-    const bom = currentJob.bom || { files: [], notes: [] };
-    if (bom.files?.length > 0) {
-      html += bom.files.map(f => renderFileRow(f, 'bom')).join('');
-    } else {
-      html += '<div style="color:var(--subtle);font-size:13px;padding:12px 0">No material lists uploaded yet. Use "Upload BOM PDF" to parse a material list.</div>';
-    }
+  // Toolbar: drop-zone for manual loose-item uploads (draftsman, job open)
+  if (isDraftsman && currentJob && currentJob.status !== 'closed') {
+    html += `
+      <div class="upload-zone" id="bomDropZone"
+           style="margin-bottom:14px;cursor:pointer"
+           onclick="document.getElementById('bomManualFileInput').click()">
+        <div class="upload-zone-icon">&#128228;</div>
+        <div class="upload-zone-text">Drop loose-item PDFs here</div>
+        <div style="color:var(--subtle);font-size:11px;margin-top:4px">
+          quotations, delivery slips, etc. · OCR'd to BOM rows · 1–100+ lines per file
+        </div>
+      </div>
+      <input type="file" id="bomManualFileInput" accept=".pdf,.PDF" multiple
+             style="display:none" onchange="onBomManualFilesPicked(this.files)">
+    `;
   }
 
-  // Notes
-  const bom = currentJob.bom || { files: [], notes: [] };
-  html += renderNotesSection(bom.notes || [], 'bom');
+  if (items.length === 0) {
+    html += '<div style="color:var(--subtle);font-size:13px;padding:8px 0">No BOM items yet. Drop a supplier slip above, or mark an assembly fabricated to auto-generate a row.</div>';
+    container.innerHTML = html;
+    wireBomDropZone();
+    return;
+  }
+
+  // Group by status, render in fixed order
+  const groups = {
+    pending:            [],
+    at_supplier:        [],
+    ready_for_despatch: [],
+    despatched:         []
+  };
+  for (const it of items) {
+    (groups[it.status] || (groups[it.status] = [])).push(it);
+  }
+  const order = ['pending', 'at_supplier', 'ready_for_despatch', 'despatched'];
+
+  // Pending group: selection + "Generate DN" header
+  const pendingCount = groups.pending.length;
+  if (pendingCount > 0 && isDraftsman) {
+    html += `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div style="font-size:11px;color:var(--subtle);text-transform:uppercase;letter-spacing:.05em">${pendingCount} pending</div>
+        <button class="btn btn-primary" id="bomGenDnBtn" style="padding:6px 14px;font-size:12px;display:none"
+                onclick="openGenerateDnModalSQL()">&#128666; Generate DN (<span id="bomGenDnCount">0</span>)</button>
+      </div>
+    `;
+  }
+
+  for (const groupKey of order) {
+    const groupItems = groups[groupKey] || [];
+    if (groupItems.length === 0) continue;
+    if (groupKey !== 'pending') {
+      html += `<div style="font-size:11px;color:var(--subtle);text-transform:uppercase;letter-spacing:.05em;margin:14px 0 6px">${BOM_STATUS_LABEL[groupKey]} (${groupItems.length})</div>`;
+    }
+    html += '<div style="display:flex;flex-direction:column;gap:6px">';
+    for (const it of groupItems) {
+      html += renderBomRow(it);
+    }
+    html += '</div>';
+  }
 
   container.innerHTML = html;
+  wireBomDropZone();
+  updateBomDnButton();
+}
 
-  // Render tables after DOM is ready
-  for (const ml of lists) {
-    if (ml.items?.length) {
-      setTimeout(() => renderBomTable(ml.id), 0);
-    }
+function renderBomRow(it) {
+  const sourceLabel = it.source === 'assembly'
+    ? (it.source_assembly_mark ? `from ${escapeHtml(it.source_assembly_mark)}` : 'from assembly')
+    : (it.file_name ? `from ${escapeHtml(it.file_name)}` : 'manual');
+  const finishBadge = it.finish_name
+    ? `<span style="background:rgba(99,102,241,.18);color:#a5b4fc;padding:2px 9px;border-radius:6px;font-size:11px">${escapeHtml(it.finish_name)}</span>`
+    : '';
+  const pdfLink = it.sharepoint_web_url
+    ? `<a href="${escapeHtml(it.sharepoint_web_url)}" target="_blank" rel="noopener" style="color:var(--subtle);font-size:11px;text-decoration:none;margin-left:8px" title="Open source PDF">&#128279;</a>`
+    : '';
+
+  // Per-status action buttons
+  let actionBtn = '';
+  if (it.status === 'pending') {
+    actionBtn = `<input type="checkbox" class="bom-sel" data-id="${it.id}" onchange="updateBomDnButton()" style="width:16px;height:16px;accent-color:var(--accent)">`;
+  } else if (it.status === 'at_supplier') {
+    actionBtn = `<button class="btn btn-success" style="padding:4px 10px;font-size:11px" onclick="bomAdvance(${it.id}, 'ready_for_despatch')">&#10003; Mark returned</button>`;
+  } else if (it.status === 'ready_for_despatch') {
+    actionBtn = `<button class="btn btn-primary" style="padding:4px 10px;font-size:11px" onclick="bomAdvance(${it.id}, 'despatched')">&#128666; Mark despatched</button>`;
+  } else if (it.status === 'despatched') {
+    actionBtn = `<span style="color:var(--green);font-size:11px">&#10003; Done</span>`;
+  }
+
+  const supplierTag = it.supplier_name
+    ? `<span style="color:var(--subtle);font-size:11px;margin-left:8px">&middot; ${escapeHtml(it.supplier_name)}</span>`
+    : '';
+
+  return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px;display:flex;align-items:center;gap:12px">
+    <div style="flex:0 0 28px;display:flex;justify-content:center">${actionBtn}</div>
+    <div style="flex:1;min-width:0">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-family:var(--font-mono);font-size:13px;color:var(--text)">${escapeHtml(it.description)}</span>
+        <span style="font-size:12px;color:var(--muted)">Qty ${Number(it.quantity)}</span>
+        ${finishBadge}
+        <span style="color:var(--subtle);font-size:11px">${sourceLabel}${pdfLink}</span>
+        ${supplierTag}
+      </div>
+    </div>
+    ${isDraftsman ? `<button class="btn btn-ghost" title="Delete" style="padding:4px 8px;font-size:11px" onclick="deleteBomItem(${it.id})">&#128465;</button>` : ''}
+  </div>`;
+}
+
+function wireBomDropZone() {
+  const dz = document.getElementById('bomDropZone');
+  if (!dz) return;
+  dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('drag-over'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+  dz.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dz.classList.remove('drag-over');
+    const files = Array.from(e.dataTransfer.files)
+      .filter(f => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
+    if (files.length) onBomManualFilesPicked(files);
+  });
+}
+
+function updateBomDnButton() {
+  const btn = document.getElementById('bomGenDnBtn');
+  if (!btn) return;
+  const selected = document.querySelectorAll('.bom-sel:checked').length;
+  if (selected === 0) {
+    btn.style.display = 'none';
+  } else {
+    btn.style.display = '';
+    const cnt = document.getElementById('bomGenDnCount');
+    if (cnt) cnt.textContent = String(selected);
   }
 }
+
+async function bomAdvance(id, newStatus) {
+  if (!id || !newStatus) return;
+  try {
+    await api.put(`/api/job-bom-items/${id}/status`, { status: newStatus });
+    if (currentJob?.id) await loadJobBomItems(parseInt(currentJob.id));
+    renderBOM();
+  } catch (e) {
+    toast(`Status change failed: ${e.message}`, 'error');
+  }
+}
+
+async function deleteBomItem(id) {
+  if (!id) return;
+  if (!window.confirm('Delete this BOM line?')) return;
+  try {
+    await api.delete(`/api/job-bom-items/${id}`);
+    if (currentJob?.id) await loadJobBomItems(parseInt(currentJob.id));
+    renderBOM();
+    toast('BOM line deleted.', 'success');
+  } catch (e) {
+    toast(`Delete failed: ${e.message}`, 'error');
+  }
+}
+
+// Placeholder — Generate DN modal lands in commit 10.
+function openGenerateDnModalSQL() {
+  const ids = Array.from(document.querySelectorAll('.bom-sel:checked')).map(c => c.dataset.id);
+  if (!ids.length) { toast('Select pending items first.', 'error'); return; }
+  toast(`Generate DN (${ids.length} item${ids.length>1?'s':''}) — coming in the next update.`, 'info');
+}
+
+// ── Manual BOM upload pipeline (SPEC §6 Route A) ──
+async function onBomManualFilesPicked(fileList) {
+  if (!fileList || !fileList.length) return;
+  if (!currentJob || !currentJob.spFolderId) {
+    toast('Job folder not available — try reloading.', 'error');
+    return;
+  }
+  const files = Array.from(fileList).filter(f =>
+    f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')
+  );
+  if (!files.length) { toast('Only PDFs accepted for BOM upload.', 'error'); return; }
+
+  // Progress banner inside the BOM section while we upload + OCR
+  const container = document.getElementById('bomContent');
+  const banner = document.createElement('div');
+  banner.id = 'bomUploadBanner';
+  banner.style.cssText = 'background:rgba(255,107,0,.08);border:1px solid rgba(255,107,0,.3);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:var(--text)';
+  banner.textContent = `Uploading 0 / ${files.length}…`;
+  container.prepend(banner);
+
+  const driveId = currentJob.spDriveId || BAMA_DRIVE_ID;
+  let bomFolder;
+  try {
+    bomFolder = await getOrCreateSubfolder(currentJob.spFolderId, ELEMENT_FOLDERS.bom, driveId);
+  } catch (e) {
+    banner.remove();
+    toast(`Could not access BOM folder: ${e.message}`, 'error');
+    return;
+  }
+
+  const queue = [];
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    banner.textContent = `Uploading ${i + 1} / ${files.length} — ${file.name}`;
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const uploaded = await uploadFileToFolder(bomFolder.id, file.name, arrayBuffer, file.type, driveId);
+
+      banner.textContent = `Parsing ${i + 1} / ${files.length} — ${file.name}`;
+      const ocr = await ocrLooseItemsPdf(file);
+
+      queue.push({
+        file,
+        sharepoint: {
+          fileId:   uploaded.id,
+          driveId:  uploaded.parentReference?.driveId || driveId,
+          webUrl:   uploaded.webUrl,
+          fileName: file.name
+        },
+        ocr
+      });
+    } catch (e) {
+      console.warn(`Failed on ${file.name}:`, e);
+      toast(`${file.name}: ${e.message}`, 'error');
+    }
+  }
+  banner.remove();
+  const input = document.getElementById('bomManualFileInput');
+  if (input) input.value = '';
+
+  if (!queue.length) { toast('No PDFs were parsed.', 'error'); return; }
+
+  _bomManualQueue = queue;
+  _bomManualReviewIndex = 0;
+  openBomManualReviewModal();
+}
+
+// Claude vision OCR on a loose-items PDF (supplier slip / quotation).
+// Returns { items: [{ description, quantity, extras }] } where extras is
+// a freeform object of whatever else the table contained (size, weight,
+// part number, unit price, supplier code, etc.). Caller throws on bad JSON.
+async function ocrLooseItemsPdf(file) {
+  const dataUri = await _fileToDataUri(file);
+  const b64 = dataUri.split(',')[1];
+
+  const prompt = `Extract line items from this supplier quotation or delivery slip PDF.
+
+For each line item in the main items table, return:
+- "description": the item description as written (e.g. "M16 x 50 hex bolt", "PLT10x60", "Self-drilling screw 12mm")
+- "quantity": the quantity as a positive integer (1 if not specified)
+- "extras": an object with any OTHER columns present in the table — size, length, weight, material, part_number, supplier_code, unit_price, line_total, etc. Use the column header as the key (lowercased, underscored). Numeric values as numbers; strings as strings.
+
+Ignore lines that are headers, separators, subtotals, tax, discount, shipping, totals, payment terms, notes, or boilerplate.
+
+Return ONLY JSON, no markdown, no commentary:
+{
+  "items": [
+    {
+      "description": "M16 x 50 hex bolt",
+      "quantity": 100,
+      "extras": { "size": "M16 x 50", "unit_price": 0.42, "line_total": 42.00 }
+    }
+  ]
+}
+
+If a value is unknown, omit the key (don't use null in extras). Return an empty items array if no line items are recognisable.`;
+
+  const result = await callClaude({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 4000,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } },
+        { type: 'text', text: prompt }
+      ]
+    }]
+  });
+  const text = (result.content?.find(b => b.type === 'text')?.text || '').trim();
+  const s = text.indexOf('{'), e = text.lastIndexOf('}');
+  if (s < 0 || e < s) throw new Error('OCR returned no JSON');
+  const parsed = JSON.parse(text.slice(s, e + 1));
+  if (!parsed.items || !Array.isArray(parsed.items)) parsed.items = [];
+  return parsed;
+}
+
+// ── Review modal: walks _bomManualQueue, lets user edit before save ──
+function openBomManualReviewModal() {
+  if (!_bomManualQueue.length) return;
+  const modal = document.getElementById('bomManualReviewModal');
+  if (!modal) { console.warn('bomManualReviewModal not found'); return; }
+  modal.classList.add('active');
+  renderBomManualReview();
+}
+
+function closeBomManualReviewModal() {
+  const modal = document.getElementById('bomManualReviewModal');
+  if (modal) modal.classList.remove('active');
+  _bomManualQueue = [];
+  _bomManualReviewIndex = 0;
+}
+
+function renderBomManualReview() {
+  const idx = _bomManualReviewIndex;
+  const total = _bomManualQueue.length;
+  const item = _bomManualQueue[idx];
+  if (!item) { closeBomManualReviewModal(); return; }
+
+  document.getElementById('bmrCounter').textContent = `${idx + 1} of ${total}`;
+  document.getElementById('bmrFileName').textContent = item.sharepoint.fileName;
+
+  // Finish dropdown — global for this whole PDF
+  const finishSel = document.getElementById('bmrFinish');
+  const finishes = _finishesCache || [];
+  let opts = '<option value="">(No finish — ready for despatch)</option>';
+  for (const f of finishes) {
+    opts += `<option value="${f.id}">${escapeHtml(f.name)}</option>`;
+  }
+  finishSel.innerHTML = opts;
+  finishSel.value = ''; // default: no finish
+
+  renderBomReviewRows(item.ocr.items || []);
+}
+
+function renderBomReviewRows(rows) {
+  const tbody = document.getElementById('bmrRowsTbody');
+  if (!tbody) return;
+  let html = '';
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i] || {};
+    const extras = r.extras || {};
+    const extrasStr = Object.keys(extras).length
+      ? Object.entries(extras).map(([k, v]) => `${k}: ${v}`).join(' · ')
+      : '';
+    html += `<tr data-i="${i}">
+      <td style="padding:4px 6px 4px 0"><input data-f="description" value="${escapeHtml(r.description || '')}" class="bmr-cell" style="width:100%"></td>
+      <td style="padding:4px"><input data-f="quantity" type="number" min="1" value="${r.quantity ?? 1}" class="bmr-cell" style="width:60px;text-align:right"></td>
+      <td style="padding:4px;color:var(--subtle);font-size:11px;font-family:var(--font-mono);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(extrasStr)}">${escapeHtml(extrasStr)}</td>
+      <td style="padding:4px 0 4px 4px;text-align:right"><button class="btn btn-ghost" style="padding:2px 8px;font-size:14px" onclick="bmrRemoveRow(${i})" title="Remove">&times;</button></td>
+    </tr>`;
+  }
+  tbody.innerHTML = html;
+}
+
+function bmrCollectRows() {
+  const tbody = document.getElementById('bmrRowsTbody');
+  if (!tbody) return [];
+  // Read both visible inputs AND the extras text — but extras is read-only
+  // and stored in the original ocr.items by index. Reconstruct extras from
+  // the source by index.
+  const idx = _bomManualReviewIndex;
+  const ocrItems = _bomManualQueue[idx]?.ocr?.items || [];
+  const out = [];
+  tbody.querySelectorAll('tr').forEach(tr => {
+    const i = parseInt(tr.dataset.i);
+    const desc = tr.querySelector('input[data-f="description"]')?.value?.trim() || '';
+    const qtyRaw = tr.querySelector('input[data-f="quantity"]')?.value;
+    const qty = parseInt(qtyRaw);
+    const extras = ocrItems[i]?.extras || {};
+    out.push({ description: desc, quantity: qty || 1, extras });
+  });
+  return out;
+}
+
+function bmrAddRow() {
+  const rows = bmrCollectRows();
+  rows.push({ description: '', quantity: 1, extras: {} });
+  // Reflect into the current queue item so re-render picks it up via index
+  _bomManualQueue[_bomManualReviewIndex].ocr.items = rows;
+  renderBomReviewRows(rows);
+}
+
+function bmrRemoveRow(i) {
+  const rows = bmrCollectRows();
+  rows.splice(i, 1);
+  _bomManualQueue[_bomManualReviewIndex].ocr.items = rows;
+  renderBomReviewRows(rows);
+}
+
+function bmrSkipCurrent() {
+  _bomManualReviewIndex++;
+  if (_bomManualReviewIndex >= _bomManualQueue.length) {
+    closeBomManualReviewModal();
+    toast('No more PDFs to review.', 'info');
+    return;
+  }
+  renderBomManualReview();
+}
+
+async function bmrSaveAndNext() {
+  const item = _bomManualQueue[_bomManualReviewIndex];
+  if (!item) { closeBomManualReviewModal(); return; }
+
+  const rows = bmrCollectRows().filter(r => r.description); // drop empty description rows
+  if (!rows.length) {
+    toast('No items to save. Skip this PDF or add a row.', 'error');
+    return;
+  }
+  const finishVal = document.getElementById('bmrFinish').value;
+  const finishServiceId = finishVal ? parseInt(finishVal) : null;
+
+  const saveBtn = document.getElementById('bmrSaveBtn');
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.style.opacity = '.6'; }
+
+  try {
+    await api.post('/api/job-bom-items/bulk', {
+      job_id:              parseInt(currentJob.id),
+      finish_service_id:   finishServiceId,
+      sharepoint_file_id:  item.sharepoint.fileId,
+      sharepoint_drive_id: item.sharepoint.driveId,
+      sharepoint_web_url:  item.sharepoint.webUrl,
+      file_name:           item.sharepoint.fileName,
+      items:               rows.map(r => ({ description: r.description, quantity: r.quantity }))
+    });
+  } catch (e) {
+    toast(`Save failed: ${e.message}`, 'error');
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.style.opacity = '1'; }
+    return;
+  }
+
+  if (saveBtn) { saveBtn.disabled = false; saveBtn.style.opacity = '1'; }
+
+  if (currentJob?.id) await loadJobBomItems(parseInt(currentJob.id));
+  renderBOM();
+
+  _bomManualReviewIndex++;
+  if (_bomManualReviewIndex >= _bomManualQueue.length) {
+    closeBomManualReviewModal();
+    toast(`Saved ${rows.length} BOM line${rows.length>1?'s':''} from this PDF.`, 'success');
+    return;
+  }
+  renderBomManualReview();
+}
+
+// ═══════════════════════════════════════════
+// LEGACY BOM — dead code below (sweep in commit 12)
+// ═══════════════════════════════════════════
 
 // ── Render BOM Table (filterable) ──
 function renderBomTable(mlId) {

@@ -1865,3 +1865,15 @@
 
 /* Assembly drop-zone drag-over state */
 .upload-zone.drag-over { border-color: var(--accent); background: rgba(255,107,0,.08); }
+
+/* BOM manual review modal — line item inputs (SPEC-job-fabrication-rework §6) */
+.bmr-cell {
+  background: var(--bg-darker, #161616);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  box-sizing: border-box;
+}
+.bmr-cell:focus { outline: none; border-color: var(--accent); }
