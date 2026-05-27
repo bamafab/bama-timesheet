@@ -349,6 +349,40 @@
 </div>
 
 <!-- ═══════════════════════════════════════
+     MARK FABRICATED MODAL (commit 8)
+     See SPEC-job-fabrication-rework.md §5
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="markFabricatedModal">
+  <div class="modal" style="max-width:460px;width:95vw">
+    <div class="modal-title" style="margin-bottom:6px">Mark fabricated</div>
+    <div style="display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px;margin-bottom:20px">
+      <span style="font-family:var(--font-mono);font-weight:700;color:var(--accent);font-size:16px" id="mfMark"></span>
+      <span id="mfQty"></span>
+      <span id="mfFinish" style="background:rgba(99,102,241,.18);color:#a5b4fc;padding:2px 9px;border-radius:6px;font-size:11px;display:none"></span>
+    </div>
+
+    <div style="margin-bottom:14px">
+      <div class="field-label">WELDER</div>
+      <select class="field-input" id="mfWelder"></select>
+    </div>
+
+    <div style="margin-bottom:20px">
+      <div class="field-label">WELDING MACHINE</div>
+      <select class="field-input" id="mfMachine"></select>
+    </div>
+
+    <button class="btn btn-primary btn-full" id="mfConfirmBtn"
+            onclick="confirmMarkFabricated()"
+            style="padding:14px;font-size:15px;opacity:.4;cursor:not-allowed" disabled>
+      Confirm &amp; mark fabricated
+    </button>
+    <button class="btn btn-ghost btn-full" onclick="closeMarkFabricatedModal()" style="margin-top:10px;padding:12px">
+      Cancel
+    </button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
      COMPLETE TASK MODAL
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="completeTaskModal">
@@ -592,6 +626,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-<script src="shared.js?v=20260527ad"></script>
+<script src="shared.js?v=20260527ae"></script>
 </body>
 </html>

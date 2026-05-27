@@ -13857,10 +13857,127 @@ async function deleteAssembly(id) {
   }
 }
 
-// Placeholder — mark-fabricated modal lands in commit 8. For now,
-// the button shows a friendly message so workshop can find their way.
-function openMarkFabricatedModal(assemblyId) {
-  toast('Mark fabricated — coming in the next update.', 'info');
+// ── Mark fabricated modal (commit 8 — SPEC §5) ──
+// Opens a confirm dialog asking who welded it and on what machine.
+// On confirm, PUTs to /api/job-assemblies/:id/fabricate, which in a
+// single transaction flips the assembly status AND creates a JobBomItems
+// row (description = heaviest part's profile, qty = assembly qty,
+// status = 'pending' if finish set else 'ready_for_despatch').
+let _pendingFabricateAssemblyId = null;
+
+async function loadWeldingMachinesIfNeeded() {
+  if (_weldingMachines && _weldingMachines.length) return;
+  try {
+    _weldingMachines = await api.get('/api/welding-machines');
+  } catch (e) {
+    console.warn('Load welding machines failed:', e.message);
+    _weldingMachines = [];
+  }
+}
+
+async function openMarkFabricatedModal(assemblyId) {
+  if (!assemblyId) return;
+  const jobId = currentJob?.id ? parseInt(currentJob.id) : null;
+  const assembly = (_assembliesByJob[jobId] || []).find(a => a.id === assemblyId);
+  if (!assembly) { toast('Assembly not found — please reload.', 'error'); return; }
+  if (assembly.status === 'fabricated') { toast('Already marked as fabricated.', 'info'); return; }
+
+  _pendingFabricateAssemblyId = assemblyId;
+
+  // Header context
+  document.getElementById('mfMark').textContent = assembly.assembly_mark;
+  document.getElementById('mfQty').textContent  = `${Number(assembly.quantity)} off`;
+  const finishEl = document.getElementById('mfFinish');
+  if (assembly.finish_name) {
+    finishEl.textContent = assembly.finish_name;
+    finishEl.style.display = '';
+  } else {
+    finishEl.style.display = 'none';
+  }
+
+  // Populate welder dropdown — staff_type='workshop', active only
+  const welderSel = document.getElementById('mfWelder');
+  welderSel.innerHTML = '<option value="">Select welder…</option>';
+  const welders = (state.timesheetData.employees || [])
+    .filter(e => (e.staffType || 'workshop') === 'workshop' && e.active !== false)
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+  for (const w of welders) {
+    welderSel.innerHTML += `<option value="${w.id}" data-name="${escapeHtml(w.name)}">${escapeHtml(w.name)}</option>`;
+  }
+
+  // Populate welding-machine dropdown — all active machines (per Q1 answer)
+  await loadWeldingMachinesIfNeeded();
+  const machineSel = document.getElementById('mfMachine');
+  machineSel.innerHTML = '<option value="">Select machine…</option>';
+  for (const m of (_weldingMachines || [])) {
+    if (m.is_active === false) continue;
+    machineSel.innerHTML += `<option value="${m.id}">${escapeHtml(m.machine_name || `Machine #${m.id}`)}</option>`;
+  }
+
+  // Reset state
+  welderSel.value = '';
+  machineSel.value = '';
+  const btn = document.getElementById('mfConfirmBtn');
+  btn.disabled = true; btn.style.opacity = '.4'; btn.style.cursor = 'not-allowed';
+
+  welderSel.onchange = checkMarkFabricatedReady;
+  machineSel.onchange = checkMarkFabricatedReady;
+
+  document.getElementById('markFabricatedModal').classList.add('active');
+}
+
+function checkMarkFabricatedReady() {
+  const w = document.getElementById('mfWelder').value;
+  const m = document.getElementById('mfMachine').value;
+  const ready = !!w && !!m;
+  const btn = document.getElementById('mfConfirmBtn');
+  btn.disabled = !ready;
+  btn.style.opacity = ready ? '1' : '.4';
+  btn.style.cursor  = ready ? 'pointer' : 'not-allowed';
+}
+
+function closeMarkFabricatedModal() {
+  document.getElementById('markFabricatedModal').classList.remove('active');
+  _pendingFabricateAssemblyId = null;
+}
+
+async function confirmMarkFabricated() {
+  const id = _pendingFabricateAssemblyId;
+  if (!id) return;
+  const welderSel  = document.getElementById('mfWelder');
+  const machineSel = document.getElementById('mfMachine');
+  const welderId   = parseInt(welderSel.value);
+  const machineId  = parseInt(machineSel.value);
+  const welderName = welderSel.selectedOptions[0]?.dataset?.name
+                  || welderSel.selectedOptions[0]?.textContent
+                  || '';
+  if (!welderId || !machineId || !welderName) return;
+
+  const btn = document.getElementById('mfConfirmBtn');
+  btn.disabled = true; btn.style.opacity = '.5';
+
+  try {
+    await api.put(`/api/job-assemblies/${id}/fabricate`, {
+      welder_id: welderId,
+      welding_machine_id: machineId,
+      fabricated_by: welderName
+    });
+    closeMarkFabricatedModal();
+    toast('Marked as fabricated.', 'success');
+    // Refresh assemblies cache (and re-render). BOM render lands in commit 9.
+    if (currentJob?.id) await loadJobAssemblies(parseInt(currentJob.id));
+    renderAssembly();
+  } catch (e) {
+    if (e?.body?.error === 'already_fabricated') {
+      toast('Already fabricated — refreshing.', 'info');
+      closeMarkFabricatedModal();
+      if (currentJob?.id) await loadJobAssemblies(parseInt(currentJob.id));
+      renderAssembly();
+    } else {
+      toast(`Failed: ${e.message}`, 'error');
+      btn.disabled = false; btn.style.opacity = '1';
+    }
+  }
 }
 
 // ═══════════════════════════════════════════

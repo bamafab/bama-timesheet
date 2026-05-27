@@ -292,3 +292,149 @@ app.http('job-assemblies-delete', {
         }
     }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PUT /api/job-assemblies/:id/fabricate
+// Single transaction:
+//   1. UPDATE JobAssemblies → status='fabricated' + welder + machine + when/who
+//   2. INSERT JobBomItems  → description = heaviest part's profile,
+//                            quantity    = assembly.quantity,
+//                            finish      = assembly.finish_service_id,
+//                            status      = 'pending' if finish set,
+//                                          else 'ready_for_despatch'
+//
+// Body shape: { welder_id, welding_machine_id, fabricated_by }
+//   - fabricated_by is the welder's display name (so the assembly card and
+//     kiosk read out the same string without a join). See SPEC §5.
+//
+// Returns: { assembly, bom_item } so the frontend can update both caches
+// in one round trip.
+// ─────────────────────────────────────────────────────────────────────────────
+app.http('job-assemblies-fabricate', {
+    methods: ['PUT'],
+    authLevel: 'anonymous',
+    route: 'job-assemblies/{id}/fabricate',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const id = parseInt(request.params.id);
+            if (!id || isNaN(id)) return badRequest('Invalid id', request);
+
+            const body = await request.json();
+            const welderId  = parseInt(body.welder_id);
+            const machineId = parseInt(body.welding_machine_id);
+            const fabricatedBy = (body.fabricated_by || '').trim();
+
+            if (!welderId  || isNaN(welderId))  return badRequest('welder_id is required',         request);
+            if (!machineId || isNaN(machineId)) return badRequest('welding_machine_id is required', request);
+            if (!fabricatedBy)                  return badRequest('fabricated_by is required',     request);
+
+            // Fetch the assembly + its parts so we can derive the BOM row.
+            // We pull this OUTSIDE the txn to validate inputs cheaply; the
+            // txn re-reads and locks the row with UPDLOCK.
+            const aRes = await query(
+                `SELECT a.*
+                 FROM JobAssemblies a
+                 WHERE a.id = @id`,
+                { id }
+            );
+            if (aRes.recordset.length === 0) return notFound('Assembly not found', request);
+            const assembly = aRes.recordset[0];
+
+            if (assembly.status === 'fabricated') {
+                return {
+                    status: 409,
+                    jsonBody: {
+                        error: 'already_fabricated',
+                        message: 'This assembly has already been marked as fabricated.'
+                    },
+                    headers: { 'Content-Type': 'application/json' }
+                };
+            }
+
+            // Determine the heaviest part (MAX(weight_kg)). Ties: first one.
+            const partsRes = await query(
+                'SELECT * FROM JobAssemblyParts WHERE assembly_id = @id ORDER BY sort_order ASC, id ASC',
+                { id }
+            );
+            const parts = partsRes.recordset;
+            if (parts.length === 0) {
+                return badRequest('Assembly has no parts — cannot derive BOM line', request);
+            }
+            let heaviest = parts[0];
+            for (const p of parts) {
+                if ((Number(p.weight_kg) || 0) > (Number(heaviest.weight_kg) || 0)) {
+                    heaviest = p;
+                }
+            }
+
+            const bomStatus = assembly.finish_service_id ? 'pending' : 'ready_for_despatch';
+
+            const db = await getPool();
+            const transaction = new sql.Transaction(db);
+            await transaction.begin();
+
+            try {
+                // 1. Flip the assembly to fabricated. The WHERE clause re-checks
+                //    status='pending' to defend against a concurrent fabricate.
+                const uReq = new sql.Request(transaction);
+                uReq.input('id',           sql.Int,           id);
+                uReq.input('welderId',     sql.Int,           welderId);
+                uReq.input('machineId',    sql.Int,           machineId);
+                uReq.input('fabricatedBy', sql.NVarChar(256), fabricatedBy);
+
+                const uRes = await uReq.query(
+                    `UPDATE JobAssemblies
+                     SET status              = 'fabricated',
+                         fabricated_at       = SYSUTCDATETIME(),
+                         fabricated_by       = @fabricatedBy,
+                         welder_id           = @welderId,
+                         welding_machine_id  = @machineId
+                     OUTPUT INSERTED.*
+                     WHERE id = @id AND status = 'pending'`
+                );
+                if (uRes.recordset.length === 0) {
+                    throw new Error('Assembly status changed concurrently — please reload.');
+                }
+                const updatedAssembly = uRes.recordset[0];
+
+                // 2. Insert the matching BOM row.
+                const bReq = new sql.Request(transaction);
+                bReq.input('jobId',            sql.Int,            assembly.job_id);
+                bReq.input('assemblyId',       sql.Int,            id);
+                bReq.input('description',      sql.NVarChar(256),  heaviest.profile);
+                bReq.input('quantity',         sql.Int,            assembly.quantity);
+                bReq.input('finishServiceId',  sql.Int,            assembly.finish_service_id ?? null);
+                bReq.input('status',           sql.NVarChar(32),   bomStatus);
+                bReq.input('createdBy',        sql.NVarChar(256),  fabricatedBy);
+
+                const bRes = await bReq.query(
+                    `INSERT INTO JobBomItems
+                        (job_id, source, source_assembly_id, description, quantity,
+                         finish_service_id, status, created_by)
+                     OUTPUT INSERTED.*
+                     VALUES
+                        (@jobId, 'assembly', @assemblyId, @description, @quantity,
+                         @finishServiceId, @status, @createdBy)`
+                );
+                const bomItem = bRes.recordset[0];
+
+                await transaction.commit();
+
+                // Hydrate parts onto the returned assembly so the frontend
+                // doesn't need a follow-up GET to refresh its row.
+                updatedAssembly.parts = parts;
+
+                return ok({ assembly: updatedAssembly, bom_item: bomItem }, request);
+            } catch (txErr) {
+                await transaction.rollback();
+                throw txErr;
+            }
+        } catch (err) {
+            context.error('Error fabricating job assembly:', err);
+            return serverError('Failed to mark fabricated: ' + err.message, request);
+        }
+    }
+});
