@@ -613,6 +613,15 @@ none of this is built yet.
   Should also fuzzy-match the supplier name in the parsed quote against
   `Suppliers` and pre-select. Aim: human reviews and confirms — never
   auto-creates the PO without confirmation.
+- **Supplier tiles (queued)** — two more quick-access tiles above the supplier
+  table, alongside the existing "POs Awaiting Invoice" tile:
+  - **Discrepancies** — count of POs where `reconciliation_status = 'discrepancy'`
+    (invoice received but value doesn't match PO total within £1 tolerance).
+    Red tile. Drill-down grouped by supplier showing PO ref, PO value, invoice
+    value, and difference. Should always be zero.
+  - **Overdue POs** — Open/Approved/Sent POs where `created_at` is older than
+    30 days with no `delivery_received_at` or `supplier_invoice_received_at`.
+    Amber tile. Drill-down grouped by supplier sorted by age desc.
 - **Supplier detail view + invoice upload** — clicking a supplier in the
   Office → Suppliers tab will open a detail panel showing all POs for
   that supplier, grouped by status (Open / Received / Matched /

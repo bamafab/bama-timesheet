@@ -6973,7 +6973,7 @@ async function renderSuppliersTab() {
   _supplierPoMap = {};
   allPos.forEach(po => {
     if (!_supplierPoMap[po.supplier_id]) {
-      _supplierPoMap[po.supplier_id] = { open: [], awaiting: [], discrep: [], spent: [], all: [] };
+      _supplierPoMap[po.supplier_id] = { open: [], awaiting: [], discrep: [], spent: [], thisMonth: [], lastMonth: [], all: [] };
     }
     const m = _supplierPoMap[po.supplier_id];
     m.all.push(po);
@@ -6981,6 +6981,14 @@ async function renderSuppliersTab() {
     if (!po.supplier_invoice_received_at && po.status !== 'Cancelled' && po.status !== 'Closed') m.awaiting.push(po);
     if (poGroup(po) === 'discrepancy') m.discrep.push(po);
     if (po.status === 'Closed' || poGroup(po) === 'matched') m.spent.push(po);
+    // Month buckets based on when the PO was closed/matched (updated_at as proxy)
+    const poDate = new Date(po.updated_at || po.created_at);
+    const now = new Date();
+    const isThisMonth = poDate.getFullYear() === now.getFullYear() && poDate.getMonth() === now.getMonth();
+    const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const isLastMonth = poDate.getFullYear() === lastMonthDate.getFullYear() && poDate.getMonth() === lastMonthDate.getMonth();
+    if ((po.status === 'Closed' || poGroup(po) === 'matched') && isThisMonth) m.thisMonth.push(po);
+    if ((po.status === 'Closed' || poGroup(po) === 'matched') && isLastMonth) m.lastMonth.push(po);
   });
 
   _renderSupplierTable();
@@ -7029,14 +7037,16 @@ function _renderSupplierTable() {
   const col = _supplierSortCol;
   const asc = _supplierSortAsc;
   list = list.slice().sort((a, b) => {
-    const ma = _supplierPoMap[a.id] || { open: [], awaiting: [], discrep: [], spent: [], all: [] };
-    const mb = _supplierPoMap[b.id] || { open: [], awaiting: [], discrep: [], spent: [], all: [] };
+    const ma = _supplierPoMap[a.id] || { open: [], awaiting: [], discrep: [], spent: [], thisMonth: [], lastMonth: [], all: [] };
+    const mb = _supplierPoMap[b.id] || { open: [], awaiting: [], discrep: [], spent: [], thisMonth: [], lastMonth: [], all: [] };
     let diff = 0;
     if      (col === 'name')      diff = a.supplier_name.localeCompare(b.supplier_name);
     else if (col === 'openPos')   diff = ma.open.length - mb.open.length;
     else if (col === 'openValue') diff = ma.open.reduce((s,p)=>s+Number(p.total_value||0),0) - mb.open.reduce((s,p)=>s+Number(p.total_value||0),0);
     else if (col === 'awaiting')  diff = ma.awaiting.length - mb.awaiting.length;
     else if (col === 'discrep')   diff = ma.discrep.length - mb.discrep.length;
+    else if (col === 'thisMonth') diff = ma.thisMonth.reduce((s,p)=>s+Number(p.total_value||0),0) - mb.thisMonth.reduce((s,p)=>s+Number(p.total_value||0),0);
+    else if (col === 'lastMonth') diff = ma.lastMonth.reduce((s,p)=>s+Number(p.total_value||0),0) - mb.lastMonth.reduce((s,p)=>s+Number(p.total_value||0),0);
     else if (col === 'spent')    diff = ma.spent.reduce((s,p)=>s+Number(p.total_value||0),0) - mb.spent.reduce((s,p)=>s+Number(p.total_value||0),0);
     return asc ? diff : -diff;
   });
@@ -7055,10 +7065,12 @@ function _renderSupplierTable() {
 
   let rows = '';
   for (const s of list) {
-    const m        = _supplierPoMap[s.id] || { open: [], awaiting: [], discrep: [], spent: [], all: [] };
+    const m        = _supplierPoMap[s.id] || { open: [], awaiting: [], discrep: [], spent: [], thisMonth: [], lastMonth: [], all: [] };
     const openVal  = m.open.reduce((sum, p) => sum + Number(p.total_value || 0), 0);
     const svcNames = (s.services || []).map(sv => sv.service_name).join(', ');
-    const spentVal  = m.spent.reduce((sum, p) => sum + Number(p.total_value || 0), 0);
+    const spentVal      = m.spent.reduce((sum, p) => sum + Number(p.total_value || 0), 0);
+    const thisMonthVal  = m.thisMonth.reduce((sum, p) => sum + Number(p.total_value || 0), 0);
+    const lastMonthVal  = m.lastMonth.reduce((sum, p) => sum + Number(p.total_value || 0), 0);
     const awaitCol = m.awaiting.length ? 'var(--amber)' : 'var(--subtle)';
     const discrCol = m.discrep.length  ? 'var(--red)'   : 'var(--subtle)';
     const nameSafe = s.supplier_name.replace(/'/g, "\\'").replace(/"/g, '&quot;');
@@ -7086,6 +7098,12 @@ function _renderSupplierTable() {
       <td style="padding:11px 8px;text-align:center;font-weight:${m.discrep.length ? '600' : '400'};color:${discrCol}">
         ${m.discrep.length ? m.discrep.length : '<span style="color:var(--subtle)">—</span>'}
       </td>
+      <td style="padding:11px 8px;text-align:right;color:${thisMonthVal ? 'var(--text)' : 'var(--subtle)'}">
+        ${thisMonthVal ? fmtVal(thisMonthVal) : '—'}
+      </td>
+      <td style="padding:11px 8px;text-align:right;color:${lastMonthVal ? 'var(--muted)' : 'var(--subtle)'}">
+        ${lastMonthVal ? fmtVal(lastMonthVal) : '—'}
+      </td>
       <td style="padding:11px 8px;text-align:right;font-weight:600;color:${spentVal ? 'var(--green)' : 'var(--subtle)'}">
         ${spentVal ? fmtVal(spentVal) : '—'}
       </td>
@@ -7104,6 +7122,8 @@ function _renderSupplierTable() {
       ${th('Open Value', 'openValue', 'right')}
       ${th('Awaiting Invoice', 'awaiting', 'center')}
       ${th('Discrepancies', 'discrep', 'center')}
+      ${th('£ This Month', 'thisMonth', 'right')}
+      ${th('£ Last Month', 'lastMonth', 'right')}
       ${th('Total Spent', 'spent', 'right')}
       <th></th>
     </tr></thead>
