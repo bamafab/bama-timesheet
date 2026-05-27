@@ -10193,13 +10193,17 @@ const USER_ACCESS_FILE = 'user-access.json';
 const BAMA_DRIVE_ID = 'b!CxTKk9lEwkyweUqAo3CRas-huywW4KtLqOk2tNzmx-P7CX86DNhTQo14pLuU_tZu';
 const PROJECTS_FOLDER = 'Projects';
 
-// Element folder names (auto-created inside each job folder)
+// Element folder names (auto-created inside each job folder).
+// Order matters — createJob() iterates Object.values() to create folders
+// in declaration order. The seDrawings folder is the draftsman's private
+// working folder, not surfaced in the UI (see SPEC-job-fabrication-rework.md §3).
 const ELEMENT_FOLDERS = {
-  bom:      '01 - BOM',
-  approval: '02 - Approval',
-  parts:    '03 - Parts',
-  assembly: '04 - Assembly',
-  site:     '05 - Site Installation'
+  seDrawings: '00 - SE Drawings',
+  bom:        '01 - BOM',
+  approval:   '02 - Approval',
+  parts:      '03 - Parts',
+  assembly:   '04 - Assembly',
+  site:       '05 - Site Installation'
 };
 const PARTS_SUBFOLDERS = ['01 - Sections', '02 - Plates'];
 
@@ -10820,7 +10824,7 @@ async function createJob() {
     const jobFolder = await createFolderInDrive(drawingsFolder.id, folderName);
     if (!jobFolder) throw new Error('Could not create job folder');
 
-    // Create 5 element subfolders
+    // Create element subfolders (driven by ELEMENT_FOLDERS)
     const elementNames = Object.values(ELEMENT_FOLDERS);
     for (let i = 0; i < elementNames.length; i++) {
       const pct = 40 + Math.round((i / elementNames.length) * 40);
