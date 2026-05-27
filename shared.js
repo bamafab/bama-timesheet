@@ -6969,13 +6969,14 @@ async function renderSuppliersTab() {
   _supplierPoMap = {};
   allPos.forEach(po => {
     if (!_supplierPoMap[po.supplier_id]) {
-      _supplierPoMap[po.supplier_id] = { open: [], awaiting: [], discrep: [], all: [] };
+      _supplierPoMap[po.supplier_id] = { open: [], awaiting: [], discrep: [], spent: [], all: [] };
     }
     const m = _supplierPoMap[po.supplier_id];
     m.all.push(po);
     if (poGroup(po) === 'open') m.open.push(po);
     if (!po.supplier_invoice_received_at && po.status !== 'Cancelled' && po.status !== 'Closed') m.awaiting.push(po);
     if (poGroup(po) === 'discrepancy') m.discrep.push(po);
+    if (po.status === 'Closed' || poGroup(po) === 'matched') m.spent.push(po);
   });
 
   _renderSupplierTable();
@@ -7032,6 +7033,7 @@ function _renderSupplierTable() {
     else if (col === 'openValue') diff = ma.open.reduce((s,p)=>s+Number(p.total_value||0),0) - mb.open.reduce((s,p)=>s+Number(p.total_value||0),0);
     else if (col === 'awaiting')  diff = ma.awaiting.length - mb.awaiting.length;
     else if (col === 'discrep')   diff = ma.discrep.length - mb.discrep.length;
+    else if (col === 'spent')    diff = ma.spent.reduce((s,p)=>s+Number(p.total_value||0),0) - mb.spent.reduce((s,p)=>s+Number(p.total_value||0),0);
     return asc ? diff : -diff;
   });
 
@@ -7052,6 +7054,7 @@ function _renderSupplierTable() {
     const m        = _supplierPoMap[s.id] || { open: [], awaiting: [], discrep: [] };
     const openVal  = m.open.reduce((sum, p) => sum + Number(p.total_value || 0), 0);
     const svcNames = (s.services || []).map(sv => sv.service_name).join(', ');
+    const spentVal  = m.spent.reduce((sum, p) => sum + Number(p.total_value || 0), 0);
     const awaitCol = m.awaiting.length ? 'var(--amber)' : 'var(--subtle)';
     const discrCol = m.discrep.length  ? 'var(--red)'   : 'var(--subtle)';
     const nameSafe = s.supplier_name.replace(/'/g, "\\'").replace(/"/g, '&quot;');
@@ -7079,6 +7082,9 @@ function _renderSupplierTable() {
       <td style="padding:11px 8px;text-align:center;font-weight:${m.discrep.length ? '600' : '400'};color:${discrCol}">
         ${m.discrep.length ? m.discrep.length : '<span style="color:var(--subtle)">—</span>'}
       </td>
+      <td style="padding:11px 8px;text-align:right;font-weight:600;color:${spentVal ? 'var(--green)' : 'var(--subtle)'}">
+        ${spentVal ? fmtVal(spentVal) : '—'}
+      </td>
       <td style="padding:11px 0 11px 8px;white-space:nowrap" onclick="event.stopPropagation()">
         <button class="btn btn-ghost" style="padding:3px 9px;font-size:11px" onclick="editSupplier(${s.id})">&#9998;</button>
         <button class="btn btn-ghost" style="padding:3px 9px;font-size:11px;color:var(--red)" onclick="deleteSupplier(${s.id}, '${nameSafe}')">&#10005;</button>
@@ -7090,10 +7096,11 @@ function _renderSupplierTable() {
     <thead><tr style="border-bottom:2px solid var(--border)">
       ${th('Supplier', 'name', 'left')}
       <th style="${thBase};cursor:default">Contact</th>
-      ${th('Open POs', 'openPos', 'center')}
+      ${th("Open PO's", 'openPos', 'center')}
       ${th('Open Value', 'openValue', 'right')}
       ${th('Awaiting Invoice', 'awaiting', 'center')}
       ${th('Discrepancies', 'discrep', 'center')}
+      ${th('Total Spent', 'spent', 'right')}
       <th></th>
     </tr></thead>
     <tbody>${rows}</tbody>
@@ -15287,7 +15294,6 @@ function renderClientList() {
           </div>
         </div>
         <button class="tiny-btn" onclick="event.stopPropagation();openClientDetail(${c.id})" style="padding:4px 12px;font-size:11px;background:var(--surface2);color:var(--muted);border:1px solid var(--border);${CURRENT_PAGE === 'office' ? 'display:none' : ''}" title="Open full client page">↗ Open</button>
-        <button class="tiny-btn" onclick="event.stopPropagation();openEditClientModal(${c.id})" style="padding:4px 10px;font-size:11px;background:var(--surface2);color:var(--muted);border:1px solid var(--border)" title="Edit client">✏️</button>
         <div class="client-chevron" id="chevron-${c.id}" style="font-size:22px;color:var(--accent);transition:transform .2s;width:28px;text-align:center">▾</div>
       </div>
       <div class="client-body" id="client-body-${c.id}" style="display:none;padding:0 16px 16px 16px;background:rgba(0,0,0,.15)">
@@ -15335,7 +15341,11 @@ async function renderInlineClientContacts(clientId) {
     container.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <div style="font-size:11px;color:var(--accent2);font-weight:600;text-transform:uppercase;letter-spacing:.5px">Contacts (${contacts.length})</div>
-        <button class="tiny-btn" onclick="quickAddContactToClient(${clientId})" style="padding:3px 10px;font-size:11px;background:var(--surface2);color:var(--muted);border:1px solid var(--border)">+ Add</button>
+        <div style="display:flex;gap:6px">
+          <button class="tiny-btn" onclick="quickAddContactToClient(${clientId})" style="padding:3px 10px;font-size:11px;background:var(--surface2);color:var(--muted);border:1px solid var(--border)">+ Add Contact</button>
+          <button class="tiny-btn" onclick="openEditClientModal(${clientId})" style="padding:3px 10px;font-size:11px;background:var(--surface2);color:var(--muted);border:1px solid var(--border)">✏️ Edit</button>
+          <button class="tiny-btn" onclick="deleteClientFromTile(${clientId})" style="padding:3px 10px;font-size:11px;background:var(--surface2);color:var(--red);border:1px solid var(--border)">✕ Delete</button>
+        </div>
       </div>
       ${contacts.map((c, i) => `
         <div style="padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
@@ -15360,6 +15370,20 @@ async function renderInlineClientContacts(clientId) {
 }
 
 // Quick add/edit contact helpers — set up the modal then it'll refresh inline contacts when saved
+async function deleteClientFromTile(clientId) {
+  const client = clientsData.find(c => String(c.id) === String(clientId));
+  const name = client ? client.company_name : 'this client';
+  if (!confirm(`Delete "${name}"? This will remove them from the client database.`)) return;
+  try {
+    await api.delete(`/api/clients/${clientId}`);
+    clientsData = clientsData.filter(c => String(c.id) !== String(clientId));
+    toast(`${name} deleted`, 'success');
+    renderClientList();
+  } catch (e) {
+    toast('Failed to delete client', 'error');
+  }
+}
+
 async function quickAddContactToClient(clientId) {
   // Set currentClient to this client so the modal works
   let client = clientsData.find(c => String(c.id) === String(clientId));

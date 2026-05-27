@@ -313,3 +313,26 @@ app.http('client-contacts-preflight', {
     route: 'client-contacts/{*path}',
     handler: async (request) => preflight(request)
 });
+
+// DELETE /api/clients/:id — soft delete (sets is_active = 0)
+app.http('clients-delete', {
+    methods: ['DELETE'],
+    authLevel: 'anonymous',
+    route: 'clients/{id}',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+        try {
+            const id = parseInt(request.params.id);
+            const result = await query(
+                `UPDATE Clients SET is_active = 0, updated_at = GETUTCDATE() OUTPUT INSERTED.id WHERE id = @id`,
+                { id }
+            );
+            if (!result.recordset.length) return notFound('Client not found', request);
+            return ok({ deleted: true, id }, request);
+        } catch (err) {
+            context.error('Error deleting client:', err);
+            return serverError('Failed to delete client', request);
+        }
+    }
+});
