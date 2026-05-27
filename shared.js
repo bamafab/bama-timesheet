@@ -26549,7 +26549,7 @@ async function saveInstantPo() {
       vat_rate:     20,
       vat_amount:   0,
       description:  document.getElementById('instantPoDescription').value.trim() || null,
-      created_by:   currentPoUser || currentManagerUser
+      created_by:   currentManagerUser || (typeof AUTH !== 'undefined' && AUTH.getUserName?.()) || 'unknown'
     };
 
     if (_instantPoState.scope === 'project' && _instantPoState.projectId) {
@@ -26565,7 +26565,7 @@ async function saveInstantPo() {
     const poRef = newPo.reference;
 
     // ── 3. Create follow-up office task assigned to the person who raised it ──
-    const taskOwner = currentPoUser || currentManagerUser;
+    const taskOwner = currentManagerUser || (typeof AUTH !== 'undefined' && AUTH.getUserName?.()) || 'unknown';
     const supplierName = _instantPoState.newSupplierMode
       ? document.getElementById('instantPoNewSupplierName').value.trim()
       : ((_poSuppliersCache || []).find(s => s.id === supplierId) || {}).supplier_name || 'supplier';
