@@ -341,10 +341,168 @@ app.http('job-bom-items-status', {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DELETE /api/job-bom-items/:id
-// Hard delete. Allowed in any status (the frontend can warn the user
-// before calling).
+// POST /api/job-bom-items/generate-dn
+// Body:
+//   {
+//     item_ids:           [42, 43, 44, ...],   -- must all share the same finish_service_id
+//     supplier_id:        7,                   -- must be active + have SupplierServices entry
+//                                                 for the items' finish_service_id
+//     sharepoint_file_id: "0123ABC..." | null, -- the DN PDF uploaded by the frontend
+//     sharepoint_drive_id: "...",
+//     sharepoint_web_url:  "https://...",
+//     file_name:          "DN-0042.pdf"
+//   }
+//
+// Returns: { dn_ref: 'DN-0042', items: [...] }
+//
+// In a single transaction:
+//   1. Allocate the next DN ref from Settings.dn_next_seq (UPDLOCK so two
+//      concurrent generate-DNs don't collide on the number).
+//   2. Validate: every item_id exists, belongs to the same job (defence
+//      against client tampering), is currently status='pending', and has
+//      the same finish_service_id.
+//   3. Validate the supplier is active AND has SupplierServices for that
+//      finish_service_id.
+//   4. UPDATE all selected items to status='at_supplier' with supplier_id,
+//      sent_at, sharepoint_file_id/drive_id/web_url/file_name pointing at
+//      the DN PDF.
+//
+// Note: the actual DN PDF is built and uploaded by the frontend (html2pdf
+// + SharePoint PUT). The backend only handles the allocation and the
+// status flip — keeps the Functions runtime small (no PDF libs needed).
+// The frontend uploads to the path AFTER calling this endpoint so the
+// DN ref returned here becomes the filename.
 // ─────────────────────────────────────────────────────────────────────────────
+app.http('job-bom-items-generate-dn', {
+    methods: ['POST'],
+    authLevel: 'anonymous',
+    route: 'job-bom-items/generate-dn',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const body = await request.json();
+            const itemIds = Array.isArray(body.item_ids)
+                ? body.item_ids.map(x => parseInt(x)).filter(x => !isNaN(x))
+                : [];
+            const supplierId = parseInt(body.supplier_id);
+            if (itemIds.length === 0) return badRequest('item_ids must be a non-empty array', request);
+            if (!supplierId || isNaN(supplierId)) return badRequest('supplier_id is required', request);
+
+            // Build a parameterised IN clause for the item lookup
+            const idParams = { supplierId };
+            const idPlaceholders = itemIds.map((id, i) => {
+                const k = `id${i}`;
+                idParams[k] = id;
+                return `@${k}`;
+            }).join(',');
+
+            // Cheap pre-flight validation (outside the txn for fast-fail)
+            const checkRes = await query(
+                `SELECT id, job_id, status, finish_service_id
+                 FROM JobBomItems
+                 WHERE id IN (${idPlaceholders})`,
+                idParams
+            );
+            if (checkRes.recordset.length !== itemIds.length) {
+                return badRequest('One or more BOM items not found', request);
+            }
+            const finishIds = new Set(checkRes.recordset.map(r => r.finish_service_id));
+            if (finishIds.size > 1) {
+                return badRequest('All items on a DN must share the same finish', request);
+            }
+            const finishServiceId = checkRes.recordset[0].finish_service_id;
+            if (!finishServiceId) {
+                return badRequest('Items without a finish cannot go on a DN — they are already ready for despatch', request);
+            }
+            const jobIds = new Set(checkRes.recordset.map(r => r.job_id));
+            if (jobIds.size > 1) {
+                return badRequest('All items on a DN must belong to the same job', request);
+            }
+            const notPending = checkRes.recordset.filter(r => r.status !== 'pending');
+            if (notPending.length) {
+                return badRequest(`Items ${notPending.map(r => r.id).join(',')} are not pending`, request);
+            }
+
+            // Supplier must be active AND offer the relevant finish service
+            const supplierRes = await query(
+                `SELECT s.id
+                 FROM Suppliers s
+                 JOIN SupplierServices ss ON ss.supplier_id = s.id
+                 WHERE s.id = @supplierId AND s.is_active = 1
+                   AND ss.service_type_id = @finishServiceId`,
+                { supplierId, finishServiceId }
+            );
+            if (supplierRes.recordset.length === 0) {
+                return badRequest('Selected supplier is inactive or does not offer the required finish', request);
+            }
+
+            const db = await getPool();
+            const transaction = new sql.Transaction(db);
+            await transaction.begin();
+
+            try {
+                // 1. Allocate next DN ref atomically. UPDLOCK keeps two concurrent
+                //    generators from getting the same number.
+                const seqReq = new sql.Request(transaction);
+                const seqRes = await seqReq.query(
+                    `SELECT value FROM Settings WITH (UPDLOCK, HOLDLOCK) WHERE [key] = 'dn_next_seq'`
+                );
+                if (seqRes.recordset.length === 0) {
+                    throw new Error('Settings.dn_next_seq not initialised — run migration 1');
+                }
+                const nextSeq = parseInt(seqRes.recordset[0].value) || 1;
+                const dnRef = `DN-${String(nextSeq).padStart(4, '0')}`;
+
+                // Increment for the next allocation
+                const incReq = new sql.Request(transaction);
+                incReq.input('newVal', sql.NVarChar(64), String(nextSeq + 1));
+                await incReq.query(
+                    `UPDATE Settings SET value = @newVal, updated_at = SYSUTCDATETIME()
+                     WHERE [key] = 'dn_next_seq'`
+                );
+
+                // 2. Flip selected items. The WHERE clause re-checks status='pending'
+                //    to defend against concurrent status changes.
+                const fileName = body.file_name || `${dnRef}.pdf`;
+                const upReq = new sql.Request(transaction);
+                upReq.input('supplierId', sql.Int,           supplierId);
+                upReq.input('spFileId',   sql.NVarChar(256), body.sharepoint_file_id  || null);
+                upReq.input('spDriveId',  sql.NVarChar(256), body.sharepoint_drive_id || null);
+                upReq.input('spWebUrl',   sql.NVarChar(1024), body.sharepoint_web_url || null);
+                upReq.input('fileName',   sql.NVarChar(256), fileName);
+                itemIds.forEach((id, i) => upReq.input(`id${i}`, sql.Int, id));
+
+                const upRes = await upReq.query(
+                    `UPDATE JobBomItems
+                     SET status              = 'at_supplier',
+                         supplier_id         = @supplierId,
+                         sent_at             = SYSUTCDATETIME(),
+                         sharepoint_file_id  = @spFileId,
+                         sharepoint_drive_id = @spDriveId,
+                         sharepoint_web_url  = @spWebUrl,
+                         file_name           = @fileName
+                     OUTPUT INSERTED.*
+                     WHERE id IN (${idPlaceholders}) AND status = 'pending'`
+                );
+                if (upRes.recordset.length !== itemIds.length) {
+                    throw new Error('One or more items changed status concurrently — please refresh.');
+                }
+
+                await transaction.commit();
+                return ok({ dn_ref: dnRef, items: upRes.recordset }, request);
+            } catch (txErr) {
+                await transaction.rollback();
+                throw txErr;
+            }
+        } catch (err) {
+            context.error('Error generating DN:', err);
+            return serverError('Failed to generate DN: ' + err.message, request);
+        }
+    }
+});
+
 app.http('job-bom-items-delete', {
     methods: ['DELETE'],
     authLevel: 'anonymous',

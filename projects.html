@@ -425,6 +425,35 @@
 </div>
 
 <!-- ═══════════════════════════════════════
+     GENERATE DELIVERY NOTE MODAL (commit 10 — SPEC §7)
+     One supplier per DN; suppliers filtered to those offering
+     the items' required finish
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="generateDnModal">
+  <div class="modal" style="width:640px;max-width:96vw">
+    <div class="modal-title" style="margin-bottom:6px">Generate delivery note</div>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:18px">
+      <span id="gdnItemCount">0</span> items · sending for <b id="gdnFinishName"></b> · total qty <span id="gdnItemQtySum">0</span>
+    </div>
+
+    <div class="field-label">PICK A SUPPLIER</div>
+    <div id="gdnSupplierList" style="margin-bottom:16px;max-height:240px;overflow-y:auto;padding:2px"></div>
+
+    <div class="field-label">ITEMS BEING SENT</div>
+    <div id="gdnItemList" style="background:var(--bg-darker);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:20px;max-height:160px;overflow-y:auto"></div>
+
+    <button class="btn btn-primary btn-full" id="gdnConfirmBtn"
+            onclick="confirmGenerateDnSQL()"
+            style="padding:14px;font-size:15px;opacity:.4;cursor:not-allowed" disabled>
+      Generate &amp; save DN PDF
+    </button>
+    <button class="btn btn-ghost btn-full" onclick="closeGenerateDnModalSQL()" style="margin-top:10px;padding:12px">
+      Cancel
+    </button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
      COMPLETE TASK MODAL
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="completeTaskModal">
@@ -591,9 +620,9 @@
 </div>
 
 <!-- ═══════════════════════════════════════
-     GENERATE DELIVERY NOTE MODAL
+     LEGACY GENERATE DELIVERY NOTE MODAL — dead, sweep in commit 12
 ══════════════════════════════════════════ -->
-<div class="modal-overlay" id="generateDnModal">
+<div class="modal-overlay" id="legacyGenerateDnModal" style="display:none">
   <div class="modal" style="width:560px;max-width:95vw">
     <div class="modal-title">&#128666; Generate Delivery Note</div>
     <div style="color:var(--muted);font-size:13px;margin-bottom:20px" id="dnItemCount"></div>
@@ -668,6 +697,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-<script src="shared.js?v=20260527af"></script>
+<script src="shared.js?v=20260527ag"></script>
 </body>
 </html>

@@ -11702,11 +11702,314 @@ async function deleteBomItem(id) {
   }
 }
 
-// Placeholder — Generate DN modal lands in commit 10.
-function openGenerateDnModalSQL() {
-  const ids = Array.from(document.querySelectorAll('.bom-sel:checked')).map(c => c.dataset.id);
-  if (!ids.length) { toast('Select pending items first.', 'error'); return; }
-  toast(`Generate DN (${ids.length} item${ids.length>1?'s':''}) — coming in the next update.`, 'info');
+// Generate DN (commit 10 — SPEC §7).
+// Steps:
+//   1. Gather selected pending items + validate same finish
+//   2. Fetch suppliers, filter to active + offering that finish
+//   3. Show supplier picker modal
+//   4. On confirm: backend allocates DN ref + flips items to at_supplier;
+//      then the frontend builds the PDF, uploads to SharePoint, and
+//      attaches the PDF metadata to the rows.
+let _pendingDn = null; // { items:[], finishServiceId, finishName }
+
+async function openGenerateDnModalSQL() {
+  const selectedIds = Array.from(document.querySelectorAll('.bom-sel:checked'))
+    .map(c => parseInt(c.dataset.id));
+  if (!selectedIds.length) { toast('Select pending items first.', 'error'); return; }
+
+  const jobId = parseInt(currentJob.id);
+  const items = (_bomItemsByJob[jobId] || []).filter(i => selectedIds.includes(i.id));
+  if (items.length === 0) { toast('Nothing selected.', 'error'); return; }
+
+  // All items must share the same finish (and have one)
+  const finishIds = [...new Set(items.map(i => i.finish_service_id))];
+  if (finishIds.length > 1) {
+    toast('All items on a DN must require the same finish. Generate separate DNs.', 'error');
+    return;
+  }
+  const finishServiceId = finishIds[0];
+  if (!finishServiceId) {
+    toast('These items have no finish — they are already ready for despatch.', 'error');
+    return;
+  }
+  const finishName = items[0].finish_name || 'finish';
+
+  _pendingDn = { items, finishServiceId, finishName };
+
+  // Fetch suppliers + filter to active suppliers offering this finish.
+  // GET /api/suppliers returns services[] per supplier (see traceability.js).
+  let suppliers = [];
+  try {
+    const all = await api.get('/api/suppliers');
+    suppliers = (all || []).filter(s =>
+      s.is_active !== false &&
+      (s.services || []).some(svc => svc.service_type_id === finishServiceId)
+    );
+  } catch (e) {
+    toast('Could not load suppliers: ' + e.message, 'error');
+    return;
+  }
+
+  // Populate modal
+  document.getElementById('gdnFinishName').textContent = finishName;
+  document.getElementById('gdnItemCount').textContent = items.length;
+  const sumWt = items.reduce((s, i) => s + (Number(i.quantity) || 0), 0);
+  document.getElementById('gdnItemQtySum').textContent = sumWt;
+
+  const list = document.getElementById('gdnSupplierList');
+  if (!suppliers.length) {
+    list.innerHTML = `<div style="padding:16px;color:var(--subtle);font-size:13px;text-align:center">
+      No active suppliers offering <b>${escapeHtml(finishName)}</b>. Add one in Manager → Suppliers.
+    </div>`;
+  } else {
+    list.innerHTML = suppliers.map(s => {
+      const addr = [s.address_line1, s.city].filter(Boolean).join(', ');
+      return `<label class="gdn-supplier-row" data-id="${s.id}" style="display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;cursor:pointer;background:var(--surface)">
+        <input type="radio" name="gdnSupplier" value="${s.id}" style="width:16px;height:16px;accent-color:var(--accent)">
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:600">${escapeHtml(s.supplier_name)}</div>
+          ${addr ? `<div style="font-size:11px;color:var(--subtle);margin-top:2px">${escapeHtml(addr)}</div>` : ''}
+        </div>
+      </label>`;
+    }).join('');
+  }
+
+  // Render items being included (read-only summary)
+  const itemList = document.getElementById('gdnItemList');
+  itemList.innerHTML = items.map(i =>
+    `<div style="display:flex;gap:10px;font-size:12px;padding:3px 0;color:var(--muted)">
+      <span style="font-family:var(--font-mono);min-width:140px">${escapeHtml(i.description)}</span>
+      <span>×${Number(i.quantity)}</span>
+      <span style="color:var(--subtle);font-size:11px">${i.source === 'assembly' ? (i.source_assembly_mark ? `from ${escapeHtml(i.source_assembly_mark)}` : 'from assembly') : 'manual'}</span>
+    </div>`
+  ).join('');
+
+  // Reset confirm button
+  const btn = document.getElementById('gdnConfirmBtn');
+  btn.disabled = true; btn.style.opacity = '.4'; btn.style.cursor = 'not-allowed';
+
+  // Wire radio change
+  list.querySelectorAll('input[name="gdnSupplier"]').forEach(r => {
+    r.addEventListener('change', () => {
+      btn.disabled = false; btn.style.opacity = '1'; btn.style.cursor = 'pointer';
+    });
+  });
+
+  document.getElementById('generateDnModal').classList.add('active');
+}
+
+function closeGenerateDnModalSQL() {
+  document.getElementById('generateDnModal').classList.remove('active');
+  _pendingDn = null;
+}
+
+async function confirmGenerateDnSQL() {
+  if (!_pendingDn) return;
+  const supplierRadio = document.querySelector('input[name="gdnSupplier"]:checked');
+  if (!supplierRadio) { toast('Pick a supplier.', 'error'); return; }
+  const supplierId = parseInt(supplierRadio.value);
+
+  const btn = document.getElementById('gdnConfirmBtn');
+  btn.disabled = true; btn.style.opacity = '.5';
+
+  const itemIds = _pendingDn.items.map(i => i.id);
+  const proj = currentProject;
+  const job = currentJob;
+
+  try {
+    // 1. Build the DN HTML (locally) — needs a placeholder ref because we
+    //    haven't allocated one yet. We'll re-build after the backend gives
+    //    us the real ref.
+    // Skip: allocate ref via the backend FIRST (without the SharePoint
+    // URL), then build PDF with the real ref, then update the rows with
+    // the file metadata in a follow-up call.
+    //
+    // Actually cleanest: call backend WITHOUT SharePoint info to allocate
+    // ref + flip status, then build PDF + upload + PATCH metadata.
+    const allocRes = await api.post('/api/job-bom-items/generate-dn', {
+      item_ids: itemIds,
+      supplier_id: supplierId
+    });
+    const dnRef = allocRes.dn_ref;
+
+    // 2. Build the DN PDF
+    await loadLogoDataUri();
+    const supplierName = (supplierRadio.closest('.gdn-supplier-row')?.querySelector('div > div')?.textContent || '').trim();
+    const dn = {
+      number:          dnRef,
+      createdAt:       new Date().toISOString(),
+      destination:     'supplier',
+      destinationName: supplierName,
+      items:           _pendingDn.items,
+      finishName:      _pendingDn.finishName
+    };
+    const html = buildDnHtmlV2(dn, proj || {}, job || {});
+
+    // 3. Render HTML → PDF blob via html2pdf
+    if (typeof html2pdf === 'undefined') throw new Error('PDF library not loaded');
+    const container = document.createElement('div');
+    container.style.cssText = 'position:absolute;left:-99999px;top:0;width:210mm;background:#fff';
+    container.innerHTML = html.replace(/^[\s\S]*?<body[^>]*>|<\/body>[\s\S]*$/g, '');
+    document.body.appendChild(container);
+    let pdfBlob;
+    try {
+      pdfBlob = await html2pdf().set({
+        margin: [10, 10, 10, 10],
+        filename: `${dnRef}.pdf`,
+        image: { type: 'jpeg', quality: 0.95 },
+        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      }).from(container).outputPdf('blob');
+    } finally {
+      document.body.removeChild(container);
+    }
+
+    // 4. Upload to SharePoint: <ProjectFolder>/07 - Deliveries/<JobFolder>/<DN-ref>.pdf
+    const projectFolder = await findProjectFolder(proj.id);
+    if (!projectFolder) throw new Error('Project folder not found on SharePoint');
+    const driveId = projectFolder.parentReference?.driveId || BAMA_DRIVE_ID;
+    const deliveriesFolder = await getOrCreateSubfolder(projectFolder.id, '07 - Deliveries', driveId);
+    const jobFolderName = (job && (job.folderName || job.name)) || 'Unassigned';
+    const jobSubFolder  = await getOrCreateSubfolder(deliveriesFolder.id, jobFolderName, driveId);
+    const dnFileName = `${dnRef}.pdf`;
+    const token = await getToken();
+    const upUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${jobSubFolder.id}:/${encodeURIComponent(dnFileName)}:/content`;
+    const upRes = await fetch(upUrl, {
+      method: 'PUT',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/pdf' },
+      body: pdfBlob
+    });
+    if (!upRes.ok) throw new Error(`DN upload failed: ${upRes.status}`);
+    const uploaded = await upRes.json();
+
+    // 5. Attach the SharePoint metadata to each BOM row (status already
+    //    flipped in step 1). We do per-row PUT /:id rather than a bulk
+    //    endpoint — small N, simple code, atomic enough.
+    //
+    //    Note: PUT /:id only accepts description/quantity/finish_service_id
+    //    today. We'd need a small extension to take file metadata, OR a
+    //    second pass via a new endpoint. For v1 it's acceptable to skip
+    //    this: the DN PDF lives in SharePoint reachable via project folder
+    //    browsing, and the BOM rows already have supplier_id + sent_at.
+    //    Per-row 'Open PDF' isn't part of the v1 must-haves for DN'd rows;
+    //    operators open the DN via the SharePoint folder.
+    //
+    //    Skipping the PUT is intentional. Logged here so future readers
+    //    know where to extend if a per-row "Open DN PDF" link is wanted.
+
+    closeGenerateDnModalSQL();
+    toast(`${dnRef} generated for ${itemIds.length} item${itemIds.length>1?'s':''}.`, 'success');
+    if (currentJob?.id) await loadJobBomItems(parseInt(currentJob.id));
+    renderBOM();
+
+    // 6. Open the freshly-uploaded DN in a new tab
+    if (uploaded.webUrl) window.open(uploaded.webUrl, '_blank');
+
+  } catch (e) {
+    // If the backend already flipped statuses but the PDF upload failed,
+    // we don't auto-roll back — the items are validly 'at_supplier' and
+    // the operator can re-generate a PDF from elsewhere. Surface the
+    // exact error so they know what to retry.
+    toast(`DN failed: ${e.message}`, 'error');
+    btn.disabled = false; btn.style.opacity = '1';
+    return;
+  }
+}
+
+// SQL-driven DN HTML builder. Same visual template as the legacy
+// buildDeliveryNoteHTMLCore but reads from the SQL-shaped item list
+// (description / quantity / finish_name) instead of the legacy
+// mark / coating / weightPerUnit fields.
+function buildDnHtmlV2(dn, proj, job) {
+  const s = (typeof _pickTplSettings === 'function') ? _pickTplSettings() : null;
+  const g = (s && s.global)         || (typeof TEMPLATE_DEFAULTS !== 'undefined' ? TEMPLATE_DEFAULTS.global       : { companyName: 'BAMA FABRICATION', address: '', phone: '', email: '', vatNumber: '' });
+  const t = (s && s.deliveryNote)   || (typeof TEMPLATE_DEFAULTS !== 'undefined' ? TEMPLATE_DEFAULTS.deliveryNote : { title: 'Delivery Note', accentColor: '#ff6b00', showLogo: true, showCompanyDetails: true, showSignatureBlock: true, termsText: '' });
+  const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
+  const showLogo = t.showLogo !== false && logo;
+  const showCo   = t.showCompanyDetails !== false;
+  const accent   = t.accentColor || '#ff6b00';
+  const date     = new Date(dn.createdAt).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
+
+  let html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+<title>${escapeHtml(dn.number)} - Delivery Note</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: Arial, sans-serif; font-size: 12px; padding: 20px; color: #222; }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 2px solid #222; gap: 20px; }
+  .company { font-size: 22px; font-weight: 700; color: ${accent}; letter-spacing: 1px; }
+  .company-sub { font-size: 9px; color: #666; margin-top: 4px; line-height: 1.4; white-space: pre-line; }
+  .header-logo { max-width: 110px; max-height: 60px; object-fit: contain; margin-right: 12px; }
+  .header-left { display: flex; align-items: flex-start; flex: 1; }
+  .header-right { text-align: right; }
+  .dn-title { font-size: 20px; font-weight: 700; font-style: italic; color: ${accent}; margin-bottom: 8px; }
+  .meta-grid { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 11px; text-align: left; }
+  .meta-label { font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+  th { background: #f5f5f5; border: 1px solid #ccc; padding: 6px 8px; text-align: left; font-size: 11px; font-weight: 600; }
+  td { border: 1px solid #ccc; padding: 5px 8px; font-size: 11px; }
+  .sign-section { margin-top: 30px; display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .sign-box { border: 1px solid #ccc; padding: 12px; min-height: 60px; }
+  .sign-label { font-weight: 600; font-size: 10px; margin-bottom: 20px; }
+  .terms { margin-top: 20px; font-size: 10px; color: #666; padding-top: 10px; border-top: 1px solid #eee; white-space: pre-line; }
+  @media print { body { padding: 10px; } }
+</style></head><body>
+<div class="header">
+  <div class="header-left">
+    ${showLogo ? `<img src="${logo}" class="header-logo" alt="">` : ''}
+    <div>
+      <div class="company">${escapeHtml(g.companyName)}</div>
+      ${showCo ? `<div class="company-sub">${escapeHtml(g.address || '')}${g.phone ? '\nTel: '+escapeHtml(g.phone) : ''}${g.email ? ' \u00b7 '+escapeHtml(g.email) : ''}${g.vatNumber ? '\nVAT: '+escapeHtml(g.vatNumber) : ''}</div>` : ''}
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="dn-title">${escapeHtml(t.title || 'Delivery Note')}</div>
+    <div class="meta-grid">
+      <span class="meta-label">DN Number:</span><span>${escapeHtml(dn.number)}</span>
+      <span class="meta-label">Date:</span><span>${date}</span>
+      <span class="meta-label">Project:</span><span>${escapeHtml(proj.name || '')}</span>
+      <span class="meta-label">Project No:</span><span>${escapeHtml(proj.id || '')}</span>
+      ${job && job.name ? `<span class="meta-label">Job:</span><span>${escapeHtml(job.name)}</span>` : ''}
+      <span class="meta-label">Supplier:</span><span>${escapeHtml(dn.destinationName || '')}</span>
+      <span class="meta-label">For:</span><span>${escapeHtml(dn.finishName || '')}</span>
+    </div>
+  </div>
+</div>
+<table>
+<thead><tr><th>Description</th><th>Qty</th><th>Finish</th><th>Source</th></tr></thead>
+<tbody>`;
+
+  for (const it of (dn.items || [])) {
+    const src = it.source === 'assembly'
+      ? (it.source_assembly_mark ? `from ${it.source_assembly_mark}` : 'assembly')
+      : (it.file_name ? `manual (${it.file_name})` : 'manual');
+    html += `<tr>
+      <td style="font-weight:600">${escapeHtml(it.description)}</td>
+      <td>${Number(it.quantity)}</td>
+      <td>${escapeHtml(it.finish_name || dn.finishName || '')}</td>
+      <td style="font-size:10px;color:#666">${escapeHtml(src)}</td>
+    </tr>`;
+  }
+  html += `</tbody></table>`;
+
+  if (t.showSignatureBlock !== false) {
+    html += `<div class="sign-section">
+      <div class="sign-box">
+        <div class="sign-label">Delivered By (BAMA):</div>
+        <div style="border-bottom:1px solid #999;margin-top:24px;padding-bottom:4px"></div>
+        <div style="font-size:10px;color:#666;margin-top:4px">Date:</div>
+      </div>
+      <div class="sign-box">
+        <div class="sign-label">Received By (Supplier):</div>
+        <div style="border-bottom:1px solid #999;margin-top:24px;padding-bottom:4px"></div>
+        <div style="font-size:10px;color:#666;margin-top:4px">Date:</div>
+      </div>
+    </div>`;
+  }
+  if (t.termsText) {
+    html += `<div class="terms">${escapeHtml(t.termsText)}</div>`;
+  }
+  html += `</body></html>`;
+  return html;
 }
 
 // ── Manual BOM upload pipeline (SPEC §6 Route A) ──

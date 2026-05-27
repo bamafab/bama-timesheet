@@ -317,7 +317,9 @@ When the user selects one or more `pending` BOM rows and clicks
 4. Generate the DN PDF (template TBD — reuses the BAMA letterhead
    pattern from `drawBamaInvoicePDF`).
 5. Upload DN PDF to SharePoint:
-   `<ProjectFolder>/01 - BOM/Delivery Notes/<DN-ref>.pdf`.
+   `<ProjectFolder>/07 - Deliveries/<JobFolderName>/<DN-ref>.pdf`.
+   (Matches the legacy path so existing folder structure stays
+   coherent.)
 6. UPDATE selected `JobBomItems` SET `status='at_supplier',
    supplier_id=<id>, delivery_note_id=<dn_id>, sent_at=NOW`.
 
