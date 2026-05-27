@@ -14483,6 +14483,66 @@ let clientsData = [];
 let currentTender = null;
 let _clientSearchTimeout = null;
 
+// ── Smart client search helpers ───────────────────────────────────────────────
+function onClientSearchInput() {
+  const input = document.getElementById('clientSearch');
+  const clear = document.getElementById('clientSearchClear');
+  if (clear) clear.style.display = input?.value ? '' : 'none';
+  clearTimeout(_clientSearchTimeout);
+  _clientSearchTimeout = setTimeout(renderClientList, 180);
+}
+
+function clearClientSearch() {
+  const input = document.getElementById('clientSearch');
+  if (input) { input.value = ''; input.focus(); }
+  const clear = document.getElementById('clientSearchClear');
+  if (clear) clear.style.display = 'none';
+  const count = document.getElementById('clientSearchCount');
+  if (count) count.textContent = '';
+  renderClientList();
+}
+
+// Highlight all query words in a string. Returns safe HTML.
+function _clientHighlight(text, words) {
+  let safe = escapeHtml(text || '');
+  words.forEach(w => {
+    if (!w) return;
+    const re = new RegExp(`(${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+    safe = safe.replace(re, '<mark style="background:rgba(255,107,0,.28);color:inherit;border-radius:2px;padding:0 1px">$1</mark>');
+  });
+  return safe;
+}
+
+// Score a client against query words. Higher = better match.
+// Returns 0 if any word matches nowhere.
+function _clientScore(c, words) {
+  if (!words.length) return 1;
+  let score = 0;
+  const fields = {
+    company:  (c.company_name  || '').toLowerCase(),
+    contact:  (c.contact_name  || '').toLowerCase(),
+    email:    (c.contact_email || '').toLowerCase(),
+    phone:    (c.contact_phone || '').toLowerCase(),
+    city:     (c.city          || '').toLowerCase(),
+    postcode: (c.postcode      || '').toLowerCase(),
+    notes:    (c.notes         || '').toLowerCase(),
+  };
+  for (const word of words) {
+    const w = word.toLowerCase();
+    let wordHit = false;
+    if (fields.company.startsWith(w))          { score += 100; wordHit = true; }
+    else if (fields.company.includes(w))        { score +=  60; wordHit = true; }
+    if (fields.contact.includes(w))             { score +=  40; wordHit = true; }
+    if (fields.email.includes(w))               { score +=  30; wordHit = true; }
+    if (fields.city.includes(w))                { score +=  25; wordHit = true; }
+    if (fields.postcode.includes(w))            { score +=  25; wordHit = true; }
+    if (fields.phone.includes(w))               { score +=  20; wordHit = true; }
+    if (fields.notes.includes(w))               { score +=  10; wordHit = true; }
+    if (!wordHit) return 0; // ALL words must match somewhere
+  }
+  return score;
+}
+
 // ── SharePoint config for Quotation folder ──
 const QUOTATION_FOLDER_PATH = 'Quotation'; // root-level in the BAMA drive
 
@@ -15043,27 +15103,51 @@ function renderClientList() {
   const container = document.getElementById('clientListContainer');
   if (!container) return;
 
-  const search = (document.getElementById('clientSearch')?.value || '').toLowerCase();
+  const raw = (document.getElementById('clientSearch')?.value || '').trim();
+  const words = raw.split(/\s+/).filter(Boolean);
   let list = clientsData.filter(c => c.is_active !== false && c.is_active !== 0);
 
-  if (search) {
-    list = list.filter(c => {
-      const hay = `${c.company_name} ${c.contact_name || ''} ${c.contact_email || ''}`.toLowerCase();
-      return hay.includes(search);
-    });
+  if (words.length) {
+    list = list
+      .map(c => ({ c, score: _clientScore(c, words) }))
+      .filter(({ score }) => score > 0)
+      .sort((a, b) => b.score - a.score)
+      .map(({ c }) => c);
+  } else {
+    list = list.slice().sort((a, b) => (a.company_name || '').localeCompare(b.company_name || ''));
+  }
+
+  // Update match count
+  const countEl = document.getElementById('clientSearchCount');
+  if (countEl) {
+    countEl.textContent = words.length
+      ? `${list.length} of ${clientsData.filter(c => c.is_active !== false && c.is_active !== 0).length} clients`
+      : '';
   }
 
   if (!list.length) {
-    container.innerHTML = '<div class="empty-state" style="padding:24px"><div class="icon">🏢</div>No clients found</div>';
+    container.innerHTML = words.length
+      ? `<div class="empty-state" style="padding:24px"><div class="icon">🔍</div>No clients match "${escapeHtml(raw)}"</div>`
+      : '<div class="empty-state" style="padding:24px"><div class="icon">🏢</div>No clients found</div>';
     return;
   }
 
-  container.innerHTML = list.map(c => `
+  container.innerHTML = list.map(c => {
+    const nameHtml    = _clientHighlight(c.company_name, words);
+    const contactHtml = _clientHighlight(c.contact_name || '', words);
+    const cityHtml    = _clientHighlight([c.address_line1, c.city, c.postcode].filter(Boolean).join(', '), words);
+    const emailHtml   = _clientHighlight(c.contact_email || '', words);
+
+    return `
     <div class="client-collapsible" data-client-id="${c.id}" style="border-bottom:1px solid var(--border)">
       <div class="client-header" onclick="toggleClientCollapse(${c.id})" style="display:flex;align-items:center;gap:12px;padding:14px 16px;cursor:pointer;transition:background .15s">
-        <div style="flex:1">
-          <div style="font-weight:600">${escapeHtml(c.company_name)}</div>
-          <div style="font-size:12px;color:var(--muted)">${escapeHtml([c.address_line1, c.city, c.postcode].filter(Boolean).join(', '))}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600">${nameHtml}</div>
+          <div style="font-size:12px;color:var(--muted);display:flex;flex-wrap:wrap;gap:8px;margin-top:2px">
+            ${cityHtml ? `<span>${cityHtml}</span>` : ''}
+            ${contactHtml ? `<span style="color:var(--subtle)">· ${contactHtml}</span>` : ''}
+            ${emailHtml  ? `<span style="color:var(--subtle)">· ${emailHtml}</span>`  : ''}
+          </div>
         </div>
         <button class="tiny-btn" onclick="event.stopPropagation();openClientDetail(${c.id})" style="padding:4px 12px;font-size:11px;background:var(--surface2);color:var(--muted);border:1px solid var(--border);${CURRENT_PAGE === 'office' ? 'display:none' : ''}" title="Open full client page">↗ Open</button>
         <button class="tiny-btn" onclick="event.stopPropagation();openEditClientModal(${c.id})" style="padding:4px 10px;font-size:11px;background:var(--surface2);color:var(--muted);border:1px solid var(--border)" title="Edit client">✏️</button>
@@ -15074,8 +15158,8 @@ function renderClientList() {
           <div style="font-size:12px;color:var(--subtle);padding:8px">Loading contacts...</div>
         </div>
       </div>
-    </div>
-  `).join('');
+    </div>`;
+  }).join('');
 }
 
 async function toggleClientCollapse(clientId) {
