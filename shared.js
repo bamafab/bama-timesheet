@@ -14379,13 +14379,13 @@ function renderUnifiedSidebar() {
     return p === page ? ' active' : '';
   };
 
+  el.style.display = 'flex';
+  el.style.flexDirection = 'column';
+
   el.innerHTML = `
     <!-- Top pinned -->
     <button class="sidebar-nav-item${a('office','dashboard')}" data-tab="dashboard" onclick="navToOfficeTab('dashboard')">
       <span class="sidebar-nav-icon">📊</span> Dashboard
-    </button>
-    <button class="sidebar-nav-item${a('manager')}" onclick="window.location.href='manager.html'">
-      <span class="sidebar-nav-icon">⚙️</span> Manager
     </button>
 
     <hr class="sidebar-nav-divider">
@@ -14473,7 +14473,14 @@ function renderUnifiedSidebar() {
           <span class="sidebar-nav-icon">🏦</span> Reconcile
         </button>
       </div>
-    </div>`;
+    </div>
+
+    <!-- Manager pinned at bottom -->
+    <div style="flex:1"></div>
+    <hr class="sidebar-nav-divider" style="margin-top:8px">
+    <button class="sidebar-nav-item${a('manager')}" onclick="window.location.href='manager.html'" style="color:var(--subtle)">
+      <span class="sidebar-nav-icon">⚙️</span> Manager
+    </button>`;
 
   // Re-apply permission gating on the freshly-rendered buttons
   updateCrossNavSidebar();

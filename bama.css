@@ -326,7 +326,10 @@
     top: 53px;
     height: calc(100vh - 53px);
     overflow-y: auto;
+    scrollbar-width: none;        /* Firefox */
+    -ms-overflow-style: none;     /* IE/Edge */
   }
+  .mgr-sidebar::-webkit-scrollbar { display: none; } /* Chrome/Safari */
   .sidebar-nav-group { margin-bottom: 20px; }
   .sidebar-nav-label {
     font-size: 10px;
