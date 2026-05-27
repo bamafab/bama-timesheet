@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Projects & Jobs</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260527h">
+<link rel="stylesheet" href="bama.css?v=20260527n">
 </head>
 <body>
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
@@ -291,53 +291,59 @@
 <!-- ═══════════════════════════════════════
      CREATE ASSEMBLY TASK MODAL
 ══════════════════════════════════════════ -->
-<div class="modal-overlay" id="createTaskModal">
-  <div class="modal" style="width:520px;max-width:95vw">
-    <div class="modal-title">&#43; Create Assembly Task</div>
-    <div style="color:var(--muted);font-size:13px;margin-bottom:20px" id="createTaskContext"></div>
-    <div style="margin-bottom:12px">
-      <div class="field-label">TASK NAME</div>
-      <input type="text" class="field-input" id="createTaskName" placeholder="e.g. Brackets Installation">
+<!-- ═══════════════════════════════════════
+     ASSEMBLY REVIEW MODAL (post-OCR review/edit)
+     See SPEC-job-fabrication-rework.md §5
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="assemblyReviewModal">
+  <div class="modal" style="width:640px;max-width:96vw">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:4px">
+      <div class="modal-title" style="margin:0">Review assembly</div>
+      <span id="armCounter" style="font-size:12px;color:var(--subtle)"></span>
     </div>
-    <div style="margin-bottom:12px">
-      <div class="field-label">FINISHING REQUIREMENT</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <label class="toggle-chip" id="taskChipGalvanising">
-          <input type="radio" name="newTaskFinishing" value="galvanising" style="display:none" onchange="updateNewTaskFinishingChips()">
-          <span>&#9881; Galvanising</span>
-        </label>
-        <label class="toggle-chip" id="taskChipPPC">
-          <input type="radio" name="newTaskFinishing" value="ppc" style="display:none" onchange="updateNewTaskFinishingChips()">
-          <span>&#9881; PPC (Powder Coat)</span>
-        </label>
-        <label class="toggle-chip" id="taskChipPainting">
-          <input type="radio" name="newTaskFinishing" value="painting" style="display:none" onchange="updateNewTaskFinishingChips()">
-          <span>&#127912; Painting (On Site)</span>
-        </label>
-        <label class="toggle-chip active" id="taskChipNone">
-          <input type="radio" name="newTaskFinishing" value="none" style="display:none" checked onchange="updateNewTaskFinishingChips()">
-          <span>No finishing</span>
-        </label>
+    <div id="armFileName" style="color:var(--muted);font-size:12px;margin-bottom:16px"></div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+      <div>
+        <div class="field-label">ASSEMBLY MARK</div>
+        <input type="text" class="field-input" id="armMark" placeholder="e.g. RL1" style="font-family:var(--font-mono)">
+      </div>
+      <div>
+        <div class="field-label">QUANTITY</div>
+        <input type="number" class="field-input" id="armQty" min="1" style="font-family:var(--font-mono)">
       </div>
     </div>
+
     <div style="margin-bottom:12px">
-      <div class="field-label">SELECT FILE(S) <span style="color:var(--muted);font-weight:400">(optional — can add later)</span></div>
-      <input type="file" id="taskFileInput" accept=".pdf,.PDF,.png,.jpg,.jpeg,.dwg,.dxf" multiple style="display:none" onchange="onTaskFilesSelected()">
-      <div class="upload-zone" onclick="document.getElementById('taskFileInput').click()">
-        <div class="upload-zone-icon">&#128196;</div>
-        <div class="upload-zone-text" id="taskFileZoneText">Click or drag files here</div>
-      </div>
-      <div id="taskFileList" style="margin-top:8px"></div>
+      <div class="field-label">FINISH</div>
+      <select class="field-input" id="armFinish"></select>
+      <div id="armFinishHint" style="font-size:11px;color:var(--subtle);margin-top:4px;display:none"></div>
     </div>
-    <div id="createTaskProgress" style="display:none;margin-bottom:12px">
-      <div style="background:var(--border);border-radius:4px;overflow:hidden;height:6px">
-        <div id="createTaskProgressBar" style="background:var(--accent);height:100%;width:0%;transition:width .3s"></div>
-      </div>
-      <div style="font-size:12px;color:var(--muted);margin-top:6px;text-align:center" id="createTaskProgressText">Creating...</div>
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <div class="field-label" style="margin:0">PARTS <span style="color:var(--subtle);font-weight:400;text-transform:none">— heaviest auto-highlighted</span></div>
+      <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="armAddRow()">&#43; Add row</button>
     </div>
+
+    <div style="background:var(--bg-darker);border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:16px;overflow-x:auto">
+      <table style="width:100%;font-family:var(--font-mono);font-size:11px;border-collapse:collapse;min-width:560px">
+        <thead><tr style="color:var(--subtle);text-align:left">
+          <th style="font-weight:400;padding:4px 4px 4px 0">Mk</th>
+          <th style="font-weight:400;padding:4px">Qty</th>
+          <th style="font-weight:400;padding:4px">Profile</th>
+          <th style="font-weight:400;padding:4px">Length</th>
+          <th style="font-weight:400;padding:4px">Mat'l</th>
+          <th style="font-weight:400;padding:4px;text-align:right">Area</th>
+          <th style="font-weight:400;padding:4px;text-align:right">Wt (kg)</th>
+          <th></th>
+        </tr></thead>
+        <tbody id="armPartsTbody"></tbody>
+      </table>
+    </div>
+
     <div class="modal-actions">
-      <button class="btn btn-ghost" onclick="closeCreateTaskModal()">Cancel</button>
-      <button class="btn btn-primary" id="createTaskBtn" onclick="createAssemblyTask()">Create Task</button>
+      <button class="btn btn-ghost" onclick="armSkipCurrent()">Skip this PDF</button>
+      <button class="btn btn-primary" id="armSaveBtn" onclick="armSaveAndNext()">Save &amp; continue &rarr;</button>
     </div>
   </div>
 </div>
@@ -586,6 +592,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-<script src="shared.js?v=20260527ac"></script>
+<script src="shared.js?v=20260527ad"></script>
 </body>
 </html>

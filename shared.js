@@ -10287,9 +10287,20 @@ let isDraftsman = false;
 // Upload state
 let _uploadFiles = [];
 let _uploadContext = null; // { element, subElement, jobId, projectId, taskId }
-let _taskFiles = [];
-let _pendingCompleteTask = null;
 let _pendingCloseJob = null;
+
+// Assembly flow state (commit 7+ of job-fabrication rework). See
+// docs/SPEC-job-fabrication-rework.md §5.
+//   _assembliesByJob: cache keyed by SQL job_id (number) → array of
+//     { ...JobAssemblies row, parts: [JobAssemblyParts rows...] }
+//   _assemblyQueue: queue of pending uploads being walked through the
+//     OCR review modal. Each item: { file, sharepoint: {file_id,...}, ocr }
+//   _assemblyReviewIndex: which queue item is currently shown in the modal
+//   _finishesCache: ServiceTypes WHERE is_finish=1, lazy-loaded
+let _assembliesByJob = {};
+let _assemblyQueue = [];
+let _assemblyReviewIndex = 0;
+let _finishesCache = null;
 
 // ── Load / Save drawings data ──
 async function loadDrawingsData() {
@@ -11020,8 +11031,13 @@ function openJobDetail(projectId, jobId) {
   });
 
   showScreen('screenJobDetail');
-  // Ensure BOM data is loaded, then render
-  loadBomData(projectId).then(() => renderAllElements()).catch(() => renderAllElements());
+  // Ensure BOM data + SQL assemblies are loaded, then render
+  const jobIdInt = parseInt(currentJob.id);
+  Promise.all([
+    loadBomData(projectId),
+    loadJobAssemblies(jobIdInt),
+    loadFinishes()
+  ]).then(() => renderAllElements()).catch(() => renderAllElements());
 }
 
 function toggleElement(name) {
@@ -12405,78 +12421,181 @@ function renderParts() {
 }
 
 // ═══════════════════════════════════════════
-// ELEMENT 4: ASSEMBLY
+// ELEMENT 4: ASSEMBLY  (job-fabrication rework — see SPEC §5)
 // ═══════════════════════════════════════════
+//
+// New flow: one PDF per assembly. Upload triggers Claude vision OCR,
+// review modal opens, on confirm we INSERT into JobAssemblies +
+// JobAssemblyParts (single txn via /api/job-assemblies). The Assembly
+// section is now driven by SQL, NOT by drawingsData.projects[].jobs[].assembly.tasks.
+
+async function loadJobAssemblies(jobId) {
+  if (!jobId) return [];
+  try {
+    const rows = await api.get(`/api/job-assemblies?job_id=${encodeURIComponent(jobId)}`);
+    _assembliesByJob[jobId] = Array.isArray(rows) ? rows : [];
+    return _assembliesByJob[jobId];
+  } catch (e) {
+    console.warn('Load assemblies failed:', e.message);
+    _assembliesByJob[jobId] = [];
+    return [];
+  }
+}
+
+async function loadFinishes() {
+  if (_finishesCache) return _finishesCache;
+  try {
+    const rows = await api.get('/api/service-types');
+    _finishesCache = (rows || []).filter(r => r.is_finish && r.is_active);
+  } catch (e) {
+    console.warn('Load finishes failed:', e.message);
+    _finishesCache = [];
+  }
+  return _finishesCache;
+}
+
+// Return the index (in parts[]) of the heaviest part by weight_kg.
+// Ties: first one wins. Used for status display AND the BOM row name
+// generated on fabricate (commit 8).
+function heaviestPartIndex(parts) {
+  if (!parts || !parts.length) return -1;
+  let best = -1, bestWt = -Infinity;
+  for (let i = 0; i < parts.length; i++) {
+    const w = Number(parts[i].weight_kg) || 0;
+    if (w > bestWt) { bestWt = w; best = i; }
+  }
+  return best;
+}
+
 function renderAssembly() {
   const container = document.getElementById('assemblyContent');
   if (!container) return;
-  const assembly = currentJob.assembly || { tasks: [] };
-  const tasks = assembly.tasks || [];
 
+  const jobId = currentJob?.id ? parseInt(currentJob.id) : null;
+  const assemblies = (jobId && _assembliesByJob[jobId]) || [];
+
+  // Update header status badge
   const status = document.getElementById('elementAssemblyStatus');
-  const completeTasks = tasks.filter(t => t.status === 'complete').length;
-  if (tasks.length > 0) {
-    status.textContent = `${completeTasks}/${tasks.length} tasks`;
-    status.style.cssText = completeTasks === tasks.length
-      ? 'color:var(--green);background:rgba(62,207,142,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600'
-      : 'color:var(--accent);background:rgba(255,107,0,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600';
-  } else {
-    status.textContent = 'No tasks';
-    status.style.cssText = 'color:var(--subtle);font-size:11px;font-weight:600';
+  if (status) {
+    const fabricated = assemblies.filter(a => a.status === 'fabricated').length;
+    if (assemblies.length > 0) {
+      status.textContent = `${fabricated}/${assemblies.length} fabricated`;
+      status.style.cssText = fabricated === assemblies.length
+        ? 'color:var(--green);background:rgba(62,207,142,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600'
+        : 'color:var(--accent);background:rgba(255,107,0,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600';
+    } else {
+      status.textContent = 'No assemblies';
+      status.style.cssText = 'color:var(--subtle);font-size:11px;font-weight:600';
+    }
   }
 
   let html = '';
 
-  // Add task button (draftsman only)
-  if (isDraftsman && currentJob.status !== 'closed') {
-    html += `<button class="btn btn-primary" style="margin-bottom:12px;padding:8px 16px;font-size:12px" onclick="openCreateTaskModal()">&#43; Add Task</button>`;
+  // Drop zone (draftsman only, job not closed)
+  if (isDraftsman && currentJob && currentJob.status !== 'closed') {
+    html += `
+      <div class="upload-zone" id="assemblyDropZone"
+           style="margin-bottom:14px;cursor:pointer"
+           onclick="document.getElementById('assemblyFileInput').click()">
+        <div class="upload-zone-icon">&#128228;</div>
+        <div class="upload-zone-text">Drop assembly PDFs here</div>
+        <div style="color:var(--subtle);font-size:11px;margin-top:4px">
+          or click to browse · one PDF per assembly · 1–100+ accepted
+        </div>
+      </div>
+      <input type="file" id="assemblyFileInput" accept=".pdf,.PDF" multiple
+             style="display:none" onchange="onAssemblyFilesPicked(this.files)">
+    `;
   }
 
-  // Render tasks
-  tasks.forEach(task => {
-    const isComplete = task.status === 'complete';
-    const finishLabel = task.finishing === 'galvanising' ? '⚙️ Galvanising' : task.finishing === 'ppc' ? '⚙️ PPC' : task.finishing === 'painting' ? '🎨 Painting' : '';
-    const finishColor = task.finishing === 'galvanising' ? 'rgba(99,102,241,.2);color:#818cf8' : task.finishing === 'ppc' ? 'rgba(99,102,241,.2);color:#818cf8' : task.finishing === 'painting' ? 'rgba(245,158,11,.2);color:var(--amber)' : '';
-
-    html += `<div class="task-card ${isComplete ? 'complete' : ''}">
-      <div class="task-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
-        <div style="font-family:var(--font-mono);font-size:12px;font-weight:700;color:var(--accent);min-width:28px">${String(task.number).padStart(2,'0')}</div>
-        <div class="task-name">${isComplete ? '&#9989; ' : ''}${task.name}</div>
-        ${finishLabel ? `<span class="task-finish-badge" style="background:${finishColor}">${finishLabel}</span>` : ''}
-        ${isComplete
-          ? `<span style="font-size:11px;color:var(--green);font-weight:600">COMPLETE</span>`
-          : `<button class="btn btn-success" style="padding:5px 12px;font-size:11px" onclick="event.stopPropagation();openCompleteTaskModal('${task.id}')">&#10003; Complete</button>`
-        }
-      </div>
-      <div class="task-body">`;
-
-    // Upload button for task files
-    if (isDraftsman && currentJob.status !== 'closed') {
-      html += `<button class="btn btn-primary" style="margin-bottom:8px;padding:6px 12px;font-size:11px" onclick="openUploadFileModal('assembly','${task.id}')">&#43; Upload File</button>`;
-    }
-
-    // Task files
-    if (task.files?.length > 0) {
-      html += task.files.map(f => renderFileRow(f, `assembly-${task.id}`)).join('');
-    } else {
-      html += '<div style="color:var(--subtle);font-size:12px;padding:4px 0">No files yet</div>';
-    }
-
-    // Task notes
-    html += renderNotesSection(task.notes || [], `assembly-${task.id}`);
-
-    if (isComplete) {
-      html += `<div style="margin-top:8px;font-size:11px;color:var(--green)">Completed by ${task.completedBy} on ${new Date(task.completedAt).toLocaleDateString('en-GB')}</div>`;
-    }
-
-    html += '</div></div>';
+  // Sort: pending first (most-recent on top), then fabricated (most-recent on top)
+  const sorted = assemblies.slice().sort((a, b) => {
+    if (a.status !== b.status) return a.status === 'pending' ? -1 : 1;
+    return String(b.created_at).localeCompare(String(a.created_at));
   });
 
-  if (!tasks.length) {
-    html += '<div style="color:var(--subtle);font-size:13px;padding:12px 0">No assembly tasks yet</div>';
+  if (!sorted.length) {
+    html += '<div style="color:var(--subtle);font-size:13px;padding:8px 0">No assemblies uploaded yet</div>';
+  }
+
+  for (const a of sorted) {
+    const isFabricated = a.status === 'fabricated';
+    const finishBadge = a.finish_name
+      ? `<span style="background:rgba(99,102,241,.18);color:#a5b4fc;padding:2px 9px;border-radius:6px;font-size:11px">${escapeHtml(a.finish_name)}</span>`
+      : `<span style="color:var(--subtle);font-size:11px">No finish</span>`;
+    const heaviestIdx = heaviestPartIndex(a.parts || []);
+
+    // Header line — always visible
+    html += `<div class="task-card ${isFabricated ? 'complete' : ''}" style="${isFabricated ? 'opacity:.65;' : ''}">
+      <div class="task-header" style="cursor:pointer" onclick="this.nextElementSibling.classList.toggle('collapsed')">
+        <div style="font-family:var(--font-mono);font-size:15px;font-weight:700;color:${isFabricated ? 'var(--muted)' : 'var(--accent)'};min-width:48px">${escapeHtml(a.assembly_mark)}</div>
+        <div style="font-size:13px;color:var(--muted);min-width:60px">${Number(a.quantity)} off</div>
+        ${finishBadge}
+        ${isFabricated
+          ? `<span style="margin-left:auto;color:var(--green);font-size:11px">&#10003; Fabricated ${a.fabricated_at ? new Date(a.fabricated_at).toLocaleString('en-GB', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : ''}${a.fabricated_by ? ' · ' + escapeHtml(a.fabricated_by) : ''}</span>`
+          : `<span style="margin-left:auto"></span>`
+        }
+      </div>
+      <div class="task-body${isFabricated ? ' collapsed' : ''}">`;
+
+    // Parts table
+    if (a.parts && a.parts.length) {
+      html += `<table style="width:100%;font-family:var(--font-mono);font-size:11px;color:var(--muted);border-collapse:collapse;margin-top:6px">
+        <thead><tr style="color:var(--subtle);text-align:left">
+          <th style="font-weight:400;padding:3px 6px 3px 0">Mk</th>
+          <th style="font-weight:400;padding:3px 6px">Qty</th>
+          <th style="font-weight:400;padding:3px 6px">Profile</th>
+          <th style="font-weight:400;padding:3px 6px">Length</th>
+          <th style="font-weight:400;padding:3px 6px">Material</th>
+          <th style="font-weight:400;padding:3px 6px;text-align:right">Area</th>
+          <th style="font-weight:400;padding:3px 0 3px 6px;text-align:right">Weight</th>
+        </tr></thead><tbody>`;
+      for (let i = 0; i < a.parts.length; i++) {
+        const p = a.parts[i];
+        const isHeaviest = i === heaviestIdx;
+        const rowStyle = isHeaviest ? 'background:rgba(255,107,0,.06)' : '';
+        const accent = isHeaviest ? 'color:var(--accent)' : '';
+        html += `<tr style="${rowStyle}">
+          <td style="padding:3px 6px 3px 0">${escapeHtml(p.part_mark)}</td>
+          <td style="padding:3px 6px">${Number(p.quantity)}</td>
+          <td style="padding:3px 6px;${accent}">${escapeHtml(p.profile)}</td>
+          <td style="padding:3px 6px">${p.length_mm != null ? Number(p.length_mm).toFixed(1) : ''}</td>
+          <td style="padding:3px 6px">${p.material ? escapeHtml(p.material) : ''}</td>
+          <td style="padding:3px 6px;text-align:right">${p.area_m2 != null ? Number(p.area_m2).toFixed(2) : ''}</td>
+          <td style="padding:3px 0 3px 6px;text-align:right;${accent}">${p.weight_kg != null ? Number(p.weight_kg).toFixed(2) : ''}</td>
+        </tr>`;
+      }
+      html += '</tbody></table>';
+    }
+
+    // Action row
+    html += '<div style="display:flex;gap:8px;margin-top:12px;align-items:center;flex-wrap:wrap">';
+    if (a.sharepoint_web_url) {
+      html += `<a href="${escapeHtml(a.sharepoint_web_url)}" target="_blank" rel="noopener" class="btn btn-ghost" style="padding:6px 12px;font-size:11px;text-decoration:none">&#128279; Open PDF</a>`;
+    }
+    if (!isFabricated && isDraftsman && currentJob.status !== 'closed') {
+      html += `<button class="btn btn-primary" style="padding:6px 14px;font-size:11px" onclick="event.stopPropagation();openMarkFabricatedModal(${a.id})">&#10003; Mark fabricated</button>`;
+      html += `<button class="btn btn-ghost" title="Delete assembly" style="padding:6px 10px;font-size:11px;margin-left:auto" onclick="event.stopPropagation();deleteAssembly(${a.id})">&#128465;</button>`;
+    }
+    html += '</div>';
+
+    html += '</div></div>';
   }
 
   container.innerHTML = html;
+
+  // Drag-and-drop wiring for the drop zone
+  const dz = document.getElementById('assemblyDropZone');
+  if (dz) {
+    dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('drag-over'); });
+    dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+    dz.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dz.classList.remove('drag-over');
+      const files = Array.from(e.dataTransfer.files).filter(f => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
+      if (files.length) onAssemblyFilesPicked(files);
+    });
+  }
 }
 
 // ═══════════════════════════════════════════
@@ -13326,266 +13445,422 @@ async function printFile(fileId, driveId) {
   }
 }
 
-// ═══════════════════════════════════════════
-// ASSEMBLY: CREATE TASK
-// ═══════════════════════════════════════════
-function openCreateTaskModal() {
-  if (!isDraftsman || !currentJob || !currentProject) return;
-  document.getElementById('createTaskContext').textContent = `Job: ${currentJob.name}`;
-  document.getElementById('createTaskName').value = '';
-  document.getElementById('taskFileZoneText').textContent = 'Click or drag files here';
-  document.getElementById('taskFileList').innerHTML = '';
-  document.getElementById('createTaskProgress').style.display = 'none';
-  document.getElementById('createTaskBtn').disabled = false;
-  document.getElementById('taskFileInput').value = '';
-  _taskFiles = [];
-  // Reset finishing chips
-  document.querySelector('input[name="newTaskFinishing"][value="none"]').checked = true;
-  updateNewTaskFinishingChips();
-  document.getElementById('createTaskModal').classList.add('active');
-  setTimeout(() => document.getElementById('createTaskName').focus(), 100);
-}
 
-function closeCreateTaskModal() {
-  document.getElementById('createTaskModal').classList.remove('active');
-  _taskFiles = [];
-}
+// ═══════════════════════════════════════════
+// ASSEMBLY: UPLOAD + OCR + REVIEW + SAVE
+// (job-fabrication rework — see SPEC §5)
+// ═══════════════════════════════════════════
+//
+// Flow: drop-zone collects PDFs → each PDF uploaded to SharePoint under
+// `04 - Assembly/<filename>.pdf` → vision OCR via callClaude → results
+// pushed to _assemblyQueue → review modal walks the queue one by one,
+// user edits + confirms → POST /api/job-assemblies (assembly + parts
+// in one txn). On duplicate (job_id, assembly_mark) the API returns
+// 409 with error='duplicate_mark' and we show the replace-confirm
+// prompt; on confirm we DELETE the old then retry.
 
-function onTaskFilesSelected() {
-  _taskFiles = Array.from(document.getElementById('taskFileInput').files);
-  if (_taskFiles.length === 1) {
-    document.getElementById('taskFileZoneText').textContent = `&#128196; ${_taskFiles[0].name}`;
-  } else if (_taskFiles.length > 1) {
-    document.getElementById('taskFileZoneText').textContent = `${_taskFiles.length} files selected`;
+async function onAssemblyFilesPicked(fileList) {
+  if (!fileList || !fileList.length) return;
+  if (!currentJob || !currentJob.spFolderId) {
+    toast('Job folder not available — try reloading.', 'error');
+    return;
   }
-  document.getElementById('taskFileList').innerHTML = _taskFiles.map((f, i) => `
-    <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;font-size:12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;margin-bottom:4px">
-      <span style="flex:1">&#128196; ${f.name}</span>
-    </div>
-  `).join('');
-}
+  const files = Array.from(fileList).filter(f =>
+    f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')
+  );
+  if (!files.length) {
+    toast('Only PDFs accepted for assembly upload.', 'error');
+    return;
+  }
 
-function updateNewTaskFinishingChips() {
-  document.querySelectorAll('#createTaskModal .toggle-chip').forEach(chip => {
-    chip.classList.toggle('active', chip.querySelector('input')?.checked);
-  });
-}
+  // Show a small progress banner inside the Assembly section while we
+  // upload+OCR each file. We DON'T open the review modal until ALL
+  // files are OCR'd — that way the draftsman gets a single sequential
+  // review session at the end, with a clear N-of-M counter.
+  const container = document.getElementById('assemblyContent');
+  const banner = document.createElement('div');
+  banner.id = 'assemblyUploadBanner';
+  banner.style.cssText = 'background:rgba(255,107,0,.08);border:1px solid rgba(255,107,0,.3);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:var(--text)';
+  banner.textContent = `Uploading 0 / ${files.length}…`;
+  container.prepend(banner);
 
-async function createAssemblyTask() {
-  const taskName = document.getElementById('createTaskName').value.trim();
-  if (!taskName) { toast('Please enter a task name', 'error'); return; }
-
-  const finishing = document.querySelector('input[name="newTaskFinishing"]:checked')?.value || 'none';
-  const projectId = currentProject.id;
-  const job = currentJob;
-
-  if (!job.assembly) job.assembly = { tasks: [] };
-  const tasks = job.assembly.tasks;
-  const taskNumber = tasks.length + 1;
-  const taskFolderName = `${String(taskNumber).padStart(2,'0')} - ${taskName}`;
-
-  document.getElementById('createTaskProgress').style.display = 'block';
-  document.getElementById('createTaskBtn').disabled = true;
-  document.getElementById('createTaskProgressBar').style.width = '20%';
-  document.getElementById('createTaskProgressText').textContent = 'Creating task folder...';
-
+  const driveId = currentJob.spDriveId || BAMA_DRIVE_ID;
+  let asmFolder;
   try {
-    const driveId = job.spDriveId || BAMA_DRIVE_ID;
-    // Create folder inside 04 - Assembly
-    const asmFolder = await getOrCreateSubfolder(job.spFolderId, ELEMENT_FOLDERS.assembly, driveId);
-    const taskFolder = await createFolderInDrive(asmFolder.id, taskFolderName, driveId);
+    asmFolder = await getOrCreateSubfolder(currentJob.spFolderId, ELEMENT_FOLDERS.assembly, driveId);
+  } catch (e) {
+    banner.remove();
+    toast(`Could not access Assembly folder: ${e.message}`, 'error');
+    return;
+  }
 
-    // Upload files if any
-    const uploadedFiles = [];
-    if (_taskFiles.length > 0) {
-      for (let i = 0; i < _taskFiles.length; i++) {
-        const pct = 30 + Math.round((i / _taskFiles.length) * 50);
-        document.getElementById('createTaskProgressBar').style.width = `${pct}%`;
-        document.getElementById('createTaskProgressText').textContent = `Uploading ${i + 1} of ${_taskFiles.length}...`;
-        const file = _taskFiles[i];
-        const arrayBuffer = await file.arrayBuffer();
-        const uploaded = await uploadFileToFolder(taskFolder.id, file.name, arrayBuffer, file.type, driveId);
-        uploadedFiles.push({
-          id: Date.now().toString() + '-' + i,
-          name: file.name.replace(/\.[^.]+$/, ''),
-          fileName: file.name,
-          fileId: uploaded.id,
+  const queue = [];
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    banner.textContent = `Uploading ${i + 1} / ${files.length} — ${file.name}`;
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const uploaded = await uploadFileToFolder(asmFolder.id, file.name, arrayBuffer, file.type, driveId);
+
+      banner.textContent = `Parsing ${i + 1} / ${files.length} — ${file.name}`;
+      const ocr = await ocrAssemblyPdf(file);
+
+      queue.push({
+        file,
+        sharepoint: {
+          fileId:  uploaded.id,
           driveId: uploaded.parentReference?.driveId || driveId,
-          webUrl: uploaded.webUrl,
-          uploadedAt: new Date().toISOString()
-        });
+          webUrl:  uploaded.webUrl,
+          fileName: file.name
+        },
+        ocr
+      });
+    } catch (e) {
+      console.warn(`Failed on ${file.name}:`, e);
+      toast(`${file.name}: ${e.message}`, 'error');
+    }
+  }
+
+  banner.remove();
+  // Clear the file input so picking the same files again retriggers change
+  const input = document.getElementById('assemblyFileInput');
+  if (input) input.value = '';
+
+  if (!queue.length) {
+    toast('No assemblies were parsed.', 'error');
+    return;
+  }
+
+  _assemblyQueue = queue;
+  _assemblyReviewIndex = 0;
+  openAssemblyReviewModal();
+}
+
+// Run Claude vision OCR on one assembly PDF.
+// Returns { assembly_mark, quantity, finish_label_raw, total_area_m2,
+//           total_weight_kg, parts:[{part_mark,quantity,profile,
+//           length_mm,material,area_m2,weight_kg}, ...] }
+// Caller catches and surfaces any error.
+async function ocrAssemblyPdf(file) {
+  const dataUri = await _fileToDataUri(file);
+  const b64 = dataUri.split(',')[1];
+
+  const prompt = `Extract data from this UK steel-fabrication assembly drawing.
+
+The drawing has a SUMMARY TABLE in the top-right corner with columns:
+  Mark | Quantity | Profile | Length | Material | Area (m²) | Weight (kg)
+
+The FIRST row of that table is the assembly itself, e.g.:
+  RL1 | 26 | "Values for ONE assembly"
+("Values for ONE assembly" appears as a merged label across the remaining columns on the assembly row.)
+
+Subsequent rows are the parts that make up ONE assembly, e.g.:
+  F20 | 1 | PLT10x60 | 150.0 | S275JR | 0.02 | 0.69
+  F1  | 1 | CHS42.4x3 | 1747.6 | S355   | 0.23 | 5.78
+
+The LAST row is a TOTALS row labelled "Totals for ONE assembly" with totals for area and weight.
+
+Separately, near the BOTTOM CENTRE of the drawing there is finish text of the form:
+  "26 No. Mkd RL1 (Galvanised)"
+The text in parentheses is the finish — extract it as written. If there's no parenthesised text, finish is null.
+
+Return ONLY JSON, no markdown, no commentary:
+{
+  "assembly_mark": "RL1",
+  "quantity": 26,
+  "finish_label_raw": "Galvanised" | null,
+  "total_area_m2": 0.25 | null,
+  "total_weight_kg": 6.47 | null,
+  "parts": [
+    { "part_mark": "F20", "quantity": 1, "profile": "PLT10x60", "length_mm": 150.0, "material": "S275JR", "area_m2": 0.02, "weight_kg": 0.69 },
+    { "part_mark": "F1",  "quantity": 1, "profile": "CHS42.4x3", "length_mm": 1747.6, "material": "S355", "area_m2": 0.23, "weight_kg": 5.78 }
+  ]
+}
+
+Set any field you cannot determine to null. Use null (not 0) for missing numerics.`;
+
+  const result = await callClaude({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 2000,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } },
+        { type: 'text', text: prompt }
+      ]
+    }]
+  });
+  const text = (result.content?.find(b => b.type === 'text')?.text || '').trim();
+  const jsonStart = text.indexOf('{'), jsonEnd = text.lastIndexOf('}');
+  if (jsonStart < 0 || jsonEnd < jsonStart) throw new Error('OCR returned no JSON');
+  return JSON.parse(text.slice(jsonStart, jsonEnd + 1));
+}
+
+// ── Review modal ──
+function openAssemblyReviewModal() {
+  if (!_assemblyQueue.length) return;
+  const modal = document.getElementById('assemblyReviewModal');
+  if (!modal) return;
+  modal.classList.add('active');
+  renderAssemblyReview();
+}
+
+function closeAssemblyReviewModal() {
+  const modal = document.getElementById('assemblyReviewModal');
+  if (modal) modal.classList.remove('active');
+  _assemblyQueue = [];
+  _assemblyReviewIndex = 0;
+}
+
+function renderAssemblyReview() {
+  const idx = _assemblyReviewIndex;
+  const total = _assemblyQueue.length;
+  const item = _assemblyQueue[idx];
+  if (!item) { closeAssemblyReviewModal(); return; }
+
+  document.getElementById('armCounter').textContent = `${idx + 1} of ${total}`;
+  document.getElementById('armFileName').textContent = item.sharepoint.fileName;
+
+  const ocr = item.ocr || {};
+  document.getElementById('armMark').value = ocr.assembly_mark || '';
+  document.getElementById('armQty').value = ocr.quantity ?? '';
+
+  // Finish dropdown
+  const finishSel = document.getElementById('armFinish');
+  const finishes = _finishesCache || [];
+  let opts = '<option value="">(No finish required)</option>';
+  for (const f of finishes) {
+    opts += `<option value="${f.id}">${escapeHtml(f.name)}</option>`;
+  }
+  finishSel.innerHTML = opts;
+
+  // Try to preselect a finish based on case-insensitive match against raw OCR text
+  const raw = (ocr.finish_label_raw || '').trim().toLowerCase();
+  let matchedId = '';
+  if (raw) {
+    for (const f of finishes) {
+      const fname = (f.name || '').toLowerCase();
+      // Match if names equal, or raw starts with name, or name appears in raw
+      // (handles "Galvanised" → "Galvanising" via the "galvan" stem).
+      if (fname === raw || raw.startsWith(fname) || fname.startsWith(raw) ||
+          (raw.length > 4 && fname.includes(raw.slice(0, 5))) ||
+          (fname.length > 4 && raw.includes(fname.slice(0, 5)))) {
+        matchedId = f.id; break;
       }
     }
-
-    document.getElementById('createTaskProgressBar').style.width = '90%';
-    document.getElementById('createTaskProgressText').textContent = 'Saving...';
-
-    const newTask = {
-      id: Date.now().toString(),
-      number: taskNumber,
-      name: taskName,
-      folderName: taskFolderName,
-      spFolderId: taskFolder?.id,
-      finishing,
-      status: 'open',
-      createdAt: new Date().toISOString(),
-      files: uploadedFiles,
-      notes: []
-    };
-
-    tasks.push(newTask);
-    await saveDrawingsData();
-
-    document.getElementById('createTaskProgressBar').style.width = '100%';
-    setTimeout(() => {
-      closeCreateTaskModal();
-      toast(`Task "${taskName}" created`, 'success');
-      renderAssembly();
-    }, 400);
-
-  } catch (e) {
-    console.error('Create task error:', e);
-    toast(`Failed: ${e.message}`, 'error');
-    document.getElementById('createTaskProgress').style.display = 'none';
-  } finally {
-    document.getElementById('createTaskBtn').disabled = false;
   }
-}
+  finishSel.value = matchedId;
 
-// ═══════════════════════════════════════════
-// ASSEMBLY: COMPLETE TASK
-// ═══════════════════════════════════════════
-function openCompleteTaskModal(taskId) {
-  const task = currentJob?.assembly?.tasks?.find(t => t.id === taskId);
-  if (!task) return;
-  _pendingCompleteTask = task;
-
-  const isPainting = task.finishing === 'painting';
-  const finishLabel = task.finishing === 'galvanising' ? 'Galvanising' : task.finishing === 'ppc' ? 'PPC (Powder Coat)' : task.finishing === 'painting' ? 'Painting' : '';
-
-  document.getElementById('completeTaskIcon').textContent = isPainting ? '🎨' : '✅';
-  document.getElementById('completeTaskTitle').textContent = `Complete "${task.name}"?`;
-  document.getElementById('completeTaskMessage').textContent = finishLabel
-    ? `This task requires ${finishLabel}. ${isPainting ? 'Confirm painting is done before completing.' : `Draftsman will be notified to organise ${finishLabel.toLowerCase()}.`}`
-    : 'Mark this assembly task as complete.';
-
-  // Painting check
-  document.getElementById('paintingCheckSection').style.display = isPainting ? 'block' : 'none';
-  const paintIcon = document.getElementById('paintingCheckIcon');
-  paintIcon.textContent = '';
-  paintIcon.style.background = 'var(--card)';
-  paintIcon.style.borderColor = 'var(--border)';
-
-  // Person select
-  const sel = document.getElementById('completeTaskPerson');
-  sel.innerHTML = '<option value="">Select your name...</option>';
-  (state.timesheetData.employees || []).filter(e => e.active !== false).forEach(e => {
-    sel.innerHTML += `<option value="${e.name}">${e.name}</option>`;
-  });
-  sel.onchange = checkCompleteTaskReady;
-
-  // Reset confirm button
-  const btn = document.getElementById('completeTaskConfirmBtn');
-  btn.disabled = true; btn.style.opacity = '.4'; btn.style.cursor = 'not-allowed';
-
-  document.getElementById('completeTaskModal').classList.add('active');
-}
-
-function closeCompleteTaskModal() {
-  document.getElementById('completeTaskModal').classList.remove('active');
-  _pendingCompleteTask = null;
-}
-
-function togglePaintingCheck() {
-  const icon = document.getElementById('paintingCheckIcon');
-  const isChecked = icon.textContent === '✓';
-  if (isChecked) {
-    icon.textContent = ''; icon.style.background = 'var(--card)'; icon.style.borderColor = 'var(--border)';
+  // OCR hint
+  const hint = document.getElementById('armFinishHint');
+  if (ocr.finish_label_raw && !matchedId) {
+    hint.textContent = `OCR read: "${ocr.finish_label_raw}" — no matching finishing service. Add one in Settings → Service Types if needed.`;
+    hint.style.display = '';
+  } else if (ocr.finish_label_raw) {
+    hint.textContent = `OCR read: "${ocr.finish_label_raw}"`;
+    hint.style.display = '';
   } else {
-    icon.textContent = '✓'; icon.style.background = 'var(--green)'; icon.style.borderColor = 'var(--green)'; icon.style.color = '#fff';
+    hint.style.display = 'none';
   }
-  checkCompleteTaskReady();
+
+  renderAssemblyReviewParts(ocr.parts || []);
 }
 
-function checkCompleteTaskReady() {
-  const person = document.getElementById('completeTaskPerson').value;
-  const isPainting = _pendingCompleteTask?.finishing === 'painting';
-  const paintingOk = !isPainting || document.getElementById('paintingCheckIcon').textContent === '✓';
-  const ready = !!person && paintingOk;
-  const btn = document.getElementById('completeTaskConfirmBtn');
-  btn.disabled = !ready; btn.style.opacity = ready ? '1' : '.4'; btn.style.cursor = ready ? 'pointer' : 'not-allowed';
-}
+function renderAssemblyReviewParts(parts) {
+  const tbody = document.getElementById('armPartsTbody');
+  if (!tbody) return;
+  // Compute heaviest index for highlight
+  const heavyIdx = heaviestPartIndex(parts);
+  let rows = '';
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i] || {};
+    const hi = i === heavyIdx;
+    const trStyle = hi ? 'background:rgba(255,107,0,.08)' : '';
+    const accent = hi ? 'color:var(--accent)' : '';
+    rows += `<tr style="${trStyle}" data-i="${i}">
+      <td style="padding:3px 4px 3px 0"><input data-f="part_mark" value="${escapeHtml(p.part_mark || '')}" style="width:48px;${accent}" class="arm-cell"/></td>
+      <td style="padding:3px 4px"><input data-f="quantity" type="number" value="${p.quantity ?? ''}" style="width:42px" class="arm-cell"/></td>
+      <td style="padding:3px 4px"><input data-f="profile" value="${escapeHtml(p.profile || '')}" style="width:88px;${accent}" class="arm-cell"/></td>
+      <td style="padding:3px 4px"><input data-f="length_mm" type="number" step="0.1" value="${p.length_mm ?? ''}" style="width:66px" class="arm-cell"/></td>
+      <td style="padding:3px 4px"><input data-f="material" value="${escapeHtml(p.material || '')}" style="width:60px" class="arm-cell"/></td>
+      <td style="padding:3px 4px"><input data-f="area_m2" type="number" step="0.001" value="${p.area_m2 ?? ''}" style="width:54px;text-align:right" class="arm-cell"/></td>
+      <td style="padding:3px 4px"><input data-f="weight_kg" type="number" step="0.001" value="${p.weight_kg ?? ''}" style="width:60px;text-align:right;${accent}" class="arm-cell"/></td>
+      <td style="padding:3px 0 3px 4px"><button class="btn btn-ghost" style="padding:2px 6px;font-size:12px" onclick="armRemoveRow(${i})" title="Remove">&times;</button></td>
+    </tr>`;
+  }
+  tbody.innerHTML = rows;
 
-async function confirmCompleteTask() {
-  if (!_pendingCompleteTask || !currentJob || !currentProject) return;
-  const task = _pendingCompleteTask;
-  const person = document.getElementById('completeTaskPerson').value;
-
-  task.status = 'complete';
-  task.completedAt = new Date().toISOString();
-  task.completedBy = person;
-
-  // Add completion note
-  if (!task.notes) task.notes = [];
-  const finishLabel = task.finishing === 'galvanising' ? 'galvanising' : task.finishing === 'ppc' ? 'PPC' : task.finishing === 'painting' ? 'painting (on site)' : '';
-  task.notes.push({
-    id: Date.now().toString(), type: 'workshop', author: person,
-    text: `✅ Task completed${finishLabel ? ` — ready for ${finishLabel}` : ''}`,
-    timestamp: new Date().toISOString()
+  // Wire change handlers so editing weight re-tints heaviest
+  tbody.querySelectorAll('.arm-cell').forEach(input => {
+    input.addEventListener('input', () => {
+      // Re-render only if weight changed (heaviest may have moved).
+      // For simplicity, re-render on any weight edit.
+      if (input.dataset.f === 'weight_kg') {
+        const updated = armCollectParts();
+        renderAssemblyReviewParts(updated);
+      }
+    });
   });
-
-  try {
-    setLoading(true);
-    await saveDrawingsData();
-    closeCompleteTaskModal();
-    toast(`Task "${task.name}" completed`, 'success');
-    renderAssembly();
-
-    // Email notifications
-    await sendTaskCompletionEmail(task);
-  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
-  finally { setLoading(false); }
 }
 
-async function sendTaskCompletionEmail(task) {
-  const settings = state.timesheetData.settings || {};
-  const draftsmanEmail = settings.draftsmanEmail || 'daniel@bamafabrication.co.uk';
-  const taskEmailList = settings.taskCompletionEmails || '';
-  const recipients = [draftsmanEmail];
-  if (taskEmailList) {
-    taskEmailList.split(',').map(e => e.trim()).filter(Boolean).forEach(e => {
-      if (!recipients.includes(e)) recipients.push(e);
+function armCollectParts() {
+  const tbody = document.getElementById('armPartsTbody');
+  if (!tbody) return [];
+  const out = [];
+  tbody.querySelectorAll('tr').forEach(tr => {
+    const row = {};
+    tr.querySelectorAll('.arm-cell').forEach(input => {
+      const f = input.dataset.f;
+      const v = input.value.trim();
+      if (v === '') {
+        row[f] = (f === 'part_mark' || f === 'profile' || f === 'material') ? '' : null;
+      } else if (f === 'part_mark' || f === 'profile' || f === 'material') {
+        row[f] = v;
+      } else {
+        const n = Number(v);
+        row[f] = isNaN(n) ? null : n;
+      }
     });
-  }
+    out.push(row);
+  });
+  return out;
+}
 
-  const finishLabel = task.finishing === 'galvanising' ? 'Galvanising' : task.finishing === 'ppc' ? 'PPC (Powder Coat)' : task.finishing === 'painting' ? 'Painting (on site)' : 'No finishing';
-  const proj = currentProject;
+function armAddRow() {
+  const parts = armCollectParts();
+  parts.push({ part_mark: '', quantity: 1, profile: '', length_mm: null, material: '', area_m2: null, weight_kg: null });
+  renderAssemblyReviewParts(parts);
+}
+
+function armRemoveRow(i) {
+  const parts = armCollectParts();
+  parts.splice(i, 1);
+  renderAssemblyReviewParts(parts);
+}
+
+function armSkipCurrent() {
+  // Advance without saving. The PDF stays in SharePoint; user can clean up
+  // manually if they wish, or re-upload later.
+  _assemblyReviewIndex++;
+  if (_assemblyReviewIndex >= _assemblyQueue.length) {
+    closeAssemblyReviewModal();
+    toast('No more PDFs to review.', 'info');
+    return;
+  }
+  renderAssemblyReview();
+}
+
+async function armSaveAndNext() {
+  const item = _assemblyQueue[_assemblyReviewIndex];
+  if (!item) { closeAssemblyReviewModal(); return; }
+
+  const mark = document.getElementById('armMark').value.trim();
+  const qty = parseInt(document.getElementById('armQty').value);
+  const finishVal = document.getElementById('armFinish').value;
+  const finishServiceId = finishVal ? parseInt(finishVal) : null;
+  const parts = armCollectParts().filter(p => p.part_mark || p.profile);
+
+  if (!mark) { toast('Assembly mark is required.', 'error'); return; }
+  if (!qty || qty < 1) { toast('Quantity must be at least 1.', 'error'); return; }
+  if (parts.length < 1) { toast('At least one part is required.', 'error'); return; }
+
+  // Roll up totals from the part rows so JobAssemblies has handy aggregates
+  const totalAreaM2 = parts.reduce((s, p) => s + ((Number(p.area_m2) || 0) * (Number(p.quantity) || 1)), 0);
+  const totalWeightKg = parts.reduce((s, p) => s + ((Number(p.weight_kg) || 0) * (Number(p.quantity) || 1)), 0);
+
+  const saveBtn = document.getElementById('armSaveBtn');
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.style.opacity = '.6'; }
 
   try {
-    const token = await getToken();
-    await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: {
-        subject: `Task Completed — ${task.name} (${proj?.id} / ${currentJob?.name})`,
-        body: { contentType: 'HTML', content: `
-          <h2 style="color:#ff6b00;font-family:sans-serif">BAMA FABRICATION</h2>
-          <h3 style="font-family:sans-serif">Assembly Task Completed</h3>
-          <table style="font-family:sans-serif;font-size:13px">
-            <tr><td style="padding:6px 16px 6px 0;color:#888">Task</td><td><b>${task.name}</b></td></tr>
-            <tr><td style="padding:6px 16px 6px 0;color:#888">Project</td><td>${proj?.id} — ${proj?.name}</td></tr>
-            <tr><td style="padding:6px 16px 6px 0;color:#888">Job</td><td>${currentJob?.name}</td></tr>
-            <tr><td style="padding:6px 16px 6px 0;color:#888">Finishing</td><td><b>${finishLabel}</b></td></tr>
-            <tr><td style="padding:6px 16px 6px 0;color:#888">Completed by</td><td>${task.completedBy}</td></tr>
-            <tr><td style="padding:6px 16px 6px 0;color:#888">Date/Time</td><td>${new Date().toLocaleString('en-GB')}</td></tr>
-          </table>
-          ${task.finishing && task.finishing !== 'none' ? `<p style="margin-top:16px;font-family:sans-serif;font-size:13px;padding:12px;border-radius:8px;background:#f0f0f0"><b>Action required:</b> Please organise ${finishLabel.toLowerCase()} for this task.</p>` : ''}
-          <p style="font-family:sans-serif;font-size:11px;color:#aaa;margin-top:12px"><a href="https://proud-dune-0dee63110.2.azurestaticapps.net" style="color:#ff6b00">Open BAMA Workshop</a></p>
-        `},
-        toRecipients: recipients.map(e => ({ emailAddress: { address: e } }))
-      }, saveToSentItems: false })
-    });
-  } catch (e) { console.warn('Task email failed:', e.message); }
+    await postAssemblyCreate(item, mark, qty, finishServiceId,
+      item.ocr?.finish_label_raw ?? null, totalAreaM2, totalWeightKg, parts);
+  } catch (err) {
+    if (err && err.body && err.body.error === 'duplicate_mark') {
+      const existing = (_assembliesByJob[parseInt(currentJob.id)] || [])
+        .find(a => (a.assembly_mark || '').toLowerCase() === mark.toLowerCase());
+      const wasFabricated = existing && existing.status === 'fabricated';
+      const msg = wasFabricated
+        ? `⚠ "${mark}" already exists AND has been marked as fabricated.\n\nReplacing will delete the old assembly and the BOM row derived from it. The BOM row may already be at a supplier or despatched — check first.\n\nContinue?`
+        : `"${mark}" already exists on this job.\n\nReplacing will delete the old assembly.\n\nContinue?`;
+      if (!window.confirm(msg)) {
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.style.opacity = '1'; }
+        return;
+      }
+      try {
+        // Delete old (force=1 needed if it was fabricated)
+        const force = wasFabricated ? '?force=1' : '';
+        if (existing) await api.delete(`/api/job-assemblies/${existing.id}${force}`);
+        await postAssemblyCreate(item, mark, qty, finishServiceId,
+          item.ocr?.finish_label_raw ?? null, totalAreaM2, totalWeightKg, parts);
+      } catch (replaceErr) {
+        toast(`Replace failed: ${replaceErr.message}`, 'error');
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.style.opacity = '1'; }
+        return;
+      }
+    } else {
+      toast(`Save failed: ${err.message}`, 'error');
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.style.opacity = '1'; }
+      return;
+    }
+  }
+
+  if (saveBtn) { saveBtn.disabled = false; saveBtn.style.opacity = '1'; }
+
+  // Refresh in-memory cache and re-render
+  await loadJobAssemblies(parseInt(currentJob.id));
+  renderAssembly();
+
+  _assemblyReviewIndex++;
+  if (_assemblyReviewIndex >= _assemblyQueue.length) {
+    closeAssemblyReviewModal();
+    toast('All assemblies saved.', 'success');
+    return;
+  }
+  renderAssemblyReview();
+}
+
+async function postAssemblyCreate(item, mark, qty, finishServiceId, finishLabelRaw, totalAreaM2, totalWeightKg, parts) {
+  return await api.post('/api/job-assemblies', {
+    job_id:             parseInt(currentJob.id),
+    assembly_mark:      mark,
+    quantity:           qty,
+    finish_service_id:  finishServiceId,
+    finish_label_raw:   finishLabelRaw,
+    total_area_m2:      isFinite(totalAreaM2) ? Number(totalAreaM2.toFixed(3)) : null,
+    total_weight_kg:    isFinite(totalWeightKg) ? Number(totalWeightKg.toFixed(3)) : null,
+    sharepoint_file_id: item.sharepoint.fileId,
+    sharepoint_drive_id: item.sharepoint.driveId,
+    sharepoint_web_url: item.sharepoint.webUrl,
+    file_name:          item.sharepoint.fileName,
+    parts:              parts.map((p, i) => ({
+      part_mark: p.part_mark, quantity: p.quantity || 1, profile: p.profile,
+      length_mm: p.length_mm, material: p.material,
+      area_m2: p.area_m2, weight_kg: p.weight_kg
+    }))
+  });
+}
+
+async function deleteAssembly(id) {
+  if (!id) return;
+  if (!window.confirm('Delete this assembly? The PDF stays in SharePoint.')) return;
+  try {
+    await api.delete(`/api/job-assemblies/${id}`);
+    await loadJobAssemblies(parseInt(currentJob.id));
+    renderAssembly();
+    toast('Assembly deleted.', 'success');
+  } catch (e) {
+    if (e && e.body && e.body.error === 'fabricated_protected') {
+      toast('Cannot delete — this assembly has been marked as fabricated. Roll back BOM first.', 'error');
+    } else {
+      toast(`Delete failed: ${e.message}`, 'error');
+    }
+  }
+}
+
+// Placeholder — mark-fabricated modal lands in commit 8. For now,
+// the button shows a friendly message so workshop can find their way.
+function openMarkFabricatedModal(assemblyId) {
+  toast('Mark fabricated — coming in the next update.', 'info');
 }
 
 // ═══════════════════════════════════════════
