@@ -475,21 +475,26 @@ async function saveTimesheetData() {
 async function loadProjects() {
   try {
     const rows = await api.get('/api/projects');
-    const list = (Array.isArray(rows) ? rows : [])
-      .filter(p => p.status === 'In Progress')
+    const all = Array.isArray(rows) ? rows : [];
+
+    // Kiosk: workers can only log hours against live projects — restrict to In Progress.
+    // Projects page (draftsman): show everything except Archived / Cancelled so newly
+    // won projects and On Hold projects are still accessible for job management.
+    const isKiosk = CURRENT_PAGE === 'index';
+    const list = all
+      .filter(p => isKiosk
+        ? p.status === 'In Progress'
+        : p.status !== 'Archived' && p.status !== 'Cancelled'
+      )
       .map(p => ({
         id:     p.project_number,
         name:   p.project_name,
         status: p.status,
         client: p.company_name || ''
       }))
-      // Sort once at load time so every dropdown that reads state.projects
-      // (kiosk projectSelect, order-form picker, and any future consumer)
-      // shows the same A→Z order. `numeric: true` gives natural sort so
-      // S9 < S10 instead of the string-only S10 < S9.
       .sort((a, b) => String(a.id).localeCompare(String(b.id), 'en', { numeric: true, sensitivity: 'base' }));
     state.projects = list;
-    console.log(`Projects loaded from SQL: ${list.length} In Progress`);
+    console.log(`Projects loaded from SQL: ${list.length} (${CURRENT_PAGE === 'index' ? 'In Progress only' : 'excl. Archived/Cancelled'})`);
   } catch (e) {
     console.warn('SQL projects load failed:', e.message);
     state.projects = [];
@@ -9491,26 +9496,34 @@ async function openProjects() {
 function renderProjectTiles() {
   const grid = document.getElementById('projectTilesGrid');
   if (!grid) return;
-  const projects = state.projects.filter(p =>
-    p.status?.toLowerCase() === 'in progress' || !p.status || p.status === 'Active'
-  );
+  // On kiosk state.projects is already In Progress only; on projects page all active statuses.
+  const projects = state.projects;
 
   if (!projects.length) {
     grid.innerHTML = '<div class="empty-state">No active projects found</div>';
     return;
   }
 
+  const statusColour = {
+    'In Progress': 'var(--green)',
+    'On Hold':     'var(--amber)',
+  };
+
   grid.innerHTML = projects.map(p => {
     const projData = drawingsData.projects[p.id];
     const jobs = projData?.jobs || [];
     const openJobs = jobs.filter(j => j.status !== 'closed').length;
     const closedJobs = jobs.filter(j => j.status === 'closed').length;
+    const statusLabel = (p.status && p.status !== 'In Progress')
+      ? `<div style="margin-top:6px"><span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:6px;background:rgba(245,158,11,.15);color:var(--amber)">${p.status.toUpperCase()}</span></div>`
+      : '';
 
     return `
       <div class="project-tile" onclick="openProjectDetail('${p.id}')">
         <div class="project-tile-id">${p.id}</div>
         <div class="project-tile-name">${p.name}</div>
         <div class="project-tile-client">${p.client || ''}</div>
+        ${statusLabel}
         ${jobs.length > 0 ? `
           <div style="margin-top:12px;font-size:11px;font-family:var(--font-mono);color:var(--muted)">
             ${openJobs} open${closedJobs ? ` · ${closedJobs} closed` : ''}
