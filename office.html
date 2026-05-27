@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Office</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260527k">
+<link rel="stylesheet" href="bama.css?v=20260527m">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 </head>
 <body>
@@ -520,7 +520,20 @@
         <!-- Quick-access tiles -->
         <div id="supplierTiles" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:20px"></div>
 
-        <div style="display:flex;gap:10px;margin-bottom:16px">
+        <div style="display:flex;gap:10px;margin-bottom:16px;align-items:center;flex-wrap:wrap">
+          <div style="position:relative;flex:1;min-width:200px;max-width:320px">
+            <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:14px;pointer-events:none">🔍</span>
+            <input type="text" class="field-input" id="supplierSearch"
+              placeholder="Name, contact, service…"
+              style="padding-left:32px;padding-right:32px;width:100%"
+              oninput="onSupplierSearchInput()"
+              onkeydown="if(event.key==='Escape')clearSupplierSearch()">
+            <button id="supplierSearchClear" onclick="clearSupplierSearch()"
+              style="display:none;position:absolute;right:8px;top:50%;transform:translateY(-50%);
+                     background:none;border:none;color:var(--muted);cursor:pointer;font-size:18px;
+                     line-height:1;padding:2px 4px" title="Clear search">×</button>
+          </div>
+          <span id="supplierSearchCount" style="font-size:12px;color:var(--subtle)"></span>
           <button class="btn btn-primary" onclick="openAddSupplierForm()">+ Add Supplier</button>
           <button class="btn btn-ghost" onclick="openMergeSuppliersModal()">⇄ Merge Duplicates</button>
           <button class="btn btn-ghost" onclick="toggleManageServices()">⚙️ Manage Services</button>
@@ -1062,6 +1075,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260527l"></script>
+<script src="shared.js?v=20260527m"></script>
 </body>
 </html>

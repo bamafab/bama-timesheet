@@ -6905,6 +6905,34 @@ async function deleteWeldingMachine(id, name) {
 // TRACEABILITY — SUPPLIERS
 // ═══════════════════════════════════════════
 let _suppliers = [];
+let _supplierSortCol = 'name';   // 'name' | 'openPos' | 'openValue' | 'awaiting' | 'discrep'
+let _supplierSortAsc = true;
+let _supplierSearchTimeout = null;
+let _supplierPoMap = {}; // supplier_id → PO summary, populated by renderSuppliersTab
+
+function onSupplierSearchInput() {
+  const input = document.getElementById('supplierSearch');
+  const clear = document.getElementById('supplierSearchClear');
+  if (clear) clear.style.display = input?.value ? '' : 'none';
+  clearTimeout(_supplierSearchTimeout);
+  _supplierSearchTimeout = setTimeout(_renderSupplierTable, 180);
+}
+
+function clearSupplierSearch() {
+  const input = document.getElementById('supplierSearch');
+  if (input) { input.value = ''; input.focus(); }
+  const clear = document.getElementById('supplierSearchClear');
+  if (clear) clear.style.display = 'none';
+  const count = document.getElementById('supplierSearchCount');
+  if (count) count.textContent = '';
+  _renderSupplierTable();
+}
+
+function sortSupplierTable(col) {
+  _supplierSortAsc = (_supplierSortCol === col) ? !_supplierSortAsc : (col === 'name');
+  _supplierSortCol = col;
+  _renderSupplierTable();
+}
 let _serviceTypes = [];
 
 async function loadServiceTypes() {
@@ -6930,17 +6958,7 @@ async function renderSuppliersTab() {
   _supplierTilePos = allPos;
   _renderSupplierTilesFromCache();
 
-  if (!_suppliers.length) {
-    container.innerHTML = '<div class="empty-state" style="padding:30px"><div class="icon">&#128666;</div>No suppliers registered yet</div>';
-    return;
-  }
-
-  const posBySupplierId = {};
-  allPos.forEach(po => {
-    if (!posBySupplierId[po.supplier_id]) posBySupplierId[po.supplier_id] = [];
-    posBySupplierId[po.supplier_id].push(po);
-  });
-
+  // Build per-supplier PO summary (used by _renderSupplierTable)
   const poGroup = po => {
     if (po.status === 'Cancelled' || po.status === 'Closed') return 'closed';
     if (po.reconciliation_status === 'matched')     return 'matched';
@@ -6948,23 +6966,94 @@ async function renderSuppliersTab() {
     if (po.supplier_invoice_received_at)            return 'invoiced';
     return 'open';
   };
+  _supplierPoMap = {};
+  allPos.forEach(po => {
+    if (!_supplierPoMap[po.supplier_id]) {
+      _supplierPoMap[po.supplier_id] = { open: [], awaiting: [], discrep: [], all: [] };
+    }
+    const m = _supplierPoMap[po.supplier_id];
+    m.all.push(po);
+    if (poGroup(po) === 'open') m.open.push(po);
+    if (!po.supplier_invoice_received_at && po.status !== 'Cancelled' && po.status !== 'Closed') m.awaiting.push(po);
+    if (poGroup(po) === 'discrepancy') m.discrep.push(po);
+  });
+
+  _renderSupplierTable();
+  renderServiceTypeList();
+}
+
+// Separate render function so search/sort can re-run it without re-fetching
+function _renderSupplierTable() {
+  const container = document.getElementById('supplierList');
+  if (!container || !_suppliers.length) return;
+
+  const raw   = (document.getElementById('supplierSearch')?.value || '').trim().toLowerCase();
+  const words = raw.split(/\s+/).filter(Boolean);
+
+  // Filter by search
+  let list = _suppliers.filter(s => {
+    if (!words.length) return true;
+    const hay = [
+      s.supplier_name,
+      s.contact_name  || '',
+      s.telephone     || '',
+      s.email         || '',
+      s.city          || '',
+      s.postcode      || '',
+      (s.services || []).map(sv => sv.service_name).join(' ')
+    ].join(' ').toLowerCase();
+    return words.every(w => hay.includes(w));
+  });
+
+  // Update count badge
+  const countEl = document.getElementById('supplierSearchCount');
+  if (countEl) {
+    countEl.textContent = words.length
+      ? `${list.length} of ${_suppliers.length} suppliers`
+      : '';
+  }
+
+  if (!list.length) {
+    container.innerHTML = words.length
+      ? `<div class="empty-state" style="padding:24px"><div class="icon">🔍</div>No suppliers match "${escapeHtml(raw)}"</div>`
+      : '<div class="empty-state" style="padding:30px"><div class="icon">&#128666;</div>No suppliers registered yet</div>';
+    return;
+  }
+
+  // Sort
+  const col = _supplierSortCol;
+  const asc = _supplierSortAsc;
+  list = list.slice().sort((a, b) => {
+    const ma = _supplierPoMap[a.id] || { open: [], awaiting: [], discrep: [] };
+    const mb = _supplierPoMap[b.id] || { open: [], awaiting: [], discrep: [] };
+    let diff = 0;
+    if      (col === 'name')      diff = a.supplier_name.localeCompare(b.supplier_name);
+    else if (col === 'openPos')   diff = ma.open.length - mb.open.length;
+    else if (col === 'openValue') diff = ma.open.reduce((s,p)=>s+Number(p.total_value||0),0) - mb.open.reduce((s,p)=>s+Number(p.total_value||0),0);
+    else if (col === 'awaiting')  diff = ma.awaiting.length - mb.awaiting.length;
+    else if (col === 'discrep')   diff = ma.discrep.length - mb.discrep.length;
+    return asc ? diff : -diff;
+  });
 
   const fmtVal = v => '£' + Number(v).toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
-  const sorted = _suppliers.slice().sort((a, b) => a.supplier_name.localeCompare(b.supplier_name));
 
-  const thStyle = 'padding:8px 8px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);white-space:nowrap;text-align:left';
+  // Sort indicator helper
+  const arrow = c => {
+    if (c !== col) return '<span style="color:var(--subtle);margin-left:3px;font-size:9px">⇅</span>';
+    return `<span style="margin-left:3px;font-size:9px">${asc ? '▲' : '▼'}</span>`;
+  };
+
+  const thBase = 'padding:8px 8px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);white-space:nowrap;cursor:pointer;user-select:none';
+  const th = (label, c, align) =>
+    `<th style="${thBase};text-align:${align||'left'}" onclick="sortSupplierTable('${c}')">${label}${arrow(c)}</th>`;
 
   let rows = '';
-  for (const s of sorted) {
-    const pos     = posBySupplierId[s.id] || [];
-    const openPos = pos.filter(p => poGroup(p) === 'open');
-    const awaitInv = pos.filter(p => !p.supplier_invoice_received_at && p.status !== 'Cancelled' && p.status !== 'Closed');
-    const discrep  = pos.filter(p => poGroup(p) === 'discrepancy');
-    const openVal  = openPos.reduce((sum, p) => sum + Number(p.total_value || 0), 0);
+  for (const s of list) {
+    const m        = _supplierPoMap[s.id] || { open: [], awaiting: [], discrep: [] };
+    const openVal  = m.open.reduce((sum, p) => sum + Number(p.total_value || 0), 0);
     const svcNames = (s.services || []).map(sv => sv.service_name).join(', ');
-
-    const awaitCol = awaitInv.length ? 'var(--amber)' : 'var(--subtle)';
-    const discrCol = discrep.length  ? 'var(--red)'   : 'var(--subtle)';
+    const awaitCol = m.awaiting.length ? 'var(--amber)' : 'var(--subtle)';
+    const discrCol = m.discrep.length  ? 'var(--red)'   : 'var(--subtle)';
     const nameSafe = s.supplier_name.replace(/'/g, "\\'").replace(/"/g, '&quot;');
 
     rows += `<tr style="border-bottom:1px solid var(--border);cursor:pointer;transition:background .12s"
@@ -6974,21 +7063,21 @@ async function renderSuppliersTab() {
         <div style="font-weight:600">${escapeHtml(s.supplier_name)}</div>
         ${svcNames ? `<div style="font-size:11px;color:var(--accent);margin-top:1px">${escapeHtml(svcNames)}</div>` : ''}
       </td>
-      <td style="padding:11px 8px;color:var(--muted);font-size:12px">
+      <td style="padding:11px 8px;color:var(--text);font-size:12px">
         ${s.contact_name ? `<div>${escapeHtml(s.contact_name)}</div>` : ''}
-        ${s.telephone    ? `<div style="color:var(--subtle)">${escapeHtml(s.telephone)}</div>` : ''}
+        ${s.telephone    ? `<div style="color:var(--muted)">${escapeHtml(s.telephone)}</div>` : ''}
       </td>
       <td style="padding:11px 8px;text-align:center">
-        ${openPos.length ? `<span style="font-weight:600">${openPos.length}</span>` : '<span style="color:var(--subtle)">—</span>'}
+        ${m.open.length ? `<span style="font-weight:600">${m.open.length}</span>` : '<span style="color:var(--subtle)">—</span>'}
       </td>
       <td style="padding:11px 8px;text-align:right;font-weight:600;color:${openVal ? 'var(--text)' : 'var(--subtle)'}">
         ${openVal ? fmtVal(openVal) : '—'}
       </td>
-      <td style="padding:11px 8px;text-align:center;font-weight:${awaitInv.length ? '600' : '400'};color:${awaitCol}">
-        ${awaitInv.length ? awaitInv.length : '<span style="color:var(--subtle)">—</span>'}
+      <td style="padding:11px 8px;text-align:center;font-weight:${m.awaiting.length ? '600' : '400'};color:${awaitCol}">
+        ${m.awaiting.length ? m.awaiting.length : '<span style="color:var(--subtle)">—</span>'}
       </td>
-      <td style="padding:11px 8px;text-align:center;font-weight:${discrep.length ? '600' : '400'};color:${discrCol}">
-        ${discrep.length ? discrep.length : '<span style="color:var(--subtle)">—</span>'}
+      <td style="padding:11px 8px;text-align:center;font-weight:${m.discrep.length ? '600' : '400'};color:${discrCol}">
+        ${m.discrep.length ? m.discrep.length : '<span style="color:var(--subtle)">—</span>'}
       </td>
       <td style="padding:11px 0 11px 8px;white-space:nowrap" onclick="event.stopPropagation()">
         <button class="btn btn-ghost" style="padding:3px 9px;font-size:11px" onclick="editSupplier(${s.id})">&#9998;</button>
@@ -6999,19 +7088,18 @@ async function renderSuppliersTab() {
 
   container.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:13px">
     <thead><tr style="border-bottom:2px solid var(--border)">
-      <th style="${thStyle};padding-left:0">Supplier</th>
-      <th style="${thStyle}">Contact</th>
-      <th style="${thStyle};text-align:center">Open POs</th>
-      <th style="${thStyle};text-align:right">Open Value</th>
-      <th style="${thStyle};text-align:center">Awaiting Invoice</th>
-      <th style="${thStyle};text-align:center">Discrepancies</th>
+      ${th('Supplier', 'name', 'left')}
+      <th style="${thBase};cursor:default">Contact</th>
+      ${th('Open POs', 'openPos', 'center')}
+      ${th('Open Value', 'openValue', 'right')}
+      ${th('Awaiting Invoice', 'awaiting', 'center')}
+      ${th('Discrepancies', 'discrep', 'center')}
       <th></th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
-
-  renderServiceTypeList();
 }
+
 
 function populateServiceCheckboxes(selectedIds) {
   const container = document.getElementById('supplierServiceCheckboxes');
