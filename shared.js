@@ -19335,29 +19335,33 @@ function populateBabcockValidationFields(header, missingFields = []) {
   }
 }
 
+// Shared 2dp rounding helper for all Babcock financial calculations
+const _r2 = v => Math.round(v * 100) / 100;
+// Shared GBP formatter for Babcock tracker (replaces 3 local copies)
+const _fmtGBP = v => (v === null || v === undefined || v === '') ? '—'
+  : `£${Number(v).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
 function updateBabcockMarkedUpTotal(markup) {
   if (!_babcockRawData) return;
   const factor = 1 + (markup / 100);
   let originalTotal = 0;
   let markedUpTotal = 0;
   _babcockRawData.forEach(r => {
-    const lineTotal = r.amount !== null ? r.amount
-                     : (r.unitPrice !== null && r.quantity !== null ? r.unitPrice * r.quantity : 0);
-    originalTotal += lineTotal;
-    markedUpTotal += lineTotal * factor;
+    const lineTotal = _r2(r.amount !== null ? r.amount
+                     : (r.unitPrice !== null && r.quantity !== null
+                        ? _r2(r.unitPrice * r.quantity) : 0));
+    originalTotal = _r2(originalTotal + lineTotal);
+    markedUpTotal = _r2(markedUpTotal + _r2(lineTotal * factor));
   });
-  const fmt = v => `£${v.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const elOrig = document.getElementById('babcockOriginalTotal');
   const elMkup = document.getElementById('babcockMarkedUpTotal');
-  if (elOrig) elOrig.textContent = fmt(originalTotal);
-  if (elMkup) elMkup.textContent = fmt(markedUpTotal);
+  if (elOrig) elOrig.textContent = _fmtGBP(originalTotal);
+  if (elMkup) elMkup.textContent = _fmtGBP(markedUpTotal);
 }
 
 function renderBabcockPreviewTable(markup) {
   if (!_babcockRawData) return;
   const factor = 1 + (markup / 100);
-
-  const fmtGBP = v => typeof v === 'number' ? `£${v.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
 
   document.getElementById('babcockPreviewHead').innerHTML = `<tr>
     <th style="width:40px">#</th>
@@ -19369,16 +19373,17 @@ function renderBabcockPreviewTable(markup) {
   </tr>`;
 
   document.getElementById('babcockPreviewBody').innerHTML = _babcockRawData.map((r, i) => {
-    const amount   = r.amount !== null ? r.amount
-                    : (r.unitPrice !== null && r.quantity !== null ? r.unitPrice * r.quantity : null);
-    const ourPrice = amount !== null ? amount * factor : null;
+    const amount   = r.amount !== null ? _r2(r.amount)
+                    : (r.unitPrice !== null && r.quantity !== null
+                       ? _r2(r.unitPrice * r.quantity) : null);
+    const ourPrice = amount !== null ? _r2(amount * factor) : null;
     return `<tr>
       <td style="color:var(--subtle);font-family:var(--font-mono)">${r.itemNum ?? (i + 1)}</td>
       <td title="${escapeHtml(String(r.description))}">${escapeHtml(String(r.description))}</td>
-      <td class="num-cell">${r.unitPrice !== null ? fmtGBP(r.unitPrice) : '—'}</td>
+      <td class="num-cell">${r.unitPrice !== null ? _fmtGBP(r.unitPrice) : '—'}</td>
       <td class="num-cell">${r.quantity !== null ? r.quantity : '—'}</td>
-      <td class="num-cell">${amount !== null ? fmtGBP(amount) : '—'}</td>
-      <td class="markup-cell">${ourPrice !== null ? fmtGBP(ourPrice) : '—'}</td>
+      <td class="num-cell">${amount !== null ? _fmtGBP(amount) : '—'}</td>
+      <td class="markup-cell">${ourPrice !== null ? _fmtGBP(ourPrice) : '—'}</td>
     </tr>`;
   }).join('');
 }
@@ -19477,14 +19482,15 @@ async function generateAndSaveBabcockQuote() {
   // Build marked-up line items + grand total
   let grandTotal = 0;
   const markedLines = _babcockRawData.map((r, i) => {
-    const amount   = r.amount !== null ? r.amount
-                    : (r.unitPrice !== null && r.quantity !== null ? r.unitPrice * r.quantity : 0);
-    const ourPrice = amount * factor;
-    grandTotal += ourPrice;
+    const amount   = r.amount !== null ? _r2(r.amount)
+                    : (r.unitPrice !== null && r.quantity !== null
+                       ? _r2(r.unitPrice * r.quantity) : 0);
+    const ourPrice = _r2(amount * factor);
+    grandTotal = _r2(grandTotal + ourPrice);
     return {
       itemNum:    r.itemNum ?? (i + 1),
       description: r.description,
-      unitPrice:  r.unitPrice !== null ? r.unitPrice * factor : null,
+      unitPrice:  r.unitPrice !== null ? _r2(r.unitPrice * factor) : null,
       quantity:   r.quantity,
       amount:     ourPrice
     };
@@ -20067,8 +20073,6 @@ function renderBabcockTracker() {
     return;
   }
 
-  const fmtGBP = v => (v === null || v === undefined || v === '') ? '—'
-    : `£${Number(v).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const fmtDate = v => {
     if (!v) return '—';
     const s = String(v).split('T')[0];
@@ -20111,8 +20115,8 @@ function renderBabcockTracker() {
       <td style="font-family:var(--font-mono);font-size:12px;color:var(--accent2)">${escapeHtml(q.po_number || '—')}</td>
       <td style="font-family:var(--font-mono);font-size:12px;color:var(--muted)">${escapeHtml(q.work_order_no || '—')}</td>
       <td>${fmtDate(q.date_sent || q.created_at)}</td>
-      <td class="num-cell">${fmtGBP(q.total_value)}</td>
-      <td class="num-cell">${fmtGBP(q.bama_sw_received_invoice_amount)}</td>
+      <td class="num-cell">${_fmtGBP(q.total_value)}</td>
+      <td class="num-cell">${_fmtGBP(q.bama_sw_received_invoice_amount)}</td>
       <td>${statusBadge}${dueDateInline}</td>
       <td>${nextBtn}</td>
       <td style="text-align:right;white-space:nowrap">
@@ -20240,7 +20244,7 @@ function bliAutoCalc(input) {
   const qty  = parseFloat(row.querySelector('.bli-qty')?.value);
   const amtInput = row.querySelector('.bli-amount');
   if (amtInput && isFinite(unit) && isFinite(qty)) {
-    amtInput.value = (unit * qty).toFixed(2);
+    amtInput.value = _r2(unit * qty).toFixed(2);
   }
   bliUpdateTotal();
 }
@@ -20248,7 +20252,7 @@ function bliAutoCalc(input) {
 function bliUpdateTotal() {
   let total = 0;
   document.querySelectorAll('#bliTableBody .bli-amount').forEach(inp => {
-    total += parseFloat(inp.value) || 0;
+    total = _r2(total + (_r2(parseFloat(inp.value) || 0)));
   });
   _bliComputedTotal = total;
   const el = document.getElementById('bliGrandTotal');
@@ -20354,7 +20358,7 @@ async function submitBabcockLineItemsEdit() {
     await loadLogoDataUri();
 
     const nextRev = (parseInt(orig.revision, 10) || 0) + 1;
-    const grandTotal = newTotal || newLineItems.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+    const grandTotal = newTotal || newLineItems.reduce((s, l) => _r2(s + _r2(Number(l.amount) || 0)), 0);
 
     const pdfBlob = await renderBabcockQuotePDF({
       quoteRef:    orig.quote_ref,
@@ -20708,7 +20712,7 @@ async function handleAdvanceFromQuoteReceived(qSummary, next) {
     customer_id:   q.customer_id || '',
     work_order_no: q.work_order_no || '',
     valid_until:   fmtDateLong(q.valid_until),
-    total_value:   fmtGBP(q.total_value)
+    total_value:   _fmtGBP(q.total_value)
   };
 
   // Open the composer. Promise resolves on send (with result) or cancel (null).
@@ -22487,8 +22491,6 @@ async function viewBabcockQuoteDetail(id) {
 }
 
 function renderBabcockDetailBody(q) {
-  const fmtGBP = v => (v === null || v === undefined || v === '') ? '—'
-    : `£${Number(v).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const fmtDate = v => {
     if (!v) return '—';
     const s = String(v).split('T')[0];
@@ -22522,16 +22524,16 @@ function renderBabcockDetailBody(q) {
            <tr style="border-bottom:1px solid var(--border)">
              <td style="padding:6px 8px;color:var(--subtle)">${escapeHtml(String(l.itemNum ?? (i + 1)))}</td>
              <td style="padding:6px 8px">${escapeHtml(String(l.description || ''))}</td>
-             <td style="padding:6px 8px;text-align:right;font-family:var(--font-mono);color:var(--accent2)">${l.unitPrice !== null && l.unitPrice !== undefined ? fmtGBP(l.unitPrice) : '—'}</td>
+             <td style="padding:6px 8px;text-align:right;font-family:var(--font-mono);color:var(--accent2)">${l.unitPrice !== null && l.unitPrice !== undefined ? _fmtGBP(l.unitPrice) : '—'}</td>
              <td style="padding:6px 8px;text-align:right;font-family:var(--font-mono)">${l.quantity ?? '—'}</td>
-             <td style="padding:6px 8px;text-align:right;font-family:var(--font-mono);color:var(--green)">${l.amount !== null && l.amount !== undefined ? fmtGBP(l.amount) : '—'}</td>
+             <td style="padding:6px 8px;text-align:right;font-family:var(--font-mono);color:var(--green)">${l.amount !== null && l.amount !== undefined ? _fmtGBP(l.amount) : '—'}</td>
            </tr>`).join('')}
          </tbody>
        </table>`
     : '<div style="font-size:12px;color:var(--muted);font-style:italic;padding:10px 0">No line items recorded.</div>';
 
   const statusBadge = `<span class="status-badge status-${babcockStatusClass(q.status)}">${escapeHtml(q.status || 'Quote Received')}</span>`;
-  const totalBig = `<span style="font-family:var(--font-mono);font-size:18px;color:var(--green);font-weight:700">${fmtGBP(q.total_value)}</span>`;
+  const totalBig = `<span style="font-family:var(--font-mono);font-size:18px;color:var(--green);font-weight:700">${_fmtGBP(q.total_value)}</span>`;
 
   return `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:8px">
