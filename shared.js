@@ -1506,7 +1506,7 @@ async function checkManagerPin() {
 
   // Has permissions — enter dashboard
   currentManagerUser = _pendingManagerUser;
-  sessionStorage.setItem('bama_mgr_authed', currentManagerUser);
+  pinSessionSet(currentManagerUser);
   _pendingManagerUser = null;
   document.getElementById('mgrPinInput').value = '';
 
@@ -1704,7 +1704,7 @@ async function checkOfficePin() {
 
   // Has permissions — enter office dashboard
   currentManagerUser = _pendingManagerUser;
-  sessionStorage.setItem('bama_mgr_authed', currentManagerUser);
+  pinSessionSet(currentManagerUser);
   _pendingManagerUser = null;
   document.getElementById('officePinInput').value = '';
 
@@ -9163,6 +9163,61 @@ let drawingsData = { projects: {} };
 let userAccessData = { globalAdminEmail: '', users: {}, accessRequests: [] };
 let bomDataCache = {}; // keyed by projectId: { jobs: { jobId: { materialLists:[], deliveryNotes:[] } } }
 let currentManagerUser = null; // name of user currently logged into manager dashboard
+
+// ── PIN idle-session helpers ──────────────────────────────────────────────────
+// Non-kiosk pages share a single PIN gate stored in sessionStorage.
+// The session expires after 10 minutes of idle — any click, keypress, scroll,
+// or mousemove resets the timer. On expiry the page reloads to the PIN gate.
+const PIN_IDLE_MS = 10 * 60 * 1000; // 10 minutes
+let _pinActivityThrottle = 0;
+
+function pinSessionGet() {
+  const name = pinSessionGet();
+  if (!name) return null;
+  const ts = parseInt(sessionStorage.getItem('bama_mgr_authed_at') || '0', 10);
+  if (Date.now() - ts > PIN_IDLE_MS) { pinSessionClear(); return null; }
+  return name;
+}
+
+function pinSessionSet(name) {
+  pinSessionSet(name);
+  sessionStorage.setItem('bama_mgr_authed_at', String(Date.now()));
+}
+
+function pinSessionClear() {
+  pinSessionClear();
+  sessionStorage.removeItem('bama_mgr_authed_at');
+}
+
+// Called on any meaningful user interaction to reset the idle timer.
+// Throttled to at most one write per 30 s to avoid hammering sessionStorage.
+function pinActivityTouch() {
+  if (CURRENT_PAGE === 'index') return;
+  const now = Date.now();
+  if (now - _pinActivityThrottle < 30000) return;
+  _pinActivityThrottle = now;
+  if (pinSessionGet()) {
+    sessionStorage.setItem('bama_mgr_authed_at', String(now));
+  }
+}
+
+// Wire up activity listeners and start the periodic expiry check.
+// Must be called once from init() for non-kiosk pages.
+function startPinIdleMonitor() {
+  if (CURRENT_PAGE === 'index') return;
+  ['click', 'keydown', 'mousemove', 'scroll'].forEach(evt =>
+    document.addEventListener(evt, pinActivityTouch, { passive: true })
+  );
+  // Check every 60 s — if session has expired, reload to show the PIN gate
+  setInterval(() => {
+    if (!pinSessionGet()) return; // not logged in — nothing to expire
+    if (!pinSessionGet()) {
+      console.log('[pin-idle] session expired — reloading to PIN gate');
+      window.location.reload();
+    }
+  }, 60000);
+}
+// ─────────────────────────────────────────────────────────────────────────────
 let _pendingManagerUser = null; // name of user selected but not yet PIN-verified
 let _pendingDraftsmanUser = null; // name of user selected for draftsman login
 
@@ -13202,7 +13257,7 @@ async function loadLogoDataUri(force) {
 
 // ── Templates page init ──
 function initTemplatesPage() {
-  const authed = sessionStorage.getItem('bama_mgr_authed');
+  const authed = pinSessionGet();
   if (!authed) {
     showScreen('screenTemplatesAuth');
     return;
@@ -14091,7 +14146,7 @@ const QUOTATION_FOLDER_PATH = 'Quotation'; // root-level in the BAMA drive
 
 async function initTendersPage() {
   // Check if already logged in from office/manager
-  const authed = sessionStorage.getItem('bama_mgr_authed');
+  const authed = pinSessionGet();
   if (authed) {
     currentManagerUser = authed;
     const perms = getUserPermissions(currentManagerUser);
@@ -14232,14 +14287,14 @@ async function verifyTenderPin() {
 
     // PIN correct — check permissions
     currentManagerUser = _pendingTenderUser.name;
-    sessionStorage.setItem('bama_mgr_authed', currentManagerUser);
+    pinSessionSet(currentManagerUser);
     document.getElementById('tenderPinModal').classList.remove('active');
 
     const perms = getUserPermissions(currentManagerUser);
     if (!perms || !perms.tenders) {
       toast('You don\'t have permission to access Tenders. Contact your admin.', 'error');
       currentManagerUser = null;
-      sessionStorage.removeItem('bama_mgr_authed');
+      pinSessionClear();
       return;
     }
 
@@ -15704,7 +15759,7 @@ let _pendingQuotesUser = null;
 
 async function initQuotesPage() {
   // Check if already logged in from office/manager
-  const authed = sessionStorage.getItem('bama_mgr_authed');
+  const authed = pinSessionGet();
   if (authed) {
     currentManagerUser = authed;
     const perms = getUserPermissions(currentManagerUser);
@@ -15768,14 +15823,14 @@ async function verifyQuotesPin() {
     }
 
     currentManagerUser = _pendingQuotesUser.name;
-    sessionStorage.setItem('bama_mgr_authed', currentManagerUser);
+    pinSessionSet(currentManagerUser);
     document.getElementById('quotesPinModal').classList.remove('active');
 
     const perms = getUserPermissions(currentManagerUser);
     if (!perms || !(perms.viewQuotes || perms.editQuotes)) {
       toast('You don\'t have permission to access Quotes. Contact your admin.', 'error');
       currentManagerUser = null;
-      sessionStorage.removeItem('bama_mgr_authed');
+      pinSessionClear();
       return;
     }
 
@@ -18544,7 +18599,7 @@ async function submitCreateProject() {
 // ── Project Tracker page init ──
 async function initProjectTrackerPage() {
   // Re-use the manager PIN gate pattern. The page will require viewProjects permission.
-  const authed = sessionStorage.getItem('bama_mgr_authed');
+  const authed = pinSessionGet();
   if (authed) {
     currentManagerUser = authed;
     const perms = getUserPermissions(currentManagerUser);
@@ -18615,7 +18670,7 @@ async function verifyProjectTrackerPin() {
     }
 
     currentManagerUser = name;
-    sessionStorage.setItem('bama_mgr_authed', name);
+    pinSessionSet(name);
     document.getElementById('projectTrackerPinModal').classList.remove('active');
     document.getElementById('screenProjectTrackerSelect').style.display = 'none';
     document.getElementById('projectTrackerLayout').style.display = 'flex';
@@ -18661,7 +18716,7 @@ let _pendingReportsUser = null;
 
 async function initReportsPage() {
   // Session-authed already? Check perm and bounce or show.
-  const authed = sessionStorage.getItem('bama_mgr_authed');
+  const authed = pinSessionGet();
   if (authed) {
     currentManagerUser = authed;
     const perms = getUserPermissions(currentManagerUser);
@@ -18755,7 +18810,7 @@ async function verifyReportsPin() {
       return;
     }
     currentManagerUser = _pendingReportsUser.name;
-    sessionStorage.setItem('bama_mgr_authed', currentManagerUser);
+    pinSessionSet(currentManagerUser);
     document.getElementById('reportsPinModal').classList.remove('active');
     const perms = getUserPermissions(currentManagerUser);
     if (!perms || !perms.reports) {
@@ -19111,7 +19166,7 @@ async function sendBabcockEmail() {
 }
 
 async function initBabcockPage() {
-  const authed = sessionStorage.getItem('bama_mgr_authed');
+  const authed = pinSessionGet();
   if (authed) {
     currentManagerUser = authed;
     const perms = getUserPermissions(currentManagerUser);
@@ -19169,13 +19224,13 @@ async function verifyBabcockPin() {
       return;
     }
     currentManagerUser = _pendingBabcockUser.name;
-    sessionStorage.setItem('bama_mgr_authed', currentManagerUser);
+    pinSessionSet(currentManagerUser);
     document.getElementById('babcockPinModal').classList.remove('active');
     const perms = getUserPermissions(currentManagerUser);
     if (!perms || !perms.tenders) {
       toast('You don\'t have permission to access Babcock Quotes.', 'error');
       currentManagerUser = null;
-      sessionStorage.removeItem('bama_mgr_authed');
+      pinSessionClear();
       return;
     }
     document.getElementById('screenBabcockSelect').style.display = 'none';
@@ -23443,7 +23498,7 @@ let _poProjectBudgets  = {};   // { projectId: { contractValue, poSpend } } — 
 
 // ── Page entry ──
 async function initPoTrackerPage() {
-  const authed = sessionStorage.getItem('bama_mgr_authed');
+  const authed = pinSessionGet();
   if (authed) {
     currentManagerUser = authed;
     const perms = getUserPermissions(currentManagerUser) || {};
@@ -23504,13 +23559,13 @@ async function verifyPoPin() {
       return;
     }
     currentManagerUser = _poPendingPinUser.name;
-    sessionStorage.setItem('bama_mgr_authed', currentManagerUser);
+    pinSessionSet(currentManagerUser);
     document.getElementById('poPinModal').classList.remove('active');
     const perms = getUserPermissions(currentManagerUser) || {};
     if (!perms.viewPurchaseOrders && !perms.editPurchaseOrders) {
       toast('You don\'t have permission to access Purchase Orders.', 'error');
       currentManagerUser = null;
-      sessionStorage.removeItem('bama_mgr_authed');
+      pinSessionClear();
       return;
     }
     document.getElementById('screenPoSelect').style.display = 'none';
@@ -25288,6 +25343,9 @@ async function init() {
     renderHome();
     startKioskPolling();
   }
+
+  // Start the idle-PIN monitor for all non-kiosk pages
+  startPinIdleMonitor();
 }
 
 init();
@@ -25309,7 +25367,7 @@ let _invProjectsCache = [];
 let _invClientsCache = [];
 
 async function initInvoiceTrackerPage() {
-  const authed = sessionStorage.getItem('bama_mgr_authed');
+  const authed = pinSessionGet();
   if (authed) {
     currentManagerUser = authed;
     const perms = getUserPermissions(currentManagerUser) || {};
@@ -25371,7 +25429,7 @@ async function verifyInvPin() {
       return;
     }
     currentManagerUser = _invPendingPinUser.name;
-    sessionStorage.setItem('bama_mgr_authed', currentManagerUser);
+    pinSessionSet(currentManagerUser);
     document.getElementById('invPinModal').classList.remove('active');
 
     // Bootstrap: if nobody has invoicing perm yet, grant it to the first user in.
@@ -25395,7 +25453,7 @@ async function verifyInvPin() {
     if (!perms.invoicing) {
       toast("You don't have permission to access the Invoice Tracker.", 'error');
       currentManagerUser = null;
-      sessionStorage.removeItem('bama_mgr_authed');
+      pinSessionClear();
       return;
     }
     document.getElementById('screenInvSelect').style.display = 'none';
@@ -27898,7 +27956,7 @@ async function initReconcilePage() {
   }
 
   // If already logged in via another tracker page, skip straight in
-  const authed = sessionStorage.getItem('bama_mgr_authed');
+  const authed = pinSessionGet();
   if (authed) {
     currentManagerUser = authed;
     enterReconcilePage();
@@ -27912,7 +27970,7 @@ function recSelectEmployee(empId) {
   if (!emp) return;
 
   // Check if already authed
-  const authed = sessionStorage.getItem('bama_mgr_authed');
+  const authed = pinSessionGet();
   if (authed) {
     currentManagerUser = authed;
     enterReconcilePage();
@@ -27941,7 +27999,7 @@ async function verifyRecPin() {
   }
 
   currentManagerUser = _recPendingPinUser.name;
-  sessionStorage.setItem('bama_mgr_authed', currentManagerUser);
+  pinSessionSet(currentManagerUser);
 
   // Bootstrap: if nobody has reconcile perm yet, grant it to the first login
   await loadUserAccessData();
