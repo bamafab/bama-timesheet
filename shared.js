@@ -7616,7 +7616,7 @@ async function onSupplierDzFile(file) {
     const dataUri = await _fileToDataUri(file);
     const isImg   = file.type.startsWith('image/');
     const result  = await callClaude({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 800,
       messages: [{
         role: 'user',
@@ -27729,7 +27729,7 @@ async function onCertFilePicked(file) {
       .map((l, i) => `  ${i + 1}. ${l.description} (applied £${Number(l.this_app_value || 0).toFixed(2)})`)
       .join('\n');
     const result = await callClaude({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 1500,
       messages: [{
         role: 'user',
@@ -28859,7 +28859,7 @@ async function onSupInvFilePicked(file) {
     const dataUri = await _fileToDataUri(file);
     const isImg = file.type.startsWith('image/');
     const result = await callClaude({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 800,
       messages: [{
         role: 'user',
@@ -29973,7 +29973,7 @@ async function _parseRecDocument(file) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${await getToken()}` },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 2000,
       messages: [{
         role: 'user',
@@ -30857,7 +30857,7 @@ async function _parseRecStatementClaude(file) {
       'Authorization': `Bearer ${await getToken()}`
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 4000,
       messages: [{
         role: 'user',
