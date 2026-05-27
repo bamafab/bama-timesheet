@@ -1,5 +1,5 @@
 const { app } = require('@azure/functions');
-const { query, sql } = require('../db');
+const { query, getPool, sql } = require('../db');
 const { requireAuth } = require('../auth');
 const { ok, created, badRequest, notFound, serverError, preflight } = require('../responses');
 
@@ -14,22 +14,26 @@ app.http('drawings-create', {
 
         try {
             const body = await request.json();
-            const { project_number, job_name, finishing, transport, sharepoint_file_id } = body;
+            const { project_number, job_name, finishing, transport, sharepoint_file_id, sharepoint_folder_id } = body;
 
             if (!project_number || !job_name) {
                 return badRequest('project_number and job_name are required', request);
             }
 
+            const createdBy = body.created_by || auth.email || auth.name || null;
+
             const result = await query(
-                `INSERT INTO DrawingJobs (project_number, job_name, finishing, transport, sharepoint_file_id)
+                `INSERT INTO DrawingJobs (project_number, job_name, finishing, transport, sharepoint_file_id, sharepoint_folder_id, created_by)
                  OUTPUT INSERTED.*
-                 VALUES (@projectNumber, @jobName, @finishing, @transport, @sharepointFileId)`,
+                 VALUES (@projectNumber, @jobName, @finishing, @transport, @sharepointFileId, @sharepointFolderId, @createdBy)`,
                 {
                     projectNumber: project_number,
                     jobName: job_name,
                     finishing: finishing || null,
                     transport: transport || null,
-                    sharepointFileId: sharepoint_file_id || null
+                    sharepointFileId: sharepoint_file_id || null,
+                    sharepointFolderId: sharepoint_folder_id || null,
+                    createdBy
                 }
             );
 
@@ -135,6 +139,8 @@ app.http('drawings-update', {
             if (body.job_name !== undefined) { fields.push('job_name = @jobName'); params.jobName = body.job_name; }
             if (body.finishing !== undefined) { fields.push('finishing = @finishing'); params.finishing = body.finishing; }
             if (body.transport !== undefined) { fields.push('transport = @transport'); params.transport = body.transport; }
+            if (body.sharepoint_folder_id !== undefined) { fields.push('sharepoint_folder_id = @sharepointFolderId'); params.sharepointFolderId = body.sharepoint_folder_id; }
+            if (body.sharepoint_file_id !== undefined) { fields.push('sharepoint_file_id = @sharepointFileId'); params.sharepointFileId = body.sharepoint_file_id; }
             if (body.is_complete !== undefined) {
                 fields.push('is_complete = @isComplete');
                 params.isComplete = body.is_complete ? 1 : 0;
@@ -276,6 +282,67 @@ app.http('drawing-notes-create', {
         } catch (err) {
             context.error('Error creating note:', err);
             return serverError('Failed to create note', request);
+        }
+    }
+});
+
+// DELETE /api/drawings/:id — hard delete a drawing job + its children.
+//
+// JobAssemblies and JobBomItems have ON DELETE CASCADE from DrawingJobs
+// so they clean themselves up. DrawingElements and DrawingNotes are the
+// older child tables (FK cascade behaviour not verified in the repo —
+// the tables were created out-of-band before sql/ migrations existed)
+// so we delete them explicitly inside the same transaction to be safe.
+//
+// JobAssemblyParts cleans up via cascade from JobAssemblies.
+// JobBomItems.source_assembly_id is NO ACTION but the BOM rows themselves
+// are cascaded from DrawingJobs directly, so the order doesn't matter
+// for a job-level delete.
+app.http('drawings-delete', {
+    methods: ['DELETE'],
+    authLevel: 'anonymous',
+    route: 'drawings/{id}',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const id = parseInt(request.params.id);
+            if (!id || isNaN(id)) return badRequest('Invalid id', request);
+
+            // Confirm the row exists before deleting (so we can return 404
+            // distinct from a successful no-op delete).
+            const existing = await query('SELECT id FROM DrawingJobs WHERE id = @id', { id });
+            if (existing.recordset.length === 0) {
+                return notFound('Drawing job not found', request);
+            }
+
+            const db = await getPool();
+            const transaction = new sql.Transaction(db);
+            await transaction.begin();
+
+            try {
+                const txRequest = new sql.Request(transaction);
+                txRequest.input('id', sql.Int, id);
+
+                // Explicit cleanup of legacy child tables (cascade not relied on)
+                await txRequest.query('DELETE FROM DrawingNotes WHERE job_id = @id');
+                await txRequest.query('DELETE FROM DrawingElements WHERE job_id = @id');
+
+                // DrawingJobs delete — JobAssemblies (+ its parts via cascade)
+                // and JobBomItems are cleaned up by their own ON DELETE CASCADE.
+                await txRequest.query('DELETE FROM DrawingJobs WHERE id = @id');
+
+                await transaction.commit();
+            } catch (txErr) {
+                await transaction.rollback();
+                throw txErr;
+            }
+
+            return ok({ deleted: true, id }, request);
+        } catch (err) {
+            context.error('Error deleting drawing:', err);
+            return serverError('Failed to delete drawing', request);
         }
     }
 });
