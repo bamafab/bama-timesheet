@@ -7534,48 +7534,107 @@ async function renderSupplierTiles() {
   _renderSupplierTilesFromCache();
 }
 
-function _renderSupplierTilesFromCache() {
-  const container = document.getElementById('supplierTiles');
-  if (!container) return;
-  const awaitingInvoice = _supplierTilePos.filter(po =>
+// ── Supplier tile filters ────────────────────────────────────────────────────
+// Centralised so the tile render and the drill-down use the exact same logic.
+function _getOverdueThresholdDays() {
+  const v = state.timesheetData?.settings?.overdue_po_threshold;
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : 30;
+}
+function _filterAwaitingInvoice(pos) {
+  return pos.filter(po =>
     po.status !== 'Cancelled' &&
     po.status !== 'Closed' &&
     !po.supplier_invoice_received_at
   );
-  const awaitingValue = awaitingInvoice.reduce((s, p) => s + Number(p.total_value || 0), 0);
+}
+function _filterDiscrepancy(pos) {
+  return pos.filter(po => po.reconciliation_status === 'discrepancy');
+}
+function _filterOverdue(pos) {
+  const threshold = _getOverdueThresholdDays();
+  const cutoff = Date.now() - threshold * 86400000;
+  return pos.filter(po =>
+    ['Open', 'Approved', 'Sent'].includes(po.status) &&
+    !po.delivery_received_at &&
+    !po.supplier_invoice_received_at &&
+    po.created_at && new Date(po.created_at).getTime() < cutoff
+  );
+}
+
+function _renderSupplierTilesFromCache() {
+  const container = document.getElementById('supplierTiles');
+  if (!container) return;
+
+  const awaitingInvoice = _filterAwaitingInvoice(_supplierTilePos);
+  const awaitingValue   = awaitingInvoice.reduce((s, p) => s + Number(p.total_value || 0), 0);
+
+  const discrepancies   = _filterDiscrepancy(_supplierTilePos);
+  const discDiff        = discrepancies.reduce((s, p) =>
+    s + Math.abs(Number(p.supplier_invoice_gross || 0) - Number(p.total_value || 0)), 0);
+
+  const overdue         = _filterOverdue(_supplierTilePos);
+  const overdueThresh   = _getOverdueThresholdDays();
+  const overdueValue    = overdue.reduce((s, p) => s + Number(p.total_value || 0), 0);
+
   const fmtVal = v => '£' + v.toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
-  container.innerHTML = `
-    <div onclick="openSupplierPoTile('awaiting-invoice')"
+  const tile = (key, icon, label, count, valueColour, subtitle) => `
+    <div onclick="openSupplierPoTile('${key}')"
          style="background:var(--surface);border:1px solid var(--border);border-radius:10px;
                 padding:16px 18px;cursor:pointer;transition:border-color .15s"
          onmouseenter="this.style.borderColor='var(--accent)'" onmouseleave="this.style.borderColor='var(--border)'">
       <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-bottom:10px">
-        📄 POs Awaiting Invoice
+        ${icon} ${label}
       </div>
-      <div style="font-size:32px;font-weight:700;font-family:var(--font-display);color:${awaitingInvoice.length ? 'var(--amber)' : 'var(--subtle)'}">
-        ${awaitingInvoice.length}
+      <div style="font-size:32px;font-weight:700;font-family:var(--font-display);color:${valueColour}">
+        ${count}
       </div>
       <div style="font-size:12px;color:var(--muted);margin-top:4px">
-        ${awaitingInvoice.length ? `${fmtVal(awaitingValue)} outstanding` : 'All invoices received'}
+        ${subtitle}
       </div>
     </div>`;
+
+  container.innerHTML =
+    tile('awaiting-invoice', '📄', 'POs Awaiting Invoice', awaitingInvoice.length,
+      awaitingInvoice.length ? 'var(--amber)' : 'var(--subtle)',
+      awaitingInvoice.length ? `${fmtVal(awaitingValue)} outstanding` : 'All invoices received') +
+    tile('discrepancy', '⚠️', 'Discrepancies', discrepancies.length,
+      discrepancies.length ? 'var(--red)' : 'var(--subtle)',
+      discrepancies.length
+        ? `${fmtVal(discDiff)} off PO total${discrepancies.length !== 1 ? 's' : ''}`
+        : 'All invoices reconciled') +
+    tile('overdue', '⏰', 'Overdue POs', overdue.length,
+      overdue.length ? 'var(--amber)' : 'var(--subtle)',
+      overdue.length
+        ? `${fmtVal(overdueValue)} · >${overdueThresh}d old`
+        : `Nothing over ${overdueThresh} days`);
 }
 
 function openSupplierPoTile(tileKey) {
   if (tileKey === 'awaiting-invoice') {
-    const pos = _supplierTilePos.filter(po =>
-      po.status !== 'Cancelled' &&
-      po.status !== 'Closed' &&
-      !po.supplier_invoice_received_at
-    );
-
+    const pos = _filterAwaitingInvoice(_supplierTilePos);
     const totalVal = pos.reduce((s, p) => s + Number(p.total_value || 0), 0);
     document.getElementById('supplierPoTileTitle').textContent = 'POs Awaiting Invoice';
     document.getElementById('supplierPoTileSubtitle').textContent =
       `${pos.length} PO${pos.length !== 1 ? 's' : ''} · £${totalVal.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} total outstanding`;
-
     _renderAwaitingInvoiceBody(pos);
+  } else if (tileKey === 'discrepancy') {
+    const pos = _filterDiscrepancy(_supplierTilePos);
+    const totalDiff = pos.reduce((s, p) =>
+      s + Math.abs(Number(p.supplier_invoice_gross || 0) - Number(p.total_value || 0)), 0);
+    document.getElementById('supplierPoTileTitle').textContent = 'Invoice Discrepancies';
+    document.getElementById('supplierPoTileSubtitle').textContent =
+      `${pos.length} PO${pos.length !== 1 ? 's' : ''} · £${totalDiff.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} total difference`;
+    _renderDiscrepancyBody(pos);
+  } else if (tileKey === 'overdue') {
+    const pos = _filterOverdue(_supplierTilePos);
+    const totalVal = pos.reduce((s, p) => s + Number(p.total_value || 0), 0);
+    const threshold = _getOverdueThresholdDays();
+    document.getElementById('supplierPoTileTitle').textContent = 'Overdue POs';
+    document.getElementById('supplierPoTileSubtitle').textContent =
+      `${pos.length} PO${pos.length !== 1 ? 's' : ''} over ${threshold} days · £${totalVal.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} outstanding`;
+    _renderOverdueBody(pos);
   }
   document.getElementById('supplierPoTileModal').classList.add('active');
 }
@@ -7653,7 +7712,165 @@ function _renderAwaitingInvoiceBody(pos) {
   }).join('<hr style="border:none;border-top:1px solid var(--border);margin:4px 0 16px">');
 }
 
-// ── Merge Duplicate Suppliers ────────────────────────────────────────────────
+// ── Drill-down: Discrepancies ────────────────────────────────────────────────
+// POs whose attached supplier invoice gross differs from the PO total_value by
+// more than the £1 reconciliation tolerance. Grouped by supplier sorted by
+// total absolute difference desc — biggest financial gaps surface first.
+function _renderDiscrepancyBody(pos) {
+  const body = document.getElementById('supplierPoTileBody');
+  if (!pos.length) {
+    body.innerHTML = '<div style="padding:30px;text-align:center;color:var(--subtle);font-size:13px">No discrepancies — all attached invoices reconcile within £1 ✓</div>';
+    return;
+  }
+
+  const bySupplier = {};
+  pos.forEach(po => {
+    const name = po.supplier_name || 'Unknown Supplier';
+    if (!bySupplier[name]) bySupplier[name] = [];
+    bySupplier[name].push(po);
+  });
+
+  const sorted = Object.entries(bySupplier)
+    .map(([name, list]) => ({
+      name, list,
+      totalDiff: list.reduce((s, p) =>
+        s + Math.abs(Number(p.supplier_invoice_gross || 0) - Number(p.total_value || 0)), 0)
+    }))
+    .sort((a, b) => b.totalDiff - a.totalDiff);
+
+  body.innerHTML = sorted.map(({ name, list, totalDiff }) => {
+    const rows = list
+      .sort((a, b) =>
+        Math.abs(Number(b.supplier_invoice_gross || 0) - Number(b.total_value || 0)) -
+        Math.abs(Number(a.supplier_invoice_gross || 0) - Number(a.total_value || 0)))
+      .map(po => {
+        const poVal  = Number(po.total_value || 0);
+        const invVal = Number(po.supplier_invoice_gross || 0);
+        const diff   = invVal - poVal;                  // signed: + means invoice overshoots PO
+        const diffCol = diff > 0 ? 'var(--red)' : 'var(--amber)';
+        const sign    = diff > 0 ? '+' : '−';
+        const project = po.project_number || po.cost_centre || '—';
+        return `
+          <tr style="border-top:1px solid var(--border)">
+            <td style="padding:7px 10px 7px 0;font-size:12px;font-weight:600">${escapeHtml(po.reference || '—')}</td>
+            <td style="padding:7px 4px;font-size:12px;color:var(--muted)">${escapeHtml(project)}</td>
+            <td style="padding:7px 4px;font-size:12px;color:var(--muted)">${escapeHtml(po.supplier_invoice_ref || '—')}</td>
+            <td style="padding:7px 4px;font-size:12px;text-align:right;white-space:nowrap">£${poVal.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+            <td style="padding:7px 4px;font-size:12px;text-align:right;white-space:nowrap">£${invVal.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+            <td style="padding:7px 4px;font-size:12px;font-weight:600;text-align:right;color:${diffCol};white-space:nowrap">${sign}£${Math.abs(diff).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+            <td style="padding:7px 0 7px 8px">
+              <button class="btn btn-ghost" style="font-size:11px;padding:3px 9px"
+                onclick="closeSupplierPoTileModal();openPoDetailModal(${po.id})">
+                View
+              </button>
+            </td>
+          </tr>`;
+      }).join('');
+
+    return `
+      <div style="margin-bottom:16px">
+        <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px">
+          <div style="font-weight:600;font-size:14px">${escapeHtml(name)}</div>
+          <div style="font-size:12px;color:var(--muted)">${list.length} PO${list.length !== 1 ? 's' : ''} · <b style="color:var(--red)">£${totalDiff.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b> off</div>
+        </div>
+        <table style="width:100%;border-collapse:collapse">
+          <thead>
+            <tr style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--subtle)">
+              <th style="padding:0 10px 6px 0;text-align:left;font-weight:600">PO Ref</th>
+              <th style="padding:0 4px 6px;text-align:left;font-weight:600">Project</th>
+              <th style="padding:0 4px 6px;text-align:left;font-weight:600">Invoice Ref</th>
+              <th style="padding:0 4px 6px;text-align:right;font-weight:600">PO £</th>
+              <th style="padding:0 4px 6px;text-align:right;font-weight:600">Invoice £</th>
+              <th style="padding:0 4px 6px;text-align:right;font-weight:600">Difference</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  }).join('<hr style="border:none;border-top:1px solid var(--border);margin:4px 0 16px">');
+}
+
+// ── Drill-down: Overdue POs ──────────────────────────────────────────────────
+// POs in Open/Approved/Sent older than the configured threshold with no
+// delivery and no supplier invoice. Grouped by supplier; within each group,
+// oldest first. Suppliers ordered by their oldest PO age (worst offenders top).
+function _renderOverdueBody(pos) {
+  const body = document.getElementById('supplierPoTileBody');
+  const threshold = _getOverdueThresholdDays();
+  if (!pos.length) {
+    body.innerHTML = `<div style="padding:30px;text-align:center;color:var(--subtle);font-size:13px">Nothing overdue — no live POs older than ${threshold} days ✓</div>`;
+    return;
+  }
+
+  const daysSince = d => d ? Math.floor((Date.now() - new Date(d).getTime()) / 86400000) : 0;
+
+  const bySupplier = {};
+  pos.forEach(po => {
+    const name = po.supplier_name || 'Unknown Supplier';
+    if (!bySupplier[name]) bySupplier[name] = [];
+    bySupplier[name].push(po);
+  });
+
+  // Sort suppliers by their oldest PO age desc
+  const sorted = Object.entries(bySupplier)
+    .map(([name, list]) => ({
+      name, list,
+      maxAge: Math.max(...list.map(p => daysSince(p.created_at))),
+      total:  list.reduce((s, p) => s + Number(p.total_value || 0), 0)
+    }))
+    .sort((a, b) => b.maxAge - a.maxAge);
+
+  const statusColour = { Open: 'var(--subtle)', Approved: 'var(--accent)', Sent: 'var(--amber)' };
+
+  body.innerHTML = sorted.map(({ name, list, maxAge, total }) => {
+    const rows = list
+      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))   // oldest first
+      .map(po => {
+        const age      = daysSince(po.created_at);
+        const ageCol   = age > 60 ? 'var(--red)' : 'var(--amber)';
+        const project  = po.project_number || po.cost_centre || '—';
+        const statusCol = statusColour[po.status] || 'var(--subtle)';
+        return `
+          <tr style="border-top:1px solid var(--border)">
+            <td style="padding:7px 10px 7px 0;font-size:12px;font-weight:600">${escapeHtml(po.reference || '—')}</td>
+            <td style="padding:7px 4px;font-size:12px;color:var(--muted);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml((po.description || '').slice(0, 60))}</td>
+            <td style="padding:7px 4px;font-size:12px;color:var(--muted)">${escapeHtml(project)}</td>
+            <td style="padding:7px 4px;font-size:12px;font-weight:600;text-align:right;white-space:nowrap">£${Number(po.total_value || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+            <td style="padding:7px 4px;font-size:11px;color:${statusCol}">${escapeHtml(po.status || '')}</td>
+            <td style="padding:7px 0 7px 4px;font-size:11px;font-weight:600;color:${ageCol};white-space:nowrap">${age}d ago</td>
+            <td style="padding:7px 0 7px 8px">
+              <button class="btn btn-ghost" style="font-size:11px;padding:3px 9px"
+                onclick="closeSupplierPoTileModal();openPoDetailModal(${po.id})">
+                View
+              </button>
+            </td>
+          </tr>`;
+      }).join('');
+
+    return `
+      <div style="margin-bottom:16px">
+        <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px">
+          <div style="font-weight:600;font-size:14px">${escapeHtml(name)}</div>
+          <div style="font-size:12px;color:var(--muted)">${list.length} PO${list.length !== 1 ? 's' : ''} · oldest <b style="color:var(--red)">${maxAge}d</b> · <b style="color:var(--text)">£${total.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b></div>
+        </div>
+        <table style="width:100%;border-collapse:collapse">
+          <thead>
+            <tr style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--subtle)">
+              <th style="padding:0 10px 6px 0;text-align:left;font-weight:600">Reference</th>
+              <th style="padding:0 4px 6px;text-align:left;font-weight:600">Description</th>
+              <th style="padding:0 4px 6px;text-align:left;font-weight:600">Project</th>
+              <th style="padding:0 4px 6px;text-align:right;font-weight:600">Value</th>
+              <th style="padding:0 4px 6px;text-align:left;font-weight:600">Status</th>
+              <th style="padding:0 4px 6px;text-align:left;font-weight:600">Age</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  }).join('<hr style="border:none;border-top:1px solid var(--border);margin:4px 0 16px">');
+}
 function openMergeSuppliersModal() {
   const sel = document.getElementById('mergeKeepSelect');
   if (!sel) return;

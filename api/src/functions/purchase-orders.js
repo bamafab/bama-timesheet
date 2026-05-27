@@ -229,6 +229,10 @@ app.http('purchase-orders-list', {
                         po.delivery_received_at, po.invoice_received_at,
                         po.invoice_value, po.invoice_ref, po.paid_at,
                         po.cancelled_at, po.sharepoint_pdf_url, po.sharepoint_dn_url,
+                        po.supplier_invoice_received_at, po.supplier_invoice_ref,
+                        po.supplier_invoice_date, po.supplier_invoice_net,
+                        po.supplier_invoice_vat, po.supplier_invoice_gross,
+                        po.reconciliation_status, po.reconciliation_notes,
                         po.created_by, po.created_at, po.updated_at,
                         s.supplier_name,
                         p.project_number, p.project_name
