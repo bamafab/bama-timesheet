@@ -10293,22 +10293,101 @@ let _pendingCloseJob = null;
 
 // ── Load / Save drawings data ──
 async function loadDrawingsData() {
+  // STEP 1 — pull the legacy SharePoint blob.
+  // This still holds Approval/Parts/Site nested data per job, plus any
+  // BOM/Assembly nested data that hasn't yet been replaced by SQL
+  // (commits 7-10 will replace those). If the file doesn't exist
+  // (404), we start with an empty container — that's fine.
   try {
     const token = await getToken();
     const metaUrl = `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.timesheetFolderItemId}:/${DRAWINGS_FILE}`;
     const metaRes = await fetch(metaUrl, { headers: { 'Authorization': `Bearer ${token}` } });
-    if (metaRes.status === 404) return;
-    if (!metaRes.ok) throw new Error(`Meta fetch failed: ${metaRes.status}`);
-    const meta = await metaRes.json();
-    const contentRes = await fetch(
-      `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${meta.id}/content`,
-      { headers: { 'Authorization': `Bearer ${token}` } }
-    );
-    if (!contentRes.ok) throw new Error('Content fetch failed');
-    drawingsData = await contentRes.json();
-    if (!drawingsData.projects) drawingsData.projects = {};
+    if (metaRes.ok) {
+      const meta = await metaRes.json();
+      const contentRes = await fetch(
+        `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${meta.id}/content`,
+        { headers: { 'Authorization': `Bearer ${token}` } }
+      );
+      if (contentRes.ok) {
+        drawingsData = await contentRes.json();
+        if (!drawingsData.projects) drawingsData.projects = {};
+      }
+    } else if (metaRes.status !== 404) {
+      throw new Error(`Meta fetch failed: ${metaRes.status}`);
+    }
   } catch (e) {
     console.warn('Drawings data load failed:', e.message);
+  }
+
+  // STEP 2 — overlay the SQL-backed job shell.
+  // DrawingJobs is the source of truth for job existence + identity.
+  // We rebuild jobs[] from SQL per project, preserving any nested
+  // element data found in the SharePoint blob (matched by SQL id).
+  // Test data left in the blob with non-SQL ids becomes invisible
+  // (it's not test data we care about — see commit 6 design notes).
+  try {
+    const rows = await api.get('/api/drawings');
+    const byProject = {};
+    (rows || []).forEach(r => {
+      const projId = r.project_number;
+      if (!projId) return;
+      if (!byProject[projId]) byProject[projId] = [];
+
+      // Preserve nested element data from the SharePoint blob if present.
+      // Match by SQL id (cast both sides to string — DB returns int,
+      // existing nested data uses string ids by convention).
+      const sqlIdStr = String(r.id);
+      const existingJobs = drawingsData.projects[projId]?.jobs || [];
+      const existing = existingJobs.find(j => String(j.id) === sqlIdStr);
+
+      const job = {
+        // Shell fields from SQL (canonical)
+        id: sqlIdStr,
+        number: existing?.number ?? (byProject[projId].length + 1),
+        name: r.job_name,
+        folderName: existing?.folderName ?? null,
+        spFolderId: r.sharepoint_folder_id || existing?.spFolderId || null,
+        spDriveId: existing?.spDriveId || BAMA_DRIVE_ID,
+        status: r.is_complete ? 'closed' : 'open',
+        createdAt: r.created_at,
+        closedAt: r.completed_at || existing?.closedAt || null,
+        closedBy: r.completed_by || existing?.closedBy || null,
+        // Nested element data (preserved from SharePoint blob, or empty)
+        bom: existing?.bom || { files: [], notes: [] },
+        approval: existing?.approval || { revisions: [], notes: [] },
+        parts: existing?.parts || {
+          sections: { files: [], notes: [] },
+          plates: { files: [], notes: [] }
+        },
+        assembly: existing?.assembly || { tasks: [] },
+        site: existing?.site || { files: [], notes: [] }
+      };
+      byProject[projId].push(job);
+    });
+
+    // Replace each project's jobs[] with the SQL-driven list.
+    // Number jobs sequentially per project in creation order if not
+    // already present (folderName / number were SharePoint-derived).
+    Object.entries(byProject).forEach(([projId, jobs]) => {
+      // Sort by createdAt asc so re-numbering is stable
+      jobs.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+      jobs.forEach((j, i) => {
+        if (!j.number) j.number = i + 1;
+        if (!j.folderName) j.folderName = `${String(j.number).padStart(2, '0')} - ${j.name}`;
+      });
+      if (!drawingsData.projects[projId]) drawingsData.projects[projId] = { jobs: [] };
+      drawingsData.projects[projId].jobs = jobs;
+    });
+
+    // Projects with SharePoint nested data but no SQL rows: leave their
+    // jobs[] empty (test data) — they won't render in the tiles grid.
+    Object.keys(drawingsData.projects).forEach(projId => {
+      if (!byProject[projId]) {
+        drawingsData.projects[projId].jobs = [];
+      }
+    });
+  } catch (e) {
+    console.warn('Drawings SQL load failed (using SharePoint blob only):', e.message);
   }
 }
 
@@ -10842,14 +10921,35 @@ async function createJob() {
     document.getElementById('createJobProgressBar').style.width = '90%';
     document.getElementById('createJobProgressText').textContent = 'Saving job data...';
 
-    // Create job entry in drawingsData
+    // Create the SQL DrawingJobs row first — its IDENTITY id becomes the
+    // canonical job id used everywhere (including the SharePoint blob's
+    // nested element data, keyed by string-cast id). If this fails the
+    // SharePoint folders are already created; that's tolerable (orphan
+    // folders are harmless and the user can retry).
+    const driveId = jobFolder.parentReference?.driveId || BAMA_DRIVE_ID;
+    let sqlJobId;
+    try {
+      const sqlRow = await api.post('/api/drawings', {
+        project_number:       projectId,
+        job_name:             jobName,
+        sharepoint_folder_id: jobFolder.id,
+        sharepoint_file_id:   null
+      });
+      sqlJobId = String(sqlRow.id);
+    } catch (sqlErr) {
+      throw new Error(`SQL save failed: ${sqlErr.message}`);
+    }
+
+    // Create job entry in drawingsData (keyed by the SQL id).
+    // Nested element data starts empty; Approval/Parts/Site will lazily
+    // populate it through their existing flows.
     const newJob = {
-      id: Date.now().toString(),
+      id: sqlJobId,
       number: jobNumber,
       name: jobName,
       folderName,
       spFolderId: jobFolder.id,
-      spDriveId: jobFolder.parentReference?.driveId || BAMA_DRIVE_ID,
+      spDriveId: driveId,
       status: 'open',
       createdAt: new Date().toISOString(),
       bom: { files: [], notes: [] },
@@ -13559,6 +13659,21 @@ async function confirmCloseJob() {
   try {
     setLoading(true);
     await saveDrawingsData();
+
+    // Mirror the close to SQL — DrawingJobs.is_complete = true
+    // with completed_at / completed_by. Non-blocking failure: if the
+    // SQL update fails we toast but don't roll back the SharePoint
+    // write, because the local state already reflects 'closed'.
+    try {
+      await api.put(`/api/drawings/${encodeURIComponent(job.id)}`, {
+        is_complete:  true,
+        completed_by: person
+      });
+    } catch (sqlErr) {
+      console.warn('Close job SQL mirror failed:', sqlErr.message);
+      toast('Job closed locally; backend sync failed (will retry on reload).', 'error');
+    }
+
     closeCloseJobModal();
     toast(`Job "${job.name}" closed`, 'success');
 
