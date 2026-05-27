@@ -10606,34 +10606,47 @@ async function openProjects() {
 function renderProjectTiles() {
   const grid = document.getElementById('projectTilesGrid');
   if (!grid) return;
-  // On kiosk state.projects is already In Progress only; on projects page all active statuses.
-  const projects = state.projects;
+
+  // On kiosk state.projects is already In Progress only; on projects page
+  // state.projects also includes On Hold. We now filter both pages to
+  // In Progress only — On Hold projects are reinstated via Project Tracker
+  // when work resumes. (Spec §2: SPEC-job-fabrication-rework.md.)
+  const projects = (state.projects || []).filter(p => p.status === 'In Progress');
 
   if (!projects.length) {
     grid.innerHTML = '<div class="empty-state">No active projects found</div>';
     return;
   }
 
-  const statusColour = {
-    'In Progress': 'var(--green)',
-    'On Hold':     'var(--amber)',
-  };
-
-  grid.innerHTML = projects.map(p => {
-    const projData = drawingsData.projects[p.id];
-    const jobs = projData?.jobs || [];
+  // Annotate each project with its job counts, then sort:
+  //   1. projects with open jobs first, by open-job count desc (busiest at top)
+  //   2. projects with only closed jobs
+  //   3. projects with no jobs at all
+  // Tie-breaker within each group: project ID asc (numeric-aware).
+  const annotated = projects.map(p => {
+    const jobs = drawingsData.projects[p.id]?.jobs || [];
     const openJobs = jobs.filter(j => j.status !== 'closed').length;
     const closedJobs = jobs.filter(j => j.status === 'closed').length;
-    const statusLabel = (p.status && p.status !== 'In Progress')
-      ? `<div style="margin-top:6px"><span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:6px;background:rgba(245,158,11,.15);color:var(--amber)">${p.status.toUpperCase()}</span></div>`
-      : '';
+    return { p, jobs, openJobs, closedJobs };
+  });
 
+  annotated.sort((a, b) => {
+    // Group: 0 = has open, 1 = closed-only, 2 = no jobs
+    const grp = x => x.openJobs > 0 ? 0 : (x.jobs.length > 0 ? 1 : 2);
+    const ga = grp(a), gb = grp(b);
+    if (ga !== gb) return ga - gb;
+    // Within "has open jobs", busiest first
+    if (ga === 0 && a.openJobs !== b.openJobs) return b.openJobs - a.openJobs;
+    // Tie-breaker: project ID asc (numeric-aware)
+    return String(a.p.id).localeCompare(String(b.p.id), 'en', { numeric: true, sensitivity: 'base' });
+  });
+
+  grid.innerHTML = annotated.map(({ p, jobs, openJobs, closedJobs }) => {
     return `
       <div class="project-tile" onclick="openProjectDetail('${p.id}')">
         <div class="project-tile-id">${p.id}</div>
         <div class="project-tile-name">${p.name}</div>
         <div class="project-tile-client">${p.client || ''}</div>
-        ${statusLabel}
         ${jobs.length > 0 ? `
           <div style="margin-top:12px;font-size:11px;font-family:var(--font-mono);color:var(--muted)">
             ${openJobs} open${closedJobs ? ` · ${closedJobs} closed` : ''}
