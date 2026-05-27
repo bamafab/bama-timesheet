@@ -1514,51 +1514,27 @@ async function checkManagerPin() {
   filterSidebarTabs(perms);
 
   showScreen('screenManager');
-  // Auto-switch to first allowed tab
+  renderUnifiedSidebar();
   const firstTab = findFirstAllowedTab(perms);
   if (firstTab) switchTab(firstTab);
   renderManagerView();
 }
 
 function filterSidebarTabs(perms) {
-  const sidebarId = CURRENT_PAGE === 'office' ? 'officeSidebar' : 'mgrSidebar';
-  const sidebar = document.getElementById(sidebarId);
+  const sidebar = document.getElementById('unifiedSidebar');
   if (!sidebar) return;
-
-  sidebar.querySelectorAll('.sidebar-nav-item').forEach(btn => {
+  sidebar.querySelectorAll('.sidebar-nav-item[data-tab]').forEach(btn => {
     const tab = btn.getAttribute('data-tab');
-    // Dashboard is always visible on office page
-    if (tab === 'dashboard' && CURRENT_PAGE === 'office') return;
+    if (tab === 'dashboard') return; // always visible
     const permKey = Object.keys(PERM_TO_TAB).find(k => PERM_TO_TAB[k] === tab);
-    if (permKey) {
-      btn.style.display = perms[permKey] ? '' : 'none';
-    }
+    if (permKey) btn.style.display = perms[permKey] ? '' : 'none';
   });
-
-  // Generic any-of-perms gating: any element with data-perm-any="permA,permB"
-  // is shown only if the user has at least one of the listed permissions.
-  // Used for cross-app launchers (e.g. Project Tracker on the office dashboard)
-  // and any future similar links. Scoped to the whole document, not just the
-  // sidebar, so it covers dashboard cards too.
   applyPermAnyVisibility(perms);
-
-  // On office page, hide collapsible group labels if no child items are visible
-  if (CURRENT_PAGE === 'office') {
-    sidebar.querySelectorAll('.sidebar-nav-subitems').forEach(sub => {
-      const anyVisible = Array.from(sub.querySelectorAll('.sidebar-nav-item')).some(btn => btn.style.display !== 'none');
-      const groupEl = sub.closest('.sidebar-nav-group');
-      if (groupEl) groupEl.style.display = anyVisible ? '' : 'none';
-    });
-    // Also hide People & Leave group labels if their items are hidden
-    sidebar.querySelectorAll('.sidebar-nav-group').forEach(group => {
-      const label = group.querySelector('.sidebar-nav-label');
-      if (label) {
-        const items = group.querySelectorAll('.sidebar-nav-item');
-        const anyVisible = Array.from(items).some(btn => btn.style.display !== 'none');
-        group.style.display = anyVisible ? '' : 'none';
-      }
-    });
-  }
+  sidebar.querySelectorAll('.sidebar-nav-subitems').forEach(sub => {
+    const anyVisible = Array.from(sub.querySelectorAll('.sidebar-nav-item')).some(btn => btn.style.display !== 'none');
+    const groupEl = sub.closest('.sidebar-nav-group');
+    if (groupEl) groupEl.style.display = anyVisible ? '' : 'none';
+  });
 }
 
 // Hide elements tagged with data-perm-any="permA,permB,..." unless the user
@@ -1712,8 +1688,11 @@ async function checkOfficePin() {
   filterSidebarTabs(perms);
 
   showScreen('screenOffice');
-  // Always land on dashboard first
-  switchTab('dashboard');
+  renderUnifiedSidebar();
+  // Land on pending tab (from cross-page nav) or dashboard
+  const _pendingTab = sessionStorage.getItem('bama_pending_tab');
+  sessionStorage.removeItem('bama_pending_tab');
+  switchTab(_pendingTab || 'dashboard');
   renderManagerView();
 }
 
@@ -3041,17 +3020,11 @@ function changeWeek(dir) {
 }
 
 function switchTab(name) {
-  // Scope sidebar items to the correct sidebar
-  const sidebarId = CURRENT_PAGE === 'office' ? 'officeSidebar' : 'mgrSidebar';
-  const sidebar = document.getElementById(sidebarId);
-  if (sidebar) {
-    sidebar.querySelectorAll('.sidebar-nav-item').forEach(item => {
-      item.classList.toggle('active', item.getAttribute('data-tab') === name);
-    });
-  }
+  _officeCurrentTab = name;
   document.querySelectorAll('.tab-content').forEach(tc => {
     tc.classList.toggle('active', tc.id === `tab-${name}`);
   });
+  renderUnifiedSidebar(); // keep active state in sync
   if (name === 'dashboard') renderDashboard();
   if (name === 'staff') renderStaffList();
   if (name === 'clockinout') { clockLogWeekOffset = 0; renderClockLogForWeek(); }
@@ -9163,6 +9136,7 @@ let drawingsData = { projects: {} };
 let userAccessData = { globalAdminEmail: '', users: {}, accessRequests: [] };
 let bomDataCache = {}; // keyed by projectId: { jobs: { jobId: { materialLists:[], deliveryNotes:[] } } }
 let currentManagerUser = null; // name of user currently logged into manager dashboard
+let _officeCurrentTab = 'dashboard'; // tracks active tab for unified sidebar active-state
 
 // ── PIN idle-session helpers ──────────────────────────────────────────────────
 // Non-kiosk pages share a single PIN gate stored in sessionStorage.
@@ -14173,7 +14147,7 @@ async function loadTendersData() {
     clientsData = clients || [];
     renderTenderList();
     renderClientList();
-    updateTenderSidebarCrossNav();
+    renderUnifiedSidebar();
 
     // Backfill ClientContacts from existing tenders (one-time per session)
     backfillContactsFromTenders();
@@ -14388,6 +14362,133 @@ function updateCrossNavSidebar() {
   set('sidebarBtnReconcile',       !!perms.reconcile,                            'Reconcile');
 }
 
+// ── Unified sidebar renderer ─────────────────────────────────────────────────
+// Generates the full left-nav HTML and injects it into #unifiedSidebar.
+// Called from every page init and from switchTab() to keep active state fresh.
+// Navigation: office.html internal tabs use navToOfficeTab(); external pages
+// navigate directly. The ?tab= param on office.html is consumed in the office
+// startup block to deep-link to a specific tab.
+function renderUnifiedSidebar() {
+  const el = document.getElementById('unifiedSidebar');
+  if (!el) return;
+
+  const p = CURRENT_PAGE;
+  const t = _officeCurrentTab;
+  const a = (page, tab) => {
+    if (tab) return (p === page && t === tab) ? ' active' : '';
+    return p === page ? ' active' : '';
+  };
+
+  el.innerHTML = `
+    <!-- Top pinned -->
+    <button class="sidebar-nav-item${a('office','dashboard')}" data-tab="dashboard" onclick="navToOfficeTab('dashboard')">
+      <span class="sidebar-nav-icon">📊</span> Dashboard
+    </button>
+    <button class="sidebar-nav-item${a('manager')}" onclick="window.location.href='manager.html'">
+      <span class="sidebar-nav-icon">⚙️</span> Manager
+    </button>
+
+    <hr class="sidebar-nav-divider">
+
+    <!-- HR -->
+    <div class="sidebar-nav-group">
+      <div class="sidebar-nav-label-toggle" onclick="toggleSidebarGroup(this)">HR <span class="chevron">&#9660;</span></div>
+      <div class="sidebar-nav-subitems">
+        <button class="sidebar-nav-item${a('office','holidays')}" data-tab="holidays" onclick="navToOfficeTab('holidays')">
+          <span class="sidebar-nav-icon">🌴</span> Holidays
+        </button>
+        <button class="sidebar-nav-item${a('office','useraccess')}" data-tab="useraccess" onclick="navToOfficeTab('useraccess')">
+          <span class="sidebar-nav-icon">🔒</span> User Access
+        </button>
+        <button class="sidebar-nav-item${a('office','staff')}" data-tab="staff" onclick="navToOfficeTab('staff')">
+          <span class="sidebar-nav-icon">👥</span> Employees
+        </button>
+      </div>
+    </div>
+
+    <!-- Payroll -->
+    <div class="sidebar-nav-group">
+      <div class="sidebar-nav-label-toggle" onclick="toggleSidebarGroup(this)">Payroll <span class="chevron">&#9660;</span></div>
+      <div class="sidebar-nav-subitems">
+        <button class="sidebar-nav-item${a('office','clockinout')}" data-tab="clockinout" onclick="navToOfficeTab('clockinout')">
+          <span class="sidebar-nav-icon">⏰</span> Clocking In/Out
+        </button>
+        <button class="sidebar-nav-item${a('office','payroll')}" data-tab="payroll" onclick="navToOfficeTab('payroll')">
+          <span class="sidebar-nav-icon">💷</span> Payroll
+        </button>
+        <button class="sidebar-nav-item${a('office','archive')}" data-tab="archive" onclick="navToOfficeTab('archive')">
+          <span class="sidebar-nav-icon">📦</span> Archive
+        </button>
+      </div>
+    </div>
+
+    <!-- Traceability -->
+    <div class="sidebar-nav-group">
+      <div class="sidebar-nav-label-toggle collapsed" onclick="toggleSidebarGroup(this)">Traceability <span class="chevron">&#9660;</span></div>
+      <div class="sidebar-nav-subitems collapsed">
+        <button class="sidebar-nav-item${a('office','welding')}" data-tab="welding" onclick="navToOfficeTab('welding')">
+          <span class="sidebar-nav-icon">🔥</span> Welding Equipment
+        </button>
+      </div>
+    </div>
+
+    <hr class="sidebar-nav-divider">
+
+    <!-- Standalone -->
+    <button class="sidebar-nav-item${a('reports')}" onclick="navToReports()">
+      <span class="sidebar-nav-icon">📈</span> Reports
+    </button>
+    <button class="sidebar-nav-item${a('office','clients')}" data-tab="clients" onclick="navToOfficeTab('clients')">
+      <span class="sidebar-nav-icon">🏢</span> Clients
+    </button>
+    <button class="sidebar-nav-item${a('office','suppliers')}" data-tab="suppliers" onclick="navToOfficeTab('suppliers')">
+      <span class="sidebar-nav-icon">🚚</span> Suppliers
+    </button>
+
+    <hr class="sidebar-nav-divider">
+
+    <!-- Finance -->
+    <div class="sidebar-nav-group">
+      <div class="sidebar-nav-label-toggle" onclick="toggleSidebarGroup(this)">Finance <span class="chevron">&#9660;</span></div>
+      <div class="sidebar-nav-subitems">
+        <button class="sidebar-nav-item${a('tenders')}" id="sidebarBtnTenders" onclick="navToTenders()">
+          <span class="sidebar-nav-icon">📋</span> Tenders
+        </button>
+        <button class="sidebar-nav-item${a('quotes')}" id="sidebarBtnQuotations" onclick="navToQuotes()">
+          <span class="sidebar-nav-icon">📊</span> Quotes
+        </button>
+        <button class="sidebar-nav-item${a('babcock')}" id="sidebarBtnBabcockQuotes" onclick="navToBabcock()">
+          <span class="sidebar-nav-icon">⚓</span> Babcock
+        </button>
+        <button class="sidebar-nav-item${a('projectTracker')}" id="sidebarBtnProjectTracker" onclick="navToProjectTracker()">
+          <span class="sidebar-nav-icon">🏗️</span> Project Tracker
+        </button>
+        <button class="sidebar-nav-item${a('poTracker')}" id="sidebarBtnPurchaseOrders" onclick="navToPoTracker()">
+          <span class="sidebar-nav-icon">🧾</span> PO Tracker
+        </button>
+        <button class="sidebar-nav-item${a('invoiceTracker')}" id="sidebarBtnInvoicing" onclick="navToInvoicing()">
+          <span class="sidebar-nav-icon">💰</span> Invoice Tracker
+        </button>
+        <button class="sidebar-nav-item${a('reconcile')}" id="sidebarBtnReconcile" onclick="navToReconcile()">
+          <span class="sidebar-nav-icon">🏦</span> Reconcile
+        </button>
+      </div>
+    </div>`;
+
+  // Re-apply permission gating on the freshly-rendered buttons
+  updateCrossNavSidebar();
+}
+
+// Navigate to an office.html tab. When already on office, just switch.
+// When on another page, navigate with ?tab= so office can deep-link on load.
+function navToOfficeTab(tab) {
+  if (CURRENT_PAGE === 'office') {
+    switchTab(tab); // switchTab calls renderUnifiedSidebar internally
+  } else {
+    window.location.href = 'office.html?tab=' + encodeURIComponent(tab);
+  }
+}
+
 // Back-compat aliases — call sites are scattered.
 function updateTenderSidebarCrossNav() { updateCrossNavSidebar(); }
 function updateQuotesSidebarCrossNav() { updateCrossNavSidebar(); }
@@ -14405,7 +14506,7 @@ function switchTenderTab(tab) {
   const target = document.getElementById(`tab-${tab}`);
   if (target) { target.classList.add('active'); target.style.display = ''; }
 
-  document.querySelectorAll('#tenderSidebar .sidebar-nav-item').forEach(el => {
+  document.querySelectorAll('#unifiedSidebar .sidebar-nav-item').forEach(el => {
     el.classList.toggle('active', el.dataset.tab === tab);
   });
 
@@ -15081,7 +15182,7 @@ function closeTenderDetail() {
   currentTender = null;
   document.getElementById('tab-tenderDetail').style.display = 'none';
   // Show the previously active tab
-  const activeTab = document.querySelector('#tenderSidebar .sidebar-nav-item.active');
+  const activeTab = document.querySelector('#unifiedSidebar .sidebar-nav-item.active');
   const tab = activeTab?.dataset.tab || 'tenders';
   switchTenderTab(tab);
 }
@@ -15853,7 +15954,7 @@ async function loadQuotesData() {
     clientsData = clients || [];
     renderQuoteList();
     renderClientList();
-    updateQuotesSidebarCrossNav();
+    renderUnifiedSidebar();
   } catch (err) {
     console.error('Failed to load quotes data:', err);
     toast('Failed to load data', 'error');
@@ -16430,7 +16531,7 @@ function switchQuotesTab(tab) {
   const target = document.getElementById(`tab-${tab}`);
   if (target) { target.classList.add('active'); target.style.display = ''; }
 
-  document.querySelectorAll('#quotesSidebar .sidebar-nav-item').forEach(el => {
+  document.querySelectorAll('#unifiedSidebar .sidebar-nav-item').forEach(el => {
     el.classList.toggle('active', el.dataset.tab === tab);
   });
 
@@ -18606,7 +18707,7 @@ async function initProjectTrackerPage() {
     if (perms && (perms.viewProjects || perms.editProjects)) {
       document.getElementById('screenProjectTrackerSelect').style.display = 'none';
       document.getElementById('projectTrackerLayout').style.display = 'flex';
-      updateCrossNavSidebar();
+      renderUnifiedSidebar();
       await loadProjectsData();
       renderProjectTrackerList();
       return;
@@ -18675,7 +18776,7 @@ async function verifyProjectTrackerPin() {
     document.getElementById('screenProjectTrackerSelect').style.display = 'none';
     document.getElementById('projectTrackerLayout').style.display = 'flex';
 
-    updateCrossNavSidebar();
+    renderUnifiedSidebar();
     await loadProjectsData();
     renderProjectTrackerList();
   } catch (err) {
@@ -18735,8 +18836,7 @@ async function initReportsPage() {
 function showReportsLayout() {
   document.getElementById('screenReportsSelect').style.display = 'none';
   document.getElementById('reportsLayout').style.display = 'flex';
-  // Grey out cross-nav buttons the user lacks permission for
-  updateCrossNavSidebar();
+  renderUnifiedSidebar();
   // The reports tab inside office.html ran `renderReports()` on selectTab;
   // mirror that here so the default Overview card paints on first load.
   // renderReports() auto-populates the employee filter on first invocation.
@@ -20327,7 +20427,7 @@ function showBabcockGenerator() {
 
 // ── Load tracker list from API ──
 async function loadBabcockTracker() {
-  updateCrossNavSidebar();
+  renderUnifiedSidebar();
   const tbody = document.getElementById('babcockTrackerBody');
   if (!tbody) return;
   try {
@@ -23505,7 +23605,7 @@ async function initPoTrackerPage() {
     if (perms.viewPurchaseOrders || perms.editPurchaseOrders) {
       document.getElementById('screenPoSelect').style.display = 'none';
       document.getElementById('poLayout').style.display = 'flex';
-      updateCrossNavSidebar();
+      renderUnifiedSidebar();
       await loadPoSupportData();
       await loadPoTracker();
       return;
@@ -23570,7 +23670,7 @@ async function verifyPoPin() {
     }
     document.getElementById('screenPoSelect').style.display = 'none';
     document.getElementById('poLayout').style.display = 'flex';
-    updateCrossNavSidebar();
+    renderUnifiedSidebar();
     await loadPoSupportData();
     await loadPoTracker();
   } catch (err) {
@@ -25287,8 +25387,23 @@ async function init() {
     showScreen('screenManagerSelect');
     renderManagerEmployeeGrid();
   } else if (CURRENT_PAGE === 'office') {
-    showScreen('screenOfficeSelect');
-    renderOfficeEmployeeGrid();
+    const _authedUser = pinSessionGet();
+    const _pendingTab = new URLSearchParams(window.location.search).get('tab');
+    if (_authedUser) {
+      // Session still valid — skip PIN gate and go straight to office layout
+      currentManagerUser = _authedUser;
+      const perms = getUserPermissions(currentManagerUser) || {};
+      filterSidebarTabs(perms);
+      showScreen('screenOffice');
+      renderUnifiedSidebar();
+      switchTab(_pendingTab || 'dashboard');
+      renderManagerView();
+    } else {
+      // Store pending tab so checkOfficePin can use it after auth
+      if (_pendingTab) sessionStorage.setItem('bama_pending_tab', _pendingTab);
+      showScreen('screenOfficeSelect');
+      renderOfficeEmployeeGrid();
+    }
   } else if (CURRENT_PAGE === 'projects') {
     showScreen('screenProjects');
     renderProjectTiles();
@@ -25374,7 +25489,7 @@ async function initInvoiceTrackerPage() {
     if (perms.invoicing) {
       document.getElementById('screenInvSelect').style.display = 'none';
       document.getElementById('invLayout').style.display = 'flex';
-      updateCrossNavSidebar();
+      renderUnifiedSidebar();
       await loadInvoicingSupportData();
       await loadInvoicingData();
       switchInvTab(_invCurrentTab);
@@ -25458,7 +25573,7 @@ async function verifyInvPin() {
     }
     document.getElementById('screenInvSelect').style.display = 'none';
     document.getElementById('invLayout').style.display = 'flex';
-    updateCrossNavSidebar();
+    renderUnifiedSidebar();
     await loadInvoicingSupportData();
     await loadInvoicingData();
     switchInvTab(_invCurrentTab);

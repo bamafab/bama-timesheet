@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Tenders &amp; Quotes</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260526e">
+<link rel="stylesheet" href="bama.css?v=20260527g">
 </head>
 <body>
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
@@ -64,35 +64,7 @@
 ══════════════════════════════════════════ -->
 <div class="mgr-layout" id="tenderLayout" style="display:none">
   <!-- Sidebar -->
-  <nav class="mgr-sidebar" id="tenderSidebar">
-    <div class="sidebar-nav-group">
-      <button class="sidebar-nav-item active" data-tab="tenders" onclick="switchTenderTab('tenders')">
-        <span class="sidebar-nav-icon">📋</span> Tenders
-      </button>
-      <button class="sidebar-nav-item" id="sidebarBtnQuotations" data-tab="quotations" onclick="navToQuotes()">
-        <span class="sidebar-nav-icon">📊</span> Quotations
-      </button>
-      <button class="sidebar-nav-item" data-tab="babcock" onclick="navToBabcock()">
-        <span class="sidebar-nav-icon">⚓</span> Babcock Quotes
-      </button>
-      <button class="sidebar-nav-item" id="sidebarBtnProjectTracker" data-tab="projectTracker" onclick="navToProjectTracker()">
-        <span class="sidebar-nav-icon">🏗️</span> Project Tracker
-      </button>
-      <button class="sidebar-nav-item" id="sidebarBtnPurchaseOrders" onclick="navToPoTracker()">
-        <span class="sidebar-nav-icon">🧾</span> Purchase Orders
-      </button>
-      <button class="sidebar-nav-item" id="sidebarBtnInvoicing" onclick="navToInvoicing()">
-        <span class="sidebar-nav-icon">💰</span> Invoice Tracker
-      </button>
-      <button class="sidebar-nav-item" id="sidebarBtnReconcile" onclick="navToReconcile()">
-        <span class="sidebar-nav-icon">🏦</span> Reconcile
-      </button>
-      <hr class="sidebar-nav-divider">
-      <button class="sidebar-nav-item sidebar-secondary-item" data-tab="clients" onclick="switchTenderTab('clients')">
-        <span class="sidebar-nav-icon">🏢</span> Clients
-      </button>
-    </div>
-  </nav>
+  <nav class="mgr-sidebar" id="unifiedSidebar"></nav>
 
   <!-- Content -->
   <div class="mgr-content">
@@ -617,6 +589,6 @@
   }
 </style>
 
-<script src="shared.js?v=20260527f"></script>
+<script src="shared.js?v=20260527g"></script>
 </body>
 </html>

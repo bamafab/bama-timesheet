@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Manager Dashboard</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260526e">
+<link rel="stylesheet" href="bama.css?v=20260527g">
 </head>
 <body>
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
@@ -85,21 +85,7 @@
 <div class="screen" id="screenManager">
   <div class="mgr-layout">
     <!-- Sidebar Navigation -->
-    <nav class="mgr-sidebar" id="mgrSidebar">
-      <div class="sidebar-nav-group">
-        <div class="sidebar-nav-label-toggle" onclick="toggleSidebarGroup(this)">
-          System <span class="chevron">&#9660;</span>
-        </div>
-        <div class="sidebar-nav-subitems">
-          <button class="sidebar-nav-item active" data-tab="settings" onclick="switchTab('settings')">
-            <span class="sidebar-nav-icon">&#9881;</span> Settings
-          </button>
-          <button class="sidebar-nav-item" data-tab="settings" onclick="window.location.href='templates.html'">
-            <span class="sidebar-nav-icon">&#128196;</span> Templates
-          </button>
-        </div>
-      </div>
-    </nav>
+    <nav class="mgr-sidebar" id="unifiedSidebar"></nav>
 
     <!-- Main Content Area -->
     <div class="mgr-content">
@@ -260,6 +246,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260527f"></script>
+<script src="shared.js?v=20260527g"></script>
 </body>
 </html>

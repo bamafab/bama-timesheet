@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Office</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260527c">
+<link rel="stylesheet" href="bama.css?v=20260527g">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 </head>
 <body>
@@ -85,85 +85,7 @@
 <div class="screen" id="screenOffice">
   <div class="mgr-layout">
     <!-- Sidebar Navigation -->
-    <nav class="mgr-sidebar" id="officeSidebar">
-      <div class="sidebar-nav-group">
-        <button class="sidebar-nav-item active" data-tab="dashboard" onclick="switchTab('dashboard')">
-          <span class="sidebar-nav-icon">📊</span> Dashboard
-        </button>
-      </div>
-      <div class="sidebar-nav-divider"></div>
-      <div class="sidebar-nav-group">
-        <div class="sidebar-nav-label-toggle" onclick="toggleSidebarGroup(this)">
-          People &amp; Leave <span class="chevron">&#9660;</span>
-        </div>
-        <div class="sidebar-nav-subitems">
-          <button class="sidebar-nav-item" data-tab="staff" onclick="switchTab('staff')">
-            <span class="sidebar-nav-icon">&#128101;</span> Staff
-          </button>
-          <button class="sidebar-nav-item" data-tab="useraccess" onclick="switchTab('useraccess')">
-            <span class="sidebar-nav-icon">&#128274;</span> User Access
-          </button>
-          <button class="sidebar-nav-item" data-tab="holidays" onclick="switchTab('holidays')">
-            <span class="sidebar-nav-icon">🌴</span> Holidays
-          </button>
-        </div>
-      </div>
-      <div class="sidebar-nav-divider"></div>
-      <div class="sidebar-nav-group">
-        <div class="sidebar-nav-label-toggle" onclick="toggleSidebarGroup(this)">
-          Timesheets &amp; Finance <span class="chevron">&#9660;</span>
-        </div>
-        <div class="sidebar-nav-subitems">
-          <button class="sidebar-nav-item" data-tab="clockinout" onclick="switchTab('clockinout')">
-            <span class="sidebar-nav-icon">⏰</span> Clocking In/Out
-          </button>
-          <button class="sidebar-nav-item" data-tab="payroll" onclick="switchTab('payroll')">
-            <span class="sidebar-nav-icon">💷</span> Payroll
-          </button>
-          <button class="sidebar-nav-item" data-tab="project" onclick="switchTab('project')">
-            <span class="sidebar-nav-icon">📁</span> By Project
-          </button>
-          <button class="sidebar-nav-item" data-tab="employee" onclick="switchTab('employee')">
-            <span class="sidebar-nav-icon">👤</span> By Employee
-          </button>
-          <button class="sidebar-nav-item" data-tab="archive" onclick="switchTab('archive')">
-            <span class="sidebar-nav-icon">📦</span> Archive
-          </button>
-        </div>
-      </div>
-      <div class="sidebar-nav-divider"></div>
-      <div class="sidebar-nav-group">
-        <div class="sidebar-nav-label-toggle collapsed" onclick="toggleSidebarGroup(this)">
-          Traceability <span class="chevron">&#9660;</span>
-        </div>
-        <div class="sidebar-nav-subitems collapsed">
-          <button class="sidebar-nav-item" data-tab="welding" onclick="switchTab('welding')">
-            <span class="sidebar-nav-icon">&#128293;</span> Welding Equipment
-          </button>
-        </div>
-      </div>
-      <div class="sidebar-nav-divider"></div>
-      <div class="sidebar-nav-group">
-        <button class="sidebar-nav-item" onclick="navToReports()">
-          <span class="sidebar-nav-icon">📈</span> Reports
-        </button>
-        <button class="sidebar-nav-item" onclick="window.location.href='tenders.html'">
-          <span class="sidebar-nav-icon">📋</span> Tenders &amp; Quotes
-        </button>
-        <button class="sidebar-nav-item" onclick="navToBabcock()">
-          <span class="sidebar-nav-icon">⚓</span> Babcock Quotes
-        </button>
-        <button class="sidebar-nav-item" onclick="navToPoTracker()">
-          <span class="sidebar-nav-icon">🧾</span> Purchase Orders
-        </button>
-        <button class="sidebar-nav-item" data-tab="suppliers" onclick="switchTab('suppliers')">
-          <span class="sidebar-nav-icon">&#128666;</span> Suppliers
-        </button>
-        <button class="sidebar-nav-item" data-tab="clients" onclick="switchTab('clients')">
-          <span class="sidebar-nav-icon">🏢</span> Clients
-        </button>
-      </div>
-    </nav>
+    <nav class="mgr-sidebar" id="unifiedSidebar"></nav>
 
     <!-- Main Content Area -->
     <div class="mgr-content">
@@ -1088,6 +1010,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260527f"></script>
+<script src="shared.js?v=20260527g"></script>
 </body>
 </html>

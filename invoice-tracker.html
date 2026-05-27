@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Invoice Tracker</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260526e">
+<link rel="stylesheet" href="bama.css?v=20260527g">
 <style>
   .mgr-content { max-width: none !important; }
 
@@ -128,35 +128,7 @@
 <div class="mgr-layout" id="invLayout" style="display:none">
 
   <!-- Sidebar cross-nav (same canonical sidebar as the rest of the tracker family) -->
-  <nav class="mgr-sidebar" id="invSidebar">
-    <div class="sidebar-nav-group">
-      <button class="sidebar-nav-item" id="sidebarBtnTenders" onclick="navToTenders()">
-        <span class="sidebar-nav-icon">📋</span> Tenders
-      </button>
-      <button class="sidebar-nav-item" id="sidebarBtnQuotations" onclick="navToQuotes()">
-        <span class="sidebar-nav-icon">📊</span> Quotations
-      </button>
-      <button class="sidebar-nav-item" id="sidebarBtnBabcockQuotes" onclick="navToBabcock()">
-        <span class="sidebar-nav-icon">⚓</span> Babcock Quotes
-      </button>
-      <button class="sidebar-nav-item" id="sidebarBtnProjectTracker" onclick="navToProjectTracker()">
-        <span class="sidebar-nav-icon">🏗️</span> Project Tracker
-      </button>
-      <button class="sidebar-nav-item" id="sidebarBtnPurchaseOrders" onclick="navToPoTracker()">
-        <span class="sidebar-nav-icon">🧾</span> Purchase Orders
-      </button>
-      <button class="sidebar-nav-item active">
-        <span class="sidebar-nav-icon">💰</span> Invoice Tracker
-      </button>
-      <button class="sidebar-nav-item" id="sidebarBtnReconcile" onclick="navToReconcile()">
-        <span class="sidebar-nav-icon">🏦</span> Reconcile
-      </button>
-      <hr class="sidebar-nav-divider">
-      <button class="sidebar-nav-item sidebar-secondary-item" onclick="navToTenders()">
-        <span class="sidebar-nav-icon">🏢</span> Clients
-      </button>
-    </div>
-  </nav>
+  <nav class="mgr-sidebar" id="unifiedSidebar"></nav>
 
   <!-- Content -->
   <div class="mgr-content">
@@ -979,6 +951,6 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="shared.js?v=20260527f"></script>
+<script src="shared.js?v=20260527g"></script>
 </body>
 </html>
