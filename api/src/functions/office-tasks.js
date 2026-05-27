@@ -115,7 +115,7 @@ app.http('office-tasks-create', {
 app.http('office-tasks-update', {
     methods: ['PUT'],
     authLevel: 'anonymous',
-    route: 'office-tasks/:id',
+    route: 'office-tasks/{id}',
     handler: async (request) => {
         const auth = await requireAuth(request);
         if (auth.status) return auth;
@@ -168,7 +168,7 @@ app.http('office-tasks-update', {
 app.http('office-tasks-delete', {
     methods: ['DELETE'],
     authLevel: 'anonymous',
-    route: 'office-tasks/:id',
+    route: 'office-tasks/{id}',
     handler: async (request) => {
         const auth = await requireAuth(request);
         if (auth.status) return auth;
