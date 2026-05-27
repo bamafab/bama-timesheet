@@ -171,6 +171,17 @@ parts) is deleted, and if there's an attached `JobBomItems` row with
 `source_assembly_id = <old>`, that's deleted too. Then the upload
 proceeds normally.
 
+> **Note on FK cascades:** `FK_JobBomItems_Assembly` is `NO ACTION`
+> (not `SET NULL`) because SQL Server rejects multiple cascade paths
+> to a single target — both `DrawingJobs → JobBomItems` (direct
+> CASCADE) and `DrawingJobs → JobAssemblies → JobBomItems` (cascade
+> via the parent) would otherwise touch the same target. The direct
+> cascade handles job deletion. **For assembly deletion alone** (the
+> replace flow above, or a future explicit delete endpoint), the API
+> must null out `source_assembly_id` on dependent BOM rows
+> *in the same transaction* before deleting the `JobAssemblies` row —
+> otherwise the FK will block the delete.
+
 ### Display in the Assembly section (projects.html)
 
 Each assembly renders as a card:
@@ -504,7 +515,8 @@ CREATE TABLE JobBomItems (
   CONSTRAINT FK_JobBomItems_Job
     FOREIGN KEY (job_id) REFERENCES DrawingJobs(id) ON DELETE CASCADE,
   CONSTRAINT FK_JobBomItems_Assembly
-    FOREIGN KEY (source_assembly_id) REFERENCES JobAssemblies(id) ON DELETE SET NULL,
+    FOREIGN KEY (source_assembly_id) REFERENCES JobAssemblies(id),
+    -- NO ACTION (default). See note below.
   CONSTRAINT FK_JobBomItems_Finish
     FOREIGN KEY (finish_service_id) REFERENCES ServiceTypes(id),
   CONSTRAINT FK_JobBomItems_Supplier
