@@ -6915,51 +6915,101 @@ async function renderSuppliersTab() {
   await loadServiceTypes();
   const container = document.getElementById('supplierList');
   if (!container) return;
+
+  let allPos = [];
   try {
-    _suppliers = await api.get('/api/suppliers');
+    [_suppliers, allPos] = await Promise.all([
+      api.get('/api/suppliers'),
+      api.get('/api/purchase-orders')
+    ]);
   } catch (e) {
     container.innerHTML = '<div class="empty-state">Failed to load suppliers</div>';
     return;
   }
 
-  // Load tiles in background (non-blocking)
-  renderSupplierTiles().catch(() => {});
+  _supplierTilePos = allPos;
+  _renderSupplierTilesFromCache();
 
   if (!_suppliers.length) {
     container.innerHTML = '<div class="empty-state" style="padding:30px"><div class="icon">&#128666;</div>No suppliers registered yet</div>';
     return;
   }
 
-  // Group by first service (or show all services per card)
-  container.innerHTML = _suppliers.map(s => {
-    const svcNames = (s.services || []).map(sv => sv.service_name);
-    const svcLabel = svcNames.length ? svcNames.join(', ') : 'No services assigned';
+  const posBySupplierId = {};
+  allPos.forEach(po => {
+    if (!posBySupplierId[po.supplier_id]) posBySupplierId[po.supplier_id] = [];
+    posBySupplierId[po.supplier_id].push(po);
+  });
 
-    return `
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:8px;cursor:pointer;transition:border-color .15s"
-           onclick="openSupplierDetail(${s.id})"
-           onmouseenter="this.style.borderColor='var(--accent)'" onmouseleave="this.style.borderColor='var(--border)'">
-        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
-          <div>
-            <div style="font-weight:600;font-size:14px">${s.supplier_name}</div>
-            <div style="font-size:11px;color:var(--accent);margin-top:2px">${svcLabel}</div>
-          </div>
-          <div style="display:flex;gap:6px" onclick="event.stopPropagation()">
-            <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="editSupplier(${s.id})">&#9998; Edit</button>
-            <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px;color:var(--red)" onclick="deleteSupplier(${s.id}, '${s.supplier_name.replace(/'/g, "\\'")}')">&#10005;</button>
-          </div>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;font-size:12px;color:var(--muted)">
-          ${s.contact_name ? `<div>Contact: <span style="color:var(--text)">${s.contact_name}</span></div>` : ''}
-          ${s.telephone ? `<div>Tel: <span style="color:var(--text)">${s.telephone}</span></div>` : ''}
-          ${s.email ? `<div>Email: <span style="color:var(--text)">${s.email}</span></div>` : ''}
-          ${(s.address_line1 || s.city || s.postcode) ? `<div>Address: <span style="color:var(--text)">${[s.address_line1, s.address_line2, s.city, s.postcode].filter(Boolean).join(', ')}</span></div>` : ''}
-        </div>
-        <div style="margin-top:8px;font-size:11px;color:var(--subtle)">Click to view purchase orders →</div>
-      </div>`;
-  }).join('');
+  const poGroup = po => {
+    if (po.status === 'Cancelled' || po.status === 'Closed') return 'closed';
+    if (po.reconciliation_status === 'matched')     return 'matched';
+    if (po.reconciliation_status === 'discrepancy') return 'discrepancy';
+    if (po.supplier_invoice_received_at)            return 'invoiced';
+    return 'open';
+  };
 
-  // Also render service type list if visible
+  const fmtVal = v => '£' + Number(v).toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  const sorted = _suppliers.slice().sort((a, b) => a.supplier_name.localeCompare(b.supplier_name));
+
+  const thStyle = 'padding:8px 8px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);white-space:nowrap;text-align:left';
+
+  let rows = '';
+  for (const s of sorted) {
+    const pos     = posBySupplierId[s.id] || [];
+    const openPos = pos.filter(p => poGroup(p) === 'open');
+    const awaitInv = pos.filter(p => !p.supplier_invoice_received_at && p.status !== 'Cancelled' && p.status !== 'Closed');
+    const discrep  = pos.filter(p => poGroup(p) === 'discrepancy');
+    const openVal  = openPos.reduce((sum, p) => sum + Number(p.total_value || 0), 0);
+    const svcNames = (s.services || []).map(sv => sv.service_name).join(', ');
+
+    const awaitCol = awaitInv.length ? 'var(--amber)' : 'var(--subtle)';
+    const discrCol = discrep.length  ? 'var(--red)'   : 'var(--subtle)';
+    const nameSafe = s.supplier_name.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+
+    rows += `<tr style="border-bottom:1px solid var(--border);cursor:pointer;transition:background .12s"
+        onclick="openSupplierDetail(${s.id})"
+        onmouseenter="this.style.background='rgba(255,255,255,.03)'" onmouseleave="this.style.background=''">
+      <td style="padding:11px 12px 11px 0">
+        <div style="font-weight:600">${escapeHtml(s.supplier_name)}</div>
+        ${svcNames ? `<div style="font-size:11px;color:var(--accent);margin-top:1px">${escapeHtml(svcNames)}</div>` : ''}
+      </td>
+      <td style="padding:11px 8px;color:var(--muted);font-size:12px">
+        ${s.contact_name ? `<div>${escapeHtml(s.contact_name)}</div>` : ''}
+        ${s.telephone    ? `<div style="color:var(--subtle)">${escapeHtml(s.telephone)}</div>` : ''}
+      </td>
+      <td style="padding:11px 8px;text-align:center">
+        ${openPos.length ? `<span style="font-weight:600">${openPos.length}</span>` : '<span style="color:var(--subtle)">—</span>'}
+      </td>
+      <td style="padding:11px 8px;text-align:right;font-weight:600;color:${openVal ? 'var(--text)' : 'var(--subtle)'}">
+        ${openVal ? fmtVal(openVal) : '—'}
+      </td>
+      <td style="padding:11px 8px;text-align:center;font-weight:${awaitInv.length ? '600' : '400'};color:${awaitCol}">
+        ${awaitInv.length ? awaitInv.length : '<span style="color:var(--subtle)">—</span>'}
+      </td>
+      <td style="padding:11px 8px;text-align:center;font-weight:${discrep.length ? '600' : '400'};color:${discrCol}">
+        ${discrep.length ? discrep.length : '<span style="color:var(--subtle)">—</span>'}
+      </td>
+      <td style="padding:11px 0 11px 8px;white-space:nowrap" onclick="event.stopPropagation()">
+        <button class="btn btn-ghost" style="padding:3px 9px;font-size:11px" onclick="editSupplier(${s.id})">&#9998;</button>
+        <button class="btn btn-ghost" style="padding:3px 9px;font-size:11px;color:var(--red)" onclick="deleteSupplier(${s.id}, '${nameSafe}')">&#10005;</button>
+      </td>
+    </tr>`;
+  }
+
+  container.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:13px">
+    <thead><tr style="border-bottom:2px solid var(--border)">
+      <th style="${thStyle};padding-left:0">Supplier</th>
+      <th style="${thStyle}">Contact</th>
+      <th style="${thStyle};text-align:center">Open POs</th>
+      <th style="${thStyle};text-align:right">Open Value</th>
+      <th style="${thStyle};text-align:center">Awaiting Invoice</th>
+      <th style="${thStyle};text-align:center">Discrepancies</th>
+      <th></th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+
   renderServiceTypeList();
 }
 
@@ -7355,21 +7405,20 @@ let _supplierTilePos = []; // cached PO list for the current tile render
 async function renderSupplierTiles() {
   const container = document.getElementById('supplierTiles');
   if (!container) return;
-
   container.innerHTML = '<div style="font-size:12px;color:var(--subtle);padding:4px 0">Loading…</div>';
-
-  let allPos = [];
   try {
-    allPos = await api.get('/api/purchase-orders');
+    _supplierTilePos = await api.get('/api/purchase-orders');
   } catch (e) {
     container.innerHTML = '';
     return;
   }
-  _supplierTilePos = allPos;
+  _renderSupplierTilesFromCache();
+}
 
-  // Tile 1 — POs awaiting invoice
-  // Any PO that isn't Cancelled/Closed and has no supplier invoice yet
-  const awaitingInvoice = allPos.filter(po =>
+function _renderSupplierTilesFromCache() {
+  const container = document.getElementById('supplierTiles');
+  if (!container) return;
+  const awaitingInvoice = _supplierTilePos.filter(po =>
     po.status !== 'Cancelled' &&
     po.status !== 'Closed' &&
     !po.supplier_invoice_received_at
