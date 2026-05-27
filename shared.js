@@ -7051,7 +7051,7 @@ function _renderSupplierTable() {
 
   let rows = '';
   for (const s of list) {
-    const m        = _supplierPoMap[s.id] || { open: [], awaiting: [], discrep: [] };
+    const m        = _supplierPoMap[s.id] || { open: [], awaiting: [], discrep: [], spent: [], all: [] };
     const openVal  = m.open.reduce((sum, p) => sum + Number(p.total_value || 0), 0);
     const svcNames = (s.services || []).map(sv => sv.service_name).join(', ');
     const spentVal  = m.spent.reduce((sum, p) => sum + Number(p.total_value || 0), 0);
