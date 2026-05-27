@@ -18079,25 +18079,29 @@ function renderWonProjectList() {
   }
 
   list.innerHTML = filtered.map(p => `
-    <div onclick="selectWonProject(${p.id}, ${JSON.stringify(escapeHtml(p.project_number || ''))})"
+    <div class="won-proj-row"
+         data-project-id="${p.id}"
+         data-project-number="${escapeHtml(p.project_number || '')}"
          style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .1s"
          onmouseenter="this.style.background='var(--surface-raised)'" onmouseleave="this.style.background=''">
       <div style="font-size:13px;font-weight:600;color:var(--text)">${escapeHtml(p.project_number || '')} — ${escapeHtml(p.project_name || '')}</div>
       ${p.client_name ? `<div style="font-size:11px;color:var(--muted)">${escapeHtml(p.client_name)}</div>` : ''}
     </div>
   `).join('');
+
+  list.querySelectorAll('.won-proj-row').forEach(row => {
+    row.addEventListener('click', () => {
+      const id  = row.dataset.projectId;
+      const num = row.dataset.projectNumber;
+      document.getElementById('wonSelectedProjectId').value = id;
+      document.getElementById('wonSelectedProjectLabel').textContent = `Selected: ${num}`;
+      list.querySelectorAll('.won-proj-row').forEach(r => r.style.background = '');
+      row.style.background = 'var(--primary-dim, rgba(99,102,241,.12))';
+    });
+  });
 }
 
 function filterWonProjectList() { renderWonProjectList(); }
-
-function selectWonProject(projectId, projectNumber) {
-  document.getElementById('wonSelectedProjectId').value = projectId;
-  document.getElementById('wonSelectedProjectLabel').textContent = `Selected: ${projectNumber}`;
-  // Highlight the selected row
-  document.querySelectorAll('#wonProjectList > div').forEach(row => {
-    row.style.background = row.textContent.includes(projectNumber) ? 'var(--primary-dim, rgba(99,102,241,.12))' : '';
-  });
-}
 
 function closeWonChoiceModal() {
   document.getElementById('wonChoiceModal').classList.remove('active');
