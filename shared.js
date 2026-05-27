@@ -27,6 +27,19 @@ async function callClaude(body) {
   return res.json();
 }
 
+// Convert a File/Blob to a base64 data URI. Used by client-side OCR flows
+// (supplier invoices, sales invoices, receipts) to feed images/PDFs into
+// the Claude vision API. Previously referenced but never defined — added
+// here so all OCR call sites can rely on it.
+function _fileToDataUri(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload  = () => resolve(r.result);
+    r.onerror = () => reject(r.error || new Error('Failed to read file'));
+    r.readAsDataURL(file);
+  });
+}
+
 // SharePoint config — used for file operations (drawing PDFs, BOM JSON, email
 // attachments) only. Tabular project data lives in SQL now; the PROJECT
 // TRACKER.xlsx read/write paths have been retired (see loadProjects + the
@@ -7303,6 +7316,11 @@ async function openSupplierDetail(supplierId) {
   _supplierDetailId = supplierId;
   _supplierDetailFilter = 'all';
 
+  // Hide any leftover dropzone state from the previous supplier
+  const dz = document.getElementById('supplierDetailDropzone');
+  if (dz) dz.style.display = 'none';
+  _supDzState = 'idle'; _supDzFile = null; _supDzParsed = null; _supDzMatchedPoId = null;
+
   // Render header immediately, load POs async
   _renderSupplierDetailHeader(supplier);
   document.getElementById('supplierDetailPoArea').innerHTML =
@@ -7501,13 +7519,308 @@ function closeSupplierDetail() {
   document.getElementById('supplierDetailModal').classList.remove('active');
   _supplierDetailId = null;
   _supplierDetailPos = [];
+  // Reset dropzone so it doesn't leak state into the next supplier view
+  const dz = document.getElementById('supplierDetailDropzone');
+  if (dz) dz.style.display = 'none';
+  _supDzState = 'idle'; _supDzFile = null; _supDzParsed = null; _supDzMatchedPoId = null;
 }
 
-// Open the existing invSupInvModal pre-filtered to this supplier's POs
+// ─────────────────────────────────────────────────────────────────────────────
+// SUPPLIER-FIRST INVOICE ATTACH — dropzone embedded in the supplier detail
+// panel. Drop or pick a PDF/image → Claude vision OCR extracts the supplier's
+// PO reference + monetary totals → auto-match against this supplier's POs
+// (any status, no invoice attached yet) → user reviews → save uploads to
+// SharePoint and PUTs /api/purchase-orders/{id}/supplier-invoice.
+// ─────────────────────────────────────────────────────────────────────────────
+
+let _supDzState  = 'idle';    // 'idle' | 'parsing' | 'review' | 'saving'
+let _supDzFile   = null;
+let _supDzParsed = null;      // { invoice_ref, invoice_date, net, vat, gross, po_reference }
+let _supDzMatchedPoId = null; // pre-selected PO id after auto-match
+
+function toggleSupplierDropzone() {
+  const box = document.getElementById('supplierDetailDropzone');
+  if (!box) return;
+  if (box.style.display === 'none' || !box.style.display) {
+    _supDzState = 'idle';
+    _supDzFile = null;
+    _supDzParsed = null;
+    _supDzMatchedPoId = null;
+    box.style.display = '';
+    _renderSupplierDropzone();
+  } else {
+    box.style.display = 'none';
+  }
+}
+
+function _renderSupplierDropzone() {
+  const box = document.getElementById('supplierDetailDropzone');
+  if (!box) return;
+
+  if (_supDzState === 'idle') {
+    box.innerHTML = `
+      <div id="supDzDrop"
+           style="border:2px dashed var(--border);border-radius:8px;padding:18px;text-align:center;cursor:pointer;transition:border-color .15s,background .15s"
+           onclick="document.getElementById('supDzFile').click()"
+           ondragover="event.preventDefault();this.style.borderColor='var(--accent)';this.style.background='rgba(255,255,255,.02)'"
+           ondragleave="this.style.borderColor='var(--border)';this.style.background='transparent'"
+           ondrop="event.preventDefault();this.style.borderColor='var(--border)';this.style.background='transparent';onSupplierDzFile(event.dataTransfer.files[0])">
+        <div style="font-size:24px;margin-bottom:6px">📎</div>
+        <div style="font-size:13px;color:var(--text);font-weight:600;margin-bottom:2px">Drop supplier invoice here, or click to browse</div>
+        <div style="font-size:11px;color:var(--subtle)">PDF, PNG, or JPG · we'll read it and match to a PO</div>
+        <input type="file" id="supDzFile" accept="application/pdf,image/*" style="display:none" onchange="onSupplierDzFile(this.files[0])">
+      </div>`;
+  } else if (_supDzState === 'parsing') {
+    box.innerHTML = `
+      <div style="display:flex;align-items:center;gap:12px;padding:14px;background:var(--surface);border-radius:8px;border:1px solid var(--border)">
+        <div class="spinner" style="width:18px;height:18px;flex-shrink:0"></div>
+        <div>
+          <div style="font-size:13px;font-weight:600">Reading supplier invoice…</div>
+          <div style="font-size:11px;color:var(--subtle);margin-top:2px">${escapeHtml(_supDzFile?.name || '')}</div>
+        </div>
+      </div>`;
+  } else if (_supDzState === 'review') {
+    _renderSupplierDzReview();
+  } else if (_supDzState === 'saving') {
+    box.innerHTML = `
+      <div style="display:flex;align-items:center;gap:12px;padding:14px;background:var(--surface);border-radius:8px;border:1px solid var(--border)">
+        <div class="spinner" style="width:18px;height:18px;flex-shrink:0"></div>
+        <div style="font-size:13px;font-weight:600">Uploading to SharePoint and saving…</div>
+      </div>`;
+  }
+}
+
+async function onSupplierDzFile(file) {
+  if (!file) return;
+  _supDzFile   = file;
+  _supDzParsed = null;
+  _supDzState  = 'parsing';
+  _renderSupplierDropzone();
+
+  try {
+    const dataUri = await _fileToDataUri(file);
+    const isImg   = file.type.startsWith('image/');
+    const result  = await callClaude({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 800,
+      messages: [{
+        role: 'user',
+        content: [
+          isImg
+            ? { type: 'image',    source: { type: 'base64', media_type: file.type, data: dataUri.split(',')[1] } }
+            : { type: 'document', source: { type: 'base64', media_type: file.type, data: dataUri.split(',')[1] } },
+          {
+            type: 'text',
+            text: `Extract from this UK supplier invoice. Return ONLY JSON, no markdown:
+{
+  "invoice_ref": "supplier's invoice number",
+  "invoice_date": "YYYY-MM-DD",
+  "net_amount": 0,
+  "vat_amount": 0,
+  "gross_amount": 0,
+  "po_reference": "BAMA's PO reference if shown on the invoice — looks like P260501 (P + 6 digits)"
+}
+Set any field to null if not clearly shown. The PO reference belongs to the customer (BAMA) and is usually printed under "Your Order", "Order Ref", "Customer Order", "PO Number" or similar.`
+          }
+        ]
+      }]
+    });
+    const text = (result.content?.find(b => b.type === 'text')?.text || '').trim();
+    const start = text.indexOf('{'), end = text.lastIndexOf('}');
+    _supDzParsed = JSON.parse(text.slice(start, end + 1));
+
+    // Auto-match to one of this supplier's unattached POs
+    _supDzMatchedPoId = _matchSupplierPoFromParsed(_supDzParsed);
+    _supDzState = 'review';
+  } catch (err) {
+    console.error('Supplier invoice OCR failed', err);
+    _supDzParsed = { _error: err.message || 'Could not read the invoice' };
+    _supDzMatchedPoId = null;
+    _supDzState = 'review';   // fall through so the user can fill manually
+  }
+  _renderSupplierDropzone();
+}
+
+// Match strategy: PO ref text on invoice first (exact match), then closest
+// gross amount among this supplier's POs without an invoice attached.
+function _matchSupplierPoFromParsed(parsed) {
+  const candidates = (_supplierDetailPos || []).filter(po => !po.supplier_invoice_received_at);
+  if (!candidates.length) return null;
+
+  // 1. Exact PO-ref match (case-insensitive, ignore whitespace)
+  const ref = (parsed?.po_reference || '').replace(/\s+/g, '').toUpperCase();
+  if (ref) {
+    const hit = candidates.find(po => (po.reference || '').replace(/\s+/g, '').toUpperCase() === ref);
+    if (hit) return hit.id;
+    // also try contains, for invoices that say "Order P260501-1" or similar
+    const looseHit = candidates.find(po => {
+      const r = (po.reference || '').replace(/\s+/g, '').toUpperCase();
+      return r && (ref.includes(r) || r.includes(ref));
+    });
+    if (looseHit) return looseHit.id;
+  }
+
+  // 2. Closest gross match within £1
+  const gross = Number(parsed?.gross_amount);
+  if (Number.isFinite(gross) && gross > 0) {
+    const closeMatches = candidates
+      .map(po => ({ po, diff: Math.abs(Number(po.total_value || 0) - gross) }))
+      .filter(x => x.diff <= 1)
+      .sort((a, b) => a.diff - b.diff);
+    if (closeMatches.length === 1) return closeMatches[0].po.id;
+  }
+
+  return null;   // user picks manually
+}
+
+function _renderSupplierDzReview() {
+  const box = document.getElementById('supplierDetailDropzone');
+  const parsed = _supDzParsed || {};
+  const candidates = (_supplierDetailPos || []).filter(po => !po.supplier_invoice_received_at);
+  const matched = _supDzMatchedPoId
+    ? candidates.find(po => po.id === _supDzMatchedPoId)
+    : null;
+
+  const matchBanner = parsed._error
+    ? `<div style="background:rgba(208,2,27,.1);border:1px solid var(--red);color:var(--red);padding:8px 12px;border-radius:6px;font-size:12px;margin-bottom:10px">⚠ Could not read the file — fill in below manually. (${escapeHtml(parsed._error)})</div>`
+    : matched
+      ? `<div style="background:rgba(62,207,142,.1);border:1px solid var(--green);color:var(--green);padding:8px 12px;border-radius:6px;font-size:12px;margin-bottom:10px">✓ Matched to <b>${escapeHtml(matched.reference)}</b> — £${Number(matched.total_value||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})} · ${escapeHtml((matched.description||'').slice(0,80))}</div>`
+      : `<div style="background:rgba(245,158,11,.1);border:1px solid var(--amber);color:var(--amber);padding:8px 12px;border-radius:6px;font-size:12px;margin-bottom:10px">⚠ No PO ref found on the invoice — pick one below.</div>`;
+
+  // Sort candidates by closeness to parsed gross when available
+  const gross = Number(parsed.gross_amount);
+  const sortedCands = Number.isFinite(gross) && gross > 0
+    ? candidates.slice().sort((a, b) =>
+        Math.abs(Number(a.total_value || 0) - gross) - Math.abs(Number(b.total_value || 0) - gross))
+    : candidates.slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+  const opts = ['<option value="">— pick a PO —</option>']
+    .concat(sortedCands.map(po => {
+      const sel = po.id === _supDzMatchedPoId ? ' selected' : '';
+      const project = po.project_number || po.cost_centre || '—';
+      return `<option value="${po.id}"${sel}>${escapeHtml(po.reference || '—')} · £${Number(po.total_value || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · ${escapeHtml(project)} · ${escapeHtml((po.description || '').slice(0, 40))}</option>`;
+    }))
+    .join('');
+
+  const fileLabel = _supDzFile ? `${_supDzFile.name} · ${(_supDzFile.size / 1024).toFixed(0)} KB` : '';
+
+  box.innerHTML = `
+    ${matchBanner}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;font-size:12px">
+      <div style="grid-column:1 / -1">
+        <label style="display:block;color:var(--muted);margin-bottom:3px;font-size:11px;text-transform:uppercase;letter-spacing:.05em">PO to attach to</label>
+        <select id="supDzPoSelect" class="field-input" style="width:100%;font-size:13px">${opts}</select>
+      </div>
+      <div>
+        <label style="display:block;color:var(--muted);margin-bottom:3px;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Invoice ref</label>
+        <input id="supDzRef" class="field-input" type="text" value="${escapeHtml(parsed.invoice_ref || '')}" style="width:100%">
+      </div>
+      <div>
+        <label style="display:block;color:var(--muted);margin-bottom:3px;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Invoice date</label>
+        <input id="supDzDate" class="field-input" type="date" value="${escapeHtml(parsed.invoice_date || new Date().toISOString().slice(0, 10))}" style="width:100%">
+      </div>
+      <div>
+        <label style="display:block;color:var(--muted);margin-bottom:3px;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Net £</label>
+        <input id="supDzNet" class="field-input" type="number" step="0.01" value="${parsed.net_amount ?? ''}" style="width:100%">
+      </div>
+      <div>
+        <label style="display:block;color:var(--muted);margin-bottom:3px;font-size:11px;text-transform:uppercase;letter-spacing:.05em">VAT £</label>
+        <input id="supDzVat" class="field-input" type="number" step="0.01" value="${parsed.vat_amount ?? ''}" style="width:100%">
+      </div>
+      <div style="grid-column:1 / -1">
+        <label style="display:block;color:var(--muted);margin-bottom:3px;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Gross £ <span style="color:var(--red)">*</span></label>
+        <input id="supDzGross" class="field-input" type="number" step="0.01" value="${parsed.gross_amount ?? ''}" style="width:100%">
+      </div>
+      <div style="grid-column:1 / -1">
+        <label style="display:block;color:var(--muted);margin-bottom:3px;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Notes (optional)</label>
+        <textarea id="supDzNotes" class="field-input" rows="2" style="width:100%;resize:vertical" placeholder="Discrepancy reason, partial delivery, etc."></textarea>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;gap:10px">
+      <div style="font-size:11px;color:var(--subtle);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📄 ${escapeHtml(fileLabel)}</div>
+      <div style="display:flex;gap:8px;flex-shrink:0">
+        <button class="btn btn-ghost" style="font-size:12px;padding:6px 14px" onclick="toggleSupplierDropzone()">Cancel</button>
+        <button class="btn btn-primary" id="supDzSaveBtn" style="font-size:12px;padding:6px 14px" onclick="saveSupplierDropzone()">Save Invoice</button>
+      </div>
+    </div>`;
+}
+
+async function saveSupplierDropzone() {
+  const poId  = Number(document.getElementById('supDzPoSelect').value);
+  const ref   = document.getElementById('supDzRef').value.trim();
+  const date  = document.getElementById('supDzDate').value;
+  const net   = Number(document.getElementById('supDzNet').value || 0);
+  const vat   = Number(document.getElementById('supDzVat').value || 0);
+  const gross = Number(document.getElementById('supDzGross').value || 0);
+  const notes = document.getElementById('supDzNotes').value.trim();
+
+  if (!poId)  { toast('Pick a PO to attach this invoice to', 'error'); return; }
+  if (!_supDzFile) { toast('Upload the invoice file first', 'error'); return; }
+  if (!gross) { toast('Gross amount is required', 'error'); return; }
+
+  const po = (_supplierDetailPos || []).find(p => p.id === poId);
+  if (!po) { toast('Selected PO not found', 'error'); return; }
+
+  _supDzState = 'saving';
+  _renderSupplierDropzone();
+  setLoading(true);
+
+  try {
+    // 1. SharePoint upload — 01 - Accounts/04 - Supplier Invoices/YYYY/MM/
+    const folder = await _findOrCreateSupplierInvoiceFolder(date);
+    const stamp  = (po.supplier_name || 'supplier').replace(/\s+/g, '_').slice(0, 30);
+    const ext    = (_supDzFile.name.split('.').pop() || 'pdf').toLowerCase();
+    const fileName = sanitizeSpFilename(`${date}_${stamp}_${ref || 'no-ref'}.${ext}`);
+    const driveItem = await uploadFileToFolder(
+      folder.id, fileName, _supDzFile, _supDzFile.type || 'application/octet-stream'
+    );
+
+    // 2. Persist on the PO (server reconciles vs total_value within £1)
+    await api.put(`/api/purchase-orders/${poId}/supplier-invoice`, {
+      supplier_invoice_ref:    ref || null,
+      supplier_invoice_date:   date || null,
+      supplier_invoice_net:    net || null,
+      supplier_invoice_vat:    vat || null,
+      supplier_invoice_gross:  gross,
+      sharepoint_id:           driveItem.id,
+      sharepoint_url:          driveItem.webUrl,
+      filename:                fileName,
+      reconciliation_notes:    notes || null
+    });
+
+    toast(`Invoice attached to ${po.reference} ✓`, 'success');
+
+    // 3. Hide dropzone and refresh the detail panel
+    document.getElementById('supplierDetailDropzone').style.display = 'none';
+    _supDzFile = null; _supDzParsed = null; _supDzMatchedPoId = null; _supDzState = 'idle';
+    if (_supplierDetailId) {
+      _supplierDetailPos = await api.get(`/api/purchase-orders?supplier_id=${_supplierDetailId}`);
+      _renderSupplierDetailPos();
+    }
+  } catch (err) {
+    console.error('Save supplier invoice failed', err);
+    toast('Failed to save invoice: ' + (err.message || 'unknown error'), 'error');
+    _supDzState = 'review';
+    _renderSupplierDropzone();
+  } finally {
+    setLoading(false);
+  }
+}
+
+// The per-PO "📎 Attach Invoice" button inside the supplier detail panel rows
+// also routes through the dropzone now (was broken — pointed at a modal that
+// only exists on invoice-tracker.html).
 function openSupplierInvoiceForPo(poId) {
-  // Close the detail modal first, then open the invoice modal with the specific PO pre-selected
-  closeSupplierDetail();
-  openAttachSupplierInvoiceModal(poId);
+  const box = document.getElementById('supplierDetailDropzone');
+  if (!box) return;
+  // Open the dropzone with this PO pre-matched
+  _supDzState = 'idle';
+  _supDzFile = null;
+  _supDzParsed = null;
+  _supDzMatchedPoId = poId;
+  box.style.display = '';
+  _renderSupplierDropzone();
+  box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 function closeSupplierPoTileModal() {
