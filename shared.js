@@ -17840,20 +17840,12 @@ async function saveQuoteChanges() {
     chasing_date: document.getElementById('qd-chasingDate')?.value || null
   };
 
-  // If transitioning to Won, confirm before kicking off conversion
+  // If transitioning to Won, show the New-vs-Assign choice modal
   if (transitioningToWon) {
-    const projectNumber = (currentTender.reference || '').replace(/^Q/i, 'C');
-    const ok = await showConfirmAsync(
-      'Mark quote as WON?',
-      `This will:<br><br>` +
-      `&nbsp;&nbsp;• Save the quote with status <strong>Won</strong><br>` +
-      `&nbsp;&nbsp;• Create a new Project (<strong>${escapeHtml(projectNumber)}</strong>)<br>` +
-      `&nbsp;&nbsp;• Create the SharePoint folder structure under Projects/<br>` +
-      `&nbsp;&nbsp;• Copy the contents of the quote folder into "03 - Quote"<br><br>` +
-      `Continue?`,
-      { okLabel: 'Mark as Won' }
-    );
-    if (!ok) return;
+    const choice = await openWonChoiceModal(currentTender);
+    if (!choice) return; // user cancelled
+    // Store choice on the body so the post-save block can read it
+    body._wonChoice = choice; // { mode: 'new' } | { mode: 'assign', projectId, projectNumber }
   }
 
   try {
@@ -17875,13 +17867,26 @@ async function saveQuoteChanges() {
 
     // Trigger project conversion AFTER the status save succeeded
     if (transitioningToWon) {
-      toast('Creating project — this may take a few seconds…', 'info');
-      try {
-        const project = await convertQuoteToProject(currentTender);
-        toast(`Project ${project.project_number} created ✓`, 'success');
-      } catch (convErr) {
-        console.error('Quote-to-project conversion failed:', convErr);
-        toast('Quote saved as Won, but project creation failed: ' + convErr.message, 'error');
+      const wonChoice = body._wonChoice || { mode: 'new' };
+      if (wonChoice.mode === 'new') {
+        toast('Creating project — this may take a few seconds…', 'info');
+        try {
+          const project = await convertQuoteToProject(currentTender);
+          toast(`Project ${project.project_number} created ✓`, 'success');
+        } catch (convErr) {
+          console.error('Quote-to-project conversion failed:', convErr);
+          toast('Quote saved as Won, but project creation failed: ' + convErr.message, 'error');
+        }
+      } else {
+        // Assign to existing project
+        toast('Linking quote to project…', 'info');
+        try {
+          await assignQuoteToExistingProject(currentTender, wonChoice.projectId);
+          toast(`Quote linked to ${wonChoice.projectNumber} ✓`, 'success');
+        } catch (convErr) {
+          console.error('Quote-to-project assign failed:', convErr);
+          toast('Quote saved as Won, but project link failed: ' + convErr.message, 'error');
+        }
       }
     }
   } catch (err) {
@@ -18004,7 +18009,149 @@ function sanitiseFolderSegment(s) {
 }
 
 // ── Quote → Project conversion ──
+// ── Won Choice Modal (New Project vs Assign to Existing) ──────────────────
+// Opens the modal and returns a Promise that resolves to:
+//   { mode: 'new' }
+//   { mode: 'assign', projectId, projectNumber }
+// or null if the user cancelled.
+
+let _wonChoiceResolve = null;
+let _wonChoiceProjects = [];
+
+async function openWonChoiceModal(tender) {
+  return new Promise(async (resolve) => {
+    _wonChoiceResolve = resolve;
+    _wonChoiceProjects = [];
+
+    // Reset UI to "new" selected
+    selectWonOpt('new');
+    document.getElementById('wonProjectSearch').value = '';
+    document.getElementById('wonSelectedProjectId').value = '';
+    document.getElementById('wonSelectedProjectLabel').textContent = '';
+
+    // Load live projects in the background for the assign picker
+    try {
+      const rows = await api.get('/api/projects');
+      _wonChoiceProjects = (rows || []).filter(p => p.status === 'In Progress');
+    } catch (e) {
+      _wonChoiceProjects = [];
+    }
+    renderWonProjectList();
+
+    document.getElementById('wonChoiceModal').classList.add('active');
+  });
+}
+
+function selectWonOpt(mode) {
+  const newCard    = document.getElementById('wonOptNew');
+  const assignCard = document.getElementById('wonOptAssign');
+  const picker     = document.getElementById('wonAssignPicker');
+  if (!newCard) return;
+
+  if (mode === 'new') {
+    newCard.style.borderColor    = 'var(--primary)';
+    assignCard.style.borderColor = 'var(--border)';
+    picker.style.display = 'none';
+    newCard.dataset.selected = '1';
+    assignCard.dataset.selected = '';
+  } else {
+    newCard.style.borderColor    = 'var(--border)';
+    assignCard.style.borderColor = 'var(--primary)';
+    picker.style.display = 'block';
+    newCard.dataset.selected = '';
+    assignCard.dataset.selected = '1';
+    renderWonProjectList();
+  }
+}
+
+function renderWonProjectList() {
+  const list = document.getElementById('wonProjectList');
+  if (!list) return;
+  const term = (document.getElementById('wonProjectSearch')?.value || '').toLowerCase().trim();
+  const filtered = _wonChoiceProjects.filter(p => {
+    if (!term) return true;
+    return `${p.project_number || ''} ${p.project_name || ''} ${p.client_name || ''}`.toLowerCase().includes(term);
+  });
+
+  if (!filtered.length) {
+    list.innerHTML = '<div style="padding:12px;font-size:12px;color:var(--subtle)">No live projects found.</div>';
+    return;
+  }
+
+  list.innerHTML = filtered.map(p => `
+    <div onclick="selectWonProject(${p.id}, ${JSON.stringify(escapeHtml(p.project_number || ''))})"
+         style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .1s"
+         onmouseenter="this.style.background='var(--surface-raised)'" onmouseleave="this.style.background=''">
+      <div style="font-size:13px;font-weight:600;color:var(--text)">${escapeHtml(p.project_number || '')} — ${escapeHtml(p.project_name || '')}</div>
+      ${p.client_name ? `<div style="font-size:11px;color:var(--muted)">${escapeHtml(p.client_name)}</div>` : ''}
+    </div>
+  `).join('');
+}
+
+function filterWonProjectList() { renderWonProjectList(); }
+
+function selectWonProject(projectId, projectNumber) {
+  document.getElementById('wonSelectedProjectId').value = projectId;
+  document.getElementById('wonSelectedProjectLabel').textContent = `Selected: ${projectNumber}`;
+  // Highlight the selected row
+  document.querySelectorAll('#wonProjectList > div').forEach(row => {
+    row.style.background = row.textContent.includes(projectNumber) ? 'var(--primary-dim, rgba(99,102,241,.12))' : '';
+  });
+}
+
+function closeWonChoiceModal() {
+  document.getElementById('wonChoiceModal').classList.remove('active');
+  if (_wonChoiceResolve) { _wonChoiceResolve(null); _wonChoiceResolve = null; }
+}
+
+async function confirmWonChoice() {
+  const isAssign = document.getElementById('wonOptAssign')?.dataset.selected === '1';
+
+  if (isAssign) {
+    const projectId = document.getElementById('wonSelectedProjectId').value;
+    if (!projectId) { toast('Please select a project first', 'error'); return; }
+    const proj = _wonChoiceProjects.find(p => String(p.id) === String(projectId));
+    document.getElementById('wonChoiceModal').classList.remove('active');
+    if (_wonChoiceResolve) {
+      _wonChoiceResolve({ mode: 'assign', projectId: parseInt(projectId, 10), projectNumber: proj?.project_number || '' });
+      _wonChoiceResolve = null;
+    }
+  } else {
+    document.getElementById('wonChoiceModal').classList.remove('active');
+    if (_wonChoiceResolve) {
+      _wonChoiceResolve({ mode: 'new' });
+      _wonChoiceResolve = null;
+    }
+  }
+}
+
+// Assigns a won quote to an existing project by inserting a ProjectQuotes row.
+// Seeds the quote line items if not already seeded.
+async function assignQuoteToExistingProject(tender, projectId) {
+  // Insert ProjectQuotes link (non-primary — the project already has its own primary)
+  await api.post('/api/project-quotes', {
+    project_id: projectId,
+    tender_id: tender.id,
+    is_primary: false,
+    added_by: currentManagerUser || (typeof AUTH !== 'undefined' && AUTH.getUserName?.()) || 'unknown'
+  });
+
+  // Seed the 9 default line items on this quote if not already seeded
+  try {
+    await api.post(`/api/quote-line-items/seed/${tender.id}`, {});
+  } catch (e) {
+    console.warn('Quote line item seed failed (non-fatal):', e);
+  }
+
+  // Update local projectsData if loaded
+  if (Array.isArray(projectsData)) {
+    const p = projectsData.find(p => String(p.id) === String(projectId));
+    if (p) p._quotesAttached = (p._quotesAttached || 0) + 1;
+  }
+}
+
 // Triggered when a quote's status changes to 'won'.
+
 // Creates the SharePoint project folder structure, copies the quote folder into 03 - Quote,
 // and inserts the Projects DB row.
 async function convertQuoteToProject(tender) {

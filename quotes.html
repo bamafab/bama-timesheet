@@ -395,6 +395,52 @@
 </style>
 
 <!-- Generic confirm dialog (used by showConfirmAsync) -->
+<!-- ═══════════════════════════════════════
+     WON — NEW vs ASSIGN CHOICE MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="wonChoiceModal">
+  <div class="modal" style="max-width:520px;width:95vw">
+    <div class="modal-title">🏆 Mark as Won</div>
+    <p style="color:var(--muted);font-size:14px;margin:0 0 18px">How should this quote be linked?</p>
+
+    <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:20px">
+      <!-- New Project option -->
+      <label id="wonOptNew" class="won-opt-card won-opt-selected" onclick="selectWonOpt('new')" style="display:flex;align-items:flex-start;gap:12px;padding:14px 16px;border-radius:10px;border:2px solid var(--primary);cursor:pointer;transition:border-color .15s,background .15s">
+        <span style="font-size:20px;line-height:1.2">🆕</span>
+        <div>
+          <div style="font-weight:600;font-size:14px;color:var(--text)" id="wonOptNewLabel">Create New Project</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:2px">Mint a new C-reference, create SharePoint folders, and link this quote as primary.</div>
+        </div>
+      </label>
+
+      <!-- Assign to existing option -->
+      <label id="wonOptAssign" class="won-opt-card" onclick="selectWonOpt('assign')" style="display:flex;align-items:flex-start;gap:12px;padding:14px 16px;border-radius:10px;border:2px solid var(--border);cursor:pointer;transition:border-color .15s,background .15s">
+        <span style="font-size:20px;line-height:1.2">🔗</span>
+        <div>
+          <div style="font-weight:600;font-size:14px;color:var(--text)">Assign to Existing Project</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:2px">Attach this quote to a live project — it will appear in Attached Quotes &amp; Line Progress.</div>
+        </div>
+      </label>
+    </div>
+
+    <!-- Project picker — shown only when Assign is selected -->
+    <div id="wonAssignPicker" style="display:none;margin-bottom:18px">
+      <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px">Select project</label>
+      <input id="wonProjectSearch" type="text" class="form-input" placeholder="Search by number, name or client…" oninput="filterWonProjectList()" style="margin-bottom:8px">
+      <div id="wonProjectList" style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;background:var(--surface)">
+        <div style="padding:12px;font-size:12px;color:var(--subtle)">Loading projects…</div>
+      </div>
+      <input type="hidden" id="wonSelectedProjectId" value="">
+      <div id="wonSelectedProjectLabel" style="margin-top:8px;font-size:12px;color:var(--primary);min-height:16px"></div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeWonChoiceModal()">Cancel</button>
+      <button class="btn btn-primary" id="wonChoiceConfirmBtn" onclick="confirmWonChoice()">Mark as Won</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="confirmModal">
   <div class="modal">
     <div class="modal-title" id="confirmTitle">Confirm</div>
@@ -544,6 +590,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260527u"></script>
+<script src="shared.js?v=20260527v"></script>
 </body>
 </html>
