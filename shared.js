@@ -6946,13 +6946,17 @@ async function renderSuppliersTab() {
 
   let allPos = [];
   try {
-    [_suppliers, allPos] = await Promise.all([
-      api.get('/api/suppliers'),
-      api.get('/api/purchase-orders')
-    ]);
+    _suppliers = await api.get('/api/suppliers');
   } catch (e) {
     container.innerHTML = '<div class="empty-state">Failed to load suppliers</div>';
     return;
+  }
+
+  // Fetch POs in background — failure here must not block the supplier list
+  try {
+    allPos = await api.get('/api/purchase-orders');
+  } catch (e) {
+    console.warn('PO data unavailable for supplier table:', e.message);
   }
 
   _supplierTilePos = allPos;
@@ -7025,8 +7029,8 @@ function _renderSupplierTable() {
   const col = _supplierSortCol;
   const asc = _supplierSortAsc;
   list = list.slice().sort((a, b) => {
-    const ma = _supplierPoMap[a.id] || { open: [], awaiting: [], discrep: [] };
-    const mb = _supplierPoMap[b.id] || { open: [], awaiting: [], discrep: [] };
+    const ma = _supplierPoMap[a.id] || { open: [], awaiting: [], discrep: [], spent: [], all: [] };
+    const mb = _supplierPoMap[b.id] || { open: [], awaiting: [], discrep: [], spent: [], all: [] };
     let diff = 0;
     if      (col === 'name')      diff = a.supplier_name.localeCompare(b.supplier_name);
     else if (col === 'openPos')   diff = ma.open.length - mb.open.length;
