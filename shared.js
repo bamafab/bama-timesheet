@@ -10908,6 +10908,17 @@ function openJobDetail(projectId, jobId) {
     badge.style.cssText = 'font-size:12px;font-weight:600;padding:6px 14px;border-radius:8px;background:rgba(255,107,0,.12);color:var(--accent)';
   }
 
+  // Collapse all 5 element sections by default on every job open
+  // (spec §4 of SPEC-job-fabrication-rework.md). Deep-link expansion
+  // in initJobsDeepLink runs AFTER this via setTimeout, so it can still
+  // re-open a target section if a ?element=… param was supplied.
+  ['BOM', 'Approval', 'Parts', 'Assembly', 'Site'].forEach(name => {
+    const body = document.getElementById(`element${name}Body`);
+    const chevron = document.getElementById(`element${name}Chevron`);
+    if (body) body.classList.add('collapsed');
+    if (chevron) chevron.classList.add('collapsed');
+  });
+
   showScreen('screenJobDetail');
   // Ensure BOM data is loaded, then render
   loadBomData(projectId).then(() => renderAllElements()).catch(() => renderAllElements());
