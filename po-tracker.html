@@ -306,30 +306,37 @@
     <!-- Project picker -->
     <div id="instantPoProjectWrap" style="margin-bottom:12px">
       <label class="field-label">Project</label>
-      <input type="text" class="field-input" id="instantPoProjectSearch"
-             placeholder="Type C-ref or project name…"
-             oninput="filterInstantPoProjects(this.value)"
-             onfocus="filterInstantPoProjects(this.value)">
-      <div id="instantPoProjectDropdown" style="position:relative"></div>
-      <div id="instantPoProjectSelected" style="font-size:12px;color:var(--muted);margin-top:4px;min-height:16px"></div>
+      <div class="ipo-field-wrap">
+        <input type="text" class="field-input" id="instantPoProjectSearch"
+               placeholder="Type C-ref or project name…"
+               oninput="filterInstantPoProjects(this.value)"
+               onfocus="filterInstantPoProjects(this.value)"
+               autocomplete="off">
+        <div id="instantPoProjectDropdown" class="ipo-dropdown" style="display:none"></div>
+      </div>
+      <div id="instantPoProjectSelected" style="min-height:20px"></div>
     </div>
 
     <!-- Overhead cost centre -->
     <div id="instantPoOverheadWrap" style="display:none;margin-bottom:12px">
       <label class="field-label">Cost Centre</label>
-      <input type="text" class="field-input" id="instantPoCostCentre"
-             placeholder="e.g. Office Supplies, Plant Hire…">
+      <select class="field-input" id="instantPoCostCentre">
+        <option value="">— Select cost centre —</option>
+      </select>
     </div>
 
     <!-- Supplier -->
     <div style="margin-bottom:12px">
       <label class="field-label">Supplier</label>
-      <input type="text" class="field-input" id="instantPoSupplierSearch"
-             placeholder="Type supplier name…"
-             oninput="filterInstantPoSuppliers(this.value)"
-             onfocus="filterInstantPoSuppliers(this.value)">
-      <div id="instantPoSupplierDropdown" style="position:relative"></div>
-      <div id="instantPoSupplierSelected" style="font-size:12px;color:var(--muted);margin-top:4px;min-height:16px"></div>
+      <div class="ipo-field-wrap">
+        <input type="text" class="field-input" id="instantPoSupplierSearch"
+               placeholder="Type supplier name…"
+               oninput="filterInstantPoSuppliers(this.value)"
+               onfocus="filterInstantPoSuppliers(this.value)"
+               autocomplete="off">
+        <div id="instantPoSupplierDropdown" class="ipo-dropdown" style="display:none"></div>
+      </div>
+      <div id="instantPoSupplierSelected" style="min-height:20px"></div>
 
       <!-- New supplier sub-form (revealed when user clicks Add) -->
       <div id="instantPoNewSupplierWrap" style="display:none;margin-top:10px;padding:12px;
@@ -486,6 +493,6 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260527x"></script>
+<script src="shared.js?v=20260527y"></script>
 </body>
 </html>

@@ -26282,11 +26282,13 @@ function openInstantPoModal() {
 
   // Reset fields
   document.getElementById('instantPoSupplierSearch').value = '';
-  document.getElementById('instantPoSupplierDropdown').innerHTML = '';
-  document.getElementById('instantPoSupplierSelected').textContent = '';
+  const supDd = document.getElementById('instantPoSupplierDropdown');
+  supDd.innerHTML = ''; supDd.style.display = 'none';
+  document.getElementById('instantPoSupplierSelected').innerHTML = '';
   document.getElementById('instantPoProjectSearch').value = '';
-  document.getElementById('instantPoProjectDropdown').innerHTML = '';
-  document.getElementById('instantPoProjectSelected').textContent = '';
+  const projDd = document.getElementById('instantPoProjectDropdown');
+  projDd.innerHTML = ''; projDd.style.display = 'none';
+  document.getElementById('instantPoProjectSelected').innerHTML = '';
   document.getElementById('instantPoCostCentre').value = '';
   document.getElementById('instantPoDescription').value = '';
   document.getElementById('instantPoError').textContent = '';
@@ -26300,6 +26302,25 @@ function openInstantPoModal() {
 
   setInstantPoScope('project');
   document.getElementById('instantPoModal').classList.add('active');
+
+  // Close dropdowns when clicking outside them (use capture so it fires before focus)
+  setTimeout(() => {
+    function ipoOutsideClick(e) {
+      const modal = document.getElementById('instantPoModal');
+      if (!modal || !modal.classList.contains('active')) {
+        document.removeEventListener('mousedown', ipoOutsideClick, true);
+        return;
+      }
+      ['instantPoProjectDropdown','instantPoSupplierDropdown'].forEach(id => {
+        const dd = document.getElementById(id);
+        const input = document.getElementById(id.replace('Dropdown','Search'));
+        if (dd && input && !dd.contains(e.target) && e.target !== input) {
+          dd.style.display = 'none';
+        }
+      });
+    }
+    document.addEventListener('mousedown', ipoOutsideClick, true);
+  }, 0);
 }
 
 function closeInstantPoModal() {
@@ -26310,8 +26331,8 @@ function setInstantPoScope(scope) {
   _instantPoState.scope = scope;
   _instantPoState.projectId = null;
 
-  const projBtn = document.getElementById('instantPoScopeProjectBtn');
-  const ohBtn   = document.getElementById('instantPoScopeOverheadBtn');
+  const projBtn  = document.getElementById('instantPoScopeProjectBtn');
+  const ohBtn    = document.getElementById('instantPoScopeOverheadBtn');
   const projWrap = document.getElementById('instantPoProjectWrap');
   const ohWrap   = document.getElementById('instantPoOverheadWrap');
 
@@ -26325,26 +26346,50 @@ function setInstantPoScope(scope) {
     projBtn.classList.add('btn-ghost');   projBtn.classList.remove('btn-primary');
     projWrap.style.display = 'none';
     ohWrap.style.display   = 'block';
+    // Populate cost centre select from loaded settings
+    const ccSel = document.getElementById('instantPoCostCentre');
+    ccSel.innerHTML = '<option value="">— Select cost centre —</option>' +
+      Object.entries(_poCostCentres || {}).map(([code, label]) =>
+        `<option value="${escapeHtml(code)}">${escapeHtml(code)} — ${escapeHtml(label)}</option>`
+      ).join('');
   }
 }
 
 function filterInstantPoProjects(q) {
-  const dd = document.getElementById('instantPoProjectDropdown');
-  const term = q.toLowerCase().trim();
-  const matches = (_poProjectsCache || []).filter(p =>
+  const dd   = document.getElementById('instantPoProjectDropdown');
+  const term = (q || '').toLowerCase().trim();
+
+  // Only show C/S/BC projects that are In Progress
+  const pool = (_poProjectsCache || []).filter(p => {
+    const s = (p.status || '').toLowerCase();
+    return s === 'in progress' || s === 'in_progress';
+  });
+
+  const matches = pool.filter(p =>
     !term ||
     (p.project_number || '').toLowerCase().includes(term) ||
-    (p.project_name   || '').toLowerCase().includes(term)
-  ).slice(0, 8);
+    (p.project_name   || '').toLowerCase().includes(term) ||
+    (p.client_name    || '').toLowerCase().includes(term)
+  ).slice(0, 12);
 
-  if (!matches.length) { dd.innerHTML = ''; return; }
+  if (!matches.length) { dd.style.display = 'none'; dd.innerHTML = ''; return; }
 
-  dd.innerHTML = `<div class="po-dropdown">${matches.map(p =>
-    `<div class="po-dropdown-item" onclick="selectInstantPoProject(${p.id})">
-       <strong>${escapeHtml(p.project_number)}</strong>
-       <span style="color:var(--muted);margin-left:8px">${escapeHtml(p.project_name)}</span>
-     </div>`
-  ).join('')}</div>`;
+  dd.innerHTML = matches.map(p => `
+    <div class="ipo-dropdown-item" data-pid="${p.id}">
+      <span style="font-weight:600">${escapeHtml(p.project_number || '')}</span>
+      <span style="color:var(--muted);margin-left:8px">${escapeHtml(p.project_name || '')}</span>
+      ${p.client_name ? `<div class="ipo-sub">${escapeHtml(p.client_name)}</div>` : ''}
+    </div>`
+  ).join('');
+
+  dd.querySelectorAll('.ipo-dropdown-item').forEach(row => {
+    row.addEventListener('mousedown', e => {
+      e.preventDefault();
+      selectInstantPoProject(parseInt(row.dataset.pid, 10));
+    });
+  });
+
+  dd.style.display = 'block';
 }
 
 function selectInstantPoProject(projectId) {
@@ -26352,31 +26397,44 @@ function selectInstantPoProject(projectId) {
   if (!proj) return;
   _instantPoState.projectId = projectId;
   document.getElementById('instantPoProjectSearch').value = `${proj.project_number} — ${proj.project_name}`;
-  document.getElementById('instantPoProjectDropdown').innerHTML = '';
-  document.getElementById('instantPoProjectSelected').textContent = proj.project_name;
+  const dd = document.getElementById('instantPoProjectDropdown');
+  dd.style.display = 'none'; dd.innerHTML = '';
+  document.getElementById('instantPoProjectSelected').innerHTML =
+    `<span class="ipo-selected-badge">✓ ${escapeHtml(proj.project_number)}</span>`;
 }
 
 function filterInstantPoSuppliers(q) {
-  const dd = document.getElementById('instantPoSupplierDropdown');
-  const term = q.toLowerCase().trim();
+  const dd   = document.getElementById('instantPoSupplierDropdown');
+  const term = (q || '').toLowerCase().trim();
+
   const matches = (_poSuppliersCache || []).filter(s =>
     !term || (s.supplier_name || '').toLowerCase().includes(term)
-  ).slice(0, 8);
+  ).slice(0, 12);
 
-  let html = matches.length
-    ? `<div class="po-dropdown">${matches.map(s =>
-        `<div class="po-dropdown-item" onclick="selectInstantPoSupplier(${s.id})">
-           ${escapeHtml(s.supplier_name)}
-         </div>`
-      ).join('')}`
-    : '<div class="po-dropdown">';
+  let rows = matches.map(s => `
+    <div class="ipo-dropdown-item" data-sid="${s.id}">
+      ${escapeHtml(s.supplier_name || '')}
+    </div>`
+  );
 
-  // Always show "Add new" option at the bottom of the dropdown
-  html += `<div class="po-dropdown-item po-dropdown-add" onclick="showInstantPoNewSupplier()">
-              ＋ Add "${escapeHtml(q || 'new supplier')}"
-           </div></div>`;
+  rows.push(`<div class="ipo-dropdown-item ipo-dropdown-add" data-action="new">
+    ＋ Add "${escapeHtml(q || 'new supplier')}"
+  </div>`);
 
-  dd.innerHTML = term || matches.length ? html : '';
+  dd.innerHTML = rows.join('');
+
+  dd.querySelectorAll('.ipo-dropdown-item').forEach(row => {
+    row.addEventListener('mousedown', e => {
+      e.preventDefault();
+      if (row.dataset.action === 'new') {
+        showInstantPoNewSupplier();
+      } else {
+        selectInstantPoSupplier(parseInt(row.dataset.sid, 10));
+      }
+    });
+  });
+
+  dd.style.display = 'block';
 }
 
 function selectInstantPoSupplier(supplierId) {
@@ -26385,8 +26443,10 @@ function selectInstantPoSupplier(supplierId) {
   _instantPoState.supplierId = supplierId;
   _instantPoState.newSupplierMode = false;
   document.getElementById('instantPoSupplierSearch').value = sup.supplier_name;
-  document.getElementById('instantPoSupplierDropdown').innerHTML = '';
-  document.getElementById('instantPoSupplierSelected').textContent = sup.supplier_name;
+  const dd = document.getElementById('instantPoSupplierDropdown');
+  dd.style.display = 'none'; dd.innerHTML = '';
+  document.getElementById('instantPoSupplierSelected').innerHTML =
+    `<span class="ipo-selected-badge">✓ ${escapeHtml(sup.supplier_name)}</span>`;
   document.getElementById('instantPoNewSupplierWrap').style.display = 'none';
 }
 
@@ -26394,8 +26454,9 @@ function showInstantPoNewSupplier() {
   const q = document.getElementById('instantPoSupplierSearch').value.trim();
   _instantPoState.supplierId = null;
   _instantPoState.newSupplierMode = true;
-  document.getElementById('instantPoSupplierDropdown').innerHTML = '';
-  document.getElementById('instantPoSupplierSelected').textContent = '';
+  const dd = document.getElementById('instantPoSupplierDropdown');
+  dd.innerHTML = ''; dd.style.display = 'none';
+  document.getElementById('instantPoSupplierSelected').innerHTML = '';
   document.getElementById('instantPoNewSupplierWrap').style.display = 'block';
   document.getElementById('instantPoParsePanel').style.display = 'none';
   if (q) document.getElementById('instantPoNewSupplierName').value = q;
