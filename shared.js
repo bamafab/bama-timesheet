@@ -6922,6 +6922,9 @@ async function renderSuppliersTab() {
     return;
   }
 
+  // Load tiles in background (non-blocking)
+  renderSupplierTiles().catch(() => {});
+
   if (!_suppliers.length) {
     container.innerHTML = '<div class="empty-state" style="padding:30px"><div class="icon">&#128666;</div>No suppliers registered yet</div>';
     return;
@@ -7336,6 +7339,150 @@ function openSupplierInvoiceForPo(poId) {
   // Close the detail modal first, then open the invoice modal with the specific PO pre-selected
   closeSupplierDetail();
   openAttachSupplierInvoiceModal(poId);
+}
+
+function closeSupplierPoTileModal() {
+  document.getElementById('supplierPoTileModal').classList.remove('active');
+}
+
+// ── Supplier quick-access tiles ───────────────────────────────────────────────
+// Rendered at the top of the Suppliers tab. Each tile aggregates PO data and
+// opens a drill-down modal grouped by supplier on click.
+// More tiles can be added here later (e.g. "Discrepancies", "Overdue POs").
+// ─────────────────────────────────────────────────────────────────────────────
+let _supplierTilePos = []; // cached PO list for the current tile render
+
+async function renderSupplierTiles() {
+  const container = document.getElementById('supplierTiles');
+  if (!container) return;
+
+  container.innerHTML = '<div style="font-size:12px;color:var(--subtle);padding:4px 0">Loading…</div>';
+
+  let allPos = [];
+  try {
+    allPos = await api.get('/api/purchase-orders');
+  } catch (e) {
+    container.innerHTML = '';
+    return;
+  }
+  _supplierTilePos = allPos;
+
+  // Tile 1 — POs awaiting invoice
+  // Any PO that isn't Cancelled/Closed and has no supplier invoice yet
+  const awaitingInvoice = allPos.filter(po =>
+    po.status !== 'Cancelled' &&
+    po.status !== 'Closed' &&
+    !po.supplier_invoice_received_at
+  );
+  const awaitingValue = awaitingInvoice.reduce((s, p) => s + Number(p.total_value || 0), 0);
+  const fmtVal = v => '£' + v.toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+
+  container.innerHTML = `
+    <div onclick="openSupplierPoTile('awaiting-invoice')"
+         style="background:var(--surface);border:1px solid var(--border);border-radius:10px;
+                padding:16px 18px;cursor:pointer;transition:border-color .15s"
+         onmouseenter="this.style.borderColor='var(--accent)'" onmouseleave="this.style.borderColor='var(--border)'">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-bottom:10px">
+        📄 POs Awaiting Invoice
+      </div>
+      <div style="font-size:32px;font-weight:700;font-family:var(--font-display);color:${awaitingInvoice.length ? 'var(--amber)' : 'var(--subtle)'}">
+        ${awaitingInvoice.length}
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-top:4px">
+        ${awaitingInvoice.length ? `${fmtVal(awaitingValue)} outstanding` : 'All invoices received'}
+      </div>
+    </div>`;
+}
+
+function openSupplierPoTile(tileKey) {
+  if (tileKey === 'awaiting-invoice') {
+    const pos = _supplierTilePos.filter(po =>
+      po.status !== 'Cancelled' &&
+      po.status !== 'Closed' &&
+      !po.supplier_invoice_received_at
+    );
+
+    const totalVal = pos.reduce((s, p) => s + Number(p.total_value || 0), 0);
+    document.getElementById('supplierPoTileTitle').textContent = 'POs Awaiting Invoice';
+    document.getElementById('supplierPoTileSubtitle').textContent =
+      `${pos.length} PO${pos.length !== 1 ? 's' : ''} · £${totalVal.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} total outstanding`;
+
+    _renderAwaitingInvoiceBody(pos);
+  }
+  document.getElementById('supplierPoTileModal').classList.add('active');
+}
+
+function _renderAwaitingInvoiceBody(pos) {
+  const body = document.getElementById('supplierPoTileBody');
+  if (!pos.length) {
+    body.innerHTML = '<div style="padding:30px;text-align:center;color:var(--subtle);font-size:13px">No outstanding POs — all invoices received ✓</div>';
+    return;
+  }
+
+  // Group by supplier name
+  const bySupplier = {};
+  pos.forEach(po => {
+    const name = po.supplier_name || 'Unknown Supplier';
+    if (!bySupplier[name]) bySupplier[name] = [];
+    bySupplier[name].push(po);
+  });
+
+  // Sort suppliers by total outstanding value desc
+  const sorted = Object.entries(bySupplier)
+    .map(([name, list]) => ({ name, list, total: list.reduce((s, p) => s + Number(p.total_value || 0), 0) }))
+    .sort((a, b) => b.total - a.total);
+
+  const statusColour = { Open: 'var(--subtle)', Approved: 'var(--accent)', Sent: 'var(--amber)', Received: 'var(--green)' };
+  const daysSince = d => d ? Math.floor((Date.now() - new Date(d).getTime()) / 86400000) : null;
+
+  body.innerHTML = sorted.map(({ name, list, total }) => {
+    const rows = list
+      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at)) // oldest first
+      .map(po => {
+        const age = daysSince(po.created_at);
+        const ageLabel = age != null ? `${age}d ago` : '';
+        const ageColour = age > 30 ? 'var(--red)' : age > 14 ? 'var(--amber)' : 'var(--subtle)';
+        const project = po.project_number || po.cost_centre || '—';
+        const statusCol = statusColour[po.status] || 'var(--subtle)';
+        return `
+          <tr style="border-top:1px solid var(--border)">
+            <td style="padding:7px 10px 7px 0;font-size:12px;font-weight:600;color:var(--text)">${escapeHtml(po.reference || '—')}</td>
+            <td style="padding:7px 4px;font-size:12px;color:var(--muted);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml((po.description || '').slice(0, 60))}</td>
+            <td style="padding:7px 4px;font-size:12px;color:var(--muted)">${escapeHtml(project)}</td>
+            <td style="padding:7px 4px;font-size:12px;font-weight:600;text-align:right;white-space:nowrap">£${Number(po.total_value || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+            <td style="padding:7px 4px;font-size:11px;color:${statusCol}">${escapeHtml(po.status || '')}</td>
+            <td style="padding:7px 0 7px 4px;font-size:11px;color:${ageColour};white-space:nowrap">${ageLabel}</td>
+            <td style="padding:7px 0 7px 8px">
+              <button class="btn btn-ghost" style="font-size:11px;padding:3px 9px"
+                onclick="closeSupplierPoTileModal();openAttachSupplierInvoiceModal(${po.id})">
+                📎 Attach
+              </button>
+            </td>
+          </tr>`;
+      }).join('');
+
+    return `
+      <div style="margin-bottom:16px">
+        <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px">
+          <div style="font-weight:600;font-size:14px">${escapeHtml(name)}</div>
+          <div style="font-size:12px;color:var(--muted)">${list.length} PO${list.length !== 1 ? 's' : ''} · <b style="color:var(--text)">£${total.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b></div>
+        </div>
+        <table style="width:100%;border-collapse:collapse">
+          <thead>
+            <tr style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--subtle)">
+              <th style="padding:0 10px 6px 0;text-align:left;font-weight:600">Reference</th>
+              <th style="padding:0 4px 6px;text-align:left;font-weight:600">Description</th>
+              <th style="padding:0 4px 6px;text-align:left;font-weight:600">Project</th>
+              <th style="padding:0 4px 6px;text-align:right;font-weight:600">Value</th>
+              <th style="padding:0 4px 6px;text-align:left;font-weight:600">Status</th>
+              <th style="padding:0 4px 6px;text-align:left;font-weight:600">Age</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+  }).join('<hr style="border:none;border-top:1px solid var(--border);margin:4px 0 16px">');
 }
 
 // ── Merge Duplicate Suppliers ────────────────────────────────────────────────

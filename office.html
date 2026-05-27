@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Office</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260527i">
+<link rel="stylesheet" href="bama.css?v=20260527j">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 </head>
 <body>
@@ -516,6 +516,10 @@
       <div class="card" style="margin-bottom:20px">
         <div class="card-title"><span class="icon">&#128666;</span> Suppliers</div>
         <div style="font-size:13px;color:var(--muted);margin-bottom:16px">Manage suppliers and the services they offer.</div>
+
+        <!-- Quick-access tiles -->
+        <div id="supplierTiles" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:20px"></div>
+
         <div style="display:flex;gap:10px;margin-bottom:16px">
           <button class="btn btn-primary" onclick="openAddSupplierForm()">+ Add Supplier</button>
           <button class="btn btn-ghost" onclick="openMergeSuppliersModal()">⇄ Merge Duplicates</button>
@@ -1034,6 +1038,19 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260527i"></script>
+<div class="modal-overlay" id="supplierPoTileModal" style="align-items:flex-start;padding:20px;overflow-y:auto">
+  <div class="modal" style="width:760px;max-width:96vw;padding:0;overflow:hidden">
+    <div style="padding:20px 24px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
+      <div>
+        <div class="modal-title" id="supplierPoTileTitle" style="margin-bottom:2px"></div>
+        <div id="supplierPoTileSubtitle" style="font-size:12px;color:var(--muted)"></div>
+      </div>
+      <button class="btn btn-ghost" onclick="closeSupplierPoTileModal()">Close</button>
+    </div>
+    <div id="supplierPoTileBody" style="padding:16px 24px;max-height:68vh;overflow-y:auto"></div>
+  </div>
+</div>
+
+<script src="shared.js?v=20260527j"></script>
 </body>
 </html>
