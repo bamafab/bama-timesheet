@@ -7072,7 +7072,7 @@ function _renderSupplierTable() {
     return `<span style="margin-left:3px;font-size:9px">${asc ? '▲' : '▼'}</span>`;
   };
 
-  const thBase = 'padding:8px 8px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);white-space:nowrap;cursor:pointer;user-select:none';
+  const thBase = 'padding:8px 8px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);white-space:nowrap;cursor:pointer;user-select:none;position:sticky;top:0;background:var(--surface);z-index:2';
   const th = (label, c, align) =>
     `<th style="${thBase};text-align:${align||'left'}" onclick="sortSupplierTable('${c}')">${label}${arrow(c)}</th>`;
 
@@ -7094,10 +7094,6 @@ function _renderSupplierTable() {
       <td style="padding:11px 12px 11px 0">
         <div style="font-weight:600">${escapeHtml(s.supplier_name)}</div>
         ${svcNames ? `<div style="font-size:11px;color:var(--accent);margin-top:1px">${escapeHtml(svcNames)}</div>` : ''}
-      </td>
-      <td style="padding:11px 8px;color:var(--text);font-size:12px">
-        ${s.contact_name ? `<div>${escapeHtml(s.contact_name)}</div>` : ''}
-        ${s.telephone    ? `<div style="color:var(--muted)">${escapeHtml(s.telephone)}</div>` : ''}
       </td>
       <td style="padding:11px 8px;text-align:center">
         ${m.open.length ? `<span style="font-weight:600">${m.open.length}</span>` : '<span style="color:var(--subtle)">—</span>'}
@@ -7122,15 +7118,16 @@ function _renderSupplierTable() {
       </td>
       <td style="padding:11px 0 11px 8px;white-space:nowrap" onclick="event.stopPropagation()">
         <button class="btn btn-ghost" style="padding:3px 9px;font-size:11px" onclick="editSupplier(${s.id})">&#9998;</button>
-        <button class="btn btn-ghost" style="padding:3px 9px;font-size:11px;color:var(--red)" onclick="deleteSupplier(${s.id}, '${nameSafe}')">&#10005;</button>
       </td>
     </tr>`;
   }
 
-  container.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:13px">
-    <thead><tr style="border-bottom:2px solid var(--border)">
+  // Sticky header: thead position:sticky; rows scroll inside the container.
+  // max-height keeps the table within the viewport so sticky has a scroll context.
+  container.innerHTML = `<div style="max-height:65vh;overflow-y:auto;border:1px solid var(--border);border-radius:8px">
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+    <thead><tr style="background:var(--surface);box-shadow:inset 0 -2px 0 var(--border)">
       ${th('Supplier', 'name', 'left')}
-      <th style="${thBase};cursor:default">Contact</th>
       ${th("Open PO's", 'openPos', 'center')}
       ${th('Open Value', 'openValue', 'right')}
       ${th('Awaiting Invoice', 'awaiting', 'center')}
@@ -7138,10 +7135,10 @@ function _renderSupplierTable() {
       ${th('£ This Month', 'thisMonth', 'right')}
       ${th('£ Last Month', 'lastMonth', 'right')}
       ${th('Total Spent', 'spent', 'right')}
-      <th></th>
+      <th style="${thBase};cursor:default;background:var(--surface)"></th>
     </tr></thead>
     <tbody>${rows}</tbody>
-  </table>`;
+  </table></div>`;
 }
 
 
@@ -7233,6 +7230,8 @@ function openAddSupplierForm() {
   document.getElementById('supplierPostcode').value = '';
   document.getElementById('supplierFormTitle').textContent = 'Add Supplier';
   populateServiceCheckboxes([]);
+  const delBtn = document.getElementById('supplierFormDeleteBtn');
+  if (delBtn) delBtn.style.display = 'none';
   document.getElementById('supplierFormArea').style.display = 'block';
 }
 
@@ -7255,6 +7254,8 @@ async function editSupplier(id) {
     document.getElementById('supplierPostcode').value = s.postcode || '';
     document.getElementById('supplierFormTitle').textContent = 'Edit Supplier';
     populateServiceCheckboxes((s.services || []).map(sv => sv.service_type_id));
+    const delBtn = document.getElementById('supplierFormDeleteBtn');
+    if (delBtn) delBtn.style.display = '';
     document.getElementById('supplierFormArea').style.display = 'block';
   } catch (e) { toast('Failed to load supplier details', 'error'); }
 }
@@ -7303,6 +7304,20 @@ async function deleteSupplier(id, name) {
     toast('Supplier removed', 'info');
     renderSuppliersTab();
   } catch (e) { toast('Delete failed', 'error'); }
+}
+
+// Called by the Delete button inside the edit form.
+async function deleteSupplierFromForm() {
+  const id = document.getElementById('supplierEditId').value;
+  const name = document.getElementById('supplierName').value.trim() || 'this supplier';
+  if (!id) return;
+  if (!confirm(`Remove supplier "${name}"?\n\nThis hides them from the list but keeps the audit trail. Their existing POs and history are preserved.`)) return;
+  try {
+    await api.delete(`/api/suppliers/${id}`);
+    toast('Supplier removed', 'info');
+    closeSupplierForm();
+    renderSuppliersTab();
+  } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
 }
 
 // ── Supplier Detail Panel ────────────────────────────────────────────────────

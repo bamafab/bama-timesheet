@@ -605,9 +605,10 @@
                 <input type="text" class="field-input" id="supplierPostcode" placeholder="e.g. B1 2AB" style="max-width:160px">
               </div>
             </div>
-            <div style="display:flex;gap:10px">
+            <div style="display:flex;gap:10px;align-items:center">
               <button class="btn btn-primary" onclick="saveSupplier()">Save</button>
               <button class="btn btn-ghost" onclick="closeSupplierForm()">Cancel</button>
+              <button class="btn btn-ghost" id="supplierFormDeleteBtn" onclick="deleteSupplierFromForm()" style="display:none;margin-left:auto;color:var(--red);border-color:var(--red)">🗑 Delete Supplier</button>
             </div>
           </div>
         </div>
@@ -1078,6 +1079,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260527s"></script>
+<script src="shared.js?v=20260527t"></script>
 </body>
 </html>
