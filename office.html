@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Office</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260527h">
+<link rel="stylesheet" href="bama.css?v=20260527i">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 </head>
 <body>
@@ -1010,6 +1010,30 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260527h"></script>
+<div class="modal-overlay" id="supplierDetailModal" style="align-items:flex-start;padding:20px;overflow-y:auto">
+  <div class="modal" style="width:720px;max-width:96vw;padding:0;overflow:hidden">
+
+    <!-- Header -->
+    <div style="padding:20px 24px 16px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+      <div>
+        <div class="modal-title" id="supplierDetailTitle" style="margin-bottom:4px"></div>
+        <div id="supplierDetailMeta"></div>
+      </div>
+      <div style="display:flex;gap:8px;flex-shrink:0">
+        <button class="btn btn-primary" style="font-size:12px;padding:6px 14px" onclick="openAttachSupplierInvoiceModal()">📎 Attach Invoice</button>
+        <button class="btn btn-ghost" style="font-size:12px;padding:6px 14px" onclick="closeSupplierDetail()">Close</button>
+      </div>
+    </div>
+
+    <!-- Status tab bar -->
+    <div id="supplierDetailTabs" style="display:flex;flex-wrap:wrap;gap:6px;padding:12px 24px;border-bottom:1px solid var(--border)"></div>
+
+    <!-- PO list -->
+    <div id="supplierDetailPoArea" style="padding:16px 24px;max-height:60vh;overflow-y:auto"></div>
+
+  </div>
+</div>
+
+<script src="shared.js?v=20260527i"></script>
 </body>
 </html>

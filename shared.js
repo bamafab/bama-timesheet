@@ -6933,13 +6933,15 @@ async function renderSuppliersTab() {
     const svcLabel = svcNames.length ? svcNames.join(', ') : 'No services assigned';
 
     return `
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:8px">
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:8px;cursor:pointer;transition:border-color .15s"
+           onclick="openSupplierDetail(${s.id})"
+           onmouseenter="this.style.borderColor='var(--accent)'" onmouseleave="this.style.borderColor='var(--border)'">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px">
           <div>
             <div style="font-weight:600;font-size:14px">${s.supplier_name}</div>
             <div style="font-size:11px;color:var(--accent);margin-top:2px">${svcLabel}</div>
           </div>
-          <div style="display:flex;gap:6px">
+          <div style="display:flex;gap:6px" onclick="event.stopPropagation()">
             <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="editSupplier(${s.id})">&#9998; Edit</button>
             <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px;color:var(--red)" onclick="deleteSupplier(${s.id}, '${s.supplier_name.replace(/'/g, "\\'")}')">&#10005;</button>
           </div>
@@ -6948,8 +6950,9 @@ async function renderSuppliersTab() {
           ${s.contact_name ? `<div>Contact: <span style="color:var(--text)">${s.contact_name}</span></div>` : ''}
           ${s.telephone ? `<div>Tel: <span style="color:var(--text)">${s.telephone}</span></div>` : ''}
           ${s.email ? `<div>Email: <span style="color:var(--text)">${s.email}</span></div>` : ''}
-          ${(s.address_line1 || s.city || s.postcode) ? `<div>Address: <span style="color:var(--text)">${[s.address_line1, s.address_line2, s.city, s.county, s.postcode].filter(Boolean).join(', ')}</span></div>` : ''}
+          ${(s.address_line1 || s.city || s.postcode) ? `<div>Address: <span style="color:var(--text)">${[s.address_line1, s.address_line2, s.city, s.postcode].filter(Boolean).join(', ')}</span></div>` : ''}
         </div>
+        <div style="margin-top:8px;font-size:11px;color:var(--subtle)">Click to view purchase orders →</div>
       </div>`;
   }).join('');
 
@@ -7115,6 +7118,224 @@ async function deleteSupplier(id, name) {
     toast('Supplier removed', 'info');
     renderSuppliersTab();
   } catch (e) { toast('Delete failed', 'error'); }
+}
+
+// ── Supplier Detail Panel ────────────────────────────────────────────────────
+let _supplierDetailId = null;   // currently open supplier id
+let _supplierDetailPos = [];    // POs loaded for the open supplier
+let _supplierDetailFilter = 'all'; // active status tab
+
+async function openSupplierDetail(supplierId) {
+  const supplier = (_suppliers || []).find(s => s.id === supplierId);
+  if (!supplier) return;
+  _supplierDetailId = supplierId;
+  _supplierDetailFilter = 'all';
+
+  // Render header immediately, load POs async
+  _renderSupplierDetailHeader(supplier);
+  document.getElementById('supplierDetailPoArea').innerHTML =
+    '<div style="padding:20px;text-align:center;color:var(--muted)"><div class="spinner"></div></div>';
+  document.getElementById('supplierDetailModal').classList.add('active');
+
+  try {
+    _supplierDetailPos = await api.get(`/api/purchase-orders?supplier_id=${supplierId}`);
+  } catch (e) {
+    _supplierDetailPos = [];
+    document.getElementById('supplierDetailPoArea').innerHTML =
+      '<div style="padding:20px;color:var(--red)">Failed to load purchase orders</div>';
+    return;
+  }
+  _renderSupplierDetailPos();
+}
+
+function _renderSupplierDetailHeader(supplier) {
+  const svcNames = (supplier.services || []).map(s => s.service_name).join(', ') || 'No services';
+  const info = [
+    supplier.contact_name ? `<span>&#128100; ${escapeHtml(supplier.contact_name)}</span>` : '',
+    supplier.telephone    ? `<span>&#128222; ${escapeHtml(supplier.telephone)}</span>` : '',
+    supplier.email        ? `<span>&#9993; ${escapeHtml(supplier.email)}</span>` : '',
+  ].filter(Boolean).join(' &nbsp;·&nbsp; ');
+
+  document.getElementById('supplierDetailTitle').textContent = supplier.supplier_name;
+  document.getElementById('supplierDetailMeta').innerHTML =
+    `<span style="color:var(--accent);font-size:12px">${escapeHtml(svcNames)}</span>` +
+    (info ? `<br><span style="font-size:12px;color:var(--muted);margin-top:4px;display:block">${info}</span>` : '');
+}
+
+function _renderSupplierDetailPos() {
+  const pos = _supplierDetailPos;
+  const f   = _supplierDetailFilter;
+
+  // Status grouping logic
+  const poGroup = po => {
+    if (po.status === 'Cancelled') return 'cancelled';
+    if (po.status === 'Closed')    return 'closed';
+    if (po.reconciliation_status === 'matched')     return 'matched';
+    if (po.reconciliation_status === 'discrepancy') return 'discrepancy';
+    if (po.supplier_invoice_received_at)            return 'invoiced';
+    if (po.status === 'Received')  return 'received';
+    return 'open'; // Open / Approved / Sent
+  };
+
+  const groups = { open:'Open', received:'Received', invoiced:'Invoice Rcvd', matched:'Matched', discrepancy:'Discrepancy', closed:'Closed', cancelled:'Cancelled' };
+  const groupColour = { open:'var(--accent)', received:'var(--amber)', invoiced:'#7b9ef8', matched:'var(--green)', discrepancy:'var(--red)', closed:'var(--subtle)', cancelled:'var(--subtle)' };
+
+  // Count badges for tabs
+  const counts = {};
+  pos.forEach(po => { const g = poGroup(po); counts[g] = (counts[g] || 0) + 1; });
+  const total = pos.length;
+
+  // Tab bar
+  const tabs = ['all', ...Object.keys(groups)].map(key => {
+    const label = key === 'all' ? 'All' : groups[key];
+    const count = key === 'all' ? total : (counts[key] || 0);
+    if (count === 0 && key !== 'all') return '';
+    const active = f === key;
+    return `<button onclick="supplierDetailFilterTab('${key}')"
+      style="padding:6px 12px;font-size:12px;border:1px solid ${active ? 'var(--accent)' : 'var(--border)'};
+             border-radius:6px;background:${active ? 'var(--accent)' : 'transparent'};
+             color:${active ? '#fff' : 'var(--muted)'};cursor:pointer;font-family:var(--font-body)">${label}
+      ${count > 0 ? `<span style="margin-left:4px;background:rgba(255,255,255,.2);border-radius:8px;padding:1px 6px;font-size:10px">${count}</span>` : ''}
+    </button>`;
+  }).join('');
+
+  // Filter POs
+  const filtered = f === 'all' ? pos : pos.filter(po => poGroup(po) === f);
+
+  if (!filtered.length) {
+    document.getElementById('supplierDetailPoArea').innerHTML =
+      `<div style="padding:30px;text-align:center;color:var(--subtle);font-size:13px">${pos.length ? 'No POs in this status' : 'No purchase orders yet for this supplier'}</div>`;
+    document.getElementById('supplierDetailTabs').innerHTML = tabs;
+    return;
+  }
+
+  // Sort newest first
+  filtered.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+  const rows = filtered.map(po => {
+    const g = poGroup(po);
+    const col = groupColour[g];
+    const statusLabel = groups[g] || po.status;
+    const project = po.project_number ? `${po.project_number}` : (po.cost_centre || '—');
+    const value = po.total_value != null ? `£${Number(po.total_value).toLocaleString('en-GB', {minimumFractionDigits:2,maximumFractionDigits:2})}` : '—';
+    const invoiceInfo = po.supplier_invoice_received_at
+      ? `<div style="font-size:11px;color:var(--muted);margin-top:3px">Invoice: ${po.supplier_invoice_ref || '—'} &nbsp;£${Number(po.supplier_invoice_gross||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>`
+      : '';
+
+    return `
+      <div style="border:1px solid var(--border);border-radius:8px;margin-bottom:6px;overflow:hidden" data-po-id="${po.id}">
+        <div style="display:flex;align-items:center;gap:12px;padding:10px 14px;cursor:pointer;background:var(--surface)"
+             onclick="toggleSupplierPoDetail(this)">
+          <div style="width:8px;height:8px;border-radius:50%;background:${col};flex-shrink:0"></div>
+          <div style="font-weight:600;font-size:13px;min-width:90px">${escapeHtml(po.reference||'—')}</div>
+          <div style="font-size:12px;color:var(--muted);flex:1">${escapeHtml(po.description||'').slice(0,60)}</div>
+          <div style="font-size:12px;color:var(--muted);min-width:70px">${project}</div>
+          <div style="font-size:13px;font-weight:600;min-width:80px;text-align:right">${value}</div>
+          <div style="font-size:11px;padding:2px 8px;border-radius:6px;background:rgba(255,255,255,.05);border:1px solid ${col};color:${col};min-width:80px;text-align:center">${statusLabel}</div>
+          <div style="font-size:11px;color:var(--subtle)">▼</div>
+        </div>
+        ${invoiceInfo ? `<div style="padding:0 14px 8px;background:var(--surface)">${invoiceInfo}</div>` : ''}
+        <div class="supplier-po-detail" style="display:none;padding:12px 14px;background:var(--bg);border-top:1px solid var(--border)">
+          <div class="supplier-po-lineitems-pending" style="font-size:12px;color:var(--subtle)">Loading…</div>
+        </div>
+      </div>`;
+  }).join('');
+
+  // Summary bar
+  const openVal = pos.filter(p => poGroup(p) === 'open').reduce((s,p) => s + Number(p.total_value||0), 0);
+  const receivedVal = pos.filter(p => ['received','invoiced','matched','discrepancy'].includes(poGroup(p))).reduce((s,p) => s + Number(p.total_value||0), 0);
+  const fmtK = v => v >= 1000 ? `£${(v/1000).toFixed(1)}k` : `£${v.toFixed(0)}`;
+
+  const summary = `
+    <div style="display:flex;gap:16px;padding:10px 0;margin-bottom:12px;border-bottom:1px solid var(--border)">
+      <div style="font-size:12px;color:var(--muted)">Total POs: <b style="color:var(--text)">${pos.length}</b></div>
+      <div style="font-size:12px;color:var(--muted)">Open value: <b style="color:var(--accent)">${fmtK(openVal)}</b></div>
+      <div style="font-size:12px;color:var(--muted)">Received value: <b style="color:var(--amber)">${fmtK(receivedVal)}</b></div>
+    </div>`;
+
+  document.getElementById('supplierDetailTabs').innerHTML = tabs;
+  document.getElementById('supplierDetailPoArea').innerHTML = summary + rows;
+}
+
+function _renderPoDetailRows(po) {
+  let html = '';
+
+  // Line items
+  if (po.line_items && po.line_items.length) {
+    html += `<div style="font-size:11px;color:var(--muted);margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:.05em">Line Items</div>`;
+    html += `<table style="width:100%;font-size:12px;border-collapse:collapse">
+      <tr style="color:var(--subtle);font-size:11px"><td style="padding:2px 8px 2px 0">Description</td><td style="padding:2px 4px;text-align:center">Qty</td><td style="padding:2px 4px;text-align:right">Unit £</td><td style="padding:2px 0 2px 4px;text-align:right">Total</td></tr>`;
+    po.line_items.forEach(li => {
+      html += `<tr style="border-top:1px solid var(--border)">
+        <td style="padding:4px 8px 4px 0;color:var(--text)">${escapeHtml(li.description||'')}</td>
+        <td style="padding:4px;text-align:center;color:var(--muted)">${li.quantity||''}</td>
+        <td style="padding:4px;text-align:right;color:var(--muted)">£${Number(li.unit_price||0).toFixed(2)}</td>
+        <td style="padding:4px 0 4px 4px;text-align:right;color:var(--text)">£${Number(li.line_total||0).toFixed(2)}</td>
+      </tr>`;
+    });
+    html += `</table>`;
+  } else {
+    html += `<div style="font-size:12px;color:var(--subtle)">No line items</div>`;
+  }
+
+  // Invoice info if present
+  if (po.supplier_invoice_received_at) {
+    html += `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:12px">
+      <span style="color:var(--muted)">Invoice ref:</span> <b>${escapeHtml(po.supplier_invoice_ref||'—')}</b> &nbsp;
+      <span style="color:var(--muted)">Gross:</span> <b>£${Number(po.supplier_invoice_gross||0).toFixed(2)}</b> &nbsp;
+      <span style="color:var(--muted)">Status:</span> <b style="color:${po.reconciliation_status==='matched'?'var(--green)':'var(--red)'}">${po.reconciliation_status||'—'}</b>
+    </div>`;
+  }
+
+  // Attach invoice button if not yet received
+  if (!po.supplier_invoice_received_at && po.status !== 'Cancelled') {
+    html += `<div style="margin-top:10px">
+      <button class="btn btn-ghost" style="font-size:12px;padding:5px 12px"
+        onclick="openSupplierInvoiceForPo(${po.id})">📎 Attach Invoice</button>
+    </div>`;
+  }
+
+  return html;
+}
+
+function toggleSupplierPoDetail(headerEl) {
+  const card = headerEl.closest('div[style*="border-radius:8px"]');
+  const detail = card?.querySelector('.supplier-po-detail');
+  if (!detail) return;
+  const isOpen = detail.style.display !== 'none';
+  detail.style.display = isOpen ? 'none' : '';
+  const arrow = headerEl.querySelector('div[style*="▼"]');
+  if (arrow) arrow.style.transform = isOpen ? '' : 'rotate(180deg)';
+
+  // Fetch line items on first expand (list endpoint omits them)
+  if (!isOpen && detail.dataset.loaded !== '1') {
+    detail.dataset.loaded = '1';
+    const poId = card.dataset.poId;
+    if (poId && detail.querySelector('.supplier-po-lineitems-pending')) {
+      api.get(`/api/purchase-orders/${poId}`).then(po => {
+        const placeholder = detail.querySelector('.supplier-po-lineitems-pending');
+        if (placeholder) placeholder.outerHTML = _renderPoDetailRows(po);
+      }).catch(() => {});
+    }
+  }
+}
+
+function supplierDetailFilterTab(key) {
+  _supplierDetailFilter = key;
+  _renderSupplierDetailPos();
+}
+
+function closeSupplierDetail() {
+  document.getElementById('supplierDetailModal').classList.remove('active');
+  _supplierDetailId = null;
+  _supplierDetailPos = [];
+}
+
+// Open the existing invSupInvModal pre-filtered to this supplier's POs
+function openSupplierInvoiceForPo(poId) {
+  // Close the detail modal first, then open the invoice modal with the specific PO pre-selected
+  closeSupplierDetail();
+  openAttachSupplierInvoiceModal(poId);
 }
 
 // ── Merge Duplicate Suppliers ────────────────────────────────────────────────
@@ -27625,7 +27846,7 @@ async function voidInvoice() {
 // ═════════════════════════════════════════════════════════════════════════
 // SUPPLIER INVOICES — attach to existing PO + OCR
 // ═════════════════════════════════════════════════════════════════════════
-async function openAttachSupplierInvoiceModal() {
+async function openAttachSupplierInvoiceModal(preSelectPoId) {
   // Show a picker for un-attached received POs
   try {
     const allPos = await api.get('/api/purchase-orders');
@@ -27634,7 +27855,7 @@ async function openAttachSupplierInvoiceModal() {
     );
     const sel = document.getElementById('invSupInvPoSelect');
     sel.innerHTML = '<option value="">— pick a PO —</option>'
-      + pickList.map(po => `<option value="${po.id}">${escapeHtml(po.reference || '')} — ${escapeHtml(po.supplier_name || '')} — £${_invFmt2(po.total_value)}</option>`).join('');
+      + pickList.map(po => `<option value="${po.id}"${po.id === preSelectPoId ? ' selected' : ''}>${escapeHtml(po.reference || '')} — ${escapeHtml(po.supplier_name || '')} — £${_invFmt2(po.total_value)}</option>`).join('');
     _invSupInvPo = null;
     _invSupInvFile = null;
     _invSupInvParsed = null;
@@ -27647,6 +27868,8 @@ async function openAttachSupplierInvoiceModal() {
     document.getElementById('invSupInvGross').value = '';
     document.getElementById('invSupInvNotes').value = '';
     document.getElementById('invSupInvModal').classList.add('active');
+    // If a PO was pre-selected, trigger the lookup
+    if (preSelectPoId) onSupInvPoPicked(preSelectPoId);
   } catch (err) {
     toast('Failed to load POs', 'error');
   }
