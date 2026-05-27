@@ -738,6 +738,68 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
+  /* new job alert overlay */
+  @keyframes pulse-ring {
+    0%   { box-shadow: 0 0 0 0 rgba(255,68,68,.5); }
+    70%  { box-shadow: 0 0 0 14px rgba(255,68,68,0); }
+    100% { box-shadow: 0 0 0 0 rgba(255,68,68,0); }
+  }
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: .35; }
+  }
+  @keyframes alert-in {
+    from { opacity: 0; transform: scale(.95) translateY(8px); }
+    to   { opacity: 1; transform: scale(1)  translateY(0); }
+  }
+  .new-job-alert-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,.75); z-index: 250;
+    align-items: center; justify-content: center;
+  }
+  .new-job-alert-overlay.active { display: flex; }
+  .new-job-alert-card {
+    background: var(--card); border: 1.5px solid var(--red);
+    border-radius: 16px; padding: 28px; width: 480px; max-width: 92vw;
+    animation: alert-in .25s ease-out;
+  }
+  .nja-pulse-dot {
+    display: inline-block; width: 10px; height: 10px;
+    border-radius: 50%; background: var(--red);
+    animation: pulse-dot 1.2s ease-in-out infinite;
+  }
+  .nja-job-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 0; border-bottom: 1px solid var(--border);
+  }
+  .nja-job-row:last-child { border-bottom: none; }
+  .nja-job-icon {
+    width: 36px; height: 36px; min-width: 36px;
+    border-radius: 8px; background: rgba(255,68,68,.12);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--red); font-size: 16px;
+  }
+  .nja-seen-btn {
+    margin-left: auto; padding: 4px 12px; font-size: 12px;
+    border-radius: 99px; border: 1px solid var(--border);
+    background: transparent; color: var(--muted); cursor: pointer;
+    white-space: nowrap; transition: background .15s, color .15s;
+  }
+  .nja-seen-btn:hover { background: var(--surface); color: var(--text); }
+  .nja-seen-btn.acked { background: rgba(62,207,142,.12); color: var(--green); border-color: var(--green); }
+  .nja-seen-all-btn {
+    width: 100%; margin-top: 18px; padding: 13px;
+    font-size: 15px; font-weight: 600; letter-spacing: .02em;
+    border-radius: 10px; border: none; cursor: pointer;
+    background: var(--red); color: #fff;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    animation: pulse-ring 1.8s ease-out infinite;
+    transition: background .15s, transform .1s;
+  }
+  .nja-seen-all-btn:hover  { background: #cc3333; }
+  .nja-seen-all-btn:active { transform: scale(.98); }
+  .nja-seen-all-btn.done  { background: var(--green); animation: none; }
+
   .empty-state {
     text-align: center; padding: 48px 24px; color: var(--muted);
     font-size: 14px;

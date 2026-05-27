@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Workshop Timesheet</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260526e">
+<link rel="stylesheet" href="bama.css?v=20260527b">
 </head>
 <body>
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
@@ -537,6 +537,21 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260527a"></script>
+<div class="new-job-alert-overlay" id="newJobAlertModal">
+  <div class="new-job-alert-card" id="newJobAlertCard">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+      <span class="nja-pulse-dot"></span>
+      <span style="font-size:12px;font-weight:700;color:var(--red);letter-spacing:.06em;text-transform:uppercase">New jobs added</span>
+      <span id="njaUnreadBadge" style="margin-left:auto;background:rgba(255,68,68,.15);color:var(--red);font-size:11px;font-weight:600;padding:2px 9px;border-radius:99px"></span>
+    </div>
+    <p style="font-size:12px;color:var(--muted);margin:0 0 14px 0">The draftsman has added jobs that need your attention.</p>
+    <div id="njaJobList"></div>
+    <button class="nja-seen-all-btn" id="njaSeenAllBtn" onclick="njaAckAll()">
+      <span style="font-size:18px">&#10003;</span> Seen all new jobs
+    </button>
+  </div>
+</div>
+
+<script src="shared.js?v=20260527b"></script>
 </body>
 </html>

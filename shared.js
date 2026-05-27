@@ -760,7 +760,11 @@ function renderHome() {
   });
 
   // Load workshop notifications (assembly tasks, etc.)
-  if (CURRENT_PAGE === 'index') renderWorkshopNotifications();
+  if (CURRENT_PAGE === 'index') {
+    renderWorkshopNotifications();
+    // Slight delay so drawingsData has a chance to populate on initial load
+    setTimeout(checkNewJobAlerts, 200);
+  }
 }
 
 // ── Workshop Kiosk Notifications ──
@@ -777,7 +781,8 @@ function renderWorkshopNotifications() {
 }
 
 function _renderWorkshopNotifs(container) {
-  // Scan all projects/jobs for open assembly tasks
+  // Scan all projects/jobs for open assembly tasks, excluding acknowledged jobs
+  const ackedJobs = _njaGetAcked();
   const notifications = [];
 
   for (const projId of Object.keys(drawingsData.projects || {})) {
@@ -786,6 +791,7 @@ function _renderWorkshopNotifs(container) {
     const projName = proj ? `${proj.id} — ${proj.name}` : projId;
     for (const job of (projData.jobs || [])) {
       if (job.status === 'closed') continue;
+      if (ackedJobs.has(_njaJobKey(projId, job.id))) continue; // hide acknowledged jobs
       for (const task of (job.assembly?.tasks || [])) {
         if (task.status === 'complete') continue;
         const created = new Date(task.createdAt).getTime();
@@ -806,8 +812,6 @@ function _renderWorkshopNotifs(container) {
   }
 
   if (!notifications.length) { container.innerHTML = ''; return; }
-
-  // Sort newest first
   notifications.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   const newCount = notifications.filter(n => n.isNew).length;
 
@@ -3264,11 +3268,157 @@ function startKioskPolling() {
         loadDrawingsData()
       ]);
       renderHome();
+      checkNewJobAlerts();
       console.log('[kiosk-poll] refresh complete');
     } catch (e) {
       console.warn('[kiosk-poll] refresh failed:', e.message);
     }
   }, POLL_INTERVAL);
+}
+
+// ── New Job Alert (kiosk popup) ─────────────────────────────────────────────
+// Shows a pulsating red overlay when the draftsman adds new jobs.
+// Acknowledgements are persisted in localStorage so dismissed jobs don't
+// reappear. On first load, jobs older than 48 h are silently auto-acked so
+// a fresh kiosk session doesn't flood with historical jobs.
+// ───────────────────────────────────────────────────────────────────────────
+const NJA_STORAGE_KEY = 'bama_acked_jobs'; // localStorage: JSON array of "projectId:jobId"
+const NJA_NEW_WINDOW_MS = 48 * 60 * 60 * 1000; // 48 hours
+
+function _njaGetAcked() {
+  try { return new Set(JSON.parse(localStorage.getItem(NJA_STORAGE_KEY) || '[]')); }
+  catch { return new Set(); }
+}
+
+function _njaSaveAcked(set) {
+  try { localStorage.setItem(NJA_STORAGE_KEY, JSON.stringify([...set])); } catch {}
+}
+
+function _njaJobKey(projectId, jobId) { return `${projectId}:${jobId}`; }
+
+// Auto-ack any job older than 48 h that hasn't been acked yet — prevents
+// a flood on a fresh browser or after localStorage is cleared.
+function _njaAutoAckOld() {
+  const acked = _njaGetAcked();
+  let changed = false;
+  for (const projId of Object.keys(drawingsData.projects || {})) {
+    for (const job of (drawingsData.projects[projId].jobs || [])) {
+      const key = _njaJobKey(projId, job.id);
+      if (!acked.has(key) && (Date.now() - new Date(job.createdAt).getTime()) > NJA_NEW_WINDOW_MS) {
+        acked.add(key);
+        changed = true;
+      }
+    }
+  }
+  if (changed) _njaSaveAcked(acked);
+}
+
+// Return array of unacknowledged jobs created within the last 48 h
+function _njaGetUnackedJobs() {
+  const acked = _njaGetAcked();
+  const unacked = [];
+  for (const projId of Object.keys(drawingsData.projects || {})) {
+    const proj = state.projects?.find(p => p.id === projId);
+    const projName = proj ? `${proj.id} — ${proj.name}` : projId;
+    for (const job of (drawingsData.projects[projId].jobs || [])) {
+      if (job.status === 'closed') continue;
+      const key = _njaJobKey(projId, job.id);
+      if (acked.has(key)) continue;
+      const age = Date.now() - new Date(job.createdAt).getTime();
+      if (age > NJA_NEW_WINDOW_MS) continue;
+      unacked.push({ projectId: projId, jobId: job.id, jobName: job.name, projName, createdAt: job.createdAt, key });
+    }
+  }
+  unacked.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  return unacked;
+}
+
+function checkNewJobAlerts() {
+  if (CURRENT_PAGE !== 'index') return;
+  _njaAutoAckOld();
+  const jobs = _njaGetUnackedJobs();
+  if (!jobs.length) return;
+
+  // Don't interrupt an active employee session
+  if (state.currentEmployee) return;
+  const anyModalOpen = Array.from(document.querySelectorAll('.modal-overlay')).some(m => m.classList.contains('active'));
+  if (anyModalOpen) return;
+
+  _njaShowModal(jobs);
+}
+
+function _njaShowModal(jobs) {
+  const list = document.getElementById('njaJobList');
+  const badge = document.getElementById('njaUnreadBadge');
+  const btn = document.getElementById('njaSeenAllBtn');
+  if (!list) return;
+
+  badge.textContent = `${jobs.length} unread`;
+  btn.className = 'nja-seen-all-btn';
+  btn.innerHTML = '<span style="font-size:18px">&#10003;</span> Seen all new jobs';
+
+  list.innerHTML = jobs.map((j, i) => {
+    const age = timeAgo(j.createdAt);
+    return `
+      <div class="nja-job-row" id="njaRow${i}" data-key="${j.key}">
+        <div class="nja-job-icon">&#9874;</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${j.jobName}</div>
+          <div style="font-size:11px;color:var(--muted)">${j.projName} &nbsp;·&nbsp; added ${age}</div>
+        </div>
+        <button class="nja-seen-btn" onclick="njaAckOne(${i}, '${j.key}')">&#10003; Seen</button>
+      </div>`;
+  }).join('');
+
+  document.getElementById('newJobAlertModal').classList.add('active');
+}
+
+function njaAckOne(i, key) {
+  const acked = _njaGetAcked();
+  acked.add(key);
+  _njaSaveAcked(acked);
+
+  const btn = document.querySelector(`#njaRow${i} .nja-seen-btn`);
+  if (btn) { btn.classList.add('acked'); btn.disabled = true; btn.textContent = '✓ Seen'; }
+
+  const remaining = document.querySelectorAll('.nja-seen-btn:not(.acked)').length;
+  const badge = document.getElementById('njaUnreadBadge');
+  if (remaining === 0) {
+    badge.textContent = 'all seen';
+    badge.style.background = 'rgba(62,207,142,.15)';
+    badge.style.color = 'var(--green)';
+    setTimeout(_njaDismiss, 600);
+  } else {
+    badge.textContent = `${remaining} unread`;
+  }
+  renderHome(); // refresh notification banner
+}
+
+function njaAckAll() {
+  const acked = _njaGetAcked();
+  document.querySelectorAll('.nja-job-row[data-key]').forEach(row => acked.add(row.dataset.key));
+  _njaSaveAcked(acked);
+
+  const btn = document.getElementById('njaSeenAllBtn');
+  btn.classList.add('done');
+  btn.innerHTML = '<span style="font-size:18px">&#10003;</span> Done — jobs acknowledged';
+
+  const badge = document.getElementById('njaUnreadBadge');
+  badge.textContent = 'all seen';
+  badge.style.background = 'rgba(62,207,142,.15)';
+  badge.style.color = 'var(--green)';
+
+  setTimeout(() => { _njaDismiss(); renderHome(); }, 800);
+}
+
+function _njaDismiss() {
+  const overlay = document.getElementById('newJobAlertModal');
+  const card = document.getElementById('newJobAlertCard');
+  if (!overlay || !card) return;
+  card.style.transition = 'opacity .35s, transform .35s';
+  card.style.opacity = '0';
+  card.style.transform = 'scale(.96)';
+  setTimeout(() => overlay.classList.remove('active'), 350);
 }
 
 function setLoading(on) {
