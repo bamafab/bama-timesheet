@@ -3236,6 +3236,41 @@ function goHome() {
   }
 }
 
+// ── Kiosk Auto-Refresh ──────────────────────────────────────────────────────
+// Silently refreshes kiosk data every 10 minutes so new jobs created by the
+// draftsman appear on screen without any user interaction.
+// Only runs when the kiosk is idle: no employee panel open, no modal visible.
+// ───────────────────────────────────────────────────────────────────────────
+function startKioskPolling() {
+  if (CURRENT_PAGE !== 'index') return;
+  const POLL_INTERVAL = 10 * 60 * 1000; // 10 minutes
+
+  setInterval(async () => {
+    // Bail if an employee panel is open
+    if (state.currentEmployee) return;
+
+    // Bail if any modal is currently visible
+    const anyModalOpen = Array.from(document.querySelectorAll('.modal')).some(m => {
+      const s = window.getComputedStyle(m);
+      return s.display !== 'none' && s.visibility !== 'hidden';
+    });
+    if (anyModalOpen) return;
+
+    console.log('[kiosk-poll] idle — refreshing data');
+    try {
+      await Promise.all([
+        loadTimesheetData(),
+        loadProjects(),
+        loadDrawingsData()
+      ]);
+      renderHome();
+      console.log('[kiosk-poll] refresh complete');
+    } catch (e) {
+      console.warn('[kiosk-poll] refresh failed:', e.message);
+    }
+  }, POLL_INTERVAL);
+}
+
 function setLoading(on) {
   document.getElementById('loadingBar').style.width = on ? '70%' : '0';
 }
@@ -25013,6 +25048,7 @@ async function init() {
     // hub has its own simple rendering
   } else {
     renderHome();
+    startKioskPolling();
   }
 }
 
