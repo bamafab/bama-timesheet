@@ -5066,8 +5066,9 @@ function renderHolidayCalendar() {
   // Build HTML
   let ganttHtml = `<div style="min-width:${totalW}px;width:${totalW}px;font-size:11px;font-family:var(--font-mono);display:block">`;
 
-  // Month headers
-  ganttHtml += `<div style="display:flex;margin-left:${labelW}px;margin-bottom:2px">`;
+  // Month headers (sticky name placeholder so header aligns with sticky name column)
+  ganttHtml += `<div style="display:flex;margin-bottom:2px">`;
+  ganttHtml += `<div style="width:${labelW}px;min-width:${labelW}px;position:sticky;left:0;z-index:3;background:var(--card)"></div>`;
   months.forEach(mo => {
     const daysInMo = new Date(mo.getFullYear(), mo.getMonth() + 1, 0).getDate();
     ganttHtml += `<div style="width:${daysInMo * cellW}px;text-align:center;font-size:11px;font-weight:600;color:var(--text);letter-spacing:.5px;border-left:1px solid var(--border);padding:2px 0">
@@ -5076,8 +5077,9 @@ function renderHolidayCalendar() {
   });
   ganttHtml += '</div>';
 
-  // Day number header
-  ganttHtml += `<div style="display:flex;margin-left:${labelW}px;margin-bottom:4px">`;
+  // Day number header (sticky placeholder)
+  ganttHtml += `<div style="display:flex;margin-bottom:4px">`;
+  ganttHtml += `<div style="width:${labelW}px;min-width:${labelW}px;position:sticky;left:0;z-index:3;background:var(--card)"></div>`;
   allDays.forEach(ds => {
     const d = new Date(ds + 'T12:00:00');
     const isWE = isWeekend(ds);
@@ -5094,8 +5096,9 @@ function renderHolidayCalendar() {
   // Employee rows
   employees.forEach(emp => {
     ganttHtml += `<div style="display:flex;align-items:center;margin-bottom:3px">`;
-    ganttHtml += `<div style="width:${labelW}px;padding-right:10px;font-weight:600;font-size:12px;
-      color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:var(--font-body)">
+    ganttHtml += `<div style="width:${labelW}px;min-width:${labelW}px;padding-right:10px;font-weight:600;font-size:12px;
+      color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:var(--font-body);
+      position:sticky;left:0;z-index:2;background:var(--card)">
       ${emp.name}
     </div>`;
 
