@@ -17529,6 +17529,19 @@ function renderDeadlineBadge(deadlineDate, status) {
 }
 
 // ── Render Quote List (status=quote/won/lost) ──
+// ── Quote list sort state ──
+let _quoteSort = { col: 'ref', dir: 'desc' }; // default: newest ref first
+
+function sortQuoteList(col) {
+  if (_quoteSort.col === col) {
+    _quoteSort.dir = _quoteSort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    _quoteSort.col = col;
+    _quoteSort.dir = col === 'value' ? 'desc' : 'asc';
+  }
+  renderQuoteList();
+}
+
 function renderQuoteList() {
   const container = document.getElementById('quoteListContainer');
   if (!container) return;
@@ -17550,6 +17563,50 @@ function renderQuoteList() {
     container.innerHTML = '<div class="empty-state" style="padding:24px"><div class="icon">📊</div>No quotes yet</div>';
     return;
   }
+
+  // ── Sort ──
+  const { col, dir } = _quoteSort;
+  const mult = dir === 'asc' ? 1 : -1;
+  list = list.slice().sort((a, b) => {
+    let av, bv;
+    if (col === 'ref') {
+      av = a.reference || ''; bv = b.reference || '';
+      return mult * av.localeCompare(bv);
+    } else if (col === 'project') {
+      av = (a.project_name || '').toLowerCase(); bv = (b.project_name || '').toLowerCase();
+      return mult * av.localeCompare(bv);
+    } else if (col === 'value') {
+      av = a.quote_value != null ? parseFloat(a.quote_value) : -1;
+      bv = b.quote_value != null ? parseFloat(b.quote_value) : -1;
+      return mult * (av - bv);
+    } else if (col === 'sent') {
+      av = a.sent_date ? String(a.sent_date).split('T')[0] : '';
+      bv = b.sent_date ? String(b.sent_date).split('T')[0] : '';
+      return mult * av.localeCompare(bv);
+    } else if (col === 'chasing') {
+      av = a.chasing_date ? String(a.chasing_date).split('T')[0] : '';
+      bv = b.chasing_date ? String(b.chasing_date).split('T')[0] : '';
+      return mult * av.localeCompare(bv);
+    } else if (col === 'status') {
+      const order = { quote: 0, won: 1, lost: 2, too_late: 3, not_interested: 4 };
+      av = order[a.status] ?? 9; bv = order[b.status] ?? 9;
+      return mult * (av - bv);
+    }
+    return 0;
+  });
+
+  // ── Update sort arrows ──
+  ['ref','project','value','sent','chasing','status'].forEach(c => {
+    const el = document.getElementById(`sort-arrow-${c}`);
+    if (!el) return;
+    if (c === col) {
+      el.textContent = dir === 'asc' ? '▲' : '▼';
+      el.classList.add('active');
+    } else {
+      el.textContent = '▲';
+      el.classList.remove('active');
+    }
+  });
 
   const onClickFn = CURRENT_PAGE === 'quotes' ? 'openQuoteDetail' : 'openTenderDetail';
 

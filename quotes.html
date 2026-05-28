@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Quotations</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260528a">
+<link rel="stylesheet" href="bama.css?v=20260528b">
 </head>
 <body>
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
@@ -96,12 +96,12 @@
             </select>
           </div>
           <div class="quote-row quote-header">
-            <div class="quote-col-ref">REF</div>
-            <div class="quote-col-project">PROJECT / CLIENT</div>
-            <div class="quote-col-value">VALUE</div>
-            <div class="quote-col-date">SENT</div>
-            <div class="quote-col-date">CHASING</div>
-            <div class="quote-col-status">STATUS</div>
+            <div class="quote-col-ref quote-col-sortable" onclick="sortQuoteList('ref')">REF <span class="sort-arrow" id="sort-arrow-ref">▲</span></div>
+            <div class="quote-col-project quote-col-sortable" onclick="sortQuoteList('project')">PROJECT / CLIENT <span class="sort-arrow" id="sort-arrow-project">▲</span></div>
+            <div class="quote-col-value quote-col-sortable" onclick="sortQuoteList('value')">VALUE <span class="sort-arrow" id="sort-arrow-value">▲</span></div>
+            <div class="quote-col-date quote-col-sortable" onclick="sortQuoteList('sent')">SENT <span class="sort-arrow" id="sort-arrow-sent">▲</span></div>
+            <div class="quote-col-date quote-col-sortable" onclick="sortQuoteList('chasing')">CHASING <span class="sort-arrow" id="sort-arrow-chasing">▲</span></div>
+            <div class="quote-col-status quote-col-sortable" onclick="sortQuoteList('status')">STATUS <span class="sort-arrow" id="sort-arrow-status">▲</span></div>
           </div>
         </div>
         <div id="quoteListContainer">
@@ -321,7 +321,8 @@
   /* ── Frozen layout ── */
   html, body { overflow: hidden; height: 100%; }
   .mgr-layout { height: calc(100vh - 53px); }
-  .mgr-content { overflow-y: auto; height: 100%; padding-top: 0 !important; }
+  .mgr-content { overflow-y: auto; height: 100%; padding-top: 0 !important; scrollbar-width: none; }
+  .mgr-content::-webkit-scrollbar { display: none; }
   .mgr-header {
     position: sticky; top: 0; z-index: 10;
     background: #0e0e0e;
@@ -376,6 +377,13 @@
     background: var(--card);
   }
   .quote-header:hover { background: var(--card); }
+  .quote-col-sortable {
+    cursor: pointer; user-select: none;
+    display: flex; align-items: center; gap: 4px;
+  }
+  .quote-col-sortable:hover { color: var(--text); }
+  .sort-arrow { font-size: 9px; opacity: 0.35; transition: opacity .15s; }
+  .sort-arrow.active { opacity: 1; color: var(--accent); }
   /* ── Quote status badge colours ── */
   .tag-status-quote        { background:rgba(62,139,207,.15);  color:#5ba8e8;  border:1px solid rgba(62,139,207,.3); }
   .tag-status-won          { background:rgba(62,207,142,.15);  color:var(--green);  border:1px solid rgba(62,207,142,.3); }
@@ -598,6 +606,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260528a"></script>
+<script src="shared.js?v=20260528b"></script>
 </body>
 </html>
