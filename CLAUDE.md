@@ -634,6 +634,19 @@ none of this is built yet.
   gross for review before saving). Essentially a supplier-first entry
   point for the supplier invoice workflow that already exists in the
   Invoice Tracker.
+- **Supplier detail: contacts + address enrichment** — the supplier detail
+  header should show all contacts for that supplier with a `notes` field
+  indicating department/role (e.g. "Accounts", "Sales", "Account Manager").
+  `Suppliers` has a single `contact_name` field today; this needs expanding
+  to a `SupplierContacts` table (supplier_id, contact_name, contact_email,
+  contact_phone, notes/department, is_primary) similar to `ClientContacts`.
+  The address (address_line1/2, city, county, postcode) should also be
+  surfaced in the detail header. If those fields are blank, the first
+  successful invoice OCR parse for that supplier should auto-fill them
+  (Claude already extracts supplier address from invoices during the dropzone
+  flow — save it back via `PUT /api/suppliers/:id` if the supplier currently
+  has no address). Both the contacts and the address enrichment from invoice
+  parsing should be added together as a single feature.
 - **Instant PO** — "I'm on the phone to a supplier and need a PO number
   RIGHT NOW" flow. Button on the PO Tracker (and ideally a kiosk
   shortcut). Asks only for supplier name (autocomplete from `Suppliers`,
