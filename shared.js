@@ -28368,7 +28368,7 @@ function searchPoReassignProjects(q) {
   dd.style.display = '';
   dd.innerHTML = matches.map(m =>
     `<div style="padding:7px 10px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)"
-          onmousedown="selectPoReassignProject(${m.id},${JSON.stringify(m.project_number)},${JSON.stringify(m.project_name || '')})"
+          onmousedown="selectPoReassignProject(${m.id},${JSON.stringify(m.project_number).replace(/"/g,'&quot;')},${JSON.stringify(m.project_name || '').replace(/"/g,'&quot;')})"
           onmouseover="this.style.background='var(--bg-light)'" onmouseout="this.style.background=''">
        <span style="font-family:var(--font-mono);color:var(--accent)">${escapeHtml(m.project_number)}</span>
        <span style="color:var(--muted);margin-left:8px">${escapeHtml(m.project_name || '')}</span>
