@@ -7787,9 +7787,14 @@ function _renderSupplierDetailHeader(supplier) {
     supplier.email        ? `<span>&#9993; ${escapeHtml(supplier.email)}</span>` : '',
   ].filter(Boolean).join(' &nbsp;·&nbsp; ');
 
+  const termLabel = _fmtPaymentTerms(supplier);
+  const termsBadge = termLabel
+    ? `<span style="display:inline-block;margin-left:10px;padding:2px 8px;border-radius:6px;background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.3);color:var(--accent);font-size:11px;font-family:var(--font-mono)">⏱ ${escapeHtml(termLabel)}</span>`
+    : `<span style="display:inline-block;margin-left:10px;padding:2px 8px;border-radius:6px;background:rgba(255,255,255,.04);border:1px solid var(--border);color:var(--subtle);font-size:11px">No terms set</span>`;
+
   document.getElementById('supplierDetailTitle').textContent = supplier.supplier_name;
   document.getElementById('supplierDetailMeta').innerHTML =
-    `<span style="color:var(--accent);font-size:12px">${escapeHtml(svcNames)}</span>` +
+    `<span style="color:var(--accent);font-size:12px">${escapeHtml(svcNames)}</span>${termsBadge}` +
     (info ? `<br><span style="font-size:12px;color:var(--muted);margin-top:4px;display:block">${info}</span>` : '');
 }
 
@@ -7966,8 +7971,92 @@ function closeSupplierDetail() {
   _supDzState = 'idle'; _supDzFile = null; _supDzParsed = null; _supDzMatchedPoId = null;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SUPPLIER-FIRST INVOICE ATTACH — dropzone embedded in the supplier detail
+// ── Supplier Payment Terms Modal ──────────────────────────────────────────────
+
+function _fmtPaymentTerms(supplier) {
+  if (!supplier || !supplier.payment_term_type || supplier.payment_term_days == null) return null;
+  const days = supplier.payment_term_days;
+  const labels = {
+    days_eom:              `${days} days EOM`,
+    days_from_invoice:     `${days} days from invoice`,
+    days_following_month:  `${days} days following month`,
+  };
+  return labels[supplier.payment_term_type] || null;
+}
+
+function openSupplierTermsModal() {
+  const supplier = (_suppliers || []).find(s => s.id === _supplierDetailId);
+  if (!supplier) return;
+
+  const nameEl = document.getElementById('supplierTermsSupplierName');
+  if (nameEl) nameEl.textContent = supplier.supplier_name;
+
+  // Pre-select existing terms
+  document.querySelectorAll('input[name="termType"]').forEach(r => r.checked = false);
+  if (supplier.payment_term_type) {
+    const radio = document.querySelector(`input[name="termType"][value="${supplier.payment_term_type}"]`);
+    if (radio) radio.checked = true;
+  }
+  const daysEl = document.getElementById('termDaysInput');
+  if (daysEl) daysEl.value = supplier.payment_term_days != null ? supplier.payment_term_days : '';
+
+  _highlightSelectedTermOption();
+
+  // Highlight on change
+  document.querySelectorAll('input[name="termType"]').forEach(r => {
+    r.onchange = _highlightSelectedTermOption;
+  });
+
+  document.getElementById('supplierTermsModal').classList.add('active');
+}
+
+function _highlightSelectedTermOption() {
+  ['termOptEom', 'termOptInvoice', 'termOptFollowing'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const radio = el.querySelector('input[type="radio"]');
+    el.style.borderColor = radio && radio.checked ? 'var(--accent)' : 'var(--border)';
+    el.style.background   = radio && radio.checked ? 'rgba(var(--accent-rgb, 59,130,246),.08)' : '';
+  });
+}
+
+function closeSupplierTermsModal() {
+  document.getElementById('supplierTermsModal').classList.remove('active');
+}
+
+async function saveSupplierTerms() {
+  const supplierId = _supplierDetailId;
+  if (!supplierId) return;
+
+  const selected = document.querySelector('input[name="termType"]:checked');
+  if (!selected) { toast('Please select a payment term type', 'warning'); return; }
+
+  const days = parseInt(document.getElementById('termDaysInput').value);
+  if (isNaN(days) || days < 0) { toast('Please enter a valid number of days', 'warning'); return; }
+
+  try {
+    const updated = await api.put(`/api/suppliers/${supplierId}`, {
+      payment_term_type: selected.value,
+      payment_term_days: days,
+    });
+
+    // Patch local cache
+    const idx = (_suppliers || []).findIndex(s => s.id === supplierId);
+    if (idx !== -1) {
+      _suppliers[idx].payment_term_type = selected.value;
+      _suppliers[idx].payment_term_days = days;
+    }
+
+    closeSupplierTermsModal();
+    const supplier = (_suppliers || []).find(s => s.id === supplierId);
+    if (supplier) _renderSupplierDetailHeader(supplier);
+    toast('Payment terms saved', 'success');
+  } catch (e) {
+    toast('Failed to save payment terms', 'error');
+  }
+}
+
+
 // panel. Drop or pick a PDF/image → Claude vision OCR extracts the supplier's
 // PO reference + monetary totals → auto-match against this supplier's POs
 // (any status, no invoice attached yet) → user reviews → save uploads to

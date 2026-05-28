@@ -404,6 +404,8 @@ app.http('suppliers-update', {
             if (body.notes !== undefined) { fields.push('notes = @notes'); params.notes = body.notes; }
             if (body.is_active !== undefined) { fields.push('is_active = @isActive'); params.isActive = body.is_active ? 1 : 0; }
             if (body.parse_source_text !== undefined) { fields.push('parse_source_text = @parseSourceText'); params.parseSourceText = body.parse_source_text || null; }
+            if (body.payment_term_type !== undefined) { fields.push('payment_term_type = @paymentTermType'); params.paymentTermType = body.payment_term_type || null; }
+            if (body.payment_term_days !== undefined) { fields.push('payment_term_days = @paymentTermDays'); params.paymentTermDays = body.payment_term_days != null ? parseInt(body.payment_term_days) : null; }
 
             if (fields.length > 0) {
                 fields.push('updated_at = GETUTCDATE()');

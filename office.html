@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Office</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260528a">
+<link rel="stylesheet" href="bama.css?v=20260528b">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 </head>
 <body>
@@ -1049,6 +1049,7 @@
         <div id="supplierDetailMeta"></div>
       </div>
       <div style="display:flex;gap:8px;flex-shrink:0">
+        <button class="btn btn-ghost" style="font-size:12px;padding:6px 14px" onclick="openSupplierTermsModal()" id="supplierTermsBtn">⚙ Terms</button>
         <button class="btn btn-primary" style="font-size:12px;padding:6px 14px" onclick="toggleSupplierDropzone()" id="supplierDropzoneToggleBtn">📎 Attach Invoice</button>
         <button class="btn btn-ghost" style="font-size:12px;padding:6px 14px" onclick="closeSupplierDetail()">Close</button>
       </div>
@@ -1066,7 +1067,52 @@
   </div>
 </div>
 
-<div class="modal-overlay" id="supplierPoTileModal" style="align-items:flex-start;padding:20px;overflow-y:auto">
+<div class="modal-overlay" id="supplierTermsModal">
+  <div class="modal" style="width:400px;max-width:95vw">
+    <div class="modal-title" style="margin-bottom:6px">Payment Terms</div>
+    <div id="supplierTermsSupplierName" style="font-size:13px;color:var(--muted);margin-bottom:20px"></div>
+
+    <div style="display:flex;flex-direction:column;gap:14px;margin-bottom:24px">
+
+      <label style="display:flex;align-items:center;gap:12px;cursor:pointer;padding:12px 14px;border:1px solid var(--border);border-radius:8px;transition:border-color .15s" id="termOptEom">
+        <input type="radio" name="termType" value="days_eom" style="accent-color:var(--accent);width:16px;height:16px;flex-shrink:0">
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:600">Days EOM</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">Payment due X days after end of invoice month</div>
+        </div>
+      </label>
+
+      <label style="display:flex;align-items:center;gap:12px;cursor:pointer;padding:12px 14px;border:1px solid var(--border);border-radius:8px;transition:border-color .15s" id="termOptInvoice">
+        <input type="radio" name="termType" value="days_from_invoice" style="accent-color:var(--accent);width:16px;height:16px;flex-shrink:0">
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:600">Days from Invoice</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">Payment due X days from invoice date</div>
+        </div>
+      </label>
+
+      <label style="display:flex;align-items:center;gap:12px;cursor:pointer;padding:12px 14px;border:1px solid var(--border);border-radius:8px;transition:border-color .15s" id="termOptFollowing">
+        <input type="radio" name="termType" value="days_following_month" style="accent-color:var(--accent);width:16px;height:16px;flex-shrink:0">
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:600">Days Following Month</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">Payment due X days into the month following the invoice</div>
+        </div>
+      </label>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
+      <label style="font-size:13px;color:var(--muted);white-space:nowrap">Number of days</label>
+      <input type="number" id="termDaysInput" min="0" max="365" placeholder="e.g. 30"
+        style="width:100px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:14px;font-family:var(--font-mono)">
+    </div>
+
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-ghost" onclick="closeSupplierTermsModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveSupplierTerms()">Save Terms</button>
+    </div>
+  </div>
+</div>
+
+ style="align-items:flex-start;padding:20px;overflow-y:auto">
   <div class="modal" style="width:760px;max-width:96vw;padding:0;overflow:hidden">
     <div style="padding:20px 24px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
       <div>
@@ -1079,6 +1125,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260528a"></script>
+<script src="shared.js?v=20260528b"></script>
 </body>
 </html>
