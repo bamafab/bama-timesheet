@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Office</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260528h">
+<link rel="stylesheet" href="bama.css?v=20260528i">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 </head>
 <body>
@@ -94,6 +94,8 @@
           <div class="mgr-title">OFFICE DASHBOARD</div>
           <div style="color:var(--muted);font-size:13px">BAMA Fabrication · Office View</div>
         </div>
+        <!-- Global invoice dropzone — always ready -->
+        <div id="globalInvDz" style="flex:1;max-width:420px;margin:0 24px"></div>
         <div style="display:flex;gap:10px;align-items:center">
           <button class="btn btn-ghost" onclick="goHome()">Exit</button>
         </div>
@@ -1119,6 +1121,16 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="globalInvModal">
+  <div class="modal" style="width:560px;max-width:96vw;max-height:90vh;overflow-y:auto">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <div class="modal-title" style="margin-bottom:0">Match Invoice</div>
+      <div id="globalInvProgress" style="font-size:12px;color:var(--muted);font-family:var(--font-mono)"></div>
+    </div>
+    <div id="globalInvModalBody"></div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="supplierPoTileModal" style="align-items:flex-start;padding:20px;overflow-y:auto">
   <div class="modal" style="width:760px;max-width:96vw;padding:0;overflow:hidden">
     <div style="padding:20px 24px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
@@ -1132,6 +1144,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260528h"></script>
+<script src="shared.js?v=20260528i"></script>
 </body>
 </html>

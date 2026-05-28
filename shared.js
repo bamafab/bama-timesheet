@@ -1893,6 +1893,8 @@ async function checkOfficePin() {
   sessionStorage.removeItem('bama_pending_tab');
   switchTab(_pendingTab || 'dashboard');
   renderManagerView();
+  // Initialise global invoice dropzone in header
+  initGlobalInvDz();
 }
 
 // Collapsible sidebar group toggle
@@ -33326,4 +33328,342 @@ Return ONLY the JSON array starting with [ and ending with ].`
 }
 
 // previewRecTxnDoc and openRecTxnEdit are fully implemented above
+
+
+// ═════════════════════════════════════════════════════════════════════════
+// GLOBAL INVOICE DROPZONE — office dashboard header
+// Drop any supplier invoice; system parses supplier name + PO ref,
+// fuzzy-matches against Suppliers, loads that supplier's open POs,
+// then runs the same review-and-save flow as the per-supplier dropzone.
+// ═════════════════════════════════════════════════════════════════════════
+
+let _gInvQueue    = [];   // File[]
+let _gInvQueueIdx = 0;
+let _gInvState    = 'idle'; // idle | parsing | review | saving
+let _gInvFile     = null;
+let _gInvParsed   = null;
+let _gInvSupplier = null;   // matched Suppliers row
+let _gInvPos      = [];     // open POs for matched supplier
+let _gInvMatchedPoId = null;
+
+function initGlobalInvDz() {
+  const box = document.getElementById('globalInvDz');
+  if (!box) return;
+  box.innerHTML = `
+    <div id="gInvDrop"
+         style="border:2px dashed var(--border);border-radius:10px;padding:10px 20px;
+                display:flex;align-items:center;gap:14px;cursor:pointer;
+                transition:border-color .15s,background .15s;background:var(--surface)"
+         onclick="document.getElementById('gInvFileInput').click()"
+         ondragover="event.preventDefault();this.style.borderColor='var(--accent)';this.style.background='rgba(255,255,255,.03)'"
+         ondragleave="this.style.borderColor='var(--border)';this.style.background='var(--surface)'"
+         ondrop="event.preventDefault();this.style.borderColor='var(--border)';this.style.background='var(--surface)';_gInvOnFiles(event.dataTransfer.files)">
+      <div style="font-size:22px;flex-shrink:0">📥</div>
+      <div>
+        <div style="font-size:13px;font-weight:600;color:var(--text)">Drop invoices to match</div>
+        <div style="font-size:11px;color:var(--subtle)">Any supplier · PDF, PNG or JPG · multiple OK</div>
+      </div>
+      <input type="file" id="gInvFileInput" accept="application/pdf,image/*" multiple
+             style="display:none" onchange="_gInvOnFiles(this.files)">
+    </div>`;
+}
+
+async function _gInvOnFiles(files) {
+  if (!files || !files.length) return;
+  _gInvQueue    = Array.from(files);
+  _gInvQueueIdx = 0;
+  await _gInvProcessNext();
+}
+
+async function _gInvProcessNext() {
+  if (_gInvQueueIdx >= _gInvQueue.length) {
+    _gInvQueue = []; _gInvQueueIdx = 0;
+    _gInvState = 'idle'; _gInvFile = null; _gInvParsed = null;
+    _gInvSupplier = null; _gInvPos = []; _gInvMatchedPoId = null;
+    document.getElementById('globalInvModal')?.classList.remove('active');
+    return;
+  }
+  _gInvFile  = _gInvQueue[_gInvQueueIdx];
+  _gInvState = 'parsing';
+  _gInvParsed = null; _gInvSupplier = null; _gInvPos = []; _gInvMatchedPoId = null;
+  _gInvOpenModal();
+  _gInvRender();
+
+  try {
+    const dataUri = await _fileToDataUri(_gInvFile);
+    const isImg   = _gInvFile.type.startsWith('image/');
+    const result  = await callClaude({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 800,
+      messages: [{ role: 'user', content: [
+        isImg
+          ? { type: 'image',    source: { type: 'base64', media_type: _gInvFile.type, data: dataUri.split(',')[1] } }
+          : { type: 'document', source: { type: 'base64', media_type: _gInvFile.type, data: dataUri.split(',')[1] } },
+        { type: 'text', text: `Extract from this UK supplier invoice. Return ONLY JSON, no markdown:
+{
+  "supplier_name": "the supplier/vendor company name as printed on the invoice",
+  "invoice_ref": "supplier's invoice number",
+  "invoice_date": "YYYY-MM-DD",
+  "net_amount": 0,
+  "vat_amount": 0,
+  "gross_amount": 0,
+  "po_reference": "BAMA's PO reference if shown — looks like P260501 (P + 6 digits)"
+}
+Set any field to null if not clearly shown. The PO reference is the customer order number printed under "Your Order", "Order Ref", "PO Number" or similar.` }
+      ]}]
+    });
+    const text  = (result.content?.find(b => b.type === 'text')?.text || '').trim();
+    const start = text.indexOf('{'), end = text.lastIndexOf('}');
+    _gInvParsed = JSON.parse(text.slice(start, end + 1));
+
+    // Fuzzy-match supplier name against loaded suppliers
+    _gInvSupplier = _gInvFuzzyMatchSupplier(_gInvParsed.supplier_name || '');
+
+    // Load open POs for matched supplier
+    if (_gInvSupplier) {
+      try {
+        const allPos = await api.get(`/api/purchase-orders?supplier_id=${_gInvSupplier.id}`);
+        _gInvPos = (allPos || []).filter(p => !p.supplier_invoice_received_at);
+      } catch { _gInvPos = []; }
+    }
+
+    // Auto-match PO
+    _gInvMatchedPoId = _gInvMatchPo();
+    _gInvState = 'review';
+  } catch (err) {
+    console.error('Global invoice OCR failed', err);
+    _gInvParsed = { _error: err.message || 'Could not read invoice' };
+    _gInvState  = 'review';
+  }
+  _gInvRender();
+}
+
+function _gInvFuzzyMatchSupplier(name) {
+  if (!name || !_suppliers?.length) return null;
+  const n = name.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
+  if (!n) return null;
+  // Score each supplier: count of words in common
+  let best = null, bestScore = 0;
+  const qWords = n.split(/\s+/).filter(w => w.length > 2);
+  for (const s of _suppliers) {
+    const sn = (s.supplier_name || '').toLowerCase().replace(/[^a-z0-9 ]/g, '');
+    const snWords = sn.split(/\s+/);
+    const score = qWords.filter(w => snWords.some(sw => sw.startsWith(w) || w.startsWith(sw))).length;
+    if (score > bestScore) { bestScore = score; best = s; }
+  }
+  return bestScore >= 1 ? best : null;
+}
+
+function _gInvMatchPo() {
+  if (!_gInvPos.length || !_gInvParsed) return null;
+  // 1. PO ref exact match
+  const ref = (_gInvParsed.po_reference || '').replace(/\s+/g, '').toUpperCase();
+  if (ref) {
+    const hit = _gInvPos.find(p => (p.reference || '').replace(/\s+/g, '').toUpperCase() === ref);
+    if (hit) return hit.id;
+  }
+  // 2. Net value match within £1
+  const net = Number(_gInvParsed.net_amount);
+  if (Number.isFinite(net) && net > 0) {
+    const close = _gInvPos
+      .map(p => ({ p, diff: Math.abs(_poNet(p) - net) }))
+      .filter(x => x.diff <= 1)
+      .sort((a, b) => a.diff - b.diff);
+    if (close.length === 1) return close[0].p.id;
+  }
+  return null;
+}
+
+function _gInvOpenModal() {
+  document.getElementById('globalInvModal')?.classList.add('active');
+}
+
+function _gInvRender() {
+  const prog = document.getElementById('globalInvProgress');
+  const body = document.getElementById('globalInvModalBody');
+  if (!body) return;
+
+  const qTotal = _gInvQueue.length;
+  const qIdx   = _gInvQueueIdx + 1;
+  if (prog) prog.textContent = qTotal > 1 ? `${qIdx} of ${qTotal}` : '';
+
+  if (_gInvState === 'parsing') {
+    body.innerHTML = `
+      <div style="display:flex;align-items:center;gap:14px;padding:20px 0">
+        <div class="spinner" style="width:20px;height:20px;flex-shrink:0"></div>
+        <div>
+          <div style="font-size:14px;font-weight:600">Reading invoice…</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:3px">${escapeHtml(_gInvFile?.name || '')}</div>
+        </div>
+      </div>`;
+    return;
+  }
+
+  if (_gInvState === 'saving') {
+    body.innerHTML = `
+      <div style="display:flex;align-items:center;gap:14px;padding:20px 0">
+        <div class="spinner" style="width:20px;height:20px;flex-shrink:0"></div>
+        <div style="font-size:14px;font-weight:600">Uploading and saving…</div>
+      </div>`;
+    return;
+  }
+
+  // review state
+  const parsed  = _gInvParsed || {};
+  const allSuppliers = (_suppliers || []).filter(s => s.is_active !== false);
+
+  // Supplier match banner
+  let supplierBanner = '';
+  if (parsed._error) {
+    supplierBanner = `<div style="background:rgba(208,2,27,.1);border:1px solid var(--red);color:var(--red);padding:8px 12px;border-radius:6px;font-size:12px;margin-bottom:12px">⚠ Could not read file — fill in below manually. (${escapeHtml(parsed._error)})</div>`;
+  } else if (_gInvSupplier) {
+    supplierBanner = `<div style="background:rgba(62,207,142,.1);border:1px solid var(--green);color:var(--green);padding:8px 12px;border-radius:6px;font-size:12px;margin-bottom:12px">✓ Supplier matched: <b>${escapeHtml(_gInvSupplier.supplier_name)}</b>${parsed.supplier_name ? ` (parsed: "${escapeHtml(parsed.supplier_name)}")` : ''}</div>`;
+  } else {
+    supplierBanner = `<div style="background:rgba(245,158,11,.1);border:1px solid var(--amber);color:var(--amber);padding:8px 12px;border-radius:6px;font-size:12px;margin-bottom:12px">⚠ Supplier "${escapeHtml(parsed.supplier_name || '?')}" not matched — pick one below.</div>`;
+  }
+
+  // Supplier dropdown
+  const suppOpts = ['<option value="">— select supplier —</option>']
+    .concat(allSuppliers.map(s =>
+      `<option value="${s.id}"${_gInvSupplier?.id === s.id ? ' selected' : ''}>${escapeHtml(s.supplier_name)}</option>`
+    )).join('');
+
+  // PO dropdown
+  const matched = _gInvMatchedPoId ? _gInvPos.find(p => p.id === _gInvMatchedPoId) : null;
+  const poMatchInfo = matched ? (() => {
+    const poN  = _poNet(matched);
+    const invN = Number(parsed.net_amount);
+    const hasN = Number.isFinite(invN) && invN > 0;
+    const ok   = hasN && Math.abs(poN - invN) <= 1;
+    const warn = hasN && !ok;
+    const valPart = hasN
+      ? ` · PO: £${poN.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})} net / Invoice: £${invN.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})} net ` + (ok ? '✓' : '⚠ mismatch')
+      : '';
+    const col = warn ? 'var(--amber)' : 'var(--green)';
+    const bg  = warn ? 'rgba(245,158,11,.1)' : 'rgba(62,207,142,.1)';
+    return `<div style="background:${bg};border:1px solid ${col};color:${col};padding:6px 10px;border-radius:6px;font-size:11px;margin-top:6px">✓ PO matched: <b>${escapeHtml(matched.reference)}</b>${valPart}</div>`;
+  })() : '';
+
+  const poOpts = ['<option value="">— pick a PO —</option>']
+    .concat((_gInvPos).map(p => {
+      const project = p.project_number || p.cost_centre || '—';
+      return `<option value="${p.id}"${p.id === _gInvMatchedPoId ? ' selected' : ''}>${escapeHtml(p.reference || '—')} · £${_poNet(p).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})} net · ${escapeHtml(project)} · ${escapeHtml((p.description||'').slice(0,35))}</option>`;
+    })).join('');
+
+  const skipLabel = qTotal > 1 ? 'Skip' : 'Cancel';
+
+  body.innerHTML = `
+    ${supplierBanner}
+    <div style="margin-bottom:12px">
+      <label style="display:block;color:var(--muted);margin-bottom:4px;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Supplier</label>
+      <select id="gInvSupplierSel" class="field-input" style="width:100%;font-size:13px"
+              onchange="_gInvOnSupplierChange(this.value)">${suppOpts}</select>
+    </div>
+    <div style="margin-bottom:12px">
+      <label style="display:block;color:var(--muted);margin-bottom:4px;font-size:11px;text-transform:uppercase;letter-spacing:.05em">PO to attach to</label>
+      <select id="gInvPoSel" class="field-input" style="width:100%;font-size:13px">${poOpts}</select>
+      ${poMatchInfo}
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+      <div>
+        <label style="display:block;color:var(--muted);margin-bottom:4px;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Invoice ref</label>
+        <input id="gInvRef" class="field-input" type="text" value="${escapeHtml(parsed.invoice_ref||'')}" style="width:100%">
+      </div>
+      <div>
+        <label style="display:block;color:var(--muted);margin-bottom:4px;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Invoice date</label>
+        <input id="gInvDate" class="field-input" type="date" value="${escapeHtml(parsed.invoice_date||new Date().toISOString().slice(0,10))}" style="width:100%">
+      </div>
+      <div>
+        <label style="display:block;color:var(--muted);margin-bottom:4px;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Net £</label>
+        <input id="gInvNet" class="field-input" type="number" step="0.01" value="${parsed.net_amount??''}" style="width:100%">
+      </div>
+      <div>
+        <label style="display:block;color:var(--muted);margin-bottom:4px;font-size:11px;text-transform:uppercase;letter-spacing:.05em">VAT £</label>
+        <input id="gInvVat" class="field-input" type="number" step="0.01" value="${parsed.vat_amount??''}" style="width:100%">
+      </div>
+      <div style="grid-column:1/-1">
+        <label style="display:block;color:var(--muted);margin-bottom:4px;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Gross £ <span style="color:var(--red)">*</span></label>
+        <input id="gInvGross" class="field-input" type="number" step="0.01" value="${parsed.gross_amount??''}" style="width:100%">
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+      <div style="font-size:11px;color:var(--subtle);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📄 ${escapeHtml(_gInvFile?.name||'')}</div>
+      <div style="display:flex;gap:8px;flex-shrink:0">
+        <button class="btn btn-ghost" style="font-size:12px;padding:6px 14px" onclick="_gInvSkip()">${skipLabel}</button>
+        <button class="btn btn-primary" style="font-size:12px;padding:6px 14px" onclick="_gInvSave()">Save Invoice</button>
+      </div>
+    </div>`;
+}
+
+async function _gInvOnSupplierChange(supplierId) {
+  const id = parseInt(supplierId);
+  _gInvSupplier = (_suppliers || []).find(s => s.id === id) || null;
+  _gInvMatchedPoId = null;
+  if (_gInvSupplier) {
+    try {
+      const allPos = await api.get(`/api/purchase-orders?supplier_id=${id}`);
+      _gInvPos = (allPos || []).filter(p => !p.supplier_invoice_received_at);
+    } catch { _gInvPos = []; }
+    _gInvMatchedPoId = _gInvMatchPo();
+  } else {
+    _gInvPos = [];
+  }
+  _gInvRender();
+}
+
+function _gInvSkip() {
+  _gInvQueueIdx++;
+  _gInvProcessNext();
+}
+
+async function _gInvSave() {
+  const supplierId = parseInt(document.getElementById('gInvSupplierSel')?.value);
+  const poId       = parseInt(document.getElementById('gInvPoSel')?.value);
+  const ref        = document.getElementById('gInvRef')?.value.trim();
+  const date       = document.getElementById('gInvDate')?.value;
+  const net        = Number(document.getElementById('gInvNet')?.value || 0);
+  const vat        = Number(document.getElementById('gInvVat')?.value || 0);
+  const gross      = Number(document.getElementById('gInvGross')?.value || 0);
+
+  if (!supplierId) { toast('Select a supplier', 'error'); return; }
+  if (!poId)       { toast('Pick a PO to attach this invoice to', 'error'); return; }
+  if (!gross)      { toast('Gross amount is required', 'error'); return; }
+
+  const supplier = (_suppliers || []).find(s => s.id === supplierId);
+  const po       = _gInvPos.find(p => p.id === poId);
+  if (!po) { toast('PO not found', 'error'); return; }
+
+  _gInvState = 'saving';
+  _gInvRender();
+  setLoading(true);
+  try {
+    const folder    = await _findOrCreateSupplierInvoiceFolder(date);
+    const stamp     = (supplier?.supplier_name || 'supplier').replace(/\s+/g, '_').slice(0, 30);
+    const ext       = (_gInvFile.name.split('.').pop() || 'pdf').toLowerCase();
+    const fileName  = sanitizeSpFilename(`${date}_${stamp}_${ref || 'no-ref'}.${ext}`);
+    const driveItem = await uploadFileToFolder(folder.id, fileName, _gInvFile, _gInvFile.type || 'application/octet-stream');
+
+    await api.put(`/api/purchase-orders/${poId}/supplier-invoice`, {
+      supplier_invoice_ref:   ref || null,
+      supplier_invoice_date:  date || null,
+      supplier_invoice_net:   net || null,
+      supplier_invoice_vat:   vat || null,
+      supplier_invoice_gross: gross,
+      sharepoint_id:          driveItem.id,
+      sharepoint_url:         driveItem.webUrl,
+      filename:               fileName,
+    });
+
+    toast(`Invoice attached to ${po.reference} ✓`, 'success');
+    _gInvQueueIdx++;
+    await _gInvProcessNext();
+  } catch (err) {
+    console.error('Global invoice save failed', err);
+    toast('Failed to save: ' + (err.message || 'unknown error'), 'error');
+    _gInvState = 'review';
+    _gInvRender();
+  } finally {
+    setLoading(false);
+  }
+}
 
