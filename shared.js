@@ -17948,7 +17948,7 @@ function _renderNtContactPicker(contacts) {
   const el = document.getElementById('ntContactPicker');
   if (!el) return;
   if (!contacts || !contacts.length) { el.style.display = 'none'; return; }
-  el.style.display = '';
+  el.style.display = 'flex';
   el.innerHTML = contacts.map(c => `
     <button type="button" class="nt-contact-chip" onclick="selectNtContact(${c.id})"
       title="${c.contact_email || ''}\n${c.contact_phone || ''}">
