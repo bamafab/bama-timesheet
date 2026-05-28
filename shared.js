@@ -21495,7 +21495,7 @@ function renderProjectPoList(pos) {
 
   const active = pos.filter(p => p.status !== 'Cancelled');
   const totalGross = active.reduce((s, p) => s + (Number(p.total_value) || 0), 0);
-  const totalNett  = active.reduce((s, p) => s + (Number(p.total_value) - Number(p.vat_amount || 0) || 0), 0);
+  const totalNett  = active.reduce((s, p) => s + (_poNet(p) || 0), 0);
 
   if (totalEl) {
     totalEl.textContent = active.length
@@ -23314,8 +23314,14 @@ function populateBabcockValidationFields(header, missingFields = []) {
 
 // Shared 2dp rounding helper for all Babcock financial calculations
 const _r2 = v => Math.round(v * 100) / 100;
-// Net value of a PO row (total_value is gross; subtract vat_amount)
-const _poNet = p => p.total_value != null ? Number(p.total_value) - Number(p.vat_amount || 0) : 0;
+// Net value of a PO row (total_value is gross; subtract vat_amount, or derive from vat_rate)
+const _poNet = p => {
+  if (p.total_value == null) return 0;
+  const gross = Number(p.total_value);
+  if (p.vat_amount != null && Number(p.vat_amount) > 0) return Math.round((gross - Number(p.vat_amount)) * 100) / 100;
+  if (p.vat_rate  != null && Number(p.vat_rate)  > 0) return Math.round((gross / (1 + Number(p.vat_rate) / 100)) * 100) / 100;
+  return gross;
+};
 // Shared GBP formatter for Babcock tracker (replaces 3 local copies)
 const _fmtGBP = v => (v === null || v === undefined || v === '') ? '—'
   : `£${Number(v).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -27461,7 +27467,7 @@ function renderPoTracker() {
          </div>`;
     const orderDate    = p.created_at    ? p.created_at.slice(0,10)    : '—';
     const deliveryDate = p.delivery_date ? p.delivery_date.slice(0,10) : '<span style="color:var(--subtle)">—</span>';
-    const nett  = (p.total_value != null) ? Number(p.total_value) - Number(p.vat_amount || 0) : null;
+    const nett  = (p.total_value != null) ? _poNet(p) : null;
     const gross = (p.total_value != null) ? Number(p.total_value) : null;
     const moneyCell = gross != null
       ? `<div style="font-family:var(--font-mono);font-size:13px">${fmtMoneyFull(gross)}</div>

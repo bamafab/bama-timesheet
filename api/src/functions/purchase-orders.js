@@ -222,7 +222,7 @@ app.http('purchase-orders-list', {
 
             const sqlText =
                 `SELECT po.id, po.reference, po.supplier_id, po.project_id, po.cost_centre,
-                        po.total_value, po.description, po.status,
+                        po.total_value, po.vat_rate, po.vat_amount, po.description, po.status,
                         po.job_number, po.delivery_date, po.delivery_address,
                         po.delivery_charge, po.collection_charge,
                         po.approved_at, po.approved_by, po.sent_at, po.sent_by,
