@@ -7916,7 +7916,8 @@ function _renderPoDetailRows(po) {
 
   // Invoice info if present
   if (po.supplier_invoice_received_at) {
-    const invUrl = po.sharepoint_url || null;
+    const invAtt = (po.attachments || []).find(a => a.kind === 'supplier_invoice');
+    const invUrl = invAtt?.sharepoint_file_url || null;
     const invLinkHtml = invUrl
       ? ` &nbsp;<a href="${escapeHtml(invUrl)}" target="_blank" style="color:var(--accent);font-size:12px;text-decoration:none" title="Open invoice in SharePoint">📄 View invoice</a>`
       : '';
@@ -28140,8 +28141,10 @@ function renderPoDetail(p) {
       ${wfRow(!!p.delivery_received_at,
         `Delivery confirmed · ${(p.delivery_received_at||'').slice(0,10)}`,
         'Awaiting delivery', 'Confirm delivery', 'delivery_received', p.id, false)}
-      ${wfRow(!!p.invoice_received_at,
-        `Invoice ${escapeHtml(p.invoice_ref||'')} received · ${(p.invoice_received_at||'').slice(0,10)}`,
+      ${wfRow(!!(p.invoice_received_at || p.supplier_invoice_received_at),
+        p.supplier_invoice_received_at
+          ? `Invoice ${escapeHtml(p.supplier_invoice_ref||p.invoice_ref||'')} received · ${(p.supplier_invoice_received_at||'').slice(0,10)}`
+          : `Invoice ${escapeHtml(p.invoice_ref||'')} received · ${(p.invoice_received_at||'').slice(0,10)}`,
         'Awaiting invoice', 'Mark invoiced', 'invoice_received', p.id, false)}
       ${wfRow(!!p.paid_at,
         `Paid · ${(p.paid_at||'').slice(0,10)}`,
