@@ -11424,9 +11424,9 @@ function renderJobsList(projectId) {
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
-          ${progress.fabPct >= 0 ? `<span style="font-size:11px;font-family:var(--font-mono);color:${progress.fabPct === 100 ? 'var(--green)' : 'var(--muted)'};font-weight:600">Fab ${progress.fabPct}%</span>` : ''}
-          ${progress.tasksTotal > 0 ? `<span style="font-size:11px;font-family:var(--font-mono);color:${progress.tasksDone === progress.tasksTotal ? 'var(--green)' : 'var(--muted)'};font-weight:600">${progress.tasksDone}/${progress.tasksTotal} tasks</span>` : ''}
-          ${progress.hasNewTasks ? `<span style="font-size:9px;font-weight:700;background:var(--accent);color:#fff;padding:2px 6px;border-radius:4px;letter-spacing:.3px">NEW TASK</span>` : ''}
+          ${progress.fabPct >= 0 ? `<span style="font-size:11px;font-family:var(--font-mono);color:${progress.fabPct === 100 ? 'var(--green)' : 'var(--muted)'};font-weight:600">BOM ${progress.fabPct}%</span>` : ''}
+          ${progress.tasksTotal > 0 ? `<span style="font-size:11px;font-family:var(--font-mono);color:${progress.tasksDone === progress.tasksTotal ? 'var(--green)' : 'var(--muted)'};font-weight:600">${progress.tasksDone}/${progress.tasksTotal} fab</span>` : ''}
+          ${progress.hasNewTasks ? `<span style="font-size:9px;font-weight:700;background:var(--accent);color:#fff;padding:2px 6px;border-radius:4px;letter-spacing:.3px">NEW</span>` : ''}
         </div>
         <div class="job-badge ${isClosed ? 'closed' : 'open'}">${isClosed ? 'CLOSED' : 'OPEN'}</div>
       </div>
@@ -11468,19 +11468,37 @@ function getJobProgress(job) {
   // dead bomDataCache — uses just job.site presence).
   elements.site = job.site?.completedAt ? 'complete' : (job.site?.files?.length > 0) ? 'active' : 'empty';
 
-  // Progress label based on BOM + Assembly only
-  const fabItems = bomItems.filter(i => i.fabricated);
-  const fabDone = fabItems.filter(i => i.status !== 'not_started').length;
-  const fabPct = fabItems.length > 0 ? Math.round(fabDone / fabItems.length * 100) : -1;
-  const tasksDone = tasks.filter(t => t.status === 'complete').length;
-  const tasksTotal = tasks.length;
-  const newTaskCutoff = Date.now() - 48 * 60 * 60 * 1000;
-  const hasNewTasks = tasks.some(t => t.status !== 'complete' && new Date(t.createdAt).getTime() > newTaskCutoff);
+  // Progress label based on BOM (delivered count) + Assembly (fabricated
+  // count). Replaces the legacy 'tasks' counter which read job.assembly.tasks
+  // — that field is gone since assemblies now live in SQL (_assembliesByJob).
+  const bomDelivered = bomItems.filter(i => i.status === 'on_site' || i.status === 'despatched').length;
+  const bomTotal     = bomItems.length;
+  const bomPct       = bomTotal > 0 ? Math.round(bomDelivered / bomTotal * 100) : -1;
 
-  const label = fabItems.length > 0 || tasks.length > 0
-    ? `Fab: ${fabPct >= 0 ? fabPct + '%' : 'N/A'} · Tasks: ${tasksDone}/${tasksTotal}`
+  const asmFabricated = assemblies.filter(a => a.status === 'fabricated').length;
+  const asmTotal      = assemblies.length;
+
+  // 'New' assemblies — uploaded in the last 48h and not yet fabricated.
+  // Used by the kiosk to highlight fresh work.
+  const newAssemblyCutoff = Date.now() - 48 * 60 * 60 * 1000;
+  const hasNewTasks = assemblies.some(a => a.status === 'pending'
+                                          && new Date(a.created_at).getTime() > newAssemblyCutoff);
+
+  const label = (bomTotal > 0 || asmTotal > 0)
+    ? `BOM: ${bomPct >= 0 ? bomPct + '%' : 'N/A'} · Assembly: ${asmFabricated}/${asmTotal}`
     : 'No progress data';
-  return { elements, label, fabPct, tasksDone, tasksTotal, hasNewTasks };
+  // Preserve the legacy return shape so existing callers keep working.
+  // (fabPct/tasksDone/tasksTotal are now BOM and assembly counts under
+  // their old names — the labels in renderJobsList don't introspect
+  // them directly.)
+  return {
+    elements,
+    label,
+    fabPct: bomPct,
+    tasksDone: asmFabricated,
+    tasksTotal: asmTotal,
+    hasNewTasks
+  };
 }
 
 // ═══════════════════════════════════════════
