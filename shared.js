@@ -10910,12 +10910,59 @@ let _bomManualQueue = [];
 let _bomManualReviewIndex = 0;
 
 // ── Load / Save drawings data ──
+// loadDrawingsData is the entry point used everywhere. After commit 13's
+// perf fix it does NOT block on the SharePoint blob: it kicks off both
+// the SQL call and the blob fetch in parallel, awaits ONLY the SQL one,
+// and returns. The blob keeps loading in the background and fills in
+// Approval/Parts/Site nested data when it lands. That data is only
+// consumed when a job detail is actually opened, so most users never
+// notice the gap; the few who open a job immediately after a cold load
+// see briefly-empty Approval/Parts/Site (BOM and Assembly stay populated
+// because they have their own SQL-backed loaders in openJobDetail).
+//
+// _blobLoadPromise is exposed so deep-link handlers can await it when
+// they specifically need the nested data.
+let _blobLoadPromise = null;
+
 async function loadDrawingsData() {
-  // STEP 1 — pull the legacy SharePoint blob.
-  // This still holds Approval/Parts/Site nested data per job, plus any
-  // BOM/Assembly nested data that hasn't yet been replaced by SQL
-  // (commits 7-10 will replace those). If the file doesn't exist
-  // (404), we start with an empty container — that's fine.
+  // Kick off both fetches in parallel
+  _blobLoadPromise = loadDrawingsBlob();
+  const sqlPromise = loadDrawingsSQL();
+
+  // Await only the SQL call — it's fast and drives the tiles render
+  try {
+    await sqlPromise;
+  } catch (e) {
+    console.warn('Drawings SQL load failed:', e.message);
+  }
+
+  // Set up the background blob to re-render the screen when it lands,
+  // so any Approval/Parts/Site sections shown during the gap fill in.
+  _blobLoadPromise.then(() => {
+    // If the user is still on the projects page, re-merge SQL + blob
+    // shells so nested data populates. We re-run loadDrawingsSQL because
+    // it's the function that does the merge — it overlays SQL on top of
+    // whatever's currently in drawingsData (which by now includes the
+    // blob).
+    return loadDrawingsSQL().catch(() => {});
+  }).then(() => {
+    // Re-render any currently-visible job detail so nested data appears.
+    if (typeof currentJob !== 'undefined' && currentJob) {
+      try { renderAllElements(); } catch (_) {}
+    }
+    // Workshop notifications on the kiosk read job.assembly.tasks from
+    // the blob (legacy data path — superseded by the SQL-backed
+    // Fabrication tile, but still wired for any old data in the blob).
+    // Re-fire after the blob lands so they appear.
+    if (CURRENT_PAGE === 'index') {
+      try { renderWorkshopNotifications(); } catch (_) {}
+    }
+  }).catch(e => console.warn('Drawings blob load failed:', e.message));
+}
+
+// STEP 1 — pull the legacy SharePoint blob (slow, ~2 round-trips).
+// Used for Approval/Parts/Site nested data per job. Safe to no-op on 404.
+async function loadDrawingsBlob() {
   try {
     const token = await getToken();
     const metaUrl = `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.timesheetFolderItemId}:/${DRAWINGS_FILE}`;
@@ -10927,22 +10974,30 @@ async function loadDrawingsData() {
         { headers: { 'Authorization': `Bearer ${token}` } }
       );
       if (contentRes.ok) {
-        drawingsData = await contentRes.json();
-        if (!drawingsData.projects) drawingsData.projects = {};
+        const blob = await contentRes.json();
+        if (!blob.projects) blob.projects = {};
+        // Merge into the live drawingsData rather than replacing — by
+        // the time the blob lands, the SQL pass may have already
+        // populated drawingsData.projects[].jobs[] for the tiles render.
+        // We only want to fold in the nested element data.
+        Object.entries(blob.projects).forEach(([projId, projBlob]) => {
+          if (!drawingsData.projects[projId]) drawingsData.projects[projId] = { jobs: [] };
+          // Stash the blob's jobs[] for the SQL pass to use as the
+          // "existing" source when re-merging.
+          drawingsData.projects[projId]._blobJobs = projBlob.jobs || [];
+        });
       }
     } else if (metaRes.status !== 404) {
       throw new Error(`Meta fetch failed: ${metaRes.status}`);
     }
   } catch (e) {
-    console.warn('Drawings data load failed:', e.message);
+    console.warn('Drawings blob load failed:', e.message);
   }
+}
 
-  // STEP 2 — overlay the SQL-backed job shell.
-  // DrawingJobs is the source of truth for job existence + identity.
-  // We rebuild jobs[] from SQL per project, preserving any nested
-  // element data found in the SharePoint blob (matched by SQL id).
-  // Test data left in the blob with non-SQL ids becomes invisible
-  // (it's not test data we care about — see commit 6 design notes).
+// STEP 2 — overlay the SQL-backed job shell. Fast (~1 SQL call).
+// DrawingJobs is the source of truth for job existence + identity.
+async function loadDrawingsSQL() {
   try {
     const rows = await api.get('/api/drawings');
     const byProject = {};
@@ -10951,11 +11006,14 @@ async function loadDrawingsData() {
       if (!projId) return;
       if (!byProject[projId]) byProject[projId] = [];
 
-      // Preserve nested element data from the SharePoint blob if present.
-      // Match by SQL id (cast both sides to string — DB returns int,
-      // existing nested data uses string ids by convention).
+      // Preserve nested element data from the SharePoint blob if it's
+      // landed by now. Match by SQL id. Existing jobs[] may have been
+      // set up either by a prior call (with blob data) or be undefined.
       const sqlIdStr = String(r.id);
-      const existingJobs = drawingsData.projects[projId]?.jobs || [];
+      const proj = drawingsData.projects[projId] || {};
+      // Look first in the freshly-loaded blob (_blobJobs) then in the
+      // existing jobs[] (in case we re-ran this after the blob landed).
+      const existingJobs = proj._blobJobs || proj.jobs || [];
       const existing = existingJobs.find(j => String(j.id) === sqlIdStr);
 
       const job = {
@@ -10987,7 +11045,6 @@ async function loadDrawingsData() {
     // Number jobs sequentially per project in creation order if not
     // already present (folderName / number were SharePoint-derived).
     Object.entries(byProject).forEach(([projId, jobs]) => {
-      // Sort by createdAt asc so re-numbering is stable
       jobs.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
       jobs.forEach((j, i) => {
         if (!j.number) j.number = i + 1;
@@ -10995,17 +11052,20 @@ async function loadDrawingsData() {
       });
       if (!drawingsData.projects[projId]) drawingsData.projects[projId] = { jobs: [] };
       drawingsData.projects[projId].jobs = jobs;
+      // The _blobJobs stash has been merged in via the existing-job
+      // lookup above; safe to drop now to avoid leaking memory.
+      delete drawingsData.projects[projId]._blobJobs;
     });
 
-    // Projects with SharePoint nested data but no SQL rows: leave their
-    // jobs[] empty (test data) — they won't render in the tiles grid.
+    // Projects with blob data but no SQL rows: their jobs[] is empty.
     Object.keys(drawingsData.projects).forEach(projId => {
       if (!byProject[projId]) {
         drawingsData.projects[projId].jobs = [];
+        delete drawingsData.projects[projId]._blobJobs;
       }
     });
   } catch (e) {
-    console.warn('Drawings SQL load failed (using SharePoint blob only):', e.message);
+    console.warn('Drawings SQL load failed:', e.message);
   }
 }
 
