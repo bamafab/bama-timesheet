@@ -3370,7 +3370,7 @@ function selectReport(name) {
   // Babcock and Cost Analysis each bring their own toolbars + KPI rows.
   // Hide the generic shared chrome so they don't visually clash.
   // (Both elements only exist on reports.html; harmless no-op elsewhere.)
-  const ownsChrome = (name === 'babcock' || name === 'costanalysis');
+  const ownsChrome = (name === 'babcock' || name === 'costanalysis' || name === 'holidays');
   const periodBar = document.getElementById('rptPeriodToolbar');
   if (periodBar) periodBar.style.display = ownsChrome ? 'none' : '';
   const sharedKpi = document.getElementById('rptKpiRow');
@@ -5809,6 +5809,10 @@ function renderReports() {
     renderCostAnalysisReport();
     return;
   }
+  if (activeReport === 'holidays') {
+    renderHolidayReport();
+    return;
+  }
 
   const empFilter = document.getElementById('rptEmployeeFilter')?.value || '';
 
@@ -6942,6 +6946,239 @@ function renderAttendanceReport(empFilter) {
         </table>`;
     }
   }
+}
+
+// ═══════════════════════════════════════════
+// HOLIDAY REPORT (reports.html)
+// ═══════════════════════════════════════════
+// Shows per-employee entitlement, carry-over, taken, pending and remaining
+// balance for the current holiday year. Does not depend on a selected period —
+// it reads directly from employee.holidayBalance and filters the holidays array
+// to the current holiday year for pending counts.
+
+function renderHolidayReport() {
+  const panel = document.getElementById('rptPanel-holidays');
+  if (!panel) return;
+
+  const employees = (state.timesheetData.employees || [])
+    .filter(e => e.active !== false)
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const holidays = state.timesheetData.holidays || [];
+
+  // Current holiday year bounds
+  const yearStart = new Date(HOLIDAY_YEAR_START + 'T00:00:00');
+  const yearEnd   = new Date(yearStart);
+  yearEnd.setFullYear(yearEnd.getFullYear() + 1);
+
+  // Sum pending paid-holiday working_days per employee within the current year
+  const pendingByEmp = {};
+  holidays.forEach(h => {
+    if (h.type !== 'paid' && h.type !== 'half') return;
+    if (h.status !== 'pending') return;
+    const from = new Date(h.dateFrom + 'T00:00:00');
+    if (from < yearStart || from >= yearEnd) return;
+    pendingByEmp[h.employeeName] = (pendingByEmp[h.employeeName] || 0) + (h.workingDays || 0);
+  });
+
+  // Build per-employee data rows
+  const rows = employees.map(emp => {
+    const entitlement  = emp.annualDays    || 28;
+    const carryover    = emp.carryoverDays || 0;
+    const totalAllowed = entitlement + carryover;
+    const balance      = emp.holidayBalance || 0;
+    const taken        = Math.max(0, Math.round((totalAllowed - balance) * 10) / 10);
+    const pending      = Math.round((pendingByEmp[emp.name] || 0) * 10) / 10;
+    return { name: emp.name, entitlement, carryover, totalAllowed, taken, pending, balance };
+  });
+
+  // KPI summary tiles
+  const totalEntitlement = rows.reduce((s, r) => s + r.totalAllowed, 0);
+  const totalTaken       = rows.reduce((s, r) => s + r.taken, 0);
+  const totalBalance     = rows.reduce((s, r) => s + r.balance, 0);
+  const totalPending     = rows.reduce((s, r) => s + r.pending, 0);
+  const lowCount         = rows.filter(r => r.balance < 5).length;
+
+  const yearEndStr = yearEnd.toISOString().split('T')[0];
+
+  const kpis = [
+    { label: 'Employees',          value: rows.length,                color: 'var(--accent2)', sub: 'Active staff' },
+    { label: 'Total Entitlement',  value: totalEntitlement + 'd',     color: 'var(--green)',   sub: 'Inc. carry-over' },
+    { label: 'Total Taken',        value: totalTaken + 'd',           color: '#6366f1',        sub: 'Approved this year' },
+    { label: 'Total Remaining',    value: totalBalance + 'd',         color: totalBalance > 0 ? 'var(--green)' : 'var(--red)', sub: 'All staff combined' },
+    { label: 'Pending Approval',   value: totalPending + 'd',         color: 'var(--amber)',   sub: 'Awaiting decision' },
+    { label: 'Low Balance (< 5d)', value: lowCount,                   color: lowCount > 0 ? 'var(--red)' : 'var(--green)', sub: 'Staff at risk' },
+  ];
+
+  const kpiHTML = kpis.map(k => `
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px 18px">
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">${k.label}</div>
+      <div style="font-family:var(--font-display);font-size:30px;color:${k.color}">${k.value}</div>
+      <div style="font-size:10px;color:var(--subtle);margin-top:4px">${k.sub}</div>
+    </div>
+  `).join('');
+
+  // Table rows
+  const tableRows = rows.length === 0
+    ? `<tr><td colspan="7" style="padding:24px;text-align:center;color:var(--muted);font-size:13px">No active employees found</td></tr>`
+    : rows.map(r => {
+        const pct      = r.totalAllowed > 0 ? Math.min(100, Math.round((r.taken / r.totalAllowed) * 100)) : 0;
+        const barColor = pct >= 80 ? 'var(--red)' : pct >= 50 ? 'var(--amber)' : '#6366f1';
+        const balColor = r.balance < 5 ? 'var(--red)' : r.balance < 10 ? 'var(--amber)' : 'var(--green)';
+        return `<tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:10px 12px;font-size:13px;color:var(--text);font-weight:500">${r.name}</td>
+          <td style="padding:10px 12px;font-size:13px;color:var(--muted);text-align:right">${r.entitlement}d</td>
+          <td style="padding:10px 12px;font-size:13px;color:${r.carryover > 0 ? 'var(--accent2)' : 'var(--subtle)'};text-align:right">${r.carryover > 0 ? '+' + r.carryover + 'd' : '—'}</td>
+          <td style="padding:10px 12px;font-size:13px;color:#6366f1;text-align:right;font-weight:600">${r.taken}d</td>
+          <td style="padding:10px 12px;font-size:13px;color:${r.pending > 0 ? 'var(--amber)' : 'var(--subtle)'};text-align:right">${r.pending > 0 ? r.pending + 'd' : '—'}</td>
+          <td style="padding:10px 12px;font-size:13px;font-weight:600;color:${balColor};text-align:right">${r.balance}d</td>
+          <td style="padding:10px 12px">
+            <div style="display:flex;align-items:center;gap:8px">
+              <div style="flex:1;height:6px;background:var(--border);border-radius:3px;overflow:hidden">
+                <div style="height:100%;width:${pct}%;background:${barColor};border-radius:3px"></div>
+              </div>
+              <span style="font-size:11px;color:var(--muted);min-width:28px;text-align:right">${pct}%</span>
+            </div>
+          </td>
+        </tr>`;
+      }).join('');
+
+  panel.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:24px">
+      ${kpiHTML}
+    </div>
+
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <div style="font-size:12px;color:var(--muted)">
+        Holiday year: <span style="color:var(--text)">${HOLIDAY_YEAR_START} → ${yearEndStr}</span>
+      </div>
+      <button class="btn btn-ghost" onclick="exportHolidayReportPDF()" style="padding:6px 16px;font-size:12px">&#128438; Export PDF</button>
+    </div>
+
+    <div class="card" style="padding:20px">
+      <div class="card-title" style="margin-bottom:4px"><span class="icon">🗓️</span> Holiday Balances</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:16px">
+        Entitlement, carry-over, taken and remaining balance per employee for the current holiday year
+      </div>
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr>
+          <th style="text-align:left;font-size:11px;color:var(--muted);padding:8px 12px;border-bottom:1px solid var(--border)">Employee</th>
+          <th style="text-align:right;font-size:11px;color:var(--muted);padding:8px 12px;border-bottom:1px solid var(--border)">Entitlement</th>
+          <th style="text-align:right;font-size:11px;color:var(--muted);padding:8px 12px;border-bottom:1px solid var(--border)">Carry Over</th>
+          <th style="text-align:right;font-size:11px;color:var(--muted);padding:8px 12px;border-bottom:1px solid var(--border)">Taken</th>
+          <th style="text-align:right;font-size:11px;color:var(--muted);padding:8px 12px;border-bottom:1px solid var(--border)">Pending</th>
+          <th style="text-align:right;font-size:11px;color:var(--muted);padding:8px 12px;border-bottom:1px solid var(--border)">Balance</th>
+          <th style="text-align:left;font-size:11px;color:var(--muted);padding:8px 12px;border-bottom:1px solid var(--border);min-width:140px">Used</th>
+        </tr></thead>
+        <tbody>${tableRows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+async function exportHolidayReportPDF() {
+  await loadLogoDataUri();
+
+  const employees = (state.timesheetData.employees || [])
+    .filter(e => e.active !== false)
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const holidays = state.timesheetData.holidays || [];
+
+  const yearStart = new Date(HOLIDAY_YEAR_START + 'T00:00:00');
+  const yearEnd   = new Date(yearStart);
+  yearEnd.setFullYear(yearEnd.getFullYear() + 1);
+  const yearEndStr = yearEnd.toISOString().split('T')[0];
+
+  const pendingByEmp = {};
+  holidays.forEach(h => {
+    if (h.type !== 'paid' && h.type !== 'half') return;
+    if (h.status !== 'pending') return;
+    const from = new Date(h.dateFrom + 'T00:00:00');
+    if (from < yearStart || from >= yearEnd) return;
+    pendingByEmp[h.employeeName] = (pendingByEmp[h.employeeName] || 0) + (h.workingDays || 0);
+  });
+
+  const rows = employees.map(emp => {
+    const entitlement  = emp.annualDays    || 28;
+    const carryover    = emp.carryoverDays || 0;
+    const totalAllowed = entitlement + carryover;
+    const balance      = emp.holidayBalance || 0;
+    const taken        = Math.max(0, Math.round((totalAllowed - balance) * 10) / 10);
+    const pending      = Math.round((pendingByEmp[emp.name] || 0) * 10) / 10;
+    return { name: emp.name, entitlement, carryover, totalAllowed, taken, pending, balance };
+  });
+
+  const logoSrc = _logoDataUri || '';
+  const now = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
+
+  const tableRows = rows.map(r => {
+    const pct = r.totalAllowed > 0 ? Math.min(100, Math.round((r.taken / r.totalAllowed) * 100)) : 0;
+    const balColor = r.balance < 5 ? '#dc2626' : r.balance < 10 ? '#d97706' : '#16a34a';
+    return `<tr>
+      <td>${r.name}</td>
+      <td style="text-align:right">${r.entitlement}d</td>
+      <td style="text-align:right">${r.carryover > 0 ? '+' + r.carryover + 'd' : '—'}</td>
+      <td style="text-align:right">${r.taken}d</td>
+      <td style="text-align:right">${r.pending > 0 ? r.pending + 'd' : '—'}</td>
+      <td style="text-align:right;font-weight:600;color:${balColor}">${r.balance}d</td>
+      <td style="text-align:right">${pct}%</td>
+    </tr>`;
+  }).join('');
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
+  <title>Holiday Report</title>
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 12px; color: #111; margin: 0; padding: 24px; }
+    .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; border-bottom: 2px solid #1a3a5c; padding-bottom: 16px; }
+    .header img { height: 48px; }
+    .header-right { text-align: right; }
+    h2 { margin: 0 0 4px; font-size: 18px; color: #1a3a5c; }
+    .sub { color: #555; font-size: 11px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+    thead th { background: #1a3a5c; color: #fff; padding: 8px 10px; font-size: 11px; text-align: right; }
+    thead th:first-child { text-align: left; }
+    tbody tr:nth-child(even) { background: #f8f9fa; }
+    tbody td { padding: 7px 10px; border-bottom: 1px solid #e2e8f0; font-size: 12px; }
+    tfoot td { padding: 8px 10px; font-weight: 600; border-top: 2px solid #1a3a5c; text-align: right; font-size: 12px; }
+    tfoot td:first-child { text-align: left; }
+    @media print { body { padding: 0; } }
+  </style>
+  </head><body>
+  <div class="header">
+    ${logoSrc ? `<img src="${logoSrc}" alt="BAMA">` : '<div style="font-size:20px;font-weight:700;color:#1a3a5c">BAMA</div>'}
+    <div class="header-right">
+      <h2>Holiday Report</h2>
+      <div class="sub">Holiday year: ${HOLIDAY_YEAR_START} → ${yearEndStr}</div>
+      <div class="sub">Generated: ${now}</div>
+    </div>
+  </div>
+  <table>
+    <thead><tr>
+      <th style="text-align:left">Employee</th>
+      <th>Entitlement</th>
+      <th>Carry Over</th>
+      <th>Taken</th>
+      <th>Pending</th>
+      <th>Balance</th>
+      <th>% Used</th>
+    </tr></thead>
+    <tbody>${tableRows}</tbody>
+    <tfoot><tr>
+      <td>Totals (${rows.length} employees)</td>
+      <td>${rows.reduce((s,r)=>s+r.totalAllowed,0)}d</td>
+      <td>${rows.reduce((s,r)=>s+r.carryover,0)}d</td>
+      <td>${rows.reduce((s,r)=>s+r.taken,0)}d</td>
+      <td>${rows.reduce((s,r)=>s+r.pending,0)}d</td>
+      <td>${rows.reduce((s,r)=>s+r.balance,0)}d</td>
+      <td></td>
+    </tr></tfoot>
+  </table>
+  </body></html>`;
+
+  const printWin = window.open('', '_blank');
+  printWin.document.write(html + `<script>window.onload = function() { window.print(); }<\/script>`);
+  printWin.document.close();
 }
 
 async function exportAttendancePDF() {

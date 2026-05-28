@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Reports</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260527p">
+<link rel="stylesheet" href="bama.css?v=20260528a">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 </head>
@@ -136,6 +136,11 @@
         <div class="report-picker-icon">💷</div>
         <div class="report-picker-name">Cost &amp; PO analysis</div>
         <div class="report-picker-desc">Top projects, labour cost, workshop vs office spend</div>
+      </div>
+      <div class="report-picker-card" data-report="holidays" onclick="selectReport('holidays')">
+        <div class="report-picker-icon">🏖️</div>
+        <div class="report-picker-name">Holiday report</div>
+        <div class="report-picker-desc">Accrued, taken &amp; remaining entitlement per employee</div>
       </div>
     </div>
 
@@ -288,6 +293,11 @@
       </div>
     </div>
 
+    <!-- Report: Holiday Report -->
+    <div class="report-panel" id="rptPanel-holidays">
+      <!-- populated by renderHolidayReport() -->
+    </div>
+
   </div><!-- end mgr-content -->
 </div><!-- end mgr-layout -->
 
@@ -312,6 +322,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260527aj"></script>
+<script src="shared.js?v=20260528a"></script>
 </body>
 </html>
