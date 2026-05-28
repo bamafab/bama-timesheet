@@ -29016,6 +29016,7 @@ async function init() {
       renderUnifiedSidebar();
       switchTab(_pendingTab || 'dashboard');
       renderManagerView();
+      initGlobalInvDz();
     } else {
       // Store pending tab so checkOfficePin can use it after auth
       if (_pendingTab) sessionStorage.setItem('bama_pending_tab', _pendingTab);
