@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Tenders &amp; Quotes</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260528m">
+<link rel="stylesheet" href="bama.css?v=20260528n">
 </head>
 <body>
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
@@ -255,8 +255,8 @@
 <!-- ═══════════════════════════════════════
      NEW TENDER MODAL
 ══════════════════════════════════════════ -->
-<div class="modal-overlay" id="newTenderModal">
-  <div class="modal" style="max-width:560px;width:95vw">
+<div class="modal-overlay" id="newTenderModal" style="align-items:flex-start;padding:20px;overflow-y:auto">
+  <div class="modal" style="max-width:560px;width:95vw;max-height:90vh;overflow-y:auto">
     <div class="modal-title">📋 New Tender</div>
     <div style="color:var(--muted);font-size:13px;margin-bottom:20px">Create a new tender entry. Start typing a client name to see suggestions.</div>
 
@@ -292,11 +292,14 @@
         <input type="text" class="field-input" id="ntPostcode">
       </div>
     </div>
+    <div id="ntExistingContacts" style="display:none;margin-bottom:10px">
+      <div class="field-label" style="margin-bottom:5px">EXISTING CONTACTS — click to copy details below</div>
+      <div id="ntContactPicker" style="display:flex;flex-wrap:wrap;gap:5px"></div>
+    </div>
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
       <div>
-        <div class="field-label">CONTACT NAME</div>
-        <div id="ntContactPicker" style="display:none;margin-bottom:6px;flex-wrap:wrap;gap:5px"></div>
-        <input type="text" class="field-input" id="ntContactName">
+        <div class="field-label">CONTACT NAME <span style="color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0">(new)</span></div>
+        <input type="text" class="field-input" id="ntContactName" placeholder="New contact name">
       </div>
       <div>
         <div class="field-label">CONTACT EMAIL</div>
@@ -642,6 +645,6 @@
   }
 </style>
 
-<script src="shared.js?v=20260528m"></script>
+<script src="shared.js?v=20260528n"></script>
 </body>
 </html>

@@ -7865,7 +7865,7 @@ function _renderSupplierDetailPos() {
     const col = groupColour[g];
     const statusLabel = groups[g] || po.status;
     const project = po.project_number ? `${po.project_number}` : (po.cost_centre || '—');
-    const _poNetVal = po.total_value != null ? Number(po.total_value) - Number(po.vat_amount || 0) : null;
+    const _poNetVal = po.total_value != null ? _poNet(po) : null;
     // If invoice attached, show the actual invoiced net; otherwise show PO net
     const _displayNet = po.supplier_invoice_received_at && po.supplier_invoice_net != null
       ? Number(po.supplier_invoice_net)
@@ -7880,7 +7880,9 @@ function _renderSupplierDetailPos() {
         <div style="display:flex;align-items:center;gap:12px;padding:10px 14px;cursor:pointer;background:var(--surface)"
              onclick="toggleSupplierPoDetail(this)">
           <div style="width:8px;height:8px;border-radius:50%;background:${col};flex-shrink:0"></div>
-          <div style="font-weight:600;font-size:13px;min-width:90px">${escapeHtml(po.reference||'—')}</div>
+          <a href="/po-tracker.html" onclick="event.stopPropagation();sessionStorage.setItem('bama_po_open',${po.id});sessionStorage.setItem('bama_pending_tab','dashboard')"
+             style="font-weight:600;font-size:13px;min-width:90px;color:var(--accent);text-decoration:none;cursor:pointer"
+             title="Open in PO Tracker">${escapeHtml(po.reference||'—')}</a>
           <div style="font-size:12px;color:var(--muted);flex:1">${escapeHtml(po.description||'').slice(0,60)}</div>
           <div style="font-size:12px;color:var(--muted);min-width:70px">${project}</div>
           <div style="font-size:13px;font-weight:600;min-width:80px;text-align:right">${value}</div>
@@ -18117,17 +18119,20 @@ function selectClient(clientId) {
 }
 
 function _renderNtContactPicker(contacts) {
+  const wrapper = document.getElementById('ntExistingContacts');
   const el = document.getElementById('ntContactPicker');
   if (!el) return;
-  if (!contacts || !contacts.length) { el.style.display = 'none'; return; }
-  el.style.display = 'flex';
+  if (!contacts || !contacts.length) {
+    if (wrapper) wrapper.style.display = 'none';
+    return;
+  }
+  if (wrapper) wrapper.style.display = '';
   el.innerHTML = contacts.map(c => `
     <button type="button" class="nt-contact-chip" onclick="selectNtContact(${c.id})"
-      title="${c.contact_email || ''}\n${c.contact_phone || ''}">
+      title="Click to copy: ${escapeHtml(c.contact_email || '')} ${escapeHtml(c.contact_phone || '')}">
       ${escapeHtml(c.contact_name || '—')}
       ${c.role ? `<span style="font-size:10px;opacity:.6;margin-left:4px">${escapeHtml(c.role)}</span>` : ''}
-    </button>`).join('') +
-    `<button type="button" class="nt-contact-chip nt-contact-chip-new" onclick="selectNtContact(null)" title="Enter a new contact manually">+ new</button>`;
+    </button>`).join('');
 }
 
 function selectNtContact(contactId) {
@@ -18270,7 +18275,8 @@ async function submitNewTender() {
     // Find or create the year folder under Quotation
     const quotationFolder = await getOrCreateFolderByPath(QUOTATION_FOLDER_PATH, token);
     const yearFolder = await createFolderInDrive(quotationFolder.id, yearFolderName);
-    const quoteFolder = await createFolderInDrive(yearFolder.id, reference);
+    const quoteFolderName = `${reference} - ${companyName} - ${projectName}`;
+    const quoteFolder = await createFolderInDrive(yearFolder.id, quoteFolderName);
     const tenderSubFolder = await createFolderInDrive(quoteFolder.id, '00 - Tender');
 
     // Step 3: Create the tender record
@@ -27277,6 +27283,13 @@ async function loadPoTracker() {
   }
   renderPoKpis();
   renderPoTracker();
+
+  // Auto-open a specific PO if navigated from supplier detail
+  const pendingPoId = sessionStorage.getItem('bama_po_open');
+  if (pendingPoId) {
+    sessionStorage.removeItem('bama_po_open');
+    openPoDetailModal(parseInt(pendingPoId));
+  }
 }
 
 // Period toggle for the spend KPI tile.
@@ -27469,9 +27482,9 @@ function renderPoTracker() {
     const deliveryDate = p.delivery_date ? p.delivery_date.slice(0,10) : '<span style="color:var(--subtle)">—</span>';
     const nett  = (p.total_value != null) ? _poNet(p) : null;
     const gross = (p.total_value != null) ? Number(p.total_value) : null;
-    const moneyCell = gross != null
-      ? `<div style="font-family:var(--font-mono);font-size:13px">${fmtMoneyFull(gross)}</div>
-         <div style="font-family:var(--font-mono);font-size:11px;color:var(--muted)">Nett ${fmtMoneyFull(nett)}</div>`
+    const moneyCell = nett != null
+      ? `<div style="font-family:var(--font-mono);font-size:13px;font-weight:600">${fmtMoneyFull(nett)}</div>
+         <div style="font-family:var(--font-mono);font-size:11px;color:var(--muted)">Gross ${fmtMoneyFull(gross)}</div>`
       : '<span style="color:var(--subtle)">—</span>';
 
     return `
