@@ -7757,10 +7757,11 @@ async function openSupplierDetail(supplierId) {
   _supplierDetailId = supplierId;
   _supplierDetailFilter = 'all';
 
-  // Hide any leftover dropzone state from the previous supplier
-  const dz = document.getElementById('supplierDetailDropzone');
-  if (dz) dz.style.display = 'none';
+  // Reset dropzone for new supplier — always visible
   _supDzState = 'idle'; _supDzFile = null; _supDzParsed = null; _supDzMatchedPoId = null;
+  _supDzQueue = []; _supDzQueueIdx = 0;
+  const dz = document.getElementById('supplierDetailDropzone');
+  if (dz) { dz.style.display = ''; _renderSupplierDropzone(); }
 
   // Render header immediately, load POs async
   _renderSupplierDetailHeader(supplier);
@@ -7787,6 +7788,14 @@ function _renderSupplierDetailHeader(supplier) {
     supplier.email        ? `<span>&#9993; ${escapeHtml(supplier.email)}</span>` : '',
   ].filter(Boolean).join(' &nbsp;·&nbsp; ');
 
+  const addrParts = [
+    supplier.address_line1, supplier.address_line2,
+    supplier.city, supplier.county, supplier.postcode
+  ].filter(Boolean);
+  const addressLine = addrParts.length
+    ? `<span style="font-size:12px;color:var(--muted)">&#128205; ${escapeHtml(addrParts.join(', '))}</span>`
+    : '';
+
   const termLabel = _fmtPaymentTerms(supplier);
   const termsBadge = termLabel
     ? `<span style="display:inline-block;margin-left:10px;padding:2px 8px;border-radius:6px;background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.3);color:var(--accent);font-size:11px;font-family:var(--font-mono)">⏱ ${escapeHtml(termLabel)}</span>`
@@ -7795,7 +7804,8 @@ function _renderSupplierDetailHeader(supplier) {
   document.getElementById('supplierDetailTitle').textContent = supplier.supplier_name;
   document.getElementById('supplierDetailMeta').innerHTML =
     `<span style="color:var(--accent);font-size:12px">${escapeHtml(svcNames)}</span>${termsBadge}` +
-    (info ? `<br><span style="font-size:12px;color:var(--muted);margin-top:4px;display:block">${info}</span>` : '');
+    (info ? `<br><span style="font-size:12px;color:var(--muted);margin-top:4px;display:block">${info}</span>` : '') +
+    (addressLine ? `<br><span style="margin-top:2px;display:block">${addressLine}</span>` : '');
 }
 
 function _renderSupplierDetailPos() {
@@ -7975,10 +7985,9 @@ function closeSupplierDetail() {
   document.getElementById('supplierDetailModal').classList.remove('active');
   _supplierDetailId = null;
   _supplierDetailPos = [];
-  // Reset dropzone so it doesn't leak state into the next supplier view
-  const dz = document.getElementById('supplierDetailDropzone');
-  if (dz) dz.style.display = 'none';
+  // Reset dropzone state
   _supDzState = 'idle'; _supDzFile = null; _supDzParsed = null; _supDzMatchedPoId = null;
+  _supDzQueue = []; _supDzQueueIdx = 0;
 }
 
 // ── Supplier Payment Terms Modal ──────────────────────────────────────────────
@@ -8086,20 +8095,11 @@ let _supDzState  = 'idle';    // 'idle' | 'parsing' | 'review' | 'saving'
 let _supDzFile   = null;
 let _supDzParsed = null;      // { invoice_ref, invoice_date, net, vat, gross, po_reference }
 let _supDzMatchedPoId = null; // pre-selected PO id after auto-match
+let _supDzQueue  = [];        // pending files when multiple uploaded
+let _supDzQueueIdx = 0;       // index of file currently being reviewed
 
 function toggleSupplierDropzone() {
-  const box = document.getElementById('supplierDetailDropzone');
-  if (!box) return;
-  if (box.style.display === 'none' || !box.style.display) {
-    _supDzState = 'idle';
-    _supDzFile = null;
-    _supDzParsed = null;
-    _supDzMatchedPoId = null;
-    box.style.display = '';
-    _renderSupplierDropzone();
-  } else {
-    box.style.display = 'none';
-  }
+  // Dropzone is always visible — this is now a no-op kept for compatibility
 }
 
 function _renderSupplierDropzone() {
@@ -8113,18 +8113,19 @@ function _renderSupplierDropzone() {
            onclick="document.getElementById('supDzFile').click()"
            ondragover="event.preventDefault();this.style.borderColor='var(--accent)';this.style.background='rgba(255,255,255,.02)'"
            ondragleave="this.style.borderColor='var(--border)';this.style.background='transparent'"
-           ondrop="event.preventDefault();this.style.borderColor='var(--border)';this.style.background='transparent';onSupplierDzFile(event.dataTransfer.files[0])">
+           ondrop="event.preventDefault();this.style.borderColor='var(--border)';this.style.background='transparent';onSupplierDzFiles(event.dataTransfer.files)">
         <div style="font-size:24px;margin-bottom:6px">📎</div>
-        <div style="font-size:13px;color:var(--text);font-weight:600;margin-bottom:2px">Drop supplier invoice here, or click to browse</div>
-        <div style="font-size:11px;color:var(--subtle)">PDF, PNG, or JPG · we'll read it and match to a PO</div>
-        <input type="file" id="supDzFile" accept="application/pdf,image/*" style="display:none" onchange="onSupplierDzFile(this.files[0])">
+        <div style="font-size:13px;color:var(--text);font-weight:600;margin-bottom:2px">Drop invoice(s) here, or click to browse</div>
+        <div style="font-size:11px;color:var(--subtle)">PDF, PNG, or JPG · multiple files supported</div>
+        <input type="file" id="supDzFile" accept="application/pdf,image/*" multiple style="display:none" onchange="onSupplierDzFiles(this.files)">
       </div>`;
   } else if (_supDzState === 'parsing') {
+    const _qProg = _supDzQueue.length > 1 ? ` <span style="color:var(--muted);font-weight:400">(${_supDzQueueIdx + 1} of ${_supDzQueue.length})</span>` : '';
     box.innerHTML = `
       <div style="display:flex;align-items:center;gap:12px;padding:14px;background:var(--surface);border-radius:8px;border:1px solid var(--border)">
         <div class="spinner" style="width:18px;height:18px;flex-shrink:0"></div>
         <div>
-          <div style="font-size:13px;font-weight:600">Reading supplier invoice…</div>
+          <div style="font-size:13px;font-weight:600">Reading supplier invoice…${_qProg}</div>
           <div style="font-size:11px;color:var(--subtle);margin-top:2px">${escapeHtml(_supDzFile?.name || '')}</div>
         </div>
       </div>`;
@@ -8139,8 +8140,26 @@ function _renderSupplierDropzone() {
   }
 }
 
+async function onSupplierDzFiles(files) {
+  if (!files || !files.length) return;
+  _supDzQueue    = Array.from(files);
+  _supDzQueueIdx = 0;
+  await _supDzProcessNext();
+}
+
 async function onSupplierDzFile(file) {
   if (!file) return;
+  await onSupplierDzFiles([file]);
+}
+
+async function _supDzProcessNext() {
+  if (_supDzQueueIdx >= _supDzQueue.length) {
+    _supDzQueue = []; _supDzQueueIdx = 0;
+    _supDzState = 'idle'; _supDzFile = null; _supDzParsed = null; _supDzMatchedPoId = null;
+    _renderSupplierDropzone();
+    return;
+  }
+  const file = _supDzQueue[_supDzQueueIdx];
   _supDzFile   = file;
   _supDzParsed = null;
   _supDzState  = 'parsing';
@@ -8222,6 +8241,13 @@ function _matchSupplierPoFromParsed(parsed) {
   return null;   // user picks manually
 }
 
+function _supDzCancelCurrent() {
+  // Skip current file — advance to next or return to idle
+  _supDzFile = null; _supDzParsed = null; _supDzMatchedPoId = null;
+  _supDzQueueIdx++;
+  _supDzProcessNext();
+}
+
 function _renderSupplierDzReview() {
   const box = document.getElementById('supplierDetailDropzone');
   const parsed = _supDzParsed || {};
@@ -8229,6 +8255,18 @@ function _renderSupplierDzReview() {
   const matched = _supDzMatchedPoId
     ? candidates.find(po => po.id === _supDzMatchedPoId)
     : null;
+
+  // Queue progress header
+  const qTotal = _supDzQueue.length;
+  const qCurrent = _supDzQueueIdx + 1;
+  const progressBar = qTotal > 1
+    ? `<div style="display:flex;align-items:center;gap:10px;padding:8px 0 12px;font-size:12px;color:var(--muted)">
+        <div style="flex:1;height:4px;background:var(--border);border-radius:2px;overflow:hidden">
+          <div style="height:100%;background:var(--accent);width:${Math.round((qCurrent/qTotal)*100)}%;transition:width .3s"></div>
+        </div>
+        <span style="flex-shrink:0;font-family:var(--font-mono)">${qCurrent} of ${qTotal}</span>
+      </div>`
+    : '';
 
   const matchBanner = parsed._error
     ? `<div style="background:rgba(208,2,27,.1);border:1px solid var(--red);color:var(--red);padding:8px 12px;border-radius:6px;font-size:12px;margin-bottom:10px">⚠ Could not read the file — fill in below manually. (${escapeHtml(parsed._error)})</div>`
@@ -8266,6 +8304,7 @@ function _renderSupplierDzReview() {
   const fileLabel = _supDzFile ? `${_supDzFile.name} · ${(_supDzFile.size / 1024).toFixed(0)} KB` : '';
 
   box.innerHTML = `
+    ${progressBar}
     ${matchBanner}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;font-size:12px">
       <div style="grid-column:1 / -1">
@@ -8300,7 +8339,9 @@ function _renderSupplierDzReview() {
     <div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px;gap:10px">
       <div style="font-size:11px;color:var(--subtle);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📄 ${escapeHtml(fileLabel)}</div>
       <div style="display:flex;gap:8px;flex-shrink:0">
-        <button class="btn btn-ghost" style="font-size:12px;padding:6px 14px" onclick="toggleSupplierDropzone()">Cancel</button>
+        <button class="btn btn-ghost" style="font-size:12px;padding:6px 14px" onclick="_supDzCancelCurrent()">
+          ${_supDzQueue.length > 1 ? 'Skip' : 'Cancel'}
+        </button>
         <button class="btn btn-primary" id="supDzSaveBtn" style="font-size:12px;padding:6px 14px" onclick="saveSupplierDropzone()">Save Invoice</button>
       </div>
     </div>`;
@@ -8351,13 +8392,14 @@ async function saveSupplierDropzone() {
 
     toast(`Invoice attached to ${po.reference} ✓`, 'success');
 
-    // 3. Hide dropzone and refresh the detail panel
-    document.getElementById('supplierDetailDropzone').style.display = 'none';
-    _supDzFile = null; _supDzParsed = null; _supDzMatchedPoId = null; _supDzState = 'idle';
+    // 3. Refresh PO list, then advance to next queued file (or reset to idle)
     if (_supplierDetailId) {
       _supplierDetailPos = await api.get(`/api/purchase-orders?supplier_id=${_supplierDetailId}`);
       _renderSupplierDetailPos();
     }
+    _supDzFile = null; _supDzParsed = null; _supDzMatchedPoId = null;
+    _supDzQueueIdx++;
+    await _supDzProcessNext();
   } catch (err) {
     console.error('Save supplier invoice failed', err);
     toast('Failed to save invoice: ' + (err.message || 'unknown error'), 'error');
