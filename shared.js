@@ -17453,6 +17453,19 @@ function switchTenderTab(tab) {
 }
 
 // ── Render Tender List ──
+// ── Tender list sort state ──
+let _tenderSort = { col: 'created', dir: 'desc' }; // default: newest first
+
+function sortTenderList(col) {
+  if (_tenderSort.col === col) {
+    _tenderSort.dir = _tenderSort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    _tenderSort.col = col;
+    _tenderSort.dir = col === 'created' ? 'desc' : 'asc';
+  }
+  renderTenderList();
+}
+
 function renderTenderList() {
   const container = document.getElementById('tenderListContainer');
   if (!container) return;
@@ -17474,16 +17487,67 @@ function renderTenderList() {
     return;
   }
 
+  // ── Sort ──
+  const { col, dir } = _tenderSort;
+  const mult = dir === 'asc' ? 1 : -1;
+  list = list.slice().sort((a, b) => {
+    let av, bv;
+    if (col === 'ref') {
+      return mult * (a.reference || '').localeCompare(b.reference || '');
+    } else if (col === 'project') {
+      av = (a.project_name || '').toLowerCase(); bv = (b.project_name || '').toLowerCase();
+      return mult * av.localeCompare(bv);
+    } else if (col === 'deadline') {
+      av = a.deadline_date ? String(a.deadline_date).split('T')[0] : '';
+      bv = b.deadline_date ? String(b.deadline_date).split('T')[0] : '';
+      // Blank dates sort to end regardless of direction
+      if (!av && !bv) return 0;
+      if (!av) return 1;
+      if (!bv) return -1;
+      return mult * av.localeCompare(bv);
+    } else if (col === 'created') {
+      av = a.created_at ? String(a.created_at).split('T')[0] : '';
+      bv = b.created_at ? String(b.created_at).split('T')[0] : '';
+      return mult * av.localeCompare(bv);
+    } else if (col === 'status') {
+      const order = { tender: 0, quote: 1, won: 2, lost: 3, cancelled: 4 };
+      return mult * ((order[a.status] ?? 9) - (order[b.status] ?? 9));
+    }
+    return 0;
+  });
+
+  // ── Update sort arrows ──
+  ['ref','project','deadline','created','status'].forEach(c => {
+    const el = document.getElementById(`tsort-arrow-${c}`);
+    if (!el) return;
+    if (c === col) {
+      el.textContent = dir === 'asc' ? '▲' : '▼';
+      el.classList.add('active');
+    } else {
+      el.textContent = '▲';
+      el.classList.remove('active');
+    }
+  });
+
+  const statusClsMap = {
+    tender:    'tag-status-tender',
+    quote:     'tag-status-quote-t',
+    won:       'tag-status-won-t',
+    lost:      'tag-status-lost-t',
+    cancelled: 'tag-status-cancelled-t'
+  };
+  const statusLabelMap = { tender: 'Tender', quote: 'Quote', won: 'Won', lost: 'Lost', cancelled: 'Cancelled' };
+
   container.innerHTML = list.map(t => `
     <div class="tender-row" onclick="openTenderDetail(${t.id})">
-      <div style="font-family:var(--font-mono);font-weight:600;font-size:14px;min-width:80px;color:var(--accent)">${t.reference}</div>
-      <div style="flex:1">
-        <div style="font-weight:500">${t.project_name}</div>
-        <div style="font-size:12px;color:var(--muted)">${t.company_name}${t.contact_name ? ' · ' + String(t.contact_name).split(',')[0].trim() : ''}</div>
+      <div style="font-family:var(--font-mono);font-weight:600;font-size:13px;color:var(--accent)">${t.reference}</div>
+      <div class="tender-col-project">
+        <div style="font-weight:500">${escapeHtml(t.project_name || '')}</div>
+        <div style="font-size:11px;color:var(--muted)">${escapeHtml(t.company_name || '')}${t.contact_name ? ' · ' + escapeHtml(String(t.contact_name).split(',')[0].trim()) : ''}</div>
       </div>
       ${renderDeadlineBadge(t.deadline_date, t.status)}
-      <span class="tag tag-${t.status === 'tender' ? 'pending' : t.status === 'quote' ? 'approved' : t.status === 'won' ? 'approved' : t.status === 'lost' ? 'rejected' : 'pending'}">${t.status}</span>
-      <div style="font-size:11px;color:var(--subtle);min-width:75px;text-align:right">${fmtDateStr(t.created_at?.split('T')[0] || '')}</div>
+      <div style="font-size:12px;color:var(--muted)">${fmtDateStr(t.created_at?.split('T')[0] || '')}</div>
+      <div><span class="tag ${statusClsMap[t.status] || 'tag-status-tender'}">${statusLabelMap[t.status] || t.status}</span></div>
     </div>
   `).join('');
 }

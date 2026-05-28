@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Tenders &amp; Quotes</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260528b">
+<link rel="stylesheet" href="bama.css?v=20260528c">
 </head>
 <body>
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
@@ -83,8 +83,11 @@
     <div class="tab-content active" id="tab-tenders">
       <div class="card">
         <div class="card-frozen-top">
-          <div class="card-title"><span class="icon">📋</span> All Tenders</div>
-          <div style="display:flex;gap:10px;margin-bottom:0;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <div class="card-title" style="margin:0"><span class="icon">📋</span> All Tenders</div>
+            <button class="btn btn-primary" onclick="openNewTenderModal()" style="font-size:12px;padding:7px 14px">&#65291; New Tender</button>
+          </div>
+          <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap">
             <input type="text" class="field-input" id="tenderSearch" placeholder="Search tenders..."
               style="max-width:260px" oninput="renderTenderList()">
             <select class="field-input" id="tenderStatusFilter" style="max-width:160px" onchange="renderTenderList()">
@@ -95,6 +98,13 @@
               <option value="lost">Lost</option>
               <option value="cancelled">Cancelled</option>
             </select>
+          </div>
+          <div class="tender-row tender-header">
+            <div class="tender-col-sortable" onclick="sortTenderList('ref')">REF <span class="sort-arrow" id="tsort-arrow-ref">▲</span></div>
+            <div class="tender-col-project tender-col-sortable" onclick="sortTenderList('project')">PROJECT / CLIENT <span class="sort-arrow" id="tsort-arrow-project">▲</span></div>
+            <div class="tender-col-sortable" onclick="sortTenderList('deadline')">DEADLINE <span class="sort-arrow" id="tsort-arrow-deadline">▲</span></div>
+            <div class="tender-col-sortable" onclick="sortTenderList('created')">CREATED <span class="sort-arrow" id="tsort-arrow-created">▼</span></div>
+            <div class="tender-col-sortable" onclick="sortTenderList('status')">STATUS <span class="sort-arrow" id="tsort-arrow-status">▲</span></div>
           </div>
         </div>
         <div id="tenderListContainer">
@@ -569,13 +579,47 @@
   .autocomplete-item .ac-company { font-weight: 600; }
   .autocomplete-item .ac-contact { color: var(--muted); font-size: 12px; }
 
+  /* ── Tender table layout ── */
   .tender-row {
-    display: flex; align-items: center; gap: 12px; padding: 12px 16px;
-    border-bottom: 1px solid var(--border); cursor: pointer; transition: background .15s;
+    display: grid;
+    grid-template-columns: 90px minmax(0,1fr) 130px 110px 100px;
+    align-items: center;
+    gap: 10px;
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: background .15s;
   }
+  .tender-col-project { min-width: 0; }
+  .tender-col-project > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
   .tender-row:hover { background: var(--surface2); }
-  .client-header:hover { background: var(--surface2); }
   .tender-row:last-child { border-bottom: none; }
+  .tender-header {
+    padding: 8px 16px 6px;
+    cursor: default;
+    border-bottom: 1px solid var(--border);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: var(--subtle);
+    text-transform: uppercase;
+    background: var(--card);
+  }
+  .tender-header:hover { background: var(--card); }
+  .tender-col-sortable {
+    cursor: pointer; user-select: none;
+    display: flex; align-items: center; gap: 4px;
+  }
+  .tender-col-sortable:hover { color: var(--text); }
+  /* ── Tender status badge colours ── */
+  .tag-status-tender       { background:rgba(245,158,11,.15);  color:var(--amber);  border:1px solid rgba(245,158,11,.3); }
+  .tag-status-quote-t      { background:rgba(62,139,207,.15);  color:#5ba8e8;       border:1px solid rgba(62,139,207,.3); }
+  .tag-status-won-t        { background:rgba(62,207,142,.15);  color:var(--green);  border:1px solid rgba(62,207,142,.3); }
+  .tag-status-lost-t       { background:rgba(255,68,68,.15);   color:var(--red);    border:1px solid rgba(255,68,68,.3); }
+  .tag-status-cancelled-t  { background:rgba(140,140,160,.12); color:#8888aa;       border:1px solid rgba(140,140,160,.25); }
+  /* ── Hide scrollbar ── */
+  .mgr-content { scrollbar-width: none; }
+  .mgr-content::-webkit-scrollbar { display: none; }
 
   .upload-zone {
     border: 2px dashed var(--border); border-radius: 10px; transition: border-color .2s;
@@ -589,6 +633,6 @@
   }
 </style>
 
-<script src="shared.js?v=20260528b"></script>
+<script src="shared.js?v=20260528c"></script>
 </body>
 </html>
