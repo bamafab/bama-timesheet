@@ -8192,7 +8192,8 @@ async function _supDzProcessNext() {
   "gross_amount": 0,
   "po_reference": "BAMA's PO reference if shown on the invoice — looks like P260501 (P + 6 digits)"
 }
-Set any field to null if not clearly shown. The PO reference belongs to the customer (BAMA) and is usually printed under "Your Order", "Order Ref", "Customer Order", "PO Number" or similar.`
+Set any field to null if not clearly shown. The PO reference belongs to the customer (BAMA) and is usually printed under "Your Order", "Order Ref", "Customer Order", "PO Number" or similar.
+IMPORTANT: net_amount and gross_amount must include ALL charges on the invoice — goods, delivery, carriage, freight, surcharges etc. Use the invoice's own printed net and gross totals, not just the goods subtotal.`
           }
         ]
       }]
@@ -8469,7 +8470,12 @@ function _filterAwaitingInvoice(pos) {
   );
 }
 function _filterDiscrepancy(pos) {
-  return pos.filter(po => po.reconciliation_status === 'discrepancy');
+  // Suppress penny-rounding differences of £0.04 or under — these are
+  // OCR/rounding artefacts and are not genuine financial discrepancies.
+  return pos.filter(po =>
+    po.reconciliation_status === 'discrepancy' &&
+    Math.abs(Number(po.supplier_invoice_gross || 0) - Number(po.total_value || 0)) > 0.04
+  );
 }
 function _filterOverdue(pos) {
   const threshold = _getOverdueThresholdDays();
@@ -27283,6 +27289,13 @@ async function loadPoTracker() {
   }
   renderPoKpis();
   renderPoTracker();
+
+  // Auto-open edit modal if navigated here from another page (e.g. supplier list)
+  const pendingEditId = sessionStorage.getItem('bama_po_edit');
+  if (pendingEditId) {
+    sessionStorage.removeItem('bama_po_edit');
+    openPoEditModal(parseInt(pendingEditId, 10));
+  }
 }
 
 // Period toggle for the spend KPI tile.
@@ -28236,15 +28249,27 @@ function renderPoDetail(p) {
     </div>
   `;
 
-  document.getElementById('poDetailEditBtn').dataset.poId = p.id;
+  const editBtn = document.getElementById('poDetailEditBtn');
+  editBtn.dataset.poId = p.id;
   const perms = getUserPermissions(currentManagerUser) || {};
-  // Edit button needs both permission AND the New/Edit PO modal markup,
-  // which only lives on po-tracker.html. On other pages (project-tracker.html)
-  // we hide it — the user can open the row from the PO Tracker page if
-  // they need to edit.
   const hasEditModal = !!document.getElementById('poNewModal');
-  document.getElementById('poDetailEditBtn').style.display =
-    (perms.editPurchaseOrders && hasEditModal) ? '' : 'none';
+  if (perms.editPurchaseOrders) {
+    editBtn.style.display = '';
+    if (hasEditModal) {
+      editBtn.textContent = '✏️ Edit';
+      editBtn.onclick = editPoFromDetail;
+    } else {
+      // On pages without the edit modal (office, project-tracker etc.)
+      // navigate to po-tracker.html and open the edit modal there.
+      editBtn.textContent = '✏️ Edit in PO Tracker';
+      editBtn.onclick = () => {
+        sessionStorage.setItem('bama_po_edit', p.id);
+        window.location.href = 'po-tracker.html';
+      };
+    }
+  } else {
+    editBtn.style.display = 'none';
+  }
 }
 
 
@@ -31319,7 +31344,8 @@ async function onSupInvFilePicked(file) {
   "vat_amount": 0,
   "gross_amount": 0
 }
-Set fields to null if unclear.`
+Set fields to null if unclear.
+IMPORTANT: net_amount and gross_amount must include ALL charges — goods, delivery, carriage, freight, surcharges etc. Use the invoice's own printed net and gross totals.`
           }
         ]
       }]
@@ -33427,7 +33453,8 @@ async function _gInvProcessNext() {
   "gross_amount": 0,
   "po_reference": "BAMA's PO reference if shown — looks like P260501 (P + 6 digits)"
 }
-Set any field to null if not clearly shown. The PO reference is the customer order number printed under "Your Order", "Order Ref", "PO Number" or similar.` }
+Set any field to null if not clearly shown. The PO reference is the customer order number printed under "Your Order", "Order Ref", "PO Number" or similar.
+IMPORTANT: net_amount and gross_amount must include ALL charges on the invoice — goods, delivery, carriage, freight, surcharges etc. Use the invoice's own printed net and gross totals, not just the goods subtotal.` }
       ]}]
     });
     const text  = (result.content?.find(b => b.type === 'text')?.text || '').trim();
