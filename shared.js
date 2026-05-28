@@ -782,7 +782,184 @@ function renderHome() {
     renderWorkshopNotifications();
     // Slight delay so drawingsData has a chance to populate on initial load
     setTimeout(checkNewJobAlerts, 200);
+    // Fabrication tile (commit 11 — SPEC §8). First load + poll.
+    loadKioskFabrication();
   }
+}
+
+// ═══════════════════════════════════════════
+// KIOSK FABRICATION TILE (commit 11 — SPEC §8)
+// ═══════════════════════════════════════════
+//
+// Full-width section on the kiosk home screen showing pending assemblies
+// workshop-wide. Tapping "Mark fabricated" on any card opens the same
+// welder+machine modal as projects.html (reused via openMarkFabricatedModal
+// with opts.assembly + opts.onSuccess).
+//
+// Visibility rule: pending assemblies on In Progress projects, PLUS any
+// assemblies marked fabricated in the last 24h (dimmed + green tick).
+//
+// Refresh: initial load on home render + 60s poll while the home screen is
+// the active screen.
+
+let _kioskFabData = [];
+let _kioskFabFilter = '__all__';
+let _kioskFabTimer = null;
+
+async function loadKioskFabrication() {
+  const tile = document.getElementById('kioskFabricationTile');
+  if (!tile) return; // not on kiosk
+  try {
+    const rows = await api.get('/api/job-assemblies/kiosk');
+    _kioskFabData = Array.isArray(rows) ? rows : [];
+  } catch (e) {
+    console.warn('Kiosk fabrication load failed:', e.message);
+    _kioskFabData = [];
+  }
+  renderKioskFabrication();
+  scheduleKioskFabricationPoll();
+}
+
+function scheduleKioskFabricationPoll() {
+  if (_kioskFabTimer) clearTimeout(_kioskFabTimer);
+  _kioskFabTimer = setTimeout(() => {
+    // Only poll while the home screen is the active one (don't burn cycles
+    // when the user is deep in an employee panel or holiday flow).
+    const home = document.getElementById('screenHome');
+    if (home && home.classList.contains('active')) {
+      loadKioskFabrication();
+    } else {
+      // Re-arm for later
+      scheduleKioskFabricationPoll();
+    }
+  }, 60000);
+}
+
+function renderKioskFabrication() {
+  const tile = document.getElementById('kioskFabricationTile');
+  if (!tile) return;
+  const list = document.getElementById('kioskFabList');
+  const chips = document.getElementById('kioskFabChips');
+  const countEl = document.getElementById('kioskFabCount');
+
+  if (!_kioskFabData.length) {
+    tile.style.display = 'none';
+    return;
+  }
+  tile.style.display = '';
+
+  const pendingCount = _kioskFabData.filter(a => a.status === 'pending').length;
+  const fabCount = _kioskFabData.filter(a => a.status === 'fabricated').length;
+  countEl.textContent = `${pendingCount} pending${fabCount ? ` · ${fabCount} fabricated (24h)` : ''}`;
+
+  // Project filter chips — one per project that has any rows
+  const projects = [...new Map(_kioskFabData.map(a => [a.project_number, a.project_name || a.project_number])).entries()];
+  projects.sort((a, b) => String(a[0]).localeCompare(String(b[0]), 'en', { numeric: true }));
+  let chipsHtml = `<div class="kfab-chip ${_kioskFabFilter === '__all__' ? 'active' : ''}" onclick="setKioskFabFilter('__all__')">All projects</div>`;
+  for (const [num, name] of projects) {
+    const active = _kioskFabFilter === num ? 'active' : '';
+    chipsHtml += `<div class="kfab-chip ${active}" onclick="setKioskFabFilter('${escapeHtml(num)}')">${escapeHtml(num)}</div>`;
+  }
+  chips.innerHTML = chipsHtml;
+
+  // Filter + group rendered list by project+job
+  const filtered = _kioskFabFilter === '__all__'
+    ? _kioskFabData
+    : _kioskFabData.filter(a => a.project_number === _kioskFabFilter);
+
+  if (!filtered.length) {
+    list.innerHTML = '<div style="color:var(--subtle);font-size:13px;padding:14px;text-align:center">Nothing pending for this project right now.</div>';
+    return;
+  }
+
+  // Group key = project_number + job_id; render section header per group.
+  const groups = new Map();
+  for (const a of filtered) {
+    const key = `${a.project_number}|${a.job_id}`;
+    if (!groups.has(key)) groups.set(key, { project_number: a.project_number, project_name: a.project_name, job_name: a.job_name, items: [] });
+    groups.get(key).items.push(a);
+  }
+
+  let html = '';
+  for (const g of groups.values()) {
+    html += `<div style="font-size:11px;color:var(--subtle);text-transform:uppercase;letter-spacing:.05em;margin:14px 0 6px">
+      ${escapeHtml(g.project_number)}${g.project_name ? ` — ${escapeHtml(g.project_name)}` : ''} &middot; ${escapeHtml(g.job_name)}
+    </div>`;
+    html += '<div style="display:flex;flex-direction:column;gap:8px">';
+    for (const a of g.items) {
+      html += renderKioskFabCard(a);
+    }
+    html += '</div>';
+  }
+  list.innerHTML = html;
+}
+
+function renderKioskFabCard(a) {
+  const isFab = a.status === 'fabricated';
+  const finishBadge = a.finish_name
+    ? `<span style="background:rgba(99,102,241,.18);color:#a5b4fc;padding:2px 9px;border-radius:6px;font-size:11px">${escapeHtml(a.finish_name)}</span>`
+    : '<span style="color:var(--subtle);font-size:11px">No finish</span>';
+
+  // Compact parts table (only for pending — fabricated cards stay slim)
+  let partsHtml = '';
+  if (!isFab && a.parts && a.parts.length) {
+    partsHtml = `<table style="width:100%;font-family:var(--font-mono);font-size:11px;color:var(--muted);border-collapse:collapse;margin-top:6px">
+      <thead><tr style="color:var(--subtle);text-align:left">
+        <th style="font-weight:400;padding:3px 6px 3px 0">Mk</th>
+        <th style="font-weight:400;padding:3px 6px">Qty</th>
+        <th style="font-weight:400;padding:3px 6px">Profile</th>
+        <th style="font-weight:400;padding:3px 6px">Length</th>
+        <th style="font-weight:400;padding:3px 6px">Material</th>
+      </tr></thead><tbody>`;
+    // Highlight heaviest
+    let heavyIdx = -1, heavyWt = -Infinity;
+    a.parts.forEach((p, i) => {
+      const w = Number(p.weight_kg) || 0;
+      if (w > heavyWt) { heavyWt = w; heavyIdx = i; }
+    });
+    for (let i = 0; i < a.parts.length; i++) {
+      const p = a.parts[i];
+      const hi = i === heavyIdx;
+      const tr = hi ? 'background:rgba(255,107,0,.06)' : '';
+      const ac = hi ? 'color:var(--accent)' : '';
+      partsHtml += `<tr style="${tr}">
+        <td style="padding:3px 6px 3px 0">${escapeHtml(p.part_mark)}</td>
+        <td style="padding:3px 6px">${Number(p.quantity)}</td>
+        <td style="padding:3px 6px;${ac}">${escapeHtml(p.profile)}</td>
+        <td style="padding:3px 6px">${p.length_mm != null ? Number(p.length_mm).toFixed(1) : ''}</td>
+        <td style="padding:3px 6px">${p.material ? escapeHtml(p.material) : ''}</td>
+      </tr>`;
+    }
+    partsHtml += '</tbody></table>';
+  }
+
+  const fabFooter = isFab
+    ? `<span style="margin-left:auto;color:var(--green);font-size:11px">&#10003; Fabricated ${a.fabricated_at ? new Date(a.fabricated_at).toLocaleString('en-GB', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : ''}${a.fabricated_by ? ' · ' + escapeHtml(a.fabricated_by) : ''}</span>`
+    : `<button class="btn btn-primary" style="margin-left:auto;padding:6px 14px;font-size:12px" onclick="kioskMarkFabricated(${a.id})">&#10003; Mark fabricated</button>`;
+
+  return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;${isFab ? 'opacity:.55;' : ''}">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <span style="font-family:var(--font-mono);font-size:15px;font-weight:700;color:${isFab ? 'var(--muted)' : 'var(--accent)'};min-width:50px">${escapeHtml(a.assembly_mark)}</span>
+      <span style="font-size:13px;color:var(--muted);min-width:60px">${Number(a.quantity)} off</span>
+      ${finishBadge}
+      ${fabFooter}
+    </div>
+    ${partsHtml}
+  </div>`;
+}
+
+function setKioskFabFilter(num) {
+  _kioskFabFilter = num;
+  renderKioskFabrication();
+}
+
+function kioskMarkFabricated(id) {
+  const assembly = _kioskFabData.find(a => a.id === id);
+  if (!assembly) { toast('Assembly not found.', 'error'); return; }
+  openMarkFabricatedModal(id, {
+    assembly,
+    onSuccess: async () => { await loadKioskFabrication(); }
+  });
 }
 
 // ── Workshop Kiosk Notifications ──
@@ -14557,13 +14734,11 @@ async function deleteAssembly(id) {
   }
 }
 
-// ── Mark fabricated modal (commit 8 — SPEC §5) ──
-// Opens a confirm dialog asking who welded it and on what machine.
-// On confirm, PUTs to /api/job-assemblies/:id/fabricate, which in a
-// single transaction flips the assembly status AND creates a JobBomItems
-// row (description = heaviest part's profile, qty = assembly qty,
-// status = 'pending' if finish set else 'ready_for_despatch').
+// Pending fabricate state. _postFabricateCallback lets callers (e.g. the
+// kiosk Fabrication tile) plug in their own refresh path after a successful
+// fabricate, since they don't have currentJob / _assembliesByJob context.
 let _pendingFabricateAssemblyId = null;
+let _postFabricateCallback = null;
 
 async function loadWeldingMachinesIfNeeded() {
   if (_weldingMachines && _weldingMachines.length) return;
@@ -14575,14 +14750,24 @@ async function loadWeldingMachinesIfNeeded() {
   }
 }
 
-async function openMarkFabricatedModal(assemblyId) {
+// openMarkFabricatedModal(assemblyId, opts?)
+//   opts.assembly  — pre-loaded assembly object (used by the kiosk where
+//                    _assembliesByJob isn't populated for that job)
+//   opts.onSuccess — callback after successful fabricate (used to refresh
+//                    custom caches like the kiosk list)
+async function openMarkFabricatedModal(assemblyId, opts) {
   if (!assemblyId) return;
-  const jobId = currentJob?.id ? parseInt(currentJob.id) : null;
-  const assembly = (_assembliesByJob[jobId] || []).find(a => a.id === assemblyId);
+  opts = opts || {};
+  let assembly = opts.assembly;
+  if (!assembly) {
+    const jobId = currentJob?.id ? parseInt(currentJob.id) : null;
+    assembly = (_assembliesByJob[jobId] || []).find(a => a.id === assemblyId);
+  }
   if (!assembly) { toast('Assembly not found — please reload.', 'error'); return; }
   if (assembly.status === 'fabricated') { toast('Already marked as fabricated.', 'info'); return; }
 
   _pendingFabricateAssemblyId = assemblyId;
+  _postFabricateCallback = typeof opts.onSuccess === 'function' ? opts.onSuccess : null;
 
   // Header context
   document.getElementById('mfMark').textContent = assembly.assembly_mark;
@@ -14639,6 +14824,7 @@ function checkMarkFabricatedReady() {
 function closeMarkFabricatedModal() {
   document.getElementById('markFabricatedModal').classList.remove('active');
   _pendingFabricateAssemblyId = null;
+  _postFabricateCallback = null;
 }
 
 async function confirmMarkFabricated() {
@@ -14656,6 +14842,9 @@ async function confirmMarkFabricated() {
   const btn = document.getElementById('mfConfirmBtn');
   btn.disabled = true; btn.style.opacity = '.5';
 
+  // Capture the callback before close() clears it
+  const cb = _postFabricateCallback;
+
   try {
     await api.put(`/api/job-assemblies/${id}/fabricate`, {
       welder_id: welderId,
@@ -14664,15 +14853,25 @@ async function confirmMarkFabricated() {
     });
     closeMarkFabricatedModal();
     toast('Marked as fabricated.', 'success');
-    // Refresh assemblies cache (and re-render). BOM render lands in commit 9.
-    if (currentJob?.id) await loadJobAssemblies(parseInt(currentJob.id));
-    renderAssembly();
+
+    // Refresh path 1: caller-supplied (kiosk uses this)
+    if (cb) {
+      try { await cb(); } catch (e) { console.warn('post-fabricate callback failed:', e); }
+    }
+    // Refresh path 2: projects.html context (currentJob set)
+    if (currentJob?.id) {
+      await loadJobAssemblies(parseInt(currentJob.id));
+      renderAssembly();
+    }
   } catch (e) {
     if (e?.body?.error === 'already_fabricated') {
       toast('Already fabricated — refreshing.', 'info');
       closeMarkFabricatedModal();
-      if (currentJob?.id) await loadJobAssemblies(parseInt(currentJob.id));
-      renderAssembly();
+      if (cb) { try { await cb(); } catch (_) {} }
+      if (currentJob?.id) {
+        await loadJobAssemblies(parseInt(currentJob.id));
+        renderAssembly();
+      }
     } else {
       toast(`Failed: ${e.message}`, 'error');
       btn.disabled = false; btn.style.opacity = '1';

@@ -1877,3 +1877,24 @@
   box-sizing: border-box;
 }
 .bmr-cell:focus { outline: none; border-color: var(--accent); }
+
+/* Kiosk Fabrication tile chips (SPEC-job-fabrication-rework §8) */
+.kfab-chip {
+  display: inline-block;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  cursor: pointer;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  user-select: none;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.kfab-chip:hover { color: var(--text); border-color: var(--accent); }
+.kfab-chip.active {
+  background: rgba(255,107,0,.12);
+  color: var(--accent);
+  border-color: rgba(255,107,0,.5);
+  font-weight: 600;
+}

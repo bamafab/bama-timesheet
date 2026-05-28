@@ -294,7 +294,80 @@ app.http('job-assemblies-delete', {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PUT /api/job-assemblies/:id/fabricate
+// GET /api/job-assemblies/kiosk
+// Returns the list for the kiosk Fabrication tile (SPEC §8):
+//   - All 'pending' assemblies on In Progress projects
+//   - All 'fabricated' assemblies fabricated in the last 24h on In Progress
+//     projects (so the workshop can see what they just finished)
+//
+// The kiosk renders these grouped by project + job, sorted with pending
+// first.
+// ─────────────────────────────────────────────────────────────────────────────
+app.http('job-assemblies-kiosk', {
+    methods: ['GET'],
+    authLevel: 'anonymous',
+    route: 'job-assemblies/kiosk',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            // Pull assemblies first (small set), then their parts, then
+            // hydrate parts onto each assembly. Same pattern as the list
+            // endpoint to keep the response shape consistent.
+            const assembliesRes = await query(
+                `SELECT a.*,
+                        j.job_name,
+                        j.project_number,
+                        p.project_name,
+                        st.name AS finish_name
+                 FROM JobAssemblies a
+                 JOIN DrawingJobs j ON j.id = a.job_id
+                 JOIN Projects    p ON p.project_number = j.project_number
+                 LEFT JOIN ServiceTypes st ON st.id = a.finish_service_id
+                 WHERE p.status = 'In Progress'
+                   AND (a.status = 'pending'
+                        OR (a.status = 'fabricated'
+                            AND a.fabricated_at > DATEADD(hour, -24, SYSUTCDATETIME())))
+                 ORDER BY a.status DESC,
+                          j.project_number,
+                          j.job_name,
+                          a.assembly_mark`
+            );
+            const assemblies = assembliesRes.recordset;
+            if (assemblies.length === 0) return ok([], request);
+
+            const ids = assemblies.map(a => a.id);
+            const idParams = {};
+            const idPlaceholders = ids.map((id, i) => {
+                const k = `id${i}`;
+                idParams[k] = id;
+                return `@${k}`;
+            }).join(',');
+
+            const partsRes = await query(
+                `SELECT * FROM JobAssemblyParts
+                 WHERE assembly_id IN (${idPlaceholders})
+                 ORDER BY assembly_id, sort_order ASC, id ASC`,
+                idParams
+            );
+            const partsByAssembly = {};
+            for (const p of partsRes.recordset) {
+                if (!partsByAssembly[p.assembly_id]) partsByAssembly[p.assembly_id] = [];
+                partsByAssembly[p.assembly_id].push(p);
+            }
+            for (const a of assemblies) {
+                a.parts = partsByAssembly[a.id] || [];
+            }
+
+            return ok(assemblies, request);
+        } catch (err) {
+            context.error('Error fetching kiosk assemblies:', err);
+            return serverError('Failed to fetch kiosk assemblies', request);
+        }
+    }
+});
+
 // Single transaction:
 //   1. UPDATE JobAssemblies → status='fabricated' + welder + machine + when/who
 //   2. INSERT JobBomItems  → description = heaviest part's profile,

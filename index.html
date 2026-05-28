@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Workshop Timesheet</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260527o">
+<link rel="stylesheet" href="bama.css?v=20260527p">
 </head>
 <body>
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
@@ -46,6 +46,17 @@
       <button class="btn" onclick="openProjects()" style="background:var(--surface);border:2px solid #6366f1;color:#6366f1;padding:16px 32px;font-family:var(--font-display);font-size:20px;border-radius:12px;letter-spacing:2px;min-width:240px">
         &#128196; VIEW PROJECTS
       </button>
+    </div>
+
+    <!-- Fabrication tile (commit 11 — SPEC §8) -->
+    <div id="kioskFabricationTile" style="margin:32px auto 0;max-width:780px;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 22px;display:none">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+        <i style="font-size:22px;color:var(--accent)">&#x1F527;</i>
+        <div style="font-family:var(--font-display);font-size:22px;letter-spacing:2px;color:var(--text)">FABRICATION</div>
+        <div id="kioskFabCount" style="margin-left:auto;font-family:var(--font-mono);font-size:12px;color:var(--subtle)"></div>
+      </div>
+      <div id="kioskFabChips" style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap"></div>
+      <div id="kioskFabList"></div>
     </div>
   </div>
 </div>
@@ -552,6 +563,41 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260527ag"></script>
+<!-- ═══════════════════════════════════════
+     MARK FABRICATED MODAL (commit 11 — SPEC §8)
+     Reused on the kiosk by the Fabrication tile (same flow + markup
+     as projects.html). The modal's JS is in shared.js.
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="markFabricatedModal">
+  <div class="modal" style="max-width:460px;width:95vw">
+    <div class="modal-title" style="margin-bottom:6px">Mark fabricated</div>
+    <div style="display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px;margin-bottom:20px">
+      <span style="font-family:var(--font-mono);font-weight:700;color:var(--accent);font-size:16px" id="mfMark"></span>
+      <span id="mfQty"></span>
+      <span id="mfFinish" style="background:rgba(99,102,241,.18);color:#a5b4fc;padding:2px 9px;border-radius:6px;font-size:11px;display:none"></span>
+    </div>
+
+    <div style="margin-bottom:14px">
+      <div class="field-label">WELDER</div>
+      <select class="field-input" id="mfWelder"></select>
+    </div>
+
+    <div style="margin-bottom:20px">
+      <div class="field-label">WELDING MACHINE</div>
+      <select class="field-input" id="mfMachine"></select>
+    </div>
+
+    <button class="btn btn-primary btn-full" id="mfConfirmBtn"
+            onclick="confirmMarkFabricated()"
+            style="padding:14px;font-size:15px;opacity:.4;cursor:not-allowed" disabled>
+      Confirm &amp; mark fabricated
+    </button>
+    <button class="btn btn-ghost btn-full" onclick="closeMarkFabricatedModal()" style="margin-top:10px;padding:12px">
+      Cancel
+    </button>
+  </div>
+</div>
+
+<script src="shared.js?v=20260527ah"></script>
 </body>
 </html>
