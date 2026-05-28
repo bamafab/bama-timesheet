@@ -7986,7 +7986,9 @@ function _fmtPaymentTerms(supplier) {
     days_from_invoice:     `${days} days from invoice`,
     days_following_month:  `${days} days following month`,
   };
-  return labels[supplier.payment_term_type] || null;
+  const term = labels[supplier.payment_term_type] || null;
+  if (!term) return null;
+  return term + (supplier.payment_dd ? ' · DD' : '');
 }
 
 function openSupplierTermsModal() {
@@ -8004,6 +8006,9 @@ function openSupplierTermsModal() {
   }
   const daysEl = document.getElementById('termDaysInput');
   if (daysEl) daysEl.value = supplier.payment_term_days != null ? supplier.payment_term_days : '';
+
+  const ddEl = document.getElementById('termDdCheckbox');
+  if (ddEl) ddEl.checked = !!supplier.payment_dd;
 
   _highlightSelectedTermOption();
 
@@ -8040,9 +8045,12 @@ async function saveSupplierTerms() {
   if (isNaN(days) || days < 0) { toast('Please enter a valid number of days', 'warning'); return; }
 
   try {
+    const dd = document.getElementById('termDdCheckbox')?.checked || false;
+
     const updated = await api.put(`/api/suppliers/${supplierId}`, {
       payment_term_type: selected.value,
       payment_term_days: days,
+      payment_dd: dd,
     });
 
     // Patch local cache
@@ -8050,6 +8058,7 @@ async function saveSupplierTerms() {
     if (idx !== -1) {
       _suppliers[idx].payment_term_type = selected.value;
       _suppliers[idx].payment_term_days = days;
+      _suppliers[idx].payment_dd = dd;
     }
 
     closeSupplierTermsModal();

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Office</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260528d">
+<link rel="stylesheet" href="bama.css?v=20260528e">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 </head>
 <body>
@@ -1105,6 +1105,14 @@
         style="width:100px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:14px;font-family:var(--font-mono)">
     </div>
 
+    <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:24px;padding:10px 14px;border:1px solid var(--border);border-radius:8px" id="termDdOption">
+      <input type="checkbox" id="termDdCheckbox" style="accent-color:var(--accent);width:16px;height:16px;flex-shrink:0">
+      <div>
+        <div style="font-size:13px;font-weight:600">Direct Debit</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">Payment collected automatically — no manual action needed</div>
+      </div>
+    </label>
+
     <div style="display:flex;gap:8px;justify-content:flex-end">
       <button class="btn btn-ghost" onclick="closeSupplierTermsModal()">Cancel</button>
       <button class="btn btn-primary" onclick="saveSupplierTerms()">Save Terms</button>
@@ -1125,6 +1133,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260528d"></script>
+<script src="shared.js?v=20260528e"></script>
 </body>
 </html>
