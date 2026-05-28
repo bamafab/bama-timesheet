@@ -7880,9 +7880,9 @@ function _renderSupplierDetailPos() {
         <div style="display:flex;align-items:center;gap:12px;padding:10px 14px;cursor:pointer;background:var(--surface)"
              onclick="toggleSupplierPoDetail(this)">
           <div style="width:8px;height:8px;border-radius:50%;background:${col};flex-shrink:0"></div>
-          <a href="/po-tracker.html" onclick="event.stopPropagation();sessionStorage.setItem('bama_po_open',${po.id});sessionStorage.setItem('bama_pending_tab','dashboard')"
+          <a onclick="event.stopPropagation();openPoDetailModal(${po.id})"
              style="font-weight:600;font-size:13px;min-width:90px;color:var(--accent);text-decoration:none;cursor:pointer"
-             title="Open in PO Tracker">${escapeHtml(po.reference||'—')}</a>
+             title="View PO detail">${escapeHtml(po.reference||'—')}</a>
           <div style="font-size:12px;color:var(--muted);flex:1">${escapeHtml(po.description||'').slice(0,60)}</div>
           <div style="font-size:12px;color:var(--muted);min-width:70px">${project}</div>
           <div style="font-size:13px;font-weight:600;min-width:80px;text-align:right">${value}</div>
@@ -27283,13 +27283,6 @@ async function loadPoTracker() {
   }
   renderPoKpis();
   renderPoTracker();
-
-  // Auto-open a specific PO if navigated from supplier detail
-  const pendingPoId = sessionStorage.getItem('bama_po_open');
-  if (pendingPoId) {
-    sessionStorage.removeItem('bama_po_open');
-    openPoDetailModal(parseInt(pendingPoId));
-  }
 }
 
 // Period toggle for the spend KPI tile.
