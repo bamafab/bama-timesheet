@@ -1995,7 +1995,7 @@ function renderEmpSummary(entries, clockings) {
     <div class="card" style="margin-bottom:16px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
         <div style="font-weight:600;font-size:15px">${name}</div>
-        <div class="mono" style="color:var(--accent2)">${data.hours.toFixed(1)} hrs total</div>
+        <div class="mono" style="color:var(--accent2)">${data.hours.toFixed(2)} hrs total</div>
       </div>
       ${data.entries.map(e => `
         <div class="entry-chip">
@@ -2135,7 +2135,7 @@ function renderClockLog(clockings) {
           ${c.clockIn || '—'} – ${c.clockOut || '<span style="color:var(--amber)">in</span>'}${editedBadge}
         </div>
         <div style="font-size:11px;color:${hrs >= 8 ? 'var(--green)' : 'var(--accent2)'};font-family:var(--font-mono);margin-top:2px">
-          ${hrs > 0 ? hrs.toFixed(1) + 'h' : ''}
+          ${hrs > 0 ? hrs.toFixed(2) + 'h' : ''}
         </div>
         ${statusBadge}
         <div style="margin-top:4px">
@@ -2177,7 +2177,7 @@ function renderClockLog(clockings) {
       }).join('');
 
       const dayTotalLabel = multi
-        ? `<div style="font-size:10px;color:var(--muted);margin-bottom:4px;font-weight:600">${shifts.length} shifts · ${dayHrs.toFixed(1)}h total</div>`
+        ? `<div style="font-size:10px;color:var(--muted);margin-bottom:4px;font-weight:600">${shifts.length} shifts · ${dayHrs.toFixed(2)}h total</div>`
         : '';
 
       return {
@@ -2197,7 +2197,7 @@ function renderClockLog(clockings) {
         </td>
         ${dayData.map(d => d.html).join('')}
         <td style="text-align:center;padding:10px 8px;vertical-align:middle">
-          <div style="font-family:var(--font-display);font-size:20px;color:${totalHrs >= 40 ? 'var(--green)' : 'var(--accent2)'}">${totalHrs.toFixed(1)}</div>
+          <div style="font-family:var(--font-display);font-size:20px;color:${totalHrs >= 40 ? 'var(--green)' : 'var(--accent2)'}">${totalHrs.toFixed(2)}</div>
           <div style="font-size:10px;color:var(--muted)">hrs</div>
         </td>
       </tr>
@@ -2287,7 +2287,7 @@ function renderClockLog(clockings) {
           <tr style="border-top:2px solid var(--border)">
             <td style="padding:8px 14px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Daily Total</td>
             ${dayTotals}
-            <td style="text-align:center;font-family:var(--font-display);font-size:18px;color:var(--green)">${grandTotal.toFixed(1)}</td>
+            <td style="text-align:center;font-family:var(--font-display);font-size:18px;color:var(--green)">${grandTotal.toFixed(2)}</td>
           </tr>
         </tfoot>
       </table>
@@ -2601,7 +2601,7 @@ function refreshDeleteClockingPreview() {
     html += `<div style="color:var(--muted);font-size:12px;margin-bottom:4px">No clock-in/out record</div>`;
   }
   if (entries.length) {
-    html += `<div style="font-size:12px">Project hours: <b>${entries.length}</b> entr${entries.length === 1 ? 'y' : 'ies'} (${projHrsTotal.toFixed(1)}h)</div>`;
+    html += `<div style="font-size:12px">Project hours: <b>${entries.length}</b> entr${entries.length === 1 ? 'y' : 'ies'} (${projHrsTotal.toFixed(2)}h)</div>`;
   } else {
     html += `<div style="color:var(--muted);font-size:12px">No project-hour entries</div>`;
   }
@@ -2759,7 +2759,7 @@ function renderMyWeek(employeeName) {
   const weekTotalHrs = weekClockings.reduce((s, c) => s + (calcHours(c.clockIn, c.clockOut, c.breakMins, c.date) || 0), 0);
   const totalEl = document.getElementById('myWeekTotal');
   if (totalEl) {
-    totalEl.textContent = weekTotalHrs > 0 ? `${weekTotalHrs.toFixed(1)}h this week` : '';
+    totalEl.textContent = weekTotalHrs > 0 ? `${weekTotalHrs.toFixed(2)}h this week` : '';
     totalEl.style.color = weekTotalHrs >= 40 ? 'var(--green)' : 'var(--accent2)';
   }
 
@@ -2799,7 +2799,7 @@ function renderMyWeek(employeeName) {
           ${clocking.clockIn ? `<div class="week-day-time in">▲ ${clocking.clockIn}</div>` : '<div class="week-day-time" style="color:var(--subtle)">▲ —</div>'}
           ${clocking.clockOut ? `<div class="week-day-time out">▼ ${clocking.clockOut}</div>` : '<div class="week-day-time" style="color:var(--subtle)">▼ —</div>'}
           ${clocking.breakMins ? `<div class="week-day-break">&#9749; ${clocking.breakMins}m</div>` : ''}
-          ${hrs !== null ? `<div class="week-day-total">${hrs.toFixed(1)}h</div>` : ''}
+          ${hrs !== null ? `<div class="week-day-total">${hrs.toFixed(2)}h</div>` : ''}
           ${isPending ? `<div style="margin-top:4px"><span class="tag tag-pending" style="font-size:9px">Pending</span></div>` : ''}
           ${clocking.manuallyEdited && !isPending ? `<div style="margin-top:4px"><span class="manually-edited-badge" style="font-size:9px">Edited</span></div>` : ''}
           ${amendment ? `<div style="margin-top:4px"><span class="tag tag-pending" style="font-size:9px">Amendment pending</span></div>` : ''}
@@ -2809,7 +2809,7 @@ function renderMyWeek(employeeName) {
       }).join('');
 
       const header = multi
-        ? `<div style="font-size:10px;color:var(--muted);margin-bottom:4px;font-weight:600">${dayClockings.length} shifts · ${dayTotalHrs.toFixed(1)}h total</div>`
+        ? `<div style="font-size:10px;color:var(--muted);margin-bottom:4px;font-weight:600">${dayClockings.length} shifts · ${dayTotalHrs.toFixed(2)}h total</div>`
         : '';
 
       content = header + shiftBlocks;
@@ -2901,7 +2901,7 @@ async function renderLastWeekReview(employeeName) {
   const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
   const weekTotalHrs = weekClockings.reduce((s, c) => s + (calcHours(c.clockIn, c.clockOut, c.breakMins, c.date) || 0), 0);
   if (totalEl) {
-    totalEl.textContent = weekTotalHrs > 0 ? `${weekTotalHrs.toFixed(1)}h total` : '';
+    totalEl.textContent = weekTotalHrs > 0 ? `${weekTotalHrs.toFixed(2)}h total` : '';
     totalEl.style.color = 'var(--accent2)';
   }
 
@@ -2931,7 +2931,7 @@ async function renderLastWeekReview(employeeName) {
           ${clocking.clockIn ? `<div class="week-day-time in">▲ ${clocking.clockIn}</div>` : '<div class="week-day-time" style="color:var(--subtle)">▲ —</div>'}
           ${clocking.clockOut ? `<div class="week-day-time out">▼ ${clocking.clockOut}</div>` : '<div class="week-day-time" style="color:var(--subtle)">▼ —</div>'}
           ${clocking.breakMins ? `<div class="week-day-break">&#9749; ${clocking.breakMins}m</div>` : ''}
-          ${hrs !== null ? `<div class="week-day-total">${hrs.toFixed(1)}h</div>` : ''}
+          ${hrs !== null ? `<div class="week-day-total">${hrs.toFixed(2)}h</div>` : ''}
           ${amendment ? `<div style="margin-top:4px"><span class="tag tag-pending" style="font-size:9px">Amendment pending</span></div>` : ''}
           ${rejectedAmendment && !amendment ? `<div style="margin-top:4px"><span class="tag tag-rejected" style="font-size:9px">Amendment rejected</span></div>` : ''}
           ${clocking.clockOut && !amendment ? `<button class="week-day-add" onclick="openAmendmentRequest('${clocking.id}')">&#9998; Request Amendment</button>` : ''}
@@ -2939,7 +2939,7 @@ async function renderLastWeekReview(employeeName) {
       }).join('');
 
       const header = multi
-        ? `<div style="font-size:10px;color:var(--muted);margin-bottom:4px;font-weight:600">${dayClockings.length} shifts · ${dayTotalHrs.toFixed(1)}h total</div>`
+        ? `<div style="font-size:10px;color:var(--muted);margin-bottom:4px;font-weight:600">${dayClockings.length} shifts · ${dayTotalHrs.toFixed(2)}h total</div>`
         : '';
 
       content = header + shiftBlocks;
@@ -5851,10 +5851,10 @@ function renderReports() {
   const kpiRow = document.getElementById('rptKpiRow');
   if (kpiRow) {
     const kpis = [
-      { label: 'Total Hours', value: totalClocked.toFixed(1) + 'h', color: 'var(--accent2)' },
-      { label: 'Project Hours', value: totalProject.toFixed(1) + 'h', color: 'var(--green)' },
-      { label: 'Workshop General', value: totalWGD.toFixed(1) + 'h', color: '#6366f1' },
-      { label: 'Unproductive', value: totalUnproductive.toFixed(1) + 'h', color: 'var(--red)' },
+      { label: 'Total Hours', value: totalClocked.toFixed(2) + 'h', color: 'var(--accent2)' },
+      { label: 'Project Hours', value: totalProject.toFixed(2) + 'h', color: 'var(--green)' },
+      { label: 'Workshop General', value: totalWGD.toFixed(2) + 'h', color: '#6366f1' },
+      { label: 'Unproductive', value: totalUnproductive.toFixed(2) + 'h', color: 'var(--red)' },
       { label: 'Utilisation', value: utilisation + '%', color: utilisation >= 80 ? 'var(--green)' : utilisation >= 60 ? 'var(--amber)' : 'var(--red)' },
       { label: 'Attendance', value: attendanceData.attendanceRate + '%', color: attendanceData.attendanceRate >= 95 ? 'var(--green)' : attendanceData.attendanceRate >= 85 ? 'var(--amber)' : 'var(--red)' },
     ];
@@ -9653,7 +9653,7 @@ function renderArchive() {
               WC ${new Date(w.weekCommencing+'T12:00:00').toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'})}
             </div>
             <div style="font-size:12px;color:var(--muted);margin-top:4px">
-              ${(w.payroll||[]).length} employees &nbsp;·&nbsp; ${totalHrs.toFixed(1)} total hours &nbsp;·&nbsp; Archived ${new Date(w.archivedAt).toLocaleDateString('en-GB')}
+              ${(w.payroll||[]).length} employees &nbsp;·&nbsp; ${totalHrs.toFixed(2)} total hours &nbsp;·&nbsp; Archived ${new Date(w.archivedAt).toLocaleDateString('en-GB')}
             </div>
           </div>
           <div style="display:flex;align-items:center;gap:12px">
@@ -16848,10 +16848,10 @@ function buildAttendanceHTML(d, settingsOverride) {
 
     <div class="section-title">Hours &amp; Utilisation</div>
     <div class="kpi-row">
-      <div class="kpi"><div class="kpi-label">Total Hours</div><div class="kpi-value orange">${d.general.totalClocked.toFixed(1)}h</div></div>
-      <div class="kpi"><div class="kpi-label">Project Hours</div><div class="kpi-value green">${d.general.totalProject.toFixed(1)}h</div></div>
-      <div class="kpi"><div class="kpi-label">Workshop General</div><div class="kpi-value purple">${d.general.totalWGD.toFixed(1)}h</div></div>
-      <div class="kpi"><div class="kpi-label">Unproductive</div><div class="kpi-value red">${d.general.totalUnproductive.toFixed(1)}h</div></div>
+      <div class="kpi"><div class="kpi-label">Total Hours</div><div class="kpi-value orange">${d.general.totalClocked.toFixed(2)}h</div></div>
+      <div class="kpi"><div class="kpi-label">Project Hours</div><div class="kpi-value green">${d.general.totalProject.toFixed(2)}h</div></div>
+      <div class="kpi"><div class="kpi-label">Workshop General</div><div class="kpi-value purple">${d.general.totalWGD.toFixed(2)}h</div></div>
+      <div class="kpi"><div class="kpi-label">Unproductive</div><div class="kpi-value red">${d.general.totalUnproductive.toFixed(2)}h</div></div>
       <div class="kpi"><div class="kpi-label">Utilisation</div><div class="kpi-value ${d.general.utilisation >= 80 ? 'green' : d.general.utilisation >= 60 ? 'amber' : 'red'}">${d.general.utilisation}%</div></div>
     </div>
 
