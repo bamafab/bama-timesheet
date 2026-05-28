@@ -706,6 +706,7 @@
     align-items: center; justify-content: center;
   }
   .modal-overlay.active { display: flex; }
+  #confirmModal { z-index: 300; }
   .modal {
     background: var(--card); border: 1px solid var(--border);
     border-radius: 16px; padding: 32px; width: 400px; max-width: 90vw;

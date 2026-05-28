@@ -1466,6 +1466,8 @@ app.http('po-supplier-invoice-attach', {
             }
 
             // Update the PO with the supplier invoice fields
+            // Advance status to Invoiced unless already Closed/Cancelled
+            const statusUpdate = ['Closed', 'Cancelled'].includes(po.status) ? po.status : 'Invoiced';
             await query(
                 `UPDATE PurchaseOrders SET
                     supplier_invoice_ref            = @ref,
@@ -1477,6 +1479,7 @@ app.http('po-supplier-invoice-attach', {
                     supplier_invoice_attachment_id  = @attachmentId,
                     reconciliation_status           = @reconStatus,
                     reconciliation_notes            = @notes,
+                    status                          = @status,
                     updated_at                      = GETUTCDATE()
                  WHERE id = @id`,
                 {
@@ -1488,7 +1491,8 @@ app.http('po-supplier-invoice-attach', {
                     gross:       grossBilled || null,
                     attachmentId,
                     reconStatus: reconciliationStatus,
-                    notes:       body.reconciliation_notes ?? null
+                    notes:       body.reconciliation_notes ?? null,
+                    status:      statusUpdate
                 }
             );
 

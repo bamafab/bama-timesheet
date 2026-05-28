@@ -7916,10 +7916,14 @@ function _renderPoDetailRows(po) {
 
   // Invoice info if present
   if (po.supplier_invoice_received_at) {
+    const invUrl = po.sharepoint_url || null;
+    const invLinkHtml = invUrl
+      ? ` &nbsp;<a href="${escapeHtml(invUrl)}" target="_blank" style="color:var(--accent);font-size:12px;text-decoration:none" title="Open invoice in SharePoint">📄 View invoice</a>`
+      : '';
     html += `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:12px">
       <span style="color:var(--muted)">Invoice ref:</span> <b>${escapeHtml(po.supplier_invoice_ref||'—')}</b> &nbsp;
       <span style="color:var(--muted)">Gross:</span> <b>£${Number(po.supplier_invoice_gross||0).toFixed(2)}</b> &nbsp;
-      <span style="color:var(--muted)">Status:</span> <b style="color:${po.reconciliation_status==='matched'?'var(--green)':'var(--red)'}">${po.reconciliation_status||'—'}</b>
+      <span style="color:var(--muted)">Status:</span> <b style="color:${po.reconciliation_status==='matched'?'var(--green)':'var(--red)'}">${po.reconciliation_status||'—'}</b>${invLinkHtml}
     </div>`;
   }
 
@@ -27417,11 +27421,15 @@ function poStatusBadge(p) {
   const map = {
     'Open':      { bg:'#22372d', fg:'#7fdca6' },
     'Received':  { bg:'#2d2a3e', fg:'#a99dff' },
+    'Invoiced':  { bg:'#2a3020', fg:'#b5d97a' },
     'Closed':    { bg:'#1f2a3a', fg:'#7fb2f0' },
     'Cancelled': { bg:'#3a2222', fg:'#ff8a8a' }
   };
   const s = map[p.status] || { bg:'#333', fg:'#bbb' };
-  return `<span style="background:${s.bg};color:${s.fg};font-size:11px;padding:3px 8px;border-radius:6px;font-weight:600">${escapeHtml(p.status || '—')}</span>`;
+  const invLink = p.status === 'Invoiced' && p.sharepoint_url
+    ? ` <a href="${escapeHtml(p.sharepoint_url)}" target="_blank" onclick="event.stopPropagation()" title="View invoice" style="color:inherit;opacity:.7;font-size:13px;text-decoration:none;margin-left:4px">📄</a>`
+    : '';
+  return `<span style="background:${s.bg};color:${s.fg};font-size:11px;padding:3px 8px;border-radius:6px;font-weight:600;display:inline-flex;align-items:center">${escapeHtml(p.status || '—')}${invLink}</span>`;
 }
 
 function poNextAction(p) {

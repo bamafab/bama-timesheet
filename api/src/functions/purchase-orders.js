@@ -57,7 +57,7 @@ async function nextReferenceForMonth(year2, month2) {
 
 // ── Validation helpers ──────────────────────────────────────────────────────
 
-const ALLOWED_STATUSES = ['Open', 'Received', 'Closed', 'Cancelled'];
+const ALLOWED_STATUSES = ['Open', 'Received', 'Invoiced', 'Closed', 'Cancelled'];
 const ALLOWED_ATTACHMENT_KINDS = ['delivery_note', 'supplier_invoice', 'other'];
 
 function num(v) {
@@ -235,12 +235,16 @@ app.http('purchase-orders-list', {
                         po.reconciliation_status, po.reconciliation_notes,
                         po.created_by, po.created_at, po.updated_at,
                         s.supplier_name,
-                        p.project_number, p.project_name
+                        p.project_number, p.project_name,
+                        pa.sharepoint_file_url AS sharepoint_url
                    FROM PurchaseOrders po
                    JOIN Suppliers s ON po.supplier_id = s.id
               LEFT JOIN Projects p  ON po.project_id  = p.id
-                  ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-               ORDER BY po.created_at DESC`;
+              LEFT JOIN POAttachments pa ON pa.po_id = po.id AND pa.kind = 'supplier_invoice'
+                                        AND pa.id = (SELECT TOP 1 id FROM POAttachments
+                                                     WHERE po_id = po.id AND kind = 'supplier_invoice'
+                                                     ORDER BY id DESC)
+                  ${where.length ? 'WHERE ' + where.join(' AND ') : ''}\n               ORDER BY po.created_at DESC`;
 
             const r = await query(sqlText, params);
             return ok(r.recordset, request);
