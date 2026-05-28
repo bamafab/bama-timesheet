@@ -33448,16 +33448,23 @@ function _gInvFuzzyMatchSupplier(name) {
   if (!name || !_suppliers?.length) return null;
   const n = name.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
   if (!n) return null;
-  // Score each supplier: count of words in common
   let best = null, bestScore = 0;
-  const qWords = n.split(/\s+/).filter(w => w.length > 2);
+  // Filter both sides: only words >= 3 chars; ignore common filler words
+  const STOP = new Set(['ltd','plc','inc','llc','the','and','for','uk','co','group','limited']);
+  const sig = w => w.length >= 3 && !STOP.has(w);
+  const qWords = n.split(/\s+/).filter(sig);
+  if (!qWords.length) return null;
   for (const s of _suppliers) {
     const sn = (s.supplier_name || '').toLowerCase().replace(/[^a-z0-9 ]/g, '');
-    const snWords = sn.split(/\s+/);
-    const score = qWords.filter(w => snWords.some(sw => sw.startsWith(w) || w.startsWith(sw))).length;
+    const snWords = sn.split(/\s+/).filter(sig);
+    // Exact word match only (no startsWith to avoid false positives)
+    const score = qWords.filter(w => snWords.includes(w)).length;
     if (score > bestScore) { bestScore = score; best = s; }
   }
-  return bestScore >= 1 ? best : null;
+  // Require 2+ matching words, OR 1 match where the word is 5+ chars (e.g. "Amazon", "Hilti")
+  const hasLongMatch = best && bestScore >= 1 &&
+    qWords.some(w => w.length >= 5 && (best.supplier_name||'').toLowerCase().replace(/[^a-z0-9 ]/g,'').split(/\s+/).includes(w));
+  return (bestScore >= 2 || hasLongMatch) ? best : null;
 }
 
 function _gInvMatchPo() {
@@ -33542,12 +33549,26 @@ function _gInvRender() {
     const hasN = Number.isFinite(invN) && invN > 0;
     const ok   = hasN && Math.abs(poN - invN) <= 1;
     const warn = hasN && !ok;
-    const valPart = hasN
-      ? ` · PO: £${poN.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})} net / Invoice: £${invN.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})} net ` + (ok ? '✓' : '⚠ mismatch')
-      : '';
-    const col = warn ? 'var(--amber)' : 'var(--green)';
-    const bg  = warn ? 'rgba(245,158,11,.1)' : 'rgba(62,207,142,.1)';
-    return `<div style="background:${bg};border:1px solid ${col};color:${col};padding:6px 10px;border-radius:6px;font-size:11px;margin-top:6px">✓ PO matched: <b>${escapeHtml(matched.reference)}</b>${valPart}</div>`;
+    const col  = warn ? 'var(--amber)' : 'var(--green)';
+    const bg   = warn ? 'rgba(245,158,11,.1)' : 'rgba(62,207,142,.1)';
+    const fmtN = v => `£${Number(v).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+    return `
+      <div style="background:${bg};border:1px solid ${col};border-radius:8px;padding:10px 14px;margin-top:8px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+          <div style="color:${col};font-size:12px;font-weight:600">✓ PO matched: ${escapeHtml(matched.reference)}</div>
+          ${hasN ? `<div style="font-size:11px;color:${col};font-weight:600">${ok ? '✓ Values match' : '⚠ Value mismatch'}</div>` : ''}
+        </div>
+        ${hasN ? `<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px">
+          <div style="background:rgba(0,0,0,.2);border-radius:6px;padding:6px 10px">
+            <div style="font-size:10px;color:var(--muted);margin-bottom:2px">PO VALUE (NET)</div>
+            <div style="font-size:14px;font-weight:700;font-family:var(--font-mono);color:var(--text)">${fmtN(poN)}</div>
+          </div>
+          <div style="background:rgba(0,0,0,.2);border-radius:6px;padding:6px 10px">
+            <div style="font-size:10px;color:var(--muted);margin-bottom:2px">INVOICE NET</div>
+            <div style="font-size:14px;font-weight:700;font-family:var(--font-mono);color:${ok ? 'var(--text)' : 'var(--amber)'}">${fmtN(invN)}</div>
+          </div>
+        </div>` : ''}
+      </div>`;
   })() : '';
 
   const poOpts = ['<option value="">— pick a PO —</option>']
@@ -33570,6 +33591,10 @@ function _gInvRender() {
       <select id="gInvPoSel" class="field-input" style="width:100%;font-size:13px">${poOpts}</select>
       ${poMatchInfo}
     </div>
+    <!-- Hidden inputs carry values to _gInvSave -->
+    <input type="hidden" id="gInvNet"   value="${parsed.net_amount??0}">
+    <input type="hidden" id="gInvVat"   value="${parsed.vat_amount??0}">
+    <input type="hidden" id="gInvGross" value="${parsed.gross_amount??0}">
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
       <div>
         <label style="display:block;color:var(--muted);margin-bottom:4px;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Invoice ref</label>
@@ -33579,18 +33604,14 @@ function _gInvRender() {
         <label style="display:block;color:var(--muted);margin-bottom:4px;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Invoice date</label>
         <input id="gInvDate" class="field-input" type="date" value="${escapeHtml(parsed.invoice_date||new Date().toISOString().slice(0,10))}" style="width:100%">
       </div>
-      <div>
-        <label style="display:block;color:var(--muted);margin-bottom:4px;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Net £</label>
-        <input id="gInvNet" class="field-input" type="number" step="0.01" value="${parsed.net_amount??''}" style="width:100%">
-      </div>
-      <div>
-        <label style="display:block;color:var(--muted);margin-bottom:4px;font-size:11px;text-transform:uppercase;letter-spacing:.05em">VAT £</label>
-        <input id="gInvVat" class="field-input" type="number" step="0.01" value="${parsed.vat_amount??''}" style="width:100%">
-      </div>
-      <div style="grid-column:1/-1">
-        <label style="display:block;color:var(--muted);margin-bottom:4px;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Gross £ <span style="color:var(--red)">*</span></label>
-        <input id="gInvGross" class="field-input" type="number" step="0.01" value="${parsed.gross_amount??''}" style="width:100%">
-      </div>
+    </div>
+    <!-- Read-only financial summary -->
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px">
+      ${[['Net',parsed.net_amount],['VAT',parsed.vat_amount],['Gross',parsed.gross_amount]].map(([lbl,val])=>`
+        <div style="background:var(--bg-darker,var(--bg));border:1px solid var(--border);border-radius:6px;padding:8px 12px">
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px">${lbl} £</div>
+          <div style="font-size:15px;font-weight:600;font-family:var(--font-mono);color:${Number(val)<0?'var(--red)':' var(--text)'}">${val!=null?'£'+Number(val).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2}):'—'}</div>
+        </div>`).join('')}
     </div>
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
       <div style="font-size:11px;color:var(--subtle);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📄 ${escapeHtml(_gInvFile?.name||'')}</div>
