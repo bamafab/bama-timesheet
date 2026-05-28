@@ -13090,14 +13090,18 @@ function renderAssembly() {
       html += '</tbody></table>';
     }
 
-    // Action row
+    // Action row. Mark-fabricated is open to BOTH workshop staff (their
+    // core job) and draftsmen (admin override) — gated only by job
+    // status. Delete assembly is destructive, draftsman-only.
     html += '<div style="display:flex;gap:8px;margin-top:12px;align-items:center;flex-wrap:wrap">';
     if (a.sharepoint_web_url) {
       html += `<a href="${escapeHtml(a.sharepoint_web_url)}" target="_blank" rel="noopener" class="btn btn-ghost" style="padding:6px 12px;font-size:11px;text-decoration:none">&#128279; Open PDF</a>`;
     }
-    if (!isFabricated && isDraftsman && currentJob.status !== 'closed') {
+    if (!isFabricated && currentJob.status !== 'closed') {
       html += `<button class="btn btn-primary" style="padding:6px 14px;font-size:11px" onclick="event.stopPropagation();openMarkFabricatedModal(${a.id})">&#10003; Mark fabricated</button>`;
-      html += `<button class="btn btn-ghost" title="Delete assembly" style="padding:6px 10px;font-size:11px;margin-left:auto" onclick="event.stopPropagation();deleteAssembly(${a.id})">&#128465;</button>`;
+      if (isDraftsman) {
+        html += `<button class="btn btn-ghost" title="Delete assembly" style="padding:6px 10px;font-size:11px;margin-left:auto" onclick="event.stopPropagation();deleteAssembly(${a.id})">&#128465;</button>`;
+      }
     }
     html += '</div>';
 
