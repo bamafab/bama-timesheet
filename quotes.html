@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Quotations</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260528b">
+<link rel="stylesheet" href="bama.css?v=20260528a">
 </head>
 <body>
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
@@ -352,7 +352,7 @@
   /* ── Quote table layout ── */
   .quote-row {
     display: grid;
-    grid-template-columns: 90px 1fr 120px 95px 95px 140px;
+    grid-template-columns: 90px minmax(0,1fr) 120px 95px 95px 100px;
     align-items: center;
     gap: 10px;
     padding: 11px 16px;
@@ -360,6 +360,8 @@
     cursor: pointer;
     transition: background .15s;
   }
+  .quote-col-project { min-width: 0; }
+  .quote-col-project > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
   .quote-row:hover { background: var(--surface2); }
   .quote-row:last-child { border-bottom: none; }
   .quote-header {
@@ -374,6 +376,12 @@
     background: var(--card);
   }
   .quote-header:hover { background: var(--card); }
+  /* ── Quote status badge colours ── */
+  .tag-status-quote        { background:rgba(62,139,207,.15);  color:#5ba8e8;  border:1px solid rgba(62,139,207,.3); }
+  .tag-status-won          { background:rgba(62,207,142,.15);  color:var(--green);  border:1px solid rgba(62,207,142,.3); }
+  .tag-status-lost         { background:rgba(255,68,68,.15);   color:var(--red);    border:1px solid rgba(255,68,68,.3); }
+  .tag-status-too-late     { background:rgba(255,68,68,.10);   color:#e06060;       border:1px solid rgba(255,68,68,.2); }
+  .tag-status-not-interested { background:rgba(140,140,160,.12); color:#8888aa;     border:1px solid rgba(140,140,160,.25); }
 
   .upload-zone {
     border: 2px dashed var(--border); border-radius: 10px; transition: border-color .2s;
@@ -540,7 +548,7 @@
       </div>
       <div style="margin-bottom:12px">
         <div class="field-label">COMMENTS (OPTIONAL)</div>
-        <textarea class="field-input" id="nqComments" rows="2" placeholder="Any notes about this quote..."></textarea>
+        <textarea class="field-input" id="nqComments" rows="4" placeholder="Any notes about this quote..."></textarea>
       </div>
     </div>
 
@@ -590,6 +598,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260528b"></script>
+<script src="shared.js?v=20260528a"></script>
 </body>
 </html>

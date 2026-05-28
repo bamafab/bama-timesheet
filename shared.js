@@ -17554,11 +17554,11 @@ function renderQuoteList() {
   const onClickFn = CURRENT_PAGE === 'quotes' ? 'openQuoteDetail' : 'openTenderDetail';
 
   const statusMeta = {
-    quote:          { label: 'Quote',          cls: 'tag-approved' },
-    won:            { label: 'Won',            cls: 'tag-approved' },
-    lost:           { label: 'Lost',           cls: 'tag-rejected' },
-    too_late:       { label: 'Too Late',       cls: 'tag-rejected' },
-    not_interested: { label: 'Not Interested', cls: 'tag-pending'  }
+    quote:          { label: 'Quote',          cls: 'tag-status-quote' },
+    won:            { label: 'Won',            cls: 'tag-status-won' },
+    lost:           { label: 'Lost',           cls: 'tag-status-lost' },
+    too_late:       { label: 'Too Late',       cls: 'tag-status-too-late' },
+    not_interested: { label: 'Not Interested', cls: 'tag-status-not-interested' }
   };
 
   const rows = list.map(t => {
@@ -19102,11 +19102,11 @@ async function parseNewQuotePDF() {
 Return ONLY a valid JSON object with no explanation or markdown fences:
 {
   "quote_ref": "quotation reference e.g. Q260514 or null",
-  "company_name": "the client/customer company this quote is addressed to (not the sender)",
+  "company_name": "the client/customer company this quote is addressed to (not the sender/issuer)",
   "contact_name": "contact person name or null",
   "contact_email": "contact email or null",
   "contact_phone": "contact phone or null",
-  "project_name": "project or job description - use comments/special instructions if no explicit name",
+  "comments": "ALL text from the Comments or Special Instructions section, verbatim and complete — preserve every line, joining with \\n. Include everything from the first word to the last line of that section. Return null if the section is absent.",
   "quote_value": 12345.00,
   "sent_date": "document date in YYYY-MM-DD or null",
   "deadline": "quotation valid until date in YYYY-MM-DD or null",
@@ -19122,11 +19122,11 @@ Return ONLY a valid JSON object with no explanation or markdown fences:
     "delivery": 2640.00
   }
 }
-Match each document line row to its category key and set the unit price (excl. VAT). Use 0 for blank/absent lines. Use null for other missing fields. Dates: YYYY-MM-DD.`;
+Match each document line row to its category key and set the unit price (excl. VAT). Use 0 for blank/absent lines. Use null for other missing fields. Dates: YYYY-MM-DD. Do NOT put comments/special instructions into project_name — that field is not extracted here.`;
 
     const data = await callClaude({
       model: 'claude-sonnet-4-6',
-      max_tokens: 800,
+      max_tokens: 1500,
       system: systemPrompt,
       messages: [{ role: 'user', content: userContent }]
     });
@@ -19135,7 +19135,7 @@ Match each document line row to its category key and set the unit price (excl. V
     const clean = raw.replace(/```json|```/g, '').trim();
     const parsed = JSON.parse(clean);
 
-    _applyParsedQuoteFields(parsed);
+    await _applyParsedQuoteFields(parsed);
     statusEl.textContent = '✓ Fields extracted — review and adjust before saving';
     statusEl.style.color = 'var(--accent2)';
 
@@ -19149,7 +19149,34 @@ Match each document line row to its category key and set the unit price (excl. V
   }
 }
 
-function _applyParsedQuoteFields(p) {
+// Fuzzy-match a company name string against clientsData.
+// Returns the best matching client or null (threshold 0.5).
+function _fuzzyMatchNqClient(name) {
+  if (!name || !(clientsData || []).length) return null;
+  const norm = s => String(s).toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+  const target = norm(name);
+  let best = null, bestScore = 0;
+  for (const c of clientsData) {
+    if (c.is_active === false || c.is_active === 0) continue;
+    const candidate = norm(c.company_name || '');
+    if (!candidate) continue;
+    let score = 0;
+    if (candidate === target) {
+      score = 1.0;
+    } else if (candidate.includes(target) || target.includes(candidate)) {
+      score = 0.8;
+    } else {
+      const tw = new Set(target.split(' '));
+      const cw = candidate.split(' ');
+      const shared = cw.filter(w => w.length > 2 && tw.has(w)).length;
+      score = shared / Math.max(tw.size, cw.length);
+    }
+    if (score > bestScore) { bestScore = score; best = c; }
+  }
+  return bestScore >= 0.5 ? best : null;
+}
+
+async function _applyParsedQuoteFields(p) {
   if (!p) return;
   const setIfBlank = (id, val) => {
     const el = document.getElementById(id);
@@ -19160,31 +19187,95 @@ function _applyParsedQuoteFields(p) {
     if (el && val != null) el.value = val;
   };
 
-  // Reference — if extracted from doc, override and auto-toggle folder switch
+  // ── Reference — if extracted from doc, override and auto-toggle folder switch
   if (p.quote_ref) {
     const refInput = document.getElementById('nqReference');
     if (refInput) refInput.value = String(p.quote_ref).toUpperCase();
     if (!_nqFolderExists) toggleNqFolderExists();
   }
 
-  // Client name & auto-match
-  setIfBlank('nqCompanyName', p.company_name);
-  if (p.company_name && !document.getElementById('nqClientId').value) {
-    const match = (clientsData || []).find(c =>
-      c.company_name?.toLowerCase() === (p.company_name || '').toLowerCase()
-    );
-    if (match) selectNqClient(match.id, match.company_name);
+  // ── Project name — derive from filename (strip leading ref like Q260531), not from comments
+  if (_nqFile) {
+    const base = _nqFile.name.replace(/\.[^.]+$/, ''); // strip extension
+    // Remove leading Q-ref token e.g. "Q260531 - " or "Q260531_-_" or "Q260531 "
+    const projectFromFile = base.replace(/^Q\d{4,6}[\s_\-]+/i, '').replace(/_/g, ' ').trim();
+    if (projectFromFile) setIfBlank('nqProjectName', projectFromFile);
   }
 
-  setIfBlank('nqContactName',  p.contact_name);
-  setIfBlank('nqContactEmail', p.contact_email);
-  setIfBlank('nqContactPhone', p.contact_phone);
-  setIfBlank('nqProjectName',  p.project_name);
+  // ── Comments — multi-line block from document
+  if (p.comments) setIfBlank('nqComments', p.comments.replace(/\\n/g, '\n'));
+
+  // ── Client fuzzy-match
+  let matchedClient = null;
+  if (p.company_name && !document.getElementById('nqClientId').value) {
+    // Try exact first, then fuzzy
+    matchedClient = (clientsData || []).find(c =>
+      c.company_name?.toLowerCase() === (p.company_name || '').toLowerCase()
+    ) || _fuzzyMatchNqClient(p.company_name);
+
+    if (matchedClient) {
+      selectNqClient(matchedClient.id, matchedClient.company_name);
+      // Address is populated by selectNqClient; contacts looked up below
+    } else {
+      // No match — fill name field so user can see what was extracted
+      setIfBlank('nqCompanyName', p.company_name);
+      // Show a note in parse status that this is a new client
+      const statusEl = document.getElementById('nqParseStatus');
+      if (statusEl) {
+        const existing = statusEl.textContent;
+        statusEl.textContent = (existing ? existing + ' · ' : '') +
+          `"${p.company_name}" not found in clients — will create new`;
+      }
+    }
+  }
+
+  // ── Contact: if client was matched, try to find contact in their contacts list
+  if (matchedClient) {
+    try {
+      const contacts = await api.get(`/api/client-contacts?client_id=${matchedClient.id}`);
+      if (contacts && contacts.length) {
+        // Try to match on parsed contact name
+        let contactMatch = null;
+        if (p.contact_name) {
+          const normName = (p.contact_name || '').toLowerCase().trim();
+          contactMatch = contacts.find(c =>
+            (c.contact_name || '').toLowerCase().trim() === normName
+          );
+        }
+        // If no name match but only one contact, use it
+        if (!contactMatch && contacts.length === 1) contactMatch = contacts[0];
+
+        if (contactMatch) {
+          setIfBlank('nqContactName',  contactMatch.contact_name);
+          setIfBlank('nqContactEmail', contactMatch.contact_email);
+          setIfBlank('nqContactPhone', contactMatch.contact_phone);
+        } else {
+          // Fill parsed values as fallback; user can correct
+          setIfBlank('nqContactName',  p.contact_name);
+          setIfBlank('nqContactEmail', p.contact_email);
+          setIfBlank('nqContactPhone', p.contact_phone);
+        }
+      } else {
+        setIfBlank('nqContactName',  p.contact_name);
+        setIfBlank('nqContactEmail', p.contact_email);
+        setIfBlank('nqContactPhone', p.contact_phone);
+      }
+    } catch (_) {
+      setIfBlank('nqContactName',  p.contact_name);
+      setIfBlank('nqContactEmail', p.contact_email);
+      setIfBlank('nqContactPhone', p.contact_phone);
+    }
+  } else {
+    setIfBlank('nqContactName',  p.contact_name);
+    setIfBlank('nqContactEmail', p.contact_email);
+    setIfBlank('nqContactPhone', p.contact_phone);
+  }
+
   if (p.quote_value != null) set('nqValue', String(parseFloat(p.quote_value).toFixed(2)));
   if (p.sent_date) set('nqSentDate', p.sent_date);
   if (p.deadline)  set('nqDeadline', p.deadline);
 
-  // Populate line item prices from parsed document
+  // ── Line item prices from parsed document
   if (p.line_items && typeof p.line_items === 'object') {
     let anySet = false;
     _nqLineItems.forEach(li => {
@@ -19197,7 +19288,6 @@ function _applyParsedQuoteFields(p) {
     });
     if (anySet) {
       renderNqLineItems();
-      // Let line items drive the headline value auto-update
       const valField = document.getElementById('nqValue');
       if (valField) valField.dataset.autoSet = '1';
     }
