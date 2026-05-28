@@ -455,6 +455,33 @@
 
 
 <!-- ═══════════════════════════════════════
+     SITE DELIVERY NOTE MODAL (commit 13 — SPEC §7 follow-up)
+     Ships ready_for_despatch BOM items to the client/site
+     and flips them to status='on_site'.
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="siteDnModal">
+  <div class="modal" style="width:640px;max-width:96vw">
+    <div class="modal-title" style="margin-bottom:6px">Site Delivery Note</div>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:18px">
+      <span id="sdnItemCount">0</span> items ready to ship to site &middot; total qty <span id="sdnItemQtySum">0</span>
+    </div>
+
+    <div class="field-label">ITEMS TO SEND TO SITE</div>
+    <div id="sdnItemList" style="margin-bottom:20px"></div>
+
+    <button class="btn btn-primary btn-full" id="sdnConfirmBtn"
+            onclick="confirmSiteDn()"
+            style="padding:14px;font-size:15px">
+      Generate &amp; save SDN PDF
+    </button>
+    <button class="btn btn-ghost btn-full" onclick="closeSiteDnModal()" style="margin-top:10px;padding:12px">
+      Cancel
+    </button>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════
      CONFIRM MODAL
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="confirmModal">
@@ -471,6 +498,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-<script src="shared.js?v=20260528t"></script>
+<script src="shared.js?v=20260528u"></script>
 </body>
 </html>

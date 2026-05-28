@@ -333,6 +333,37 @@ DN reference numbering: `DN-0001` ascending, single global sequence.
 A `Settings` row `dn_next_seq` tracks it (matches the existing
 pattern for invoice / quote refs).
 
+### Site delivery notes (SDN)
+
+A separate flow on the **Site element** generates a delivery note
+when shipping items to the client/installation site:
+
+1. User clicks "Site Delivery Note (N ready)" on the Site element.
+2. Modal shows all `ready_for_despatch` BOM rows in the job, all
+   ticked by default. User can untick rows to split the delivery.
+3. Confirm → backend allocates the next `SDN-NNNN` ref from
+   `Settings.sdn_next_seq`, flips selected items from
+   `ready_for_despatch` to `on_site` in a single transaction.
+4. Frontend builds the DN PDF using the **same template** as the
+   supplier DN, with destination = client name + project name.
+5. Uploads to the **same SharePoint path**:
+   `<ProjectFolder>/07 - Deliveries/<JobFolderName>/<SDN-ref>.pdf`
+
+Differences from the supplier DN flow:
+
+- No supplier picker (destination is the client site, set
+  automatically from the project).
+- Items must be `ready_for_despatch` — not `pending` (pending
+  means still at supplier; can't ship un-finished items to site).
+- Terminal status is `on_site` (not `despatched`).
+- Uses `Settings.sdn_next_seq` for the ref — separate sequence
+  so SDNs are visually distinct from supplier DNs.
+
+A job's BOM is considered "delivered" when every row is either
+`on_site` (shipped via SDN) or `despatched` (shipped direct from
+supplier without an SDN). `confirmCloseJob` enforces this before
+the job can be closed.
+
 ---
 
 ## 8. Kiosk fabrication tile (index.html)

@@ -18,7 +18,7 @@ const { query, getPool, sql } = require('../db');
 const { requireAuth } = require('../auth');
 const { ok, created, badRequest, notFound, serverError } = require('../responses');
 
-const ALLOWED_STATUS = ['pending', 'at_supplier', 'ready_for_despatch', 'despatched'];
+const ALLOWED_STATUS = ['pending', 'at_supplier', 'ready_for_despatch', 'despatched', 'on_site'];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/job-bom-items?job_id=X
@@ -319,6 +319,13 @@ app.http('job-bom-items-status', {
                 sets.push('returned_at = SYSUTCDATETIME()');
             } else if (newStatus === 'despatched') {
                 sets.push('despatched_at = SYSUTCDATETIME()');
+            } else if (newStatus === 'on_site') {
+                // 'on_site' is the terminal state when items have been
+                // delivered to the client/site via a Site DN. Reuses
+                // despatched_at as the timestamp — the row's status
+                // discriminates whether it went to a supplier-DN
+                // ('despatched') or a site-DN ('on_site') destination.
+                sets.push('despatched_at = SYSUTCDATETIME()');
             } else if (newStatus === 'pending') {
                 // Reset: clear supplier and timestamps (only if forcing back)
                 if (!force) return badRequest('Cannot revert to pending without ?force=1', request);
@@ -499,6 +506,135 @@ app.http('job-bom-items-generate-dn', {
         } catch (err) {
             context.error('Error generating DN:', err);
             return serverError('Failed to generate DN: ' + err.message, request);
+        }
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/job-bom-items/generate-sdn
+// Site Delivery Note allocator. Mirrors generate-dn but:
+//   - No supplier required (the destination is the client / installation site)
+//   - Items must be in 'ready_for_despatch' status (not pending — pending
+//     means still at supplier, can't ship to site)
+//   - Items flip to 'on_site' (a new terminal status alongside 'despatched')
+//   - Uses Settings.sdn_next_seq → SDN-0001, SDN-0002, …
+//
+// Body:
+//   {
+//     item_ids:           [42, 43, ...]      -- must all be ready_for_despatch
+//                                               and share one job_id
+//     sharepoint_file_id: "..." | null,      -- the SDN PDF uploaded by frontend
+//     sharepoint_drive_id: "..." | null,
+//     sharepoint_web_url:  "https://...",
+//     file_name:          "SDN-0001.pdf"
+//   }
+//
+// Returns: { sdn_ref: 'SDN-0001', items: [...] }
+//
+// Same single-transaction pattern as generate-dn: UPDLOCK+HOLDLOCK on the
+// Settings row prevents concurrent allocators colliding on the number.
+// ─────────────────────────────────────────────────────────────────────────────
+app.http('job-bom-items-generate-sdn', {
+    methods: ['POST'],
+    authLevel: 'anonymous',
+    route: 'job-bom-items/generate-sdn',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const body = await request.json();
+            const itemIds = Array.isArray(body.item_ids)
+                ? body.item_ids.map(x => parseInt(x)).filter(x => !isNaN(x))
+                : [];
+            if (itemIds.length === 0) return badRequest('item_ids must be a non-empty array', request);
+
+            // Pre-flight validation outside the txn for fast-fail
+            const idParams = {};
+            const idPlaceholders = itemIds.map((id, i) => {
+                const k = `id${i}`;
+                idParams[k] = id;
+                return `@${k}`;
+            }).join(',');
+
+            const checkRes = await query(
+                `SELECT id, job_id, status
+                 FROM JobBomItems
+                 WHERE id IN (${idPlaceholders})`,
+                idParams
+            );
+            if (checkRes.recordset.length !== itemIds.length) {
+                return badRequest('One or more BOM items not found', request);
+            }
+            const jobIds = new Set(checkRes.recordset.map(r => r.job_id));
+            if (jobIds.size > 1) {
+                return badRequest('All items on an SDN must belong to the same job', request);
+            }
+            const notReady = checkRes.recordset.filter(r => r.status !== 'ready_for_despatch');
+            if (notReady.length) {
+                return badRequest(
+                    `Items ${notReady.map(r => r.id).join(',')} are not ready_for_despatch (only items returned from a supplier or never needing one can ship to site).`,
+                    request
+                );
+            }
+
+            const db = await getPool();
+            const transaction = new sql.Transaction(db);
+            await transaction.begin();
+
+            try {
+                // 1. Allocate next SDN ref atomically
+                const seqReq = new sql.Request(transaction);
+                const seqRes = await seqReq.query(
+                    `SELECT value FROM Settings WITH (UPDLOCK, HOLDLOCK) WHERE [key] = 'sdn_next_seq'`
+                );
+                if (seqRes.recordset.length === 0) {
+                    throw new Error('Settings.sdn_next_seq not initialised — run add-sdn-sequence.sql');
+                }
+                const nextSeq = parseInt(seqRes.recordset[0].value) || 1;
+                const sdnRef = `SDN-${String(nextSeq).padStart(4, '0')}`;
+
+                const incReq = new sql.Request(transaction);
+                incReq.input('newVal', sql.NVarChar(64), String(nextSeq + 1));
+                await incReq.query(
+                    `UPDATE Settings SET value = @newVal, updated_at = SYSUTCDATETIME()
+                     WHERE [key] = 'sdn_next_seq'`
+                );
+
+                // 2. Flip selected items to on_site. WHERE re-checks status to
+                //    defend against concurrent status changes.
+                const fileName = body.file_name || `${sdnRef}.pdf`;
+                const upReq = new sql.Request(transaction);
+                upReq.input('spFileId',   sql.NVarChar(256),  body.sharepoint_file_id  || null);
+                upReq.input('spDriveId',  sql.NVarChar(256),  body.sharepoint_drive_id || null);
+                upReq.input('spWebUrl',   sql.NVarChar(1024), body.sharepoint_web_url  || null);
+                upReq.input('fileName',   sql.NVarChar(256),  fileName);
+                itemIds.forEach((id, i) => upReq.input(`id${i}`, sql.Int, id));
+
+                const upRes = await upReq.query(
+                    `UPDATE JobBomItems
+                     SET status              = 'on_site',
+                         despatched_at       = SYSUTCDATETIME(),
+                         sharepoint_file_id  = @spFileId,
+                         sharepoint_drive_id = @spDriveId,
+                         sharepoint_web_url  = @spWebUrl,
+                         file_name           = @fileName
+                     OUTPUT INSERTED.*
+                     WHERE id IN (${idPlaceholders}) AND status = 'ready_for_despatch'`
+                );
+                if (upRes.recordset.length !== itemIds.length) {
+                    throw new Error('One or more items changed status concurrently — please refresh.');
+                }
+
+                await transaction.commit();
+                return ok({ sdn_ref: sdnRef, items: upRes.recordset }, request);
+            } catch (txErr) {
+                await transaction.rollback();
+                throw txErr;
+            }
+        } catch (err) {
+            context.error('Error generating SDN:', err);
+            return serverError('Failed to generate SDN: ' + err.message, request);
         }
     }
 });

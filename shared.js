@@ -11444,9 +11444,9 @@ function getJobProgress(job) {
 
   // BOM progress: based on item statuses — the primary measure
   if (bomItems.length > 0) {
-    const allDespatched = bomItems.every(i => i.status === 'despatched');
-    const anyProgress  = bomItems.some(i => i.status !== 'pending');
-    elements.bom = allDespatched ? 'complete' : anyProgress ? 'active' : 'empty';
+    const allDone     = bomItems.every(i => i.status === 'on_site' || i.status === 'despatched');
+    const anyProgress = bomItems.some(i => i.status !== 'pending');
+    elements.bom = allDone ? 'complete' : anyProgress ? 'active' : 'empty';
   } else {
     elements.bom = (job.bom?.files?.length > 0) ? 'active' : 'empty';
   }
@@ -11711,7 +11711,8 @@ const BOM_STATUS_LABEL = {
   pending:             'Pending',
   at_supplier:         'At supplier',
   ready_for_despatch:  'Ready for despatch',
-  despatched:          'Despatched'
+  despatched:          'Despatched',
+  on_site:             'On site'
 };
 
 // Map an in-progress finish service name to its past-participle form,
@@ -11727,7 +11728,9 @@ const FINISH_DONE_LABEL = {
 };
 function finishBadgeFor(item) {
   if (!item.finish_name) return '';
-  const done = item.status === 'ready_for_despatch' || item.status === 'despatched';
+  const done = item.status === 'ready_for_despatch'
+            || item.status === 'despatched'
+            || item.status === 'on_site';
   const text = done ? (FINISH_DONE_LABEL[item.finish_name] || item.finish_name) : item.finish_name;
   const style = done
     ? 'background:rgba(62,207,142,.18);color:#3ecf8e' // green (completed)
@@ -11749,10 +11752,10 @@ function renderBOM() {
       status.textContent = 'Empty';
       status.style.cssText = 'color:var(--subtle);font-size:11px;font-weight:600';
     } else {
-      const done    = items.filter(i => i.status === 'despatched').length;
+      const done    = items.filter(i => i.status === 'despatched' || i.status === 'on_site').length;
       const total   = items.length;
       const allDone = done === total;
-      status.textContent = `${total} item${total > 1 ? 's' : ''} · ${done}/${total} despatched`;
+      status.textContent = `${total} item${total > 1 ? 's' : ''} · ${done}/${total} delivered`;
       status.style.cssText = allDone
         ? 'color:var(--green);background:rgba(62,207,142,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600'
         : 'color:var(--accent);background:rgba(255,107,0,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600';
@@ -11786,7 +11789,7 @@ function renderBOM() {
   }
 
   // Sort items: by status order, then by created_at asc
-  const STATUS_ORDER = { pending: 0, at_supplier: 1, ready_for_despatch: 2, despatched: 3 };
+  const STATUS_ORDER = { pending: 0, at_supplier: 1, ready_for_despatch: 2, on_site: 3, despatched: 3 };
   const sortedItems = items.slice().sort((a, b) => {
     const sa = STATUS_ORDER[a.status] ?? 99;
     const sb = STATUS_ORDER[b.status] ?? 99;
@@ -11860,7 +11863,8 @@ function renderBomRow(it) {
     pending:            'background:rgba(255,107,0,.15);color:var(--accent)',
     at_supplier:        'background:rgba(99,102,241,.15);color:#a5b4fc',
     ready_for_despatch: 'background:rgba(62,207,142,.15);color:#3ecf8e',
-    despatched:         'background:rgba(140,140,140,.15);color:var(--text)'
+    despatched:         'background:rgba(140,140,140,.15);color:var(--text)',
+    on_site:            'background:rgba(140,140,140,.15);color:var(--text)'
   };
   const statusPill = `<span style="${statusStyles[it.status] || ''};padding:2px 9px;border-radius:6px;font-size:11px;font-weight:500;white-space:nowrap">${escapeHtml(BOM_STATUS_LABEL[it.status] || it.status)}</span>`;
   const supplierTag = it.supplier_name
@@ -12210,6 +12214,180 @@ async function confirmGenerateDnSQL() {
 
   } catch (e) {
     toast(`DN failed: ${e.message}`, 'error');
+    btn.disabled = false; btn.style.opacity = '1';
+    return;
+  }
+}
+
+// ── Site Delivery Note (SDN) flow ──
+//
+// Lives on the Site element. Selects items in 'ready_for_despatch'
+// (items that have come back from a supplier, or items that never
+// needed a finishing supplier), generates an SDN, ships them to site,
+// and flips their status to 'on_site'.
+//
+// Differences from the supplier DN flow:
+//   - No supplier picker (destination is implicitly "site" — the
+//     client's installation address, which lives on the project).
+//   - No state-machine restrictions per finish — anything that's
+//     ready can ride along.
+//   - Uses Settings.sdn_next_seq → SDN-0001, SDN-0002, …
+//   - Terminal status is 'on_site' (not 'despatched').
+let _pendingSdn = null;
+
+function openSiteDnModal() {
+  const jobId = currentJob?.id ? parseInt(currentJob.id) : null;
+  if (!jobId) { toast('No job selected.', 'error'); return; }
+
+  const eligible = (_bomItemsByJob[jobId] || []).filter(i => i.status === 'ready_for_despatch');
+  if (!eligible.length) {
+    toast('Nothing to ship to site. Items must be ready for despatch first.', 'error');
+    return;
+  }
+
+  _pendingSdn = { items: eligible };
+
+  // Header counts
+  document.getElementById('sdnItemCount').textContent = eligible.length;
+  const sumQty = eligible.reduce((s, i) => s + (Number(i.quantity) || 0), 0);
+  document.getElementById('sdnItemQtySum').textContent = sumQty;
+
+  // Items list — all ticked by default (typical case: ship everything ready)
+  const list = document.getElementById('sdnItemList');
+  list.innerHTML = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+    <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+      <input type="checkbox" id="sdnSelectAll" checked onchange="sdnToggleAll(this.checked)" style="width:14px;height:14px;accent-color:var(--accent)">
+      <span style="font-size:11px;color:var(--subtle);text-transform:uppercase;letter-spacing:.04em">Select all</span>
+    </label>
+    <span style="margin-left:auto;font-size:11px;color:var(--subtle)" id="sdnSelCount">${eligible.length} selected</span>
+  </div>`;
+
+  list.innerHTML += '<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;max-height:320px;overflow-y:auto">' +
+    eligible.map(it => `<label style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);cursor:pointer">
+      <input type="checkbox" class="sdn-item-check" data-id="${it.id}" checked
+             onchange="sdnUpdateSelCount()"
+             style="width:14px;height:14px;accent-color:var(--accent)">
+      <span style="font-family:var(--font-mono);font-size:12px;color:var(--text);flex:1">${escapeHtml(it.description)}</span>
+      <span style="font-size:12px;color:var(--text);min-width:50px;text-align:right">${Number(it.quantity)}</span>
+      <span style="min-width:120px">${finishBadgeFor(it)}</span>
+      <span style="font-size:11px;color:var(--subtle)">${it.source === 'assembly'
+        ? (it.source_assembly_mark ? `from ${escapeHtml(it.source_assembly_mark)}` : 'assembly')
+        : 'manual'}</span>
+    </label>`).join('') +
+  '</div>';
+
+  // Enable confirm button (everything's ticked by default)
+  const btn = document.getElementById('sdnConfirmBtn');
+  btn.disabled = false; btn.style.opacity = '1'; btn.style.cursor = 'pointer';
+
+  document.getElementById('siteDnModal').classList.add('active');
+}
+
+function sdnToggleAll(on) {
+  document.querySelectorAll('.sdn-item-check').forEach(c => c.checked = on);
+  sdnUpdateSelCount();
+}
+
+function sdnUpdateSelCount() {
+  const checked = document.querySelectorAll('.sdn-item-check:checked').length;
+  const el = document.getElementById('sdnSelCount');
+  if (el) el.textContent = `${checked} selected`;
+  const btn = document.getElementById('sdnConfirmBtn');
+  if (btn) {
+    btn.disabled = checked === 0;
+    btn.style.opacity = checked === 0 ? '.4' : '1';
+    btn.style.cursor  = checked === 0 ? 'not-allowed' : 'pointer';
+  }
+}
+
+function closeSiteDnModal() {
+  document.getElementById('siteDnModal').classList.remove('active');
+  _pendingSdn = null;
+}
+
+async function confirmSiteDn() {
+  if (!_pendingSdn) return;
+  const selectedIds = Array.from(document.querySelectorAll('.sdn-item-check:checked'))
+    .map(c => parseInt(c.dataset.id));
+  if (!selectedIds.length) { toast('Tick at least one item.', 'error'); return; }
+  const items = _pendingSdn.items.filter(i => selectedIds.includes(i.id));
+
+  const btn = document.getElementById('sdnConfirmBtn');
+  btn.disabled = true; btn.style.opacity = '.5';
+
+  const proj = currentProject;
+  const job  = currentJob;
+
+  try {
+    // 1. Allocate SDN ref + flip selected items to on_site
+    const allocRes = await api.post('/api/job-bom-items/generate-sdn', {
+      item_ids: selectedIds
+    });
+    const sdnRef = allocRes.sdn_ref;
+
+    // 2. Build the SDN PDF using the same template as supplier DNs.
+    //    Destination is the project's client (with project address if
+    //    available — falls back to client name only).
+    await loadLogoDataUri();
+    const siteName = (proj?.client && proj?.name)
+      ? `${proj.client} — ${proj.name}`
+      : (proj?.client || proj?.name || 'Site delivery');
+    const dn = {
+      number:          sdnRef,
+      createdAt:       new Date().toISOString(),
+      destinationName: siteName,
+      finishName:      'Site delivery',
+      items
+    };
+    const html = buildDnHtmlV2(dn, proj || {}, job || {});
+
+    // 3. Render PDF (same hidden-container pattern as supplier DN)
+    if (typeof html2pdf === 'undefined') throw new Error('PDF library not loaded');
+    const container = document.createElement('div');
+    container.style.cssText = 'position:fixed;left:-10000px;top:0;width:794px;background:#fff;';
+    container.innerHTML = html.replace(/^[\s\S]*?<body[^>]*>|<\/body>[\s\S]*$/g, '');
+    document.body.appendChild(container);
+    let pdfBlob;
+    try {
+      pdfBlob = await html2pdf().set({
+        margin: [10, 10, 10, 10],
+        filename: `${sdnRef}.pdf`,
+        image: { type: 'jpeg', quality: 0.95 },
+        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      }).from(container).outputPdf('blob');
+    } finally {
+      document.body.removeChild(container);
+    }
+
+    // 4. Upload to SharePoint: same path as supplier DNs (per spec).
+    const projectFolder = await findProjectFolder(proj.id);
+    if (!projectFolder) throw new Error('Project folder not found on SharePoint');
+    const driveId = projectFolder.parentReference?.driveId || BAMA_DRIVE_ID;
+    const deliveriesFolder = await getOrCreateSubfolder(projectFolder.id, '07 - Deliveries', driveId);
+    const jobFolderName = (job && (job.folderName || job.name)) || 'Unassigned';
+    const jobSubFolder  = await getOrCreateSubfolder(deliveriesFolder.id, jobFolderName, driveId);
+    const sdnFileName = `${sdnRef}.pdf`;
+    const token = await getToken();
+    const upUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${jobSubFolder.id}:/${encodeURIComponent(sdnFileName)}:/content`;
+    const upRes = await fetch(upUrl, {
+      method: 'PUT',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/pdf' },
+      body: pdfBlob
+    });
+    if (!upRes.ok) throw new Error(`SDN upload failed: ${upRes.status}`);
+    const uploaded = await upRes.json();
+
+    closeSiteDnModal();
+    toast(`${sdnRef} generated — ${items.length} item${items.length>1?'s':''} now on site.`, 'success');
+    if (currentJob?.id) await loadJobBomItems(parseInt(currentJob.id));
+    renderBOM();
+    renderSite();
+
+    if (uploaded.webUrl) window.open(uploaded.webUrl, '_blank');
+
+  } catch (e) {
+    toast(`SDN failed: ${e.message}`, 'error');
     btn.disabled = false; btn.style.opacity = '1';
     return;
   }
@@ -12946,15 +13124,22 @@ function renderSite() {
 
   let html = '';
 
-  // Upload and complete buttons. The legacy 'Create Delivery Note'
-  // button (which routed to openDispatchPanel reading from the dead
-  // bomDataCache) is gone — the proper supplier DN flow now lives on
-  // the BOM element itself. A separate Site DN flow is on the TODO
-  // list (issue 6 from the smoke-test feedback round).
+  // Buttons row. Site Delivery Note generates an SDN for items in
+  // ready_for_despatch status (returned from supplier, or never needed
+  // one) — see SPEC §7 + the Site DN follow-up commit.
   if (currentJob.status !== 'closed') {
     html += '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">';
     if (isDraftsman) {
       html += `<button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="openUploadFileModal('site')">&#43; Upload File</button>`;
+    }
+    if (isDraftsman) {
+      // Count items eligible for an SDN so the button can show a count
+      // (or hide if there's nothing to ship).
+      const jobIdInt = parseInt(currentJob.id);
+      const eligible = (_bomItemsByJob[jobIdInt] || []).filter(i => i.status === 'ready_for_despatch');
+      if (eligible.length > 0) {
+        html += `<button class="btn" style="padding:8px 16px;font-size:12px;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);color:#60a5fa" onclick="openSiteDnModal()">&#128666; Site Delivery Note (${eligible.length} ready)</button>`;
+      }
     }
     if (!site.completedAt) {
       html += `<button class="btn btn-success" style="padding:8px 16px;font-size:12px" onclick="openCloseJobModal()">&#127919; Mark Site Complete &amp; Close Job</button>`;
@@ -14027,18 +14212,22 @@ async function confirmCloseJob() {
   // Guard: all BOM items must be 'despatched' before the job can close.
   // Reads from the SQL-backed _bomItemsByJob cache (populated by
   // loadJobBomItems in openJobDetail).
+  // A job can close once all BOM items are either:
+  //   - 'on_site'    — shipped to site via SDN (typical end state)
+  //   - 'despatched' — shipped direct from supplier without an SDN
+  // Both count as "done".
   const jobId = parseInt(currentJob.id);
   const items = (jobId && _bomItemsByJob[jobId]) || [];
   if (items.length > 0) {
-    const notDespatched = items.filter(i => i.status !== 'despatched');
-    if (notDespatched.length > 0) {
-      const pending    = notDespatched.filter(i => i.status === 'pending').length;
-      const atSupplier = notDespatched.filter(i => i.status === 'at_supplier').length;
-      const ready      = notDespatched.filter(i => i.status === 'ready_for_despatch').length;
-      let detail = `${notDespatched.length} BOM item${notDespatched.length > 1 ? 's' : ''} not yet despatched:`;
+    const notDone = items.filter(i => i.status !== 'on_site' && i.status !== 'despatched');
+    if (notDone.length > 0) {
+      const pending    = notDone.filter(i => i.status === 'pending').length;
+      const atSupplier = notDone.filter(i => i.status === 'at_supplier').length;
+      const ready      = notDone.filter(i => i.status === 'ready_for_despatch').length;
+      let detail = `${notDone.length} BOM item${notDone.length > 1 ? 's' : ''} not yet delivered:`;
       if (pending)    detail += `\n• ${pending} pending (need a DN to a supplier)`;
       if (atSupplier) detail += `\n• ${atSupplier} at supplier (still being processed)`;
-      if (ready)      detail += `\n• ${ready} ready for despatch`;
+      if (ready)      detail += `\n• ${ready} ready for despatch (generate a Site DN)`;
       toast(detail, 'error');
       return;
     }
