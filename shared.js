@@ -11097,12 +11097,20 @@ async function getOrCreateSubfolder(parentItemId, folderName, driveId) {
 async function uploadFileToFolder(parentItemId, fileName, fileData, contentType, driveId) {
   const token = await getToken();
   const url = `https://graph.microsoft.com/v1.0/drives/${driveId || BAMA_DRIVE_ID}/items/${parentItemId}:/${encodeURIComponent(fileName)}:/content`;
+  // Ensure we send raw bytes — convert File/Blob to ArrayBuffer if needed
+  const body = (fileData instanceof File || fileData instanceof Blob)
+    ? await fileData.arrayBuffer()
+    : fileData;
   const res = await fetch(url, {
     method: 'PUT',
     headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': contentType || 'application/octet-stream' },
-    body: fileData
+    body
   });
-  if (!res.ok) throw new Error(`Upload failed: ${res.status} ${res.statusText}`);
+  if (!res.ok) {
+    let detail = '';
+    try { const e = await res.json(); detail = e?.error?.message || JSON.stringify(e); } catch (_) {}
+    throw new Error(`Upload failed: ${res.status} ${res.statusText}${detail ? ' — ' + detail : ''}`);
+  }
   return await res.json();
 }
 
@@ -18538,7 +18546,7 @@ async function uploadTenderFiles(files, target) {
         }
       }
 
-      const fileName = parts[parts.length - 1];
+      const fileName = sanitizeSpFilename(parts[parts.length - 1]);
       await uploadFileToFolder(parentId, fileName, file, file.type || 'application/octet-stream');
       uploaded++;
     } catch (err) {
