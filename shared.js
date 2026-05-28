@@ -7481,12 +7481,12 @@ function _renderSupplierTable() {
     let diff = 0;
     if      (col === 'name')      diff = a.supplier_name.localeCompare(b.supplier_name);
     else if (col === 'openPos')   diff = ma.open.length - mb.open.length;
-    else if (col === 'openValue') diff = ma.open.reduce((s,p)=>s+Number(p.total_value||0),0) - mb.open.reduce((s,p)=>s+Number(p.total_value||0),0);
+    else if (col === 'openValue') diff = ma.open.reduce((s,p)=>s+_poNet(p),0) - mb.open.reduce((s,p)=>s+_poNet(p),0);
     else if (col === 'awaiting')  diff = ma.awaiting.length - mb.awaiting.length;
     else if (col === 'discrep')   diff = ma.discrep.length - mb.discrep.length;
-    else if (col === 'thisMonth') diff = ma.thisMonth.reduce((s,p)=>s+Number(p.total_value||0),0) - mb.thisMonth.reduce((s,p)=>s+Number(p.total_value||0),0);
-    else if (col === 'lastMonth') diff = ma.lastMonth.reduce((s,p)=>s+Number(p.total_value||0),0) - mb.lastMonth.reduce((s,p)=>s+Number(p.total_value||0),0);
-    else if (col === 'spent')    diff = ma.spent.reduce((s,p)=>s+Number(p.total_value||0),0) - mb.spent.reduce((s,p)=>s+Number(p.total_value||0),0);
+    else if (col === 'thisMonth') diff = ma.thisMonth.reduce((s,p)=>s+_poNet(p),0) - mb.thisMonth.reduce((s,p)=>s+_poNet(p),0);
+    else if (col === 'lastMonth') diff = ma.lastMonth.reduce((s,p)=>s+_poNet(p),0) - mb.lastMonth.reduce((s,p)=>s+_poNet(p),0);
+    else if (col === 'spent')    diff = ma.spent.reduce((s,p)=>s+_poNet(p),0) - mb.spent.reduce((s,p)=>s+_poNet(p),0);
     return asc ? diff : -diff;
   });
 
@@ -7505,11 +7505,11 @@ function _renderSupplierTable() {
   let rows = '';
   for (const s of list) {
     const m        = _supplierPoMap[s.id] || { open: [], awaiting: [], discrep: [], spent: [], thisMonth: [], lastMonth: [], all: [] };
-    const openVal  = m.open.reduce((sum, p) => sum + Number(p.total_value || 0), 0);
+    const openVal  = m.open.reduce((sum, p) => sum + _poNet(p), 0);
     const svcNames = (s.services || []).map(sv => sv.service_name).join(', ');
-    const spentVal      = m.spent.reduce((sum, p) => sum + Number(p.total_value || 0), 0);
-    const thisMonthVal  = m.thisMonth.reduce((sum, p) => sum + Number(p.total_value || 0), 0);
-    const lastMonthVal  = m.lastMonth.reduce((sum, p) => sum + Number(p.total_value || 0), 0);
+    const spentVal      = m.spent.reduce((sum, p) => sum + _poNet(p), 0);
+    const thisMonthVal  = m.thisMonth.reduce((sum, p) => sum + _poNet(p), 0);
+    const lastMonthVal  = m.lastMonth.reduce((sum, p) => sum + _poNet(p), 0);
     const awaitCol = m.awaiting.length ? 'var(--amber)' : 'var(--subtle)';
     const discrCol = m.discrep.length  ? 'var(--red)'   : 'var(--subtle)';
     const nameSafe = s.supplier_name.replace(/'/g, "\\'").replace(/"/g, '&quot;');
@@ -7853,9 +7853,10 @@ function _renderSupplierDetailPos() {
     const col = groupColour[g];
     const statusLabel = groups[g] || po.status;
     const project = po.project_number ? `${po.project_number}` : (po.cost_centre || '—');
-    const value = po.total_value != null ? `£${Number(po.total_value).toLocaleString('en-GB', {minimumFractionDigits:2,maximumFractionDigits:2})}` : '—';
+    const _poNetVal = po.total_value != null ? Number(po.total_value) - Number(po.vat_amount || 0) : null;
+    const value = _poNetVal != null ? `£${_poNetVal.toLocaleString('en-GB', {minimumFractionDigits:2,maximumFractionDigits:2})}` : '—';
     const invoiceInfo = po.supplier_invoice_received_at
-      ? `<div style="font-size:11px;color:var(--muted);margin-top:3px">Invoice: ${po.supplier_invoice_ref || '—'} &nbsp;£${Number(po.supplier_invoice_gross||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>`
+      ? `<div style="font-size:11px;color:var(--muted);margin-top:3px">Invoice: ${po.supplier_invoice_ref || '—'} &nbsp;£${Number(po.supplier_invoice_net||po.supplier_invoice_gross||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})} net</div>`
       : '';
 
     return `
@@ -7878,8 +7879,8 @@ function _renderSupplierDetailPos() {
   }).join('');
 
   // Summary bar
-  const openVal = pos.filter(p => poGroup(p) === 'open').reduce((s,p) => s + Number(p.total_value||0), 0);
-  const receivedVal = pos.filter(p => ['received','invoiced','matched','discrepancy'].includes(poGroup(p))).reduce((s,p) => s + Number(p.total_value||0), 0);
+  const openVal = pos.filter(p => poGroup(p) === 'open').reduce((s,p) => s + _poNet(p), 0);
+  const receivedVal = pos.filter(p => ['received','invoiced','matched','discrepancy'].includes(poGroup(p))).reduce((s,p) => s + _poNet(p), 0);
   const fmtK = v => v >= 1000 ? `£${(v/1000).toFixed(1)}k` : `£${v.toFixed(0)}`;
 
   const summary = `
@@ -8204,11 +8205,11 @@ function _matchSupplierPoFromParsed(parsed) {
     if (looseHit) return looseHit.id;
   }
 
-  // 2. Closest gross match within £1
-  const gross = Number(parsed?.gross_amount);
-  if (Number.isFinite(gross) && gross > 0) {
+  // 2. Closest net match within £1
+  const invoiceNet = Number(parsed?.net_amount);
+  if (Number.isFinite(invoiceNet) && invoiceNet > 0) {
     const closeMatches = candidates
-      .map(po => ({ po, diff: Math.abs(Number(po.total_value || 0) - gross) }))
+      .map(po => ({ po, diff: Math.abs(_poNet(po) - invoiceNet) }))
       .filter(x => x.diff <= 1)
       .sort((a, b) => a.diff - b.diff);
     if (closeMatches.length === 1) return closeMatches[0].po.id;
@@ -8228,7 +8229,18 @@ function _renderSupplierDzReview() {
   const matchBanner = parsed._error
     ? `<div style="background:rgba(208,2,27,.1);border:1px solid var(--red);color:var(--red);padding:8px 12px;border-radius:6px;font-size:12px;margin-bottom:10px">⚠ Could not read the file — fill in below manually. (${escapeHtml(parsed._error)})</div>`
     : matched
-      ? `<div style="background:rgba(62,207,142,.1);border:1px solid var(--green);color:var(--green);padding:8px 12px;border-radius:6px;font-size:12px;margin-bottom:10px">✓ Matched to <b>${escapeHtml(matched.reference)}</b> — £${Number(matched.total_value||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})} · ${escapeHtml((matched.description||'').slice(0,80))}</div>`
+      ? (() => {
+          const poN  = _poNet(matched);
+          const invN = Number(parsed.net_amount);
+          const hasInvN = Number.isFinite(invN) && invN > 0;
+          const valOk   = hasInvN && Math.abs(poN - invN) <= 1;
+          const valWarn = hasInvN && !valOk;
+          const valPart = hasInvN
+            ? ` &nbsp;·&nbsp; PO: <b>£${poN.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})} net</b> / Invoice: <b>£${invN.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})} net</b>` + (valOk ? ' ✓' : ' <span style="color:var(--amber)">⚠ value mismatch</span>') : '';
+          const col = valWarn ? 'var(--amber)' : 'var(--green)';
+          const bg  = valWarn ? 'rgba(245,158,11,.1)' : 'rgba(62,207,142,.1)';
+          return `<div style="background:${bg};border:1px solid ${col};color:${col};padding:8px 12px;border-radius:6px;font-size:12px;margin-bottom:10px">✓ Matched to <b>${escapeHtml(matched.reference)}</b>${valPart}</div>`;
+        })()
       : `<div style="background:rgba(245,158,11,.1);border:1px solid var(--amber);color:var(--amber);padding:8px 12px;border-radius:6px;font-size:12px;margin-bottom:10px">⚠ No PO ref found on the invoice — pick one below.</div>`;
 
   // Sort candidates by closeness to parsed gross when available
@@ -8242,7 +8254,8 @@ function _renderSupplierDzReview() {
     .concat(sortedCands.map(po => {
       const sel = po.id === _supDzMatchedPoId ? ' selected' : '';
       const project = po.project_number || po.cost_centre || '—';
-      return `<option value="${po.id}"${sel}>${escapeHtml(po.reference || '—')} · £${Number(po.total_value || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · ${escapeHtml(project)} · ${escapeHtml((po.description || '').slice(0, 40))}</option>`;
+      const poNetDisp = _poNet(po);
+      return `<option value="${po.id}"${sel}>${escapeHtml(po.reference || '—')} · £${poNetDisp.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} net · ${escapeHtml(project)} · ${escapeHtml((po.description || '').slice(0, 40))}</option>`;
     }))
     .join('');
 
@@ -23253,6 +23266,8 @@ function populateBabcockValidationFields(header, missingFields = []) {
 
 // Shared 2dp rounding helper for all Babcock financial calculations
 const _r2 = v => Math.round(v * 100) / 100;
+// Net value of a PO row (total_value is gross; subtract vat_amount)
+const _poNet = p => p.total_value != null ? Number(p.total_value) - Number(p.vat_amount || 0) : 0;
 // Shared GBP formatter for Babcock tracker (replaces 3 local copies)
 const _fmtGBP = v => (v === null || v === undefined || v === '') ? '—'
   : `£${Number(v).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
