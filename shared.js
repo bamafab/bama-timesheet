@@ -900,10 +900,18 @@ function renderKioskFabCard(a) {
     ? `<span style="background:rgba(99,102,241,.18);color:#a5b4fc;padding:2px 9px;border-radius:6px;font-size:11px">${escapeHtml(a.finish_name)}</span>`
     : '<span style="color:var(--subtle);font-size:11px">No finish</span>';
 
+  // Open PDF link (matches projects.html assembly card)
+  const pdfLink = a.sharepoint_web_url
+    ? `<a href="${escapeHtml(a.sharepoint_web_url)}" target="_blank" rel="noopener"
+          class="btn btn-ghost"
+          style="padding:6px 12px;font-size:11px;text-decoration:none;color:var(--text)"
+          onclick="event.stopPropagation()">&#128279; Open PDF</a>`
+    : '';
+
   // Compact parts table (only for pending — fabricated cards stay slim)
   let partsHtml = '';
   if (!isFab && a.parts && a.parts.length) {
-    partsHtml = `<table style="width:100%;font-family:var(--font-mono);font-size:11px;color:var(--muted);border-collapse:collapse;margin-top:6px">
+    partsHtml = `<table style="width:100%;font-family:var(--font-mono);font-size:11px;color:var(--text);border-collapse:collapse;margin-top:6px">
       <thead><tr style="color:var(--subtle);text-align:left">
         <th style="font-weight:400;padding:3px 6px 3px 0">Mk</th>
         <th style="font-weight:400;padding:3px 6px">Qty</th>
@@ -933,16 +941,17 @@ function renderKioskFabCard(a) {
     partsHtml += '</tbody></table>';
   }
 
-  const fabFooter = isFab
-    ? `<span style="margin-left:auto;color:var(--green);font-size:11px">&#10003; Fabricated ${a.fabricated_at ? new Date(a.fabricated_at).toLocaleString('en-GB', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : ''}${a.fabricated_by ? ' · ' + escapeHtml(a.fabricated_by) : ''}</span>`
-    : `<button class="btn btn-primary" style="margin-left:auto;padding:6px 14px;font-size:12px" onclick="kioskMarkFabricated(${a.id})">&#10003; Mark fabricated</button>`;
+  // Action row — Open PDF + Mark fabricated (or just the Fabricated tag)
+  const actions = isFab
+    ? `<span style="margin-left:auto;color:var(--green);font-size:11px">&#10003; Fabricated ${a.fabricated_at ? new Date(a.fabricated_at).toLocaleString('en-GB', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : ''}${a.fabricated_by ? ' · ' + escapeHtml(a.fabricated_by) : ''}</span>${pdfLink ? '<span>' + pdfLink + '</span>' : ''}`
+    : `<span style="margin-left:auto;display:flex;gap:8px;align-items:center">${pdfLink}<button class="btn btn-primary" style="padding:6px 14px;font-size:12px" onclick="kioskMarkFabricated(${a.id})">&#10003; Mark fabricated</button></span>`;
 
   return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;${isFab ? 'opacity:.55;' : ''}">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-      <span style="font-family:var(--font-mono);font-size:15px;font-weight:700;color:${isFab ? 'var(--muted)' : 'var(--accent)'};min-width:50px">${escapeHtml(a.assembly_mark)}</span>
-      <span style="font-size:13px;color:var(--muted);min-width:60px">${Number(a.quantity)} off</span>
+      <span style="font-family:var(--font-mono);font-size:15px;font-weight:700;color:${isFab ? 'var(--text)' : 'var(--accent)'};min-width:50px">${escapeHtml(a.assembly_mark)}</span>
+      <span style="font-size:13px;color:var(--text);min-width:60px">${Number(a.quantity)} off</span>
       ${finishBadge}
-      ${fabFooter}
+      ${actions}
     </div>
     ${partsHtml}
   </div>`;
