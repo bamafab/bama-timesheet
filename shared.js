@@ -8193,7 +8193,7 @@ async function _supDzProcessNext() {
   "po_reference": "BAMA's PO reference if shown on the invoice — looks like P260501 (P + 6 digits)"
 }
 Set any field to null if not clearly shown. The PO reference belongs to the customer (BAMA) and is usually printed under "Your Order", "Order Ref", "Customer Order", "PO Number" or similar.
-IMPORTANT: net_amount and gross_amount must include ALL charges on the invoice — goods, delivery, carriage, freight, surcharges etc. Use the invoice's own printed net and gross totals, not just the goods subtotal.`
+IMPORTANT: Use the final printed net total and gross total from the invoice — not a goods-only subtotal. If the invoice has no delivery or other extra charges, the printed total is still correct as-is.`
           }
         ]
       }]
@@ -31345,7 +31345,7 @@ async function onSupInvFilePicked(file) {
   "gross_amount": 0
 }
 Set fields to null if unclear.
-IMPORTANT: net_amount and gross_amount must include ALL charges — goods, delivery, carriage, freight, surcharges etc. Use the invoice's own printed net and gross totals.`
+IMPORTANT: Use the final printed net total and gross total from the invoice — not a goods-only subtotal. If the invoice has no delivery or other extra charges, the printed total is still correct as-is.`
           }
         ]
       }]
@@ -33454,7 +33454,7 @@ async function _gInvProcessNext() {
   "po_reference": "BAMA's PO reference if shown — looks like P260501 (P + 6 digits)"
 }
 Set any field to null if not clearly shown. The PO reference is the customer order number printed under "Your Order", "Order Ref", "PO Number" or similar.
-IMPORTANT: net_amount and gross_amount must include ALL charges on the invoice — goods, delivery, carriage, freight, surcharges etc. Use the invoice's own printed net and gross totals, not just the goods subtotal.` }
+IMPORTANT: Use the final printed net total and gross total from the invoice — not a goods-only subtotal. If the invoice has no delivery or other extra charges, the printed total is still correct as-is.` }
       ]}]
     });
     const text  = (result.content?.find(b => b.type === 'text')?.text || '').trim();
