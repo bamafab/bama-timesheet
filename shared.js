@@ -10817,7 +10817,6 @@ let drawingsData = { projects: {} };
 // }
 
 let userAccessData = { globalAdminEmail: '', users: {}, accessRequests: [] };
-let bomDataCache = {}; // keyed by projectId: { jobs: { jobId: { materialLists:[], deliveryNotes:[] } } }
 let currentManagerUser = null; // name of user currently logged into manager dashboard
 let _officeCurrentTab = 'dashboard'; // tracks active tab for unified sidebar active-state
 
@@ -11021,62 +11020,6 @@ async function saveDrawingsData() {
   if (!res.ok) throw new Error(`Save drawings failed: ${res.status}`);
 }
 
-// ── Load / Save BOM data (per-project file) ──
-function bomFileName(projectId) { return `bom-${projectId}.json`; }
-
-function getBomDataForJob(projectId, jobId) {
-  const projBom = bomDataCache[projectId];
-  if (!projBom || !projBom.jobs || !projBom.jobs[jobId]) return { materialLists: [], deliveryNotes: [] };
-  return projBom.jobs[jobId];
-}
-
-function ensureBomDataForJob(projectId, jobId) {
-  if (!bomDataCache[projectId]) bomDataCache[projectId] = { projectId, jobs: {}, settings: { weldingMachines: [] } };
-  if (!bomDataCache[projectId].jobs[jobId]) bomDataCache[projectId].jobs[jobId] = { materialLists: [], deliveryNotes: [] };
-  return bomDataCache[projectId].jobs[jobId];
-}
-
-async function loadBomData(projectId) {
-  if (bomDataCache[projectId]) return bomDataCache[projectId];
-  try {
-    const token = await getToken();
-    const metaUrl = `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.timesheetFolderItemId}:/${bomFileName(projectId)}`;
-    const metaRes = await fetch(metaUrl, { headers: { 'Authorization': `Bearer ${token}` } });
-    if (metaRes.status === 404) {
-      bomDataCache[projectId] = { projectId, jobs: {}, settings: { weldingMachines: [] } };
-      return bomDataCache[projectId];
-    }
-    if (!metaRes.ok) throw new Error(`BOM meta fetch failed: ${metaRes.status}`);
-    const meta = await metaRes.json();
-    const contentRes = await fetch(
-      `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${meta.id}/content`,
-      { headers: { 'Authorization': `Bearer ${token}` } }
-    );
-    if (!contentRes.ok) throw new Error('BOM content fetch failed');
-    bomDataCache[projectId] = await contentRes.json();
-    if (!bomDataCache[projectId].jobs) bomDataCache[projectId].jobs = {};
-    if (!bomDataCache[projectId].settings) bomDataCache[projectId].settings = { weldingMachines: [] };
-    console.log(`BOM data loaded for ${projectId}:`, Object.keys(bomDataCache[projectId].jobs).length, 'jobs');
-    return bomDataCache[projectId];
-  } catch (e) {
-    console.warn(`BOM data load failed for ${projectId}:`, e.message);
-    bomDataCache[projectId] = { projectId, jobs: {}, settings: { weldingMachines: [] } };
-    return bomDataCache[projectId];
-  }
-}
-
-async function saveBomData(projectId) {
-  if (!bomDataCache[projectId]) return;
-  const token = await getToken();
-  const url = `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.timesheetFolderItemId}:/${bomFileName(projectId)}:/content`;
-  const res = await fetch(url, {
-    method: 'PUT',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(bomDataCache[projectId])
-  });
-  if (!res.ok) throw new Error(`Save BOM data failed: ${res.status}`);
-  console.log(`BOM data saved for ${projectId}`);
-}
 
 // ── Load / Save user access data ──
 async function loadUserAccessData() {
@@ -11386,9 +11329,6 @@ async function openProjectDetail(projectId) {
 
   showScreen('screenProjectDetail');
   renderJobsList(projectId);
-
-  // Load BOM data for this project in background
-  loadBomData(projectId).catch(e => console.warn('BOM data load:', e.message));
 }
 
 function renderJobsList(projectId) {
@@ -11436,15 +11376,17 @@ function renderJobsList(projectId) {
 
 function getJobProgress(job) {
   const elements = {};
-  const projId = currentProject?.id;
-  const bomJob = projId ? getBomDataForJob(projId, job.id) : { materialLists: [] };
-  const bomItems = (bomJob.materialLists || []).flatMap(ml => ml.items || []);
+  // BOM progress now reads from the SQL-backed _bomItemsByJob cache
+  // (populated by loadJobBomItems in openJobDetail). job.id is a string;
+  // the cache is keyed by SQL int — coerce.
+  const jobIdInt = job?.id ? parseInt(job.id) : null;
+  const bomItems = (jobIdInt && _bomItemsByJob[jobIdInt]) || [];
 
   // BOM progress: based on item statuses — the primary measure
   if (bomItems.length > 0) {
-    const allOnSite = bomItems.every(i => i.status === 'delivered_to_site' || i.status === 'complete');
-    const anyProgress = bomItems.some(i => i.status !== 'not_started');
-    elements.bom = allOnSite ? 'complete' : anyProgress ? 'active' : 'empty';
+    const allDespatched = bomItems.every(i => i.status === 'despatched');
+    const anyProgress  = bomItems.some(i => i.status !== 'pending');
+    elements.bom = allDespatched ? 'complete' : anyProgress ? 'active' : 'empty';
   } else {
     elements.bom = (job.bom?.files?.length > 0) ? 'active' : 'empty';
   }
@@ -11455,14 +11397,16 @@ function getJobProgress(job) {
 
   elements.parts = ((job.parts?.sections?.files?.length || 0) + (job.parts?.plates?.files?.length || 0)) > 0 ? 'complete' : 'empty';
 
-  // Assembly progress: based on task completion — the second measure
-  const tasks = job.assembly?.tasks || [];
-  const allDone = tasks.length > 0 && tasks.every(t => t.status === 'complete');
-  elements.assembly = allDone ? 'complete' : tasks.length > 0 ? 'active' : 'empty';
+  // Assembly progress: now from SQL-backed assembly cache rather than
+  // the legacy task list. An assembly is 'complete' when all rows are
+  // status='fabricated'.
+  const assemblies = (jobIdInt && _assembliesByJob[jobIdInt]) || [];
+  const allFabricated = assemblies.length > 0 && assemblies.every(a => a.status === 'fabricated');
+  elements.assembly = allFabricated ? 'complete' : assemblies.length > 0 ? 'active' : 'empty';
 
-  // Site: just an indicator
-  const dns = bomJob.deliveryNotes || [];
-  elements.site = job.site?.completedAt ? 'complete' : (dns.length > 0 || job.site?.files?.length > 0) ? 'active' : 'empty';
+  // Site: just an indicator (no longer reads deliveryNotes from the
+  // dead bomDataCache — uses just job.site presence).
+  elements.site = job.site?.completedAt ? 'complete' : (job.site?.files?.length > 0) ? 'active' : 'empty';
 
   // Progress label based on BOM + Assembly only
   const fabItems = bomItems.filter(i => i.fabricated);
@@ -11647,10 +11591,9 @@ function openJobDetail(projectId, jobId) {
   });
 
   showScreen('screenJobDetail');
-  // Ensure BOM data + SQL assemblies are loaded, then render
+  // Load SQL-backed assemblies, BOM items, and finishes in parallel
   const jobIdInt = parseInt(currentJob.id);
   Promise.all([
-    loadBomData(projectId),
     loadJobAssemblies(jobIdInt),
     loadJobBomItems(jobIdInt),
     loadFinishes()
@@ -11675,411 +11618,6 @@ function renderAllElements() {
 }
 
 // ═══════════════════════════════════════════
-// ELEMENT 1: BOM — MATERIAL LIST SYSTEM
-// ═══════════════════════════════════════════
-
-// ── BOM State ──
-let bomFilterCoating = '';
-let bomFilterStatus = '';
-let bomFilterFab = '';
-let bomFilterMark = '';
-let bomSelectedIds = new Set();
-let parsedBomData = null; // temp storage during upload
-
-// ── BOM Parser Constants ──
-const NON_FAB_KEYWORDS = [
-  'bolt','nut','washer','anchor','screw','rivet','hilti','hit-v','hit-re',
-  'xox','hexagon','din 934','din 933','iso 4017','iso 4014','stud',
-  'threaded rod','chemical anchor','fixings','fastener'
-];
-const BOM_HEADER_MAP = {
-  'mark':'mark','quantity':'quantity','amount':'quantity',
-  'size':'size','name':'description','description':'description',
-  'coating':'coating','wt per assembly':'weightPerUnit',
-  'weight (kg)':'weightPerUnit','weight':'weightPerUnit',
-  'total wt (kg)':'totalWeight','total weight':'totalWeight',
-  'x':'dimX','y':'dimY','z':'dimZ','length':'length','width':'width'
-};
-const BOM_NUMERIC_FIELDS = ['quantity','weightPerUnit','totalWeight','totalSurface','length','width','dimX','dimY','dimZ'];
-
-// ── PDF Parser (uses PDF.js loaded on projects.html) ──
-async function parseBomPdfBrowser(file) {
-  const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
-  const allPages = [];
-
-  for (let p = 1; p <= pdf.numPages; p++) {
-    const page = await pdf.getPage(p);
-    const tc = await page.getTextContent();
-    const vp = page.getViewport({scale: 1});
-    const items = tc.items.map(it => ({
-      text: it.str, x: Math.round(it.transform[4]),
-      y: Math.round(vp.height - it.transform[5]),
-      width: Math.round(it.width), height: Math.round(Math.abs(it.transform[0]))
-    })).filter(it => it.text.trim());
-    allPages.push(items);
-  }
-
-  // Get full page 1 text for type/metadata detection
-  const p1Text = allPages[0]?.map(i => i.text).join(' ') || '';
-  const bomType = detectBomTypeBrowser(p1Text);
-  const metadata = extractMetadataBrowser(p1Text);
-
-  let columns = null;
-  const allItems = [];
-  let itemCounter = 0;
-
-  for (const pageItems of allPages) {
-    const rows = groupRowsBrowser(pageItems);
-    let headerRowIdx = -1;
-    let bestCols = [];
-
-    for (let ri = 0; ri < Math.min(rows.length, 8); ri++) {
-      const detected = detectColumnsBrowser(rows[ri]);
-      if (detected.length > bestCols.length) { bestCols = detected; headerRowIdx = ri; }
-    }
-    if (bestCols.length < 2) continue;
-    if (!columns) columns = bestCols;
-
-    for (let ri = headerRowIdx + 1; ri < rows.length; ri++) {
-      const rowText = rows[ri].map(i => i.text).join(' ').toLowerCase();
-      if (rowText.match(/page\s+\d+\s*\/\s*\d+/) || rowText.includes('total weight') && rows[ri].length <= 3) continue;
-      if (rowText.includes('delivered by') || rowText.includes('received by')) continue;
-
-      const vals = assignColsBrowser(rows[ri], columns);
-      const nonEmpty = Object.values(vals).filter(v => v.trim());
-      if (nonEmpty.length < 2) continue;
-      if (vals.mark && /^\(.*\)$/.test(vals.mark)) continue;
-
-      const item = {
-        id: null, mark: vals.mark||'', description: vals.description||'',
-        quantity: null, coating: vals.coating||'', size: vals.size||'',
-        weightPerUnit: null, totalWeight: null, totalSurface: null,
-        length: null, width: null, dimX: null, dimY: null, dimZ: null,
-        fabricated: true, manuallyAdded: false, status: 'not_started',
-        traceability: null, deliveryHistory: []
-      };
-
-      for (const f of BOM_NUMERIC_FIELDS) {
-        if (vals[f] !== undefined) {
-          const cleaned = String(vals[f]).trim().replace(/,/g, '');
-          const n = parseFloat(cleaned);
-          if (!isNaN(n)) item[f] = n;
-        }
-      }
-
-      if (!item.mark && !item.description) continue;
-      if (!item.mark && item.description) {
-        itemCounter++;
-        item.mark = `ITEM-${String(itemCounter).padStart(3, '0')}`;
-      }
-
-      const checkText = (item.description || item.mark || '').toLowerCase();
-      if (bomType === 'bolt_anchor_list') item.fabricated = false;
-      else item.fabricated = !NON_FAB_KEYWORDS.some(kw => checkText.includes(kw));
-
-      item.id = `bom-${item.mark}-${allItems.length}`;
-      allItems.push(item);
-    }
-  }
-
-  return {
-    metadata, bomType, fileName: file.name,
-    columns: (columns||[]).map(c => ({key: c.key, label: c.label})),
-    itemCount: allItems.length,
-    fabricatedCount: allItems.filter(i => i.fabricated).length,
-    nonFabricatedCount: allItems.filter(i => !i.fabricated).length,
-    items: allItems
-  };
-}
-
-function detectBomTypeBrowser(text) {
-  const t = text.toLowerCase();
-  if (t.includes('shipping list')) return 'shipping_list';
-  if (t.includes('bolt') && (t.includes('anchor') || t.includes('list'))) return 'bolt_anchor_list';
-  if (t.includes('grating')) return 'grating_list';
-  return 'material_list';
-}
-
-function extractMetadataBrowser(text) {
-  const meta = {title:'',date:'',project:'',client:'',jobNo:'',author:'',detailer:''};
-  const lines = text.split(/\s{3,}|\n/).map(l => l.trim()).filter(Boolean);
-  for (const line of lines.slice(0, 15)) {
-    const ll = line.toLowerCase();
-    if (!meta.title && (ll.includes('shipping list')||ll.includes('bolt')||ll.includes('grating list')||ll.includes('anchor list'))) {
-      // Extract just the title portion — cut at first date/number pattern or limit to 60 chars
-      const titleMatch = line.match(/(.*?(?:shipping list|bolt\s*&?\s*anchor\s*list|grating list))/i);
-      meta.title = titleMatch ? titleMatch[1].trim() : line.substring(0, 60).trim();
-    }
-    let m;
-    if ((m = line.match(/Date:\s*(.+?)(?:\s{2,}|Project|$)/i))) meta.date = m[1].trim();
-    if ((m = line.match(/Project:\s*(.+?)(?:\s{2,}|Author|$)/i))) meta.project = m[1].trim();
-    if ((m = line.match(/Client:\s*(.+?)(?:\s{2,}|Job|$)/i))) meta.client = m[1].trim();
-    if ((m = line.match(/Job\s*No\.?:\s*(.+?)(?:\s{2,}|$)/i))) meta.jobNo = m[1].trim();
-    if ((m = line.match(/Contract:\s*(.+?)(?:\s{2,}|$)/i)) && !meta.project) meta.project = m[1].trim();
-  }
-  if (!meta.title) meta.title = detectBomTypeBrowser(text).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-  return meta;
-}
-
-function groupRowsBrowser(items, tol = 4) {
-  if (!items.length) return [];
-  const sorted = [...items].sort((a,b) => a.y - b.y || a.x - b.x);
-  const rows = [];
-  let cur = [sorted[0]], curY = sorted[0].y;
-  for (let i = 1; i < sorted.length; i++) {
-    if (Math.abs(sorted[i].y - curY) <= tol) cur.push(sorted[i]);
-    else { rows.push(cur); cur = [sorted[i]]; curY = sorted[i].y; }
-  }
-  rows.push(cur);
-  return rows;
-}
-
-function detectColumnsBrowser(row) {
-  const cols = [];
-  for (const item of row) {
-    const label = item.text.trim().toLowerCase();
-    let norm = BOM_HEADER_MAP[label];
-    if (!norm) {
-      for (const [k,v] of Object.entries(BOM_HEADER_MAP)) {
-        if (label.includes(k) || k.includes(label)) { norm = v; break; }
-      }
-    }
-    if (norm && !cols.find(c => c.key === norm)) {
-      cols.push({key: norm, label: item.text.trim(), x: item.x, width: item.width || 60});
-    }
-  }
-  return cols.sort((a,b) => a.x - b.x);
-}
-
-function assignColsBrowser(rowItems, columns) {
-  const result = {};
-  for (const col of columns) result[col.key] = '';
-  for (const item of rowItems) {
-    let bestCol = null, bestDist = Infinity;
-    for (const col of columns) {
-      const dist = Math.abs((item.x + item.width/2) - (col.x + col.width/2));
-      const inRange = item.x >= col.x - 30 && item.x <= col.x + col.width + 50;
-      if (inRange && dist < bestDist) { bestDist = dist; bestCol = col; }
-    }
-    if (!bestCol) {
-      for (const col of columns) {
-        const dist = Math.abs(item.x - col.x);
-        if (dist < bestDist) { bestDist = dist; bestCol = col; }
-      }
-    }
-    if (bestCol) {
-      result[bestCol.key] = result[bestCol.key] ? result[bestCol.key] + ' ' + item.text.trim() : item.text.trim();
-    }
-  }
-  return result;
-}
-
-// ── BOM Upload Modal ──
-function openUploadBomModal() {
-  if (!isDraftsman || !currentJob || !currentProject) return;
-  document.getElementById('uploadBomContext').textContent = `${currentProject.id} — ${currentProject.name} / ${currentJob.name}`;
-  document.getElementById('bomFileInput').value = '';
-  document.getElementById('bomUploadZoneText').textContent = 'Click or drag a BOM PDF here';
-  document.getElementById('bomParsePreview').style.display = 'none';
-  document.getElementById('bomUploadConfirmBtn').style.display = 'none';
-  document.getElementById('bomUploadProgress').style.display = 'none';
-  parsedBomData = null;
-  document.getElementById('uploadBomModal').classList.add('active');
-}
-function closeUploadBomModal() { document.getElementById('uploadBomModal').classList.remove('active'); parsedBomData = null; }
-
-async function onBomFileSelected() {
-  const input = document.getElementById('bomFileInput');
-  if (!input.files.length) return;
-  const file = input.files[0];
-  document.getElementById('bomUploadZoneText').textContent = file.name;
-  document.getElementById('bomUploadProgress').style.display = 'block';
-  document.getElementById('bomUploadProgressText').textContent = 'Parsing PDF...';
-  document.getElementById('bomUploadProgressBar').style.width = '30%';
-
-  try {
-    parsedBomData = await parseBomPdfBrowser(file);
-    parsedBomData._file = file;
-    document.getElementById('bomUploadProgressBar').style.width = '100%';
-    document.getElementById('bomUploadProgressText').textContent = 'Parsed!';
-
-    // Show preview
-    document.getElementById('bomParseTitle').textContent = `${parsedBomData.metadata.title || parsedBomData.bomType}`;
-    document.getElementById('bomParseSummary').textContent =
-      `${parsedBomData.itemCount} items found — ${parsedBomData.fabricatedCount} fabricated, ${parsedBomData.nonFabricatedCount} non-fabricated (bought-in)`;
-
-    // Build preview table
-    const cols = parsedBomData.columns;
-    let tableHtml = '<thead><tr>';
-    tableHtml += '<th style="padding:6px 8px;font-size:10px;border-bottom:1px solid var(--border);color:var(--subtle)">Type</th>';
-    for (const c of cols.slice(0, 5)) {
-      tableHtml += `<th style="padding:6px 8px;font-size:10px;border-bottom:1px solid var(--border);color:var(--subtle)">${c.label}</th>`;
-    }
-    tableHtml += '</tr></thead><tbody>';
-    for (const item of parsedBomData.items.slice(0, 15)) {
-      const rowClass = item.fabricated ? '' : 'non-fab';
-      tableHtml += `<tr class="${rowClass}">`;
-      tableHtml += `<td style="padding:4px 8px;font-size:11px">${item.fabricated ? '&#128296;' : '&#128230;'}</td>`;
-      for (const c of cols.slice(0, 5)) {
-        let val = item[c.key];
-        if (val === null || val === undefined) val = '';
-        if (typeof val === 'number') val = val.toLocaleString('en-GB');
-        tableHtml += `<td style="padding:4px 8px;font-size:11px">${val}</td>`;
-      }
-      tableHtml += '</tr>';
-    }
-    if (parsedBomData.items.length > 15) {
-      tableHtml += `<tr><td colspan="${cols.length+1}" style="padding:8px;text-align:center;color:var(--muted);font-size:11px">... and ${parsedBomData.items.length - 15} more items</td></tr>`;
-    }
-    tableHtml += '</tbody>';
-    document.getElementById('bomPreviewTable').innerHTML = tableHtml;
-
-    document.getElementById('bomParsePreview').style.display = 'block';
-    document.getElementById('bomUploadConfirmBtn').style.display = '';
-    setTimeout(() => { document.getElementById('bomUploadProgress').style.display = 'none'; }, 600);
-  } catch (e) {
-    console.error('BOM parse error:', e);
-    document.getElementById('bomUploadProgressText').textContent = `Parse failed: ${e.message}`;
-    document.getElementById('bomUploadProgressBar').style.width = '100%';
-    document.getElementById('bomUploadProgressBar').style.background = 'var(--red)';
-    toast('Failed to parse BOM PDF: ' + e.message, 'error');
-  }
-}
-
-async function confirmUploadBom() {
-  if (!parsedBomData || !currentJob || !currentProject) return;
-  const projectId = currentProject.id;
-  const btn = document.getElementById('bomUploadConfirmBtn');
-  btn.disabled = true;
-  btn.textContent = 'Saving...';
-
-  try {
-    // Upload the PDF file to SharePoint
-    let fileRecord = {};
-    if (parsedBomData._file) {
-      document.getElementById('bomUploadProgress').style.display = 'block';
-      document.getElementById('bomUploadProgressText').textContent = 'Uploading PDF to SharePoint...';
-      document.getElementById('bomUploadProgressBar').style.width = '50%';
-      document.getElementById('bomUploadProgressBar').style.background = 'var(--accent)';
-
-      const projectFolder = await findProjectFolder(projectId);
-      if (projectFolder) {
-        const drawingsFolder = await getOrCreateSubfolder(projectFolder.id, '02 - Drawings');
-        if (drawingsFolder) {
-          const jobFolder = currentJob.spFolderId
-            ? { id: currentJob.spFolderId }
-            : await getOrCreateSubfolder(drawingsFolder.id, currentJob.folderName || currentJob.name);
-          if (jobFolder) {
-            const bomFolder = await getOrCreateSubfolder(jobFolder.id, '01 - BOM');
-            if (bomFolder) {
-              const uploaded = await uploadFileToFolder(bomFolder.id, parsedBomData._file.name, parsedBomData._file, parsedBomData._file.type || 'application/pdf');
-              fileRecord = {
-                fileId: uploaded.id,
-                driveId: uploaded.parentReference?.driveId || BAMA_DRIVE_ID,
-                webUrl: uploaded.webUrl
-              };
-            }
-          }
-        }
-      }
-      document.getElementById('bomUploadProgressBar').style.width = '80%';
-      document.getElementById('bomUploadProgressText').textContent = 'Saving data...';
-    }
-
-    // Build material list entry
-    const ml = {
-      id: 'ml-' + Date.now(),
-      fileName: parsedBomData.fileName,
-      fileId: fileRecord.fileId || '',
-      driveId: fileRecord.driveId || '',
-      webUrl: fileRecord.webUrl || '',
-      bomType: parsedBomData.bomType,
-      uploadedAt: new Date().toISOString(),
-      uploadedBy: 'Draftsman',
-      metadata: parsedBomData.metadata,
-      columns: parsedBomData.columns,
-      items: parsedBomData.items
-    };
-
-    // Add to job
-    const bomJob = ensureBomDataForJob(currentProject.id, currentJob.id);
-    bomJob.materialLists.push(ml);
-
-    await saveBomData(currentProject.id);
-
-    document.getElementById('bomUploadProgressBar').style.width = '100%';
-    document.getElementById('bomUploadProgressText').textContent = 'Done!';
-
-    setTimeout(() => {
-      closeUploadBomModal();
-      toast(`BOM uploaded: ${ml.items.length} items parsed`, 'success');
-      renderBOM();
-    }, 400);
-
-  } catch (e) {
-    console.error('BOM upload error:', e);
-    toast('Upload failed: ' + e.message, 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Upload & Save BOM';
-  }
-}
-
-// ── Add Manual Item ──
-function openAddBomItemModal() {
-  if (!currentJob) return;
-  document.getElementById('manualBomMark').value = '';
-  document.getElementById('manualBomQty').value = '1';
-  document.getElementById('manualBomDesc').value = '';
-  document.getElementById('manualBomCoating').value = '';
-  document.getElementById('manualBomWeight').value = '';
-  document.querySelectorAll('input[name="manualBomFab"]')[0].checked = true;
-  document.getElementById('addBomItemModal').classList.add('active');
-}
-function closeAddBomItemModal() { document.getElementById('addBomItemModal').classList.remove('active'); }
-
-async function confirmAddBomItem() {
-  const mark = document.getElementById('manualBomMark').value.trim();
-  const qty = parseFloat(document.getElementById('manualBomQty').value) || 1;
-  const desc = document.getElementById('manualBomDesc').value.trim();
-  const coating = document.getElementById('manualBomCoating').value.trim();
-  const weight = parseFloat(document.getElementById('manualBomWeight').value) || null;
-  const fab = document.querySelector('input[name="manualBomFab"]:checked')?.value === 'true';
-
-  if (!mark && !desc) { toast('Enter a mark or description', 'error'); return; }
-
-  // Find the first material list to add to, or create a manual one
-  const bomJob = ensureBomDataForJob(currentProject.id, currentJob.id);
-  let targetList = bomJob.materialLists[0];
-  if (!targetList) {
-    targetList = {
-      id: 'ml-manual-' + Date.now(), fileName: 'Manual entries', fileId: '', driveId: '', webUrl: '',
-      bomType: 'manual', uploadedAt: new Date().toISOString(), uploadedBy: 'Manual',
-      metadata: { title: 'Manual entries', date: '', project: '', client: '', jobNo: '', author: '', detailer: '' },
-      columns: [{key:'mark',label:'Mark'},{key:'description',label:'Description'},{key:'quantity',label:'Quantity'},{key:'coating',label:'Coating'},{key:'totalWeight',label:'Weight'}],
-      items: []
-    };
-    bomJob.materialLists.push(targetList);
-  }
-
-  const item = {
-    id: `bom-manual-${Date.now()}`,
-    mark: mark || `MANUAL-${targetList.items.length + 1}`,
-    description: desc, quantity: qty, coating, size: '',
-    weightPerUnit: null, totalWeight: weight, totalSurface: null,
-    length: null, width: null, dimX: null, dimY: null, dimZ: null,
-    fabricated: fab, manuallyAdded: true, status: 'not_started',
-    traceability: null, deliveryHistory: []
-  };
-
-  targetList.items.push(item);
-  await saveBomData(currentProject.id);
-  closeAddBomItemModal();
-  toast(`Added ${item.mark} to BOM`, 'success');
-  renderBOM();
-}
-
 
 // ═══════════════════════════════════════════
 // ELEMENT 1: BOM (job-fabrication rework — see SPEC §6)
@@ -12095,11 +11633,6 @@ async function confirmAddBomItem() {
 // Status state machine (see SPEC §6):
 //   pending → at_supplier → ready_for_despatch → despatched
 //   (no-finish items skip to ready_for_despatch on create)
-//
-// Legacy code paths below this function (renderBomTable,
-// openUploadBomModal, openAddBomItemModal, buildDeliveryNoteHTML,
-// the whole materialLists/deliveryNotes machinery) are dead — kept
-// in place for commit 12's wipe sweep, but unreachable from the UI.
 
 async function loadJobBomItems(jobId) {
   if (!jobId) return [];
@@ -12982,679 +12515,6 @@ async function bmrSaveAndNext() {
   renderBomManualReview();
 }
 
-// ═══════════════════════════════════════════
-// LEGACY BOM — dead code below (sweep in commit 12)
-// ═══════════════════════════════════════════
-
-// ── Render BOM Table (filterable) ──
-function renderBomTable(mlId) {
-  const wrap = document.getElementById(`bomTableWrap-${mlId}`);
-  if (!wrap) return;
-  const bomJob = getBomDataForJob(currentProject?.id, currentJob?.id);
-  const lists = bomJob.materialLists || [];
-  const ml = lists.find(m => m.id === mlId);
-  if (!ml) return;
-
-  let items = [...ml.items];
-
-  // Apply filters
-  if (bomFilterCoating) items = items.filter(i => i.coating === bomFilterCoating);
-  if (bomFilterStatus) items = items.filter(i => i.status === bomFilterStatus);
-  if (bomFilterFab === 'true') items = items.filter(i => i.fabricated);
-  else if (bomFilterFab === 'false') items = items.filter(i => !i.fabricated);
-  if (bomFilterMark) items = items.filter(i => i.mark.toLowerCase().includes(bomFilterMark.toLowerCase()));
-
-  // Auto-sort: not_started first, then fabricated, then dispatched/returned, then delivered_to_site last
-  const STATUS_ORDER = { not_started: 0, fabricated: 1, returned: 2, dispatched: 3, delivered_to_site: 4, complete: 5 };
-  items.sort((a, b) => (STATUS_ORDER[a.status] ?? 3) - (STATUS_ORDER[b.status] ?? 3));
-
-  // Select all bar
-  const allFilteredIds = items.map(i => i.id);
-  const allSelected = allFilteredIds.length > 0 && allFilteredIds.every(id => bomSelectedIds.has(id));
-
-  let html = `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--surface);border-bottom:1px solid var(--border)">`;
-  html += `<input type="checkbox" ${allSelected ? 'checked' : ''} onchange="toggleBomSelectAll('${mlId}', this.checked)" style="width:16px;height:16px;accent-color:var(--accent)">`;
-  html += `<span style="font-size:11px;color:var(--muted)">${allSelected ? 'Deselect' : 'Select'} all ${items.length} filtered</span>`;
-  html += `</div>`;
-
-  html += '<table class="bom-table"><thead><tr>';
-  html += '<th class="cb-cell"></th>';
-  html += '<th>Mark</th>';
-  const showDesc = ml.columns.some(c => c.key === 'description');
-  const showSize = ml.columns.some(c => c.key === 'size');
-  const showCoating = ml.columns.some(c => c.key === 'coating');
-  if (showDesc || showSize) html += `<th>${showDesc ? 'Description' : 'Size'}</th>`;
-  html += '<th>Qty</th>';
-  if (showCoating) html += '<th>Coating</th>';
-  html += '<th>Weight</th><th>Status</th>';
-  html += '<th>Actions</th>';
-  html += '</tr></thead><tbody>';
-
-  for (const item of items) {
-    const classes = [];
-    if (!item.fabricated) classes.push('non-fab');
-    if (item.manuallyAdded) classes.push('manual-item');
-
-    html += `<tr class="${classes.join(' ')}">`;
-    html += `<td class="cb-cell"><input type="checkbox" ${bomSelectedIds.has(item.id) ? 'checked' : ''} onchange="toggleBomSelect('${item.id}', this.checked)"></td>`;
-    html += `<td style="font-weight:600;font-family:var(--font-mono)">${item.mark}${item.manuallyAdded ? ' <span style="color:var(--amber);font-size:10px" title="Manually added">&#9679;</span>' : ''}</td>`;
-    if (showDesc || showSize) html += `<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${item.description || item.size}">${item.description || item.size}</td>`;
-    html += `<td>${item.quantity || ''}</td>`;
-    if (showCoating) html += `<td>${item.coating}</td>`;
-    html += `<td>${item.totalWeight != null ? item.totalWeight.toLocaleString('en-GB') : (item.weightPerUnit != null ? item.weightPerUnit.toLocaleString('en-GB') : '')}</td>`;
-
-    // Status cell with delivery history
-    const lastDn = item.deliveryHistory?.length ? item.deliveryHistory[item.deliveryHistory.length - 1] : null;
-    let statusLabel = item.status.replace(/_/g, ' ');
-    if (lastDn && item.status === 'dispatched') statusLabel = `Sent: ${lastDn.destinationName || lastDn.destination}`;
-    if (lastDn && item.status === 'delivered_to_site') statusLabel = 'Delivered to site';
-    html += `<td>`;
-    html += `<span class="bom-status-badge ${item.status.replace(/_/g,'-')}">${statusLabel}</span>`;
-    if (item.deliveryHistory?.length > 0) {
-      html += `<button class="btn btn-ghost" style="padding:1px 6px;font-size:9px;margin-left:4px" onclick="showItemDeliveryHistory('${mlId}','${item.id}')" title="View delivery history">&#128196; ${item.deliveryHistory.length}</button>`;
-    }
-    html += `</td>`;
-
-    // Actions cell
-    html += '<td style="white-space:nowrap">';
-    if (item.fabricated && item.status === 'not_started') {
-      html += `<button class="btn btn-success" style="padding:3px 10px;font-size:10px" onclick="openFabricateItemModal('${mlId}','${item.id}')">&#10003; Mark as fabricated</button>`;
-    } else if (item.status === 'dispatched') {
-      html += `<button class="btn" style="padding:3px 10px;font-size:10px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);color:var(--amber)" onclick="markItemReturned('${mlId}','${item.id}')">&#8617; Returned</button>`;
-    } else if (item.traceability) {
-      html += `<span style="font-size:10px;color:var(--subtle)">${item.traceability.welder}${item.traceability.machine ? ' / ' + item.traceability.machine : ''}</span>`;
-    } else if (!item.fabricated && item.status === 'not_started') {
-      html += `<span style="font-size:10px;color:var(--subtle)">Ready for dispatch</span>`;
-    }
-    html += '</td>';
-    html += '</tr>';
-  }
-
-  html += '</tbody></table>';
-  wrap.innerHTML = html;
-  updateBomBulkBar();
-}
-
-function toggleBomSelect(itemId, checked) {
-  if (checked) bomSelectedIds.add(itemId);
-  else bomSelectedIds.delete(itemId);
-  updateBomBulkBar();
-}
-
-function toggleBomSelectAll(mlId, checked) {
-  const bomJob = getBomDataForJob(currentProject?.id, currentJob?.id);
-  const ml = (bomJob.materialLists || []).find(m => m.id === mlId);
-  if (!ml) return;
-  let items = [...ml.items];
-  if (bomFilterCoating) items = items.filter(i => i.coating === bomFilterCoating);
-  if (bomFilterStatus) items = items.filter(i => i.status === bomFilterStatus);
-  if (bomFilterFab === 'true') items = items.filter(i => i.fabricated);
-  else if (bomFilterFab === 'false') items = items.filter(i => !i.fabricated);
-  if (bomFilterMark) items = items.filter(i => i.mark.toLowerCase().includes(bomFilterMark.toLowerCase()));
-
-  for (const item of items) {
-    if (checked) bomSelectedIds.add(item.id);
-    else bomSelectedIds.delete(item.id);
-  }
-  renderBomTable(mlId);
-}
-
-function updateBomBulkBar() {
-  const bar = document.getElementById('bomBulkBar');
-  if (!bar) return;
-  if (bomSelectedIds.size > 0) {
-    bar.style.display = 'flex';
-    document.getElementById('bomSelCount').textContent = `${bomSelectedIds.size} selected`;
-  } else {
-    bar.style.display = 'none';
-  }
-}
-
-// ── Fabrication toggle (workshop) ──
-async function openFabricateItemModal(mlId, itemId) {
-  const bomJob = getBomDataForJob(currentProject?.id, currentJob?.id);
-  const ml = (bomJob.materialLists || []).find(m => m.id === mlId);
-  if (!ml) return;
-  const item = ml.items.find(i => i.id === itemId);
-  if (!item) return;
-
-  const employees = (state.timesheetData.employees || []).filter(e => e.active !== false);
-
-  // Load welding machines from the central SQL-backed API
-  let machines = [];
-  try { machines = await api.get('/api/welding-machines'); } catch (e) { console.warn('Failed to load welding machines:', e.message); }
-
-  // Quick inline approach using confirm modal
-  const empOptions = employees.map(e => `<option value="${e.name}">${e.name}</option>`).join('');
-  const machOptions = machines.filter(m => m.is_active !== false).map(m => `<option value="${m.machine_name}">${m.machine_name}${m.serial_number ? ' (S/N ' + m.serial_number + ')' : ''}</option>`).join('');
-
-  const content = `
-    <div style="text-align:left;margin-top:12px">
-      <div style="font-size:14px;font-weight:600;margin-bottom:12px">${item.mark} — Mark as fabricated</div>
-      <div style="margin-bottom:10px">
-        <div class="field-label">WELDER</div>
-        <select class="field-input" id="fabWelder" style="font-size:13px"><option value="">Select welder...</option>${empOptions}</select>
-      </div>
-      <div style="margin-bottom:10px">
-        <div class="field-label">WELDING MACHINE (if applicable)</div>
-        <select class="field-input" id="fabMachine" style="font-size:13px"><option value="">N/A</option>${machOptions}</select>
-      </div>
-    </div>
-  `;
-
-  document.getElementById('confirmTitle').textContent = '&#10003; Mark as Fabricated';
-  document.getElementById('confirmMsg').innerHTML = content;
-  const okBtn = document.getElementById('confirmOk');
-  okBtn.textContent = 'Confirm';
-  okBtn.onclick = async () => {
-    const welder = document.getElementById('fabWelder').value;
-    if (!welder) { toast('Please select the welder', 'error'); return; }
-    const machine = document.getElementById('fabMachine').value;
-
-    item.status = 'fabricated';
-    const selectedMachine = machines.find(m => m.machine_name === machine);
-    item.traceability = {
-      welder,
-      machine: machine || null,
-      machineSerialNumber: selectedMachine?.serial_number || null,
-      projectNumber: currentProject?.id || null,
-      jobName: currentJob?.job_name || currentJob?.jobName || null,
-      completedAt: new Date().toISOString()
-    };
-
-    try {
-      await saveBomData(currentProject.id);
-      closeModal();
-      toast(`${item.mark} marked as fabricated`, 'success');
-      renderBOM();
-    } catch (e) { toast('Save failed: ' + e.message, 'error'); }
-  };
-  document.getElementById('confirmModal').classList.add('active');
-}
-
-// ── Bulk Mark as Fabricated ──
-async function bulkMarkFabricated() {
-  if (bomSelectedIds.size === 0) { toast('Select items first', 'error'); return; }
-
-  // Find selected fabricatable items
-  const bomJob = getBomDataForJob(currentProject?.id, currentJob?.id);
-  const allItems = (bomJob.materialLists || []).flatMap(ml => ml.items || []);
-  const selected = allItems.filter(i => bomSelectedIds.has(i.id) && i.fabricated && i.status === 'not_started');
-
-  if (!selected.length) { toast('No unfabricated items in selection', 'error'); return; }
-
-  const employees = (state.timesheetData.employees || []).filter(e => e.active !== false);
-
-  // Load welding machines from the central SQL-backed API
-  let machines = [];
-  try { machines = await api.get('/api/welding-machines'); } catch (e) { console.warn('Failed to load welding machines:', e.message); }
-
-  const empOptions = employees.map(e => `<option value="${e.name}">${e.name}</option>`).join('');
-  const machOptions = machines.filter(m => m.is_active !== false).map(m => `<option value="${m.machine_name}">${m.machine_name}${m.serial_number ? ' (S/N ' + m.serial_number + ')' : ''}</option>`).join('');
-
-  const content = `
-    <div style="text-align:left;margin-top:12px">
-      <div style="font-size:14px;font-weight:600;margin-bottom:4px">Mark ${selected.length} items as fabricated</div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:12px">${selected.map(i => i.mark).join(', ')}</div>
-      <div style="margin-bottom:10px">
-        <div class="field-label">WELDER</div>
-        <select class="field-input" id="fabWelder" style="font-size:13px"><option value="">Select welder...</option>${empOptions}</select>
-      </div>
-      <div style="margin-bottom:10px">
-        <div class="field-label">WELDING MACHINE (if applicable)</div>
-        <select class="field-input" id="fabMachine" style="font-size:13px"><option value="">N/A</option>${machOptions}</select>
-      </div>
-    </div>
-  `;
-
-  document.getElementById('confirmTitle').textContent = 'Mark as Fabricated';
-  document.getElementById('confirmMsg').innerHTML = content;
-  const okBtn = document.getElementById('confirmOk');
-  okBtn.textContent = 'Confirm';
-  okBtn.onclick = async () => {
-    const welder = document.getElementById('fabWelder').value;
-    if (!welder) { toast('Please select the welder', 'error'); return; }
-    const machine = document.getElementById('fabMachine').value;
-    const now = new Date().toISOString();
-    const selectedMachine = machines.find(m => m.machine_name === machine);
-
-    for (const item of selected) {
-      item.status = 'fabricated';
-      item.traceability = {
-        welder,
-        machine: machine || null,
-        machineSerialNumber: selectedMachine?.serial_number || null,
-        projectNumber: currentProject?.id || null,
-        jobName: currentJob?.job_name || currentJob?.jobName || null,
-        completedAt: now
-      };
-    }
-
-    try {
-      await saveBomData(currentProject.id);
-      bomSelectedIds.clear();
-      closeModal();
-      toast(`${selected.length} items marked as fabricated`, 'success');
-      renderBOM();
-    } catch (e) { toast('Save failed: ' + e.message, 'error'); }
-  };
-  document.getElementById('confirmModal').classList.add('active');
-}
-
-// ── Delivery Note Generation ──
-async function openGenerateDnModal() {
-  if (bomSelectedIds.size === 0) { toast('Select items first', 'error'); return; }
-  document.getElementById('dnItemCount').textContent = `${bomSelectedIds.size} items selected`;
-  document.getElementById('dnDestType').value = '';
-  document.getElementById('dnDestName').value = '';
-  document.getElementById('dnAddress').value = '';
-  document.getElementById('dnSiteContact').value = '';
-
-  // Populate supplier dropdown from SQL API
-  let apiSuppliers = [];
-  try { apiSuppliers = await api.get('/api/suppliers'); } catch (e) { console.warn('Failed to load suppliers:', e.message); }
-  window._dnSuppliers = (apiSuppliers || []).filter(s => s.is_active !== false);
-  const suppSelect = document.getElementById('dnSupplierSelect');
-  if (suppSelect) {
-    suppSelect.innerHTML = '<option value="">-- Select saved supplier --</option>' +
-      window._dnSuppliers.map(s => {
-        const svcLabel = (s.services || []).map(sv => sv.service_name).join(', ') || '';
-        return `<option value="${s.id}">${s.supplier_name}${svcLabel ? ' (' + svcLabel + ')' : ''}</option>`;
-      }).join('');
-  }
-
-  // Set default dates
-  const today = new Date().toISOString().split('T')[0];
-  const collEl = document.getElementById('dnCollectionDate');
-  const delEl = document.getElementById('dnDeliveryDate');
-  if (collEl) collEl.value = today;
-  if (delEl) delEl.value = '';
-
-  updateDnSummary();
-  document.getElementById('generateDnModal').classList.add('active');
-}
-function closeGenerateDnModal() { document.getElementById('generateDnModal').classList.remove('active'); }
-
-function onDnSupplierSelect() {
-  const suppSelect = document.getElementById('dnSupplierSelect');
-  const suppId = suppSelect?.value;
-  if (!suppId) return;
-  const supplier = (window._dnSuppliers || []).find(s => String(s.id) === suppId);
-  if (!supplier) return;
-  // Map service types to destination type
-  const svcNames = (supplier.services || []).map(sv => sv.service_name.toLowerCase());
-  let destType = '';
-  if (svcNames.some(s => s.includes('galvan'))) destType = 'galvaniser';
-  else if (svcNames.some(s => s.includes('paint'))) destType = 'painter';
-  else if (svcNames.some(s => s.includes('powder'))) destType = 'powder_coater';
-  else if (svcNames.some(s => s.includes('site'))) destType = 'site';
-  else if (svcNames.length) destType = 'other';
-  document.getElementById('dnDestType').value = destType;
-  document.getElementById('dnDestName').value = supplier.supplier_name || '';
-  const addrParts = [supplier.address_line1, supplier.address_line2, supplier.city, supplier.county, supplier.postcode].filter(Boolean);
-  document.getElementById('dnAddress').value = addrParts.join(', ');
-  document.getElementById('dnSiteContact').value = supplier.contact_name || '';
-  updateDnSummary();
-}
-
-function onDnDestTypeChange() { updateDnSummary(); }
-
-function updateDnSummary() {
-  const destType = document.getElementById('dnDestType').value;
-  const bomJob = getBomDataForJob(currentProject?.id, currentJob?.id);
-  const allItems = (bomJob.materialLists || []).flatMap(ml => ml.items || []);
-  const selected = allItems.filter(i => bomSelectedIds.has(i.id));
-  const totalWeight = selected.reduce((sum, i) => sum + (i.totalWeight || i.weightPerUnit || 0), 0);
-  const coatings = [...new Set(selected.map(i => i.coating).filter(Boolean))];
-
-  let summary = `${selected.length} items · ${totalWeight.toLocaleString('en-GB')} kg total`;
-  if (coatings.length) summary += ` · Coatings: ${coatings.join(', ')}`;
-  if (destType) summary += ` · Destination: ${destType.replace(/_/g, ' ')}`;
-  document.getElementById('dnSummary').textContent = summary;
-}
-
-async function confirmGenerateDn() {
-  const destType = document.getElementById('dnDestType').value;
-  const destName = document.getElementById('dnDestName').value.trim();
-  const address = document.getElementById('dnAddress').value.trim();
-  const siteContact = document.getElementById('dnSiteContact').value.trim();
-  const collectionDate = document.getElementById('dnCollectionDate')?.value || '';
-  const deliveryDate = document.getElementById('dnDeliveryDate')?.value || '';
-
-  if (!destType) { toast('Select a destination type', 'error'); return; }
-  if (!destName) { toast('Enter a destination name', 'error'); return; }
-
-  const bomJob2 = ensureBomDataForJob(currentProject.id, currentJob.id);
-  const allItems = (bomJob2.materialLists || []).flatMap(ml => ml.items || []);
-  const selected = allItems.filter(i => bomSelectedIds.has(i.id));
-  if (!selected.length) { toast('No items selected', 'error'); return; }
-
-  // Generate DN number
-  if (!bomJob2.deliveryNotes) bomJob2.deliveryNotes = [];
-  const dnNumber = `DN-${String(bomJob2.deliveryNotes.length + 1).padStart(3, '0')}`;
-
-  const dn = {
-    id: 'dn-' + Date.now(),
-    number: dnNumber,
-    destination: destType,
-    destinationName: destName,
-    address,
-    siteContact,
-    collectionDate,
-    deliveryDate,
-    createdAt: new Date().toISOString(),
-    createdBy: 'Office',
-    itemIds: selected.map(i => i.id),
-    totalWeight: selected.reduce((s, i) => s + (i.totalWeight || i.weightPerUnit || 0), 0),
-    deliveredBy: '',
-    deliveredAt: null,
-    receivedBy: '',
-    receivedAt: null
-  };
-
-  bomJob2.deliveryNotes.push(dn);
-
-  // Update item statuses
-  for (const item of selected) {
-    item.status = destType === 'site' ? 'delivered_to_site' : 'dispatched';
-    item.deliveryHistory.push({
-      deliveryNoteId: dn.id,
-      deliveryNoteNumber: dnNumber,
-      destination: destType,
-      destinationName: destName,
-      createdAt: dn.createdAt,
-      createdBy: dn.createdBy
-    });
-  }
-
-  try {
-    await saveBomData(currentProject.id);
-
-    // Upload PDF copy to SharePoint: 07 - Deliveries / [Job Folder] / [ProjectId] - DN-NNNN.pdf
-    try {
-      const saved = await saveDeliveryNotePDFToSharePoint(dn, bomJob2, currentProject, currentJob);
-      dn.fileId = saved.fileId;
-      dn.driveId = saved.driveId;
-      dn.webUrl = saved.webUrl;
-      dn.fileName = saved.fileName;
-      dn.savedAt = new Date().toISOString();
-      await saveBomData(currentProject.id);
-    } catch (pdfErr) {
-      console.error('DN PDF save to SharePoint failed:', pdfErr);
-      toast(`DN created but PDF save failed: ${pdfErr.message}`, 'warning');
-    }
-
-    bomSelectedIds.clear();
-    closeGenerateDnModal();
-    toast(`Delivery note ${dnNumber} created for ${selected.length} items`, 'success');
-    renderBOM();
-  } catch (e) {
-    toast('Save failed: ' + e.message, 'error');
-  }
-}
-
-// ── Mark Item Returned from Finishing ──
-async function markItemReturned(mlId, itemId) {
-  const bomJob = getBomDataForJob(currentProject?.id, currentJob?.id);
-  const ml = (bomJob.materialLists || []).find(m => m.id === mlId);
-  if (!ml) return;
-  const item = ml.items.find(i => i.id === itemId);
-  if (!item) return;
-
-  item.status = 'returned';
-  try {
-    await saveBomData(currentProject.id);
-    toast(`${item.mark} marked as returned`, 'success');
-    renderBOM();
-  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
-}
-
-// ── Show Item Delivery History ──
-function showItemDeliveryHistory(mlId, itemId) {
-  const bomJob = getBomDataForJob(currentProject?.id, currentJob?.id);
-  const ml = (bomJob.materialLists || []).find(m => m.id === mlId);
-  if (!ml) return;
-  const item = ml.items.find(i => i.id === itemId);
-  if (!item || !item.deliveryHistory?.length) return;
-
-  let content = `<div style="text-align:left;margin-top:12px">`;
-  content += `<div style="font-size:14px;font-weight:600;margin-bottom:12px">${item.mark} — Delivery History</div>`;
-  for (const dh of item.deliveryHistory) {
-    const date = new Date(dh.createdAt).toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'});
-    const destLabel = dh.destination === 'site' ? 'Site' : (dh.destinationName || dh.destination);
-    content += `<div class="dn-history-item">
-      <div style="font-weight:600;color:var(--accent);min-width:60px">${dh.deliveryNoteNumber}</div>
-      <div style="flex:1">
-        <div style="font-weight:500">${destLabel}</div>
-        <div style="color:var(--subtle);font-size:11px">${date} by ${dh.createdBy}</div>
-      </div>
-    </div>`;
-  }
-  content += `</div>`;
-
-  document.getElementById('confirmTitle').textContent = 'Delivery History';
-  document.getElementById('confirmMsg').innerHTML = content;
-  document.getElementById('confirmOk').textContent = 'Close';
-  document.getElementById('confirmOk').onclick = () => closeModal();
-  document.getElementById('confirmModal').classList.add('active');
-}
-
-// ── Delivery Notes List (per job) ──
-function renderDeliveryNotesList() {
-  const bomJob = getBomDataForJob(currentProject?.id, currentJob?.id);
-  const dns = bomJob.deliveryNotes || [];
-  if (!dns.length) return '';
-
-  let html = '<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">';
-  html += '<div style="font-size:13px;font-weight:600;margin-bottom:10px">Delivery Notes</div>';
-
-  for (const dn of dns) {
-    const date = new Date(dn.createdAt).toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'});
-    const destLabel = dn.destination === 'site' ? 'Site Delivery' :
-      dn.destination === 'galvaniser' ? 'Galvaniser' :
-      dn.destination === 'painter' ? 'Painter' :
-      dn.destination === 'powder_coater' ? 'Powder Coater' : dn.destination;
-
-    html += `<div class="dn-history-item">
-      <div style="font-weight:700;color:var(--accent);min-width:70px;font-family:var(--font-mono)">${dn.number}</div>
-      <div style="flex:1">
-        <div style="font-weight:500">${dn.destinationName || destLabel}</div>
-        <div style="color:var(--subtle);font-size:11px">${dn.itemIds.length} items · ${dn.totalWeight?.toLocaleString('en-GB') || 0} kg · ${date}</div>
-      </div>
-      <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="printDeliveryNote('${dn.id}')">&#128438; Print</button>
-    </div>`;
-  }
-  html += '</div>';
-  return html;
-}
-
-// ── Print Delivery Note (BAMA format) ──
-function buildDeliveryNoteHTML(dn, bomJob, proj, job) {
-  // Thin wrapper over buildDeliveryNoteHTMLCore so existing callers keep working.
-  // Callers that want the logo embedded should `await loadLogoDataUri()` before calling this.
-  return buildDeliveryNoteHTMLCore(dn, bomJob, proj, job);
-}
-
-// ── Upload generated Delivery Note PDF to SharePoint ──
-// Saves to: [Project Folder]/07 - Deliveries/[Job Folder]/[ProjectId] - DN-NNNN.pdf
-// Keeps original on re-save (conflict: fail) so reprints re-open the original.
-async function saveDeliveryNotePDFToSharePoint(dn, bomJob, proj, job) {
-  if (typeof html2pdf === 'undefined') throw new Error('PDF library not loaded');
-
-  // Build HTML into a hidden container
-  await loadLogoDataUri();
-  const html = buildDeliveryNoteHTML(dn, bomJob, proj, job);
-  const container = document.createElement('div');
-  container.style.cssText = 'position:fixed;left:-10000px;top:0;width:794px;background:#fff;';
-  container.innerHTML = html.replace(/^[\s\S]*?<body[^>]*>|<\/body>[\s\S]*$/g, '');
-  document.body.appendChild(container);
-
-  let pdfBlob;
-  try {
-    pdfBlob = await html2pdf().set({
-      margin: [10, 10, 10, 10],
-      filename: `${proj.id} - ${dn.number}.pdf`,
-      image: { type: 'jpeg', quality: 0.95 },
-      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-    }).from(container).outputPdf('blob');
-  } finally {
-    document.body.removeChild(container);
-  }
-
-  // Find project folder on SharePoint
-  const projectFolder = await findProjectFolder(proj.id);
-  if (!projectFolder) throw new Error('Project folder not found on SharePoint');
-  const driveId = projectFolder.parentReference?.driveId || BAMA_DRIVE_ID;
-
-  // Ensure "07 - Deliveries" exists inside project folder
-  const deliveriesFolder = await getOrCreateSubfolder(projectFolder.id, '07 - Deliveries', driveId);
-  if (!deliveriesFolder) throw new Error('Could not create 07 - Deliveries folder');
-
-  // Ensure subfolder named after the job exists
-  const jobFolderName = (job && (job.folderName || job.name)) || 'Unassigned';
-  const jobSubFolder = await getOrCreateSubfolder(deliveriesFolder.id, jobFolderName, driveId);
-  if (!jobSubFolder) throw new Error('Could not create job delivery subfolder');
-
-  // Upload PDF — use fail-on-conflict so existing originals are preserved
-  const fileName = `${proj.id} - ${dn.number}.pdf`;
-  const token = await getToken();
-  const uploadUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${jobSubFolder.id}:/${encodeURIComponent(fileName)}:/content?@microsoft.graph.conflictBehavior=fail`;
-  const upRes = await fetch(uploadUrl, {
-    method: 'PUT',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/pdf' },
-    body: pdfBlob
-  });
-  if (upRes.status === 409) {
-    // Already exists — look it up so we can still store the fileId
-    const lookupRes = await fetch(
-      `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${jobSubFolder.id}:/${encodeURIComponent(fileName)}`,
-      { headers: { 'Authorization': `Bearer ${token}` } }
-    );
-    if (!lookupRes.ok) throw new Error('DN exists on SharePoint but could not be read back');
-    const existing = await lookupRes.json();
-    return { fileId: existing.id, driveId, webUrl: existing.webUrl, fileName, reused: true };
-  }
-  if (!upRes.ok) throw new Error(`DN upload failed: ${upRes.status}`);
-  const uploaded = await upRes.json();
-  return { fileId: uploaded.id, driveId, webUrl: uploaded.webUrl, fileName, reused: false };
-}
-
-// ── Print / open a Delivery Note ──
-// Preferred path: open the saved PDF on SharePoint (via printFile).
-// Fallback: re-render HTML for DNs that were created before the SharePoint-save change.
-async function printDeliveryNote(dnId) {
-  const bomJob = getBomDataForJob(currentProject?.id, currentJob?.id);
-  const dn = (bomJob.deliveryNotes || []).find(d => d.id === dnId);
-  if (!dn) return;
-
-  // If we have a SharePoint copy, open it
-  if (dn.fileId) {
-    return printFile(dn.fileId, dn.driveId);
-  }
-
-  // Fallback: render HTML directly for legacy DNs
-  await loadLogoDataUri();
-  const html = buildDeliveryNoteHTML(dn, bomJob, currentProject || {}, currentJob || {});
-  const printWin = window.open('', '_blank');
-  printWin.document.write(html);
-  printWin.document.close();
-  setTimeout(() => printWin.print(), 300);
-}
-
-// ── Supplier Management ──
-function addSupplier() {
-  if (!currentProject) return;
-  const content = `
-    <div style="text-align:left;margin-top:12px">
-      <div style="font-size:14px;font-weight:600;margin-bottom:12px">Add Supplier / Destination</div>
-      <div style="margin-bottom:10px">
-        <div class="field-label">SUPPLIER NAME</div>
-        <input type="text" class="field-input" id="suppName" placeholder="e.g. ABC Galvanising Ltd" style="font-size:13px">
-      </div>
-      <div style="margin-bottom:10px">
-        <div class="field-label">TYPE</div>
-        <select class="field-input" id="suppType" style="font-size:13px">
-          <option value="galvaniser">Galvaniser</option>
-          <option value="painter">Painter</option>
-          <option value="powder_coater">Powder Coater</option>
-          <option value="site">Site (Final Delivery)</option>
-          <option value="other">Other</option>
-        </select>
-      </div>
-      <div style="margin-bottom:10px">
-        <div class="field-label">ADDRESS (optional)</div>
-        <input type="text" class="field-input" id="suppAddress" placeholder="Address" style="font-size:13px">
-      </div>
-      <div style="margin-bottom:10px">
-        <div class="field-label">CONTACT (optional)</div>
-        <input type="text" class="field-input" id="suppContact" placeholder="Contact name / phone" style="font-size:13px">
-      </div>
-    </div>
-  `;
-  document.getElementById('confirmTitle').textContent = 'Add Supplier';
-  document.getElementById('confirmMsg').innerHTML = content;
-  const okBtn = document.getElementById('confirmOk');
-  okBtn.textContent = 'Add';
-  okBtn.onclick = async () => {
-    const name = document.getElementById('suppName').value.trim();
-    if (!name) { toast('Enter a supplier name', 'error'); return; }
-    const type = document.getElementById('suppType').value;
-    const address = document.getElementById('suppAddress').value.trim();
-    const contact = document.getElementById('suppContact').value.trim();
-
-    ensureBomDataForJob(currentProject.id, '__settings__');
-    const bomProjData = bomDataCache[currentProject.id];
-    if (!bomProjData.settings) bomProjData.settings = { weldingMachines: [], suppliers: [] };
-    if (!bomProjData.settings.suppliers) bomProjData.settings.suppliers = [];
-    bomProjData.settings.suppliers.push({
-      id: 'sup-' + Date.now(), name, type, address, contact, active: true
-    });
-    try {
-      await saveBomData(currentProject.id);
-      closeModal();
-      toast(`${name} added`, 'success');
-      renderBOM();
-    } catch (e) { toast('Save failed: ' + e.message, 'error'); }
-  };
-  document.getElementById('confirmModal').classList.add('active');
-  setTimeout(() => document.getElementById('suppName')?.focus(), 100);
-}
-
-async function removeSupplier(supplierId) {
-  if (!currentProject) return;
-  const bomProjData = bomDataCache[currentProject.id];
-  if (!bomProjData?.settings?.suppliers) return;
-  const supplier = bomProjData.settings.suppliers.find(s => s.id === supplierId);
-  if (!supplier) return;
-  supplier.active = false;
-  try {
-    await saveBomData(currentProject.id);
-    toast(`${supplier.name} removed`, 'success');
-    renderBOM();
-  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
-}
-
-// ── BOM Progress Calculation ──
-function getBomProgress(projectId, jobId) {
-  const bomJob = getBomDataForJob(projectId, jobId);
-  const allItems = (bomJob.materialLists || []).flatMap(ml => ml.items || []);
-  if (!allItems.length) return { total: 0, fabricated: 0, dispatched: 0, complete: 0, pct: 0 };
-
-  const fabItems = allItems.filter(i => i.fabricated);
-  const fabDone = fabItems.filter(i => i.status !== 'not_started').length;
-  const dispatched = allItems.filter(i => ['dispatched','returned','delivered_to_site','complete'].includes(i.status)).length;
-  const complete = allItems.filter(i => i.status === 'delivered_to_site' || i.status === 'complete').length;
-
-  return {
-    total: allItems.length,
-    fabricated: fabDone,
-    fabricatedTotal: fabItems.length,
-    dispatched,
-    complete,
-    pct: fabItems.length ? Math.round(fabDone / fabItems.length * 100) : (allItems.length ? 100 : 0)
-  };
-}
 
 // ═══════════════════════════════════════════
 // ELEMENT 2: APPROVAL
@@ -14026,14 +12886,15 @@ function renderSite() {
 
   let html = '';
 
-  // Upload and complete buttons
+  // Upload and complete buttons. The legacy 'Create Delivery Note'
+  // button (which routed to openDispatchPanel reading from the dead
+  // bomDataCache) is gone — the proper supplier DN flow now lives on
+  // the BOM element itself. A separate Site DN flow is on the TODO
+  // list (issue 6 from the smoke-test feedback round).
   if (currentJob.status !== 'closed') {
     html += '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">';
     if (isDraftsman) {
       html += `<button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="openUploadFileModal('site')">&#43; Upload File</button>`;
-    }
-    if (isDraftsman) {
-      html += `<button class="btn" style="padding:8px 16px;font-size:12px;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);color:#60a5fa" onclick="openDispatchPanel()">&#128666; Create Delivery Note</button>`;
     }
     if (!site.completedAt) {
       html += `<button class="btn btn-success" style="padding:8px 16px;font-size:12px" onclick="openCloseJobModal()">&#127919; Mark Site Complete &amp; Close Job</button>`;
@@ -14051,46 +12912,9 @@ function renderSite() {
   // Notes
   html += renderNotesSection(site.notes || [], 'site');
 
-  // Delivery notes summary for this job (all DNs across all material lists)
-  const bomJob = getBomDataForJob(currentProject?.id, currentJob?.id);
-  const dns = bomJob.deliveryNotes || [];
-  if (dns.length) {
-    const allBomItems = (bomJob.materialLists || []).flatMap(ml => ml.items || []);
-    html += '<div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">';
-    html += '<div style="font-size:13px;font-weight:600;margin-bottom:10px">Delivery Notes</div>';
-    for (const dn of dns) {
-      const date = new Date(dn.createdAt).toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'});
-      const destLabel = dn.destination === 'site' ? 'Site Delivery' :
-        dn.destination === 'galvaniser' ? 'Galvaniser' :
-        dn.destination === 'painter' ? 'Painter' :
-        dn.destination === 'powder_coater' ? 'Powder Coater' : dn.destination;
-      html += `<div class="dn-history-item">
-        <div style="font-weight:700;color:var(--accent);min-width:70px;font-family:var(--font-mono)">${dn.number}</div>
-        <div style="flex:1">
-          <div style="font-weight:500">${dn.destinationName || destLabel}</div>
-          <div style="color:var(--subtle);font-size:11px">${dn.itemIds.length} items · ${dn.totalWeight?.toLocaleString('en-GB') || 0} kg · ${date}</div>
-        </div>
-        <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="printDeliveryNote('${dn.id}')">&#128438; Print</button>
-      </div>`;
-    }
-    html += '</div>';
-
-    // Dispatch progress
-    const totalItems = allBomItems.length;
-    const siteItems = allBomItems.filter(i => i.status === 'delivered_to_site' || i.status === 'complete').length;
-    const dispatchedItems = allBomItems.filter(i => ['dispatched','returned','delivered_to_site','complete'].includes(i.status)).length;
-    if (totalItems > 0) {
-      html += `<div style="margin-top:12px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px;font-size:12px">`;
-      html += `<div style="display:flex;justify-content:space-between;margin-bottom:6px">`;
-      html += `<span style="color:var(--muted)">Dispatch progress</span>`;
-      html += `<span style="font-weight:600">${siteItems}/${totalItems} on site</span>`;
-      html += `</div>`;
-      html += `<div style="height:4px;background:var(--border);border-radius:2px">`;
-      html += `<div style="height:100%;background:var(--green);border-radius:2px;width:${Math.round(siteItems/totalItems*100)}%;transition:width .3s"></div>`;
-      html += `</div>`;
-      html += `</div>`;
-    }
-  }
+  // (DN history + dispatch progress sections removed in commit 12 —
+  // they read from the legacy bomDataCache which is no longer populated.
+  // Replacement Site-DN flow is on the TODO list.)
 
   if (site.completedAt) {
     html += `<div style="margin-top:12px;padding:12px;background:rgba(62,207,142,.08);border:1px solid rgba(62,207,142,.2);border-radius:8px;font-size:13px;color:var(--green)">
@@ -14099,309 +12923,6 @@ function renderSite() {
   }
 
   container.innerHTML = html;
-}
-
-// ═══════════════════════════════════════════
-// DISPATCH PANEL — Delivery Note Creation
-// ═══════════════════════════════════════════
-let _dispatchSelectedIds = new Set();
-
-async function openDispatchPanel() {
-  if (!currentProject || !currentJob) return;
-  _dispatchSelectedIds.clear();
-
-  const bomJob = getBomDataForJob(currentProject.id, currentJob.id);
-  const allItems = (bomJob.materialLists || []).flatMap(ml => ml.items || []);
-  if (!allItems.length) { toast('No BOM items found for this job — upload a BOM first', 'error'); return; }
-
-  // Items eligible for dispatch:
-  // - fabricated (welded, ready to go)
-  // - not_started + non-fab (bought-in items, ready to dispatch)
-  // - returned (back from finishing, can re-dispatch)
-  // - dispatched (already at a service, can go to next destination or site)
-  const eligible = allItems.filter(i =>
-    i.status === 'fabricated' ||
-    (i.status === 'not_started' && !i.fabricated) ||
-    i.status === 'returned' ||
-    i.status === 'dispatched'
-  );
-
-  if (!eligible.length) { toast('No items are ready for dispatch', 'error'); return; }
-
-  // Build the modal content
-  let content = '';
-  content += `<div style="text-align:left;max-height:70vh;overflow-y:auto">`;
-  content += `<div style="font-size:15px;font-weight:600;margin-bottom:4px">Create Delivery Note</div>`;
-  content += `<div style="font-size:12px;color:var(--muted);margin-bottom:16px">${currentProject.id} — ${currentJob.name}</div>`;
-
-  // Quick-select buttons
-  content += `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">`;
-  content += `<button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="dispatchSelectGroup('all')">Select all eligible</button>`;
-  content += `<button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="dispatchSelectGroup('fabricated')">All fabricated</button>`;
-  content += `<button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="dispatchSelectGroup('non-fab')">All non-fab</button>`;
-  content += `<button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="dispatchSelectGroup('returned')">All returned</button>`;
-  content += `<button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="dispatchSelectGroup('none')">Clear</button>`;
-  content += `</div>`;
-
-  // Items table
-  content += `<div style="max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:16px">`;
-  content += `<table class="bom-table" style="width:100%;font-size:11px"><thead><tr>`;
-  content += `<th style="width:30px;padding:6px"><input type="checkbox" id="dispatchSelectAll" onchange="dispatchToggleAll(this.checked)"></th>`;
-  content += `<th>Mark</th><th>Description</th><th>Qty</th><th>Weight</th><th>Status</th>`;
-  content += `</tr></thead><tbody>`;
-
-  for (const item of allItems) {
-    const isEligible = eligible.includes(item);
-    const statusLabel = item.status === 'fabricated' ? 'Fabricated' :
-      item.status === 'not_started' && !item.fabricated ? 'Ready (non-fab)' :
-      item.status === 'returned' ? 'Returned' :
-      item.status === 'dispatched' ? 'Dispatched' :
-      item.status === 'delivered_to_site' ? 'On site' :
-      item.status.replace(/_/g, ' ');
-    const statusColor = isEligible ? 'var(--green)' :
-      item.status === 'delivered_to_site' ? 'var(--accent)' :
-      item.status === 'not_started' ? 'var(--subtle)' : 'var(--muted)';
-    const lastDn = item.deliveryHistory?.length ? item.deliveryHistory[item.deliveryHistory.length - 1] : null;
-    const dnHint = lastDn ? ` (${lastDn.deliveryNoteNumber} \u2192 ${lastDn.destinationName || lastDn.destination})` : '';
-
-    content += `<tr style="opacity:${isEligible ? '1' : '0.4'}">`;
-    content += `<td style="padding:4px 6px"><input type="checkbox" ${isEligible ? '' : 'disabled'} data-dispatch-id="${item.id}" onchange="dispatchToggleItem('${item.id}', this.checked)"></td>`;
-    content += `<td style="font-weight:600;font-family:var(--font-mono);padding:4px 8px">${item.mark}</td>`;
-    content += `<td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:4px 8px">${item.description || item.size || ''}</td>`;
-    content += `<td style="padding:4px 8px">${item.quantity || ''}</td>`;
-    content += `<td style="padding:4px 8px">${item.totalWeight != null ? item.totalWeight.toLocaleString('en-GB') : ''}</td>`;
-    content += `<td style="padding:4px 8px;color:${statusColor};font-size:10px">${statusLabel}${dnHint}</td>`;
-    content += `</tr>`;
-  }
-  content += `</tbody></table></div>`;
-
-  // Selection summary
-  content += `<div id="dispatchSummary" style="padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;font-size:12px;color:var(--muted);margin-bottom:16px">Select items above</div>`;
-
-  // Destination form — suppliers loaded from SQL API
-  let apiSuppliers = [];
-  try { apiSuppliers = await api.get('/api/suppliers'); } catch (e) { console.warn('Failed to load suppliers:', e.message); }
-  const activeSuppliers = (apiSuppliers || []).filter(s => s.is_active !== false);
-  // Store on window for the onchange handler
-  window._dispatchSuppliers = activeSuppliers;
-
-  const suppOptions = activeSuppliers.map(s => {
-    const svcLabel = (s.services || []).map(sv => sv.service_name).join(', ') || '';
-    return `<option value="${s.id}">${s.supplier_name}${svcLabel ? ' (' + svcLabel + ')' : ''}</option>`;
-  }).join('');
-
-  content += `<div style="margin-bottom:10px">`;
-  content += `<div class="field-label">SAVED SUPPLIER / DESTINATION</div>`;
-  content += `<select class="field-input" id="dispatchSupplier" onchange="onDispatchSupplierSelect()" style="font-size:13px"><option value="">-- Select or fill in below --</option>${suppOptions}</select>`;
-  content += `</div>`;
-
-  content += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">`;
-  content += `<div><div class="field-label">DESTINATION TYPE</div>`;
-  content += `<select class="field-input" id="dispatchDestType" style="font-size:13px">`;
-  content += `<option value="">Select...</option>`;
-  content += `<option value="galvaniser">Galvaniser</option>`;
-  content += `<option value="painter">Painter</option>`;
-  content += `<option value="powder_coater">Powder Coater</option>`;
-  content += `<option value="site">Site (Final Delivery)</option>`;
-  content += `<option value="other">Other</option>`;
-  content += `</select></div>`;
-  content += `<div><div class="field-label">DESTINATION NAME</div>`;
-  content += `<input type="text" class="field-input" id="dispatchDestName" placeholder="e.g. ABC Galvanising Ltd" style="font-size:13px"></div>`;
-  content += `</div>`;
-
-  content += `<div style="margin-bottom:10px"><div class="field-label">ADDRESS (optional)</div>`;
-  content += `<input type="text" class="field-input" id="dispatchAddress" placeholder="Delivery address" style="font-size:13px"></div>`;
-
-  content += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">`;
-  content += `<div><div class="field-label">SITE CONTACT *</div>`;
-  content += `<input type="text" class="field-input" id="dispatchContact" placeholder="Contact name" style="font-size:13px"></div>`;
-  content += `<div><div class="field-label">PHONE NUMBER *</div>`;
-  content += `<input type="text" class="field-input" id="dispatchPhone" placeholder="Phone number" style="font-size:13px"></div>`;
-  content += `</div>`;
-
-  content += `<div style="margin-bottom:10px"><div class="field-label">COLLECTION DATE</div>`;
-  content += `<input type="date" class="field-input" id="dispatchCollDate" value="${new Date().toISOString().split('T')[0]}" style="font-size:13px"></div>`;
-  content += `</div>`;
-
-  content += `</div>`;
-
-  document.getElementById('confirmTitle').innerHTML = '&#128230; Create Delivery Note';
-  document.getElementById('confirmMsg').innerHTML = content;
-  const modalEl = document.getElementById('confirmModal').querySelector('.modal');
-  if (modalEl) modalEl.style.width = '620px';
-  const okBtn = document.getElementById('confirmOk');
-  okBtn.textContent = 'Generate & Save';
-  okBtn.onclick = () => confirmDispatchDn();
-  document.getElementById('confirmModal').classList.add('active');
-}
-
-function dispatchToggleItem(itemId, checked) {
-  if (checked) _dispatchSelectedIds.add(itemId);
-  else _dispatchSelectedIds.delete(itemId);
-  updateDispatchSummary();
-}
-
-function dispatchToggleAll(checked) {
-  const checkboxes = document.querySelectorAll('[data-dispatch-id]');
-  checkboxes.forEach(cb => {
-    if (!cb.disabled) {
-      cb.checked = checked;
-      if (checked) _dispatchSelectedIds.add(cb.dataset.dispatchId);
-      else _dispatchSelectedIds.delete(cb.dataset.dispatchId);
-    }
-  });
-  updateDispatchSummary();
-}
-
-function dispatchSelectGroup(group) {
-  const bomJob = getBomDataForJob(currentProject?.id, currentJob?.id);
-  const allItems = (bomJob.materialLists || []).flatMap(ml => ml.items || []);
-
-  _dispatchSelectedIds.clear();
-  if (group !== 'none') {
-    for (const item of allItems) {
-      const match =
-        (group === 'all' && (item.status === 'fabricated' || (item.status === 'not_started' && !item.fabricated) || item.status === 'returned' || item.status === 'dispatched')) ||
-        (group === 'fabricated' && item.status === 'fabricated') ||
-        (group === 'non-fab' && item.status === 'not_started' && !item.fabricated) ||
-        (group === 'returned' && item.status === 'returned');
-      if (match) _dispatchSelectedIds.add(item.id);
-    }
-  }
-
-  // Update checkboxes in DOM
-  const checkboxes = document.querySelectorAll('[data-dispatch-id]');
-  checkboxes.forEach(cb => {
-    if (!cb.disabled) cb.checked = _dispatchSelectedIds.has(cb.dataset.dispatchId);
-  });
-  const selectAll = document.getElementById('dispatchSelectAll');
-  if (selectAll) selectAll.checked = group === 'all';
-  updateDispatchSummary();
-}
-
-function updateDispatchSummary() {
-  const el = document.getElementById('dispatchSummary');
-  if (!el) return;
-  if (_dispatchSelectedIds.size === 0) { el.textContent = 'Select items above'; return; }
-
-  const bomJob = getBomDataForJob(currentProject?.id, currentJob?.id);
-  const allItems = (bomJob.materialLists || []).flatMap(ml => ml.items || []);
-  const selected = allItems.filter(i => _dispatchSelectedIds.has(i.id));
-  const totalWeight = selected.reduce((s, i) => s + (i.totalWeight || i.weightPerUnit || 0), 0);
-  const coatings = [...new Set(selected.map(i => i.coating).filter(Boolean))];
-
-  let text = `${selected.length} item${selected.length > 1 ? 's' : ''} selected`;
-  text += ` \u00B7 ${totalWeight.toLocaleString('en-GB')} kg`;
-  if (coatings.length) text += ` \u00B7 ${coatings.join(', ')}`;
-  el.innerHTML = `<span style="color:var(--text);font-weight:600">${text}</span>`;
-}
-
-function onDispatchSupplierSelect() {
-  const suppId = document.getElementById('dispatchSupplier')?.value;
-  if (!suppId) return;
-  const supplier = (window._dispatchSuppliers || []).find(s => String(s.id) === suppId);
-  if (!supplier) return;
-  // Map service types to destination type
-  const svcNames = (supplier.services || []).map(sv => sv.service_name.toLowerCase());
-  let destType = '';
-  if (svcNames.some(s => s.includes('galvan'))) destType = 'galvaniser';
-  else if (svcNames.some(s => s.includes('paint'))) destType = 'painter';
-  else if (svcNames.some(s => s.includes('powder'))) destType = 'powder_coater';
-  else if (svcNames.some(s => s.includes('site'))) destType = 'site';
-  else if (svcNames.length) destType = 'other';
-  document.getElementById('dispatchDestType').value = destType;
-  document.getElementById('dispatchDestName').value = supplier.supplier_name || '';
-  const addrParts = [supplier.address_line1, supplier.address_line2, supplier.city, supplier.county, supplier.postcode].filter(Boolean);
-  document.getElementById('dispatchAddress').value = addrParts.join(', ');
-  document.getElementById('dispatchContact').value = supplier.contact_name || '';
-  document.getElementById('dispatchPhone').value = supplier.telephone || '';
-}
-
-async function confirmDispatchDn() {
-  if (_dispatchSelectedIds.size === 0) { toast('Select items first', 'error'); return; }
-
-  const destType = document.getElementById('dispatchDestType').value;
-  const destName = document.getElementById('dispatchDestName').value.trim();
-  const address = document.getElementById('dispatchAddress').value.trim();
-  const siteContact = document.getElementById('dispatchContact').value.trim();
-  const phone = document.getElementById('dispatchPhone').value.trim();
-  const collectionDate = document.getElementById('dispatchCollDate')?.value || '';
-
-  if (!destType) { toast('Select a destination type', 'error'); return; }
-  if (!destName) { toast('Enter a destination name', 'error'); return; }
-  if (!siteContact) { toast('Site contact is required', 'error'); return; }
-  if (!phone) { toast('Phone number is required', 'error'); return; }
-
-  const bomJob2 = ensureBomDataForJob(currentProject.id, currentJob.id);
-  const allItems = (bomJob2.materialLists || []).flatMap(ml => ml.items || []);
-  const selected = allItems.filter(i => _dispatchSelectedIds.has(i.id));
-  if (!selected.length) { toast('No items selected', 'error'); return; }
-
-  // Generate DN number
-  if (!bomJob2.deliveryNotes) bomJob2.deliveryNotes = [];
-  const dnNumber = `DN-${String(bomJob2.deliveryNotes.length + 1).padStart(3, '0')}`;
-
-  const dn = {
-    id: 'dn-' + Date.now(),
-    number: dnNumber,
-    destination: destType,
-    destinationName: destName,
-    address,
-    siteContact,
-    phone,
-    collectionDate,
-    deliveryDate: '',
-    createdAt: new Date().toISOString(),
-    createdBy: isDraftsman ? 'Draftsman' : 'Workshop',
-    itemIds: selected.map(i => i.id),
-    totalWeight: selected.reduce((s, i) => s + (i.totalWeight || i.weightPerUnit || 0), 0),
-    deliveredBy: '',
-    deliveredAt: null,
-    receivedBy: '',
-    receivedAt: null
-  };
-
-  bomJob2.deliveryNotes.push(dn);
-
-  // Update item statuses
-  for (const item of selected) {
-    item.status = destType === 'site' ? 'delivered_to_site' : 'dispatched';
-    if (!item.deliveryHistory) item.deliveryHistory = [];
-    item.deliveryHistory.push({
-      deliveryNoteId: dn.id,
-      deliveryNoteNumber: dnNumber,
-      destination: destType,
-      destinationName: destName,
-      createdAt: dn.createdAt,
-      createdBy: dn.createdBy
-    });
-  }
-
-  try {
-    await saveBomData(currentProject.id);
-
-    // Upload PDF copy to SharePoint: 07 - Deliveries / [Job Folder] / [ProjectId] - DN-NNNN.pdf
-    try {
-      const saved = await saveDeliveryNotePDFToSharePoint(dn, bomJob2, currentProject, currentJob);
-      dn.fileId = saved.fileId;
-      dn.driveId = saved.driveId;
-      dn.webUrl = saved.webUrl;
-      dn.fileName = saved.fileName;
-      dn.savedAt = new Date().toISOString();
-      await saveBomData(currentProject.id);
-    } catch (pdfErr) {
-      console.error('DN PDF save to SharePoint failed:', pdfErr);
-      toast(`DN created but PDF save failed: ${pdfErr.message}`, 'warning');
-    }
-
-    _dispatchSelectedIds.clear();
-    closeModal();
-    toast(`${dnNumber} created \u2014 ${selected.length} items to ${destName}`, 'success');
-    renderBOM();
-    renderSite();
-  } catch (e) {
-    toast('Save failed: ' + e.message, 'error');
-  }
 }
 
 // ═══════════════════════════════════════════
@@ -15443,19 +13964,21 @@ async function confirmCloseJob() {
   const person = document.getElementById('closeJobPerson').value;
   if (!person) return;
 
-  // Check all BOM items are delivered to site
-  const bomJob = getBomDataForJob(currentProject.id, currentJob.id);
-  const allItems = (bomJob.materialLists || []).flatMap(ml => ml.items || []);
-  if (allItems.length > 0) {
-    const notOnSite = allItems.filter(i => i.status !== 'delivered_to_site' && i.status !== 'complete');
-    if (notOnSite.length > 0) {
-      const fabPending = notOnSite.filter(i => i.fabricated && i.status === 'not_started').length;
-      const dispPending = notOnSite.filter(i => i.status === 'dispatched' || i.status === 'returned').length;
-      const readyPending = notOnSite.filter(i => !i.fabricated && i.status === 'not_started').length;
-      let detail = `${notOnSite.length} item${notOnSite.length > 1 ? 's' : ''} not yet on site:`;
-      if (fabPending) detail += `\n• ${fabPending} awaiting fabrication`;
-      if (readyPending) detail += `\n• ${readyPending} non-fab items not dispatched`;
-      if (dispPending) detail += `\n• ${dispPending} dispatched but not returned to site`;
+  // Guard: all BOM items must be 'despatched' before the job can close.
+  // Reads from the SQL-backed _bomItemsByJob cache (populated by
+  // loadJobBomItems in openJobDetail).
+  const jobId = parseInt(currentJob.id);
+  const items = (jobId && _bomItemsByJob[jobId]) || [];
+  if (items.length > 0) {
+    const notDespatched = items.filter(i => i.status !== 'despatched');
+    if (notDespatched.length > 0) {
+      const pending    = notDespatched.filter(i => i.status === 'pending').length;
+      const atSupplier = notDespatched.filter(i => i.status === 'at_supplier').length;
+      const ready      = notDespatched.filter(i => i.status === 'ready_for_despatch').length;
+      let detail = `${notDespatched.length} BOM item${notDespatched.length > 1 ? 's' : ''} not yet despatched:`;
+      if (pending)    detail += `\n• ${pending} pending (need a DN to a supplier)`;
+      if (atSupplier) detail += `\n• ${atSupplier} at supplier (still being processed)`;
+      if (ready)      detail += `\n• ${ready} ready for despatch`;
       toast(detail, 'error');
       return;
     }
@@ -16572,7 +15095,20 @@ function refreshTemplatePreview() {
     html = buildAttendanceHTML(getMockAttendanceData(), tplDraft);
     if (label) label.textContent = 'Attendance Report \u2014 sample data';
   } else if (tplCurrent === 'deliveryNote') {
-    html = buildDeliveryNoteHTMLCore(getMockDeliveryNote(), getMockBomJob(), getMockProject(), getMockJob(), tplDraft);
+    // Mock shaped for the new buildDnHtmlV2 (legacy buildDeliveryNoteHTMLCore
+    // was removed in commit 12). Items here mirror the JobBomItems shape.
+    const mockDn = {
+      number: 'DN-0001',
+      createdAt: new Date().toISOString(),
+      destinationName: 'Smith Galvanising Ltd',
+      finishName: 'Galvanising',
+      items: [
+        { description: 'CHS42.4x3', quantity: 26, finish_name: 'Galvanising', source: 'assembly', source_assembly_mark: 'RL1' },
+        { description: 'PFC152x89', quantity: 8,  finish_name: 'Galvanising', source: 'assembly', source_assembly_mark: 'RL2' },
+        { description: 'M16 bolts', quantity: 100, finish_name: 'Galvanising', source: 'manual', file_name: 'UK Bolt Co - delivery slip.pdf' }
+      ]
+    };
+    html = buildDnHtmlV2(mockDn, getMockProject(), getMockJob());
     if (label) label.textContent = 'Delivery Note \u2014 sample data';
   } else if (tplCurrent === 'emailQuoteSent' || tplCurrent === 'emailBamaSwInvoice' || tplCurrent === 'emailBamaSwPo') {
     html = buildEmailPreviewHTML(tplCurrent, tplDraft);
@@ -16702,21 +15238,6 @@ function getMockAttendanceData() {
       ]
     }
   };
-}
-function getMockDeliveryNote() {
-  return {
-    number: 'DN-001', createdAt: new Date().toISOString(),
-    destinationName: 'Site A \u2014 Main Building', address: 'Unit 4, Industrial Park, Peterborough PE1 5XY',
-    siteContact: 'Mike Johnson', phone: '07123 456789', deliveryDate: new Date().toISOString(),
-    itemIds: ['i1','i2','i3']
-  };
-}
-function getMockBomJob() {
-  return { materialLists: [{ items: [
-    { id: 'i1', mark: 'B1', quantity: 4, description: '203\u00d7203 UC46 \u00d7 3500mm', coating: 'Galv', totalWeight: 644 },
-    { id: 'i2', mark: 'C1', quantity: 2, description: '152\u00d789 PFC \u00d7 2800mm', coating: 'Primed', totalWeight: 95 },
-    { id: 'i3', mark: 'P1', quantity: 12, description: '200\u00d7200\u00d710mm Base Plate', coating: 'Galv', totalWeight: 76 }
-  ]}]};
 }
 function getMockProject() { return { id: '24-156', name: 'Peterborough Office Expansion' }; }
 function getMockJob() { return { name: 'Main Frame' }; }
@@ -17047,109 +15568,6 @@ function buildAttendanceHTML(d, settingsOverride) {
   </body></html>`;
 }
 
-function buildDeliveryNoteHTMLCore(dn, bomJob, proj, job, settingsOverride) {
-  const s = _pickTplSettings(settingsOverride);
-  const g = s.global || TEMPLATE_DEFAULTS.global;
-  const t = s.deliveryNote || TEMPLATE_DEFAULTS.deliveryNote;
-  const logo = _logoDataUriCache || '';
-  const showLogo = t.showLogo !== false && logo;
-  const showCo = t.showCompanyDetails !== false;
-  const accent = t.accentColor || TEMPLATE_DEFAULTS.deliveryNote.accentColor;
-
-  const allItems = (bomJob.materialLists || []).flatMap(ml => ml.items || []);
-  const dnItems = dn.itemIds.map(id => allItems.find(i => i.id === id)).filter(Boolean);
-  const date = new Date(dn.createdAt).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
-
-  let html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
-<title>${escapeHtml(dn.number)} - Delivery Note</title>
-<style>
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body { font-family: Arial, sans-serif; font-size: 12px; padding: 20px; color: #222; }
-  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 2px solid #222; gap: 20px; }
-  .company { font-size: 22px; font-weight: 700; color: ${accent}; letter-spacing: 1px; }
-  .company-sub { font-size: 9px; color: #666; margin-top: 4px; line-height: 1.4; white-space: pre-line; }
-  .header-logo { max-width: 110px; max-height: 60px; object-fit: contain; margin-right: 12px; }
-  .header-left { display: flex; align-items: flex-start; flex: 1; }
-  .header-right { text-align: right; }
-  .dn-title { font-size: 20px; font-weight: 700; font-style: italic; color: ${accent}; margin-bottom: 8px; }
-  .meta-grid { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 11px; text-align: left; }
-  .meta-label { font-weight: 600; }
-  table { width: 100%; border-collapse: collapse; margin: 16px 0; }
-  th { background: #f5f5f5; border: 1px solid #ccc; padding: 6px 8px; text-align: left; font-size: 11px; font-weight: 600; }
-  td { border: 1px solid #ccc; padding: 5px 8px; font-size: 11px; }
-  .sign-section { margin-top: 30px; display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
-  .sign-box { border: 1px solid #ccc; padding: 12px; min-height: 60px; }
-  .sign-label { font-weight: 600; font-size: 10px; margin-bottom: 20px; }
-  .total-row td { font-weight: 700; background: #f9f9f9; }
-  .terms { margin-top: 20px; font-size: 10px; color: #666; padding-top: 10px; border-top: 1px solid #eee; white-space: pre-line; }
-  @media print { body { padding: 10px; } }
-</style></head><body>
-<div class="header">
-  <div class="header-left">
-    ${showLogo ? `<img src="${logo}" class="header-logo" alt="">` : ''}
-    <div>
-      <div class="company">${escapeHtml(g.companyName)}</div>
-      ${showCo ? `<div class="company-sub">${escapeHtml(g.address)}${g.phone ? '\nTel: '+escapeHtml(g.phone) : ''}${g.email ? ' \u00b7 '+escapeHtml(g.email) : ''}${g.vatNumber ? '\nVAT: '+escapeHtml(g.vatNumber) : ''}</div>` : ''}
-    </div>
-  </div>
-  <div class="header-right">
-    <div class="dn-title">${escapeHtml(t.title)}</div>
-    <div class="meta-grid">
-      <span class="meta-label">DN Number:</span><span>${escapeHtml(dn.number)}</span>
-      <span class="meta-label">Date:</span><span>${date}</span>
-      <span class="meta-label">Project:</span><span>${escapeHtml(proj.name || '')}</span>
-      <span class="meta-label">Job No:</span><span>${escapeHtml(proj.id || '')}</span>
-      ${job && job.name ? `<span class="meta-label">Job:</span><span>${escapeHtml(job.name)}</span>` : ''}
-      <span class="meta-label">Destination:</span><span>${escapeHtml(dn.destinationName || dn.destination || '')}</span>
-      ${dn.address ? `<span class="meta-label">Address:</span><span>${escapeHtml(dn.address)}</span>` : ''}
-      ${dn.siteContact ? `<span class="meta-label">Site Contact:</span><span>${escapeHtml(dn.siteContact)}</span>` : ''}
-      ${dn.phone ? `<span class="meta-label">Phone:</span><span>${escapeHtml(dn.phone)}</span>` : ''}
-      ${dn.collectionDate ? `<span class="meta-label">Collection Date:</span><span>${new Date(dn.collectionDate).toLocaleDateString('en-GB')}</span>` : ''}
-      ${dn.deliveryDate ? `<span class="meta-label">Delivery Date:</span><span>${new Date(dn.deliveryDate).toLocaleDateString('en-GB')}</span>` : ''}
-    </div>
-  </div>
-</div>
-<table>
-<thead><tr><th>Mark</th><th>Qty</th><th>Description / Size</th><th>Coating</th><th>Weight (kg)</th></tr></thead>
-<tbody>`;
-
-  let totalWt = 0;
-  for (const item of dnItems) {
-    const wt = item.totalWeight || item.weightPerUnit || 0;
-    totalWt += wt;
-    html += `<tr>
-      <td style="font-weight:600">${escapeHtml(item.mark || '')}</td>
-      <td>${item.quantity || ''}</td>
-      <td>${escapeHtml(item.description || item.size || '')}</td>
-      <td>${escapeHtml(item.coating || '')}</td>
-      <td style="text-align:right">${wt ? wt.toLocaleString('en-GB') : ''}</td>
-    </tr>`;
-  }
-  html += `<tr class="total-row">
-    <td colspan="4" style="text-align:right">Total Weight:</td>
-    <td style="text-align:right">${totalWt.toLocaleString('en-GB')} kg</td>
-  </tr></tbody></table>`;
-
-  if (t.showSignatureBlock !== false) {
-    html += `<div class="sign-section">
-      <div class="sign-box">
-        <div class="sign-label">Delivered By:</div>
-        <div style="border-bottom:1px solid #999;margin-top:24px;padding-bottom:4px"></div>
-        <div style="font-size:10px;color:#666;margin-top:4px">Date Delivered:</div>
-      </div>
-      <div class="sign-box">
-        <div class="sign-label">Received By:</div>
-        <div style="border-bottom:1px solid #999;margin-top:24px;padding-bottom:4px"></div>
-        <div style="font-size:10px;color:#666;margin-top:4px">Date Received:</div>
-      </div>
-    </div>`;
-  }
-  if (t.termsText) {
-    html += `<div class="terms">${escapeHtml(t.termsText)}</div>`;
-  }
-  html += `</body></html>`;
-  return html;
-}
 
 // ═══════════════════════════════════════════
 // TENDERS & CLIENTS
@@ -29074,20 +27492,19 @@ async function init() {
       if (deepProject && deepJob) {
         // Clear URL params so back button doesn't re-trigger
         window.history.replaceState({}, '', window.location.pathname);
-        // Wait for BOM data, then navigate
-        loadBomData(deepProject).then(() => {
-          openJobDetail(deepProject, deepJob);
-          if (deepElement) {
-            setTimeout(() => {
-              // Expand the target element section
-              const body = document.getElementById(`element${deepElement}Body`);
-              if (body && body.classList.contains('collapsed')) toggleElement(deepElement);
-              // Scroll to it
-              const card = document.getElementById(`element${deepElement}`);
-              if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            }, 300);
-          }
-        }).catch(() => {});
+        // Navigate directly — openJobDetail handles its own data load
+        // (loadJobAssemblies + loadJobBomItems + loadFinishes via Promise.all).
+        openJobDetail(deepProject, deepJob);
+        if (deepElement) {
+          setTimeout(() => {
+            // Expand the target element section
+            const body = document.getElementById(`element${deepElement}Body`);
+            if (body && body.classList.contains('collapsed')) toggleElement(deepElement);
+            // Scroll to it
+            const card = document.getElementById(`element${deepElement}`);
+            if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }, 300);
+        }
       }
     }).catch(e => console.warn('Job data load failed:', e.message));
   } else if (CURRENT_PAGE === 'templates') {
