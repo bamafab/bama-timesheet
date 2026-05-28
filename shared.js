@@ -14439,6 +14439,9 @@ async function checkDraftsmanPin() {
 
   // Authorised — enter draftsman mode
   isDraftsman = true;
+  // Persist in sessionStorage so the mode survives a page refresh
+  // (per user's PC, tab-lifetime is acceptable safety boundary).
+  try { sessionStorage.setItem('bama_draftsman', '1'); } catch (_) {}
   closeDraftsmanPinModal();
   toast(`Draftsman mode active — ${_pendingDraftsmanUser}`, 'success');
   _pendingDraftsmanUser = null;
@@ -14463,6 +14466,7 @@ async function checkDraftsmanPin() {
 
 function logoutDraftsman() {
   isDraftsman = false;
+  try { sessionStorage.removeItem('bama_draftsman'); } catch (_) {}
   const badge = document.getElementById('draftsmanBadge');
   const loginBtn = document.getElementById('draftsmanLoginBtn');
   if (badge) badge.style.display = 'none';
@@ -27751,6 +27755,21 @@ async function init() {
     }
   } else if (CURRENT_PAGE === 'projects') {
     showScreen('screenProjects');
+
+    // Restore draftsman mode from sessionStorage if set. Survives a page
+    // refresh; cleared on tab close or manual logout. Done BEFORE the
+    // first renderProjectTiles so the UI starts in the right state and
+    // doesn't flicker from non-draftsman to draftsman.
+    try {
+      if (sessionStorage.getItem('bama_draftsman') === '1') {
+        isDraftsman = true;
+        const badge = document.getElementById('draftsmanBadge');
+        const loginBtn = document.getElementById('draftsmanLoginBtn');
+        if (badge) badge.style.display = 'flex';
+        if (loginBtn) loginBtn.style.display = 'none';
+      }
+    } catch (_) {}
+
     renderProjectTiles();
     // Load job data then re-render tiles with job counts, and handle deep links
     loadDrawingsData().then(() => {
