@@ -11692,6 +11692,27 @@ const BOM_STATUS_LABEL = {
   despatched:          'Despatched'
 };
 
+// Map an in-progress finish service name to its past-participle form,
+// so that once an item is back from a supplier we can re-label the
+// badge to read like a completed state (Galvanising → Galvanised).
+// Falls back to the raw name when no mapping is found.
+const FINISH_DONE_LABEL = {
+  'Galvanising':    'Galvanised',
+  'Painting':       'Painted',
+  'Powder Coating': 'Powder Coated',
+  'Shot Blasting':  'Shot Blasted',
+  'Priming':        'Primed'
+};
+function finishBadgeFor(item) {
+  if (!item.finish_name) return '';
+  const done = item.status === 'ready_for_despatch' || item.status === 'despatched';
+  const text = done ? (FINISH_DONE_LABEL[item.finish_name] || item.finish_name) : item.finish_name;
+  const style = done
+    ? 'background:rgba(62,207,142,.18);color:#3ecf8e' // green (completed)
+    : 'background:rgba(99,102,241,.18);color:#a5b4fc'; // blue (in progress)
+  return `<span style="${style};padding:2px 9px;border-radius:6px;font-size:11px;font-weight:500;white-space:nowrap">${escapeHtml(text)}</span>`;
+}
+
 function renderBOM() {
   const container = document.getElementById('bomContent');
   if (!container) return;
@@ -11706,8 +11727,6 @@ function renderBOM() {
       status.textContent = 'Empty';
       status.style.cssText = 'color:var(--subtle);font-size:11px;font-weight:600';
     } else {
-      const pending = items.filter(i => i.status === 'pending').length;
-      const ready   = items.filter(i => i.status === 'ready_for_despatch').length;
       const done    = items.filter(i => i.status === 'despatched').length;
       const total   = items.length;
       const allDone = done === total;
@@ -11744,88 +11763,117 @@ function renderBOM() {
     return;
   }
 
-  // Group by status, render in fixed order
-  const groups = {
-    pending:            [],
-    at_supplier:        [],
-    ready_for_despatch: [],
-    despatched:         []
-  };
-  for (const it of items) {
-    (groups[it.status] || (groups[it.status] = [])).push(it);
-  }
-  const order = ['pending', 'at_supplier', 'ready_for_despatch', 'despatched'];
+  // Sort items: by status order, then by created_at asc
+  const STATUS_ORDER = { pending: 0, at_supplier: 1, ready_for_despatch: 2, despatched: 3 };
+  const sortedItems = items.slice().sort((a, b) => {
+    const sa = STATUS_ORDER[a.status] ?? 99;
+    const sb = STATUS_ORDER[b.status] ?? 99;
+    if (sa !== sb) return sa - sb;
+    return String(a.created_at).localeCompare(String(b.created_at));
+  });
 
-  // Pending group: selection + "Generate DN" header
-  const pendingCount = groups.pending.length;
+  // Toolbar above the table
+  const pendingCount = items.filter(i => i.status === 'pending').length;
   if (pendingCount > 0 && isDraftsman) {
     html += `
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-        <div style="font-size:11px;color:var(--subtle);text-transform:uppercase;letter-spacing:.05em">${pendingCount} pending</div>
-        <button class="btn btn-primary" id="bomGenDnBtn" style="padding:6px 14px;font-size:12px;display:none"
-                onclick="openGenerateDnModalSQL()">&#128666; Generate DN (<span id="bomGenDnCount">0</span>)</button>
+        <div style="font-size:11px;color:var(--subtle);text-transform:uppercase;letter-spacing:.05em">
+          ${pendingCount} pending · ${items.length} total
+        </div>
+        <button class="btn btn-primary" id="bomGenDnBtn"
+                style="padding:6px 14px;font-size:12px"
+                onclick="openGenerateDnModalSQL()">&#128666; Generate DN</button>
       </div>
     `;
   }
 
-  for (const groupKey of order) {
-    const groupItems = groups[groupKey] || [];
-    if (groupItems.length === 0) continue;
-    if (groupKey !== 'pending') {
-      html += `<div style="font-size:11px;color:var(--subtle);text-transform:uppercase;letter-spacing:.05em;margin:14px 0 6px">${BOM_STATUS_LABEL[groupKey]} (${groupItems.length})</div>`;
+  // Table view (commit 11.1 — replaces commit 9's tile-card view)
+  html += `<div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px;background:var(--surface)">
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead>
+        <tr style="background:var(--bg-darker);color:var(--subtle);text-transform:uppercase;font-size:11px;letter-spacing:.04em">
+          <th style="text-align:left;padding:8px 12px;font-weight:600;border-bottom:1px solid var(--border)">Description</th>
+          <th style="text-align:right;padding:8px 12px;font-weight:600;border-bottom:1px solid var(--border)">Qty</th>
+          <th style="text-align:left;padding:8px 12px;font-weight:600;border-bottom:1px solid var(--border)">Finish</th>
+          <th style="text-align:left;padding:8px 12px;font-weight:600;border-bottom:1px solid var(--border)">Source</th>
+          <th style="text-align:left;padding:8px 12px;font-weight:600;border-bottom:1px solid var(--border)">Status</th>
+          <th style="text-align:right;padding:8px 12px;font-weight:600;border-bottom:1px solid var(--border)">Actions</th>
+        </tr>
+      </thead>
+      <tbody>`;
+
+  let prevStatus = null;
+  for (const it of sortedItems) {
+    // Section header row when the status group changes
+    if (it.status !== prevStatus) {
+      html += `<tr style="background:rgba(255,255,255,.02)">
+        <td colspan="6" style="padding:8px 12px;font-size:11px;color:var(--subtle);text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border)">
+          ${BOM_STATUS_LABEL[it.status] || it.status}
+        </td>
+      </tr>`;
+      prevStatus = it.status;
     }
-    html += '<div style="display:flex;flex-direction:column;gap:6px">';
-    for (const it of groupItems) {
-      html += renderBomRow(it);
-    }
-    html += '</div>';
+    html += renderBomRow(it);
   }
+
+  html += `</tbody></table></div>`;
 
   container.innerHTML = html;
   wireBomDropZone();
-  updateBomDnButton();
 }
 
 function renderBomRow(it) {
   const sourceLabel = it.source === 'assembly'
     ? (it.source_assembly_mark ? `from ${escapeHtml(it.source_assembly_mark)}` : 'from assembly')
-    : (it.file_name ? `from ${escapeHtml(it.file_name)}` : 'manual');
-  const finishBadge = it.finish_name
-    ? `<span style="background:rgba(99,102,241,.18);color:#a5b4fc;padding:2px 9px;border-radius:6px;font-size:11px">${escapeHtml(it.finish_name)}</span>`
-    : '';
+    : (it.file_name ? escapeHtml(it.file_name) : 'manual');
+  const finishBadge = finishBadgeFor(it);
   const pdfLink = it.sharepoint_web_url
-    ? `<a href="${escapeHtml(it.sharepoint_web_url)}" target="_blank" rel="noopener" style="color:var(--subtle);font-size:11px;text-decoration:none;margin-left:8px" title="Open source PDF">&#128279;</a>`
+    ? `<a href="${escapeHtml(it.sharepoint_web_url)}" target="_blank" rel="noopener"
+          style="color:var(--accent);font-size:13px;text-decoration:none;margin-left:6px"
+          title="Open source PDF">&#128279;</a>`
+    : '';
+
+  // Status pill — same colour scheme as the finish badge but for the workflow state
+  const statusStyles = {
+    pending:            'background:rgba(255,107,0,.15);color:var(--accent)',
+    at_supplier:        'background:rgba(99,102,241,.15);color:#a5b4fc',
+    ready_for_despatch: 'background:rgba(62,207,142,.15);color:#3ecf8e',
+    despatched:         'background:rgba(140,140,140,.15);color:var(--text)'
+  };
+  const statusPill = `<span style="${statusStyles[it.status] || ''};padding:2px 9px;border-radius:6px;font-size:11px;font-weight:500;white-space:nowrap">${escapeHtml(BOM_STATUS_LABEL[it.status] || it.status)}</span>`;
+  const supplierTag = it.supplier_name
+    ? `<div style="font-size:11px;color:var(--subtle);margin-top:2px">${escapeHtml(it.supplier_name)}</div>`
     : '';
 
   // Per-status action buttons
   let actionBtn = '';
-  if (it.status === 'pending') {
-    actionBtn = `<input type="checkbox" class="bom-sel" data-id="${it.id}" onchange="updateBomDnButton()" style="width:16px;height:16px;accent-color:var(--accent)">`;
-  } else if (it.status === 'at_supplier') {
-    actionBtn = `<button class="btn btn-success" style="padding:4px 10px;font-size:11px" onclick="bomAdvance(${it.id}, 'ready_for_despatch')">&#10003; Mark returned</button>`;
+  if (it.status === 'at_supplier') {
+    actionBtn = `<button class="btn btn-success" style="padding:5px 11px;font-size:11px;white-space:nowrap"
+                   onclick="bomAdvance(${it.id}, 'ready_for_despatch')">&#10003; Mark returned</button>`;
   } else if (it.status === 'ready_for_despatch') {
-    actionBtn = `<button class="btn btn-primary" style="padding:4px 10px;font-size:11px" onclick="bomAdvance(${it.id}, 'despatched')">&#128666; Mark despatched</button>`;
-  } else if (it.status === 'despatched') {
-    actionBtn = `<span style="color:var(--green);font-size:11px">&#10003; Done</span>`;
+    actionBtn = `<button class="btn btn-primary" style="padding:5px 11px;font-size:11px;white-space:nowrap"
+                   onclick="bomAdvance(${it.id}, 'despatched')">&#128666; Despatched</button>`;
   }
 
-  const supplierTag = it.supplier_name
-    ? `<span style="color:var(--subtle);font-size:11px;margin-left:8px">&middot; ${escapeHtml(it.supplier_name)}</span>`
+  const deleteBtn = isDraftsman
+    ? `<button class="btn btn-ghost" title="Delete" style="padding:5px 9px;font-size:14px;color:var(--subtle)"
+         onclick="deleteBomItem(${it.id})">&#128465;</button>`
     : '';
 
-  return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px;display:flex;align-items:center;gap:12px">
-    <div style="flex:0 0 28px;display:flex;justify-content:center">${actionBtn}</div>
-    <div style="flex:1;min-width:0">
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <span style="font-family:var(--font-mono);font-size:13px;color:var(--text)">${escapeHtml(it.description)}</span>
-        <span style="font-size:12px;color:var(--muted)">Qty ${Number(it.quantity)}</span>
-        ${finishBadge}
-        <span style="color:var(--subtle);font-size:11px">${sourceLabel}${pdfLink}</span>
-        ${supplierTag}
-      </div>
-    </div>
-    ${isDraftsman ? `<button class="btn btn-ghost" title="Delete" style="padding:4px 8px;font-size:11px" onclick="deleteBomItem(${it.id})">&#128465;</button>` : ''}
-  </div>`;
+  return `<tr style="border-bottom:1px solid var(--border)">
+    <td style="padding:10px 12px;color:var(--text);font-family:var(--font-mono);font-size:13px">${escapeHtml(it.description)}</td>
+    <td style="padding:10px 12px;text-align:right;color:var(--text);font-family:var(--font-mono);font-size:13px">${Number(it.quantity)}</td>
+    <td style="padding:10px 12px">${finishBadge}</td>
+    <td style="padding:10px 12px;color:var(--text);font-size:12px">${sourceLabel}${pdfLink}</td>
+    <td style="padding:10px 12px">
+      ${statusPill}
+      ${supplierTag}
+    </td>
+    <td style="padding:10px 12px;text-align:right;white-space:nowrap">
+      ${actionBtn}
+      ${deleteBtn}
+    </td>
+  </tr>`;
 }
 
 function wireBomDropZone() {
@@ -11842,137 +11890,176 @@ function wireBomDropZone() {
   });
 }
 
-function updateBomDnButton() {
-  const btn = document.getElementById('bomGenDnBtn');
-  if (!btn) return;
-  const selected = document.querySelectorAll('.bom-sel:checked').length;
-  if (selected === 0) {
-    btn.style.display = 'none';
-  } else {
-    btn.style.display = '';
-    const cnt = document.getElementById('bomGenDnCount');
-    if (cnt) cnt.textContent = String(selected);
-  }
-}
 
-async function bomAdvance(id, newStatus) {
-  if (!id || !newStatus) return;
-  try {
-    await api.put(`/api/job-bom-items/${id}/status`, { status: newStatus });
-    if (currentJob?.id) await loadJobBomItems(parseInt(currentJob.id));
-    renderBOM();
-  } catch (e) {
-    toast(`Status change failed: ${e.message}`, 'error');
-  }
-}
+// No-op stub. The pre-11.1 BOM tile view had per-row checkboxes that
+// drove the visibility of the Generate-DN button via this function;
+// the new table view doesn't (the DN modal handles selection itself).
+// Kept as a stub so any stale onchange="updateBomDnButton()" attribute
+// doesn't error out during the deploy lag between SWA and an open tab.
+function updateBomDnButton() { /* no-op — see comment */ }
 
-async function deleteBomItem(id) {
-  if (!id) return;
-  if (!window.confirm('Delete this BOM line?')) return;
-  try {
-    await api.delete(`/api/job-bom-items/${id}`);
-    if (currentJob?.id) await loadJobBomItems(parseInt(currentJob.id));
-    renderBOM();
-    toast('BOM line deleted.', 'success');
-  } catch (e) {
-    toast(`Delete failed: ${e.message}`, 'error');
-  }
-}
-
-// Generate DN (commit 10 — SPEC §7).
-// Steps:
-//   1. Gather selected pending items + validate same finish
-//   2. Fetch suppliers, filter to active + offering that finish
-//   3. Show supplier picker modal
-//   4. On confirm: backend allocates DN ref + flips items to at_supplier;
-//      then the frontend builds the PDF, uploads to SharePoint, and
-//      attaches the PDF metadata to the rows.
-let _pendingDn = null; // { items:[], finishServiceId, finishName }
+// ── Generate DN flow (commit 11.1 — supplier-first selection) ──
+//
+// New flow per user feedback on commit 10/11:
+//   1. User clicks "Generate DN" at the top of the BOM table.
+//   2. Modal opens with the SUPPLIER picker (filtered to active +
+//      offering at least one finish service we have items for).
+//   3. After supplier is chosen, ALL pending + ready_for_despatch BOM
+//      items in this job appear with checkboxes. Items matching one of
+//      the supplier's services are ticked by default; everything else
+//      is unticked but selectable (so bolts/nuts can ride along to the
+//      galvaniser, for instance).
+//   4. Confirm → backend allocates DN ref + flips only the pending
+//      items to at_supplier (ready_for_despatch items stay where they
+//      are; they're just listed on the DN as ride-alongs). Frontend
+//      then builds the PDF, uploads to SharePoint, and reloads.
+let _pendingDn = null;
+//   { items:[allEligibleBomItems], supplierId, supplierName, supplierServiceIds:Set }
 
 async function openGenerateDnModalSQL() {
-  const selectedIds = Array.from(document.querySelectorAll('.bom-sel:checked'))
-    .map(c => parseInt(c.dataset.id));
-  if (!selectedIds.length) { toast('Select pending items first.', 'error'); return; }
+  const jobId = currentJob?.id ? parseInt(currentJob.id) : null;
+  if (!jobId) { toast('No job selected.', 'error'); return; }
 
-  const jobId = parseInt(currentJob.id);
-  const items = (_bomItemsByJob[jobId] || []).filter(i => selectedIds.includes(i.id));
-  if (items.length === 0) { toast('Nothing selected.', 'error'); return; }
-
-  // All items must share the same finish (and have one)
-  const finishIds = [...new Set(items.map(i => i.finish_service_id))];
-  if (finishIds.length > 1) {
-    toast('All items on a DN must require the same finish. Generate separate DNs.', 'error');
+  // Eligible items = anything not yet despatched (i.e. status pending
+  // OR ready_for_despatch OR at_supplier). We include at_supplier too
+  // so the user can re-print a DN if needed, but they're shown read-only
+  // and ticking is disabled.
+  const items = (_bomItemsByJob[jobId] || []).filter(i => i.status !== 'despatched');
+  if (items.length === 0) {
+    toast('Nothing to send. All BOM items are already despatched.', 'error');
     return;
   }
-  const finishServiceId = finishIds[0];
-  if (!finishServiceId) {
-    toast('These items have no finish — they are already ready for despatch.', 'error');
-    return;
-  }
-  const finishName = items[0].finish_name || 'finish';
 
-  _pendingDn = { items, finishServiceId, finishName };
+  _pendingDn = { items, supplierId: null, supplierName: '', supplierServiceIds: new Set() };
 
-  // Fetch suppliers + filter to active suppliers offering this finish.
-  // GET /api/suppliers returns services[] per supplier (see traceability.js).
+  // Fetch suppliers. Show only suppliers active and offering at least
+  // one finish that appears in the eligible items list. That way the
+  // operator isn't picking from non-relevant suppliers (e.g. a
+  // transport company when nothing on the job needs delivery).
   let suppliers = [];
-  try {
-    const all = await api.get('/api/suppliers');
-    suppliers = (all || []).filter(s =>
-      s.is_active !== false &&
-      (s.services || []).some(svc => svc.service_type_id === finishServiceId)
-    );
-  } catch (e) {
-    toast('Could not load suppliers: ' + e.message, 'error');
-    return;
-  }
+  try { suppliers = (await api.get('/api/suppliers')) || []; }
+  catch (e) { toast('Could not load suppliers: ' + e.message, 'error'); _pendingDn = null; return; }
 
-  // Populate modal
-  document.getElementById('gdnFinishName').textContent = finishName;
+  const relevantFinishIds = new Set(items.map(i => i.finish_service_id).filter(Boolean));
+  // If the user has *only* no-finish ready_for_despatch items, we should
+  // still let them pick any supplier (eg. a transport company). So if
+  // relevantFinishIds is empty, fall back to showing all active suppliers.
+  const filteredSuppliers = relevantFinishIds.size === 0
+    ? suppliers.filter(s => s.is_active !== false)
+    : suppliers.filter(s =>
+        s.is_active !== false &&
+        (s.services || []).some(svc => relevantFinishIds.has(svc.service_type_id))
+      );
+
   document.getElementById('gdnItemCount').textContent = items.length;
-  const sumWt = items.reduce((s, i) => s + (Number(i.quantity) || 0), 0);
-  document.getElementById('gdnItemQtySum').textContent = sumWt;
+  const sumQty = items.reduce((s, i) => s + (Number(i.quantity) || 0), 0);
+  document.getElementById('gdnItemQtySum').textContent = sumQty;
+  document.getElementById('gdnFinishName').textContent =
+    relevantFinishIds.size === 0 ? 'mixed / no finish' : 'various';
 
-  const list = document.getElementById('gdnSupplierList');
-  if (!suppliers.length) {
-    list.innerHTML = `<div style="padding:16px;color:var(--subtle);font-size:13px;text-align:center">
-      No active suppliers offering <b>${escapeHtml(finishName)}</b>. Add one in Manager → Suppliers.
+  // Step 1 UI: supplier picker. Items list rendered after pick.
+  const sList = document.getElementById('gdnSupplierList');
+  if (!filteredSuppliers.length) {
+    sList.innerHTML = `<div style="padding:16px;color:var(--subtle);font-size:13px;text-align:center">
+      No active suppliers match the finishes on this job. Add one in Manager &rarr; Suppliers.
     </div>`;
   } else {
-    list.innerHTML = suppliers.map(s => {
+    sList.innerHTML = filteredSuppliers.map(s => {
       const addr = [s.address_line1, s.city].filter(Boolean).join(', ');
-      return `<label class="gdn-supplier-row" data-id="${s.id}" style="display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;cursor:pointer;background:var(--surface)">
-        <input type="radio" name="gdnSupplier" value="${s.id}" style="width:16px;height:16px;accent-color:var(--accent)">
+      const svcNames = (s.services || []).map(svc => svc.service_name).filter(Boolean).join(', ');
+      return `<label class="gdn-supplier-row" data-id="${s.id}"
+                style="display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid var(--border);
+                       border-radius:8px;margin-bottom:6px;cursor:pointer;background:var(--surface);">
+        <input type="radio" name="gdnSupplier" value="${s.id}"
+               data-name="${escapeHtml(s.supplier_name)}"
+               data-services="${(s.services || []).map(svc => svc.service_type_id).join(',')}"
+               style="width:16px;height:16px;accent-color:var(--accent)">
         <div style="flex:1">
-          <div style="font-size:13px;font-weight:600">${escapeHtml(s.supplier_name)}</div>
+          <div style="font-size:13px;font-weight:600;color:var(--text)">${escapeHtml(s.supplier_name)}</div>
+          ${svcNames ? `<div style="font-size:11px;color:var(--accent);margin-top:2px">${escapeHtml(svcNames)}</div>` : ''}
           ${addr ? `<div style="font-size:11px;color:var(--subtle);margin-top:2px">${escapeHtml(addr)}</div>` : ''}
         </div>
       </label>`;
     }).join('');
   }
 
-  // Render items being included (read-only summary)
-  const itemList = document.getElementById('gdnItemList');
-  itemList.innerHTML = items.map(i =>
-    `<div style="display:flex;gap:10px;font-size:12px;padding:3px 0;color:var(--muted)">
-      <span style="font-family:var(--font-mono);min-width:140px">${escapeHtml(i.description)}</span>
-      <span>×${Number(i.quantity)}</span>
-      <span style="color:var(--subtle);font-size:11px">${i.source === 'assembly' ? (i.source_assembly_mark ? `from ${escapeHtml(i.source_assembly_mark)}` : 'from assembly') : 'manual'}</span>
-    </div>`
-  ).join('');
+  // Items list cleared (rendered after supplier is picked)
+  document.getElementById('gdnItemList').innerHTML =
+    '<div style="color:var(--subtle);font-size:12px;text-align:center;padding:20px">Pick a supplier above to choose items.</div>';
 
-  // Reset confirm button
   const btn = document.getElementById('gdnConfirmBtn');
   btn.disabled = true; btn.style.opacity = '.4'; btn.style.cursor = 'not-allowed';
 
-  // Wire radio change
-  list.querySelectorAll('input[name="gdnSupplier"]').forEach(r => {
+  // Wire radio change → render item list with smart defaults
+  sList.querySelectorAll('input[name="gdnSupplier"]').forEach(r => {
     r.addEventListener('change', () => {
-      btn.disabled = false; btn.style.opacity = '1'; btn.style.cursor = 'pointer';
+      const sid = parseInt(r.value);
+      const sname = r.dataset.name || '';
+      const services = (r.dataset.services || '').split(',').filter(Boolean).map(x => parseInt(x));
+      _pendingDn.supplierId = sid;
+      _pendingDn.supplierName = sname;
+      _pendingDn.supplierServiceIds = new Set(services);
+      renderGdnItemList();
     });
   });
 
   document.getElementById('generateDnModal').classList.add('active');
+}
+
+function renderGdnItemList() {
+  if (!_pendingDn) return;
+  const list = document.getElementById('gdnItemList');
+  const items = _pendingDn.items;
+  const supSvc = _pendingDn.supplierServiceIds;
+
+  let html = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+    <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+      <input type="checkbox" id="gdnSelectAll" onchange="gdnToggleAll(this.checked)" style="width:14px;height:14px;accent-color:var(--accent)">
+      <span style="font-size:11px;color:var(--subtle);text-transform:uppercase;letter-spacing:.04em">Select all</span>
+    </label>
+    <span style="margin-left:auto;font-size:11px;color:var(--subtle)" id="gdnSelCount">0 selected</span>
+  </div>`;
+
+  html += '<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;max-height:280px;overflow-y:auto">';
+  items.forEach((it, idx) => {
+    const matches = it.finish_service_id && supSvc.has(it.finish_service_id);
+    const readonly = it.status === 'at_supplier';
+    const checked = matches && !readonly; // default-tick matching items
+    const dim = readonly ? 'opacity:.5' : '';
+
+    html += `<label style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);cursor:${readonly ? 'not-allowed' : 'pointer'};${dim}">
+      <input type="checkbox" class="gdn-item-check" data-id="${it.id}"
+             ${checked ? 'checked' : ''} ${readonly ? 'disabled' : ''}
+             onchange="gdnUpdateSelCount()"
+             style="width:14px;height:14px;accent-color:var(--accent)">
+      <span style="font-family:var(--font-mono);font-size:12px;color:var(--text);flex:1">${escapeHtml(it.description)}</span>
+      <span style="font-size:12px;color:var(--text);min-width:50px;text-align:right">${Number(it.quantity)}</span>
+      <span style="min-width:120px">${finishBadgeFor(it)}</span>
+      <span style="font-size:11px;color:var(--subtle)">${it.source === 'assembly'
+        ? (it.source_assembly_mark ? `from ${escapeHtml(it.source_assembly_mark)}` : 'assembly')
+        : 'manual'}</span>
+    </label>`;
+  });
+  html += '</div>';
+  list.innerHTML = html;
+  gdnUpdateSelCount();
+}
+
+function gdnToggleAll(on) {
+  document.querySelectorAll('.gdn-item-check:not(:disabled)').forEach(c => c.checked = on);
+  gdnUpdateSelCount();
+}
+
+function gdnUpdateSelCount() {
+  const checked = document.querySelectorAll('.gdn-item-check:checked').length;
+  const el = document.getElementById('gdnSelCount');
+  if (el) el.textContent = `${checked} selected`;
+  const btn = document.getElementById('gdnConfirmBtn');
+  if (btn) {
+    btn.disabled = checked === 0;
+    btn.style.opacity = checked === 0 ? '.4' : '1';
+    btn.style.cursor  = checked === 0 ? 'not-allowed' : 'pointer';
+  }
 }
 
 function closeGenerateDnModalSQL() {
@@ -11981,51 +12068,79 @@ function closeGenerateDnModalSQL() {
 }
 
 async function confirmGenerateDnSQL() {
-  if (!_pendingDn) return;
-  const supplierRadio = document.querySelector('input[name="gdnSupplier"]:checked');
-  if (!supplierRadio) { toast('Pick a supplier.', 'error'); return; }
-  const supplierId = parseInt(supplierRadio.value);
+  if (!_pendingDn || !_pendingDn.supplierId) return;
+  const selectedIds = Array.from(document.querySelectorAll('.gdn-item-check:checked'))
+    .map(c => parseInt(c.dataset.id));
+  if (!selectedIds.length) { toast('Pick at least one item.', 'error'); return; }
+
+  // Split selected items: those still 'pending' need status flip via backend;
+  // those already 'ready_for_despatch' just ride along on the printed DN.
+  const allSelected = _pendingDn.items.filter(i => selectedIds.includes(i.id));
+  const toShip      = allSelected.filter(i => i.status === 'pending');
+  const rideAlongs  = allSelected.filter(i => i.status === 'ready_for_despatch');
+
+  // Backend currently rejects multi-finish DNs. New behaviour: only the
+  // 'pending' subset is sent to the backend, and we require those to
+  // share a single finish. Ride-alongs (ready_for_despatch) are not
+  // sent — they just appear on the printed PDF.
+  if (toShip.length > 0) {
+    const finishIds = new Set(toShip.map(i => i.finish_service_id));
+    if (finishIds.size > 1) {
+      toast('Items being SENT for finishing must share one finish. Untick the odd ones out or split the DN.', 'error');
+      return;
+    }
+  }
+  // If there's nothing pending to ship AND only ride-alongs, that's a
+  // print-only DN — let's still allow it (the operator may want to
+  // physically deliver bolts to the same supplier on the same trip).
 
   const btn = document.getElementById('gdnConfirmBtn');
   btn.disabled = true; btn.style.opacity = '.5';
 
-  const itemIds = _pendingDn.items.map(i => i.id);
   const proj = currentProject;
-  const job = currentJob;
+  const job  = currentJob;
 
   try {
-    // 1. Build the DN HTML (locally) — needs a placeholder ref because we
-    //    haven't allocated one yet. We'll re-build after the backend gives
-    //    us the real ref.
-    // Skip: allocate ref via the backend FIRST (without the SharePoint
-    // URL), then build PDF with the real ref, then update the rows with
-    // the file metadata in a follow-up call.
-    //
-    // Actually cleanest: call backend WITHOUT SharePoint info to allocate
-    // ref + flip status, then build PDF + upload + PATCH metadata.
-    const allocRes = await api.post('/api/job-bom-items/generate-dn', {
-      item_ids: itemIds,
-      supplier_id: supplierId
-    });
-    const dnRef = allocRes.dn_ref;
+    // 1. Allocate the DN ref + flip ONLY the pending items to at_supplier.
+    //    If only ride-alongs are selected, we still need a DN ref — we
+    //    use a separate endpoint path that doesn't require pending items.
+    //    For simplicity, route through generate-dn when there are pending
+    //    items, and a tiny inline ref allocation for ride-along-only DNs.
+    let dnRef;
+    if (toShip.length > 0) {
+      const allocRes = await api.post('/api/job-bom-items/generate-dn', {
+        item_ids:    toShip.map(i => i.id),
+        supplier_id: _pendingDn.supplierId
+      });
+      dnRef = allocRes.dn_ref;
+    } else {
+      // Ride-along-only DN: no status flips. Allocate ref via a no-op call
+      // to /generate-dn would fail validation. Easiest: skip ref allocation
+      // and use a timestamp-based ref for now. (A proper "ride-along only
+      // DN" endpoint would be a future improvement.)
+      const ts = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 12);
+      dnRef = `DN-RA-${ts}`;
+    }
 
     // 2. Build the DN PDF
     await loadLogoDataUri();
-    const supplierName = (supplierRadio.closest('.gdn-supplier-row')?.querySelector('div > div')?.textContent || '').trim();
     const dn = {
       number:          dnRef,
       createdAt:       new Date().toISOString(),
-      destination:     'supplier',
-      destinationName: supplierName,
-      items:           _pendingDn.items,
-      finishName:      _pendingDn.finishName
+      destinationName: _pendingDn.supplierName,
+      items:           allSelected,
+      finishName:      [...new Set(allSelected.map(i => i.finish_name).filter(Boolean))].join(', ') || ''
     };
     const html = buildDnHtmlV2(dn, proj || {}, job || {});
 
-    // 3. Render HTML → PDF blob via html2pdf
+    // 3. Render HTML → PDF blob via html2pdf.
+    //    Use the SAME container CSS pattern as the working legacy DN code
+    //    (position:fixed; width:794px in px). The earlier version used
+    //    'position:absolute; width:210mm' which produced a blank PDF on
+    //    some browsers.
     if (typeof html2pdf === 'undefined') throw new Error('PDF library not loaded');
     const container = document.createElement('div');
-    container.style.cssText = 'position:absolute;left:-99999px;top:0;width:210mm;background:#fff';
+    container.style.cssText = 'position:fixed;left:-10000px;top:0;width:794px;background:#fff;';
     container.innerHTML = html.replace(/^[\s\S]*?<body[^>]*>|<\/body>[\s\S]*$/g, '');
     document.body.appendChild(container);
     let pdfBlob;
@@ -12059,41 +12174,26 @@ async function confirmGenerateDnSQL() {
     if (!upRes.ok) throw new Error(`DN upload failed: ${upRes.status}`);
     const uploaded = await upRes.json();
 
-    // 5. Attach the SharePoint metadata to each BOM row (status already
-    //    flipped in step 1). We do per-row PUT /:id rather than a bulk
-    //    endpoint — small N, simple code, atomic enough.
-    //
-    //    Note: PUT /:id only accepts description/quantity/finish_service_id
-    //    today. We'd need a small extension to take file metadata, OR a
-    //    second pass via a new endpoint. For v1 it's acceptable to skip
-    //    this: the DN PDF lives in SharePoint reachable via project folder
-    //    browsing, and the BOM rows already have supplier_id + sent_at.
-    //    Per-row 'Open PDF' isn't part of the v1 must-haves for DN'd rows;
-    //    operators open the DN via the SharePoint folder.
-    //
-    //    Skipping the PUT is intentional. Logged here so future readers
-    //    know where to extend if a per-row "Open DN PDF" link is wanted.
-
     closeGenerateDnModalSQL();
-    toast(`${dnRef} generated for ${itemIds.length} item${itemIds.length>1?'s':''}.`, 'success');
+    const msg = toShip.length && rideAlongs.length
+      ? `${dnRef} generated — ${toShip.length} for finishing + ${rideAlongs.length} ride-along.`
+      : (toShip.length
+          ? `${dnRef} generated for ${toShip.length} item${toShip.length>1?'s':''}.`
+          : `${dnRef} generated for ${rideAlongs.length} ride-along item${rideAlongs.length>1?'s':''}.`);
+    toast(msg, 'success');
     if (currentJob?.id) await loadJobBomItems(parseInt(currentJob.id));
     renderBOM();
 
-    // 6. Open the freshly-uploaded DN in a new tab
     if (uploaded.webUrl) window.open(uploaded.webUrl, '_blank');
 
   } catch (e) {
-    // If the backend already flipped statuses but the PDF upload failed,
-    // we don't auto-roll back — the items are validly 'at_supplier' and
-    // the operator can re-generate a PDF from elsewhere. Surface the
-    // exact error so they know what to retry.
     toast(`DN failed: ${e.message}`, 'error');
     btn.disabled = false; btn.style.opacity = '1';
     return;
   }
 }
 
-// SQL-driven DN HTML builder. Same visual template as the legacy
+
 // buildDeliveryNoteHTMLCore but reads from the SQL-shaped item list
 // (description / quantity / finish_name) instead of the legacy
 // mark / coating / weightPerUnit fields.
@@ -13405,8 +13505,8 @@ function renderAssembly() {
     // Header line — always visible
     html += `<div class="task-card ${isFabricated ? 'complete' : ''}" style="${isFabricated ? 'opacity:.65;' : ''}">
       <div class="task-header" style="cursor:pointer" onclick="this.nextElementSibling.classList.toggle('collapsed')">
-        <div style="font-family:var(--font-mono);font-size:15px;font-weight:700;color:${isFabricated ? 'var(--muted)' : 'var(--accent)'};min-width:48px">${escapeHtml(a.assembly_mark)}</div>
-        <div style="font-size:13px;color:var(--muted);min-width:60px">${Number(a.quantity)} off</div>
+        <div style="font-family:var(--font-mono);font-size:15px;font-weight:700;color:${isFabricated ? 'var(--text)' : 'var(--accent)'};min-width:48px">${escapeHtml(a.assembly_mark)}</div>
+        <div style="font-size:13px;color:var(--text);min-width:60px">${Number(a.quantity)} off</div>
         ${finishBadge}
         ${isFabricated
           ? `<span style="margin-left:auto;color:var(--green);font-size:11px">&#10003; Fabricated ${a.fabricated_at ? new Date(a.fabricated_at).toLocaleString('en-GB', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : ''}${a.fabricated_by ? ' · ' + escapeHtml(a.fabricated_by) : ''}</span>`
@@ -13417,7 +13517,7 @@ function renderAssembly() {
 
     // Parts table
     if (a.parts && a.parts.length) {
-      html += `<table style="width:100%;font-family:var(--font-mono);font-size:11px;color:var(--muted);border-collapse:collapse;margin-top:6px">
+      html += `<table style="width:100%;font-family:var(--font-mono);font-size:11px;color:var(--text);border-collapse:collapse;margin-top:6px">
         <thead><tr style="color:var(--subtle);text-align:left">
           <th style="font-weight:400;padding:3px 6px 3px 0">Mk</th>
           <th style="font-weight:400;padding:3px 6px">Qty</th>
