@@ -33390,6 +33390,11 @@ async function _gInvProcessNext() {
   _gInvOpenModal();
   _gInvRender();
 
+  // Ensure suppliers are loaded (may not be if Suppliers tab hasn't been opened)
+  if (!_suppliers || _suppliers.length === 0) {
+    try { _suppliers = await api.get('/api/suppliers'); } catch { _suppliers = []; }
+  }
+
   try {
     const dataUri = await _fileToDataUri(_gInvFile);
     const isImg   = _gInvFile.type.startsWith('image/');
