@@ -7854,9 +7854,13 @@ function _renderSupplierDetailPos() {
     const statusLabel = groups[g] || po.status;
     const project = po.project_number ? `${po.project_number}` : (po.cost_centre || '—');
     const _poNetVal = po.total_value != null ? Number(po.total_value) - Number(po.vat_amount || 0) : null;
-    const value = _poNetVal != null ? `£${_poNetVal.toLocaleString('en-GB', {minimumFractionDigits:2,maximumFractionDigits:2})}` : '—';
+    // If invoice attached, show the actual invoiced net; otherwise show PO net
+    const _displayNet = po.supplier_invoice_received_at && po.supplier_invoice_net != null
+      ? Number(po.supplier_invoice_net)
+      : _poNetVal;
+    const value = _displayNet != null ? `£${_displayNet.toLocaleString('en-GB', {minimumFractionDigits:2,maximumFractionDigits:2})}` : '—';
     const invoiceInfo = po.supplier_invoice_received_at
-      ? `<div style="font-size:11px;color:var(--muted);margin-top:3px">Invoice: ${po.supplier_invoice_ref || '—'} &nbsp;£${Number(po.supplier_invoice_net||po.supplier_invoice_gross||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})} net</div>`
+      ? `<div style="font-size:11px;color:var(--muted);margin-top:3px">Invoice: ${po.supplier_invoice_ref || '—'} &nbsp;<b>£${Number(po.supplier_invoice_net||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})} net</b> / £${Number(po.supplier_invoice_gross||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})} gross</div>`
       : '';
 
     return `
