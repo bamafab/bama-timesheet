@@ -17474,7 +17474,8 @@ function renderTenderList() {
   const statusFilter = document.getElementById('tenderStatusFilter')?.value || '';
 
   let list = tendersData.filter(t => {
-    if (statusFilter && t.status !== statusFilter) return false;
+    // Tenders list shows only active tenders — quotes live on the Quotes page
+    if (!(statusFilter ? t.status === statusFilter : t.status === 'tender')) return false;
     if (search) {
       const hay = `${t.reference} ${t.project_name} ${t.company_name} ${t.contact_name || ''}`.toLowerCase();
       if (!hay.includes(search)) return false;
@@ -17916,6 +17917,8 @@ function onClientSearch(value) {
   }, 200);
 }
 
+let _ntContactsCache = [];
+
 function selectClient(clientId) {
   const client = clientsData.find(c => c.id === clientId);
   if (!client) return;
@@ -17927,11 +17930,48 @@ function selectClient(clientId) {
   document.getElementById('ntCity').value = client.city || '';
   document.getElementById('ntCounty').value = client.county || '';
   document.getElementById('ntPostcode').value = client.postcode || '';
-  // Contact fields left blank — they vary per project/location
   document.getElementById('ntContactName').value = '';
   document.getElementById('ntContactEmail').value = '';
   document.getElementById('ntContactPhone').value = '';
   document.getElementById('ntClientSuggestions').style.display = 'none';
+
+  // Load contacts for this client and show picker if >0
+  _ntContactsCache = [];
+  _renderNtContactPicker([]);
+  api.get(`/api/client-contacts?client_id=${client.id}`).then(contacts => {
+    _ntContactsCache = contacts || [];
+    _renderNtContactPicker(_ntContactsCache);
+  }).catch(() => {});
+}
+
+function _renderNtContactPicker(contacts) {
+  const el = document.getElementById('ntContactPicker');
+  if (!el) return;
+  if (!contacts || !contacts.length) { el.style.display = 'none'; return; }
+  el.style.display = '';
+  el.innerHTML = contacts.map(c => `
+    <button type="button" class="nt-contact-chip" onclick="selectNtContact(${c.id})"
+      title="${c.contact_email || ''}\n${c.contact_phone || ''}">
+      ${escapeHtml(c.contact_name || '—')}
+      ${c.role ? `<span style="font-size:10px;opacity:.6;margin-left:4px">${escapeHtml(c.role)}</span>` : ''}
+    </button>`).join('') +
+    `<button type="button" class="nt-contact-chip nt-contact-chip-new" onclick="selectNtContact(null)" title="Enter a new contact manually">+ new</button>`;
+}
+
+function selectNtContact(contactId) {
+  if (contactId === null) {
+    // Clear fields so user can type freely
+    document.getElementById('ntContactName').value = '';
+    document.getElementById('ntContactEmail').value = '';
+    document.getElementById('ntContactPhone').value = '';
+    document.getElementById('ntContactName').focus();
+    return;
+  }
+  const c = (_ntContactsCache || []).find(x => x.id === contactId);
+  if (!c) return;
+  document.getElementById('ntContactName').value  = c.contact_name  || '';
+  document.getElementById('ntContactEmail').value = c.contact_email || '';
+  document.getElementById('ntContactPhone').value = c.contact_phone || '';
 }
 
 // ── New Tender Modal ──
@@ -17944,6 +17984,8 @@ async function openNewTenderModal() {
     if (el) el.value = '';
   });
   document.getElementById('ntClientSuggestions').style.display = 'none';
+  _ntContactsCache = [];
+  _renderNtContactPicker([]);
 
   // Set deadline to today as default
   const today = new Date();
@@ -17965,11 +18007,12 @@ async function openNewTenderModal() {
 async function getNextTenderReference() {
   const now = new Date();
   const yy = String(now.getFullYear()).slice(-2); // "26"
+  const mm = String(now.getMonth() + 1).padStart(2, '0'); // "05"
   const fullYear = '20' + yy;
   const yearNum = parseInt(fullYear);
   const yearPrefix = String(yearNum - 2023).padStart(2, '0'); // 2026→03, 2027→04
   const yearFolderName = `${yearPrefix} - ${fullYear}`; // "03 - 2026"
-  const prefix = `Q${yy}`; // "Q26"
+  const prefix = `Q${yy}${mm}`; // "Q2605"
 
   let highestNum = 0;
 
@@ -17984,7 +18027,7 @@ async function getNextTenderReference() {
       const data = await res.json();
       (data.value || []).forEach(item => {
         // Match folders like Q260426, "Q260426 - Client Name" etc
-        const match = item.name.match(new RegExp(`^${prefix}(\\d+)`));
+        const match = item.name.match(new RegExp(`^${prefix}(\\d{2})`));
         if (match) {
           const num = parseInt(match[1], 10);
           if (num > highestNum) highestNum = num;

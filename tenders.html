@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Tenders &amp; Quotes</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260528c">
+<link rel="stylesheet" href="bama.css?v=20260528d">
 </head>
 <body>
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
@@ -91,11 +91,8 @@
             <input type="text" class="field-input" id="tenderSearch" placeholder="Search tenders..."
               style="max-width:260px" oninput="renderTenderList()">
             <select class="field-input" id="tenderStatusFilter" style="max-width:160px" onchange="renderTenderList()">
-              <option value="">All Statuses</option>
-              <option value="tender">Tender</option>
-              <option value="quote">Quote</option>
-              <option value="won">Won</option>
-              <option value="lost">Lost</option>
+              <option value="">Active Tenders</option>
+              <option value="quote">Converted to Quote</option>
               <option value="cancelled">Cancelled</option>
             </select>
           </div>
@@ -298,6 +295,7 @@
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
       <div>
         <div class="field-label">CONTACT NAME</div>
+        <div id="ntContactPicker" style="display:none;margin-bottom:6px;display:flex;flex-wrap:wrap;gap:5px"></div>
         <input type="text" class="field-input" id="ntContactName">
       </div>
       <div>
@@ -621,6 +619,17 @@
   .mgr-content { scrollbar-width: none; }
   .mgr-content::-webkit-scrollbar { display: none; }
 
+  /* ── Contact picker chips ── */
+  .nt-contact-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 500;
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text); cursor: pointer; transition: background .15s, border-color .15s;
+  }
+  .nt-contact-chip:hover { background: var(--surface); border-color: var(--accent); color: var(--accent); }
+  .nt-contact-chip-new { color: var(--muted); font-weight: 400; }
+  .nt-contact-chip-new:hover { color: var(--accent); }
+
   .upload-zone {
     border: 2px dashed var(--border); border-radius: 10px; transition: border-color .2s;
   }
@@ -633,6 +642,6 @@
   }
 </style>
 
-<script src="shared.js?v=20260528c"></script>
+<script src="shared.js?v=20260528d"></script>
 </body>
 </html>
