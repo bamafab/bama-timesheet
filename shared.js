@@ -10875,7 +10875,8 @@ function startPinIdleMonitor() {
 }
 // ─────────────────────────────────────────────────────────────────────────────
 let _pendingManagerUser = null; // name of user selected but not yet PIN-verified
-let _pendingDraftsmanUser = null; // name of user selected for draftsman login
+let _pendingDraftsmanUser  = null; // name of user selected for draftsman login
+let _currentDraftsmanName = null;  // name of user currently logged into draftsman mode
 
 let currentProject = null;
 let currentJob = null;
@@ -11429,9 +11430,82 @@ function renderJobsList(projectId) {
           ${progress.hasNewTasks ? `<span style="font-size:9px;font-weight:700;background:var(--accent);color:#fff;padding:2px 6px;border-radius:4px;letter-spacing:.3px">NEW</span>` : ''}
         </div>
         <div class="job-badge ${isClosed ? 'closed' : 'open'}">${isClosed ? 'CLOSED' : 'OPEN'}</div>
+        ${isDraftsman ? `<button class="btn btn-ghost" title="Delete job" style="padding:4px 8px;font-size:13px;opacity:.55;flex-shrink:0;margin-left:4px" onclick="event.stopPropagation();openDeleteJobModal('${job.id}','${job.name.replace(/'/g,"\\'")}')">&#128465;</button>` : ''}
       </div>
     `;
   }).join('');
+}
+
+// ── Delete job (draftsman-only, PIN-gated) ────────────────────────────────────
+let _pendingDeleteJobId   = null;
+let _pendingDeleteJobName = null;
+
+function openDeleteJobModal(jobId, jobName) {
+  if (!isDraftsman) return;
+  _pendingDeleteJobId   = jobId;
+  _pendingDeleteJobName = jobName;
+  const modal = document.getElementById('deleteJobModal');
+  if (!modal) return;
+  document.getElementById('deleteJobName').textContent = jobName;
+  document.getElementById('deleteJobPinInput').value = '';
+  document.getElementById('deleteJobPinError').textContent = '';
+  modal.classList.add('active');
+  setTimeout(() => document.getElementById('deleteJobPinInput').focus(), 100);
+}
+
+function closeDeleteJobModal() {
+  const modal = document.getElementById('deleteJobModal');
+  if (modal) modal.classList.remove('active');
+  _pendingDeleteJobId   = null;
+  _pendingDeleteJobName = null;
+}
+
+async function confirmDeleteJob() {
+  if (!_pendingDeleteJobId) return;
+
+  const pin = document.getElementById('deleteJobPinInput').value.trim();
+  if (!pin) {
+    document.getElementById('deleteJobPinError').textContent = 'Please enter your PIN';
+    return;
+  }
+
+  // Resolve the logged-in draftsman's employee record
+  const name = _currentDraftsmanName;
+  const emp  = name ? (state.timesheetData.employees || []).find(e => e.name === name) : null;
+  if (!emp) {
+    document.getElementById('deleteJobPinError').textContent = 'Cannot identify logged-in draftsman — please log out and back in';
+    return;
+  }
+
+  // Verify PIN server-side
+  let result;
+  try {
+    result = await api.post('/api/auth/verify-pin', { employee_id: emp.id, pin });
+  } catch (err) {
+    document.getElementById('deleteJobPinError').textContent = 'Verification failed — try again';
+    return;
+  }
+  if (!result || !result.valid) {
+    document.getElementById('deleteJobPinError').textContent = (result && result.reason) || 'Incorrect PIN';
+    document.getElementById('deleteJobPinInput').value = '';
+    return;
+  }
+
+  // PIN correct — delete the job
+  const jobId = _pendingDeleteJobId;
+  closeDeleteJobModal();
+  try {
+    await api.delete(`/api/drawings/${encodeURIComponent(jobId)}`);
+    toast(`Job "${_pendingDeleteJobName || jobId}" deleted.`, 'success');
+    // Remove from local drawingsData so the list re-renders immediately
+    if (currentProject) {
+      const pd = drawingsData.projects[currentProject.id];
+      if (pd) pd.jobs = (pd.jobs || []).filter(j => String(j.id) !== String(jobId));
+      renderJobsList(currentProject.id);
+    }
+  } catch (e) {
+    toast('Delete failed: ' + e.message, 'error');
+  }
 }
 
 function getJobProgress(job) {
@@ -14522,9 +14596,10 @@ async function checkDraftsmanPin() {
 
   // Authorised — enter draftsman mode
   isDraftsman = true;
+  _currentDraftsmanName = _pendingDraftsmanUser;
   // Persist in sessionStorage so the mode survives a page refresh
   // (per user's PC, tab-lifetime is acceptable safety boundary).
-  try { sessionStorage.setItem('bama_draftsman', '1'); } catch (_) {}
+  try { sessionStorage.setItem('bama_draftsman', '1'); sessionStorage.setItem('bama_draftsman_name', _pendingDraftsmanUser); } catch (_) {}
   closeDraftsmanPinModal();
   toast(`Draftsman mode active — ${_pendingDraftsmanUser}`, 'success');
   _pendingDraftsmanUser = null;
@@ -14549,7 +14624,8 @@ async function checkDraftsmanPin() {
 
 function logoutDraftsman() {
   isDraftsman = false;
-  try { sessionStorage.removeItem('bama_draftsman'); } catch (_) {}
+  _currentDraftsmanName = null;
+  try { sessionStorage.removeItem('bama_draftsman'); sessionStorage.removeItem('bama_draftsman_name'); } catch (_) {}
   const badge = document.getElementById('draftsmanBadge');
   const loginBtn = document.getElementById('draftsmanLoginBtn');
   if (badge) badge.style.display = 'none';
@@ -27846,6 +27922,7 @@ async function init() {
     try {
       if (sessionStorage.getItem('bama_draftsman') === '1') {
         isDraftsman = true;
+        _currentDraftsmanName = sessionStorage.getItem('bama_draftsman_name') || null;
         const badge = document.getElementById('draftsmanBadge');
         const loginBtn = document.getElementById('draftsmanLoginBtn');
         if (badge) badge.style.display = 'flex';

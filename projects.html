@@ -209,6 +209,28 @@
 </div>
 
 <!-- ═══════════════════════════════════════
+     DELETE JOB MODAL (draftsman PIN-gated)
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="deleteJobModal">
+  <div class="modal" style="max-width:400px;width:95vw;text-align:center">
+    <div style="font-size:32px;margin-bottom:10px">&#128465;</div>
+    <div class="modal-title" style="color:var(--red);margin-bottom:6px">Delete job?</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:4px">You are about to permanently delete:</div>
+    <div id="deleteJobName" style="font-weight:600;font-size:15px;color:var(--text);margin-bottom:16px;word-break:break-word"></div>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:16px">This will remove all assemblies, parts and notes. This cannot be undone.</div>
+    <div class="field-label" style="text-align:left">CONFIRM WITH YOUR PIN</div>
+    <input type="password" class="field-input" id="deleteJobPinInput" maxlength="10"
+      placeholder="••••••" style="text-align:center;font-size:24px;letter-spacing:8px;margin-bottom:6px"
+      onkeydown="if(event.key==='Enter')confirmDeleteJob()">
+    <div id="deleteJobPinError" style="color:var(--red);font-size:12px;height:16px;margin-bottom:14px"></div>
+    <div style="display:flex;gap:10px">
+      <button class="btn btn-ghost" style="flex:1" onclick="closeDeleteJobModal()">Cancel</button>
+      <button class="btn btn-primary" style="flex:1;background:var(--red);border-color:var(--red)" onclick="confirmDeleteJob()">Delete job</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
      CREATE JOB MODAL
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="createJobModal">
@@ -498,6 +520,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-<script src="shared.js?v=20260528z"></script>
+<script src="shared.js?v=20260528aa"></script>
 </body>
 </html>
