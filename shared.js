@@ -13017,7 +13017,7 @@ function renderAssembly() {
   if (isDraftsman && currentJob && currentJob.status !== 'closed') {
     html += `
       <div class="upload-zone" id="assemblyDropZone"
-           style="margin-bottom:14px;cursor:pointer"
+           style="margin-bottom:8px;cursor:pointer"
            onclick="document.getElementById('assemblyFileInput').click()">
         <div class="upload-zone-icon">&#128228;</div>
         <div class="upload-zone-text">Drop assembly PDFs here</div>
@@ -13027,6 +13027,10 @@ function renderAssembly() {
       </div>
       <input type="file" id="assemblyFileInput" accept=".pdf,.PDF" multiple
              style="display:none" onchange="onAssemblyFilesPicked(this.files)">
+      <div style="text-align:center;margin-bottom:14px">
+        <button class="btn btn-ghost" style="font-size:12px;padding:5px 14px"
+                onclick="openManualAssemblyModal()">&#43; Add manually (no PDF)</button>
+      </div>
     `;
   }
 
@@ -13652,6 +13656,30 @@ async function printFile(fileId, driveId) {
 // in one txn). On duplicate (job_id, assembly_mark) the API returns
 // 409 with error='duplicate_mark' and we show the replace-confirm
 // prompt; on confirm we DELETE the old then retry.
+
+// Opens the assembly review modal with blank fields and a manual-entry
+// stub so the draftsman can enter parts directly without uploading a PDF.
+// Used when OCR cannot read the drawing (e.g. hand-drawn or non-standard
+// drawing formats). sharepoint_file_id is set to 'manual-entry' as a
+// placeholder; the "Open PDF" button will not appear on the assembly card.
+function openManualAssemblyModal() {
+  if (!currentJob) { toast('No job selected.', 'error'); return; }
+  _assemblyQueue = [{
+    file: { name: 'Manual entry' },
+    sharepoint: {
+      fileId:   'manual-entry',
+      driveId:  currentJob.spDriveId || BAMA_DRIVE_ID,
+      webUrl:   null,
+      fileName: 'Manual entry'
+    },
+    ocr: { assembly_mark: '', quantity: null, finish_label_raw: null,
+           total_area_m2: null, total_weight_kg: null,
+           parts: [{ part_mark: '', quantity: 1, profile: '', length_mm: null,
+                     material: 'S355JR', area_m2: null, weight_kg: null }] }
+  }];
+  _assemblyReviewIndex = 0;
+  openAssemblyReviewModal();
+}
 
 async function onAssemblyFilesPicked(fileList) {
   if (!fileList || !fileList.length) return;
