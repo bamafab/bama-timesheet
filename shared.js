@@ -13101,6 +13101,9 @@ function renderAssembly() {
     if (a.sharepoint_web_url) {
       html += `<a href="${escapeHtml(a.sharepoint_web_url)}" target="_blank" rel="noopener" class="btn btn-ghost" style="padding:6px 12px;font-size:11px;text-decoration:none">&#128279; Open PDF</a>`;
     }
+    if (isDraftsman && !a.sharepoint_web_url && currentJob.status !== 'closed') {
+      html += `<button class="btn btn-ghost" style="padding:6px 12px;font-size:11px" onclick="event.stopPropagation();triggerAttachPdf(${a.id})">&#128206; Attach PDF</button>`;
+    }
     if (!isFabricated && currentJob.status !== 'closed') {
       html += `<button class="btn btn-primary" style="padding:6px 14px;font-size:11px" onclick="event.stopPropagation();openMarkFabricatedModal(${a.id})">&#10003; Mark fabricated</button>`;
       if (isDraftsman) {
@@ -14076,6 +14079,58 @@ async function deleteAssembly(id) {
     } else {
       toast(`Delete failed: ${e.message}`, 'error');
     }
+  }
+}
+
+// ── Attach PDF to a manual-entry assembly ────────────────────────────────────
+// Creates a hidden <input type=file> on demand, waits for the user to pick
+// a PDF, uploads it to the job's Assembly folder in SharePoint, then calls
+// PUT /api/job-assemblies/:id/attach-pdf to link it.
+// The "Attach PDF" button is shown on any assembly card that has no webUrl.
+
+let _attachPdfInput = null;
+
+function triggerAttachPdf(assemblyId) {
+  if (!currentJob || !currentJob.spFolderId) {
+    toast('Job folder not available — try reloading.', 'error');
+    return;
+  }
+  if (!_attachPdfInput) {
+    _attachPdfInput = document.createElement('input');
+    _attachPdfInput.type = 'file';
+    _attachPdfInput.accept = '.pdf,.PDF';
+    _attachPdfInput.style.display = 'none';
+    document.body.appendChild(_attachPdfInput);
+  }
+  _attachPdfInput.onchange = () => {
+    const file = _attachPdfInput.files[0];
+    _attachPdfInput.value = '';
+    if (file) attachPdfToAssembly(assemblyId, file);
+  };
+  _attachPdfInput.click();
+}
+
+async function attachPdfToAssembly(assemblyId, file) {
+  toast('Uploading PDF…', 'info');
+  try {
+    const driveId = currentJob.spDriveId || BAMA_DRIVE_ID;
+    const asmFolder = await getOrCreateSubfolder(currentJob.spFolderId, ELEMENT_FOLDERS.assembly, driveId);
+    const arrayBuffer = await file.arrayBuffer();
+    const uploaded = await uploadFileToFolder(asmFolder.id, file.name, arrayBuffer, file.type, driveId);
+
+    await api.put(`/api/job-assemblies/${assemblyId}/attach-pdf`, {
+      sharepoint_file_id:  uploaded.id,
+      sharepoint_drive_id: uploaded.parentReference?.driveId || driveId,
+      sharepoint_web_url:  uploaded.webUrl || null,
+      file_name:           file.name
+    });
+
+    // Refresh the local cache so the card re-renders with the Open PDF button
+    await loadJobAssemblies(parseInt(currentJob.id));
+    renderAssembly();
+    toast('PDF attached — lads can now open it from the card.', 'success');
+  } catch (e) {
+    toast(`Attach failed: ${e.message}`, 'error');
   }
 }
 

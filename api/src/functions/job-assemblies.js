@@ -511,3 +511,54 @@ app.http('job-assemblies-fabricate', {
         }
     }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PUT /api/job-assemblies/:id/attach-pdf
+// Attaches (or replaces) a SharePoint PDF reference on an existing assembly.
+// Called after a manual-entry assembly has its PDF uploaded client-side.
+//
+// Body: { sharepoint_file_id, sharepoint_drive_id, sharepoint_web_url, file_name }
+// ─────────────────────────────────────────────────────────────────────────────
+app.http('job-assemblies-attach-pdf', {
+    methods: ['PUT'],
+    authLevel: 'anonymous',
+    route: 'job-assemblies/{id}/attach-pdf',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const id = parseInt(request.params.id);
+            if (!id || isNaN(id)) return badRequest('Invalid id', request);
+
+            const body = await request.json();
+            const { sharepoint_file_id, sharepoint_drive_id, sharepoint_web_url, file_name } = body;
+            if (!sharepoint_file_id || !sharepoint_drive_id || !file_name) {
+                return badRequest('sharepoint_file_id, sharepoint_drive_id and file_name are required', request);
+            }
+
+            const result = await query(
+                `UPDATE JobAssemblies
+                 SET sharepoint_file_id  = @spFileId,
+                     sharepoint_drive_id = @spDriveId,
+                     sharepoint_web_url  = @spWebUrl,
+                     file_name           = @fileName
+                 OUTPUT INSERTED.*
+                 WHERE id = @id`,
+                {
+                    id,
+                    spFileId:  sharepoint_file_id,
+                    spDriveId: sharepoint_drive_id,
+                    spWebUrl:  sharepoint_web_url ?? null,
+                    fileName:  file_name
+                }
+            );
+
+            if (!result.recordset.length) return notFound('Assembly not found', request);
+            return ok(result.recordset[0], request);
+        } catch (err) {
+            context.error('Error attaching PDF to assembly:', err);
+            return serverError('Failed to attach PDF: ' + err.message, request);
+        }
+    }
+});
