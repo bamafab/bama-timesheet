@@ -209,6 +209,27 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 /* ── SETTINGS PAGE ── */
 .settings-rate-grid { display: grid; grid-template-columns: 1fr 120px; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); }
 .settings-rate-grid:last-child { border-bottom: none; }
+
+/* ── SECTION AUTOCOMPLETE ── */
+.ac-wrap { position: relative; }
+.ac-input { width: 100%; min-width: 160px; }
+.ac-dropdown {
+  position: absolute; top: 100%; left: 0; z-index: 999;
+  background: #1e1e1e; border: 1px solid #ff6b00; border-radius: 6px;
+  min-width: 220px; max-height: 220px; overflow-y: auto;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.6); margin-top: 2px;
+  scrollbar-width: thin; scrollbar-color: #444 transparent;
+}
+.ac-item {
+  padding: 7px 12px; cursor: pointer; font-family: 'DM Mono', monospace;
+  font-size: 12px; color: #f0f0f0; border-bottom: 1px solid #2a2a2a;
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+}
+.ac-item:last-child { border-bottom: none; }
+.ac-item:hover, .ac-item.selected { background: rgba(255,107,0,0.15); color: #ff6b00; }
+.ac-item .ac-kgm { color: #888; font-size: 11px; }
+.ac-item .ac-match { color: #ff6b00; }
+
 </style>
 </head>
 <body>
@@ -1175,7 +1196,13 @@ function takeoffRowHTML(row, i) {
   const mat = totalKg * (row.rate || 0);
   return `<tr>
     <td style="color:var(--muted);font-family:var(--font-mono);font-size:11px">${i+1}</td>
-    <td><input value="${row.type||''}" placeholder="e.g. UB203x133x25" oninput="updateTakeoffRow(${i},'type',this.value)" style="min-width:160px"></td>
+    <td><div class="ac-wrap" id="ac-wrap-${i}">
+      <input class="ac-input" value="${row.type||''}" placeholder="e.g. UB203x133x25"
+        oninput="onTakeoffTypeInput(${i},this.value)"
+        onkeydown="onTakeoffTypeKey(event,${i})"
+        onfocus="onTakeoffTypeInput(${i},this.value)"
+        autocomplete="off">
+    </div></td>
     <td><input type="number" value="${row.length||''}" placeholder="mm" oninput="updateTakeoffRow(${i},'length',this.value)" class="num"></td>
     <td><input type="number" value="${row.qty||1}" oninput="updateTakeoffRow(${i},'qty',this.value)" class="num"></td>
     <td><input type="number" value="${kgm||''}" placeholder="auto" oninput="updateTakeoffRow(${i},'kgm',this.value)" class="num" style="color:${row.kgm?'var(--text)':'var(--subtle)'}"></td>
@@ -1768,6 +1795,100 @@ renderSidebar();
 </html>
 <!-- PDF INJECTION — appended -->
 <script>
+
+// ============================================================
+// SECTION AUTOCOMPLETE
+// ============================================================
+// Build sorted list of all known section designations
+const STEEL_SECTIONS = Object.keys(STEEL_KGM)
+  .filter(k => !k.includes('*'))  // keep x-form only, no duplicates
+  .sort();
+
+let _acActiveIdx = -1;
+let _acCurrentRow = -1;
+
+function onTakeoffTypeInput(i, val) {
+  _acCurrentRow = i;
+  _acActiveIdx = -1;
+  const wrap = document.getElementById('ac-wrap-'+i);
+  if (!wrap) return;
+  closeAllDropdowns();
+  if (!val || val.length < 2) return;
+
+  const q = val.trim().toUpperCase().replace(/[*×]/g,'x');
+  const matches = STEEL_SECTIONS.filter(s => s.toUpperCase().includes(q)).slice(0, 40);
+  if (!matches.length) return;
+
+  const dd = document.createElement('div');
+  dd.className = 'ac-dropdown';
+  dd.id = 'ac-dd-'+i;
+  dd.innerHTML = matches.map((s,idx) => {
+    const kgm = STEEL_KGM[s];
+    const highlighted = s.replace(new RegExp('('+q.replace(/x/gi,'[x*]')+')', 'i'), '<span class="ac-match">$1</span>');
+    return `<div class="ac-item" data-val="${s}" data-idx="${idx}"
+      onmousedown="selectSection(${i},'${s}')"
+      onmouseover="highlightAcItem(${i},${idx})">
+      ${highlighted} <span class="ac-kgm">${kgm ? kgm+' kg/m' : ''}</span>
+    </div>`;
+  }).join('');
+  wrap.appendChild(dd);
+}
+
+function onTakeoffTypeKey(e, i) {
+  const dd = document.getElementById('ac-dd-'+i);
+  if (!dd) return;
+  const items = dd.querySelectorAll('.ac-item');
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    _acActiveIdx = Math.min(_acActiveIdx+1, items.length-1);
+    items.forEach((el,idx) => el.classList.toggle('selected', idx===_acActiveIdx));
+    items[_acActiveIdx]?.scrollIntoView({block:'nearest'});
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    _acActiveIdx = Math.max(_acActiveIdx-1, 0);
+    items.forEach((el,idx) => el.classList.toggle('selected', idx===_acActiveIdx));
+    items[_acActiveIdx]?.scrollIntoView({block:'nearest'});
+  } else if (e.key === 'Enter' || e.key === 'Tab') {
+    if (_acActiveIdx >= 0 && items[_acActiveIdx]) {
+      e.preventDefault();
+      selectSection(i, items[_acActiveIdx].dataset.val);
+    } else {
+      closeAllDropdowns();
+    }
+  } else if (e.key === 'Escape') {
+    closeAllDropdowns();
+  }
+}
+
+function highlightAcItem(i, idx) {
+  _acActiveIdx = idx;
+  const dd = document.getElementById('ac-dd-'+i);
+  if (!dd) return;
+  dd.querySelectorAll('.ac-item').forEach((el,j) => el.classList.toggle('selected', j===idx));
+}
+
+function selectSection(i, val) {
+  closeAllDropdowns();
+  const wrap = document.getElementById('ac-wrap-'+i);
+  if (!wrap) return;
+  const inp = wrap.querySelector('input');
+  if (inp) inp.value = val;
+  updateTakeoffRow(i, 'type', val);
+  // move focus to length field
+  const row = document.getElementById('takeoffBody')?.rows[i];
+  if (row) row.cells[2]?.querySelector('input')?.focus();
+}
+
+function closeAllDropdowns() {
+  document.querySelectorAll('.ac-dropdown').forEach(d => d.remove());
+  _acActiveIdx = -1;
+}
+
+// Close on click outside
+document.addEventListener('mousedown', e => {
+  if (!e.target.closest('.ac-wrap')) closeAllDropdowns();
+});
+
 // ============================================================
 // PDF GENERATION
 // ============================================================
