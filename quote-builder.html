@@ -246,7 +246,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
           <div style="font-family:var(--font-display);font-size:28px" id="editorRef">Q260601</div>
           <span class="revision-tag" id="editorRev" style="display:none"></span>
           <span class="badge badge-draft" id="editorStatus">Draft</span>
-          <button class="btn btn-ghost btn-sm" onclick="addRevision()" title="Add revision">+ Rev</button>
+          <button class="btn btn-ghost btn-sm" onclick="removeRevision()" title="Previous revision">− Rev</button><button class="btn btn-ghost btn-sm" onclick="addRevision()" title="Next revision">+ Rev</button>
         </div>
         <div class="flex gap-8">
           <select class="cost-input" style="width:120px" id="statusSelect" onchange="setStatus(this.value)">
