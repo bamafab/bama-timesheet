@@ -1019,18 +1019,34 @@ function setStatus(val) {
   saveAll();
 }
 
+function _updateRevDisplay(q) {
+  document.getElementById('hRevision').value = q.revision || '';
+  const revEl = document.getElementById('editorRev');
+  revEl.textContent = q.revision || '';
+  revEl.style.display = q.revision ? '' : 'none';
+  renderSidebar();
+}
+
 function addRevision() {
   const q = getQuote(); if (!q) return;
   const revs = ['','Rev A','Rev B','Rev C','Rev D','Rev E'];
   const cur = revs.indexOf(q.revision);
   if (cur >= revs.length - 1) { toast('Max revision reached', 'error'); return; }
   q.revision = revs[cur + 1];
-  document.getElementById('hRevision').value = q.revision;
-  const revEl = document.getElementById('editorRev');
-  revEl.textContent = q.revision || '';
-  revEl.style.display = q.revision ? '' : 'none';
+  _updateRevDisplay(q);
   saveAll();
-  toast('Revision bumped to ' + q.revision);
+  toast('Revision → ' + (q.revision || 'none'));
+}
+
+function removeRevision() {
+  const q = getQuote(); if (!q) return;
+  const revs = ['','Rev A','Rev B','Rev C','Rev D','Rev E'];
+  const cur = revs.indexOf(q.revision);
+  if (cur <= 0) { toast('Already at no revision', 'error'); return; }
+  q.revision = revs[cur - 1];
+  _updateRevDisplay(q);
+  saveAll();
+  toast('Revision → ' + (q.revision || 'none'));
 }
 
 // ============================================================
