@@ -214,7 +214,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 .ac-wrap { position: relative; }
 .ac-input { width: 100%; min-width: 160px; }
 .ac-dropdown {
-  position: absolute; top: 100%; left: 0; z-index: 999;
+  z-index: 9999;
   background: #1e1e1e; border: 1px solid #ff6b00; border-radius: 6px;
   min-width: 220px; max-height: 220px; overflow-y: auto;
   box-shadow: 0 8px 24px rgba(0,0,0,0.6); margin-top: 2px;
@@ -1819,9 +1819,13 @@ function onTakeoffTypeInput(i, val) {
   const matches = STEEL_SECTIONS.filter(s => s.toUpperCase().includes(q)).slice(0, 40);
   if (!matches.length) return;
 
+  const inp = wrap.querySelector('input');
+  const rect = inp.getBoundingClientRect();
+
   const dd = document.createElement('div');
   dd.className = 'ac-dropdown';
   dd.id = 'ac-dd-'+i;
+  dd.style.cssText = `position:fixed;top:${rect.bottom+2}px;left:${rect.left}px;width:${Math.max(rect.width,240)}px;z-index:9999`;
   dd.innerHTML = matches.map((s,idx) => {
     const kgm = STEEL_KGM[s];
     const highlighted = s.replace(new RegExp('('+q.replace(/x/gi,'[x*]')+')', 'i'), '<span class="ac-match">$1</span>');
@@ -1831,7 +1835,7 @@ function onTakeoffTypeInput(i, val) {
       ${highlighted} <span class="ac-kgm">${kgm ? kgm+' kg/m' : ''}</span>
     </div>`;
   }).join('');
-  wrap.appendChild(dd);
+  document.body.appendChild(dd);
 }
 
 function onTakeoffTypeKey(e, i) {
