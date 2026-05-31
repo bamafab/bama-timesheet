@@ -142,9 +142,6 @@
     overflow-x: auto;
     scrollbar-width: none;
     border-bottom: 1px solid var(--border);
-    position: sticky;
-    top: var(--header-h, 110px);
-    z-index: 50;
   }
 
   .tab-bar::-webkit-scrollbar { display: none; }
@@ -216,8 +213,6 @@
 
   .table-wrapper {
     overflow-x: auto;
-    overflow-y: auto;
-    max-height: calc(100vh - var(--thead-top, 160px) - 60px);
     border-radius: 12px;
     border: 1px solid var(--border);
     background: var(--card);
@@ -232,9 +227,6 @@
   }
 
   thead {
-    position: sticky;
-    top: 0;
-    z-index: 10;
   }
 
   thead tr:first-child th {
@@ -244,7 +236,7 @@
     padding: 11px 14px;
     text-align: center;
     white-space: nowrap;
-    border-bottom: 1px solid var(--border);
+    border-bottom: none;
     cursor: pointer;
     user-select: none;
     transition: background 0.15s, color 0.15s;
@@ -272,10 +264,6 @@
     background: #1a1a1a;
   }
 
-  thead tr:first-child th:first-child:hover {
-    background: #242424;
-  }
-
   thead tr:nth-child(2) th {
     background: #141414;
     color: #666;
@@ -285,6 +273,8 @@
     text-align: center;
     border-bottom: 2px solid var(--accent);
     font-family: var(--font-mono);
+    cursor: default;
+    user-select: none;
   }
 
   thead tr:nth-child(2) th:first-child {
@@ -1208,20 +1198,6 @@ function render() {
 
 render();
 
-function updateStickyOffsets() {
-  const header = document.querySelector('.app-header');
-  const tabBar = document.querySelector('.tab-bar');
-  if (header) {
-    const hh = header.getBoundingClientRect().height;
-    document.documentElement.style.setProperty('--header-h', hh + 'px');
-    if (tabBar) {
-      const th = tabBar.getBoundingClientRect().height;
-      document.documentElement.style.setProperty('--thead-top', (hh + th) + 'px');
-    }
-  }
-}
-updateStickyOffsets();
-window.addEventListener('resize', updateStickyOffsets);
 </script>
 </body>
 </html>
