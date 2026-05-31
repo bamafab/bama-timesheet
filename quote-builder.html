@@ -1,0 +1,1746 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BAMA Quote Builder</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0e0e0e; --surface: #161616; --card: #1e1e1e; --border: #2a2a2a;
+  --accent: #ff6b00; --accent2: #ffb347; --green: #3ecf8e; --red: #ff4444;
+  --text: #f0f0f0; --muted: #888; --subtle: #6a6a6a;
+  --font-display: 'Bebas Neue', sans-serif;
+  --font-body: 'DM Sans', sans-serif;
+  --font-mono: 'DM Mono', monospace;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: var(--font-body); font-size: 14px; min-height: 100vh; }
+
+/* ── TOPBAR ── */
+.topbar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 24px; height: 52px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 200; }
+.logo { font-family: var(--font-display); font-size: 22px; letter-spacing: 1px; }
+.logo span { color: var(--accent); }
+.topbar-right { display: flex; gap: 8px; align-items: center; }
+
+/* ── LAYOUT ── */
+.layout { display: grid; grid-template-columns: 220px 1fr; min-height: calc(100vh - 52px); }
+
+/* ── SIDEBAR ── */
+.sidebar { background: var(--surface); border-right: 1px solid var(--border); padding: 16px 0; position: sticky; top: 52px; height: calc(100vh - 52px); overflow-y: auto; }
+.sidebar-section { padding: 8px 16px 4px; font-size: 10px; letter-spacing: 1.5px; color: var(--subtle); text-transform: uppercase; margin-top: 8px; }
+.quote-list { padding: 0 8px; }
+.quote-item { padding: 9px 10px; border-radius: 6px; cursor: pointer; margin-bottom: 2px; transition: background 0.15s; border: 1px solid transparent; }
+.quote-item:hover { background: var(--card); }
+.quote-item.active { background: rgba(255,107,0,0.12); border-color: rgba(255,107,0,0.3); }
+.quote-item-ref { font-family: var(--font-mono); font-size: 11px; color: var(--accent); font-weight: 500; }
+.quote-item-name { font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+.quote-item-status { font-size: 10px; color: var(--muted); margin-top: 2px; }
+.btn-new-quote { margin: 8px; width: calc(100% - 16px); background: var(--accent); color: #fff; border: none; border-radius: 6px; padding: 9px; font-family: var(--font-body); font-size: 13px; font-weight: 600; cursor: pointer; transition: background 0.15s; }
+.btn-new-quote:hover { background: #e05e00; }
+
+/* ── MAIN ── */
+.main { padding: 24px; overflow-y: auto; }
+
+/* ── TABS ── */
+.tab-bar { display: flex; gap: 2px; border-bottom: 2px solid var(--border); margin-bottom: 24px; }
+.tab-btn { padding: 10px 20px; background: none; border: none; color: var(--muted); font-family: var(--font-body); font-size: 13px; font-weight: 500; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all 0.15s; white-space: nowrap; }
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+/* ── CARDS ── */
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 16px; }
+.card-title { font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); margin-bottom: 16px; font-weight: 600; }
+
+/* ── FORM GRID ── */
+.form-grid { display: grid; gap: 12px; }
+.form-grid-2 { grid-template-columns: 1fr 1fr; }
+.form-grid-3 { grid-template-columns: 1fr 1fr 1fr; }
+.form-grid-4 { grid-template-columns: 1fr 1fr 1fr 1fr; }
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field label { font-size: 11px; color: var(--muted); font-weight: 500; letter-spacing: 0.3px; }
+.field input, .field select, .field textarea {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 10px; color: var(--text); font-family: var(--font-body); font-size: 13px;
+  transition: border-color 0.15s; width: 100%;
+}
+.field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: var(--accent); }
+.field textarea { resize: vertical; min-height: 70px; }
+.field select option { background: var(--card); }
+
+/* ── SECTION HEADER ── */
+.section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.section-title { font-size: 13px; font-weight: 600; color: var(--text); }
+
+/* ── BUTTONS ── */
+.btn { padding: 8px 16px; border-radius: 6px; border: none; font-family: var(--font-body); font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.15s; }
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover { background: #e05e00; }
+.btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+.btn-ghost:hover { color: var(--text); border-color: var(--subtle); }
+.btn-danger { background: transparent; color: var(--red); border: 1px solid var(--red); }
+.btn-danger:hover { background: rgba(255,68,68,0.1); }
+.btn-sm { padding: 5px 10px; font-size: 12px; }
+.btn-icon { padding: 5px 8px; font-size: 14px; background: transparent; border: 1px solid var(--border); color: var(--muted); border-radius: 5px; cursor: pointer; transition: all 0.15s; }
+.btn-icon:hover { color: var(--red); border-color: var(--red); }
+
+/* ── TAKEOFF TABLE ── */
+.data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.data-table th { background: #141414; color: var(--muted); font-weight: 500; padding: 8px 10px; text-align: left; border-bottom: 2px solid var(--accent); font-size: 11px; letter-spacing: 0.5px; white-space: nowrap; }
+.data-table td { padding: 6px 6px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.data-table tr:hover td { background: rgba(255,107,0,0.03); }
+.data-table input, .data-table select {
+  background: transparent; border: 1px solid transparent; border-radius: 4px;
+  padding: 4px 6px; color: var(--text); font-family: var(--font-mono); font-size: 12px;
+  width: 100%; transition: border-color 0.15s;
+}
+.data-table input:focus, .data-table select:focus { outline: none; border-color: var(--accent); background: var(--surface); }
+.data-table .num { text-align: right; font-family: var(--font-mono); color: var(--muted); }
+.data-table .num input { text-align: right; }
+.data-table tfoot td { border-top: 2px solid var(--border); border-bottom: none; padding: 10px; font-weight: 600; }
+
+/* ── COST BLOCKS ── */
+.cost-block { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+.cost-block-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; cursor: pointer; }
+.cost-block-title { font-size: 13px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 8px; }
+.cost-block-total { font-family: var(--font-mono); font-size: 14px; color: var(--accent); font-weight: 500; }
+.cost-block-body { display: grid; gap: 8px; }
+.cost-row { display: grid; gap: 8px; align-items: center; }
+.cost-row-3 { grid-template-columns: 1fr 100px 100px; }
+.cost-row-4 { grid-template-columns: 1fr 80px 80px 100px; }
+.cost-row-5 { grid-template-columns: 1fr 70px 70px 70px 100px; }
+.cost-label { font-size: 12px; color: var(--muted); }
+.cost-input { background: var(--card); border: 1px solid var(--border); border-radius: 5px; padding: 6px 8px; color: var(--text); font-family: var(--font-mono); font-size: 12px; text-align: right; width: 100%; transition: border-color 0.15s; }
+.cost-input:focus { outline: none; border-color: var(--accent); }
+.cost-result { font-family: var(--font-mono); font-size: 12px; color: var(--text); text-align: right; padding: 6px 8px; background: rgba(255,107,0,0.06); border-radius: 5px; border: 1px solid rgba(255,107,0,0.15); }
+.cost-add-row { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+.cost-add-row select { flex: 1; background: var(--card); border: 1px solid var(--border); border-radius: 5px; padding: 6px 8px; color: var(--text); font-family: var(--font-body); font-size: 12px; }
+.cost-add-row select:focus { outline: none; border-color: var(--accent); }
+
+/* ── SUMMARY PANEL ── */
+.summary-panel { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; position: sticky; top: 76px; }
+.summary-line { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.summary-line:last-child { border-bottom: none; }
+.summary-line.total { font-weight: 700; font-size: 16px; color: var(--accent); margin-top: 4px; padding-top: 10px; border-top: 2px solid var(--border); border-bottom: none; }
+.summary-line .val { font-family: var(--font-mono); }
+.margin-slider { width: 100%; accent-color: var(--accent); margin: 4px 0; }
+
+/* ── QUOTATION TAB ── */
+.quotation-line { display: grid; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.quotation-line-standard { grid-template-columns: 2fr 80px 100px 90px; }
+.quotation-line-custom { grid-template-columns: 2fr 70px 60px 90px 28px; }
+.ql-label { font-size: 13px; color: var(--text); }
+.ql-input { background: var(--surface); border: 1px solid var(--border); border-radius: 5px; padding: 6px 8px; color: var(--text); font-family: var(--font-body); font-size: 13px; width: 100%; }
+.ql-input:focus { outline: none; border-color: var(--accent); }
+.ql-num { font-family: var(--font-mono); font-size: 13px; color: var(--muted); text-align: right; padding: 6px 8px; }
+.ql-total { font-family: var(--font-mono); font-size: 13px; color: var(--text); text-align: right; padding: 6px 8px; background: rgba(255,255,255,0.03); border-radius: 4px; }
+
+/* ── MODE TOGGLE ── */
+.mode-toggle { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+.mode-btn { padding: 7px 16px; background: transparent; border: none; color: var(--muted); font-family: var(--font-body); font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.15s; }
+.mode-btn.active { background: var(--accent); color: #fff; }
+
+/* ── TOGGLE ── */
+.toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; }
+.toggle-label { font-size: 13px; color: var(--text); }
+.toggle-sub { font-size: 11px; color: var(--muted); margin-top: 1px; }
+.toggle { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
+.toggle input { opacity: 0; width: 0; height: 0; }
+.toggle-slider { position: absolute; inset: 0; background: var(--border); border-radius: 20px; cursor: pointer; transition: background 0.2s; }
+.toggle-slider:before { content: ''; position: absolute; width: 14px; height: 14px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: transform 0.2s; }
+.toggle input:checked + .toggle-slider { background: var(--accent); }
+.toggle input:checked + .toggle-slider:before { transform: translateX(16px); }
+
+/* ── BADGE ── */
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.badge-draft { background: rgba(136,136,136,0.15); color: var(--muted); }
+.badge-sent { background: rgba(255,179,71,0.15); color: var(--accent2); }
+.badge-won { background: rgba(62,207,142,0.15); color: var(--green); }
+.badge-lost { background: rgba(255,68,68,0.15); color: var(--red); }
+
+/* ── REVISION ── */
+.revision-tag { font-family: var(--font-mono); font-size: 11px; background: rgba(255,107,0,0.1); color: var(--accent); padding: 2px 7px; border-radius: 4px; border: 1px solid rgba(255,107,0,0.2); }
+
+/* ── UPLOAD ZONE ── */
+.upload-zone { border: 2px dashed var(--border); border-radius: 8px; padding: 24px; text-align: center; cursor: pointer; transition: all 0.15s; color: var(--muted); font-size: 13px; }
+.upload-zone:hover, .upload-zone.dragover { border-color: var(--accent); color: var(--accent); background: rgba(255,107,0,0.04); }
+.upload-zone .icon { font-size: 28px; margin-bottom: 8px; }
+
+/* ── TOAST ── */
+.toast { position: fixed; bottom: 24px; right: 24px; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 12px 18px; font-size: 13px; z-index: 1000; transform: translateY(80px); opacity: 0; transition: all 0.25s; pointer-events: none; }
+.toast.show { transform: translateY(0); opacity: 1; }
+.toast.success { border-color: var(--green); color: var(--green); }
+.toast.error { border-color: var(--red); color: var(--red); }
+
+/* ── EMPTY STATE ── */
+.empty-state { text-align: center; padding: 80px 40px; color: var(--muted); }
+.empty-state .icon { font-size: 48px; margin-bottom: 16px; opacity: 0.3; }
+.empty-state h3 { font-size: 18px; color: var(--text); margin-bottom: 8px; }
+.empty-state p { font-size: 13px; }
+
+/* ── MODAL ── */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 500; display: none; align-items: center; justify-content: center; padding: 20px; }
+.modal-overlay.active { display: flex; }
+.modal { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; width: 100%; max-width: 520px; max-height: 90vh; overflow-y: auto; }
+.modal-title { font-size: 16px; font-weight: 700; margin-bottom: 20px; }
+.modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
+
+/* ── MISC ── */
+.divider { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+.text-muted { color: var(--muted); }
+.text-accent { color: var(--accent); }
+.text-mono { font-family: var(--font-mono); }
+.flex { display: flex; }
+.gap-8 { gap: 8px; }
+.gap-12 { gap: 12px; }
+.items-center { align-items: center; }
+.justify-between { justify-content: space-between; }
+.w-full { width: 100%; }
+.mt-8 { margin-top: 8px; }
+.mt-12 { margin-top: 12px; }
+.info-box { background: rgba(255,107,0,0.06); border: 1px solid rgba(255,107,0,0.15); border-radius: 6px; padding: 10px 14px; font-size: 12px; color: var(--muted); }
+
+/* ── CALCS LAYOUT ── */
+.calcs-layout { display: grid; grid-template-columns: 1fr 320px; gap: 16px; align-items: start; }
+@media (max-width: 1100px) { .calcs-layout { grid-template-columns: 1fr; } }
+
+/* ── SETTINGS PAGE ── */
+.settings-rate-grid { display: grid; grid-template-columns: 1fr 120px; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.settings-rate-grid:last-child { border-bottom: none; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="logo"><span>BAMA</span> QUOTE BUILDER <span style="font-size:11px;color:var(--subtle);margin-left:8px;font-family:var(--font-mono)">OFFLINE</span></div>
+  <div class="topbar-right">
+    <button class="btn btn-ghost btn-sm" onclick="openSettings()">⚙ Rates</button>
+    <button class="btn btn-ghost btn-sm" onclick="exportAllData()">↓ Export</button>
+    <button class="btn btn-primary btn-sm" onclick="saveCurrentQuote()">Save</button>
+  </div>
+</div>
+
+<div class="layout">
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <button class="btn-new-quote" onclick="newQuote()">＋ New Quote</button>
+    <div class="sidebar-section">Quotes</div>
+    <div class="quote-list" id="quoteList"></div>
+  </aside>
+
+  <!-- MAIN CONTENT -->
+  <main class="main" id="mainContent">
+    <div class="empty-state" id="emptyState">
+      <div class="icon">📋</div>
+      <h3>No quote selected</h3>
+      <p>Create a new quote or select one from the sidebar</p>
+    </div>
+    <div id="quoteEditor" style="display:none">
+      <!-- HEADER BAR -->
+      <div class="flex items-center justify-between gap-12" style="margin-bottom:20px;flex-wrap:wrap">
+        <div class="flex items-center gap-8" style="flex-wrap:wrap">
+          <div style="font-family:var(--font-display);font-size:28px" id="editorRef">Q260601</div>
+          <span class="revision-tag" id="editorRev">Rev A</span>
+          <span class="badge badge-draft" id="editorStatus">Draft</span>
+          <button class="btn btn-ghost btn-sm" onclick="addRevision()" title="Add revision">+ Rev</button>
+        </div>
+        <div class="flex gap-8">
+          <select class="cost-input" style="width:120px" id="statusSelect" onchange="setStatus(this.value)">
+            <option value="draft">Draft</option>
+            <option value="sent">Sent</option>
+            <option value="won">Won</option>
+            <option value="lost">Lost</option>
+          </select>
+          <button class="btn btn-ghost btn-sm" onclick="deleteQuote()" style="color:var(--red);border-color:var(--red)">Delete</button>
+        </div>
+      </div>
+
+      <!-- TABS -->
+      <div class="tab-bar">
+        <button class="tab-btn active" onclick="switchTab('header',this)">📄 Header</button>
+        <button class="tab-btn" onclick="switchTab('takeoff',this)">📐 Takeoff</button>
+        <button class="tab-btn" onclick="switchTab('calcs',this)">🧮 Calcs</button>
+        <button class="tab-btn" onclick="switchTab('quotation',this)">📋 Quotation</button>
+      </div>
+
+      <!-- ══════════════════════════════════════════
+           TAB: HEADER
+      ══════════════════════════════════════════ -->
+      <div class="tab-content active" id="tab-header">
+        <div class="form-grid form-grid-2">
+          <div class="card">
+            <div class="card-title">Quote Details</div>
+            <div class="form-grid" style="gap:10px">
+              <div class="form-grid form-grid-2">
+                <div class="field"><label>Reference</label><input type="text" id="hRef" oninput="autosave()"></div>
+                <div class="field"><label>Revision</label>
+                  <select id="hRevision" onchange="autosave()">
+                    <option>Rev A</option><option>Rev B</option><option>Rev C</option>
+                    <option>Rev D</option><option>Rev E</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-grid form-grid-2">
+                <div class="field"><label>Date</label><input type="date" id="hDate" oninput="autosave()"></div>
+                <div class="field"><label>Valid Until</label><input type="date" id="hValidUntil" oninput="autosave()"></div>
+              </div>
+              <div class="field">
+                <label>Prepared By</label>
+                <select id="hPreparedBy" onchange="autosave()">
+                  <option>Mateusz Braczyk</option>
+                  <option>Other</option>
+                </select>
+              </div>
+              <div class="field"><label>Quote Type</label>
+                <div class="mode-toggle" style="margin-top:4px">
+                  <button class="mode-btn active" id="typeBama" onclick="setQuoteType('bama')">BAMA Standard</button>
+                  <button class="mode-btn" id="typeCustom" onclick="setQuoteType('custom')">Custom Lines</button>
+                  <button class="mode-btn" id="typeBoq" onclick="setQuoteType('boq')">Client BoQ</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Client</div>
+            <div class="form-grid" style="gap:10px">
+              <div class="field"><label>Company Name</label><input type="text" id="hCompany" oninput="autosave()"></div>
+              <div class="field"><label>Contact Name</label><input type="text" id="hContact" oninput="autosave()"></div>
+              <div class="field"><label>Contact Email</label><input type="email" id="hEmail" oninput="autosave()"></div>
+              <div class="field"><label>Contact Phone</label><input type="tel" id="hPhone" oninput="autosave()"></div>
+            </div>
+          </div>
+
+          <div class="card" style="grid-column:1/-1">
+            <div class="card-title">Scope / Comments</div>
+            <div class="field">
+              <textarea id="hComments" rows="4" placeholder="Supply, delivery and carry out installation of..." oninput="autosave()"></textarea>
+            </div>
+          </div>
+
+          <!-- BoQ only -->
+          <div class="card" id="boqCard" style="grid-column:1/-1;display:none">
+            <div class="card-title">Client BoQ</div>
+            <div class="info-box" style="margin-bottom:12px">For Client BoQ quotes, enter the agreed lump sum total in Calcs → Summary. Attach the client's BoQ file below for reference.</div>
+            <div class="field"><label>BoQ Reference / Document Title</label><input type="text" id="hBoqRef" oninput="autosave()"></div>
+            <div class="upload-zone mt-12" onclick="document.getElementById('boqFileInput').click()">
+              <div class="icon">📎</div>
+              <div id="boqFileName">Click to attach client BoQ file (PDF, Excel, etc.)</div>
+            </div>
+            <input type="file" id="boqFileInput" style="display:none" onchange="handleBoqFile(this)">
+          </div>
+        </div>
+      </div>
+
+      <!-- ══════════════════════════════════════════
+           TAB: TAKEOFF
+      ══════════════════════════════════════════ -->
+      <div class="tab-content" id="tab-takeoff">
+        <div class="card">
+          <div class="section-header">
+            <div class="section-title">Steel Takeoff</div>
+            <div class="flex gap-8">
+              <button class="btn btn-ghost btn-sm" onclick="openPlanswiftImport()">↑ PlanSwift Import</button>
+              <button class="btn btn-primary btn-sm" onclick="addTakeoffRow()">+ Row</button>
+            </div>
+          </div>
+
+          <div style="overflow-x:auto">
+            <table class="data-table" id="takeoffTable">
+              <thead>
+                <tr>
+                  <th style="width:40px">#</th>
+                  <th style="min-width:180px">Section Type</th>
+                  <th style="width:100px">Length (mm)</th>
+                  <th style="width:70px">Qty</th>
+                  <th style="width:100px">kg/m</th>
+                  <th style="width:110px">Total kg</th>
+                  <th style="width:90px">£/kg</th>
+                  <th style="width:100px">Material £</th>
+                  <th style="width:32px"></th>
+                </tr>
+              </thead>
+              <tbody id="takeoffBody"></tbody>
+              <tfoot>
+                <tr>
+                  <td colspan="5" style="color:var(--muted);font-size:12px">Totals</td>
+                  <td class="num" id="takeoffTotalKg" style="font-family:var(--font-mono)">0 kg</td>
+                  <td></td>
+                  <td class="num" id="takeoffTotalCost" style="color:var(--accent);font-family:var(--font-mono)">£0.00</td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+            <div class="info-box flex-1">
+              Tip: Type section name (e.g. UB203x133x25) — kg/m pulls from steel database automatically.
+              Use PlanSwift Import to paste your exported list.
+            </div>
+          </div>
+        </div>
+
+        <!-- Fittings / misc material -->
+        <div class="card">
+          <div class="card-title">Additional Material</div>
+          <div class="form-grid form-grid-3">
+            <div class="field"><label>Fittings / Plates lump sum (£)</label><input type="number" id="fittingsVal" value="0" oninput="autosave();recalcAll()"></div>
+            <div class="field"><label>Misc Material (£)</label><input type="number" id="miscMaterialVal" value="0" oninput="autosave();recalcAll()"></div>
+            <div class="field"><label>Notes</label><input type="text" id="miscMaterialNote" placeholder="e.g. plates, bolts, fixings" oninput="autosave()"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══════════════════════════════════════════
+           TAB: CALCS
+      ══════════════════════════════════════════ -->
+      <div class="tab-content" id="tab-calcs">
+        <div class="calcs-layout">
+          <div id="calcsCostBlocks">
+
+            <!-- INSTALLATION -->
+            <div class="cost-block" id="block-installation">
+              <div class="cost-block-header" onclick="toggleBlock('installation')">
+                <div class="cost-block-title">🏗 Installation <span style="font-size:11px;color:var(--muted);font-weight:400;margin-left:4px">(excl. margin)</span></div>
+                <div class="cost-block-total" id="total-installation">£0.00</div>
+              </div>
+              <div class="cost-block-body" id="body-installation">
+                <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Days on site: <input type="number" class="cost-input" id="inst-days" style="width:60px;display:inline-block" value="0" oninput="recalcAll()"> &nbsp; No. of operatives: <input type="number" class="cost-input" id="inst-operatives" style="width:50px;display:inline-block" value="2" oninput="recalcAll()"></div>
+                <div id="labourRows"></div>
+                <div class="cost-add-row">
+                  <select id="labourTypeSelect">
+                    <option value="">-- Add labour type --</option>
+                    <option value="supervisor">Supervisor</option>
+                    <option value="erector">Erector</option>
+                    <option value="slinger">Slinger</option>
+                    <option value="welder">Welder</option>
+                    <option value="labour">General Labour</option>
+                  </select>
+                  <button class="btn btn-ghost btn-sm" onclick="addLabourRow()">+ Add</button>
+                </div>
+                <hr class="divider">
+                <div style="font-size:11px;color:var(--muted);margin-bottom:6px;font-weight:600">PLANT & EQUIPMENT</div>
+                <div id="plantRows"></div>
+                <div class="cost-add-row">
+                  <select id="plantTypeSelect">
+                    <option value="">-- Add plant/equipment --</option>
+                    <option value="genie">Genie Lift / Boom</option>
+                    <option value="crane">Crane (per day)</option>
+                    <option value="mewp">MEWP</option>
+                    <option value="scaffold">Tower Scaffold</option>
+                    <option value="van">Van</option>
+                    <option value="fuel">Fuel</option>
+                    <option value="tools">Tools</option>
+                    <option value="lodging">Lodging (per person/night)</option>
+                    <option value="other_plant">Other</option>
+                  </select>
+                  <button class="btn btn-ghost btn-sm" onclick="addPlantRow()">+ Add</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- FABRICATION -->
+            <div class="cost-block" id="block-fabrication">
+              <div class="cost-block-header" onclick="toggleBlock('fabrication')">
+                <div class="cost-block-title">🔧 Fabrication</div>
+                <div class="cost-block-total" id="total-fabrication">£0.00</div>
+              </div>
+              <div class="cost-block-body" id="body-fabrication">
+                <div class="cost-row cost-row-4">
+                  <span class="cost-label">Workshop fabrication</span>
+                  <input type="number" class="cost-input" id="fab-hours" value="0" placeholder="hrs" oninput="recalcAll()">
+                  <input type="number" class="cost-input" id="fab-rate" value="45" placeholder="£/hr" oninput="recalcAll()">
+                  <div class="cost-result" id="fab-result">£0.00</div>
+                </div>
+                <div class="cost-row cost-row-4">
+                  <span class="cost-label">Design / drawings</span>
+                  <input type="number" class="cost-input" id="design-hours" value="0" placeholder="hrs" oninput="recalcAll()">
+                  <input type="number" class="cost-input" id="design-rate" value="50" placeholder="£/hr" oninput="recalcAll()">
+                  <div class="cost-result" id="design-result">£0.00</div>
+                </div>
+                <div class="cost-row cost-row-4">
+                  <span class="cost-label">Approval &amp; Fab pack</span>
+                  <input type="number" class="cost-input" id="fabpack-hours" value="0" placeholder="hrs" oninput="recalcAll()">
+                  <input type="number" class="cost-input" id="fabpack-rate" value="50" placeholder="£/hr" oninput="recalcAll()">
+                  <div class="cost-result" id="fabpack-result">£0.00</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- PAINTING -->
+            <div class="cost-block" id="block-painting">
+              <div class="cost-block-header" onclick="toggleBlock('painting')">
+                <div class="cost-block-title">🎨 Painting / Finishing</div>
+                <div class="cost-block-total" id="total-painting">£0.00</div>
+              </div>
+              <div class="cost-block-body" id="body-painting">
+                <div id="paintingRows"></div>
+                <div class="cost-add-row">
+                  <select id="paintTypeSelect">
+                    <option value="">-- Add finish type --</option>
+                    <option value="workshop_spray">Workshop Spray (£/hr)</option>
+                    <option value="powder_coat">Powder Coating (£/tonne)</option>
+                    <option value="site_paint">Site Painting (£/hr)</option>
+                    <option value="primer">Primer (£/hr)</option>
+                    <option value="intumescent">Intumescent (£/m²)</option>
+                    <option value="galvanise">Galvanising (£/tonne)</option>
+                  </select>
+                  <button class="btn btn-ghost btn-sm" onclick="addPaintRow()">+ Add</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- SURVEY -->
+            <div class="cost-block" id="block-survey">
+              <div class="cost-block-header" onclick="toggleBlock('survey')">
+                <div class="cost-block-title">📏 Survey</div>
+                <div class="cost-block-total" id="total-survey">£0.00</div>
+              </div>
+              <div class="cost-block-body" id="body-survey">
+                <div class="cost-row cost-row-5">
+                  <span class="cost-label">Visits</span>
+                  <input type="number" class="cost-input" id="survey-visits" value="0" placeholder="visits" oninput="recalcAll()">
+                  <input type="number" class="cost-input" id="survey-visitors" value="1" placeholder="people" oninput="recalcAll()">
+                  <input type="number" class="cost-input" id="survey-rate" value="250" placeholder="£/person" oninput="recalcAll()">
+                  <div class="cost-result" id="survey-result">£0.00</div>
+                </div>
+                <div class="cost-row cost-row-5" style="margin-top:6px">
+                  <span class="cost-label">Parking / charges</span>
+                  <input type="number" class="cost-input" id="survey-parking" value="0" placeholder="£" oninput="recalcAll()">
+                  <span></span><span></span>
+                  <div class="cost-result" id="survey-parking-result">£0.00</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- DELIVERY -->
+            <div class="cost-block" id="block-delivery">
+              <div class="cost-block-header" onclick="toggleBlock('delivery')">
+                <div class="cost-block-title">🚛 Delivery</div>
+                <div class="cost-block-total" id="total-delivery">£0.00</div>
+              </div>
+              <div class="cost-block-body" id="body-delivery">
+                <div id="deliveryRows"></div>
+                <div class="cost-add-row">
+                  <select id="deliveryTypeSelect">
+                    <option value="">-- Add vehicle --</option>
+                    <option value="rigid">Rigid Lorry</option>
+                    <option value="artic">Articulated Lorry</option>
+                    <option value="transit">Transit Van</option>
+                    <option value="hiab">HIAB</option>
+                    <option value="other_delivery">Other</option>
+                  </select>
+                  <button class="btn btn-ghost btn-sm" onclick="addDeliveryRow()">+ Add</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- PRELIMS -->
+            <div class="cost-block" id="block-prelims">
+              <div class="cost-block-header" onclick="toggleBlock('prelims')">
+                <div class="cost-block-title">📋 Prelims</div>
+                <div class="cost-block-total" id="total-prelims">£0.00</div>
+              </div>
+              <div class="cost-block-body" id="body-prelims">
+                <div id="prelimRows"></div>
+                <div class="cost-add-row">
+                  <select id="prelimTypeSelect">
+                    <option value="">-- Add prelim item --</option>
+                    <option value="proj_manager">Project Manager (per day)</option>
+                    <option value="hs_officer">H&amp;S Officer (per day)</option>
+                    <option value="site_manager">Site Manager (per day)</option>
+                    <option value="rams">RAMS</option>
+                    <option value="ppe">PPE</option>
+                    <option value="logistics">Logistics</option>
+                    <option value="weld_inspect">Welding Inspections</option>
+                    <option value="other_prelim">Other</option>
+                  </select>
+                  <button class="btn btn-ghost btn-sm" onclick="addPrelimRow()">+ Add</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- PURLINS -->
+            <div class="cost-block" id="block-purlins">
+              <div class="cost-block-header" onclick="toggleBlock('purlins')">
+                <div class="cost-block-title">🪵 Purlins Installation</div>
+                <div class="cost-block-total" id="total-purlins">£0.00</div>
+              </div>
+              <div class="cost-block-body" id="body-purlins">
+                <div class="cost-row cost-row-4">
+                  <span class="cost-label">Metrage</span>
+                  <input type="number" class="cost-input" id="purlins-m" value="0" placeholder="m" oninput="recalcAll()">
+                  <input type="number" class="cost-input" id="purlins-rate" value="0" placeholder="£/m" oninput="recalcAll()">
+                  <div class="cost-result" id="purlins-result">£0.00</div>
+                </div>
+              </div>
+            </div>
+
+          </div><!-- end calcsCostBlocks -->
+
+          <!-- SUMMARY PANEL -->
+          <div>
+            <div class="summary-panel">
+              <div style="font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);margin-bottom:14px;font-weight:600">Cost Summary</div>
+
+              <div class="summary-line">
+                <span>Material</span>
+                <span class="val" id="sum-material">£0.00</span>
+              </div>
+              <div class="summary-line">
+                <span>Installation</span>
+                <span class="val" id="sum-installation">£0.00</span>
+              </div>
+              <div class="summary-line">
+                <span>Fabrication</span>
+                <span class="val" id="sum-fabrication">£0.00</span>
+              </div>
+              <div class="summary-line">
+                <span>Painting / Finishing</span>
+                <span class="val" id="sum-painting">£0.00</span>
+              </div>
+              <div class="summary-line">
+                <span>Survey</span>
+                <span class="val" id="sum-survey">£0.00</span>
+              </div>
+              <div class="summary-line">
+                <span>Delivery</span>
+                <span class="val" id="sum-delivery">£0.00</span>
+              </div>
+              <div class="summary-line">
+                <span>Prelims</span>
+                <span class="val" id="sum-prelims">£0.00</span>
+              </div>
+              <div class="summary-line">
+                <span>Purlins</span>
+                <span class="val" id="sum-purlins">£0.00</span>
+              </div>
+
+              <hr class="divider">
+              <div class="summary-line">
+                <span>Sub-total</span>
+                <span class="val" id="sum-subtotal">£0.00</span>
+              </div>
+
+              <div style="margin:10px 0 4px">
+                <div class="flex items-center justify-between">
+                  <span style="font-size:12px;color:var(--muted)">Margin %</span>
+                  <span style="font-family:var(--font-mono);font-size:12px;color:var(--accent)" id="marginPct">20%</span>
+                </div>
+                <input type="range" class="margin-slider" id="marginSlider" min="0" max="50" value="20" step="1" oninput="recalcAll()">
+              </div>
+              <div class="summary-line">
+                <span>Margin</span>
+                <span class="val" id="sum-margin">£0.00</span>
+              </div>
+
+              <div class="summary-line total">
+                <span>TOTAL</span>
+                <span class="val" id="sum-total">£0.00</span>
+              </div>
+
+              <hr class="divider">
+              <div class="toggle-row">
+                <div>
+                  <div class="toggle-label">Show Deposit on PDF</div>
+                  <div class="toggle-sub">Internal calc — hide from client by default</div>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="showDeposit" onchange="recalcAll()">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div id="depositSection" style="display:none">
+                <div class="summary-line" style="margin-top:6px">
+                  <span style="font-size:12px">Deposit % <input type="number" class="cost-input" id="depositPct" value="60" style="width:55px;display:inline-block;margin-left:6px" oninput="recalcAll()"></span>
+                  <span class="val" id="sum-deposit">£0.00</span>
+                </div>
+              </div>
+
+              <hr class="divider">
+              <div style="font-size:11px;color:var(--muted);text-align:center">Internal cost only — not shown on quote PDF</div>
+              <div class="summary-line" style="margin-top:6px">
+                <span style="font-size:12px">Internal cost / kg</span>
+                <span class="val text-mono" style="font-size:12px" id="sum-cost-per-kg">—</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══════════════════════════════════════════
+           TAB: QUOTATION
+      ══════════════════════════════════════════ -->
+      <div class="tab-content" id="tab-quotation">
+        <div class="card" id="quotationBuilder">
+          <div class="section-header">
+            <div class="section-title" id="quotationModeLabel">Standard Quote Lines</div>
+            <div class="flex gap-8" id="quotationControls">
+              <button class="btn btn-ghost btn-sm" id="addCustomLineBtn" onclick="addCustomLine()" style="display:none">+ Add Line</button>
+            </div>
+          </div>
+
+          <!-- standard mode header -->
+          <div id="quotationStandardHeader" style="display:grid;grid-template-columns:2fr 80px 100px 90px;gap:8px;padding:6px 0;border-bottom:2px solid var(--accent);margin-bottom:4px">
+            <div style="font-size:11px;color:var(--muted);font-weight:600">DESCRIPTION</div>
+            <div style="font-size:11px;color:var(--muted);font-weight:600;text-align:right">QTY</div>
+            <div style="font-size:11px;color:var(--muted);font-weight:600;text-align:right">UNIT PRICE</div>
+            <div style="font-size:11px;color:var(--muted);font-weight:600;text-align:right">AMOUNT</div>
+          </div>
+          <!-- custom mode header -->
+          <div id="quotationCustomHeader" style="display:none;grid-template-columns:2fr 70px 60px 90px 28px;gap:8px;padding:6px 0;border-bottom:2px solid var(--accent);margin-bottom:4px">
+            <div style="font-size:11px;color:var(--muted);font-weight:600">DESCRIPTION</div>
+            <div style="font-size:11px;color:var(--muted);font-weight:600;text-align:right">QTY</div>
+            <div style="font-size:11px;color:var(--muted);font-weight:600;text-align:right">UNIT</div>
+            <div style="font-size:11px;color:var(--muted);font-weight:600;text-align:right">UNIT PRICE</div>
+            <div></div>
+          </div>
+
+          <div id="quotationLines"></div>
+
+          <!-- totals -->
+          <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px">
+            <div style="display:grid;grid-template-columns:1fr 120px;gap:6px;max-width:320px;margin-left:auto">
+              <span style="font-size:13px;color:var(--muted)">Subtotal (excl. VAT)</span>
+              <span style="font-family:var(--font-mono);text-align:right" id="qlSubtotal">£0.00</span>
+              <span style="font-size:13px;font-weight:700">TOTAL</span>
+              <span style="font-family:var(--font-mono);font-weight:700;color:var(--accent);text-align:right;font-size:15px" id="qlTotal">£0.00</span>
+              <div id="depositLineRow" style="display:none;grid-column:1/-1;margin-top:4px;padding-top:4px;border-top:1px dashed var(--border)">
+                <div style="display:grid;grid-template-columns:1fr 120px;gap:6px">
+                  <span style="font-size:12px;color:var(--muted)" id="depositLineLabel">Deposit (60%)</span>
+                  <span style="font-family:var(--font-mono);text-align:right;font-size:12px;color:var(--accent2)" id="qlDeposit">£0.00</span>
+                </div>
+              </div>
+            </div>
+            <div style="margin-top:10px;font-size:11px;color:var(--muted)">All quotes are VAT exclusive</div>
+          </div>
+        </div>
+
+        <!-- Scope repeat for PDF reference -->
+        <div class="card">
+          <div class="card-title">Scope on Quote</div>
+          <div class="field">
+            <textarea id="qScope" rows="3" placeholder="Scope text as it will appear on the PDF quote..." oninput="autosave()"></textarea>
+          </div>
+          <div class="info-box mt-8">This text appears under "Comments or Special Instructions" on the client-facing PDF.</div>
+        </div>
+      </div>
+
+    </div><!-- end quoteEditor -->
+  </main>
+</div>
+
+<!-- PLANSWIFT IMPORT MODAL -->
+<div class="modal-overlay" id="planswiftModal">
+  <div class="modal" style="max-width:600px">
+    <div class="modal-title">📐 PlanSwift Import</div>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:16px">Paste your PlanSwift exported list below, or upload the Excel file exported from PlanSwift. Expected columns: <strong>TYPE | LENGTH | WEIGHT | QUANTITY</strong></p>
+    <div class="upload-zone" onclick="document.getElementById('planswiftFile').click()" id="psDropzone">
+      <div class="icon">📂</div>
+      <div>Click to upload PlanSwift Excel export</div>
+      <div style="font-size:11px;margin-top:4px">or paste text below</div>
+    </div>
+    <input type="file" id="planswiftFile" style="display:none" accept=".xlsx,.xls,.csv" onchange="handlePlanswiftFile(this)">
+    <div class="field" style="margin-top:12px">
+      <label>Or paste tab-separated data (TYPE ↹ LENGTH ↹ WEIGHT ↹ QUANTITY)</label>
+      <textarea id="planswiftPaste" rows="8" style="font-family:var(--font-mono);font-size:12px" placeholder="UB203x133x25&#9;5349&#9;133.725&#9;2&#10;SHS100x100x8&#9;3200&#9;22.9&#9;4"></textarea>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closePlanswiftModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="importPlanswift()">Import</button>
+    </div>
+  </div>
+</div>
+
+<!-- SETTINGS MODAL -->
+<div class="modal-overlay" id="settingsModal">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-title">⚙ Default Rates</div>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:16px">These are applied as defaults when adding items. You can override them per quote.</p>
+
+    <div class="card-title" style="margin-top:8px">Labour (£/day)</div>
+    <div id="settingsLabour"></div>
+    <div class="card-title" style="margin-top:16px">Plant & Equipment (£/day)</div>
+    <div id="settingsPlant"></div>
+    <div class="card-title" style="margin-top:16px">Fabrication</div>
+    <div id="settingsFab"></div>
+    <div class="card-title" style="margin-top:16px">Material (£/kg by type)</div>
+    <div id="settingsMaterial"></div>
+    <div class="card-title" style="margin-top:16px">Delivery (£/load)</div>
+    <div id="settingsDelivery"></div>
+    <div class="card-title" style="margin-top:16px">Prelims (£ lump sum)</div>
+    <div id="settingsPrelims"></div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeSettings()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveSettings()">Save Rates</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ============================================================
+// STEEL DATABASE (kg/m lookup — matches steel-database.html)
+// ============================================================
+const STEEL_KGM = {};
+// UB
+[["127x76x13",13],["152x89x16",16],["178x102x19",19],["203x102x23",23.1],["203x133x25",25.1],["203x133x30",30],["254x102x22",22],["254x102x25",25.2],["254x102x28",28.3],["254x146x31",31.1],["254x146x37",37],["254x146x43",43],["305x102x25",24.8],["305x102x28",28.2],["305x102x33",32.8],["305x127x37",37],["305x127x42",41.9],["305x127x48",48.1],["305x165x40",40.3],["305x165x46",46.1],["305x165x54",54],["356x127x33",33.1],["356x127x39",39.1],["356x171x45",45],["356x171x51",51],["356x171x57",57],["356x171x67",67.1],["406x140x39",39],["406x140x46",46],["406x178x54",54.1],["406x178x60",60.1],["406x178x67",67.1],["406x178x74",74.2],["457x152x52",52.3],["457x152x60",59.8],["457x152x67",67.2],["457x152x74",74.2],["457x152x82",82.1],["457x191x67",67.1],["457x191x74",74.3],["457x191x82",82.1],["457x191x89",89.3],["457x191x98",98.3],["533x210x82",82.2],["533x210x92",92.1],["533x210x101",101],["533x210x109",109],["533x210x122",122],["610x229x101",101],["610x229x113",113],["610x229x125",125],["610x229x140",140],["610x305x149",149],["610x305x179",179],["610x305x238",238],["686x254x125",125],["686x254x140",140],["686x254x152",152],["686x254x170",170],["762x267x134",134],["762x267x147",147],["762x267x173",173],["762x267x197",197],["838x292x176",176],["838x292x194",194],["838x292x226",226],["914x305x201",201],["914x305x224",224],["914x305x253",253],["914x305x289",289],["914x419x343",343],["914x419x388",388],["1016x305x222",222],["1016x305x249",249],["1016x305x272",272],["1016x305x314",314],["1016x305x349",349],["1016x305x393",393],["1016x305x438",438],["1016x305x487",487]].forEach(([k,v])=>{ STEEL_KGM['UB'+k]=v; STEEL_KGM['UB'+k.replace(/x/g,'*')]=v; });
+// UC
+[["152x152x23",23],["152x152x30",30],["152x152x37",37],["152x152x44",44],["152x152x51",51],["203x203x46",46.1],["203x203x52",52],["203x203x60",60],["203x203x71",71],["203x203x86",86.1],["203x203x100",100],["203x203x127",127],["254x254x73",73.1],["254x254x89",88.9],["254x254x107",107.1],["254x254x132",132],["254x254x167",167.1],["305x305x97",96.9],["305x305x118",117.9],["305x305x137",136.9],["305x305x158",158.1],["305x305x198",198.1],["305x305x240",240],["305x305x283",283],["356x368x129",129],["356x368x153",152.9],["356x368x177",177],["356x368x202",202],["356x406x235",235.1],["356x406x287",287.1],["356x406x340",339.9],["356x406x393",393],["356x406x467",467],["356x406x551",551],["356x406x634",633.9]].forEach(([k,v])=>{ STEEL_KGM['UC'+k]=v; STEEL_KGM['UC'+k.replace(/x/g,'*')]=v; });
+// SHS
+[["20x20x2",1.12],["25x25x2.5",1.74],["30x30x2.5",2.14],["40x40x3",3.45],["40x40x4",4.46],["40x40x5",5.4],["40x40x6.3",null],["50x50x3",4.39],["50x50x4",5.72],["50x50x5",6.97],["50x50x6.3",8.49],["60x60x4",6.97],["60x60x5",8.54],["60x60x6.3",10.5],["60x60x8",12.8],["70x70x5",10.1],["70x70x6.3",12.5],["70x70x8",15.4],["80x80x5",11.7],["80x80x6.3",14.4],["80x80x8",17.8],["90x90x5",13.3],["90x90x6.3",16.4],["90x90x8",20.4],["100x100x5",14.8],["100x100x6.3",18.4],["100x100x8",22.9],["100x100x10",27.9],["120x120x5",18],["120x120x6.3",22.3],["120x120x8",27.9],["120x120x10",34.2],["150x150x6.3",28.3],["150x150x8",35.4],["150x150x10",43.6],["150x150x12.5",53.4],["200x200x8",47.7],["200x200x10",59.1],["200x200x12.5",72.8],["250x250x10",74.9],["300x300x10",90.7],["300x300x12.5",112]].forEach(([k,v])=>{ if(v){STEEL_KGM['SHS'+k]=v; STEEL_KGM['SHS'+k.replace(/x/g,'*')]=v;} });
+// RHS
+[["50x25x2.5",2.72],["60x40x3",4.46],["60x40x4",5.82],["80x40x4",7.07],["80x40x5",8.66],["80x60x4",7.72],["100x50x4",8.96],["100x50x5",11],["100x50x6.3",13.5],["100x60x5",11.7],["120x60x5",13.3],["120x60x6.3",16.4],["120x80x5",14.8],["150x100x5",18.7],["150x100x6.3",23.3],["150x100x8",29.1],["150x100x10",35.6],["160x80x5",18],["160x80x6.3",22.3],["160x80x8",27.9],["200x100x6.3",28.3],["200x100x8",35.4],["200x100x10",43.6],["250x150x8",47.7],["300x200x8",60.3],["400x200x10",90.7]].forEach(([k,v])=>{ STEEL_KGM['RHS'+k]=v; STEEL_KGM['RHS'+k.replace(/x/g,'*')]=v; });
+// CHS
+[["21.3x3.2",1.43],["26.9x3.2",1.87],["33.7x3.2",2.41],["42.4x3.2",3.09],["42.4x4",3.79],["48.3x3.2",3.56],["48.3x4",4.37],["48.3x5",5.34],["60.3x3.2",4.51],["60.3x4",5.55],["60.3x5",6.82],["76.1x3.2",5.75],["76.1x4",7.11],["76.1x5",8.77],["88.9x3.2",6.76],["88.9x4",8.38],["88.9x5",10.3],["88.9x6.3",12.8],["114.3x5",13.5],["114.3x6.3",16.8],["139.7x5",16.6],["139.7x6.3",20.7],["139.7x8",26],["168.3x6.3",25.2],["168.3x8",31.6],["193.7x6.3",29.1],["219.1x6.3",33.1],["273x8",52.3],["323.9x8",62.3]].forEach(([k,v])=>{ STEEL_KGM['CHS'+k]=v; STEEL_KGM['CHS'+k.replace(/x/g,'*')]=v; });
+// PFC
+[["430x100",64.4],["380x100",54],["300x100",45.5],["300x90",41.4],["260x90",34.8],["260x75",27.6],["230x90",32.2],["230x75",25.7],["200x90",29.7],["200x75",23.4],["180x90",26.1],["180x75",20.3],["150x90",23.9],["150x75",17.9],["125x65",14.8],["100x50",10.2]].forEach(([k,v])=>{ STEEL_KGM['PFC'+k]=v; STEEL_KGM['PFC'+k.replace(/x/g,'*')]=v; });
+// RSA / Angles — map common formats
+[["75x75x8",8.36],["100x50x8",9.94],["100x65x8",9.94],["100x75x8",10.6],["125x75x10",15],["150x90x10",17],["150x75x10",17],["200x150x15",39.6],["200x100x12",27.3]].forEach(([k,v])=>{ STEEL_KGM['RSA'+k]=v; STEEL_KGM['RSA'+k.replace(/x/g,'*')]=v; STEEL_KGM['EA'+k]=v; });
+// Flat bar
+[["10x100",7.85],["10x150",11.8],["10x200",15.7],["12x100",9.42],["15x100",11.8],["15x150",17.7],["20x100",15.7]].forEach(([k,v])=>{ STEEL_KGM['FLT'+k]=v; STEEL_KGM['FLT'+k.replace(/x/g,'*')]=v; STEEL_KGM['FLAT'+k]=v; });
+
+function lookupKgM(type) {
+  if (!type) return null;
+  const clean = type.trim().toUpperCase().replace(/\s+/g,'').replace(/[*×]/g,'x');
+  if (STEEL_KGM[clean]) return STEEL_KGM[clean];
+  // try without prefix
+  for (const [k,v] of Object.entries(STEEL_KGM)) {
+    if (k.toUpperCase() === clean) return v;
+  }
+  return null;
+}
+
+// ============================================================
+// DEFAULT RATES
+// ============================================================
+const DEFAULT_RATES = {
+  labour: {
+    supervisor: { label: 'Supervisor', rate: 350 },
+    erector:    { label: 'Erector',    rate: 280 },
+    slinger:    { label: 'Slinger',    rate: 250 },
+    welder:     { label: 'Welder',     rate: 300 },
+    labour:     { label: 'General Labour', rate: 220 }
+  },
+  plant: {
+    genie:    { label: 'Genie Lift / Boom', rate: 160 },
+    crane:    { label: 'Crane (per day)',    rate: 1850 },
+    mewp:     { label: 'MEWP',              rate: 200 },
+    scaffold: { label: 'Tower Scaffold',    rate: 150 },
+    van:      { label: 'Van',               rate: 25 },
+    fuel:     { label: 'Fuel',              rate: 25 },
+    tools:    { label: 'Tools',             rate: 25 },
+    lodging:  { label: 'Lodging (per person/night)', rate: 80 },
+    other_plant: { label: 'Other', rate: 0 }
+  },
+  fab: {
+    fab_rate:    { label: 'Fabrication (£/hr)',       rate: 45 },
+    design_rate: { label: 'Design / drawings (£/hr)', rate: 50 },
+    fabpack_rate:{ label: 'Approval & Fab Pack (£/hr)', rate: 50 }
+  },
+  material: {
+    ub_uc:   { label: 'UB / UC (£/kg)',           rate: 1.10 },
+    hollow:  { label: 'SHS / RHS / CHS (£/kg)',   rate: 1.40 },
+    angle:   { label: 'Angles / PFC (£/kg)',       rate: 1.30 },
+    flat:    { label: 'Flat Bar / Plate (£/kg)',   rate: 1.40 },
+    default: { label: 'Other / Unknown (£/kg)',    rate: 1.30 }
+  },
+  delivery: {
+    rigid:   { label: 'Rigid Lorry',       rate: 1100 },
+    artic:   { label: 'Articulated Lorry', rate: 1800 },
+    transit: { label: 'Transit Van',       rate: 250 },
+    hiab:    { label: 'HIAB',              rate: 1400 },
+    other_delivery: { label: 'Other',      rate: 0 }
+  },
+  prelims: {
+    proj_manager: { label: 'Project Manager (£/day)',    rate: 400 },
+    hs_officer:   { label: 'H&S Officer (£/day)',        rate: 0 },
+    site_manager: { label: 'Site Manager (£/day)',       rate: 350 },
+    rams:         { label: 'RAMS (lump sum)',             rate: 120 },
+    ppe:          { label: 'PPE (lump sum)',              rate: 50 },
+    logistics:    { label: 'Logistics (lump sum)',        rate: 50 },
+    weld_inspect: { label: 'Welding Inspections',         rate: 0 },
+    other_prelim: { label: 'Other',                      rate: 0 }
+  },
+  paint: {
+    workshop_spray: { label: 'Workshop Spray (£/hr)',       rate: 90,  unit: 'hrs' },
+    powder_coat:    { label: 'Powder Coating (£/tonne)',    rate: 800, unit: 'tonnes' },
+    site_paint:     { label: 'Site Painting (£/hr)',        rate: 150, unit: 'hrs' },
+    primer:         { label: 'Primer (£/hr)',               rate: 90,  unit: 'hrs' },
+    intumescent:    { label: 'Intumescent (£/m²)',          rate: 0,   unit: 'm²' },
+    galvanise:      { label: 'Galvanising (£/tonne)',       rate: 750, unit: 'tonnes' }
+  },
+  margin: 20,
+  survey_rate: 250
+};
+
+let rates = JSON.parse(localStorage.getItem('bama_rates') || 'null') || JSON.parse(JSON.stringify(DEFAULT_RATES));
+
+function defaultRate(category, key) {
+  return rates[category]?.[key]?.rate ?? 0;
+}
+
+function sectionMaterialRate(type) {
+  if (!type) return rates.material.default.rate;
+  const t = type.toUpperCase();
+  if (t.startsWith('UB') || t.startsWith('UC')) return rates.material.ub_uc.rate;
+  if (t.startsWith('SHS') || t.startsWith('RHS') || t.startsWith('CHS')) return rates.material.hollow.rate;
+  if (t.startsWith('RSA') || t.startsWith('EA') || t.startsWith('PFC')) return rates.material.angle.rate;
+  if (t.startsWith('FLT') || t.startsWith('FLAT') || t.startsWith('PLT')) return rates.material.flat.rate;
+  return rates.material.default.rate;
+}
+
+// ============================================================
+// DATA
+// ============================================================
+let quotes = JSON.parse(localStorage.getItem('bama_quotes') || '[]');
+let currentId = null;
+
+function getQuote() { return quotes.find(q => q.id === currentId); }
+
+function newQuote() {
+  const now = new Date();
+  const yy = String(now.getFullYear()).slice(2);
+  const mm = String(now.getMonth()+1).padStart(2,'0');
+  const seq = String(quotes.filter(q=>q.ref.startsWith('Q'+yy+mm)).length + 1).padStart(2,'0');
+  const ref = `Q${yy}${mm}${seq}`;
+  const q = {
+    id: Date.now().toString(),
+    ref, revision: 'Rev A', status: 'draft', type: 'bama',
+    date: now.toISOString().slice(0,10),
+    validUntil: new Date(now.getTime()+14*86400000).toISOString().slice(0,10),
+    preparedBy: 'Mateusz Braczyk',
+    company: '', contact: '', email: '', phone: '',
+    comments: '', qScope: '', boqRef: '', boqFile: '',
+    takeoff: [],
+    fittings: 0, miscMaterial: 0, miscMaterialNote: '',
+    // calcs
+    instDays: 0, instOperatives: 2,
+    labourRows: [], plantRows: [], paintRows: [], deliveryRows: [], prelimRows: [],
+    fabHours: 0, fabRate: 45, designHours: 0, designRate: 50, fabpackHours: 0, fabpackRate: 50,
+    surveyVisits: 0, surveyVisitors: 1, surveyRate: 250, surveyParking: 0,
+    purlinM: 0, purlinRate: 0,
+    margin: 20, showDeposit: false, depositPct: 60,
+    // quotation
+    standardLines: getDefaultStandardLines(),
+    customLines: []
+  };
+  quotes.push(q);
+  saveAll();
+  selectQuote(q.id);
+  renderSidebar();
+}
+
+function getDefaultStandardLines() {
+  return [
+    { key: 'prelims',         desc: 'Prelims',                       qty: 1, price: 0 },
+    { key: 'approval_fab',    desc: 'Approval and Fabrication Pack', qty: 1, price: 0 },
+    { key: 'survey',          desc: 'Survey',                        qty: 1, price: 0 },
+    { key: 'material',        desc: 'Material cost',                 qty: 1, price: 0 },
+    { key: 'fabrication',     desc: 'Fabrication',                   qty: 1, price: 0 },
+    { key: 'painting',        desc: 'Painting / Finishing',          qty: 1, price: 0 },
+    { key: 'galvanising',     desc: 'Galvanising',                   qty: 1, price: 0 },
+    { key: 'installation',    desc: 'Installation',                  qty: 1, price: 0 },
+    { key: 'delivery',        desc: 'Delivery',                      qty: 1, price: 0 }
+  ];
+}
+
+function saveAll() {
+  localStorage.setItem('bama_quotes', JSON.stringify(quotes));
+}
+
+function autosave() {
+  const q = getQuote(); if (!q) return;
+  q.ref        = document.getElementById('hRef')?.value || q.ref;
+  q.revision   = document.getElementById('hRevision')?.value || q.revision;
+  q.date       = document.getElementById('hDate')?.value || q.date;
+  q.validUntil = document.getElementById('hValidUntil')?.value || q.validUntil;
+  q.preparedBy = document.getElementById('hPreparedBy')?.value || q.preparedBy;
+  q.company    = document.getElementById('hCompany')?.value || '';
+  q.contact    = document.getElementById('hContact')?.value || '';
+  q.email      = document.getElementById('hEmail')?.value || '';
+  q.phone      = document.getElementById('hPhone')?.value || '';
+  q.comments   = document.getElementById('hComments')?.value || '';
+  q.boqRef     = document.getElementById('hBoqRef')?.value || '';
+  q.qScope     = document.getElementById('qScope')?.value || '';
+  q.fittings   = parseFloat(document.getElementById('fittingsVal')?.value) || 0;
+  q.miscMaterial = parseFloat(document.getElementById('miscMaterialVal')?.value) || 0;
+  q.miscMaterialNote = document.getElementById('miscMaterialNote')?.value || '';
+  updateSidebarItem(q);
+  saveAll();
+}
+
+function saveCurrentQuote() {
+  autosave();
+  const q = getQuote(); if (!q) return;
+  // save calcs fields
+  q.instDays       = parseFloat(document.getElementById('inst-days')?.value) || 0;
+  q.instOperatives = parseFloat(document.getElementById('inst-operatives')?.value) || 2;
+  q.fabHours       = parseFloat(document.getElementById('fab-hours')?.value) || 0;
+  q.fabRate        = parseFloat(document.getElementById('fab-rate')?.value) || 45;
+  q.designHours    = parseFloat(document.getElementById('design-hours')?.value) || 0;
+  q.designRate     = parseFloat(document.getElementById('design-rate')?.value) || 50;
+  q.fabpackHours   = parseFloat(document.getElementById('fabpack-hours')?.value) || 0;
+  q.fabpackRate    = parseFloat(document.getElementById('fabpack-rate')?.value) || 50;
+  q.surveyVisits   = parseFloat(document.getElementById('survey-visits')?.value) || 0;
+  q.surveyVisitors = parseFloat(document.getElementById('survey-visitors')?.value) || 1;
+  q.surveyRate     = parseFloat(document.getElementById('survey-rate')?.value) || 250;
+  q.surveyParking  = parseFloat(document.getElementById('survey-parking')?.value) || 0;
+  q.purlinM        = parseFloat(document.getElementById('purlins-m')?.value) || 0;
+  q.purlinRate     = parseFloat(document.getElementById('purlins-rate')?.value) || 0;
+  q.margin         = parseFloat(document.getElementById('marginSlider')?.value) || 20;
+  q.showDeposit    = document.getElementById('showDeposit')?.checked || false;
+  q.depositPct     = parseFloat(document.getElementById('depositPct')?.value) || 60;
+  saveAll();
+  toast('Quote saved', 'success');
+}
+
+function deleteQuote() {
+  if (!confirm('Delete this quote? This cannot be undone.')) return;
+  quotes = quotes.filter(q => q.id !== currentId);
+  currentId = null;
+  saveAll();
+  renderSidebar();
+  document.getElementById('quoteEditor').style.display = 'none';
+  document.getElementById('emptyState').style.display = '';
+}
+
+function setStatus(val) {
+  const q = getQuote(); if (!q) return;
+  q.status = val;
+  renderStatusBadge(q);
+  saveAll();
+}
+
+function addRevision() {
+  const q = getQuote(); if (!q) return;
+  const revs = ['Rev A','Rev B','Rev C','Rev D','Rev E'];
+  const cur = revs.indexOf(q.revision);
+  if (cur >= revs.length - 1) { toast('Max revision reached', 'error'); return; }
+  q.revision = revs[cur + 1];
+  document.getElementById('hRevision').value = q.revision;
+  document.getElementById('editorRev').textContent = q.revision;
+  saveAll();
+  toast('Revision bumped to ' + q.revision);
+}
+
+// ============================================================
+// SIDEBAR
+// ============================================================
+function renderSidebar() {
+  const list = document.getElementById('quoteList');
+  if (!quotes.length) { list.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--subtle);text-align:center">No quotes yet</div>'; return; }
+  list.innerHTML = [...quotes].reverse().map(q => `
+    <div class="quote-item ${q.id===currentId?'active':''}" onclick="selectQuote('${q.id}')">
+      <div class="quote-item-ref">${q.ref} <span style="font-size:10px;opacity:0.7">${q.revision}</span></div>
+      <div class="quote-item-name">${q.company || q.contact || 'No client'}</div>
+      <div class="quote-item-status">${statusLabel(q.status)} · ${fmtDate(q.date)}</div>
+    </div>
+  `).join('');
+}
+
+function updateSidebarItem(q) {
+  document.querySelectorAll('.quote-item').forEach(el => {
+    if (el.onclick?.toString().includes(q.id)) {
+      el.querySelector('.quote-item-ref').textContent = q.ref + ' ' + q.revision;
+      el.querySelector('.quote-item-name').textContent = q.company || q.contact || 'No client';
+    }
+  });
+}
+
+function selectQuote(id) {
+  currentId = id;
+  renderSidebar();
+  loadQuoteEditor();
+}
+
+// ============================================================
+// EDITOR LOAD
+// ============================================================
+function loadQuoteEditor() {
+  const q = getQuote(); if (!q) return;
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('quoteEditor').style.display = '';
+
+  // header
+  document.getElementById('editorRef').textContent = q.ref;
+  document.getElementById('editorRev').textContent = q.revision;
+  renderStatusBadge(q);
+
+  document.getElementById('hRef').value        = q.ref;
+  document.getElementById('hRevision').value   = q.revision;
+  document.getElementById('hDate').value       = q.date;
+  document.getElementById('hValidUntil').value = q.validUntil;
+  document.getElementById('hPreparedBy').value = q.preparedBy;
+  document.getElementById('hCompany').value    = q.company;
+  document.getElementById('hContact').value    = q.contact;
+  document.getElementById('hEmail').value      = q.email;
+  document.getElementById('hPhone').value      = q.phone;
+  document.getElementById('hComments').value   = q.comments;
+  document.getElementById('hBoqRef').value     = q.boqRef || '';
+  document.getElementById('qScope').value      = q.qScope || '';
+  document.getElementById('statusSelect').value = q.status;
+  document.getElementById('fittingsVal').value  = q.fittings || 0;
+  document.getElementById('miscMaterialVal').value = q.miscMaterial || 0;
+  document.getElementById('miscMaterialNote').value = q.miscMaterialNote || '';
+
+  setQuoteType(q.type || 'bama', false);
+
+  // calcs
+  document.getElementById('inst-days').value       = q.instDays || 0;
+  document.getElementById('inst-operatives').value  = q.instOperatives || 2;
+  document.getElementById('fab-hours').value        = q.fabHours || 0;
+  document.getElementById('fab-rate').value         = q.fabRate || 45;
+  document.getElementById('design-hours').value     = q.designHours || 0;
+  document.getElementById('design-rate').value      = q.designRate || 50;
+  document.getElementById('fabpack-hours').value    = q.fabpackHours || 0;
+  document.getElementById('fabpack-rate').value     = q.fabpackRate || 50;
+  document.getElementById('survey-visits').value    = q.surveyVisits || 0;
+  document.getElementById('survey-visitors').value  = q.surveyVisitors || 1;
+  document.getElementById('survey-rate').value      = q.surveyRate || 250;
+  document.getElementById('survey-parking').value   = q.surveyParking || 0;
+  document.getElementById('purlins-m').value        = q.purlinM || 0;
+  document.getElementById('purlins-rate').value     = q.purlinRate || 0;
+  document.getElementById('marginSlider').value     = q.margin ?? 20;
+  document.getElementById('showDeposit').checked    = q.showDeposit || false;
+  document.getElementById('depositPct').value       = q.depositPct || 60;
+
+  renderLabourRows();
+  renderPlantRows();
+  renderPaintRows();
+  renderDeliveryRows();
+  renderPrelimRows();
+  renderTakeoff();
+  recalcAll();
+  renderQuotationLines();
+}
+
+// ============================================================
+// QUOTE TYPE
+// ============================================================
+function setQuoteType(type, save=true) {
+  ['bama','custom','boq'].forEach(t => {
+    document.getElementById('type'+t.charAt(0).toUpperCase()+t.slice(1))?.classList.toggle('active', t===type);
+  });
+  document.getElementById('boqCard').style.display = type==='boq' ? '' : 'none';
+  document.getElementById('addCustomLineBtn').style.display = type==='custom' ? '' : 'none';
+  document.getElementById('quotationModeLabel').textContent = type==='bama' ? 'Standard Quote Lines' : type==='custom' ? 'Custom Quote Lines' : 'Client BoQ — Lump Sum';
+  document.getElementById('quotationStandardHeader').style.display = type!=='custom' ? 'grid' : 'none';
+  document.getElementById('quotationCustomHeader').style.display   = type==='custom' ? 'grid' : 'none';
+  if (save) {
+    const q = getQuote(); if (q) { q.type = type; saveAll(); renderQuotationLines(); }
+  }
+}
+
+// ============================================================
+// TAKEOFF
+// ============================================================
+function renderTakeoff() {
+  const q = getQuote(); if (!q) return;
+  const body = document.getElementById('takeoffBody');
+  body.innerHTML = (q.takeoff || []).map((row,i) => takeoffRowHTML(row,i)).join('');
+  updateTakeoffTotals();
+}
+
+function takeoffRowHTML(row, i) {
+  const kgm = row.kgm || 0;
+  const totalKg = (row.length/1000) * kgm * (row.qty||1);
+  const mat = totalKg * (row.rate || 0);
+  return `<tr>
+    <td style="color:var(--muted);font-family:var(--font-mono);font-size:11px">${i+1}</td>
+    <td><input value="${row.type||''}" placeholder="e.g. UB203x133x25" oninput="updateTakeoffRow(${i},'type',this.value)" style="min-width:160px"></td>
+    <td><input type="number" value="${row.length||''}" placeholder="mm" oninput="updateTakeoffRow(${i},'length',this.value)" class="num"></td>
+    <td><input type="number" value="${row.qty||1}" oninput="updateTakeoffRow(${i},'qty',this.value)" class="num"></td>
+    <td><input type="number" value="${kgm||''}" placeholder="auto" oninput="updateTakeoffRow(${i},'kgm',this.value)" class="num" style="color:${row.kgm?'var(--text)':'var(--subtle)'}"></td>
+    <td class="num" style="color:var(--muted)">${totalKg>0?totalKg.toFixed(2):''}</td>
+    <td><input type="number" value="${row.rate||''}" placeholder="£/kg" oninput="updateTakeoffRow(${i},'rate',this.value)" class="num"></td>
+    <td class="num" style="color:${mat>0?'var(--accent)':'var(--muted)'}">${mat>0?'£'+mat.toFixed(2):''}</td>
+    <td><button class="btn-icon" onclick="removeTakeoffRow(${i})">✕</button></td>
+  </tr>`;
+}
+
+function addTakeoffRow() {
+  const q = getQuote(); if (!q) return;
+  q.takeoff.push({ type:'', length:0, qty:1, kgm:null, rate:null });
+  saveAll(); renderTakeoff(); recalcAll();
+}
+
+function updateTakeoffRow(i, field, val) {
+  const q = getQuote(); if (!q) return;
+  const row = q.takeoff[i];
+  if (field === 'type') {
+    row.type = val;
+    const kgm = lookupKgM(val);
+    if (kgm) row.kgm = kgm;
+    row.rate = row.rate || sectionMaterialRate(val);
+    // re-render this row to show auto-filled kgm
+    const tbody = document.getElementById('takeoffBody');
+    const tr = tbody.rows[i];
+    if (tr) {
+      tr.cells[4].querySelector('input').value = row.kgm || '';
+      tr.cells[4].querySelector('input').style.color = row.kgm ? 'var(--text)' : 'var(--subtle)';
+      tr.cells[6].querySelector('input').value = row.rate || '';
+    }
+  } else if (field === 'kgm') {
+    row.kgm = parseFloat(val) || null;
+  } else if (field === 'length') {
+    row.length = parseFloat(val) || 0;
+  } else if (field === 'qty') {
+    row.qty = parseFloat(val) || 1;
+  } else if (field === 'rate') {
+    row.rate = parseFloat(val) || null;
+  }
+  saveAll(); updateTakeoffTotals(); recalcAll();
+}
+
+function removeTakeoffRow(i) {
+  const q = getQuote(); if (!q) return;
+  q.takeoff.splice(i,1); saveAll(); renderTakeoff(); recalcAll();
+}
+
+function updateTakeoffTotals() {
+  const q = getQuote(); if (!q) return;
+  let totalKg = 0, totalCost = 0;
+  q.takeoff.forEach(row => {
+    const kg = (row.length/1000) * (row.kgm||0) * (row.qty||1);
+    totalKg += kg;
+    totalCost += kg * (row.rate||0);
+  });
+  document.getElementById('takeoffTotalKg').textContent = totalKg.toFixed(1) + ' kg';
+  document.getElementById('takeoffTotalCost').textContent = '£' + totalCost.toFixed(2);
+}
+
+function totalTakeoffKg() {
+  const q = getQuote(); if (!q) return 0;
+  return q.takeoff.reduce((s,row) => s + (row.length/1000)*(row.kgm||0)*(row.qty||1), 0);
+}
+
+function totalTakeoffCost() {
+  const q = getQuote(); if (!q) return 0;
+  const fittings = parseFloat(document.getElementById('fittingsVal')?.value) || 0;
+  const misc = parseFloat(document.getElementById('miscMaterialVal')?.value) || 0;
+  return q.takeoff.reduce((s,row) => s + (row.length/1000)*(row.kgm||0)*(row.qty||1)*(row.rate||0), 0) + fittings + misc;
+}
+
+// ============================================================
+// DYNAMIC ROWS — generic helpers
+// ============================================================
+function rowHTML(id, label, qty, rate, result, extraAttrs='') {
+  return `<div class="cost-row cost-row-4" id="dynrow-${id}" ${extraAttrs}>
+    <span class="cost-label">${label}</span>
+    <input type="number" class="cost-input" id="qty-${id}" value="${qty}" oninput="recalcAll()">
+    <input type="number" class="cost-input" id="rate-${id}" value="${rate}" oninput="recalcAll()">
+    <div style="display:flex;gap:4px;align-items:center">
+      <div class="cost-result" id="res-${id}">${result}</div>
+      <button class="btn-icon" onclick="removeDynRow('${id}')" style="flex-shrink:0;height:28px">✕</button>
+    </div>
+  </div>`;
+}
+
+function removeDynRow(id) {
+  const q = getQuote(); if (!q) return;
+  ['labourRows','plantRows','paintRows','deliveryRows','prelimRows'].forEach(arr => {
+    q[arr] = (q[arr]||[]).filter(r=>r.id!==id);
+  });
+  document.getElementById('dynrow-'+id)?.remove();
+  saveAll(); recalcAll();
+}
+
+// ============================================================
+// LABOUR ROWS
+// ============================================================
+function addLabourRow() {
+  const q = getQuote(); if (!q) return;
+  const type = document.getElementById('labourTypeSelect').value;
+  if (!type) return;
+  const def = rates.labour[type] || { label: type, rate: 0 };
+  const id = 'labour_'+Date.now();
+  q.labourRows = q.labourRows || [];
+  q.labourRows.push({ id, type, label: def.label, qty: 1, rate: def.rate });
+  saveAll(); renderLabourRows(); recalcAll();
+}
+
+function renderLabourRows() {
+  const q = getQuote(); if (!q) return;
+  const cont = document.getElementById('labourRows');
+  cont.innerHTML = (q.labourRows||[]).map(r =>
+    rowHTML(r.id, r.label, r.qty, r.rate, '£0.00')
+  ).join('');
+}
+
+function sumLabour() {
+  const q = getQuote(); if (!q) return 0;
+  const days = parseFloat(document.getElementById('inst-days')?.value) || 0;
+  return (q.labourRows||[]).reduce((s,r) => {
+    const qty = parseFloat(document.getElementById('qty-'+r.id)?.value) || r.qty || 0;
+    const rate = parseFloat(document.getElementById('rate-'+r.id)?.value) || r.rate || 0;
+    const sub = qty * rate * days;
+    const el = document.getElementById('res-'+r.id);
+    if (el) el.textContent = '£'+sub.toFixed(2);
+    return s + sub;
+  }, 0);
+}
+
+// ============================================================
+// PLANT ROWS
+// ============================================================
+function addPlantRow() {
+  const q = getQuote(); if (!q) return;
+  const type = document.getElementById('plantTypeSelect').value;
+  if (!type) return;
+  const def = rates.plant[type] || { label: type, rate: 0 };
+  const id = 'plant_'+Date.now();
+  q.plantRows = q.plantRows || [];
+  q.plantRows.push({ id, type, label: def.label, qty: 1, rate: def.rate });
+  saveAll(); renderPlantRows(); recalcAll();
+}
+
+function renderPlantRows() {
+  const q = getQuote(); if (!q) return;
+  const cont = document.getElementById('plantRows');
+  cont.innerHTML = (q.plantRows||[]).map(r =>
+    rowHTML(r.id, r.label, r.qty, r.rate, '£0.00')
+  ).join('');
+}
+
+function sumPlant() {
+  const q = getQuote(); if (!q) return 0;
+  return (q.plantRows||[]).reduce((s,r) => {
+    const qty = parseFloat(document.getElementById('qty-'+r.id)?.value) || r.qty || 0;
+    const rate = parseFloat(document.getElementById('rate-'+r.id)?.value) || r.rate || 0;
+    const sub = qty * rate;
+    const el = document.getElementById('res-'+r.id);
+    if (el) el.textContent = '£'+sub.toFixed(2);
+    return s + sub;
+  }, 0);
+}
+
+// ============================================================
+// PAINTING ROWS
+// ============================================================
+function addPaintRow() {
+  const q = getQuote(); if (!q) return;
+  const type = document.getElementById('paintTypeSelect').value;
+  if (!type) return;
+  const def = rates.paint[type] || { label: type, rate: 0, unit: 'hrs' };
+  const id = 'paint_'+Date.now();
+  q.paintRows = q.paintRows || [];
+  q.paintRows.push({ id, type, label: def.label, qty: 0, rate: def.rate, unit: def.unit });
+  saveAll(); renderPaintRows(); recalcAll();
+}
+
+function renderPaintRows() {
+  const q = getQuote(); if (!q) return;
+  const cont = document.getElementById('paintingRows');
+  cont.innerHTML = (q.paintRows||[]).map(r =>
+    rowHTML(r.id, `${r.label} <span style="font-size:10px;color:var(--subtle)">(${r.unit})</span>`, r.qty, r.rate, '£0.00')
+  ).join('');
+}
+
+function sumPaint() {
+  const q = getQuote(); if (!q) return 0;
+  return (q.paintRows||[]).reduce((s,r) => {
+    const qty = parseFloat(document.getElementById('qty-'+r.id)?.value) || 0;
+    const rate = parseFloat(document.getElementById('rate-'+r.id)?.value) || r.rate || 0;
+    // tonnes-based: divide kg by 1000
+    let sub = 0;
+    if (r.unit === 'tonnes') {
+      const kg = qty > 0 ? qty : totalTakeoffKg()/1000;
+      sub = kg * rate;
+      document.getElementById('qty-'+r.id).placeholder = (totalTakeoffKg()/1000).toFixed(2);
+    } else {
+      sub = qty * rate;
+    }
+    const el = document.getElementById('res-'+r.id);
+    if (el) el.textContent = '£'+sub.toFixed(2);
+    return s + sub;
+  }, 0);
+}
+
+// ============================================================
+// DELIVERY ROWS
+// ============================================================
+function addDeliveryRow() {
+  const q = getQuote(); if (!q) return;
+  const type = document.getElementById('deliveryTypeSelect').value;
+  if (!type) return;
+  const def = rates.delivery[type] || { label: type, rate: 0 };
+  const id = 'deliv_'+Date.now();
+  q.deliveryRows = q.deliveryRows || [];
+  q.deliveryRows.push({ id, type, label: def.label, qty: 1, rate: def.rate });
+  saveAll(); renderDeliveryRows(); recalcAll();
+}
+
+function renderDeliveryRows() {
+  const q = getQuote(); if (!q) return;
+  const cont = document.getElementById('deliveryRows');
+  cont.innerHTML = (q.deliveryRows||[]).map(r =>
+    rowHTML(r.id, r.label, r.qty, r.rate, '£0.00')
+  ).join('');
+}
+
+function sumDelivery() {
+  const q = getQuote(); if (!q) return 0;
+  return (q.deliveryRows||[]).reduce((s,r) => {
+    const qty = parseFloat(document.getElementById('qty-'+r.id)?.value) || r.qty || 0;
+    const rate = parseFloat(document.getElementById('rate-'+r.id)?.value) || r.rate || 0;
+    const sub = qty * rate;
+    const el = document.getElementById('res-'+r.id);
+    if (el) el.textContent = '£'+sub.toFixed(2);
+    return s + sub;
+  }, 0);
+}
+
+// ============================================================
+// PRELIM ROWS
+// ============================================================
+function addPrelimRow() {
+  const q = getQuote(); if (!q) return;
+  const type = document.getElementById('prelimTypeSelect').value;
+  if (!type) return;
+  const def = rates.prelims[type] || { label: type, rate: 0 };
+  const id = 'prelim_'+Date.now();
+  q.prelimRows = q.prelimRows || [];
+  q.prelimRows.push({ id, type, label: def.label, qty: 1, rate: def.rate });
+  saveAll(); renderPrelimRows(); recalcAll();
+}
+
+function renderPrelimRows() {
+  const q = getQuote(); if (!q) return;
+  const cont = document.getElementById('prelimRows');
+  cont.innerHTML = (q.prelimRows||[]).map(r =>
+    rowHTML(r.id, r.label, r.qty, r.rate, '£0.00')
+  ).join('');
+}
+
+function sumPrelims() {
+  const q = getQuote(); if (!q) return 0;
+  return (q.prelimRows||[]).reduce((s,r) => {
+    const qty = parseFloat(document.getElementById('qty-'+r.id)?.value) || r.qty || 0;
+    const rate = parseFloat(document.getElementById('rate-'+r.id)?.value) || r.rate || 0;
+    const sub = qty * rate;
+    const el = document.getElementById('res-'+r.id);
+    if (el) el.textContent = '£'+sub.toFixed(2);
+    return s + sub;
+  }, 0);
+}
+
+// ============================================================
+// RECALC ALL
+// ============================================================
+function fmt(n) { return '£'+n.toFixed(2); }
+
+function recalcAll() {
+  const q = getQuote(); if (!q) return;
+
+  const material    = Math.round(totalTakeoffCost() * 100) / 100;
+  const labour      = Math.round(sumLabour() * 100) / 100;
+  const plant       = Math.round(sumPlant() * 100) / 100;
+  const installation = Math.round((labour + plant) * 100) / 100;
+  const fabrication  = Math.round(((parseFloat(document.getElementById('fab-hours')?.value)||0)*(parseFloat(document.getElementById('fab-rate')?.value)||0)
+                        +(parseFloat(document.getElementById('design-hours')?.value)||0)*(parseFloat(document.getElementById('design-rate')?.value)||0)
+                        +(parseFloat(document.getElementById('fabpack-hours')?.value)||0)*(parseFloat(document.getElementById('fabpack-rate')?.value)||0)) * 100) / 100;
+  const painting     = Math.round(sumPaint() * 100) / 100;
+  const survey       = Math.round(((parseFloat(document.getElementById('survey-visits')?.value)||0)*(parseFloat(document.getElementById('survey-visitors')?.value)||1)*(parseFloat(document.getElementById('survey-rate')?.value)||0)+(parseFloat(document.getElementById('survey-parking')?.value)||0)) * 100) / 100;
+  const delivery     = Math.round(sumDelivery() * 100) / 100;
+  const prelims      = Math.round(sumPrelims() * 100) / 100;
+  const purlins      = Math.round(((parseFloat(document.getElementById('purlins-m')?.value)||0)*(parseFloat(document.getElementById('purlins-rate')?.value)||0)) * 100) / 100;
+
+  // individual results
+  document.getElementById('fab-result').textContent     = fmt((parseFloat(document.getElementById('fab-hours')?.value)||0)*(parseFloat(document.getElementById('fab-rate')?.value)||0));
+  document.getElementById('design-result').textContent  = fmt((parseFloat(document.getElementById('design-hours')?.value)||0)*(parseFloat(document.getElementById('design-rate')?.value)||0));
+  document.getElementById('fabpack-result').textContent = fmt((parseFloat(document.getElementById('fabpack-hours')?.value)||0)*(parseFloat(document.getElementById('fabpack-rate')?.value)||0));
+  document.getElementById('survey-result').textContent  = fmt((parseFloat(document.getElementById('survey-visits')?.value)||0)*(parseFloat(document.getElementById('survey-visitors')?.value)||1)*(parseFloat(document.getElementById('survey-rate')?.value)||0));
+  document.getElementById('survey-parking-result').textContent = fmt(parseFloat(document.getElementById('survey-parking')?.value)||0);
+  document.getElementById('purlins-result').textContent = fmt(purlins);
+
+  // block totals
+  document.getElementById('total-installation').textContent = fmt(installation);
+  document.getElementById('total-fabrication').textContent  = fmt(fabrication);
+  document.getElementById('total-painting').textContent     = fmt(painting);
+  document.getElementById('total-survey').textContent       = fmt(survey);
+  document.getElementById('total-delivery').textContent     = fmt(delivery);
+  document.getElementById('total-prelims').textContent      = fmt(prelims);
+  document.getElementById('total-purlins').textContent      = fmt(purlins);
+
+  // summary
+  const subtotal = material+installation+fabrication+painting+survey+delivery+prelims+purlins;
+  const margin   = parseFloat(document.getElementById('marginSlider')?.value) || 0;
+  document.getElementById('marginPct').textContent = margin + '%';
+  const marginAmt = Math.round(subtotal * margin / 100 * 100) / 100;
+  const total     = Math.round((subtotal + marginAmt) * 100) / 100;
+  const totalKg   = totalTakeoffKg();
+
+  document.getElementById('sum-material').textContent     = fmt(material);
+  document.getElementById('sum-installation').textContent = fmt(installation);
+  document.getElementById('sum-fabrication').textContent  = fmt(fabrication);
+  document.getElementById('sum-painting').textContent     = fmt(painting);
+  document.getElementById('sum-survey').textContent       = fmt(survey);
+  document.getElementById('sum-delivery').textContent     = fmt(delivery);
+  document.getElementById('sum-prelims').textContent      = fmt(prelims);
+  document.getElementById('sum-purlins').textContent      = fmt(purlins);
+  document.getElementById('sum-subtotal').textContent     = fmt(subtotal);
+  document.getElementById('sum-margin').textContent       = fmt(marginAmt);
+  document.getElementById('sum-total').textContent        = fmt(total);
+  document.getElementById('sum-cost-per-kg').textContent  = totalKg > 0 ? '£'+(total/totalKg).toFixed(2)+'/kg' : '—';
+
+  const showDep = document.getElementById('showDeposit')?.checked;
+  document.getElementById('depositSection').style.display = showDep ? '' : 'none';
+  if (showDep) {
+    const depPct = parseFloat(document.getElementById('depositPct')?.value) || 60;
+    document.getElementById('sum-deposit').textContent = fmt(total * depPct / 100);
+  }
+
+  // store computed totals for quotation tab
+  if (q) {
+    q._computed = { material, installation, fabrication, painting, survey, delivery, prelims, purlins, subtotal, marginAmt, total };
+  }
+
+  // auto-fill standard lines from calcs
+  if (q?.type === 'bama' && q.standardLines) {
+    const map = { material, fabrication, painting, installation, delivery, prelims };
+    q.standardLines.forEach(l => {
+      if (l.key === 'material') l.price = material;
+      else if (l.key === 'fabrication') l.price = fabrication;
+      else if (l.key === 'painting') l.price = painting;
+      else if (l.key === 'installation') l.price = installation;
+      else if (l.key === 'delivery') l.price = delivery;
+      else if (l.key === 'prelims') l.price = prelims;
+    });
+    renderQuotationLines();
+  }
+
+  updateTakeoffTotals();
+}
+
+// ============================================================
+// QUOTATION TAB
+// ============================================================
+function renderQuotationLines() {
+  const q = getQuote(); if (!q) return;
+  const cont = document.getElementById('quotationLines');
+
+  if (q.type === 'bama') {
+    let sub = 0;
+    cont.innerHTML = (q.standardLines||[]).map((l,i) => {
+      const amt = (l.qty||1) * (l.price||0);
+      sub += amt;
+      return `<div class="quotation-line quotation-line-standard">
+        <input class="ql-input" value="${l.desc}" oninput="updateStdLine(${i},'desc',this.value)" style="background:transparent;border-color:transparent">
+        <input class="ql-input" type="number" value="${l.qty||1}" oninput="updateStdLine(${i},'qty',this.value)" style="text-align:right">
+        <input class="ql-input" type="number" value="${l.price||0}" oninput="updateStdLine(${i},'price',this.value)" style="text-align:right;font-family:var(--font-mono)">
+        <div class="ql-total">${fmt(amt)}</div>
+      </div>`;
+    }).join('');
+    updateQuotationTotals(sub);
+
+  } else if (q.type === 'custom') {
+    let sub = 0;
+    cont.innerHTML = (q.customLines||[]).map((l,i) => {
+      const amt = (l.qty||1) * (l.price||0);
+      sub += amt;
+      return `<div class="quotation-line quotation-line-custom">
+        <input class="ql-input" value="${l.desc||''}" placeholder="Description..." oninput="updateCustLine(${i},'desc',this.value)" style="background:transparent;border-color:transparent">
+        <input class="ql-input" type="number" value="${l.qty||1}" oninput="updateCustLine(${i},'qty',this.value)" style="text-align:right">
+        <input class="ql-input" value="${l.unit||'m'}" oninput="updateCustLine(${i},'unit',this.value)" style="text-align:center">
+        <input class="ql-input" type="number" value="${l.price||0}" oninput="updateCustLine(${i},'price',this.value)" style="text-align:right;font-family:var(--font-mono)">
+        <button class="btn-icon" onclick="removeCustLine(${i})">✕</button>
+      </div>`;
+    }).join('');
+    updateQuotationTotals(sub);
+
+  } else {
+    // BoQ — just show total from calcs
+    const total = q._computed?.total || 0;
+    cont.innerHTML = `<div class="info-box" style="margin:8px 0">Client BoQ quote — lump sum from Calcs tab</div>
+      <div style="display:flex;justify-content:space-between;padding:12px 0">
+        <span style="font-size:13px">Lump Sum (as per BoQ ref: ${q.boqRef||'—'})</span>
+        <span style="font-family:var(--font-mono);font-size:15px;color:var(--accent)">${fmt(total)}</span>
+      </div>`;
+    updateQuotationTotals(total);
+  }
+}
+
+function updateQuotationTotals(sub) {
+  const q = getQuote(); if (!q) return;
+  document.getElementById('qlSubtotal').textContent = fmt(sub);
+  document.getElementById('qlTotal').textContent    = fmt(sub);
+  const showDep = q.showDeposit || document.getElementById('showDeposit')?.checked;
+  document.getElementById('depositLineRow').style.display = showDep ? '' : 'none';
+  if (showDep) {
+    const depPct = parseFloat(document.getElementById('depositPct')?.value) || q.depositPct || 60;
+    document.getElementById('depositLineLabel').textContent = `Deposit (${depPct}%)`;
+    document.getElementById('qlDeposit').textContent = fmt(sub * depPct / 100);
+  }
+}
+
+function updateStdLine(i, field, val) {
+  const q = getQuote(); if (!q) return;
+  q.standardLines[i][field] = field==='qty'||field==='price' ? parseFloat(val)||0 : val;
+  saveAll(); renderQuotationLines();
+}
+
+function addCustomLine() {
+  const q = getQuote(); if (!q) return;
+  q.customLines = q.customLines || [];
+  q.customLines.push({ desc:'', qty:1, unit:'m', price:0 });
+  saveAll(); renderQuotationLines();
+}
+
+function updateCustLine(i, field, val) {
+  const q = getQuote(); if (!q) return;
+  q.customLines[i][field] = field==='qty'||field==='price' ? parseFloat(val)||0 : val;
+  saveAll(); renderQuotationLines();
+}
+
+function removeCustLine(i) {
+  const q = getQuote(); if (!q) return;
+  q.customLines.splice(i,1); saveAll(); renderQuotationLines();
+}
+
+// ============================================================
+// TAB SWITCHING / BLOCK TOGGLE
+// ============================================================
+function switchTab(name, btn) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('tab-'+name).classList.add('active');
+  if (name==='calcs') recalcAll();
+  if (name==='quotation') { recalcAll(); renderQuotationLines(); }
+}
+
+function toggleBlock(name) {
+  const body = document.getElementById('body-'+name);
+  if (body) body.style.display = body.style.display==='none' ? '' : 'none';
+}
+
+// ============================================================
+// PLANSWIFT IMPORT
+// ============================================================
+function openPlanswiftImport() { document.getElementById('planswiftModal').classList.add('active'); }
+function closePlanswiftModal() { document.getElementById('planswiftModal').classList.remove('active'); }
+
+function handlePlanswiftFile(input) {
+  toast('Excel import: paste the data from your PlanSwift export into the text area below (copy columns A-D from the file)', 'success');
+}
+
+function importPlanswift() {
+  const q = getQuote(); if (!q) return;
+  const raw = document.getElementById('planswiftPaste').value.trim();
+  if (!raw) { toast('Nothing to import', 'error'); return; }
+  const lines = raw.split('\n').filter(l=>l.trim());
+  let added = 0;
+  lines.forEach(line => {
+    const parts = line.split(/\t|,/).map(p=>p.trim());
+    if (parts.length < 2) return;
+    const type   = parts[0];
+    const length = parseFloat(parts[1]) || 0;
+    const kgmRaw = parts.length >= 3 ? parseFloat(parts[2]) : null;
+    const qty    = parts.length >= 4 ? parseFloat(parts[3]) || 1 : 1;
+    if (!type || !length) return;
+    const kgm = kgmRaw || lookupKgM(type);
+    const rate = sectionMaterialRate(type);
+    q.takeoff.push({ type, length, qty, kgm, rate });
+    added++;
+  });
+  saveAll(); renderTakeoff(); recalcAll();
+  closePlanswiftModal();
+  document.getElementById('planswiftPaste').value = '';
+  toast(`Imported ${added} rows`, 'success');
+}
+
+// ============================================================
+// SETTINGS
+// ============================================================
+function openSettings() {
+  renderSettingsForm();
+  document.getElementById('settingsModal').classList.add('active');
+}
+function closeSettings() { document.getElementById('settingsModal').classList.remove('active'); }
+
+function settingsRateRow(category, key, def) {
+  return `<div class="settings-rate-grid">
+    <span style="font-size:12px;color:var(--text)">${def.label}</span>
+    <input type="number" class="cost-input" id="sr_${category}_${key}" value="${def.rate}" step="0.01">
+  </div>`;
+}
+
+function renderSettingsForm() {
+  document.getElementById('settingsLabour').innerHTML   = Object.entries(rates.labour).map(([k,v])=>settingsRateRow('labour',k,v)).join('');
+  document.getElementById('settingsPlant').innerHTML    = Object.entries(rates.plant).map(([k,v])=>settingsRateRow('plant',k,v)).join('');
+  document.getElementById('settingsFab').innerHTML      = Object.entries(rates.fab).map(([k,v])=>settingsRateRow('fab',k,v)).join('');
+  document.getElementById('settingsMaterial').innerHTML = Object.entries(rates.material).map(([k,v])=>settingsRateRow('material',k,v)).join('');
+  document.getElementById('settingsDelivery').innerHTML = Object.entries(rates.delivery).map(([k,v])=>settingsRateRow('delivery',k,v)).join('');
+  document.getElementById('settingsPrelims').innerHTML  = Object.entries(rates.prelims).map(([k,v])=>settingsRateRow('prelims',k,v)).join('');
+}
+
+function saveSettings() {
+  ['labour','plant','fab','material','delivery','prelims'].forEach(cat => {
+    Object.keys(rates[cat]).forEach(key => {
+      const el = document.getElementById(`sr_${cat}_${key}`);
+      if (el) rates[cat][key].rate = parseFloat(el.value) || 0;
+    });
+  });
+  localStorage.setItem('bama_rates', JSON.stringify(rates));
+  closeSettings();
+  toast('Rates saved', 'success');
+}
+
+// ============================================================
+// HELPERS
+// ============================================================
+function renderStatusBadge(q) {
+  const el = document.getElementById('editorStatus');
+  el.className = 'badge badge-'+q.status;
+  el.textContent = statusLabel(q.status);
+}
+
+function statusLabel(s) {
+  return { draft:'Draft', sent:'Sent', won:'Won', lost:'Lost' }[s] || s;
+}
+
+function fmtDate(d) {
+  if (!d) return '—';
+  try { return new Date(d).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'2-digit'}); } catch { return d; }
+}
+
+function handleBoqFile(input) {
+  const q = getQuote(); if (!q) return;
+  if (input.files[0]) {
+    q.boqFile = input.files[0].name;
+    document.getElementById('boqFileName').textContent = '📎 ' + input.files[0].name;
+    saveAll();
+    toast('File attached: ' + input.files[0].name + ' (stored locally for reference)', 'success');
+  }
+}
+
+function exportAllData() {
+  const data = JSON.stringify({ quotes, rates }, null, 2);
+  const blob = new Blob([data], { type: 'application/json' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'bama-quotes-export-' + new Date().toISOString().slice(0,10) + '.json';
+  a.click();
+  toast('Exported', 'success');
+}
+
+let toastTimer;
+function toast(msg, type='') {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.className = 'toast show ' + type;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2800);
+}
+
+// ============================================================
+// INIT
+// ============================================================
+renderSidebar();
+</script>
+</body>
+</html>
