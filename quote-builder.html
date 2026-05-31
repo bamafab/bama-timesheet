@@ -216,8 +216,10 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 <div class="topbar">
   <div class="logo"><span>BAMA</span> QUOTE BUILDER <span style="font-size:11px;color:var(--subtle);margin-left:8px;font-family:var(--font-mono)">OFFLINE</span></div>
   <div class="topbar-right">
+    <button class="btn btn-ghost btn-sm" onclick="openLogoUpload()" title="Upload logo for PDF">🖼 Logo</button>
     <button class="btn btn-ghost btn-sm" onclick="openSettings()">⚙ Rates</button>
     <button class="btn btn-ghost btn-sm" onclick="exportAllData()">↓ Export</button>
+    <button class="btn btn-ghost btn-sm" onclick="generateQuotePDF()" id="pdfBtn">📄 PDF</button>
     <button class="btn btn-primary btn-sm" onclick="saveCurrentQuote()">Save</button>
   </div>
 </div>
@@ -1744,3 +1746,278 @@ renderSidebar();
 </script>
 </body>
 </html>
+<!-- PDF INJECTION — appended -->
+<script>
+// ============================================================
+// PDF GENERATION
+// ============================================================
+// BAMA logo as inline SVG (matches the red BAMA text brand)
+const BAMA_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 60" style="height:52px;width:auto">
+  <rect width="220" height="60" rx="4" fill="#D0021B"/>
+  <text x="12" y="44" font-family="Arial Black,Arial" font-weight="900" font-size="42" fill="#ffffff" letter-spacing="2">BAMA</text>
+</svg>`;
+
+// Try to load stored logo from localStorage (if user has uploaded one)
+function getLogoHtml() {
+  const stored = localStorage.getItem('bama_logo_b64');
+  if (stored) return `<img src="${stored}" style="height:52px;width:auto">`;
+  return BAMA_LOGO_SVG;
+}
+
+function fmtGBP(n) {
+  return '£' + (parseFloat(n)||0).toLocaleString('en-GB', { minimumFractionDigits:2, maximumFractionDigits:2 });
+}
+
+function fmtDateLong(d) {
+  if (!d) return '—';
+  try { return new Date(d+'T12:00:00').toLocaleDateString('en-GB',{day:'2-digit',month:'long',year:'numeric'}); }
+  catch { return d; }
+}
+
+function generateQuotePDF() {
+  const q = getQuote();
+  if (!q) { toast('No quote selected', 'error'); return; }
+
+  // ── collect line items ──
+  let lineRows = '';
+  let grandTotal = 0;
+
+  if (q.type === 'bama') {
+    (q.standardLines || []).forEach(l => {
+      const price = parseFloat(l.price) || 0;
+      const qty   = parseFloat(l.qty)   || 1;
+      const amt   = Math.round(qty * price * 100) / 100;
+      if (price === 0) return; // skip zero lines
+      grandTotal += amt;
+      lineRows += `<tr>
+        <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">${qty !== 1 ? qty : '1'}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">${escHtml(l.desc)}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(price)}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(amt)}</td>
+      </tr>`;
+    });
+  } else if (q.type === 'custom') {
+    (q.customLines || []).forEach(l => {
+      const price = parseFloat(l.price) || 0;
+      const qty   = parseFloat(l.qty)   || 1;
+      const amt   = Math.round(qty * price * 100) / 100;
+      grandTotal += amt;
+      lineRows += `<tr>
+        <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">${qty}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">${escHtml(l.desc)}<span style="color:#888;font-size:10px;margin-left:4px">${escHtml(l.unit||'')}</span></td>
+        <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(price)}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(amt)}</td>
+      </tr>`;
+    });
+  } else {
+    // BoQ — single lump sum line
+    const total = q._computed?.total || 0;
+    grandTotal = total;
+    lineRows = `<tr>
+      <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">1</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">As per ${escHtml(q.boqRef || 'Client BoQ')}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(total)}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(total)}</td>
+    </tr>`;
+  }
+
+  // pad to at least 6 rows for a cleaner look
+  const rowCount = (q.type==='bama' ? (q.standardLines||[]).filter(l=>(l.price||0)>0).length : (q.customLines||[]).length) || 1;
+  for (let i = rowCount; i < 6; i++) {
+    lineRows += `<tr style="height:34px"><td style="border-bottom:1px solid #e5e7eb"></td><td style="border-bottom:1px solid #e5e7eb"></td><td style="border-bottom:1px solid #e5e7eb"></td><td style="border-bottom:1px solid #e5e7eb"></td></tr>`;
+  }
+
+  // ── deposit row ──
+  let depositRow = '';
+  if (q.showDeposit) {
+    const depPct = parseFloat(q.depositPct) || 60;
+    const depAmt = Math.round(grandTotal * depPct / 100 * 100) / 100;
+    depositRow = `<tr>
+      <td colspan="3" style="padding:6px 10px;text-align:right;font-size:12px;color:#555">Deposit Required (${depPct}%)</td>
+      <td style="padding:6px 10px;text-align:right;font-size:12px;font-weight:600;color:#D0021B">${fmtGBP(depAmt)}</td>
+    </tr>`;
+  }
+
+  // ── scope text ──
+  const scope = (q.qScope || q.comments || '').replace(/\n/g,'<br>');
+
+  // ── revision ──
+  const revStr = q.revision && q.revision !== 'Rev A' ? ` · ${q.revision}` : '';
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Quotation ${escHtml(q.ref)}${revStr}</title>
+<style>
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:Arial,Helvetica,sans-serif; font-size:12px; color:#111; background:#fff; }
+  .page { max-width:210mm; margin:0 auto; padding:16mm 16mm 12mm; min-height:297mm; }
+
+  /* HEADER */
+  .doc-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:24px; padding-bottom:16px; border-bottom:3px solid #D0021B; }
+  .doc-header-left { display:flex; flex-direction:column; gap:6px; }
+  .doc-type { font-size:28px; font-weight:900; letter-spacing:1px; color:#111; margin-top:4px; }
+  .addr { font-size:10px; color:#555; line-height:1.5; margin-top:4px; }
+  .doc-meta { text-align:right; font-size:11px; line-height:1.7; }
+  .doc-meta strong { display:inline-block; min-width:130px; color:#333; }
+  .doc-meta .val { font-weight:600; }
+
+  /* TWO COLUMN INFO */
+  .info-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:20px; }
+  .info-block label { font-size:9px; text-transform:uppercase; letter-spacing:1px; color:#888; font-weight:700; display:block; margin-bottom:4px; }
+  .info-block .info-val { font-size:12px; color:#111; line-height:1.5; }
+
+  /* SCOPE */
+  .scope-block { background:#f9f9f9; border-left:3px solid #D0021B; padding:10px 14px; margin-bottom:20px; font-size:11px; line-height:1.6; color:#333; }
+  .scope-block label { font-size:9px; text-transform:uppercase; letter-spacing:1px; color:#888; font-weight:700; display:block; margin-bottom:6px; }
+
+  /* TABLE */
+  table { width:100%; border-collapse:collapse; margin-bottom:0; }
+  thead tr { background:#1a1a2e; }
+  thead th { color:#fff; padding:9px 10px; font-size:11px; font-weight:700; text-align:left; letter-spacing:0.3px; }
+  thead th:nth-child(3), thead th:nth-child(4) { text-align:right; }
+  thead th:first-child { width:60px; }
+  tbody tr:nth-child(even) { background:#fafafa; }
+
+  /* TOTALS */
+  .totals-block { border-top:2px solid #1a1a2e; }
+  .total-row { display:flex; justify-content:space-between; padding:5px 10px; font-size:12px; }
+  .total-row.grand { background:#1a1a2e; color:#fff; font-size:14px; font-weight:700; padding:10px; margin-top:0; }
+  .total-row.grand .val { color:#ff6b00; }
+
+  /* FOOTER */
+  .doc-footer { margin-top:28px; padding-top:12px; border-top:1px solid #ddd; display:flex; justify-content:space-between; align-items:flex-end; font-size:10px; color:#888; }
+  .footer-note { line-height:1.6; }
+  .footer-note a { color:#D0021B; text-decoration:none; }
+
+  @media print {
+    body { print-color-adjust:exact; -webkit-print-color-adjust:exact; }
+    .page { padding:10mm 12mm; }
+    .no-print { display:none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- TOP: print button (hidden on print) -->
+  <div class="no-print" style="text-align:right;margin-bottom:12px">
+    <button onclick="window.print()" style="background:#D0021B;color:#fff;border:none;padding:8px 20px;border-radius:4px;font-size:13px;cursor:pointer;font-weight:600">🖨 Print / Save as PDF</button>
+  </div>
+
+  <!-- HEADER -->
+  <div class="doc-header">
+    <div class="doc-header-left">
+      ${getLogoHtml()}
+      <div class="addr">
+        11 Enterprise Way, Enterprise Park<br>
+        Yaxley, PE7 3WY, Peterborough<br>
+        01733 855212 · info@bamafabrication.co.uk
+      </div>
+    </div>
+    <div style="text-align:right">
+      <div class="doc-type">Quotation</div>
+      <div class="doc-meta" style="margin-top:10px">
+        <div><strong>Date:</strong><span class="val"> ${fmtDateLong(q.date)}</span></div>
+        <div><strong>Quotation #:</strong><span class="val"> ${escHtml(q.ref)}${revStr}</span></div>
+        <div><strong>Prepared by:</strong><span class="val"> ${escHtml(q.preparedBy||'—')}</span></div>
+        <div><strong>Valid until:</strong><span class="val"> ${fmtDateLong(q.validUntil)}</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CLIENT INFO -->
+  <div class="info-grid">
+    <div class="info-block">
+      <label>Quotation For</label>
+      <div class="info-val">
+        ${q.contact ? escHtml(q.contact)+'<br>' : ''}
+        <strong>${escHtml(q.company||'—')}</strong>
+        ${q.email ? '<br><span style="color:#555">'+escHtml(q.email)+'</span>' : ''}
+        ${q.phone ? '<br><span style="color:#555">'+escHtml(q.phone)+'</span>' : ''}
+      </div>
+    </div>
+    <div class="info-block">
+      <label>Company Address</label>
+      <div class="info-val">
+        11 Enterprise Way, Enterprise Park<br>
+        Yaxley, PE7 3WY, Peterborough<br>
+        01733 855212
+      </div>
+    </div>
+  </div>
+
+  ${scope ? `<div class="scope-block"><label>Comments or Special Instructions</label>${scope}</div>` : ''}
+
+  <!-- LINE ITEMS -->
+  <table>
+    <thead>
+      <tr>
+        <th>Quantity</th>
+        <th>Description</th>
+        <th style="text-align:right;width:110px">Unit Price</th>
+        <th style="text-align:right;width:110px">Amount</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${lineRows}
+    </tbody>
+  </table>
+
+  <!-- TOTALS -->
+  <div class="totals-block">
+    <div class="total-row" style="padding-top:8px">
+      <span style="color:#555">Subtotal</span>
+      <span style="font-weight:600">${fmtGBP(grandTotal)}</span>
+    </div>
+    ${depositRow}
+    <div class="total-row grand">
+      <span>TOTAL</span>
+      <span class="val">${fmtGBP(grandTotal)}</span>
+    </div>
+    <div style="padding:6px 10px;font-size:10px;color:#888">All prices are exclusive of VAT</div>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="doc-footer">
+    <div class="footer-note">
+      If you have any questions concerning this quotation, please contact:<br>
+      <a href="mailto:info@bamafabrication.co.uk">info@bamafabrication.co.uk</a><br>
+      <br>Thank you for your business!
+    </div>
+    <div style="text-align:right">
+      <div style="font-size:9px;color:#bbb;margin-bottom:2px">BAMA Fabrication Ltd</div>
+      <div style="font-size:9px;color:#bbb">11 Enterprise Way, Yaxley, PE7 3WY</div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>`;
+
+  const win = window.open('', '_blank', 'width=900,height=1100');
+  win.document.write(html);
+  win.document.close();
+}
+
+function escHtml(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Logo upload for PDF ──
+function openLogoUpload() {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = 'image/*';
+  inp.onchange = e => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      localStorage.setItem('bama_logo_b64', ev.target.result);
+      toast('Logo saved — will appear on PDFs', 'success');
+    };
+    reader.readAsDataURL(file);
+  };
+  inp.click();
+}
+</script>
