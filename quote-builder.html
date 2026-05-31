@@ -244,7 +244,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
       <div class="flex items-center justify-between gap-12" style="margin-bottom:20px;flex-wrap:wrap">
         <div class="flex items-center gap-8" style="flex-wrap:wrap">
           <div style="font-family:var(--font-display);font-size:28px" id="editorRef">Q260601</div>
-          <span class="revision-tag" id="editorRev">Rev A</span>
+          <span class="revision-tag" id="editorRev" style="display:none"></span>
           <span class="badge badge-draft" id="editorStatus">Draft</span>
           <button class="btn btn-ghost btn-sm" onclick="addRevision()" title="Add revision">+ Rev</button>
         </div>
@@ -279,7 +279,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
                 <div class="field"><label>Reference</label><input type="text" id="hRef" oninput="autosave()"></div>
                 <div class="field"><label>Revision</label>
                   <select id="hRevision" onchange="autosave()">
-                    <option>Rev A</option><option>Rev B</option><option>Rev C</option>
+                    <option value="">—</option><option>Rev A</option><option>Rev B</option><option>Rev C</option>
                     <option>Rev D</option><option>Rev E</option>
                   </select>
                 </div>
@@ -913,7 +913,7 @@ function newQuote() {
   const ref = `Q${yy}${mm}${seq}`;
   const q = {
     id: Date.now().toString(),
-    ref, revision: 'Rev A', status: 'draft', type: 'bama',
+    ref, revision: '', status: 'draft', type: 'bama',
     date: now.toISOString().slice(0,10),
     validUntil: new Date(now.getTime()+14*86400000).toISOString().slice(0,10),
     preparedBy: 'Mateusz Braczyk',
@@ -1021,12 +1021,14 @@ function setStatus(val) {
 
 function addRevision() {
   const q = getQuote(); if (!q) return;
-  const revs = ['Rev A','Rev B','Rev C','Rev D','Rev E'];
+  const revs = ['','Rev A','Rev B','Rev C','Rev D','Rev E'];
   const cur = revs.indexOf(q.revision);
   if (cur >= revs.length - 1) { toast('Max revision reached', 'error'); return; }
   q.revision = revs[cur + 1];
   document.getElementById('hRevision').value = q.revision;
-  document.getElementById('editorRev').textContent = q.revision;
+  const revEl = document.getElementById('editorRev');
+  revEl.textContent = q.revision || '';
+  revEl.style.display = q.revision ? '' : 'none';
   saveAll();
   toast('Revision bumped to ' + q.revision);
 }
@@ -1039,7 +1041,7 @@ function renderSidebar() {
   if (!quotes.length) { list.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--subtle);text-align:center">No quotes yet</div>'; return; }
   list.innerHTML = [...quotes].reverse().map(q => `
     <div class="quote-item ${q.id===currentId?'active':''}" onclick="selectQuote('${q.id}')">
-      <div class="quote-item-ref">${q.ref} <span style="font-size:10px;opacity:0.7">${q.revision}</span></div>
+      <div class="quote-item-ref">${q.ref}${q.revision ? ' <span style="font-size:10px;opacity:0.7">'+q.revision+'</span>' : ''}</div>
       <div class="quote-item-name">${q.company || q.contact || 'No client'}</div>
       <div class="quote-item-status">${statusLabel(q.status)} · ${fmtDate(q.date)}</div>
     </div>
@@ -1071,7 +1073,9 @@ function loadQuoteEditor() {
 
   // header
   document.getElementById('editorRef').textContent = q.ref;
-  document.getElementById('editorRev').textContent = q.revision;
+  const revEl = document.getElementById('editorRev');
+  revEl.textContent = q.revision || '';
+  revEl.style.display = q.revision ? '' : 'none';
   renderStatusBadge(q);
 
   document.getElementById('hRef').value        = q.ref;
@@ -1842,7 +1846,7 @@ function generateQuotePDF() {
   const scope = (q.qScope || q.comments || '').replace(/\n/g,'<br>');
 
   // ── revision ──
-  const revStr = q.revision && q.revision !== 'Rev A' ? ` · ${q.revision}` : '';
+  const revStr = q.revision ? ` · ${q.revision}` : '';
 
   const html = `<!DOCTYPE html>
 <html lang="en">
