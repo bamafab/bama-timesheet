@@ -409,8 +409,26 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
         <!-- Fittings / misc material -->
         <div class="card">
           <div class="card-title">Additional Material</div>
+          <div class="form-grid form-grid-4" style="align-items:end">
+            <div class="field">
+              <label>Fittings — % of total member weight</label>
+              <input type="number" id="fittingsPct" value="10" min="0" max="100" step="1" oninput="autosave();recalcAll()">
+            </div>
+            <div class="field">
+              <label>Fittings £/kg</label>
+              <input type="number" id="fittingsRate" value="1.30" step="0.01" oninput="autosave();recalcAll()">
+            </div>
+            <div class="field">
+              <label>Fittings total (auto)</label>
+              <div class="cost-result" id="fittingsComputed" style="height:34px;display:flex;align-items:center;justify-content:flex-end">£0.00</div>
+            </div>
+            <div class="field" style="grid-column:span 1">
+              <label style="opacity:0">.</label>
+              <div style="font-size:11px;color:var(--muted);padding:8px 0;line-height:1.5" id="fittingsKgHint">Based on 0 kg total</div>
+            </div>
+          </div>
+          <hr class="divider">
           <div class="form-grid form-grid-3">
-            <div class="field"><label>Fittings / Plates lump sum (£)</label><input type="number" id="fittingsVal" value="0" oninput="autosave();recalcAll()"></div>
             <div class="field"><label>Misc Material (£)</label><input type="number" id="miscMaterialVal" value="0" oninput="autosave();recalcAll()"></div>
             <div class="field"><label>Notes</label><input type="text" id="miscMaterialNote" placeholder="e.g. plates, bolts, fixings" oninput="autosave()"></div>
           </div>
@@ -941,7 +959,7 @@ function newQuote() {
     company: '', contact: '', email: '', phone: '',
     comments: '', qScope: '', boqRef: '', boqFile: '',
     takeoff: [],
-    fittings: 0, miscMaterial: 0, miscMaterialNote: '',
+    fittingsPct: 10, fittingsRate: 1.30, miscMaterial: 0, miscMaterialNote: '',
     // calcs
     instDays: 0, instOperatives: 2,
     labourRows: [], plantRows: [], paintRows: [], deliveryRows: [], prelimRows: [],
@@ -991,7 +1009,8 @@ function autosave() {
   q.comments   = document.getElementById('hComments')?.value || '';
   q.boqRef     = document.getElementById('hBoqRef')?.value || '';
   q.qScope     = document.getElementById('qScope')?.value || '';
-  q.fittings   = parseFloat(document.getElementById('fittingsVal')?.value) || 0;
+  q.fittingsPct  = parseFloat(document.getElementById('fittingsPct')?.value) ?? 10;
+  q.fittingsRate = parseFloat(document.getElementById('fittingsRate')?.value) || 1.30;
   q.miscMaterial = parseFloat(document.getElementById('miscMaterialVal')?.value) || 0;
   q.miscMaterialNote = document.getElementById('miscMaterialNote')?.value || '';
   updateSidebarItem(q);
@@ -1128,7 +1147,8 @@ function loadQuoteEditor() {
   document.getElementById('hBoqRef').value     = q.boqRef || '';
   document.getElementById('qScope').value      = q.qScope || '';
   document.getElementById('statusSelect').value = q.status;
-  document.getElementById('fittingsVal').value  = q.fittings || 0;
+  document.getElementById('fittingsPct').value   = q.fittingsPct ?? 10;
+  document.getElementById('fittingsRate').value  = q.fittingsRate || 1.30;
   document.getElementById('miscMaterialVal').value = q.miscMaterial || 0;
   document.getElementById('miscMaterialNote').value = q.miscMaterialNote || '';
 
@@ -1271,11 +1291,24 @@ function totalTakeoffKg() {
   return q.takeoff.reduce((s,row) => s + (row.length/1000)*(row.kgm||0)*(row.qty||1), 0);
 }
 
+function fittingsCost() {
+  const totalKg  = totalTakeoffKg();
+  const pct      = parseFloat(document.getElementById('fittingsPct')?.value) ?? 10;
+  const rate     = parseFloat(document.getElementById('fittingsRate')?.value) || 1.30;
+  const fittingsKg = totalKg * (pct / 100);
+  const cost = Math.round(fittingsKg * rate * 100) / 100;
+  // update hint and computed display
+  const hint = document.getElementById('fittingsKgHint');
+  const comp = document.getElementById('fittingsComputed');
+  if (hint) hint.textContent = `Based on ${fittingsKg.toFixed(1)} kg (${pct}% of ${totalKg.toFixed(1)} kg)`;
+  if (comp) comp.textContent = '£' + cost.toFixed(2);
+  return cost;
+}
+
 function totalTakeoffCost() {
   const q = getQuote(); if (!q) return 0;
-  const fittings = parseFloat(document.getElementById('fittingsVal')?.value) || 0;
   const misc = parseFloat(document.getElementById('miscMaterialVal')?.value) || 0;
-  return q.takeoff.reduce((s,row) => s + (row.length/1000)*(row.kgm||0)*(row.qty||1)*(row.rate||0), 0) + fittings + misc;
+  return q.takeoff.reduce((s,row) => s + (row.length/1000)*(row.kgm||0)*(row.qty||1)*(row.rate||0), 0) + fittingsCost() + misc;
 }
 
 // ============================================================
