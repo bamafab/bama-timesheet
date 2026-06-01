@@ -377,7 +377,15 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
           </div>
 
           <!-- BoQ only -->
-          <div class="card" id="boqCard" style="grid-column:1/-1;display:none">
+          <!-- Client history (shown when company is filled) -->
+          <div id="clientHistoryCard" style="display:none;grid-column:1/-1">
+            <div class="card" style="border-color:rgba(62,207,142,0.15)">
+              <div class="card-title" style="color:var(--green)">📊 Client History</div>
+              <div id="clientHistoryContent"></div>
+            </div>
+          </div>
+
+          <div class="card" id="boqCard"  style="grid-column:1/-1;display:none">
             <div class="card-title">Client BoQ</div>
             <div class="info-box" style="margin-bottom:12px">For Client BoQ quotes, enter the agreed lump sum total in Calcs → Summary. Attach the client's BoQ file below for reference.</div>
             <div class="field"><label>BoQ Reference / Document Title</label><input type="text" id="hBoqRef" oninput="autosave()"></div>
@@ -1490,6 +1498,7 @@ function autosave() {
   q.validUntil = document.getElementById('hValidUntil')?.value || q.validUntil;
   q.preparedBy = document.getElementById('hPreparedBy')?.value || q.preparedBy;
   q.company    = document.getElementById('hCompany')?.value || '';
+  renderClientHistory(q.company);
   q.contact    = document.getElementById('hContact')?.value || '';
   q.email      = document.getElementById('hEmail')?.value || '';
   q.phone      = document.getElementById('hPhone')?.value || '';
@@ -1707,6 +1716,7 @@ function loadQuoteEditor() {
   updateMoveToAreaOptions();
   recalcAll();
   renderQuotationLines();
+  renderClientHistory(q.company);
   // ERP project badge
   const badge = document.getElementById('erpProjectBadge');
   if (badge) {
@@ -3835,15 +3845,27 @@ function onCompanyInput(val) {
   if (!matches.length) { dd.style.display = 'none'; return; }
 
   dd.style.display = '';
-  dd.innerHTML = matches.map((c, i) => `
-    <div onmousedown="fillClientFields('${escClientStr(c.company)}')"
+  dd.innerHTML = matches.map((c, i) => {
+    const clientQuotes = quotes.filter(q => (q.company||'').toLowerCase() === c.company.toLowerCase());
+    const won   = clientQuotes.filter(q => q.status === 'won');
+    const total = won.reduce((s,q) => s + (q._computed?.total || 0), 0);
+    const winRate = clientQuotes.length > 0 ? Math.round(won.length/clientQuotes.length*100) : null;
+    const statsHtml = clientQuotes.length > 0
+      ? `<div style="display:flex;gap:10px;margin-top:4px;font-size:10px">
+          <span style="color:var(--muted)">${clientQuotes.length} quote${clientQuotes.length>1?'s':''}</span>
+          ${won.length > 0 ? `<span style="color:var(--green)">${won.length} won</span>` : ''}
+          ${winRate !== null ? `<span style="color:var(--muted)">${winRate}% win rate</span>` : ''}
+          ${total > 0 ? `<span style="color:var(--accent)">£${total.toLocaleString('en-GB',{maximumFractionDigits:0})} won</span>` : ''}
+        </div>` : '';
+    return `<div onmousedown="fillClientFields('${escClientStr(c.company)}')"
       style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);transition:background 0.1s"
       onmouseover="this.style.background='rgba(255,107,0,0.08)'"
       onmouseout="this.style.background=''">
       <div style="font-size:13px;font-weight:600;color:var(--text)">${escHtml(c.company)}</div>
       <div style="font-size:11px;color:var(--muted);margin-top:2px">${escHtml(c.contact||'')}${c.email?' · '+escHtml(c.email):''}</div>
-    </div>
-  `).join('');
+      ${statsHtml}
+    </div>`;
+  }).join('');
 }
 
 function escClientStr(s) {
@@ -3859,6 +3881,7 @@ function fillClientFields(company) {
   document.getElementById('hPhone').value   = client.phone   || '';
   closeClientDD();
   autosave();
+  renderClientHistory(client.company);
   toast('Client filled: ' + client.company);
   document.getElementById('clientSaveBtn').style.display = 'none';
 }
@@ -3866,6 +3889,56 @@ function fillClientFields(company) {
 function closeClientDD() {
   const dd = document.getElementById('clientDropdown');
   if (dd) dd.style.display = 'none';
+}
+
+function renderClientHistory(company) {
+  const card = document.getElementById('clientHistoryCard');
+  const cont = document.getElementById('clientHistoryContent');
+  if (!card || !cont || !company) { if(card) card.style.display='none'; return; }
+
+  const clientQuotes = quotes.filter(q =>
+    (q.company||'').toLowerCase() === company.toLowerCase() && q.id !== currentId
+  ).sort((a,b) => (b.date||'').localeCompare(a.date||''));
+
+  if (!clientQuotes.length) { card.style.display='none'; return; }
+
+  const won   = clientQuotes.filter(q => q.status==='won');
+  const lost  = clientQuotes.filter(q => q.status==='lost');
+  const sent  = clientQuotes.filter(q => q.status==='sent');
+  const totalWon = won.reduce((s,q) => s+(q._computed?.total||0),0);
+  const winRate  = clientQuotes.length > 0 ? Math.round(won.length/clientQuotes.length*100) : 0;
+
+  const statBox = (val, label, col) =>
+    `<div style="text-align:center;padding:10px 16px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
+      <div style="font-size:20px;font-weight:700;color:${col};font-family:var(--font-mono)">${val}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:2px">${label}</div>
+    </div>`;
+
+  cont.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px;margin-bottom:14px">
+      ${statBox(clientQuotes.length, 'Total Quotes', 'var(--text)')}
+      ${statBox(won.length, 'Won', 'var(--green)')}
+      ${statBox(lost.length, 'Lost', 'var(--red)')}
+      ${statBox(winRate+'%', 'Win Rate', 'var(--accent)')}
+      ${totalWon > 0 ? statBox('£'+totalWon.toLocaleString('en-GB',{maximumFractionDigits:0}), 'Total Won', 'var(--accent)') : ''}
+    </div>
+    <div style="font-size:11px;color:var(--muted);font-weight:600;margin-bottom:6px;letter-spacing:0.5px">PREVIOUS QUOTES</div>
+    ${clientQuotes.slice(0,5).map(q => {
+      const total = q._computed?.total || 0;
+      const statusCol = {won:'var(--green)',lost:'var(--red)',sent:'var(--accent2)',draft:'var(--muted)'}[q.status]||'var(--muted)';
+      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);cursor:pointer"
+        onclick="selectQuote('${q.id}')" onmouseover="this.style.background='rgba(255,107,0,0.04)'" onmouseout="this.style.background=''">
+        <div>
+          <span style="font-family:var(--font-mono);font-size:12px;color:var(--accent)">${q.ref}${q.revision?' '+q.revision:''}</span>
+          <span style="font-size:11px;color:var(--muted);margin-left:8px">${fmtDate(q.date)}</span>
+          <span style="font-size:11px;margin-left:8px;color:${statusCol}">${statusLabel(q.status)}</span>
+        </div>
+        ${total > 0 ? `<span style="font-family:var(--font-mono);font-size:12px;font-weight:600">£${total.toLocaleString('en-GB',{maximumFractionDigits:0})}</span>` : ''}
+      </div>`;
+    }).join('')}
+    ${clientQuotes.length > 5 ? `<div style="font-size:11px;color:var(--muted);padding-top:6px">${clientQuotes.length-5} more quote${clientQuotes.length-5>1?'s':''} not shown</div>` : ''}
+  `;
+  card.style.display = '';
 }
 
 function showClientSave() {
