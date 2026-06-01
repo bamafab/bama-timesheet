@@ -4458,8 +4458,8 @@ function generateQuotePDF(mode = 'quote') {
     </div>`;
 
   // ── QUOTE PDF ────────────────────────────────────────────
+  let lineRows = '', grandTotal = 0;
   if (mode === 'quote' || mode === 'combined') {
-    let lineRows = '', grandTotal = 0;
     if (q.type === 'bama') {
       (q.standardLines||[]).forEach(l => {
         const price = parseFloat(l.price)||0, qty = parseFloat(l.qty)||1;
