@@ -472,6 +472,10 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
             </table>
           </div>
 
+          <div id="weightWarning" style="display:none;margin-top:8px;padding:10px 14px;background:rgba(255,179,71,0.08);border:1px solid rgba(255,179,71,0.25);border-radius:7px">
+            <div style="font-size:12px;font-weight:600;color:var(--accent2);margin-bottom:6px">⚠ Missing kg/m — costs will be incomplete</div>
+            <div id="weightWarningList" style="font-size:12px;color:var(--muted);line-height:1.7"></div>
+          </div>
           <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
             <div class="info-box flex-1">
               Tip: Type section (e.g. UB203x133x25) — kg/m auto-fills from steel database. Lengths always in mm.
@@ -2184,13 +2188,35 @@ function confirmSplitMove() {
 function updateTakeoffTotals() {
   const q = getQuote(); if (!q) return;
   let totalKg = 0, totalCost = 0;
+  const missing = [];
   q.takeoff.forEach(row => {
     const kg = (row.length/1000) * (row.kgm||0) * (row.qty||1);
     totalKg += kg;
     totalCost += kg * (row.rate||0);
+    if (row.type && !row.kgm && row.length > 0) {
+      if (!missing.find(m => m === row.type)) missing.push(row.type);
+    }
   });
   document.getElementById('takeoffTotalKg').textContent = totalKg.toFixed(1) + ' kg';
   document.getElementById('takeoffTotalCost').textContent = '£' + totalCost.toFixed(2);
+
+  // Weight checker warning
+  const warn = document.getElementById('weightWarning');
+  const list = document.getElementById('weightWarningList');
+  if (warn && list) {
+    if (missing.length) {
+      list.innerHTML = missing.map(t =>
+        `<span style="display:inline-flex;align-items:center;gap:5px;background:rgba(255,179,71,0.1);border:1px solid rgba(255,179,71,0.2);border-radius:12px;padding:2px 9px;margin:2px;font-family:var(--font-mono);font-size:11px">
+          ${escHtml(t)}
+          <span style="color:var(--accent2);font-size:10px">no kg/m</span>
+        </span>`
+      ).join('') +
+      `<div style="margin-top:6px;font-size:11px">Enter kg/m manually in the takeoff, or check the section name matches the steel database format (e.g. UB203x133x25).</div>`;
+      warn.style.display = '';
+    } else {
+      warn.style.display = 'none';
+    }
+  }
 }
 
 function totalTakeoffKg() {
