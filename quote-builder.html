@@ -253,7 +253,14 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
     <button class="btn btn-ghost btn-sm" onclick="openLogoUpload()" title="Upload logo for PDF">🖼 Logo</button>
     <button class="btn btn-ghost btn-sm" onclick="openSettings()">⚙ Rates</button>
     <button class="btn btn-ghost btn-sm" onclick="exportAllData()">↓ Export</button>
-    <button class="btn btn-ghost btn-sm" onclick="generateQuotePDF()" id="pdfBtn">📄 PDF</button>
+    <div style="position:relative;display:inline-block" id="pdfMenuWrap">
+      <button class="btn btn-ghost btn-sm" onclick="togglePdfMenu()" id="pdfBtn">📄 PDF ▾</button>
+      <div id="pdfMenu" style="display:none;position:absolute;top:100%;right:0;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.4);min-width:200px;z-index:500;margin-top:4px;overflow:hidden">
+        <div onclick="generateQuotePDF('quote');togglePdfMenu()" style="padding:10px 16px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)" onmouseover="this.style.background='rgba(255,107,0,0.08)'" onmouseout="this.style.background=''">📋 Quote (client-facing)</div>
+        <div onclick="generateQuotePDF('breakdown');togglePdfMenu()" style="padding:10px 16px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)" onmouseover="this.style.background='rgba(255,107,0,0.08)'" onmouseout="this.style.background=''">🔢 Cost Breakdown</div>
+        <div onclick="generateQuotePDF('combined');togglePdfMenu()" style="padding:10px 16px;cursor:pointer;font-size:13px" onmouseover="this.style.background='rgba(255,107,0,0.08)'" onmouseout="this.style.background=''">📄 Quote + Breakdown</div>
+      </div>
+    </div>
     <button class="btn btn-primary btn-sm" onclick="saveCurrentQuote()">Save</button>
   </div>
 </div>
@@ -908,10 +915,10 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
             ondrop="event.preventDefault();this.classList.remove('dragover');handleHelperDrop(event)">
             <div class="icon">📄</div>
             <div id="helperDropzoneText"><strong>Click to upload</strong> or drag &amp; drop — multiple PDFs supported</div>
-            <div style="font-size:11px;color:var(--muted);margin-top:4px">PDFs only · add spec, drawings schedule, contract docs together</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:4px">PDF, Word (.doc/.docx) · spec, drawings schedule, contract docs</div>
             <div id="helperFileList" style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;justify-content:center"></div>
           </div>
-          <input type="file" id="helperFileInput" style="display:none" accept=".pdf" multiple onchange="handleHelperFile(this)">
+          <input type="file" id="helperFileInput" style="display:none" accept=".pdf,.doc,.docx" multiple onchange="handleHelperFile(this)">
 
           <!-- Optional context -->
           <div class="form-grid form-grid-2" style="margin-top:14px;gap:10px">
@@ -2916,13 +2923,21 @@ function checkRalVisibility() {
 // ============================================================
 let _helperFiles = []; // [{name, base64}]
 
+function isHelperFileSupported(f) {
+  return f.name.match(/\.(pdf|doc|docx)$/i);
+}
+function helperMediaType(name) {
+  if (name.match(/\.pdf$/i)) return 'application/pdf';
+  return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+}
+
 function handleHelperDrop(e) {
-  const files = [...e.dataTransfer.files].filter(f => f.name.endsWith('.pdf'));
-  if (!files.length) { toast('Please drop PDF files only', 'error'); return; }
+  const files = [...e.dataTransfer.files].filter(isHelperFileSupported);
+  if (!files.length) { toast('Please drop PDF or Word files', 'error'); return; }
   files.forEach(loadHelperFile);
 }
 function handleHelperFile(input) {
-  const files = [...input.files].filter(f => f.name.endsWith('.pdf'));
+  const files = [...input.files].filter(isHelperFileSupported);
   files.forEach(loadHelperFile);
   input.value = '';
 }
@@ -2931,7 +2946,7 @@ function loadHelperFile(file) {
   if (_helperFiles.find(f => f.name === file.name)) { toast(file.name + ' already added', 'error'); return; }
   const reader = new FileReader();
   reader.onload = e => {
-    _helperFiles.push({ name: file.name, base64: e.target.result.split(',')[1] });
+    _helperFiles.push({ name: file.name, base64: e.target.result.split(',')[1], mediaType: helperMediaType(file.name) });
     updateHelperFileList();
   };
   reader.readAsDataURL(file);
@@ -2941,7 +2956,7 @@ function updateHelperFileList() {
   const list = document.getElementById('helperFileList');
   list.innerHTML = _helperFiles.map((f,i) => `
     <div style="display:inline-flex;align-items:center;gap:5px;background:rgba(255,107,0,0.1);border:1px solid rgba(255,107,0,0.25);border-radius:20px;padding:3px 10px;font-size:11px;color:var(--accent)">
-      📄 ${escHtml(f.name)}
+      ${f.name.match(/\.docx?$/i) ? "📝" : "📄"} ${escHtml(f.name)}
       <button onclick="removeHelperFile(${i})" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:12px;padding:0;line-height:1" title="Remove">✕</button>
     </div>`).join('');
   document.getElementById('helperDropzoneText').innerHTML =
@@ -2994,7 +3009,15 @@ Respond ONLY in valid JSON with these exact keys — no markdown, no preamble:
   "exclusions": ["list of things explicitly excluded or that BAMA should exclude"]
 }
 
-Be direct and practical. Address Mateusz by first name occasionally. Flag anything that could catch a steelwork contractor out — liquidated damages, design responsibility, payment terms, market volatility, programme risk, access restrictions, working hours, noise/vibration limits near live plant.`;
+CRITICAL INSTRUCTIONS:
+- You MUST return ALL JSON keys — do not skip any even if empty (use empty arrays/strings)
+- pricing_items MUST list every individual steel element, access item, finishing item, or installation activity visible in the documents — be exhaustive, Mateusz needs to price each one
+- drawings_to_check MUST list every drawing number, spec section, or document reference mentioned — even if just referenced in passing
+- contract_risks MUST flag: contract type (JCT/NEC/bespoke), LD clauses, retention, design liability, payment terms, programme constraints, access, noise/vibration near live plant, working at height, third party interfaces
+- scope_draft MUST be a complete professional scope statement as it would appear on the BAMA quote — "Supply, delivery and carry out installation of..." format, listing all elements, material grade, finish, drawings referenced, and key exclusions
+- tc_notes MUST include relevant T&C flags based on the contract type and project specifics
+- If a document is a spec or NBS clause, extract every relevant clause number and requirement
+Be direct. Address Mateusz by first name. Think like an experienced steelwork estimator who has been caught out before.`;
 
   const userPrompt = `${project}Our trade: ${trade}.${focus ? ` Pay particular attention to: ${focus}.` : ''}
 
@@ -3010,7 +3033,7 @@ Please read this tender document and give me a full pricing briefing for my trad
         content: [
           ..._helperFiles.map((f, i) => ({
             type: 'document',
-            source: { type: 'base64', media_type: 'application/pdf', data: f.base64 },
+            source: { type: 'base64', media_type: f.mediaType || 'application/pdf', data: f.base64 },
             title: f.name
           })),
           { type: 'text', text: userPrompt + (_helperFiles.length > 1 ? `\n\nDocuments provided: ${_helperFiles.map(f=>f.name).join(', ')}` : '') }
@@ -3498,228 +3521,288 @@ function fmtDateLong(d) {
   catch { return d; }
 }
 
-function generateQuotePDF() {
+// ── BAMA standard T&Cs ─────────────────────────────────────
+const BAMA_TC = [
+  { h: 'Quotation Validity', t: 'This quotation is valid for 14 days from the date of issue unless stated otherwise, and is subject to written acceptance. BAMA Fabrication reserves the right to withdraw or amend this quotation at any time prior to acceptance.' },
+  { h: 'VAT', t: 'All prices are exclusive of VAT, which will be charged at the prevailing rate.' },
+  { h: 'Material Price Fluctuation', t: 'Structural steel prices are subject to market fluctuation. BAMA Fabrication reserves the right to apply a price adjustment based on the Steel Market Index (Spons or equivalent) should procurement be delayed beyond 8 weeks from the date of this quotation.' },
+  { h: 'Design & Drawing Information', t: 'This quotation is based on information available at the time of submission. Any changes to drawings, specifications or scope after acceptance may result in additional costs, which will be notified by formal variation.' },
+  { h: 'Payment Terms', t: 'Unless otherwise agreed in writing: 30% deposit on order, interim applications monthly in line with progress, final payment within 30 days of practical completion of our works. BAMA Fabrication reserves the right to suspend works for non-payment.' },
+  { h: 'Retention', t: 'Unless stated in the accepted terms, BAMA Fabrication does not accept retention deductions. If retention is a condition of contract, this must be agreed prior to order and may affect the quoted price.' },
+  { h: 'CDM 2015', t: 'BAMA Fabrication will act as Designer under CDM 2015 for structural elements within our scope. The Principal Designer and Principal Contractor roles remain with the Client or their appointed party.' },
+  { h: 'Access & Site Conditions', t: 'This quotation assumes clear and unrestricted access to all working areas during normal working hours (07:00–17:30 Mon–Fri). Any working restrictions, out-of-hours requirements, or abnormal site conditions must be advised prior to acceptance.' },
+  { h: 'Exclusions', t: 'Unless explicitly included in this quotation, the following are excluded: groundworks, concrete foundations, crane pads, fire engineering, M&E services, cladding fixings beyond our scope, and statutory fees or inspections.' },
+  { h: 'Governing Law', t: 'This quotation and any resulting contract shall be governed by and construed in accordance with the laws of England and Wales.' }
+];
+
+function togglePdfMenu() {
+  const menu = document.getElementById('pdfMenu');
+  menu.style.display = menu.style.display === 'none' ? '' : 'none';
+}
+document.addEventListener('click', e => {
+  if (!e.target.closest('#pdfMenuWrap')) {
+    const m = document.getElementById('pdfMenu');
+    if (m) m.style.display = 'none';
+  }
+});
+
+function generateQuotePDF(mode = 'quote') {
   const q = getQuote();
   if (!q) { toast('No quote selected', 'error'); return; }
 
-  // ── collect line items ──
-  let lineRows = '';
-  let grandTotal = 0;
+  const revStr  = q.revision ? ` · ${q.revision}` : '';
+  const scope   = (q.qScope || q.comments || '').replace(/\n/g,'<br>');
+  const logoHtml = getLogoHtml();
+  const computed = q._computed || {};
 
-  if (q.type === 'bama') {
-    (q.standardLines || []).forEach(l => {
-      const price = parseFloat(l.price) || 0;
-      const qty   = parseFloat(l.qty)   || 1;
-      const amt   = Math.round(qty * price * 100) / 100;
-      if (price === 0) return; // skip zero lines
-      grandTotal += amt;
-      lineRows += `<tr>
-        <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">${qty !== 1 ? qty : '1'}</td>
-        <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">${escHtml(l.desc)}</td>
-        <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(price)}</td>
-        <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(amt)}</td>
-      </tr>`;
-    });
-  } else if (q.type === 'custom') {
-    (q.customLines || []).forEach(l => {
-      const price = parseFloat(l.price) || 0;
-      const qty   = parseFloat(l.qty)   || 1;
-      const amt   = Math.round(qty * price * 100) / 100;
-      grandTotal += amt;
-      lineRows += `<tr>
-        <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">${qty}</td>
-        <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">${escHtml(l.desc)}<span style="color:#888;font-size:10px;margin-left:4px">${escHtml(l.unit||'')}</span></td>
-        <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(price)}</td>
-        <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(amt)}</td>
-      </tr>`;
-    });
-  } else {
-    // BoQ — single lump sum line
-    const total = q._computed?.total || 0;
-    grandTotal = total;
-    lineRows = `<tr>
-      <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">1</td>
-      <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">As per ${escHtml(q.boqRef || 'Client BoQ')}</td>
-      <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(total)}</td>
-      <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(total)}</td>
-    </tr>`;
+  // ── shared header HTML ───────────────────────────────────
+  const docHeader = `
+    <div class="doc-header">
+      <div class="doc-header-left">
+        ${logoHtml}
+        <div class="addr">11 Enterprise Way, Enterprise Park<br>Yaxley, PE7 3WY, Peterborough<br>01733 855212 · info@bamafabrication.co.uk</div>
+      </div>
+      <div style="text-align:right">
+        <div class="doc-type">Quotation</div>
+        <div class="doc-meta" style="margin-top:10px">
+          <div><strong>Date:</strong><span class="val"> ${fmtDateLong(q.date)}</span></div>
+          <div><strong>Quotation #:</strong><span class="val"> ${escHtml(q.ref)}${revStr}</span></div>
+          <div><strong>Prepared by:</strong><span class="val"> ${escHtml(q.preparedBy||'—')}</span></div>
+          <div><strong>Valid until:</strong><span class="val"> ${fmtDateLong(q.validUntil)}</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="info-grid">
+      <div class="info-block">
+        <label>Quotation For</label>
+        <div class="info-val">
+          ${q.contact ? escHtml(q.contact)+'<br>' : ''}
+          <strong>${escHtml(q.company||'—')}</strong>
+          ${q.email ? '<br><span style="color:#555">'+escHtml(q.email)+'</span>' : ''}
+          ${q.phone ? '<br><span style="color:#555">'+escHtml(q.phone)+'</span>' : ''}
+        </div>
+      </div>
+      <div class="info-block">
+        <label>Company Address</label>
+        <div class="info-val">11 Enterprise Way, Enterprise Park<br>Yaxley, PE7 3WY, Peterborough<br>01733 855212</div>
+      </div>
+    </div>
+    ${scope ? `<div class="scope-block"><label>Comments or Special Instructions</label>${scope}</div>` : ''}`;
+
+  // ── T&Cs HTML ────────────────────────────────────────────
+  const tcHtml = `
+    <div style="margin-top:24px;padding-top:14px;border-top:2px solid #eee">
+      <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#888;margin-bottom:10px">Terms &amp; Conditions</div>
+      ${BAMA_TC.map(tc => `
+        <div style="margin-bottom:7px;font-size:9.5px;line-height:1.5">
+          <strong style="color:#333">${escHtml(tc.h)}: </strong><span style="color:#555">${escHtml(tc.t)}</span>
+        </div>`).join('')}
+    </div>`;
+
+  // ── QUOTE PDF ────────────────────────────────────────────
+  if (mode === 'quote' || mode === 'combined') {
+    let lineRows = '', grandTotal = 0;
+    if (q.type === 'bama') {
+      (q.standardLines||[]).forEach(l => {
+        const price = parseFloat(l.price)||0, qty = parseFloat(l.qty)||1;
+        const amt = Math.round(qty*price*100)/100;
+        if (price===0) return;
+        grandTotal += amt;
+        lineRows += `<tr><td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">${qty!==1?qty:'1'}</td>
+          <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">${escHtml(l.desc)}</td>
+          <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(price)}</td>
+          <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(amt)}</td></tr>`;
+      });
+    } else if (q.type === 'custom') {
+      (q.customLines||[]).forEach(l => {
+        const price = parseFloat(l.price)||0, qty = parseFloat(l.qty)||1;
+        const amt = Math.round(qty*price*100)/100;
+        grandTotal += amt;
+        lineRows += `<tr><td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">${qty}</td>
+          <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">${escHtml(l.desc)}<span style="color:#888;font-size:10px;margin-left:4px">${escHtml(l.unit||'')}</span></td>
+          <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(price)}</td>
+          <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(amt)}</td></tr>`;
+      });
+    } else {
+      const total = computed.total||0; grandTotal = total;
+      lineRows = `<tr><td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">1</td>
+        <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">As per ${escHtml(q.boqRef||'Client BoQ')}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(total)}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(total)}</td></tr>`;
+    }
+    const rowCount = (q.type==='bama'?(q.standardLines||[]).filter(l=>(l.price||0)>0).length:(q.customLines||[]).length)||1;
+    for (let i=rowCount; i<6; i++) lineRows += `<tr style="height:34px"><td style="border-bottom:1px solid #e5e7eb"></td><td style="border-bottom:1px solid #e5e7eb"></td><td style="border-bottom:1px solid #e5e7eb"></td><td style="border-bottom:1px solid #e5e7eb"></td></tr>`;
+    let depositRow = '';
+    if (q.showDeposit) {
+      const depPct=parseFloat(q.depositPct)||60, depAmt=Math.round(grandTotal*depPct/100*100)/100;
+      depositRow = `<tr><td colspan="3" style="padding:6px 10px;text-align:right;font-size:12px;color:#555">Deposit Required (${depPct}%)</td><td style="padding:6px 10px;text-align:right;font-size:12px;font-weight:600;color:#D0021B">${fmtGBP(depAmt)}</td></tr>`;
+    }
+
+    const quoteHtml = buildPdfPage(`Quotation ${escHtml(q.ref)}${revStr}`, `
+      ${docHeader}
+      <table>
+        <thead><tr>
+          <th style="width:60px">Quantity</th><th>Description</th>
+          <th style="text-align:right;width:110px">Unit Price</th>
+          <th style="text-align:right;width:110px">Amount</th>
+        </tr></thead>
+        <tbody>${lineRows}</tbody>
+      </table>
+      <div class="totals-block">
+        <div class="total-row"><span>Subtotal (excl. VAT)</span><span>${fmtGBP(grandTotal)}</span></div>
+        ${depositRow}
+        <div class="total-row grand"><span>TOTAL</span><span class="val">${fmtGBP(grandTotal)}</span></div>
+        <div style="padding:6px 10px;font-size:10px;color:#888">All prices are exclusive of VAT</div>
+      </div>
+      <div class="doc-footer">
+        <div class="footer-note">If you have any questions concerning this quotation, please contact:<br>
+          <a href="mailto:info@bamafabrication.co.uk">info@bamafabrication.co.uk</a><br><br>Thank you for your business!
+        </div>
+      </div>
+      ${tcHtml}
+    `);
+
+    if (mode === 'quote') { openPdfWindow(quoteHtml); return; }
   }
 
-  // pad to at least 6 rows for a cleaner look
-  const rowCount = (q.type==='bama' ? (q.standardLines||[]).filter(l=>(l.price||0)>0).length : (q.customLines||[]).length) || 1;
-  for (let i = rowCount; i < 6; i++) {
-    lineRows += `<tr style="height:34px"><td style="border-bottom:1px solid #e5e7eb"></td><td style="border-bottom:1px solid #e5e7eb"></td><td style="border-bottom:1px solid #e5e7eb"></td><td style="border-bottom:1px solid #e5e7eb"></td></tr>`;
-  }
+  // ── BREAKDOWN PDF ─────────────────────────────────────────
+  const margin = parseFloat(document.getElementById('marginSlider')?.value)||q.margin||20;
+  const totals = [
+    ['Material (inc. fittings)', computed.material||0],
+    ['Installation (labour + plant)', computed.installation||0],
+    ['Fabrication + Consumables', computed.fabrication||0],
+    ['Design', computed.design||0],
+    ['Painting / Finishing', computed.painting||0],
+    ['Survey', computed.survey||0],
+    ['Delivery', computed.delivery||0],
+    ['Prelims', computed.prelims||0],
+    ['Purlins', computed.purlins||0],
+  ].filter(([,v]) => v > 0);
+  const subtotal = totals.reduce((s,[,v]) => s+v, 0);
+  const marginAmt = Math.round(subtotal*margin/100*100)/100;
+  const total = Math.round((subtotal+marginAmt)*100)/100;
+  const totalKg = totalTakeoffKg();
 
-  // ── deposit row ──
-  let depositRow = '';
-  if (q.showDeposit) {
-    const depPct = parseFloat(q.depositPct) || 60;
-    const depAmt = Math.round(grandTotal * depPct / 100 * 100) / 100;
-    depositRow = `<tr>
-      <td colspan="3" style="padding:6px 10px;text-align:right;font-size:12px;color:#555">Deposit Required (${depPct}%)</td>
-      <td style="padding:6px 10px;text-align:right;font-size:12px;font-weight:600;color:#D0021B">${fmtGBP(depAmt)}</td>
-    </tr>`;
-  }
+  const bkRows = totals.map(([label,val]) => `
+    <tr>
+      <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">${escHtml(label)}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right;font-family:monospace">${fmtGBP(val)}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right;color:#888;font-size:11px">${subtotal>0?(val/subtotal*100).toFixed(1)+'%':''}</td>
+    </tr>`).join('');
 
-  // ── scope text ──
-  const scope = (q.qScope || q.comments || '').replace(/\n/g,'<br>');
+  // Takeoff summary grouped by section type
+  const takeoffSummary = {};
+  (q.takeoff||[]).forEach(r => {
+    if (!r.type) return;
+    const key = r.type;
+    if (!takeoffSummary[key]) takeoffSummary[key] = { qty:0, totalKg:0, cost:0 };
+    const kg = (r.length/1000)*(r.kgm||0)*(r.qty||1);
+    takeoffSummary[key].qty += (r.qty||1);
+    takeoffSummary[key].totalKg += kg;
+    takeoffSummary[key].cost += kg*(r.rate||0);
+  });
+  const tkRows = Object.entries(takeoffSummary).map(([type,d]) => `
+    <tr>
+      <td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;font-family:monospace;font-size:11px">${escHtml(type)}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;text-align:right;font-size:11px">${d.qty}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;text-align:right;font-size:11px">${d.totalKg.toFixed(1)} kg</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #f0f0f0;text-align:right;font-size:11px">${fmtGBP(d.cost)}</td>
+    </tr>`).join('');
 
-  // ── revision ──
-  const revStr = q.revision ? ` · ${q.revision}` : '';
+  const breakdownHtml = buildPdfPage(`Cost Breakdown — ${escHtml(q.ref)}${revStr}`, `
+    ${docHeader}
+    <div style="background:#fff3e0;border:1px solid #ffcc80;border-radius:6px;padding:8px 14px;margin-bottom:16px;font-size:11px;color:#e65100">
+      ⚠ CONFIDENTIAL — Internal cost breakdown. Not for client distribution.
+    </div>
+    <h2 style="font-size:13px;font-weight:700;margin:0 0 10px;padding-bottom:4px;border-bottom:2px solid #D0021B">Cost Summary</h2>
+    <table>
+      <thead><tr>
+        <th>Cost Element</th>
+        <th style="text-align:right;width:120px">Net Cost</th>
+        <th style="text-align:right;width:80px">% of Sub</th>
+      </tr></thead>
+      <tbody>${bkRows}</tbody>
+    </table>
+    <div style="margin-top:0;border-top:2px solid #1a1a2e">
+      <div style="display:flex;justify-content:space-between;padding:6px 10px;font-size:12px"><span>Sub-total</span><span style="font-family:monospace">${fmtGBP(subtotal)}</span></div>
+      <div style="display:flex;justify-content:space-between;padding:6px 10px;font-size:12px"><span>Margin (${margin}%)</span><span style="font-family:monospace">${fmtGBP(marginAmt)}</span></div>
+      <div style="display:flex;justify-content:space-between;padding:10px;background:#1a1a2e;color:#fff;font-size:14px;font-weight:700"><span>TOTAL</span><span style="color:#ff6b00;font-family:monospace">${fmtGBP(total)}</span></div>
+      ${totalKg > 0 ? `<div style="display:flex;justify-content:space-between;padding:6px 10px;font-size:11px;color:#888"><span>Cost per kg (incl. margin)</span><span style="font-family:monospace">£${(total/totalKg).toFixed(2)}/kg</span></div>` : ''}
+    </div>
+    ${tkRows ? `
+    <h2 style="font-size:13px;font-weight:700;margin:20px 0 10px;padding-bottom:4px;border-bottom:2px solid #D0021B">Steel Takeoff Summary</h2>
+    <table>
+      <thead><tr><th>Section</th><th style="text-align:right">Qty</th><th style="text-align:right">Total kg</th><th style="text-align:right">Material £</th></tr></thead>
+      <tbody>${tkRows}</tbody>
+      <tfoot><tr>
+        <td style="padding:8px 10px;font-weight:700">Total</td>
+        <td></td>
+        <td style="padding:8px 10px;text-align:right;font-weight:700;font-size:11px">${totalKg.toFixed(1)} kg</td>
+        <td style="padding:8px 10px;text-align:right;font-weight:700;font-size:11px">${fmtGBP(Object.values(takeoffSummary).reduce((s,d)=>s+d.cost,0))}</td>
+      </tr></tfoot>
+    </table>` : ''}
+  `);
 
-  const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<title>Quotation ${escHtml(q.ref)}${revStr}</title>
-<style>
-  * { box-sizing:border-box; margin:0; padding:0; }
-  body { font-family:Arial,Helvetica,sans-serif; font-size:12px; color:#111; background:#fff; }
-  .page { max-width:210mm; margin:0 auto; padding:16mm 16mm 12mm; min-height:297mm; }
+  if (mode === 'breakdown') { openPdfWindow(breakdownHtml); return; }
 
-  /* HEADER */
-  .doc-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:24px; padding-bottom:16px; border-bottom:3px solid #D0021B; }
-  .doc-header-left { display:flex; flex-direction:column; gap:6px; }
-  .doc-type { font-size:28px; font-weight:900; letter-spacing:1px; color:#111; margin-top:4px; }
-  .addr { font-size:10px; color:#555; line-height:1.5; margin-top:4px; }
-  .doc-meta { text-align:right; font-size:11px; line-height:1.7; }
-  .doc-meta strong { display:inline-block; min-width:130px; color:#333; }
-  .doc-meta .val { font-weight:600; }
+  // ── COMBINED — quote + breakdown in same window ──────────
+  const combined = buildPdfPage(`${escHtml(q.ref)} — Quote + Breakdown`, `
+    ${buildPdfPage(`Quotation ${escHtml(q.ref)}${revStr}`, `
+      ${docHeader}
+      <table>
+        <thead><tr><th style="width:60px">Quantity</th><th>Description</th><th style="text-align:right;width:110px">Unit Price</th><th style="text-align:right;width:110px">Amount</th></tr></thead>
+        <tbody>${lineRows||''}</tbody>
+      </table>
+      <div class="totals-block">
+        <div class="total-row grand"><span>TOTAL</span><span class="val">${fmtGBP(grandTotal)}</span></div>
+        <div style="padding:6px 10px;font-size:10px;color:#888">All prices are exclusive of VAT</div>
+      </div>
+      ${tcHtml}
+    `).replace('<!DOCTYPE html><html><head>','').replace('</html>','')}
+    <div style="page-break-before:always"></div>
+    ${breakdownHtml.replace('<!DOCTYPE html><html><head>','').replace('</html>','')}
+  `);
+  openPdfWindow(combined);
+}
 
-  /* TWO COLUMN INFO */
-  .info-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:20px; }
-  .info-block label { font-size:9px; text-transform:uppercase; letter-spacing:1px; color:#888; font-weight:700; display:block; margin-bottom:4px; }
-  .info-block .info-val { font-size:12px; color:#111; line-height:1.5; }
-
-  /* SCOPE */
-  .scope-block { background:#f9f9f9; border-left:3px solid #D0021B; padding:10px 14px; margin-bottom:20px; font-size:11px; line-height:1.6; color:#333; }
-  .scope-block label { font-size:9px; text-transform:uppercase; letter-spacing:1px; color:#888; font-weight:700; display:block; margin-bottom:6px; }
-
-  /* TABLE */
-  table { width:100%; border-collapse:collapse; margin-bottom:0; }
-  thead tr { background:#1a1a2e; }
-  thead th { color:#fff; padding:9px 10px; font-size:11px; font-weight:700; text-align:left; letter-spacing:0.3px; }
-  thead th:nth-child(3), thead th:nth-child(4) { text-align:right; }
-  thead th:first-child { width:60px; }
-  tbody tr:nth-child(even) { background:#fafafa; }
-
-  /* TOTALS */
-  .totals-block { border-top:2px solid #1a1a2e; }
-  .total-row { display:flex; justify-content:space-between; padding:5px 10px; font-size:12px; }
-  .total-row.grand { background:#1a1a2e; color:#fff; font-size:14px; font-weight:700; padding:10px; margin-top:0; }
-  .total-row.grand .val { color:#ff6b00; }
-
-  /* FOOTER */
-  .doc-footer { margin-top:28px; padding-top:12px; border-top:1px solid #ddd; display:flex; justify-content:space-between; align-items:flex-end; font-size:10px; color:#888; }
-  .footer-note { line-height:1.6; }
-  .footer-note a { color:#D0021B; text-decoration:none; }
-
-  @media print {
-    body { print-color-adjust:exact; -webkit-print-color-adjust:exact; }
-    .page { padding:10mm 12mm; }
-    .no-print { display:none !important; }
-  }
-</style>
-</head>
-<body>
-<div class="page">
-
-  <!-- TOP: print button (hidden on print) -->
-  <div class="no-print" style="text-align:right;margin-bottom:12px">
+function buildPdfPage(title, body) {
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title}</title><style>
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { font-family:Arial,Helvetica,sans-serif; font-size:12px; color:#111; background:#fff; }
+    .page { max-width:210mm; margin:0 auto; padding:16mm 16mm 12mm; }
+    .doc-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:24px; padding-bottom:16px; border-bottom:3px solid #D0021B; }
+    .doc-header-left { display:flex; flex-direction:column; gap:6px; }
+    .doc-type { font-size:28px; font-weight:900; letter-spacing:1px; color:#111; margin-top:4px; }
+    .addr { font-size:10px; color:#555; line-height:1.5; margin-top:4px; }
+    .doc-meta { text-align:right; font-size:11px; line-height:1.7; }
+    .doc-meta strong { display:inline-block; min-width:130px; color:#333; }
+    .doc-meta .val { font-weight:600; }
+    .info-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:20px; }
+    .info-block label { font-size:9px; text-transform:uppercase; letter-spacing:1px; color:#888; font-weight:700; display:block; margin-bottom:4px; }
+    .info-block .info-val { font-size:12px; color:#111; line-height:1.5; }
+    .scope-block { background:#f9f9f9; border-left:3px solid #D0021B; padding:10px 14px; margin-bottom:20px; font-size:11px; line-height:1.6; color:#333; }
+    .scope-block label { font-size:9px; text-transform:uppercase; letter-spacing:1px; color:#888; font-weight:700; display:block; margin-bottom:6px; }
+    table { width:100%; border-collapse:collapse; margin-bottom:0; }
+    thead tr { background:#1a1a2e; }
+    thead th { color:#fff; padding:9px 10px; font-size:11px; font-weight:700; text-align:left; letter-spacing:0.3px; }
+    tbody tr:nth-child(even) { background:#fafafa; }
+    .totals-block { border-top:2px solid #1a1a2e; }
+    .total-row { display:flex; justify-content:space-between; padding:5px 10px; font-size:12px; }
+    .total-row.grand { background:#1a1a2e; color:#fff; font-size:14px; font-weight:700; padding:10px; }
+    .total-row.grand .val { color:#ff6b00; }
+    .doc-footer { margin-top:28px; padding-top:12px; border-top:1px solid #ddd; font-size:10px; color:#888; }
+    .doc-footer a { color:#D0021B; text-decoration:none; }
+    .no-print { display:block; }
+    @media print { .no-print { display:none !important; } body { print-color-adjust:exact; -webkit-print-color-adjust:exact; } .page { padding:10mm 12mm; } }
+  </style></head><body>
+  <div class="no-print" style="text-align:right;padding:8px 16px">
     <button onclick="window.print()" style="background:#D0021B;color:#fff;border:none;padding:8px 20px;border-radius:4px;font-size:13px;cursor:pointer;font-weight:600">🖨 Print / Save as PDF</button>
   </div>
+  <div class="page">${body}</div>
+  </body></html>`;
+}
 
-  <!-- HEADER -->
-  <div class="doc-header">
-    <div class="doc-header-left">
-      ${getLogoHtml()}
-      <div class="addr">
-        11 Enterprise Way, Enterprise Park<br>
-        Yaxley, PE7 3WY, Peterborough<br>
-        01733 855212 · info@bamafabrication.co.uk
-      </div>
-    </div>
-    <div style="text-align:right">
-      <div class="doc-type">Quotation</div>
-      <div class="doc-meta" style="margin-top:10px">
-        <div><strong>Date:</strong><span class="val"> ${fmtDateLong(q.date)}</span></div>
-        <div><strong>Quotation #:</strong><span class="val"> ${escHtml(q.ref)}${revStr}</span></div>
-        <div><strong>Prepared by:</strong><span class="val"> ${escHtml(q.preparedBy||'—')}</span></div>
-        <div><strong>Valid until:</strong><span class="val"> ${fmtDateLong(q.validUntil)}</span></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- CLIENT INFO -->
-  <div class="info-grid">
-    <div class="info-block">
-      <label>Quotation For</label>
-      <div class="info-val">
-        ${q.contact ? escHtml(q.contact)+'<br>' : ''}
-        <strong>${escHtml(q.company||'—')}</strong>
-        ${q.email ? '<br><span style="color:#555">'+escHtml(q.email)+'</span>' : ''}
-        ${q.phone ? '<br><span style="color:#555">'+escHtml(q.phone)+'</span>' : ''}
-      </div>
-    </div>
-    <div class="info-block">
-      <label>Company Address</label>
-      <div class="info-val">
-        11 Enterprise Way, Enterprise Park<br>
-        Yaxley, PE7 3WY, Peterborough<br>
-        01733 855212
-      </div>
-    </div>
-  </div>
-
-  ${scope ? `<div class="scope-block"><label>Comments or Special Instructions</label>${scope}</div>` : ''}
-
-  <!-- LINE ITEMS -->
-  <table>
-    <thead>
-      <tr>
-        <th>Quantity</th>
-        <th>Description</th>
-        <th style="text-align:right;width:110px">Unit Price</th>
-        <th style="text-align:right;width:110px">Amount</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${lineRows}
-    </tbody>
-  </table>
-
-  <!-- TOTALS -->
-  <div class="totals-block">
-    <div class="total-row" style="padding-top:8px">
-      <span style="color:#555">Subtotal</span>
-      <span style="font-weight:600">${fmtGBP(grandTotal)}</span>
-    </div>
-    ${depositRow}
-    <div class="total-row grand">
-      <span>TOTAL</span>
-      <span class="val">${fmtGBP(grandTotal)}</span>
-    </div>
-    <div style="padding:6px 10px;font-size:10px;color:#888">All prices are exclusive of VAT</div>
-  </div>
-
-  <!-- FOOTER -->
-  <div class="doc-footer">
-    <div class="footer-note">
-      If you have any questions concerning this quotation, please contact:<br>
-      <a href="mailto:info@bamafabrication.co.uk">info@bamafabrication.co.uk</a><br>
-      <br>Thank you for your business!
-    </div>
-    <div style="text-align:right">
-      <div style="font-size:9px;color:#bbb;margin-bottom:2px">BAMA Fabrication Ltd</div>
-      <div style="font-size:9px;color:#bbb">11 Enterprise Way, Yaxley, PE7 3WY</div>
-    </div>
-  </div>
-
-</div>
-</body>
-</html>`;
-
+function openPdfWindow(html) {
   const win = window.open('', '_blank', 'width=900,height=1100');
   win.document.write(html);
   win.document.close();
