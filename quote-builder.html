@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Quote Builder</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -784,22 +785,54 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 
 <!-- PLANSWIFT IMPORT MODAL -->
 <div class="modal-overlay" id="planswiftModal">
-  <div class="modal" style="max-width:600px">
+  <div class="modal" style="max-width:660px">
     <div class="modal-title">📐 PlanSwift Import</div>
-    <p style="font-size:13px;color:var(--muted);margin-bottom:16px">Paste your PlanSwift exported list below, or upload the Excel file exported from PlanSwift. Expected columns: <strong>TYPE | LENGTH | WEIGHT | QUANTITY</strong></p>
-    <div class="upload-zone" onclick="document.getElementById('planswiftFile').click()" id="psDropzone">
+    <p style="font-size:13px;color:var(--muted);margin-bottom:16px">
+      Upload your PlanSwift Excel export or paste the data directly. 
+      The system looks for columns containing: <strong>type/section</strong>, <strong>length</strong>, <strong>quantity</strong> — in any order, any column name.
+    </p>
+
+    <!-- DROP ZONE -->
+    <div class="upload-zone" id="psDropzone"
+      onclick="document.getElementById('planswiftFile').click()"
+      ondragover="event.preventDefault();this.classList.add('dragover')"
+      ondragleave="this.classList.remove('dragover')"
+      ondrop="event.preventDefault();this.classList.remove('dragover');handlePlanswiftDrop(event)">
       <div class="icon">📂</div>
-      <div>Click to upload PlanSwift Excel export</div>
-      <div style="font-size:11px;margin-top:4px">or paste text below</div>
+      <div id="psDropzoneText"><strong>Click to browse</strong> or drag &amp; drop your PlanSwift Excel file here</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">.xlsx · .xls · .csv accepted</div>
     </div>
     <input type="file" id="planswiftFile" style="display:none" accept=".xlsx,.xls,.csv" onchange="handlePlanswiftFile(this)">
-    <div class="field" style="margin-top:12px">
-      <label>Or paste tab-separated data (TYPE ↹ LENGTH ↹ WEIGHT ↹ QUANTITY)</label>
-      <textarea id="planswiftPaste" rows="8" style="font-family:var(--font-mono);font-size:12px" placeholder="UB203x133x25&#9;5349&#9;133.725&#9;2&#10;SHS100x100x8&#9;3200&#9;22.9&#9;4"></textarea>
+
+    <!-- PREVIEW TABLE -->
+    <div id="psPreview" style="display:none;margin-top:12px">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:6px" id="psPreviewLabel"></div>
+      <div style="overflow-x:auto;max-height:220px;border:1px solid var(--border);border-radius:6px">
+        <table class="data-table" id="psPreviewTable" style="font-size:11px">
+          <thead><tr>
+            <th>Type / Section</th>
+            <th style="text-align:right">Length (mm)</th>
+            <th style="text-align:right">Qty</th>
+            <th style="text-align:right">kg/m (auto)</th>
+          </tr></thead>
+          <tbody id="psPreviewBody"></tbody>
+        </table>
+      </div>
     </div>
+
+    <!-- PASTE FALLBACK -->
+    <details style="margin-top:12px">
+      <summary style="font-size:12px;color:var(--muted);cursor:pointer;user-select:none">Or paste tab-separated data manually</summary>
+      <div class="field" style="margin-top:8px">
+        <textarea id="planswiftPaste" rows="6" style="font-family:var(--font-mono);font-size:12px"
+          placeholder="UB203x133x25&#9;5349&#9;2&#10;SHS100x100x8&#9;3200&#9;4"
+          oninput="parsePastePreview()"></textarea>
+      </div>
+    </details>
+
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closePlanswiftModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="importPlanswift()">Import</button>
+      <button class="btn btn-primary" id="psImportBtn" onclick="importPlanswift()" disabled style="opacity:0.4">Import rows</button>
     </div>
   </div>
 </div>
@@ -1715,36 +1748,147 @@ function toggleBlock(name) {
 // ============================================================
 // PLANSWIFT IMPORT
 // ============================================================
-function openPlanswiftImport() { document.getElementById('planswiftModal').classList.add('active'); }
-function closePlanswiftModal() { document.getElementById('planswiftModal').classList.remove('active'); }
+// parsed rows staging area
+let _psRows = [];
 
+function openPlanswiftImport() {
+  _psRows = [];
+  document.getElementById('psPreview').style.display = 'none';
+  document.getElementById('psImportBtn').disabled = true;
+  document.getElementById('psImportBtn').style.opacity = '0.4';
+  document.getElementById('psDropzoneText').innerHTML = '<strong>Click to browse</strong> or drag &amp; drop your PlanSwift Excel file here';
+  document.getElementById('planswiftPaste').value = '';
+  document.getElementById('planswiftModal').classList.add('active');
+}
+function closePlanswiftModal() {
+  document.getElementById('planswiftModal').classList.remove('active');
+}
+
+function handlePlanswiftDrop(e) {
+  const file = e.dataTransfer.files[0];
+  if (file) readPlanswiftFile(file);
+}
 function handlePlanswiftFile(input) {
-  toast('Excel import: paste the data from your PlanSwift export into the text area below (copy columns A-D from the file)', 'success');
+  const file = input.files[0];
+  if (file) readPlanswiftFile(file);
+}
+
+function readPlanswiftFile(file) {
+  document.getElementById('psDropzoneText').innerHTML = `<strong>${file.name}</strong> — reading...`;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      let rows = [];
+      if (file.name.endsWith('.csv')) {
+        // CSV: split lines
+        const text = e.target.result;
+        rows = text.split('\n').map(l => l.split(',').map(c => c.trim().replace(/^"|"$/g,'')));
+      } else {
+        // Excel via SheetJS
+        const wb = XLSX.read(e.target.result, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' });
+      }
+      parsePlanswiftRows(rows, file.name);
+    } catch(err) {
+      toast('Could not read file: ' + err.message, 'error');
+    }
+  };
+  if (file.name.endsWith('.csv')) {
+    reader.readAsText(file);
+  } else {
+    reader.readAsArrayBuffer(file);
+  }
+}
+
+function parsePlanswiftRows(rows, filename) {
+  // Find header row — look for row containing something like 'type','name','section','length','qty'
+  let headerIdx = -1;
+  let colType = -1, colLength = -1, colQty = -1, colKgm = -1;
+
+  for (let i = 0; i < Math.min(rows.length, 10); i++) {
+    const r = rows[i].map(c => String(c).toLowerCase().trim());
+    const tIdx = r.findIndex(c => /type|section|name|member|profile|size/.test(c));
+    const lIdx = r.findIndex(c => /length|len|mm/.test(c));
+    const qIdx = r.findIndex(c => /qty|quantity|no\.|count|nr/.test(c));
+    if (tIdx >= 0 && lIdx >= 0) {
+      headerIdx = i; colType = tIdx; colLength = lIdx;
+      colQty = qIdx >= 0 ? qIdx : -1;
+      colKgm = r.findIndex(c => /kg.m|weight.m|kg\/m|unit.wt/.test(c));
+      break;
+    }
+  }
+
+  // if no header found, assume col 0=type, 1=length, 2=qty (or 2=kgm, 3=qty)
+  const dataStart = headerIdx >= 0 ? headerIdx + 1 : 0;
+  if (headerIdx < 0) { colType=0; colLength=1; colQty=2; }
+
+  _psRows = [];
+  for (let i = dataStart; i < rows.length; i++) {
+    const r = rows[i];
+    const typeVal = String(r[colType]||'').trim();
+    const lenVal  = parseFloat(String(r[colLength]||'').replace(/[^0-9.]/g,''));
+    const qtyVal  = colQty >= 0 ? parseFloat(r[colQty]) || 1 : 1;
+    const kgmFile = colKgm >= 0 ? parseFloat(r[colKgm]) || null : null;
+    if (!typeVal || !lenVal || isNaN(lenVal)) continue;
+    const kgm  = kgmFile || lookupKgM(typeVal);
+    const rate = sectionMaterialRate(typeVal);
+    _psRows.push({ type: typeVal, length: lenVal, qty: qtyVal, kgm, rate });
+  }
+
+  showPsPreview(filename);
+}
+
+function parsePastePreview() {
+  const raw = document.getElementById('planswiftPaste').value.trim();
+  if (!raw) { _psRows = []; showPsPreview('paste'); return; }
+  _psRows = [];
+  raw.split('\n').filter(l=>l.trim()).forEach(line => {
+    const parts = line.split(/\t|,/).map(p=>p.trim());
+    const typeVal = parts[0];
+    const lenVal  = parseFloat(parts[1]);
+    const qtyVal  = parseFloat(parts[2]) || 1;
+    if (!typeVal || !lenVal || isNaN(lenVal)) return;
+    const kgm = lookupKgM(typeVal);
+    _psRows.push({ type: typeVal, length: lenVal, qty: qtyVal, kgm, rate: sectionMaterialRate(typeVal) });
+  });
+  showPsPreview('paste');
+}
+
+function showPsPreview(source) {
+  const preview = document.getElementById('psPreview');
+  const body    = document.getElementById('psPreviewBody');
+  const label   = document.getElementById('psPreviewLabel');
+  const btn     = document.getElementById('psImportBtn');
+
+  if (!_psRows.length) {
+    preview.style.display = 'none';
+    btn.disabled = true; btn.style.opacity = '0.4';
+    if (source !== 'paste') document.getElementById('psDropzoneText').innerHTML = '⚠ No rows found — check column names match type/length/qty';
+    return;
+  }
+
+  label.textContent = `${_psRows.length} rows found from ${source}`;
+  body.innerHTML = _psRows.map(r => `<tr>
+    <td style="padding:5px 8px">${escHtml(r.type)}</td>
+    <td style="padding:5px 8px;text-align:right;font-family:var(--font-mono)">${r.length}</td>
+    <td style="padding:5px 8px;text-align:right;font-family:var(--font-mono)">${r.qty}</td>
+    <td style="padding:5px 8px;text-align:right;font-family:var(--font-mono);color:${r.kgm?'var(--green)':'var(--muted)'}">${r.kgm ? r.kgm+' ✓' : '—'}</td>
+  </tr>`).join('');
+
+  preview.style.display = '';
+  btn.disabled = false; btn.style.opacity = '1';
+  if (source !== 'paste') document.getElementById('psDropzoneText').innerHTML = `✅ <strong>${source}</strong> — ${_psRows.length} rows ready`;
 }
 
 function importPlanswift() {
   const q = getQuote(); if (!q) return;
-  const raw = document.getElementById('planswiftPaste').value.trim();
-  if (!raw) { toast('Nothing to import', 'error'); return; }
-  const lines = raw.split('\n').filter(l=>l.trim());
-  let added = 0;
-  lines.forEach(line => {
-    const parts = line.split(/\t|,/).map(p=>p.trim());
-    if (parts.length < 2) return;
-    const type   = parts[0];
-    const length = parseFloat(parts[1]) || 0;
-    const kgmRaw = parts.length >= 3 ? parseFloat(parts[2]) : null;
-    const qty    = parts.length >= 4 ? parseFloat(parts[3]) || 1 : 1;
-    if (!type || !length) return;
-    const kgm = kgmRaw || lookupKgM(type);
-    const rate = sectionMaterialRate(type);
-    q.takeoff.push({ type, length, qty, kgm, rate });
-    added++;
-  });
+  if (!_psRows.length) { toast('Nothing to import', 'error'); return; }
+  _psRows.forEach(r => q.takeoff.push({ ...r }));
   saveAll(); renderTakeoff(); recalcAll();
   closePlanswiftModal();
-  document.getElementById('planswiftPaste').value = '';
-  toast(`Imported ${added} rows`, 'success');
+  _psRows = [];
+  toast(`Imported ${_psRows.length || q.takeoff.length} rows`, 'success');
 }
 
 // ============================================================
