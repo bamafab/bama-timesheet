@@ -837,22 +837,16 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
                   style="background:rgba(255,255,255,0.04);border:none;border-bottom:1px solid var(--border);border-radius:0;padding:4px 2px;color:var(--muted);font-size:11px;width:100%;font-style:italic"
                   oninput="saveBlockNote('prelims',this.value)">
               </div>
-                <div id="prelimRows"></div>
-                <div id="prelimQuickPanel" style="margin-bottom:8px;padding:8px;background:rgba(255,255,255,0.03);border-radius:6px;border:1px solid var(--border)">
-                  <div style="font-size:10px;color:var(--muted);margin-bottom:6px;font-weight:600">QUICK ADD (from default rates):</div>
-                  <div id="prelimChecklist" style="display:flex;flex-wrap:wrap;gap:4px"></div>
-                </div>
-                <div class="cost-add-row">
-                  <select id="prelimTypeSelect">
-                    <option value="">-- Add prelim item --</option>
-                    <option value="proj_manager">Project Manager (per day)</option>
-                    <option value="hs_officer">H&amp;S Officer (per day)</option>
-                    <option value="site_manager">Site Manager (per day)</option>
-                    <option value="rams">RAMS</option>
-                    <option value="ppe">PPE</option>
-                    <option value="logistics">Logistics</option>
-                    <option value="weld_inspect">Welding Inspections</option>
-                    <option value="other_prelim">Other</option>
+                <!-- Quick panel pills + inline editors (replaces old prelimRows) -->
+                <div id="prelimChecklist" style="display:flex;flex-wrap:wrap;gap:4px"></div>
+                <!-- Hidden old row container — kept for sumPrelims() compat but not shown -->
+                <div id="prelimRows" style="display:none"></div>
+                <!-- Custom / other item -->
+                <div class="cost-add-row" style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border)">
+                  <span style="font-size:11px;color:var(--muted)">Add custom:</span>
+                  <select id="prelimTypeSelect" style="flex:1">
+                    <option value="">-- Other item --</option>
+                    <option value="other_prelim">Other (lump sum)</option>
                   </select>
                   <button class="btn btn-ghost btn-sm" onclick="addPrelimRow()">+ Add</button>
                 </div>
