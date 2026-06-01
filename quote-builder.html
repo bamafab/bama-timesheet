@@ -254,7 +254,13 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
     <button class="btn btn-ghost btn-sm" onclick="openEmailModal()" id="emailBtn" title="Email quote to client">✉ Send</button>
     <button class="btn btn-ghost btn-sm" onclick="openCompareModal()" title="Compare two quotes side by side">⇄ Compare</button>
     <button class="btn btn-ghost btn-sm" onclick="openSettings()">⚙ Rates</button>
-    <button class="btn btn-ghost btn-sm" onclick="exportAllData()">↓ Export</button>
+    <div style="position:relative;display:inline-block" id="exportMenuWrap">
+      <button class="btn btn-ghost btn-sm" onclick="toggleExportMenu()">↓ Export ▾</button>
+      <div id="exportMenu" style="display:none;position:absolute;top:100%;right:0;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.4);min-width:200px;z-index:500;margin-top:4px;overflow:hidden">
+        <div onclick="exportQuoteRegister();toggleExportMenu()" style="padding:10px 16px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)" onmouseover="this.style.background='rgba(255,107,0,0.08)'" onmouseout="this.style.background=''">📊 Quote Register (Excel)</div>
+        <div onclick="exportAllData();toggleExportMenu()" style="padding:10px 16px;cursor:pointer;font-size:13px" onmouseover="this.style.background='rgba(255,107,0,0.08)'" onmouseout="this.style.background=''">💾 Full Backup (JSON)</div>
+      </div>
+    </div>
     <div style="position:relative;display:inline-block" id="pdfMenuWrap">
       <button class="btn btn-ghost btn-sm" onclick="togglePdfMenu()" id="pdfBtn">📄 PDF ▾</button>
       <div id="pdfMenu" style="display:none;position:absolute;top:100%;right:0;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.4);min-width:200px;z-index:500;margin-top:4px;overflow:hidden">
@@ -3012,13 +3018,106 @@ function handleBoqFile(input) {
   }
 }
 
+function toggleExportMenu() {
+  const m = document.getElementById('exportMenu');
+  m.style.display = m.style.display === 'none' ? '' : 'none';
+}
+document.addEventListener('click', e => {
+  if (!e.target.closest('#exportMenuWrap')) {
+    const m = document.getElementById('exportMenu');
+    if (m) m.style.display = 'none';
+  }
+});
+
 function exportAllData() {
   const data = JSON.stringify({ quotes, rates }, null, 2);
   const blob = new Blob([data], { type: 'application/json' });
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-  a.download = 'bama-quotes-export-' + new Date().toISOString().slice(0,10) + '.json';
+  a.download = 'bama-quotes-backup-' + new Date().toISOString().slice(0,10) + '.json';
   a.click();
-  toast('Exported', 'success');
+  toast('Backup exported', 'success');
+}
+
+function exportQuoteRegister() {
+  if (!quotes.length) { toast('No quotes to export', 'error'); return; }
+
+  const headers = [
+    'Ref', 'Revision', 'Status', 'Date', 'Valid Until',
+    'Client', 'Contact', 'Email', 'Site Address',
+    'Quote Type', 'Prepared By',
+    'Material (£)', 'Installation (£)', 'Fabrication (£)', 'Design (£)',
+    'Painting (£)', 'Survey (£)', 'Delivery (£)', 'Prelims (£)', 'Purlins (£)',
+    'Sub-total (£)', 'Margin %', 'Margin (£)', 'TOTAL (£)',
+    'Total kg', 'ERP Project ID', 'Notes'
+  ];
+
+  const rows = [...quotes].sort((a,b) => (b.date||'').localeCompare(a.date||'')).map(q => {
+    const c = q._computed || {};
+    const totalKg = (q.takeoff||[]).reduce((s,r) => s+(r.length/1000)*(r.kgm||0)*(r.qty||1), 0);
+    return [
+      q.ref, q.revision||'', statusLabel(q.status),
+      q.date||'', q.validUntil||'',
+      q.company||'', q.contact||'', q.email||'', q.siteAddress||'',
+      q.type||'bama', q.preparedBy||'',
+      c.material||0, c.installation||0, c.fabrication||0, c.design||0,
+      c.painting||0, c.survey||0, c.delivery||0, c.prelims||0, c.purlins||0,
+      c.subtotal||0, q.margin||0, c.marginAmt||0, c.total||0,
+      Math.round(totalKg*10)/10,
+      q.erpProjectId||'',
+      (q.qScope||q.comments||'').replace(/\n/g,' ')
+    ];
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+
+  // Column widths
+  ws['!cols'] = [
+    {wch:10},{wch:8},{wch:8},{wch:12},{wch:12},
+    {wch:22},{wch:18},{wch:24},{wch:24},
+    {wch:10},{wch:16},
+    ...Array(13).fill({wch:13}),
+    {wch:10},{wch:14},{wch:40}
+  ];
+
+  // Style header row bold (basic)
+  const range = XLSX.utils.decode_range(ws['!ref']);
+  for (let C = range.s.c; C <= range.e.c; C++) {
+    const cell = ws[XLSX.utils.encode_cell({r:0, c:C})];
+    if (cell) cell.s = { font: { bold: true }, fill: { fgColor: { rgb: 'D0021B' } } };
+  }
+
+  // Freeze top row
+  ws['!freeze'] = { xSplit: 0, ySplit: 1 };
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Quote Register');
+
+  // Summary sheet
+  const won   = quotes.filter(q => q.status==='won');
+  const sent  = quotes.filter(q => q.status==='sent');
+  const draft = quotes.filter(q => q.status==='draft');
+  const lost  = quotes.filter(q => q.status==='lost');
+  const totalWon = won.reduce((s,q) => s+(q._computed?.total||0), 0);
+  const sumRows = [
+    ['BAMA Fabrication — Quote Register Summary', ''],
+    ['Exported', new Date().toLocaleDateString('en-GB')],
+    [''],
+    ['Total Quotes', quotes.length],
+    ['Draft', draft.length],
+    ['Sent', sent.length],
+    ['Won', won.length],
+    ['Lost', lost.length],
+    [''],
+    ['Win Rate', won.length + sent.length + lost.length > 0
+      ? Math.round(won.length/(won.length+sent.length+lost.length)*100)+'%' : '—'],
+    ['Total Value Won (£)', totalWon.toFixed(2)],
+  ];
+  const ws2 = XLSX.utils.aoa_to_sheet(sumRows);
+  ws2['!cols'] = [{wch:28},{wch:16}];
+  XLSX.utils.book_append_sheet(wb, ws2, 'Summary');
+
+  XLSX.writeFile(wb, 'BAMA-Quote-Register-' + new Date().toISOString().slice(0,10) + '.xlsx');
+  toast('Quote register exported', 'success');
 }
 
 let toastTimer;
