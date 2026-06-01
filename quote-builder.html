@@ -252,6 +252,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
   <div class="topbar-right">
     <button class="btn btn-ghost btn-sm" onclick="openLogoUpload()" title="Upload logo for PDF">🖼 Logo</button>
     <button class="btn btn-ghost btn-sm" onclick="openEmailModal()" id="emailBtn" title="Email quote to client">✉ Send</button>
+    <button class="btn btn-ghost btn-sm" onclick="openCompareModal()" title="Compare two quotes side by side">⇄ Compare</button>
     <button class="btn btn-ghost btn-sm" onclick="openSettings()">⚙ Rates</button>
     <button class="btn btn-ghost btn-sm" onclick="exportAllData()">↓ Export</button>
     <div style="position:relative;display:inline-block" id="pdfMenuWrap">
@@ -1135,6 +1136,27 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeSplitModal()">Cancel</button>
       <button class="btn btn-primary" onclick="confirmSplitMove()">Move</button>
+    </div>
+  </div>
+</div>
+
+<!-- COMPARE MODAL -->
+<div class="modal-overlay" id="compareModal">
+  <div class="modal" style="max-width:900px;width:95vw">
+    <div class="modal-title">⇄ Quote Comparison</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+      <div class="field">
+        <label>Quote A</label>
+        <select id="compareA" onchange="runComparison()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%"></select>
+      </div>
+      <div class="field">
+        <label>Quote B</label>
+        <select id="compareB" onchange="runComparison()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%"></select>
+      </div>
+    </div>
+    <div id="compareOutput" style="overflow-x:auto"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeCompareModal()">Close</button>
     </div>
   </div>
 </div>
@@ -3042,6 +3064,130 @@ function checkRalVisibility() {
   const hasPpc = (q.paintRows || []).some(r => r.type === 'powder_coat_m' || r.type === 'powder_coat_bay');
   const ral = document.getElementById('ralSection');
   if (ral) ral.style.display = hasPpc ? '' : 'none';
+}
+
+// ============================================================
+// QUOTE COMPARISON
+// ============================================================
+function openCompareModal() {
+  // Populate both dropdowns with all quotes
+  const opts = quotes.map(q =>
+    `<option value="${q.id}">${q.ref}${q.revision?' '+q.revision:''} — ${q.company||'No client'} (${statusLabel(q.status)})</option>`
+  ).join('');
+  document.getElementById('compareA').innerHTML = opts;
+  document.getElementById('compareB').innerHTML = opts;
+
+  // Default: current quote in A, previous quote in B if exists
+  const idx = quotes.findIndex(q => q.id === currentId);
+  if (idx >= 0) {
+    document.getElementById('compareA').value = quotes[idx].id;
+    // Try to find same ref with different revision, else just pick adjacent
+    const sameRef = quotes.find(q => q.id !== currentId &&
+      q.ref === quotes[idx].ref);
+    document.getElementById('compareB').value = sameRef
+      ? sameRef.id
+      : (quotes[idx > 0 ? idx - 1 : Math.min(idx + 1, quotes.length - 1)]?.id || quotes[0].id);
+  }
+
+  runComparison();
+  document.getElementById('compareModal').classList.add('active');
+}
+
+function closeCompareModal() {
+  document.getElementById('compareModal').classList.remove('active');
+}
+
+function getQuoteComputedTotals(q) {
+  // Use stored _computed if available, else recalc from standardLines/customLines
+  if (q._computed) return q._computed;
+  const lines = q.type === 'bama' ? (q.standardLines||[]) : (q.customLines||[]);
+  const total = lines.reduce((s,l) => s + (parseFloat(l.price)||0)*(parseFloat(l.qty)||1), 0);
+  return { total, subtotal: total, material:0, installation:0, fabrication:0, design:0, painting:0, survey:0, delivery:0, prelims:0, purlins:0, marginAmt:0 };
+}
+
+function runComparison() {
+  const idA = document.getElementById('compareA').value;
+  const idB = document.getElementById('compareB').value;
+  const qA  = quotes.find(q => q.id === idA);
+  const qB  = quotes.find(q => q.id === idB);
+  if (!qA || !qB) return;
+
+  const cA = getQuoteComputedTotals(qA);
+  const cB = getQuoteComputedTotals(qB);
+
+  const rows = [
+    { label: 'Material',          a: cA.material||0,      b: cB.material||0 },
+    { label: 'Installation',      a: cA.installation||0,  b: cB.installation||0 },
+    { label: 'Fabrication',       a: cA.fabrication||0,   b: cB.fabrication||0 },
+    { label: 'Design',            a: cA.design||0,        b: cB.design||0 },
+    { label: 'Painting/Finishing',a: cA.painting||0,      b: cB.painting||0 },
+    { label: 'Survey',            a: cA.survey||0,        b: cB.survey||0 },
+    { label: 'Delivery',          a: cA.delivery||0,      b: cB.delivery||0 },
+    { label: 'Prelims',           a: cA.prelims||0,       b: cB.prelims||0 },
+    { label: 'Purlins',           a: cA.purlins||0,       b: cB.purlins||0 },
+    { label: 'Margin',            a: cA.marginAmt||0,     b: cB.marginAmt||0 },
+  ].filter(r => r.a > 0 || r.b > 0);
+
+  rows.push({ label: 'TOTAL', a: cA.total||0, b: cB.total||0, bold: true });
+
+  const diffCell = (a, b, bold) => {
+    if (!a && !b) return '<td></td>';
+    const diff = b - a;
+    const pct  = a > 0 ? ((diff/a)*100).toFixed(1) : null;
+    if (Math.abs(diff) < 0.01) return `<td style="text-align:center;color:#888;font-size:12px">—</td>`;
+    const col = diff > 0 ? '#ff4444' : '#3ecf8e';
+    const arr = diff > 0 ? '▲' : '▼';
+    return `<td style="text-align:right;color:${col};font-family:monospace;font-size:12px;font-weight:${bold?700:400}">
+      ${arr} £${Math.abs(diff).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})}
+      ${pct !== null ? `<span style="font-size:10px;opacity:0.8">(${diff>0?'+':''}${pct}%)</span>` : ''}
+    </td>`;
+  };
+
+  const gbp = (n, bold) => `<td style="text-align:right;font-family:monospace;font-size:12px;font-weight:${bold?700:400};${bold?'color:var(--accent)':''}">
+    £${(n||0).toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>`;
+
+  const labelA = `${qA.ref}${qA.revision?' '+qA.revision:''}<br><span style="font-size:10px;font-weight:400;color:#888">${qA.company||''}</span>`;
+  const labelB = `${qB.ref}${qB.revision?' '+qB.revision:''}<br><span style="font-size:10px;font-weight:400;color:#888">${qB.company||''}</span>`;
+
+  const tableRows = rows.map(r => `<tr style="${r.bold?'border-top:2px solid #333;':''}">
+    <td style="padding:7px 10px;font-size:13px;font-weight:${r.bold?700:400};${r.bold?'':'color:#ccc'}">${r.label}</td>
+    ${gbp(r.a, r.bold)}
+    ${gbp(r.b, r.bold)}
+    ${diffCell(r.a, r.b, r.bold)}
+  </tr>`).join('');
+
+  // Header info
+  const infoRow = (label, vA, vB) => vA||vB ? `<div style="display:grid;grid-template-columns:120px 1fr 1fr;gap:8px;padding:4px 0;font-size:12px;border-bottom:1px solid #2a2a2a">
+    <span style="color:#666">${label}</span><span>${vA||'—'}</span><span>${vB||'—'}</span></div>` : '';
+
+  document.getElementById('compareOutput').innerHTML = `
+    <div style="background:#141414;border-radius:8px;padding:12px 16px;margin-bottom:12px;font-size:12px">
+      <div style="display:grid;grid-template-columns:120px 1fr 1fr;gap:8px;padding-bottom:6px;margin-bottom:4px;border-bottom:1px solid var(--accent)">
+        <span style="color:#888;font-size:11px">FIELD</span>
+        <span style="font-weight:600;color:var(--accent)">${qA.ref}${qA.revision?' '+qA.revision:''}</span>
+        <span style="font-weight:600;color:var(--accent2)">${qB.ref}${qB.revision?' '+qB.revision:''}</span>
+      </div>
+      ${infoRow('Client',   qA.company||'—',   qB.company||'—')}
+      ${infoRow('Status',   statusLabel(qA.status), statusLabel(qB.status))}
+      ${infoRow('Date',     fmtDate(qA.date),   fmtDate(qB.date))}
+      ${infoRow('Valid',    fmtDate(qA.validUntil), fmtDate(qB.validUntil))}
+      ${infoRow('Type',     qA.type,            qB.type)}
+      ${infoRow('Takeoff',  (qA.takeoff||[]).length+' rows', (qB.takeoff||[]).length+' rows')}
+    </div>
+    <table style="width:100%;border-collapse:collapse">
+      <thead>
+        <tr style="background:#1a1a1a">
+          <th style="padding:8px 10px;text-align:left;font-size:11px;color:#888;font-weight:600;letter-spacing:0.5px">COST ELEMENT</th>
+          <th style="padding:8px 10px;text-align:right;font-size:11px;color:var(--accent);font-weight:600">${labelA}</th>
+          <th style="padding:8px 10px;text-align:right;font-size:11px;color:var(--accent2);font-weight:600">${labelB}</th>
+          <th style="padding:8px 10px;text-align:right;font-size:11px;color:#888;font-weight:600">DIFFERENCE</th>
+        </tr>
+      </thead>
+      <tbody>${tableRows}</tbody>
+    </table>
+    <div style="margin-top:12px;font-size:11px;color:#666;text-align:right">
+      ▲ = B is higher than A &nbsp;·&nbsp; ▼ = B is lower than A
+    </div>`;
 }
 
 // ============================================================
