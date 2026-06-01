@@ -329,10 +329,18 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
           <div class="card">
             <div class="card-title">Client</div>
             <div class="form-grid" style="gap:10px">
-              <div class="field"><label>Company Name</label><input type="text" id="hCompany" oninput="autosave()"></div>
-              <div class="field"><label>Contact Name</label><input type="text" id="hContact" oninput="autosave()"></div>
-              <div class="field"><label>Contact Email</label><input type="email" id="hEmail" oninput="autosave()"></div>
-              <div class="field"><label>Contact Phone</label><input type="tel" id="hPhone" oninput="autosave()"></div>
+              <div class="field" style="position:relative">
+                <label style="display:flex;justify-content:space-between;align-items:center">
+                  Company Name
+                  <span id="clientSaveBtn" onclick="saveClientToBook()" style="display:none;font-size:10px;color:var(--accent);cursor:pointer;font-weight:600">💾 Save to client book</span>
+                </label>
+                <input type="text" id="hCompany" autocomplete="off" placeholder="Type to search saved clients..."
+                  oninput="onCompanyInput(this.value)" onblur="setTimeout(closeClientDD,180)" autosave="">
+                <div id="clientDropdown" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:9999;background:var(--card);border:1px solid var(--border);border-radius:0 0 8px 8px;box-shadow:0 8px 24px rgba(0,0,0,0.4);max-height:220px;overflow-y:auto"></div>
+              </div>
+              <div class="field"><label>Contact Name</label><input type="text" id="hContact" oninput="autosave();showClientSave()"></div>
+              <div class="field"><label>Contact Email</label><input type="email" id="hEmail" oninput="autosave();showClientSave()"></div>
+              <div class="field"><label>Contact Phone</label><input type="tel" id="hPhone" oninput="autosave();showClientSave()"></div>
             </div>
           </div>
 
@@ -1819,6 +1827,89 @@ function toast(msg, type='') {
   el.textContent = msg; el.className = 'toast show ' + type;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove('show'), 2800);
+}
+
+// ============================================================
+// CLIENT BOOK
+// ============================================================
+let clientBook = JSON.parse(localStorage.getItem('bama_clients') || '[]');
+
+function saveClientBook() {
+  localStorage.setItem('bama_clients', JSON.stringify(clientBook));
+}
+
+function onCompanyInput(val) {
+  autosave();
+  showClientSave();
+  const q = val.trim().toLowerCase();
+  const dd = document.getElementById('clientDropdown');
+  if (!q || clientBook.length === 0) { dd.style.display = 'none'; return; }
+
+  const matches = clientBook.filter(c =>
+    c.company.toLowerCase().includes(q)
+  );
+
+  if (!matches.length) { dd.style.display = 'none'; return; }
+
+  dd.style.display = '';
+  dd.innerHTML = matches.map((c, i) => `
+    <div onmousedown="fillClientFields('${escClientStr(c.company)}')"
+      style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);transition:background 0.1s"
+      onmouseover="this.style.background='rgba(255,107,0,0.08)'"
+      onmouseout="this.style.background=''">
+      <div style="font-size:13px;font-weight:600;color:var(--text)">${escHtml(c.company)}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:2px">${escHtml(c.contact||'')}${c.email?' · '+escHtml(c.email):''}</div>
+    </div>
+  `).join('');
+}
+
+function escClientStr(s) {
+  return String(s||'').replace(/'/g,"\\'").replace(/"/g,'&quot;');
+}
+
+function fillClientFields(company) {
+  const client = clientBook.find(c => c.company === company);
+  if (!client) return;
+  document.getElementById('hCompany').value = client.company;
+  document.getElementById('hContact').value = client.contact || '';
+  document.getElementById('hEmail').value   = client.email   || '';
+  document.getElementById('hPhone').value   = client.phone   || '';
+  closeClientDD();
+  autosave();
+  toast('Client filled: ' + client.company);
+  document.getElementById('clientSaveBtn').style.display = 'none';
+}
+
+function closeClientDD() {
+  const dd = document.getElementById('clientDropdown');
+  if (dd) dd.style.display = 'none';
+}
+
+function showClientSave() {
+  const company = document.getElementById('hCompany')?.value?.trim();
+  const btn = document.getElementById('clientSaveBtn');
+  if (btn) btn.style.display = company ? '' : 'none';
+}
+
+function saveClientToBook() {
+  const company = document.getElementById('hCompany')?.value?.trim();
+  if (!company) return;
+  const contact = document.getElementById('hContact')?.value?.trim() || '';
+  const email   = document.getElementById('hEmail')?.value?.trim()   || '';
+  const phone   = document.getElementById('hPhone')?.value?.trim()   || '';
+
+  const existing = clientBook.findIndex(c => c.company.toLowerCase() === company.toLowerCase());
+  const record = { company, contact, email, phone, updated: new Date().toISOString() };
+
+  if (existing >= 0) {
+    clientBook[existing] = record;
+    toast('Client updated: ' + company, 'success');
+  } else {
+    clientBook.push(record);
+    toast('Client saved: ' + company, 'success');
+  }
+  saveClientBook();
+  document.getElementById('clientSaveBtn').style.display = 'none';
 }
 
 // ============================================================
