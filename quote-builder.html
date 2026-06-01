@@ -5653,16 +5653,11 @@ Please read this tender document and give me a full pricing briefing for my trad
       }
     } catch(e) { /* fall through */ }
 
-    // Use server-side proxy with MS auth token — avoids browser rate limits
-    const msToken = sessionStorage.getItem('bama_token');
-    const headers = { 'Content-Type': 'application/json' };
-    if (msToken) headers['Authorization'] = 'Bearer ' + msToken;
-
-    const doFetch = () => fetch('/api/claude-proxy', {
+    // Server-side proxy — anonymous, uses ANTHROPIC_API_KEY env var
+    const doFetch = () => fetch('/api/quote-helper-proxy', {
       method: 'POST',
-      headers,
-      body: JSON.stringify(requestBody),
-      credentials: 'include'
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody)
     });
 
     let response = await doFetch();
