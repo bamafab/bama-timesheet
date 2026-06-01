@@ -459,6 +459,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
                   <th style="width:90px;text-align:right">Length (mm)</th>
                   <th style="width:50px;text-align:right">Qty</th>
                   <th style="width:72px;text-align:right">kg/m</th>
+                  <th style="width:58px;text-align:center">Finish</th>
                   <th style="width:80px;text-align:right">Total kg</th>
                   <th style="width:68px;text-align:right">£/kg</th>
                   <th style="width:88px;text-align:right">Material £</th>
@@ -837,6 +838,10 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
                   oninput="saveBlockNote('prelims',this.value)">
               </div>
                 <div id="prelimRows"></div>
+                <div id="prelimQuickPanel" style="margin-bottom:8px;padding:8px;background:rgba(255,255,255,0.03);border-radius:6px;border:1px solid var(--border)">
+                  <div style="font-size:10px;color:var(--muted);margin-bottom:6px;font-weight:600">QUICK ADD (from default rates):</div>
+                  <div id="prelimChecklist" style="display:flex;flex-wrap:wrap;gap:4px"></div>
+                </div>
                 <div class="cost-add-row">
                   <select id="prelimTypeSelect">
                     <option value="">-- Add prelim item --</option>
@@ -1567,6 +1572,300 @@ function lookupKgM(type) {
 }
 
 // ============================================================
+// CORE CALCULATION ENGINE — pure function, no DOM reads
+// ============================================================
+
+/**
+ * Complexity multipliers for fab hours per tonne.
+ * Based on profile type — heavier sections are faster to fabricate per tonne.
+ */
+const FAB_HRS_PER_TONNE = {
+  UB:   8,   // Heavy universal beams
+  UC:   8,   // Universal columns
+  RHS: 14,   // Rectangular hollow — more weld, more prep
+  SHS: 14,   // Square hollow
+  CHS: 16,   // Circular hollow — hardest to fabricate
+  PFC: 12,   // Parallel flange channels
+  RSA: 12,   // Angles
+  EA:  12,   // Equal angles
+  FLT: 10,   // Flat bar / plate
+  FLAT:10,
+  PLT: 10,
+  default: 12
+};
+
+function profileComplexity(type) {
+  if (!type) return FAB_HRS_PER_TONNE.default;
+  const prefix = (type.match(/^[A-Za-z]+/) || [''])[0].toUpperCase();
+  return FAB_HRS_PER_TONNE[prefix] || FAB_HRS_PER_TONNE.default;
+}
+
+/**
+ * Resolve kg/m for a takeoff row.
+ * Priority: row.kgm (user-entered) > STEEL_KGM lookup > null
+ * Fix 1: explicit null check rather than falsy — 0 kgm is also invalid.
+ */
+function resolveKgM(row) {
+  if (row.kgm !== null && row.kgm !== undefined && row.kgm > 0) return row.kgm;
+  const fromDB = lookupKgM(row.type);
+  return (fromDB && fromDB > 0) ? fromDB : null;
+}
+
+/**
+ * Resolve length in METRES for a takeoff row.
+ * Fix 2: all lengths are stored in mm (our standard), so always divide by 1000.
+ * _unit is metadata from import only — storage is always mm.
+ * EA rows: length is one piece length in mm, qty is count.
+ */
+function rowLengthM(row) {
+  const lenMM = parseFloat(row.length) || 0;
+  // All stored lengths are in mm — always divide by 1000
+  return lenMM / 1000;
+}
+
+/**
+ * Compute weight in kg for a single takeoff row.
+ * Fix 3: EA rows — length × kgm × qty (correct, qty is the sole count multiplier).
+ * Non-EA rows — length × kgm × qty (same formula, qty defaults to 1).
+ * Returns { kg, isValid, missing } — isValid false if kgm is unknown.
+ */
+function rowWeight(row) {
+  const kgm = resolveKgM(row);
+  if (!kgm) return { kg: 0, isValid: false, missing: row.type || '?' };
+  const lenM = rowLengthM(row);
+  const qty  = parseFloat(row.qty) || 1;
+  // For EA rows, length is a single piece — qty multiplies pieces
+  const kg   = lenM * kgm * qty;
+  return { kg, isValid: true, missing: null };
+}
+
+/**
+ * Classify a takeoff row's finish type from its tags or type prefix.
+ * Used to auto-populate finishing quantities.
+ */
+function rowFinishType(row) {
+  return row.finish || null; // 'galv', 'ppc', 'primer', 'paint' — user-tagged
+}
+
+/**
+ * Fix 4: Auto-calculate recommended fabrication hours from takeoff.
+ * Breaks down by profile type complexity, returns hours and breakdown.
+ */
+function autoFabHours(takeoff) {
+  const byType = {};
+  takeoff.forEach(row => {
+    const { kg, isValid } = rowWeight(row);
+    if (!isValid || !kg) return;
+    const hrs = profileComplexity(row.type);
+    const prefix = (row.type?.match(/^[A-Za-z]+/) || ['OTHER'])[0].toUpperCase();
+    if (!byType[prefix]) byType[prefix] = { tonnes: 0, hrsPerTonne: hrs };
+    byType[prefix].tonnes += kg / 1000;
+  });
+  const breakdown = Object.entries(byType).map(([prefix, { tonnes, hrsPerTonne }]) => ({
+    prefix,
+    tonnes: Math.round(tonnes * 1000) / 1000,
+    hrsPerTonne,
+    hours: Math.round(tonnes * hrsPerTonne)
+  }));
+  const totalHours = breakdown.reduce((s, b) => s + b.hours, 0);
+  return { totalHours, breakdown };
+}
+
+/**
+ * Fix 5: Compute finish quantities from takeoff rows tagged with a finish type.
+ * Returns { galv_t, ppc_kg, primer_t, paint_m2 } auto-quantities.
+ */
+function computeFinishQuantities(takeoff) {
+  const result = { galv_t: 0, ppc_kg: 0, primer_t: 0, paint_m2: 0 };
+  takeoff.forEach(row => {
+    const { kg, isValid } = rowWeight(row);
+    if (!isValid || !kg) return;
+    const finish = rowFinishType(row);
+    if (!finish) return;
+    if (finish === 'galv')   result.galv_t   += kg / 1000;
+    if (finish === 'ppc')    result.ppc_kg   += kg;
+    if (finish === 'primer') result.primer_t  += kg / 1000;
+    if (finish === 'paint')  result.paint_m2 += kg * 0.02; // rough ~50kg/m²
+  });
+  result.galv_t   = Math.round(result.galv_t   * 1000) / 1000;
+  result.ppc_kg   = Math.round(result.ppc_kg   * 10)   / 10;
+  result.primer_t = Math.round(result.primer_t * 1000) / 1000;
+  return result;
+}
+
+/**
+ * Fix 6: Map rates.prelims into active quote's prelimRows using checkbox state.
+ * Only activates items where checked[key] === true.
+ * Returns new prelimRows array — call saveAll() and renderPrelimRows() after.
+ */
+function buildPrelimRowsFromRates(ratesObj, checkedKeys, overrides) {
+  const prelims = ratesObj.prelims || {};
+  return Object.entries(prelims)
+    .filter(([key]) => checkedKeys.includes(key))
+    .map(([key, def]) => ({
+      id:    'prelim_' + key,
+      type:  key,
+      label: def.label,
+      qty:   overrides?.[key]?.qty  ?? 1,
+      rate:  overrides?.[key]?.rate ?? def.rate
+    }));
+}
+
+/**
+ * MAIN PURE CALCULATION ENGINE
+ * Takes quote data + rates object, reads nothing from DOM.
+ * Returns full cost breakdown with per-row detail.
+ */
+function computeQuoteTotals(quote, ratesObj) {
+  // ── Takeoff ──────────────────────────────────────────────
+  let totalKg = 0, materialCost = 0;
+  const missingKgm = [];
+  const finishQty  = { galv_t: 0, ppc_kg: 0, primer_t: 0 };
+
+  (quote.takeoff || []).forEach(row => {
+    const { kg, isValid, missing } = rowWeight(row);
+    if (!isValid) { if (missing && !missingKgm.includes(missing)) missingKgm.push(missing); return; }
+    totalKg      += kg;
+    materialCost += kg * (parseFloat(row.rate) || 0);
+    // finish auto-accumulation
+    const fin = rowFinishType(row);
+    if (fin === 'galv')   finishQty.galv_t   += kg / 1000;
+    if (fin === 'ppc')    finishQty.ppc_kg   += kg;
+    if (fin === 'primer') finishQty.primer_t += kg / 1000;
+  });
+
+  // Fittings
+  const fittingsPct  = parseFloat(quote.fittingsPct)  || 10;
+  const fittingsRate = parseFloat(quote.fittingsRate) || 1.30;
+  const fittingsKg   = totalKg * (fittingsPct / 100);
+  const fittingsCostVal = fittingsKg * fittingsRate;
+  const miscMaterial    = parseFloat(quote.miscMaterial) || 0;
+  const material = Math.round((materialCost + fittingsCostVal + miscMaterial) * 100) / 100;
+
+  // ── Installation ─────────────────────────────────────────
+  const days       = parseFloat(quote.instDays) || 0;
+  const isGlobal   = quote.globalDays !== false;
+  let labourCost = 0;
+  (quote.labourRows || []).forEach(r => {
+    const qty  = parseFloat(r.qty)  || 1;
+    const rate = parseFloat(r.rate) || 0;
+    const d    = isGlobal ? days : (parseFloat(r.days) ?? days);
+    labourCost += qty * rate * d;
+  });
+  let plantCost = 0;
+  (quote.plantRows || []).forEach(r => {
+    plantCost += (parseFloat(r.qty) || 1) * (parseFloat(r.rate) || 0);
+  });
+  const installation = Math.round((labourCost + plantCost) * 100) / 100;
+
+  // ── Fabrication ──────────────────────────────────────────
+  const fabWorkshop  = (parseFloat(quote.fabHours)     || 0) * (parseFloat(quote.fabRate)     || 45);
+  const fabPack      = (parseFloat(quote.fabpackHours) || 0) * (parseFloat(quote.fabpackRate) || 50);
+  let consumablesCost = 0;
+  (quote.consumableRows || []).forEach(r => {
+    consumablesCost += (parseFloat(r.qty) || 0) * (parseFloat(r.rate) || 0);
+  });
+  const fabrication = Math.round((fabWorkshop + fabPack + consumablesCost) * 100) / 100;
+
+  // ── Design ───────────────────────────────────────────────
+  const structEng  = (parseFloat(quote.structEngHours)  || 0) * (parseFloat(quote.structEngRate)  || 90);
+  const architect  = (parseFloat(quote.architectHours)  || 0) * (parseFloat(quote.architectRate)  || 90);
+  const draughtsman= (parseFloat(quote.designHours)     || 0) * (parseFloat(quote.designRate)     || 50);
+  const design = Math.round((structEng + architect + draughtsman) * 100) / 100;
+
+  // ── Painting ─────────────────────────────────────────────
+  let painting = 0;
+  (quote.paintRows || []).forEach(r => {
+    const rate = parseFloat(r.rate) || 0;
+    let qty = parseFloat(r.qty) || 0;
+    if (r.unit === 'tonnes') {
+      // Fix 5: use auto finish qty if tagged rows exist, else full takeoff
+      if (r.type === 'galvanise' && finishQty.galv_t > 0)  qty = qty || finishQty.galv_t;
+      else if (r.type === 'primer_tonne' && finishQty.primer_t > 0) qty = qty || finishQty.primer_t;
+      else qty = qty || (totalKg / 1000);
+    }
+    painting += qty * rate;
+  });
+  painting = Math.round(painting * 100) / 100;
+
+  // ── Survey ───────────────────────────────────────────────
+  let survey = 0;
+  (quote.surveyVisitRows || []).forEach(r => {
+    survey += (parseFloat(r.qty) || 0) * (parseFloat(r.rate) || 0);
+  });
+  survey += parseFloat(quote.surveyParking) || 0;
+  survey = Math.round(survey * 100) / 100;
+
+  // ── Delivery ─────────────────────────────────────────────
+  let delivery = 0;
+  (quote.deliveryRows || []).forEach(r => {
+    delivery += (parseFloat(r.qty) || 1) * (parseFloat(r.rate) || 0);
+  });
+  delivery = Math.round(delivery * 100) / 100;
+
+  // ── Prelims ──────────────────────────────────────────────
+  let prelims = 0;
+  (quote.prelimRows || []).forEach(r => {
+    prelims += (parseFloat(r.qty) || 1) * (parseFloat(r.rate) || 0);
+  });
+  prelims = Math.round(prelims * 100) / 100;
+
+  // ── Purlins ──────────────────────────────────────────────
+  const purlins = Math.round(
+    (parseFloat(quote.purlinM) || 0) * (parseFloat(quote.purlinRate) || 0) * 100) / 100;
+
+  // ── Apply N/A blocks ─────────────────────────────────────
+  const na = quote.blockNA || {};
+  const subtotal = [
+    na.installation ? 0 : installation,
+    na.fabrication  ? 0 : fabrication,
+    na.design       ? 0 : design,
+    na.painting     ? 0 : painting,
+    na.survey       ? 0 : survey,
+    na.delivery     ? 0 : delivery,
+    na.prelims      ? 0 : prelims,
+    na.purlins      ? 0 : purlins,
+    material  // material never N/A
+  ].reduce((s, v) => s + v, 0);
+
+  const margin    = parseFloat(quote.margin) || 0;
+  const marginAmt = Math.round(subtotal * margin / 100 * 100) / 100;
+  const total     = Math.round((subtotal + marginAmt) * 100) / 100;
+  const totalTonnes = totalKg / 1000;
+
+  // ── Productivity metrics ──────────────────────────────────
+  const fabHrsTotal = (parseFloat(quote.fabHours) || 0);
+  const instDaysTotal = (parseFloat(quote.instDays) || 0);
+  const autoFab = autoFabHours(quote.takeoff || []);
+
+  return {
+    // Cost buckets
+    material, installation, fabrication, design,
+    painting, survey, delivery, prelims, purlins,
+    subtotal, marginAmt, total,
+    // Weight
+    totalKg: Math.round(totalKg * 10) / 10,
+    totalTonnes: Math.round(totalTonnes * 1000) / 1000,
+    fittingsKg: Math.round(fittingsKg * 10) / 10,
+    // Data quality
+    missingKgm,        // sections without a kg/m — costs incomplete
+    // Productivity
+    costPerKgExMargin: totalKg > 0 ? Math.round(subtotal / totalKg * 100) / 100 : null,
+    costPerKgIncMargin: totalKg > 0 ? Math.round(total   / totalKg * 100) / 100 : null,
+    fabHrsPerTonne:    totalTonnes > 0 && fabHrsTotal  > 0 ? Math.round(fabHrsTotal  / totalTonnes * 10) / 10 : null,
+    instDaysPerTonne:  totalTonnes > 0 && instDaysTotal > 0 ? Math.round(instDaysTotal / totalTonnes * 100) / 100 : null,
+    // Auto-fab suggestion
+    autoFab,
+    // Finish auto-quantities
+    finishQty: {
+      galv_t:   Math.round(finishQty.galv_t   * 1000) / 1000,
+      ppc_kg:   Math.round(finishQty.ppc_kg   * 10)   / 10,
+      primer_t: Math.round(finishQty.primer_t * 1000) / 1000,
+    }
+  };
+}
+
+// ============================================================
 // DEFAULT RATES
 // ============================================================
 const DEFAULT_RATES = {
@@ -1974,6 +2273,7 @@ function loadQuoteEditor() {
   renderPaintRows();
   renderDeliveryRows();
   renderPrelimRows();
+  renderPrelimChecklist();
   renderConsumableRows();
   renderSurveyVisitRows();
   renderTakeoff();
@@ -2102,6 +2402,18 @@ function takeoffRowHTML(row, i) {
       </select>
     </td>
     <td style="${nc}"><input type="number" value="${kgm||''}" placeholder="auto" oninput="updateTakeoffRow(${i},'kgm',this.value)" style="${ni};color:${row.kgm?'var(--text)':'var(--subtle)'}"></td>
+    <td style="padding:2px 3px">
+      <select onchange="updateTakeoffRow(${i},'finish',this.value)"
+        style="background:transparent;border:1px solid transparent;border-radius:4px;padding:3px 4px;color:var(--muted);font-size:10px;width:100%;cursor:pointer"
+        onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='transparent'"
+        title="Finish type — used to auto-populate painting quantities">
+        <option value="" ${!row.finish?'selected':''}>—</option>
+        <option value="galv"   ${row.finish==='galv'  ?'selected':''}>Galv</option>
+        <option value="ppc"    ${row.finish==='ppc'   ?'selected':''}>PPC</option>
+        <option value="primer" ${row.finish==='primer'?'selected':''}>Primer</option>
+        <option value="paint"  ${row.finish==='paint' ?'selected':''}>Paint</option>
+      </select>
+    </td>
     <td style="${nc};color:var(--muted);font-family:var(--font-mono);font-size:12px">${totalKg>0?totalKg.toFixed(2):''}</td>
     <td style="${nc}"><input type="number" value="${row.rate||''}" placeholder="—" oninput="updateTakeoffRow(${i},'rate',this.value)" style="${ni}"></td>
     <td style="${nc};color:${mat>0?'var(--accent)':'var(--muted)'};font-family:var(--font-mono);font-size:12px;font-weight:${mat>0?'600':'400'}">${mat>0?'£'+mat.toFixed(2):''}</td>
@@ -2143,6 +2455,8 @@ function updateTakeoffRow(i, field, val) {
     row.rate = parseFloat(val) || null;
   } else if (field === 'area') {
     row.area = val;
+  } else if (field === 'finish') {
+    row.finish = val;
   }
   saveAll(); updateTakeoffTotals(); recalcAll();
 }
@@ -2452,6 +2766,7 @@ function updateTakeoffTotals() {
   });
   document.getElementById('takeoffTotalKg').textContent = totalKg.toFixed(1) + ' kg';
   document.getElementById('takeoffTotalCost').textContent = '£' + totalCost.toFixed(2);
+  syncFinishToPaintRows();
 
   // Weight checker warning
   const warn = document.getElementById('weightWarning');
@@ -2474,7 +2789,10 @@ function updateTakeoffTotals() {
 
 function totalTakeoffKg() {
   const q = getQuote(); if (!q) return 0;
-  return q.takeoff.reduce((s,row) => s + (row.length/1000)*(row.kgm||0)*(row.qty||1), 0);
+  return q.takeoff.reduce((s,row) => {
+    const {kg} = rowWeight(row);
+    return s + kg;
+  }, 0);
 }
 
 function fittingsCost() {
@@ -2494,7 +2812,10 @@ function fittingsCost() {
 function totalTakeoffCost() {
   const q = getQuote(); if (!q) return 0;
   const misc = parseFloat(document.getElementById('miscMaterialVal')?.value) || 0;
-  return q.takeoff.reduce((s,row) => s + (row.length/1000)*(row.kgm||0)*(row.qty||1)*(row.rate||0), 0) + fittingsCost() + misc;
+  return q.takeoff.reduce((s,row) => {
+    const {kg} = rowWeight(row);
+    return s + kg * (parseFloat(row.rate) || 0);
+  }, 0) + fittingsCost() + misc;
 }
 
 // ============================================================
@@ -2808,32 +3129,106 @@ function fmt(n) { return '£'+n.toFixed(2); }
 function recalcAll() {
   const q = getQuote(); if (!q) return;
 
-  const material    = Math.round(totalTakeoffCost() * 100) / 100;
-  const labour      = Math.round(sumLabour() * 100) / 100;
-  const plant       = Math.round(sumPlant() * 100) / 100;
-  const installation = Math.round((labour + plant) * 100) / 100;
-  const _fabW    = (parseFloat(document.getElementById('fab-hours')?.value)||0)*(parseFloat(document.getElementById('fab-rate')?.value)||0);
-  const _fabpack = (parseFloat(document.getElementById('fabpack-hours')?.value)||0)*(parseFloat(document.getElementById('fabpack-rate')?.value)||0);
-  document.getElementById('fab-result').textContent     = fmt(_fabW);
-  document.getElementById('fabpack-result').textContent = fmt(_fabpack);
-  const fabrication  = Math.round((_fabW + _fabpack + sumConsumables()) * 100) / 100;
+  // ── Snapshot DOM → quote for pure engine ─────────────────
+  q.fabHours      = parseFloat(document.getElementById('fab-hours')?.value)      || 0;
+  q.fabRate       = parseFloat(document.getElementById('fab-rate')?.value)       || 45;
+  q.fabpackHours  = parseFloat(document.getElementById('fabpack-hours')?.value)  || 0;
+  q.fabpackRate   = parseFloat(document.getElementById('fabpack-rate')?.value)   || 50;
+  q.structEngHours= parseFloat(document.getElementById('struct-eng-hours')?.value)|| 0;
+  q.structEngRate = parseFloat(document.getElementById('struct-eng-rate')?.value) || 90;
+  q.architectHours= parseFloat(document.getElementById('architect-hours')?.value) || 0;
+  q.architectRate = parseFloat(document.getElementById('architect-rate')?.value)  || 90;
+  q.designHours   = parseFloat(document.getElementById('design-hours')?.value)    || 0;
+  q.designRate    = parseFloat(document.getElementById('design-rate')?.value)     || 50;
+  q.surveyParking = parseFloat(document.getElementById('survey-parking')?.value)  || 0;
+  q.purlinM       = parseFloat(document.getElementById('purlins-m')?.value)       || 0;
+  q.purlinRate    = parseFloat(document.getElementById('purlins-rate')?.value)    || 0;
+  q.margin        = parseFloat(document.getElementById('marginSlider')?.value)    || 20;
+  q.fittingsPct   = parseFloat(document.getElementById('fittingsPct')?.value)  ?? 10;
+  q.fittingsRate  = parseFloat(document.getElementById('fittingsRate')?.value)    || 1.30;
+  q.miscMaterial  = parseFloat(document.getElementById('miscMaterialVal')?.value) || 0;
+  q.globalDays    = document.getElementById('globalDaysToggle')?.checked !== false;
+  q.instDays      = parseFloat(document.getElementById('inst-days')?.value)       || 0;
+  q.instOperatives= parseFloat(document.getElementById('inst-operatives')?.value) || 2;
 
-  const _structEng  = (parseFloat(document.getElementById('struct-eng-hours')?.value)||0)*(parseFloat(document.getElementById('struct-eng-rate')?.value)||0);
-  const _architect  = (parseFloat(document.getElementById('architect-hours')?.value)||0)*(parseFloat(document.getElementById('architect-rate')?.value)||0);
-  const _draughtsman= (parseFloat(document.getElementById('design-hours')?.value)||0)*(parseFloat(document.getElementById('design-rate')?.value)||0);
-  const design      = Math.round((_structEng + _architect + _draughtsman) * 100) / 100;
-  document.getElementById('struct-eng-result').textContent = fmt(_structEng);
-  document.getElementById('architect-result').textContent  = fmt(_architect);
-  document.getElementById('design-result').textContent     = fmt(_draughtsman);
-  document.getElementById('total-design').textContent      = fmt(design);
-  const painting     = Math.round(sumPaint() * 100) / 100;
-  const survey       = Math.round((sumSurveyVisits() + (parseFloat(document.getElementById('survey-parking')?.value)||0)) * 100) / 100;
-  const delivery     = Math.round(sumDelivery() * 100) / 100;
-  const prelims      = Math.round(sumPrelims() * 100) / 100;
-  const purlins      = Math.round(((parseFloat(document.getElementById('purlins-m')?.value)||0)*(parseFloat(document.getElementById('purlins-rate')?.value)||0)) * 100) / 100;
+  // Snapshot dynamic rows from DOM into quote
+  (q.labourRows||[]).forEach(r => {
+    r.qty  = parseFloat(document.getElementById('qty-'+r.id)?.value)  || r.qty;
+    r.rate = parseFloat(document.getElementById('rate-'+r.id)?.value) || r.rate;
+    if (!q.globalDays) r.days = parseFloat(document.getElementById('days-'+r.id)?.value) ?? r.days;
+  });
+  (q.plantRows||[]).forEach(r => {
+    r.qty  = parseFloat(document.getElementById('qty-'+r.id)?.value)  || r.qty;
+    r.rate = parseFloat(document.getElementById('rate-'+r.id)?.value) || r.rate;
+  });
+  (q.paintRows||[]).forEach(r => {
+    r.qty  = parseFloat(document.getElementById('qty-'+r.id)?.value)  || 0;
+    r.rate = parseFloat(document.getElementById('rate-'+r.id)?.value) || r.rate;
+  });
+  (q.deliveryRows||[]).forEach(r => {
+    r.qty  = parseFloat(document.getElementById('qty-'+r.id)?.value)  || r.qty;
+    r.rate = parseFloat(document.getElementById('rate-'+r.id)?.value) || r.rate;
+  });
+  (q.prelimRows||[]).forEach(r => {
+    r.qty  = parseFloat(document.getElementById('qty-'+r.id)?.value)  || r.qty;
+    r.rate = parseFloat(document.getElementById('rate-'+r.id)?.value) || r.rate;
+  });
+  (q.consumableRows||[]).forEach(r => {
+    r.qty  = parseFloat(document.getElementById('qty-'+r.id)?.value)  || 0;
+    r.rate = parseFloat(document.getElementById('rate-'+r.id)?.value) || r.rate;
+  });
+  (q.surveyVisitRows||[]).forEach(r => {
+    r.qty  = parseFloat(document.getElementById('qty-'+r.id)?.value)  || 0;
+    r.rate = parseFloat(document.getElementById('rate-'+r.id)?.value) || r.rate;
+  });
 
-  // individual results
-  document.getElementById('survey-parking-result').textContent = fmt(parseFloat(document.getElementById('survey-parking')?.value)||0);
+  // ── Run pure calculation engine ───────────────────────────
+  const C = computeQuoteTotals(q, rates);
+  const { material, installation, fabrication, design, painting,
+          survey, delivery, prelims, purlins,
+          subtotal, marginAmt, total } = C;
+
+  // Store computed on quote for PDF / comparison / export
+  q._computed = C;
+
+  // ── Individual results still needed for sub-rows ──────────
+  const _fabW   = q.fabHours * q.fabRate;
+  const _fabpack= q.fabpackHours * q.fabpackRate;
+  const _fabEl = document.getElementById('fab-result'); if(_fabEl) _fabEl.textContent = fmt(_fabW);
+  const _fpEl = document.getElementById('fabpack-result'); if(_fpEl) _fpEl.textContent = fmt(_fabpack);
+  const _se = q.structEngHours * q.structEngRate;
+  const _ar = q.architectHours * q.architectRate;
+  const _dr = q.designHours    * q.designRate;
+  if(document.getElementById('struct-eng-result')) document.getElementById('struct-eng-result').textContent = fmt(_se);
+  if(document.getElementById('architect-result'))  document.getElementById('architect-result').textContent  = fmt(_ar);
+  if(document.getElementById('design-result'))     document.getElementById('design-result').textContent     = fmt(_dr);
+  if(document.getElementById('total-design'))      document.getElementById('total-design').textContent      = fmt(design);
+  if(document.getElementById('purlins-result'))    document.getElementById('purlins-result').textContent    = fmt(purlins);
+  if(document.getElementById('survey-parking-result')) document.getElementById('survey-parking-result').textContent = fmt(q.surveyParking);
+
+  // Update per-row results for dynamic rows
+  sumLabour(); sumPlant(); sumPaint(); sumConsumables(); sumSurveyVisits(); sumDelivery(); sumPrelims();
+
+  // ── Missing kgm warning ───────────────────────────────────
+  const warn = document.getElementById('weightWarning');
+  const warnList = document.getElementById('weightWarningList');
+  if (warn && warnList) {
+    if (C.missingKgm.length) {
+      warnList.innerHTML = C.missingKgm.map(t =>
+        `<span style="display:inline-flex;align-items:center;gap:5px;background:rgba(255,179,71,0.1);border:1px solid rgba(255,179,71,0.2);border-radius:12px;padding:2px 9px;margin:2px;font-family:var(--font-mono);font-size:11px">${escHtml(t)} <span style="color:var(--accent2);font-size:10px">no kg/m</span></span>`
+      ).join('') + `<div style="margin-top:6px;font-size:11px">Enter kg/m manually or check section name format.</div>`;
+      warn.style.display = '';
+    } else { warn.style.display = 'none'; }
+  }
+
+  // Auto-fab suggestion button hint
+  const autoFabBtn = document.querySelector('button[onclick="autoFillFabHours()"]');
+  if (autoFabBtn && C.autoFab.totalHours > 0) {
+    autoFabBtn.title = `Suggested: ${C.autoFab.totalHours} hrs based on profile complexity`;
+  }
+
+  // dummy values for compat (still referenced below)
+  const _survey = survey; const _delivery = delivery;
   document.getElementById('purlins-result').textContent = fmt(purlins);
 
   // block totals
@@ -2845,13 +3240,9 @@ function recalcAll() {
   document.getElementById('total-prelims').textContent      = fmt(prelims);
   document.getElementById('total-purlins').textContent      = fmt(purlins);
 
-  // summary
-  const subtotal = material+installation+fabrication+design+painting+survey+delivery+prelims+purlins;
-  const margin   = parseFloat(document.getElementById('marginSlider')?.value) || 0;
-  document.getElementById('marginPct').textContent = margin + '%';
-  const marginAmt = Math.round(subtotal * margin / 100 * 100) / 100;
-  const total     = Math.round((subtotal + marginAmt) * 100) / 100;
-  const totalKg   = totalTakeoffKg();
+  // summary — values come from computeQuoteTotals (C)
+  const totalKg  = C.totalKg;
+  document.getElementById('marginPct').textContent = q.margin + '%';
 
   document.getElementById('sum-material').textContent     = fmt(material);
   document.getElementById('sum-installation').textContent = fmt(installation);
@@ -3485,15 +3876,19 @@ function toast(msg, type='') {
 // CALCS IMPROVEMENTS (Ideas 2,4,5,6,7,8,9,10,11)
 // ============================================================
 
-// ── Idea 2: Auto-fill fab hours from takeoff weight ──
+// ── Idea 2: Auto-fill fab hours from takeoff weight (complexity-aware) ──
 function autoFillFabHours() {
-  const kg = totalTakeoffKg();
-  if (!kg) { toast('No takeoff weight yet — add members first', 'error'); return; }
-  const tonnes = kg / 1000;
-  const hrs = Math.round(tonnes * 15); // 15 hrs/tonne default
-  document.getElementById('fab-hours').value = hrs;
+  const q = getQuote(); if (!q) return;
+  if (!q.takeoff?.length) { toast('No takeoff yet — add members first', 'error'); return; }
+  const { totalHours, breakdown } = autoFabHours(q.takeoff);
+  if (!totalHours) { toast('No valid weights in takeoff — check kg/m values', 'error'); return; }
+  document.getElementById('fab-hours').value = totalHours;
+  const detail = breakdown.map(b =>
+    `${b.prefix}: ${b.tonnes.toFixed(2)}t × ${b.hrsPerTonne} hrs/t = ${b.hours} hrs`
+  ).join('\n');
   recalcAll();
-  toast(`Auto-filled ${hrs} hrs (15 hrs/tonne × ${tonnes.toFixed(2)}t)`);
+  toast(`Auto-filled ${totalHours} hrs based on profile complexity`, 'success');
+  console.log('Fab hours breakdown:\n' + detail);
 }
 
 // ── Idea 4: N/A toggle per block ──
@@ -3707,6 +4102,56 @@ function updateMaterialLink(i, field, val) {
 function removeMaterialLink(i) {
   const q = getQuote(); if (!q) return;
   q.materialLinks.splice(i,1); saveAll(); renderMaterialLinks();
+}
+
+// ── Fix 6: Prelims quick-panel ──
+function renderPrelimChecklist() {
+  const cont = document.getElementById('prelimChecklist');
+  if (!cont) return;
+  const q = getQuote(); if (!q) return;
+  const activeIds = new Set((q.prelimRows||[]).map(r => r.type || r.id));
+
+  cont.innerHTML = Object.entries(rates.prelims || {}).map(([key, def]) => {
+    const active = activeIds.has(key) || activeIds.has('prelim_'+key);
+    return `<button onclick="togglePrelimQuick('${key}')"
+      style="padding:3px 9px;border-radius:12px;border:1px solid ${active?'var(--accent)':'var(--border)'};
+             background:${active?'rgba(255,107,0,0.15)':'transparent'};
+             color:${active?'var(--accent)':'var(--muted)'};font-size:11px;cursor:pointer;
+             transition:all 0.15s;white-space:nowrap">
+      ${active?'✓ ':''} ${escHtml(def.label.replace(' (per day)','').replace(' (lump sum)',''))}
+    </button>`;
+  }).join('');
+}
+
+function togglePrelimQuick(key) {
+  const q = getQuote(); if (!q) return;
+  q.prelimRows = q.prelimRows || [];
+  const existingIdx = q.prelimRows.findIndex(r => r.type === key || r.id === 'prelim_'+key);
+  if (existingIdx >= 0) {
+    q.prelimRows.splice(existingIdx, 1);
+  } else {
+    const def = (rates.prelims || {})[key] || { label: key, rate: 0 };
+    q.prelimRows.push({ id: 'prelim_'+key, type: key, label: def.label, qty: 1, rate: def.rate });
+  }
+  saveAll(); renderPrelimRows(); renderPrelimChecklist(); recalcAll();
+}
+
+// ── Fix 5: Link finish tags to paint rows ──
+function syncFinishToPaintRows() {
+  const q = getQuote(); if (!q) return;
+  const C = computeQuoteTotals(q, rates);
+  const { finishQty } = C;
+  // Update any galvanise paint row qty if it's set to auto (0)
+  (q.paintRows || []).forEach(r => {
+    if (r.type === 'galvanise' && (!r.qty || r.qty === 0) && finishQty.galv_t > 0) {
+      const inp = document.getElementById('qty-'+r.id);
+      if (inp) inp.placeholder = finishQty.galv_t.toFixed(3) + ' (from finish tags)';
+    }
+    if (r.type === 'primer_tonne' && (!r.qty || r.qty === 0) && finishQty.primer_t > 0) {
+      const inp = document.getElementById('qty-'+r.id);
+      if (inp) inp.placeholder = finishQty.primer_t.toFixed(3) + ' (from finish tags)';
+    }
+  });
 }
 
 // ============================================================
