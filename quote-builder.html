@@ -517,23 +517,47 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
             <div class="field"><label>Notes</label><input type="text" id="miscMaterialNote" placeholder="e.g. plates, bolts, fixings" oninput="autosave()"></div>
           </div>
         </div>
+
+        <!-- IDEA 11: Material / product links -->
+        <div class="card">
+          <div class="section-header">
+            <div class="section-title">🔗 Material & Product Links</div>
+            <button class="btn btn-primary btn-sm" onclick="addMaterialLink()">+ Link</button>
+          </div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Paste links to exact products from FH Brundle, DC Iron, metals4U etc. — helps with ordering and future quoting.</div>
+          <div id="materialLinks"></div>
+        </div>
       </div>
 
       <!-- ══════════════════════════════════════════
            TAB: CALCS
       ══════════════════════════════════════════ -->
       <div class="tab-content" id="tab-calcs">
+        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
+          <span style="font-size:12px;color:var(--muted)">Calcs templates:</span>
+          <button class="btn btn-ghost btn-sm" id="loadTemplateBtn" onclick="loadCalcsTemplate()">📂 Load template</button>
+          <button class="btn btn-ghost btn-sm" onclick="saveCalcsTemplate()">💾 Save as template</button>
+        </div>
         <div class="calcs-layout">
           <div id="calcsCostBlocks">
 
             <!-- INSTALLATION -->
             <div class="cost-block" id="block-installation">
               <div class="cost-block-header" onclick="toggleBlock('installation')">
-                <div class="cost-block-title">🏗 Installation <span style="font-size:11px;color:var(--muted);font-weight:400;margin-left:4px">(excl. margin)</span></div>
+                <div class="cost-block-title" style="display:flex;align-items:center">🏗 Installation <span style="font-size:11px;color:var(--muted);font-weight:400;margin-left:4px">(excl. margin)</span><span class="cost-block-chevron">▾</span></div>
+                <div style="display:flex;align-items:center;gap:8px">
+                <button id="na-installation" onclick="event.stopPropagation();toggleNA('installation')" title="Mark as N/A — excluded from this quote"
+                  style="font-size:10px;padding:2px 7px;background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--muted);cursor:pointer;transition:all 0.15s">N/A</button>
                 <div class="cost-block-total" id="total-installation">£0.00</div>
               </div>
-              <div class="cost-block-body" id="body-installation">
-                <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Days on site: <input type="number" class="cost-input" id="inst-days" style="width:60px;display:inline-block" value="0" oninput="recalcAll()"> &nbsp; No. of operatives: <input type="number" class="cost-input" id="inst-operatives" style="width:50px;display:inline-block" value="2" oninput="recalcAll()"></div>
+              </div>
+              <div class="cost-block-body" id="body-installation" style="display:none">
+              <div style="margin-bottom:8px">
+                <input type="text" id="note-installation" placeholder="Notes (supplier, subcontractor, assumptions...)"
+                  style="background:rgba(255,255,255,0.04);border:none;border-bottom:1px solid var(--border);border-radius:0;padding:4px 2px;color:var(--muted);font-size:11px;width:100%;font-style:italic"
+                  oninput="saveBlockNote('installation',this.value)">
+              </div>
+                <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Days on site: <input type="number" class="cost-input" id="inst-days" style="width:60px;display:inline-block" value="0" oninput="renderLabourRows();recalcAll()"> &nbsp; No. of operatives: <input type="number" class="cost-input" id="inst-operatives" style="width:50px;display:inline-block" value="2" oninput="recalcAll()"></div>
                 <div id="labourRows"></div>
                 <div class="cost-add-row">
                   <select id="labourTypeSelect">
@@ -569,11 +593,23 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
             <!-- FABRICATION -->
             <div class="cost-block" id="block-fabrication">
               <div class="cost-block-header" onclick="toggleBlock('fabrication')">
-                <div class="cost-block-title">🔧 Fabrication</div>
+                <div class="cost-block-title" style="display:flex;align-items:center">🔧 Fabrication<span class="cost-block-chevron">▾</span></div>
+                <div style="display:flex;align-items:center;gap:8px">
+                <button id="na-fabrication" onclick="event.stopPropagation();toggleNA('fabrication')" title="Mark as N/A — excluded from this quote"
+                  style="font-size:10px;padding:2px 7px;background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--muted);cursor:pointer;transition:all 0.15s">N/A</button>
                 <div class="cost-block-total" id="total-fabrication">£0.00</div>
               </div>
-              <div class="cost-block-body" id="body-fabrication">
-                <div style="font-size:11px;color:var(--muted);margin-bottom:4px;font-weight:600">WORKSHOP</div>
+              </div>
+              <div class="cost-block-body" id="body-fabrication" style="display:none">
+              <div style="margin-bottom:8px">
+                <input type="text" id="note-fabrication" placeholder="Notes (supplier, subcontractor, assumptions...)"
+                  style="background:rgba(255,255,255,0.04);border:none;border-bottom:1px solid var(--border);border-radius:0;padding:4px 2px;color:var(--muted);font-size:11px;width:100%;font-style:italic"
+                  oninput="saveBlockNote('fabrication',this.value)">
+              </div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                  <div style="font-size:11px;color:var(--muted);font-weight:600">WORKSHOP</div>
+                  <button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px" onclick="autoFillFabHours()" title="Auto-fill hours from takeoff weight">⚡ From takeoff</button>
+                </div>
                 <div class="cost-row cost-row-4">
                   <span class="cost-label">Workshop fabrication</span>
                   <input type="number" class="cost-input" id="fab-hours" value="0" placeholder="hrs" oninput="recalcAll()">
@@ -608,10 +644,19 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
             <!-- DESIGN -->
             <div class="cost-block" id="block-design">
               <div class="cost-block-header" onclick="toggleBlock('design')">
-                <div class="cost-block-title">📐 Design</div>
+                <div class="cost-block-title" style="display:flex;align-items:center">📐 Design<span class="cost-block-chevron">▾</span></div>
+                <div style="display:flex;align-items:center;gap:8px">
+                <button id="na-design" onclick="event.stopPropagation();toggleNA('design')" title="Mark as N/A — excluded from this quote"
+                  style="font-size:10px;padding:2px 7px;background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--muted);cursor:pointer;transition:all 0.15s">N/A</button>
                 <div class="cost-block-total" id="total-design">£0.00</div>
               </div>
-              <div class="cost-block-body" id="body-design">
+              </div>
+              <div class="cost-block-body" id="body-design" style="display:none">
+              <div style="margin-bottom:8px">
+                <input type="text" id="note-design" placeholder="Notes (supplier, subcontractor, assumptions...)"
+                  style="background:rgba(255,255,255,0.04);border:none;border-bottom:1px solid var(--border);border-radius:0;padding:4px 2px;color:var(--muted);font-size:11px;width:100%;font-style:italic"
+                  oninput="saveBlockNote('design',this.value)">
+              </div>
                 <div class="cost-row cost-row-4">
                   <span class="cost-label">Structural engineer fee</span>
                   <input type="number" class="cost-input" id="struct-eng-hours" value="0" placeholder="hrs" oninput="recalcAll()">
@@ -636,10 +681,19 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
             <!-- PAINTING -->
             <div class="cost-block" id="block-painting">
               <div class="cost-block-header" onclick="toggleBlock('painting')">
-                <div class="cost-block-title">🎨 Painting / Finishing</div>
+                <div class="cost-block-title" style="display:flex;align-items:center">🎨 Painting / Finishing<span class="cost-block-chevron">▾</span></div>
+                <div style="display:flex;align-items:center;gap:8px">
+                <button id="na-painting" onclick="event.stopPropagation();toggleNA('painting')" title="Mark as N/A — excluded from this quote"
+                  style="font-size:10px;padding:2px 7px;background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--muted);cursor:pointer;transition:all 0.15s">N/A</button>
                 <div class="cost-block-total" id="total-painting">£0.00</div>
               </div>
-              <div class="cost-block-body" id="body-painting">
+              </div>
+              <div class="cost-block-body" id="body-painting" style="display:none">
+              <div style="margin-bottom:8px">
+                <input type="text" id="note-painting" placeholder="Notes (supplier, subcontractor, assumptions...)"
+                  style="background:rgba(255,255,255,0.04);border:none;border-bottom:1px solid var(--border);border-radius:0;padding:4px 2px;color:var(--muted);font-size:11px;width:100%;font-style:italic"
+                  oninput="saveBlockNote('painting',this.value)">
+              </div>
                 <div id="paintingRows"></div>
                 <div class="cost-add-row">
                   <select id="paintTypeSelect">
@@ -683,10 +737,19 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
             <!-- SURVEY -->
             <div class="cost-block" id="block-survey">
               <div class="cost-block-header" onclick="toggleBlock('survey')">
-                <div class="cost-block-title">📏 Survey</div>
+                <div class="cost-block-title" style="display:flex;align-items:center">📏 Survey<span class="cost-block-chevron">▾</span></div>
+                <div style="display:flex;align-items:center;gap:8px">
+                <button id="na-survey" onclick="event.stopPropagation();toggleNA('survey')" title="Mark as N/A — excluded from this quote"
+                  style="font-size:10px;padding:2px 7px;background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--muted);cursor:pointer;transition:all 0.15s">N/A</button>
                 <div class="cost-block-total" id="total-survey">£0.00</div>
               </div>
-              <div class="cost-block-body" id="body-survey">
+              </div>
+              <div class="cost-block-body" id="body-survey" style="display:none">
+              <div style="margin-bottom:8px">
+                <input type="text" id="note-survey" placeholder="Notes (supplier, subcontractor, assumptions...)"
+                  style="background:rgba(255,255,255,0.04);border:none;border-bottom:1px solid var(--border);border-radius:0;padding:4px 2px;color:var(--muted);font-size:11px;width:100%;font-style:italic"
+                  oninput="saveBlockNote('survey',this.value)">
+              </div>
                 <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Add each visit separately — choose who attends.</div>
                 <div id="surveyVisitRows"></div>
                 <div class="cost-add-row">
@@ -712,10 +775,19 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
             <!-- DELIVERY -->
             <div class="cost-block" id="block-delivery">
               <div class="cost-block-header" onclick="toggleBlock('delivery')">
-                <div class="cost-block-title">🚛 Delivery</div>
+                <div class="cost-block-title" style="display:flex;align-items:center">🚛 Delivery<span class="cost-block-chevron">▾</span></div>
+                <div style="display:flex;align-items:center;gap:8px">
+                <button id="na-delivery" onclick="event.stopPropagation();toggleNA('delivery')" title="Mark as N/A — excluded from this quote"
+                  style="font-size:10px;padding:2px 7px;background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--muted);cursor:pointer;transition:all 0.15s">N/A</button>
                 <div class="cost-block-total" id="total-delivery">£0.00</div>
               </div>
-              <div class="cost-block-body" id="body-delivery">
+              </div>
+              <div class="cost-block-body" id="body-delivery" style="display:none">
+              <div style="margin-bottom:8px">
+                <input type="text" id="note-delivery" placeholder="Notes (supplier, subcontractor, assumptions...)"
+                  style="background:rgba(255,255,255,0.04);border:none;border-bottom:1px solid var(--border);border-radius:0;padding:4px 2px;color:var(--muted);font-size:11px;width:100%;font-style:italic"
+                  oninput="saveBlockNote('delivery',this.value)">
+              </div>
                 <div id="deliveryRows"></div>
                 <div class="cost-add-row">
                   <select id="deliveryTypeSelect">
@@ -734,10 +806,19 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
             <!-- PRELIMS -->
             <div class="cost-block" id="block-prelims">
               <div class="cost-block-header" onclick="toggleBlock('prelims')">
-                <div class="cost-block-title">📋 Prelims</div>
+                <div class="cost-block-title" style="display:flex;align-items:center">📋 Prelims<span class="cost-block-chevron">▾</span></div>
+                <div style="display:flex;align-items:center;gap:8px">
+                <button id="na-prelims" onclick="event.stopPropagation();toggleNA('prelims')" title="Mark as N/A — excluded from this quote"
+                  style="font-size:10px;padding:2px 7px;background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--muted);cursor:pointer;transition:all 0.15s">N/A</button>
                 <div class="cost-block-total" id="total-prelims">£0.00</div>
               </div>
-              <div class="cost-block-body" id="body-prelims">
+              </div>
+              <div class="cost-block-body" id="body-prelims" style="display:none">
+              <div style="margin-bottom:8px">
+                <input type="text" id="note-prelims" placeholder="Notes (supplier, subcontractor, assumptions...)"
+                  style="background:rgba(255,255,255,0.04);border:none;border-bottom:1px solid var(--border);border-radius:0;padding:4px 2px;color:var(--muted);font-size:11px;width:100%;font-style:italic"
+                  oninput="saveBlockNote('prelims',this.value)">
+              </div>
                 <div id="prelimRows"></div>
                 <div class="cost-add-row">
                   <select id="prelimTypeSelect">
@@ -759,10 +840,19 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
             <!-- PURLINS -->
             <div class="cost-block" id="block-purlins">
               <div class="cost-block-header" onclick="toggleBlock('purlins')">
-                <div class="cost-block-title">🪵 Purlins Installation</div>
+                <div class="cost-block-title" style="display:flex;align-items:center">🪵 Purlins Installation<span class="cost-block-chevron">▾</span></div>
+                <div style="display:flex;align-items:center;gap:8px">
+                <button id="na-purlins" onclick="event.stopPropagation();toggleNA('purlins')" title="Mark as N/A — excluded from this quote"
+                  style="font-size:10px;padding:2px 7px;background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--muted);cursor:pointer;transition:all 0.15s">N/A</button>
                 <div class="cost-block-total" id="total-purlins">£0.00</div>
               </div>
-              <div class="cost-block-body" id="body-purlins">
+              </div>
+              <div class="cost-block-body" id="body-purlins" style="display:none">
+              <div style="margin-bottom:8px">
+                <input type="text" id="note-purlins" placeholder="Notes (supplier, subcontractor, assumptions...)"
+                  style="background:rgba(255,255,255,0.04);border:none;border-bottom:1px solid var(--border);border-radius:0;padding:4px 2px;color:var(--muted);font-size:11px;width:100%;font-style:italic"
+                  oninput="saveBlockNote('purlins',this.value)">
+              </div>
                 <div class="cost-row cost-row-4">
                   <span class="cost-label">Metrage</span>
                   <input type="number" class="cost-input" id="purlins-m" value="0" placeholder="m" oninput="recalcAll()">
@@ -858,10 +948,48 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
               </div>
 
               <hr class="divider">
-              <div style="font-size:11px;color:var(--muted);text-align:center">Internal cost only — not shown on quote PDF</div>
-              <div class="summary-line" style="margin-top:6px">
-                <span style="font-size:12px">Internal cost / kg</span>
-                <span class="val text-mono" style="font-size:12px" id="sum-cost-per-kg">—</span>
+
+              <!-- IDEA 6: Scenario slider -->
+              <div style="margin:8px 0">
+                <div class="flex items-center justify-between" style="margin-bottom:3px">
+                  <span style="font-size:11px;color:var(--muted)">Scenario margin %</span>
+                  <span style="font-family:var(--font-mono);font-size:11px;color:var(--accent2)" id="scenarioPct">—</span>
+                </div>
+                <input type="range" class="margin-slider" id="scenarioSlider" min="0" max="50" value="20" step="1" oninput="updateScenario()" style="accent-color:var(--accent2)">
+                <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:2px">
+                  <span>Scenario total:</span>
+                  <span style="font-family:var(--font-mono);color:var(--accent2)" id="scenarioTotal">—</span>
+                </div>
+                <div style="font-size:10px;color:var(--subtle);margin-top:2px">Adjust to explore — doesn't change the quote</div>
+              </div>
+
+              <hr class="divider">
+
+              <!-- IDEA 7: % bar chart -->
+              <div style="margin-bottom:10px">
+                <div style="font-size:10px;color:var(--muted);font-weight:600;letter-spacing:1px;margin-bottom:6px">COST BREAKDOWN %</div>
+                <div id="costBars"></div>
+              </div>
+
+              <hr class="divider">
+
+              <!-- IDEA 8: Productivity metrics -->
+              <div style="font-size:10px;color:var(--muted);font-weight:600;letter-spacing:1px;margin-bottom:6px">PRODUCTIVITY</div>
+              <div class="summary-line" style="margin-top:0">
+                <span style="font-size:11px">Cost/kg (excl. margin)</span>
+                <span class="val text-mono" style="font-size:11px" id="sum-cost-per-kg-ex">—</span>
+              </div>
+              <div class="summary-line">
+                <span style="font-size:11px">Cost/kg (incl. margin)</span>
+                <span class="val text-mono" style="font-size:11px;color:var(--accent)" id="sum-cost-per-kg">—</span>
+              </div>
+              <div class="summary-line">
+                <span style="font-size:11px">Fab hrs/tonne</span>
+                <span class="val text-mono" style="font-size:11px" id="sum-fab-per-tonne">—</span>
+              </div>
+              <div class="summary-line">
+                <span style="font-size:11px">Install days/tonne</span>
+                <span class="val text-mono" style="font-size:11px" id="sum-inst-per-tonne">—</span>
               </div>
             </div>
           </div>
@@ -1562,6 +1690,7 @@ function newQuote() {
     takeoff: [],
     areas: [],  // [{id, name, collapsed}]
     fittingsPct: 10, fittingsRate: 1.30, miscMaterial: 0, miscMaterialNote: '',
+    materialLinks: [],
     // calcs
     instDays: 0, instOperatives: 2,
     labourRows: [], plantRows: [], paintRows: [], deliveryRows: [], prelimRows: [], consumableRows: [], surveyVisitRows: [],
@@ -1608,6 +1737,10 @@ function autosave() {
   q.preparedBy = document.getElementById('hPreparedBy')?.value || q.preparedBy;
   q.company    = document.getElementById('hCompany')?.value || '';
   renderClientHistory(q.company);
+  loadBlockNA(q);
+  loadBlockNotes(q);
+  renderMaterialLinks();
+  renderCalcsTemplateBtn();
   q.contact    = document.getElementById('hContact')?.value || '';
   q.email      = document.getElementById('hEmail')?.value || '';
   q.phone       = document.getElementById('hPhone')?.value || '';
@@ -1829,6 +1962,10 @@ function loadQuoteEditor() {
   recalcAll();
   renderQuotationLines();
   renderClientHistory(q.company);
+  loadBlockNA(q);
+  loadBlockNotes(q);
+  renderMaterialLinks();
+  renderCalcsTemplateBtn();
   // ERP project badge
   const badge = document.getElementById('erpProjectBadge');
   if (badge) {
@@ -1912,6 +2049,48 @@ function renderTakeoff() {
   body.innerHTML = html;
   updateTakeoffTotals();
   checkRalVisibility();
+
+  // Idea 6: scenario slider sync
+  const scenSlider = document.getElementById('scenarioSlider');
+  if (scenSlider) {
+    scenSlider.value = parseFloat(document.getElementById('marginSlider')?.value)||20;
+    updateScenario();
+  }
+
+  // Idea 7: cost bars
+  const q2 = getQuote();
+  if (q2) {
+    const na = q2.blockNA || {};
+    updateCostBars([
+      ['Material',     na.material     ? 0 : material],
+      ['Installation', na.installation ? 0 : installation],
+      ['Fabrication',  na.fabrication  ? 0 : fabrication],
+      ['Design',       na.design       ? 0 : design],
+      ['Painting',     na.painting     ? 0 : painting],
+      ['Survey',       na.survey       ? 0 : survey],
+      ['Delivery',     na.delivery     ? 0 : delivery],
+      ['Prelims',      na.prelims      ? 0 : prelims],
+    ]);
+  }
+
+  // Idea 8: productivity metrics
+  const fabHrs  = (parseFloat(document.getElementById('fab-hours')?.value)||0);
+  const instDays= (parseFloat(document.getElementById('inst-days')?.value)||0);
+  const kg      = totalTakeoffKg();
+  const tonnes  = kg / 1000;
+  const setMetric = (id, val) => { const el=document.getElementById(id); if(el) el.textContent=val; };
+  setMetric('sum-cost-per-kg-ex', kg>0 ? '£'+(subtotal/kg).toFixed(2)+'/kg' : '—');
+  setMetric('sum-cost-per-kg',    kg>0 ? '£'+(total/kg).toFixed(2)+'/kg' : '—');
+  setMetric('sum-fab-per-tonne',  tonnes>0&&fabHrs>0 ? (fabHrs/tonnes).toFixed(1)+' hrs/t' : '—');
+  setMetric('sum-inst-per-tonne', tonnes>0&&instDays>0 ? (instDays/tonnes).toFixed(2)+' days/t' : '—');
+
+  // Apply N/A blocks to totals
+  if (q2) {
+    const na2 = q2.blockNA || {};
+    ['installation','fabrication','design','painting','survey','delivery','prelims','purlins'].forEach(name => {
+      if (na2[name]) { const el = document.getElementById('total-'+name); if(el) el.textContent='N/A'; }
+    });
+  }
 }
 
 function takeoffRowHTML(row, i) {
@@ -2382,9 +2561,22 @@ function addLabourRow() {
 function renderLabourRows() {
   const q = getQuote(); if (!q) return;
   const cont = document.getElementById('labourRows');
-  cont.innerHTML = (q.labourRows||[]).map(r =>
-    rowHTML(r.id, r.label, r.qty, r.rate, '£0.00')
-  ).join('');
+  const days = parseFloat(document.getElementById('inst-days')?.value) || 0;
+  cont.innerHTML = (q.labourRows||[]).map(r => `
+    <div class="cost-row cost-row-4" id="dynrow-${r.id}">
+      <span class="cost-label">${r.label}
+        <span style="font-size:10px;color:var(--subtle);margin-left:4px">× ${days} days</span>
+      </span>
+      <div style="display:flex;align-items:center;gap:4px">
+        <span style="font-size:10px;color:var(--muted)">No.</span>
+        <input type="number" class="cost-input" id="qty-${r.id}" value="${r.qty||1}" min="1" oninput="recalcAll()" style="width:48px" title="Number of this role">
+      </div>
+      <input type="number" class="cost-input" id="rate-${r.id}" value="${r.rate}" placeholder="£/day" oninput="recalcAll()">
+      <div style="display:flex;gap:4px;align-items:center">
+        <div class="cost-result" id="res-${r.id}">£0.00</div>
+        <button class="btn-icon" onclick="removeDynRow('${r.id}')" style="flex-shrink:0;height:28px">✕</button>
+      </div>
+    </div>`).join('');
 }
 
 function sumLabour() {
@@ -2418,7 +2610,7 @@ function renderPlantRows() {
   const q = getQuote(); if (!q) return;
   const cont = document.getElementById('plantRows');
   cont.innerHTML = (q.plantRows||[]).map(r =>
-    rowHTML(r.id, r.label, r.qty, r.rate, '£0.00')
+    rowHTMLWithNote(r.id, r.label, r.qty, r.rate, '£0.00', r.supplierNote||'')
   ).join('');
 }
 
@@ -2539,7 +2731,7 @@ function renderDeliveryRows() {
   const q = getQuote(); if (!q) return;
   const cont = document.getElementById('deliveryRows');
   cont.innerHTML = (q.deliveryRows||[]).map(r =>
-    rowHTML(r.id, r.label, r.qty, r.rate, '£0.00')
+    rowHTMLWithNote(r.id, r.label, r.qty, r.rate, '£0.00', r.supplierNote||'')
   ).join('');
 }
 
@@ -2785,7 +2977,11 @@ function switchTab(name, btn) {
 
 function toggleBlock(name) {
   const body = document.getElementById('body-'+name);
-  if (body) body.style.display = body.style.display==='none' ? '' : 'none';
+  const hdr  = document.getElementById('block-'+name);
+  if (!body) return;
+  const open = body.style.display === 'none';
+  body.style.display = open ? '' : 'none';
+  if (hdr) hdr.classList.toggle('block-open', open);
 }
 
 // ============================================================
@@ -3246,6 +3442,234 @@ function toast(msg, type='') {
   el.textContent = msg; el.className = 'toast show ' + type;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove('show'), 2800);
+}
+
+// ============================================================
+// CALCS IMPROVEMENTS (Ideas 2,4,5,6,7,8,9,10,11)
+// ============================================================
+
+// ── Idea 2: Auto-fill fab hours from takeoff weight ──
+function autoFillFabHours() {
+  const kg = totalTakeoffKg();
+  if (!kg) { toast('No takeoff weight yet — add members first', 'error'); return; }
+  const tonnes = kg / 1000;
+  const hrs = Math.round(tonnes * 15); // 15 hrs/tonne default
+  document.getElementById('fab-hours').value = hrs;
+  recalcAll();
+  toast(`Auto-filled ${hrs} hrs (15 hrs/tonne × ${tonnes.toFixed(2)}t)`);
+}
+
+// ── Idea 4: N/A toggle per block ──
+function toggleNA(name) {
+  const q = getQuote(); if (!q) return;
+  q.blockNA = q.blockNA || {};
+  q.blockNA[name] = !q.blockNA[name];
+  saveAll();
+  applyBlockNA(name, q.blockNA[name]);
+  recalcAll();
+}
+
+function applyBlockNA(name, isNA) {
+  const block = document.getElementById('block-'+name);
+  const btn   = document.getElementById('na-'+name);
+  const body  = document.getElementById('body-'+name);
+  const total = document.getElementById('total-'+name);
+  if (!block || !btn) return;
+  if (isNA) {
+    block.style.opacity = '0.45';
+    btn.style.background = 'rgba(255,68,68,0.15)';
+    btn.style.borderColor = 'var(--red)';
+    btn.style.color = 'var(--red)';
+    btn.title = 'Marked N/A — click to re-enable';
+    if (body) body.style.display = 'none';
+    if (total) total.textContent = 'N/A';
+  } else {
+    block.style.opacity = '';
+    btn.style.background = 'transparent';
+    btn.style.borderColor = 'var(--border)';
+    btn.style.color = 'var(--muted)';
+    btn.title = 'Mark as N/A';
+    if (total) total.textContent = '£0.00';
+  }
+}
+
+function loadBlockNA(q) {
+  const nas = q.blockNA || {};
+  ['installation','fabrication','design','painting','survey','delivery','prelims','purlins'].forEach(name => {
+    applyBlockNA(name, !!nas[name]);
+  });
+}
+
+// ── Idea 5: Notes per block ──
+function saveBlockNote(name, val) {
+  const q = getQuote(); if (!q) return;
+  q.blockNotes = q.blockNotes || {};
+  q.blockNotes[name] = val;
+  saveAll();
+}
+
+function loadBlockNotes(q) {
+  const notes = q.blockNotes || {};
+  ['installation','fabrication','design','painting','survey','delivery','prelims','purlins'].forEach(name => {
+    const el = document.getElementById('note-'+name);
+    if (el) el.value = notes[name] || '';
+  });
+}
+
+// ── Idea 6: Scenario slider ──
+function updateScenario() {
+  const slider = document.getElementById('scenarioSlider');
+  const pctEl  = document.getElementById('scenarioPct');
+  const totEl  = document.getElementById('scenarioTotal');
+  if (!slider) return;
+  const pct = parseFloat(slider.value);
+  pctEl.textContent = pct + '%';
+  // Get current subtotal from summary
+  const subtotalEl = document.getElementById('sum-subtotal');
+  const subtotal   = parseFloat(subtotalEl?.textContent?.replace(/[£,]/g,'')) || 0;
+  const scenTotal  = Math.round(subtotal * (1 + pct/100) * 100) / 100;
+  totEl.textContent = '£' + scenTotal.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+
+// ── Idea 7: Cost breakdown bars ──
+function updateCostBars(breakdown) {
+  const cont = document.getElementById('costBars');
+  if (!cont) return;
+  const total = breakdown.reduce((s,[,v])=>s+v,0);
+  if (!total) { cont.innerHTML = '<div style="font-size:11px;color:var(--subtle)">No costs yet</div>'; return; }
+  const colours = ['#ff6b00','#ffb347','#3ecf8e','#4a9eff','#ff4444','#b347ff','#47d4ff','#ffd447','#7fff47'];
+  cont.innerHTML = breakdown.filter(([,v])=>v>0).map(([label,val],i) => {
+    const pct = Math.round(val/total*100);
+    return `<div style="margin-bottom:4px">
+      <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-bottom:2px">
+        <span>${label}</span><span>${pct}%</span>
+      </div>
+      <div style="height:6px;background:var(--border);border-radius:3px;overflow:hidden">
+        <div style="height:100%;width:${pct}%;background:${colours[i%colours.length]};border-radius:3px;transition:width 0.3s"></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── Idea 9: Supplier note on plant/delivery rows ──
+// Extended rowHTML with optional supplier note
+function rowHTMLWithNote(id, label, qty, rate, result, supplierNote='') {
+  return `<div id="dynrow-${id}">
+    <div class="cost-row cost-row-4">
+      <span class="cost-label">${label}</span>
+      <input type="number" class="cost-input" id="qty-${id}" value="${qty}" oninput="recalcAll()">
+      <input type="number" class="cost-input" id="rate-${id}" value="${rate}" oninput="recalcAll()">
+      <div style="display:flex;gap:4px;align-items:center">
+        <div class="cost-result" id="res-${id}">${result}</div>
+        <button class="btn-icon" onclick="removeDynRow('${id}')" style="flex-shrink:0;height:28px">✕</button>
+      </div>
+    </div>
+    <input type="text" id="supplier-${id}" value="${supplierNote}"
+      placeholder="Supplier / notes (e.g. Ainscough, nationwide hire)..."
+      style="background:transparent;border:none;border-bottom:1px solid var(--border);padding:2px 4px;color:var(--muted);font-size:10px;width:100%;font-style:italic;margin-bottom:4px"
+      oninput="saveSupplierNote('${id}',this.value)">
+  </div>`;
+}
+
+function saveSupplierNote(id, val) {
+  const q = getQuote(); if (!q) return;
+  ['plantRows','deliveryRows'].forEach(arr => {
+    const r = (q[arr]||[]).find(r=>r.id===id);
+    if (r) r.supplierNote = val;
+  });
+  saveAll();
+}
+
+// ── Idea 10: Save/load calcs template ──
+function saveCalcsTemplate() {
+  const q = getQuote(); if (!q) return;
+  const name = prompt('Template name (e.g. "Portal Frame", "Mezzanine fit-out"):');
+  if (!name?.trim()) return;
+  const templates = JSON.parse(localStorage.getItem('bama_calcs_templates')||'{}');
+  templates[name.trim()] = {
+    instDays: q.instDays, instOperatives: q.instOperatives,
+    labourRows: q.labourRows, plantRows: q.plantRows,
+    fabHours: q.fabHours, fabRate: q.fabRate,
+    fabpackHours: q.fabpackHours, fabpackRate: q.fabpackRate,
+    designHours: q.designHours, designRate: q.designRate,
+    structEngHours: q.structEngHours, structEngRate: q.structEngRate,
+    architectHours: q.architectHours, architectRate: q.architectRate,
+    paintRows: q.paintRows, deliveryRows: q.deliveryRows, prelimRows: q.prelimRows,
+    consumableRows: q.consumableRows, surveyVisitRows: q.surveyVisitRows,
+    purlinM: q.purlinM, purlinRate: q.purlinRate,
+    margin: q.margin, blockNA: q.blockNA, blockNotes: q.blockNotes
+  };
+  localStorage.setItem('bama_calcs_templates', JSON.stringify(templates));
+  toast('Template saved: ' + name.trim(), 'success');
+  renderCalcsTemplateBtn();
+}
+
+function loadCalcsTemplate() {
+  const templates = JSON.parse(localStorage.getItem('bama_calcs_templates')||'{}');
+  const names = Object.keys(templates);
+  if (!names.length) { toast('No templates saved yet', 'error'); return; }
+  // show a small select dialog
+  const name = names.length === 1 ? names[0] : prompt('Load template:\n' + names.map((n,i)=>`${i+1}. ${n}`).join('\n') + '\n\nEnter name exactly:');
+  if (!name || !templates[name]) { toast('Template not found', 'error'); return; }
+  const q = getQuote(); if (!q) return;
+  Object.assign(q, templates[name]);
+  saveAll(); loadQuoteEditor();
+  toast('Template loaded: ' + name, 'success');
+}
+
+function renderCalcsTemplateBtn() {
+  const templates = JSON.parse(localStorage.getItem('bama_calcs_templates')||'{}');
+  const btn = document.getElementById('loadTemplateBtn');
+  if (btn) btn.textContent = Object.keys(templates).length
+    ? `📂 Load template (${Object.keys(templates).length})`
+    : '📂 Load template';
+}
+
+// ── Idea 11: Material links ──
+function addMaterialLink() {
+  const q = getQuote(); if (!q) return;
+  q.materialLinks = q.materialLinks || [];
+  q.materialLinks.push({ id: 'ml_'+Date.now(), label:'', url:'', note:'' });
+  saveAll(); renderMaterialLinks();
+}
+
+function renderMaterialLinks() {
+  const q = getQuote(); if (!q) return;
+  const cont = document.getElementById('materialLinks');
+  if (!cont) return;
+  const links = q.materialLinks || [];
+  if (!links.length) {
+    cont.innerHTML = '<div style="font-size:12px;color:var(--subtle);padding:8px 0">No links yet — click + Link to add</div>';
+    return;
+  }
+  cont.innerHTML = links.map((l,i) => `
+    <div style="display:grid;grid-template-columns:140px 1fr 28px;gap:6px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
+      <input type="text" value="${escHtml(l.label)}" placeholder="Label (e.g. Handrail tube)"
+        style="background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:5px 8px;color:var(--text);font-size:12px;width:100%"
+        oninput="updateMaterialLink(${i},'label',this.value)">
+      <div style="display:flex;gap:6px;align-items:center">
+        <input type="url" value="${escHtml(l.url)}" placeholder="https://www.fhbrundle.co.uk/..."
+          style="background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:5px 8px;color:var(--text);font-size:12px;flex:1"
+          oninput="updateMaterialLink(${i},'url',this.value)">
+        ${l.url ? `<a href="${escHtml(l.url)}" target="_blank" style="color:var(--accent);font-size:18px;text-decoration:none;flex-shrink:0" title="Open link">↗</a>` : ''}
+      </div>
+      <button class="btn-icon" onclick="removeMaterialLink(${i})" style="padding:4px 6px;font-size:12px">✕</button>
+    </div>
+    <input type="text" value="${escHtml(l.note)}" placeholder="Notes (size, grade, price per unit...)"
+      style="background:transparent;border:none;border-bottom:1px solid var(--border);padding:3px 2px;color:var(--muted);font-size:11px;width:100%;font-style:italic;margin-bottom:4px"
+      oninput="updateMaterialLink(${i},'note',this.value)">`
+  ).join('');
+}
+
+function updateMaterialLink(i, field, val) {
+  const q = getQuote(); if (!q) return;
+  if (q.materialLinks?.[i]) { q.materialLinks[i][field] = val; saveAll(); }
+  if (field === 'url') renderMaterialLinks(); // refresh to show/hide arrow
+}
+
+function removeMaterialLink(i) {
+  const q = getQuote(); if (!q) return;
+  q.materialLinks.splice(i,1); saveAll(); renderMaterialLinks();
 }
 
 // ============================================================
