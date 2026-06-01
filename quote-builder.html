@@ -297,6 +297,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
         <button class="tab-btn" onclick="switchTab('takeoff',this)">📐 Takeoff</button>
         <button class="tab-btn" onclick="switchTab('calcs',this)">🧮 Calcs</button>
         <button class="tab-btn" onclick="switchTab('quotation',this)">📋 Quotation</button>
+        <button class="tab-btn" onclick="switchTab('helper',this)">🤖 Quote Helper</button>
       </div>
 
       <!-- ══════════════════════════════════════════
@@ -884,6 +885,96 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
           </div>
           <div class="info-box mt-8">This text appears under "Comments or Special Instructions" on the client-facing PDF.</div>
         </div>
+      </div>
+
+      <!-- ══════════════════════════════════════════
+           TAB: QUOTE HELPER
+      ══════════════════════════════════════════ -->
+      <div class="tab-content" id="tab-helper">
+
+        <div class="card" style="margin-bottom:16px">
+          <div class="card-title">🤖 Quote Helper — Tender Document Analysis</div>
+          <p style="font-size:13px;color:var(--muted);margin-bottom:16px;line-height:1.6">
+            Upload a tender document, specification, or drawing schedule. The AI will read through it and tell you exactly what needs pricing, flag contract risks, suggest how to structure the quote, and highlight any drawings or items you need to check.
+          </p>
+
+          <!-- Upload zone -->
+          <div class="upload-zone" id="helperDropzone"
+            onclick="document.getElementById('helperFileInput').click()"
+            ondragover="event.preventDefault();this.classList.add('dragover')"
+            ondragleave="this.classList.remove('dragover')"
+            ondrop="event.preventDefault();this.classList.remove('dragover');handleHelperDrop(event)">
+            <div class="icon">📄</div>
+            <div id="helperDropzoneText"><strong>Click to upload</strong> or drag &amp; drop tender document</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:4px">PDF accepted · max ~50 pages for best results</div>
+          </div>
+          <input type="file" id="helperFileInput" style="display:none" accept=".pdf" onchange="handleHelperFile(this)">
+
+          <!-- Optional context -->
+          <div class="form-grid form-grid-2" style="margin-top:14px;gap:10px">
+            <div class="field">
+              <label>Your trade / scope (optional)</label>
+              <input type="text" id="helperTrade" value="Structural steelwork, balustrades, handrails, staircases"
+                placeholder="e.g. Structural steelwork, balustrades, staircases"
+                style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%">
+            </div>
+            <div class="field">
+              <label>Anything specific to look for (optional)</label>
+              <input type="text" id="helperFocus"
+                placeholder="e.g. fire escape stairs, loading dock, mezzanine"
+                style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%">
+            </div>
+          </div>
+
+          <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <button class="btn btn-primary" id="helperAnalyseBtn" onclick="runQuoteHelper()" disabled style="opacity:0.4">
+              🔍 Analyse Document
+            </button>
+            <button class="btn btn-ghost btn-sm" id="helperClearBtn" onclick="clearHelper()" style="display:none">Clear</button>
+            <span id="helperStatus" style="font-size:12px;color:var(--muted)"></span>
+          </div>
+        </div>
+
+        <!-- Briefing output -->
+        <div id="helperOutput" style="display:none">
+
+          <!-- Summary card -->
+          <div class="card" id="helperSummaryCard" style="margin-bottom:12px;border-color:rgba(255,107,0,0.3)">
+            <div class="card-title" style="color:var(--accent)">📋 Summary</div>
+            <div id="helperSummaryText" style="font-size:13px;line-height:1.7;color:var(--text)"></div>
+          </div>
+
+          <!-- Pricing items -->
+          <div class="card" id="helperItemsCard" style="margin-bottom:12px">
+            <div class="card-title">💰 What Needs Pricing</div>
+            <div id="helperItemsList" style="font-size:13px;line-height:1.8;color:var(--text)"></div>
+          </div>
+
+          <!-- Contract / risk flags -->
+          <div class="card" id="helperRisksCard" style="margin-bottom:12px;border-color:rgba(255,68,68,0.2);display:none">
+            <div class="card-title" style="color:var(--red)">⚠ Contract & Risk Flags</div>
+            <div id="helperRisksList" style="font-size:13px;line-height:1.8;color:var(--text)"></div>
+          </div>
+
+          <!-- Drawings to check -->
+          <div class="card" id="helperDrawingsCard" style="margin-bottom:12px;border-color:rgba(255,179,71,0.2);display:none">
+            <div class="card-title" style="color:var(--accent2)">📐 Drawings & References to Check</div>
+            <div id="helperDrawingsList" style="font-size:13px;line-height:1.8;color:var(--text)"></div>
+          </div>
+
+          <!-- Quote structure suggestion -->
+          <div class="card" id="helperStructureCard" style="margin-bottom:12px">
+            <div class="card-title">🏗 Suggested Quote Structure</div>
+            <div id="helperStructureText" style="font-size:13px;line-height:1.8;color:var(--text)"></div>
+          </div>
+
+          <!-- Raw notes -->
+          <details style="margin-top:8px">
+            <summary style="font-size:12px;color:var(--muted);cursor:pointer">Full AI notes</summary>
+            <div id="helperRawText" style="font-size:12px;color:var(--muted);margin-top:8px;line-height:1.7;white-space:pre-wrap;background:var(--surface);padding:12px;border-radius:6px;border:1px solid var(--border)"></div>
+          </details>
+        </div>
+
       </div>
 
     </div><!-- end quoteEditor -->
@@ -2765,6 +2856,187 @@ function checkRalVisibility() {
   const hasPpc = (q.paintRows || []).some(r => r.type === 'powder_coat_m' || r.type === 'powder_coat_bay');
   const ral = document.getElementById('ralSection');
   if (ral) ral.style.display = hasPpc ? '' : 'none';
+}
+
+// ============================================================
+// QUOTE HELPER
+// ============================================================
+let _helperPdfBase64 = null;
+let _helperFileName  = '';
+
+function handleHelperDrop(e) {
+  const file = e.dataTransfer.files[0];
+  if (file) loadHelperFile(file);
+}
+function handleHelperFile(input) {
+  const file = input.files[0];
+  if (file) loadHelperFile(file);
+}
+
+function loadHelperFile(file) {
+  if (!file.name.endsWith('.pdf')) { toast('Please upload a PDF file', 'error'); return; }
+  _helperFileName = file.name;
+  document.getElementById('helperDropzoneText').innerHTML = `<strong>${file.name}</strong> — ready to analyse`;
+  document.getElementById('helperStatus').textContent = '';
+
+  const reader = new FileReader();
+  reader.onload = e => {
+    _helperPdfBase64 = e.target.result.split(',')[1];
+    document.getElementById('helperAnalyseBtn').disabled = false;
+    document.getElementById('helperAnalyseBtn').style.opacity = '1';
+  };
+  reader.readAsDataURL(file);
+}
+
+async function runQuoteHelper() {
+  if (!_helperPdfBase64) { toast('Upload a document first', 'error'); return; }
+
+  const trade   = document.getElementById('helperTrade')?.value || 'structural steelwork, balustrades, handrails';
+  const focus   = document.getElementById('helperFocus')?.value || '';
+  const q       = getQuote();
+  const project = q?.company ? `Client: ${q.company}. ` : '';
+
+  const btn = document.getElementById('helperAnalyseBtn');
+  const status = document.getElementById('helperStatus');
+  btn.disabled = true; btn.style.opacity = '0.5';
+  btn.textContent = '⏳ Analysing...';
+  status.textContent = 'Reading document — this may take 20–30 seconds...';
+  document.getElementById('helperOutput').style.display = 'none';
+
+  const systemPrompt = `You are an expert quantity surveyor and steelwork contractor's estimator working for BAMA Fabrication Ltd, a UK structural steelwork and metalwork fabrication company based in Peterborough.
+
+Your job is to read tender documents, specifications, and drawing schedules and produce a clear briefing for the estimator — Mateusz Braczyk — telling him exactly what needs to be priced for his trade.
+
+BAMA's scope covers: structural steelwork frames, columns, beams, mezzanine floors, staircases, balustrades, handrails, cat ladders, platforms, purlins, steel doors, lintels, and general fabrication metalwork.
+
+Respond in a structured JSON format with these exact keys:
+{
+  "summary": "2-3 sentence plain English overview of the project and what BAMA's involvement likely is",
+  "pricing_items": ["array of specific items/elements that need to be priced, each as a clear sentence"],
+  "contract_risks": ["array of contract/risk flags — JCT/NEC type, liquidated damages, retention, programme constraints, design responsibility, payment terms, anything that affects pricing strategy. Empty array if none found."],
+  "drawings_to_check": ["array of specific drawing references, schedules, or documents mentioned that BAMA should obtain or check before pricing. Empty array if none."],
+  "quote_structure": "Recommendation on how to structure the quote — standard 9-bucket vs custom line items, whether to split by area/element, any items to price separately",
+  "notes": "Any other observations, exclusions to flag, or advice for the estimator"
+}
+
+Be direct and practical. Address Mateusz by name occasionally. Flag anything that could catch a steelwork contractor out.`;
+
+  const userPrompt = `${project}Our trade: ${trade}.${focus ? ` Pay particular attention to: ${focus}.` : ''}
+
+Please read this tender document and give me a full pricing briefing for my trade.`;
+
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 2000,
+        system: systemPrompt,
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type: 'document',
+              source: { type: 'base64', media_type: 'application/pdf', data: _helperPdfBase64 }
+            },
+            { type: 'text', text: userPrompt }
+          ]
+        }]
+      })
+    });
+
+    const data = await response.json();
+    if (data.error) throw new Error(data.error.message);
+
+    const raw = data.content?.find(b => b.type === 'text')?.text || '';
+    document.getElementById('helperRawText').textContent = raw;
+
+    // Parse JSON — strip markdown fences if present
+    let parsed;
+    try {
+      const clean = raw.replace(/^```json\s*/,'').replace(/```\s*$/,'').trim();
+      parsed = JSON.parse(clean);
+    } catch(e) {
+      // Fallback: show raw text if JSON parse fails
+      parsed = { summary: raw, pricing_items: [], contract_risks: [], drawings_to_check: [], quote_structure: '', notes: '' };
+    }
+
+    renderHelperOutput(parsed);
+    status.textContent = `Analysis complete — ${_helperFileName}`;
+
+  } catch(err) {
+    status.textContent = '❌ Error: ' + err.message;
+    toast('Analysis failed: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false; btn.style.opacity = '1';
+    btn.textContent = '🔍 Analyse Document';
+    document.getElementById('helperClearBtn').style.display = '';
+  }
+}
+
+function renderHelperOutput(data) {
+  // Summary
+  document.getElementById('helperSummaryText').innerHTML =
+    data.summary ? data.summary.replace(/\n/g,'<br>') : '—';
+
+  // Pricing items
+  const items = data.pricing_items || [];
+  document.getElementById('helperItemsList').innerHTML = items.length
+    ? items.map((item, i) => `
+        <div style="display:flex;gap:10px;padding:6px 0;border-bottom:1px solid var(--border);align-items:flex-start">
+          <span style="color:var(--accent);font-weight:700;font-size:13px;flex-shrink:0;min-width:20px">${i+1}.</span>
+          <span>${item}</span>
+        </div>`).join('')
+    : '<span style="color:var(--muted)">No specific items identified</span>';
+
+  // Contract risks
+  const risks = data.contract_risks || [];
+  const risksCard = document.getElementById('helperRisksCard');
+  if (risks.length) {
+    risksCard.style.display = '';
+    document.getElementById('helperRisksList').innerHTML = risks.map(r =>
+      `<div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);align-items:flex-start">
+        <span style="color:var(--red);flex-shrink:0">⚠</span><span>${r}</span>
+      </div>`).join('');
+  } else {
+    risksCard.style.display = 'none';
+  }
+
+  // Drawings
+  const drawings = data.drawings_to_check || [];
+  const drawingsCard = document.getElementById('helperDrawingsCard');
+  if (drawings.length) {
+    drawingsCard.style.display = '';
+    document.getElementById('helperDrawingsList').innerHTML = drawings.map(d =>
+      `<div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);align-items:flex-start">
+        <span style="color:var(--accent2);flex-shrink:0">📐</span><span>${d}</span>
+      </div>`).join('');
+  } else {
+    drawingsCard.style.display = 'none';
+  }
+
+  // Quote structure
+  document.getElementById('helperStructureText').innerHTML =
+    data.quote_structure ? data.quote_structure.replace(/\n/g,'<br>') : '—';
+  if (data.notes) {
+    document.getElementById('helperStructureText').innerHTML +=
+      `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);color:var(--muted);font-size:12px">${data.notes.replace(/\n/g,'<br>')}</div>`;
+  }
+
+  document.getElementById('helperOutput').style.display = '';
+  document.getElementById('helperOutput').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function clearHelper() {
+  _helperPdfBase64 = null; _helperFileName = '';
+  document.getElementById('helperDropzoneText').innerHTML = '<strong>Click to upload</strong> or drag &amp; drop tender document';
+  document.getElementById('helperOutput').style.display = 'none';
+  document.getElementById('helperStatus').textContent = '';
+  document.getElementById('helperAnalyseBtn').disabled = true;
+  document.getElementById('helperAnalyseBtn').style.opacity = '0.4';
+  document.getElementById('helperClearBtn').style.display = 'none';
+  document.getElementById('helperFileInput').value = '';
 }
 
 // ============================================================
