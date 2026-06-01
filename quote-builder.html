@@ -215,6 +215,18 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 .area-header.collapsed .area-header-chevron { transform:rotate(-90deg); }
 .area-header.unspecified { background:rgba(136,136,136,0.06); border-color:rgba(136,136,136,0.15); }
 .helper-tile { transition:border-color 0.15s; }
+.wiz-section { margin-bottom:14px;padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:8px; }
+.wiz-section-title { font-size:12px;font-weight:600;color:var(--text);margin-bottom:10px; }
+.wiz-tile { padding:8px 12px;border-radius:7px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:12px;cursor:pointer;text-align:center;transition:all 0.15s;line-height:1.4;min-width:80px; }
+.wiz-tile:hover { border-color:var(--accent);color:var(--text); }
+.wiz-tile.active { background:rgba(255,107,0,0.12);border-color:var(--accent);color:var(--accent);font-weight:600; }
+.wiz-role-tile { padding:8px 12px;border-radius:7px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:12px;cursor:pointer;text-align:center;transition:all 0.15s;min-width:90px; }
+.wiz-role-tile.active { background:rgba(255,107,0,0.12);border-color:var(--accent);color:var(--accent); }
+.wiz-role-name { font-weight:600;margin-bottom:4px; }
+.wiz-role-qty { width:40px;background:var(--card);border:1px solid var(--border);border-radius:4px;padding:2px 4px;color:var(--text);font-size:12px;text-align:center;margin-top:2px; }
+.wiz-stat-box { background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px 10px;text-align:center; }
+.wiz-stat-val { font-size:18px;font-weight:700;font-family:var(--font-mono);color:var(--text); }
+.wiz-stat-lbl { font-size:10px;color:var(--muted);margin-top:2px; }
 .helper-tile:hover { border-color:var(--accent) !important; }
 .area-name-input { background:transparent;border:none;outline:none;color:var(--accent);font-size:12px;font-weight:600;font-family:var(--font-body);width:180px; }
 .area-name-input:focus { border-bottom:1px solid var(--accent); }
@@ -1437,6 +1449,153 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 </div>
 
 <!-- SETTINGS MODAL -->
+<!-- JOB SETUP WIZARD -->
+<div class="modal-overlay" id="wizardModal">
+  <div class="modal" style="max-width:720px;max-height:90vh;overflow-y:auto;padding:0">
+
+    <!-- Header -->
+    <div style="padding:16px 20px;border-bottom:1px solid var(--border);background:var(--surface);border-radius:8px 8px 0 0;position:sticky;top:0;z-index:10">
+      <div style="font-size:16px;font-weight:700;color:var(--text)">⚡ Job Setup Wizard</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:2px">Review the takeoff summary then set your job parameters</div>
+    </div>
+
+    <div style="padding:16px 20px">
+
+      <!-- JOB SUMMARY (read-only) -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:16px">
+        <div style="font-size:10px;color:var(--muted);font-weight:600;letter-spacing:1px;margin-bottom:10px">TAKEOFF SUMMARY</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:12px" id="wiz-stats"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px" id="wiz-breakdown"></div>
+        <div id="wiz-warnings" style="margin-top:8px"></div>
+      </div>
+
+      <!-- CREW -->
+      <div class="wiz-section">
+        <div class="wiz-section-title">👷 Crew</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div class="field">
+            <label>No. of operatives</label>
+            <input type="number" id="wiz-operatives" value="2" min="1" max="20"
+              style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:14px;font-family:var(--font-mono);width:100%;text-align:center"
+              oninput="wizUpdateDays()">
+          </div>
+          <div class="field">
+            <label>Days on site <span id="wiz-days-hint" style="color:var(--muted);font-size:10px"></span></label>
+            <input type="number" id="wiz-days" value="5" min="1" max="60"
+              style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:14px;font-family:var(--font-mono);width:100%;text-align:center">
+          </div>
+        </div>
+        <!-- Labour roles -->
+        <div style="margin-top:8px">
+          <label style="font-size:11px;color:var(--muted);font-weight:600;display:block;margin-bottom:6px">ROLES (qty per role)</label>
+          <div style="display:flex;flex-wrap:wrap;gap:6px" id="wiz-roles">
+            <div class="wiz-role-tile active" data-role="erector" data-qty="2" onclick="wizToggleRole(this)">
+              <div class="wiz-role-name">Erector</div>
+              <input type="number" value="2" min="0" max="10" class="wiz-role-qty" onclick="event.stopPropagation()" oninput="wizUpdateDays()">
+            </div>
+            <div class="wiz-role-tile" data-role="supervisor" data-qty="0" onclick="wizToggleRole(this)">
+              <div class="wiz-role-name">Supervisor</div>
+              <input type="number" value="1" min="0" max="10" class="wiz-role-qty" onclick="event.stopPropagation()" oninput="wizUpdateDays()">
+            </div>
+            <div class="wiz-role-tile" data-role="slinger" data-qty="0" onclick="wizToggleRole(this)">
+              <div class="wiz-role-name">Slinger</div>
+              <input type="number" value="1" min="0" max="10" class="wiz-role-qty" onclick="event.stopPropagation()" oninput="wizUpdateDays()">
+            </div>
+            <div class="wiz-role-tile" data-role="welder" data-qty="0" onclick="wizToggleRole(this)">
+              <div class="wiz-role-name">Welder</div>
+              <input type="number" value="1" min="0" max="10" class="wiz-role-qty" onclick="event.stopPropagation()" oninput="wizUpdateDays()">
+            </div>
+            <div class="wiz-role-tile" data-role="labour" data-qty="0" onclick="wizToggleRole(this)">
+              <div class="wiz-role-name">General Labour</div>
+              <input type="number" value="1" min="0" max="10" class="wiz-role-qty" onclick="event.stopPropagation()" oninput="wizUpdateDays()">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CRANE -->
+      <div class="wiz-section">
+        <div class="wiz-section-title">🏗 Crane / Lifting</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px" id="wiz-crane-tiles">
+          <div class="wiz-tile" data-crane="none" onclick="wizSelectCrane(this)">No crane</div>
+          <div class="wiz-tile" data-crane="crane_25t" onclick="wizSelectCrane(this)">25t Mobile<br><span style="font-size:10px;color:var(--muted)">£1,200/day</span></div>
+          <div class="wiz-tile" data-crane="crane_50t" onclick="wizSelectCrane(this)">50t Mobile<br><span style="font-size:10px;color:var(--muted)">£1,850/day</span></div>
+          <div class="wiz-tile" data-crane="crane_spider" onclick="wizSelectCrane(this)">Spider Crane<br><span style="font-size:10px;color:var(--muted)">£950/day</span></div>
+          <div class="wiz-tile" data-crane="crane_hiab" onclick="wizSelectCrane(this)">HIAB only<br><span style="font-size:10px;color:var(--muted)">£800/day</span></div>
+        </div>
+        <div id="wiz-crane-days-wrap" style="display:none">
+          <label style="font-size:11px;color:var(--muted)">Crane days</label>
+          <input type="number" id="wiz-crane-days" value="1" min="1"
+            style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;font-family:var(--font-mono);width:80px;margin-left:8px">
+        </div>
+      </div>
+
+      <!-- ACCESS MEWP -->
+      <div class="wiz-section">
+        <div class="wiz-section-title">🦺 Access Equipment <span style="font-size:11px;font-weight:400;color:var(--muted)">(select all that apply)</span></div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px" id="wiz-mewp-tiles">
+          <div class="wiz-tile" data-mewp="none" onclick="wizToggleMewp(this)">None needed</div>
+          <div class="wiz-tile" data-mewp="genie_z30" onclick="wizToggleMewp(this)">Genie Z-30<br><span style="font-size:10px;color:var(--muted)">£130/day</span></div>
+          <div class="wiz-tile" data-mewp="genie_z45" onclick="wizToggleMewp(this)">Genie Z-45<br><span style="font-size:10px;color:var(--muted)">£175/day</span></div>
+          <div class="wiz-tile" data-mewp="genie_z60" onclick="wizToggleMewp(this)">Genie Z-60<br><span style="font-size:10px;color:var(--muted)">£230/day</span></div>
+          <div class="wiz-tile" data-mewp="genie_s40" onclick="wizToggleMewp(this)">S-40 Telescopic<br><span style="font-size:10px;color:var(--muted)">£190/day</span></div>
+          <div class="wiz-tile" data-mewp="scissor_skyjack" onclick="wizToggleMewp(this)">Scissor Lift<br><span style="font-size:10px;color:var(--muted)">£120/day</span></div>
+          <div class="wiz-tile" data-mewp="cherry_z45" onclick="wizToggleMewp(this)">Cherry Picker Z45<br><span style="font-size:10px;color:var(--muted)">£200/day</span></div>
+          <div class="wiz-tile" data-mewp="scaffold" onclick="wizToggleMewp(this)">Tower Scaffold<br><span style="font-size:10px;color:var(--muted)">£150/wk</span></div>
+        </div>
+      </div>
+
+      <!-- FINISH -->
+      <div class="wiz-section">
+        <div class="wiz-section-title">🎨 Finish <span style="font-size:11px;font-weight:400;color:var(--muted)">(select all that apply)</span></div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px" id="wiz-finish-tiles">
+          <div class="wiz-tile active" data-finish="primer_tonne" onclick="wizToggleFinish(this)">Primer<br><span style="font-size:10px;color:var(--muted)">£/tonne</span></div>
+          <div class="wiz-tile" data-finish="galvanise" onclick="wizToggleFinish(this)">Galvanising<br><span style="font-size:10px;color:var(--muted)">£750/tonne</span></div>
+          <div class="wiz-tile" data-finish="powder_coat_m" onclick="wizToggleFinish(this)">Powder Coat<br><span style="font-size:10px;color:var(--muted)">£/m</span></div>
+          <div class="wiz-tile" data-finish="touch_up" onclick="wizToggleFinish(this)">Touch Up<br><span style="font-size:10px;color:var(--muted)">£/hr</span></div>
+          <div class="wiz-tile" data-finish="intumescent" onclick="wizToggleFinish(this)">Intumescent<br><span style="font-size:10px;color:var(--muted)">£/m²</span></div>
+          <div class="wiz-tile" data-finish="none" onclick="wizToggleFinish(this)">None / TBC</div>
+        </div>
+      </div>
+
+      <!-- SURVEY -->
+      <div class="wiz-section">
+        <div class="wiz-section-title">📏 Survey</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px" id="wiz-survey-tiles">
+          <div class="wiz-tile active" data-survey="no" onclick="wizSelectSurvey(this)">No survey</div>
+          <div class="wiz-tile" data-survey="mateusz" onclick="wizSelectSurvey(this)">Mateusz</div>
+          <div class="wiz-tile" data-survey="leszek" onclick="wizSelectSurvey(this)">Leszek</div>
+          <div class="wiz-tile" data-survey="struct_eng" onclick="wizSelectSurvey(this)">Struct. Eng</div>
+          <div class="wiz-tile" data-survey="both" onclick="wizSelectSurvey(this)">Mateusz + Leszek</div>
+        </div>
+        <div id="wiz-survey-visits-wrap" style="display:none">
+          <label style="font-size:11px;color:var(--muted)">No. of visits</label>
+          <input type="number" id="wiz-survey-visits" value="1" min="1"
+            style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;font-family:var(--font-mono);width:80px;margin-left:8px">
+        </div>
+      </div>
+
+      <!-- DESIGN -->
+      <div class="wiz-section">
+        <div class="wiz-section-title">📐 Design</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px" id="wiz-design-tiles">
+          <div class="wiz-tile active" data-design="fab_pack_only" onclick="wizSelectDesign(this)">Fab Pack only<br><span style="font-size:10px;color:var(--muted)">Internal draughtsman</span></div>
+          <div class="wiz-tile" data-design="full_design" onclick="wizSelectDesign(this)">Full design<br><span style="font-size:10px;color:var(--muted)">Struct Eng + Draughtsman</span></div>
+          <div class="wiz-tile" data-design="client_design" onclick="wizSelectDesign(this)">Client provides design<br><span style="font-size:10px;color:var(--muted)">Fab pack only</span></div>
+          <div class="wiz-tile" data-design="none" onclick="wizSelectDesign(this)">No design fee</div>
+        </div>
+      </div>
+
+    </div><!-- end padding -->
+
+    <!-- Footer -->
+    <div style="padding:14px 20px;border-top:1px solid var(--border);background:var(--surface);border-radius:0 0 8px 8px;position:sticky;bottom:0;display:flex;justify-content:space-between;align-items:center">
+      <button class="btn btn-ghost" onclick="closeWizard()">Skip — I'll fill manually</button>
+      <button class="btn btn-primary" onclick="applyWizard()" style="padding:10px 24px;font-size:14px">⚡ Generate Quote</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="settingsModal">
   <div class="modal" style="max-width:560px">
     <div class="modal-title">⚙ Default Rates</div>
@@ -3766,6 +3925,313 @@ function showPsPreview(source) {
  * fresh = false → ask first, only proceed if confirmed
  */
 // ============================================================
+// JOB SETUP WIZARD
+// ============================================================
+let _wizQuote = null;
+
+function openWizard(q) {
+  _wizQuote = q;
+  buildWizSummary(q);
+  wizSuggestCrew(q);
+  // Reset all tiles to defaults
+  document.querySelectorAll('#wiz-crane-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
+  document.querySelector('[data-crane="none"]')?.classList.add('active');
+  document.getElementById('wiz-crane-days-wrap').style.display = 'none';
+  document.querySelectorAll('#wiz-mewp-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('#wiz-finish-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
+  document.querySelector('[data-finish="primer_tonne"]')?.classList.add('active');
+  document.querySelectorAll('#wiz-survey-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
+  document.querySelector('[data-survey="no"]')?.classList.add('active');
+  document.getElementById('wiz-survey-visits-wrap').style.display = 'none';
+  document.querySelectorAll('#wiz-design-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
+  document.querySelector('[data-design="fab_pack_only"]')?.classList.add('active');
+  document.getElementById('wizardModal').classList.add('active');
+}
+
+function closeWizard() {
+  document.getElementById('wizardModal').classList.remove('active');
+  // Still run fab/design auto-calc silently
+  if (_wizQuote) {
+    const { totalHours: fabHrs } = autoFabHours(_wizQuote.takeoff);
+    const { draughtHrs, structEngHrs, fabpackHrs } = autoDesignHours(_wizQuote.takeoff);
+    _wizQuote.fabHours = fabHrs;
+    _wizQuote.designHours = draughtHrs;
+    _wizQuote.structEngHrs = structEngHrs;
+    _wizQuote.fabpackHours = fabpackHrs;
+    const set = (id,v) => { const el=document.getElementById(id); if(el) el.value=v; };
+    set('fab-hours', fabHrs); set('struct-eng-hours', structEngHrs);
+    set('design-hours', draughtHrs); set('fabpack-hours', fabpackHrs);
+    saveAll(); recalcAll();
+  }
+}
+
+function buildWizSummary(q) {
+  const takeoff = q.takeoff || [];
+  // Total weight
+  let totalKg = 0;
+  const byProfile = {};
+  let heaviest = null, heaviestKg = 0;
+  const missingKgm = [];
+
+  takeoff.forEach(row => {
+    const { kg, isValid } = rowWeight(row);
+    if (!isValid) { if (row.type && !missingKgm.includes(row.type)) missingKgm.push(row.type); return; }
+    totalKg += kg;
+    const rowKg = kg;
+    if (rowKg > heaviestKg) { heaviestKg = rowKg; heaviest = row; }
+    const prefix = (row.type?.match(/^[A-Za-z]+/)||['?'])[0].toUpperCase();
+    const group =
+      (prefix === 'UB' || prefix === 'UC') ? 'UB/UC' :
+      (prefix === 'PFC' || prefix === 'RSA') ? 'PFC/Angles' :
+      (prefix === 'SHS' || prefix === 'RHS' || prefix === 'CHS') ? 'Hollow' : 'Other';
+    byProfile[group] = (byProfile[group]||0) + kg/1000;
+  });
+
+  // Longest member
+  let longestRow = null, longestMM = 0;
+  takeoff.forEach(r => { if ((r.length||0) > longestMM) { longestMM = r.length; longestRow = r; } });
+
+  const t = totalKg / 1000;
+  const statsEl = document.getElementById('wiz-stats');
+  statsEl.innerHTML = [
+    { val: takeoff.length, lbl: 'Members' },
+    { val: t.toFixed(2)+'t', lbl: 'Total tonnage' },
+    { val: longestMM ? ((longestMM/1000).toFixed(2)+'m') : '—', lbl: 'Longest member' },
+    { val: (q.areas||[]).length || '—', lbl: 'Areas' },
+  ].map(s => `<div class="wiz-stat-box"><div class="wiz-stat-val">${s.val}</div><div class="wiz-stat-lbl">${s.lbl}</div></div>`).join('');
+
+  // Heaviest section
+  const breakdownEl = document.getElementById('wiz-breakdown');
+  const heaviestHtml = heaviest
+    ? `<div style="background:var(--card);border:1px solid rgba(255,107,0,0.2);border-radius:6px;padding:8px 10px">
+        <div style="font-size:10px;color:var(--muted);font-weight:600;margin-bottom:4px">HEAVIEST SECTION</div>
+        <div style="font-size:13px;font-weight:600;font-family:var(--font-mono);color:var(--accent)">${escHtml(heaviest.type)}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">${heaviest.kgm||'?'} kg/m · ${heaviest.qty||1} No. · ${((heaviest.length||0)/1000).toFixed(2)}m long</div>
+        <div style="font-size:11px;color:var(--muted)">${heaviestKg.toFixed(1)} kg total for this row</div>
+      </div>` : '';
+
+  const profileHtml = `<div style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px 10px">
+    <div style="font-size:10px;color:var(--muted);font-weight:600;margin-bottom:6px">BY PROFILE GROUP</div>
+    ${Object.entries(byProfile).map(([grp, tonnes]) =>
+      `<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0;border-bottom:1px solid var(--border)">
+        <span style="color:var(--muted)">${grp}</span>
+        <span style="font-family:var(--font-mono);color:var(--text)">${tonnes.toFixed(2)}t</span>
+      </div>`
+    ).join('')}
+  </div>`;
+
+  breakdownEl.innerHTML = heaviestHtml + profileHtml;
+
+  // Warnings
+  const warnEl = document.getElementById('wiz-warnings');
+  warnEl.innerHTML = missingKgm.length
+    ? `<div style="padding:6px 10px;background:rgba(255,179,71,0.08);border:1px solid rgba(255,179,71,0.25);border-radius:5px;font-size:11px;color:var(--accent2)">
+        ⚠ ${missingKgm.length} section${missingKgm.length>1?'s':''} missing kg/m — tonnage is incomplete: ${missingKgm.join(', ')}
+      </div>` : '';
+
+  // Store summary for use in applyWizard
+  window._wizTonnes = t;
+}
+
+function wizSuggestCrew(q) {
+  // Suggest operatives based on member count
+  const members = (q.takeoff||[]).length;
+  const suggestedOps = members <= 10 ? 2 : members <= 30 ? 3 : 4;
+  document.getElementById('wiz-operatives').value = suggestedOps;
+  // Suggest days: members ÷ (operatives × 4 members/day), min 2
+  const suggestedDays = Math.max(2, Math.ceil(members / (suggestedOps * 4)));
+  document.getElementById('wiz-days').value = suggestedDays;
+  document.getElementById('wiz-days-hint').textContent =
+    `(suggested: ${members} members ÷ ${suggestedOps} ops)`;
+  // Default erectors to operatives
+  const erectorTile = document.querySelector('[data-role="erector"]');
+  if (erectorTile) {
+    erectorTile.querySelector('.wiz-role-qty').value = suggestedOps;
+    erectorTile.classList.add('active');
+  }
+}
+
+function wizUpdateDays() {
+  // Recalculate suggested days when operatives change
+  const ops = parseFloat(document.getElementById('wiz-operatives').value) || 2;
+  const members = (_wizQuote?.takeoff||[]).length;
+  const suggested = Math.max(2, Math.ceil(members / (ops * 4)));
+  document.getElementById('wiz-days-hint').textContent = `(suggested: ${members} members ÷ ${ops} ops ≈ ${suggested} days)`;
+}
+
+function wizToggleRole(el) {
+  el.classList.toggle('active');
+}
+
+function wizSelectCrane(el) {
+  document.querySelectorAll('#wiz-crane-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  const needsDays = el.dataset.crane !== 'none';
+  document.getElementById('wiz-crane-days-wrap').style.display = needsDays ? '' : 'none';
+}
+
+function wizToggleMewp(el) {
+  if (el.dataset.mewp === 'none') {
+    document.querySelectorAll('#wiz-mewp-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+  } else {
+    document.querySelector('[data-mewp="none"]')?.classList.remove('active');
+    el.classList.toggle('active');
+  }
+}
+
+function wizToggleFinish(el) {
+  if (el.dataset.finish === 'none') {
+    document.querySelectorAll('#wiz-finish-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+  } else {
+    document.querySelector('[data-finish="none"]')?.classList.remove('active');
+    el.classList.toggle('active');
+  }
+}
+
+function wizSelectSurvey(el) {
+  document.querySelectorAll('#wiz-survey-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('wiz-survey-visits-wrap').style.display =
+    el.dataset.survey !== 'no' ? '' : 'none';
+}
+
+function wizSelectDesign(el) {
+  document.querySelectorAll('#wiz-design-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+}
+
+function applyWizard() {
+  const q = _wizQuote; if (!q) return;
+  const days  = parseFloat(document.getElementById('wiz-days').value) || 5;
+  const ops   = parseFloat(document.getElementById('wiz-operatives').value) || 2;
+  const tonnes = window._wizTonnes || 0;
+
+  // ── Labour rows ──────────────────────────────────────────
+  q.labourRows = [];
+  document.querySelectorAll('#wiz-roles .wiz-role-tile.active').forEach(tile => {
+    const role = tile.dataset.role;
+    const qty  = parseFloat(tile.querySelector('.wiz-role-qty').value) || 1;
+    const def  = rates.labour[role] || { label: role, rate: 0 };
+    q.labourRows.push({ id: 'labour_'+role+'_'+Date.now(), type: role, label: def.label, qty, rate: def.rate, days: null, useGlobalDays: true });
+  });
+  q.instDays       = days;
+  q.instOperatives = ops;
+  q.globalDays     = true;
+
+  // ── Crane ────────────────────────────────────────────────
+  const craneTile = document.querySelector('#wiz-crane-tiles .wiz-tile.active');
+  const craneType = craneTile?.dataset.crane || 'none';
+  q.plantRows = (q.plantRows||[]).filter(r => !r._auto);
+  if (craneType !== 'none') {
+    const craneDays = parseFloat(document.getElementById('wiz-crane-days').value) || 1;
+    const craneRate = rates.plant[craneType]?.rate || 0;
+    const craneLabel = rates.plant[craneType]?.label || craneType;
+    q.plantRows.push({ id: 'plant_crane_'+Date.now(), type: craneType, label: craneLabel, qty: craneDays, rate: craneRate, _auto: true });
+  }
+
+  // ── Access MEWP ──────────────────────────────────────────
+  document.querySelectorAll('#wiz-mewp-tiles .wiz-tile.active').forEach(tile => {
+    if (tile.dataset.mewp === 'none') return;
+    const mewpType  = tile.dataset.mewp;
+    const mewpRate  = rates.plant[mewpType]?.rate || 0;
+    const mewpLabel = rates.plant[mewpType]?.label || mewpType;
+    q.plantRows.push({ id: 'plant_mewp_'+mewpType+'_'+Date.now(), type: mewpType, label: mewpLabel, qty: days, rate: mewpRate, _auto: true });
+  });
+
+  // ── Finish / paint rows ──────────────────────────────────
+  q.paintRows = [];
+  document.querySelectorAll('#wiz-finish-tiles .wiz-tile.active').forEach(tile => {
+    if (tile.dataset.finish === 'none') return;
+    const ft  = tile.dataset.finish;
+    const def = rates.paint[ft] || { label: ft, rate: 0, unit: '' };
+    // Auto-qty for tonnes-based
+    let qty = 0;
+    if (ft === 'galvanise' || ft === 'primer_tonne') qty = tonnes;
+    q.paintRows.push({ id: 'paint_'+ft+'_'+Date.now(), type: ft, label: def.label, qty, rate: def.rate, unit: def.unit });
+  });
+
+  // ── Survey ───────────────────────────────────────────────
+  const surveyTile = document.querySelector('#wiz-survey-tiles .wiz-tile.active');
+  const surveyChoice = surveyTile?.dataset.survey || 'no';
+  const surveyVisits = parseFloat(document.getElementById('wiz-survey-visits').value) || 1;
+  q.surveyVisitRows = [];
+  if (surveyChoice !== 'no') {
+    const peopleMap = {
+      mateusz:    { label: 'Mateusz Braczyk',     rate: 250 },
+      leszek:     { label: 'Leszek',              rate: 250 },
+      struct_eng: { label: 'Structural Engineer', rate: 350 },
+      both:       null // handled below
+    };
+    if (surveyChoice === 'both') {
+      ['mateusz','leszek'].forEach(p => {
+        const def = peopleMap[p];
+        q.surveyVisitRows.push({ id: 'surv_'+p+'_'+Date.now(), type: p, label: def.label, qty: surveyVisits, rate: def.rate });
+      });
+    } else {
+      const def = peopleMap[surveyChoice];
+      if (def) q.surveyVisitRows.push({ id: 'surv_'+surveyChoice+'_'+Date.now(), type: surveyChoice, label: def.label, qty: surveyVisits, rate: def.rate });
+    }
+  }
+
+  // ── Design hours ─────────────────────────────────────────
+  const designChoice = document.querySelector('#wiz-design-tiles .wiz-tile.active')?.dataset.design || 'fab_pack_only';
+  const { draughtHrs, structEngHrs, fabpackHrs } = autoDesignHours(q.takeoff);
+  if (designChoice === 'none') {
+    q.designHours = 0; q.structEngHrs = 0; q.fabpackHours = 0;
+  } else if (designChoice === 'fab_pack_only' || designChoice === 'client_design') {
+    q.designHours = draughtHrs; q.structEngHrs = 0; q.fabpackHours = fabpackHrs;
+  } else { // full_design
+    q.designHours = draughtHrs; q.structEngHrs = structEngHrs; q.fabpackHours = fabpackHrs;
+  }
+
+  // ── Fab hours ────────────────────────────────────────────
+  const { totalHours: fabHrs } = autoFabHours(q.takeoff);
+  q.fabHours = fabHrs;
+
+  // ── Prelims — always RAMS + PPE, plus others based on scope ─
+  q.prelimRows = [];
+  const addPrelim = (key, qtyOverride) => {
+    const def = (rates.prelims||{})[key] || { label: key, rate: 0, type: 'flat' };
+    const qty = qtyOverride ?? (def.type === 'daily' ? days : 1);
+    q.prelimRows.push({ id: 'prelim_'+key, type: key, label: def.label, qty, rate: def.rate, _auto: true });
+  };
+  addPrelim('rams'); addPrelim('ppe');
+  if (craneType !== 'none' || document.querySelectorAll('#wiz-mewp-tiles .wiz-tile.active:not([data-mewp="none"])').length > 0) {
+    const hasStructural = (q.takeoff||[]).some(r => ['UB','UC','PFC','RSA'].includes((r.type?.match(/^[A-Za-z]+/)||[''])[0].toUpperCase()));
+    if (hasStructural) addPrelim('weld_inspect');
+  }
+  if (tonnes > 5) addPrelim('proj_manager', Math.max(1, Math.round(days * 0.15)));
+
+  // ── Delivery ─────────────────────────────────────────────
+  autoEstimateDelivery(q, tonnes);
+
+  // ── Sync DOM ─────────────────────────────────────────────
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  set('inst-days', days);
+  set('inst-operatives', ops);
+  set('fab-hours', fabHrs);
+  set('struct-eng-hours', q.structEngHrs);
+  set('design-hours', q.designHours);
+  set('fabpack-hours', q.fabpackHours);
+  const gtEl = document.getElementById('globalDaysToggle'); if (gtEl) gtEl.checked = true;
+
+  saveAll();
+  renderLabourRows();
+  renderPlantRows();
+  renderDeliveryRows();
+  renderPaintRows();
+  renderSurveyVisitRows();
+  renderPrelimChecklist();
+  checkRalVisibility();
+  recalcAll();
+
+  closeWizard();
+  toast(`Quote generated — ${tonnes.toFixed(2)}t · ${days} days · ${q.labourRows.length} roles · ${q.paintRows.length} finish items`, 'success');
+}
+
+// ============================================================
 // AUTOMATION HELPERS
 // ============================================================
 
@@ -3931,12 +4397,10 @@ function importPlanswift() {
   closePlanswiftModal();
   if (document.getElementById('psNewAreaName')) document.getElementById('psNewAreaName').value = '';
 
-  // Auto-calc: check if this is a fresh quote (no prior hours set)
-  const fresh = !q.fabHours && !q.designHours && !q.structEngHrs;
   _psRows = [];
 
-  // Run after short delay so takeoff renders first
-  setTimeout(() => executeFullQuoteAutomation(q, fresh), 80);
+  // Open the Job Setup Wizard after a short delay so takeoff renders first
+  setTimeout(() => openWizard(q), 120);
 }
 
 // ============================================================
