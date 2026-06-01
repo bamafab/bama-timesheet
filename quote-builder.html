@@ -889,6 +889,25 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
           <!-- SUMMARY PANEL -->
           <div>
             <div class="summary-panel">
+              <!-- Tonnage breakdown box -->
+              <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:14px">
+                <div style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);font-weight:600;margin-bottom:10px">Tonnage</div>
+                <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:8px">
+                  <div>
+                    <div style="font-family:var(--font-mono);font-size:24px;font-weight:700;color:var(--text);line-height:1" id="sum-total-tonnes">0.000</div>
+                    <div style="font-size:10px;color:var(--muted);margin-top:2px">total tonnes</div>
+                  </div>
+                  <div style="text-align:right;font-size:11px;font-family:var(--font-mono);line-height:1.9">
+                    <div><span style="color:var(--subtle)">UB/UC </span><span style="color:var(--text)" id="sum-tonnes-ubuc">0.000t</span></div>
+                    <div><span style="color:var(--subtle)">PFC/∠ </span><span style="color:var(--text)" id="sum-tonnes-pfc">0.000t</span></div>
+                    <div><span style="color:var(--subtle)">Hollow </span><span style="color:var(--text)" id="sum-tonnes-hollow">0.000t</span></div>
+                    <div><span style="color:var(--subtle)">Other </span><span style="color:var(--text)" id="sum-tonnes-other">0.000t</span></div>
+                  </div>
+                </div>
+                <!-- Mini bars -->
+                <div id="tonnageBars" style="display:flex;gap:2px;height:6px;border-radius:3px;overflow:hidden;background:var(--border)"></div>
+              </div>
+
               <div style="font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);margin-bottom:14px;font-weight:600">Cost Summary</div>
 
               <div class="summary-line">
@@ -1838,6 +1857,22 @@ function computeQuoteTotals(quote, ratesObj) {
   const instDaysTotal = (parseFloat(quote.instDays) || 0);
   const autoFab = autoFabHours(quote.takeoff || []);
 
+  // Tonnes by profile group
+  const tonnesBreakdown = { ubuc: 0, pfc: 0, hollow: 0, other: 0 };
+  (quote.takeoff || []).forEach(row => {
+    const { kg } = rowWeight(row);
+    if (!kg) return;
+    const t = kg / 1000;
+    const p = (row.type?.match(/^[A-Za-z]+/) || [''])[0].toUpperCase();
+    if (p === 'UB' || p === 'UC')                              tonnesBreakdown.ubuc   += t;
+    else if (p === 'PFC' || p === 'RSA' || p === 'EA')         tonnesBreakdown.pfc    += t;
+    else if (p === 'SHS' || p === 'RHS' || p === 'CHS')        tonnesBreakdown.hollow += t;
+    else                                                        tonnesBreakdown.other  += t;
+  });
+  Object.keys(tonnesBreakdown).forEach(k => {
+    tonnesBreakdown[k] = Math.round(tonnesBreakdown[k] * 1000) / 1000;
+  });
+
   return {
     // Cost buckets
     material, installation, fabrication, design,
@@ -1847,6 +1882,7 @@ function computeQuoteTotals(quote, ratesObj) {
     totalKg: Math.round(totalKg * 10) / 10,
     totalTonnes: Math.round(totalTonnes * 1000) / 1000,
     fittingsKg: Math.round(fittingsKg * 10) / 10,
+    tonnesBreakdown,
     // Data quality
     missingKgm,        // sections without a kg/m — costs incomplete
     // Productivity
@@ -1938,14 +1974,14 @@ const DEFAULT_RATES = {
     other_delivery: { label: 'Other',      rate: 0 }
   },
   prelims: {
-    proj_manager: { label: 'Project Manager (£/day)',    rate: 400 },
-    hs_officer:   { label: 'H&S Officer (£/day)',        rate: 0 },
-    site_manager: { label: 'Site Manager (£/day)',       rate: 350 },
-    rams:         { label: 'RAMS (lump sum)',             rate: 120 },
-    ppe:          { label: 'PPE (lump sum)',              rate: 50 },
-    logistics:    { label: 'Logistics (lump sum)',        rate: 50 },
-    weld_inspect: { label: 'Welding Inspections',         rate: 0 },
-    other_prelim: { label: 'Other',                      rate: 0 }
+    proj_manager: { label: 'Project Manager', rate: 400,  type: 'daily' },
+    hs_officer:   { label: 'H&S Officer',     rate: 0,    type: 'daily' },
+    site_manager: { label: 'Site Manager',    rate: 350,  type: 'daily' },
+    rams:         { label: 'RAMS',            rate: 120,  type: 'flat'  },
+    ppe:          { label: 'PPE',             rate: 50,   type: 'flat'  },
+    logistics:    { label: 'Logistics',       rate: 50,   type: 'flat'  },
+    weld_inspect: { label: 'Welding Insp.',   rate: 0,    type: 'flat'  },
+    other_prelim: { label: 'Other',           rate: 0,    type: 'flat'  }
   },
   paint: {
     powder_coat_m:   { label: 'Powder Coating (£/m)',       rate: 0,   unit: 'm' },
@@ -3251,6 +3287,25 @@ function recalcAll() {
   const totalKg  = C.totalKg;
   document.getElementById('marginPct').textContent = q.margin + '%';
 
+  // Tonnage breakdown box
+  const _tb = C.tonnesBreakdown || {};
+  const _tt = C.totalTonnes || 0;
+  const _setT = (id,v) => { const el=document.getElementById(id); if(el) el.textContent=v; };
+  _setT('sum-total-tonnes', _tt.toFixed(3));
+  _setT('sum-tonnes-ubuc',   (_tb.ubuc  ||0).toFixed(3)+'t');
+  _setT('sum-tonnes-pfc',    (_tb.pfc   ||0).toFixed(3)+'t');
+  _setT('sum-tonnes-hollow', (_tb.hollow||0).toFixed(3)+'t');
+  _setT('sum-tonnes-other',  (_tb.other ||0).toFixed(3)+'t');
+  // Mini colour bars
+  const _tbars = document.getElementById('tonnageBars');
+  if (_tbars && _tt > 0) {
+    const cols = [['ubuc','#ff6b00'],['pfc','#ffb347'],['hollow','#4a9eff'],['other','#888']];
+    _tbars.innerHTML = cols.map(([k,c]) => {
+      const pct = ((_tb[k]||0) / _tt * 100).toFixed(1);
+      return pct > 0 ? `<div style="width:${pct}%;background:${c};transition:width 0.3s" title="${k}: ${pct}%"></div>` : '';
+    }).join('');
+  }
+
   document.getElementById('sum-material').textContent     = fmt(material);
   document.getElementById('sum-installation').textContent = fmt(installation);
   document.getElementById('sum-fabrication').textContent  = fmt(fabrication);
@@ -4116,18 +4171,86 @@ function renderPrelimChecklist() {
   const cont = document.getElementById('prelimChecklist');
   if (!cont) return;
   const q = getQuote(); if (!q) return;
-  const activeIds = new Set((q.prelimRows||[]).map(r => r.type || r.id));
 
+  // Pill buttons
+  const activeIds = new Set((q.prelimRows||[]).map(r => r.type || r.id));
   cont.innerHTML = Object.entries(rates.prelims || {}).map(([key, def]) => {
     const active = activeIds.has(key) || activeIds.has('prelim_'+key);
+    const typeTag = def.type === 'daily'
+      ? `<span style="font-size:9px;opacity:0.7;margin-left:3px">/day</span>`
+      : `<span style="font-size:9px;opacity:0.7;margin-left:3px">flat</span>`;
     return `<button onclick="togglePrelimQuick('${key}')"
-      style="padding:3px 9px;border-radius:12px;border:1px solid ${active?'var(--accent)':'var(--border)'};
+      style="padding:3px 10px;border-radius:12px;border:1px solid ${active?'var(--accent)':'var(--border)'};
              background:${active?'rgba(255,107,0,0.15)':'transparent'};
              color:${active?'var(--accent)':'var(--muted)'};font-size:11px;cursor:pointer;
-             transition:all 0.15s;white-space:nowrap">
-      ${active?'✓ ':''} ${escHtml(def.label.replace(' (per day)','').replace(' (lump sum)',''))}
+             transition:all 0.15s;white-space:nowrap;display:inline-flex;align-items:center">
+      ${active?'✓ ':''}${escHtml(def.label)}${typeTag}
     </button>`;
   }).join('');
+
+  // Inline editors for active items
+  const activeRows = (q.prelimRows||[]);
+  let editorsHtml = '';
+  if (activeRows.length) {
+    editorsHtml = `<div style="margin-top:10px;display:grid;gap:6px">` +
+      activeRows.map(r => {
+        const def = (rates.prelims||{})[r.type] || {};
+        const isDaily = def.type === 'daily';
+        return `<div style="display:grid;grid-template-columns:1fr 70px 80px 28px;gap:6px;align-items:center;
+                   padding:6px 10px;background:rgba(255,107,0,0.06);border:1px solid rgba(255,107,0,0.15);border-radius:6px">
+          <span style="font-size:12px;font-weight:500;color:var(--text)">${escHtml(r.label)}</span>
+          <div style="display:flex;align-items:center;gap:3px">
+            <input type="number" value="${r.qty||1}" min="1"
+              style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:4px;
+                     padding:4px 6px;color:var(--text);font-family:var(--font-mono);font-size:12px;text-align:right"
+              oninput="updatePrelimQuickQty('${r.id||'prelim_'+r.type}',this.value)"
+              title="${isDaily ? 'Number of days' : 'Quantity'}">
+            <span style="font-size:10px;color:var(--muted);white-space:nowrap">${isDaily?'days':'qty'}</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:3px">
+            <span style="font-size:10px;color:var(--muted)">£</span>
+            <input type="number" value="${r.rate||0}"
+              style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:4px;
+                     padding:4px 6px;color:var(--text);font-family:var(--font-mono);font-size:12px;text-align:right"
+              oninput="updatePrelimQuickRate('${r.id||'prelim_'+r.type}',this.value)"
+              title="Rate ${isDaily ? 'per day' : 'flat'}">
+          </div>
+          <button onclick="togglePrelimQuick('${r.type}')" title="Remove"
+            style="background:transparent;border:1px solid var(--border);border-radius:4px;
+                   color:var(--muted);cursor:pointer;padding:3px 5px;font-size:12px;
+                   transition:all 0.15s" onmouseover="this.style.color='var(--red)';this.style.borderColor='var(--red)'"
+                   onmouseout="this.style.color='var(--muted)';this.style.borderColor='var(--border)'">✕</button>
+        </div>
+        <div style="font-size:10px;color:var(--muted);text-align:right;margin-top:-3px;padding-right:40px">
+          = £${((r.qty||1)*(r.rate||0)).toFixed(2)} ${isDaily ? '(' + (r.qty||1) + ' day' + ((r.qty||1)!==1?'s':'') + ' × £' + (r.rate||0) + ')' : ''}
+        </div>`;
+      }).join('') + `</div>`;
+  }
+
+  // Append editors after the pill container
+  let editorEl = document.getElementById('prelimEditors');
+  if (!editorEl) {
+    editorEl = document.createElement('div');
+    editorEl.id = 'prelimEditors';
+    cont.parentNode.insertBefore(editorEl, cont.nextSibling);
+  }
+  editorEl.innerHTML = editorsHtml;
+}
+
+function updatePrelimQuickQty(id, val) {
+  const q = getQuote(); if (!q) return;
+  const r = (q.prelimRows||[]).find(r => (r.id||'prelim_'+r.type) === id);
+  if (r) { r.qty = parseFloat(val)||1; saveAll(); recalcAll(); }
+  // Update the subtotal display inline without full re-render
+  const def = (rates.prelims||{})[r?.type] || {};
+  renderPrelimChecklist(); // light re-render to update subtotals
+}
+
+function updatePrelimQuickRate(id, val) {
+  const q = getQuote(); if (!q) return;
+  const r = (q.prelimRows||[]).find(r => (r.id||'prelim_'+r.type) === id);
+  if (r) { r.rate = parseFloat(val)||0; saveAll(); recalcAll(); }
+  renderPrelimChecklist();
 }
 
 function togglePrelimQuick(key) {
@@ -4137,8 +4260,9 @@ function togglePrelimQuick(key) {
   if (existingIdx >= 0) {
     q.prelimRows.splice(existingIdx, 1);
   } else {
-    const def = (rates.prelims || {})[key] || { label: key, rate: 0 };
-    q.prelimRows.push({ id: 'prelim_'+key, type: key, label: def.label, qty: 1, rate: def.rate });
+    const def = (rates.prelims || {})[key] || { label: key, rate: 0, type: 'flat' };
+    const defaultQty = def.type === 'daily' ? 10 : 1; // daily items default to 10 days
+    q.prelimRows.push({ id: 'prelim_'+key, type: key, label: def.label, qty: defaultQty, rate: def.rate });
   }
   saveAll(); renderPrelimRows(); renderPrelimChecklist(); recalcAll();
 }
