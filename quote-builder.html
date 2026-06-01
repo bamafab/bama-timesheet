@@ -1691,6 +1691,50 @@ function autoFabHours(takeoff) {
 }
 
 /**
+ * Auto-calculate design hours from takeoff by profile complexity.
+ * Tiered draughtsman + structural engineer rates per tonne:
+ *   UB/UC:           Draughtsman 4 hrs/t, Struct Eng 1 hr/t
+ *   PFC/RSA/FLT:     Draughtsman 6 hrs/t
+ *   SHS/RHS/CHS:     Draughtsman 12 hrs/t  (hollow → complex connections)
+ *   Other:           Draughtsman 6 hrs/t
+ * Fab pack: 0.5 hr/t across all, min 4hrs
+ */
+function autoDesignHours(takeoff) {
+  let draughtHrs   = 0;
+  let structEngHrs = 0;
+
+  takeoff.forEach(row => {
+    const { kg, isValid } = rowWeight(row);
+    if (!isValid || !kg) return;
+    const t = kg / 1000;
+    const prefix = (row.type?.match(/^[A-Za-z]+/) || [''])[0].toUpperCase();
+
+    if (prefix === 'UB' || prefix === 'UC') {
+      draughtHrs   += t * 4;
+      structEngHrs += t * 1;
+    } else if (prefix === 'PFC' || prefix === 'RSA' || prefix === 'FLT' || prefix === 'FLAT') {
+      draughtHrs   += t * 6;
+    } else if (prefix === 'SHS' || prefix === 'RHS' || prefix === 'CHS') {
+      draughtHrs   += t * 12;
+    } else {
+      draughtHrs   += t * 6;  // misc / unrecognised
+    }
+  });
+
+  const totalTonnes = takeoff.reduce((s, row) => {
+    const { kg } = rowWeight(row); return s + kg / 1000;
+  }, 0);
+
+  const fabpackHrs = Math.max(4, Math.round(totalTonnes * 0.5));
+
+  return {
+    draughtHrs:   Math.max(8,  Math.round(draughtHrs)),
+    structEngHrs: Math.max(4,  Math.round(structEngHrs)),
+    fabpackHrs
+  };
+}
+
+/**
  * Fix 5: Compute finish quantities from takeoff rows tagged with a finish type.
  * Returns { galv_t, ppc_kg, primer_t, paint_m2 } auto-quantities.
  */
@@ -3716,6 +3760,71 @@ function showPsPreview(source) {
   if (source !== 'paste') document.getElementById('psDropzoneText').innerHTML = `✅ <strong>${source}</strong> — ${_psRows.length} rows ready`;
 }
 
+/**
+ * Full quote automation chain — runs after PlanSwift import.
+ * fresh = true  → fill everything silently (all fields were zero)
+ * fresh = false → ask first, only proceed if confirmed
+ */
+function executeFullQuoteAutomation(q, fresh) {
+  if (!q.takeoff?.length) return;
+
+  const run = () => {
+    // 1. Fab hours (complexity-aware)
+    const { totalHours: fabHrs } = autoFabHours(q.takeoff);
+    q.fabHours = fabHrs;
+
+    // 2. Design hours (profile-complexity tiered)
+    const { draughtHrs, structEngHrs, fabpackHrs } = autoDesignHours(q.takeoff);
+    q.designHours    = draughtHrs;
+    q.structEngHrs   = structEngHrs;
+    q.fabpackHours   = fabpackHrs;
+
+    // 3. Finish quantities → populate galv/primer paint rows
+    const finQty = computeFinishQuantities(q.takeoff);
+    (q.paintRows || []).forEach(r => {
+      if (r.type === 'galvanise'   && finQty.galv_t   > 0 && !r.qty) r.qty = finQty.galv_t;
+      if (r.type === 'primer_tonne'&& finQty.primer_t > 0 && !r.qty) r.qty = finQty.primer_t;
+    });
+
+    // 4. Sync DOM inputs and recalc
+    const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+    set('fab-hours',       q.fabHours);
+    set('struct-eng-hours',q.structEngHrs);
+    set('design-hours',    q.designHours);
+    set('fabpack-hours',   q.fabpackHours);
+
+    saveAll();
+    renderPaintRows();
+    recalcAll();
+
+    // Flash the total to show it's been calculated
+    const totalEl = document.getElementById('sum-total');
+    if (totalEl) {
+      totalEl.style.transition = 'color 0.2s';
+      totalEl.style.color = 'var(--green)';
+      setTimeout(() => { totalEl.style.color = ''; }, 1200);
+    }
+
+    const totalTonnes = (totalTakeoffKg() / 1000).toFixed(2);
+    toast(
+      `Auto-calc complete — ${totalTonnes}t · Fab ${fabHrs}h · Design ${draughtHrs}h · Struct ${structEngHrs}h`,
+      'success'
+    );
+  };
+
+  if (fresh) {
+    run();
+  } else {
+    if (confirm(
+      'Takeoff already has entries. Re-run auto-calc?\n\n' +
+      'This will overwrite: fabrication hours, design hours, fab pack hours.\n' +
+      'Your labour rows, plant, rates and margins are NOT affected.'
+    )) {
+      run();
+    }
+  }
+}
+
 function importPlanswift() {
   const q = getQuote(); if (!q) return;
   if (!_psRows.length) { toast('Nothing to import', 'error'); return; }
@@ -3757,8 +3866,13 @@ function importPlanswift() {
   saveAll(); renderTakeoff(); recalcAll(); updateMoveToAreaOptions();
   closePlanswiftModal();
   if (document.getElementById('psNewAreaName')) document.getElementById('psNewAreaName').value = '';
+
+  // Auto-calc: check if this is a fresh quote (no prior hours set)
+  const fresh = !q.fabHours && !q.designHours && !q.structEngHrs;
   _psRows = [];
-  toast(`Imported ${count} rows`, 'success');
+
+  // Run after short delay so takeoff renders first
+  setTimeout(() => executeFullQuoteAutomation(q, fresh), 80);
 }
 
 // ============================================================
@@ -3976,21 +4090,14 @@ function toast(msg, type='') {
 //   Fab pack: 0.5 hr per tonne (min 4hrs) — approval package
 function autoFillDesignHours() {
   const q = getQuote(); if (!q) return;
-  const kg     = totalTakeoffKg();
-  if (!kg) { toast('No takeoff weight yet — add members first', 'error'); return; }
-  const tonnes = kg / 1000;
-
-  const structEngHrs  = Math.max(4,  Math.min(40, Math.round(tonnes / 5)));
-  const draughtHrs    = Math.max(8,  Math.round(tonnes * 1));
-  const fabpackHrs    = Math.max(4,  Math.round(tonnes * 0.5));
-
+  if (!q.takeoff?.length) { toast('No takeoff yet — add members first', 'error'); return; }
+  const { draughtHrs, structEngHrs, fabpackHrs } = autoDesignHours(q.takeoff);
   document.getElementById('struct-eng-hours').value = structEngHrs;
   document.getElementById('design-hours').value     = draughtHrs;
   document.getElementById('fabpack-hours').value    = fabpackHrs;
   recalcAll();
   toast(
-    `Suggested: Struct. Eng ${structEngHrs}h · Draughtsman ${draughtHrs}h · Fab Pack ${fabpackHrs}h` +
-    ` (based on ${tonnes.toFixed(2)}t)`,
+    `Suggested: Struct. Eng ${structEngHrs}h · Draughtsman ${draughtHrs}h · Fab Pack ${fabpackHrs}h`,
     'success'
   );
 }
