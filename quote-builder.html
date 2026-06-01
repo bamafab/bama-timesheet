@@ -375,16 +375,26 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
             <div class="section-title">Steel Takeoff</div>
             <div class="flex gap-8">
               <button class="btn btn-ghost btn-sm" onclick="openPlanswiftImport()">↑ PlanSwift Import</button>
+              <button class="btn btn-ghost btn-sm" onclick="sortTakeoffByType()" title="Sort by section type">⇅ Sort</button>
               <button class="btn btn-primary btn-sm" onclick="addTakeoffRow()">+ Row</button>
             </div>
+          </div>
+
+          <!-- BULK ACTION TOOLBAR (hidden until selection) -->
+          <div id="takeoffBulkBar" style="display:none;align-items:center;gap:10px;padding:8px 12px;background:rgba(255,107,0,0.08);border:1px solid rgba(255,107,0,0.25);border-radius:7px;margin-bottom:8px">
+            <span id="takeoffSelCount" style="font-size:12px;color:var(--accent);font-weight:600">0 selected</span>
+            <button class="btn btn-ghost btn-sm" onclick="selectAllTakeoff()">Select all</button>
+            <button class="btn btn-ghost btn-sm" onclick="deselectAllTakeoff()">Deselect all</button>
+            <button class="btn btn-ghost btn-sm" onclick="invertTakeoffSelection()">Invert</button>
+            <button class="btn btn-ghost btn-sm" onclick="deleteSelectedTakeoffRows()" style="color:var(--red);border-color:var(--red);margin-left:auto">🗑 Delete selected</button>
           </div>
 
           <div style="overflow-x:auto">
             <table class="data-table" id="takeoffTable" style="table-layout:fixed;width:100%">
               <thead>
                 <tr>
-                  <th style="width:36px">#</th>
-                  <th style="width:200px">Section Type</th>
+                  <th style="width:28px;text-align:center"><input type="checkbox" id="takeoffSelectAll" onchange="toggleSelectAllTakeoff(this.checked)" style="cursor:pointer;accent-color:var(--accent)"></th>
+                  <th style="width:190px">Section Type</th>
                   <th style="width:90px;text-align:right">Length (mm)</th>
                   <th style="width:50px;text-align:right">Qty</th>
                   <th style="width:72px;text-align:right">kg/m</th>
@@ -407,10 +417,10 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
             </table>
           </div>
 
-          <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+          <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
             <div class="info-box flex-1">
-              Tip: Type section name (e.g. UB203x133x25) — kg/m pulls from steel database automatically.
-              Use PlanSwift Import to paste your exported list.
+              Tip: Type section (e.g. UB203x133x25) — kg/m auto-fills from steel database. Lengths always in mm.
+              Use PlanSwift Import to upload your exported file directly.
             </div>
           </div>
         </div>
@@ -1372,12 +1382,18 @@ function renderTakeoff() {
 
 function takeoffRowHTML(row, i) {
   const kgm = row.kgm || 0;
-  const totalKg = (row.length/1000) * kgm * (row.qty||1);
+  // length is always stored and displayed in mm
+  const lengthMM = row.length || 0;
+  const totalKg = (lengthMM/1000) * kgm * (row.qty||1);
   const mat = totalKg * (row.rate || 0);
-  const numCell = 'padding:4px 4px;text-align:right';
-  const numInput = 'background:transparent;border:1px solid transparent;border-radius:4px;padding:4px 5px;color:var(--text);font-family:var(--font-mono);font-size:12px;text-align:right;width:100%;transition:border-color 0.15s';
-  return `<tr>
-    <td style="color:var(--muted);font-family:var(--font-mono);font-size:11px;text-align:center;padding:4px 2px">${i+1}</td>
+  const isEA = row._unit === 'EA';
+  const nc = 'padding:4px 4px;text-align:right';
+  const ni = 'background:transparent;border:1px solid transparent;border-radius:4px;padding:4px 5px;color:var(--text);font-family:var(--font-mono);font-size:12px;text-align:right;width:100%;transition:border-color 0.15s';
+  return `<tr id="takeoff-row-${i}" style="transition:background 0.1s">
+    <td style="text-align:center;padding:4px 2px">
+      <input type="checkbox" class="takeoff-cb" data-idx="${i}"
+        onchange="onTakeoffCheck()" style="cursor:pointer;accent-color:var(--accent)">
+    </td>
     <td style="padding:3px 4px"><div class="ac-wrap" id="ac-wrap-${i}">
       <input class="ac-input" value="${row.type||''}" placeholder="e.g. UB203x133x25"
         oninput="onTakeoffTypeInput(${i},this.value)"
@@ -1385,13 +1401,20 @@ function takeoffRowHTML(row, i) {
         onfocus="onTakeoffTypeInput(${i},this.value)"
         autocomplete="off" style="width:100%;font-size:12px">
     </div></td>
-    <td style="${numCell}"><input type="number" value="${row.length||''}" placeholder="—" oninput="updateTakeoffRow(${i},'length',this.value)" style="${numInput}"></td>
-    <td style="${numCell}"><input type="number" value="${row.qty||1}" oninput="updateTakeoffRow(${i},'qty',this.value)" style="${numInput}"></td>
-    <td style="${numCell}"><input type="number" value="${kgm||''}" placeholder="auto" oninput="updateTakeoffRow(${i},'kgm',this.value)" style="${numInput};color:${row.kgm?'var(--text)':'var(--subtle)'}"></td>
-    <td style="${numCell};color:var(--muted);font-family:var(--font-mono);font-size:12px">${totalKg>0?totalKg.toFixed(2):''}</td>
-    <td style="${numCell}"><input type="number" value="${row.rate||''}" placeholder="—" oninput="updateTakeoffRow(${i},'rate',this.value)" style="${numInput}"></td>
-    <td style="${numCell};color:${mat>0?'var(--accent)':'var(--muted)'};font-family:var(--font-mono);font-size:12px;font-weight:${mat>0?'600':'400'}">${mat>0?'£'+mat.toFixed(2):''}</td>
-    <td style="padding:4px 2px;text-align:center"><button class="btn-icon" onclick="removeTakeoffRow(${i})" style="padding:3px 6px;font-size:12px">✕</button></td>
+    <td style="${nc}">
+      ${isEA
+        ? `<span style="font-family:var(--font-mono);font-size:12px;color:var(--accent2);padding:4px 5px">EA</span>`
+        : `<input type="number" value="${lengthMM||''}" placeholder="mm" oninput="updateTakeoffRow(${i},'length',this.value)" style="${ni}">`
+      }
+    </td>
+    <td style="${nc}"><input type="number" value="${row.qty||1}" oninput="updateTakeoffRow(${i},'qty',this.value)" style="${ni}"></td>
+    <td style="${nc}"><input type="number" value="${kgm||''}" placeholder="auto" oninput="updateTakeoffRow(${i},'kgm',this.value)" style="${ni};color:${row.kgm?'var(--text)':'var(--subtle)'}"></td>
+    <td style="${nc};color:var(--muted);font-family:var(--font-mono);font-size:12px">${totalKg>0?totalKg.toFixed(2):''}</td>
+    <td style="${nc}"><input type="number" value="${row.rate||''}" placeholder="—" oninput="updateTakeoffRow(${i},'rate',this.value)" style="${ni}"></td>
+    <td style="${nc};color:${mat>0?'var(--accent)':'var(--muted)'};font-family:var(--font-mono);font-size:12px;font-weight:${mat>0?'600':'400'}">${mat>0?'£'+mat.toFixed(2):''}</td>
+    <td style="padding:4px 2px;text-align:center">
+      <button class="btn-icon" onclick="removeTakeoffRow(${i})" style="padding:3px 6px;font-size:12px" title="Delete row">✕</button>
+    </td>
   </tr>`;
 }
 
@@ -1432,6 +1455,63 @@ function updateTakeoffRow(i, field, val) {
 function removeTakeoffRow(i) {
   const q = getQuote(); if (!q) return;
   q.takeoff.splice(i,1); saveAll(); renderTakeoff(); recalcAll();
+}
+
+// ── Checkbox selection ──────────────────────────────────────
+function onTakeoffCheck() {
+  const cbs = document.querySelectorAll('.takeoff-cb');
+  const checked = [...cbs].filter(c => c.checked);
+  const bar = document.getElementById('takeoffBulkBar');
+  const countEl = document.getElementById('takeoffSelCount');
+  const selectAll = document.getElementById('takeoffSelectAll');
+  bar.style.display = checked.length ? 'flex' : 'none';
+  if (countEl) countEl.textContent = checked.length + ' selected';
+  if (selectAll) selectAll.indeterminate = checked.length > 0 && checked.length < cbs.length;
+  if (selectAll) selectAll.checked = checked.length === cbs.length && cbs.length > 0;
+  // highlight selected rows
+  cbs.forEach(cb => {
+    const row = document.getElementById('takeoff-row-' + cb.dataset.idx);
+    if (row) row.style.background = cb.checked ? 'rgba(255,107,0,0.08)' : '';
+  });
+}
+
+function toggleSelectAllTakeoff(checked) {
+  document.querySelectorAll('.takeoff-cb').forEach(cb => { cb.checked = checked; });
+  onTakeoffCheck();
+}
+
+function selectAllTakeoff() {
+  document.querySelectorAll('.takeoff-cb').forEach(cb => { cb.checked = true; });
+  document.getElementById('takeoffSelectAll').checked = true;
+  onTakeoffCheck();
+}
+
+function deselectAllTakeoff() {
+  document.querySelectorAll('.takeoff-cb').forEach(cb => { cb.checked = false; });
+  document.getElementById('takeoffSelectAll').checked = false;
+  onTakeoffCheck();
+}
+
+function invertTakeoffSelection() {
+  document.querySelectorAll('.takeoff-cb').forEach(cb => { cb.checked = !cb.checked; });
+  onTakeoffCheck();
+}
+
+function deleteSelectedTakeoffRows() {
+  const q = getQuote(); if (!q) return;
+  const selected = new Set([...document.querySelectorAll('.takeoff-cb:checked')].map(cb => parseInt(cb.dataset.idx)));
+  if (!selected.size) return;
+  if (!confirm(`Delete ${selected.size} selected row${selected.size > 1 ? 's' : ''}?`)) return;
+  q.takeoff = q.takeoff.filter((_, i) => !selected.has(i));
+  saveAll(); renderTakeoff(); recalcAll();
+  document.getElementById('takeoffBulkBar').style.display = 'none';
+}
+
+function sortTakeoffByType() {
+  const q = getQuote(); if (!q) return;
+  q.takeoff.sort((a, b) => (a.type || '').localeCompare(b.type || ''));
+  saveAll(); renderTakeoff();
+  toast('Sorted by section type');
 }
 
 function updateTakeoffTotals() {
