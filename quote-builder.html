@@ -1401,13 +1401,8 @@ function takeoffRowHTML(row, i) {
         onfocus="onTakeoffTypeInput(${i},this.value)"
         autocomplete="off" style="width:100%;font-size:12px">
     </div></td>
-    <td style="${nc}">
-      ${isEA
-        ? `<span style="font-family:var(--font-mono);font-size:12px;color:var(--accent2);padding:4px 5px">EA</span>`
-        : `<input type="number" value="${lengthMM||''}" placeholder="mm" oninput="updateTakeoffRow(${i},'length',this.value)" style="${ni}">`
-      }
-    </td>
-    <td style="${nc}"><input type="number" value="${row.qty||1}" oninput="updateTakeoffRow(${i},'qty',this.value)" style="${ni}"></td>
+    <td style="${nc}"><input type="number" value="${isEA ? '' : (lengthMM||'')}" placeholder="mm" oninput="updateTakeoffRow(${i},'length',this.value)" style="${ni}"></td>
+    <td style="${nc}"><input type="number" value="${isEA ? row.qty : (row.qty||1)}" oninput="updateTakeoffRow(${i},'qty',this.value)" style="${ni}"></td>
     <td style="${nc}"><input type="number" value="${kgm||''}" placeholder="auto" oninput="updateTakeoffRow(${i},'kgm',this.value)" style="${ni};color:${row.kgm?'var(--text)':'var(--subtle)'}"></td>
     <td style="${nc};color:var(--muted);font-family:var(--font-mono);font-size:12px">${totalKg>0?totalKg.toFixed(2):''}</td>
     <td style="${nc}"><input type="number" value="${row.rate||''}" placeholder="—" oninput="updateTakeoffRow(${i},'rate',this.value)" style="${ni}"></td>
