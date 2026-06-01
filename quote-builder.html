@@ -474,20 +474,19 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
                 <hr class="divider">
                 <div style="font-size:11px;color:var(--muted);margin-bottom:6px;font-weight:600">PLANT & EQUIPMENT</div>
                 <div id="plantRows"></div>
-                <div class="cost-add-row">
-                  <select id="plantTypeSelect">
-                    <option value="">-- Add plant/equipment --</option>
-                    <option value="genie">Genie Lift / Boom</option>
-                    <option value="crane">Crane (per day)</option>
-                    <option value="mewp">MEWP</option>
-                    <option value="scaffold">Tower Scaffold</option>
-                    <option value="van">Van</option>
-                    <option value="fuel">Fuel</option>
-                    <option value="tools">Tools</option>
-                    <option value="lodging">Lodging (per person/night)</option>
-                    <option value="other_plant">Other</option>
-                  </select>
-                  <button class="btn btn-ghost btn-sm" onclick="addPlantRow()">+ Add</button>
+                <div class="cost-add-row" style="flex-direction:column;align-items:stretch;gap:4px">
+                  <div style="display:flex;gap:6px">
+                    <div style="position:relative;flex:1">
+                      <input type="text" id="plantSearch" class="cost-input" style="text-align:left"
+                        placeholder="Type to search plant (genie, crane, scissor...)"
+                        oninput="filterPlantList(this.value)"
+                        onfocus="filterPlantList(this.value)"
+                        onblur="setTimeout(()=>document.getElementById('plantSearchDD').style.display='none',180)"
+                        autocomplete="off">
+                      <div id="plantSearchDD" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:9999;background:var(--card);border:1px solid var(--border);border-radius:0 0 8px 8px;box-shadow:0 8px 24px rgba(0,0,0,0.4);max-height:200px;overflow-y:auto"></div>
+                    </div>
+                    <button class="btn btn-ghost btn-sm" onclick="addPlantFromSearch()">+ Add</button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -499,23 +498,62 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
                 <div class="cost-block-total" id="total-fabrication">£0.00</div>
               </div>
               <div class="cost-block-body" id="body-fabrication">
+                <div style="font-size:11px;color:var(--muted);margin-bottom:4px;font-weight:600">WORKSHOP</div>
                 <div class="cost-row cost-row-4">
                   <span class="cost-label">Workshop fabrication</span>
                   <input type="number" class="cost-input" id="fab-hours" value="0" placeholder="hrs" oninput="recalcAll()">
                   <input type="number" class="cost-input" id="fab-rate" value="45" placeholder="£/hr" oninput="recalcAll()">
                   <div class="cost-result" id="fab-result">£0.00</div>
                 </div>
-                <div class="cost-row cost-row-4">
-                  <span class="cost-label">Design / drawings</span>
-                  <input type="number" class="cost-input" id="design-hours" value="0" placeholder="hrs" oninput="recalcAll()">
-                  <input type="number" class="cost-input" id="design-rate" value="50" placeholder="£/hr" oninput="recalcAll()">
-                  <div class="cost-result" id="design-result">£0.00</div>
-                </div>
-                <div class="cost-row cost-row-4">
+                <div class="cost-row cost-row-4" style="margin-top:4px">
                   <span class="cost-label">Approval &amp; Fab pack</span>
                   <input type="number" class="cost-input" id="fabpack-hours" value="0" placeholder="hrs" oninput="recalcAll()">
                   <input type="number" class="cost-input" id="fabpack-rate" value="50" placeholder="£/hr" oninput="recalcAll()">
                   <div class="cost-result" id="fabpack-result">£0.00</div>
+                </div>
+                <hr class="divider">
+                <div style="font-size:11px;color:var(--muted);margin-bottom:4px;font-weight:600">CONSUMABLES</div>
+                <div id="consumableRows"></div>
+                <div class="cost-add-row">
+                  <select id="consumableTypeSelect">
+                    <option value="">-- Add consumable --</option>
+                    <option value="welding_wire">Welding Wire</option>
+                    <option value="welding_gas">Welding Gas</option>
+                    <option value="grinding_discs">Grinding Discs</option>
+                    <option value="cutting_discs">Cutting Discs</option>
+                    <option value="drill_bits">Drill Bits</option>
+                    <option value="bolts_fixings">Bolts &amp; Fixings</option>
+                    <option value="other_consumable">Other</option>
+                  </select>
+                  <button class="btn btn-ghost btn-sm" onclick="addConsumableRow()">+ Add</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- DESIGN -->
+            <div class="cost-block" id="block-design">
+              <div class="cost-block-header" onclick="toggleBlock('design')">
+                <div class="cost-block-title">📐 Design</div>
+                <div class="cost-block-total" id="total-design">£0.00</div>
+              </div>
+              <div class="cost-block-body" id="body-design">
+                <div class="cost-row cost-row-4">
+                  <span class="cost-label">Structural engineer fee</span>
+                  <input type="number" class="cost-input" id="struct-eng-hours" value="0" placeholder="hrs" oninput="recalcAll()">
+                  <input type="number" class="cost-input" id="struct-eng-rate" value="90" placeholder="£/hr" oninput="recalcAll()">
+                  <div class="cost-result" id="struct-eng-result">£0.00</div>
+                </div>
+                <div class="cost-row cost-row-4" style="margin-top:4px">
+                  <span class="cost-label">Architect fee</span>
+                  <input type="number" class="cost-input" id="architect-hours" value="0" placeholder="hrs" oninput="recalcAll()">
+                  <input type="number" class="cost-input" id="architect-rate" value="90" placeholder="£/hr" oninput="recalcAll()">
+                  <div class="cost-result" id="architect-result">£0.00</div>
+                </div>
+                <div class="cost-row cost-row-4" style="margin-top:4px">
+                  <span class="cost-label">Internal draughtsman</span>
+                  <input type="number" class="cost-input" id="design-hours" value="0" placeholder="hrs" oninput="recalcAll()">
+                  <input type="number" class="cost-input" id="design-rate" value="50" placeholder="£/hr" oninput="recalcAll()">
+                  <div class="cost-result" id="design-result">£0.00</div>
                 </div>
               </div>
             </div>
@@ -531,14 +569,38 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
                 <div class="cost-add-row">
                   <select id="paintTypeSelect">
                     <option value="">-- Add finish type --</option>
-                    <option value="workshop_spray">Workshop Spray (£/hr)</option>
-                    <option value="powder_coat">Powder Coating (£/tonne)</option>
-                    <option value="site_paint">Site Painting (£/hr)</option>
-                    <option value="primer">Primer (£/hr)</option>
-                    <option value="intumescent">Intumescent (£/m²)</option>
+                    <option value="powder_coat_m">Powder Coating (£/m)</option>
+                    <option value="powder_coat_bay">Powder Coating (£/bay)</option>
                     <option value="galvanise">Galvanising (£/tonne)</option>
+                    <option value="primer_tonne">Primer (£/tonne)</option>
+                    <option value="touch_up">Touch Up After Erection (£/hr)</option>
+                    <option value="intumescent">Intumescent (£/m²)</option>
                   </select>
                   <button class="btn btn-ghost btn-sm" onclick="addPaintRow()">+ Add</button>
+                </div>
+                <!-- RAL colour for powder coat -->
+                <div id="ralSection" style="display:none;margin-top:10px;padding:10px;background:rgba(255,107,0,0.05);border-radius:6px;border:1px solid rgba(255,107,0,0.15)">
+                  <div style="font-size:11px;color:var(--muted);margin-bottom:6px;font-weight:600">POWDER COAT COLOUR</div>
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:center">
+                    <div class="field">
+                      <label>RAL Colour</label>
+                      <div style="display:flex;gap:6px">
+                        <input type="text" id="ralColour" class="cost-input" style="text-align:left;flex:1" placeholder="e.g. RAL 9005" oninput="autosave()">
+                        <div id="ralSwatch" style="width:32px;height:32px;border-radius:4px;border:1px solid var(--border);flex-shrink:0"></div>
+                      </div>
+                    </div>
+                    <div class="field">
+                      <label>Finish</label>
+                      <select id="ralFinish" class="cost-input" style="text-align:left" onchange="autosave()">
+                        <option value="tbc">TBC</option>
+                        <option value="matt">Matt</option>
+                        <option value="satin">Satin</option>
+                        <option value="gloss">Gloss</option>
+                        <option value="textured">Textured</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div style="font-size:11px;color:var(--muted);margin-top:6px" id="ralNote">This colour will appear on the quotation PDF.</div>
                 </div>
               </div>
             </div>
@@ -550,15 +612,21 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
                 <div class="cost-block-total" id="total-survey">£0.00</div>
               </div>
               <div class="cost-block-body" id="body-survey">
-                <div class="cost-row cost-row-5">
-                  <span class="cost-label">Visits</span>
-                  <input type="number" class="cost-input" id="survey-visits" value="0" placeholder="visits" oninput="recalcAll()">
-                  <input type="number" class="cost-input" id="survey-visitors" value="1" placeholder="people" oninput="recalcAll()">
-                  <input type="number" class="cost-input" id="survey-rate" value="250" placeholder="£/person" oninput="recalcAll()">
-                  <div class="cost-result" id="survey-result">£0.00</div>
+                <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Add each visit separately — choose who attends.</div>
+                <div id="surveyVisitRows"></div>
+                <div class="cost-add-row">
+                  <select id="surveyPersonSelect">
+                    <option value="">-- Add attendee --</option>
+                    <option value="mateusz">Mateusz Braczyk</option>
+                    <option value="leszek">Leszek</option>
+                    <option value="struct_eng">Structural Engineer</option>
+                    <option value="other_survey">Other</option>
+                  </select>
+                  <button class="btn btn-ghost btn-sm" onclick="addSurveyVisit()">+ Add</button>
                 </div>
-                <div class="cost-row cost-row-5" style="margin-top:6px">
-                  <span class="cost-label">Parking / charges</span>
+                <hr class="divider">
+                <div class="cost-row cost-row-5" style="margin-top:4px">
+                  <span class="cost-label">Parking / other charges</span>
                   <input type="number" class="cost-input" id="survey-parking" value="0" placeholder="£" oninput="recalcAll()">
                   <span></span><span></span>
                   <div class="cost-result" id="survey-parking-result">£0.00</div>
@@ -647,6 +715,10 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
               <div class="summary-line">
                 <span>Fabrication</span>
                 <span class="val" id="sum-fabrication">£0.00</span>
+              </div>
+              <div class="summary-line">
+                <span>Design</span>
+                <span class="val" id="sum-design">£0.00</span>
               </div>
               <div class="summary-line">
                 <span>Painting / Finishing</span>
@@ -910,20 +982,51 @@ const DEFAULT_RATES = {
     labour:     { label: 'General Labour', rate: 220 }
   },
   plant: {
-    genie:    { label: 'Genie Lift / Boom', rate: 160 },
-    crane:    { label: 'Crane (per day)',    rate: 1850 },
-    mewp:     { label: 'MEWP',              rate: 200 },
-    scaffold: { label: 'Tower Scaffold',    rate: 150 },
-    van:      { label: 'Van',               rate: 25 },
-    fuel:     { label: 'Fuel',              rate: 25 },
-    tools:    { label: 'Tools',             rate: 25 },
-    lodging:  { label: 'Lodging (per person/night)', rate: 80 },
-    other_plant: { label: 'Other', rate: 0 }
+    // Genie lifts
+    'genie_sla10':  { label: 'Genie SLA-10',        rate: 80 },
+    'genie_sla15':  { label: 'Genie SLA-15',        rate: 95 },
+    'genie_sla20':  { label: 'Genie SLA-20',        rate: 110 },
+    'genie_z30':    { label: 'Genie Z-30 Boom',      rate: 130 },
+    'genie_z45':    { label: 'Genie Z-45 Boom',      rate: 175 },
+    'genie_z60':    { label: 'Genie Z-60 Boom',      rate: 230 },
+    'genie_s40':    { label: 'Genie S-40 Telescopic',rate: 190 },
+    'genie_s65':    { label: 'Genie S-65 Telescopic',rate: 280 },
+    // MEWPs
+    'scissor_skyjack': { label: 'Scissor Lift – Skyjack SJ3219', rate: 120 },
+    'scissor_jlg':     { label: 'Scissor Lift – JLG 2630ES',     rate: 130 },
+    'cherry_z45':      { label: 'Cherry Picker – Z45',           rate: 200 },
+    'cherry_z60':      { label: 'Cherry Picker – Z60',           rate: 260 },
+    'cherry_z80':      { label: 'Cherry Picker – Z80',           rate: 320 },
+    // Cranes
+    'crane_50t':    { label: 'Mobile Crane – 50t',  rate: 1850 },
+    'crane_25t':    { label: 'Mobile Crane – 25t',  rate: 1200 },
+    'crane_spider': { label: 'Spider Crane',         rate: 950 },
+    'crane_hiab':   { label: 'HIAB (lorry-mounted)', rate: 800 },
+    // Other
+    'scaffold':     { label: 'Tower Scaffold',       rate: 150 },
+    'van':          { label: 'Van',                  rate: 25 },
+    'fuel':         { label: 'Fuel',                 rate: 25 },
+    'tools':        { label: 'Tools',                rate: 25 },
+    'lodging':      { label: 'Lodging (per person/night)', rate: 80 },
+    'other_plant':  { label: 'Other',                rate: 0 }
   },
   fab: {
-    fab_rate:    { label: 'Fabrication (£/hr)',       rate: 45 },
-    design_rate: { label: 'Design / drawings (£/hr)', rate: 50 },
-    fabpack_rate:{ label: 'Approval & Fab Pack (£/hr)', rate: 50 }
+    fab_rate:     { label: 'Workshop Fabrication (£/hr)', rate: 45 },
+    fabpack_rate: { label: 'Approval & Fab Pack (£/hr)',  rate: 50 }
+  },
+  consumables: {
+    welding_wire:     { label: 'Welding Wire',     rate: 0 },
+    welding_gas:      { label: 'Welding Gas',      rate: 0 },
+    grinding_discs:   { label: 'Grinding Discs',   rate: 0 },
+    cutting_discs:    { label: 'Cutting Discs',    rate: 0 },
+    drill_bits:       { label: 'Drill Bits',       rate: 0 },
+    bolts_fixings:    { label: 'Bolts & Fixings',  rate: 0 },
+    other_consumable: { label: 'Other',            rate: 0 }
+  },
+  design: {
+    struct_eng_rate: { label: 'Structural Engineer (£/hr)', rate: 90 },
+    architect_rate:  { label: 'Architect (£/hr)',           rate: 90 },
+    design_rate:     { label: 'Internal Draughtsman (£/hr)',rate: 50 }
   },
   material: {
     ub_uc:   { label: 'UB / UC (£/kg)',           rate: 1.10 },
@@ -950,14 +1053,20 @@ const DEFAULT_RATES = {
     other_prelim: { label: 'Other',                      rate: 0 }
   },
   paint: {
-    workshop_spray: { label: 'Workshop Spray (£/hr)',       rate: 90,  unit: 'hrs' },
-    powder_coat:    { label: 'Powder Coating (£/tonne)',    rate: 800, unit: 'tonnes' },
-    site_paint:     { label: 'Site Painting (£/hr)',        rate: 150, unit: 'hrs' },
-    primer:         { label: 'Primer (£/hr)',               rate: 90,  unit: 'hrs' },
-    intumescent:    { label: 'Intumescent (£/m²)',          rate: 0,   unit: 'm²' },
-    galvanise:      { label: 'Galvanising (£/tonne)',       rate: 750, unit: 'tonnes' }
+    powder_coat_m:   { label: 'Powder Coating (£/m)',       rate: 0,   unit: 'm' },
+    powder_coat_bay: { label: 'Powder Coating (£/bay)',     rate: 0,   unit: 'bays' },
+    galvanise:       { label: 'Galvanising (£/tonne)',      rate: 750, unit: 'tonnes' },
+    primer_tonne:    { label: 'Primer (£/tonne)',           rate: 0,   unit: 'tonnes' },
+    touch_up:        { label: 'Touch Up After Erection (£/hr)', rate: 150, unit: 'hrs' },
+    intumescent:     { label: 'Intumescent (£/m²)',         rate: 0,   unit: 'm²' }
   },
   margin: 20,
+  survey: {
+    mateusz:    { label: 'Mateusz Braczyk',    rate: 250 },
+    leszek:     { label: 'Leszek',             rate: 250 },
+    struct_eng: { label: 'Structural Engineer',rate: 350 },
+    other_survey:{ label: 'Other',             rate: 250 }
+  },
   survey_rate: 250
 };
 
@@ -1003,9 +1112,10 @@ function newQuote() {
     fittingsPct: 10, fittingsRate: 1.30, miscMaterial: 0, miscMaterialNote: '',
     // calcs
     instDays: 0, instOperatives: 2,
-    labourRows: [], plantRows: [], paintRows: [], deliveryRows: [], prelimRows: [],
-    fabHours: 0, fabRate: 45, designHours: 0, designRate: 50, fabpackHours: 0, fabpackRate: 50,
-    surveyVisits: 0, surveyVisitors: 1, surveyRate: 250, surveyParking: 0,
+    labourRows: [], plantRows: [], paintRows: [], deliveryRows: [], prelimRows: [], consumableRows: [], surveyVisitRows: [],
+    fabHours: 0, fabRate: 45, fabpackHours: 0, fabpackRate: 50,
+    structEngHours: 0, structEngRate: 90, architectHours: 0, architectRate: 90, designHours: 0, designRate: 50,
+    surveyParking: 0, ralColour: '', ralFinish: 'tbc',
     purlinM: 0, purlinRate: 0,
     margin: 20, showDeposit: false, depositPct: 60,
     // quotation
@@ -1025,6 +1135,7 @@ function getDefaultStandardLines() {
     { key: 'survey',          desc: 'Survey',                        qty: 1, price: 0 },
     { key: 'material',        desc: 'Material cost',                 qty: 1, price: 0 },
     { key: 'fabrication',     desc: 'Fabrication',                   qty: 1, price: 0 },
+    { key: 'design',          desc: 'Design',                        qty: 1, price: 0 },
     { key: 'painting',        desc: 'Painting / Finishing',          qty: 1, price: 0 },
     { key: 'galvanising',     desc: 'Galvanising',                   qty: 1, price: 0 },
     { key: 'installation',    desc: 'Installation',                  qty: 1, price: 0 },
@@ -1198,16 +1309,19 @@ function loadQuoteEditor() {
   // calcs
   document.getElementById('inst-days').value       = q.instDays || 0;
   document.getElementById('inst-operatives').value  = q.instOperatives || 2;
-  document.getElementById('fab-hours').value        = q.fabHours || 0;
-  document.getElementById('fab-rate').value         = q.fabRate || 45;
-  document.getElementById('design-hours').value     = q.designHours || 0;
-  document.getElementById('design-rate').value      = q.designRate || 50;
-  document.getElementById('fabpack-hours').value    = q.fabpackHours || 0;
-  document.getElementById('fabpack-rate').value     = q.fabpackRate || 50;
-  document.getElementById('survey-visits').value    = q.surveyVisits || 0;
-  document.getElementById('survey-visitors').value  = q.surveyVisitors || 1;
-  document.getElementById('survey-rate').value      = q.surveyRate || 250;
-  document.getElementById('survey-parking').value   = q.surveyParking || 0;
+  document.getElementById('fab-hours').value          = q.fabHours || 0;
+  document.getElementById('fab-rate').value           = q.fabRate || 45;
+  document.getElementById('fabpack-hours').value      = q.fabpackHours || 0;
+  document.getElementById('fabpack-rate').value       = q.fabpackRate || 50;
+  document.getElementById('struct-eng-hours').value   = q.structEngHours || 0;
+  document.getElementById('struct-eng-rate').value    = q.structEngRate || 90;
+  document.getElementById('architect-hours').value    = q.architectHours || 0;
+  document.getElementById('architect-rate').value     = q.architectRate || 90;
+  document.getElementById('design-hours').value       = q.designHours || 0;
+  document.getElementById('design-rate').value        = q.designRate || 50;
+  document.getElementById('survey-parking').value     = q.surveyParking || 0;
+  document.getElementById('ralColour').value          = q.ralColour || '';
+  document.getElementById('ralFinish').value          = q.ralFinish || 'tbc';
   document.getElementById('purlins-m').value        = q.purlinM || 0;
   document.getElementById('purlins-rate').value     = q.purlinRate || 0;
   document.getElementById('marginSlider').value     = q.margin ?? 20;
@@ -1219,6 +1333,8 @@ function loadQuoteEditor() {
   renderPaintRows();
   renderDeliveryRows();
   renderPrelimRows();
+  renderConsumableRows();
+  renderSurveyVisitRows();
   renderTakeoff();
   recalcAll();
   renderQuotationLines();
@@ -1249,6 +1365,7 @@ function renderTakeoff() {
   const body = document.getElementById('takeoffBody');
   body.innerHTML = (q.takeoff || []).map((row,i) => takeoffRowHTML(row,i)).join('');
   updateTakeoffTotals();
+  checkRalVisibility();
 }
 
 function takeoffRowHTML(row, i) {
@@ -1567,20 +1684,27 @@ function recalcAll() {
   const labour      = Math.round(sumLabour() * 100) / 100;
   const plant       = Math.round(sumPlant() * 100) / 100;
   const installation = Math.round((labour + plant) * 100) / 100;
-  const fabrication  = Math.round(((parseFloat(document.getElementById('fab-hours')?.value)||0)*(parseFloat(document.getElementById('fab-rate')?.value)||0)
-                        +(parseFloat(document.getElementById('design-hours')?.value)||0)*(parseFloat(document.getElementById('design-rate')?.value)||0)
-                        +(parseFloat(document.getElementById('fabpack-hours')?.value)||0)*(parseFloat(document.getElementById('fabpack-rate')?.value)||0)) * 100) / 100;
+  const _fabW    = (parseFloat(document.getElementById('fab-hours')?.value)||0)*(parseFloat(document.getElementById('fab-rate')?.value)||0);
+  const _fabpack = (parseFloat(document.getElementById('fabpack-hours')?.value)||0)*(parseFloat(document.getElementById('fabpack-rate')?.value)||0);
+  document.getElementById('fab-result').textContent     = fmt(_fabW);
+  document.getElementById('fabpack-result').textContent = fmt(_fabpack);
+  const fabrication  = Math.round((_fabW + _fabpack + sumConsumables()) * 100) / 100;
+
+  const _structEng  = (parseFloat(document.getElementById('struct-eng-hours')?.value)||0)*(parseFloat(document.getElementById('struct-eng-rate')?.value)||0);
+  const _architect  = (parseFloat(document.getElementById('architect-hours')?.value)||0)*(parseFloat(document.getElementById('architect-rate')?.value)||0);
+  const _draughtsman= (parseFloat(document.getElementById('design-hours')?.value)||0)*(parseFloat(document.getElementById('design-rate')?.value)||0);
+  const design      = Math.round((_structEng + _architect + _draughtsman) * 100) / 100;
+  document.getElementById('struct-eng-result').textContent = fmt(_structEng);
+  document.getElementById('architect-result').textContent  = fmt(_architect);
+  document.getElementById('design-result').textContent     = fmt(_draughtsman);
+  document.getElementById('total-design').textContent      = fmt(design);
   const painting     = Math.round(sumPaint() * 100) / 100;
-  const survey       = Math.round(((parseFloat(document.getElementById('survey-visits')?.value)||0)*(parseFloat(document.getElementById('survey-visitors')?.value)||1)*(parseFloat(document.getElementById('survey-rate')?.value)||0)+(parseFloat(document.getElementById('survey-parking')?.value)||0)) * 100) / 100;
+  const survey       = Math.round((sumSurveyVisits() + (parseFloat(document.getElementById('survey-parking')?.value)||0)) * 100) / 100;
   const delivery     = Math.round(sumDelivery() * 100) / 100;
   const prelims      = Math.round(sumPrelims() * 100) / 100;
   const purlins      = Math.round(((parseFloat(document.getElementById('purlins-m')?.value)||0)*(parseFloat(document.getElementById('purlins-rate')?.value)||0)) * 100) / 100;
 
   // individual results
-  document.getElementById('fab-result').textContent     = fmt((parseFloat(document.getElementById('fab-hours')?.value)||0)*(parseFloat(document.getElementById('fab-rate')?.value)||0));
-  document.getElementById('design-result').textContent  = fmt((parseFloat(document.getElementById('design-hours')?.value)||0)*(parseFloat(document.getElementById('design-rate')?.value)||0));
-  document.getElementById('fabpack-result').textContent = fmt((parseFloat(document.getElementById('fabpack-hours')?.value)||0)*(parseFloat(document.getElementById('fabpack-rate')?.value)||0));
-  document.getElementById('survey-result').textContent  = fmt((parseFloat(document.getElementById('survey-visits')?.value)||0)*(parseFloat(document.getElementById('survey-visitors')?.value)||1)*(parseFloat(document.getElementById('survey-rate')?.value)||0));
   document.getElementById('survey-parking-result').textContent = fmt(parseFloat(document.getElementById('survey-parking')?.value)||0);
   document.getElementById('purlins-result').textContent = fmt(purlins);
 
@@ -1594,7 +1718,7 @@ function recalcAll() {
   document.getElementById('total-purlins').textContent      = fmt(purlins);
 
   // summary
-  const subtotal = material+installation+fabrication+painting+survey+delivery+prelims+purlins;
+  const subtotal = material+installation+fabrication+design+painting+survey+delivery+prelims+purlins;
   const margin   = parseFloat(document.getElementById('marginSlider')?.value) || 0;
   document.getElementById('marginPct').textContent = margin + '%';
   const marginAmt = Math.round(subtotal * margin / 100 * 100) / 100;
@@ -1604,6 +1728,7 @@ function recalcAll() {
   document.getElementById('sum-material').textContent     = fmt(material);
   document.getElementById('sum-installation').textContent = fmt(installation);
   document.getElementById('sum-fabrication').textContent  = fmt(fabrication);
+  document.getElementById('sum-design').textContent       = fmt(design);
   document.getElementById('sum-painting').textContent     = fmt(painting);
   document.getElementById('sum-survey').textContent       = fmt(survey);
   document.getElementById('sum-delivery').textContent     = fmt(delivery);
@@ -1623,7 +1748,7 @@ function recalcAll() {
 
   // store computed totals for quotation tab
   if (q) {
-    q._computed = { material, installation, fabrication, painting, survey, delivery, prelims, purlins, subtotal, marginAmt, total };
+    q._computed = { material, installation, fabrication, design, painting, survey, delivery, prelims, purlins, subtotal, marginAmt, total };
   }
 
   // auto-fill standard lines from calcs
@@ -1632,6 +1757,7 @@ function recalcAll() {
     q.standardLines.forEach(l => {
       if (l.key === 'material') l.price = material;
       else if (l.key === 'fabrication') l.price = fabrication;
+      else if (l.key === 'design') l.price = design;
       else if (l.key === 'painting') l.price = painting;
       else if (l.key === 'installation') l.price = installation;
       else if (l.key === 'delivery') l.price = delivery;
@@ -1971,6 +2097,135 @@ function toast(msg, type='') {
   el.textContent = msg; el.className = 'toast show ' + type;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove('show'), 2800);
+}
+
+// ============================================================
+// PLANT SEARCH (typeahead)
+// ============================================================
+function filterPlantList(val) {
+  const dd = document.getElementById('plantSearchDD');
+  const q  = val.trim().toLowerCase();
+  const all = Object.entries(rates.plant);
+  const matches = q ? all.filter(([k,v]) => v.label.toLowerCase().includes(q) || k.includes(q)) : all;
+  if (!matches.length) { dd.style.display = 'none'; return; }
+  dd.style.display = '';
+  dd.innerHTML = matches.map(([k,v]) => `
+    <div onmousedown="selectPlantItem('${k}')"
+      style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border);font-size:12px;transition:background 0.1s"
+      onmouseover="this.style.background='rgba(255,107,0,0.08)'" onmouseout="this.style.background=''">
+      <span style="color:var(--text)">${v.label}</span>
+      <span style="color:var(--muted);margin-left:8px;font-family:var(--font-mono);font-size:11px">£${v.rate}/day</span>
+    </div>`).join('');
+}
+
+function selectPlantItem(key) {
+  document.getElementById('plantSearch').value = rates.plant[key]?.label || key;
+  document.getElementById('plantSearch').dataset.selectedKey = key;
+  document.getElementById('plantSearchDD').style.display = 'none';
+}
+
+function addPlantFromSearch() {
+  const inp = document.getElementById('plantSearch');
+  const key = inp.dataset.selectedKey || 'other_plant';
+  const def = rates.plant[key] || { label: inp.value || 'Plant', rate: 0 };
+  const q = getQuote(); if (!q) return;
+  const id = 'plant_' + Date.now();
+  q.plantRows = q.plantRows || [];
+  q.plantRows.push({ id, type: key, label: def.label, qty: 1, rate: def.rate });
+  inp.value = ''; inp.dataset.selectedKey = '';
+  saveAll(); renderPlantRows(); recalcAll();
+}
+
+// ============================================================
+// CONSUMABLE ROWS
+// ============================================================
+function addConsumableRow() {
+  const q = getQuote(); if (!q) return;
+  const type = document.getElementById('consumableTypeSelect').value;
+  if (!type) return;
+  const def = (rates.consumables || {})[type] || { label: type, rate: 0 };
+  const id = 'cons_' + Date.now();
+  q.consumableRows = q.consumableRows || [];
+  q.consumableRows.push({ id, type, label: def.label, qty: 1, rate: def.rate });
+  saveAll(); renderConsumableRows(); recalcAll();
+}
+
+function renderConsumableRows() {
+  const q = getQuote(); if (!q) return;
+  const cont = document.getElementById('consumableRows');
+  if (!cont) return;
+  cont.innerHTML = (q.consumableRows || []).map(r =>
+    rowHTML(r.id, r.label, r.qty, r.rate, '£0.00')
+  ).join('');
+}
+
+function sumConsumables() {
+  const q = getQuote(); if (!q) return 0;
+  return (q.consumableRows || []).reduce((s, r) => {
+    const qty  = parseFloat(document.getElementById('qty-' + r.id)?.value) || 0;
+    const rate = parseFloat(document.getElementById('rate-' + r.id)?.value) || 0;
+    const sub  = qty * rate;
+    const el   = document.getElementById('res-' + r.id);
+    if (el) el.textContent = '£' + sub.toFixed(2);
+    return s + sub;
+  }, 0);
+}
+
+// ============================================================
+// SURVEY VISIT ROWS
+// ============================================================
+function addSurveyVisit() {
+  const q = getQuote(); if (!q) return;
+  const type = document.getElementById('surveyPersonSelect').value;
+  if (!type) return;
+  const def = (rates.survey || {})[type] || { label: type, rate: 250 };
+  const id = 'surv_' + Date.now();
+  q.surveyVisitRows = q.surveyVisitRows || [];
+  q.surveyVisitRows.push({ id, type, label: def.label, qty: 1, rate: def.rate });
+  saveAll(); renderSurveyVisitRows(); recalcAll();
+}
+
+function renderSurveyVisitRows() {
+  const q = getQuote(); if (!q) return;
+  const cont = document.getElementById('surveyVisitRows');
+  if (!cont) return;
+  cont.innerHTML = (q.surveyVisitRows || []).map(r =>
+    rowHTML(r.id, r.label + ' <span style="font-size:10px;color:var(--subtle)">(visits × day rate)</span>', r.qty, r.rate, '£0.00')
+  ).join('');
+}
+
+function sumSurveyVisits() {
+  const q = getQuote(); if (!q) return 0;
+  return (q.surveyVisitRows || []).reduce((s, r) => {
+    const qty  = parseFloat(document.getElementById('qty-' + r.id)?.value) || 0;
+    const rate = parseFloat(document.getElementById('rate-' + r.id)?.value) || 0;
+    const sub  = qty * rate;
+    const el   = document.getElementById('res-' + r.id);
+    if (el) el.textContent = '£' + sub.toFixed(2);
+    return s + sub;
+  }, 0);
+}
+
+// ============================================================
+// RAL COLOUR
+// ============================================================
+document.addEventListener('input', e => {
+  if (e.target.id === 'ralColour') updateRalSwatch(e.target.value);
+});
+function updateRalSwatch(val) {
+  const ralMap = {'9005':'#0a0a0a','9010':'#f5f4ef','9016':'#f7f7f7','7016':'#293133',
+    '7035':'#d5d6d2','7037':'#7c7f7e','3000':'#af2b1e','3020':'#cc0605','5010':'#1f4788',
+    '6005':'#2f4538','1023':'#f9a800','2004':'#f44611','8017':'#4e3b31','6020':'#316650'};
+  const num = val.replace(/[^0-9]/g,'');
+  const swatch = document.getElementById('ralSwatch');
+  if (swatch) swatch.style.background = ralMap[num] || (num ? '#555' : 'transparent');
+}
+
+function checkRalVisibility() {
+  const q = getQuote(); if (!q) return;
+  const hasPpc = (q.paintRows || []).some(r => r.type === 'powder_coat_m' || r.type === 'powder_coat_bay');
+  const ral = document.getElementById('ralSection');
+  if (ral) ral.style.display = hasPpc ? '' : 'none';
 }
 
 // ============================================================
