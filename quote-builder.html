@@ -1269,22 +1269,113 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 
 <!-- SETTINGS MODAL -->
 <div class="modal-overlay" id="settingsModal">
-  <div class="modal" style="max-width:480px">
+  <div class="modal" style="max-width:560px">
     <div class="modal-title">⚙ Default Rates</div>
-    <p style="font-size:12px;color:var(--muted);margin-bottom:16px">These are applied as defaults when adding items. You can override them per quote.</p>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:16px">Click a tile to expand. These are defaults when adding items — override per quote any time.</p>
 
-    <div class="card-title" style="margin-top:8px">Labour (£/day)</div>
-    <div id="settingsLabour"></div>
-    <div class="card-title" style="margin-top:16px">Plant & Equipment (£/day)</div>
-    <div id="settingsPlant"></div>
-    <div class="card-title" style="margin-top:16px">Fabrication</div>
-    <div id="settingsFab"></div>
-    <div class="card-title" style="margin-top:16px">Material (£/kg by type)</div>
-    <div id="settingsMaterial"></div>
-    <div class="card-title" style="margin-top:16px">Delivery (£/load)</div>
-    <div id="settingsDelivery"></div>
-    <div class="card-title" style="margin-top:16px">Prelims (£ lump sum)</div>
-    <div id="settingsPrelims"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+
+      <div class="settings-tile" id="tile-labour">
+        <div class="settings-tile-header" onclick="toggleSettingsTile('labour')">
+          <span>👷 Labour</span><span class="settings-tile-count" id="count-labour"></span><span class="settings-tile-chevron">▾</span>
+        </div>
+        <div class="settings-tile-body" id="body-labour" style="display:none">
+          <div style="font-size:10px;color:var(--muted);margin-bottom:6px">£ per day</div>
+          <div id="settingsLabour"></div>
+        </div>
+      </div>
+
+      <div class="settings-tile" id="tile-plant">
+        <div class="settings-tile-header" onclick="toggleSettingsTile('plant')">
+          <span>🏗 Plant & Equipment</span><span class="settings-tile-count" id="count-plant"></span><span class="settings-tile-chevron">▾</span>
+        </div>
+        <div class="settings-tile-body" id="body-plant" style="display:none">
+          <div style="font-size:10px;color:var(--muted);margin-bottom:6px">£ per day</div>
+          <div id="settingsPlant"></div>
+        </div>
+      </div>
+
+      <div class="settings-tile" id="tile-fab">
+        <div class="settings-tile-header" onclick="toggleSettingsTile('fab')">
+          <span>🔧 Fabrication</span><span class="settings-tile-count" id="count-fab"></span><span class="settings-tile-chevron">▾</span>
+        </div>
+        <div class="settings-tile-body" id="body-fab" style="display:none">
+          <div style="font-size:10px;color:var(--muted);margin-bottom:6px">£ per hour</div>
+          <div id="settingsFab"></div>
+        </div>
+      </div>
+
+      <div class="settings-tile" id="tile-material">
+        <div class="settings-tile-header" onclick="toggleSettingsTile('material')">
+          <span>🧱 Material</span><span class="settings-tile-count" id="count-material"></span><span class="settings-tile-chevron">▾</span>
+        </div>
+        <div class="settings-tile-body" id="body-material" style="display:none">
+          <div style="font-size:10px;color:var(--muted);margin-bottom:6px">£ per kg by section type</div>
+          <div id="settingsMaterial"></div>
+        </div>
+      </div>
+
+      <div class="settings-tile" id="tile-delivery">
+        <div class="settings-tile-header" onclick="toggleSettingsTile('delivery')">
+          <span>🚛 Delivery</span><span class="settings-tile-count" id="count-delivery"></span><span class="settings-tile-chevron">▾</span>
+        </div>
+        <div class="settings-tile-body" id="body-delivery" style="display:none">
+          <div style="font-size:10px;color:var(--muted);margin-bottom:6px">£ per load</div>
+          <div id="settingsDelivery"></div>
+        </div>
+      </div>
+
+      <div class="settings-tile" id="tile-prelims">
+        <div class="settings-tile-header" onclick="toggleSettingsTile('prelims')">
+          <span>📋 Prelims</span><span class="settings-tile-count" id="count-prelims"></span><span class="settings-tile-chevron">▾</span>
+        </div>
+        <div class="settings-tile-body" id="body-prelims" style="display:none">
+          <div style="font-size:10px;color:var(--muted);margin-bottom:6px">£ lump sum defaults</div>
+          <div id="settingsPrelims"></div>
+        </div>
+      </div>
+
+      <div class="settings-tile" id="tile-consumables">
+        <div class="settings-tile-header" onclick="toggleSettingsTile('consumables')">
+          <span>🔩 Consumables</span><span class="settings-tile-count" id="count-consumables"></span><span class="settings-tile-chevron">▾</span>
+        </div>
+        <div class="settings-tile-body" id="body-consumables" style="display:none">
+          <div style="font-size:10px;color:var(--muted);margin-bottom:6px">£ lump sum defaults</div>
+          <div id="settingsConsumables"></div>
+        </div>
+      </div>
+
+      <div class="settings-tile" id="tile-survey">
+        <div class="settings-tile-header" onclick="toggleSettingsTile('survey')">
+          <span>📏 Survey</span><span class="settings-tile-count" id="count-survey"></span><span class="settings-tile-chevron">▾</span>
+        </div>
+        <div class="settings-tile-body" id="body-survey" style="display:none">
+          <div style="font-size:10px;color:var(--muted);margin-bottom:6px">£ per visit/day</div>
+          <div id="settingsSurvey"></div>
+        </div>
+      </div>
+
+      <div class="settings-tile" id="tile-paint">
+        <div class="settings-tile-header" onclick="toggleSettingsTile('paint')">
+          <span>🎨 Painting</span><span class="settings-tile-count" id="count-paint"></span><span class="settings-tile-chevron">▾</span>
+        </div>
+        <div class="settings-tile-body" id="body-paint" style="display:none">
+          <div style="font-size:10px;color:var(--muted);margin-bottom:6px">rates by finish type</div>
+          <div id="settingsPaint"></div>
+        </div>
+      </div>
+
+      <div class="settings-tile" id="tile-design">
+        <div class="settings-tile-header" onclick="toggleSettingsTile('design')">
+          <span>📐 Design</span><span class="settings-tile-count" id="count-design"></span><span class="settings-tile-chevron">▾</span>
+        </div>
+        <div class="settings-tile-body" id="body-design" style="display:none">
+          <div style="font-size:10px;color:var(--muted);margin-bottom:6px">£ per hour</div>
+          <div id="settingsDesign"></div>
+        </div>
+      </div>
+
+    </div>
 
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeSettings()">Cancel</button>
@@ -2970,16 +3061,45 @@ function settingsRateRow(category, key, def) {
 }
 
 function renderSettingsForm() {
-  document.getElementById('settingsLabour').innerHTML   = Object.entries(rates.labour).map(([k,v])=>settingsRateRow('labour',k,v)).join('');
-  document.getElementById('settingsPlant').innerHTML    = Object.entries(rates.plant).map(([k,v])=>settingsRateRow('plant',k,v)).join('');
-  document.getElementById('settingsFab').innerHTML      = Object.entries(rates.fab).map(([k,v])=>settingsRateRow('fab',k,v)).join('');
-  document.getElementById('settingsMaterial').innerHTML = Object.entries(rates.material).map(([k,v])=>settingsRateRow('material',k,v)).join('');
-  document.getElementById('settingsDelivery').innerHTML = Object.entries(rates.delivery).map(([k,v])=>settingsRateRow('delivery',k,v)).join('');
-  document.getElementById('settingsPrelims').innerHTML  = Object.entries(rates.prelims).map(([k,v])=>settingsRateRow('prelims',k,v)).join('');
+  const fill = (id, cat) => {
+    const el = document.getElementById(id);
+    if (el && rates[cat]) el.innerHTML = Object.entries(rates[cat]).map(([k,v])=>settingsRateRow(cat,k,v)).join('');
+  };
+  fill('settingsLabour',      'labour');
+  fill('settingsPlant',       'plant');
+  fill('settingsFab',         'fab');
+  fill('settingsMaterial',    'material');
+  fill('settingsDelivery',    'delivery');
+  fill('settingsPrelims',     'prelims');
+  fill('settingsConsumables', 'consumables');
+  fill('settingsSurvey',      'survey');
+  fill('settingsPaint',       'paint');
+  fill('settingsDesign',      'design');
+
+  // Update counts
+  const counts = {
+    labour:'settingsLabour', plant:'settingsPlant', fab:'settingsFab',
+    material:'settingsMaterial', delivery:'settingsDelivery', prelims:'settingsPrelims',
+    consumables:'settingsConsumables', survey:'settingsSurvey', paint:'settingsPaint', design:'settingsDesign'
+  };
+  Object.entries(counts).forEach(([cat, elId]) => {
+    const countEl = document.getElementById('count-'+cat);
+    if (countEl && rates[cat]) countEl.textContent = Object.keys(rates[cat]).length + ' items';
+  });
+}
+
+function toggleSettingsTile(name) {
+  const tile = document.getElementById('tile-'+name);
+  const body = document.getElementById('body-'+name);
+  if (!tile || !body) return;
+  const open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : '';
+  tile.classList.toggle('open', !open);
 }
 
 function saveSettings() {
-  ['labour','plant','fab','material','delivery','prelims'].forEach(cat => {
+  ['labour','plant','fab','material','delivery','prelims','consumables','survey','paint','design'].forEach(cat => {
+    if (!rates[cat]) return;
     Object.keys(rates[cat]).forEach(key => {
       const el = document.getElementById(`sr_${cat}_${key}`);
       if (el) rates[cat][key].rate = parseFloat(el.value) || 0;
