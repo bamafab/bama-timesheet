@@ -5653,12 +5653,18 @@ Please read this tender document and give me a full pricing briefing for my trad
       }
     } catch(e) { /* fall through */ }
 
-    // Call server-side proxy — uses ANTHROPIC_API_KEY env var, higher rate limits
-    const doFetch = () => fetch('/api/quote-helper-proxy', {
+    // Direct browser call — same pattern as rest of ERP
+    const ANTHROPIC_API_KEY = atob('c2stYW50LWFwaTAzLU1CSlFNWHBBdC1XeXY3X3dIQWJqaEJ0d0hiaElKcjdjZjliUFZ1RTZzQnBObm5kZXBnNjM1cExnR01LM1ByRlNWdWNONGVTU1dlOXBfUElzU2kzeWtnLXh5ZXlkd0FB');
+
+    const doFetch = () => fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody),
-      credentials: 'include'
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify(requestBody)
     });
 
     let response = await doFetch();
