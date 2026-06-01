@@ -945,6 +945,21 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
   </div>
 </div>
 
+<!-- SPLIT MOVE MODAL -->
+<div class="modal-overlay" id="splitMoveModal">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-title">Move Rows to Area</div>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:16px">
+      Some selected rows have qty &gt; 1. Set how many to move for each — the remainder stays in the original area.
+    </p>
+    <div id="splitMoveRows" style="max-height:320px;overflow-y:auto"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeSplitModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmSplitMove()">Move</button>
+    </div>
+  </div>
+</div>
+
 <!-- SETTINGS MODAL -->
 <div class="modal-overlay" id="settingsModal">
   <div class="modal" style="max-width:480px">
@@ -1639,15 +1654,97 @@ function updateMoveToAreaOptions() {
   if (sel2) sel2.innerHTML = psOpts;
 }
 
+// pending split move state
+let _splitMoveAreaId  = '';
+let _splitMoveIndices = [];
+
 function moveSelectedToArea(areaId) {
   if (!areaId) return;
   const q = getQuote(); if (!q) return;
-  const selected = new Set([...document.querySelectorAll('.takeoff-cb:checked')].map(cb => parseInt(cb.dataset.idx)));
-  if (!selected.size) { document.getElementById('moveToAreaSelect').value = ''; return; }
-  selected.forEach(i => { if (q.takeoff[i]) q.takeoff[i].area = areaId; });
-  saveAll(); renderTakeoff();
+  const selected = [...document.querySelectorAll('.takeoff-cb:checked')].map(cb => parseInt(cb.dataset.idx));
   document.getElementById('moveToAreaSelect').value = '';
-  toast(`Moved ${selected.size} row${selected.size>1?'s':''} to area`);
+  if (!selected.length) return;
+
+  // Check if any selected row has qty > 1
+  const needsSplit = selected.some(i => (q.takeoff[i]?.qty || 1) > 1);
+
+  if (!needsSplit) {
+    // Simple move — all qty 1 rows
+    selected.forEach(i => { if (q.takeoff[i]) q.takeoff[i].area = areaId; });
+    saveAll(); renderTakeoff();
+    toast(`Moved ${selected.length} row${selected.length>1?'s':''} to area`);
+    return;
+  }
+
+  // Show split modal
+  _splitMoveAreaId  = areaId;
+  _splitMoveIndices = selected;
+  const targetArea  = (q.areas||[]).find(a => a.id === areaId);
+
+  const rows = document.getElementById('splitMoveRows');
+  rows.innerHTML = selected.map(i => {
+    const row = q.takeoff[i];
+    if (!row) return '';
+    const qty = row.qty || 1;
+    const fromArea = (q.areas||[]).find(a => a.id === row.area)?.name || 'Ungrouped';
+    return `<div style="display:grid;grid-template-columns:1fr 80px 80px;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+      <div>
+        <div style="font-size:12px;font-weight:600;color:var(--text)">${escHtml(row.type||'—')}</div>
+        <div style="font-size:11px;color:var(--muted)">${row.length||0} mm · ${fromArea}</div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);text-align:center">
+        qty: ${qty}
+      </div>
+      <div>
+        <input type="number" id="split-qty-${i}" value="${qty}" min="0" max="${qty}"
+          style="background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:5px 8px;color:var(--text);font-family:var(--font-mono);font-size:13px;text-align:right;width:100%"
+          title="How many to move (max ${qty})">
+      </div>
+    </div>`;
+  }).join('');
+
+  // add header
+  rows.insertAdjacentHTML('afterbegin', `
+    <div style="display:grid;grid-template-columns:1fr 80px 80px;gap:8px;padding:6px 0;margin-bottom:4px">
+      <div style="font-size:11px;color:var(--muted);font-weight:600">MEMBER</div>
+      <div style="font-size:11px;color:var(--muted);font-weight:600;text-align:center">TOTAL QTY</div>
+      <div style="font-size:11px;color:var(--muted);font-weight:600;text-align:right">MOVE TO <span style="color:var(--accent)">${escHtml(targetArea?.name||areaId)}</span></div>
+    </div>`);
+
+  document.getElementById('splitMoveModal').classList.add('active');
+}
+
+function closeSplitModal() {
+  document.getElementById('splitMoveModal').classList.remove('active');
+  _splitMoveAreaId = ''; _splitMoveIndices = [];
+}
+
+function confirmSplitMove() {
+  const q = getQuote(); if (!q) return;
+  let moved = 0;
+
+  _splitMoveIndices.forEach(i => {
+    const row = q.takeoff[i]; if (!row) return;
+    const totalQty = row.qty || 1;
+    const moveQty  = Math.min(parseInt(document.getElementById('split-qty-'+i)?.value)||0, totalQty);
+    if (moveQty <= 0) return;
+
+    if (moveQty === totalQty) {
+      // Move entire row
+      row.area = _splitMoveAreaId;
+      moved++;
+    } else {
+      // Split: reduce original qty, insert new row with moved qty
+      row.qty = totalQty - moveQty;
+      const newRow = { ...row, qty: moveQty, area: _splitMoveAreaId };
+      q.takeoff.splice(i + 1, 0, newRow);
+      moved++;
+    }
+  });
+
+  saveAll(); renderTakeoff(); recalcAll();
+  closeSplitModal();
+  toast(`Moved ${moved} row${moved>1?'s':''} — split where needed`);
 }
 
 function updateTakeoffTotals() {
