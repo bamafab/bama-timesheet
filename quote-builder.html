@@ -2389,10 +2389,17 @@ function takeoffRowHTML(row, i) {
         oninput="onTakeoffTypeInput(${i},this.value)"
         onkeydown="onTakeoffTypeKey(event,${i})"
         onfocus="onTakeoffTypeInput(${i},this.value)"
-        autocomplete="off" style="width:100%;font-size:12px">
+        autocomplete="off" style="width:100%;font-size:12px"
+        data-row="${i}" data-col="type">
     </div></td>
-    <td style="${nc}"><input type="number" value="${isEA ? '' : (lengthMM||'')}" placeholder="mm" oninput="updateTakeoffRow(${i},'length',this.value)" style="${ni}"></td>
-    <td style="${nc}"><input type="number" value="${isEA ? row.qty : (row.qty||1)}" oninput="updateTakeoffRow(${i},'qty',this.value)" style="${ni}"></td>
+    <td style="${nc}"><input type="number" value="${isEA ? '' : (lengthMM||'')}" placeholder="mm"
+        oninput="updateTakeoffRow(${i},'length',this.value)"
+        onkeydown="takeoffGridKey(event,${i},'length')"
+        style="${ni}" data-row="${i}" data-col="length"></td>
+    <td style="${nc}"><input type="number" value="${isEA ? row.qty : (row.qty||1)}"
+        oninput="updateTakeoffRow(${i},'qty',this.value)"
+        onkeydown="takeoffGridKey(event,${i},'qty')"
+        style="${ni}" data-row="${i}" data-col="qty"></td>
     <td style="padding:2px 3px">
       <select onchange="updateTakeoffRow(${i},'area',this.value)"
         style="background:transparent;border:1px solid transparent;border-radius:4px;padding:3px 4px;color:var(--muted);font-size:11px;width:100%;cursor:pointer"
@@ -5301,8 +5308,32 @@ function onTakeoffTypeInput(i, val) {
   closeAllDropdowns();
   if (!val || val.length < 2) return;
 
-  const q = val.trim().toUpperCase().replace(/[*×]/g,'x');
-  const matches = STEEL_SECTIONS.filter(s => s.toUpperCase().includes(q)).slice(0, 40);
+  const q = val.trim().toUpperCase().replace(/[*×]/g,'x').replace(/\s+/g,'');
+
+  // Fuzzy match: score each section by how well it matches
+  function fuzzyScore(section, query) {
+    const s = section.toUpperCase();
+    // Exact substring = highest score
+    if (s.includes(query)) return 100 + (100 - s.indexOf(query));
+    // All chars of query appear in order = medium score
+    let qi = 0;
+    for (let si = 0; si < s.length && qi < query.length; si++) {
+      if (s[si] === query[qi]) qi++;
+    }
+    if (qi === query.length) return 50;
+    // Partial digit match — useful for "20313330" finding UB203x133x30
+    const digits = query.replace(/[^0-9]/g,'');
+    if (digits.length >= 3 && s.replace(/[^0-9]/g,'').includes(digits)) return 30;
+    return 0;
+  }
+
+  const scored = STEEL_SECTIONS
+    .map(s => ({ s, score: fuzzyScore(s, q) }))
+    .filter(x => x.score > 0)
+    .sort((a,b) => b.score - a.score)
+    .slice(0, 40)
+    .map(x => x.s);
+  const matches = scored;
   if (!matches.length) return;
 
   const inp = wrap.querySelector('input');
@@ -5342,6 +5373,13 @@ function onTakeoffTypeKey(e, i) {
     if (_acActiveIdx >= 0 && items[_acActiveIdx]) {
       e.preventDefault();
       selectSection(i, items[_acActiveIdx].dataset.val);
+    } else if (e.key === 'Enter') {
+      // No dropdown selection — commit whatever is typed and move to length
+      e.preventDefault();
+      closeAllDropdowns();
+      const wrap = document.getElementById('ac-wrap-'+i);
+      const inp = wrap?.querySelector('input');
+      if (inp?.value) { updateTakeoffRow(i, 'type', inp.value); focusTakeoffCell(i, 'length'); }
     } else {
       closeAllDropdowns();
     }
@@ -5364,9 +5402,68 @@ function selectSection(i, val) {
   const inp = wrap.querySelector('input');
   if (inp) inp.value = val;
   updateTakeoffRow(i, 'type', val);
-  // move focus to length field
-  const row = document.getElementById('takeoffBody')?.rows[i];
-  if (row) row.cells[2]?.querySelector('input')?.focus();
+  // Tab forward to length field
+  focusTakeoffCell(i, 'length');
+}
+
+// Navigate to a specific cell in the takeoff grid
+function focusTakeoffCell(rowIdx, col) {
+  // col order: type, length, qty, finish
+  const colMap = { type: 1, length: 2, qty: 3, finish: 4 };
+  const tbody = document.getElementById('takeoffBody');
+  if (!tbody || rowIdx >= tbody.rows.length) return;
+  const tr = tbody.rows[rowIdx];
+  if (!tr) return;
+  const cellIdx = colMap[col];
+  const cell = tr.cells[cellIdx];
+  if (!cell) return;
+  const input = cell.querySelector('input, select');
+  if (input) { input.focus(); input.select?.(); }
+}
+
+// Keyboard navigation across takeoff row columns
+function takeoffGridKey(e, rowIdx, col) {
+  // Tab moves to next column (browser handles forward tab naturally,
+  // we just need to handle Enter on the finish/qty column to add a new row)
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const colOrder = ['type','length','qty','finish'];
+    const curColIdx = colOrder.indexOf(col);
+    if (curColIdx < colOrder.length - 1) {
+      // Move to next column
+      focusTakeoffCell(rowIdx, colOrder[curColIdx + 1]);
+    } else {
+      // Last column — save and add new row
+      saveCurrentTakeoffRow(rowIdx);
+      addTakeoffRow();
+      // Focus type of the new (last) row
+      const q = getQuote();
+      if (q) {
+        setTimeout(() => focusTakeoffCell(q.takeoff.length - 1, 'type'), 30);
+      }
+    }
+  }
+  // Shift+Enter on any column also adds a new row
+  if (e.key === 'Enter' && e.shiftKey && col !== 'finish') {
+    e.preventDefault();
+    saveCurrentTakeoffRow(rowIdx);
+    addTakeoffRow();
+    const q = getQuote();
+    if (q) setTimeout(() => focusTakeoffCell(q.takeoff.length - 1, 'type'), 30);
+  }
+}
+
+// Snapshot current DOM values for a row back to the quote
+function saveCurrentTakeoffRow(i) {
+  const q = getQuote(); if (!q || !q.takeoff[i]) return;
+  const tbody = document.getElementById('takeoffBody');
+  if (!tbody) return;
+  const tr = tbody.rows[i]; if (!tr) return;
+  const lenInput = tr.cells[2]?.querySelector('input');
+  const qtyInput = tr.cells[3]?.querySelector('input');
+  if (lenInput) updateTakeoffRow(i, 'length', lenInput.value);
+  if (qtyInput) updateTakeoffRow(i, 'qty', qtyInput.value);
+  saveAll();
 }
 
 function closeAllDropdowns() {
