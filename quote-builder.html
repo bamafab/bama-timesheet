@@ -288,6 +288,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
           <span class="revision-tag" id="editorRev" style="display:none"></span>
           <span class="badge badge-draft" id="editorStatus">Draft</span>
           <button class="btn btn-ghost btn-sm" onclick="removeRevision()" title="Previous revision">− Rev</button><button class="btn btn-ghost btn-sm" onclick="addRevision()" title="Next revision">+ Rev</button>
+          <span id="erpProjectBadge" style="display:none;font-size:11px;background:rgba(62,207,142,0.12);color:var(--green);border:1px solid rgba(62,207,142,0.3);border-radius:4px;padding:2px 8px;font-family:var(--font-mono)"></span>
         </div>
         <div class="flex gap-8">
           <select class="cost-input" style="width:120px" id="statusSelect" onchange="setStatus(this.value)">
@@ -1136,6 +1137,50 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
   </div>
 </div>
 
+<!-- WON — CREATE PROJECT MODAL -->
+<div class="modal-overlay" id="wonModal">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-title" style="color:var(--green)">🎉 Quote Won — Create Project</div>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:20px;line-height:1.6">
+      Push this quote into the ERP as a new project. Fields are pre-filled from the quote — review and adjust before creating.
+    </p>
+    <div class="form-grid" style="gap:10px">
+      <div class="field">
+        <label>Project Name</label>
+        <input type="text" id="wonProjectName" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%">
+      </div>
+      <div class="form-grid form-grid-2" style="gap:10px">
+        <div class="field">
+          <label>Contract Value (£)</label>
+          <input type="number" id="wonContractValue" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%">
+        </div>
+        <div class="field">
+          <label>Start Date</label>
+          <input type="date" id="wonStartDate" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%">
+        </div>
+      </div>
+      <div class="field">
+        <label>Client (must match ERP client name exactly)</label>
+        <input type="text" id="wonClient" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%">
+        <div style="font-size:11px;color:var(--muted);margin-top:3px">If client doesn't exist in ERP it will be created automatically.</div>
+      </div>
+      <div class="field">
+        <label>Quote Ref</label>
+        <input type="text" id="wonQuoteRef" disabled style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--muted);font-size:13px;width:100%;opacity:0.6">
+      </div>
+      <div class="field">
+        <label>Notes / Scope</label>
+        <textarea id="wonNotes" rows="3" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%;resize:vertical"></textarea>
+      </div>
+    </div>
+    <div id="wonStatus" style="margin-top:12px;font-size:12px;color:var(--muted);min-height:20px"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeWonModal()">Cancel</button>
+      <button class="btn btn-primary" id="wonCreateBtn" onclick="createProjectFromQuote()">🏗 Create Project in ERP</button>
+    </div>
+  </div>
+</div>
+
 <!-- SETTINGS MODAL -->
 <div class="modal-overlay" id="settingsModal">
   <div class="modal" style="max-width:480px">
@@ -1436,9 +1481,11 @@ function deleteQuote() {
 
 function setStatus(val) {
   const q = getQuote(); if (!q) return;
+  const prev = q.status;
   q.status = val;
   renderStatusBadge(q);
   saveAll();
+  if (val === 'won' && prev !== 'won') showWonModal();
 }
 
 function _updateRevDisplay(q) {
@@ -1569,6 +1616,16 @@ function loadQuoteEditor() {
   updateMoveToAreaOptions();
   recalcAll();
   renderQuotationLines();
+  // ERP project badge
+  const badge = document.getElementById('erpProjectBadge');
+  if (badge) {
+    if (q.erpProjectId) {
+      badge.textContent = '🔗 ERP #' + q.erpProjectId;
+      badge.style.display = '';
+    } else {
+      badge.style.display = 'none';
+    }
+  }
 }
 
 // ============================================================
@@ -2916,6 +2973,111 @@ function checkRalVisibility() {
   const hasPpc = (q.paintRows || []).some(r => r.type === 'powder_coat_m' || r.type === 'powder_coat_bay');
   const ral = document.getElementById('ralSection');
   if (ral) ral.style.display = hasPpc ? '' : 'none';
+}
+
+// ============================================================
+// WON → CREATE PROJECT
+// ============================================================
+function showWonModal() {
+  const q = getQuote(); if (!q) return;
+  const total = q._computed?.total || 0;
+  document.getElementById('wonProjectName').value   = [q.company, q.ref].filter(Boolean).join(' — ');
+  document.getElementById('wonContractValue').value = total > 0 ? total.toFixed(2) : '';
+  document.getElementById('wonClient').value        = q.company || '';
+  document.getElementById('wonQuoteRef').value      = q.ref + (q.revision ? ' ' + q.revision : '');
+  document.getElementById('wonStartDate').value     = '';
+  document.getElementById('wonNotes').value         = q.qScope || q.comments || '';
+  document.getElementById('wonStatus').textContent  = '';
+  document.getElementById('wonCreateBtn').disabled  = false;
+  document.getElementById('wonCreateBtn').textContent = '🏗 Create Project in ERP';
+  document.getElementById('wonModal').classList.add('active');
+}
+
+function closeWonModal() {
+  document.getElementById('wonModal').classList.remove('active');
+}
+
+async function createProjectFromQuote() {
+  const q = getQuote(); if (!q) return;
+  const btn    = document.getElementById('wonCreateBtn');
+  const status = document.getElementById('wonStatus');
+  const name   = document.getElementById('wonProjectName').value.trim();
+  const value  = parseFloat(document.getElementById('wonContractValue').value) || null;
+  const client = document.getElementById('wonClient').value.trim();
+  const notes  = document.getElementById('wonNotes').value.trim();
+  const start  = document.getElementById('wonStartDate').value || null;
+
+  if (!name)   { status.textContent = '⚠ Project name required'; status.style.color = 'var(--red)'; return; }
+  if (!client) { status.textContent = '⚠ Client name required';  status.style.color = 'var(--red)'; return; }
+
+  btn.disabled = true;
+  status.style.color = 'var(--muted)';
+  status.textContent = 'Looking up client...';
+
+  try {
+    // 1. Find or create client
+    const clientsRes = await fetch('/api/clients', { credentials: 'include' });
+    if (!clientsRes.ok) throw new Error('Could not load clients — are you logged into the ERP?');
+    const clientsBody = await clientsRes.json();
+    const clientList  = clientsBody.data || clientsBody || [];
+    let clientId = null;
+    const match = clientList.find(c =>
+      (c.name || c.company_name || '').toLowerCase() === client.toLowerCase()
+    );
+    if (match) {
+      clientId = match.id;
+      status.textContent = 'Client found: ' + (match.name || match.company_name);
+    } else {
+      status.textContent = 'Client not found — creating...';
+      const newClientRes = await fetch('/api/clients', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: client, company_name: client })
+      });
+      if (!newClientRes.ok) throw new Error('Failed to create client');
+      const nc = await newClientRes.json();
+      clientId = nc.id || nc.data?.id;
+      status.textContent = 'Client created (ID ' + clientId + ')';
+    }
+
+    // 2. Create project
+    status.textContent = 'Creating project in ERP...';
+    const projRes = await fetch('/api/projects', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_name:    name,
+        client_id:       clientId,
+        status:          'In Progress',
+        quote_value:     value,
+        start_date:      start,
+        comments:        notes || null,
+        source_quote_id: null,
+        created_by:      'Quote Builder'
+      })
+    });
+    if (!projRes.ok) {
+      const err = await projRes.json().catch(() => ({}));
+      throw new Error(err.message || err.error || 'HTTP ' + projRes.status);
+    }
+    const proj = await projRes.json();
+    const projId = proj.id || proj.data?.id || proj.project_id;
+
+    // 3. Save ERP project ID on the local quote
+    q.erpProjectId = projId;
+    saveAll();
+
+    status.style.color = 'var(--green)';
+    status.textContent = '✓ Project created! ID: ' + projId;
+    btn.textContent = '✓ Done';
+    toast('Project created in ERP — ' + name, 'success');
+    setTimeout(() => closeWonModal(), 2500);
+
+  } catch(err) {
+    status.style.color = 'var(--red)';
+    status.textContent = '❌ ' + err.message;
+    btn.disabled = false;
+  }
 }
 
 // ============================================================
