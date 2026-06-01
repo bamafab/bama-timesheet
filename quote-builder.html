@@ -3002,34 +3002,50 @@ Please read this tender document and give me a full pricing briefing for my trad
 
   try {
     const ANTHROPIC_API_KEY = atob('c2stYW50LWFwaTAzLU1CSlFNWHBBdC1XeXY3X3dIQWJqaEJ0d0hiaElKcjdjZjliUFZ1RTZzQnBObm5kZXBnNjM1cExnR01LM1ByRlNWdWNONGVTU1dlOXBfUElzU2kzeWtnLXh5ZXlkd0FB');
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true'
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 2000,
-        system: systemPrompt,
-        messages: [{
-          role: 'user',
-          content: [
-            ..._helperFiles.map((f, i) => ({
-              type: 'document',
-              source: { type: 'base64', media_type: 'application/pdf', data: f.base64 },
-              title: f.name
-            })),
-            { type: 'text', text: userPrompt + (_helperFiles.length > 1 ? `\n\nDocuments provided: ${_helperFiles.map(f=>f.name).join(', ')}` : '') }
-          ]
-        }]
-      })
-    });
 
-    const data = await response.json();
-    if (data.error) throw new Error(data.error.message);
+    const requestBody = {
+      model: 'claude-sonnet-4-6',
+      max_tokens: 2000,
+      system: systemPrompt,
+      messages: [{
+        role: 'user',
+        content: [
+          ..._helperFiles.map((f, i) => ({
+            type: 'document',
+            source: { type: 'base64', media_type: 'application/pdf', data: f.base64 },
+            title: f.name
+          })),
+          { type: 'text', text: userPrompt + (_helperFiles.length > 1 ? `\n\nDocuments provided: ${_helperFiles.map(f=>f.name).join(', ')}` : '') }
+        ]
+      }]
+    };
+
+    // Retry up to 4 times with exponential backoff on rate limit (429)
+    let data, lastErr;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      if (attempt > 0) {
+        const wait = [15, 30, 60][attempt - 1] * 1000;
+        status.textContent = `Rate limit hit — retrying in ${wait/1000}s (attempt ${attempt+1}/4)...`;
+        await new Promise(r => setTimeout(r, wait));
+        status.textContent = 'Retrying...';
+      }
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true'
+        },
+        body: JSON.stringify(requestBody)
+      });
+      data = await response.json();
+      if (response.status === 429) { lastErr = data.error?.message || 'Rate limit'; continue; }
+      if (data.error) throw new Error(data.error.message);
+      lastErr = null;
+      break;
+    }
+    if (lastErr) throw new Error('Rate limit — tried 4 times. Wait a minute and try again. (' + lastErr + ')');
 
     const raw = data.content?.find(b => b.type === 'text')?.text || '';
     document.getElementById('helperRawText').textContent = raw;
