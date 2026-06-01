@@ -3765,49 +3765,114 @@ function showPsPreview(source) {
  * fresh = true  → fill everything silently (all fields were zero)
  * fresh = false → ask first, only proceed if confirmed
  */
+// ============================================================
+// AUTOMATION HELPERS
+// ============================================================
+
+function autoEstimateInstallDays(takeoff) {
+  const tonnes = takeoff.reduce((s, row) => { const {kg} = rowWeight(row); return s + kg/1000; }, 0);
+  return Math.min(20, Math.max(2, Math.round(tonnes * 2)));
+}
+
+function autoEstimateDelivery(q, totalTonnes) {
+  q.deliveryRows = [];
+  if (totalTonnes <= 1.5) {
+    q.deliveryRows.push({ id: 'del_auto_'+Date.now(), type: 'transit', label: 'Transit Van', qty: 1, rate: 250 });
+  } else if (totalTonnes <= 7) {
+    q.deliveryRows.push({ id: 'del_auto_'+Date.now(), type: 'hiab', label: 'HIAB', qty: 1, rate: 1400 });
+  } else {
+    const runs = Math.ceil(totalTonnes / 10);
+    for (let i = 0; i < runs; i++) {
+      q.deliveryRows.push({ id: 'del_auto_'+(Date.now()+i), type: 'artic', label: 'Articulated Lorry', qty: 1, rate: 1800 });
+    }
+  }
+}
+
+function autoEstimatePlant(q, takeoff, instDays) {
+  q.plantRows = (q.plantRows||[]).filter(r => !r._auto);
+  const profileTonnes = (...prefixes) => takeoff.reduce((s, row) => {
+    const p = (row.type?.match(/^[A-Za-z]+/)||[''])[0].toUpperCase();
+    if (!prefixes.includes(p)) return s;
+    const {kg} = rowWeight(row); return s + kg/1000;
+  }, 0);
+  const ubucT   = profileTonnes('UB','UC');
+  const hollowT = profileTonnes('SHS','RHS');
+  if (ubucT > 3) {
+    q.plantRows.push({ id: 'plant_auto_crane_'+Date.now(), type: 'crane_25t', label: 'Mobile Crane - 25t', qty: 2, rate: 1200, _auto: true });
+  }
+  if (hollowT > 0) {
+    q.plantRows.push({ id: 'plant_auto_genie_'+Date.now(), type: 'genie_z45', label: 'Genie Z-45 Boom', qty: Math.max(1, instDays), rate: 175, _auto: true });
+  }
+}
+
+function autoEstimatePrelims(q, takeoff, totalTonnes, instDays) {
+  q.prelimRows = (q.prelimRows||[]).filter(r => !r._auto);
+  const hasPfx = (...pfx) => takeoff.some(r => pfx.includes((r.type?.match(/^[A-Za-z]+/)||[''])[0].toUpperCase()));
+  const add = (key, qtyOverride) => {
+    if (q.prelimRows.find(r => r.type === key)) return;
+    const def = (rates.prelims||{})[key] || { label: key, rate: 0, type: 'flat' };
+    const qty = qtyOverride ?? (def.type === 'daily' ? Math.max(1, instDays) : 1);
+    q.prelimRows.push({ id: 'prelim_'+key, type: key, label: def.label, qty, rate: def.rate, _auto: true });
+  };
+  add('rams');
+  add('ppe');
+  if (hasPfx('UB','UC','PFC','RSA')) add('weld_inspect');
+  if (totalTonnes > 5) add('proj_manager', Math.max(1, Math.round(instDays * 0.15)));
+}
+
 function executeFullQuoteAutomation(q, fresh) {
   if (!q.takeoff?.length) return;
 
   const run = () => {
-    // 1. Fab hours (complexity-aware)
+    const totalKg     = q.takeoff.reduce((s, row) => { const {kg} = rowWeight(row); return s + kg; }, 0);
+    const totalTonnes = totalKg / 1000;
+
+    const instDays = autoEstimateInstallDays(q.takeoff);
+    q.instDays = instDays;
+
     const { totalHours: fabHrs } = autoFabHours(q.takeoff);
     q.fabHours = fabHrs;
 
-    // 2. Design hours (profile-complexity tiered)
     const { draughtHrs, structEngHrs, fabpackHrs } = autoDesignHours(q.takeoff);
-    q.designHours    = draughtHrs;
-    q.structEngHrs   = structEngHrs;
-    q.fabpackHours   = fabpackHrs;
+    q.designHours  = draughtHrs;
+    q.structEngHrs = structEngHrs;
+    q.fabpackHours = fabpackHrs;
 
-    // 3. Finish quantities → populate galv/primer paint rows
     const finQty = computeFinishQuantities(q.takeoff);
     (q.paintRows || []).forEach(r => {
-      if (r.type === 'galvanise'   && finQty.galv_t   > 0 && !r.qty) r.qty = finQty.galv_t;
-      if (r.type === 'primer_tonne'&& finQty.primer_t > 0 && !r.qty) r.qty = finQty.primer_t;
+      if (r.type === 'galvanise'    && finQty.galv_t   > 0 && !r.qty) r.qty = finQty.galv_t;
+      if (r.type === 'primer_tonne' && finQty.primer_t > 0 && !r.qty) r.qty = finQty.primer_t;
     });
 
-    // 4. Sync DOM inputs and recalc
+    autoEstimateDelivery(q, totalTonnes);
+    autoEstimatePlant(q, q.takeoff, instDays);
+    autoEstimatePrelims(q, q.takeoff, totalTonnes, instDays);
+
     const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
-    set('fab-hours',       q.fabHours);
-    set('struct-eng-hours',q.structEngHrs);
-    set('design-hours',    q.designHours);
-    set('fabpack-hours',   q.fabpackHours);
+    set('inst-days',       instDays);
+    set('fab-hours',       fabHrs);
+    set('struct-eng-hours',structEngHrs);
+    set('design-hours',    draughtHrs);
+    set('fabpack-hours',   fabpackHrs);
 
     saveAll();
+    renderLabourRows();
+    renderPlantRows();
+    renderDeliveryRows();
     renderPaintRows();
+    renderPrelimChecklist();
     recalcAll();
 
-    // Flash the total to show it's been calculated
     const totalEl = document.getElementById('sum-total');
     if (totalEl) {
-      totalEl.style.transition = 'color 0.2s';
+      totalEl.style.transition = 'color 0.3s';
       totalEl.style.color = 'var(--green)';
-      setTimeout(() => { totalEl.style.color = ''; }, 1200);
+      setTimeout(() => { totalEl.style.color = ''; }, 1400);
     }
 
-    const totalTonnes = (totalTakeoffKg() / 1000).toFixed(2);
+    const deliveryDesc = q.deliveryRows.length === 1 ? q.deliveryRows[0].label : q.deliveryRows.length + ' loads';
     toast(
-      `Auto-calc complete — ${totalTonnes}t · Fab ${fabHrs}h · Design ${draughtHrs}h · Struct ${structEngHrs}h`,
+      'Auto-calc complete - ' + totalTonnes.toFixed(2) + 't  Fab ' + fabHrs + 'h  Design ' + draughtHrs + 'h  ' + instDays + ' install days  ' + deliveryDesc,
       'success'
     );
   };
@@ -3816,14 +3881,13 @@ function executeFullQuoteAutomation(q, fresh) {
     run();
   } else {
     if (confirm(
-      'Takeoff already has entries. Re-run auto-calc?\n\n' +
-      'This will overwrite: fabrication hours, design hours, fab pack hours.\n' +
-      'Your labour rows, plant, rates and margins are NOT affected.'
-    )) {
-      run();
-    }
+      'Takeoff already has data. Re-run full auto-calc?\n\n' +
+      'Will overwrite: fab hours, design hours, install days, delivery rows, auto plant, auto prelims.\n\n' +
+      'Manual labour rows, rates and margin are NOT affected.'
+    )) { run(); }
   }
 }
+
 
 function importPlanswift() {
   const q = getQuote(); if (!q) return;
