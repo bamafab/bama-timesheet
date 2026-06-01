@@ -214,6 +214,8 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 .area-header-chevron { font-size:10px;color:var(--muted);transition:transform 0.15s; }
 .area-header.collapsed .area-header-chevron { transform:rotate(-90deg); }
 .area-header.unspecified { background:rgba(136,136,136,0.06); border-color:rgba(136,136,136,0.15); }
+.helper-tile { transition:border-color 0.15s; }
+.helper-tile:hover { border-color:var(--accent) !important; }
 .area-name-input { background:transparent;border:none;outline:none;color:var(--accent);font-size:12px;font-weight:600;font-family:var(--font-body);width:180px; }
 .area-name-input:focus { border-bottom:1px solid var(--accent); }
 
@@ -939,39 +941,89 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
         <!-- Briefing output -->
         <div id="helperOutput" style="display:none">
 
-          <!-- Summary card -->
-          <div class="card" id="helperSummaryCard" style="margin-bottom:12px;border-color:rgba(255,107,0,0.3)">
-            <div class="card-title" style="color:var(--accent)">📋 Summary</div>
-            <div id="helperSummaryText" style="font-size:13px;line-height:1.7;color:var(--text)"></div>
+          <!-- Action bar -->
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
+            <button class="btn btn-ghost btn-sm" onclick="helperDraftScope()" title="Send scope draft to Header tab comments">📝 Draft Scope → Header</button>
+            <button class="btn btn-ghost btn-sm" onclick="helperExportPDF()">📄 Export Briefing PDF</button>
+            <div style="margin-left:auto;font-size:11px;color:var(--subtle)" id="helperDocRef"></div>
           </div>
 
-          <!-- Pricing items -->
-          <div class="card" id="helperItemsCard" style="margin-bottom:12px">
-            <div class="card-title">💰 What Needs Pricing</div>
-            <div id="helperItemsList" style="font-size:13px;line-height:1.8;color:var(--text)"></div>
+          <!-- TILES grid -->
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;margin-bottom:12px" id="helperTileGrid">
+
+            <!-- Summary tile -->
+            <div class="card helper-tile" id="helperSummaryCard" style="border-color:rgba(255,107,0,0.3);cursor:pointer" onclick="toggleHelperTile('summary')">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <div class="card-title" style="color:var(--accent);margin:0">📋 Summary</div>
+                <span style="font-size:11px;color:var(--muted)">click to expand</span>
+              </div>
+              <div id="helperSummaryShort" style="font-size:13px;line-height:1.6;color:var(--text)"></div>
+              <div id="helperSummaryFull" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:13px;line-height:1.7;color:var(--text)"></div>
+            </div>
+
+            <!-- Pricing items tile -->
+            <div class="card helper-tile" id="helperItemsCard" style="cursor:pointer" onclick="toggleHelperTile('items')">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <div class="card-title" style="margin:0">💰 What Needs Pricing</div>
+                <span id="helperItemsCount" style="font-size:11px;color:var(--accent);font-weight:600"></span>
+              </div>
+              <div id="helperItemsShort" style="font-size:13px;line-height:1.7;color:var(--text)"></div>
+              <div id="helperItemsFull" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)"></div>
+            </div>
+
+            <!-- Risks tile -->
+            <div class="card helper-tile" id="helperRisksCard" style="border-color:rgba(255,68,68,0.2);cursor:pointer;display:none" onclick="toggleHelperTile('risks')">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <div class="card-title" style="color:var(--red);margin:0">⚠ Contract & Risks</div>
+                <span id="helperRisksCount" style="font-size:11px;color:var(--red);font-weight:600"></span>
+              </div>
+              <div id="helperRisksShort" style="font-size:13px;line-height:1.7;color:var(--text)"></div>
+              <div id="helperRisksFull" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)"></div>
+            </div>
+
+            <!-- Drawings tile -->
+            <div class="card helper-tile" id="helperDrawingsCard" style="border-color:rgba(255,179,71,0.2);cursor:pointer;display:none" onclick="toggleHelperTile('drawings')">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <div class="card-title" style="color:var(--accent2);margin:0">📐 Drawings to Check</div>
+                <span id="helperDrawingsCount" style="font-size:11px;color:var(--accent2);font-weight:600"></span>
+              </div>
+              <div id="helperDrawingsShort" style="font-size:13px;line-height:1.7;color:var(--text)"></div>
+              <div id="helperDrawingsFull" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)"></div>
+            </div>
+
+            <!-- Quote structure tile -->
+            <div class="card helper-tile" id="helperStructureCard" style="cursor:pointer" onclick="toggleHelperTile('structure')">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <div class="card-title" style="margin:0">🏗 Suggested Quote Structure</div>
+              </div>
+              <div id="helperStructureShort" style="font-size:13px;line-height:1.6;color:var(--text)"></div>
+              <div id="helperStructureFull" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:13px;line-height:1.7;color:var(--text)"></div>
+            </div>
+
+            <!-- Scope draft tile -->
+            <div class="card helper-tile" id="helperScopeCard" style="border-color:rgba(62,207,142,0.2);cursor:pointer" onclick="toggleHelperTile('scope')">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <div class="card-title" style="color:var(--green);margin:0">✍ Draft Scope Text</div>
+                <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();helperDraftScope()" style="font-size:11px;padding:3px 8px">→ Header</button>
+              </div>
+              <div id="helperScopeText" style="font-size:12px;line-height:1.7;color:var(--muted);font-style:italic;white-space:pre-wrap"></div>
+            </div>
+
+          </div><!-- end tile grid -->
+
+          <!-- T&Cs / Exclusions tile — full width -->
+          <div class="card helper-tile" id="helperTcCard" style="margin-bottom:12px;border-color:rgba(136,136,136,0.2);cursor:pointer" onclick="toggleHelperTile('tc')">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <div class="card-title" style="margin:0">📜 T&Cs, Exclusions & Commercial Notes</div>
+              <span style="font-size:11px;color:var(--muted)">click to expand</span>
+            </div>
+            <div id="helperTcShort" style="font-size:13px;line-height:1.6;color:var(--text)"></div>
+            <div id="helperTcFull" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:13px;line-height:1.7;color:var(--text)"></div>
           </div>
 
-          <!-- Contract / risk flags -->
-          <div class="card" id="helperRisksCard" style="margin-bottom:12px;border-color:rgba(255,68,68,0.2);display:none">
-            <div class="card-title" style="color:var(--red)">⚠ Contract & Risk Flags</div>
-            <div id="helperRisksList" style="font-size:13px;line-height:1.8;color:var(--text)"></div>
-          </div>
-
-          <!-- Drawings to check -->
-          <div class="card" id="helperDrawingsCard" style="margin-bottom:12px;border-color:rgba(255,179,71,0.2);display:none">
-            <div class="card-title" style="color:var(--accent2)">📐 Drawings & References to Check</div>
-            <div id="helperDrawingsList" style="font-size:13px;line-height:1.8;color:var(--text)"></div>
-          </div>
-
-          <!-- Quote structure suggestion -->
-          <div class="card" id="helperStructureCard" style="margin-bottom:12px">
-            <div class="card-title">🏗 Suggested Quote Structure</div>
-            <div id="helperStructureText" style="font-size:13px;line-height:1.8;color:var(--text)"></div>
-          </div>
-
-          <!-- Raw notes -->
+          <!-- Raw AI notes collapsed -->
           <details style="margin-top:8px">
-            <summary style="font-size:12px;color:var(--muted);cursor:pointer">Full AI notes</summary>
+            <summary style="font-size:12px;color:var(--muted);cursor:pointer;user-select:none">Full AI response (raw)</summary>
             <div id="helperRawText" style="font-size:12px;color:var(--muted);margin-top:8px;line-height:1.7;white-space:pre-wrap;background:var(--surface);padding:12px;border-radius:6px;border:1px solid var(--border)"></div>
           </details>
         </div>
@@ -2928,17 +2980,21 @@ Your job is to read tender documents, specifications, and drawing schedules and 
 
 BAMA's scope covers: structural steelwork frames, columns, beams, mezzanine floors, staircases, balustrades, handrails, cat ladders, platforms, purlins, steel doors, lintels, and general fabrication metalwork.
 
-Respond in a structured JSON format with these exact keys:
+Respond ONLY in valid JSON with these exact keys — no markdown, no preamble:
 {
-  "summary": "2-3 sentence plain English overview of the project and what BAMA's involvement likely is",
-  "pricing_items": ["array of specific items/elements that need to be priced, each as a clear sentence"],
-  "contract_risks": ["array of contract/risk flags — JCT/NEC type, liquidated damages, retention, programme constraints, design responsibility, payment terms, anything that affects pricing strategy. Empty array if none found."],
-  "drawings_to_check": ["array of specific drawing references, schedules, or documents mentioned that BAMA should obtain or check before pricing. Empty array if none."],
-  "quote_structure": "Recommendation on how to structure the quote — standard 9-bucket vs custom line items, whether to split by area/element, any items to price separately",
-  "notes": "Any other observations, exclusions to flag, or advice for the estimator"
+  "summary_short": "2 sentences max — project overview and BAMA's likely scope",
+  "summary_detail": "Full paragraph — project background, BAMA involvement, key facts worth knowing",
+  "pricing_items": [{"item": "short name", "detail": "full description of what needs pricing and how"}],
+  "contract_risks": [{"risk": "short headline", "detail": "full explanation of the risk and how it affects pricing"}],
+  "drawings_to_check": [{"ref": "drawing/doc reference or type", "reason": "why BAMA needs to check this"}],
+  "quote_structure_short": "1 sentence recommendation",
+  "quote_structure_detail": "Full recommendation — standard vs custom lines, areas, separate line items, anything to split out",
+  "scope_draft": "Draft scope text for the quote — as it would appear under Comments or Special Instructions on the client PDF. Write in BAMA's voice: 'Supply, delivery and carry out installation of...' Include finish, material grade, drawings referenced. Keep it professional and concise.",
+  "tc_notes": [{"heading": "short heading", "text": "full T&C / exclusion / commercial note text"}],
+  "exclusions": ["list of things explicitly excluded or that BAMA should exclude"]
 }
 
-Be direct and practical. Address Mateusz by name occasionally. Flag anything that could catch a steelwork contractor out.`;
+Be direct and practical. Address Mateusz by first name occasionally. Flag anything that could catch a steelwork contractor out — liquidated damages, design responsibility, payment terms, market volatility, programme risk, access restrictions, working hours, noise/vibration limits near live plant.`;
 
   const userPrompt = `${project}Our trade: ${trade}.${focus ? ` Pay particular attention to: ${focus}.` : ''}
 
@@ -2985,7 +3041,7 @@ Please read this tender document and give me a full pricing briefing for my trad
       parsed = JSON.parse(clean);
     } catch(e) {
       // Fallback: show raw text if JSON parse fails
-      parsed = { summary: raw, pricing_items: [], contract_risks: [], drawings_to_check: [], quote_structure: '', notes: '' };
+      parsed = { summary_short: 'Could not parse structured response — see full AI notes below.', summary_detail: raw, pricing_items: [], contract_risks: [], drawings_to_check: [], quote_structure_short: '', quote_structure_detail: '', scope_draft: '', tc_notes: [], exclusions: [] };
     }
 
     renderHelperOutput(parsed);
@@ -3002,56 +3058,192 @@ Please read this tender document and give me a full pricing briefing for my trad
 }
 
 function renderHelperOutput(data) {
-  // Summary
-  document.getElementById('helperSummaryText').innerHTML =
-    data.summary ? data.summary.replace(/\n/g,'<br>') : '—';
+  const br = s => (s||'').replace(/\n/g,'<br>');
+
+  // Summary tile
+  document.getElementById('helperSummaryShort').innerHTML = br(data.summary_short || data.summary || '—');
+  document.getElementById('helperSummaryFull').innerHTML  = br(data.summary_detail || '');
 
   // Pricing items
   const items = data.pricing_items || [];
-  document.getElementById('helperItemsList').innerHTML = items.length
-    ? items.map((item, i) => `
-        <div style="display:flex;gap:10px;padding:6px 0;border-bottom:1px solid var(--border);align-items:flex-start">
-          <span style="color:var(--accent);font-weight:700;font-size:13px;flex-shrink:0;min-width:20px">${i+1}.</span>
-          <span>${item}</span>
-        </div>`).join('')
-    : '<span style="color:var(--muted)">No specific items identified</span>';
+  document.getElementById('helperItemsCount').textContent = items.length ? items.length + ' items' : '';
+  document.getElementById('helperItemsShort').innerHTML = items.slice(0,3).map((it,i) =>
+    `<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--border);align-items:flex-start">
+      <span style="color:var(--accent);font-weight:700;font-size:12px;flex-shrink:0;min-width:18px">${i+1}.</span>
+      <span style="font-size:13px">${escHtml(it.item||it)}</span>
+    </div>`).join('') + (items.length > 3 ? `<div style="font-size:11px;color:var(--muted);margin-top:4px">+ ${items.length-3} more — click to expand</div>` : '');
+  document.getElementById('helperItemsFull').innerHTML = items.map((it,i) =>
+    `<div style="padding:8px 0;border-bottom:1px solid var(--border)">
+      <div style="display:flex;gap:8px;align-items:flex-start">
+        <span style="color:var(--accent);font-weight:700;font-size:12px;flex-shrink:0;min-width:18px">${i+1}.</span>
+        <div>
+          <div style="font-size:13px;font-weight:600;color:var(--text)">${escHtml(it.item||it)}</div>
+          ${it.detail ? `<div style="font-size:12px;color:var(--muted);margin-top:3px">${escHtml(it.detail)}</div>` : ''}
+        </div>
+      </div>
+    </div>`).join('');
 
-  // Contract risks
+  // Risks
   const risks = data.contract_risks || [];
   const risksCard = document.getElementById('helperRisksCard');
+  risksCard.style.display = risks.length ? '' : 'none';
   if (risks.length) {
-    risksCard.style.display = '';
-    document.getElementById('helperRisksList').innerHTML = risks.map(r =>
-      `<div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);align-items:flex-start">
-        <span style="color:var(--red);flex-shrink:0">⚠</span><span>${r}</span>
+    document.getElementById('helperRisksCount').textContent = risks.length + ' flag' + (risks.length>1?'s':'');
+    document.getElementById('helperRisksShort').innerHTML = risks.slice(0,2).map(r =>
+      `<div style="display:flex;gap:8px;padding:4px 0;align-items:flex-start">
+        <span style="color:var(--red);flex-shrink:0">⚠</span>
+        <span style="font-size:13px">${escHtml(r.risk||r)}</span>
+      </div>`).join('') + (risks.length > 2 ? `<div style="font-size:11px;color:var(--muted);margin-top:4px">+ ${risks.length-2} more — click to expand</div>` : '');
+    document.getElementById('helperRisksFull').innerHTML = risks.map(r =>
+      `<div style="padding:8px 0;border-bottom:1px solid var(--border)">
+        <div style="display:flex;gap:8px;align-items:flex-start">
+          <span style="color:var(--red);flex-shrink:0;font-size:14px">⚠</span>
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--red)">${escHtml(r.risk||r)}</div>
+            ${r.detail ? `<div style="font-size:12px;color:var(--muted);margin-top:3px">${escHtml(r.detail)}</div>` : ''}
+          </div>
+        </div>
       </div>`).join('');
-  } else {
-    risksCard.style.display = 'none';
   }
 
   // Drawings
   const drawings = data.drawings_to_check || [];
-  const drawingsCard = document.getElementById('helperDrawingsCard');
+  const drawCard = document.getElementById('helperDrawingsCard');
+  drawCard.style.display = drawings.length ? '' : 'none';
   if (drawings.length) {
-    drawingsCard.style.display = '';
-    document.getElementById('helperDrawingsList').innerHTML = drawings.map(d =>
-      `<div style="display:flex;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);align-items:flex-start">
-        <span style="color:var(--accent2);flex-shrink:0">📐</span><span>${d}</span>
+    document.getElementById('helperDrawingsCount').textContent = drawings.length + ' ref' + (drawings.length>1?'s':'');
+    document.getElementById('helperDrawingsShort').innerHTML = drawings.slice(0,3).map(d =>
+      `<div style="display:flex;gap:8px;padding:4px 0;align-items:flex-start">
+        <span style="color:var(--accent2);flex-shrink:0">📐</span>
+        <span style="font-size:13px">${escHtml(d.ref||d)}</span>
+      </div>`).join('') + (drawings.length > 3 ? `<div style="font-size:11px;color:var(--muted);margin-top:4px">+ ${drawings.length-3} more — click to expand</div>` : '');
+    document.getElementById('helperDrawingsFull').innerHTML = drawings.map(d =>
+      `<div style="padding:8px 0;border-bottom:1px solid var(--border)">
+        <div style="display:flex;gap:8px;align-items:flex-start">
+          <span style="color:var(--accent2);flex-shrink:0">📐</span>
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--text)">${escHtml(d.ref||d)}</div>
+            ${d.reason ? `<div style="font-size:12px;color:var(--muted);margin-top:3px">${escHtml(d.reason)}</div>` : ''}
+          </div>
+        </div>
       </div>`).join('');
-  } else {
-    drawingsCard.style.display = 'none';
   }
 
   // Quote structure
-  document.getElementById('helperStructureText').innerHTML =
-    data.quote_structure ? data.quote_structure.replace(/\n/g,'<br>') : '—';
-  if (data.notes) {
-    document.getElementById('helperStructureText').innerHTML +=
-      `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);color:var(--muted);font-size:12px">${data.notes.replace(/\n/g,'<br>')}</div>`;
+  document.getElementById('helperStructureShort').innerHTML = escHtml(data.quote_structure_short || data.quote_structure || '—');
+  document.getElementById('helperStructureFull').innerHTML  = br(data.quote_structure_detail || '');
+
+  // Scope draft
+  document.getElementById('helperScopeText').textContent = data.scope_draft || '';
+
+  // T&Cs / exclusions
+  const tcs  = data.tc_notes || [];
+  const excs = data.exclusions || [];
+  document.getElementById('helperTcShort').innerHTML = tcs.length
+    ? tcs.slice(0,1).map(t => `<div style="font-size:13px"><strong>${escHtml(t.heading||'')}</strong> — ${escHtml(t.text||'').substring(0,120)}${(t.text||'').length>120?'…':''}</div>`).join('') + (tcs.length>1?`<div style="font-size:11px;color:var(--muted);margin-top:4px">+ ${tcs.length-1} more — click to expand</div>`:'')
+    : '<span style="color:var(--muted);font-size:13px">No specific T&C flags</span>';
+  let tcFull = tcs.map(t =>
+    `<div style="padding:8px 0;border-bottom:1px solid var(--border)">
+      <div style="font-size:13px;font-weight:600;color:var(--text)">${escHtml(t.heading||'')}</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:3px">${escHtml(t.text||'')}</div>
+    </div>`).join('');
+  if (excs.length) {
+    tcFull += `<div style="margin-top:10px"><div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px">EXCLUSIONS</div>`
+      + excs.map(e => `<div style="display:flex;gap:8px;padding:3px 0;font-size:12px;color:var(--muted)"><span>✗</span><span>${escHtml(e)}</span></div>`).join('') + '</div>';
   }
+  document.getElementById('helperTcFull').innerHTML = tcFull;
+
+  // Doc ref in action bar
+  const q = getQuote();
+  document.getElementById('helperDocRef').textContent = _helperFiles.map(f=>f.name).join(' · ');
+
+  // Store scope draft on the quote for "→ Header" button
+  if (q) q._helperScopeDraft = data.scope_draft || '';
 
   document.getElementById('helperOutput').style.display = '';
   document.getElementById('helperOutput').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function toggleHelperTile(name) {
+  const shorts = { summary:'helperSummaryFull', items:'helperItemsFull', risks:'helperRisksFull', drawings:'helperDrawingsFull', structure:'helperStructureFull', tc:'helperTcFull', scope:null };
+  const fullId = shorts[name];
+  if (!fullId) return;
+  const el = document.getElementById(fullId);
+  if (!el) return;
+  const open = el.style.display !== 'none';
+  el.style.display = open ? 'none' : '';
+  // update hint text on summary/structure/tc
+  const hints = { summary:'helperSummaryCard', tc:'helperTcCard', structure:'helperStructureCard' };
+  if (hints[name]) {
+    const card = document.getElementById(hints[name]);
+    const hint = card?.querySelector('span:last-child');
+    if (hint && ['click to expand','click to collapse'].includes(hint.textContent)) {
+      hint.textContent = open ? 'click to expand' : 'click to collapse';
+    }
+  }
+}
+
+function helperDraftScope() {
+  const q = getQuote(); if (!q) return;
+  const draft = q._helperScopeDraft || document.getElementById('helperScopeText')?.textContent || '';
+  if (!draft) { toast('No scope draft yet — run analysis first', 'error'); return; }
+  // Switch to header tab and fill comments
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  const headerBtn = document.querySelector('.tab-btn[onclick*="header"]');
+  if (headerBtn) headerBtn.classList.add('active');
+  document.getElementById('tab-header').classList.add('active');
+  document.getElementById('hComments').value = draft;
+  autosave();
+  toast('Scope draft sent to Header comments ✓', 'success');
+}
+
+function helperExportPDF() {
+  const q = getQuote();
+  const items   = document.getElementById('helperItemsFull')?.innerHTML || '';
+  const risks   = document.getElementById('helperRisksFull')?.innerHTML || '';
+  const drawings= document.getElementById('helperDrawingsFull')?.innerHTML || '';
+  const struct  = document.getElementById('helperStructureFull')?.innerHTML || document.getElementById('helperStructureShort')?.innerHTML || '';
+  const scope   = document.getElementById('helperScopeText')?.textContent || '';
+  const tc      = document.getElementById('helperTcFull')?.innerHTML || '';
+  const summary = document.getElementById('helperSummaryFull')?.innerHTML || document.getElementById('helperSummaryShort')?.innerHTML || '';
+  const docRef  = _helperFiles.map(f=>f.name).join(', ');
+  const project = q?.company ? q.company + (q.ref ? ' · ' + q.ref : '') : 'Quote Analysis';
+
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+  <title>Quote Helper Briefing — ${escHtml(project)}</title>
+  <style>
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { font-family:Arial,sans-serif; font-size:12px; color:#111; padding:16mm 16mm 12mm; }
+    h1 { font-size:20px; font-weight:900; color:#D0021B; margin-bottom:4px; }
+    .sub { font-size:11px; color:#888; margin-bottom:20px; }
+    h2 { font-size:13px; font-weight:700; margin:18px 0 8px; padding-bottom:4px; border-bottom:2px solid #D0021B; color:#111; }
+    h2.risk { border-bottom-color:#cc0000; color:#cc0000; }
+    h2.draw { border-bottom-color:#f9a800; color:#b37a00; }
+    h2.green { border-bottom-color:#3ecf8e; color:#2a9e6a; }
+    h2.grey  { border-bottom-color:#888; color:#555; }
+    .section { margin-bottom:14px; font-size:12px; line-height:1.6; }
+    .scope-box { background:#f9f9f9; border-left:3px solid #D0021B; padding:10px 14px; font-style:italic; line-height:1.7; white-space:pre-wrap; }
+    .no-print { display:none; }
+    @media print { body { padding:10mm 12mm; } .no-print { display:none !important; } }
+  </style></head><body>
+  <div class="no-print" style="text-align:right;margin-bottom:12px">
+    <button onclick="window.print()" style="background:#D0021B;color:#fff;border:none;padding:8px 20px;border-radius:4px;font-size:13px;cursor:pointer;font-weight:600">🖨 Print / Save PDF</button>
+  </div>
+  <h1>Quote Helper Briefing</h1>
+  <div class="sub">${escHtml(project)} · Documents: ${escHtml(docRef)} · ${new Date().toLocaleDateString('en-GB')}</div>
+  ${summary ? `<h2>Summary</h2><div class="section">${summary}</div>` : ''}
+  ${items   ? `<h2>What Needs Pricing</h2><div class="section">${items}</div>` : ''}
+  ${risks   ? `<h2 class="risk">⚠ Contract & Risk Flags</h2><div class="section">${risks}</div>` : ''}
+  ${drawings? `<h2 class="draw">📐 Drawings & References to Check</h2><div class="section">${drawings}</div>` : ''}
+  ${struct  ? `<h2>Suggested Quote Structure</h2><div class="section">${struct}</div>` : ''}
+  ${scope   ? `<h2 class="green">Draft Scope Text</h2><div class="section scope-box">${escHtml(scope)}</div>` : ''}
+  ${tc      ? `<h2 class="grey">T&Cs, Exclusions & Commercial Notes</h2><div class="section">${tc}</div>` : ''}
+  </body></html>`;
+
+  const win = window.open('', '_blank', 'width=900,height:1100');
+  win.document.write(html);
+  win.document.close();
 }
 
 function clearHelper() {
