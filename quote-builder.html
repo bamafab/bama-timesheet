@@ -557,7 +557,24 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
                   style="background:rgba(255,255,255,0.04);border:none;border-bottom:1px solid var(--border);border-radius:0;padding:4px 2px;color:var(--muted);font-size:11px;width:100%;font-style:italic"
                   oninput="saveBlockNote('installation',this.value)">
               </div>
-                <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Days on site: <input type="number" class="cost-input" id="inst-days" style="width:60px;display:inline-block" value="0" oninput="renderLabourRows();recalcAll()"> &nbsp; No. of operatives: <input type="number" class="cost-input" id="inst-operatives" style="width:50px;display:inline-block" value="2" oninput="recalcAll()"></div>
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;padding:8px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
+                  <div style="display:flex;align-items:center;gap:6px">
+                    <span style="font-size:11px;color:var(--muted)">Days on site:</span>
+                    <input type="number" class="cost-input" id="inst-days" style="width:60px" value="0" oninput="renderLabourRows();recalcAll()">
+                  </div>
+                  <div style="display:flex;align-items:center;gap:6px">
+                    <span style="font-size:11px;color:var(--muted)">Operatives:</span>
+                    <input type="number" class="cost-input" id="inst-operatives" style="width:50px" value="2" oninput="recalcAll()">
+                  </div>
+                  <div style="display:flex;align-items:center;gap:6px;margin-left:auto">
+                    <span style="font-size:11px;color:var(--muted)">Global days</span>
+                    <label class="toggle" title="ON = same days for all; OFF = set days per role">
+                      <input type="checkbox" id="globalDaysToggle" checked onchange="renderLabourRows();recalcAll()">
+                      <span class="toggle-slider"></span>
+                    </label>
+                    <span style="font-size:10px;color:var(--subtle)" id="globalDaysLabel">all roles same days</span>
+                  </div>
+                </div>
                 <div id="labourRows"></div>
                 <div class="cost-add-row">
                   <select id="labourTypeSelect">
@@ -1692,7 +1709,7 @@ function newQuote() {
     fittingsPct: 10, fittingsRate: 1.30, miscMaterial: 0, miscMaterialNote: '',
     materialLinks: [],
     // calcs
-    instDays: 0, instOperatives: 2,
+    instDays: 0, instOperatives: 2, globalDays: true,
     labourRows: [], plantRows: [], paintRows: [], deliveryRows: [], prelimRows: [], consumableRows: [], surveyVisitRows: [],
     fabHours: 0, fabRate: 45, fabpackHours: 0, fabpackRate: 50,
     structEngHours: 0, structEngRate: 90, architectHours: 0, architectRate: 90, designHours: 0, designRate: 50,
@@ -1762,6 +1779,7 @@ function saveCurrentQuote() {
   // save calcs fields
   q.instDays       = parseFloat(document.getElementById('inst-days')?.value) || 0;
   q.instOperatives = parseFloat(document.getElementById('inst-operatives')?.value) || 2;
+  q.globalDays     = document.getElementById('globalDaysToggle')?.checked !== false;
   q.fabHours       = parseFloat(document.getElementById('fab-hours')?.value) || 0;
   q.fabRate        = parseFloat(document.getElementById('fab-rate')?.value) || 45;
   q.designHours    = parseFloat(document.getElementById('design-hours')?.value) || 0;
@@ -1931,6 +1949,7 @@ function loadQuoteEditor() {
   // calcs
   document.getElementById('inst-days').value       = q.instDays || 0;
   document.getElementById('inst-operatives').value  = q.instOperatives || 2;
+  const gtEl = document.getElementById('globalDaysToggle'); if(gtEl) gtEl.checked = q.globalDays !== false;
   document.getElementById('fab-hours').value          = q.fabHours || 0;
   document.getElementById('fab-rate').value           = q.fabRate || 45;
   document.getElementById('fabpack-hours').value      = q.fabpackHours || 0;
@@ -2551,42 +2570,84 @@ function addLabourRow() {
   const q = getQuote(); if (!q) return;
   const type = document.getElementById('labourTypeSelect').value;
   if (!type) return;
+
+  // Check operative count limit
+  const maxOps   = parseFloat(document.getElementById('inst-operatives')?.value) || 0;
+  const usedOps  = (q.labourRows||[]).reduce((s,r) => {
+    return s + (parseFloat(document.getElementById('qty-'+r.id)?.value) || r.qty || 1);
+  }, 0);
+
+  if (maxOps > 0 && usedOps >= maxOps) {
+    const proceed = confirm(
+      `You have ${maxOps} operative${maxOps!==1?'s':''} set but ${usedOps} already allocated.\n\n` +
+      `Increase the operatives count first, or click OK to add anyway.`
+    );
+    if (!proceed) {
+      document.getElementById('labourTypeSelect').value = '';
+      return;
+    }
+  }
+
   const def = rates.labour[type] || { label: type, rate: 0 };
-  const id = 'labour_'+Date.now();
+  const id  = 'labour_'+Date.now();
   q.labourRows = q.labourRows || [];
-  q.labourRows.push({ id, type, label: def.label, qty: 1, rate: def.rate });
+  q.labourRows.push({ id, type, label: def.label, qty: 1, rate: def.rate, days: null });
   saveAll(); renderLabourRows(); recalcAll();
 }
 
 function renderLabourRows() {
   const q = getQuote(); if (!q) return;
   const cont = document.getElementById('labourRows');
-  const days = parseFloat(document.getElementById('inst-days')?.value) || 0;
-  cont.innerHTML = (q.labourRows||[]).map(r => `
-    <div class="cost-row cost-row-4" id="dynrow-${r.id}">
-      <span class="cost-label">${r.label}
-        <span style="font-size:10px;color:var(--subtle);margin-left:4px">× ${days} days</span>
-      </span>
-      <div style="display:flex;align-items:center;gap:4px">
+  const globalDays  = parseFloat(document.getElementById('inst-days')?.value) || 0;
+  const isGlobal    = document.getElementById('globalDaysToggle')?.checked !== false;
+  const labelEl     = document.getElementById('globalDaysLabel');
+  if (labelEl) labelEl.textContent = isGlobal ? 'all roles same days' : 'days set per role';
+
+  cont.innerHTML = (q.labourRows||[]).map(r => {
+    const rowDays = isGlobal ? globalDays : (r.days ?? globalDays);
+    return `<div class="cost-row cost-row-4" id="dynrow-${r.id}" style="margin-bottom:2px">
+      <span class="cost-label" style="font-size:12px">${r.label}</span>
+      <div style="display:flex;align-items:center;gap:3px">
         <span style="font-size:10px;color:var(--muted)">No.</span>
-        <input type="number" class="cost-input" id="qty-${r.id}" value="${r.qty||1}" min="1" oninput="recalcAll()" style="width:48px" title="Number of this role">
+        <input type="number" class="cost-input" id="qty-${r.id}" value="${r.qty||1}" min="1"
+          oninput="recalcAll()" style="width:44px" title="Number of this role">
       </div>
+      ${isGlobal
+        ? `<div style="display:flex;align-items:center;gap:3px">
+            <span style="font-size:10px;color:var(--muted)">days</span>
+            <div style="font-family:var(--font-mono);font-size:12px;color:var(--muted);padding:5px 6px;background:rgba(255,255,255,0.03);border-radius:4px;min-width:40px;text-align:right">${rowDays}</div>
+           </div>`
+        : `<div style="display:flex;align-items:center;gap:3px">
+            <span style="font-size:10px;color:var(--muted)">days</span>
+            <input type="number" class="cost-input" id="days-${r.id}" value="${r.days ?? globalDays}" min="0"
+              oninput="updateLabourDays('${r.id}',this.value);recalcAll()" style="width:52px" title="Days for this role">
+           </div>`
+      }
       <input type="number" class="cost-input" id="rate-${r.id}" value="${r.rate}" placeholder="£/day" oninput="recalcAll()">
       <div style="display:flex;gap:4px;align-items:center">
         <div class="cost-result" id="res-${r.id}">£0.00</div>
         <button class="btn-icon" onclick="removeDynRow('${r.id}')" style="flex-shrink:0;height:28px">✕</button>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
+}
+
+function updateLabourDays(id, val) {
+  const q = getQuote(); if (!q) return;
+  const r = (q.labourRows||[]).find(r=>r.id===id);
+  if (r) { r.days = parseFloat(val)||0; saveAll(); }
 }
 
 function sumLabour() {
   const q = getQuote(); if (!q) return 0;
-  const days = parseFloat(document.getElementById('inst-days')?.value) || 0;
+  const globalDays = parseFloat(document.getElementById('inst-days')?.value) || 0;
+  const isGlobal   = document.getElementById('globalDaysToggle')?.checked !== false;
   return (q.labourRows||[]).reduce((s,r) => {
-    const qty = parseFloat(document.getElementById('qty-'+r.id)?.value) || r.qty || 0;
+    const qty  = parseFloat(document.getElementById('qty-'+r.id)?.value)  || r.qty  || 0;
     const rate = parseFloat(document.getElementById('rate-'+r.id)?.value) || r.rate || 0;
-    const sub = qty * rate * days;
-    const el = document.getElementById('res-'+r.id);
+    const days = isGlobal ? globalDays : (parseFloat(document.getElementById('days-'+r.id)?.value) ?? r.days ?? globalDays);
+    const sub  = qty * rate * days;
+    const el   = document.getElementById('res-'+r.id);
     if (el) el.textContent = '£'+sub.toFixed(2);
     return s + sub;
   }, 0);
