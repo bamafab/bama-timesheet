@@ -213,6 +213,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 .area-header-stats { font-size:11px;color:var(--muted);font-family:var(--font-mono); }
 .area-header-chevron { font-size:10px;color:var(--muted);transition:transform 0.15s; }
 .area-header.collapsed .area-header-chevron { transform:rotate(-90deg); }
+.area-header.unspecified { background:rgba(136,136,136,0.06); border-color:rgba(136,136,136,0.15); }
 .area-name-input { background:transparent;border:none;outline:none;color:var(--accent);font-size:12px;font-weight:600;font-family:var(--font-body);width:180px; }
 .area-name-input:focus { border-bottom:1px solid var(--accent); }
 
@@ -396,9 +397,12 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
             <button class="btn btn-ghost btn-sm" onclick="selectAllTakeoff()">Select all</button>
             <button class="btn btn-ghost btn-sm" onclick="deselectAllTakeoff()">Deselect all</button>
             <button class="btn btn-ghost btn-sm" onclick="invertTakeoffSelection()">Invert</button>
-            <select id="moveToAreaSelect" onchange="moveSelectedToArea(this.value)" style="background:var(--card);border:1px solid var(--border);border-radius:5px;padding:4px 8px;color:var(--text);font-size:12px">
+            <button class="btn btn-ghost btn-sm" onclick="selectByType()" title="Select all rows of same section type">Same type</button>
+            <select id="moveToAreaSelect" style="background:var(--card);border:1px solid var(--border);border-radius:5px;padding:4px 8px;color:var(--text);font-size:12px">
               <option value="">Move to area...</option>
+              <option value="__new__">＋ New area...</option>
             </select>
+            <button class="btn btn-ghost btn-sm" onclick="triggerMoveToArea()">Move</button>
             <button class="btn btn-ghost btn-sm" onclick="deleteSelectedTakeoffRows()" style="color:var(--red);border-color:var(--red);margin-left:auto">🗑 Delete selected</button>
           </div>
 
@@ -1420,32 +1424,39 @@ function renderTakeoff() {
   const body = document.getElementById('takeoffBody');
   const areas = q.areas || [];
 
-  // Collect all area IDs used in rows, plus any registered area definitions
-  const usedAreaIds = [...new Set((q.takeoff||[]).map(r => r.area||''))];
-  areas.forEach(a => { if (!usedAreaIds.includes(a.id)) usedAreaIds.push(a.id); });
+  // Named areas first (in defined order), then unspecified ('')
+  const namedIds = areas.map(a => a.id);
+  const usedAreaIds = [
+    ...namedIds,
+    ...([...new Set((q.takeoff||[]).map(r => r.area||''))].filter(id => !namedIds.includes(id)))
+  ];
 
   let html = '';
 
   usedAreaIds.forEach(areaId => {
     const areaDef   = areas.find(a => a.id === areaId);
-    const areaName  = areaDef?.name || areaId || '';
-    const collapsed = areaDef?.collapsed || false;
+    const areaName  = areaDef?.name || (areaId ? areaId : 'Unspecified');
+    const collapsed = areaId === '' ? (q._unspecCollapsed || false) : (areaDef?.collapsed || false);
     const rows      = (q.takeoff||[]).map((r,i) => ({r,i})).filter(({r}) => (r.area||'') === areaId);
 
-    if (areaId) {
+    {
       const areaKg   = rows.reduce((s,{r}) => s + (r.length/1000)*(r.kgm||0)*(r.qty||1), 0);
       const areaCost = rows.reduce((s,{r}) => s + (r.length/1000)*(r.kgm||0)*(r.qty||1)*(r.rate||0), 0);
-      html += `<tr data-area-hdr="${escHtml(areaId)}">
+      const isUnspec = !areaId;
+      html += `<tr data-area-hdr="${escHtml(areaId||'__unspec__')}">
         <td colspan="9" style="padding:2px 0">
-          <div class="area-header ${collapsed?'collapsed':''}" onclick="toggleArea('${areaId}')">
+          <div class="area-header ${collapsed?'collapsed':''} ${isUnspec?'unspecified':''}" onclick="toggleArea('${areaId}')">
             <span class="area-header-chevron">▾</span>
-            <input class="area-name-input" value="${escHtml(areaName)}"
-              onclick="event.stopPropagation()"
-              onchange="renameArea('${areaId}',this.value)"
-              onblur="renameArea('${areaId}',this.value)">
+            ${isUnspec
+              ? `<span class="area-header-name" style="color:var(--muted);font-style:italic">Unspecified</span>`
+              : `<input class="area-name-input" value="${escHtml(areaName)}"
+                  onclick="event.stopPropagation()"
+                  onchange="renameArea('${areaId}',this.value)"
+                  onblur="renameArea('${areaId}',this.value)">`
+            }
             <span class="area-header-stats">${rows.length} rows · ${areaKg.toFixed(1)} kg · £${areaCost.toFixed(2)}</span>
-            <button onclick="event.stopPropagation();deleteArea('${areaId}')"
-              style="background:transparent;border:none;color:var(--subtle);cursor:pointer;font-size:12px;padding:0 4px" title="Delete area (rows kept, moved to ungrouped)">✕</button>
+            ${!isUnspec ? `<button onclick="event.stopPropagation();deleteArea('${areaId}')"
+              style="background:transparent;border:none;color:var(--subtle);cursor:pointer;font-size:12px;padding:0 4px" title="Delete area">✕</button>` : ''}
           </div>
         </td>
       </tr>`;
@@ -1488,16 +1499,8 @@ function takeoffRowHTML(row, i) {
       <select onchange="updateTakeoffRow(${i},'area',this.value)"
         style="background:transparent;border:1px solid transparent;border-radius:4px;padding:3px 4px;color:var(--muted);font-size:11px;width:100%;cursor:pointer"
         onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='transparent'">
-        <option value="" ${!row.area?'selected':''}>—</option>
+        <option value="" ${!row.area?'selected':''}>Unspecified</option>
         ${(getQuote()?.areas||[]).map(a=>`<option value="${a.id}" ${row.area===a.id?'selected':''}>${escHtml(a.name)}</option>`).join('')}
-      </select>
-    </td>
-    <td style="padding:3px 4px">
-      <select onchange="updateTakeoffRow(${i},'area',this.value)"
-        style="background:transparent;border:1px solid transparent;border-radius:4px;padding:3px 4px;color:var(--muted);font-size:11px;width:100%;cursor:pointer"
-        onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='transparent'">
-        <option value="" ${!row.area?'selected':''}>—</option>
-        ${(getQuote()?.areas||[]).map(a=>`<option value="${escHtml(a.id)}" ${row.area===a.id?'selected':''}>${escHtml(a.name)}</option>`).join('')}
       </select>
     </td>
     <td style="${nc}"><input type="number" value="${kgm||''}" placeholder="auto" oninput="updateTakeoffRow(${i},'kgm',this.value)" style="${ni};color:${row.kgm?'var(--text)':'var(--subtle)'}"></td>
@@ -1630,6 +1633,11 @@ function renameArea(id, name) {
 
 function toggleArea(id) {
   const q = getQuote(); if (!q) return;
+  if (id === '') {
+    // unspecified area collapse stored on quote itself
+    q._unspecCollapsed = !q._unspecCollapsed;
+    saveAll(); renderTakeoff(); return;
+  }
   const a = (q.areas||[]).find(a => a.id === id);
   if (a) { a.collapsed = !a.collapsed; saveAll(); renderTakeoff(); }
 }
@@ -1652,6 +1660,37 @@ function updateMoveToAreaOptions() {
   const psOpts = '<option value="">Use areas from file (Notes column)</option>' + areas.map(a => `<option value="${a.id}">${escHtml(a.name)}</option>`).join('');
   if (sel1) sel1.innerHTML = opts;
   if (sel2) sel2.innerHTML = psOpts;
+}
+
+function triggerMoveToArea() {
+  const sel = document.getElementById('moveToAreaSelect');
+  let areaId = sel.value;
+  if (!areaId) { toast('Pick an area first', 'error'); return; }
+  if (areaId === '__new__') {
+    const name = prompt('New area name:');
+    if (!name?.trim()) { sel.value = ''; return; }
+    const q = getQuote(); if (!q) return;
+    q.areas = q.areas || [];
+    areaId = 'area_' + Date.now();
+    q.areas.push({ id: areaId, name: name.trim(), collapsed: false });
+    saveAll(); updateMoveToAreaOptions();
+  }
+  sel.value = '';
+  moveSelectedToArea(areaId);
+}
+
+function selectByType() {
+  // Get the types of currently checked rows, then select ALL rows with those types
+  const checked = [...document.querySelectorAll('.takeoff-cb:checked')];
+  if (!checked.length) { toast('Check at least one row first', 'error'); return; }
+  const q = getQuote(); if (!q) return;
+  const types = new Set(checked.map(cb => q.takeoff[parseInt(cb.dataset.idx)]?.type || '').filter(Boolean));
+  document.querySelectorAll('.takeoff-cb').forEach(cb => {
+    const rowType = q.takeoff[parseInt(cb.dataset.idx)]?.type || '';
+    if (types.has(rowType)) cb.checked = true;
+  });
+  onTakeoffCheck();
+  toast(`Selected all rows matching: ${[...types].join(', ')}`);
 }
 
 // pending split move state
