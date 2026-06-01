@@ -251,6 +251,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
   <div class="logo"><span>BAMA</span> QUOTE BUILDER <span style="font-size:11px;color:var(--subtle);margin-left:8px;font-family:var(--font-mono)">OFFLINE</span></div>
   <div class="topbar-right">
     <button class="btn btn-ghost btn-sm" onclick="openLogoUpload()" title="Upload logo for PDF">🖼 Logo</button>
+    <button class="btn btn-ghost btn-sm" onclick="openEmailModal()" id="emailBtn" title="Email quote to client">✉ Send</button>
     <button class="btn btn-ghost btn-sm" onclick="openSettings()">⚙ Rates</button>
     <button class="btn btn-ghost btn-sm" onclick="exportAllData()">↓ Export</button>
     <div style="position:relative;display:inline-block" id="pdfMenuWrap">
@@ -1134,6 +1135,42 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeSplitModal()">Cancel</button>
       <button class="btn btn-primary" onclick="confirmSplitMove()">Move</button>
+    </div>
+  </div>
+</div>
+
+<!-- EMAIL MODAL -->
+<div class="modal-overlay" id="emailModal">
+  <div class="modal" style="max-width:540px">
+    <div class="modal-title">✉ Send Quote by Email</div>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:16px;line-height:1.6">
+      Sends from your Microsoft account. The quote PDF is described in the email body — attach the PDF manually from the Print/Save PDF window if needed.
+    </p>
+    <div class="form-grid" style="gap:10px">
+      <div class="field">
+        <label>To</label>
+        <input type="email" id="emailTo" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%" placeholder="client@example.com">
+      </div>
+      <div class="field">
+        <label>CC (optional)</label>
+        <input type="text" id="emailCc" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%" placeholder="cc@example.com, another@example.com">
+      </div>
+      <div class="field">
+        <label>Subject</label>
+        <input type="text" id="emailSubject" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%">
+      </div>
+      <div class="field">
+        <label>Message</label>
+        <textarea id="emailBody" rows="8" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%;resize:vertical;font-family:var(--font-body)"></textarea>
+      </div>
+      <div class="info-box" style="font-size:11px">
+        💡 Tip — after sending, use <strong>📄 PDF → Quote</strong> to open the quote PDF, then save and attach it to the email in Outlook.
+      </div>
+    </div>
+    <div id="emailStatus" style="margin-top:10px;font-size:12px;min-height:18px"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeEmailModal()">Cancel</button>
+      <button class="btn btn-primary" id="emailSendBtn" onclick="sendQuoteEmail()">✉ Send Email</button>
     </div>
   </div>
 </div>
@@ -3005,6 +3042,136 @@ function checkRalVisibility() {
   const hasPpc = (q.paintRows || []).some(r => r.type === 'powder_coat_m' || r.type === 'powder_coat_bay');
   const ral = document.getElementById('ralSection');
   if (ral) ral.style.display = hasPpc ? '' : 'none';
+}
+
+// ============================================================
+// EMAIL — SEND QUOTE
+// ============================================================
+function openEmailModal() {
+  const q = getQuote(); if (!q) return;
+  const revStr = q.revision ? ' ' + q.revision : '';
+  const total  = q._computed?.total || 0;
+
+  document.getElementById('emailTo').value      = q.email || '';
+  document.getElementById('emailCc').value      = '';
+  document.getElementById('emailSubject').value = `Quotation ${q.ref}${revStr} — ${q.company || 'BAMA Fabrication'}`;
+  document.getElementById('emailBody').value    = buildEmailBody(q, total, revStr);
+  document.getElementById('emailStatus').textContent = '';
+  document.getElementById('emailStatus').style.color = 'var(--muted)';
+  document.getElementById('emailSendBtn').disabled   = false;
+  document.getElementById('emailSendBtn').textContent = '✉ Send Email';
+  document.getElementById('emailModal').classList.add('active');
+}
+
+function closeEmailModal() {
+  document.getElementById('emailModal').classList.remove('active');
+}
+
+function buildEmailBody(q, total, revStr) {
+  const scope = q.qScope || q.comments || '';
+  const lines = [];
+  lines.push(`Dear ${q.contact || 'Sir/Madam'},`);
+  lines.push('');
+  lines.push(`Please find attached our quotation ${q.ref}${revStr} for the above project.`);
+  if (scope) { lines.push(''); lines.push(scope); }
+  lines.push('');
+  if (total > 0) lines.push(`Total (excl. VAT): £${total.toLocaleString('en-GB', {minimumFractionDigits:2, maximumFractionDigits:2})}`);
+  lines.push(`Valid until: ${q.validUntil ? new Date(q.validUntil+'T12:00:00').toLocaleDateString('en-GB',{day:'2-digit',month:'long',year:'numeric'}) : '14 days from date of issue'}`);
+  lines.push('');
+  lines.push('All prices are exclusive of VAT. Please do not hesitate to contact us should you require any clarification or wish to discuss the proposal further.');
+  lines.push('');
+  lines.push('Kind regards,');
+  lines.push(q.preparedBy || 'Mateusz Braczyk');
+  lines.push('BAMA Fabrication Ltd');
+  lines.push('11 Enterprise Way, Enterprise Park, Yaxley, PE7 3WY');
+  lines.push('T: 01733 855212 | E: info@bamafabrication.co.uk');
+  return lines.join('\n');
+}
+
+async function sendQuoteEmail() {
+  const q   = getQuote(); if (!q) return;
+  const to  = document.getElementById('emailTo').value.trim();
+  const cc  = document.getElementById('emailCc').value.trim();
+  const sub = document.getElementById('emailSubject').value.trim();
+  const msg = document.getElementById('emailBody').value.trim();
+  const btn = document.getElementById('emailSendBtn');
+  const sts = document.getElementById('emailStatus');
+
+  if (!to)  { sts.textContent = '⚠ Recipient email required'; sts.style.color = 'var(--red)'; return; }
+  if (!sub) { sts.textContent = '⚠ Subject required'; sts.style.color = 'var(--red)'; return; }
+
+  // Get Graph token from sessionStorage (same origin as main ERP)
+  const token = sessionStorage.getItem('bama_token');
+  if (!token) {
+    sts.textContent = '⚠ Not logged in — open the main ERP first to authenticate, then return here.';
+    sts.style.color = 'var(--red)';
+    return;
+  }
+
+  btn.disabled = true;
+  sts.style.color = 'var(--muted)';
+  sts.textContent = 'Sending...';
+
+  // Build HTML version of email body
+  const htmlBody = msg
+    .split('\n')
+    .map(l => l.trim() === '' ? '<br>' : `<p style="margin:0 0 4px;font-family:Arial,sans-serif;font-size:13px;color:#111">${escHtml(l)}</p>`)
+    .join('');
+
+  const toRecipients = [{ emailAddress: { address: to } }];
+  const ccRecipients = cc
+    ? cc.split(',').map(a => ({ emailAddress: { address: a.trim() } })).filter(r => r.emailAddress.address)
+    : [];
+
+  const emailPayload = {
+    message: {
+      subject: sub,
+      body: {
+        contentType: 'HTML',
+        content: `
+          <div style="max-width:600px;font-family:Arial,sans-serif">
+            <div style="border-bottom:3px solid #D0021B;padding-bottom:12px;margin-bottom:20px">
+              <img src="https://proud-dune-0dee63110.2.azurestaticapps.net/bama-logo.png"
+                style="height:40px" onerror="this.style.display='none'">
+            </div>
+            ${htmlBody}
+            <div style="margin-top:24px;padding-top:12px;border-top:1px solid #eee;font-size:11px;color:#888">
+              BAMA Fabrication Ltd · 11 Enterprise Way, Enterprise Park, Yaxley, PE7 3WY · 01733 855212
+            </div>
+          </div>`
+      },
+      toRecipients,
+      ccRecipients: ccRecipients.length ? ccRecipients : undefined
+    },
+    saveToSentItems: true
+  };
+
+  try {
+    const res = await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(emailPayload)
+    });
+
+    if (res.status === 202 || res.status === 200) {
+      sts.style.color = 'var(--green)';
+      sts.textContent = '✓ Email sent successfully — saved to Sent Items';
+      btn.textContent = '✓ Sent';
+      // Mark quote as sent
+      q.status = 'sent';
+      renderStatusBadge(q);
+      document.getElementById('statusSelect').value = 'sent';
+      saveAll(); renderSidebar();
+      setTimeout(() => closeEmailModal(), 2500);
+    } else {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error?.message || `HTTP ${res.status}`);
+    }
+  } catch(err) {
+    sts.style.color = 'var(--red)';
+    sts.textContent = '❌ ' + err.message;
+    btn.disabled = false;
+  }
 }
 
 // ============================================================
