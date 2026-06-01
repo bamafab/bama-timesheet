@@ -961,7 +961,9 @@ const STEEL_KGM = {};
 
 function lookupKgM(type) {
   if (!type) return null;
-  const clean = type.trim().toUpperCase().replace(/\s+/g,'').replace(/[*×]/g,'x');
+  // normalise first (handles PFC stripping, * → x etc.)
+  const normalised = normaliseSectionName(type);
+  const clean = normalised.replace(/\s+/g,'');
   if (STEEL_KGM[clean]) return STEEL_KGM[clean];
   // try without prefix
   for (const [k,v] of Object.entries(STEEL_KGM)) {
@@ -1403,10 +1405,10 @@ function updateTakeoffRow(i, field, val) {
   const q = getQuote(); if (!q) return;
   const row = q.takeoff[i];
   if (field === 'type') {
-    row.type = val;
-    const kgm = lookupKgM(val);
+    row.type = normaliseSectionName(val);
+    const kgm = lookupKgM(row.type);
     if (kgm) row.kgm = kgm;
-    row.rate = row.rate || sectionMaterialRate(val);
+    row.rate = row.rate || sectionMaterialRate(row.type);
     // re-render this row to show auto-filled kgm
     const tbody = document.getElementById('takeoffBody');
     const tr = tbody.rows[i];
@@ -1927,42 +1929,105 @@ function readPlanswiftFile(file) {
   }
 }
 
+// Normalise a PlanSwift section name to match steel DB keys
+// e.g. UB203*133*30 → UB203x133x30
+//      PFC200*90*30 → PFC200x90      (strip weight suffix for PFC)
+//      RSA150*150*8 → RSA150x150x8   (keep all parts for angles)
+function normaliseSectionName(raw) {
+  if (!raw) return '';
+  // uppercase prefix, lowercase x separators
+  const prefix = raw.trim().match(/^[A-Za-z]+/)?.[0]?.toUpperCase() || '';
+  const rest   = raw.trim().slice(prefix.length).replace(/[*×xX]/g, 'x').replace(/\s/g, '');
+  let s = prefix + rest;
+  // PFC: PFC200x90x30 → PFC200x90 (depth x width only, drop mass suffix)
+  const pfcMatch = s.match(/^PFC(\d+)x(\d+)x(\d+(\.\d+)?)$/i);
+  if (pfcMatch) return 'PFC' + pfcMatch[1] + 'x' + pfcMatch[2];
+  return s;
+}
+
 function parsePlanswiftRows(rows, filename) {
-  // Find header row — look for row containing something like 'type','name','section','length','qty'
+  // Find header row — look for Description/Takeoff/Units pattern (PlanSwift default)
+  // or generic type/length/qty/unit
   let headerIdx = -1;
-  let colType = -1, colLength = -1, colQty = -1, colKgm = -1;
+  let colType = -1, colLength = -1, colUnit = -1, colQty = -1, colKgm = -1;
 
   for (let i = 0; i < Math.min(rows.length, 10); i++) {
     const r = rows[i].map(c => String(c).toLowerCase().trim());
-    const tIdx = r.findIndex(c => /type|section|name|member|profile|size/.test(c));
-    const lIdx = r.findIndex(c => /length|len|mm/.test(c));
+    // PlanSwift default: Description | Takeoff | Units
+    if (r[0] === 'description' && (r[1] === 'takeoff' || r[1] === 'length')) {
+      headerIdx = i; colType = 0; colLength = 1; colUnit = 2; colQty = -1; break;
+    }
+    const tIdx = r.findIndex(c => /type|section|name|member|profile|description|size/.test(c));
+    const lIdx = r.findIndex(c => /takeoff|length|len|mm/.test(c));
+    const uIdx = r.findIndex(c => /unit/.test(c));
     const qIdx = r.findIndex(c => /qty|quantity|no\.|count|nr/.test(c));
     if (tIdx >= 0 && lIdx >= 0) {
       headerIdx = i; colType = tIdx; colLength = lIdx;
-      colQty = qIdx >= 0 ? qIdx : -1;
-      colKgm = r.findIndex(c => /kg.m|weight.m|kg\/m|unit.wt/.test(c));
+      colUnit = uIdx >= 0 ? uIdx : -1;
+      colQty  = qIdx >= 0 ? qIdx  : -1;
+      colKgm  = r.findIndex(c => /kg.m|weight.m|kg\/m|unit.wt/.test(c));
       break;
     }
   }
 
-  // if no header found, assume col 0=type, 1=length, 2=qty (or 2=kgm, 3=qty)
   const dataStart = headerIdx >= 0 ? headerIdx + 1 : 0;
-  if (headerIdx < 0) { colType=0; colLength=1; colQty=2; }
+  if (headerIdx < 0) { colType=0; colLength=1; colUnit=2; }
 
   _psRows = [];
   for (let i = dataStart; i < rows.length; i++) {
     const r = rows[i];
-    const typeVal = String(r[colType]||'').trim();
-    const lenVal  = parseFloat(String(r[colLength]||'').replace(/[^0-9.]/g,''));
-    const qtyVal  = colQty >= 0 ? parseFloat(r[colQty]) || 1 : 1;
+    const rawType = String(r[colType] || '').trim();
+    if (!rawType) continue;
+
+    const typeVal = normaliseSectionName(rawType);
+    const unitVal = colUnit >= 0 ? String(r[colUnit] || '').trim().toUpperCase() : 'MM';
+    const rawVal  = parseFloat(String(r[colLength] || '').replace(/[^0-9.]/g, ''));
+    if (isNaN(rawVal) || rawVal === 0) continue;
+
+    let lengthMM, qty;
+
+    if (unitVal === 'EA') {
+      // Count-based (columns, posts etc.) — rawVal is the count
+      // Use 0 as length placeholder; user can fill manually
+      lengthMM = 0;
+      qty = rawVal;
+    } else if (unitVal === 'M') {
+      lengthMM = Math.round(rawVal * 1000);
+      qty = 1;
+    } else {
+      // MM (default)
+      lengthMM = Math.round(rawVal);
+      qty = 1;
+    }
+
     const kgmFile = colKgm >= 0 ? parseFloat(r[colKgm]) || null : null;
-    if (!typeVal || !lenVal || isNaN(lenVal)) continue;
     const kgm  = kgmFile || lookupKgM(typeVal);
     const rate = sectionMaterialRate(typeVal);
-    _psRows.push({ type: typeVal, length: lenVal, qty: qtyVal, kgm, rate });
+    _psRows.push({ type: typeVal, length: lengthMM, qty, kgm, rate,
+                   _unit: unitVal, _rawVal: rawVal });
   }
 
+  // Group identical section + length (within 1mm tolerance) into qty rows
+  _psRows = groupPsRows(_psRows);
+
   showPsPreview(filename);
+}
+
+function groupPsRows(rows) {
+  const grouped = [];
+  rows.forEach(r => {
+    const existing = grouped.find(g =>
+      g.type === r.type &&
+      (r._unit === 'EA' ? true : Math.abs(g.length - r.length) <= 1) &&
+      r._unit !== 'EA'
+    );
+    if (existing && r._unit !== 'EA') {
+      existing.qty = (existing.qty || 1) + 1;
+    } else {
+      grouped.push({ ...r });
+    }
+  });
+  return grouped;
 }
 
 function parsePastePreview() {
@@ -1971,13 +2036,18 @@ function parsePastePreview() {
   _psRows = [];
   raw.split('\n').filter(l=>l.trim()).forEach(line => {
     const parts = line.split(/\t|,/).map(p=>p.trim());
-    const typeVal = parts[0];
-    const lenVal  = parseFloat(parts[1]);
-    const qtyVal  = parseFloat(parts[2]) || 1;
-    if (!typeVal || !lenVal || isNaN(lenVal)) return;
+    const typeVal = normaliseSectionName(parts[0]);
+    const lenRaw  = parseFloat(parts[1]);
+    const unit    = (parts[3] || parts[2] || 'MM').toUpperCase().replace(/[^A-Z]/g,'') || 'MM';
+    let lengthMM, qty;
+    if (unit === 'EA') { lengthMM = 0; qty = lenRaw || 1; }
+    else if (unit === 'M') { lengthMM = Math.round(lenRaw * 1000); qty = 1; }
+    else { lengthMM = Math.round(lenRaw); qty = parseFloat(parts[2]) || 1; }
+    if (!typeVal || isNaN(lenRaw)) return;
     const kgm = lookupKgM(typeVal);
-    _psRows.push({ type: typeVal, length: lenVal, qty: qtyVal, kgm, rate: sectionMaterialRate(typeVal) });
+    _psRows.push({ type: typeVal, length: lengthMM, qty, kgm, rate: sectionMaterialRate(typeVal), _unit: unit });
   });
+  _psRows = groupPsRows(_psRows);
   showPsPreview('paste');
 }
 
@@ -1995,12 +2065,17 @@ function showPsPreview(source) {
   }
 
   label.textContent = `${_psRows.length} rows found from ${source}`;
-  body.innerHTML = _psRows.map(r => `<tr>
-    <td style="padding:5px 8px">${escHtml(r.type)}</td>
-    <td style="padding:5px 8px;text-align:right;font-family:var(--font-mono)">${r.length}</td>
-    <td style="padding:5px 8px;text-align:right;font-family:var(--font-mono)">${r.qty}</td>
-    <td style="padding:5px 8px;text-align:right;font-family:var(--font-mono);color:${r.kgm?'var(--green)':'var(--muted)'}">${r.kgm ? r.kgm+' ✓' : '—'}</td>
-  </tr>`).join('');
+  body.innerHTML = _psRows.map(r => {
+    const isEA = r._unit === 'EA';
+    const lenDisplay = isEA ? `<span style="color:var(--accent2)">${r.qty} EA</span>` : r.length + ' mm';
+    const qtyDisplay = isEA ? '—' : r.qty;
+    return `<tr>
+      <td style="padding:5px 8px">${escHtml(r.type)}</td>
+      <td style="padding:5px 8px;text-align:right;font-family:var(--font-mono)">${lenDisplay}</td>
+      <td style="padding:5px 8px;text-align:right;font-family:var(--font-mono)">${qtyDisplay}</td>
+      <td style="padding:5px 8px;text-align:right;font-family:var(--font-mono);color:${r.kgm?'var(--green)':'var(--muted)'}">${r.kgm ? r.kgm+' ✓' : '—'}</td>
+    </tr>`;
+  }).join('');
 
   preview.style.display = '';
   btn.disabled = false; btn.style.opacity = '1';
