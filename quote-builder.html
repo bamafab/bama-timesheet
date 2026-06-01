@@ -2354,9 +2354,52 @@ function addPaintRow() {
 function renderPaintRows() {
   const q = getQuote(); if (!q) return;
   const cont = document.getElementById('paintingRows');
-  cont.innerHTML = (q.paintRows||[]).map(r =>
-    rowHTML(r.id, `${r.label} <span style="font-size:10px;color:var(--subtle)">(${r.unit})</span>`, r.qty, r.rate, '£0.00')
-  ).join('');
+  const totalKg = totalTakeoffKg();
+  cont.innerHTML = (q.paintRows||[]).map(r => {
+    if (r.unit === 'tonnes') {
+      const autoTonnes = (totalKg/1000).toFixed(3);
+      const isAuto = !r.qty || r.qty === 0;
+      return `<div class="cost-row cost-row-4" id="dynrow-${r.id}">
+        <span class="cost-label">
+          ${r.label}
+          <span style="font-size:10px;color:var(--subtle)">(${r.unit})</span>
+        </span>
+        <div style="display:flex;gap:4px;align-items:center">
+          <input type="number" class="cost-input" id="qty-${r.id}" value="${r.qty||''}"
+            placeholder="${autoTonnes} auto" oninput="recalcAll()" style="flex:1;min-width:0">
+          <button onclick="setAutoWeight('${r.id}')" title="Use takeoff weight (${autoTonnes}t)"
+            style="background:${isAuto?'rgba(255,107,0,0.15)':'transparent'};border:1px solid ${isAuto?'var(--accent)':'var(--border)'};border-radius:4px;color:${isAuto?'var(--accent)':'var(--muted)'};cursor:pointer;padding:3px 5px;font-size:11px;white-space:nowrap;flex-shrink:0">↻</button>
+        </div>
+        <input type="number" class="cost-input" id="rate-${r.id}" value="${r.rate}" oninput="recalcAll()">
+        <div style="display:flex;gap:4px;align-items:center">
+          <div class="cost-result" id="res-${r.id}">£0.00</div>
+          <button class="btn-icon" onclick="removeDynRow('${r.id}')" style="flex-shrink:0;height:28px">✕</button>
+        </div>
+      </div>
+      <div style="font-size:10px;color:var(--muted);margin:-4px 0 6px;padding-left:2px">
+        Takeoff total: <strong>${autoTonnes}t</strong> (${totalKg.toFixed(0)} kg) — click ↻ to use automatically
+      </div>`;
+    }
+    return rowHTML(r.id, `${r.label} <span style="font-size:10px;color:var(--subtle)">(${r.unit})</span>`, r.qty, r.rate, '£0.00');
+  }).join('');
+}
+
+function setAutoWeight(id) {
+  const q = getQuote(); if (!q) return;
+  const row = (q.paintRows||[]).find(r => r.id === id);
+  if (!row) return;
+  const inp = document.getElementById('qty-'+id);
+  if (!inp) return;
+  // Toggle: if already 0/auto, set explicitly; if explicit, clear to auto
+  if (!row.qty || row.qty === 0) {
+    // Already auto — do nothing, it's working
+    toast('Already using takeoff weight automatically', 'success');
+  } else {
+    row.qty = 0;
+    inp.value = '';
+    saveAll(); renderPaintRows(); recalcAll();
+    toast('Set to auto — will use takeoff weight');
+  }
 }
 
 function sumPaint() {
@@ -2367,9 +2410,11 @@ function sumPaint() {
     // tonnes-based: divide kg by 1000
     let sub = 0;
     if (r.unit === 'tonnes') {
-      const kg = qty > 0 ? qty : totalTakeoffKg()/1000;
+      const autoKg = totalTakeoffKg()/1000;
+      const kg = qty > 0 ? qty : autoKg;
       sub = kg * rate;
-      document.getElementById('qty-'+r.id).placeholder = (totalTakeoffKg()/1000).toFixed(2);
+      const inp = document.getElementById('qty-'+r.id);
+      if (inp) inp.placeholder = autoKg.toFixed(3) + ' auto';
     } else {
       sub = qty * rate;
     }
