@@ -297,6 +297,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
             <option value="won">Won</option>
             <option value="lost">Lost</option>
           </select>
+          <button class="btn btn-ghost btn-sm" onclick="duplicateQuote()" title="Duplicate this quote as a new draft">⧉ Duplicate</button>
           <button class="btn btn-ghost btn-sm" onclick="deleteQuote()" style="color:var(--red);border-color:var(--red)">Delete</button>
         </div>
       </div>
@@ -1479,6 +1480,34 @@ function deleteQuote() {
   document.getElementById('emptyState').style.display = '';
 }
 
+function duplicateQuote(id) {
+  const source = quotes.find(q => q.id === (id || currentId));
+  if (!source) return;
+  const now = new Date();
+  const yy  = String(now.getFullYear()).slice(2);
+  const mm  = String(now.getMonth()+1).padStart(2,'0');
+  const seq = String(quotes.filter(q=>q.ref.startsWith('Q'+yy+mm)).length + 1).padStart(2,'0');
+  const ref = 'Q'+yy+mm+seq;
+
+  // Deep copy — strip runtime/ERP fields, reset identity
+  const copy = JSON.parse(JSON.stringify(source));
+  copy.id          = Date.now().toString();
+  copy.ref         = ref;
+  copy.revision    = '';
+  copy.status      = 'draft';
+  copy.date        = now.toISOString().slice(0,10);
+  copy.validUntil  = new Date(now.getTime()+14*86400000).toISOString().slice(0,10);
+  copy.erpProjectId = undefined;
+  copy._computed   = undefined;
+  copy._helperScopeDraft = undefined;
+
+  quotes.push(copy);
+  saveAll();
+  renderSidebar();
+  selectQuote(copy.id);
+  toast('Duplicated as ' + ref, 'success');
+}
+
 function setStatus(val) {
   const q = getQuote(); if (!q) return;
   const prev = q.status;
@@ -1526,7 +1555,10 @@ function renderSidebar() {
   if (!quotes.length) { list.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--subtle);text-align:center">No quotes yet</div>'; return; }
   list.innerHTML = [...quotes].reverse().map(q => `
     <div class="quote-item ${q.id===currentId?'active':''}" onclick="selectQuote('${q.id}')">
-      <div class="quote-item-ref">${q.ref}${q.revision ? ' <span style="font-size:10px;opacity:0.7">'+q.revision+'</span>' : ''}</div>
+      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div class="quote-item-ref">${q.ref}${q.revision ? ' <span style="font-size:10px;opacity:0.7">'+q.revision+'</span>' : ''}</div>
+        <button onclick="event.stopPropagation();duplicateQuote('${q.id}')" title="Duplicate" style="background:none;border:none;color:var(--subtle);cursor:pointer;font-size:11px;padding:0;line-height:1;flex-shrink:0" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--subtle)'">⧉</button>
+      </div>
       <div class="quote-item-name">${q.company || q.contact || 'No client'}</div>
       <div class="quote-item-status">${statusLabel(q.status)} · ${fmtDate(q.date)}</div>
     </div>
