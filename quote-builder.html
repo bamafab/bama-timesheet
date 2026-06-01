@@ -403,7 +403,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
               <option value="">Move to area...</option>
               <option value="__new__">＋ New area...</option>
             </select>
-            <div id="newAreaInline" style="display:none;display:none">
+            <div id="newAreaInline" style="display:none">
               <input type="text" id="newAreaNameInput" placeholder="Area name..."
                 style="background:var(--card);border:1px solid var(--accent);border-radius:5px;padding:4px 8px;color:var(--text);font-size:12px;width:130px"
                 onkeydown="if(event.key==='Enter')triggerMoveToArea()"
@@ -952,6 +952,20 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closePlanswiftModal()">Cancel</button>
       <button class="btn btn-primary" id="psImportBtn" onclick="importPlanswift()" disabled style="opacity:0.4">Import rows</button>
+    </div>
+  </div>
+</div>
+
+<!-- DELETE AREA MODAL -->
+<div class="modal-overlay" id="deleteAreaModal">
+  <div class="modal" style="max-width:400px">
+    <div class="modal-title">Delete Area</div>
+    <p id="deleteAreaMsg" style="font-size:13px;color:var(--muted);margin-bottom:20px"></p>
+    <p style="font-size:13px;color:var(--text);margin-bottom:20px">What would you like to do with the members?</p>
+    <div class="modal-actions" style="justify-content:stretch;gap:8px">
+      <button class="btn btn-ghost" onclick="document.getElementById('deleteAreaModal').classList.remove('active')" style="flex:1">Cancel</button>
+      <button class="btn btn-ghost" onclick="confirmDeleteAreaKeepRows()" style="flex:1">Move to Unspecified</button>
+      <button class="btn btn-danger" onclick="confirmDeleteAreaWithRows()" style="flex:1">Delete with Area</button>
     </div>
   </div>
 </div>
@@ -1651,11 +1665,51 @@ function toggleArea(id) {
 
 function deleteArea(id) {
   const q = getQuote(); if (!q) return;
-  // move rows in this area to ungrouped
+  const area = (q.areas||[]).find(a => a.id === id);
+  const name = area?.name || 'this area';
+  const rowCount = (q.takeoff||[]).filter(r => r.area === id).length;
+
+  // Build confirm dialog with two choices
+  const msg = rowCount > 0
+    ? `Delete area "${name}"?\n\n${rowCount} member${rowCount>1?'s':''} are assigned to this area.\n\nClick OK to move them to Unspecified.\nClick Cancel to keep the area.`
+    : `Delete empty area "${name}"?`;
+
+  if (rowCount > 0) {
+    // Custom two-button logic using a small inline modal
+    showDeleteAreaModal(id, name, rowCount);
+  } else {
+    if (!confirm(msg)) return;
+    q.areas = (q.areas||[]).filter(a => a.id !== id);
+    saveAll(); renderTakeoff(); updateMoveToAreaOptions();
+    toast('Area deleted');
+  }
+}
+
+function showDeleteAreaModal(id, name, rowCount) {
+  document.getElementById('deleteAreaModal').classList.add('active');
+  document.getElementById('deleteAreaMsg').textContent =
+    `"${name}" has ${rowCount} member${rowCount>1?'s':''} assigned.`;
+  document.getElementById('deleteAreaModal').dataset.areaId = id;
+}
+
+function confirmDeleteAreaKeepRows() {
+  const id = document.getElementById('deleteAreaModal').dataset.areaId;
+  const q = getQuote(); if (!q) return;
   (q.takeoff||[]).forEach(r => { if (r.area === id) r.area = ''; });
   q.areas = (q.areas||[]).filter(a => a.id !== id);
   saveAll(); renderTakeoff(); updateMoveToAreaOptions();
-  toast('Area deleted — rows moved to ungrouped');
+  document.getElementById('deleteAreaModal').classList.remove('active');
+  toast('Area deleted — members moved to Unspecified');
+}
+
+function confirmDeleteAreaWithRows() {
+  const id = document.getElementById('deleteAreaModal').dataset.areaId;
+  const q = getQuote(); if (!q) return;
+  q.takeoff = (q.takeoff||[]).filter(r => r.area !== id);
+  q.areas   = (q.areas||[]).filter(a => a.id !== id);
+  saveAll(); renderTakeoff(); updateMoveToAreaOptions(); recalcAll();
+  document.getElementById('deleteAreaModal').classList.remove('active');
+  toast('Area and all members deleted');
 }
 
 function updateMoveToAreaOptions() {
@@ -1663,7 +1717,7 @@ function updateMoveToAreaOptions() {
   const sel1 = document.getElementById('moveToAreaSelect');
   const sel2 = document.getElementById('psAreaSelect');
   const areas = q?.areas || [];
-  const opts = '<option value="">Move to area...</option>' + areas.map(a => `<option value="${a.id}">${escHtml(a.name)}</option>`).join('');
+  const opts = '<option value="">Move to area...</option>' + areas.map(a => `<option value="${a.id}">${escHtml(a.name)}</option>`).join('') + '<option value="__new__">＋ New area...</option>';
   const psOpts = '<option value="">Use areas from file (Notes column)</option>' + areas.map(a => `<option value="${a.id}">${escHtml(a.name)}</option>`).join('');
   if (sel1) sel1.innerHTML = opts;
   if (sel2) sel2.innerHTML = psOpts;
