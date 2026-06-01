@@ -2068,48 +2068,6 @@ function renderTakeoff() {
   body.innerHTML = html;
   updateTakeoffTotals();
   checkRalVisibility();
-
-  // Idea 6: scenario slider sync
-  const scenSlider = document.getElementById('scenarioSlider');
-  if (scenSlider) {
-    scenSlider.value = parseFloat(document.getElementById('marginSlider')?.value)||20;
-    updateScenario();
-  }
-
-  // Idea 7: cost bars
-  const q2 = getQuote();
-  if (q2) {
-    const na = q2.blockNA || {};
-    updateCostBars([
-      ['Material',     na.material     ? 0 : material],
-      ['Installation', na.installation ? 0 : installation],
-      ['Fabrication',  na.fabrication  ? 0 : fabrication],
-      ['Design',       na.design       ? 0 : design],
-      ['Painting',     na.painting     ? 0 : painting],
-      ['Survey',       na.survey       ? 0 : survey],
-      ['Delivery',     na.delivery     ? 0 : delivery],
-      ['Prelims',      na.prelims      ? 0 : prelims],
-    ]);
-  }
-
-  // Idea 8: productivity metrics
-  const fabHrs  = (parseFloat(document.getElementById('fab-hours')?.value)||0);
-  const instDays= (parseFloat(document.getElementById('inst-days')?.value)||0);
-  const kg      = totalTakeoffKg();
-  const tonnes  = kg / 1000;
-  const setMetric = (id, val) => { const el=document.getElementById(id); if(el) el.textContent=val; };
-  setMetric('sum-cost-per-kg-ex', kg>0 ? '£'+(subtotal/kg).toFixed(2)+'/kg' : '—');
-  setMetric('sum-cost-per-kg',    kg>0 ? '£'+(total/kg).toFixed(2)+'/kg' : '—');
-  setMetric('sum-fab-per-tonne',  tonnes>0&&fabHrs>0 ? (fabHrs/tonnes).toFixed(1)+' hrs/t' : '—');
-  setMetric('sum-inst-per-tonne', tonnes>0&&instDays>0 ? (instDays/tonnes).toFixed(2)+' days/t' : '—');
-
-  // Apply N/A blocks to totals
-  if (q2) {
-    const na2 = q2.blockNA || {};
-    ['installation','fabrication','design','painting','survey','delivery','prelims','purlins'].forEach(name => {
-      if (na2[name]) { const el = document.getElementById('total-'+name); if(el) el.textContent='N/A'; }
-    });
-  }
 }
 
 function takeoffRowHTML(row, i) {
@@ -2937,6 +2895,24 @@ function recalcAll() {
   }
 
   updateTakeoffTotals();
+
+  // Ideas 6/7/8: scenario, cost bars, productivity
+  const scenSlider2=document.getElementById('scenarioSlider');
+  if(scenSlider2){scenSlider2.value=parseFloat(document.getElementById('marginSlider')?.value)||20;updateScenario();}
+  const _q=getQuote();
+  if(_q){
+    const _na=_q.blockNA||{};
+    updateCostBars([['Material',_na.material?0:material],['Installation',_na.installation?0:installation],['Fabrication',_na.fabrication?0:fabrication],['Design',_na.design?0:design],['Painting',_na.painting?0:painting],['Survey',_na.survey?0:survey],['Delivery',_na.delivery?0:delivery],['Prelims',_na.prelims?0:prelims]]);
+    const _fh=parseFloat(document.getElementById('fab-hours')?.value)||0;
+    const _id2=parseFloat(document.getElementById('inst-days')?.value)||0;
+    const _kg=totalTakeoffKg(),_t=_kg/1000;
+    const _sm=(id,val)=>{const el=document.getElementById(id);if(el)el.textContent=val;};
+    _sm('sum-cost-per-kg-ex',_kg>0?'£'+(subtotal/_kg).toFixed(2)+'/kg':'—');
+    _sm('sum-cost-per-kg',_kg>0?'£'+(total/_kg).toFixed(2)+'/kg':'—');
+    _sm('sum-fab-per-tonne',_t>0&&_fh>0?(_fh/_t).toFixed(1)+' hrs/t':'—');
+    _sm('sum-inst-per-tonne',_t>0&&_id2>0?(_id2/_t).toFixed(2)+' days/t':'—');
+    ['installation','fabrication','design','painting','survey','delivery','prelims','purlins'].forEach(n=>{if((_q.blockNA||{})[n]){const el=document.getElementById('total-'+n);if(el)el.textContent='N/A';}});
+  }
 }
 
 // ============================================================
