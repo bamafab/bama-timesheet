@@ -634,12 +634,6 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
                   <input type="number" class="cost-input" id="fab-rate" value="45" placeholder="£/hr" oninput="recalcAll()">
                   <div class="cost-result" id="fab-result">£0.00</div>
                 </div>
-                <div class="cost-row cost-row-4" style="margin-top:4px">
-                  <span class="cost-label">Approval &amp; Fab pack</span>
-                  <input type="number" class="cost-input" id="fabpack-hours" value="0" placeholder="hrs" oninput="recalcAll()">
-                  <input type="number" class="cost-input" id="fabpack-rate" value="50" placeholder="£/hr" oninput="recalcAll()">
-                  <div class="cost-result" id="fabpack-result">£0.00</div>
-                </div>
                 <hr class="divider">
                 <div style="font-size:11px;color:var(--muted);margin-bottom:4px;font-weight:600">CONSUMABLES</div>
                 <div id="consumableRows"></div>
@@ -675,6 +669,10 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
                   style="background:rgba(255,255,255,0.04);border:none;border-bottom:1px solid var(--border);border-radius:0;padding:4px 2px;color:var(--muted);font-size:11px;width:100%;font-style:italic"
                   oninput="saveBlockNote('design',this.value)">
               </div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                  <div style="font-size:11px;color:var(--muted);font-weight:600">DESIGN FEES</div>
+                  <button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px" onclick="autoFillDesignHours()" title="Auto-suggest design hours based on project complexity">⚡ Suggest hours</button>
+                </div>
                 <div class="cost-row cost-row-4">
                   <span class="cost-label">Structural engineer fee</span>
                   <input type="number" class="cost-input" id="struct-eng-hours" value="0" placeholder="hrs" oninput="recalcAll()">
@@ -692,6 +690,14 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
                   <input type="number" class="cost-input" id="design-hours" value="0" placeholder="hrs" oninput="recalcAll()">
                   <input type="number" class="cost-input" id="design-rate" value="50" placeholder="£/hr" oninput="recalcAll()">
                   <div class="cost-result" id="design-result">£0.00</div>
+                </div>
+                <hr class="divider">
+                <div style="font-size:11px;color:var(--muted);margin-bottom:4px;font-weight:600">APPROVAL & FAB PACK</div>
+                <div class="cost-row cost-row-4">
+                  <span class="cost-label">Approval &amp; Fab pack</span>
+                  <input type="number" class="cost-input" id="fabpack-hours" value="0" placeholder="hrs" oninput="recalcAll()">
+                  <input type="number" class="cost-input" id="fabpack-rate" value="50" placeholder="£/hr" oninput="recalcAll()">
+                  <div class="cost-result" id="fabpack-result">£0.00</div>
                 </div>
               </div>
             </div>
@@ -1762,7 +1768,8 @@ function computeQuoteTotals(quote, ratesObj) {
   (quote.labourRows || []).forEach(r => {
     const qty  = parseFloat(r.qty)  || 1;
     const rate = parseFloat(r.rate) || 0;
-    const d    = isGlobal ? days : (parseFloat(r.days) ?? days);
+    const rowLocked = isGlobal && (r.useGlobalDays !== false);
+    const d    = rowLocked ? days : (parseFloat(r.days) ?? days);
     labourCost += qty * rate * d;
   });
   let plantCost = 0;
@@ -2907,7 +2914,7 @@ function addLabourRow() {
   const def = rates.labour[type] || { label: type, rate: 0 };
   const id  = 'labour_'+Date.now();
   q.labourRows = q.labourRows || [];
-  q.labourRows.push({ id, type, label: def.label, qty: 1, rate: def.rate, days: null });
+  q.labourRows.push({ id, type, label: def.label, qty: 1, rate: def.rate, days: null, useGlobalDays: true });
   saveAll(); renderLabourRows(); recalcAll();
 }
 
@@ -2920,27 +2927,34 @@ function renderLabourRows() {
   if (labelEl) labelEl.textContent = isGlobal ? 'all roles same days' : 'days set per role';
 
   cont.innerHTML = (q.labourRows||[]).map(r => {
-    const rowDays = isGlobal ? globalDays : (r.days ?? globalDays);
-    return `<div class="cost-row cost-row-4" id="dynrow-${r.id}" style="margin-bottom:2px">
-      <span class="cost-label" style="font-size:12px">${r.label}</span>
-      <div style="display:flex;align-items:center;gap:3px">
-        <span style="font-size:10px;color:var(--muted)">No.</span>
-        <input type="number" class="cost-input" id="qty-${r.id}" value="${r.qty||1}" min="1"
-          oninput="recalcAll()" style="width:44px" title="Number of this role">
-      </div>
-      ${isGlobal
-        ? `<div style="display:flex;align-items:center;gap:3px">
-            <span style="font-size:10px;color:var(--muted)">days</span>
-            <div style="font-family:var(--font-mono);font-size:12px;color:var(--muted);padding:5px 6px;background:rgba(255,255,255,0.03);border-radius:4px;min-width:40px;text-align:right">${rowDays}</div>
-           </div>`
-        : `<div style="display:flex;align-items:center;gap:3px">
-            <span style="font-size:10px;color:var(--muted)">days</span>
-            <input type="number" class="cost-input" id="days-${r.id}" value="${r.days ?? globalDays}" min="0"
-              oninput="updateLabourDays('${r.id}',this.value);recalcAll()" style="width:52px" title="Days for this role">
-           </div>`
-      }
-      <input type="number" class="cost-input" id="rate-${r.id}" value="${r.rate}" placeholder="£/day" oninput="recalcAll()">
-      <div style="display:flex;gap:4px;align-items:center">
+    // A row is "locked" to global if r.useGlobalDays is true or undefined (default)
+    // and global toggle is ON. Row can be individually unlocked.
+    const rowLocked = isGlobal && (r.useGlobalDays !== false);
+    const rowDays   = rowLocked ? globalDays : (r.days ?? globalDays);
+    const lockTitle = rowLocked ? 'Using global days — click to set own days' : 'Using own days — click to sync to global';
+    const lockIcon  = rowLocked ? '🔒' : '✏️';
+    const lockColor = rowLocked ? 'var(--muted)' : 'var(--accent)';
+
+    return `<div id="dynrow-${r.id}" style="margin-bottom:4px;padding:6px 8px;background:var(--surface);border:1px solid var(--border);border-radius:6px">
+      <div style="display:grid;grid-template-columns:1fr 60px 90px 80px 60px 28px;gap:6px;align-items:center">
+        <span style="font-size:12px;font-weight:500;color:var(--text)">${r.label}</span>
+        <div style="display:flex;align-items:center;gap:3px">
+          <span style="font-size:10px;color:var(--muted)">No.</span>
+          <input type="number" class="cost-input" id="qty-${r.id}" value="${r.qty||1}" min="1"
+            oninput="recalcAll()" style="width:44px" title="Number of this role">
+        </div>
+        <div style="display:flex;align-items:center;gap:3px">
+          <button onclick="toggleLabourRowLock('${r.id}')" title="${lockTitle}"
+            style="background:transparent;border:1px solid var(--border);border-radius:4px;padding:2px 5px;cursor:pointer;font-size:11px;color:${lockColor};flex-shrink:0">
+            ${lockIcon}
+          </button>
+          ${rowLocked
+            ? `<div style="font-family:var(--font-mono);font-size:12px;color:var(--muted);padding:4px 6px;background:rgba(255,255,255,0.03);border-radius:4px;min-width:36px;text-align:right">${rowDays}d</div>`
+            : `<input type="number" class="cost-input" id="days-${r.id}" value="${rowDays}" min="0"
+                oninput="updateLabourDays('${r.id}',this.value);recalcAll()" style="width:52px" title="Days for this role">`
+          }
+        </div>
+        <input type="number" class="cost-input" id="rate-${r.id}" value="${r.rate}" placeholder="£/day" oninput="recalcAll()">
         <div class="cost-result" id="res-${r.id}">£0.00</div>
         <button class="btn-icon" onclick="removeDynRow('${r.id}')" style="flex-shrink:0;height:28px">✕</button>
       </div>
@@ -2954,6 +2968,25 @@ function updateLabourDays(id, val) {
   if (r) { r.days = parseFloat(val)||0; saveAll(); }
 }
 
+function toggleLabourRowLock(id) {
+  const q = getQuote(); if (!q) return;
+  const r = (q.labourRows||[]).find(r=>r.id===id);
+  if (!r) return;
+  const isGlobal = document.getElementById('globalDaysToggle')?.checked !== false;
+  if (!isGlobal) { toast('Enable global days toggle first', 'error'); return; }
+  // Toggle: if currently locked (useGlobalDays true/undefined), unlock it
+  if (r.useGlobalDays !== false) {
+    r.useGlobalDays = false;
+    r.days = parseFloat(document.getElementById('inst-days')?.value) || 0;
+    saveAll(); renderLabourRows();
+    toast(r.label + ' — now has its own days, edit below');
+  } else {
+    r.useGlobalDays = true;
+    saveAll(); renderLabourRows(); recalcAll();
+    toast(r.label + ' — synced back to global days');
+  }
+}
+
 function sumLabour() {
   const q = getQuote(); if (!q) return 0;
   const globalDays = parseFloat(document.getElementById('inst-days')?.value) || 0;
@@ -2961,7 +2994,11 @@ function sumLabour() {
   return (q.labourRows||[]).reduce((s,r) => {
     const qty  = parseFloat(document.getElementById('qty-'+r.id)?.value)  || r.qty  || 0;
     const rate = parseFloat(document.getElementById('rate-'+r.id)?.value) || r.rate || 0;
-    const days = isGlobal ? globalDays : (parseFloat(document.getElementById('days-'+r.id)?.value) ?? r.days ?? globalDays);
+    // Row uses global days unless individually unlocked (useGlobalDays === false)
+    const rowLocked = isGlobal && (r.useGlobalDays !== false);
+    const days = rowLocked
+      ? globalDays
+      : (parseFloat(document.getElementById('days-'+r.id)?.value) ?? r.days ?? globalDays);
     const sub  = qty * rate * days;
     const el   = document.getElementById('res-'+r.id);
     if (el) el.textContent = '£'+sub.toFixed(2);
@@ -3931,6 +3968,32 @@ function toast(msg, type='') {
 // ============================================================
 // CALCS IMPROVEMENTS (Ideas 2,4,5,6,7,8,9,10,11)
 // ============================================================
+
+// ── Auto-fill design hours from takeoff ──────────────────────
+// Design complexity rules:
+//   Structural engineer: 1 hr per 5 tonnes (min 4hrs), capped at 40hrs
+//   Internal draughtsman: 1 hr per tonne (min 8hrs) — drawing production
+//   Fab pack: 0.5 hr per tonne (min 4hrs) — approval package
+function autoFillDesignHours() {
+  const q = getQuote(); if (!q) return;
+  const kg     = totalTakeoffKg();
+  if (!kg) { toast('No takeoff weight yet — add members first', 'error'); return; }
+  const tonnes = kg / 1000;
+
+  const structEngHrs  = Math.max(4,  Math.min(40, Math.round(tonnes / 5)));
+  const draughtHrs    = Math.max(8,  Math.round(tonnes * 1));
+  const fabpackHrs    = Math.max(4,  Math.round(tonnes * 0.5));
+
+  document.getElementById('struct-eng-hours').value = structEngHrs;
+  document.getElementById('design-hours').value     = draughtHrs;
+  document.getElementById('fabpack-hours').value    = fabpackHrs;
+  recalcAll();
+  toast(
+    `Suggested: Struct. Eng ${structEngHrs}h · Draughtsman ${draughtHrs}h · Fab Pack ${fabpackHrs}h` +
+    ` (based on ${tonnes.toFixed(2)}t)`,
+    'success'
+  );
+}
 
 // ── Idea 2: Auto-fill fab hours from takeoff weight (complexity-aware) ──
 function autoFillFabHours() {
