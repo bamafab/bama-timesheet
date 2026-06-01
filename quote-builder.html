@@ -2945,7 +2945,7 @@ Be direct and practical. Address Mateusz by name occasionally. Flag anything tha
 Please read this tender document and give me a full pricing briefing for my trade.`;
 
   try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const response = await fetch('/api/claude-proxy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
