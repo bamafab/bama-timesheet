@@ -398,10 +398,17 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
             <button class="btn btn-ghost btn-sm" onclick="deselectAllTakeoff()">Deselect all</button>
             <button class="btn btn-ghost btn-sm" onclick="invertTakeoffSelection()">Invert</button>
             <button class="btn btn-ghost btn-sm" onclick="selectByType()" title="Select all rows of same section type">Same type</button>
-            <select id="moveToAreaSelect" style="background:var(--card);border:1px solid var(--border);border-radius:5px;padding:4px 8px;color:var(--text);font-size:12px">
+            <select id="moveToAreaSelect" onchange="onMoveAreaChange(this.value)"
+              style="background:var(--card);border:1px solid var(--border);border-radius:5px;padding:4px 8px;color:var(--text);font-size:12px">
               <option value="">Move to area...</option>
               <option value="__new__">＋ New area...</option>
             </select>
+            <div id="newAreaInline" style="display:none;display:none">
+              <input type="text" id="newAreaNameInput" placeholder="Area name..."
+                style="background:var(--card);border:1px solid var(--accent);border-radius:5px;padding:4px 8px;color:var(--text);font-size:12px;width:130px"
+                onkeydown="if(event.key==='Enter')triggerMoveToArea()"
+                oninput="this.style.borderColor=this.value?'var(--accent)':'var(--red)'">
+            </div>
             <button class="btn btn-ghost btn-sm" onclick="triggerMoveToArea()">Move</button>
             <button class="btn btn-ghost btn-sm" onclick="deleteSelectedTakeoffRows()" style="color:var(--red);border-color:var(--red);margin-left:auto">🗑 Delete selected</button>
           </div>
@@ -1662,19 +1669,33 @@ function updateMoveToAreaOptions() {
   if (sel2) sel2.innerHTML = psOpts;
 }
 
+function onMoveAreaChange(val) {
+  const inline = document.getElementById('newAreaInline');
+  if (val === '__new__') {
+    inline.style.display = 'inline-flex';
+    document.getElementById('newAreaNameInput').focus();
+  } else {
+    inline.style.display = 'none';
+  }
+}
+
 function triggerMoveToArea() {
   const sel = document.getElementById('moveToAreaSelect');
   let areaId = sel.value;
-  if (!areaId) { toast('Pick an area first', 'error'); return; }
+
   if (areaId === '__new__') {
-    const name = prompt('New area name:');
-    if (!name?.trim()) { sel.value = ''; return; }
+    const name = document.getElementById('newAreaNameInput')?.value?.trim();
+    if (!name) { document.getElementById('newAreaNameInput').style.borderColor='var(--red)'; toast('Enter an area name', 'error'); return; }
     const q = getQuote(); if (!q) return;
     q.areas = q.areas || [];
     areaId = 'area_' + Date.now();
-    q.areas.push({ id: areaId, name: name.trim(), collapsed: false });
+    q.areas.push({ id: areaId, name, collapsed: false });
     saveAll(); updateMoveToAreaOptions();
+    document.getElementById('newAreaNameInput').value = '';
+    document.getElementById('newAreaInline').style.display = 'none';
   }
+
+  if (!areaId) { toast('Pick or create an area first', 'error'); return; }
   sel.value = '';
   moveSelectedToArea(areaId);
 }
