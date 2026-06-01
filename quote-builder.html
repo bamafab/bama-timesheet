@@ -3822,6 +3822,34 @@ function clearHelper() {
   updateHelperFileList();
 }
 
+const SCOPE_TEMPLATES = [
+  ['Steel Frame',"Supply, delivery and carry out installation of structural steelwork as per engineer's drawings. All structural steelwork to be S355 grade steel. Finish: one coat zinc phosphate primer. All work to be carried out in accordance with the relevant British Standards."],
+  ['Balustrades & Handrails','Supply, delivery and carry out installation of mild steel balustrades and handrails as per drawings. Material: mild steel. Finish: powder coated, colour TBC. Fixings: stainless steel grade A4. All balustrades to comply with Building Regulations Part K.'],
+  ['Mezzanine Floor',"Supply, delivery and carry out installation of structural steel mezzanine floor frame including columns, beams, bracing and floor decking as per engineer's drawings. Material: S355 structural steel. Finish: primer painted. Decking: Kingspan or equivalent composite flooring."],
+  ['Staircase','Supply, delivery and carry out installation of steel staircase including strings, treads, handrails and balustrades as per drawings. Material: mild steel. Finish: powder coated, colour TBC. All works to comply with Building Regulations Part K and M.'],
+  ['Cat Ladders','Supply, delivery and carry out installation of cat ladders fabricated to BS EN ISO 14122. Material: mild steel. Finish: hot dip galvanised to BS EN ISO 1461. Inclusive of support steelwork and fall arrest anchor points.'],
+  ['Structural Alterations',"Supply, delivery and carry out installation of structural steelwork alterations including new beams, columns, connections and associated steelwork as per structural engineer's drawings. All structural steelwork S355 grade. Finish: primer painted. Existing structure not included unless stated."],
+  ['Steel Frame + Cladding Rails',"Supply, delivery and carry out installation of structural steel portal frame and secondary steelwork including purlins and cladding rails as per engineer's drawings. Primary frame: S355 structural steel. Secondary steelwork: cold-rolled galvanised. Finish: primer painted to primary frame."],
+  ['Gate & Fencing','Supply, delivery and carry out installation of mild steel gate and fencing as per drawings. Material: RHS and SHS mild steel. Finish: powder coated, colour TBC. Posts to be set in concrete. Ironmongery included unless stated otherwise.']
+];
+
+function toggleScopeTemplates() {
+  const dd = document.getElementById('scopeTemplateDD');
+  dd.style.display = dd.style.display === 'none' ? '' : 'none';
+}
+document.addEventListener('click', e => {
+  if (!e.target.closest('#scopeTemplateWrap')) {
+    const dd = document.getElementById('scopeTemplateDD');
+    if (dd) dd.style.display = 'none';
+  }
+});
+function applyScopeTemplate(i) {
+  const [,text] = SCOPE_TEMPLATES[i];
+  const el = document.getElementById('hComments');
+  if (el) { el.value = text; autosave(); }
+  document.getElementById('scopeTemplateDD').style.display = 'none';
+  toast('Template applied — edit as needed');
+}
 // ============================================================
 // CLIENT BOOK
 // ============================================================
