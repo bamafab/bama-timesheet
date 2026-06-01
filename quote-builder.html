@@ -905,10 +905,11 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
             ondragleave="this.classList.remove('dragover')"
             ondrop="event.preventDefault();this.classList.remove('dragover');handleHelperDrop(event)">
             <div class="icon">📄</div>
-            <div id="helperDropzoneText"><strong>Click to upload</strong> or drag &amp; drop tender document</div>
-            <div style="font-size:11px;color:var(--muted);margin-top:4px">PDF accepted · max ~50 pages for best results</div>
+            <div id="helperDropzoneText"><strong>Click to upload</strong> or drag &amp; drop — multiple PDFs supported</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:4px">PDFs only · add spec, drawings schedule, contract docs together</div>
+            <div id="helperFileList" style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;justify-content:center"></div>
           </div>
-          <input type="file" id="helperFileInput" style="display:none" accept=".pdf" onchange="handleHelperFile(this)">
+          <input type="file" id="helperFileInput" style="display:none" accept=".pdf" multiple onchange="handleHelperFile(this)">
 
           <!-- Optional context -->
           <div class="form-grid form-grid-2" style="margin-top:14px;gap:10px">
@@ -2861,35 +2862,53 @@ function checkRalVisibility() {
 // ============================================================
 // QUOTE HELPER
 // ============================================================
-let _helperPdfBase64 = null;
-let _helperFileName  = '';
+let _helperFiles = []; // [{name, base64}]
 
 function handleHelperDrop(e) {
-  const file = e.dataTransfer.files[0];
-  if (file) loadHelperFile(file);
+  const files = [...e.dataTransfer.files].filter(f => f.name.endsWith('.pdf'));
+  if (!files.length) { toast('Please drop PDF files only', 'error'); return; }
+  files.forEach(loadHelperFile);
 }
 function handleHelperFile(input) {
-  const file = input.files[0];
-  if (file) loadHelperFile(file);
+  const files = [...input.files].filter(f => f.name.endsWith('.pdf'));
+  files.forEach(loadHelperFile);
+  input.value = '';
 }
 
 function loadHelperFile(file) {
-  if (!file.name.endsWith('.pdf')) { toast('Please upload a PDF file', 'error'); return; }
-  _helperFileName = file.name;
-  document.getElementById('helperDropzoneText').innerHTML = `<strong>${file.name}</strong> — ready to analyse`;
-  document.getElementById('helperStatus').textContent = '';
-
+  if (_helperFiles.find(f => f.name === file.name)) { toast(file.name + ' already added', 'error'); return; }
   const reader = new FileReader();
   reader.onload = e => {
-    _helperPdfBase64 = e.target.result.split(',')[1];
-    document.getElementById('helperAnalyseBtn').disabled = false;
-    document.getElementById('helperAnalyseBtn').style.opacity = '1';
+    _helperFiles.push({ name: file.name, base64: e.target.result.split(',')[1] });
+    updateHelperFileList();
   };
   reader.readAsDataURL(file);
 }
 
+function updateHelperFileList() {
+  const list = document.getElementById('helperFileList');
+  list.innerHTML = _helperFiles.map((f,i) => `
+    <div style="display:inline-flex;align-items:center;gap:5px;background:rgba(255,107,0,0.1);border:1px solid rgba(255,107,0,0.25);border-radius:20px;padding:3px 10px;font-size:11px;color:var(--accent)">
+      📄 ${escHtml(f.name)}
+      <button onclick="removeHelperFile(${i})" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:12px;padding:0;line-height:1" title="Remove">✕</button>
+    </div>`).join('');
+  document.getElementById('helperDropzoneText').innerHTML =
+    _helperFiles.length
+      ? `<strong>${_helperFiles.length} file${_helperFiles.length>1?'s':''} loaded</strong> — click or drop to add more`
+      : '<strong>Click to upload</strong> or drag &amp; drop — multiple PDFs supported';
+  document.getElementById('helperStatus').textContent = '';
+  const btn = document.getElementById('helperAnalyseBtn');
+  btn.disabled = !_helperFiles.length;
+  btn.style.opacity = _helperFiles.length ? '1' : '0.4';
+}
+
+function removeHelperFile(i) {
+  _helperFiles.splice(i, 1);
+  updateHelperFileList();
+}
+
 async function runQuoteHelper() {
-  if (!_helperPdfBase64) { toast('Upload a document first', 'error'); return; }
+  if (!_helperFiles.length) { toast('Upload at least one document first', 'error'); return; }
 
   const trade   = document.getElementById('helperTrade')?.value || 'structural steelwork, balustrades, handrails';
   const focus   = document.getElementById('helperFocus')?.value || '';
@@ -2936,11 +2955,12 @@ Please read this tender document and give me a full pricing briefing for my trad
         messages: [{
           role: 'user',
           content: [
-            {
+            ..._helperFiles.map((f, i) => ({
               type: 'document',
-              source: { type: 'base64', media_type: 'application/pdf', data: _helperPdfBase64 }
-            },
-            { type: 'text', text: userPrompt }
+              source: { type: 'base64', media_type: 'application/pdf', data: f.base64 },
+              title: f.name
+            })),
+            { type: 'text', text: userPrompt + (_helperFiles.length > 1 ? `\n\nDocuments provided: ${_helperFiles.map(f=>f.name).join(', ')}` : '') }
           ]
         }]
       })
@@ -2963,7 +2983,7 @@ Please read this tender document and give me a full pricing briefing for my trad
     }
 
     renderHelperOutput(parsed);
-    status.textContent = `Analysis complete — ${_helperFileName}`;
+    status.textContent = `Analysis complete — ${_helperFiles.map(f=>f.name).join(', ')}`;
 
   } catch(err) {
     status.textContent = '❌ Error: ' + err.message;
@@ -3029,14 +3049,16 @@ function renderHelperOutput(data) {
 }
 
 function clearHelper() {
-  _helperPdfBase64 = null; _helperFileName = '';
-  document.getElementById('helperDropzoneText').innerHTML = '<strong>Click to upload</strong> or drag &amp; drop tender document';
+  _helperFiles = [];
+  document.getElementById('helperFileList').innerHTML = '';
+  document.getElementById('helperDropzoneText').innerHTML = '<strong>Click to upload</strong> or drag &amp; drop — multiple PDFs supported';
   document.getElementById('helperOutput').style.display = 'none';
   document.getElementById('helperStatus').textContent = '';
   document.getElementById('helperAnalyseBtn').disabled = true;
   document.getElementById('helperAnalyseBtn').style.opacity = '0.4';
   document.getElementById('helperClearBtn').style.display = 'none';
   document.getElementById('helperFileInput').value = '';
+  updateHelperFileList();
 }
 
 // ============================================================
