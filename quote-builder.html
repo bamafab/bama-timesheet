@@ -1469,6 +1469,23 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 
 <!-- SETTINGS MODAL -->
 <!-- JOB SETUP WIZARD -->
+<!-- Custom confirm / prompt modal -->
+<div class="modal-overlay" id="bamaConfirmModal" style="z-index:9999">
+  <div class="modal" style="max-width:420px;padding:24px 24px 20px">
+    <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:10px" id="bamaConfirmTitle">Confirm</div>
+    <div style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:16px" id="bamaConfirmMsg"></div>
+    <div id="bamaPromptWrap" style="display:none;margin-bottom:14px">
+      <input id="bamaPromptInput" type="text"
+        style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 12px;color:var(--text);font-size:13px"
+        placeholder="">
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-ghost" id="bamaConfirmCancel">Cancel</button>
+      <button class="btn btn-primary" id="bamaConfirmOk">Confirm</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="wizardModal">
   <div class="modal" style="max-width:760px;max-height:92vh;overflow-y:auto;padding:0">
 
@@ -1893,7 +1910,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 
     <!-- Footer -->
     <div style="padding:14px 20px;border-top:1px solid var(--border);background:var(--surface);border-radius:0 0 8px 8px;position:sticky;bottom:0;display:flex;justify-content:space-between;align-items:center">
-      <button class="btn btn-ghost" onclick="closeWizard()">Skip — I'll fill manually</button>
+      <button class="btn btn-ghost" onclick="closeWizard()">Cancel</button>
       <button class="btn btn-primary" onclick="applyWizard()" style="padding:10px 28px;font-size:14px">⚡ Generate Quote</button>
     </div>
   </div>
@@ -2172,7 +2189,7 @@ function autoDesignHours(takeoff) {
   const memberCount = takeoff.length;
   let draughtHrs = 0;
 
-  // Count members by type
+  // Count total pieces by profile type (qty-weighted)
   let ubucCount = 0, pfcAngleCount = 0, hollowCount = 0, otherCount = 0;
   takeoff.forEach(row => {
     const prefix = (row.type?.match(/^[A-Za-z]+/) || [''])[0].toUpperCase();
@@ -2183,11 +2200,14 @@ function autoDesignHours(takeoff) {
     else otherCount += qty;
   });
 
-  const totalQty = ubucCount + pfcAngleCount + hollowCount + otherCount || memberCount;
-  // Weighted hours per "piece" (not per row — rows can have qty > 1)
-  draughtHrs = (ubucCount * 2.5) + (pfcAngleCount * 3) + (hollowCount * 3.5) + (otherCount * 3);
+  // Calibrated against real BAMA quotes:
+  // Q260523: ~1t mixed 10 pieces → ~10h draughtsman
+  // Q260514: ~27t complex 70+ pieces → ~85h draughtsman
+  // Target: 20t structural frame ~85-105h
+  // hrs per piece: UB/UC 1.0 (repetitive connections), PFC/angle 1.2, hollow 1.4, other 1.2
+  draughtHrs = (ubucCount * 1.0) + (pfcAngleCount * 1.2) + (hollowCount * 1.4) + (otherCount * 1.2);
 
-  // Minimum floor: 8h for any job
+  // Minimum 8h for any job
   draughtHrs = Math.max(8, Math.round(draughtHrs));
 
   // Struct eng: ~22% of draughtsman, minimum 0 (only applied when full_design chosen)
@@ -2647,8 +2667,8 @@ function saveCurrentQuote() {
   toast('Quote saved', 'success');
 }
 
-function deleteQuote() {
-  if (!confirm('Delete this quote? This cannot be undone.')) return;
+async function deleteQuote() {
+  if (!await bamaConfirm('Delete this quote? This cannot be undone.', 'Delete Quote')) return;
   quotes = quotes.filter(q => q.id !== currentId);
   currentId = null;
   saveAll();
@@ -3062,11 +3082,11 @@ function invertTakeoffSelection() {
   onTakeoffCheck();
 }
 
-function deleteSelectedTakeoffRows() {
+async function deleteSelectedTakeoffRows() {
   const q = getQuote(); if (!q) return;
   const selected = new Set([...document.querySelectorAll('.takeoff-cb:checked')].map(cb => parseInt(cb.dataset.idx)));
   if (!selected.size) return;
-  if (!confirm(`Delete ${selected.size} selected row${selected.size > 1 ? 's' : ''}?`)) return;
+  if (!await bamaConfirm(`Delete ${selected.size} selected row${selected.size > 1 ? 's' : ''}?`, 'Delete Rows')) return;
   q.takeoff = q.takeoff.filter((_, i) => !selected.has(i));
   saveAll(); renderTakeoff(); recalcAll();
   document.getElementById('takeoffBulkBar').style.display = 'none';
@@ -3110,7 +3130,7 @@ function toggleArea(id) {
   if (a) { a.collapsed = !a.collapsed; saveAll(); renderTakeoff(); }
 }
 
-function deleteArea(id) {
+async function deleteArea(id) {
   const q = getQuote(); if (!q) return;
   const area = (q.areas||[]).find(a => a.id === id);
   const name = area?.name || 'this area';
@@ -3122,10 +3142,9 @@ function deleteArea(id) {
     : `Delete empty area "${name}"?`;
 
   if (rowCount > 0) {
-    // Custom two-button logic using a small inline modal
     showDeleteAreaModal(id, name, rowCount);
   } else {
-    if (!confirm(msg)) return;
+    if (!await bamaConfirm(msg, 'Delete Area')) return;
     q.areas = (q.areas||[]).filter(a => a.id !== id);
     saveAll(); renderTakeoff(); updateMoveToAreaOptions();
     toast('Area deleted');
@@ -3401,7 +3420,7 @@ function removeDynRow(id) {
 // ============================================================
 // LABOUR ROWS
 // ============================================================
-function addLabourRow() {
+async function addLabourRow() {
   const q = getQuote(); if (!q) return;
   const type = document.getElementById('labourTypeSelect').value;
   if (!type) return;
@@ -3413,9 +3432,9 @@ function addLabourRow() {
   }, 0);
 
   if (maxOps > 0 && usedOps >= maxOps) {
-    const proceed = confirm(
-      `You have ${maxOps} operative${maxOps!==1?'s':''} set but ${usedOps} already allocated.\n\n` +
-      `Increase the operatives count first, or click OK to add anyway.`
+    const proceed = await bamaConfirm(
+      `You have ${maxOps} operative${maxOps!==1?'s':''} set but ${usedOps} already allocated.\n\nIncrease the operatives count first, or confirm to add anyway.`,
+      'Over Allocation'
     );
     if (!proceed) {
       document.getElementById('labourTypeSelect').value = '';
@@ -4328,7 +4347,7 @@ function buildWizSummary(q) {
 
   const t = totalKg / 1000;
   window._wizTonnes = t;
-  window._wizMemberCount = takeoff.length;
+  window._wizMemberCount = takeoff.reduce((s, r) => s + (r.qty || 1), 0);
 
   document.getElementById('wiz-stats').innerHTML = [
     { val: takeoff.length, lbl: 'Members' },
@@ -4694,10 +4713,13 @@ function applyWizard() {
   // ── Delivery ──────────────────────────────────────────────
   const deliveryTile = document.querySelector('#wiz-delivery-tiles .wiz-tile.active');
   const deliveryChoice = deliveryTile?.dataset.delivery || 'auto';
+  let deliveryLoads = 1;
   if (deliveryChoice === 'client_collect') {
     q.deliveryRows = [];
+    deliveryLoads = 0;
   } else if (deliveryChoice === 'auto') {
     autoEstimateDelivery(q, tonnes);
+    deliveryLoads = q.deliveryRows.length;
   } else {
     const loads = parseFloat(document.getElementById('wiz-delivery-loads')?.value) || 1;
     const rate  = parseFloat(document.getElementById('wiz-delivery-rate')?.value) || 800;
@@ -4706,6 +4728,12 @@ function applyWizard() {
     for (let i=0; i<loads; i++) {
       q.deliveryRows.push({ id: 'del_'+deliveryChoice+'_'+(Date.now()+i), type: deliveryChoice, label: labelMap[deliveryChoice]||'Delivery', qty: 1, rate });
     }
+    deliveryLoads = loads;
+  }
+  // Sync logistics prelim qty to number of delivery loads
+  if (deliveryLoads > 0) {
+    const logRow = q.prelimRows?.find(r => r.type === 'logistics');
+    if (logRow) logRow.qty = deliveryLoads;
   }
 
   // ── Sync DOM ──────────────────────────────────────────────
@@ -4841,11 +4869,10 @@ function executeFullQuoteAutomation(q, fresh) {
   if (fresh) {
     run();
   } else {
-    if (confirm(
-      'Takeoff already has data. Re-run full auto-calc?\n\n' +
-      'Will overwrite: fab hours, design hours, install days, delivery rows, auto plant, auto prelims.\n\n' +
-      'Manual labour rows, rates and margin are NOT affected.'
-    )) { run(); }
+    bamaConfirm(
+      'Takeoff already has data. Re-run full auto-calc?\n\nWill overwrite: fab hours, design hours, install days, delivery rows, auto plant, auto prelims.\n\nManual labour rows, rates and margin are NOT affected.',
+      'Re-run Auto-Calc'
+    ).then(ok => { if (ok) run(); });
   }
 }
 
@@ -4894,13 +4921,55 @@ function importPlanswift() {
 
   _psRows = [];
 
-  // Open the Job Setup Wizard after a short delay so takeoff renders first
-  setTimeout(() => openWizard(q), 120);
+  // Wizard available via "Price with Wizard" button — not auto-opened on paste
 }
 
-// ============================================================
-// SETTINGS
-// ============================================================
+// ── Custom confirm / prompt (replaces browser dialogs) ────────
+function bamaConfirm(msg, title='Confirm') {
+  return new Promise(resolve => {
+    document.getElementById('bamaConfirmTitle').textContent = title;
+    document.getElementById('bamaConfirmMsg').textContent = msg;
+    document.getElementById('bamaPromptWrap').style.display = 'none';
+    document.getElementById('bamaConfirmOk').textContent = 'Confirm';
+    document.getElementById('bamaConfirmOk').className = 'btn btn-primary';
+    // Destructive actions
+    if (/delete|remove|cannot be undone/i.test(msg)) {
+      document.getElementById('bamaConfirmOk').className = 'btn';
+      document.getElementById('bamaConfirmOk').style.cssText = 'background:var(--red);color:#fff;padding:8px 18px;border-radius:6px;border:none;cursor:pointer;font-weight:600';
+    } else {
+      document.getElementById('bamaConfirmOk').style.cssText = '';
+    }
+    document.getElementById('bamaConfirmModal').classList.add('active');
+    const ok = document.getElementById('bamaConfirmOk');
+    const cancel = document.getElementById('bamaConfirmCancel');
+    const cleanup = () => { document.getElementById('bamaConfirmModal').classList.remove('active'); ok.replaceWith(ok.cloneNode(true)); cancel.replaceWith(cancel.cloneNode(true)); };
+    document.getElementById('bamaConfirmOk').onclick = () => { cleanup(); resolve(true); };
+    document.getElementById('bamaConfirmCancel').onclick = () => { cleanup(); resolve(false); };
+  });
+}
+
+function bamaPrompt(msg, placeholder='', title='Enter value') {
+  return new Promise(resolve => {
+    document.getElementById('bamaConfirmTitle').textContent = title;
+    document.getElementById('bamaConfirmMsg').textContent = msg;
+    const wrap = document.getElementById('bamaPromptWrap');
+    const inp  = document.getElementById('bamaPromptInput');
+    wrap.style.display = '';
+    inp.value = '';
+    inp.placeholder = placeholder;
+    document.getElementById('bamaConfirmOk').textContent = 'OK';
+    document.getElementById('bamaConfirmOk').style.cssText = '';
+    document.getElementById('bamaConfirmModal').classList.add('active');
+    setTimeout(() => inp.focus(), 50);
+    const ok = document.getElementById('bamaConfirmOk');
+    const cancel = document.getElementById('bamaConfirmCancel');
+    const cleanup = () => { document.getElementById('bamaConfirmModal').classList.remove('active'); wrap.style.display='none'; ok.replaceWith(ok.cloneNode(true)); cancel.replaceWith(cancel.cloneNode(true)); };
+    document.getElementById('bamaConfirmOk').onclick = () => { const v = inp.value.trim(); cleanup(); resolve(v||null); };
+    document.getElementById('bamaConfirmCancel').onclick = () => { cleanup(); resolve(null); };
+    inp.onkeydown = e => { if (e.key==='Enter') { const v=inp.value.trim(); cleanup(); resolve(v||null); } if (e.key==='Escape') { cleanup(); resolve(null); } };
+  });
+}
+
 function openSettings() {
   renderSettingsForm();
   document.getElementById('settingsModal').classList.add('active');
@@ -5262,9 +5331,9 @@ function saveSupplierNote(id, val) {
 }
 
 // ── Idea 10: Save/load calcs template ──
-function saveCalcsTemplate() {
+async function saveCalcsTemplate() {
   const q = getQuote(); if (!q) return;
-  const name = prompt('Template name (e.g. "Portal Frame", "Mezzanine fit-out"):');
+  const name = await bamaPrompt('Enter a name for this template:', 'e.g. Portal Frame, Mezzanine fit-out', 'Save Calcs Template');
   if (!name?.trim()) return;
   const templates = JSON.parse(localStorage.getItem('bama_calcs_templates')||'{}');
   templates[name.trim()] = {
@@ -5285,13 +5354,17 @@ function saveCalcsTemplate() {
   renderCalcsTemplateBtn();
 }
 
-function loadCalcsTemplate() {
+async function loadCalcsTemplate() {
   const templates = JSON.parse(localStorage.getItem('bama_calcs_templates')||'{}');
   const names = Object.keys(templates);
   if (!names.length) { toast('No templates saved yet', 'error'); return; }
-  // show a small select dialog
-  const name = names.length === 1 ? names[0] : prompt('Load template:\n' + names.map((n,i)=>`${i+1}. ${n}`).join('\n') + '\n\nEnter name exactly:');
-  if (!name || !templates[name]) { toast('Template not found', 'error'); return; }
+  let name;
+  if (names.length === 1) {
+    name = names[0];
+  } else {
+    name = await bamaPrompt('Available templates:\n' + names.map((n,i)=>`${i+1}. ${n}`).join('\n') + '\n\nEnter template name:', '', 'Load Calcs Template');
+  }
+  if (!name || !templates[name]) { if (name) toast('Template not found', 'error'); return; }
   const q = getQuote(); if (!q) return;
   Object.assign(q, templates[name]);
   saveAll(); loadQuoteEditor();
@@ -6068,7 +6141,7 @@ Please read this tender document and give me a full pricing briefing for my trad
   try {
     const requestBody = {
       model: 'claude-sonnet-4-6',
-      max_tokens: 2000,
+      max_tokens: 4000,
       system: systemPrompt,
       messages: [{
         role: 'user',
@@ -6523,8 +6596,10 @@ function renderClientHistory(company) {
   if (!card || !cont || !company) { if(card) card.style.display='none'; return; }
 
   const clientQuotes = quotes.filter(q =>
-    (q.company||'').toLowerCase() === company.toLowerCase() && q.id !== currentId
+    (q.company||'').toLowerCase() === company.toLowerCase()
   ).sort((a,b) => (b.date||'').localeCompare(a.date||''));
+
+  const otherQuotes = clientQuotes.filter(q => q.id !== currentId);
 
   if (!clientQuotes.length) { card.style.display='none'; return; }
 
@@ -6549,7 +6624,7 @@ function renderClientHistory(company) {
       ${totalWon > 0 ? statBox('£'+totalWon.toLocaleString('en-GB',{maximumFractionDigits:0}), 'Total Won', 'var(--accent)') : ''}
     </div>
     <div style="font-size:11px;color:var(--muted);font-weight:600;margin-bottom:6px;letter-spacing:0.5px">PREVIOUS QUOTES</div>
-    ${clientQuotes.slice(0,5).map(q => {
+    ${otherQuotes.slice(0,5).map(q => {
       const total = q._computed?.total || 0;
       const statusCol = {won:'var(--green)',lost:'var(--red)',sent:'var(--accent2)',draft:'var(--muted)'}[q.status]||'var(--muted)';
       return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);cursor:pointer"
@@ -6562,7 +6637,7 @@ function renderClientHistory(company) {
         ${total > 0 ? `<span style="font-family:var(--font-mono);font-size:12px;font-weight:600">£${total.toLocaleString('en-GB',{maximumFractionDigits:0})}</span>` : ''}
       </div>`;
     }).join('')}
-    ${clientQuotes.length > 5 ? `<div style="font-size:11px;color:var(--muted);padding-top:6px">${clientQuotes.length-5} more quote${clientQuotes.length-5>1?'s':''} not shown</div>` : ''}
+    ${otherQuotes.length > 5 ? `<div style="font-size:11px;color:var(--muted);padding-top:6px">${otherQuotes.length-5} more quote${otherQuotes.length-5>1?'s':''} not shown</div>` : ''}
   `;
   card.style.display = '';
 }
@@ -6879,8 +6954,8 @@ function generateQuotePDF(mode = 'quote') {
         </div>
       </div>
       <div class="info-block">
-        <label>Company Address</label>
-        <div class="info-val">11 Enterprise Way, Enterprise Park<br>Yaxley, PE7 3WY, Peterborough<br>01733 855212</div>
+        <label>Client Address</label>
+        <div class="info-val">${q.clientAddress ? escHtml(q.clientAddress).replace(/\n/g,'<br>') : (q.company ? `<span style="color:#888">${escHtml(q.company)}</span>` : '<span style="color:#aaa">—</span>')}</div>
       </div>
     </div>
     ${scope ? `<div class="scope-block"><label>Comments or Special Instructions</label>${scope}</div>` : ''}`;
@@ -6899,16 +6974,19 @@ function generateQuotePDF(mode = 'quote') {
   let lineRows = '', grandTotal = 0;
   if (mode === 'quote' || mode === 'combined') {
     if (q.type === 'bama') {
-      (q.standardLines||[]).forEach(l => {
+      // Use standardLines for line items, computed.total as authoritative total
+      const allLines = (q.standardLines||[]).filter(l => (parseFloat(l.price)||0) !== 0);
+      allLines.forEach(l => {
         const price = parseFloat(l.price)||0, qty = parseFloat(l.qty)||1;
         const amt = Math.round(qty*price*100)/100;
-        if (price===0) return;
         grandTotal += amt;
         lineRows += `<tr><td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">${qty!==1?qty:'1'}</td>
           <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">${escHtml(l.desc)}</td>
           <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(price)}</td>
           <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(amt)}</td></tr>`;
       });
+      // computed.total is authoritative — override if they differ by more than £1
+      if (computed.total && Math.abs(computed.total - grandTotal) > 1) grandTotal = computed.total;
     } else if (q.type === 'custom') {
       (q.customLines||[]).forEach(l => {
         const price = parseFloat(l.price)||0, qty = parseFloat(l.qty)||1;
@@ -6928,7 +7006,7 @@ function generateQuotePDF(mode = 'quote') {
     }
     const rowCount = (q.type==='bama'?(q.standardLines||[]).filter(l=>(l.price||0)>0).length:(q.customLines||[]).length)||1;
     for (let i=rowCount; i<6; i++) lineRows += `<tr style="height:34px"><td style="border-bottom:1px solid #e5e7eb"></td><td style="border-bottom:1px solid #e5e7eb"></td><td style="border-bottom:1px solid #e5e7eb"></td><td style="border-bottom:1px solid #e5e7eb"></td></tr>`;
-    let depositRow = '';
+        let depositRow = '';
     if (q.showDeposit) {
       const depPct=parseFloat(q.depositPct)||60, depAmt=Math.round(grandTotal*depPct/100*100)/100;
       depositRow = `<tr><td colspan="3" style="padding:6px 10px;text-align:right;font-size:12px;color:#555">Deposit Required (${depPct}%)</td><td style="padding:6px 10px;text-align:right;font-size:12px;font-weight:600;color:#D0021B">${fmtGBP(depAmt)}</td></tr>`;
