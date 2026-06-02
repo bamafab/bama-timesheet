@@ -4276,7 +4276,25 @@ function openWizard(q) {
   document.querySelectorAll('.wiz-mewp-row').forEach(t => t.classList.remove('active'));
   document.querySelector('[data-mewp="none"]')?.classList.add('active');
   document.querySelectorAll('#wiz-finish-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
-  document.querySelector('[data-finish="primer_tonne"]')?.classList.add('active');
+  // Read finish types from takeoff rows and pre-select matching tiles
+  const finishTypes = new Set((q.takeoff||[]).map(r => r.finish).filter(Boolean));
+  let finishMatched = false;
+  if (finishTypes.has('galv')) {
+    document.querySelector('[data-finish="galvanise"]')?.classList.add('active');
+    finishMatched = true;
+  }
+  if (finishTypes.has('ppc') || finishTypes.has('paint')) {
+    document.querySelector('[data-finish="powder_coat_m"]')?.classList.add('active');
+    finishMatched = true;
+  }
+  if (finishTypes.has('primer')) {
+    document.querySelector('[data-finish="primer_tonne"]')?.classList.add('active');
+    finishMatched = true;
+  }
+  // If nothing tagged in takeoff, default to primer
+  if (!finishMatched) {
+    document.querySelector('[data-finish="primer_tonne"]')?.classList.add('active');
+  }
   document.querySelectorAll('#wiz-survey-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
   document.querySelector('[data-survey="no"]')?.classList.add('active');
   document.getElementById('wiz-survey-visits-wrap').style.display = 'none';
