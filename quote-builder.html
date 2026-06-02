@@ -214,6 +214,15 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 .area-header-chevron { font-size:10px;color:var(--muted);transition:transform 0.15s; }
 .area-header.collapsed .area-header-chevron { transform:rotate(-90deg); }
 .area-header.unspecified { background:rgba(136,136,136,0.06); border-color:rgba(136,136,136,0.15); }
+/* Drag and drop */
+.drag-handle { cursor:grab;color:var(--subtle);font-size:13px;padding:0 4px;user-select:none;opacity:0.4;transition:opacity 0.1s; }
+.drag-handle:hover { opacity:1;color:var(--accent); }
+tr.drag-selected td { background:rgba(255,107,0,0.08) !important; }
+tr.drag-selected { outline:1px solid rgba(255,107,0,0.3); }
+tr.drag-over td { background:rgba(255,107,0,0.15) !important; border-top:2px solid var(--accent) !important; }
+tr.drag-dragging { opacity:0.35; }
+.area-header.drop-target { background:rgba(255,107,0,0.2) !important; border-color:var(--accent) !important; outline:2px solid var(--accent); }
+.drag-ghost { position:fixed;pointer-events:none;background:var(--card);border:1px solid var(--accent);border-radius:6px;padding:6px 12px;font-size:12px;color:var(--accent);font-weight:600;z-index:99999;box-shadow:0 4px 20px rgba(0,0,0,0.5); }
 .helper-tile { transition:border-color 0.15s; }
 /* Wizard panels */
 .wiz-panel { background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden; }
@@ -519,6 +528,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
             <table class="data-table" id="takeoffTable" style="table-layout:fixed;width:100%">
               <thead>
                 <tr>
+                  <th style="width:18px"></th>
                   <th style="width:28px;text-align:center"><input type="checkbox" id="takeoffSelectAll" onchange="toggleSelectAllTakeoff(this.checked)" style="cursor:pointer;accent-color:var(--accent)"></th>
                   <th style="width:160px">Section Type <button class="sort-btn" data-col="type" onclick="sortTakeoff('type')" style="background:none;border:none;cursor:pointer;font-size:10px;color:var(--muted);padding:0 2px">⇅</button></th>
                   <th style="width:90px;text-align:right">Length (mm) <button class="sort-btn" data-col="length" onclick="sortTakeoff('length')" style="background:none;border:none;cursor:pointer;font-size:10px;color:var(--muted);padding:0 2px">⇅</button></th>
@@ -2999,8 +3009,13 @@ function renderTakeoff() {
       const areaCost = rows.reduce((s,{r}) => s + (r.length/1000)*(r.kgm||0)*(r.qty||1)*(r.rate||0), 0);
       const isUnspec = !areaId;
       html += `<tr data-area-hdr="${escHtml(areaId||'__unspec__')}">
-        <td colspan="9" style="padding:2px 0">
-          <div class="area-header ${collapsed?'collapsed':''} ${isUnspec?'unspecified':''}" onclick="toggleArea('${areaId}')">
+        <td colspan="10" style="padding:2px 0">
+          <div class="area-header ${collapsed?'collapsed':''} ${isUnspec?'unspecified':''}"
+            onclick="toggleArea('${areaId}')"
+            ondragover="onAreaDragOver(event,'${areaId}')"
+            ondragleave="onAreaDragLeave(event)"
+            ondrop="onAreaDrop(event,'${areaId}')"
+            data-area-id="${areaId||'__unspec__'}">
             <span class="area-header-chevron">▾</span>
             ${isUnspec
               ? `<span class="area-header-name" style="color:var(--muted);font-style:italic">Unspecified</span>`
@@ -3029,17 +3044,26 @@ function renderTakeoff() {
 
 function takeoffRowHTML(row, i) {
   const kgm = row.kgm || 0;
-  // length is always stored and displayed in mm
   const lengthMM = row.length || 0;
   const totalKg = (lengthMM/1000) * kgm * (row.qty||1);
   const mat = totalKg * (row.rate || 0);
   const isEA = row._unit === 'EA';
   const nc = 'padding:4px 4px;text-align:right';
   const ni = 'background:transparent;border:1px solid transparent;border-radius:4px;padding:4px 5px;color:var(--text);font-family:var(--font-mono);font-size:12px;text-align:right;width:100%;transition:border-color 0.15s';
-  return `<tr id="takeoff-row-${i}" style="transition:background 0.1s">
+  const sel = (getQuote()?.areas||[]).map(a=>`<option value="${a.id}" ${row.area===a.id?'selected':''} >${escHtml(a.name)}</option>`).join('');
+  return `<tr id="takeoff-row-${i}" data-idx="${i}" draggable="true"
+    ondragstart="onRowDragStart(event,${i})"
+    ondragover="onRowDragOver(event,${i})"
+    ondragleave="onRowDragLeave(event)"
+    ondrop="onRowDrop(event,${i})"
+    ondragend="onDragEnd()"
+    style="transition:background 0.1s">
+    <td style="text-align:center;padding:4px 2px;cursor:grab">
+      <span class="drag-handle" title="Drag to reorder">⠿</span>
+    </td>
     <td style="text-align:center;padding:4px 2px">
       <input type="checkbox" class="takeoff-cb" data-idx="${i}"
-        onchange="onTakeoffCheck()" style="cursor:pointer;accent-color:var(--accent)">
+        onchange="onTakeoffCheck()" onclick="onCbClick(event,${i})" style="cursor:pointer;accent-color:var(--accent)">
     </td>
     <td style="padding:3px 4px"><div class="ac-wrap" id="ac-wrap-${i}">
       <input class="ac-input" value="${row.type||''}" placeholder="e.g. UB203x133x25"
@@ -3062,15 +3086,16 @@ function takeoffRowHTML(row, i) {
         style="background:transparent;border:1px solid transparent;border-radius:4px;padding:3px 4px;color:var(--muted);font-size:11px;width:100%;cursor:pointer"
         onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='transparent'">
         <option value="" ${!row.area?'selected':''}>Unspecified</option>
-        ${(getQuote()?.areas||[]).map(a=>`<option value="${a.id}" ${row.area===a.id?'selected':''}>${escHtml(a.name)}</option>`).join('')}
+        ${sel}
       </select>
     </td>
-    <td style="${nc}"><input type="number" value="${kgm||''}" placeholder="auto" oninput="updateTakeoffRow(${i},'kgm',this.value)" style="${ni};color:${row.kgm?'var(--text)':'var(--subtle)'}"></td>
+    <td style="${nc}"><input type="number" value="${kgm||''}" placeholder="auto"
+        oninput="updateTakeoffRow(${i},'kgm',this.value)"
+        style="${ni};color:${row.kgm?'var(--text)':'var(--subtle)'}"></td>
     <td style="padding:2px 3px">
       <select onchange="updateTakeoffRow(${i},'finish',this.value)"
         style="background:transparent;border:1px solid transparent;border-radius:4px;padding:3px 4px;color:var(--muted);font-size:10px;width:100%;cursor:pointer"
-        onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='transparent'"
-        title="Finish type — used to auto-populate painting quantities">
+        onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='transparent'">
         <option value="" ${!row.finish?'selected':''}>—</option>
         <option value="galv"   ${row.finish==='galv'  ?'selected':''}>Galv</option>
         <option value="ppc"    ${row.finish==='ppc'   ?'selected':''}>PPC</option>
@@ -3079,12 +3104,159 @@ function takeoffRowHTML(row, i) {
       </select>
     </td>
     <td style="${nc};color:var(--muted);font-family:var(--font-mono);font-size:12px">${totalKg>0?totalKg.toFixed(2):''}</td>
-    <td style="${nc}"><input type="number" value="${row.rate||''}" placeholder="—" oninput="updateTakeoffRow(${i},'rate',this.value)" style="${ni}"></td>
+    <td style="${nc}"><input type="number" value="${row.rate||''}" placeholder="—"
+        oninput="updateTakeoffRow(${i},'rate',this.value)" style="${ni}"></td>
     <td style="${nc};color:${mat>0?'var(--accent)':'var(--muted)'};font-family:var(--font-mono);font-size:12px;font-weight:${mat>0?'600':'400'}">${mat>0?'£'+mat.toFixed(2):''}</td>
     <td style="padding:4px 2px;text-align:center">
       <button class="btn-icon" onclick="removeTakeoffRow(${i})" style="padding:3px 6px;font-size:12px" title="Delete row">✕</button>
     </td>
   </tr>`;
+}
+
+// ============================================================
+// TAKEOFF DRAG AND DROP
+// ============================================================
+let _dragIndices  = [];   // indices being dragged
+let _dragOverIdx  = null; // row index being hovered over
+let _ghostEl      = null; // custom ghost element
+let _lastClickIdx = null; // for shift-click range selection
+
+function onCbClick(event, idx) {
+  // Shift+click: select range
+  if (event.shiftKey && _lastClickIdx !== null) {
+    const lo = Math.min(_lastClickIdx, idx);
+    const hi = Math.max(_lastClickIdx, idx);
+    document.querySelectorAll('.takeoff-cb').forEach(cb => {
+      const i = parseInt(cb.dataset.idx);
+      if (i >= lo && i <= hi) cb.checked = true;
+    });
+    onTakeoffCheck();
+    return;
+  }
+  // Ctrl/Cmd+click: toggle without deselecting others — native checkbox handles this
+  _lastClickIdx = idx;
+  onTakeoffCheck();
+}
+
+function getSelectedIndices() {
+  return [...document.querySelectorAll('.takeoff-cb:checked')].map(cb => parseInt(cb.dataset.idx));
+}
+
+function onRowDragStart(event, idx) {
+  let selected = getSelectedIndices();
+  // If dragged row isn't selected, select only it
+  if (!selected.includes(idx)) {
+    document.querySelectorAll('.takeoff-cb').forEach(cb => cb.checked = false);
+    const cb = document.querySelector(`.takeoff-cb[data-idx="${idx}"]`);
+    if (cb) cb.checked = true;
+    selected = [idx];
+    onTakeoffCheck();
+  }
+  _dragIndices = selected;
+
+  // Mark dragged rows visually
+  _dragIndices.forEach(i => {
+    document.getElementById(`takeoff-row-${i}`)?.classList.add('drag-dragging');
+  });
+
+  // Custom ghost
+  _ghostEl = document.createElement('div');
+  _ghostEl.className = 'drag-ghost';
+  _ghostEl.textContent = `⠿ Moving ${_dragIndices.length} row${_dragIndices.length>1?'s':''}`;
+  document.body.appendChild(_ghostEl);
+  event.dataTransfer.setDragImage(_ghostEl, 0, 0);
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData('text/plain', JSON.stringify(_dragIndices));
+}
+
+function onRowDragOver(event, idx) {
+  if (!_dragIndices.length) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'move';
+  if (_dragOverIdx !== idx) {
+    if (_dragOverIdx !== null) document.getElementById(`takeoff-row-${_dragOverIdx}`)?.classList.remove('drag-over');
+    _dragOverIdx = idx;
+    if (!_dragIndices.includes(idx)) document.getElementById(`takeoff-row-${idx}`)?.classList.add('drag-over');
+  }
+}
+
+function onRowDragLeave(event) {
+  if (_dragOverIdx !== null) {
+    document.getElementById(`takeoff-row-${_dragOverIdx}`)?.classList.remove('drag-over');
+    _dragOverIdx = null;
+  }
+}
+
+function onRowDrop(event, targetIdx) {
+  event.preventDefault();
+  if (!_dragIndices.length || _dragIndices.includes(targetIdx)) { onDragEnd(); return; }
+  const q = getQuote(); if (!q) return;
+
+  // Get target area from the row being dropped onto
+  const targetArea = q.takeoff[targetIdx]?.area || '';
+
+  // Move selected rows to target area and reorder
+  moveRowsToPosition(q, _dragIndices, targetIdx, targetArea);
+  saveAll(); renderTakeoff(); recalcAll();
+  onDragEnd();
+}
+
+function onAreaDragOver(event, areaId) {
+  if (!_dragIndices.length) return;
+  event.preventDefault();
+  event.stopPropagation();
+  event.dataTransfer.dropEffect = 'move';
+  event.currentTarget.classList.add('drop-target');
+}
+
+function onAreaDragLeave(event) {
+  event.currentTarget.classList.remove('drop-target');
+}
+
+function onAreaDrop(event, areaId) {
+  event.preventDefault();
+  event.stopPropagation();
+  event.currentTarget.classList.remove('drop-target');
+  if (!_dragIndices.length) return;
+  const q = getQuote(); if (!q) return;
+
+  const realAreaId = areaId === '__unspec__' ? '' : areaId;
+  // Move rows to this area (append at end of area)
+  _dragIndices.forEach(i => { if (q.takeoff[i]) q.takeoff[i].area = realAreaId; });
+
+  saveAll(); renderTakeoff(); recalcAll();
+  onDragEnd();
+  toast(`${_dragIndices.length} row${_dragIndices.length>1?'s':''} moved`, 'success');
+}
+
+function moveRowsToPosition(q, draggedIndices, targetIdx, targetArea) {
+  // Assign target area to all dragged rows
+  draggedIndices.forEach(i => { if (q.takeoff[i]) q.takeoff[i].area = targetArea; });
+
+  // Reorder: remove dragged rows, insert at target position
+  const dragged = draggedIndices.map(i => q.takeoff[i]);
+  const remaining = q.takeoff.filter((_, i) => !draggedIndices.includes(i));
+
+  // Find new position of targetIdx in remaining array
+  const originalTarget = q.takeoff[targetIdx];
+  let insertAt = remaining.findIndex(r => r === originalTarget);
+  if (insertAt < 0) insertAt = remaining.length;
+
+  q.takeoff = [
+    ...remaining.slice(0, insertAt),
+    ...dragged,
+    ...remaining.slice(insertAt)
+  ];
+}
+
+function onDragEnd() {
+  // Clean up all visual states
+  document.querySelectorAll('.drag-dragging').forEach(el => el.classList.remove('drag-dragging'));
+  document.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+  document.querySelectorAll('.drop-target').forEach(el => el.classList.remove('drop-target'));
+  if (_ghostEl) { _ghostEl.remove(); _ghostEl = null; }
+  _dragIndices = [];
+  _dragOverIdx = null;
 }
 
 function addTakeoffRow() {
