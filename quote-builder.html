@@ -2325,20 +2325,22 @@ function computeQuoteTotals(quote, ratesObj) {
   const draughtsman= (parseFloat(quote.designHours)     || 0) * (parseFloat(quote.designRate)     || 50);
   const design = Math.round((structEng + architect + draughtsman) * 100) / 100;
 
-  // ── Painting ─────────────────────────────────────────────
-  let painting = 0;
+  // ── Painting / Finishing ─────────────────────────────────
+  let painting = 0, galvanising = 0;
   (quote.paintRows || []).forEach(r => {
     const rate = parseFloat(r.rate) || 0;
     let qty = parseFloat(r.qty) || 0;
     if (r.unit === 'tonnes') {
-      // Fix 5: use auto finish qty if tagged rows exist, else full takeoff
       if (r.type === 'galvanise' && finishQty.galv_t > 0)  qty = qty || finishQty.galv_t;
       else if (r.type === 'primer_tonne' && finishQty.primer_t > 0) qty = qty || finishQty.primer_t;
       else qty = qty || (totalKg / 1000);
     }
-    painting += qty * rate;
+    const cost = qty * rate;
+    if (r.type === 'galvanise' || r.type === 'galvanise_spin') galvanising += cost;
+    else painting += cost;
   });
-  painting = Math.round(painting * 100) / 100;
+  painting     = Math.round(painting     * 100) / 100;
+  galvanising  = Math.round(galvanising  * 100) / 100;
 
   // ── Survey ───────────────────────────────────────────────
   let survey = 0;
@@ -2409,7 +2411,9 @@ function computeQuoteTotals(quote, ratesObj) {
   return {
     // Cost buckets
     material, installation, fabrication, design,
-    painting, survey, delivery, prelims, purlins,
+    painting, galvanising, survey, delivery, prelims, purlins,
+    fittingsCostVal: Math.round(fittingsCostVal * 100) / 100,
+    fixingsCost: Math.round(fixingsCost * 100) / 100,
     subtotal, marginAmt, total,
     // Weight
     totalKg: Math.round(totalKg * 10) / 10,
@@ -3896,15 +3900,15 @@ function recalcAll() {
 
   // auto-fill standard lines from calcs
   if (q?.type === 'bama' && q.standardLines) {
-    const map = { material, fabrication, painting, installation, delivery, prelims };
     q.standardLines.forEach(l => {
-      if (l.key === 'material') l.price = material;
+      if (l.key === 'material')        l.price = material;
       else if (l.key === 'fabrication') l.price = fabrication;
-      else if (l.key === 'design') l.price = design;
-      else if (l.key === 'painting') l.price = painting;
+      else if (l.key === 'design')      l.price = design;
+      else if (l.key === 'painting')    l.price = painting;
+      else if (l.key === 'galvanising') l.price = galvanising;
       else if (l.key === 'installation') l.price = installation;
-      else if (l.key === 'delivery') l.price = delivery;
-      else if (l.key === 'prelims') l.price = prelims;
+      else if (l.key === 'delivery')    l.price = delivery;
+      else if (l.key === 'prelims')     l.price = prelims;
     });
     renderQuotationLines();
   }
@@ -7042,16 +7046,20 @@ function generateQuotePDF(mode = 'quote') {
   // ── BREAKDOWN PDF ─────────────────────────────────────────
   const margin = parseFloat(document.getElementById('marginSlider')?.value)||q.margin||20;
   const totals = [
-    ['Material (inc. fittings)', computed.material||0],
+    ['Steel Material (raw)',        (computed.material||0) - (computed.fittingsCostVal||0) - (computed.fixingsCost||0) - (parseFloat(q.miscMaterial)||0)],
+    ['Fittings & Connections',      computed.fittingsCostVal||0],
+    computed.fixingsCost > 0 ? ['Fixings & Consumables',   computed.fixingsCost||0] : null,
+    (parseFloat(q.miscMaterial)||0) > 0 ? ['Misc Material', parseFloat(q.miscMaterial)||0] : null,
     ['Installation (labour + plant)', computed.installation||0],
-    ['Fabrication + Consumables', computed.fabrication||0],
-    ['Design', computed.design||0],
-    ['Painting / Finishing', computed.painting||0],
-    ['Survey', computed.survey||0],
-    ['Delivery', computed.delivery||0],
-    ['Prelims', computed.prelims||0],
-    ['Purlins', computed.purlins||0],
-  ].filter(([,v]) => v > 0);
+    ['Fabrication + Consumables',   computed.fabrication||0],
+    ['Design',                      computed.design||0],
+    ['Galvanising',                 computed.galvanising||0],
+    ['Painting / Finishing',        computed.painting||0],
+    ['Survey',                      computed.survey||0],
+    ['Delivery',                    computed.delivery||0],
+    ['Prelims',                     computed.prelims||0],
+    ['Purlins',                     computed.purlins||0],
+  ].filter(row => row && row[1] > 0);
   const subtotal = totals.reduce((s,[,v]) => s+v, 0);
   const marginAmt = Math.round(subtotal*margin/100*100)/100;
   const total = Math.round((subtotal+marginAmt)*100)/100;
