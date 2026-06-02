@@ -215,13 +215,30 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 .area-header.collapsed .area-header-chevron { transform:rotate(-90deg); }
 .area-header.unspecified { background:rgba(136,136,136,0.06); border-color:rgba(136,136,136,0.15); }
 .helper-tile { transition:border-color 0.15s; }
-.wiz-section { margin-bottom:14px;padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:8px; }
-.wiz-section-title { font-size:12px;font-weight:600;color:var(--text);margin-bottom:10px; }
+/* Wizard panels */
+.wiz-panel { background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden; }
+.wiz-panel-header { display:flex;align-items:center;justify-content:space-between;padding:11px 14px;cursor:pointer;user-select:none;font-size:13px;font-weight:600;color:var(--text);gap:8px; }
+.wiz-panel-header:hover { background:rgba(255,255,255,0.03); }
+.wiz-panel-badge { font-size:11px;font-weight:400;color:var(--muted);margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px; }
+.wiz-chevron { font-size:12px;color:var(--muted);transition:transform 0.2s;flex-shrink:0; }
+.wiz-panel-body { padding:12px 14px;border-top:1px solid var(--border);display:none; }
+.wiz-panel.open .wiz-panel-body { display:block; }
+.wiz-panel.open .wiz-chevron { transform:rotate(180deg); }
+/* Tiles */
 .wiz-tile { padding:8px 12px;border-radius:7px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:12px;cursor:pointer;text-align:center;transition:all 0.15s;line-height:1.4;min-width:80px; }
 .wiz-tile:hover { border-color:var(--accent);color:var(--text); }
 .wiz-tile.active { background:rgba(255,107,0,0.12);border-color:var(--accent);color:var(--accent);font-weight:600; }
 .wiz-role-tile { padding:8px 12px;border-radius:7px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:12px;cursor:pointer;text-align:center;transition:all 0.15s;min-width:90px; }
 .wiz-role-tile.active { background:rgba(255,107,0,0.12);border-color:var(--accent);color:var(--accent); }
+/* MEWP rows */
+.wiz-mewp-row { display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border-radius:7px;border:1px solid var(--border);cursor:pointer;transition:all 0.15s;gap:8px;flex-wrap:wrap; }
+.wiz-mewp-row:hover { border-color:rgba(255,107,0,0.4); }
+.wiz-mewp-row.active { background:rgba(255,107,0,0.08);border-color:var(--accent); }
+.wiz-mewp-check { width:18px;height:18px;border-radius:4px;border:1px solid var(--border);background:transparent;display:flex;align-items:center;justify-content:center;font-size:11px;flex-shrink:0;color:transparent; }
+.wiz-mewp-row.active .wiz-mewp-check { background:var(--accent);border-color:var(--accent);color:#fff; }
+.wiz-mewp-controls { display:none;align-items:center;gap:6px; }
+.wiz-mewp-row.active .wiz-mewp-controls { display:flex; }
+.wiz-mewp-controls input { background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:4px 6px;color:var(--text);font-size:12px;font-family:var(--font-mono);text-align:center; }
 .wiz-role-name { font-weight:600;margin-bottom:4px; }
 .wiz-role-qty { width:40px;background:var(--card);border:1px solid var(--border);border-radius:4px;padding:2px 4px;color:var(--text);font-size:12px;text-align:center;margin-top:2px; }
 .wiz-stat-box { background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px 10px;text-align:center; }
@@ -546,10 +563,12 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
            TAB: CALCS
       ══════════════════════════════════════════ -->
       <div class="tab-content" id="tab-calcs">
-        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
+        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
           <span style="font-size:12px;color:var(--muted)">Calcs templates:</span>
           <button class="btn btn-ghost btn-sm" id="loadTemplateBtn" onclick="loadCalcsTemplate()">📂 Load template</button>
           <button class="btn btn-ghost btn-sm" onclick="saveCalcsTemplate()">💾 Save as template</button>
+          <div style="flex:1"></div>
+          <button class="btn btn-primary btn-sm" onclick="openWizardManual()" title="Set job parameters using the wizard">⚡ Price with Wizard</button>
         </div>
         <div class="calcs-layout">
           <div id="calcsCostBlocks">
@@ -1451,79 +1470,104 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 <!-- SETTINGS MODAL -->
 <!-- JOB SETUP WIZARD -->
 <div class="modal-overlay" id="wizardModal">
-  <div class="modal" style="max-width:720px;max-height:90vh;overflow-y:auto;padding:0">
+  <div class="modal" style="max-width:760px;max-height:92vh;overflow-y:auto;padding:0">
 
     <!-- Header -->
-    <div style="padding:16px 20px;border-bottom:1px solid var(--border);background:var(--surface);border-radius:8px 8px 0 0;position:sticky;top:0;z-index:10">
-      <div style="font-size:16px;font-weight:700;color:var(--text)">⚡ Job Setup Wizard</div>
-      <div style="font-size:12px;color:var(--muted);margin-top:2px">Review the takeoff summary then set your job parameters</div>
+    <div style="padding:14px 20px;border-bottom:1px solid var(--border);background:var(--surface);border-radius:8px 8px 0 0;position:sticky;top:0;z-index:10">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <div>
+          <div style="font-size:16px;font-weight:700;color:var(--text)">⚡ Job Setup Wizard</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:2px">Review takeoff, set parameters, generate quote</div>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <span style="font-size:11px;color:var(--muted)">Job type:</span>
+          <select id="wiz-job-type" onchange="wizApplyJobType(this.value)"
+            style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:12px;cursor:pointer">
+            <option value="">— Select type —</option>
+            <option value="structural_frame">Structural Frame</option>
+            <option value="mezzanine">Mezzanine / Platform</option>
+            <option value="agricultural">Agricultural / Shed</option>
+            <option value="architectural">Architectural / Balustrades</option>
+            <option value="stairs">Staircases</option>
+            <option value="residential">Residential (RSJ / Beams)</option>
+            <option value="industrial">Industrial / Process</option>
+            <option value="supply_only">Supply Only</option>
+          </select>
+        </div>
+      </div>
     </div>
 
-    <div style="padding:16px 20px">
+    <div style="padding:14px 20px;display:flex;flex-direction:column;gap:10px">
 
       <!-- JOB SUMMARY (read-only) -->
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:16px">
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px">
         <div style="font-size:10px;color:var(--muted);font-weight:600;letter-spacing:1px;margin-bottom:10px">TAKEOFF SUMMARY</div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:12px" id="wiz-stats"></div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-bottom:10px" id="wiz-stats"></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px" id="wiz-breakdown"></div>
         <div id="wiz-warnings" style="margin-top:8px"></div>
       </div>
 
-      <!-- SCOPE TOGGLE -->
-      <div class="wiz-section" style="padding:12px 14px">
-        <div class="wiz-section-title" style="margin-bottom:8px">📦 Scope of Works</div>
-        <div style="display:flex;gap:8px">
-          <div class="wiz-tile active" id="wiz-scope-install" data-scope="install"
-            onclick="wizSetScope('install')" style="flex:1;padding:12px">
-            Supply & Install<br>
-            <span style="font-size:10px;color:var(--muted)">Full scope</span>
-          </div>
-          <div class="wiz-tile" id="wiz-scope-supply" data-scope="supply"
-            onclick="wizSetScope('supply')" style="flex:1;padding:12px">
-            Supply Only<br>
-            <span style="font-size:10px;color:var(--muted)">No installation</span>
+      <!-- SCOPE -->
+      <div class="wiz-panel">
+        <div class="wiz-panel-header" onclick="wizTogglePanel(this)">
+          <span>📦 Scope of Works</span><span class="wiz-panel-badge" id="wiz-badge-scope">Supply &amp; Install</span><span class="wiz-chevron">▾</span>
+        </div>
+        <div class="wiz-panel-body">
+          <div style="display:flex;gap:8px">
+            <div class="wiz-tile active" id="wiz-scope-install" data-scope="install" onclick="wizSetScope('install')" style="flex:1;padding:12px">
+              Supply &amp; Install<br><span style="font-size:10px;color:var(--muted)">Full scope</span>
+            </div>
+            <div class="wiz-tile" id="wiz-scope-supply" data-scope="supply" onclick="wizSetScope('supply')" style="flex:1;padding:12px">
+              Supply Only<br><span style="font-size:10px;color:var(--muted)">No installation</span>
+            </div>
           </div>
         </div>
       </div>
 
       <!-- CREW (install only) -->
-      <div class="wiz-section" id="wiz-section-crew">
-        <div class="wiz-section-title">👷 Crew</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-          <div class="field">
-            <label>No. of operatives</label>
-            <input type="number" id="wiz-operatives" value="2" min="1" max="20"
-              style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:14px;font-family:var(--font-mono);width:100%;text-align:center"
-              oninput="wizUpdateDays()">
-          </div>
-          <div class="field">
-            <label>Days on site <span id="wiz-days-hint" style="color:var(--muted);font-size:10px"></span></label>
-            <input type="number" id="wiz-days" value="5" min="1" max="60"
-              style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:14px;font-family:var(--font-mono);width:100%;text-align:center">
-          </div>
+      <div class="wiz-panel" id="wiz-section-crew">
+        <div class="wiz-panel-header" onclick="wizTogglePanel(this)">
+          <span>👷 Crew &amp; Labour</span><span class="wiz-panel-badge" id="wiz-badge-crew">2 erectors</span><span class="wiz-chevron">▾</span>
         </div>
-        <!-- Labour roles -->
-        <div style="margin-top:8px">
-          <label style="font-size:11px;color:var(--muted);font-weight:600;display:block;margin-bottom:6px">ROLES (qty per role)</label>
+        <div class="wiz-panel-body">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+            <div class="field">
+              <label>No. of operatives</label>
+              <input type="number" id="wiz-operatives" value="2" min="1" max="20"
+                style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:14px;font-family:var(--font-mono);width:100%;text-align:center"
+                oninput="wizUpdateDays()">
+            </div>
+            <div class="field">
+              <label>Days on site <span id="wiz-days-hint" style="color:var(--muted);font-size:10px"></span></label>
+              <input type="number" id="wiz-days" value="5" min="1" max="60"
+                style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:14px;font-family:var(--font-mono);width:100%;text-align:center"
+                oninput="wizUpdateCrewBadge()">
+            </div>
+          </div>
+          <label style="font-size:11px;color:var(--muted);font-weight:600;display:block;margin-bottom:6px">ROLES (click to include, set qty)</label>
           <div style="display:flex;flex-wrap:wrap;gap:6px" id="wiz-roles">
-            <div class="wiz-role-tile active" data-role="erector" data-qty="2" onclick="wizToggleRole(this)">
+            <div class="wiz-role-tile active" data-role="erector" onclick="wizToggleRole(this)">
               <div class="wiz-role-name">Erector</div>
               <input type="number" value="2" min="0" max="10" class="wiz-role-qty" onclick="event.stopPropagation()" oninput="wizUpdateDays()">
             </div>
-            <div class="wiz-role-tile" data-role="supervisor" data-qty="0" onclick="wizToggleRole(this)">
+            <div class="wiz-role-tile" data-role="supervisor" onclick="wizToggleRole(this)">
               <div class="wiz-role-name">Supervisor</div>
               <input type="number" value="1" min="0" max="10" class="wiz-role-qty" onclick="event.stopPropagation()" oninput="wizUpdateDays()">
             </div>
-            <div class="wiz-role-tile" data-role="slinger" data-qty="0" onclick="wizToggleRole(this)">
-              <div class="wiz-role-name">Slinger</div>
+            <div class="wiz-role-tile" data-role="slinger" onclick="wizToggleRole(this)">
+              <div class="wiz-role-name">Slinger / Banksman</div>
               <input type="number" value="1" min="0" max="10" class="wiz-role-qty" onclick="event.stopPropagation()" oninput="wizUpdateDays()">
             </div>
-            <div class="wiz-role-tile" data-role="welder" data-qty="0" onclick="wizToggleRole(this)">
-              <div class="wiz-role-name">Welder</div>
+            <div class="wiz-role-tile" data-role="welder" onclick="wizToggleRole(this)">
+              <div class="wiz-role-name">Site Welder</div>
               <input type="number" value="1" min="0" max="10" class="wiz-role-qty" onclick="event.stopPropagation()" oninput="wizUpdateDays()">
             </div>
-            <div class="wiz-role-tile" data-role="labour" data-qty="0" onclick="wizToggleRole(this)">
+            <div class="wiz-role-tile" data-role="labour" onclick="wizToggleRole(this)">
               <div class="wiz-role-name">General Labour</div>
+              <input type="number" value="1" min="0" max="10" class="wiz-role-qty" onclick="event.stopPropagation()" oninput="wizUpdateDays()">
+            </div>
+            <div class="wiz-role-tile" data-role="tiler" onclick="wizToggleRole(this)">
+              <div class="wiz-role-name">Groundworker</div>
               <input type="number" value="1" min="0" max="10" class="wiz-role-qty" onclick="event.stopPropagation()" oninput="wizUpdateDays()">
             </div>
           </div>
@@ -1531,75 +1575,317 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
       </div>
 
       <!-- CRANE (install only) -->
-      <div class="wiz-section" id="wiz-section-crane">
-        <div class="wiz-section-title">🏗 Crane / Lifting</div>
-        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px" id="wiz-crane-tiles">
-          <div class="wiz-tile" data-crane="none" onclick="wizSelectCrane(this)">No crane</div>
-          <div class="wiz-tile" data-crane="crane_25t" onclick="wizSelectCrane(this)">25t Mobile<br><span style="font-size:10px;color:var(--muted)">£1,200/day</span></div>
-          <div class="wiz-tile" data-crane="crane_50t" onclick="wizSelectCrane(this)">50t Mobile<br><span style="font-size:10px;color:var(--muted)">£1,850/day</span></div>
-          <div class="wiz-tile" data-crane="crane_spider" onclick="wizSelectCrane(this)">Spider Crane<br><span style="font-size:10px;color:var(--muted)">£950/day</span></div>
-          <div class="wiz-tile" data-crane="crane_hiab" onclick="wizSelectCrane(this)">HIAB only<br><span style="font-size:10px;color:var(--muted)">£800/day</span></div>
+      <div class="wiz-panel" id="wiz-section-crane">
+        <div class="wiz-panel-header" onclick="wizTogglePanel(this)">
+          <span>🏗 Crane &amp; Lifting</span><span class="wiz-panel-badge" id="wiz-badge-crane">No crane</span><span class="wiz-chevron">▾</span>
         </div>
-        <div id="wiz-crane-days-wrap" style="display:none">
-          <label style="font-size:11px;color:var(--muted)">Crane days</label>
-          <input type="number" id="wiz-crane-days" value="1" min="1"
-            style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;font-family:var(--font-mono);width:80px;margin-left:8px">
+        <div class="wiz-panel-body">
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px" id="wiz-crane-tiles">
+            <div class="wiz-tile active" data-crane="none" onclick="wizSelectCrane(this)">No crane</div>
+            <div class="wiz-tile" data-crane="crane_25t" onclick="wizSelectCrane(this)">25t Mobile Crane<br><span style="font-size:10px;color:var(--muted)">£1,200/day</span></div>
+            <div class="wiz-tile" data-crane="crane_50t" onclick="wizSelectCrane(this)">50t Mobile Crane<br><span style="font-size:10px;color:var(--muted)">£1,850/day</span></div>
+            <div class="wiz-tile" data-crane="crane_100t" onclick="wizSelectCrane(this)">100t Mobile Crane<br><span style="font-size:10px;color:var(--muted)">£2,800/day</span></div>
+            <div class="wiz-tile" data-crane="crane_spider" onclick="wizSelectCrane(this)">Spider Crane<br><span style="font-size:10px;color:var(--muted)">£950/day</span></div>
+            <div class="wiz-tile" data-crane="crane_hiab" onclick="wizSelectCrane(this)">HIAB Lorry Crane<br><span style="font-size:10px;color:var(--muted)">£800/day</span></div>
+            <div class="wiz-tile" data-crane="crane_telehandler" onclick="wizSelectCrane(this)">Telehandler / Forklift<br><span style="font-size:10px;color:var(--muted)">£350/day</span></div>
+            <div class="wiz-tile" data-crane="crane_minipick" onclick="wizSelectCrane(this)">Mini Pick &amp; Carry<br><span style="font-size:10px;color:var(--muted)">£550/day</span></div>
+          </div>
+          <div id="wiz-crane-days-wrap" style="display:none;margin-top:4px">
+            <label style="font-size:11px;color:var(--muted)">Crane days on site</label>
+            <input type="number" id="wiz-crane-days" value="1" min="1"
+              style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;font-family:var(--font-mono);width:80px;margin-left:8px"
+              oninput="wizUpdateCraneBadge()">
+          </div>
         </div>
       </div>
 
-      <!-- ACCESS MEWP (install only) -->
-      <div class="wiz-section" id="wiz-section-mewp">
-        <div class="wiz-section-title">🦺 Access Equipment <span style="font-size:11px;font-weight:400;color:var(--muted)">(select all that apply)</span></div>
-        <div style="display:flex;flex-wrap:wrap;gap:6px" id="wiz-mewp-tiles">
-          <div class="wiz-tile" data-mewp="none" onclick="wizToggleMewp(this)">None needed</div>
-          <div class="wiz-tile" data-mewp="genie_z30" onclick="wizToggleMewp(this)">Genie Z-30<br><span style="font-size:10px;color:var(--muted)">£130/day</span></div>
-          <div class="wiz-tile" data-mewp="genie_z45" onclick="wizToggleMewp(this)">Genie Z-45<br><span style="font-size:10px;color:var(--muted)">£175/day</span></div>
-          <div class="wiz-tile" data-mewp="genie_z60" onclick="wizToggleMewp(this)">Genie Z-60<br><span style="font-size:10px;color:var(--muted)">£230/day</span></div>
-          <div class="wiz-tile" data-mewp="genie_s40" onclick="wizToggleMewp(this)">S-40 Telescopic<br><span style="font-size:10px;color:var(--muted)">£190/day</span></div>
-          <div class="wiz-tile" data-mewp="scissor_skyjack" onclick="wizToggleMewp(this)">Scissor Lift<br><span style="font-size:10px;color:var(--muted)">£120/day</span></div>
-          <div class="wiz-tile" data-mewp="cherry_z45" onclick="wizToggleMewp(this)">Cherry Picker Z45<br><span style="font-size:10px;color:var(--muted)">£200/day</span></div>
-          <div class="wiz-tile" data-mewp="scaffold" onclick="wizToggleMewp(this)">Tower Scaffold<br><span style="font-size:10px;color:var(--muted)">£150/wk</span></div>
+      <!-- ACCESS / MEWP (install only) -->
+      <div class="wiz-panel" id="wiz-section-mewp">
+        <div class="wiz-panel-header" onclick="wizTogglePanel(this)">
+          <span>🦺 Access Equipment</span><span class="wiz-panel-badge" id="wiz-badge-mewp">None</span><span class="wiz-chevron">▾</span>
+        </div>
+        <div class="wiz-panel-body">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Select all equipment needed. Set quantity and days per item.</div>
+          <div style="display:flex;flex-direction:column;gap:6px" id="wiz-mewp-tiles">
+            <!-- None -->
+            <div class="wiz-mewp-row" data-mewp="none" onclick="wizToggleMewp(this)">
+              <div style="display:flex;align-items:center;gap:8px">
+                <div class="wiz-mewp-check">✓</div>
+                <div style="font-size:13px;font-weight:600">None needed</div>
+              </div>
+            </div>
+            <!-- Scissor lifts -->
+            <div style="font-size:10px;color:var(--muted);font-weight:600;letter-spacing:1px;margin-top:4px">SCISSOR LIFTS</div>
+            <div class="wiz-mewp-row" data-mewp="scissor_19" onclick="wizToggleMewp(this)">
+              <div style="display:flex;align-items:center;gap:8px;flex:1">
+                <div class="wiz-mewp-check"></div>
+                <div><div style="font-size:13px;font-weight:600">Electric Scissor 19ft</div><div style="font-size:10px;color:var(--muted)">Up to 6m working height · indoor</div></div>
+              </div>
+              <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
+                <span style="font-size:11px;color:var(--muted)">Qty</span>
+                <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
+                <span style="font-size:11px;color:var(--muted)">Days</span>
+                <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
+                <span style="font-size:11px;color:var(--muted);min-width:60px">£90/day</span>
+              </div>
+            </div>
+            <div class="wiz-mewp-row" data-mewp="scissor_26" onclick="wizToggleMewp(this)">
+              <div style="display:flex;align-items:center;gap:8px;flex:1">
+                <div class="wiz-mewp-check"></div>
+                <div><div style="font-size:13px;font-weight:600">Rough Terrain Scissor 26ft</div><div style="font-size:10px;color:var(--muted)">Up to 10m · outdoor / uneven ground</div></div>
+              </div>
+              <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
+                <span style="font-size:11px;color:var(--muted)">Qty</span>
+                <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
+                <span style="font-size:11px;color:var(--muted)">Days</span>
+                <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
+                <span style="font-size:11px;color:var(--muted);min-width:60px">£120/day</span>
+              </div>
+            </div>
+            <!-- Boom lifts -->
+            <div style="font-size:10px;color:var(--muted);font-weight:600;letter-spacing:1px;margin-top:4px">BOOM LIFTS (GENIE / SIMILAR)</div>
+            <div class="wiz-mewp-row" data-mewp="boom_z30" onclick="wizToggleMewp(this)">
+              <div style="display:flex;align-items:center;gap:8px;flex:1">
+                <div class="wiz-mewp-check"></div>
+                <div><div style="font-size:13px;font-weight:600">Articulating Boom 30ft (Genie Z-30)</div><div style="font-size:10px;color:var(--muted)">Up to 11m · tight access</div></div>
+              </div>
+              <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
+                <span style="font-size:11px;color:var(--muted)">Qty</span>
+                <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
+                <span style="font-size:11px;color:var(--muted)">Days</span>
+                <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
+                <span style="font-size:11px;color:var(--muted);min-width:60px">£130/day</span>
+              </div>
+            </div>
+            <div class="wiz-mewp-row" data-mewp="boom_z45" onclick="wizToggleMewp(this)">
+              <div style="display:flex;align-items:center;gap:8px;flex:1">
+                <div class="wiz-mewp-check"></div>
+                <div><div style="font-size:13px;font-weight:600">Articulating Boom 45ft (Genie Z-45)</div><div style="font-size:10px;color:var(--muted)">Up to 16m working height</div></div>
+              </div>
+              <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
+                <span style="font-size:11px;color:var(--muted)">Qty</span>
+                <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
+                <span style="font-size:11px;color:var(--muted)">Days</span>
+                <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
+                <span style="font-size:11px;color:var(--muted);min-width:60px">£175/day</span>
+              </div>
+            </div>
+            <div class="wiz-mewp-row" data-mewp="boom_z60" onclick="wizToggleMewp(this)">
+              <div style="display:flex;align-items:center;gap:8px;flex:1">
+                <div class="wiz-mewp-check"></div>
+                <div><div style="font-size:13px;font-weight:600">Articulating Boom 60ft (Genie Z-60)</div><div style="font-size:10px;color:var(--muted)">Up to 20m working height</div></div>
+              </div>
+              <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
+                <span style="font-size:11px;color:var(--muted)">Qty</span>
+                <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
+                <span style="font-size:11px;color:var(--muted)">Days</span>
+                <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
+                <span style="font-size:11px;color:var(--muted);min-width:60px">£230/day</span>
+              </div>
+            </div>
+            <div class="wiz-mewp-row" data-mewp="telehandler_boom" onclick="wizToggleMewp(this)">
+              <div style="display:flex;align-items:center;gap:8px;flex:1">
+                <div class="wiz-mewp-check"></div>
+                <div><div style="font-size:13px;font-weight:600">Telescopic Boom (S-40 / S-65)</div><div style="font-size:10px;color:var(--muted)">Straight boom · outdoor use</div></div>
+              </div>
+              <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
+                <span style="font-size:11px;color:var(--muted)">Qty</span>
+                <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
+                <span style="font-size:11px;color:var(--muted)">Days</span>
+                <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
+                <span style="font-size:11px;color:var(--muted);min-width:60px">£190/day</span>
+              </div>
+            </div>
+            <!-- Cherry pickers -->
+            <div style="font-size:10px;color:var(--muted);font-weight:600;letter-spacing:1px;margin-top:4px">CHERRY PICKERS (TRUCK / VAN MOUNT)</div>
+            <div class="wiz-mewp-row" data-mewp="cherry_12m" onclick="wizToggleMewp(this)">
+              <div style="display:flex;align-items:center;gap:8px;flex:1">
+                <div class="wiz-mewp-check"></div>
+                <div><div style="font-size:13px;font-weight:600">Van Mount Cherry Picker 12m</div><div style="font-size:10px;color:var(--muted)">Self-drive / van-mounted</div></div>
+              </div>
+              <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
+                <span style="font-size:11px;color:var(--muted)">Qty</span>
+                <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
+                <span style="font-size:11px;color:var(--muted)">Days</span>
+                <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
+                <span style="font-size:11px;color:var(--muted);min-width:60px">£160/day</span>
+              </div>
+            </div>
+            <div class="wiz-mewp-row" data-mewp="cherry_18m" onclick="wizToggleMewp(this)">
+              <div style="display:flex;align-items:center;gap:8px;flex:1">
+                <div class="wiz-mewp-check"></div>
+                <div><div style="font-size:13px;font-weight:600">Truck Mount Cherry Picker 18m+</div><div style="font-size:10px;color:var(--muted)">High reach · operator sometimes included</div></div>
+              </div>
+              <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
+                <span style="font-size:11px;color:var(--muted)">Qty</span>
+                <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
+                <span style="font-size:11px;color:var(--muted)">Days</span>
+                <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
+                <span style="font-size:11px;color:var(--muted);min-width:60px">£350/day</span>
+              </div>
+            </div>
+            <!-- Other access -->
+            <div style="font-size:10px;color:var(--muted);font-weight:600;letter-spacing:1px;margin-top:4px">OTHER ACCESS</div>
+            <div class="wiz-mewp-row" data-mewp="scaffold_tower" onclick="wizToggleMewp(this)">
+              <div style="display:flex;align-items:center;gap:8px;flex:1">
+                <div class="wiz-mewp-check"></div>
+                <div><div style="font-size:13px;font-weight:600">Tower Scaffold</div><div style="font-size:10px;color:var(--muted)">Per tower · weekly hire</div></div>
+              </div>
+              <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
+                <span style="font-size:11px;color:var(--muted)">Qty</span>
+                <input type="number" class="wiz-mewp-qty" value="1" min="1" max="10" style="width:45px">
+                <span style="font-size:11px;color:var(--muted)">Weeks</span>
+                <input type="number" class="wiz-mewp-days" value="1" min="1" max="20" style="width:45px">
+                <span style="font-size:11px;color:var(--muted);min-width:60px">£150/wk</span>
+              </div>
+            </div>
+            <div class="wiz-mewp-row" data-mewp="scaffold_system" onclick="wizToggleMewp(this)">
+              <div style="display:flex;align-items:center;gap:8px;flex:1">
+                <div class="wiz-mewp-check"></div>
+                <div><div style="font-size:13px;font-weight:600">Erected Scaffold (subcontract)</div><div style="font-size:10px;color:var(--muted)">Full scaffold erection — allow lump sum</div></div>
+              </div>
+              <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
+                <span style="font-size:11px;color:var(--muted)">Qty</span>
+                <input type="number" class="wiz-mewp-qty" value="1" min="1" max="1" style="width:45px">
+                <span style="font-size:11px;color:var(--muted)">£ lump</span>
+                <input type="number" class="wiz-mewp-days" value="0" min="0" style="width:65px">
+                <span style="font-size:11px;color:var(--muted);min-width:60px">lump sum</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SURVEY (always visible) -->
+      <div class="wiz-panel" id="wiz-section-survey">
+        <div class="wiz-panel-header" onclick="wizTogglePanel(this)">
+          <span>📏 Pre-Construction Survey</span><span class="wiz-panel-badge" id="wiz-badge-survey">No survey</span><span class="wiz-chevron">▾</span>
+        </div>
+        <div class="wiz-panel-body">
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px" id="wiz-survey-tiles">
+            <div class="wiz-tile active" data-survey="no" onclick="wizSelectSurvey(this)">No survey needed</div>
+            <div class="wiz-tile" data-survey="mateusz" onclick="wizSelectSurvey(this)">Mateusz<br><span style="font-size:10px;color:var(--muted)">£250/visit</span></div>
+            <div class="wiz-tile" data-survey="leszek" onclick="wizSelectSurvey(this)">Leszek<br><span style="font-size:10px;color:var(--muted)">£250/visit</span></div>
+            <div class="wiz-tile" data-survey="struct_eng" onclick="wizSelectSurvey(this)">Structural Engineer<br><span style="font-size:10px;color:var(--muted)">£350/visit</span></div>
+            <div class="wiz-tile" data-survey="both" onclick="wizSelectSurvey(this)">Mateusz + Leszek<br><span style="font-size:10px;color:var(--muted)">Both attend</span></div>
+          </div>
+          <div id="wiz-survey-visits-wrap" style="display:none;margin-top:4px">
+            <label style="font-size:11px;color:var(--muted)">No. of visits</label>
+            <input type="number" id="wiz-survey-visits" value="1" min="1" max="10"
+              style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;font-family:var(--font-mono);width:80px;margin-left:8px"
+              oninput="wizUpdateSurveyBadge()">
+          </div>
         </div>
       </div>
 
       <!-- FINISH -->
-      <div class="wiz-section">
-        <div class="wiz-section-title">🎨 Finish <span style="font-size:11px;font-weight:400;color:var(--muted)">(select all that apply)</span></div>
-        <div style="display:flex;flex-wrap:wrap;gap:6px" id="wiz-finish-tiles">
-          <div class="wiz-tile active" data-finish="primer_tonne" onclick="wizToggleFinish(this)">Primer<br><span style="font-size:10px;color:var(--muted)">£/tonne</span></div>
-          <div class="wiz-tile" data-finish="galvanise" onclick="wizToggleFinish(this)">Galvanising<br><span style="font-size:10px;color:var(--muted)">£750/tonne</span></div>
-          <div class="wiz-tile" data-finish="powder_coat_m" onclick="wizToggleFinish(this)">Powder Coat<br><span style="font-size:10px;color:var(--muted)">£/m</span></div>
-          <div class="wiz-tile" data-finish="touch_up" onclick="wizToggleFinish(this)">Touch Up<br><span style="font-size:10px;color:var(--muted)">£/hr</span></div>
-          <div class="wiz-tile" data-finish="intumescent" onclick="wizToggleFinish(this)">Intumescent<br><span style="font-size:10px;color:var(--muted)">£/m²</span></div>
-          <div class="wiz-tile" data-finish="none" onclick="wizToggleFinish(this)">None / TBC</div>
+      <div class="wiz-panel">
+        <div class="wiz-panel-header" onclick="wizTogglePanel(this)">
+          <span>🎨 Surface Finish</span><span class="wiz-panel-badge" id="wiz-badge-finish">Primer</span><span class="wiz-chevron">▾</span>
+        </div>
+        <div class="wiz-panel-body">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Select all that apply — quantities auto-filled from tonnage</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px" id="wiz-finish-tiles">
+            <div class="wiz-tile active" data-finish="primer_tonne" onclick="wizToggleFinish(this)">Primer<br><span style="font-size:10px;color:var(--muted)">£180/tonne</span></div>
+            <div class="wiz-tile" data-finish="galvanise" onclick="wizToggleFinish(this)">Hot-dip Galvanising<br><span style="font-size:10px;color:var(--muted)">£750/tonne</span></div>
+            <div class="wiz-tile" data-finish="galvanise_spin" onclick="wizToggleFinish(this)">Spin Galvanising<br><span style="font-size:10px;color:var(--muted)">Fixings / small items</span></div>
+            <div class="wiz-tile" data-finish="powder_coat_m" onclick="wizToggleFinish(this)">Powder Coat<br><span style="font-size:10px;color:var(--muted)">£/m² · colour TBC</span></div>
+            <div class="wiz-tile" data-finish="intumescent" onclick="wizToggleFinish(this)">Intumescent Coating<br><span style="font-size:10px;color:var(--muted)">Fire protection · £/m²</span></div>
+            <div class="wiz-tile" data-finish="touch_up" onclick="wizToggleFinish(this)">Touch Up After Erection<br><span style="font-size:10px;color:var(--muted)">£150/hr</span></div>
+            <div class="wiz-tile" data-finish="blast_clean" onclick="wizToggleFinish(this)">Blast Clean<br><span style="font-size:10px;color:var(--muted)">SA2.5 before coating</span></div>
+            <div class="wiz-tile" data-finish="none" onclick="wizToggleFinish(this)">None / By Others</div>
+          </div>
         </div>
       </div>
 
-      <!-- SURVEY (install only) -->
-      <div class="wiz-section" id="wiz-section-survey">
-        <div class="wiz-section-title">📏 Survey</div>
-        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px" id="wiz-survey-tiles">
-          <div class="wiz-tile active" data-survey="no" onclick="wizSelectSurvey(this)">No survey</div>
-          <div class="wiz-tile" data-survey="mateusz" onclick="wizSelectSurvey(this)">Mateusz</div>
-          <div class="wiz-tile" data-survey="leszek" onclick="wizSelectSurvey(this)">Leszek</div>
-          <div class="wiz-tile" data-survey="struct_eng" onclick="wizSelectSurvey(this)">Struct. Eng</div>
-          <div class="wiz-tile" data-survey="both" onclick="wizSelectSurvey(this)">Mateusz + Leszek</div>
+      <!-- FIXINGS & CONSUMABLES -->
+      <div class="wiz-panel">
+        <div class="wiz-panel-header" onclick="wizTogglePanel(this)">
+          <span>🔩 Fixings &amp; Consumables</span><span class="wiz-panel-badge" id="wiz-badge-fixings">2.5% of materials</span><span class="wiz-chevron">▾</span>
         </div>
-        <div id="wiz-survey-visits-wrap" style="display:none">
-          <label style="font-size:11px;color:var(--muted)">No. of visits</label>
-          <input type="number" id="wiz-survey-visits" value="1" min="1"
-            style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;font-family:var(--font-mono);width:80px;margin-left:8px">
+        <div class="wiz-panel-body">
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+              <input type="checkbox" id="wiz-fixings-enabled" checked onchange="wizUpdateFixingsBadge()"
+                style="width:16px;height:16px;cursor:pointer">
+              <span style="font-size:13px">Include fixings &amp; consumables</span>
+            </label>
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="font-size:12px;color:var(--muted)">% of material cost:</span>
+              <input type="number" id="wiz-fixings-pct" value="2.5" min="0.5" max="10" step="0.5"
+                style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:13px;font-family:var(--font-mono);width:70px"
+                oninput="wizUpdateFixingsBadge()">
+              <span style="font-size:12px;color:var(--muted)">%</span>
+            </div>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-top:8px">Covers: holding-down bolts, anchor bolts, shear studs, structural bolts (grade 8.8), nuts, washers, welding wire, gas, consumables. Typically 2–3% for standard frames, up to 5% for connection-heavy jobs.</div>
+        </div>
+      </div>
+
+      <!-- DELIVERY -->
+      <div class="wiz-panel">
+        <div class="wiz-panel-header" onclick="wizTogglePanel(this)">
+          <span>🚚 Delivery</span><span class="wiz-panel-badge" id="wiz-badge-delivery">Auto (by tonnage)</span><span class="wiz-chevron">▾</span>
+        </div>
+        <div class="wiz-panel-body">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Auto-estimated from tonnage — override here if known</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px" id="wiz-delivery-tiles">
+            <div class="wiz-tile active" data-delivery="auto" onclick="wizSelectDelivery(this)">Auto-estimate<br><span style="font-size:10px;color:var(--muted)">Based on tonnage</span></div>
+            <div class="wiz-tile" data-delivery="transit" onclick="wizSelectDelivery(this)">Transit Van<br><span style="font-size:10px;color:var(--muted)">£250/load</span></div>
+            <div class="wiz-tile" data-delivery="hiab_drop" onclick="wizSelectDelivery(this)">HIAB Drop<br><span style="font-size:10px;color:var(--muted)">£800–1,400</span></div>
+            <div class="wiz-tile" data-delivery="rigid" onclick="wizSelectDelivery(this)">Rigid Lorry<br><span style="font-size:10px;color:var(--muted)">£700/load</span></div>
+            <div class="wiz-tile" data-delivery="artic" onclick="wizSelectDelivery(this)">Artic / Flatbed<br><span style="font-size:10px;color:var(--muted)">£1,100/load</span></div>
+            <div class="wiz-tile" data-delivery="multi_drop" onclick="wizSelectDelivery(this)">Multi-drop<br><span style="font-size:10px;color:var(--muted)">Phased delivery</span></div>
+            <div class="wiz-tile" data-delivery="client_collect" onclick="wizSelectDelivery(this)">Client Collects<br><span style="font-size:10px;color:var(--muted)">No delivery charge</span></div>
+          </div>
+          <div id="wiz-delivery-manual" style="display:none;margin-top:4px">
+            <label style="font-size:11px;color:var(--muted)">No. of loads</label>
+            <input type="number" id="wiz-delivery-loads" value="1" min="1"
+              style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;font-family:var(--font-mono);width:70px;margin-left:8px;margin-right:12px">
+            <label style="font-size:11px;color:var(--muted)">Rate per load (£)</label>
+            <input type="number" id="wiz-delivery-rate" value="800" min="0"
+              style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;font-family:var(--font-mono);width:90px;margin-left:8px">
+          </div>
         </div>
       </div>
 
       <!-- DESIGN -->
-      <div class="wiz-section">
-        <div class="wiz-section-title">📐 Design</div>
-        <div style="display:flex;flex-wrap:wrap;gap:6px" id="wiz-design-tiles">
-          <div class="wiz-tile active" data-design="fab_pack_only" onclick="wizSelectDesign(this)">Fab Pack only<br><span style="font-size:10px;color:var(--muted)">Internal draughtsman</span></div>
-          <div class="wiz-tile" data-design="full_design" onclick="wizSelectDesign(this)">Full design<br><span style="font-size:10px;color:var(--muted)">Struct Eng + Draughtsman</span></div>
-          <div class="wiz-tile" data-design="client_design" onclick="wizSelectDesign(this)">Client provides design<br><span style="font-size:10px;color:var(--muted)">Fab pack only</span></div>
-          <div class="wiz-tile" data-design="none" onclick="wizSelectDesign(this)">No design fee</div>
+      <div class="wiz-panel">
+        <div class="wiz-panel-header" onclick="wizTogglePanel(this)">
+          <span>📐 Design &amp; Drawings</span><span class="wiz-panel-badge" id="wiz-badge-design">Fab Pack only</span><span class="wiz-chevron">▾</span>
+        </div>
+        <div class="wiz-panel-body">
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px" id="wiz-design-tiles">
+            <div class="wiz-tile active" data-design="fab_pack_only" onclick="wizSelectDesign(this)">Fab Pack only<br><span style="font-size:10px;color:var(--muted)">Internal draughtsman — our drawings</span></div>
+            <div class="wiz-tile" data-design="full_design" onclick="wizSelectDesign(this)">Full Structural Design<br><span style="font-size:10px;color:var(--muted)">Struct Eng + Draughtsman</span></div>
+            <div class="wiz-tile" data-design="client_design" onclick="wizSelectDesign(this)">Client Provides Design<br><span style="font-size:10px;color:var(--muted)">We produce fab pack only</span></div>
+            <div class="wiz-tile" data-design="design_check" onclick="wizSelectDesign(this)">Design Check Only<br><span style="font-size:10px;color:var(--muted)">Review client's calcs</span></div>
+            <div class="wiz-tile" data-design="none" onclick="wizSelectDesign(this)">No Design Fee<br><span style="font-size:10px;color:var(--muted)">Repeat / simple job</span></div>
+          </div>
+          <div id="wiz-design-hours-preview" style="font-size:12px;color:var(--muted);padding:8px;background:var(--card);border-radius:6px;border:1px solid var(--border)">
+            Suggested hours will appear after wizard runs
+          </div>
+        </div>
+      </div>
+
+      <!-- PRELIMS -->
+      <div class="wiz-panel">
+        <div class="wiz-panel-header" onclick="wizTogglePanel(this)">
+          <span>📋 Preliminaries</span><span class="wiz-panel-badge" id="wiz-badge-prelims">RAMS + PPE</span><span class="wiz-chevron">▾</span>
+        </div>
+        <div class="wiz-panel-body">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Auto-selected based on scope. Toggle as needed.</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px" id="wiz-prelim-tiles">
+            <div class="wiz-tile active" data-prelim="rams">RAMS<br><span style="font-size:10px;color:var(--muted)">£120</span></div>
+            <div class="wiz-tile active" data-prelim="ppe">PPE<br><span style="font-size:10px;color:var(--muted)">£50</span></div>
+            <div class="wiz-tile" data-prelim="hs_officer" onclick="wizTogglePrelim(this)">H&amp;S Officer<br><span style="font-size:10px;color:var(--muted)">£/day</span></div>
+            <div class="wiz-tile" data-prelim="site_manager" onclick="wizTogglePrelim(this)">Site Manager<br><span style="font-size:10px;color:var(--muted)">£350/day</span></div>
+            <div class="wiz-tile" data-prelim="proj_manager" onclick="wizTogglePrelim(this)">Project Manager<br><span style="font-size:10px;color:var(--muted)">£400/day</span></div>
+            <div class="wiz-tile" data-prelim="weld_inspect" onclick="wizTogglePrelim(this)">Welding Inspection<br><span style="font-size:10px;color:var(--muted)">LOLER / cert</span></div>
+            <div class="wiz-tile" data-prelim="temp_works" onclick="wizTogglePrelim(this)">Temporary Works<br><span style="font-size:10px;color:var(--muted)">Propping / shoring</span></div>
+            <div class="wiz-tile" data-prelim="traffic_mgmt" onclick="wizTogglePrelim(this)">Traffic Management<br><span style="font-size:10px;color:var(--muted)">Road permit / cones</span></div>
+            <div class="wiz-tile" data-prelim="logistics" onclick="wizTogglePrelim(this)">Logistics<br><span style="font-size:10px;color:var(--muted)">£50</span></div>
+          </div>
         </div>
       </div>
 
@@ -1608,7 +1894,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
     <!-- Footer -->
     <div style="padding:14px 20px;border-top:1px solid var(--border);background:var(--surface);border-radius:0 0 8px 8px;position:sticky;bottom:0;display:flex;justify-content:space-between;align-items:center">
       <button class="btn btn-ghost" onclick="closeWizard()">Skip — I'll fill manually</button>
-      <button class="btn btn-primary" onclick="applyWizard()" style="padding:10px 24px;font-size:14px">⚡ Generate Quote</button>
+      <button class="btn btn-primary" onclick="applyWizard()" style="padding:10px 28px;font-size:14px">⚡ Generate Quote</button>
     </div>
   </div>
 </div>
@@ -1868,46 +2154,49 @@ function autoFabHours(takeoff) {
 
 /**
  * Auto-calculate design hours from takeoff by profile complexity.
- * Tiered draughtsman + structural engineer rates per tonne:
- *   UB/UC:           Draughtsman 4 hrs/t, Struct Eng 1 hr/t
- *   PFC/RSA/FLT:     Draughtsman 6 hrs/t
- *   SHS/RHS/CHS:     Draughtsman 12 hrs/t  (hollow → complex connections)
- *   Other:           Draughtsman 6 hrs/t
- * Fab pack: 0.5 hr/t across all, min 4hrs
+ * Calibrated against real BAMA quotes:
+ *   Q260523: ~1t mixed → 10h draughtsman, 0h struct eng (small residential)
+ *   Q260514: ~27t complex multi-floor → 85h draughtsman, ~20h struct eng
+ * Logic: member count drives hours more than tonnage for architectural work.
+ * Blended formula: base from member count + tonnage multiplier + complexity premium.
+ *   Simple frames (UB/UC only):   ~3 hrs/member (repetitive, similar connections)
+ *   Mixed structural:              ~4 hrs/member
+ *   Hollow/architectural:          ~5 hrs/member (unique connections each time)
+ *   Struct Eng: only for full_design — roughly 25% of draughtsman hours
+ *   Fab pack: flat 2h + 0.3h/member, min 4h
+ * All figures capped to prevent ludicrous outputs on large member counts.
  */
 function autoDesignHours(takeoff) {
-  let draughtHrs   = 0;
-  let structEngHrs = 0;
+  if (!takeoff?.length) return { draughtHrs: 8, structEngHrs: 4, fabpackHrs: 4, memberCount: 0 };
 
+  const memberCount = takeoff.length;
+  let draughtHrs = 0;
+
+  // Count members by type
+  let ubucCount = 0, pfcAngleCount = 0, hollowCount = 0, otherCount = 0;
   takeoff.forEach(row => {
-    const { kg, isValid } = rowWeight(row);
-    if (!isValid || !kg) return;
-    const t = kg / 1000;
     const prefix = (row.type?.match(/^[A-Za-z]+/) || [''])[0].toUpperCase();
-
-    if (prefix === 'UB' || prefix === 'UC') {
-      draughtHrs   += t * 4;
-      structEngHrs += t * 1;
-    } else if (prefix === 'PFC' || prefix === 'RSA' || prefix === 'FLT' || prefix === 'FLAT') {
-      draughtHrs   += t * 6;
-    } else if (prefix === 'SHS' || prefix === 'RHS' || prefix === 'CHS') {
-      draughtHrs   += t * 12;
-    } else {
-      draughtHrs   += t * 6;  // misc / unrecognised
-    }
+    const qty = row.qty || 1;
+    if (prefix === 'UB' || prefix === 'UC') ubucCount += qty;
+    else if (prefix === 'PFC' || prefix === 'RSA' || prefix === 'EA') pfcAngleCount += qty;
+    else if (prefix === 'SHS' || prefix === 'RHS' || prefix === 'CHS') hollowCount += qty;
+    else otherCount += qty;
   });
 
-  const totalTonnes = takeoff.reduce((s, row) => {
-    const { kg } = rowWeight(row); return s + kg / 1000;
-  }, 0);
+  const totalQty = ubucCount + pfcAngleCount + hollowCount + otherCount || memberCount;
+  // Weighted hours per "piece" (not per row — rows can have qty > 1)
+  draughtHrs = (ubucCount * 2.5) + (pfcAngleCount * 3) + (hollowCount * 3.5) + (otherCount * 3);
 
-  const fabpackHrs = Math.max(4, Math.round(totalTonnes * 0.5));
+  // Minimum floor: 8h for any job
+  draughtHrs = Math.max(8, Math.round(draughtHrs));
 
-  return {
-    draughtHrs:   Math.max(8,  Math.round(draughtHrs)),
-    structEngHrs: Math.max(4,  Math.round(structEngHrs)),
-    fabpackHrs
-  };
+  // Struct eng: ~22% of draughtsman, minimum 0 (only applied when full_design chosen)
+  const structEngHrs = Math.max(4, Math.round(draughtHrs * 0.22));
+
+  // Fab pack: flat base + per-unique-row (not qty)
+  const fabpackHrs = Math.max(4, Math.round(4 + takeoff.length * 0.5));
+
+  return { draughtHrs, structEngHrs, fabpackHrs, memberCount };
 }
 
 /**
@@ -1979,7 +2268,10 @@ function computeQuoteTotals(quote, ratesObj) {
   const fittingsKg   = totalKg * (fittingsPct / 100);
   const fittingsCostVal = fittingsKg * fittingsRate;
   const miscMaterial    = parseFloat(quote.miscMaterial) || 0;
-  const material = Math.round((materialCost + fittingsCostVal + miscMaterial) * 100) / 100;
+  // Fixings & consumables (% of raw material cost, from wizard)
+  const fixingsPct = parseFloat(quote.fixingsPct) || 0;
+  const fixingsCost = fixingsPct > 0 ? Math.round((materialCost + fittingsCostVal) * fixingsPct / 100 * 100) / 100 : 0;
+  const material = Math.round((materialCost + fittingsCostVal + miscMaterial + fixingsCost) * 100) / 100;
 
   // ── Installation ─────────────────────────────────────────
   const days       = parseFloat(quote.instDays) || 0;
@@ -2208,7 +2500,7 @@ const DEFAULT_RATES = {
     powder_coat_m:   { label: 'Powder Coating (£/m)',       rate: 0,   unit: 'm' },
     powder_coat_bay: { label: 'Powder Coating (£/bay)',     rate: 0,   unit: 'bays' },
     galvanise:       { label: 'Galvanising (£/tonne)',      rate: 750, unit: 'tonnes' },
-    primer_tonne:    { label: 'Primer (£/tonne)',           rate: 0,   unit: 'tonnes' },
+    primer_tonne:    { label: 'Primer (£/tonne)',           rate: 180, unit: 'tonnes' },
     touch_up:        { label: 'Touch Up After Erection (£/hr)', rate: 150, unit: 'hrs' },
     intumescent:     { label: 'Intumescent (£/m²)',         rate: 0,   unit: 'm²' }
   },
@@ -3937,24 +4229,25 @@ function showPsPreview(source) {
 }
 
 /**
- * Full quote automation chain — runs after PlanSwift import.
- * fresh = true  → fill everything silently (all fields were zero)
- * fresh = false → ask first, only proceed if confirmed
- */
 // ============================================================
 // JOB SETUP WIZARD
 // ============================================================
 let _wizQuote = null;
 
+function wizTogglePanel(header) {
+  header.closest('.wiz-panel').classList.toggle('open');
+}
+
 function openWizard(q) {
   _wizQuote = q;
   buildWizSummary(q);
   wizSuggestCrew(q);
-  // Reset all tiles to defaults
+  // Reset tiles to defaults
   document.querySelectorAll('#wiz-crane-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
   document.querySelector('[data-crane="none"]')?.classList.add('active');
   document.getElementById('wiz-crane-days-wrap').style.display = 'none';
-  document.querySelectorAll('#wiz-mewp-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.wiz-mewp-row').forEach(t => t.classList.remove('active'));
+  document.querySelector('[data-mewp="none"]')?.classList.add('active');
   document.querySelectorAll('#wiz-finish-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
   document.querySelector('[data-finish="primer_tonne"]')?.classList.add('active');
   document.querySelectorAll('#wiz-survey-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
@@ -3962,14 +4255,34 @@ function openWizard(q) {
   document.getElementById('wiz-survey-visits-wrap').style.display = 'none';
   document.querySelectorAll('#wiz-design-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
   document.querySelector('[data-design="fab_pack_only"]')?.classList.add('active');
-  // Default to supply & install
+  document.querySelectorAll('#wiz-delivery-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
+  document.querySelector('[data-delivery="auto"]')?.classList.add('active');
+  document.getElementById('wiz-delivery-manual').style.display = 'none';
+  // Default prelims
+  document.querySelectorAll('#wiz-prelim-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
+  document.querySelector('[data-prelim="rams"]')?.classList.add('active');
+  document.querySelector('[data-prelim="ppe"]')?.classList.add('active');
+  // Update design hours preview
+  wizUpdateDesignPreview();
+  // Open key panels by default
+  document.querySelectorAll('.wiz-panel').forEach(p => p.classList.remove('open'));
+  ['wiz-section-crew','wiz-section-crane','wiz-section-mewp','wiz-section-survey'].forEach(id => {
+    document.getElementById(id)?.classList.add('open');
+  });
+  // Also open scope, finish, design, fixings, delivery, prelims
+  document.querySelectorAll('.wiz-panel').forEach(p => p.classList.add('open'));
+  // Default scope
   wizSetScope('install');
+  // Job type blank
+  const jt = document.getElementById('wiz-job-type');
+  if (jt) jt.value = '';
+  // Update badges
+  wizUpdateAllBadges();
   document.getElementById('wizardModal').classList.add('active');
 }
 
 function closeWizard() {
   document.getElementById('wizardModal').classList.remove('active');
-  // Still run fab/design auto-calc silently
   if (_wizQuote) {
     const { totalHours: fabHrs } = autoFabHours(_wizQuote.takeoff);
     const { draughtHrs, structEngHrs, fabpackHrs } = autoDesignHours(_wizQuote.takeoff);
@@ -3984,9 +4297,14 @@ function closeWizard() {
   }
 }
 
-function buildWizSummary(q) {
+function openWizardManual() {
+  const q = getQuote();
+  if (!q) { toast('No active quote', 'error'); return; }
+  openWizard(q);
+}
+
+
   const takeoff = q.takeoff || [];
-  // Total weight
   let totalKg = 0;
   const byProfile = {};
   let heaviest = null, heaviestKg = 0;
@@ -3996,37 +4314,38 @@ function buildWizSummary(q) {
     const { kg, isValid } = rowWeight(row);
     if (!isValid) { if (row.type && !missingKgm.includes(row.type)) missingKgm.push(row.type); return; }
     totalKg += kg;
-    const rowKg = kg;
-    if (rowKg > heaviestKg) { heaviestKg = rowKg; heaviest = row; }
+    if (kg > heaviestKg) { heaviestKg = kg; heaviest = row; }
     const prefix = (row.type?.match(/^[A-Za-z]+/)||['?'])[0].toUpperCase();
     const group =
-      (prefix === 'UB' || prefix === 'UC') ? 'UB/UC' :
-      (prefix === 'PFC' || prefix === 'RSA') ? 'PFC/Angles' :
-      (prefix === 'SHS' || prefix === 'RHS' || prefix === 'CHS') ? 'Hollow' : 'Other';
+      (prefix === 'UB' || prefix === 'UC') ? 'UB/UC Beams' :
+      (prefix === 'PFC' || prefix === 'RSA' || prefix === 'EA') ? 'PFC/Angles' :
+      (prefix === 'SHS' || prefix === 'RHS' || prefix === 'CHS') ? 'Hollow Section' :
+      (prefix === 'FLT' || prefix === 'FLAT' || prefix === 'PLT') ? 'Flat/Plate' : 'Other';
     byProfile[group] = (byProfile[group]||0) + kg/1000;
   });
 
-  // Longest member
-  let longestRow = null, longestMM = 0;
+  let longestMM = 0, longestRow = null;
   takeoff.forEach(r => { if ((r.length||0) > longestMM) { longestMM = r.length; longestRow = r; } });
 
   const t = totalKg / 1000;
-  const statsEl = document.getElementById('wiz-stats');
-  statsEl.innerHTML = [
+  window._wizTonnes = t;
+  window._wizMemberCount = takeoff.length;
+
+  document.getElementById('wiz-stats').innerHTML = [
     { val: takeoff.length, lbl: 'Members' },
     { val: t.toFixed(2)+'t', lbl: 'Total tonnage' },
     { val: longestMM ? ((longestMM/1000).toFixed(2)+'m') : '—', lbl: 'Longest member' },
     { val: (q.areas||[]).length || '—', lbl: 'Areas' },
+    { val: Object.keys(byProfile).length, lbl: 'Section types' },
   ].map(s => `<div class="wiz-stat-box"><div class="wiz-stat-val">${s.val}</div><div class="wiz-stat-lbl">${s.lbl}</div></div>`).join('');
 
-  // Heaviest section
   const breakdownEl = document.getElementById('wiz-breakdown');
   const heaviestHtml = heaviest
     ? `<div style="background:var(--card);border:1px solid rgba(255,107,0,0.2);border-radius:6px;padding:8px 10px">
         <div style="font-size:10px;color:var(--muted);font-weight:600;margin-bottom:4px">HEAVIEST SECTION</div>
         <div style="font-size:13px;font-weight:600;font-family:var(--font-mono);color:var(--accent)">${escHtml(heaviest.type)}</div>
-        <div style="font-size:11px;color:var(--muted);margin-top:2px">${heaviest.kgm||'?'} kg/m · ${heaviest.qty||1} No. · ${((heaviest.length||0)/1000).toFixed(2)}m long</div>
-        <div style="font-size:11px;color:var(--muted)">${heaviestKg.toFixed(1)} kg total for this row</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">${heaviest.kgm||'?'} kg/m · ${heaviest.qty||1} No. · ${((heaviest.length||0)/1000).toFixed(2)}m</div>
+        <div style="font-size:11px;color:var(--muted)">${heaviestKg.toFixed(1)} kg total</div>
       </div>` : '';
 
   const profileHtml = `<div style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px 10px">
@@ -4041,62 +4360,130 @@ function buildWizSummary(q) {
 
   breakdownEl.innerHTML = heaviestHtml + profileHtml;
 
-  // Warnings
   const warnEl = document.getElementById('wiz-warnings');
   warnEl.innerHTML = missingKgm.length
     ? `<div style="padding:6px 10px;background:rgba(255,179,71,0.08);border:1px solid rgba(255,179,71,0.25);border-radius:5px;font-size:11px;color:var(--accent2)">
-        ⚠ ${missingKgm.length} section${missingKgm.length>1?'s':''} missing kg/m — tonnage is incomplete: ${missingKgm.join(', ')}
-      </div>` : '';
-
-  // Store summary for use in applyWizard
-  window._wizTonnes = t;
+        ⚠ ${missingKgm.length} section${missingKgm.length>1?'s':''} missing kg/m — tonnage incomplete: ${missingKgm.join(', ')}</div>` : '';
 }
 
 function wizSuggestCrew(q) {
-  // Suggest operatives based on member count
   const members = (q.takeoff||[]).length;
-  const suggestedOps = members <= 10 ? 2 : members <= 30 ? 3 : 4;
+  const tonnes = window._wizTonnes || 0;
+  const suggestedOps = members <= 8 ? 2 : members <= 25 ? 3 : 4;
   document.getElementById('wiz-operatives').value = suggestedOps;
-  // Suggest days: members ÷ (operatives × 4 members/day), min 2
-  const suggestedDays = Math.max(2, Math.ceil(members / (suggestedOps * 4)));
+  const suggestedDays = Math.max(1, Math.ceil(members / (suggestedOps * 5)));
   document.getElementById('wiz-days').value = suggestedDays;
-  document.getElementById('wiz-days-hint').textContent =
-    `(suggested: ${members} members ÷ ${suggestedOps} ops)`;
-  // Default erectors to operatives
+  document.getElementById('wiz-days-hint').textContent = `(suggested: ${members} members ÷ ${suggestedOps} ops)`;
   const erectorTile = document.querySelector('[data-role="erector"]');
   if (erectorTile) {
     erectorTile.querySelector('.wiz-role-qty').value = suggestedOps;
     erectorTile.classList.add('active');
   }
+  wizUpdateDesignPreview();
 }
 
 function wizUpdateDays() {
-  // Recalculate suggested days when operatives change
   const ops = parseFloat(document.getElementById('wiz-operatives').value) || 2;
-  const members = (_wizQuote?.takeoff||[]).length;
-  const suggested = Math.max(2, Math.ceil(members / (ops * 4)));
+  const members = window._wizMemberCount || 0;
+  const suggested = Math.max(1, Math.ceil(members / (ops * 5)));
   document.getElementById('wiz-days-hint').textContent = `(suggested: ${members} members ÷ ${ops} ops ≈ ${suggested} days)`;
+  wizUpdateCrewBadge();
 }
 
-function wizToggleRole(el) {
-  el.classList.toggle('active');
+// ── Badge updaters ────────────────────────────────────────────
+function wizUpdateAllBadges() {
+  wizUpdateCrewBadge(); wizUpdateCraneBadge(); wizUpdateMewpBadge();
+  wizUpdateSurveyBadge(); wizUpdateFinishBadge(); wizUpdateDeliveryBadge();
+  wizUpdateFixingsBadge(); wizUpdateDesignBadge(); wizUpdatePrelimsBadge();
+  const scope = document.getElementById('wiz-scope-install')?.classList.contains('active') ? 'Supply & Install' : 'Supply Only';
+  const badge = document.getElementById('wiz-badge-scope');
+  if (badge) badge.textContent = scope;
 }
+function wizUpdateCrewBadge() {
+  const ops = document.getElementById('wiz-operatives')?.value || 2;
+  const days = document.getElementById('wiz-days')?.value || 5;
+  const el = document.getElementById('wiz-badge-crew');
+  if (el) el.textContent = `${ops} ops · ${days} days`;
+}
+function wizUpdateCraneBadge() {
+  const active = document.querySelector('#wiz-crane-tiles .wiz-tile.active');
+  const el = document.getElementById('wiz-badge-crane');
+  if (!el) return;
+  if (!active || active.dataset.crane === 'none') { el.textContent = 'No crane'; return; }
+  const days = document.getElementById('wiz-crane-days')?.value || 1;
+  el.textContent = active.textContent.split('\n')[0].trim() + ` · ${days} days`;
+}
+function wizUpdateMewpBadge() {
+  const active = [...document.querySelectorAll('.wiz-mewp-row.active')].filter(r => r.dataset.mewp !== 'none');
+  const el = document.getElementById('wiz-badge-mewp');
+  if (!el) return;
+  el.textContent = active.length ? active.map(r => r.querySelector('div > div > div')?.textContent || r.dataset.mewp).join(', ') : 'None';
+}
+function wizUpdateSurveyBadge() {
+  const active = document.querySelector('#wiz-survey-tiles .wiz-tile.active');
+  const el = document.getElementById('wiz-badge-survey');
+  if (!el) return;
+  if (!active || active.dataset.survey === 'no') { el.textContent = 'No survey'; return; }
+  const visits = document.getElementById('wiz-survey-visits')?.value || 1;
+  el.textContent = active.textContent.split('\n')[0].trim() + (visits > 1 ? ` · ${visits} visits` : '');
+}
+function wizUpdateFinishBadge() {
+  const active = [...document.querySelectorAll('#wiz-finish-tiles .wiz-tile.active')].filter(t => t.dataset.finish !== 'none');
+  const el = document.getElementById('wiz-badge-finish');
+  if (el) el.textContent = active.length ? active.map(t => t.textContent.split('\n')[0].trim()).join(', ') : 'None';
+}
+function wizUpdateDeliveryBadge() {
+  const active = document.querySelector('#wiz-delivery-tiles .wiz-tile.active');
+  const el = document.getElementById('wiz-badge-delivery');
+  if (el) el.textContent = active?.textContent.split('\n')[0].trim() || 'Auto';
+}
+function wizUpdateFixingsBadge() {
+  const enabled = document.getElementById('wiz-fixings-enabled')?.checked;
+  const pct = document.getElementById('wiz-fixings-pct')?.value || 2.5;
+  const el = document.getElementById('wiz-badge-fixings');
+  if (el) el.textContent = enabled ? `${pct}% of materials` : 'Not included';
+}
+function wizUpdateDesignBadge() {
+  const active = document.querySelector('#wiz-design-tiles .wiz-tile.active');
+  const el = document.getElementById('wiz-badge-design');
+  if (el) el.textContent = active?.textContent.split('\n')[0].trim() || 'Fab Pack only';
+}
+function wizUpdatePrelimsBadge() {
+  const active = [...document.querySelectorAll('#wiz-prelim-tiles .wiz-tile.active')];
+  const el = document.getElementById('wiz-badge-prelims');
+  if (el) el.textContent = active.length ? active.map(t => t.textContent.split('\n')[0].trim()).join(', ') : 'None';
+}
+
+function wizUpdateDesignPreview() {
+  const q = _wizQuote; if (!q || !q.takeoff?.length) return;
+  const { draughtHrs, structEngHrs, fabpackHrs, memberCount } = autoDesignHours(q.takeoff);
+  const el = document.getElementById('wiz-design-hours-preview');
+  if (el) el.innerHTML = `
+    <span style="font-weight:600;color:var(--text)">Suggested hours (${memberCount} members · ${(window._wizTonnes||0).toFixed(2)}t):</span>
+    Draughtsman <b>${draughtHrs}h</b> · Struct Eng <b>${structEngHrs}h</b> · Fab Pack <b>${fabpackHrs}h</b>
+    <span style="color:var(--muted);font-size:10px"> — based on your actual quotes</span>`;
+}
+
+// ── Tile interaction ──────────────────────────────────────────
+function wizToggleRole(el) { el.classList.toggle('active'); wizUpdateCrewBadge(); }
 
 function wizSelectCrane(el) {
   document.querySelectorAll('#wiz-crane-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
   el.classList.add('active');
   const needsDays = el.dataset.crane !== 'none';
   document.getElementById('wiz-crane-days-wrap').style.display = needsDays ? '' : 'none';
+  wizUpdateCraneBadge();
 }
 
 function wizToggleMewp(el) {
   if (el.dataset.mewp === 'none') {
-    document.querySelectorAll('#wiz-mewp-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.wiz-mewp-row').forEach(t => t.classList.remove('active'));
     el.classList.add('active');
   } else {
     document.querySelector('[data-mewp="none"]')?.classList.remove('active');
     el.classList.toggle('active');
   }
+  wizUpdateMewpBadge();
 }
 
 function wizToggleFinish(el) {
@@ -4107,35 +4494,77 @@ function wizToggleFinish(el) {
     document.querySelector('[data-finish="none"]')?.classList.remove('active');
     el.classList.toggle('active');
   }
+  wizUpdateFinishBadge();
 }
 
 function wizSelectSurvey(el) {
   document.querySelectorAll('#wiz-survey-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
   el.classList.add('active');
-  document.getElementById('wiz-survey-visits-wrap').style.display =
-    el.dataset.survey !== 'no' ? '' : 'none';
+  document.getElementById('wiz-survey-visits-wrap').style.display = el.dataset.survey !== 'no' ? '' : 'none';
+  wizUpdateSurveyBadge();
 }
 
 function wizSelectDesign(el) {
   document.querySelectorAll('#wiz-design-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
   el.classList.add('active');
+  wizUpdateDesignBadge();
 }
 
+function wizSelectDelivery(el) {
+  document.querySelectorAll('#wiz-delivery-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  const isManual = el.dataset.delivery !== 'auto' && el.dataset.delivery !== 'client_collect';
+  document.getElementById('wiz-delivery-manual').style.display = isManual ? '' : 'none';
+  // pre-fill rate for selected type
+  const rateMap = { transit:250, hiab_drop:1000, rigid:700, artic:1100, multi_drop:900 };
+  const rateEl = document.getElementById('wiz-delivery-rate');
+  if (rateEl && rateMap[el.dataset.delivery]) rateEl.value = rateMap[el.dataset.delivery];
+  wizUpdateDeliveryBadge();
+}
+
+function wizTogglePrelim(el) { el.classList.toggle('active'); wizUpdatePrelimsBadge(); }
+
 function wizSetScope(scope) {
-  // Toggle scope tile active state
   document.getElementById('wiz-scope-install')?.classList.toggle('active', scope === 'install');
   document.getElementById('wiz-scope-supply')?.classList.toggle('active', scope === 'supply');
-  // Show/hide install-only sections
-  const installOnly = ['wiz-section-crew','wiz-section-crane','wiz-section-mewp','wiz-section-survey'];
-  installOnly.forEach(id => {
+  // Install-only sections — still shown but visually dimmed for supply-only
+  const installSections = ['wiz-section-crew','wiz-section-crane','wiz-section-mewp'];
+  installSections.forEach(id => {
     const el = document.getElementById(id);
-    if (el) el.style.display = scope === 'install' ? '' : 'none';
+    if (el) el.style.opacity = scope === 'install' ? '1' : '0.4';
   });
-  // If supply only, grey out footer hint
-  const hint = document.getElementById('wiz-scope-hint');
-  if (hint) hint.textContent = scope === 'supply'
-    ? 'Supply only — finish and delivery only'
-    : '';
+  const badge = document.getElementById('wiz-badge-scope');
+  if (badge) badge.textContent = scope === 'install' ? 'Supply & Install' : 'Supply Only';
+}
+
+// ── Job type presets ──────────────────────────────────────────
+function wizApplyJobType(type) {
+  if (!type) return;
+  const presets = {
+    structural_frame:  { finish:['primer_tonne'], design:'fab_pack_only', prelims:['rams','ppe','weld_inspect'] },
+    mezzanine:         { finish:['primer_tonne','galvanise'], design:'fab_pack_only', prelims:['rams','ppe'] },
+    agricultural:      { finish:['primer_tonne'], design:'client_design', prelims:['rams','ppe'] },
+    architectural:     { finish:['galvanise','powder_coat_m'], design:'fab_pack_only', prelims:['rams','ppe'] },
+    stairs:            { finish:['galvanise'], design:'fab_pack_only', prelims:['rams','ppe'] },
+    residential:       { finish:['primer_tonne'], design:'none', prelims:['rams','ppe'] },
+    industrial:        { finish:['primer_tonne'], design:'full_design', prelims:['rams','ppe','weld_inspect','proj_manager'] },
+    supply_only:       { finish:['primer_tonne'], design:'fab_pack_only', prelims:['rams'] },
+  };
+  const p = presets[type]; if (!p) return;
+  // Apply finish
+  document.querySelectorAll('#wiz-finish-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
+  p.finish.forEach(f => document.querySelector(`[data-finish="${f}"]`)?.classList.add('active'));
+  // Apply design
+  document.querySelectorAll('#wiz-design-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
+  document.querySelector(`[data-design="${p.design}"]`)?.classList.add('active');
+  // Apply prelims
+  document.querySelectorAll('#wiz-prelim-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
+  p.prelims.forEach(k => document.querySelector(`[data-prelim="${k}"]`)?.classList.add('active'));
+  // Scope
+  if (type === 'supply_only') wizSetScope('supply');
+  // Badges
+  wizUpdateAllBadges();
+  toast(`Preset applied: ${document.getElementById('wiz-job-type').options[document.getElementById('wiz-job-type').selectedIndex].text}`, 'success');
 }
 
 function applyWizard() {
@@ -4144,9 +4573,9 @@ function applyWizard() {
   const ops   = parseFloat(document.getElementById('wiz-operatives').value) || 2;
   const tonnes = window._wizTonnes || 0;
 
-  const isInstall = document.getElementById('wiz-scope-install')?.classList.contains('active') !== false;
+  const isInstall = document.getElementById('wiz-scope-install')?.classList.contains('active');
 
-  // ── Labour rows (install only) ────────────────────────────
+  // ── Labour rows ───────────────────────────────────────────
   q.labourRows = [];
   if (isInstall) {
     document.querySelectorAll('#wiz-roles .wiz-role-tile.active').forEach(tile => {
@@ -4162,42 +4591,58 @@ function applyWizard() {
     q.instDays = 0; q.instOperatives = 0;
   }
 
-  // ── Crane & MEWP (install only) ───────────────────────────
+  // ── Crane ─────────────────────────────────────────────────
   q.plantRows = (q.plantRows||[]).filter(r => !r._auto);
+  const craneRates = { crane_25t:1200, crane_50t:1850, crane_100t:2800, crane_spider:950, crane_hiab:800, crane_telehandler:350, crane_minipick:550 };
+  const craneLabels = { crane_25t:'25t Mobile Crane', crane_50t:'50t Mobile Crane', crane_100t:'100t Mobile Crane', crane_spider:'Spider Crane', crane_hiab:'HIAB Lorry Crane', crane_telehandler:'Telehandler', crane_minipick:'Mini Pick & Carry' };
   let craneType = 'none';
   if (isInstall) {
     const craneTile = document.querySelector('#wiz-crane-tiles .wiz-tile.active');
     craneType = craneTile?.dataset.crane || 'none';
     if (craneType !== 'none') {
-      const craneDays  = parseFloat(document.getElementById('wiz-crane-days').value) || 1;
-      const craneRate  = rates.plant[craneType]?.rate || 0;
-      const craneLabel = rates.plant[craneType]?.label || craneType;
-      q.plantRows.push({ id: 'plant_crane_'+Date.now(), type: craneType, label: craneLabel, qty: craneDays, rate: craneRate, _auto: true });
+      const craneDays = parseFloat(document.getElementById('wiz-crane-days').value) || 1;
+      const craneRate = rates.plant[craneType]?.rate || craneRates[craneType] || 0;
+      q.plantRows.push({ id: 'plant_crane_'+Date.now(), type: craneType, label: craneLabels[craneType]||craneType, qty: craneDays, rate: craneRate, _auto: true });
     }
-    document.querySelectorAll('#wiz-mewp-tiles .wiz-tile.active').forEach(tile => {
-      if (tile.dataset.mewp === 'none') return;
-      const mewpType  = tile.dataset.mewp;
-      const mewpRate  = rates.plant[mewpType]?.rate || 0;
-      const mewpLabel = rates.plant[mewpType]?.label || mewpType;
-      q.plantRows.push({ id: 'plant_mewp_'+mewpType+'_'+Date.now(), type: mewpType, label: mewpLabel, qty: days, rate: mewpRate, _auto: true });
+
+    // MEWP rows (new structure with qty + days)
+    const mewpRates = { scissor_19:90, scissor_26:120, boom_z30:130, boom_z45:175, boom_z60:230, telehandler_boom:190, cherry_12m:160, cherry_18m:350, scaffold_tower:150, scaffold_system:0 };
+    const mewpLabels = { scissor_19:'Electric Scissor 19ft', scissor_26:'Rough Terrain Scissor 26ft', boom_z30:'Articulating Boom 30ft', boom_z45:'Articulating Boom 45ft', boom_z60:'Articulating Boom 60ft', telehandler_boom:'Telescopic Boom', cherry_12m:'Cherry Picker 12m', cherry_18m:'Cherry Picker 18m+', scaffold_tower:'Tower Scaffold', scaffold_system:'Erected Scaffold (sub)' };
+    document.querySelectorAll('.wiz-mewp-row.active').forEach(row => {
+      if (row.dataset.mewp === 'none') return;
+      const mewpType = row.dataset.mewp;
+      const mewpQty  = parseFloat(row.querySelector('.wiz-mewp-qty')?.value) || 1;
+      const mewpDays = parseFloat(row.querySelector('.wiz-mewp-days')?.value) || 1;
+      const rate     = mewpRates[mewpType] || 0;
+      const label    = mewpLabels[mewpType] || mewpType;
+      // scaffold_system: wiz-mewp-days is actually lump sum value
+      if (mewpType === 'scaffold_system') {
+        q.plantRows.push({ id: 'plant_'+mewpType+'_'+Date.now(), type: mewpType, label, qty: 1, rate: mewpDays, _auto: true });
+      } else {
+        q.plantRows.push({ id: 'plant_'+mewpType+'_'+Date.now(), type: mewpType, label, qty: mewpQty * mewpDays, rate, _auto: true });
+      }
     });
   }
 
-  // ── Finish / paint rows ──────────────────────────────────
+  // ── Finish ────────────────────────────────────────────────
   q.paintRows = [];
   document.querySelectorAll('#wiz-finish-tiles .wiz-tile.active').forEach(tile => {
     if (tile.dataset.finish === 'none') return;
     const ft  = tile.dataset.finish;
     const def = rates.paint[ft] || { label: ft, rate: 0, unit: '' };
-    // Auto-qty for tonnes-based
     let qty = 0;
     if (ft === 'galvanise' || ft === 'primer_tonne') qty = tonnes;
     q.paintRows.push({ id: 'paint_'+ft+'_'+Date.now(), type: ft, label: def.label, qty, rate: def.rate, unit: def.unit });
   });
 
-  // ── Survey (install only) ────────────────────────────────
+  // ── Fixings & consumables ─────────────────────────────────
+  q.fixingsPct = document.getElementById('wiz-fixings-enabled')?.checked
+    ? (parseFloat(document.getElementById('wiz-fixings-pct')?.value) || 2.5)
+    : 0;
+
+  // ── Survey (always, any scope) ────────────────────────────
   const surveyTile = document.querySelector('#wiz-survey-tiles .wiz-tile.active');
-  const surveyChoice = isInstall ? (surveyTile?.dataset.survey || 'no') : 'no';
+  const surveyChoice = surveyTile?.dataset.survey || 'no';
   const surveyVisits = parseFloat(document.getElementById('wiz-survey-visits').value) || 1;
   q.surveyVisitRows = [];
   if (surveyChoice !== 'no') {
@@ -4205,7 +4650,7 @@ function applyWizard() {
       mateusz:    { label: 'Mateusz Braczyk',     rate: 250 },
       leszek:     { label: 'Leszek',              rate: 250 },
       struct_eng: { label: 'Structural Engineer', rate: 350 },
-      both:       null // handled below
+      both:       null
     };
     if (surveyChoice === 'both') {
       ['mateusz','leszek'].forEach(p => {
@@ -4218,50 +4663,55 @@ function applyWizard() {
     }
   }
 
-  // ── Design hours ─────────────────────────────────────────
+  // ── Design ────────────────────────────────────────────────
   const designChoice = document.querySelector('#wiz-design-tiles .wiz-tile.active')?.dataset.design || 'fab_pack_only';
   const { draughtHrs, structEngHrs, fabpackHrs } = autoDesignHours(q.takeoff);
   if (designChoice === 'none') {
     q.designHours = 0; q.structEngHrs = 0; q.fabpackHours = 0;
-  } else if (designChoice === 'fab_pack_only' || designChoice === 'client_design') {
+  } else if (designChoice === 'client_design') {
+    q.designHours = draughtHrs; q.structEngHrs = 0; q.fabpackHours = fabpackHrs;
+  } else if (designChoice === 'design_check') {
+    q.designHours = Math.round(draughtHrs * 0.3); q.structEngHrs = Math.round(structEngHrs * 0.5); q.fabpackHours = 0;
+  } else if (designChoice === 'fab_pack_only') {
     q.designHours = draughtHrs; q.structEngHrs = 0; q.fabpackHours = fabpackHrs;
   } else { // full_design
     q.designHours = draughtHrs; q.structEngHrs = structEngHrs; q.fabpackHours = fabpackHrs;
   }
 
-  // ── Fab hours ────────────────────────────────────────────
+  // ── Fab hours ─────────────────────────────────────────────
   const { totalHours: fabHrs } = autoFabHours(q.takeoff);
   q.fabHours = fabHrs;
 
-  // ── Prelims ───────────────────────────────────────────────
+  // ── Prelims (from tile selection) ─────────────────────────
   q.prelimRows = [];
-  const addPrelim = (key, qtyOverride) => {
-    if (q.prelimRows.find(r => r.type === key)) return;
+  document.querySelectorAll('#wiz-prelim-tiles .wiz-tile.active').forEach(tile => {
+    const key = tile.dataset.prelim;
+    if (!key) return;
     const def = (rates.prelims||{})[key] || { label: key, rate: 0, type: 'flat' };
-    const qty = qtyOverride ?? (def.type === 'daily' ? (isInstall ? days : 1) : 1);
-    q.prelimRows.push({ id: 'prelim_'+key, type: key, label: def.label, qty, rate: def.rate, _auto: true });
-  };
-  // Always: RAMS + PPE
-  addPrelim('rams'); addPrelim('ppe');
-  if (isInstall) {
-    // Structural + crane/mewp → welding inspector
-    if (craneType !== 'none' || document.querySelectorAll('#wiz-mewp-tiles .wiz-tile.active:not([data-mewp="none"])').length > 0) {
-      const hasStructural = (q.takeoff||[]).some(r => ['UB','UC','PFC','RSA'].includes((r.type?.match(/^[A-Za-z]+/)||[''])[0].toUpperCase()));
-      if (hasStructural) addPrelim('weld_inspect');
+    const qty = def.type === 'daily' ? (isInstall ? days : 1) : 1;
+    q.prelimRows.push({ id: 'prelim_'+key+'_'+Date.now(), type: key, label: def.label, qty, rate: def.rate, _auto: true });
+  });
+
+  // ── Delivery ──────────────────────────────────────────────
+  const deliveryTile = document.querySelector('#wiz-delivery-tiles .wiz-tile.active');
+  const deliveryChoice = deliveryTile?.dataset.delivery || 'auto';
+  if (deliveryChoice === 'client_collect') {
+    q.deliveryRows = [];
+  } else if (deliveryChoice === 'auto') {
+    autoEstimateDelivery(q, tonnes);
+  } else {
+    const loads = parseFloat(document.getElementById('wiz-delivery-loads')?.value) || 1;
+    const rate  = parseFloat(document.getElementById('wiz-delivery-rate')?.value) || 800;
+    const labelMap = { transit:'Transit Van', hiab_drop:'HIAB Drop', rigid:'Rigid Lorry', artic:'Articulated Lorry', multi_drop:'Multi-drop Delivery' };
+    q.deliveryRows = [];
+    for (let i=0; i<loads; i++) {
+      q.deliveryRows.push({ id: 'del_'+deliveryChoice+'_'+(Date.now()+i), type: deliveryChoice, label: labelMap[deliveryChoice]||'Delivery', qty: 1, rate });
     }
-    // Large job → project manager
-    if (tonnes > 5) addPrelim('proj_manager', Math.max(1, Math.round(days * 0.15)));
   }
 
-  // ── Delivery ─────────────────────────────────────────────
-  autoEstimateDelivery(q, tonnes);
-
-  // ── Sync DOM ─────────────────────────────────────────────
+  // ── Sync DOM ──────────────────────────────────────────────
   const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
-  if (isInstall) {
-    set('inst-days', days);
-    set('inst-operatives', ops);
-  }
+  if (isInstall) { set('inst-days', days); set('inst-operatives', ops); }
   set('fab-hours', fabHrs);
   set('struct-eng-hours', q.structEngHrs);
   set('design-hours', q.designHours);
@@ -4269,17 +4719,12 @@ function applyWizard() {
   const gtEl = document.getElementById('globalDaysToggle'); if (gtEl) gtEl.checked = true;
 
   saveAll();
-  renderLabourRows();
-  renderPlantRows();
-  renderDeliveryRows();
-  renderPaintRows();
-  renderSurveyVisitRows();
-  renderPrelimChecklist();
-  checkRalVisibility();
-  recalcAll();
+  renderLabourRows(); renderPlantRows(); renderDeliveryRows();
+  renderPaintRows(); renderSurveyVisitRows(); renderPrelimChecklist();
+  checkRalVisibility(); recalcAll();
 
-  closeWizard();
-  toast(`Quote generated — ${tonnes.toFixed(2)}t · ${days} days · ${q.labourRows.length} roles · ${q.paintRows.length} finish items`, 'success');
+  document.getElementById('wizardModal').classList.remove('active');
+  toast(`Quote generated — ${tonnes.toFixed(2)}t · ${days} days · ${q.labourRows.length} labour roles · ${q.paintRows.length} finish items`, 'success');
 }
 
 // ============================================================
