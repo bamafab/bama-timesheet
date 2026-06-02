@@ -397,6 +397,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
           <div class="card">
             <div class="card-title">Client</div>
             <div class="form-grid" style="gap:10px">
+              <!-- Company with search dropdown -->
               <div class="field" style="position:relative">
                 <label style="display:flex;justify-content:space-between;align-items:center">
                   Company Name
@@ -406,9 +407,30 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
                   oninput="onCompanyInput(this.value)" onblur="setTimeout(closeClientDD,180)" autosave="">
                 <div id="clientDropdown" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:9999;background:var(--card);border:1px solid var(--border);border-radius:0 0 8px 8px;box-shadow:0 8px 24px rgba(0,0,0,0.4);max-height:220px;overflow-y:auto"></div>
               </div>
-              <div class="field"><label>Contact Name</label><input type="text" id="hContact" oninput="autosave();showClientSave()"></div>
-              <div class="field"><label>Contact Email</label><input type="email" id="hEmail" oninput="autosave();showClientSave()"></div>
-              <div class="field"><label>Contact Phone</label><input type="tel" id="hPhone" oninput="autosave();showClientSave()"></div>
+              <!-- Client address -->
+              <div class="field">
+                <label>Client Address</label>
+                <textarea id="hClientAddress" rows="3" placeholder="Address line 1&#10;City&#10;Postcode" oninput="autosave();showClientSave()"
+                  style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%;resize:vertical;font-family:inherit"></textarea>
+              </div>
+              <!-- Contact person with dropdown -->
+              <div class="field">
+                <label style="display:flex;justify-content:space-between;align-items:center">
+                  Contact Person
+                  <button class="btn btn-ghost btn-sm" style="font-size:10px;padding:2px 8px" onclick="openAddContactModal()">+ Add person</button>
+                </label>
+                <select id="hContactSelect" onchange="onContactSelect(this.value)"
+                  style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%">
+                  <option value="">— Select or type below —</option>
+                </select>
+              </div>
+              <!-- Contact details -->
+              <div class="form-grid form-grid-2" style="gap:8px">
+                <div class="field"><label>Contact Name</label><input type="text" id="hContact" oninput="autosave();showClientSave()"></div>
+                <div class="field"><label>Role / Title</label><input type="text" id="hContactRole" placeholder="e.g. Estimator" oninput="autosave();showClientSave()"></div>
+                <div class="field"><label>Contact Email</label><input type="email" id="hEmail" oninput="autosave();showClientSave()"></div>
+                <div class="field"><label>Contact Phone</label><input type="tel" id="hPhone" oninput="autosave();showClientSave()"></div>
+              </div>
             </div>
           </div>
 
@@ -498,15 +520,15 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
               <thead>
                 <tr>
                   <th style="width:28px;text-align:center"><input type="checkbox" id="takeoffSelectAll" onchange="toggleSelectAllTakeoff(this.checked)" style="cursor:pointer;accent-color:var(--accent)"></th>
-                  <th style="width:160px">Section Type</th>
-                  <th style="width:90px;text-align:right">Length (mm)</th>
-                  <th style="width:50px;text-align:right">Qty</th>
-                  <th style="width:100px">Area</th>
-                  <th style="width:72px;text-align:right">kg/m</th>
+                  <th style="width:160px">Section Type <button class="sort-btn" data-col="type" onclick="sortTakeoff('type')" style="background:none;border:none;cursor:pointer;font-size:10px;color:var(--muted);padding:0 2px">⇅</button></th>
+                  <th style="width:90px;text-align:right">Length (mm) <button class="sort-btn" data-col="length" onclick="sortTakeoff('length')" style="background:none;border:none;cursor:pointer;font-size:10px;color:var(--muted);padding:0 2px">⇅</button></th>
+                  <th style="width:50px;text-align:right">Qty <button class="sort-btn" data-col="qty" onclick="sortTakeoff('qty')" style="background:none;border:none;cursor:pointer;font-size:10px;color:var(--muted);padding:0 2px">⇅</button></th>
+                  <th style="width:100px">Area <button class="sort-btn" data-col="area" onclick="sortTakeoff('area')" style="background:none;border:none;cursor:pointer;font-size:10px;color:var(--muted);padding:0 2px">⇅</button></th>
+                  <th style="width:72px;text-align:right">kg/m <button class="sort-btn" data-col="kgm" onclick="sortTakeoff('kgm')" style="background:none;border:none;cursor:pointer;font-size:10px;color:var(--muted);padding:0 2px">⇅</button></th>
                   <th style="width:58px;text-align:center">Finish</th>
-                  <th style="width:80px;text-align:right">Total kg</th>
+                  <th style="width:80px;text-align:right">Total kg <button class="sort-btn" data-col="totalkg" onclick="sortTakeoff('totalkg')" style="background:none;border:none;cursor:pointer;font-size:10px;color:var(--muted);padding:0 2px">⇅</button></th>
                   <th style="width:68px;text-align:right">£/kg</th>
-                  <th style="width:88px;text-align:right">Material £</th>
+                  <th style="width:88px;text-align:right">Material £ <button class="sort-btn" data-col="cost" onclick="sortTakeoff('cost')" style="background:none;border:none;cursor:pointer;font-size:10px;color:var(--muted);padding:0 2px">⇅</button></th>
                   <th style="width:28px"></th>
                 </tr>
               </thead>
@@ -1487,6 +1509,24 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 
 <!-- SETTINGS MODAL -->
 <!-- JOB SETUP WIZARD -->
+<!-- Add Contact Modal -->
+<div class="modal-overlay" id="addContactModal">
+  <div class="modal" style="max-width:400px;padding:20px">
+    <div style="font-size:15px;font-weight:700;margin-bottom:4px">Add Contact</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:16px" id="addContactCompanyLabel"></div>
+    <div class="form-grid" style="gap:10px">
+      <div class="field"><label>Full Name *</label><input type="text" id="addContactName" placeholder="John Smith"></div>
+      <div class="field"><label>Role / Title</label><input type="text" id="addContactRole" placeholder="e.g. Estimator, Contracts Manager"></div>
+      <div class="field"><label>Email</label><input type="email" id="addContactEmail" placeholder="john@company.com"></div>
+      <div class="field"><label>Phone</label><input type="tel" id="addContactPhone" placeholder="07700 000000"></div>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+      <button class="btn btn-ghost" onclick="document.getElementById('addContactModal').classList.remove('active')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveNewContact()">Save Contact</button>
+    </div>
+  </div>
+</div>
+
 <!-- Custom confirm / prompt modal -->
 <div class="modal-overlay" id="bamaConfirmModal" style="z-index:9999">
   <div class="modal" style="max-width:420px;padding:24px 24px 20px">
@@ -2648,9 +2688,11 @@ function autosave() {
   loadBlockNotes(q);
   renderMaterialLinks();
   renderCalcsTemplateBtn();
+  q.clientAddress = document.getElementById('hClientAddress')?.value || '';
   q.contact    = document.getElementById('hContact')?.value || '';
+  q.contactRole= document.getElementById('hContactRole')?.value || '';
   q.email      = document.getElementById('hEmail')?.value || '';
-  q.phone       = document.getElementById('hPhone')?.value || '';
+  q.phone      = document.getElementById('hPhone')?.value || '';
   q.siteAddress = document.getElementById('hSiteAddress')?.value || '';
   q.comments   = document.getElementById('hComments')?.value || '';
   q.projectTCs = document.getElementById('hProjectTCs')?.value || '';
@@ -2832,10 +2874,16 @@ function loadQuoteEditor() {
   document.getElementById('hDate').value       = q.date;
   document.getElementById('hValidUntil').value = q.validUntil;
   document.getElementById('hPreparedBy').value = q.preparedBy;
-  document.getElementById('hCompany').value    = q.company;
-  document.getElementById('hContact').value    = q.contact;
-  document.getElementById('hEmail').value      = q.email;
-  document.getElementById('hPhone').value       = q.phone;
+  document.getElementById('hCompany').value    = q.company || '';
+  const caEl = document.getElementById('hClientAddress');
+  if (caEl) caEl.value = q.clientAddress || '';
+  const crEl = document.getElementById('hContactRole');
+  if (crEl) crEl.value = q.contactRole || '';
+  document.getElementById('hContact').value    = q.contact || '';
+  document.getElementById('hEmail').value      = q.email || '';
+  document.getElementById('hPhone').value      = q.phone || '';
+  // Populate contact dropdown for this company
+  populateContactDropdown(q.company, q.contact);
   document.getElementById('hSiteAddress').value = q.siteAddress || '';
   document.getElementById('travelEstimate').style.display = 'none';
   document.getElementById('hComments').value   = q.comments || '';
@@ -6798,10 +6846,198 @@ function applyTravelToCalcs(miles, fuelCost) {
 // ============================================================
 // CLIENT BOOK
 // ============================================================
+// ── Client database ───────────────────────────────────────────
+const SEED_CLIENTS = [
+  {
+    id: 'seed_1', company: 'Kaja Steel Services Ltd',
+    address: 'Unit 12, Fengate Industrial Estate\nPeterborough\nPE1 5XD',
+    phone: '01733 556677',
+    contacts: [
+      { name: 'Adam Kowalski', role: 'Contracts Manager', email: 'adam@kajasteeel.co.uk', phone: '07700 111222' },
+      { name: 'Piotr Wiśniewski', role: 'Estimator', email: 'piotr@kajasteel.co.uk', phone: '07700 111333' }
+    ]
+  },
+  {
+    id: 'seed_2', company: 'RG Carter Construction Ltd',
+    address: 'Rouen House, Rouen Road\nNorwich\nNR1 1RB',
+    phone: '01603 484000',
+    contacts: [
+      { name: 'James Fletcher', role: 'Senior Estimator', email: 'j.fletcher@rgcarter.co.uk', phone: '07800 222111' },
+      { name: 'Sarah Mitchell', role: 'Procurement Manager', email: 's.mitchell@rgcarter.co.uk', phone: '07800 222222' },
+      { name: 'Tom Aldridge', role: 'Project Manager', email: 't.aldridge@rgcarter.co.uk', phone: '07800 222333' }
+    ]
+  },
+  {
+    id: 'seed_3', company: 'North Norfolk Garden Machinery',
+    address: 'Fakenham Road\nNorth Elmham\nNR20 5JQ',
+    phone: '01362 668899',
+    contacts: [
+      { name: 'David Clarke', role: 'Director', email: 'david@nngm.co.uk', phone: '07900 333111' }
+    ]
+  },
+  {
+    id: 'seed_4', company: 'Cambridge University Hospitals NHS',
+    address: 'Addenbrookes Hospital, Hills Road\nCambridge\nCB2 0QQ',
+    phone: '01223 245151',
+    contacts: [
+      { name: 'Mark Thompson', role: 'Capital Projects Manager', email: 'm.thompson@cuh.nhs.uk', phone: '07700 444111' },
+      { name: 'Helen Barker', role: 'Procurement Lead', email: 'h.barker@cuh.nhs.uk', phone: '07700 444222' }
+    ]
+  }
+];
+
 let clientBook = JSON.parse(localStorage.getItem('bama_clients') || '[]');
+
+// Seed dummy clients if not already present
+SEED_CLIENTS.forEach(seed => {
+  if (!clientBook.find(c => c.id === seed.id || c.company === seed.company)) {
+    clientBook.push(seed);
+  }
+});
+localStorage.setItem('bama_clients', JSON.stringify(clientBook));
 
 function saveClientBook() {
   localStorage.setItem('bama_clients', JSON.stringify(clientBook));
+}
+
+// ── Contact management ────────────────────────────────────────
+function populateContactDropdown(company, selectedName) {
+  const sel = document.getElementById('hContactSelect');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">— Select contact —</option>';
+  if (!company) return;
+  const client = clientBook.find(c => c.company === company);
+  if (!client) return;
+  const contacts = client.contacts || (client.contact ? [{ name: client.contact, email: client.email || '', phone: client.phone || '', role: '' }] : []);
+  contacts.forEach((c, i) => {
+    const opt = document.createElement('option');
+    opt.value = i;
+    opt.textContent = c.name + (c.role ? ` — ${c.role}` : '');
+    if (c.name === selectedName) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+function onContactSelect(idx) {
+  const company = document.getElementById('hCompany')?.value?.trim();
+  if (!company || idx === '') return;
+  const client = clientBook.find(c => c.company === company);
+  if (!client) return;
+  const contacts = client.contacts || [];
+  const contact = contacts[parseInt(idx)];
+  if (!contact) return;
+  document.getElementById('hContact').value = contact.name || '';
+  const crEl = document.getElementById('hContactRole');
+  if (crEl) crEl.value = contact.role || '';
+  document.getElementById('hEmail').value = contact.email || '';
+  document.getElementById('hPhone').value = contact.phone || '';
+  autosave();
+}
+
+function openAddContactModal() {
+  const company = document.getElementById('hCompany')?.value?.trim();
+  if (!company) { toast('Enter company name first', 'error'); return; }
+  document.getElementById('addContactCompanyLabel').textContent = company;
+  document.getElementById('addContactName').value = '';
+  document.getElementById('addContactRole').value = '';
+  document.getElementById('addContactEmail').value = '';
+  document.getElementById('addContactPhone').value = '';
+  document.getElementById('addContactModal').classList.add('active');
+  setTimeout(() => document.getElementById('addContactName').focus(), 50);
+}
+
+function saveNewContact() {
+  const name = document.getElementById('addContactName')?.value?.trim();
+  if (!name) { toast('Name is required', 'error'); return; }
+  const company = document.getElementById('addContactCompanyLabel')?.textContent;
+  const role    = document.getElementById('addContactRole')?.value?.trim();
+  const email   = document.getElementById('addContactEmail')?.value?.trim();
+  const phone   = document.getElementById('addContactPhone')?.value?.trim();
+
+  let client = clientBook.find(c => c.company === company);
+  if (!client) {
+    // Create new client entry
+    client = { id: 'c_' + Date.now(), company, address: '', contacts: [] };
+    clientBook.push(client);
+  }
+  if (!client.contacts) client.contacts = [];
+  client.contacts.push({ name, role, email, phone });
+  saveClientBook();
+
+  // Fill the fields with the new contact
+  document.getElementById('hContact').value = name;
+  const crEl = document.getElementById('hContactRole');
+  if (crEl) crEl.value = role;
+  document.getElementById('hEmail').value   = email;
+  document.getElementById('hPhone').value   = phone;
+  populateContactDropdown(company, name);
+  document.getElementById('addContactModal').classList.remove('active');
+  autosave();
+  toast(`${name} saved to ${company}`, 'success');
+}
+
+// ── Takeoff column sorting ─────────────────────────────────────
+let _sortState = { col: null, dir: 1 }; // dir: 1=asc, -1=desc
+
+function sortTakeoff(col) {
+  if (_sortState.col === col) {
+    if (_sortState.dir === 1) _sortState.dir = -1;
+    else { _sortState.col = null; _sortState.dir = 1; } // third click = reset
+  } else {
+    _sortState.col = col;
+    _sortState.dir = 1;
+  }
+  const q = getQuote(); if (!q) return;
+
+  const getValue = (row) => {
+    switch(col) {
+      case 'type':   return (row.type || '').toLowerCase();
+      case 'length': return parseFloat(row.length) || 0;
+      case 'qty':    return parseFloat(row.qty) || 0;
+      case 'area':   return (row.areaId || '').toLowerCase();
+      case 'kgm':    return parseFloat(row.kgm) || 0;
+      case 'totalkg':return (row.length/1000) * (row.kgm||0) * (row.qty||1);
+      case 'cost':   return (row.length/1000) * (row.kgm||0) * (row.qty||1) * (row.rate||0);
+      default: return 0;
+    }
+  };
+
+  if (!_sortState.col) {
+    // Reset — restore original order (by areaId then original index)
+    renderTakeoff();
+    return;
+  }
+
+  // Sort within each area independently
+  const areas = q.areas?.length ? q.areas : [null];
+  areas.forEach(area => {
+    const areaId = area?.id || null;
+    const indices = q.takeoff.map((r,i) => i).filter(i => (q.takeoff[i].areaId||null) === areaId);
+    const rows = indices.map(i => q.takeoff[i]);
+    rows.sort((a, b) => {
+      const va = getValue(a), vb = getValue(b);
+      if (typeof va === 'string') return _sortState.dir * va.localeCompare(vb);
+      return _sortState.dir * (va - vb);
+    });
+    indices.forEach((origIdx, newPos) => { q.takeoff[origIdx] = rows[newPos]; });
+  });
+
+  saveAll();
+  renderTakeoff();
+  updateSortIndicators();
+}
+
+function updateSortIndicators() {
+  document.querySelectorAll('.sort-btn').forEach(btn => {
+    const col = btn.dataset.col;
+    if (_sortState.col === col) {
+      btn.textContent = _sortState.dir === 1 ? '▲' : '▼';
+      btn.style.color = 'var(--accent)';
+    } else {
+      btn.textContent = '⇅';
+      btn.style.color = 'var(--muted)';
+    }
+  });
 }
 
 function onCompanyInput(val) {
@@ -6849,9 +7085,17 @@ function fillClientFields(company) {
   const client = clientBook.find(c => c.company === company);
   if (!client) return;
   document.getElementById('hCompany').value = client.company;
-  document.getElementById('hContact').value = client.contact || '';
-  document.getElementById('hEmail').value   = client.email   || '';
-  document.getElementById('hPhone').value   = client.phone   || '';
+  const caEl = document.getElementById('hClientAddress');
+  if (caEl) caEl.value = client.address || '';
+  // Default contact = first in contacts array, or legacy single contact
+  const contacts = client.contacts || (client.contact ? [{ name: client.contact, email: client.email, phone: client.phone, role: '' }] : []);
+  const defaultContact = contacts[0] || {};
+  document.getElementById('hContact').value = defaultContact.name || client.contact || '';
+  const crEl = document.getElementById('hContactRole');
+  if (crEl) crEl.value = defaultContact.role || '';
+  document.getElementById('hEmail').value   = defaultContact.email || client.email || '';
+  document.getElementById('hPhone').value   = defaultContact.phone || client.phone || '';
+  populateContactDropdown(company, defaultContact.name || client.contact || '');
   closeClientDD();
   autosave();
   renderClientHistory(client.company);
