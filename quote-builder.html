@@ -2638,7 +2638,7 @@ function autosave() {
   q.comments   = document.getElementById('hComments')?.value || '';
   q.boqRef     = document.getElementById('hBoqRef')?.value || '';
   q.qScope     = document.getElementById('qScope')?.value || '';
-  q.fittingsPct  = parseFloat(document.getElementById('fittingsPct')?.value) ?? 10;
+  q.fittingsPct  = parseFloat(document.getElementById('fittingsPct')?.value) || 10;
   q.fittingsRate = parseFloat(document.getElementById('fittingsRate')?.value) || 1.30;
   q.miscMaterial = parseFloat(document.getElementById('miscMaterialVal')?.value) || 0;
   q.miscMaterialNote = document.getElementById('miscMaterialNote')?.value || '';
@@ -2813,7 +2813,7 @@ function loadQuoteEditor() {
   document.getElementById('hBoqRef').value     = q.boqRef || '';
   document.getElementById('qScope').value      = q.qScope || '';
   document.getElementById('statusSelect').value = q.status;
-  document.getElementById('fittingsPct').value   = q.fittingsPct ?? 10;
+  document.getElementById('fittingsPct').value   = q.fittingsPct || 10;
   document.getElementById('fittingsRate').value  = q.fittingsRate || 1.30;
   document.getElementById('miscMaterialVal').value = q.miscMaterial || 0;
   document.getElementById('miscMaterialNote').value = q.miscMaterialNote || '';
@@ -3380,7 +3380,7 @@ function totalTakeoffKg() {
 
 function fittingsCost() {
   const totalKg  = totalTakeoffKg();
-  const pct      = parseFloat(document.getElementById('fittingsPct')?.value) ?? 10;
+  const pct      = parseFloat(document.getElementById('fittingsPct')?.value) || 10;
   const rate     = parseFloat(document.getElementById('fittingsRate')?.value) || 1.30;
   const fittingsKg = totalKg * (pct / 100);
   const cost = Math.round(fittingsKg * rate * 100) / 100;
@@ -3757,7 +3757,7 @@ function recalcAll() {
   q.purlinM       = parseFloat(document.getElementById('purlins-m')?.value)       || 0;
   q.purlinRate    = parseFloat(document.getElementById('purlins-rate')?.value)    || 0;
   q.margin        = parseFloat(document.getElementById('marginSlider')?.value)    || 20;
-  q.fittingsPct   = parseFloat(document.getElementById('fittingsPct')?.value)  ?? 10;
+  q.fittingsPct   = parseFloat(document.getElementById('fittingsPct')?.value)  || 10;
   q.fittingsRate  = parseFloat(document.getElementById('fittingsRate')?.value)    || 1.30;
   q.miscMaterial  = parseFloat(document.getElementById('miscMaterialVal')?.value) || 0;
   q.globalDays    = document.getElementById('globalDaysToggle')?.checked !== false;
