@@ -25856,13 +25856,15 @@ function closeQuoteDetail() {
 
 async function deleteCurrentQuote() {
   if (!currentTender) return;
+  const perms = getUserPermissions(currentManagerUser) || {};
   if (!perms.editQuotes) { toast('You need editQuotes permission to delete quotes', 'error'); return; }
 
   const ref = currentTender.reference || `Quote #${currentTender.id}`;
   const result = await showConfirmAsync(
-    '🗑 Delete Quote',
-    `<p style="margin:0">Permanently delete <b>${escapeHtml(ref)}</b>? This cannot be undone.</p>`,
-    { okLabel: 'Delete', cancelLabel: 'Cancel', danger: true }
+    'Delete this quote?',
+    `<p style="margin:0 0 8px 0"><b>${escapeHtml(ref)}</b></p>
+     <p style="margin:0;color:var(--muted)">This will <b style="color:var(--red)">permanently delete</b> the quote and all its line items. This cannot be undone.</p>`,
+    { okLabel: 'Yes, delete', cancelLabel: 'Cancel', danger: true }
   );
   if (!result || !result.ok) return;
 
