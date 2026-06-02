@@ -1182,6 +1182,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
           <!-- Action bar -->
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
             <button class="btn btn-ghost btn-sm" onclick="helperDraftScope()" title="Send scope draft to Header tab comments">📝 Draft Scope → Header</button>
+            <button class="btn btn-primary btn-sm" onclick="helperApplyStructure()" title="Create takeoff areas from suggested quote structure">📐 Apply Structure to Quote</button>
             <button class="btn btn-ghost btn-sm" onclick="helperExportPDF()">📄 Export Briefing PDF</button>
             <div style="margin-left:auto;font-size:11px;color:var(--subtle)" id="helperDocRef"></div>
           </div>
@@ -6258,6 +6259,7 @@ Please read this tender document and give me a full pricing briefing for my trad
     }
 
     renderHelperOutput(parsed);
+    window._helperParsed = parsed;
     status.textContent = `Analysis complete — ${_helperFiles.map(f=>f.name).join(', ')}`;
 
   } catch(err) {
@@ -6394,6 +6396,87 @@ function toggleHelperTile(name) {
       hint.textContent = open ? 'click to expand' : 'click to collapse';
     }
   }
+}
+
+async function helperApplyStructure() {
+  const q = getQuote();
+  if (!q) { toast('No active quote', 'error'); return; }
+
+  // Get the stored parsed helper data
+  const structShort = document.getElementById('helperStructureShort')?.textContent || '';
+  const structFull  = document.getElementById('helperStructureFull')?.innerHTML || '';
+  const pricingItems = window._helperParsed?.pricing_items || [];
+
+  // Derive area names from quote structure suggestion
+  // Strategy: parse numbered/bulleted sections from structure text
+  // Fall back to grouping pricing items by first word if no clear sections
+  let areaNames = [];
+
+  // Try to extract sections from structure text (e.g. "(1) Walkway System, (2) Duct Bridge...")
+  const numbered = (structShort + ' ' + structFull.replace(/<[^>]+>/g,' '))
+    .match(/\(\d+\)\s*([^,()\n]+)/g);
+  if (numbered && numbered.length >= 2) {
+    areaNames = numbered.map(m => m.replace(/\(\d+\)\s*/,'').trim().replace(/\s+/g,' '));
+  }
+
+  // Also try colon-separated sections: "Section A: Walkway"
+  if (areaNames.length < 2) {
+    const colonSections = (structShort + ' ' + structFull.replace(/<[^>]+>/g,' '))
+      .match(/(?:Section|Area|Part)\s+[A-Z\d]+[:\s—]+([^,.\n]+)/gi);
+    if (colonSections?.length >= 2) {
+      areaNames = colonSections.map(m => m.replace(/(?:Section|Area|Part)\s+[A-Z\d]+[:\s—]+/i,'').trim());
+    }
+  }
+
+  // Fall back: group pricing items into logical buckets by keyword
+  if (areaNames.length < 2 && pricingItems.length > 0) {
+    const seen = new Set();
+    pricingItems.forEach(item => {
+      const name = (item.item || item).split('—')[0].split(' — ')[0].trim();
+      // Extract top-level element (first 3-4 words)
+      const key = name.split(' ').slice(0,4).join(' ');
+      if (!seen.has(key)) { seen.add(key); areaNames.push(name); }
+    });
+    // Cap at 8 areas
+    areaNames = areaNames.slice(0, 8);
+  }
+
+  // Final fallback
+  if (areaNames.length === 0) {
+    toast('No structure found — add areas manually', 'error');
+    return;
+  }
+
+  // Clean names — strip trailing punctuation, cap length
+  areaNames = areaNames.map(n => n.replace(/[,;:.]+$/, '').trim().substring(0, 60));
+
+  // Confirm with user
+  const confirmed = await bamaConfirm(
+    `Create ${areaNames.length} takeoff area${areaNames.length>1?'s':''}:\n\n${areaNames.map((n,i)=>`${i+1}. ${n}`).join('\n')}\n\nExisting areas will be kept. New areas added at the end.`,
+    'Apply Quote Structure'
+  );
+  if (!confirmed) return;
+
+  // Create areas on the quote
+  if (!q.areas) q.areas = [];
+  areaNames.forEach(name => {
+    // Don't duplicate if same name already exists
+    if (q.areas.find(a => a.name.toLowerCase() === name.toLowerCase())) return;
+    q.areas.push({ id: 'area_' + Date.now() + '_' + Math.random().toString(36).slice(2,6), name, collapsed: false });
+  });
+
+  saveAll();
+  renderTakeoff();
+  updateMoveToAreaOptions();
+
+  // Switch to takeoff tab
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  const takeoffBtn = document.querySelector('.tab-btn[onclick*="takeoff"]');
+  if (takeoffBtn) takeoffBtn.classList.add('active');
+  document.getElementById('tab-takeoff')?.classList.add('active');
+
+  toast(`${areaNames.length} area${areaNames.length>1?'s':''} created — ready for takeoff`, 'success');
 }
 
 function helperDraftScope() {
