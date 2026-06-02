@@ -2809,6 +2809,17 @@ function loadQuoteEditor() {
   document.getElementById('emptyState').style.display = 'none';
   document.getElementById('quoteEditor').style.display = '';
 
+  // Restore saved helper analysis if present
+  if (q.helperAnalysis) {
+    window._helperParsed = q.helperAnalysis;
+    renderHelperOutput(q.helperAnalysis);
+    const statusEl = document.getElementById('helperStatus');
+    if (statusEl) statusEl.textContent = 'Analysis restored from saved quote';
+  } else {
+    window._helperParsed = null;
+    document.getElementById('helperOutput').style.display = 'none';
+  }
+
   // header
   document.getElementById('editorRef').textContent = q.ref;
   const revEl = document.getElementById('editorRev');
@@ -6337,6 +6348,9 @@ Please read this tender document and give me a full pricing briefing for my trad
 
     renderHelperOutput(parsed);
     window._helperParsed = parsed;
+    // Persist on the quote so it survives page reload / quote switch
+    const _q = getQuote();
+    if (_q) { _q.helperAnalysis = parsed; saveAll(); }
     status.textContent = `Analysis complete — ${_helperFiles.map(f=>f.name).join(', ')}`;
 
   } catch(err) {
