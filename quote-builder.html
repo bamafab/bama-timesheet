@@ -4206,7 +4206,7 @@ function showPsPreview(source) {
   if (!_psRows.length) {
     preview.style.display = 'none';
     btn.disabled = true; btn.style.opacity = '0.4';
-    if (source !== 'paste') document.getElementById('psDropzoneText').innerHTML = '&#x26A0; No rows found — check column names match type/length/qty';
+    if (source !== 'paste') document.getElementById('psDropzoneText').innerHTML = '⚠ No rows found — check column names match type/length/qty';
     return;
   }
 
@@ -4362,7 +4362,7 @@ function openWizardManual() {
   const warnEl = document.getElementById('wiz-warnings');
   warnEl.innerHTML = missingKgm.length
     ? `<div style="padding:6px 10px;background:rgba(255,179,71,0.08);border:1px solid rgba(255,179,71,0.25);border-radius:5px;font-size:11px;color:var(--accent2)">
-        &#x26A0; ${missingKgm.length} section${missingKgm.length>1?'s':''} missing kg/m — tonnage incomplete: ${missingKgm.join(', ')}</div>` : '';
+        ${missingKgm.length} section${missingKgm.length>1?'s':''} missing kg/m — tonnage incomplete: ${missingKgm.join(', ')}</div>` : '';
 }
 
 function wizSuggestCrew(q) {
@@ -5778,13 +5778,13 @@ async function sendQuoteEmail() {
   const btn = document.getElementById('emailSendBtn');
   const sts = document.getElementById('emailStatus');
 
-  if (!to)  { sts.textContent = '&#x26A0; Recipient email required'; sts.style.color = 'var(--red)'; return; }
-  if (!sub) { sts.textContent = '&#x26A0; Subject required'; sts.style.color = 'var(--red)'; return; }
+  if (!to)  { sts.textContent = '⚠ Recipient email required'; sts.style.color = 'var(--red)'; return; }
+  if (!sub) { sts.textContent = '⚠ Subject required'; sts.style.color = 'var(--red)'; return; }
 
   // Get Graph token from sessionStorage (same origin as main ERP)
   const token = sessionStorage.getItem('bama_token');
   if (!token) {
-    sts.textContent = '&#x26A0; Not logged in — open the main ERP first to authenticate, then return here.';
+    sts.textContent = '⚠ Not logged in — open the main ERP first to authenticate, then return here.';
     sts.style.color = 'var(--red)';
     return;
   }
@@ -5887,8 +5887,8 @@ async function createProjectFromQuote() {
   const notes  = document.getElementById('wonNotes').value.trim();
   const start  = document.getElementById('wonStartDate').value || null;
 
-  if (!name)   { status.textContent = '&#x26A0; Project name required'; status.style.color = 'var(--red)'; return; }
-  if (!client) { status.textContent = '&#x26A0; Client name required';  status.style.color = 'var(--red)'; return; }
+  if (!name)   { status.textContent = '⚠ Project name required'; status.style.color = 'var(--red)'; return; }
+  if (!client) { status.textContent = '⚠ Client name required';  status.style.color = 'var(--red)'; return; }
 
   btn.disabled = true;
   status.style.color = 'var(--muted)';
