@@ -18898,7 +18898,8 @@ async function openQuoteDetail(id) {
   if (saveBtn) saveBtn.style.display = 'none';
   if (discardBtn) discardBtn.style.display = 'none';
 
-  _populateQuoteDetailFields(tender);
+  const deleteBtn = document.getElementById('qdDeleteBtn');
+  if (deleteBtn) deleteBtn.style.display = perms.editQuotes ? '' : 'none';
   loadQuoteComments();
   loadTenderFiles();
   // Line items editor — Session 2 of the financial dashboard build.
@@ -25851,6 +25852,30 @@ function closeQuoteDetail() {
   document.getElementById('tab-quoteDetail').style.display = 'none';
   document.getElementById('tab-quoteDetail').classList.remove('active');
   switchQuotesTab('quotes');
+}
+
+async function deleteCurrentQuote() {
+  if (!currentTender) return;
+  if (!perms.editQuotes) { toast('You need editQuotes permission to delete quotes', 'error'); return; }
+
+  const ref = currentTender.reference || `Quote #${currentTender.id}`;
+  const result = await showConfirmAsync(
+    '🗑 Delete Quote',
+    `<p style="margin:0">Permanently delete <b>${escapeHtml(ref)}</b>? This cannot be undone.</p>`,
+    { okLabel: 'Delete', cancelLabel: 'Cancel', danger: true }
+  );
+  if (!result || !result.ok) return;
+
+  try {
+    await api.delete(`/api/tenders/${currentTender.id}`);
+    // Remove from local list
+    tendersData = tendersData.filter(t => String(t.id) !== String(currentTender.id));
+    closeQuoteDetail();
+    renderQuoteList();
+    toast(`${escapeHtml(ref)} deleted`, 'success');
+  } catch (err) {
+    toast('Delete failed: ' + (err.message || 'unknown error'), 'error');
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

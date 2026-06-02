@@ -301,6 +301,33 @@ app.http('tender-comments-delete', {
     }
 });
 
+// DELETE /api/tenders/:id — hard-delete a quote/tender record
+app.http('tenders-delete', {
+    methods: ['DELETE'],
+    authLevel: 'anonymous',
+    route: 'tenders/{id}',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const id = parseInt(request.params.id);
+            if (isNaN(id)) return badRequest('Invalid id', request);
+
+            // Capture reference before deleting so we can return it
+            const result = await query(
+                `DELETE FROM Tenders OUTPUT DELETED.id, DELETED.reference WHERE id = @id`,
+                { id }
+            );
+            if (result.recordset.length === 0) return notFound('Record not found', request);
+            return ok({ deleted: true, id, reference: result.recordset[0].reference }, request);
+        } catch (err) {
+            context.error('Error deleting tender/quote:', err);
+            return serverError('Failed to delete record', request);
+        }
+    }
+});
+
 // OPTIONS preflight for tender-comments
 app.http('tender-comments-preflight', {
     methods: ['OPTIONS'],
