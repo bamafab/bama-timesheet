@@ -10953,13 +10953,18 @@ let _bomManualReviewIndex = 0;
 // they specifically need the nested data.
 let _blobLoadPromise = null;
 
+let _drawingsLoadPromise = null; // stored so openProjectDetail can await it
+
 async function loadDrawingsData() {
   // SQL-only load — blob has been fully migrated to SQL.
-  try {
-    await loadDrawingsSQL();
-  } catch (e) {
-    console.warn('Drawings SQL load failed:', e.message);
-  }
+  _drawingsLoadPromise = (async () => {
+    try {
+      await loadDrawingsSQL();
+    } catch (e) {
+      console.warn('Drawings SQL load failed:', e.message);
+    }
+  })();
+  await _drawingsLoadPromise;
 }
 
 // STEP 1 — pull the legacy SharePoint blob (slow, ~2 round-trips).
@@ -11430,6 +11435,9 @@ function renderProjectTiles() {
 // PROJECT DETAIL — JOB LIST
 // ═══════════════════════════════════════════
 async function openProjectDetail(projectId) {
+  // Await drawings data if it hasn't finished loading yet
+  if (_drawingsLoadPromise) await _drawingsLoadPromise.catch(() => {});
+
   const proj = state.projects.find(p => p.id === projectId);
   if (!proj) return;
   currentProject = proj;
