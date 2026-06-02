@@ -419,6 +419,21 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
             </div>
           </div>
 
+          <!-- Project-specific T&Cs / Exclusions (appears above standard BAMA T&Cs in PDF) -->
+          <div class="card" style="grid-column:1/-1">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+              <div class="card-title" style="margin-bottom:0">Project T&Cs, Exclusions &amp; Special Conditions</div>
+              <span style="font-size:11px;color:var(--muted)">Appears above standard BAMA T&Cs in the PDF · fully editable</span>
+            </div>
+            <div class="field">
+              <textarea id="hProjectTCs" rows="5"
+                placeholder="e.g. Exclusions: Groundworks, concrete foundations, structural engineer's fees not included.&#10;Design liability: Fabricator's detailing only — structural design by client's engineer.&#10;Programme: Subject to site survey confirmation prior to fabrication."
+                oninput="autosave()"
+                style="font-size:12px;line-height:1.6"></textarea>
+            </div>
+            <div style="font-size:11px;color:var(--muted);margin-top:4px">Tip: use the Quote Helper → T&Cs → Quote button to auto-populate from tender documents.</div>
+          </div>
+
           <!-- BoQ only -->
           <!-- Client history (shown when company is filled) -->
           <div id="clientHistoryCard" style="display:none;grid-column:1/-1">
@@ -1182,6 +1197,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
           <!-- Action bar -->
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
             <button class="btn btn-ghost btn-sm" onclick="helperDraftScope()" title="Send scope draft to Header tab comments">📝 Draft Scope → Header</button>
+            <button class="btn btn-ghost btn-sm" onclick="helperPushTCs()" title="Push T&Cs and exclusions to quote">📋 T&amp;Cs → Quote</button>
             <button class="btn btn-primary btn-sm" onclick="helperApplyStructure()" title="Create takeoff areas from suggested quote structure">📐 Apply Structure to Quote</button>
             <button class="btn btn-ghost btn-sm" onclick="helperExportPDF()">📄 Export Briefing PDF</button>
             <div style="margin-left:auto;font-size:11px;color:var(--subtle)" id="helperDocRef"></div>
@@ -2577,7 +2593,7 @@ function newQuote() {
     validUntil: new Date(now.getTime()+14*86400000).toISOString().slice(0,10),
     preparedBy: 'Mateusz Braczyk',
     company: '', contact: '', email: '', phone: '', siteAddress: '',
-    comments: '', qScope: '', boqRef: '', boqFile: '',
+    comments: '', qScope: '', boqRef: '', boqFile: '', projectTCs: '',
     takeoff: [],
     areas: [],  // [{id, name, collapsed}]
     fittingsPct: 10, fittingsRate: 1.30, miscMaterial: 0, miscMaterialNote: '',
@@ -2637,6 +2653,7 @@ function autosave() {
   q.phone       = document.getElementById('hPhone')?.value || '';
   q.siteAddress = document.getElementById('hSiteAddress')?.value || '';
   q.comments   = document.getElementById('hComments')?.value || '';
+  q.projectTCs = document.getElementById('hProjectTCs')?.value || '';
   q.boqRef     = document.getElementById('hBoqRef')?.value || '';
   q.qScope     = document.getElementById('qScope')?.value || '';
   q.fittingsPct  = parseFloat(document.getElementById('fittingsPct')?.value) || 10;
@@ -2810,7 +2827,9 @@ function loadQuoteEditor() {
   document.getElementById('hPhone').value       = q.phone;
   document.getElementById('hSiteAddress').value = q.siteAddress || '';
   document.getElementById('travelEstimate').style.display = 'none';
-  document.getElementById('hComments').value   = q.comments;
+  document.getElementById('hComments').value   = q.comments || '';
+  const ptcEl = document.getElementById('hProjectTCs');
+  if (ptcEl) ptcEl.value = q.projectTCs || '';
   document.getElementById('hBoqRef').value     = q.boqRef || '';
   document.getElementById('qScope').value      = q.qScope || '';
   document.getElementById('statusSelect').value = q.status;
@@ -6163,9 +6182,34 @@ CRITICAL INSTRUCTIONS:
 - tc_notes: key commercial flags only, concise
 Be direct. Address Mateusz by first name.`;
 
-  const userPrompt = `${project}Our trade: ${trade}.${focus ? ` Pay particular attention to: ${focus}.` : ''}
+  // Detect if this is an incremental update (existing analysis + new document)
+  const isIncremental = !!(window._helperParsed && window._helperParsed.summary_short &&
+    window._helperParsed.summary_short !== 'Could not parse structured response — see full AI notes below.');
+
+  let userPrompt;
+  if (isIncremental) {
+    status.textContent = 'Updating existing analysis with new document...';
+    btn.textContent = '⏳ Updating...';
+    const existingSummary = JSON.stringify({
+      pricing_items: (window._helperParsed.pricing_items||[]).map(i=>i.item||i),
+      contract_risks: (window._helperParsed.contract_risks||[]).map(r=>r.risk||r),
+      drawings_to_check: (window._helperParsed.drawings_to_check||[]).map(d=>d.ref||d),
+      scope_draft: window._helperParsed.scope_draft||'',
+      exclusions: window._helperParsed.exclusions||[]
+    }, null, 2);
+    userPrompt = `${project}Our trade: ${trade}.${focus ? ` Pay particular attention to: ${focus}.` : ''}
+
+EXISTING ANALYSIS (from previous documents):
+${existingSummary}
+
+NEW DOCUMENT: ${_helperFiles[_helperFiles.length-1]?.name || 'attached'}
+
+Compare the new document against the existing analysis and return ONLY what is new, changed, or contradicts the existing analysis. Return the same JSON structure but only populate fields that have updates — use empty arrays for unchanged sections. For pricing_items, only list items NOT already in the existing analysis. For contract_risks, only list new risks or significant updates to existing ones. Update scope_draft and summary to reflect the combined picture.`;
+  } else {
+    userPrompt = `${project}Our trade: ${trade}.${focus ? ` Pay particular attention to: ${focus}.` : ''}
 
 Please read this tender document and give me a full pricing briefing for my trade.`;
+  }
 
   try {
     const requestBody = {
@@ -6180,7 +6224,7 @@ Please read this tender document and give me a full pricing briefing for my trad
             source: { type: 'base64', media_type: f.mediaType || 'application/pdf', data: f.base64 },
             title: f.name
           })),
-          { type: 'text', text: userPrompt + (_helperFiles.length > 1 ? `\n\nDocuments provided: ${_helperFiles.map(f=>f.name).join(', ')}` : '') }
+          { type: 'text', text: userPrompt }
         ]
       }]
     };
@@ -6256,6 +6300,39 @@ Please read this tender document and give me a full pricing briefing for my trad
       } else {
         parsed = { summary_short: 'Could not parse structured response — see full AI notes below.', summary_detail: raw, pricing_items: [], contract_risks: [], drawings_to_check: [], quote_structure_short: '', quote_structure_detail: '', scope_draft: '', tc_notes: [], exclusions: [] };
       }
+    }
+
+    // Merge incremental results into existing analysis
+    if (isIncremental && window._helperParsed) {
+      const existing = window._helperParsed;
+      // Append new pricing items (avoid duplicates by item name)
+      const existingItems = new Set((existing.pricing_items||[]).map(i=>(i.item||i).toLowerCase()));
+      (parsed.pricing_items||[]).forEach(i => {
+        if (!existingItems.has((i.item||i).toLowerCase())) existing.pricing_items.push(i);
+      });
+      // Append new risks
+      const existingRisks = new Set((existing.contract_risks||[]).map(r=>(r.risk||r).toLowerCase()));
+      (parsed.contract_risks||[]).forEach(r => {
+        if (!existingRisks.has((r.risk||r).toLowerCase())) existing.contract_risks.push(r);
+      });
+      // Append new drawings
+      const existingDrawings = new Set((existing.drawings_to_check||[]).map(d=>(d.ref||d).toLowerCase()));
+      (parsed.drawings_to_check||[]).forEach(d => {
+        if (!existingDrawings.has((d.ref||d).toLowerCase())) existing.drawings_to_check.push(d);
+      });
+      // Append new exclusions
+      const existingExcs = new Set((existing.exclusions||[]).map(e=>e.toLowerCase()));
+      (parsed.exclusions||[]).forEach(e => { if (!existingExcs.has(e.toLowerCase())) existing.exclusions.push(e); });
+      // Append new T&C notes
+      (parsed.tc_notes||[]).forEach(t => existing.tc_notes.push(t));
+      // Update scope if new one provided
+      if (parsed.scope_draft) existing.scope_draft = parsed.scope_draft;
+      if (parsed.summary_short && !parsed.summary_short.includes('Could not parse')) {
+        existing.summary_short = parsed.summary_short;
+        existing.summary_detail = (existing.summary_detail||'') + '\n\n--- Updated from additional document ---\n' + (parsed.summary_detail||'');
+      }
+      parsed = existing;
+      status.textContent += ' (merged with previous analysis)';
     }
 
     renderHelperOutput(parsed);
@@ -6396,6 +6473,58 @@ function toggleHelperTile(name) {
       hint.textContent = open ? 'click to expand' : 'click to collapse';
     }
   }
+}
+
+function helperPushTCs() {
+  const q = getQuote();
+  if (!q) { toast('No active quote', 'error'); return; }
+  const parsed = window._helperParsed;
+  if (!parsed) { toast('Run analysis first', 'error'); return; }
+
+  const tcs   = parsed.tc_notes   || [];
+  const excs  = parsed.exclusions || [];
+  const risks = (parsed.contract_risks || []).filter(r => r.risk);
+
+  let text = '';
+
+  if (excs.length) {
+    text += 'EXCLUSIONS:\n';
+    excs.forEach(e => { text += `• ${e}\n`; });
+    text += '\n';
+  }
+
+  if (tcs.length) {
+    tcs.forEach(t => {
+      text += `${t.heading || 'Note'}: ${t.text || ''}\n`;
+    });
+    text += '\n';
+  }
+
+  if (risks.length) {
+    text += 'COMMERCIAL NOTES:\n';
+    risks.slice(0, 4).forEach(r => {
+      text += `• ${r.risk}: ${(r.detail||'').split('.')[0]}.\n`;
+    });
+  }
+
+  text = text.trim();
+  if (!text) { toast('No T&C content found in analysis', 'error'); return; }
+
+  const el = document.getElementById('hProjectTCs');
+  if (el) {
+    // Append if already has content, replace if empty
+    el.value = el.value.trim() ? el.value.trim() + '\n\n' + text : text;
+    autosave();
+  }
+
+  // Switch to Header tab
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  const headerBtn = document.querySelector('.tab-btn[onclick*="header"]');
+  if (headerBtn) headerBtn.classList.add('active');
+  document.getElementById('tab-header')?.classList.add('active');
+
+  toast('T&Cs pushed to Header — review and edit as needed', 'success');
 }
 
 async function helperApplyStructure() {
@@ -7092,9 +7221,14 @@ function generateQuotePDF(mode = 'quote') {
     ${scope ? `<div class="scope-block"><label>Comments or Special Instructions</label>${scope}</div>` : ''}`;
 
   // ── T&Cs HTML ────────────────────────────────────────────
+  const projectTCsText = (q.projectTCs || '').trim();
+  const projectTCsHtml = projectTCsText
+    ? `<div style="margin-bottom:10px;padding:8px 10px;background:#f9f9f9;border-left:3px solid #D0021B;font-size:9.5px;line-height:1.6;white-space:pre-wrap;color:#333">${escHtml(projectTCsText)}</div>`
+    : '';
   const tcHtml = `
     <div style="margin-top:24px;padding-top:14px;border-top:2px solid #eee">
       <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#888;margin-bottom:10px">Terms &amp; Conditions</div>
+      ${projectTCsHtml}
       ${BAMA_TC.map(tc => `
         <div style="margin-bottom:7px;font-size:9.5px;line-height:1.5">
           <strong style="color:#333">${escHtml(tc.h)}: </strong><span style="color:#555">${escHtml(tc.t)}</span>
