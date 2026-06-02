@@ -12002,6 +12002,30 @@ function renderBomRow(it) {
   </tr>`;
 }
 
+async function deleteBomItem(id) {
+  if (!confirm('Delete this BOM item? This cannot be undone.')) return;
+  try {
+    await api.delete(`/api/job-bom-items/${id}`);
+    toast('BOM item deleted', 'success');
+    const jobId = currentJob?.id ? parseInt(currentJob.id) : null;
+    if (jobId) await loadJobBomItems(jobId);
+    renderBOM();
+  } catch (e) {
+    toast('Failed to delete BOM item: ' + e.message, 'error');
+  }
+}
+
+async function bomAdvance(id, newStatus) {
+  try {
+    await api.patch(`/api/job-bom-items/${id}`, { status: newStatus });
+    const jobId = currentJob?.id ? parseInt(currentJob.id) : null;
+    if (jobId) await loadJobBomItems(jobId);
+    renderBOM();
+  } catch (e) {
+    toast('Failed to update BOM item: ' + e.message, 'error');
+  }
+}
+
 function wireBomDropZone() {
   const dz = document.getElementById('bomDropZone');
   if (!dz) return;
