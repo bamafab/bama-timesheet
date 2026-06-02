@@ -1682,12 +1682,15 @@ async function checkManagerPin() {
   }
 
   // PIN correct — check permissions
-  // BOOTSTRAP: if NO users have ANY permissions yet, grant this user full admin
+  // BOOTSTRAP: if NO users have ANY permissions yet, AND data actually loaded
+  // from the API (not a cold-start failure), grant this user full admin.
+  // Guard on _dataLoadedFromAPI prevents a transient API timeout from
+  // silently wiping permissions and re-granting full access to whoever logs in.
   const anyoneHasPerms = Object.values(userAccessData.users || {}).some(u =>
     u.permissions && Object.values(u.permissions).some(v => v === true)
   );
 
-  if (!anyoneHasPerms) {
+  if (!anyoneHasPerms && _dataLoadedFromAPI) {
     // First-time setup — auto-grant all permissions to this user
     console.log('Bootstrap: No permissions configured yet — granting full access to', _pendingManagerUser);
     if (!userAccessData.users[_pendingManagerUser]) {
@@ -1699,6 +1702,10 @@ async function checkManagerPin() {
     // Save in background (non-blocking)
     saveUserAccessData().catch(e => console.warn('Bootstrap save failed:', e.message));
     toast('First-time setup — you have been granted full admin access', 'success');
+  } else if (!anyoneHasPerms && !_dataLoadedFromAPI) {
+    // API failed to load — refuse entry rather than risk a false bootstrap
+    document.getElementById('mgrPinError').textContent = 'System data not loaded yet — please wait and try again.';
+    return;
   }
 
   const perms = getUserPermissions(_pendingManagerUser);
@@ -1857,7 +1864,7 @@ async function checkOfficePin() {
     u.permissions && Object.values(u.permissions).some(v => v === true)
   );
 
-  if (!anyoneHasPerms) {
+  if (!anyoneHasPerms && _dataLoadedFromAPI) {
     console.log('Bootstrap: No permissions configured yet — granting full access to', _pendingManagerUser);
     if (!userAccessData.users[_pendingManagerUser]) {
       userAccessData.users[_pendingManagerUser] = { permissions: {} };
@@ -1867,6 +1874,9 @@ async function checkOfficePin() {
     });
     saveUserAccessData().catch(e => console.warn('Bootstrap save failed:', e.message));
     toast('First-time setup — you have been granted full admin access', 'success');
+  } else if (!anyoneHasPerms && !_dataLoadedFromAPI) {
+    document.getElementById('officePinError').textContent = 'System data not loaded yet — please wait and try again.';
+    return;
   }
 
   const perms = getUserPermissions(_pendingManagerUser);
@@ -3229,6 +3239,15 @@ function changeWeek(dir) {
 }
 
 function switchTab(name) {
+  // Permission gate — dashboard always allowed; other tabs require the matching perm
+  if (name !== 'dashboard' && currentManagerUser) {
+    const perms = getUserPermissions(currentManagerUser) || {};
+    const permKey = Object.keys(PERM_TO_TAB).find(k => PERM_TO_TAB[k] === name);
+    if (permKey && !perms[permKey]) {
+      toast(`You don't have permission to access this tab`, 'error');
+      return;
+    }
+  }
   _officeCurrentTab = name;
   document.querySelectorAll('.tab-content').forEach(tc => {
     tc.classList.toggle('active', tc.id === `tab-${name}`);
