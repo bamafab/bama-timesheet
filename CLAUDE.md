@@ -661,6 +661,55 @@ none of this is built yet.
   Should integrate with the existing dashCreateTaskModal / office task
   system so it shows up in the normal task queue.
 
+### Planning session — 2026-06-02 (voice notes, design tomorrow)
+
+- **Daily login alert modal** — On a user's **first login of the day** to the
+  ERP, show a once-per-day modal (shown on the first login attempt only, never
+  again that day). Contents:
+  - All overdue tasks **delegated to this user** — how long each is now overdue
+    and who it is overdue with.
+  - **Role-based alerts** driven by a setup/config system (see below) — e.g.
+    a director (Ahmed) sees invoices due to be paid today + whose tasks are
+    most overdue; office admin (Natasha) sees unmatched PO numbers + her own
+    dashboard tasks. Different users see different alert types.
+  - Option to **print the job list per day**.
+  - Data sources: the existing dashboard tasks, invoices due to pay today, and
+    overdue items from the **Compliance Calendar** (below).
+  - **Alert setup/config system** — admin panel to decide which alert types
+    each user/role receives. Map alert types → users/roles.
+- **Babcock Quotes tracker — project number fix** — Project number is not
+  displaying correctly in the bids/quotes tracker. May have been fixed before;
+  double-check and re-fix if needed.
+- **HOUSEKEEPING — delete 3 tenders from today** — Three tenders created on
+  2026-06-02 have broken SharePoint folders (folders didn't create correctly).
+  Delete them from Tenders, then either redo them or fix the folder names.
+- **Tender → quote auto-conversion** — When a tender has been typed up/saved,
+  it should automatically become a quote at that point (no separate manual
+  step).
+- **Welding machine calibration certificates** — In the Control Traceability
+  tab, add a calibration-certificate **upload field per welding machine**.
+  Each upload needs a certificate **expiry date** and **reminders** for those
+  dates (feed into the Compliance Calendar / daily login alert).
+- **Compliance tab (new, standalone)** — A brand-new Compliance tab,
+  **separate and unrelated to the welding machines**. Scope TBD — discuss
+  tomorrow. Will house the Compliance Calendar below.
+- **Compliance Calendar** — A document-expiry tracker for everything with an
+  expiry date that needs action when due/nearly due: insurances, vehicle MOTs,
+  van service dates, certifications, etc. Lives inside the Compliance tab.
+  Overdue/upcoming items **feed into the daily login alert** report. (Name
+  agreed: "Compliance Calendar".)
+- **Invoice Tracker — show net not gross** — The invoice tracker page is
+  currently displaying gross values for some reason; change it to show **net**
+  values.
+- **Invoice creation system** — Build a complete, fully functional invoice
+  creation flow: generate an invoice and **match it to a received purchase
+  order**. End-to-end.
+- **Invoice Tracker — payment approval workflow** — Re-purpose the invoice
+  tracker as the hub for tracking invoices **due for payment**. From that page,
+  generate reports for the directors showing which invoices are due; directors
+  flag "please pay this invoice"; office admin staff then proceed with payment
+  for flagged invoices. (Approval → execution workflow.)
+
 ## Local dev
 
 - Frontend: serve the repo root over HTTP (e.g. `npx http-server` on :4280 to
