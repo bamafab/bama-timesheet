@@ -3349,6 +3349,7 @@ function updateTakeoffTotals() {
   });
   document.getElementById('takeoffTotalKg').textContent = totalKg.toFixed(1) + ' kg';
   document.getElementById('takeoffTotalCost').textContent = '£' + totalCost.toFixed(2);
+  fittingsCost(); // update fittings hint + computed display
   syncFinishToPaintRows();
 
   // Weight checker warning
