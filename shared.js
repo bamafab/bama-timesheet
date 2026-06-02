@@ -9,22 +9,30 @@ const API_BASE = 'https://bama-erp-api-deauckd2cja7ebd5.uksouth-01.azurewebsites
 const ANTHROPIC_API_KEY = atob("c2stYW50LWFwaTAzLU1CSlFNWHBBdC1XeXY3X3dIQWJqaEJ0d0hiaElKcjdjZjliUFZ1RTZzQnBObm5kZXBnNjM1cExnR01LM1ByRlNWdWNONGVTU1dlOXBfUElzU2kzeWtnLXh5ZXlkd0FB");
 
 // Shared helper — replaces the server-side claude-proxy for all AI calls.
-async function callClaude(body) {
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true'
-    },
-    body: JSON.stringify(body)
-  });
-  if (!res.ok) {
+// Retries up to 4 times on 529 (overloaded) with exponential backoff.
+async function callClaude(body, { maxRetries = 4 } = {}) {
+  const delay = ms => new Promise(r => setTimeout(r, ms));
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify(body)
+    });
+    if (res.ok) return res.json();
+    if (res.status === 529 && attempt < maxRetries) {
+      const wait = 2000 * Math.pow(2, attempt); // 2s, 4s, 8s, 16s
+      console.warn(`Anthropic overloaded (529), retrying in ${wait / 1000}s… (attempt ${attempt + 1}/${maxRetries})`);
+      await delay(wait);
+      continue;
+    }
     const err = await res.json().catch(() => ({}));
     throw new Error(err?.error?.message || `Anthropic API error ${res.status}`);
   }
-  return res.json();
 }
 
 // Convert a File/Blob to a base64 data URI. Used by client-side OCR flows
