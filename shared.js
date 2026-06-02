@@ -10814,6 +10814,7 @@ const ELEMENT_FOLDERS = {
 const PARTS_SUBFOLDERS = ['01 - Sections', '02 - Plates'];
 
 let drawingsData = { projects: {} };
+let _drawingElementsCache = {}; // jobId -> { revisions, files, notes, site } loaded from SQL
 // Data shape: drawingsData.projects[projectId] = {
 //   jobs: [{ id, number, name, status:'open'|'closed', createdAt, closedAt, closedBy,
 //     bom: { files: [{id,name,fileName,fileId,driveId,webUrl,uploadedAt}], notes:[] },
@@ -10934,39 +10935,12 @@ let _bomManualReviewIndex = 0;
 let _blobLoadPromise = null;
 
 async function loadDrawingsData() {
-  // Kick off both fetches in parallel
-  _blobLoadPromise = loadDrawingsBlob();
-  const sqlPromise = loadDrawingsSQL();
-
-  // Await only the SQL call — it's fast and drives the tiles render
+  // SQL-only load — blob has been fully migrated to SQL.
   try {
-    await sqlPromise;
+    await loadDrawingsSQL();
   } catch (e) {
     console.warn('Drawings SQL load failed:', e.message);
   }
-
-  // Set up the background blob to re-render the screen when it lands,
-  // so any Approval/Parts/Site sections shown during the gap fill in.
-  _blobLoadPromise.then(() => {
-    // If the user is still on the projects page, re-merge SQL + blob
-    // shells so nested data populates. We re-run loadDrawingsSQL because
-    // it's the function that does the merge — it overlays SQL on top of
-    // whatever's currently in drawingsData (which by now includes the
-    // blob).
-    return loadDrawingsSQL().catch(() => {});
-  }).then(() => {
-    // Re-render any currently-visible job detail so nested data appears.
-    if (typeof currentJob !== 'undefined' && currentJob) {
-      try { renderAllElements(); } catch (_) {}
-    }
-    // Workshop notifications on the kiosk read job.assembly.tasks from
-    // the blob (legacy data path — superseded by the SQL-backed
-    // Fabrication tile, but still wired for any old data in the blob).
-    // Re-fire after the blob lands so they appear.
-    if (CURRENT_PAGE === 'index') {
-      try { renderWorkshopNotifications(); } catch (_) {}
-    }
-  }).catch(e => console.warn('Drawings blob load failed:', e.message));
 }
 
 // STEP 1 — pull the legacy SharePoint blob (slow, ~2 round-trips).
@@ -11079,14 +11053,64 @@ async function loadDrawingsSQL() {
 }
 
 async function saveDrawingsData() {
-  const token = await getToken();
-  const url = `https://graph.microsoft.com/v1.0/drives/${CONFIG.driveId}/items/${CONFIG.timesheetFolderItemId}:/${DRAWINGS_FILE}:/content`;
-  const res = await fetch(url, {
-    method: 'PUT',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(drawingsData)
-  });
-  if (!res.ok) throw new Error(`Save drawings failed: ${res.status}`);
+  // Legacy blob save — no longer used for approval/parts/site/notes
+  // (all migrated to SQL). Kept as a stub so any remaining call sites
+  // don't throw. Remove once all call sites are confirmed gone.
+  console.warn('saveDrawingsData() called — this should be a no-op now. Check call site.');
+}
+
+// ── Load element data (approval, parts, site, notes) from SQL ──────────────
+async function loadJobElementData(jobId) {
+  const id = parseInt(jobId);
+  if (!id) return;
+  try {
+    const data = await api.get(`/api/drawing-elements/${id}`);
+    _drawingElementsCache[id] = data;
+    // Merge into currentJob if it matches
+    if (currentJob && parseInt(currentJob.id) === id) {
+      _applyElementDataToJob(currentJob, data);
+    }
+  } catch (e) {
+    console.warn(`loadJobElementData(${id}) failed:`, e.message);
+    _drawingElementsCache[id] = { revisions: [], files: {}, notes: {}, site: null };
+  }
+}
+
+function _applyElementDataToJob(job, data) {
+  if (!data) return;
+  // Approval
+  job.approval = {
+    revisions: (data.revisions || []).map(r => ({
+      id: r.id,
+      type: r.type,
+      number: r.number,
+      status: r.status,
+      statusUpdatedAt: r.statusUpdatedAt,
+      uploadedAt: r.uploadedAt,
+      files: r.files || []
+    })),
+    notes: (data.notes && data.notes['approval']) || []
+  };
+  // Parts
+  job.parts = {
+    sections: {
+      files: (data.files && data.files['parts-sections']) || [],
+      notes: (data.notes && data.notes['parts-sections']) || []
+    },
+    plates: {
+      files: (data.files && data.files['parts-plates']) || [],
+      notes: (data.notes && data.notes['parts-plates']) || []
+    }
+  };
+  // Site
+  const siteFiles = (data.files && data.files['site']) || [];
+  const siteNotes = (data.notes && data.notes['site']) || [];
+  job.site = {
+    files: siteFiles,
+    notes: siteNotes,
+    completedAt: data.site ? data.site.completedAt : null,
+    completedBy: data.site ? data.site.completedBy : null
+  };
 }
 
 
@@ -11751,12 +11775,13 @@ function openJobDetail(projectId, jobId) {
   });
 
   showScreen('screenJobDetail');
-  // Load SQL-backed assemblies, BOM items, and finishes in parallel
+  // Load all data in parallel: assemblies, BOM, finishes, and element data (SQL-backed)
   const jobIdInt = parseInt(currentJob.id);
   Promise.all([
     loadJobAssemblies(jobIdInt),
     loadJobBomItems(jobIdInt),
-    loadFinishes()
+    loadFinishes(),
+    loadJobElementData(jobIdInt)
   ]).then(() => renderAllElements()).catch(() => renderAllElements());
 }
 
@@ -12982,13 +13007,13 @@ function renderApproval() {
 
 async function updateApprovalStatus(revisionId, newStatus) {
   if (!currentJob || !currentProject) return;
-  const projectId = currentProject.id;
+  const jobIdInt = parseInt(currentJob.id);
   const rev = currentJob.approval?.revisions?.find(r => r.id === revisionId);
   if (!rev) return;
-  rev.status = newStatus;
-  rev.statusUpdatedAt = new Date().toISOString();
   try {
-    await saveDrawingsData();
+    await api.patch(`/api/drawing-elements/${jobIdInt}/approval-revision/${revisionId}/status`, { status: newStatus });
+    rev.status = newStatus;
+    rev.statusUpdatedAt = new Date().toISOString();
     toast(`Status updated to ${newStatus === 'sent' ? 'Sent for Approval' : newStatus === 'approved' ? 'Approved' : 'Not Approved'}`, 'success');
     renderApproval();
   } catch (e) { toast('Save failed: ' + e.message, 'error'); }
@@ -13414,7 +13439,15 @@ async function addElementNote(context, type) {
   notesArr.push(note);
 
   try {
-    await saveDrawingsData();
+    const jobIdInt = parseInt(currentJob.id);
+    const saved = await api.post(`/api/drawing-elements/${jobIdInt}/note`, {
+      noteContext: context,
+      noteType: type,
+      author,
+      text
+    });
+    // Update local state
+    notesArr.push({ id: saved.id, type: saved.type, author: saved.author, text: saved.text, timestamp: saved.timestamp });
     inputEl.value = '';
     toast('Note added', 'success');
     renderAllElements();
@@ -13622,41 +13655,59 @@ async function confirmUploadFile() {
     document.getElementById('uploadFileProgressBar').style.width = '90%';
     document.getElementById('uploadFileProgressText').textContent = 'Saving data...';
 
-    // Save to drawingsData
+    // Save to SQL (approval, parts, site) or local blob state (bom, assembly legacy)
+    const jobIdInt = parseInt(job.id);
     if (element === 'bom') {
       if (!job.bom) job.bom = { files: [], notes: [] };
       job.bom.files.push(...uploadedFiles);
+      // BOM files are tracked in JobBomItems — no extra save needed here
     } else if (element === 'approval') {
       if (!job.approval) job.approval = { revisions: [], notes: [] };
-      const revisions = job.approval.revisions;
       const type = subElement || 'PO';
-      const num = revisions.filter(r => r.type === type).length + 1;
       const approvalStatus = document.querySelector('input[name="approvalStatus"]:checked')?.value || 'sent';
-      revisions.push({
-        id: Date.now().toString(),
+      const saved = await api.post(`/api/drawing-elements/${jobIdInt}/approval-revision`, {
         type,
-        number: num,
         status: type === 'CO' ? 'approved' : approvalStatus,
-        files: uploadedFiles,
-        uploadedAt: new Date().toISOString()
+        uploadedBy: _currentDraftsmanName || null,
+        files: uploadedFiles.map(f => ({
+          name: f.name, fileName: f.fileName,
+          fileId: f.fileId, driveId: f.driveId,
+          webUrl: f.webUrl, uploadedAt: f.uploadedAt
+        }))
+      });
+      job.approval.revisions.push({
+        id: saved.id, type: saved.type, number: saved.number,
+        status: saved.status, uploadedAt: saved.uploadedAt,
+        files: saved.files
       });
     } else if (element === 'parts') {
       if (!job.parts) job.parts = { sections: { files: [], notes: [] }, plates: { files: [], notes: [] } };
+      const fileContext = subElement === 'sections' ? 'parts-sections' : 'parts-plates';
       const target = subElement === 'sections' ? job.parts.sections : job.parts.plates;
       if (!target.files) target.files = [];
-      target.files.push(...uploadedFiles);
-    } else if (element === 'assembly') {
-      const task = job.assembly?.tasks?.find(t => t.id === subElement);
-      if (task) {
-        if (!task.files) task.files = [];
-        task.files.push(...uploadedFiles);
+      for (const f of uploadedFiles) {
+        const saved = await api.post(`/api/drawing-elements/${jobIdInt}/file`, {
+          fileContext, name: f.name, fileName: f.fileName,
+          fileId: f.fileId, driveId: f.driveId,
+          webUrl: f.webUrl, uploadedAt: f.uploadedAt,
+          uploadedBy: _currentDraftsmanName || null
+        });
+        target.files.push({ ...saved });
       }
+    } else if (element === 'assembly') {
+      // Assembly PDFs handled by the separate assembly upload flow — no-op here
     } else if (element === 'site') {
       if (!job.site) job.site = { files: [], notes: [] };
-      job.site.files.push(...uploadedFiles);
+      for (const f of uploadedFiles) {
+        const saved = await api.post(`/api/drawing-elements/${jobIdInt}/file`, {
+          fileContext: 'site', name: f.name, fileName: f.fileName,
+          fileId: f.fileId, driveId: f.driveId,
+          webUrl: f.webUrl, uploadedAt: f.uploadedAt,
+          uploadedBy: _currentDraftsmanName || null
+        });
+        job.site.files.push({ ...saved });
+      }
     }
-
-    await saveDrawingsData();
 
     document.getElementById('uploadFileProgressBar').style.width = '100%';
     document.getElementById('uploadFileProgressText').textContent = 'Done!';
@@ -13682,7 +13733,7 @@ async function confirmUploadFile() {
 function confirmDeleteFile(context, fileId) {
   if (!currentJob || !currentProject) return;
   const filesArr = getFilesArray(context);
-  const file = filesArr?.find(f => f.id === fileId);
+  const file = filesArr?.find(f => String(f.id) === String(fileId));
   if (!file) return;
 
   showConfirm('Delete File', `Delete "${file.name || file.fileName}"? This cannot be undone.`, async () => {
@@ -13692,10 +13743,16 @@ function confirmDeleteFile(context, fileId) {
       if (file.fileId) {
         await deleteFileFromDrive(file.fileId, file.driveId);
       }
-      // Remove from data
+      // Delete from SQL
+      const jobIdInt = parseInt(currentJob.id);
+      if (context === 'parts-sections' || context === 'parts-plates' || context === 'site') {
+        await api.delete(`/api/drawing-elements/${jobIdInt}/file/${fileId}`);
+      } else if (context === 'approval') {
+        await api.delete(`/api/drawing-elements/${jobIdInt}/revision-file/${fileId}`);
+      }
+      // Remove from local state
       const idx = filesArr.indexOf(file);
       if (idx >= 0) filesArr.splice(idx, 1);
-      await saveDrawingsData();
       toast('File deleted', 'success');
       renderAllElements();
     } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
@@ -14451,22 +14508,30 @@ async function confirmCloseJob() {
   job.closedAt = new Date().toISOString();
   job.closedBy = person;
 
-  // Add completion note
+  // Add completion note to local state (will be persisted via API below)
   if (!job.site.notes) job.site.notes = [];
-  job.site.notes.push({
-    id: Date.now().toString(), type: 'workshop', author: person,
+  const closingNote = {
+    type: 'workshop', author: person,
     text: `🏁 Site installation complete. Job closed.`,
     timestamp: new Date().toISOString()
-  });
+  };
 
   try {
     setLoading(true);
-    await saveDrawingsData();
+    const jobIdInt = parseInt(job.id);
 
-    // Mirror the close to SQL — DrawingJobs.is_complete = true
-    // with completed_at / completed_by. Non-blocking failure: if the
-    // SQL update fails we toast but don't roll back the SharePoint
-    // write, because the local state already reflects 'closed'.
+    // Persist site completion + closing note to SQL
+    await api.put(`/api/drawing-elements/${jobIdInt}/site-complete`, { completedBy: person });
+    try {
+      const saved = await api.post(`/api/drawing-elements/${jobIdInt}/note`, {
+        noteContext: 'site', noteType: 'workshop', author: person,
+        text: closingNote.text
+      });
+      closingNote.id = saved.id;
+    } catch (_) {}
+    job.site.notes.push(closingNote);
+
+    // Update DrawingJobs.is_complete in SQL
     try {
       await api.put(`/api/drawings/${encodeURIComponent(job.id)}`, {
         is_complete:  true,
