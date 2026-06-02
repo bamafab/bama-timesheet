@@ -6154,14 +6154,13 @@ Respond ONLY in valid JSON with these exact keys — no markdown, no preamble:
 }
 
 CRITICAL INSTRUCTIONS:
-- You MUST return ALL JSON keys — do not skip any even if empty (use empty arrays/strings)
-- pricing_items MUST list every individual steel element, access item, finishing item, or installation activity visible in the documents — be exhaustive, Mateusz needs to price each one
-- drawings_to_check MUST list every drawing number, spec section, or document reference mentioned — even if just referenced in passing
-- contract_risks MUST flag: contract type (JCT/NEC/bespoke), LD clauses, retention, design liability, payment terms, programme constraints, access, noise/vibration near live plant, working at height, third party interfaces
-- scope_draft MUST be a complete professional scope statement as it would appear on the BAMA quote — "Supply, delivery and carry out installation of..." format, listing all elements, material grade, finish, drawings referenced, and key exclusions
-- tc_notes MUST include relevant T&C flags based on the contract type and project specifics
-- If a document is a spec or NBS clause, extract every relevant clause number and requirement
-Be direct. Address Mateusz by first name. Think like an experienced steelwork estimator who has been caught out before.`;
+- Return ALL JSON keys — use empty arrays/strings if nothing to report
+- pricing_items: list every priceable element — keep each "detail" to 2 sentences max
+- contract_risks: flag contract type, LD, retention, design liability, programme, access constraints — 2 sentences per risk max
+- drawings_to_check: list every drawing/spec reference mentioned
+- scope_draft: professional scope statement, "Supply, delivery and carry out installation of..." format, 100 words max
+- tc_notes: key commercial flags only, concise
+Be direct. Address Mateusz by first name.`;
 
   const userPrompt = `${project}Our trade: ${trade}.${focus ? ` Pay particular attention to: ${focus}.` : ''}
 
@@ -6170,7 +6169,7 @@ Please read this tender document and give me a full pricing briefing for my trad
   try {
     const requestBody = {
       model: 'claude-sonnet-4-6',
-      max_tokens: 4000,
+      max_tokens: 8000,
       system: systemPrompt,
       messages: [{
         role: 'user',
@@ -6234,8 +6233,28 @@ Please read this tender document and give me a full pricing briefing for my trad
       const clean = raw.replace(/^```json\s*/,'').replace(/```\s*$/,'').trim();
       parsed = JSON.parse(clean);
     } catch(e) {
-      // Fallback: show raw text if JSON parse fails
-      parsed = { summary_short: 'Could not parse structured response — see full AI notes below.', summary_detail: raw, pricing_items: [], contract_risks: [], drawings_to_check: [], quote_structure_short: '', quote_structure_detail: '', scope_draft: '', tc_notes: [], exclusions: [] };
+      // Attempt partial recovery — truncate at last complete top-level value
+      // by finding the last complete array/object before the cut-off
+      const clean = raw.replace(/^```json\s*/,'').replace(/```\s*$/,'').trim();
+      let recovered = null;
+      // Try progressively shorter versions until one parses
+      const attempts = [
+        // Try closing off truncated arrays/objects
+        clean + '"}]}',
+        clean + '"]}}',
+        clean + '"]},"tc_notes":[],"exclusions":[]}',
+        clean.replace(/,\s*\{[^}]*$/, '') + ']}',  // drop last incomplete object
+        clean.replace(/,?\s*"[^"]*":\s*"[^"]*$/, '') + '"}]}',  // drop truncated string
+      ];
+      for (const attempt of attempts) {
+        try { recovered = JSON.parse(attempt); break; } catch(_) {}
+      }
+      if (recovered) {
+        parsed = recovered;
+        status.textContent += ' (response truncated — partial results shown)';
+      } else {
+        parsed = { summary_short: 'Could not parse structured response — see full AI notes below.', summary_detail: raw, pricing_items: [], contract_risks: [], drawings_to_check: [], quote_structure_short: '', quote_structure_detail: '', scope_draft: '', tc_notes: [], exclusions: [] };
+      }
     }
 
     renderHelperOutput(parsed);
