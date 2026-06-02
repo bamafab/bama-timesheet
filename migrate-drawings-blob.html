@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Drawings Blob Migration</title>
+<style>
+  body { font-family: monospace; background: #111; color: #ccc; padding: 24px; max-width: 900px; margin: 0 auto; }
+  h1 { color: #ff6b00; }
+  button { background: #ff6b00; color: #fff; border: none; padding: 12px 24px; font-size: 14px; cursor: pointer; border-radius: 6px; margin: 8px 4px; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  #log { background: #1a1a1a; border: 1px solid #333; border-radius: 6px; padding: 16px; margin-top: 16px; min-height: 200px; white-space: pre-wrap; font-size: 12px; max-height: 600px; overflow-y: auto; }
+  .ok { color: #3ecf8e; }
+  .warn { color: #f59e0b; }
+  .err { color: #ff4444; }
+  .info { color: #60a5fa; }
+</style>
+</head>
+<body>
+<h1>Drawings Blob → SQL Migration</h1>
+<p>This reads the existing <code>drawings-data.json</code> blob from SharePoint and imports any approval revisions, parts files, site data, and notes into the new SQL tables.</p>
+<p style="color:#f59e0b">⚠ Run this once only. It is idempotent (skips jobs with no blob data) but will create duplicate rows if run twice on a job that already has SQL data.</p>
+<button id="btnRun" onclick="runMigration()">▶ Run Migration</button>
+<button onclick="document.getElementById('log').textContent=''">Clear Log</button>
+<div id="log">Ready. Press Run Migration to start.\n</div>
+
+<script>
+const DRIVE_ID = 'b!CxTKk9lEwkyweUqAo3CRas-huywW4KtLqOk2tNzmx-P7CX86DNhTQo14pLuU_tZu';
+const TIMESHEET_FOLDER_ID = '012IX7LSKBTWWE4SJNNFEJGFDOXH3M3Z5B';
+const DRAWINGS_FILE = 'drawings-data.json';
+const API_BASE = 'https://bama-erp-api-deauckd2cja7ebd5.uksouth-01.azurewebsites.net';
+const TOKEN_KEY = 'bama_token';
+
+function log(msg, cls) {
+  const el = document.getElementById('log');
+  const line = document.createElement('span');
+  if (cls) line.className = cls;
+  line.textContent = msg + '\n';
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+function getToken() {
+  const t = sessionStorage.getItem(TOKEN_KEY);
+  if (!t) throw new Error('No auth token in sessionStorage. Log into the ERP first, then come back to this page.');
+  return t;
+}
+
+async function graphGet(url) {
+  const token = getToken();
+  const res = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
+  if (!res.ok) throw new Error(`Graph ${res.status}: ${url}`);
+  return res.json();
+}
+
+async function apiPost(path, body) {
+  const token = getToken();
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    throw new Error(`API POST ${path} → ${res.status}: ${txt.slice(0,200)}`);
+  }
+  return res.json();
+}
+
+async function apiPut(path, body) {
+  const token = getToken();
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'PUT',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    throw new Error(`API PUT ${path} → ${res.status}: ${txt.slice(0,200)}`);
+  }
+  return res.json();
+}
+
+async function apiGet(path) {
+  const token = getToken();
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: { 'Authorization': `Bearer ${token}` }
+  });
+  if (!res.ok) throw new Error(`API GET ${path} → ${res.status}`);
+  return res.json();
+}
+
+async function runMigration() {
+  document.getElementById('btnRun').disabled = true;
+  try {
+    log('── Step 1: Load drawings-data.json from SharePoint ──', 'info');
+    const metaUrl = `https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/items/${TIMESHEET_FOLDER_ID}:/${DRAWINGS_FILE}`;
+    const meta = await graphGet(metaUrl);
+    log(`Found blob: ${meta.name} (${(meta.size/1024).toFixed(1)} KB)`, 'ok');
+
+    const contentRes = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${DRIVE_ID}/items/${meta.id}/content`,
+      { headers: { 'Authorization': `Bearer ${getToken()}` } }
+    );
+    if (!contentRes.ok) throw new Error(`Content fetch failed: ${contentRes.status}`);
+    const blob = await contentRes.json();
+    log(`Blob loaded. Projects in blob: ${Object.keys(blob.projects || {}).length}`, 'ok');
+
+    log('\n── Step 2: Load SQL job list ──', 'info');
+    const sqlJobs = await apiGet('/api/drawings');
+    log(`SQL jobs: ${sqlJobs.length}`, 'ok');
+    const jobByProjectAndName = {};
+    for (const j of sqlJobs) {
+      const key = `${j.project_number}::${j.job_name}`;
+      jobByProjectAndName[key] = j;
+    }
+
+    log('\n── Step 3: Migrate blob data into SQL ──', 'info');
+    let totalRevisions = 0, totalFiles = 0, totalNotes = 0, totalSite = 0;
+    let skippedJobs = 0, migratedJobs = 0;
+
+    for (const [projId, projData] of Object.entries(blob.projects || {})) {
+      const blobJobs = projData.jobs || [];
+      if (!blobJobs.length) continue;
+
+      for (const blobJob of blobJobs) {
+        const jobName = blobJob.name || blobJob.jobName;
+        if (!jobName) continue;
+
+        // Find matching SQL job by project + name
+        const key = `${projId}::${jobName}`;
+        const sqlJob = jobByProjectAndName[key];
+        if (!sqlJob) {
+          log(`  SKIP: no SQL job found for ${projId} / "${jobName}"`, 'warn');
+          skippedJobs++;
+          continue;
+        }
+
+        const jobId = sqlJob.id;
+        let jobHasData = false;
+
+        // ── Approval revisions ──
+        const revisions = blobJob.approval?.revisions || [];
+        for (const rev of revisions) {
+          try {
+            await apiPost(`/api/drawing-elements/${jobId}/approval-revision`, {
+              type: rev.type,
+              status: rev.status || (rev.type === 'CO' ? 'approved' : 'sent'),
+              uploadedBy: null,
+              files: (rev.files || []).map(f => ({
+                name: f.name || f.fileName || '',
+                fileName: f.fileName || f.name || '',
+                fileId: f.fileId || null,
+                driveId: f.driveId || null,
+                webUrl: f.webUrl || null,
+                uploadedAt: f.uploadedAt || rev.uploadedAt || new Date().toISOString(),
+                blobId: f.id || null
+              }))
+            });
+            totalRevisions++;
+            jobHasData = true;
+            log(`  ${projId}/${jobName}: imported ${rev.type}${rev.number} revision`, 'ok');
+          } catch (e) {
+            log(`  ERROR importing revision ${rev.type}${rev.number} for ${projId}/${jobName}: ${e.message}`, 'err');
+          }
+        }
+
+        // ── Approval notes ──
+        for (const note of (blobJob.approval?.notes || [])) {
+          try {
+            await apiPost(`/api/drawing-elements/${jobId}/note`, {
+              noteContext: 'approval',
+              noteType: note.type || 'draftsman',
+              author: note.author || 'Unknown',
+              text: note.text || ''
+            });
+            totalNotes++;
+            jobHasData = true;
+          } catch (e) {
+            log(`  ERROR importing approval note for ${projId}/${jobName}: ${e.message}`, 'err');
+          }
+        }
+
+        // ── Parts files: sections ──
+        for (const f of (blobJob.parts?.sections?.files || [])) {
+          try {
+            await apiPost(`/api/drawing-elements/${jobId}/file`, {
+              fileContext: 'parts-sections',
+              name: f.name || f.fileName || '',
+              fileName: f.fileName || f.name || '',
+              fileId: f.fileId || null,
+              driveId: f.driveId || null,
+              webUrl: f.webUrl || null,
+              uploadedAt: f.uploadedAt || new Date().toISOString()
+            });
+            totalFiles++;
+            jobHasData = true;
+          } catch (e) {
+            log(`  ERROR importing parts-sections file for ${projId}/${jobName}: ${e.message}`, 'err');
+          }
+        }
+
+        // ── Parts files: plates ──
+        for (const f of (blobJob.parts?.plates?.files || [])) {
+          try {
+            await apiPost(`/api/drawing-elements/${jobId}/file`, {
+              fileContext: 'parts-plates',
+              name: f.name || f.fileName || '',
+              fileName: f.fileName || f.name || '',
+              fileId: f.fileId || null,
+              driveId: f.driveId || null,
+              webUrl: f.webUrl || null,
+              uploadedAt: f.uploadedAt || new Date().toISOString()
+            });
+            totalFiles++;
+            jobHasData = true;
+          } catch (e) {
+            log(`  ERROR importing parts-plates file for ${projId}/${jobName}: ${e.message}`, 'err');
+          }
+        }
+
+        // ── Parts notes ──
+        for (const [ctx, notesArr] of [['parts-sections', blobJob.parts?.sections?.notes || []], ['parts-plates', blobJob.parts?.plates?.notes || []]]) {
+          for (const note of notesArr) {
+            try {
+              await apiPost(`/api/drawing-elements/${jobId}/note`, {
+                noteContext: ctx,
+                noteType: note.type || 'draftsman',
+                author: note.author || 'Unknown',
+                text: note.text || ''
+              });
+              totalNotes++;
+              jobHasData = true;
+            } catch (e) {
+              log(`  ERROR importing ${ctx} note for ${projId}/${jobName}: ${e.message}`, 'err');
+            }
+          }
+        }
+
+        // ── Site files ──
+        for (const f of (blobJob.site?.files || [])) {
+          try {
+            await apiPost(`/api/drawing-elements/${jobId}/file`, {
+              fileContext: 'site',
+              name: f.name || f.fileName || '',
+              fileName: f.fileName || f.name || '',
+              fileId: f.fileId || null,
+              driveId: f.driveId || null,
+              webUrl: f.webUrl || null,
+              uploadedAt: f.uploadedAt || new Date().toISOString()
+            });
+            totalFiles++;
+            jobHasData = true;
+          } catch (e) {
+            log(`  ERROR importing site file for ${projId}/${jobName}: ${e.message}`, 'err');
+          }
+        }
+
+        // ── Site notes ──
+        for (const note of (blobJob.site?.notes || [])) {
+          try {
+            await apiPost(`/api/drawing-elements/${jobId}/note`, {
+              noteContext: 'site',
+              noteType: note.type || 'workshop',
+              author: note.author || 'Unknown',
+              text: note.text || ''
+            });
+            totalNotes++;
+            jobHasData = true;
+          } catch (e) {
+            log(`  ERROR importing site note for ${projId}/${jobName}: ${e.message}`, 'err');
+          }
+        }
+
+        // ── Site completion ──
+        if (blobJob.site?.completedAt) {
+          try {
+            await apiPut(`/api/drawing-elements/${jobId}/site-complete`, {
+              completedBy: blobJob.site.completedBy || null
+            });
+            totalSite++;
+            jobHasData = true;
+            log(`  ${projId}/${jobName}: imported site completion (${blobJob.site.completedBy})`, 'ok');
+          } catch (e) {
+            log(`  ERROR importing site completion for ${projId}/${jobName}: ${e.message}`, 'err');
+          }
+        }
+
+        if (jobHasData) migratedJobs++;
+      }
+    }
+
+    log(`\n── Migration complete ──`, 'info');
+    log(`Jobs with data migrated: ${migratedJobs}`, 'ok');
+    log(`Jobs skipped (no SQL match): ${skippedJobs}`, skippedJobs > 0 ? 'warn' : 'ok');
+    log(`Approval revisions: ${totalRevisions}`, 'ok');
+    log(`Element files: ${totalFiles}`, 'ok');
+    log(`Notes: ${totalNotes}`, 'ok');
+    log(`Site completions: ${totalSite}`, 'ok');
+
+    if (migratedJobs === 0 && skippedJobs === 0) {
+      log('\nBlob contained no approval/parts/site data — nothing to migrate. All clear.', 'ok');
+    }
+
+  } catch (e) {
+    log(`\nFATAL: ${e.message}`, 'err');
+  } finally {
+    document.getElementById('btnRun').disabled = false;
+  }
+}
+</script>
+</body>
+</html>
