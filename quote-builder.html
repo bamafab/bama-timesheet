@@ -545,6 +545,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
           <div class="form-grid form-grid-3">
             <div class="field"><label>Misc Material (£)</label><input type="number" id="miscMaterialVal" value="0" oninput="autosave();recalcAll()"></div>
             <div class="field"><label>Notes</label><input type="text" id="miscMaterialNote" placeholder="e.g. plates, bolts, fixings" oninput="autosave()"></div>
+            <div class="field"><label>Fixings &amp; Consumables (%)<span style="font-size:10px;color:var(--muted);margin-left:4px">of material cost</span></label><input type="number" id="fixingsPctInput" value="0" min="0" max="15" step="0.5" oninput="autosave();recalcAll()" placeholder="0 = off"></div>
           </div>
         </div>
 
@@ -2641,6 +2642,7 @@ function autosave() {
   q.fittingsRate = parseFloat(document.getElementById('fittingsRate')?.value) || 1.30;
   q.miscMaterial = parseFloat(document.getElementById('miscMaterialVal')?.value) || 0;
   q.miscMaterialNote = document.getElementById('miscMaterialNote')?.value || '';
+  q.fixingsPct = parseFloat(document.getElementById('fixingsPctInput')?.value) || 0;
   updateSidebarItem(q);
   saveAll();
 }
@@ -2815,6 +2817,8 @@ function loadQuoteEditor() {
   document.getElementById('fittingsRate').value  = q.fittingsRate || 1.30;
   document.getElementById('miscMaterialVal').value = q.miscMaterial || 0;
   document.getElementById('miscMaterialNote').value = q.miscMaterialNote || '';
+  const fixInp = document.getElementById('fixingsPctInput');
+  if (fixInp) fixInp.value = q.fixingsPct || 0;
 
   setQuoteType(q.type || 'bama', false);
 
@@ -4389,13 +4393,13 @@ function buildWizSummary(q) {
 }
 
 function wizSuggestCrew(q) {
-  const members = (q.takeoff||[]).length;
+  const members = window._wizMemberCount || (q.takeoff||[]).reduce((s,r) => s + (r.qty||1), 0);
   const tonnes = window._wizTonnes || 0;
-  const suggestedOps = members <= 8 ? 2 : members <= 25 ? 3 : 4;
+  const suggestedOps = members <= 10 ? 2 : members <= 40 ? 3 : 4;
   document.getElementById('wiz-operatives').value = suggestedOps;
   const suggestedDays = Math.max(1, Math.ceil(members / (suggestedOps * 5)));
   document.getElementById('wiz-days').value = suggestedDays;
-  document.getElementById('wiz-days-hint').textContent = `(suggested: ${members} members ÷ ${suggestedOps} ops)`;
+  document.getElementById('wiz-days-hint').textContent = `(suggested: ${members} pieces ÷ ${suggestedOps} ops)`;
   const erectorTile = document.querySelector('[data-role="erector"]');
   if (erectorTile) {
     erectorTile.querySelector('.wiz-role-qty').value = suggestedOps;
@@ -4661,6 +4665,8 @@ function applyWizard() {
   q.fixingsPct = document.getElementById('wiz-fixings-enabled')?.checked
     ? (parseFloat(document.getElementById('wiz-fixings-pct')?.value) || 2.5)
     : 0;
+  const fixInp = document.getElementById('fixingsPctInput');
+  if (fixInp) fixInp.value = q.fixingsPct;
 
   // ── Survey (always, any scope) ────────────────────────────
   const surveyTile = document.querySelector('#wiz-survey-tiles .wiz-tile.active');
