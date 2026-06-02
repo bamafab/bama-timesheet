@@ -4359,7 +4359,7 @@ function buildWizSummary(q) {
   window._wizMemberCount = takeoff.reduce((s, r) => s + (r.qty || 1), 0);
 
   document.getElementById('wiz-stats').innerHTML = [
-    { val: takeoff.length, lbl: 'Members' },
+    { val: window._wizMemberCount, lbl: 'Members (total qty)' },
     { val: t.toFixed(2)+'t', lbl: 'Total tonnage' },
     { val: longestMM ? ((longestMM/1000).toFixed(2)+'m') : '—', lbl: 'Longest member' },
     { val: (q.areas||[]).length || '—', lbl: 'Areas' },
