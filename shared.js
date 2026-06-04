@@ -19014,6 +19014,7 @@ async function openQuoteDetail(id) {
   if (saveBtn) saveBtn.style.display = 'none';
   if (discardBtn) discardBtn.style.display = 'none';
 
+  const perms = getUserPermissions(currentManagerUser) || {};
   const deleteBtn = document.getElementById('qdDeleteBtn');
   if (deleteBtn) deleteBtn.style.display = perms.editQuotes ? '' : 'none';
   _populateQuoteDetailFields(tender);
