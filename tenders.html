@@ -129,8 +129,9 @@
 
     <!-- Tender Detail View (hidden by default) -->
     <div class="tab-content" id="tab-tenderDetail" style="display:none">
-      <div style="margin-bottom:16px">
+      <div style="margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:12px">
         <button class="btn btn-ghost" onclick="closeTenderDetail()" style="padding:6px 14px;font-size:12px">&#8592; Back to list</button>
+        <button class="btn btn-ghost" onclick="deleteCurrentTender()" id="tdDeleteBtn" style="font-size:16px;color:var(--red);border-color:var(--red);padding:4px 8px;line-height:1" title="Delete tender">🗑</button>
       </div>
       <div class="card" style="margin-bottom:20px">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
@@ -645,6 +646,6 @@
   }
 </style>
 
-<script src="shared.js?v=20260604b"></script>
+<script src="shared.js?v=20260604c"></script>
 </body>
 </html>

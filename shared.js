@@ -17467,6 +17467,13 @@ async function openTenderDetail(id) {
   // Show/hide convert button
   document.getElementById('convertToQuoteSection').style.display = tender.status === 'tender' ? '' : 'none';
 
+  // Show/hide delete button
+  const tdDeleteBtn = document.getElementById('tdDeleteBtn');
+  if (tdDeleteBtn) {
+    const perms = getUserPermissions(currentManagerUser) || {};
+    tdDeleteBtn.style.display = perms.tenders ? '' : 'none';
+  }
+
   // Load files from SharePoint
   loadTenderFiles();
 
@@ -25984,7 +25991,7 @@ async function deleteCurrentQuote() {
      <p style="margin:0;color:var(--muted)">This will <b style="color:var(--red)">permanently delete</b> the quote and all its line items. This cannot be undone.</p>`,
     { okLabel: 'Yes, delete', cancelLabel: 'Cancel', danger: true }
   );
-  if (!result || !result.ok) return;
+  if (result !== true) return;
 
   try {
     await api.delete(`/api/tenders/${currentTender.id}`);
@@ -25992,6 +25999,31 @@ async function deleteCurrentQuote() {
     tendersData = tendersData.filter(t => String(t.id) !== String(currentTender.id));
     closeQuoteDetail();
     renderQuoteList();
+    toast(`${escapeHtml(ref)} deleted`, 'success');
+  } catch (err) {
+    toast('Delete failed: ' + (err.message || 'unknown error'), 'error');
+  }
+}
+
+async function deleteCurrentTender() {
+  if (!currentTender) return;
+  const perms = getUserPermissions(currentManagerUser) || {};
+  if (!perms.tenders) { toast('You need tenders permission to delete tenders', 'error'); return; }
+
+  const ref = currentTender.reference || `Tender #${currentTender.id}`;
+  const result = await showConfirmAsync(
+    'Delete this tender?',
+    `<p style="margin:0 0 8px 0"><b>${escapeHtml(ref)}</b></p>
+     <p style="margin:0;color:var(--muted)">This will <b style="color:var(--red)">permanently delete</b> the tender and all its comments. This cannot be undone.</p>`,
+    { okLabel: 'Yes, delete', cancelLabel: 'Cancel', danger: true }
+  );
+  if (result !== true) return;
+
+  try {
+    await api.delete(`/api/tenders/${currentTender.id}`);
+    tendersData = tendersData.filter(t => String(t.id) !== String(currentTender.id));
+    closeTenderDetail();
+    renderTenderList();
     toast(`${escapeHtml(ref)} deleted`, 'success');
   } catch (err) {
     toast('Delete failed: ' + (err.message || 'unknown error'), 'error');
