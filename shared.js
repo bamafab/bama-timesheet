@@ -19016,6 +19016,7 @@ async function openQuoteDetail(id) {
 
   const deleteBtn = document.getElementById('qdDeleteBtn');
   if (deleteBtn) deleteBtn.style.display = perms.editQuotes ? '' : 'none';
+  _populateQuoteDetailFields(tender);
   loadQuoteComments();
   loadTenderFiles();
   // Line items editor — Session 2 of the financial dashboard build.
