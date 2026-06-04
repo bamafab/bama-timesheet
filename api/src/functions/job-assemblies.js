@@ -320,10 +320,12 @@ app.http('job-assemblies-kiosk', {
                         j.job_name,
                         j.project_number,
                         p.project_name,
+                        c.company_name,
                         st.name AS finish_name
                  FROM JobAssemblies a
                  JOIN DrawingJobs j ON j.id = a.job_id
                  JOIN Projects    p ON p.project_number = j.project_number
+                 LEFT JOIN Clients c ON c.id = p.client_id
                  LEFT JOIN ServiceTypes st ON st.id = a.finish_service_id
                  WHERE p.status = 'In Progress'
                    AND (a.status = 'pending'

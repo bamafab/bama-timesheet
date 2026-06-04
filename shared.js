@@ -884,14 +884,14 @@ function renderKioskFabrication() {
   const groups = new Map();
   for (const a of filtered) {
     const key = `${a.project_number}|${a.job_id}`;
-    if (!groups.has(key)) groups.set(key, { project_number: a.project_number, project_name: a.project_name, job_name: a.job_name, items: [] });
+    if (!groups.has(key)) groups.set(key, { project_number: a.project_number, project_name: a.project_name, company_name: a.company_name, job_name: a.job_name, items: [] });
     groups.get(key).items.push(a);
   }
 
   let html = '';
   for (const g of groups.values()) {
     html += `<div style="font-size:11px;color:var(--subtle);text-transform:uppercase;letter-spacing:.05em;margin:14px 0 6px">
-      ${escapeHtml(g.project_number)}${g.project_name ? ` — ${escapeHtml(g.project_name)}` : ''} &middot; ${escapeHtml(g.job_name)}
+      ${escapeHtml(g.project_number)}${g.project_name ? ` — ${escapeHtml(g.project_name)}` : ''}${g.company_name ? ` · ${escapeHtml(g.company_name)}` : ''} &middot; ${escapeHtml(g.job_name)}
     </div>`;
     html += '<div style="display:flex;flex-direction:column;gap:8px">';
     for (const a of g.items) {
