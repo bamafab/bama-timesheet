@@ -13012,7 +13012,7 @@ function renderApproval() {
       html += '<div style="padding:8px 14px">';
       rev.files.forEach(f => {
         if (isCurrent || isDraftsman) {
-          html += renderFileRow(f, 'approval', false);
+          html += renderFileRow(f, 'approval', isDraftsman && currentJob.status !== 'closed');
         } else {
           html += `<div class="file-row grayed"><div class="file-row-icon">&#128196;</div><div class="file-row-name">${f.name || f.fileName}</div></div>`;
         }
@@ -13759,8 +13759,17 @@ async function confirmUploadFile() {
 // ═══════════════════════════════════════════
 function confirmDeleteFile(context, fileId) {
   if (!currentJob || !currentProject) return;
-  const filesArr = getFilesArray(context);
-  const file = filesArr?.find(f => String(f.id) === String(fileId));
+
+  // Resolve the file and the array it lives in. Approval files live inside
+  // revisions, so getFilesArray() returns null for them — search the revisions.
+  let filesArr = getFilesArray(context);
+  let file = filesArr?.find(f => String(f.id) === String(fileId));
+  if (!file && context === 'approval') {
+    for (const rev of (currentJob.approval?.revisions || [])) {
+      const f = (rev.files || []).find(x => String(x.id) === String(fileId));
+      if (f) { file = f; filesArr = rev.files; break; }
+    }
+  }
   if (!file) return;
 
   showConfirm('Delete File', `Delete "${file.name || file.fileName}"? This cannot be undone.`, async () => {
