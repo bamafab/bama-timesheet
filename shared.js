@@ -21697,6 +21697,8 @@ let _babcockWorkbook = null;    // parsed XLSX workbook
 let _babcockOriginalFile = null; // raw File object — needed to upload to SharePoint
 let _babcockRawData = null;     // array of line items extracted from Quote tab
 let _babcockHeader = null;      // header metadata extracted from Quote tab
+let _babcockParsedByAI = false; // true when the AI fallback parser was used (upload path)
+let _babcockEntryMode = 'upload'; // 'upload' | 'manual'
 let _pendingBabcockUser = null;
 let _babcockQuotes = [];        // tracker list (loaded from API)
 let _babcockLastGenerated = null; // cached payload for "Save to Tracker"
@@ -22113,11 +22115,11 @@ function handleBabcockDrop(event) {
   if (file) handleBabcockFileSelect(file);
 }
 
-function handleBabcockFileSelect(file) {
+async function handleBabcockFileSelect(file) {
   if (!file) return;
   const ext = file.name.split('.').pop().toLowerCase();
-  if (!['xlsx', 'xls'].includes(ext)) {
-    toast('Please upload an .xlsx or .xls file', 'error');
+  if (!['xlsx', 'xls', 'pdf'].includes(ext)) {
+    toast('Please upload an .xlsx, .xls or .pdf file', 'error');
     return;
   }
 
@@ -22126,43 +22128,66 @@ function handleBabcockFileSelect(file) {
   document.getElementById('babcockFileName').textContent = file.name;
   document.getElementById('babcockFileSize').textContent = formatFileSize(file.size);
   _babcockOriginalFile = file;
+  _babcockParsedByAI = false;
 
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    try {
-      _babcockWorkbook = XLSX.read(e.target.result, { type: 'array' });
-      const parsed = parseBabcockQuoteTab(_babcockWorkbook);
-      _babcockHeader = parsed.header;
-      _babcockRawData = parsed.lineItems;
+  try {
+    let parsed = null;
+    let usedAI = false;
 
-      if (!_babcockRawData.length) {
-        toast('No line items found on the "Quote" tab. Check the template format.', 'error');
-        return;
+    if (ext === 'pdf') {
+      // No deterministic PDF parser — go straight to AI vision.
+      toast('Reading PDF with AI…', 'info');
+      setLoading(true);
+      parsed = await parseBabcockWithAI({ kind: 'pdf', file });
+      usedAI = true;
+    } else {
+      // XLSX: try the strict parser first (free, exact). Fall back to AI
+      // only if it throws or finds no line items (layout/header drift).
+      const buf = await file.arrayBuffer();
+      _babcockWorkbook = XLSX.read(buf, { type: 'array' });
+      try {
+        parsed = parseBabcockQuoteTab(_babcockWorkbook);
+        if (!parsed.lineItems || !parsed.lineItems.length) throw new Error('no line items found');
+      } catch (strictErr) {
+        console.warn('Strict Babcock parse failed, falling back to AI:', strictErr.message);
+        toast('Standard parse failed — reading with AI…', 'info');
+        setLoading(true);
+        parsed = await parseBabcockWithAI({ kind: 'csv', text: babcockWorkbookToCsv(_babcockWorkbook) });
+        usedAI = true;
       }
-
-      populateBabcockValidationFields(_babcockHeader, parsed.missingFields || []);
-      const markup = parseFloat(document.getElementById('babcockMarkup').value) || 10;
-      renderBabcockPreviewTable(markup);
-      updateBabcockMarkedUpTotal(markup);
-      document.getElementById('babcockRowCount').textContent = `${_babcockRawData.length} line item${_babcockRawData.length === 1 ? '' : 's'}`;
-      document.getElementById('babcockValidateCard').style.display = '';
-      document.getElementById('babcockValidateCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
-
-      if (parsed.missingFields && parsed.missingFields.length) {
-        // Soft warning — the parser couldn't read these from the
-        // spreadsheet, but upload proceeds and the user can fill them in.
-        // The validate form will already show them with a red border.
-        const labels = parsed.missingFields.map(m => m.label).join(', ');
-        toast(`Loaded ${file.name} — please fill in: ${labels}`, 'info');
-      } else {
-        toast(`Loaded ${file.name} — ${_babcockRawData.length} line items extracted`, 'success');
-      }
-    } catch (err) {
-      console.error('Babcock parse failed:', err);
-      toast('Failed to read spreadsheet: ' + err.message, 'error');
     }
-  };
-  reader.readAsArrayBuffer(file);
+
+    if (!parsed || !parsed.lineItems || !parsed.lineItems.length) {
+      toast('No line items could be extracted from this file.', 'error');
+      return;
+    }
+
+    _babcockHeader = parsed.header;
+    _babcockRawData = parsed.lineItems;
+    _babcockParsedByAI = usedAI;
+
+    populateBabcockValidationFields(_babcockHeader, parsed.missingFields || []);
+    const markup = babcockCurrentMarkup();
+    renderBabcockPreviewTable(markup);
+    updateBabcockMarkedUpTotal(markup);
+    document.getElementById('babcockRowCount').textContent = `${_babcockRawData.length} line item${_babcockRawData.length === 1 ? '' : 's'}`;
+    setBabcockAiBadge(usedAI);
+    document.getElementById('babcockValidateCard').style.display = '';
+    document.getElementById('babcockValidateCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    const aiNote = usedAI ? ' (AI-parsed — please verify every line)' : '';
+    if (parsed.missingFields && parsed.missingFields.length) {
+      const labels = parsed.missingFields.map(m => m.label).join(', ');
+      toast(`Loaded ${file.name}${aiNote} — please fill in: ${labels}`, 'info');
+    } else {
+      toast(`Loaded ${file.name} — ${_babcockRawData.length} line items extracted${aiNote}`, 'success');
+    }
+  } catch (err) {
+    console.error('Babcock parse failed:', err);
+    toast('Failed to read file: ' + (err.message || err), 'error');
+  } finally {
+    setLoading(false);
+  }
 }
 
 function clearBabcockFile() {
@@ -22171,6 +22196,8 @@ function clearBabcockFile() {
   _babcockRawData = null;
   _babcockHeader = null;
   _babcockLastGenerated = null;
+  _babcockParsedByAI = false;
+  setBabcockAiBadge(false);
   document.getElementById('babcockFileInput').value = '';
   document.getElementById('babcockFileInfo').style.display = 'none';
   document.getElementById('babcockValidateCard').style.display = 'none';
@@ -22217,6 +22244,144 @@ function clearBabcockFile() {
 // vertically as the spreadsheet evolves.
 //
 // Returns { header, lineItems } where any missing/blank optional field is ''.
+// ── AI fallback parser for Babcock quotes ─────────────────────────
+// Used when the strict label-anchored XLSX parser fails (layout/header
+// drift) or when the upload is a PDF (no deterministic parser exists).
+// Returns the SAME { header, lineItems, missingFields } shape as
+// parseBabcockQuoteTab so the downstream preview/markup/generate flow is
+// unchanged. input is { kind:'csv', text } or { kind:'pdf', file }.
+async function parseBabcockWithAI(input) {
+  const schemaPrompt = `You are extracting a quotation for a UK steel fabrication company (BAMA).
+Return ONLY valid JSON, no markdown fences, no commentary, in exactly this shape:
+{
+  "header": {
+    "quotationDate": "YYYY-MM-DD or empty string",
+    "quoteRef": "the supplier's own quotation number if present, else empty string",
+    "customerId": "",
+    "workOrderNo": "",
+    "validUntil": "YYYY-MM-DD or empty string",
+    "preparedBy": "",
+    "quoteFor": "short description of who/what the quote is for",
+    "customerEmail": "",
+    "area": "",
+    "address": "",
+    "comments": ""
+  },
+  "lineItems": [
+    { "itemNum": 1, "description": "...", "unitPrice": 0, "quantity": 0, "amount": 0 }
+  ]
+}
+Rules:
+- Each line item must have a non-empty description and a numeric amount (the line total).
+- If only a unit price and quantity are shown, set amount = unitPrice * quantity.
+- unitPrice and quantity may be null if not shown; amount must still be the line total.
+- Do NOT include the TOTAL / grand-total row or any "VAT exclusive" note as a line item.
+- All money values are plain numbers: no currency symbols, no thousands separators.
+- Use empty string "" for any header field you cannot find. Never invent values.`;
+
+  let content;
+  if (input.kind === 'pdf') {
+    const dataUri = await _fileToDataUri(input.file);
+    content = [
+      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: dataUri.split(',')[1] } },
+      { type: 'text', text: schemaPrompt }
+    ];
+  } else {
+    content = [
+      { type: 'text', text: `${schemaPrompt}\n\nHere is the quotation as CSV (rows from the spreadsheet):\n\n${input.text}` }
+    ];
+  }
+
+  const result = await callClaude({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 4000,
+    messages: [{ role: 'user', content }]
+  });
+
+  const rawText = (result.content?.find(b => b.type === 'text')?.text || '').trim();
+  const s = rawText.indexOf('{'), e = rawText.lastIndexOf('}');
+  if (s < 0 || e < 0) throw new Error('AI parser returned no JSON');
+  let parsed;
+  try { parsed = JSON.parse(rawText.slice(s, e + 1)); }
+  catch (err) { throw new Error('AI parser returned malformed JSON'); }
+
+  const h = parsed.header || {};
+  const header = {
+    quotationDate: excelToISODate(h.quotationDate),
+    quoteRef:      String(h.quoteRef || '').trim(),
+    customerId:    String(h.customerId || '').trim(),
+    workOrderNo:   String(h.workOrderNo || '').trim(),
+    validUntil:    excelToISODate(h.validUntil),
+    preparedBy:    String(h.preparedBy || '').trim(),
+    quoteFor:      String(h.quoteFor || '').trim(),
+    customerEmail: String(h.customerEmail || '').trim(),
+    area:          String(h.area || '').trim(),
+    address:       String(h.address || '').trim(),
+    comments:      String(h.comments || '').trim()
+  };
+
+  const num = v => {
+    if (v === null || v === undefined || v === '') return null;
+    const n = Number(v);
+    return isFinite(n) ? n : null;
+  };
+  const lineItems = (Array.isArray(parsed.lineItems) ? parsed.lineItems : [])
+    .map((l, i) => {
+      const description = String(l.description || '').trim();
+      const upNum  = num(l.unitPrice);
+      const qtyNum = num(l.quantity);
+      let amtNum   = num(l.amount);
+      if (amtNum === null && upNum !== null && qtyNum !== null) amtNum = upNum * qtyNum;
+      return { itemNum: l.itemNum ?? (i + 1), description, unitPrice: upNum, quantity: qtyNum, amount: amtNum };
+    })
+    .filter(l => l.description && l.amount !== null);
+
+  const SOFT_REQUIRED = [
+    { key: 'customerId',  label: 'Customer ID' },
+    { key: 'workOrderNo', label: 'Work Order no.' },
+    { key: 'quoteFor',    label: 'Quotation For' }
+  ];
+  const missingFields = SOFT_REQUIRED.filter(f => !header[f.key]);
+
+  return { header, lineItems, missingFields };
+}
+
+// Resolve the "Quote" sheet from a workbook with the same forgiving logic
+// the strict parser uses, falling back to the first sheet. Returns a SheetJS
+// worksheet object (or null).
+function babcockResolveQuoteSheet(wb) {
+  const names = wb.SheetNames || [];
+  if (wb.Sheets['Quote']) return wb.Sheets['Quote'];
+  const norm = x => String(x || '').trim().toLowerCase();
+  const name = names.find(x => norm(x) === 'quote' || norm(x) === 'quotation')
+            || names.find(x => norm(x).includes('quote'))
+            || names[0];
+  return name ? wb.Sheets[name] : null;
+}
+
+// Workbook → CSV text of the Quote sheet, for feeding to the AI parser.
+function babcockWorkbookToCsv(wb) {
+  const sheet = babcockResolveQuoteSheet(wb);
+  if (!sheet) throw new Error('No sheet found in workbook');
+  return XLSX.utils.sheet_to_csv(sheet, { blankrows: false });
+}
+
+// Toggle the "AI-parsed — verify" badge on the validate card.
+function setBabcockAiBadge(on) {
+  const el = document.getElementById('babcockAiBadge');
+  if (el) el.style.display = on ? '' : 'none';
+}
+
+// Effective markup for the current quote. In manual mode the markup
+// checkbox can switch markup off entirely (return 0). Otherwise use the
+// markup % input, defaulting to 10.
+function babcockCurrentMarkup() {
+  const chk = document.getElementById('babcockManualMarkupChk');
+  if (_babcockEntryMode === 'manual' && chk && !chk.checked) return 0;
+  const n = parseFloat(document.getElementById('babcockMarkup')?.value);
+  return isFinite(n) ? n : 10;
+}
+
 function parseBabcockQuoteTab(wb) {
   const sheetNames = wb.SheetNames || [];
 
@@ -22598,17 +22763,21 @@ function renderBabcockPreviewTable(markup) {
 //   5. Upload generated .pdf to "...Bama South West Quotes/"
 //   6. POST to /api/babcock-quotes with all metadata + file links
 async function generateAndSaveBabcockQuote() {
+  // Manual mode: the editable grid is the source of truth — harvest it now.
+  if (_babcockEntryMode === 'manual') harvestBabcockManualRows();
+
   if (!_babcockRawData || !_babcockRawData.length) {
-    toast('Upload a quote template first', 'error');
+    toast(_babcockEntryMode === 'manual' ? 'Add at least one line item' : 'Upload a quote template first', 'error');
     return;
   }
-  if (!_babcockOriginalFile) {
+  // Uploaded quotes carry a source file; manual quotes don't.
+  if (_babcockEntryMode !== 'manual' && !_babcockOriginalFile) {
     toast('Original file not in memory — please re-upload', 'error');
     return;
   }
 
   // Gather form values up-front so we can validate before doing anything else.
-  const markup = parseFloat(document.getElementById('babcockMarkup').value) || 10;
+  const markup = babcockCurrentMarkup();
   const factor = 1 + (markup / 100);
 
   const formData = {
@@ -22720,15 +22889,23 @@ async function generateAndSaveBabcockQuote() {
     const folders = await findOrCreateBabcockFolders();
     const safeRef = sanitizeSpFilename(formData.quoteRef || 'BAMA-quote');
     const dateForName = (formData.quoteDate || todayStr()).replace(/-/g, '');
-    const originalFileName = `${safeRef} - ${_babcockOriginalFile.name}`;
     const pdfFileName = `${safeRef} - ${sanitizeSpFilename(formData.quoteFor || 'Quote')} - ${dateForName}.pdf`;
 
-    const originalUploaded = await uploadFileToFolder(
-      folders.received.id,
-      originalFileName,
-      await _babcockOriginalFile.arrayBuffer(),
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    );
+    // Manual quotes have no source file — only upload the original when present.
+    let originalUploaded = null;
+    if (_babcockOriginalFile) {
+      const originalFileName = `${safeRef} - ${_babcockOriginalFile.name}`;
+      const origExt = (_babcockOriginalFile.name.split('.').pop() || '').toLowerCase();
+      const origMime = origExt === 'pdf'
+        ? 'application/pdf'
+        : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      originalUploaded = await uploadFileToFolder(
+        folders.received.id,
+        originalFileName,
+        await _babcockOriginalFile.arrayBuffer(),
+        origMime
+      );
+    }
 
     const pdfUploaded = await uploadFileToFolder(
       folders.parent.id,
@@ -22745,7 +22922,7 @@ async function generateAndSaveBabcockQuote() {
       total_value:        +grandTotal.toFixed(2),
       markup_pct:         markup,
       line_items:         markedLines,
-      source_filename:    _babcockOriginalFile.name,
+      source_filename:    _babcockOriginalFile ? _babcockOriginalFile.name : null,
       created_by:         currentManagerUser || null,
       quotation_date:     formData.quoteDate || null,
       customer_id:        formData.customerId || null,
@@ -22755,8 +22932,8 @@ async function generateAndSaveBabcockQuote() {
       quote_for_area:     [formData.quoteFor, formData.area].filter(Boolean).join(' — ') || null,
       quote_for_address:  formData.address || null,
       comments:           formData.comments || null,
-      original_file_id:   originalUploaded.id,
-      original_file_url:  originalUploaded.webUrl,
+      original_file_id:   originalUploaded ? originalUploaded.id : null,
+      original_file_url:  originalUploaded ? originalUploaded.webUrl : null,
       generated_file_id:  pdfUploaded.id,
       generated_file_url: pdfUploaded.webUrl,
       // Captured from the spreadsheet (or typed by the user) — used at
@@ -23194,8 +23371,141 @@ function showBabcockGenerator() {
   const btn = document.getElementById('babcockNewQuoteBtn');
   if (btn) btn.style.display = 'none';
   // Start from a clean slate every time the generator is opened
-  clearBabcockFile();
+  setBabcockEntryMode('upload');
   _babcockLastGenerated = null;
+}
+
+// ── Manual quote entry ───────────────────────────────────────────
+// Lets the user type a quote from scratch (no upload). Produces the same
+// _babcockRawData / header-form state the upload path produces, then funnels
+// into the identical generate/save flow. A per-quote markup toggle decides
+// whether the typed line amounts are Babcock prices (apply markup) or the
+// final customer prices (markup off).
+function setBabcockEntryMode(mode) {
+  _babcockEntryMode = (mode === 'manual') ? 'manual' : 'upload';
+  clearBabcockFile();
+
+  const uploadCard   = document.getElementById('babcockUploadCard');
+  const previewWrap  = document.getElementById('babcockPreviewWrap');
+  const manualWrap   = document.getElementById('babcockManualWrap');
+  const validateCard = document.getElementById('babcockValidateCard');
+  const markupRow    = document.getElementById('babcockMarkupToggleRow');
+  const btnUpload    = document.getElementById('babcockModeUpload');
+  const btnManual    = document.getElementById('babcockModeManual');
+
+  if (btnUpload) btnUpload.classList.toggle('active', _babcockEntryMode === 'upload');
+  if (btnManual) btnManual.classList.toggle('active', _babcockEntryMode === 'manual');
+
+  if (_babcockEntryMode === 'manual') {
+    if (uploadCard)   uploadCard.style.display = 'none';
+    if (previewWrap)  previewWrap.style.display = 'none';
+    if (manualWrap)   manualWrap.style.display = '';
+    if (markupRow)    markupRow.style.display = '';
+    // Seed an empty grid
+    const body = document.getElementById('babcockManualBody');
+    if (body) {
+      body.innerHTML = '';
+      body.insertAdjacentHTML('beforeend', _buildBabcockManualRow());
+      body.insertAdjacentHTML('beforeend', _buildBabcockManualRow());
+      body.insertAdjacentHTML('beforeend', _buildBabcockManualRow());
+    }
+    // Markup checkbox defaults to ON; enable/disable the % input accordingly
+    const chk = document.getElementById('babcockManualMarkupChk');
+    if (chk) chk.checked = true;
+    const mk = document.getElementById('babcockMarkup');
+    if (mk) mk.disabled = false;
+    // Clean header form: blank fields, today's date, next B#### ref, email-gated button
+    populateBabcockValidationFields({}, []);
+    if (validateCard) validateCard.style.display = '';
+    harvestBabcockManualRows();
+    if (validateCard) validateCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } else {
+    if (uploadCard)   uploadCard.style.display = '';
+    if (previewWrap)  previewWrap.style.display = '';
+    if (manualWrap)   manualWrap.style.display = 'none';
+    if (markupRow)    markupRow.style.display = 'none';
+    if (validateCard) validateCard.style.display = 'none';
+  }
+}
+
+function _buildBabcockManualRow(desc = '', unit = null, qty = null, amount = null) {
+  const inp = 'background:var(--surface-2);border:1px solid var(--border);border-radius:5px;padding:6px 8px;color:var(--text);font-size:13px';
+  return `<tr>
+    <td style="padding:4px"><input class="bm-desc" type="text" value="${escapeHtml(String(desc))}" placeholder="Description"
+         style="${inp};width:100%" oninput="harvestBabcockManualRows()"></td>
+    <td style="padding:4px"><input class="bm-unit" type="number" step="0.01" value="${unit ?? ''}" placeholder="0.00"
+         style="${inp};width:100px;text-align:right" oninput="bmRowAmount(this)"></td>
+    <td style="padding:4px"><input class="bm-qty" type="number" step="any" value="${qty ?? ''}" placeholder="0"
+         style="${inp};width:80px;text-align:right" oninput="bmRowAmount(this)"></td>
+    <td style="padding:4px"><input class="bm-amount" type="number" step="0.01" value="${amount ?? ''}" placeholder="0.00"
+         style="${inp};width:110px;text-align:right" oninput="harvestBabcockManualRows()"></td>
+    <td style="padding:4px;text-align:center"><button class="btn btn-ghost" style="padding:4px 9px;font-size:12px"
+         onclick="removeBabcockManualRow(this)">✕</button></td>
+  </tr>`;
+}
+
+function addBabcockManualRow() {
+  const body = document.getElementById('babcockManualBody');
+  if (!body) return;
+  body.insertAdjacentHTML('beforeend', _buildBabcockManualRow());
+  body.querySelectorAll('tr')[body.querySelectorAll('tr').length - 1]?.querySelector('.bm-desc')?.focus();
+  harvestBabcockManualRows();
+}
+
+function removeBabcockManualRow(btn) {
+  const row = btn.closest('tr');
+  if (row) row.remove();
+  const body = document.getElementById('babcockManualBody');
+  if (body && !body.querySelector('tr')) body.insertAdjacentHTML('beforeend', _buildBabcockManualRow());
+  harvestBabcockManualRows();
+}
+
+// Auto-fill the line amount from unit price × quantity when both are present.
+function bmRowAmount(input) {
+  const row = input.closest('tr');
+  if (!row) return;
+  const unit = parseFloat(row.querySelector('.bm-unit')?.value);
+  const qty  = parseFloat(row.querySelector('.bm-qty')?.value);
+  const amtEl = row.querySelector('.bm-amount');
+  if (amtEl && isFinite(unit) && isFinite(qty)) amtEl.value = _r2(unit * qty).toFixed(2);
+  harvestBabcockManualRows();
+}
+
+// Read the manual grid into _babcockRawData and refresh the totals.
+function harvestBabcockManualRows() {
+  const rows = document.querySelectorAll('#babcockManualBody tr');
+  const data = [];
+  rows.forEach((row, i) => {
+    const desc  = row.querySelector('.bm-desc')?.value?.trim() || '';
+    const unitV = row.querySelector('.bm-unit')?.value;
+    const qtyV  = row.querySelector('.bm-qty')?.value;
+    const amtV  = row.querySelector('.bm-amount')?.value;
+    const unit = unitV !== '' && unitV != null ? Number(unitV) : null;
+    const qty  = qtyV  !== '' && qtyV  != null ? Number(qtyV)  : null;
+    let amt    = amtV  !== '' && amtV  != null ? Number(amtV)  : null;
+    if (amt === null && unit !== null && qty !== null) amt = _r2(unit * qty);
+    if (!desc && amt === null) return; // skip blank rows
+    data.push({
+      itemNum: i + 1,
+      description: desc,
+      unitPrice: (unit !== null && isFinite(unit)) ? unit : null,
+      quantity:  (qty  !== null && isFinite(qty))  ? qty  : null,
+      amount:    (amt  !== null && isFinite(amt))  ? amt  : null
+    });
+  });
+  _babcockRawData = data;
+  updateBabcockMarkedUpTotal(babcockCurrentMarkup());
+  const rc = document.getElementById('babcockRowCount');
+  if (rc) rc.textContent = `${data.length} line item${data.length === 1 ? '' : 's'}`;
+}
+
+// Markup on/off toggle for manual quotes. When off, the % input is
+// disabled and the effective markup is 0 (typed amounts are final prices).
+function toggleBabcockManualMarkup() {
+  const chk = document.getElementById('babcockManualMarkupChk');
+  const mk  = document.getElementById('babcockMarkup');
+  if (mk) mk.disabled = chk ? !chk.checked : false;
+  harvestBabcockManualRows();
 }
 
 // ── Load tracker list from API ──
@@ -26152,8 +26462,13 @@ async function deleteSharepointFile(itemId) {
 
 // ── Recalculate preview + marked-up total when markup changes ──
 function onBabcockMarkupChange() {
+  const markup = babcockCurrentMarkup();
+  if (_babcockEntryMode === 'manual') {
+    // Manual grid is the source of truth; re-harvest to recompute totals.
+    harvestBabcockManualRows();
+    return;
+  }
   if (!_babcockRawData) return;
-  const markup = parseFloat(document.getElementById('babcockMarkup').value) || 10;
   renderBabcockPreviewTable(markup);
   updateBabcockMarkedUpTotal(markup);
 }
