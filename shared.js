@@ -23528,7 +23528,7 @@ async function submitBabcockLineItemsEdit() {
 
   if (validationError) return;
 
-  const newTotal = newLineItems.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+  const newTotal = newLineItems.reduce((s, l) => _r2(s + _r2(Number(l.amount) || 0)), 0);
   const origTotal = Number(orig.total_value) || 0;
   const totalChanged = Math.abs(newTotal - origTotal) > 0.001;
 
