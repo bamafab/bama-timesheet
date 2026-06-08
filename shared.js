@@ -128,6 +128,7 @@ const api = {
   get:    (endpoint) => apiCall('GET', endpoint),
   post:   (endpoint, body) => apiCall('POST', endpoint, body),
   put:    (endpoint, body) => apiCall('PUT', endpoint, body),
+  patch:  (endpoint, body) => apiCall('PATCH', endpoint, body),
   delete: (endpoint) => apiCall('DELETE', endpoint),
 };
 
@@ -906,7 +907,9 @@ function renderKioskFabCard(a) {
   const isFab = a.status === 'fabricated';
   const finishBadge = a.finish_name
     ? `<span style="background:rgba(99,102,241,.18);color:#a5b4fc;padding:2px 9px;border-radius:6px;font-size:11px">${escapeHtml(a.finish_name)}</span>`
-    : '<span style="color:var(--subtle);font-size:11px">No finish</span>';
+    : a.finish_label_raw
+      ? `<span style="background:rgba(234,179,8,.15);color:#fcd34d;border:1px solid rgba(234,179,8,.35);padding:2px 9px;border-radius:6px;font-size:11px" title="Read from drawing — not linked to a finishing service. Add it under Office → Service Types.">${escapeHtml(a.finish_label_raw)}</span>`
+      : '<span style="color:var(--subtle);font-size:11px">No finish</span>';
 
   // Open PDF link (matches projects.html assembly card)
   const pdfLink = a.sharepoint_web_url
@@ -8938,6 +8941,9 @@ function renderServiceTypeList() {
             ${groups[letter].map(st => `
               <div class="svc-mgmt-pill" data-svc-name="${st.name.toLowerCase()}" style="display:flex;align-items:center;gap:6px;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:5px 10px;font-size:13px">
                 ${st.name}
+                <button onclick="toggleServiceTypeFinish(${st.id}, ${st.is_finish ? 1 : 0})"
+                  title="${st.is_finish ? 'Finishing service — click to unmark' : 'Click to mark as a finishing service (shows on assembly drawings)'}"
+                  style="background:${st.is_finish ? 'rgba(99,102,241,.2)' : 'none'};border:1px solid ${st.is_finish ? 'rgba(99,102,241,.45)' : 'var(--border)'};color:${st.is_finish ? '#a5b4fc' : 'var(--muted)'};border-radius:5px;cursor:pointer;font-size:10px;padding:1px 6px;line-height:1.5">finish</button>
                 <button onclick="deleteServiceType(${st.id}, '${st.name.replace(/'/g, "\\'")}')"
                   style="background:none;border:none;color:var(--red);cursor:pointer;font-size:14px;padding:0 2px;line-height:1" title="Remove">&#10005;</button>
               </div>`).join('')}
@@ -8964,14 +8970,31 @@ function filterServiceTypeList() {
 async function addServiceType() {
   const input = document.getElementById('newServiceTypeName');
   const name = (input?.value || '').trim();
+  const isFinish = !!document.getElementById('newServiceTypeIsFinish')?.checked;
   if (!name) { toast('Enter a service name', 'error'); return; }
   try {
-    await api.post('/api/service-types', { name });
+    await api.post('/api/service-types', { name, is_finish: isFinish });
     input.value = '';
+    const fchk = document.getElementById('newServiceTypeIsFinish');
+    if (fchk) fchk.checked = false;
+    _finishesCache = null; // bust so the assembly finish dropdown picks up new finishes
     await loadServiceTypes();
     renderServiceTypeList();
     toast('Service added ✓', 'success');
   } catch (e) { toast(e.message || 'Failed to add service', 'error'); }
+}
+
+// Flag/unflag a service type as a finishing service. Finishing services are the
+// ones offered as selectable finishes on assembly drawings (Galvanising, paints,
+// primers, etc.) — driven by ServiceTypes.is_finish.
+async function toggleServiceTypeFinish(id, current) {
+  try {
+    await api.put(`/api/service-types/${id}`, { is_finish: current ? 0 : 1 });
+    _finishesCache = null; // bust the assembly finishes cache
+    await loadServiceTypes();
+    renderServiceTypeList();
+    toast(current ? 'Removed from finishing services' : 'Marked as finishing service ✓', 'success');
+  } catch (e) { toast(e.message || 'Update failed', 'error'); }
 }
 
 async function deleteServiceType(id, name) {
@@ -12933,6 +12956,14 @@ async function bmrSaveAndNext() {
 // ═══════════════════════════════════════════
 // ELEMENT 2: APPROVAL
 // ═══════════════════════════════════════════
+// A revision's display label follows its approval state, not just which button
+// created it: pending/rejected → "PO1", approved → "C01". Folder names in
+// SharePoint mirror this (renamed on approve — see updateApprovalStatus).
+function approvalRevLabel(type, number, status) {
+  const approved = type === 'CO' || status === 'approved';
+  return approved ? 'C' + String(number).padStart(2, '0') : 'PO' + number;
+}
+
 function renderApproval() {
   const container = document.getElementById('approvalContent');
   if (!container) return;
@@ -12940,10 +12971,12 @@ function renderApproval() {
   const revisions = approval.revisions || [];
   const status = document.getElementById('elementApprovalStatus');
 
-  const latestCO = [...revisions].reverse().find(r => r.type === 'CO');
-  const latestPO = [...revisions].reverse().find(r => r.type === 'PO');
-  if (latestCO) {
-    status.textContent = `CO${latestCO.number} Approved`;
+  const sortedDesc = [...revisions].reverse();
+  // The headline = most recent approved revision (a CO, or a PO marked approved).
+  const latestApproved = sortedDesc.find(r => r.type === 'CO' || r.status === 'approved');
+  const latestPO = sortedDesc.find(r => r.type === 'PO');
+  if (latestApproved) {
+    status.textContent = `${approvalRevLabel(latestApproved.type, latestApproved.number, latestApproved.status)} Approved`;
     status.style.cssText = 'color:var(--green);background:rgba(62,207,142,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600';
   } else if (latestPO) {
     if (latestPO.status === 'rejected') {
@@ -12974,7 +13007,7 @@ function renderApproval() {
     // Status toggles for latest PO revision (draftsman can change status)
     if (latestPO && latestPO.type === 'PO') {
       html += `<div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
-        <span style="font-size:12px;color:var(--muted);font-weight:500">PO${latestPO.number} Status:</span>
+        <span style="font-size:12px;color:var(--muted);font-weight:500">${approvalRevLabel(latestPO.type, latestPO.number, latestPO.status)} Status:</span>
         <label class="toggle-chip"><input type="radio" name="approvalStatusToggle" value="sent" ${latestPO.status==='sent'?'checked':''} style="display:none" onchange="updateApprovalStatus('${latestPO.id}','sent')"><span>&#128232; Sent</span></label>
         <label class="toggle-chip"><input type="radio" name="approvalStatusToggle" value="approved" ${latestPO.status==='approved'?'checked':''} style="display:none" onchange="updateApprovalStatus('${latestPO.id}','approved')"><span>&#9989; Approved</span></label>
         <label class="toggle-chip"><input type="radio" name="approvalStatusToggle" value="rejected" ${latestPO.status==='rejected'?'checked':''} style="display:none" onchange="updateApprovalStatus('${latestPO.id}','rejected')"><span>&#10060; Not Approved</span></label>
@@ -12982,20 +13015,17 @@ function renderApproval() {
     }
   }
 
-  // Render revisions (latest first for visibility, CO on top)
+  // Render revisions (latest first). The "current" row is the headline approved
+  // revision (CO, or PO marked approved); it stays un-grayed for workshop staff.
   const sortedRevisions = [...revisions].reverse();
-  const latestCOId = latestCO?.id;
+  const currentId = latestApproved?.id;
 
   sortedRevisions.forEach(rev => {
-    const isCurrent = (rev.type === 'CO' && rev.id === latestCOId);
+    const isCurrent = (rev.id === currentId);
     const isGrayed = !isDraftsman && !isCurrent;
-    // PO rows always look "sent" (blue) unless explicitly rejected, even if their
-    // stored status was flipped to 'approved' to unlock the CO upload.
-    // CO rows always look "approved" (green).
-    const badgeClass = rev.type === 'CO'
-      ? 'approved'
-      : rev.status === 'rejected' ? 'rejected' : 'sent';
-    const labelHtml = rev.type === 'CO'
+    const isApproved = rev.type === 'CO' || rev.status === 'approved';
+    const badgeClass = isApproved ? 'approved' : (rev.status === 'rejected' ? 'rejected' : 'sent');
+    const labelHtml = isApproved
       ? '<span style="color:var(--green);background:rgba(62,207,142,.15);border:1px solid rgba(62,207,142,.45);padding:2px 10px;border-radius:4px;font-size:11px;font-weight:600;letter-spacing:.3px">Approved</span>'
       : rev.status === 'rejected'
         ? '<span style="font-size:12px;color:var(--red)">Not Approved</span>'
@@ -13003,7 +13033,7 @@ function renderApproval() {
 
     html += `<div class="revision-group ${isCurrent ? 'current' : ''} ${isGrayed ? 'grayed' : ''}">
       <div class="revision-header">
-        <span class="revision-badge ${badgeClass}">${rev.type}${rev.number}</span>
+        <span class="revision-badge ${badgeClass}">${approvalRevLabel(rev.type, rev.number, rev.status)}</span>
         ${labelHtml}
         <span style="font-size:11px;color:var(--subtle);margin-left:auto">${new Date(rev.uploadedAt).toLocaleDateString('en-GB')}</span>
       </div>`;
@@ -13038,12 +13068,77 @@ async function updateApprovalStatus(revisionId, newStatus) {
   const rev = currentJob.approval?.revisions?.find(r => r.id === revisionId);
   if (!rev) return;
   try {
+    setLoading(true);
     await api.patch(`/api/drawing-elements/${jobIdInt}/approval-revision/${revisionId}/status`, { status: newStatus });
     rev.status = newStatus;
     rev.statusUpdatedAt = new Date().toISOString();
+
+    // Mirror approval in SharePoint: an approved revision lives in a "C01" folder,
+    // a pending/rejected one in a "PO1" folder. Rename the revision folder so the
+    // file store matches the in-app label (PO1 → C01 on approval, and back).
+    const targetName = approvalRevLabel(rev.type, rev.number, newStatus);
+    try {
+      await renameApprovalRevisionFolder(rev, targetName);
+    } catch (e) {
+      console.warn('Approval folder rename skipped:', e.message);
+      toast(`Status saved, but the SharePoint folder couldn't be renamed (${e.message}).`, 'info');
+    }
     toast(`Status updated to ${newStatus === 'sent' ? 'Sent for Approval' : newStatus === 'approved' ? 'Approved' : 'Not Approved'}`, 'success');
     renderApproval();
   } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+  finally { setLoading(false); }
+}
+
+// Rename the SharePoint folder holding an approval revision's files. The folder
+// id isn't persisted, so we derive it from the parent of one of the revision's
+// files, then PATCH the folder name. File item IDs are stable across a rename,
+// so Print (which uses fileId) keeps working; View also fetches fresh by fileId
+// (see viewFile) so renamed paths don't 404.
+async function renameApprovalRevisionFolder(rev, newName) {
+  const anchor = (rev.files || []).find(f => f.fileId && f.driveId);
+  if (!anchor) throw new Error('no file to locate folder');
+  const token = await getToken();
+  const drive = anchor.driveId || BAMA_DRIVE_ID;
+
+  const metaRes = await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${drive}/items/${anchor.fileId}?$select=parentReference`,
+    { headers: { 'Authorization': `Bearer ${token}` } }
+  );
+  if (!metaRes.ok) throw new Error('meta ' + metaRes.status);
+  const meta = await metaRes.json();
+  const folderId = meta.parentReference?.id;
+  if (!folderId) throw new Error('no parent folder');
+
+  const patchRes = await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${drive}/items/${folderId}`,
+    {
+      method: 'PATCH',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newName })
+    }
+  );
+  if (!patchRes.ok) throw new Error('rename ' + patchRes.status);
+}
+
+// Open a SharePoint file by fetching its current webUrl from its (stable) item
+// id. Used for approval file rows, whose folder may be renamed on approval —
+// the stored webUrl can go stale, but the item id never changes.
+async function viewFile(fileId, driveId) {
+  if (!fileId) return;
+  try {
+    setLoading(true);
+    const token = await getToken();
+    const drive = driveId || BAMA_DRIVE_ID;
+    const res = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${drive}/items/${fileId}?$select=webUrl`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    if (!res.ok) throw new Error('File not found');
+    const meta = await res.json();
+    if (meta.webUrl) window.open(meta.webUrl, '_blank', 'noopener');
+    else throw new Error('No link available');
+  } catch (e) { toast('Open failed: ' + e.message, 'error'); }
+  finally { setLoading(false); }
 }
 
 // ═══════════════════════════════════════════
@@ -13068,10 +13163,14 @@ function renderParts() {
   let html = '';
 
   // Sections
+  const secPdfCount = (parts.sections?.files || []).filter(f => (f.fileName || f.name || '').toLowerCase().endsWith('.pdf')).length;
   html += `<div class="parts-sub">
     <div class="parts-sub-header">
       <span>&#128297; Sections</span>
-      ${isDraftsman && currentJob.status !== 'closed' ? `<button class="btn btn-primary" style="padding:6px 12px;font-size:11px" onclick="openUploadFileModal('parts','sections')">&#43; Upload</button>` : ''}
+      <div style="display:flex;gap:8px;align-items:center">
+        ${secPdfCount > 0 ? `<button class="btn btn-ghost" style="padding:6px 12px;font-size:11px" onclick="printAllParts('sections')">&#128438; Print All (${secPdfCount})</button>` : ''}
+        ${isDraftsman && currentJob.status !== 'closed' ? `<button class="btn btn-primary" style="padding:6px 12px;font-size:11px" onclick="openUploadFileModal('parts','sections')">&#43; Upload</button>` : ''}
+      </div>
     </div>
     <div style="padding:12px 14px">`;
   if (secCount > 0) {
@@ -13083,10 +13182,14 @@ function renderParts() {
   html += '</div></div>';
 
   // Plates
+  const platPdfCount = (parts.plates?.files || []).filter(f => (f.fileName || f.name || '').toLowerCase().endsWith('.pdf')).length;
   html += `<div class="parts-sub">
     <div class="parts-sub-header">
       <span>&#128297; Plates</span>
-      ${isDraftsman && currentJob.status !== 'closed' ? `<button class="btn btn-primary" style="padding:6px 12px;font-size:11px" onclick="openUploadFileModal('parts','plates')">&#43; Upload</button>` : ''}
+      <div style="display:flex;gap:8px;align-items:center">
+        ${platPdfCount > 0 ? `<button class="btn btn-ghost" style="padding:6px 12px;font-size:11px" onclick="printAllParts('plates')">&#128438; Print All (${platPdfCount})</button>` : ''}
+        ${isDraftsman && currentJob.status !== 'closed' ? `<button class="btn btn-primary" style="padding:6px 12px;font-size:11px" onclick="openUploadFileModal('parts','plates')">&#43; Upload</button>` : ''}
+      </div>
     </div>
     <div style="padding:12px 14px">`;
   if (platCount > 0) {
@@ -13206,7 +13309,9 @@ function renderAssembly() {
     const isFabricated = a.status === 'fabricated';
     const finishBadge = a.finish_name
       ? `<span style="background:rgba(99,102,241,.18);color:#a5b4fc;padding:2px 9px;border-radius:6px;font-size:11px">${escapeHtml(a.finish_name)}</span>`
-      : `<span style="color:var(--subtle);font-size:11px">No finish</span>`;
+      : a.finish_label_raw
+        ? `<span style="background:rgba(234,179,8,.15);color:#fcd34d;border:1px solid rgba(234,179,8,.35);padding:2px 9px;border-radius:6px;font-size:11px" title="Read from drawing — not linked to a finishing service. Add it under Office → Service Types.">${escapeHtml(a.finish_label_raw)}</span>`
+        : `<span style="color:var(--subtle);font-size:11px">No finish</span>`;
     const heaviestIdx = heaviestPartIndex(a.parts || []);
 
     // Header line — always visible
@@ -13369,7 +13474,9 @@ function renderFileRow(file, context, showDelete) {
       <div class="file-row-name">${file.name || file.fileName}</div>
       <div class="file-row-date">${dateStr}</div>
       <div class="file-row-actions">
-        ${file.webUrl ? `<a href="${file.webUrl}" target="_blank" class="btn btn-ghost" style="padding:4px 10px;font-size:11px;text-decoration:none">&#128065; View</a>` : ''}
+        ${context === 'approval'
+          ? `<button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="viewFile('${file.fileId}','${file.driveId || ''}')">&#128065; View</button>`
+          : (file.webUrl ? `<a href="${file.webUrl}" target="_blank" class="btn btn-ghost" style="padding:4px 10px;font-size:11px;text-decoration:none">&#128065; View</a>` : '')}
         <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="printFile('${file.fileId}','${file.driveId || ''}')">&#128438; Print</button>
         ${showDelete ? `<button class="btn" style="padding:4px 10px;font-size:11px;background:rgba(255,68,68,.1);border:1px solid rgba(255,68,68,.3);color:var(--red)" onclick="confirmDeleteFile('${context}','${file.id}')">&#128465;</button>` : ''}
       </div>
@@ -13553,6 +13660,17 @@ function onUploadFilesSelected() {
   updateUploadFileListUI();
 }
 
+// Drag-and-drop onto the upload modal drop zone. Mirrors onUploadFilesSelected
+// but takes the dropped FileList directly (the file <input> is never populated
+// on a drop). Without the matching ondrop/ondragover preventDefault on the zone,
+// the browser navigates to the dropped file instead of uploading it.
+function onUploadFilesDropped(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  _uploadFiles = files;
+  updateUploadFileListUI();
+}
+
 function updateUploadFileListUI() {
   const container = document.getElementById('uploadFileList');
   const nameInput = document.getElementById('uploadFileName');
@@ -13625,15 +13743,18 @@ async function confirmUploadFile() {
       targetFolderId = folder.id;
     } else if (element === 'approval') {
       const approvalFolder = await getOrCreateSubfolder(targetFolderId, ELEMENT_FOLDERS.approval, driveId);
-      // Determine PO/CO number
+      // Folder name follows the effective approval state, not just the button:
+      // approved → "C01", pending/rejected → "PO1".
       const revisions = job.approval?.revisions || [];
+      const chipStatus = document.querySelector('input[name="approvalStatus"]:checked')?.value || 'sent';
+      const isApproved = subElement === 'CO' || chipStatus === 'approved';
       let folderName;
       if (subElement === 'CO') {
         const coCount = revisions.filter(r => r.type === 'CO').length;
-        folderName = `CO${coCount + 1}`;
+        folderName = `C${String(coCount + 1).padStart(2, '0')}`;
       } else {
-        const poCount = revisions.filter(r => r.type === 'PO').length;
-        folderName = `PO${poCount + 1}`;
+        const num = revisions.filter(r => r.type === 'PO').length + 1;
+        folderName = isApproved ? `C${String(num).padStart(2, '0')}` : `PO${num}`;
       }
       const revFolder = await createFolderInDrive(approvalFolder.id, folderName, driveId);
       targetFolderId = revFolder.id;
@@ -13843,6 +13964,94 @@ async function printFile(fileId, driveId) {
   } finally {
     setLoading(false);
   }
+}
+
+// ═══════════════════════════════════════════
+// PRINT ALL — merge many SharePoint PDFs into one and open the print dialog.
+// Used by the Parts element's "Print All" buttons (Sections / Plates) where
+// the workshop may have 1–200 individual drawing PDFs and needs them as a
+// single printable file. pdf-lib copies source pages as vectors (no
+// rasterising), so the merged document stays crisp and small even at hundreds
+// of pages. Files that aren't PDFs, or that fail to download/parse, are
+// skipped and reported rather than aborting the whole batch.
+// ═══════════════════════════════════════════
+async function printMergedPdfs(files, label) {
+  if (typeof PDFLib === 'undefined') {
+    toast('PDF library not loaded — refresh and try again', 'error');
+    return;
+  }
+  const pdfFiles = (files || []).filter(f =>
+    f.fileId && (f.fileName || f.name || '').toLowerCase().endsWith('.pdf'));
+  const skipped = (files || []).length - pdfFiles.length;
+  if (!pdfFiles.length) { toast('No PDF files to print', 'error'); return; }
+
+  setLoading(true);
+  try {
+    const token = await getToken();
+    const merged = await PDFLib.PDFDocument.create();
+    const failed = [];
+
+    for (let i = 0; i < pdfFiles.length; i++) {
+      const f = pdfFiles[i];
+      toast(`Preparing ${label}: ${i + 1}/${pdfFiles.length}…`, 'info');
+      try {
+        const drive = f.driveId || BAMA_DRIVE_ID;
+        const metaRes = await fetch(
+          `https://graph.microsoft.com/v1.0/drives/${drive}/items/${f.fileId}`,
+          { headers: { 'Authorization': `Bearer ${token}` } }
+        );
+        if (!metaRes.ok) throw new Error('meta ' + metaRes.status);
+        const meta = await metaRes.json();
+        const url = meta['@microsoft.graph.downloadUrl'];
+        if (!url) throw new Error('no download url');
+        const bytes = await (await fetch(url)).arrayBuffer();
+        const src = await PDFLib.PDFDocument.load(bytes, { ignoreEncryption: true });
+        const pages = await merged.copyPages(src, src.getPageIndices());
+        pages.forEach(p => merged.addPage(p));
+      } catch (e) {
+        console.warn('Print All: skipped', f.fileName || f.name, e.message);
+        failed.push(f.fileName || f.name || 'unnamed');
+      }
+    }
+
+    if (!merged.getPageCount()) {
+      toast('Could not load any PDFs to print', 'error');
+      return;
+    }
+
+    const out = await merged.save();
+    const blobUrl = URL.createObjectURL(new Blob([out], { type: 'application/pdf' }));
+    const win = window.open(blobUrl);
+    if (win) {
+      win.onload = () => { try { win.print(); } catch (_) {} };
+    } else {
+      // Popup blocked — fall back to a download so the user still gets the file.
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = `${label.replace(/\s+/g, '-')}.pdf`;
+      a.click();
+    }
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+
+    const pages = merged.getPageCount();
+    let msg = `${label}: ${pages} page${pages > 1 ? 's' : ''} ready`;
+    if (failed.length) msg += ` · ${failed.length} skipped`;
+    if (skipped) msg += ` · ${skipped} non-PDF ignored`;
+    toast(msg, (failed.length || skipped) ? 'info' : 'success');
+  } catch (e) {
+    toast('Print All failed: ' + e.message, 'error');
+  } finally {
+    setLoading(false);
+  }
+}
+
+// onclick wrapper for the Parts "Print All" buttons. sub = 'sections' | 'plates'.
+function printAllParts(sub) {
+  if (!currentJob) return;
+  const files = sub === 'plates'
+    ? (currentJob.parts?.plates?.files || [])
+    : (currentJob.parts?.sections?.files || []);
+  printMergedPdfs(files, sub === 'plates' ? 'Plates' : 'Sections');
 }
 
 

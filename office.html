@@ -552,6 +552,9 @@
                 <div class="field-label">NEW SERVICE NAME</div>
                 <input type="text" class="field-input" id="newServiceTypeName" placeholder="e.g. Fabrication" onkeydown="if(event.key==='Enter')addServiceType()">
               </div>
+              <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);white-space:nowrap;padding-bottom:9px;cursor:pointer" title="Finishing services (galvanising, painting, primers…) appear as selectable finishes on assembly drawings">
+                <input type="checkbox" id="newServiceTypeIsFinish"> Finishing service
+              </label>
               <button class="btn btn-primary" onclick="addServiceType()">Add</button>
             </div>
           </div>
@@ -1144,6 +1147,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260608a"></script>
+<script src="shared.js?v=20260608c"></script>
 </body>
 </html>

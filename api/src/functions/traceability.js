@@ -230,8 +230,8 @@ app.http('service-types-create', {
             if (!body.name || !body.name.trim()) return badRequest('name is required', request);
 
             const result = await query(
-                'INSERT INTO ServiceTypes (name) OUTPUT INSERTED.* VALUES (@name)',
-                { name: body.name.trim() }
+                'INSERT INTO ServiceTypes (name, is_finish) OUTPUT INSERTED.* VALUES (@name, @isFinish)',
+                { name: body.name.trim(), isFinish: body.is_finish ? 1 : 0 }
             );
             return created(result.recordset[0], request);
         } catch (err) {
@@ -240,6 +240,49 @@ app.http('service-types-create', {
             }
             context.error('Error creating service type:', err);
             return serverError('Failed to create service type', request);
+        }
+    }
+});
+
+// PUT /api/service-types/:id — update name and/or is_finish flag.
+// Body: { name?, is_finish? } — only provided fields are changed.
+app.http('service-types-update', {
+    methods: ['PUT'],
+    authLevel: 'anonymous',
+    route: 'service-types/{id}',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const id = parseInt(request.params.id);
+            if (!id) return badRequest('Invalid id', request);
+            const body = await request.json();
+
+            const sets = [];
+            const params = { id };
+            if (typeof body.name === 'string' && body.name.trim()) {
+                sets.push('name = @name');
+                params.name = body.name.trim();
+            }
+            if (body.is_finish !== undefined) {
+                sets.push('is_finish = @isFinish');
+                params.isFinish = body.is_finish ? 1 : 0;
+            }
+            if (!sets.length) return badRequest('No valid fields to update', request);
+
+            const result = await query(
+                `UPDATE ServiceTypes SET ${sets.join(', ')} OUTPUT INSERTED.* WHERE id = @id`,
+                params
+            );
+            if (result.recordset.length === 0) return notFound('Service type not found', request);
+            return ok(result.recordset[0], request);
+        } catch (err) {
+            if (err.message && err.message.includes('UNIQUE')) {
+                return badRequest('Service type name already exists', request);
+            }
+            context.error('Error updating service type:', err);
+            return serverError('Failed to update service type', request);
         }
     }
 });

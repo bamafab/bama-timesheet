@@ -270,7 +270,10 @@
     <div style="margin-bottom:12px">
       <div class="field-label">SELECT FILE(S)</div>
       <input type="file" id="uploadFileInput" accept=".pdf,.PDF,.png,.jpg,.jpeg,.dwg,.dxf" multiple style="display:none" onchange="onUploadFilesSelected()">
-      <div class="upload-zone" id="uploadDropZone" onclick="document.getElementById('uploadFileInput').click()">
+      <div class="upload-zone" id="uploadDropZone" onclick="document.getElementById('uploadFileInput').click()"
+           ondragover="event.preventDefault();this.classList.add('drag-over')"
+           ondragleave="this.classList.remove('drag-over')"
+           ondrop="event.preventDefault();this.classList.remove('drag-over');onUploadFilesDropped(event.dataTransfer.files)">
         <div class="upload-zone-icon">&#128196;</div>
         <div class="upload-zone-text" id="uploadFileZoneText">Click or drag files here</div>
       </div>
@@ -520,6 +523,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-<script src="shared.js?v=20260608a"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<script src="shared.js?v=20260608c"></script>
 </body>
 </html>
