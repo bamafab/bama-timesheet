@@ -6210,10 +6210,10 @@ function _caRenderToggle() {
 // the PO Tracker render.
 function _caNett(p) {
   const total = Number(p.total_value) || 0;
-  if (Number(p.vat_amount) >= 0) return total - Number(p.vat_amount);
+  if (Number(p.vat_amount) >= 0) return _r2(total - Number(p.vat_amount));
   const rate = Number(p.vat_rate);
-  if (rate > 0)                  return total / (1 + rate / 100);
-  return total;
+  if (rate > 0)                  return _r2(total / (1 + rate / 100));
+  return _r2(total);
 }
 
 async function renderCostAnalysisReport() {
@@ -6523,8 +6523,8 @@ async function renderBabcockReport() {
     const tv = Number(q.total_value) || 0;
     const mu = Number(q.markup_pct) || 0;
     if (mu <= 0) return s;
-    const pretax = tv / (1 + mu / 100);
-    return s + (tv - pretax);
+    const pretax = _r2(tv / (1 + mu / 100));
+    return _r2(s + _r2(tv - pretax));
   }, 0);
 
   // Avg days to payment
@@ -8504,7 +8504,7 @@ function _filterDiscrepancy(pos) {
   // OCR/rounding artefacts and are not genuine financial discrepancies.
   return pos.filter(po =>
     po.reconciliation_status === 'discrepancy' &&
-    Math.abs(Number(po.supplier_invoice_gross || 0) - Number(po.total_value || 0)) > 0.04
+    _r2(Math.abs(Number(po.supplier_invoice_gross || 0) - Number(po.total_value || 0))) > 0.04
   );
 }
 function _filterOverdue(pos) {
