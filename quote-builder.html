@@ -318,6 +318,7 @@ tr.drag-dragging { opacity:0.35; }
   <!-- SIDEBAR -->
   <aside class="sidebar">
     <button class="btn-new-quote" onclick="newQuote()">＋ New Quote</button>
+    <button class="btn-new-quote" onclick="openQuickQuote()" style="background:var(--surface);color:var(--accent);border:1.5px solid var(--accent);margin-top:4px">⚡ Quick Quote</button>
     <div class="sidebar-section">Quotes</div>
     <div class="quote-list" id="quoteList"></div>
   </aside>
@@ -7756,6 +7757,266 @@ function saveClientToBook() {
 // INIT
 // ============================================================
 renderSidebar();
+</script>
+
+<!-- ===== QUICK QUOTE MODAL ===== -->
+<div class="modal-overlay" id="quickQuoteModal">
+  <div class="modal" style="max-width:540px;padding:0">
+    <!-- Header -->
+    <div style="padding:14px 20px;border-bottom:1px solid var(--border);background:var(--surface);border-radius:8px 8px 0 0">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <div>
+          <div style="font-size:16px;font-weight:700;color:var(--text)">⚡ Quick Quote</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:2px">Ballpark estimate in seconds — save as draft to refine later</div>
+        </div>
+        <button onclick="closeQuickQuote()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--muted);line-height:1">×</button>
+      </div>
+    </div>
+
+    <!-- Body -->
+    <div style="padding:20px;display:flex;flex-direction:column;gap:18px">
+
+      <!-- Tonnage -->
+      <div>
+        <label style="font-size:12px;font-weight:600;color:var(--text);display:block;margin-bottom:6px">Estimated Tonnage (t)</label>
+        <input type="number" id="qq-tonnage" min="0.1" step="0.1" placeholder="e.g. 12.5"
+          style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:14px;box-sizing:border-box"
+          oninput="qqCalc()">
+      </div>
+
+      <!-- Profile type -->
+      <div>
+        <label style="font-size:12px;font-weight:600;color:var(--text);display:block;margin-bottom:8px">Dominant Profile Type</label>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px" id="qq-profile-tiles">
+          <div class="wiz-tile active" data-profile="ub_uc" onclick="qqSelectTile(this,'qq-profile-tiles')">UB / UC<br><span style="font-size:10px;color:var(--muted)">8 hrs/t · £1.10/kg</span></div>
+          <div class="wiz-tile" data-profile="pfc_rsa" onclick="qqSelectTile(this,'qq-profile-tiles')">PFC / Angles<br><span style="font-size:10px;color:var(--muted)">12 hrs/t · £1.30/kg</span></div>
+          <div class="wiz-tile" data-profile="hollow" onclick="qqSelectTile(this,'qq-profile-tiles')">RHS / SHS / CHS<br><span style="font-size:10px;color:var(--muted)">14 hrs/t · £1.40/kg</span></div>
+        </div>
+      </div>
+
+      <!-- Scope -->
+      <div>
+        <label style="font-size:12px;font-weight:600;color:var(--text);display:block;margin-bottom:8px">Scope</label>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px" id="qq-scope-tiles">
+          <div class="wiz-tile active" data-scope="supply_only" onclick="qqSelectTile(this,'qq-scope-tiles')">Supply Only</div>
+          <div class="wiz-tile" data-scope="supply_install" onclick="qqSelectTile(this,'qq-scope-tiles')">Supply &amp; Install</div>
+        </div>
+      </div>
+
+      <!-- Install days (shown only when supply & install) -->
+      <div id="qq-install-row" style="display:none">
+        <label style="font-size:12px;font-weight:600;color:var(--text);display:block;margin-bottom:6px">Installation Days</label>
+        <div style="display:flex;align-items:center;gap:10px">
+          <input type="number" id="qq-inst-days" min="1" step="1" value="5"
+            style="width:100px;padding:9px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:14px"
+            oninput="qqCalc()">
+          <span style="font-size:12px;color:var(--muted)">× 2 operatives @ £80–95/day</span>
+        </div>
+      </div>
+
+      <!-- Finish -->
+      <div>
+        <label style="font-size:12px;font-weight:600;color:var(--text);display:block;margin-bottom:8px">Finish</label>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px" id="qq-finish-tiles">
+          <div class="wiz-tile active" data-finish="primer" onclick="qqSelectTile(this,'qq-finish-tiles')">Primer<br><span style="font-size:10px;color:var(--muted)">£180/t</span></div>
+          <div class="wiz-tile" data-finish="galv" onclick="qqSelectTile(this,'qq-finish-tiles')">Galvanising<br><span style="font-size:10px;color:var(--muted)">£750/t</span></div>
+          <div class="wiz-tile" data-finish="none" onclick="qqSelectTile(this,'qq-finish-tiles')">None / TBC<br><span style="font-size:10px;color:var(--muted)">—</span></div>
+        </div>
+      </div>
+
+      <!-- Margin -->
+      <div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <label style="font-size:12px;font-weight:600;color:var(--text)">Margin</label>
+          <span id="qq-margin-label" style="font-size:13px;font-weight:700;color:var(--accent)">20%</span>
+        </div>
+        <input type="range" id="qq-margin" min="5" max="45" step="1" value="20"
+          style="width:100%;accent-color:var(--accent)" oninput="document.getElementById('qq-margin-label').textContent=this.value+'%';qqCalc()">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted)"><span>5%</span><span>45%</span></div>
+      </div>
+
+      <!-- Result -->
+      <div id="qq-result" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px">
+        <div style="font-size:11px;font-weight:600;color:var(--muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.05em">Estimate</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px">
+          <div style="color:var(--muted)">Material</div><div id="qq-r-material" style="text-align:right;font-weight:600">—</div>
+          <div style="color:var(--muted)">Fabrication</div><div id="qq-r-fab" style="text-align:right;font-weight:600">—</div>
+          <div id="qq-r-install-label" style="color:var(--muted);display:none">Installation</div><div id="qq-r-install" style="text-align:right;font-weight:600;display:none">—</div>
+          <div style="color:var(--muted)">Finish</div><div id="qq-r-finish" style="text-align:right;font-weight:600">—</div>
+        </div>
+        <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px;display:flex;justify-content:space-between;align-items:baseline">
+          <div style="font-size:12px;color:var(--muted)">Total inc. margin</div>
+          <div id="qq-r-total" style="font-size:22px;font-weight:800;color:var(--accent)">—</div>
+        </div>
+        <div style="margin-top:4px;display:flex;justify-content:flex-end;gap:12px;font-size:11px;color:var(--muted)">
+          <span>Cost: <span id="qq-r-cost">—</span></span>
+          <span>£/t inc: <span id="qq-r-pt">—</span></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div style="padding:14px 20px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <button onclick="closeQuickQuote()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:8px 16px;color:var(--text);cursor:pointer;font-size:13px">Cancel</button>
+      <button id="qq-save-btn" onclick="qqSaveAsDraft()" disabled
+        style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:9px 20px;font-weight:600;cursor:pointer;font-size:13px;opacity:0.5">
+        Save as Draft Quote →
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ===== QUICK QUOTE =====
+let _qqResult = null;
+
+function openQuickQuote() {
+  _qqResult = null;
+  document.getElementById('qq-tonnage').value = '';
+  document.getElementById('qq-inst-days').value = 5;
+  document.getElementById('qq-margin').value = 20;
+  document.getElementById('qq-margin-label').textContent = '20%';
+  document.getElementById('qq-result').style.display = 'none';
+  document.getElementById('qq-save-btn').disabled = true;
+  document.getElementById('qq-save-btn').style.opacity = '0.5';
+  // reset tiles
+  ['qq-profile-tiles','qq-scope-tiles','qq-finish-tiles'].forEach(id => {
+    const tiles = document.querySelectorAll(`#${id} .wiz-tile`);
+    tiles.forEach((t,i) => t.classList.toggle('active', i===0));
+  });
+  document.getElementById('qq-install-row').style.display = 'none';
+  document.getElementById('quickQuoteModal').classList.add('active');
+}
+
+function closeQuickQuote() {
+  document.getElementById('quickQuoteModal').classList.remove('active');
+}
+
+function qqSelectTile(el, groupId) {
+  document.querySelectorAll(`#${groupId} .wiz-tile`).forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  // show/hide install days
+  if (groupId === 'qq-scope-tiles') {
+    const isInstall = el.dataset.scope === 'supply_install';
+    document.getElementById('qq-install-row').style.display = isInstall ? '' : 'none';
+    const rInst = document.getElementById('qq-r-install');
+    const rInstL = document.getElementById('qq-r-install-label');
+    if (rInst) { rInst.style.display = isInstall ? '' : 'none'; rInstL.style.display = isInstall ? '' : 'none'; }
+  }
+  qqCalc();
+}
+
+function qqCalc() {
+  const tonnes = parseFloat(document.getElementById('qq-tonnage').value) || 0;
+  if (tonnes <= 0) {
+    document.getElementById('qq-result').style.display = 'none';
+    document.getElementById('qq-save-btn').disabled = true;
+    document.getElementById('qq-save-btn').style.opacity = '0.5';
+    _qqResult = null;
+    return;
+  }
+  const kg = tonnes * 1000;
+  const profile = document.querySelector('#qq-profile-tiles .wiz-tile.active')?.dataset.profile || 'ub_uc';
+  const scope    = document.querySelector('#qq-scope-tiles .wiz-tile.active')?.dataset.scope   || 'supply_only';
+  const finish   = document.querySelector('#qq-finish-tiles .wiz-tile.active')?.dataset.finish || 'primer';
+  const margin   = parseInt(document.getElementById('qq-margin').value) || 20;
+  const instDays = parseInt(document.getElementById('qq-inst-days').value) || 5;
+
+  // Material cost
+  const matRates = { ub_uc: 1.10, pfc_rsa: 1.30, hollow: 1.40 };
+  const matCost = kg * (matRates[profile] || 1.10);
+
+  // Fab cost
+  const fabHrsPerT = { ub_uc: 8, pfc_rsa: 12, hollow: 14 };
+  const fabHrs = tonnes * (fabHrsPerT[profile] || 8);
+  const fabCost = fabHrs * 45; // £45/hr default
+
+  // Installation cost
+  let instCost = 0;
+  if (scope === 'supply_install') {
+    // 2 erectors @ £80/day + 1 supervisor @ £95/day (every 5+ days) = avg £87.5/person
+    instCost = instDays * 2 * 87.5;
+  }
+
+  // Finish cost
+  const finishRates = { primer: 180, galv: 750, none: 0 };
+  const finishCost = tonnes * (finishRates[finish] || 0);
+
+  const subtotal = matCost + fabCost + instCost + finishCost;
+  const total = subtotal / (1 - margin / 100);
+
+  _qqResult = { tonnes, kg, profile, scope, finish, margin, instDays, matCost, fabCost, instCost, finishCost, subtotal, total };
+
+  const fmt = v => '£' + Math.round(v).toLocaleString('en-GB');
+  document.getElementById('qq-r-material').textContent = fmt(matCost);
+  document.getElementById('qq-r-fab').textContent = fmt(fabCost);
+  document.getElementById('qq-r-install').textContent = scope === 'supply_install' ? fmt(instCost) : '—';
+  document.getElementById('qq-r-finish').textContent = finishCost > 0 ? fmt(finishCost) : '—';
+  document.getElementById('qq-r-total').textContent = fmt(total);
+  document.getElementById('qq-r-cost').textContent = fmt(subtotal);
+  document.getElementById('qq-r-pt').textContent = fmt(total / tonnes);
+
+  document.getElementById('qq-result').style.display = '';
+  document.getElementById('qq-save-btn').disabled = false;
+  document.getElementById('qq-save-btn').style.opacity = '1';
+}
+
+function qqSaveAsDraft() {
+  if (!_qqResult) return;
+  const r = _qqResult;
+  const now = new Date();
+  const yy = String(now.getFullYear()).slice(2);
+  const mm = String(now.getMonth()+1).padStart(2,'0');
+  const seq = String(quotes.filter(q=>q.ref.startsWith('Q'+yy+mm)).length + 1).padStart(2,'0');
+  const ref = `Q${yy}${mm}${seq}`;
+
+  const profileLabels = { ub_uc: 'UB/UC', pfc_rsa: 'PFC/Angles', hollow: 'RHS/SHS/CHS' };
+  const finishLabels  = { primer: 'Primer', galv: 'Galvanising', none: 'None/TBC' };
+
+  const q = {
+    id: Date.now().toString(),
+    ref, revision: '', status: 'draft', type: 'bama',
+    date: now.toISOString().slice(0,10),
+    validUntil: new Date(now.getTime()+14*86400000).toISOString().slice(0,10),
+    preparedBy: 'Mateusz Braczyk',
+    company: '', contact: '', email: '', phone: '',
+    siteAddress: '',
+    comments: `Quick Quote — ${r.tonnes}t ${profileLabels[r.profile]}, ${r.scope === 'supply_install' ? 'Supply & Install (' + r.instDays + ' days)' : 'Supply Only'}, ${finishLabels[r.finish]}, ${r.margin}% margin`,
+    qScope: '', boqRef: '', boqFile: '', projectTCs: '',
+    takeoff: [], areas: [],
+    fittingsPct: 10, fittingsRate: 1.30, miscMaterial: 0, miscMaterialNote: '',
+    materialLinks: [],
+    instDays: r.scope === 'supply_install' ? r.instDays : 0,
+    instOperatives: 2, globalDays: true,
+    labourRows: r.scope === 'supply_install' ? [
+      { id: Date.now()+'_l1', role: 'Erector',    qty: 2, rate: 80,  days: r.instDays, locked: false },
+      { id: Date.now()+'_l2', role: 'Supervisor',  qty: 1, rate: 95,  days: r.instDays, locked: false }
+    ] : [],
+    plantRows: [], paintRows: [], deliveryRows: [], prelimRows: [], consumableRows: [], surveyVisitRows: [],
+    fabHours: Math.round(r.tonnes * (r.profile === 'ub_uc' ? 8 : r.profile === 'pfc_rsa' ? 12 : 14)),
+    fabRate: 45, fabpackHours: 0, fabpackRate: 50,
+    structEngHours: 0, structEngRate: 90, architectHours: 0, architectRate: 90, designHours: 0, designRate: 50,
+    surveyParking: 0, ralColour: '', ralFinish: 'tbc',
+    purlinM: 0, purlinRate: 0,
+    margin: r.margin, showDeposit: false, depositPct: 60,
+    standardLines: getDefaultStandardLines(),
+    customLines: [],
+    _qqSource: true // flag so we know it started as quick quote
+  };
+
+  // Pre-fill quotation lines with the estimates
+  q.standardLines.find(l=>l.key==='material').price      = Math.round(r.matCost);
+  q.standardLines.find(l=>l.key==='fabrication').price   = Math.round(r.fabCost);
+  q.standardLines.find(l=>l.key==='installation').price  = Math.round(r.instCost);
+  if (r.finish === 'primer')     q.standardLines.find(l=>l.key==='painting').price    = Math.round(r.finishCost);
+  if (r.finish === 'galv')       q.standardLines.find(l=>l.key==='galvanising').price = Math.round(r.finishCost);
+
+  quotes.push(q);
+  saveAll();
+  selectQuote(q.id);
+  renderSidebar();
+  closeQuickQuote();
+}
 </script>
 </body>
 </html>
