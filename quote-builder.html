@@ -577,7 +577,7 @@ tr.drag-dragging { opacity:0.35; }
             </div>
             <div class="field">
               <label>Fittings £/kg</label>
-              <input type="number" id="fittingsRate" value="1.30" step="0.01" oninput="autosave();recalcAll()">
+              <input type="number" id="fittingsRate" value="1.30" step="0.1" oninput="autosave();recalcAll()">
             </div>
             <div class="field">
               <label>Fittings total (auto)</label>
@@ -859,7 +859,7 @@ tr.drag-dragging { opacity:0.35; }
                   <select id="surveyPersonSelect">
                     <option value="">-- Add attendee --</option>
                     <option value="mateusz">Mateusz Braczyk</option>
-                    <option value="leszek">Leszek</option>
+                    <option value="leszek">Leszek Spychalski</option>
                     <option value="struct_eng">Structural Engineer</option>
                     <option value="other_survey">Other</option>
                   </select>
@@ -1811,6 +1811,60 @@ tr.drag-dragging { opacity:0.35; }
               </div>
             </div>
             <!-- Other access -->
+            <div style="font-size:10px;color:var(--muted);font-weight:600;letter-spacing:1px;margin-top:4px">GENIE LIFT (VERTICAL)</div>
+            <div class="wiz-mewp-row" data-mewp="genie_sla10" onclick="wizToggleMewp(this)">
+              <div style="display:flex;align-items:center;gap:8px;flex:1">
+                <div class="wiz-mewp-check"></div>
+                <div><div style="font-size:13px;font-weight:600">Genie SLA-10</div><div style="font-size:10px;color:var(--muted)">3m lift height · materials / panel lifts</div></div>
+              </div>
+              <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
+                <span style="font-size:11px;color:var(--muted)">Qty</span>
+                <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
+                <span style="font-size:11px;color:var(--muted)">Days</span>
+                <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
+                <span style="font-size:11px;color:var(--muted);min-width:60px">£80/day</span>
+              </div>
+            </div>
+            <div class="wiz-mewp-row" data-mewp="genie_sla15" onclick="wizToggleMewp(this)">
+              <div style="display:flex;align-items:center;gap:8px;flex:1">
+                <div class="wiz-mewp-check"></div>
+                <div><div style="font-size:13px;font-weight:600">Genie SLA-15</div><div style="font-size:10px;color:var(--muted)">4.5m lift height · lightweight loads</div></div>
+              </div>
+              <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
+                <span style="font-size:11px;color:var(--muted)">Qty</span>
+                <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
+                <span style="font-size:11px;color:var(--muted)">Days</span>
+                <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
+                <span style="font-size:11px;color:var(--muted);min-width:60px">£95/day</span>
+              </div>
+            </div>
+            <div class="wiz-mewp-row" data-mewp="genie_sla20" onclick="wizToggleMewp(this)">
+              <div style="display:flex;align-items:center;gap:8px;flex:1">
+                <div class="wiz-mewp-check"></div>
+                <div><div style="font-size:13px;font-weight:600">Genie SLA-20</div><div style="font-size:10px;color:var(--muted)">6m lift height · steel / beam lifts</div></div>
+              </div>
+              <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
+                <span style="font-size:11px;color:var(--muted)">Qty</span>
+                <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
+                <span style="font-size:11px;color:var(--muted)">Days</span>
+                <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
+                <span style="font-size:11px;color:var(--muted);min-width:60px">£110/day</span>
+              </div>
+            </div>
+            <div class="wiz-mewp-row" data-mewp="genie_sla25" onclick="wizToggleMewp(this)">
+              <div style="display:flex;align-items:center;gap:8px;flex:1">
+                <div class="wiz-mewp-check"></div>
+                <div><div style="font-size:13px;font-weight:600">Genie SLA-25</div><div style="font-size:10px;color:var(--muted)">7.5m lift height · heavy beam / column lifts</div></div>
+              </div>
+              <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
+                <span style="font-size:11px;color:var(--muted)">Qty</span>
+                <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
+                <span style="font-size:11px;color:var(--muted)">Days</span>
+                <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
+                <span style="font-size:11px;color:var(--muted);min-width:60px">£125/day</span>
+              </div>
+            </div>
+            <!-- Other access -->
             <div style="font-size:10px;color:var(--muted);font-weight:600;letter-spacing:1px;margin-top:4px">OTHER ACCESS</div>
             <div class="wiz-mewp-row" data-mewp="scaffold_tower" onclick="wizToggleMewp(this)">
               <div style="display:flex;align-items:center;gap:8px;flex:1">
@@ -1851,7 +1905,7 @@ tr.drag-dragging { opacity:0.35; }
           <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px" id="wiz-survey-tiles">
             <div class="wiz-tile active" data-survey="no" onclick="wizSelectSurvey(this)">No survey needed</div>
             <div class="wiz-tile" data-survey="mateusz" onclick="wizSelectSurvey(this)">Mateusz<br><span style="font-size:10px;color:var(--muted)">£250/visit</span></div>
-            <div class="wiz-tile" data-survey="leszek" onclick="wizSelectSurvey(this)">Leszek<br><span style="font-size:10px;color:var(--muted)">£250/visit</span></div>
+            <div class="wiz-tile" data-survey="leszek" onclick="wizSelectSurvey(this)">Leszek Spychalski<br><span style="font-size:10px;color:var(--muted)">£250/visit</span></div>
             <div class="wiz-tile" data-survey="struct_eng" onclick="wizSelectSurvey(this)">Structural Engineer<br><span style="font-size:10px;color:var(--muted)">£350/visit</span></div>
             <div class="wiz-tile" data-survey="both" onclick="wizSelectSurvey(this)">Mateusz + Leszek<br><span style="font-size:10px;color:var(--muted)">Both attend</span></div>
           </div>
@@ -1942,7 +1996,7 @@ tr.drag-dragging { opacity:0.35; }
         </div>
         <div class="wiz-panel-body">
           <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px" id="wiz-design-tiles">
-            <div class="wiz-tile active" data-design="fab_pack_only" onclick="wizSelectDesign(this)">Fab Pack only<br><span style="font-size:10px;color:var(--muted)">Internal draughtsman — our drawings</span></div>
+            <div class="wiz-tile active" data-design="fab_pack_only" onclick="wizSelectDesign(this)">Approval &amp; Fab Pack<br><span style="font-size:10px;color:var(--muted)">We produce fabrication drawings</span></div>
             <div class="wiz-tile" data-design="full_design" onclick="wizSelectDesign(this)">Full Structural Design<br><span style="font-size:10px;color:var(--muted)">Struct Eng + Draughtsman</span></div>
             <div class="wiz-tile" data-design="client_design" onclick="wizSelectDesign(this)">Client Provides Design<br><span style="font-size:10px;color:var(--muted)">We produce fab pack only</span></div>
             <div class="wiz-tile" data-design="design_check" onclick="wizSelectDesign(this)">Design Check Only<br><span style="font-size:10px;color:var(--muted)">Review client's calcs</span></div>
@@ -2600,7 +2654,7 @@ const DEFAULT_RATES = {
   margin: 20,
   survey: {
     mateusz:    { label: 'Mateusz Braczyk',    rate: 250 },
-    leszek:     { label: 'Leszek',             rate: 250 },
+    leszek:     { label: 'Leszek Spychalski',  rate: 250 },
     struct_eng: { label: 'Structural Engineer',rate: 350 },
     other_survey:{ label: 'Other',             rate: 250 }
   },
@@ -3104,7 +3158,7 @@ function takeoffRowHTML(row, i) {
       </select>
     </td>
     <td style="${nc};color:var(--muted);font-family:var(--font-mono);font-size:12px">${totalKg>0?totalKg.toFixed(2):''}</td>
-    <td style="${nc}"><input type="number" value="${row.rate||''}" placeholder="—"
+    <td style="${nc}"><input type="number" value="${row.rate||''}" placeholder="—" step="0.1"
         oninput="updateTakeoffRow(${i},'rate',this.value)" style="${ni}"></td>
     <td style="${nc};color:${mat>0?'var(--accent)':'var(--muted)'};font-family:var(--font-mono);font-size:12px;font-weight:${mat>0?'600':'400'}">${mat>0?'£'+mat.toFixed(2):''}</td>
     <td style="padding:4px 2px;text-align:center">
@@ -4872,6 +4926,12 @@ function wizToggleFinish(el) {
     el.classList.add('active');
   } else {
     document.querySelector('[data-finish="none"]')?.classList.remove('active');
+    // Galvanise and primer are mutually exclusive
+    if (el.dataset.finish === 'galvanise') {
+      document.querySelector('[data-finish="primer_tonne"]')?.classList.remove('active');
+    } else if (el.dataset.finish === 'primer_tonne') {
+      document.querySelector('[data-finish="galvanise"]')?.classList.remove('active');
+    }
     el.classList.toggle('active');
   }
   wizUpdateFinishBadge();
@@ -4986,8 +5046,8 @@ function applyWizard() {
     }
 
     // MEWP rows (new structure with qty + days)
-    const mewpRates = { scissor_19:90, scissor_26:120, boom_z30:130, boom_z45:175, boom_z60:230, telehandler_boom:190, cherry_12m:160, cherry_18m:350, scaffold_tower:150, scaffold_system:0 };
-    const mewpLabels = { scissor_19:'Electric Scissor 19ft', scissor_26:'Rough Terrain Scissor 26ft', boom_z30:'Articulating Boom 30ft', boom_z45:'Articulating Boom 45ft', boom_z60:'Articulating Boom 60ft', telehandler_boom:'Telescopic Boom', cherry_12m:'Cherry Picker 12m', cherry_18m:'Cherry Picker 18m+', scaffold_tower:'Tower Scaffold', scaffold_system:'Erected Scaffold (sub)' };
+    const mewpRates = { scissor_19:90, scissor_26:120, boom_z30:130, boom_z45:175, boom_z60:230, telehandler_boom:190, cherry_12m:160, cherry_18m:350, scaffold_tower:150, scaffold_system:0, genie_sla10:80, genie_sla15:95, genie_sla20:110, genie_sla25:125 };
+    const mewpLabels = { scissor_19:'Electric Scissor 19ft', scissor_26:'Rough Terrain Scissor 26ft', boom_z30:'Articulating Boom 30ft', boom_z45:'Articulating Boom 45ft', boom_z60:'Articulating Boom 60ft', telehandler_boom:'Telescopic Boom', cherry_12m:'Cherry Picker 12m', cherry_18m:'Cherry Picker 18m+', scaffold_tower:'Tower Scaffold', scaffold_system:'Erected Scaffold (sub)', genie_sla10:'Genie SLA-10', genie_sla15:'Genie SLA-15', genie_sla20:'Genie SLA-20', genie_sla25:'Genie SLA-25' };
     document.querySelectorAll('.wiz-mewp-row.active').forEach(row => {
       if (row.dataset.mewp === 'none') return;
       const mewpType = row.dataset.mewp;
@@ -5030,7 +5090,7 @@ function applyWizard() {
   if (surveyChoice !== 'no') {
     const peopleMap = {
       mateusz:    { label: 'Mateusz Braczyk',     rate: 250 },
-      leszek:     { label: 'Leszek',              rate: 250 },
+      leszek:     { label: 'Leszek Spychalski', rate: 250 },
       struct_eng: { label: 'Structural Engineer', rate: 350 },
       both:       null
     };
@@ -5845,7 +5905,7 @@ function renderPrelimChecklist() {
                    transition:all 0.15s" onmouseover="this.style.color='var(--red)';this.style.borderColor='var(--red)'"
                    onmouseout="this.style.color='var(--muted)';this.style.borderColor='var(--border)'">✕</button>
         </div>
-        <div style="font-size:10px;color:var(--muted);text-align:right;margin-top:-3px;padding-right:40px">
+        <div id="prelim-sub-${r.id||'prelim_'+r.type}" style="font-size:10px;color:var(--muted);text-align:right;margin-top:-3px;padding-right:40px">
           = £${((r.qty||1)*(r.rate||0)).toFixed(2)} ${isDaily ? '(' + (r.qty||1) + ' day' + ((r.qty||1)!==1?'s':'') + ' × £' + (r.rate||0) + ')' : ''}
         </div>`;
       }).join('') + `</div>`;
@@ -5865,16 +5925,25 @@ function updatePrelimQuickQty(id, val) {
   const q = getQuote(); if (!q) return;
   const r = (q.prelimRows||[]).find(r => (r.id||'prelim_'+r.type) === id);
   if (r) { r.qty = parseFloat(val)||1; saveAll(); recalcAll(); }
-  // Update the subtotal display inline without full re-render
+  // Update only the subtotal display, not the full re-render (would lose focus)
   const def = (rates.prelims||{})[r?.type] || {};
-  renderPrelimChecklist(); // light re-render to update subtotals
+  const isDaily = def.type === 'daily';
+  const subtotalEl = document.getElementById('prelim-sub-'+id);
+  if (subtotalEl && r) {
+    subtotalEl.textContent = `= £${((r.qty||1)*(r.rate||0)).toFixed(2)}${isDaily ? ' (' + (r.qty||1) + ' day' + ((r.qty||1)!==1?'s':'') + ' × £' + (r.rate||0) + ')' : ''}`;
+  }
 }
 
 function updatePrelimQuickRate(id, val) {
   const q = getQuote(); if (!q) return;
   const r = (q.prelimRows||[]).find(r => (r.id||'prelim_'+r.type) === id);
   if (r) { r.rate = parseFloat(val)||0; saveAll(); recalcAll(); }
-  renderPrelimChecklist();
+  const def = (rates.prelims||{})[r?.type] || {};
+  const isDaily = def.type === 'daily';
+  const subtotalEl = document.getElementById('prelim-sub-'+id);
+  if (subtotalEl && r) {
+    subtotalEl.textContent = `= £${((r.qty||1)*(r.rate||0)).toFixed(2)}${isDaily ? ' (' + (r.qty||1) + ' day' + ((r.qty||1)!==1?'s':'') + ' × £' + (r.rate||0) + ')' : ''}`;
+  }
 }
 
 function togglePrelimQuick(key) {
@@ -7863,6 +7932,99 @@ function generateQuotePDF(mode = 'quote') {
   const tkTotalKg = (q.takeoff||[]).reduce((s,r) => s + (r.length/1000)*(r.kgm||0)*(r.qty||1), 0);
   const tkTotalCost = (q.takeoff||[]).reduce((s,r) => s + (r.length/1000)*(r.kgm||0)*(r.qty||1)*(r.rate||0), 0);
 
+  // ── Handover Pack data ────────────────────────────────────
+  const fabHrsVal   = parseFloat(document.getElementById('fab-hours')?.value) || q.fabHours || 0;
+  const fabRateVal  = parseFloat(document.getElementById('fab-rate')?.value)  || q.fabRate  || 45;
+  const designHrsVal    = parseFloat(document.getElementById('design-hours')?.value)    || q.designHours    || 0;
+  const structEngHrsVal = parseFloat(document.getElementById('struct-eng-hours')?.value) || q.structEngHours || 0;
+  const architectHrsVal = parseFloat(document.getElementById('architect-hours')?.value)  || q.architectHours || 0;
+  const fabpackHrsVal   = parseFloat(document.getElementById('fabpack-hours')?.value)    || q.fabpackHours   || 0;
+  const instDaysVal = parseFloat(document.getElementById('inst-days')?.value) || q.instDays || 0;
+  const instOpsVal  = parseFloat(document.getElementById('inst-operatives')?.value) || q.instOperatives || 0;
+
+  // Labour rows
+  const labourRowsForPack = (q.labourRows||[]).map(r =>
+    `<tr><td style="padding:5px 10px;border-bottom:1px solid #f0f0f0">${escHtml(r.label||r.type)}</td><td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;text-align:right">${r.qty||1} operative${(r.qty||1)!==1?'s':''}</td><td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;text-align:right">${instDaysVal} day${instDaysVal!==1?'s':''}</td><td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;text-align:right;font-family:monospace">${fmtGBP(r.rate||0)}/day</td></tr>`
+  ).join('');
+
+  // Plant / equipment rows
+  const plantRowsForPack = (q.plantRows||[]).map(r =>
+    `<tr><td style="padding:5px 10px;border-bottom:1px solid #f0f0f0">${escHtml(r.label||r.type)}</td><td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;text-align:right">${r.qty||1} day${(r.qty||1)!==1?'s':''}</td><td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;text-align:right;font-family:monospace">${fmtGBP(r.rate||0)}/day</td><td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;text-align:right;font-weight:600;font-family:monospace">${fmtGBP((r.qty||1)*(r.rate||0))}</td></tr>`
+  ).join('');
+
+  const exclusionsText = (q.projectTCs||'').trim();
+
+  const handoverHtml = `
+    <div style="page-break-before:always"></div>
+    <h2 style="font-size:16px;font-weight:900;margin:20px 0 4px;letter-spacing:0.5px">ESTIMATING HANDOVER PACK</h2>
+    <div style="font-size:10px;color:#888;margin-bottom:16px;padding-bottom:10px;border-bottom:2px solid #D0021B">Internal reference — to be retained with the quote file</div>
+
+    <!-- Project summary -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+      <div style="background:#f5f5f5;border-radius:6px;padding:12px 14px">
+        <div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:#888;font-weight:700;margin-bottom:6px">Project</div>
+        <div style="font-size:13px;font-weight:700;color:#111;margin-bottom:2px">${escHtml(q.project||'—')}</div>
+        <div style="font-size:11px;color:#555">${escHtml(q.company||'—')}</div>
+        <div style="font-size:11px;color:#888;margin-top:4px">Ref: ${escHtml(q.ref||'—')}</div>
+      </div>
+      <div style="background:#f5f5f5;border-radius:6px;padding:12px 14px">
+        <div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:#888;font-weight:700;margin-bottom:6px">Site Address</div>
+        <div style="font-size:11px;color:#111;line-height:1.6;white-space:pre-wrap">${escHtml(q.siteAddress||'Not specified')}</div>
+      </div>
+    </div>
+
+    <!-- Tonnage summary -->
+    ${tkTotalKg > 0 ? `
+    <div style="background:#1a1a2e;color:#fff;border-radius:6px;padding:10px 16px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center">
+      <span style="font-size:11px;opacity:0.7">Total Steelwork</span>
+      <span style="font-size:20px;font-weight:900;color:#ff6b00">${(tkTotalKg/1000).toFixed(2)}t</span>
+      <span style="font-size:11px;opacity:0.7">${tkTotalKg.toFixed(0)} kg</span>
+      <span style="font-size:11px;opacity:0.7">Material: ${fmtGBP(tkTotalCost)}</span>
+    </div>` : ''}
+
+    <!-- Fabrication -->
+    <h3 style="font-size:12px;font-weight:700;margin:14px 0 8px;padding:4px 0;border-bottom:1px solid #e5e7eb;color:#1a1a2e">🔩 Fabrication</h3>
+    <table style="margin-bottom:12px">
+      <tbody>
+        <tr style="background:#f9f9f9"><td style="padding:6px 10px;font-weight:600">Fab Hours Allowed</td><td style="padding:6px 10px;text-align:right;font-family:monospace">${fabHrsVal}h</td><td style="padding:6px 10px;text-align:right;font-family:monospace">@ ${fmtGBP(fabRateVal)}/hr</td><td style="padding:6px 10px;text-align:right;font-weight:700;font-family:monospace">${fmtGBP(fabHrsVal*fabRateVal)}</td></tr>
+        ${tkTotalKg > 0 && fabHrsVal > 0 ? `<tr><td style="padding:4px 10px;color:#888;font-size:10px" colspan="4">= ${(fabHrsVal/(tkTotalKg/1000)).toFixed(1)} hrs/tonne</td></tr>` : ''}
+      </tbody>
+    </table>
+
+    <!-- Design & Drawings -->
+    <h3 style="font-size:12px;font-weight:700;margin:14px 0 8px;padding:4px 0;border-bottom:1px solid #e5e7eb;color:#1a1a2e">📐 Design & Drawings</h3>
+    <table style="margin-bottom:12px">
+      <tbody>
+        ${designHrsVal > 0 ? `<tr style="background:#f9f9f9"><td style="padding:5px 10px">Draughtsman / Detailing</td><td style="padding:5px 10px;text-align:right;font-family:monospace">${designHrsVal}h</td><td colspan="2" style="padding:5px 10px;text-align:right;font-family:monospace">${fmtGBP(designHrsVal*(q.designRate||50))}</td></tr>` : ''}
+        ${structEngHrsVal > 0 ? `<tr><td style="padding:5px 10px">Structural Engineer</td><td style="padding:5px 10px;text-align:right;font-family:monospace">${structEngHrsVal}h</td><td colspan="2" style="padding:5px 10px;text-align:right;font-family:monospace">${fmtGBP(structEngHrsVal*(q.structEngRate||90))}</td></tr>` : ''}
+        ${architectHrsVal > 0 ? `<tr style="background:#f9f9f9"><td style="padding:5px 10px">Architect</td><td style="padding:5px 10px;text-align:right;font-family:monospace">${architectHrsVal}h</td><td colspan="2" style="padding:5px 10px;text-align:right;font-family:monospace">${fmtGBP(architectHrsVal*(q.architectRate||90))}</td></tr>` : ''}
+        ${fabpackHrsVal > 0 ? `<tr><td style="padding:5px 10px">Approval &amp; Fabrication Pack</td><td style="padding:5px 10px;text-align:right;font-family:monospace">${fabpackHrsVal}h</td><td colspan="2" style="padding:5px 10px;text-align:right;font-family:monospace">${fmtGBP(fabpackHrsVal*(q.fabpackRate||50))}</td></tr>` : ''}
+        ${(designHrsVal+structEngHrsVal+architectHrsVal+fabpackHrsVal) === 0 ? `<tr><td colspan="4" style="padding:6px 10px;color:#aaa;font-style:italic">No design fees included</td></tr>` : ''}
+      </tbody>
+    </table>
+
+    <!-- Installation -->
+    ${(labourRowsForPack || instDaysVal > 0) ? `
+    <h3 style="font-size:12px;font-weight:700;margin:14px 0 8px;padding:4px 0;border-bottom:1px solid #e5e7eb;color:#1a1a2e">👷 Installation Crew</h3>
+    <div style="font-size:11px;color:#555;margin-bottom:6px">${instOpsVal} operative${instOpsVal!==1?'s':''} · ${instDaysVal} day${instDaysVal!==1?'s':''} on site</div>
+    ${labourRowsForPack ? `<table style="margin-bottom:12px"><thead><tr><th style="text-align:left;padding:6px 10px;background:#1a1a2e;color:#fff;font-size:10px">Role</th><th style="text-align:right;padding:6px 10px;background:#1a1a2e;color:#fff;font-size:10px">Qty</th><th style="text-align:right;padding:6px 10px;background:#1a1a2e;color:#fff;font-size:10px">Days</th><th style="text-align:right;padding:6px 10px;background:#1a1a2e;color:#fff;font-size:10px">Rate</th></tr></thead><tbody>${labourRowsForPack}</tbody></table>` : ''}` : ''}
+
+    <!-- Plant & Equipment -->
+    ${plantRowsForPack ? `
+    <h3 style="font-size:12px;font-weight:700;margin:14px 0 8px;padding:4px 0;border-bottom:1px solid #e5e7eb;color:#1a1a2e">🏗️ Plant & Equipment</h3>
+    <table style="margin-bottom:12px"><thead><tr><th style="text-align:left;padding:6px 10px;background:#1a1a2e;color:#fff;font-size:10px">Equipment</th><th style="text-align:right;padding:6px 10px;background:#1a1a2e;color:#fff;font-size:10px">Duration</th><th style="text-align:right;padding:6px 10px;background:#1a1a2e;color:#fff;font-size:10px">Rate</th><th style="text-align:right;padding:6px 10px;background:#1a1a2e;color:#fff;font-size:10px">Cost</th></tr></thead><tbody>${plantRowsForPack}</tbody></table>` : ''}
+
+    <!-- Exclusions -->
+    ${exclusionsText ? `
+    <h3 style="font-size:12px;font-weight:700;margin:14px 0 8px;padding:4px 0;border-bottom:1px solid #e5e7eb;color:#1a1a2e">📋 Exclusions & Special Conditions</h3>
+    <div style="background:#fff8e1;border-left:3px solid #f59e0b;padding:10px 14px;border-radius:0 6px 6px 0;font-size:10.5px;line-height:1.7;color:#333;white-space:pre-wrap">${escHtml(exclusionsText)}</div>` : ''}
+
+    <!-- Prepared by -->
+    <div style="margin-top:24px;padding-top:12px;border-top:1px solid #ddd;font-size:10px;color:#888">
+      Prepared by: ${escHtml(q.contact||'BAMA Fabrication')} &nbsp;·&nbsp; Date quoted: ${escHtml(q.date||new Date().toLocaleDateString('en-GB'))} &nbsp;·&nbsp; Ref: ${escHtml(q.ref||'—')}
+    </div>
+  `;
+
   const breakdownHtml = buildPdfPage(`Cost Breakdown — ${escHtml(q.ref)}${revStr}`, `
     ${docHeader}
     <div style="background:#fff3e0;border:1px solid #ffcc80;border-radius:6px;padding:8px 14px;margin-bottom:16px;font-size:11px;color:#e65100">
@@ -7894,6 +8056,7 @@ function generateQuotePDF(mode = 'quote') {
         <td style="padding:8px 10px;text-align:right;font-weight:700;font-size:11px">${fmtGBP(tkTotalCost)}</td>
       </tr></tfoot>
     </table>` : ''}
+    ${handoverHtml}
   `);
 
   if (mode === 'breakdown') { openPdfWindow(breakdownHtml); return; }
