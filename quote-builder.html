@@ -740,6 +740,8 @@ tr.drag-dragging { opacity:0.35; }
               <div class="cost-block-header" onclick="toggleBlock('design')">
                 <div class="cost-block-title" style="display:flex;align-items:center">📐 Design<span class="cost-block-chevron">▾</span></div>
                 <div style="display:flex;align-items:center;gap:8px">
+                <button id="btn-design-wizard" onclick="event.stopPropagation();openDesignWizard()" title="Open design hours estimator"
+                  style="font-size:10px;padding:2px 8px;background:transparent;border:1px solid var(--accent);border-radius:4px;color:var(--accent);cursor:pointer;transition:all 0.15s">⚡ hrs</button>
                 <button id="na-design" onclick="event.stopPropagation();toggleNA('design')" title="Mark as N/A — excluded from this quote"
                   style="font-size:10px;padding:2px 7px;background:transparent;border:1px solid var(--border);border-radius:4px;color:var(--muted);cursor:pointer;transition:all 0.15s">N/A</button>
                 <div class="cost-block-total" id="total-design">£0.00</div>
@@ -751,10 +753,7 @@ tr.drag-dragging { opacity:0.35; }
                   style="background:rgba(255,255,255,0.04);border:none;border-bottom:1px solid var(--border);border-radius:0;padding:4px 2px;color:var(--muted);font-size:11px;width:100%;font-style:italic"
                   oninput="saveBlockNote('design',this.value)">
               </div>
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-                  <div style="font-size:11px;color:var(--muted);font-weight:600">DESIGN FEES</div>
-                  <button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px" onclick="toggleDesignWizard()" id="btn-design-wizard" title="Open design hours estimator">⚡ Suggest hours</button>
-                </div>
+                <div style="font-size:11px;color:var(--muted);font-weight:600;margin-bottom:8px">DESIGN FEES</div>
                 <!-- ── Design hours mini-wizard ───────────────────── -->
                 <div id="design-wizard-panel" style="display:none;margin-bottom:12px;background:rgba(255,107,0,0.05);border:1px solid rgba(255,107,0,0.2);border-radius:8px;padding:10px 12px">
                   <div style="font-size:11px;font-weight:700;color:var(--accent);margin-bottom:10px;letter-spacing:0.3px">DESIGN HOURS ESTIMATOR</div>
@@ -5685,13 +5684,28 @@ function toast(msg, type='') {
 //   Structural engineer: 1 hr per 5 tonnes (min 4hrs), capped at 40hrs
 //   Internal draughtsman: 1 hr per tonne (min 8hrs) — drawing production
 //   Fab pack: 0.5 hr per tonne (min 4hrs) — approval package
+function openDesignWizard() {
+  // Expand design block if collapsed
+  const body = document.getElementById('body-design');
+  if (body && body.style.display === 'none') toggleBlock('design');
+  // Then show wizard
+  const panel = document.getElementById('design-wizard-panel');
+  if (!panel) return;
+  panel.style.display = '';
+  document.getElementById('btn-design-wizard').style.background = 'rgba(255,107,0,0.15)';
+  dwizCalc();
+  // Scroll into view
+  setTimeout(() => panel.scrollIntoView({ behavior:'smooth', block:'nearest' }), 150);
+}
+
 function toggleDesignWizard() {
   const panel = document.getElementById('design-wizard-panel');
   if (!panel) return;
   const isOpen = panel.style.display !== 'none';
   panel.style.display = isOpen ? 'none' : '';
-  document.getElementById('btn-design-wizard').textContent = isOpen ? '⚡ Suggest hours' : '✕ Close estimator';
-  if (!isOpen) dwizCalc(); // auto-calculate on open
+  const btn = document.getElementById('btn-design-wizard');
+  if (btn) btn.style.background = isOpen ? 'transparent' : 'rgba(255,107,0,0.15)';
+  if (!isOpen) dwizCalc();
 }
 
 function dwizSelect(group, el) {
