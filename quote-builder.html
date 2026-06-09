@@ -765,18 +765,26 @@ tr.drag-dragging { opacity:0.35; }
                   <div class="cost-result" id="architect-result">£0.00</div>
                 </div>
                 <div class="cost-row cost-row-4" style="margin-top:4px">
-                  <span class="cost-label">Internal draughtsman</span>
+                  <span class="cost-label">Draughtsman / Detailing</span>
                   <input type="number" class="cost-input" id="design-hours" value="0" placeholder="hrs" oninput="recalcAll()">
                   <input type="number" class="cost-input" id="design-rate" value="50" placeholder="£/hr" oninput="recalcAll()">
                   <div class="cost-result" id="design-result">£0.00</div>
                 </div>
                 <hr class="divider">
-                <div style="font-size:11px;color:var(--muted);margin-bottom:4px;font-weight:600">APPROVAL & FAB PACK</div>
+                <div style="font-size:11px;color:var(--muted);margin-bottom:4px;font-weight:600">APPROVAL &amp; FAB PACK</div>
                 <div class="cost-row cost-row-4">
-                  <span class="cost-label">Approval &amp; Fab pack</span>
+                  <span class="cost-label">Approval &amp; Fab Pack</span>
                   <input type="number" class="cost-input" id="fabpack-hours" value="0" placeholder="hrs" oninput="recalcAll()">
                   <input type="number" class="cost-input" id="fabpack-rate" value="50" placeholder="£/hr" oninput="recalcAll()">
                   <div class="cost-result" id="fabpack-result">£0.00</div>
+                </div>
+                <div class="cost-row cost-row-4" style="margin-top:4px">
+                  <span class="cost-label" style="display:flex;align-items:center;gap:4px">Connection Design
+                    <span style="font-size:9px;color:var(--muted);font-weight:400">(incl. in A&amp;FP by default)</span>
+                  </span>
+                  <input type="number" class="cost-input" id="conn-design-hours" value="0" placeholder="hrs" oninput="recalcAll()">
+                  <input type="number" class="cost-input" id="conn-design-rate" value="50" placeholder="£/hr" oninput="recalcAll()">
+                  <div class="cost-result" id="conn-design-result">£0.00</div>
                 </div>
               </div>
             </div>
@@ -1682,6 +1690,62 @@ tr.drag-dragging { opacity:0.35; }
               style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;font-family:var(--font-mono);width:80px;margin-left:8px"
               oninput="wizUpdateCraneBadge()">
           </div>
+          <!-- Genie SLA vertical lifts -->
+          <div style="font-size:10px;color:var(--muted);font-weight:600;letter-spacing:1px;margin-top:12px;margin-bottom:6px">🔼 GENIE LIFT (VERTICAL MAST)</div>
+          <div style="display:flex;flex-direction:column;gap:6px" id="wiz-genie-tiles">
+            <div class="wiz-mewp-row" data-mewp="genie_sla10" onclick="wizToggleMewp(this)">
+              <div style="display:flex;align-items:center;gap:8px;flex:1">
+                <div class="wiz-mewp-check"></div>
+                <div><div style="font-size:13px;font-weight:600">Genie SLA-10</div><div style="font-size:10px;color:var(--muted)">3m lift height · materials / panel lifts</div></div>
+              </div>
+              <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
+                <span style="font-size:11px;color:var(--muted)">Qty</span>
+                <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
+                <span style="font-size:11px;color:var(--muted)">Days</span>
+                <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
+                <span style="font-size:11px;color:var(--muted);min-width:60px">£80/day</span>
+              </div>
+            </div>
+            <div class="wiz-mewp-row" data-mewp="genie_sla15" onclick="wizToggleMewp(this)">
+              <div style="display:flex;align-items:center;gap:8px;flex:1">
+                <div class="wiz-mewp-check"></div>
+                <div><div style="font-size:13px;font-weight:600">Genie SLA-15</div><div style="font-size:10px;color:var(--muted)">4.5m lift height · lightweight loads</div></div>
+              </div>
+              <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
+                <span style="font-size:11px;color:var(--muted)">Qty</span>
+                <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
+                <span style="font-size:11px;color:var(--muted)">Days</span>
+                <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
+                <span style="font-size:11px;color:var(--muted);min-width:60px">£95/day</span>
+              </div>
+            </div>
+            <div class="wiz-mewp-row" data-mewp="genie_sla20" onclick="wizToggleMewp(this)">
+              <div style="display:flex;align-items:center;gap:8px;flex:1">
+                <div class="wiz-mewp-check"></div>
+                <div><div style="font-size:13px;font-weight:600">Genie SLA-20</div><div style="font-size:10px;color:var(--muted)">6m lift height · steel / beam lifts</div></div>
+              </div>
+              <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
+                <span style="font-size:11px;color:var(--muted)">Qty</span>
+                <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
+                <span style="font-size:11px;color:var(--muted)">Days</span>
+                <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
+                <span style="font-size:11px;color:var(--muted);min-width:60px">£110/day</span>
+              </div>
+            </div>
+            <div class="wiz-mewp-row" data-mewp="genie_sla25" onclick="wizToggleMewp(this)">
+              <div style="display:flex;align-items:center;gap:8px;flex:1">
+                <div class="wiz-mewp-check"></div>
+                <div><div style="font-size:13px;font-weight:600">Genie SLA-25</div><div style="font-size:10px;color:var(--muted)">7.5m lift height · heavy beam / column lifts</div></div>
+              </div>
+              <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
+                <span style="font-size:11px;color:var(--muted)">Qty</span>
+                <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
+                <span style="font-size:11px;color:var(--muted)">Days</span>
+                <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
+                <span style="font-size:11px;color:var(--muted);min-width:60px">£125/day</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1808,60 +1872,6 @@ tr.drag-dragging { opacity:0.35; }
                 <span style="font-size:11px;color:var(--muted)">Days</span>
                 <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
                 <span style="font-size:11px;color:var(--muted);min-width:60px">£350/day</span>
-              </div>
-            </div>
-            <!-- Other access -->
-            <div style="font-size:10px;color:var(--muted);font-weight:600;letter-spacing:1px;margin-top:4px">GENIE LIFT (VERTICAL)</div>
-            <div class="wiz-mewp-row" data-mewp="genie_sla10" onclick="wizToggleMewp(this)">
-              <div style="display:flex;align-items:center;gap:8px;flex:1">
-                <div class="wiz-mewp-check"></div>
-                <div><div style="font-size:13px;font-weight:600">Genie SLA-10</div><div style="font-size:10px;color:var(--muted)">3m lift height · materials / panel lifts</div></div>
-              </div>
-              <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
-                <span style="font-size:11px;color:var(--muted)">Qty</span>
-                <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
-                <span style="font-size:11px;color:var(--muted)">Days</span>
-                <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
-                <span style="font-size:11px;color:var(--muted);min-width:60px">£80/day</span>
-              </div>
-            </div>
-            <div class="wiz-mewp-row" data-mewp="genie_sla15" onclick="wizToggleMewp(this)">
-              <div style="display:flex;align-items:center;gap:8px;flex:1">
-                <div class="wiz-mewp-check"></div>
-                <div><div style="font-size:13px;font-weight:600">Genie SLA-15</div><div style="font-size:10px;color:var(--muted)">4.5m lift height · lightweight loads</div></div>
-              </div>
-              <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
-                <span style="font-size:11px;color:var(--muted)">Qty</span>
-                <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
-                <span style="font-size:11px;color:var(--muted)">Days</span>
-                <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
-                <span style="font-size:11px;color:var(--muted);min-width:60px">£95/day</span>
-              </div>
-            </div>
-            <div class="wiz-mewp-row" data-mewp="genie_sla20" onclick="wizToggleMewp(this)">
-              <div style="display:flex;align-items:center;gap:8px;flex:1">
-                <div class="wiz-mewp-check"></div>
-                <div><div style="font-size:13px;font-weight:600">Genie SLA-20</div><div style="font-size:10px;color:var(--muted)">6m lift height · steel / beam lifts</div></div>
-              </div>
-              <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
-                <span style="font-size:11px;color:var(--muted)">Qty</span>
-                <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
-                <span style="font-size:11px;color:var(--muted)">Days</span>
-                <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
-                <span style="font-size:11px;color:var(--muted);min-width:60px">£110/day</span>
-              </div>
-            </div>
-            <div class="wiz-mewp-row" data-mewp="genie_sla25" onclick="wizToggleMewp(this)">
-              <div style="display:flex;align-items:center;gap:8px;flex:1">
-                <div class="wiz-mewp-check"></div>
-                <div><div style="font-size:13px;font-weight:600">Genie SLA-25</div><div style="font-size:10px;color:var(--muted)">7.5m lift height · heavy beam / column lifts</div></div>
-              </div>
-              <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
-                <span style="font-size:11px;color:var(--muted)">Qty</span>
-                <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
-                <span style="font-size:11px;color:var(--muted)">Days</span>
-                <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
-                <span style="font-size:11px;color:var(--muted);min-width:60px">£125/day</span>
               </div>
             </div>
             <!-- Other access -->
@@ -2446,7 +2456,8 @@ function computeQuoteTotals(quote, ratesObj) {
   const structEng  = (parseFloat(quote.structEngHours)  || 0) * (parseFloat(quote.structEngRate)  || 90);
   const architect  = (parseFloat(quote.architectHours)  || 0) * (parseFloat(quote.architectRate)  || 90);
   const draughtsman= (parseFloat(quote.designHours)     || 0) * (parseFloat(quote.designRate)     || 50);
-  const design = Math.round((structEng + architect + draughtsman) * 100) / 100;
+  const connDesign = (parseFloat(quote.connDesignHours) || 0) * (parseFloat(quote.connDesignRate) || 50);
+  const design = Math.round((structEng + architect + draughtsman + connDesign) * 100) / 100;
 
   // ── Painting / Finishing ─────────────────────────────────
   let painting = 0, galvanising = 0;
@@ -2785,6 +2796,8 @@ function saveCurrentQuote() {
   q.designRate     = parseFloat(document.getElementById('design-rate')?.value) || 50;
   q.fabpackHours   = parseFloat(document.getElementById('fabpack-hours')?.value) || 0;
   q.fabpackRate    = parseFloat(document.getElementById('fabpack-rate')?.value) || 50;
+  q.connDesignHours = parseFloat(document.getElementById('conn-design-hours')?.value) || 0;
+  q.connDesignRate  = parseFloat(document.getElementById('conn-design-rate')?.value) || 50;
   q.surveyVisits   = parseFloat(document.getElementById('survey-visits')?.value) || 0;
   q.surveyVisitors = parseFloat(document.getElementById('survey-visitors')?.value) || 1;
   q.surveyRate     = parseFloat(document.getElementById('survey-rate')?.value) || 250;
@@ -2974,6 +2987,8 @@ function loadQuoteEditor() {
   document.getElementById('fab-rate').value           = q.fabRate || 45;
   document.getElementById('fabpack-hours').value      = q.fabpackHours || 0;
   document.getElementById('fabpack-rate').value       = q.fabpackRate || 50;
+  const _cdHEl = document.getElementById('conn-design-hours'); if(_cdHEl) _cdHEl.value = q.connDesignHours || 0;
+  const _cdREl = document.getElementById('conn-design-rate');  if(_cdREl) _cdREl.value = q.connDesignRate  || 50;
   document.getElementById('struct-eng-hours').value   = q.structEngHours || 0;
   document.getElementById('struct-eng-rate').value    = q.structEngRate || 90;
   document.getElementById('architect-hours').value    = q.architectHours || 0;
@@ -4032,11 +4047,15 @@ function renderPrelimRows() {
 function sumPrelims() {
   const q = getQuote(); if (!q) return 0;
   return (q.prelimRows||[]).reduce((s,r) => {
-    const qty = parseFloat(document.getElementById('qty-'+r.id)?.value) || r.qty || 0;
-    const rate = parseFloat(document.getElementById('rate-'+r.id)?.value) || r.rate || 0;
-    const sub = qty * rate;
-    const el = document.getElementById('res-'+r.id);
-    if (el) el.textContent = '£'+sub.toFixed(2);
+    const qty  = r.qty  || 0;
+    const rate = r.rate || 0;
+    const sub  = qty * rate;
+    // Update inline subtotal display if rendered
+    const rid = r.id || 'prelim_'+r.type;
+    const subEl = document.getElementById('prelim-sub-'+rid);
+    const def = (rates.prelims||{})[r.type] || {};
+    const isDaily = def.type === 'daily';
+    if (subEl) subEl.textContent = `= £${sub.toFixed(2)}${isDaily ? ' ('+qty+' day'+(qty!==1?'s':'')+' × £'+rate+')' : ''}`;
     return s + sub;
   }, 0);
 }
@@ -4054,6 +4073,8 @@ function recalcAll() {
   q.fabRate       = parseFloat(document.getElementById('fab-rate')?.value)       || 45;
   q.fabpackHours  = parseFloat(document.getElementById('fabpack-hours')?.value)  || 0;
   q.fabpackRate   = parseFloat(document.getElementById('fabpack-rate')?.value)   || 50;
+  q.connDesignHours = parseFloat(document.getElementById('conn-design-hours')?.value) || 0;
+  q.connDesignRate  = parseFloat(document.getElementById('conn-design-rate')?.value)  || 50;
   q.structEngHours= parseFloat(document.getElementById('struct-eng-hours')?.value)|| 0;
   q.structEngRate = parseFloat(document.getElementById('struct-eng-rate')?.value) || 90;
   q.architectHours= parseFloat(document.getElementById('architect-hours')?.value) || 0;
@@ -4114,8 +4135,10 @@ function recalcAll() {
   // ── Individual results still needed for sub-rows ──────────
   const _fabW   = q.fabHours * q.fabRate;
   const _fabpack= q.fabpackHours * q.fabpackRate;
+  const _connD  = (q.connDesignHours||0) * (q.connDesignRate||50);
   const _fabEl = document.getElementById('fab-result'); if(_fabEl) _fabEl.textContent = fmt(_fabW);
   const _fpEl = document.getElementById('fabpack-result'); if(_fpEl) _fpEl.textContent = fmt(_fabpack);
+  const _cdEl = document.getElementById('conn-design-result'); if(_cdEl) _cdEl.textContent = fmt(_connD);
   const _se = q.structEngHours * q.structEngRate;
   const _ar = q.architectHours * q.architectRate;
   const _dr = q.designHours    * q.designRate;
@@ -7939,6 +7962,7 @@ function generateQuotePDF(mode = 'quote') {
   const structEngHrsVal = parseFloat(document.getElementById('struct-eng-hours')?.value) || q.structEngHours || 0;
   const architectHrsVal = parseFloat(document.getElementById('architect-hours')?.value)  || q.architectHours || 0;
   const fabpackHrsVal   = parseFloat(document.getElementById('fabpack-hours')?.value)    || q.fabpackHours   || 0;
+  const connDesignHrsVal = parseFloat(document.getElementById('conn-design-hours')?.value) || q.connDesignHours || 0;
   const instDaysVal = parseFloat(document.getElementById('inst-days')?.value) || q.instDays || 0;
   const instOpsVal  = parseFloat(document.getElementById('inst-operatives')?.value) || q.instOperatives || 0;
 
@@ -7999,7 +8023,8 @@ function generateQuotePDF(mode = 'quote') {
         ${structEngHrsVal > 0 ? `<tr><td style="padding:5px 10px">Structural Engineer</td><td style="padding:5px 10px;text-align:right;font-family:monospace">${structEngHrsVal}h</td><td colspan="2" style="padding:5px 10px;text-align:right;font-family:monospace">${fmtGBP(structEngHrsVal*(q.structEngRate||90))}</td></tr>` : ''}
         ${architectHrsVal > 0 ? `<tr style="background:#f9f9f9"><td style="padding:5px 10px">Architect</td><td style="padding:5px 10px;text-align:right;font-family:monospace">${architectHrsVal}h</td><td colspan="2" style="padding:5px 10px;text-align:right;font-family:monospace">${fmtGBP(architectHrsVal*(q.architectRate||90))}</td></tr>` : ''}
         ${fabpackHrsVal > 0 ? `<tr><td style="padding:5px 10px">Approval &amp; Fabrication Pack</td><td style="padding:5px 10px;text-align:right;font-family:monospace">${fabpackHrsVal}h</td><td colspan="2" style="padding:5px 10px;text-align:right;font-family:monospace">${fmtGBP(fabpackHrsVal*(q.fabpackRate||50))}</td></tr>` : ''}
-        ${(designHrsVal+structEngHrsVal+architectHrsVal+fabpackHrsVal) === 0 ? `<tr><td colspan="4" style="padding:6px 10px;color:#aaa;font-style:italic">No design fees included</td></tr>` : ''}
+        ${connDesignHrsVal > 0 ? `<tr style="background:#f9f9f9"><td style="padding:5px 10px">Connection Design</td><td style="padding:5px 10px;text-align:right;font-family:monospace">${connDesignHrsVal}h</td><td colspan="2" style="padding:5px 10px;text-align:right;font-family:monospace">${fmtGBP(connDesignHrsVal*(q.connDesignRate||50))}</td></tr>` : ''}
+        ${(designHrsVal+structEngHrsVal+architectHrsVal+fabpackHrsVal+connDesignHrsVal) === 0 ? `<tr><td colspan="4" style="padding:6px 10px;color:#aaa;font-style:italic">No design fees included</td></tr>` : ''}
       </tbody>
     </table>
 
