@@ -235,6 +235,9 @@ tr.drag-dragging { opacity:0.35; }
 .wiz-panel.open .wiz-chevron { transform:rotate(180deg); }
 /* Tiles */
 .wiz-tile { padding:8px 12px;border-radius:7px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:12px;cursor:pointer;text-align:center;transition:all 0.15s;line-height:1.4;min-width:80px; }
+.dwiz-tile { padding:5px 10px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:11px;cursor:pointer;text-align:center;transition:all 0.15s;line-height:1.4; }
+.dwiz-tile.active { background:rgba(255,107,0,0.12);border-color:var(--accent);color:var(--accent);font-weight:600; }
+.dwiz-tile:hover:not(.active) { border-color:rgba(255,107,0,0.4);color:var(--text); }
 .wiz-tile:hover { border-color:var(--accent);color:var(--text); }
 .wiz-tile.active { background:rgba(255,107,0,0.12);border-color:var(--accent);color:var(--accent);font-weight:600; }
 .wiz-role-tile { padding:8px 12px;border-radius:7px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:12px;cursor:pointer;text-align:center;transition:all 0.15s;min-width:90px; }
@@ -750,8 +753,63 @@ tr.drag-dragging { opacity:0.35; }
               </div>
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
                   <div style="font-size:11px;color:var(--muted);font-weight:600">DESIGN FEES</div>
-                  <button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px" onclick="autoFillDesignHours()" title="Auto-suggest design hours based on project complexity">⚡ Suggest hours</button>
+                  <button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px" onclick="toggleDesignWizard()" id="btn-design-wizard" title="Open design hours estimator">⚡ Suggest hours</button>
                 </div>
+                <!-- ── Design hours mini-wizard ───────────────────── -->
+                <div id="design-wizard-panel" style="display:none;margin-bottom:12px;background:rgba(255,107,0,0.05);border:1px solid rgba(255,107,0,0.2);border-radius:8px;padding:10px 12px">
+                  <div style="font-size:11px;font-weight:700;color:var(--accent);margin-bottom:10px;letter-spacing:0.3px">DESIGN HOURS ESTIMATOR</div>
+
+                  <div style="margin-bottom:8px">
+                    <div style="font-size:10px;color:var(--muted);font-weight:600;margin-bottom:4px">1. TYP POŁĄCZEŃ</div>
+                    <div style="display:flex;flex-wrap:wrap;gap:4px" id="dwiz-connections">
+                      <button class="dwiz-tile active" data-val="simple" onclick="dwizSelect('connections',this)">Proste śrubowe<br><span style="font-size:9px;opacity:0.7">standard end plates</span></button>
+                      <button class="dwiz-tile" data-val="standard" onclick="dwizSelect('connections',this)">Standardowe<br><span style="font-size:9px;opacity:0.7">stiffeners, cleats</span></button>
+                      <button class="dwiz-tile" data-val="moment" onclick="dwizSelect('connections',this)">Moment resistance<br><span style="font-size:9px;opacity:0.7">rigid frame</span></button>
+                      <button class="dwiz-tile" data-val="complex" onclick="dwizSelect('connections',this)">Złożone / specjalne<br><span style="font-size:9px;opacity:0.7">cantilever, trusses</span></button>
+                    </div>
+                  </div>
+
+                  <div style="margin-bottom:8px">
+                    <div style="font-size:10px;color:var(--muted);font-weight:600;margin-bottom:4px">2. POWTARZALNOŚĆ</div>
+                    <div style="display:flex;flex-wrap:wrap;gap:4px" id="dwiz-repetition">
+                      <button class="dwiz-tile active" data-val="high" onclick="dwizSelect('repetition',this)">Wysoka<br><span style="font-size:9px;opacity:0.7">typowe ramy, magazyn</span></button>
+                      <button class="dwiz-tile" data-val="medium" onclick="dwizSelect('repetition',this)">Średnia<br><span style="font-size:9px;opacity:0.7">mieszane detale</span></button>
+                      <button class="dwiz-tile" data-val="low" onclick="dwizSelect('repetition',this)">Niska<br><span style="font-size:9px;opacity:0.7">każdy element inny</span></button>
+                    </div>
+                  </div>
+
+                  <div style="margin-bottom:8px">
+                    <div style="font-size:10px;color:var(--muted);font-weight:600;margin-bottom:4px">3. MATERIAŁY</div>
+                    <div style="display:flex;flex-wrap:wrap;gap:4px" id="dwiz-material">
+                      <button class="dwiz-tile active" data-val="steel" onclick="dwizSelect('material',this)">Tylko stal<br><span style="font-size:9px;opacity:0.7">standardowe</span></button>
+                      <button class="dwiz-tile" data-val="grp" onclick="dwizSelect('material',this)">GRP / kompozyt<br><span style="font-size:9px;opacity:0.7">+25%</span></button>
+                      <button class="dwiz-tile" data-val="mixed" onclick="dwizSelect('material',this)">Mieszane<br><span style="font-size:9px;opacity:0.7">aluminium, SS, GRP</span></button>
+                    </div>
+                  </div>
+
+                  <div style="margin-bottom:10px">
+                    <div style="font-size:10px;color:var(--muted);font-weight:600;margin-bottom:4px">4. UNIKALNE DETALE</div>
+                    <div style="display:flex;flex-wrap:wrap;gap:4px" id="dwiz-details">
+                      <button class="dwiz-tile active" data-val="few" onclick="dwizSelect('details',this)">&lt;5 typów<br><span style="font-size:9px;opacity:0.7">proste, powtarzalne</span></button>
+                      <button class="dwiz-tile" data-val="medium" onclick="dwizSelect('details',this)">5–15 typów<br><span style="font-size:9px;opacity:0.7">typowy projekt</span></button>
+                      <button class="dwiz-tile" data-val="many" onclick="dwizSelect('details',this)">15+ typów<br><span style="font-size:9px;opacity:0.7">złożona geometria</span></button>
+                    </div>
+                  </div>
+
+                  <div id="dwiz-result" style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px 12px;margin-bottom:8px;font-size:12px;display:none">
+                    <div style="display:flex;justify-content:space-between;align-items:center">
+                      <span style="color:var(--muted)">Sugerowane godziny draughtsmanowi:</span>
+                      <span id="dwiz-range" style="font-weight:700;color:var(--accent);font-family:var(--font-mono)">—</span>
+                    </div>
+                    <div style="font-size:10px;color:var(--muted);margin-top:3px" id="dwiz-factors"></div>
+                  </div>
+
+                  <div style="display:flex;gap:6px">
+                    <button class="btn btn-sm" style="background:var(--accent);color:#fff;border:none;flex:1" onclick="dwizApply()">✓ Zastosuj środek zakresu</button>
+                    <button class="btn btn-ghost btn-sm" onclick="toggleDesignWizard()">Zamknij</button>
+                  </div>
+                </div>
+                <!-- ── end design wizard ──────────────────────────── -->
                 <div class="cost-row cost-row-4">
                   <span class="cost-label">Structural engineer fee</span>
                   <input type="number" class="cost-input" id="struct-eng-hours" value="0" placeholder="hrs" oninput="recalcAll()">
@@ -5627,19 +5685,84 @@ function toast(msg, type='') {
 //   Structural engineer: 1 hr per 5 tonnes (min 4hrs), capped at 40hrs
 //   Internal draughtsman: 1 hr per tonne (min 8hrs) — drawing production
 //   Fab pack: 0.5 hr per tonne (min 4hrs) — approval package
-function autoFillDesignHours() {
-  const q = getQuote(); if (!q) return;
-  if (!q.takeoff?.length) { toast('No takeoff yet — add members first', 'error'); return; }
-  const { draughtHrs, structEngHrs, fabpackHrs } = autoDesignHours(q.takeoff);
-  document.getElementById('struct-eng-hours').value = structEngHrs;
-  document.getElementById('design-hours').value     = draughtHrs;
-  document.getElementById('fabpack-hours').value    = fabpackHrs;
-  recalcAll();
-  toast(
-    `Suggested: Struct. Eng ${structEngHrs}h · Draughtsman ${draughtHrs}h · Fab Pack ${fabpackHrs}h`,
-    'success'
-  );
+function toggleDesignWizard() {
+  const panel = document.getElementById('design-wizard-panel');
+  if (!panel) return;
+  const isOpen = panel.style.display !== 'none';
+  panel.style.display = isOpen ? 'none' : '';
+  document.getElementById('btn-design-wizard').textContent = isOpen ? '⚡ Suggest hours' : '✕ Close estimator';
+  if (!isOpen) dwizCalc(); // auto-calculate on open
 }
+
+function dwizSelect(group, el) {
+  document.querySelectorAll(`#dwiz-${group} .dwiz-tile`).forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  dwizCalc();
+}
+
+function dwizCalc() {
+  const q = getQuote();
+  const totalKg = q ? (q.takeoff||[]).reduce((s,r) => s + (r.length/1000)*(r.kgm||0)*(r.qty||1), 0) : 0;
+  const tonnes = totalKg / 1000;
+
+  const conn   = document.querySelector('#dwiz-connections .dwiz-tile.active')?.dataset.val || 'simple';
+  const rep    = document.querySelector('#dwiz-repetition .dwiz-tile.active')?.dataset.val  || 'high';
+  const mat    = document.querySelector('#dwiz-material .dwiz-tile.active')?.dataset.val    || 'steel';
+  const det    = document.querySelector('#dwiz-details .dwiz-tile.active')?.dataset.val     || 'few';
+
+  // Base rate (h/tonne) by connection type — calibrated to real BAMA quotes
+  const baseRate = { simple:2.5, standard:3.2, moment:4.2, complex:5.0 }[conn];
+
+  // Multipliers
+  const repMult = { high:0.82, medium:1.00, low:1.18 }[rep];
+  const matMult = { steel:1.00, grp:1.15, mixed:1.10 }[mat];
+  const detMult = { few:0.88, medium:1.00, many:1.18 }[det];
+
+  // Economy of scale — large jobs: lower h/t due to repetition
+  const scaleMult = tonnes > 8 ? Math.max(0.72, 1 - (Math.min(tonnes,120)-8)*0.002) : 1;
+
+  // Job overhead per connection type (setup, coord, checking)
+  const overhead = { simple:12, standard:16, moment:20, complex:28 }[conn];
+
+  // Base hours
+  const baseHrs = tonnes > 0
+    ? overhead + (tonnes * baseRate * repMult * matMult * detMult * scaleMult)
+    : overhead;
+
+  // Minimum floor
+  const floor = { simple:10, standard:14, moment:16, complex:22 }[conn];
+  const midHrs = Math.max(floor, Math.round(baseHrs));
+
+  // Range ±20-25%
+  const minHrs = Math.max(floor, Math.round(midHrs * 0.80));
+  const maxHrs = Math.round(midHrs * 1.25);
+
+  const factors = [];
+  if (tonnes > 0) factors.push(`${tonnes.toFixed(1)}t @ ${(baseRate*repMult*matMult*detMult*scaleMult).toFixed(1)}h/t eff.`);
+  if (mat !== 'steel') factors.push(mat === 'grp' ? '+28% GRP' : '+20% mixed');
+  if (rep === 'low') factors.push('+30% niska powtarzalność');
+  if (det === 'many') factors.push('+25% wiele detali');
+  if (tonnes > 40) factors.push(`−${Math.round((1-scaleMult)*100)}% ekonomia skali`);
+
+  document.getElementById('dwiz-result').style.display = '';
+  document.getElementById('dwiz-range').textContent = `${minHrs}–${maxHrs}h`;
+  document.getElementById('dwiz-factors').textContent = factors.join(' · ') || 'brak danych z takeoff — szacunek bazowy';
+
+  // Store midpoint for apply
+  document.getElementById('design-wizard-panel').dataset.mid = midHrs;
+}
+
+function dwizApply() {
+  const mid = parseInt(document.getElementById('design-wizard-panel')?.dataset.mid || '0');
+  if (!mid) { toast('Najpierw oblicz zakres', 'error'); return; }
+  document.getElementById('design-hours').value = mid;
+  saveAll(); recalcAll();
+  toast(`Wpisano ${mid}h do Draughtsman / Detailing`, 'success');
+  toggleDesignWizard();
+}
+
+// legacy — keep for any remaining calls
+function autoFillDesignHours() { toggleDesignWizard(); }
 
 // ── Idea 2: Auto-fill fab hours from takeoff weight (complexity-aware) ──
 function autoFillFabHours() {
