@@ -307,7 +307,8 @@ tr.drag-dragging { opacity:0.35; }
       <div id="pdfMenu" style="display:none;position:absolute;top:100%;right:0;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.4);min-width:200px;z-index:500;margin-top:4px;overflow:hidden">
         <div onclick="generateQuotePDF('quote');togglePdfMenu()" style="padding:10px 16px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)" onmouseover="this.style.background='rgba(255,107,0,0.08)'" onmouseout="this.style.background=''">📋 Quote (client-facing)</div>
         <div onclick="generateQuotePDF('breakdown');togglePdfMenu()" style="padding:10px 16px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)" onmouseover="this.style.background='rgba(255,107,0,0.08)'" onmouseout="this.style.background=''">🔢 Cost Breakdown</div>
-        <div onclick="generateQuotePDF('combined');togglePdfMenu()" style="padding:10px 16px;cursor:pointer;font-size:13px" onmouseover="this.style.background='rgba(255,107,0,0.08)'" onmouseout="this.style.background=''">📄 Quote + Breakdown</div>
+        <div onclick="generateQuotePDF('combined');togglePdfMenu()" style="padding:10px 16px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)" onmouseover="this.style.background='rgba(255,107,0,0.08)'" onmouseout="this.style.background=''">📄 Quote + Breakdown</div>
+        <div onclick="generateHandoverPack();togglePdfMenu()" style="padding:10px 16px;cursor:pointer;font-size:13px" onmouseover="this.style.background='rgba(255,107,0,0.08)'" onmouseout="this.style.background=''">📦 Handover Pack (internal)</div>
       </div>
     </div>
     <button class="btn btn-primary btn-sm" onclick="saveCurrentQuote()">Save</button>
@@ -7751,6 +7752,291 @@ function saveClientToBook() {
   }
   saveClientBook();
   document.getElementById('clientSaveBtn').style.display = 'none';
+}
+
+// ============================================================
+// HANDOVER PACK PDF
+// ============================================================
+function generateHandoverPack() {
+  const q = getQuote();
+  if (!q) return;
+
+  const computed = computeQuoteTotals(q, null);
+  const fmt  = v => v > 0 ? '£' + Math.round(v).toLocaleString('en-GB') : '—';
+  const fmtH = v => v > 0 ? v + ' hrs' : '—';
+  const fmtD = v => v > 0 ? v + (v === 1 ? ' day' : ' days') : '—';
+  const esc  = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const today = new Date().toLocaleDateString('en-GB', {day:'2-digit',month:'long',year:'numeric'});
+
+  // ── Labour rows ──
+  const labourRows = (q.labourRows || []);
+  const labourHTML = labourRows.length > 0
+    ? labourRows.map(r => {
+        const days = r.locked ? r.lockedDays : (q.globalDays !== false ? (q.instDays || 0) : r.days);
+        return `<tr>
+          <td>${esc(r.role || 'Operative')}</td>
+          <td style="text-align:center">${r.qty || 1}</td>
+          <td style="text-align:center">${days || 0} days</td>
+          <td style="text-align:right">£${r.rate || 0}/day</td>
+          <td style="text-align:right">${fmt((r.qty||1)*(days||0)*(r.rate||0))}</td>
+        </tr>`;
+      }).join('')
+    : '<tr><td colspan="5" style="color:#888;font-style:italic">No installation (Supply Only)</td></tr>';
+
+  // ── Plant rows ──
+  const plantRows = (q.plantRows || []);
+  const plantHTML = plantRows.length > 0
+    ? plantRows.map(r => {
+        const isDaily = r.type && !['fuel','fixed'].includes(r.type);
+        const cost = isDaily ? (r.qty||1)*(r.rate||0) : (r.rate||0);
+        const desc = r.desc || r.type || 'Plant';
+        const detail = isDaily ? `${r.qty||1} days × £${r.rate||0}/day` : `£${r.rate||0} flat`;
+        return `<tr>
+          <td>${esc(desc)}${r.supplierNote ? `<br><span style="font-size:10px;color:#888">${esc(r.supplierNote)}</span>` : ''}</td>
+          <td colspan="3" style="color:#666">${detail}</td>
+          <td style="text-align:right">${fmt(cost)}</td>
+        </tr>`;
+      }).join('')
+    : '<tr><td colspan="5" style="color:#888;font-style:italic">No plant/equipment</td></tr>';
+
+  // ── Paint rows ──
+  const paintRows = (q.paintRows || []);
+  const paintHTML = paintRows.length > 0
+    ? paintRows.map(r => {
+        const labelMap = {
+          galvanise:'Hot-dip Galvanising', primer_tonne:'Primer (£/t)', powder_coat_m:'Powder Coat (m²)',
+          powder_coat_bay:'Powder Coat (bay)', intumescent_m:'Intumescent (m²)', touch_up:'Touch-up on Site'
+        };
+        const label = labelMap[r.type] || r.type || 'Finish';
+        const cost  = (r.qty||0)*(r.rate||0);
+        return `<tr>
+          <td>${esc(label)}</td>
+          <td style="text-align:center">${r.qty || 0} ${r.unit === 'tonnes' ? 't' : r.unit === 'm2' ? 'm²' : ''}</td>
+          <td style="text-align:right">£${r.rate||0}/${r.unit==='tonnes'?'t':'m²'}</td>
+          <td colspan="1"></td>
+          <td style="text-align:right">${fmt(cost)}</td>
+        </tr>`;
+      }).join('')
+    : '<tr><td colspan="5" style="color:#888;font-style:italic">No finishing specified</td></tr>';
+
+  // ── Survey rows ──
+  const surveyRows = (q.surveyVisitRows || []);
+  const surveyHTML = surveyRows.length > 0 || q.surveyVisits > 0
+    ? (surveyRows.length > 0
+        ? surveyRows.map(r => `<tr><td>${esc(r.attendees||'')}</td><td style="text-align:center">${r.visits||1} visit(s)</td><td colspan="3"></td></tr>`).join('')
+        : `<tr><td>${q.surveyVisitors||1} person(s)</td><td style="text-align:center">${q.surveyVisits||1} visit(s)</td><td colspan="3"></td></tr>`)
+    : '<tr><td colspan="5" style="color:#888;font-style:italic">No survey scheduled</td></tr>';
+
+  // ── Prelims ──
+  const prelimRows = (q.prelimRows || []).filter(r => r.active !== false && r.rate > 0);
+  const prelimHTML = prelimRows.length > 0
+    ? prelimRows.map(r => {
+        const cost = r.isDaily ? (r.qty||1)*(r.rate||0) : (r.rate||0);
+        const detail = r.isDaily ? `${r.qty||1} days × £${r.rate||0}` : `£${r.rate||0} flat`;
+        return `<tr><td>${esc(r.desc||r.type||'Prelim')}</td><td colspan="3" style="color:#666">${detail}</td><td style="text-align:right">${fmt(cost)}</td></tr>`;
+      }).join('')
+    : '<tr><td colspan="5" style="color:#888;font-style:italic">No prelims</td></tr>';
+
+  // ── Takeoff summary ──
+  const totByType = {};
+  let totalKgAll = 0;
+  (q.takeoff || []).forEach(row => {
+    const prefix = (row.section||'').match(/^[A-Za-z]+/)?.[0]?.toUpperCase() || 'Other';
+    const kg = (parseFloat(row.kgm)||0) * (parseFloat(row.qty)||1) * (parseFloat(row.length)||0) / 1000;
+    totByType[prefix] = (totByType[prefix]||0) + kg;
+    totalKgAll += kg;
+  });
+  const takeoffSummaryHTML = totalKgAll > 0
+    ? Object.entries(totByType).sort((a,b)=>b[1]-a[1]).map(([type,kg]) =>
+        `<tr><td>${type}</td><td style="text-align:right">${(kg/1000).toFixed(3)}t</td><td style="text-align:right">${Math.round(kg/(totalKgAll||1)*100)}%</td></tr>`
+      ).join('') + `<tr style="font-weight:700;border-top:2px solid #1a1a2e"><td>TOTAL</td><td style="text-align:right">${(totalKgAll/1000).toFixed(3)}t</td><td></td></tr>`
+    : '<tr><td colspan="3" style="color:#888;font-style:italic">No takeoff data</td></tr>';
+
+  // ── Exclusions / T&Cs ──
+  const exclusions = (q.projectTCs || '').trim();
+  const exclusionsHTML = exclusions
+    ? exclusions.split('\n').map(l => l.trim() ? `<li>${esc(l)}</li>` : '').join('')
+    : '<li style="color:#888;font-style:italic">No exclusions noted</li>';
+
+  const siteAddr = (q.siteAddress || '').trim() || 'Not specified';
+  const travelInfo = q._siteLat ? `${q._siteDist||'?'} miles from Yaxley · ~${q._siteTime||'?'} drive` : '';
+
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+<title>Handover Pack — ${esc(q.ref)} ${esc(q.company)}</title>
+<style>
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family:Arial,sans-serif; font-size:11px; color:#1a1a2e; background:#fff; }
+  .page { padding:14mm 16mm 12mm; }
+  /* Header */
+  .hdr { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:18px; padding-bottom:14px; border-bottom:3px solid #1a1a2e; }
+  .hdr-left h1 { font-size:22px; font-weight:900; color:#1a1a2e; letter-spacing:-0.5px; }
+  .hdr-left .badge { display:inline-block; background:#ff6b00; color:#fff; font-size:10px; font-weight:700; padding:2px 8px; border-radius:10px; margin-left:8px; vertical-align:middle; text-transform:uppercase; letter-spacing:0.05em; }
+  .hdr-meta { font-size:11px; color:#555; margin-top:6px; line-height:1.7; }
+  .hdr-meta strong { color:#1a1a2e; }
+  .hdr-right { text-align:right; }
+  .ref-box { font-size:28px; font-weight:900; color:#ff6b00; letter-spacing:-1px; }
+  .date-line { font-size:10px; color:#888; margin-top:3px; }
+  /* Confidential banner */
+  .confidential { background:#1a1a2e; color:#fff; font-size:10px; font-weight:700; text-align:center; padding:5px; letter-spacing:0.15em; text-transform:uppercase; margin-bottom:16px; border-radius:3px; }
+  /* Section */
+  .section { margin-bottom:16px; break-inside:avoid; }
+  .section-title { font-size:12px; font-weight:800; color:#fff; background:#1a1a2e; padding:5px 10px; margin-bottom:0; text-transform:uppercase; letter-spacing:0.06em; border-radius:3px 3px 0 0; }
+  .section-title.orange { background:#ff6b00; }
+  .section-title.navy { background:#1a1a2e; }
+  /* Table */
+  table { width:100%; border-collapse:collapse; font-size:11px; }
+  th { background:#f0f0f4; font-weight:700; padding:5px 8px; text-align:left; font-size:10px; text-transform:uppercase; letter-spacing:0.04em; color:#444; }
+  td { padding:5px 8px; border-bottom:1px solid #eee; vertical-align:top; }
+  tr:last-child td { border-bottom:none; }
+  /* Site info grid */
+  .info-grid { display:grid; grid-template-columns:140px 1fr; gap:4px 12px; padding:10px; background:#f8f8fc; border:1px solid #e0e0ee; border-radius:0 0 3px 3px; }
+  .info-label { font-weight:700; color:#555; font-size:10px; text-transform:uppercase; letter-spacing:0.04em; padding-top:2px; }
+  .info-value { color:#1a1a2e; line-height:1.5; }
+  /* Hours grid */
+  .hours-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; padding:10px; background:#f8f8fc; border:1px solid #e0e0ee; border-radius:0 0 3px 3px; }
+  .hours-card { text-align:center; padding:10px; background:#fff; border:1px solid #ddd; border-radius:4px; }
+  .hours-num { font-size:22px; font-weight:900; color:#ff6b00; }
+  .hours-label { font-size:9px; color:#888; text-transform:uppercase; letter-spacing:0.05em; margin-top:2px; }
+  .hours-sub { font-size:9px; color:#aaa; margin-top:1px; }
+  /* Exclusions */
+  .excl-box { background:#fff8f0; border:1px solid #ffd0a0; border-radius:0 0 3px 3px; padding:10px 14px; }
+  .excl-box ul { padding-left:18px; line-height:1.9; color:#555; }
+  /* Print */
+  @media print {
+    body { font-size:10.5px; }
+    .no-print { display:none !important; }
+    .section { break-inside:avoid; }
+  }
+</style>
+</head><body>
+<div class="no-print" style="background:#1a1a2e;padding:10px 20px;display:flex;justify-content:space-between;align-items:center">
+  <span style="color:#fff;font-weight:700;font-size:13px">📦 Handover Pack — ${esc(q.ref)}</span>
+  <button onclick="window.print()" style="background:#ff6b00;color:#fff;border:none;padding:8px 20px;border-radius:4px;font-size:13px;cursor:pointer;font-weight:600">🖨 Print / Save PDF</button>
+</div>
+
+<div class="page">
+  <!-- Header -->
+  <div class="hdr">
+    <div class="hdr-left">
+      <h1>BAMA Fabrication Ltd <span class="badge">Handover Pack</span></h1>
+      <div class="hdr-meta">
+        <strong>Client:</strong> ${esc(q.company||'—')}<br>
+        <strong>Contact:</strong> ${esc(q.contact||'—')}${q.phone ? ' · ' + esc(q.phone) : ''}${q.email ? ' · ' + esc(q.email) : ''}<br>
+        <strong>Project:</strong> ${esc(q.qScope||q.comments||'—')}
+      </div>
+    </div>
+    <div class="hdr-right">
+      <div class="ref-box">${esc(q.ref)}${q.revision ? ' Rev ' + esc(q.revision) : ''}</div>
+      <div class="date-line">Prepared: ${today}</div>
+    </div>
+  </div>
+
+  <div class="confidential">Internal Document — Not for Client Distribution</div>
+
+  <!-- Site Info -->
+  <div class="section">
+    <div class="section-title orange">📍 Site Information</div>
+    <div class="info-grid">
+      <div class="info-label">Site Address</div>
+      <div class="info-value">${esc(siteAddr)}</div>
+      ${travelInfo ? `<div class="info-label">Travel</div><div class="info-value">${esc(travelInfo)}</div>` : ''}
+      <div class="info-label">BOQ / Drawing Ref</div>
+      <div class="info-value">${esc(q.boqRef||'—')}</div>
+      <div class="info-label">Quote Value</div>
+      <div class="info-value" style="font-weight:700;color:#ff6b00;font-size:13px">${fmt(computed.total)}</div>
+    </div>
+  </div>
+
+  <!-- Production Hours -->
+  <div class="section">
+    <div class="section-title navy">⚙️ Production Hours</div>
+    <div class="hours-grid">
+      <div class="hours-card">
+        <div class="hours-num">${q.fabHours||0}</div>
+        <div class="hours-label">Fabrication</div>
+        <div class="hours-sub">@ £${q.fabRate||45}/hr</div>
+      </div>
+      <div class="hours-card">
+        <div class="hours-num">${q.fabpackHours||0}</div>
+        <div class="hours-label">Approval &amp; Fab Pack</div>
+        <div class="hours-sub">@ £${q.fabpackRate||50}/hr</div>
+      </div>
+      <div class="hours-card">
+        <div class="hours-num">${(q.structEngHours||0) + (q.designHours||0)}</div>
+        <div class="hours-label">Design / Eng</div>
+        <div class="hours-sub">${q.structEngHours>0 ? 'Struct Eng: '+q.structEngHours+'h · ' : ''}${q.designHours>0 ? 'Draughtsman: '+q.designHours+'h' : q.structEngHours>0 ? '' : '—'}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Steel Takeoff Summary -->
+  <div class="section">
+    <div class="section-title navy">⚖️ Steel Tonnage</div>
+    <table>
+      <tr><th>Profile Group</th><th style="text-align:right">Weight</th><th style="text-align:right">%</th></tr>
+      ${takeoffSummaryHTML}
+    </table>
+  </div>
+
+  <!-- Installation Labour -->
+  <div class="section">
+    <div class="section-title orange">👷 Installation Labour</div>
+    <table>
+      <tr><th>Role</th><th style="text-align:center">Qty</th><th style="text-align:center">Days</th><th style="text-align:right">Rate</th><th style="text-align:right">Cost</th></tr>
+      ${labourHTML}
+    </table>
+  </div>
+
+  <!-- Plant & Equipment -->
+  <div class="section">
+    <div class="section-title navy">🏗️ Plant &amp; Equipment</div>
+    <table>
+      <tr><th>Item</th><th colspan="3">Detail</th><th style="text-align:right">Cost</th></tr>
+      ${plantHTML}
+    </table>
+  </div>
+
+  <!-- Finishing -->
+  <div class="section">
+    <div class="section-title navy">🎨 Finishing</div>
+    <table>
+      <tr><th>Type</th><th style="text-align:center">Qty</th><th style="text-align:right">Rate</th><th></th><th style="text-align:right">Cost</th></tr>
+      ${paintHTML}
+    </table>
+  </div>
+
+  <!-- Survey -->
+  <div class="section">
+    <div class="section-title navy">📐 Survey</div>
+    <table>
+      <tr><th>Attendees</th><th style="text-align:center">Visits</th><th colspan="3"></th></tr>
+      ${surveyHTML}
+    </table>
+  </div>
+
+  <!-- Prelims -->
+  <div class="section">
+    <div class="section-title navy">📋 Prelims</div>
+    <table>
+      <tr><th>Item</th><th colspan="3">Detail</th><th style="text-align:right">Cost</th></tr>
+      ${prelimHTML}
+    </table>
+  </div>
+
+  <!-- Exclusions -->
+  <div class="section">
+    <div class="section-title orange">⚠️ Exclusions &amp; Project T&amp;Cs</div>
+    <div class="excl-box">
+      <ul>${exclusionsHTML}</ul>
+    </div>
+  </div>
+
+</div><!-- /page -->
+</body></html>`;
+
+  const win = window.open('', '_blank', 'width=960,height:1100');
+  win.document.write(html);
+  win.document.close();
 }
 
 // ============================================================
