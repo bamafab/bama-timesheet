@@ -7761,9 +7761,9 @@ renderSidebar();
 
 <!-- ===== QUICK QUOTE MODAL ===== -->
 <div class="modal-overlay" id="quickQuoteModal">
-  <div class="modal" style="max-width:540px;padding:0">
+  <div class="modal" style="max-width:580px;padding:0;max-height:92vh;overflow-y:auto">
     <!-- Header -->
-    <div style="padding:14px 20px;border-bottom:1px solid var(--border);background:var(--surface);border-radius:8px 8px 0 0">
+    <div style="padding:14px 20px;border-bottom:1px solid var(--border);background:var(--surface);border-radius:8px 8px 0 0;position:sticky;top:0;z-index:10">
       <div style="display:flex;align-items:center;justify-content:space-between">
         <div>
           <div style="font-size:16px;font-weight:700;color:var(--text)">⚡ Quick Quote</div>
@@ -7776,21 +7776,41 @@ renderSidebar();
     <!-- Body -->
     <div style="padding:20px;display:flex;flex-direction:column;gap:18px">
 
-      <!-- Tonnage -->
+      <!-- Weight input method -->
       <div>
+        <label style="font-size:12px;font-weight:600;color:var(--text);display:block;margin-bottom:8px">How do you know the weight?</label>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px" id="qq-method-tiles">
+          <div class="wiz-tile active" data-method="tonnage" onclick="qqSelectTile(this,'qq-method-tiles');qqToggleMethod()">I know the tonnage</div>
+          <div class="wiz-tile" data-method="members" onclick="qqSelectTile(this,'qq-method-tiles');qqToggleMethod()">I know beams / columns</div>
+        </div>
+      </div>
+
+      <!-- Tonnage input -->
+      <div id="qq-tonnage-row">
         <label style="font-size:12px;font-weight:600;color:var(--text);display:block;margin-bottom:6px">Estimated Tonnage (t)</label>
         <input type="number" id="qq-tonnage" min="0.1" step="0.1" placeholder="e.g. 12.5"
           style="width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:14px;box-sizing:border-box"
           oninput="qqCalc()">
       </div>
 
+      <!-- Members input -->
+      <div id="qq-members-row" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <label style="font-size:12px;font-weight:600;color:var(--text)">Beams &amp; Columns</label>
+          <button onclick="qqAddMember()" style="background:none;border:1px solid var(--accent);border-radius:5px;color:var(--accent);font-size:11px;padding:3px 10px;cursor:pointer">＋ Add row</button>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Leave profile blank to use dominant profile type for weight estimate</div>
+        <div id="qq-members-list" style="display:flex;flex-direction:column;gap:6px"></div>
+        <div id="qq-members-total" style="font-size:12px;color:var(--muted);margin-top:8px;text-align:right"></div>
+      </div>
+
       <!-- Profile type -->
       <div>
         <label style="font-size:12px;font-weight:600;color:var(--text);display:block;margin-bottom:8px">Dominant Profile Type</label>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px" id="qq-profile-tiles">
-          <div class="wiz-tile active" data-profile="ub_uc" onclick="qqSelectTile(this,'qq-profile-tiles')">UB / UC<br><span style="font-size:10px;color:var(--muted)">8 hrs/t · £1.10/kg</span></div>
-          <div class="wiz-tile" data-profile="pfc_rsa" onclick="qqSelectTile(this,'qq-profile-tiles')">PFC / Angles<br><span style="font-size:10px;color:var(--muted)">12 hrs/t · £1.30/kg</span></div>
-          <div class="wiz-tile" data-profile="hollow" onclick="qqSelectTile(this,'qq-profile-tiles')">RHS / SHS / CHS<br><span style="font-size:10px;color:var(--muted)">14 hrs/t · £1.40/kg</span></div>
+          <div class="wiz-tile active" data-profile="ub_uc" onclick="qqSelectTile(this,'qq-profile-tiles');qqCalc()">UB / UC<br><span class="qq-profile-hint" data-profile="ub_uc" style="font-size:10px;color:var(--muted)">8 hrs/t</span></div>
+          <div class="wiz-tile" data-profile="pfc_rsa" onclick="qqSelectTile(this,'qq-profile-tiles');qqCalc()">PFC / Angles<br><span class="qq-profile-hint" data-profile="pfc_rsa" style="font-size:10px;color:var(--muted)">12 hrs/t</span></div>
+          <div class="wiz-tile" data-profile="hollow" onclick="qqSelectTile(this,'qq-profile-tiles');qqCalc()">RHS / SHS / CHS<br><span class="qq-profile-hint" data-profile="hollow" style="font-size:10px;color:var(--muted)">14 hrs/t</span></div>
         </div>
       </div>
 
@@ -7798,29 +7818,44 @@ renderSidebar();
       <div>
         <label style="font-size:12px;font-weight:600;color:var(--text);display:block;margin-bottom:8px">Scope</label>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px" id="qq-scope-tiles">
-          <div class="wiz-tile active" data-scope="supply_only" onclick="qqSelectTile(this,'qq-scope-tiles')">Supply Only</div>
-          <div class="wiz-tile" data-scope="supply_install" onclick="qqSelectTile(this,'qq-scope-tiles')">Supply &amp; Install</div>
+          <div class="wiz-tile active" data-scope="supply_only" onclick="qqSelectTile(this,'qq-scope-tiles');qqToggleInstall()">Supply Only</div>
+          <div class="wiz-tile" data-scope="supply_install" onclick="qqSelectTile(this,'qq-scope-tiles');qqToggleInstall()">Supply &amp; Install</div>
         </div>
       </div>
 
-      <!-- Install days (shown only when supply & install) -->
+      <!-- Install days -->
       <div id="qq-install-row" style="display:none">
-        <label style="font-size:12px;font-weight:600;color:var(--text);display:block;margin-bottom:6px">Installation Days</label>
-        <div style="display:flex;align-items:center;gap:10px">
-          <input type="number" id="qq-inst-days" min="1" step="1" value="5"
-            style="width:100px;padding:9px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:14px"
-            oninput="qqCalc()">
-          <span style="font-size:12px;color:var(--muted)">× 2 operatives @ £80–95/day</span>
+        <label style="font-size:12px;font-weight:600;color:var(--text);display:block;margin-bottom:6px">Installation</label>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:6px">
+            <input type="number" id="qq-inst-days" min="1" step="1" value="5"
+              style="width:70px;padding:9px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:14px"
+              oninput="qqCalc()">
+            <span style="font-size:12px;color:var(--muted)">days</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <input type="number" id="qq-inst-erectors" min="1" step="1" value="2"
+              style="width:55px;padding:9px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:14px"
+              oninput="qqCalc()">
+            <span style="font-size:12px;color:var(--muted)">erectors</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <input type="number" id="qq-inst-supervisors" min="0" step="1" value="1"
+              style="width:55px;padding:9px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:14px"
+              oninput="qqCalc()">
+            <span style="font-size:12px;color:var(--muted)">supervisor</span>
+          </div>
         </div>
+        <div id="qq-install-rates-hint" style="font-size:11px;color:var(--muted);margin-top:5px"></div>
       </div>
 
       <!-- Finish -->
       <div>
         <label style="font-size:12px;font-weight:600;color:var(--text);display:block;margin-bottom:8px">Finish</label>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px" id="qq-finish-tiles">
-          <div class="wiz-tile active" data-finish="primer" onclick="qqSelectTile(this,'qq-finish-tiles')">Primer<br><span style="font-size:10px;color:var(--muted)">£180/t</span></div>
-          <div class="wiz-tile" data-finish="galv" onclick="qqSelectTile(this,'qq-finish-tiles')">Galvanising<br><span style="font-size:10px;color:var(--muted)">£750/t</span></div>
-          <div class="wiz-tile" data-finish="none" onclick="qqSelectTile(this,'qq-finish-tiles')">None / TBC<br><span style="font-size:10px;color:var(--muted)">—</span></div>
+          <div class="wiz-tile active" data-finish="primer" onclick="qqSelectTile(this,'qq-finish-tiles');qqCalc()">Primer<br><span style="font-size:10px;color:var(--muted)">£180/t</span></div>
+          <div class="wiz-tile" data-finish="galv" onclick="qqSelectTile(this,'qq-finish-tiles');qqCalc()">Galvanising<br><span style="font-size:10px;color:var(--muted)">£750/t</span></div>
+          <div class="wiz-tile" data-finish="none" onclick="qqSelectTile(this,'qq-finish-tiles');qqCalc()">None / TBC<br><span style="font-size:10px;color:var(--muted)">—</span></div>
         </div>
       </div>
 
@@ -7839,6 +7874,7 @@ renderSidebar();
       <div id="qq-result" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px">
         <div style="font-size:11px;font-weight:600;color:var(--muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:0.05em">Estimate</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px">
+          <div style="color:var(--muted)">Tonnage</div><div id="qq-r-tonnes" style="text-align:right;font-weight:600">—</div>
           <div style="color:var(--muted)">Material</div><div id="qq-r-material" style="text-align:right;font-weight:600">—</div>
           <div style="color:var(--muted)">Fabrication</div><div id="qq-r-fab" style="text-align:right;font-weight:600">—</div>
           <div id="qq-r-install-label" style="color:var(--muted);display:none">Installation</div><div id="qq-r-install" style="text-align:right;font-weight:600;display:none">—</div>
@@ -7856,7 +7892,7 @@ renderSidebar();
     </div>
 
     <!-- Footer -->
-    <div style="padding:14px 20px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:8px">
+    <div style="padding:14px 20px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:8px;background:var(--surface);border-radius:0 0 8px 8px;position:sticky;bottom:0">
       <button onclick="closeQuickQuote()" style="background:none;border:1px solid var(--border);border-radius:6px;padding:8px 16px;color:var(--text);cursor:pointer;font-size:13px">Cancel</button>
       <button id="qq-save-btn" onclick="qqSaveAsDraft()" disabled
         style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:9px 20px;font-weight:600;cursor:pointer;font-size:13px;opacity:0.5">
@@ -7869,22 +7905,49 @@ renderSidebar();
 <script>
 // ===== QUICK QUOTE =====
 let _qqResult = null;
+let _qqMembers = [];
+
+function qqGetRates() {
+  // Pull live rates from calcs inputs if available, else fall back to defaults
+  return {
+    matRates: {
+      ub_uc:   parseFloat(document.getElementById('rate-ub-uc')?.value)  || 1.10,
+      pfc_rsa: parseFloat(document.getElementById('rate-angle')?.value)  || 1.30,
+      hollow:  parseFloat(document.getElementById('rate-hollow')?.value) || 1.40
+    },
+    fabRate:      parseFloat(document.getElementById('fab-rate')?.value)      || 45,
+    erectorRate:  200,
+    supervisorRate: 300
+  };
+}
 
 function openQuickQuote() {
   _qqResult = null;
+  _qqMembers = [];
   document.getElementById('qq-tonnage').value = '';
   document.getElementById('qq-inst-days').value = 5;
+  document.getElementById('qq-inst-erectors').value = 2;
+  document.getElementById('qq-inst-supervisors').value = 1;
   document.getElementById('qq-margin').value = 20;
   document.getElementById('qq-margin-label').textContent = '20%';
   document.getElementById('qq-result').style.display = 'none';
   document.getElementById('qq-save-btn').disabled = true;
   document.getElementById('qq-save-btn').style.opacity = '0.5';
-  // reset tiles
-  ['qq-profile-tiles','qq-scope-tiles','qq-finish-tiles'].forEach(id => {
-    const tiles = document.querySelectorAll(`#${id} .wiz-tile`);
-    tiles.forEach((t,i) => t.classList.toggle('active', i===0));
-  });
+  document.getElementById('qq-members-list').innerHTML = '';
+  document.getElementById('qq-members-total').textContent = '';
+  document.getElementById('qq-members-row').style.display = 'none';
+  document.getElementById('qq-tonnage-row').style.display = '';
   document.getElementById('qq-install-row').style.display = 'none';
+
+  // Reset tiles
+  ['qq-method-tiles','qq-profile-tiles','qq-scope-tiles','qq-finish-tiles'].forEach(id => {
+    document.querySelectorAll(`#${id} .wiz-tile`).forEach((t,i) => t.classList.toggle('active', i===0));
+  });
+
+  // Update profile hints with live rates
+  qqUpdateProfileHints();
+  qqUpdateInstallHint();
+
   document.getElementById('quickQuoteModal').classList.add('active');
 }
 
@@ -7892,22 +7955,121 @@ function closeQuickQuote() {
   document.getElementById('quickQuoteModal').classList.remove('active');
 }
 
+function qqUpdateProfileHints() {
+  const r = qqGetRates();
+  const hints = { ub_uc: `8 hrs/t · £${r.matRates.ub_uc}/kg`, pfc_rsa: `12 hrs/t · £${r.matRates.pfc_rsa}/kg`, hollow: `14 hrs/t · £${r.matRates.hollow}/kg` };
+  document.querySelectorAll('.qq-profile-hint').forEach(el => {
+    el.textContent = hints[el.dataset.profile] || '';
+  });
+}
+
+function qqUpdateInstallHint() {
+  const r = qqGetRates();
+  const el = document.getElementById('qq-install-rates-hint');
+  if (el) el.textContent = `Rates: erector £${r.erectorRate}/day · supervisor £${r.supervisorRate}/day`;
+}
+
 function qqSelectTile(el, groupId) {
   document.querySelectorAll(`#${groupId} .wiz-tile`).forEach(t => t.classList.remove('active'));
   el.classList.add('active');
-  // show/hide install days
-  if (groupId === 'qq-scope-tiles') {
-    const isInstall = el.dataset.scope === 'supply_install';
-    document.getElementById('qq-install-row').style.display = isInstall ? '' : 'none';
-    const rInst = document.getElementById('qq-r-install');
-    const rInstL = document.getElementById('qq-r-install-label');
-    if (rInst) { rInst.style.display = isInstall ? '' : 'none'; rInstL.style.display = isInstall ? '' : 'none'; }
-  }
+}
+
+function qqToggleMethod() {
+  const method = document.querySelector('#qq-method-tiles .wiz-tile.active')?.dataset.method || 'tonnage';
+  document.getElementById('qq-tonnage-row').style.display = method === 'tonnage' ? '' : 'none';
+  document.getElementById('qq-members-row').style.display = method === 'members' ? '' : 'none';
+  if (method === 'members' && _qqMembers.length === 0) qqAddMember();
   qqCalc();
 }
 
+function qqToggleInstall() {
+  const isInstall = document.querySelector('#qq-scope-tiles .wiz-tile.active')?.dataset.scope === 'supply_install';
+  document.getElementById('qq-install-row').style.display = isInstall ? '' : 'none';
+  const rInst = document.getElementById('qq-r-install');
+  const rInstL = document.getElementById('qq-r-install-label');
+  if (rInst) { rInst.style.display = isInstall ? '' : 'none'; rInstL.style.display = isInstall ? '' : 'none'; }
+  qqCalc();
+}
+
+function qqAddMember() {
+  const id = Date.now() + Math.random();
+  _qqMembers.push({ id, profile: '', length: '', qty: 1 });
+  qqRenderMembers();
+}
+
+function qqRemoveMember(id) {
+  _qqMembers = _qqMembers.filter(m => m.id !== id);
+  qqRenderMembers();
+  qqCalc();
+}
+
+function qqRenderMembers() {
+  const list = document.getElementById('qq-members-list');
+  list.innerHTML = _qqMembers.map(m => `
+    <div style="display:grid;grid-template-columns:2fr 1fr 60px 28px;gap:6px;align-items:center">
+      <input type="text" placeholder="Profile e.g. UC203x203x60" value="${m.profile}"
+        style="padding:7px 10px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);font-size:12px"
+        oninput="qqMemberUpdate(${m.id},'profile',this.value)">
+      <input type="number" placeholder="Length (mm)" value="${m.length}" min="0" step="100"
+        style="padding:7px 10px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);font-size:12px"
+        oninput="qqMemberUpdate(${m.id},'length',this.value)">
+      <input type="number" placeholder="Qty" value="${m.qty}" min="1" step="1"
+        style="padding:7px 10px;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);font-size:12px"
+        oninput="qqMemberUpdate(${m.id},'qty',this.value)">
+      <button onclick="qqRemoveMember(${m.id})" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;padding:0;line-height:1">×</button>
+    </div>
+  `).join('');
+}
+
+function qqMemberUpdate(id, field, val) {
+  const m = _qqMembers.find(m => m.id === id);
+  if (!m) return;
+  m[field] = field === 'qty' ? (parseInt(val)||1) : (field === 'length' ? (parseFloat(val)||0) : val);
+  qqCalc();
+}
+
+function qqCalcMemberTonnage() {
+  // Resolve kg/m for each member row, sum to total kg
+  let totalKg = 0;
+  const profile = document.querySelector('#qq-profile-tiles .wiz-tile.active')?.dataset.profile || 'ub_uc';
+  // fallback kg/m by profile when section not in DB
+  const fallbackKgm = { ub_uc: 50, pfc_rsa: 20, hollow: 25 };
+
+  _qqMembers.forEach(m => {
+    if (!m.length || m.length <= 0) return;
+    const lenM = m.length / 1000;
+    let kgm = null;
+    if (m.profile) {
+      // Try exact lookup
+      const key = m.profile.trim().toUpperCase().replace(/[*×]/g,'x').replace(/\s+/g,'');
+      kgm = STEEL_KGM[key] || null;
+      // If not found, try to parse weight from end of designation e.g. UC203x203x60 → 60
+      if (!kgm) {
+        const parts = key.split('x');
+        const lastNum = parseFloat(parts[parts.length-1]);
+        if (!isNaN(lastNum) && lastNum > 0 && lastNum < 1000) kgm = lastNum;
+      }
+    }
+    if (!kgm) kgm = fallbackKgm[profile] || 50;
+    totalKg += kgm * lenM * (m.qty || 1);
+  });
+
+  // Update total display
+  const tonnes = totalKg / 1000;
+  const el = document.getElementById('qq-members-total');
+  if (el) el.textContent = _qqMembers.length > 0 ? `Estimated weight: ~${tonnes.toFixed(2)}t (${Math.round(totalKg).toLocaleString('en-GB')} kg)` : '';
+  return tonnes;
+}
+
 function qqCalc() {
-  const tonnes = parseFloat(document.getElementById('qq-tonnage').value) || 0;
+  const method = document.querySelector('#qq-method-tiles .wiz-tile.active')?.dataset.method || 'tonnage';
+  let tonnes = 0;
+  if (method === 'tonnage') {
+    tonnes = parseFloat(document.getElementById('qq-tonnage').value) || 0;
+  } else {
+    tonnes = qqCalcMemberTonnage();
+  }
+
   if (tonnes <= 0) {
     document.getElementById('qq-result').style.display = 'none';
     document.getElementById('qq-save-btn').disabled = true;
@@ -7915,46 +8077,39 @@ function qqCalc() {
     _qqResult = null;
     return;
   }
+
   const kg = tonnes * 1000;
+  const r  = qqGetRates();
   const profile = document.querySelector('#qq-profile-tiles .wiz-tile.active')?.dataset.profile || 'ub_uc';
-  const scope    = document.querySelector('#qq-scope-tiles .wiz-tile.active')?.dataset.scope   || 'supply_only';
-  const finish   = document.querySelector('#qq-finish-tiles .wiz-tile.active')?.dataset.finish || 'primer';
-  const margin   = parseInt(document.getElementById('qq-margin').value) || 20;
-  const instDays = parseInt(document.getElementById('qq-inst-days').value) || 5;
+  const scope   = document.querySelector('#qq-scope-tiles .wiz-tile.active')?.dataset.scope   || 'supply_only';
+  const finish  = document.querySelector('#qq-finish-tiles .wiz-tile.active')?.dataset.finish || 'primer';
+  const margin  = parseInt(document.getElementById('qq-margin').value) || 20;
+  const instDays       = parseInt(document.getElementById('qq-inst-days').value)        || 5;
+  const instErectors   = parseInt(document.getElementById('qq-inst-erectors').value)    || 2;
+  const instSupervisors= parseInt(document.getElementById('qq-inst-supervisors').value) || 1;
 
-  // Material cost
-  const matRates = { ub_uc: 1.10, pfc_rsa: 1.30, hollow: 1.40 };
-  const matCost = kg * (matRates[profile] || 1.10);
-
-  // Fab cost
+  const matCost  = kg * (r.matRates[profile] || 1.10);
   const fabHrsPerT = { ub_uc: 8, pfc_rsa: 12, hollow: 14 };
-  const fabHrs = tonnes * (fabHrsPerT[profile] || 8);
-  const fabCost = fabHrs * 45; // £45/hr default
-
-  // Installation cost
-  let instCost = 0;
-  if (scope === 'supply_install') {
-    // 2 erectors @ £80/day + 1 supervisor @ £95/day (every 5+ days) = avg £87.5/person
-    instCost = instDays * 2 * 87.5;
-  }
-
-  // Finish cost
+  const fabCost  = tonnes * (fabHrsPerT[profile] || 8) * r.fabRate;
+  const instCost = scope === 'supply_install'
+    ? instDays * (instErectors * r.erectorRate + instSupervisors * r.supervisorRate)
+    : 0;
   const finishRates = { primer: 180, galv: 750, none: 0 };
   const finishCost = tonnes * (finishRates[finish] || 0);
-
   const subtotal = matCost + fabCost + instCost + finishCost;
-  const total = subtotal / (1 - margin / 100);
+  const total    = subtotal / (1 - margin / 100);
 
-  _qqResult = { tonnes, kg, profile, scope, finish, margin, instDays, matCost, fabCost, instCost, finishCost, subtotal, total };
+  _qqResult = { tonnes, kg, method, profile, scope, finish, margin, instDays, instErectors, instSupervisors, matCost, fabCost, instCost, finishCost, subtotal, total, rates: r };
 
   const fmt = v => '£' + Math.round(v).toLocaleString('en-GB');
+  document.getElementById('qq-r-tonnes').textContent  = tonnes.toFixed(2) + 't';
   document.getElementById('qq-r-material').textContent = fmt(matCost);
-  document.getElementById('qq-r-fab').textContent = fmt(fabCost);
-  document.getElementById('qq-r-install').textContent = scope === 'supply_install' ? fmt(instCost) : '—';
-  document.getElementById('qq-r-finish').textContent = finishCost > 0 ? fmt(finishCost) : '—';
-  document.getElementById('qq-r-total').textContent = fmt(total);
-  document.getElementById('qq-r-cost').textContent = fmt(subtotal);
-  document.getElementById('qq-r-pt').textContent = fmt(total / tonnes);
+  document.getElementById('qq-r-fab').textContent      = fmt(fabCost);
+  document.getElementById('qq-r-install').textContent  = scope === 'supply_install' ? fmt(instCost) : '—';
+  document.getElementById('qq-r-finish').textContent   = finishCost > 0 ? fmt(finishCost) : '—';
+  document.getElementById('qq-r-total').textContent    = fmt(total);
+  document.getElementById('qq-r-cost').textContent     = fmt(subtotal);
+  document.getElementById('qq-r-pt').textContent       = fmt(total / tonnes);
 
   document.getElementById('qq-result').style.display = '';
   document.getElementById('qq-save-btn').disabled = false;
@@ -7963,15 +8118,16 @@ function qqCalc() {
 
 function qqSaveAsDraft() {
   if (!_qqResult) return;
-  const r = _qqResult;
+  const r2 = _qqResult;
   const now = new Date();
-  const yy = String(now.getFullYear()).slice(2);
-  const mm = String(now.getMonth()+1).padStart(2,'0');
+  const yy  = String(now.getFullYear()).slice(2);
+  const mm  = String(now.getMonth()+1).padStart(2,'0');
   const seq = String(quotes.filter(q=>q.ref.startsWith('Q'+yy+mm)).length + 1).padStart(2,'0');
   const ref = `Q${yy}${mm}${seq}`;
 
   const profileLabels = { ub_uc: 'UB/UC', pfc_rsa: 'PFC/Angles', hollow: 'RHS/SHS/CHS' };
   const finishLabels  = { primer: 'Primer', galv: 'Galvanising', none: 'None/TBC' };
+  const scopeLabel    = r2.scope === 'supply_install' ? `Supply & Install (${r2.instDays} days, ${r2.instErectors} erectors, ${r2.instSupervisors} supervisor)` : 'Supply Only';
 
   const q = {
     id: Date.now().toString(),
@@ -7979,37 +8135,35 @@ function qqSaveAsDraft() {
     date: now.toISOString().slice(0,10),
     validUntil: new Date(now.getTime()+14*86400000).toISOString().slice(0,10),
     preparedBy: 'Mateusz Braczyk',
-    company: '', contact: '', email: '', phone: '',
-    siteAddress: '',
-    comments: `Quick Quote — ${r.tonnes}t ${profileLabels[r.profile]}, ${r.scope === 'supply_install' ? 'Supply & Install (' + r.instDays + ' days)' : 'Supply Only'}, ${finishLabels[r.finish]}, ${r.margin}% margin`,
+    company: '', contact: '', email: '', phone: '', siteAddress: '',
+    comments: `Quick Quote — ${r2.tonnes.toFixed(2)}t ${profileLabels[r2.profile]}, ${scopeLabel}, ${finishLabels[r2.finish]}, ${r2.margin}% margin`,
     qScope: '', boqRef: '', boqFile: '', projectTCs: '',
     takeoff: [], areas: [],
     fittingsPct: 10, fittingsRate: 1.30, miscMaterial: 0, miscMaterialNote: '',
     materialLinks: [],
-    instDays: r.scope === 'supply_install' ? r.instDays : 0,
-    instOperatives: 2, globalDays: true,
-    labourRows: r.scope === 'supply_install' ? [
-      { id: Date.now()+'_l1', role: 'Erector',    qty: 2, rate: 80,  days: r.instDays, locked: false },
-      { id: Date.now()+'_l2', role: 'Supervisor',  qty: 1, rate: 95,  days: r.instDays, locked: false }
+    instDays: r2.scope === 'supply_install' ? r2.instDays : 0,
+    instOperatives: r2.instErectors + r2.instSupervisors, globalDays: true,
+    labourRows: r2.scope === 'supply_install' ? [
+      { id: Date.now()+'_l1', role: 'Erector',    qty: r2.instErectors,    rate: r2.rates.erectorRate,    days: r2.instDays, locked: false },
+      { id: Date.now()+'_l2', role: 'Supervisor',  qty: r2.instSupervisors, rate: r2.rates.supervisorRate, days: r2.instDays, locked: false }
     ] : [],
     plantRows: [], paintRows: [], deliveryRows: [], prelimRows: [], consumableRows: [], surveyVisitRows: [],
-    fabHours: Math.round(r.tonnes * (r.profile === 'ub_uc' ? 8 : r.profile === 'pfc_rsa' ? 12 : 14)),
-    fabRate: 45, fabpackHours: 0, fabpackRate: 50,
+    fabHours: Math.round(r2.tonnes * (r2.profile === 'ub_uc' ? 8 : r2.profile === 'pfc_rsa' ? 12 : 14)),
+    fabRate: r2.rates.fabRate, fabpackHours: 0, fabpackRate: 50,
     structEngHours: 0, structEngRate: 90, architectHours: 0, architectRate: 90, designHours: 0, designRate: 50,
     surveyParking: 0, ralColour: '', ralFinish: 'tbc',
     purlinM: 0, purlinRate: 0,
-    margin: r.margin, showDeposit: false, depositPct: 60,
+    margin: r2.margin, showDeposit: false, depositPct: 60,
     standardLines: getDefaultStandardLines(),
     customLines: [],
-    _qqSource: true // flag so we know it started as quick quote
+    _qqSource: true
   };
 
-  // Pre-fill quotation lines with the estimates
-  q.standardLines.find(l=>l.key==='material').price      = Math.round(r.matCost);
-  q.standardLines.find(l=>l.key==='fabrication').price   = Math.round(r.fabCost);
-  q.standardLines.find(l=>l.key==='installation').price  = Math.round(r.instCost);
-  if (r.finish === 'primer')     q.standardLines.find(l=>l.key==='painting').price    = Math.round(r.finishCost);
-  if (r.finish === 'galv')       q.standardLines.find(l=>l.key==='galvanising').price = Math.round(r.finishCost);
+  q.standardLines.find(l=>l.key==='material').price      = Math.round(r2.matCost);
+  q.standardLines.find(l=>l.key==='fabrication').price   = Math.round(r2.fabCost);
+  q.standardLines.find(l=>l.key==='installation').price  = Math.round(r2.instCost);
+  if (r2.finish === 'primer') q.standardLines.find(l=>l.key==='painting').price    = Math.round(r2.finishCost);
+  if (r2.finish === 'galv')   q.standardLines.find(l=>l.key==='galvanising').price = Math.round(r2.finishCost);
 
   quotes.push(q);
   saveAll();
@@ -8018,632 +8172,8 @@ function qqSaveAsDraft() {
   closeQuickQuote();
 }
 </script>
+
+</script>
 </body>
 </html>
-<!-- PDF INJECTION — appended -->
-<script>
-
-// ============================================================
-// SECTION AUTOCOMPLETE
-// ============================================================
-// Build sorted list of all known section designations
-const STEEL_SECTIONS = Object.keys(STEEL_KGM)
-  .filter(k => !k.includes('*'))  // keep x-form only, no duplicates
-  .sort();
-
-let _acActiveIdx = -1;
-let _acCurrentRow = -1;
-
-function onTakeoffTypeInput(i, val) {
-  _acCurrentRow = i;
-  _acActiveIdx = -1;
-  const wrap = document.getElementById('ac-wrap-'+i);
-  if (!wrap) return;
-  closeAllDropdowns();
-  if (!val || val.length < 2) return;
-
-  const q = val.trim().toUpperCase().replace(/[*×]/g,'x').replace(/\s+/g,'');
-
-  // Fuzzy match: score each section by how well it matches
-  function fuzzyScore(section, query) {
-    const s = section.toUpperCase();
-    // Exact substring = highest score
-    if (s.includes(query)) return 100 + (100 - s.indexOf(query));
-    // All chars of query appear in order = medium score
-    let qi = 0;
-    for (let si = 0; si < s.length && qi < query.length; si++) {
-      if (s[si] === query[qi]) qi++;
-    }
-    if (qi === query.length) return 50;
-    // Partial digit match — useful for "20313330" finding UB203x133x30
-    const digits = query.replace(/[^0-9]/g,'');
-    if (digits.length >= 3 && s.replace(/[^0-9]/g,'').includes(digits)) return 30;
-    return 0;
-  }
-
-  const scored = STEEL_SECTIONS
-    .map(s => ({ s, score: fuzzyScore(s, q) }))
-    .filter(x => x.score > 0)
-    .sort((a,b) => b.score - a.score)
-    .slice(0, 40)
-    .map(x => x.s);
-  const matches = scored;
-  if (!matches.length) return;
-
-  const inp = wrap.querySelector('input');
-  const rect = inp.getBoundingClientRect();
-
-  const dd = document.createElement('div');
-  dd.className = 'ac-dropdown';
-  dd.id = 'ac-dd-'+i;
-  dd.style.cssText = `position:fixed;top:${rect.bottom+2}px;left:${rect.left}px;width:${Math.max(rect.width,240)}px;z-index:9999`;
-  dd.innerHTML = matches.map((s,idx) => {
-    const kgm = STEEL_KGM[s];
-    const highlighted = s.replace(new RegExp('('+q.replace(/x/gi,'[x*]')+')', 'i'), '<span class="ac-match">$1</span>');
-    return `<div class="ac-item" data-val="${s}" data-idx="${idx}"
-      onmousedown="selectSection(${i},'${s}')"
-      onmouseover="highlightAcItem(${i},${idx})">
-      ${highlighted} <span class="ac-kgm">${kgm ? kgm+' kg/m' : ''}</span>
-    </div>`;
-  }).join('');
-  document.body.appendChild(dd);
-}
-
-function onTakeoffTypeKey(e, i) {
-  const dd = document.getElementById('ac-dd-'+i);
-  if (!dd) return;
-  const items = dd.querySelectorAll('.ac-item');
-  if (e.key === 'ArrowDown') {
-    e.preventDefault();
-    _acActiveIdx = Math.min(_acActiveIdx+1, items.length-1);
-    items.forEach((el,idx) => el.classList.toggle('selected', idx===_acActiveIdx));
-    items[_acActiveIdx]?.scrollIntoView({block:'nearest'});
-  } else if (e.key === 'ArrowUp') {
-    e.preventDefault();
-    _acActiveIdx = Math.max(_acActiveIdx-1, 0);
-    items.forEach((el,idx) => el.classList.toggle('selected', idx===_acActiveIdx));
-    items[_acActiveIdx]?.scrollIntoView({block:'nearest'});
-  } else if (e.key === 'Enter' || e.key === 'Tab') {
-    if (_acActiveIdx >= 0 && items[_acActiveIdx]) {
-      e.preventDefault();
-      selectSection(i, items[_acActiveIdx].dataset.val);
-    } else if (e.key === 'Enter') {
-      // No dropdown selection — commit whatever is typed and move to length
-      e.preventDefault();
-      closeAllDropdowns();
-      const wrap = document.getElementById('ac-wrap-'+i);
-      const inp = wrap?.querySelector('input');
-      if (inp?.value) { updateTakeoffRow(i, 'type', inp.value); focusTakeoffCell(i, 'length'); }
-    } else {
-      closeAllDropdowns();
-    }
-  } else if (e.key === 'Escape') {
-    closeAllDropdowns();
-  }
-}
-
-function highlightAcItem(i, idx) {
-  _acActiveIdx = idx;
-  const dd = document.getElementById('ac-dd-'+i);
-  if (!dd) return;
-  dd.querySelectorAll('.ac-item').forEach((el,j) => el.classList.toggle('selected', j===idx));
-}
-
-function selectSection(i, val) {
-  closeAllDropdowns();
-  const wrap = document.getElementById('ac-wrap-'+i);
-  if (!wrap) return;
-  const inp = wrap.querySelector('input');
-  if (inp) inp.value = val;
-  updateTakeoffRow(i, 'type', val);
-  // Tab forward to length field
-  focusTakeoffCell(i, 'length');
-}
-
-// Navigate to a specific cell in the takeoff grid
-function focusTakeoffCell(rowIdx, col) {
-  // col order: type, length, qty, finish
-  const colMap = { type: 1, length: 2, qty: 3, finish: 4 };
-  const tbody = document.getElementById('takeoffBody');
-  if (!tbody || rowIdx >= tbody.rows.length) return;
-  const tr = tbody.rows[rowIdx];
-  if (!tr) return;
-  const cellIdx = colMap[col];
-  const cell = tr.cells[cellIdx];
-  if (!cell) return;
-  const input = cell.querySelector('input, select');
-  if (input) { input.focus(); input.select?.(); }
-}
-
-// Keyboard navigation across takeoff row columns
-function takeoffGridKey(e, rowIdx, col) {
-  // Tab moves to next column (browser handles forward tab naturally,
-  // we just need to handle Enter on the finish/qty column to add a new row)
-  if (e.key === 'Enter') {
-    e.preventDefault();
-    const colOrder = ['type','length','qty','finish'];
-    const curColIdx = colOrder.indexOf(col);
-    if (curColIdx < colOrder.length - 1) {
-      // Move to next column
-      focusTakeoffCell(rowIdx, colOrder[curColIdx + 1]);
-    } else {
-      // Last column — save and add new row
-      saveCurrentTakeoffRow(rowIdx);
-      addTakeoffRow();
-      // Focus type of the new (last) row
-      const q = getQuote();
-      if (q) {
-        setTimeout(() => focusTakeoffCell(q.takeoff.length - 1, 'type'), 30);
-      }
-    }
-  }
-  // Shift+Enter on any column also adds a new row
-  if (e.key === 'Enter' && e.shiftKey && col !== 'finish') {
-    e.preventDefault();
-    saveCurrentTakeoffRow(rowIdx);
-    addTakeoffRow();
-    const q = getQuote();
-    if (q) setTimeout(() => focusTakeoffCell(q.takeoff.length - 1, 'type'), 30);
-  }
-}
-
-// Snapshot current DOM values for a row back to the quote
-function saveCurrentTakeoffRow(i) {
-  const q = getQuote(); if (!q || !q.takeoff[i]) return;
-  const tbody = document.getElementById('takeoffBody');
-  if (!tbody) return;
-  const tr = tbody.rows[i]; if (!tr) return;
-  const lenInput = tr.cells[2]?.querySelector('input');
-  const qtyInput = tr.cells[3]?.querySelector('input');
-  if (lenInput) updateTakeoffRow(i, 'length', lenInput.value);
-  if (qtyInput) updateTakeoffRow(i, 'qty', qtyInput.value);
-  saveAll();
-}
-
-function closeAllDropdowns() {
-  document.querySelectorAll('.ac-dropdown').forEach(d => d.remove());
-  _acActiveIdx = -1;
-}
-
-// Close on click outside
-document.addEventListener('mousedown', e => {
-  if (!e.target.closest('.ac-wrap')) closeAllDropdowns();
-});
-
-// ============================================================
-// PDF GENERATION
-// ============================================================
-// BAMA logo as inline SVG (matches the red BAMA text brand)
-const BAMA_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 60" style="height:52px;width:auto">
-  <rect width="220" height="60" rx="4" fill="#D0021B"/>
-  <text x="12" y="44" font-family="Arial Black,Arial" font-weight="900" font-size="42" fill="#ffffff" letter-spacing="2">BAMA</text>
-</svg>`;
-
-// Try to load stored logo from localStorage (if user has uploaded one)
-function getLogoHtml() {
-  const stored = localStorage.getItem('bama_logo_b64');
-  if (stored) return `<img src="${stored}" style="height:52px;width:auto">`;
-  return BAMA_LOGO_SVG;
-}
-
-function fmtGBP(n) {
-  return '£' + (parseFloat(n)||0).toLocaleString('en-GB', { minimumFractionDigits:2, maximumFractionDigits:2 });
-}
-
-function fmtDateLong(d) {
-  if (!d) return '—';
-  try { return new Date(d+'T12:00:00').toLocaleDateString('en-GB',{day:'2-digit',month:'long',year:'numeric'}); }
-  catch { return d; }
-}
-
-// ── BAMA standard T&Cs ─────────────────────────────────────
-const BAMA_TC = [
-  { h: 'Quotation Validity', t: 'This quotation is valid for 14 days from the date of issue unless stated otherwise, and is subject to written acceptance. BAMA Fabrication reserves the right to withdraw or amend this quotation at any time prior to acceptance.' },
-  { h: 'VAT', t: 'All prices are exclusive of VAT, which will be charged at the prevailing rate.' },
-  { h: 'Material Price Fluctuation', t: 'Structural steel prices are subject to market fluctuation. BAMA Fabrication reserves the right to apply a price adjustment based on the Steel Market Index (Spons or equivalent) should procurement be delayed beyond 8 weeks from the date of this quotation.' },
-  { h: 'Design & Drawing Information', t: 'This quotation is based on information available at the time of submission. Any changes to drawings, specifications or scope after acceptance may result in additional costs, which will be notified by formal variation.' },
-  { h: 'Payment Terms', t: 'Unless otherwise agreed in writing: 30% deposit on order, interim applications monthly in line with progress, final payment within 30 days of practical completion of our works. BAMA Fabrication reserves the right to suspend works for non-payment.' },
-  { h: 'Retention', t: 'Unless stated in the accepted terms, BAMA Fabrication does not accept retention deductions. If retention is a condition of contract, this must be agreed prior to order and may affect the quoted price.' },
-  { h: 'CDM 2015', t: 'BAMA Fabrication will act as Designer under CDM 2015 for structural elements within our scope. The Principal Designer and Principal Contractor roles remain with the Client or their appointed party.' },
-  { h: 'Access & Site Conditions', t: 'This quotation assumes clear and unrestricted access to all working areas during normal working hours (07:00–17:30 Mon–Fri). Any working restrictions, out-of-hours requirements, or abnormal site conditions must be advised prior to acceptance.' },
-  { h: 'Exclusions', t: 'Unless explicitly included in this quotation, the following are excluded: groundworks, concrete foundations, crane pads, fire engineering, M&E services, cladding fixings beyond our scope, and statutory fees or inspections.' },
-  { h: 'Governing Law', t: 'This quotation and any resulting contract shall be governed by and construed in accordance with the laws of England and Wales.' }
-];
-
-function togglePdfMenu() {
-  const menu = document.getElementById('pdfMenu');
-  menu.style.display = menu.style.display === 'none' ? '' : 'none';
-}
-document.addEventListener('click', e => {
-  if (!e.target.closest('#pdfMenuWrap')) {
-    const m = document.getElementById('pdfMenu');
-    if (m) m.style.display = 'none';
-  }
-});
-
-function generateQuotePDF(mode = 'quote') {
-  const q = getQuote();
-  if (!q) { toast('No quote selected', 'error'); return; }
-
-  const revStr  = q.revision ? ` · ${q.revision}` : '';
-  const scope   = (q.qScope || q.comments || '').replace(/\n/g,'<br>');
-  const logoHtml = getLogoHtml();
-  const computed = q._computed || {};
-
-  // ── shared header HTML ───────────────────────────────────
-  const docHeader = `
-    <div class="doc-header">
-      <div class="doc-header-left">
-        ${logoHtml}
-        <div class="addr">11 Enterprise Way, Enterprise Park<br>Yaxley, PE7 3WY, Peterborough<br>01733 855212 · info@bamafabrication.co.uk</div>
-      </div>
-      <div style="text-align:right">
-        <div class="doc-type">Quotation</div>
-        <div class="doc-meta" style="margin-top:10px">
-          <div><strong>Date:</strong><span class="val"> ${fmtDateLong(q.date)}</span></div>
-          <div><strong>Quotation #:</strong><span class="val"> ${escHtml(q.ref)}${revStr}</span></div>
-          <div><strong>Prepared by:</strong><span class="val"> ${escHtml(q.preparedBy||'—')}</span></div>
-          <div><strong>Valid until:</strong><span class="val"> ${fmtDateLong(q.validUntil)}</span></div>
-        </div>
-      </div>
-    </div>
-    <div class="info-grid">
-      <div class="info-block">
-        <label>Quotation For</label>
-        <div class="info-val">
-          ${q.contact ? escHtml(q.contact)+'<br>' : ''}
-          <strong>${escHtml(q.company||'—')}</strong>
-          ${q.email ? '<br><span style="color:#555">'+escHtml(q.email)+'</span>' : ''}
-          ${q.phone ? '<br><span style="color:#555">'+escHtml(q.phone)+'</span>' : ''}
-        </div>
-      </div>
-      <div class="info-block">
-        <label>Client Address</label>
-        <div class="info-val">${q.clientAddress ? escHtml(q.clientAddress).replace(/\n/g,'<br>') : (q.company ? `<span style="color:#888">${escHtml(q.company)}</span>` : '<span style="color:#aaa">—</span>')}</div>
-      </div>
-    </div>
-    ${scope ? `<div class="scope-block"><label>Comments or Special Instructions</label>${scope}</div>` : ''}`;
-
-  // ── T&Cs HTML ────────────────────────────────────────────
-  const projectTCsText = (q.projectTCs || '').trim();
-  const projectTCsHtml = projectTCsText
-    ? `<div style="margin-bottom:10px;padding:8px 10px;background:#f9f9f9;border-left:3px solid #D0021B;font-size:9.5px;line-height:1.6;white-space:pre-wrap;color:#333">${escHtml(projectTCsText)}</div>`
-    : '';
-  const tcHtml = `
-    <div style="margin-top:24px;padding-top:14px;border-top:2px solid #eee">
-      <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#888;margin-bottom:10px">Terms &amp; Conditions</div>
-      ${projectTCsHtml}
-      ${BAMA_TC.map(tc => `
-        <div style="margin-bottom:7px;font-size:9.5px;line-height:1.5">
-          <strong style="color:#333">${escHtml(tc.h)}: </strong><span style="color:#555">${escHtml(tc.t)}</span>
-        </div>`).join('')}
-    </div>`;
-
-  // ── QUOTE PDF ────────────────────────────────────────────
-  let lineRows = '', grandTotal = 0;
-  if (mode === 'quote' || mode === 'combined') {
-    if (q.type === 'bama') {
-      // Use standardLines for line items, computed.total as authoritative total
-      const allLines = (q.standardLines||[]).filter(l => (parseFloat(l.price)||0) !== 0);
-      allLines.forEach(l => {
-        const price = parseFloat(l.price)||0, qty = parseFloat(l.qty)||1;
-        const amt = Math.round(qty*price*100)/100;
-        grandTotal += amt;
-        lineRows += `<tr><td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">${qty!==1?qty:'1'}</td>
-          <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">${escHtml(l.desc)}</td>
-          <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(price)}</td>
-          <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(amt)}</td></tr>`;
-      });
-      // computed.total is authoritative — override if they differ by more than £1
-      if (computed.total && Math.abs(computed.total - grandTotal) > 1) grandTotal = computed.total;
-    } else if (q.type === 'custom') {
-      (q.customLines||[]).forEach(l => {
-        const price = parseFloat(l.price)||0, qty = parseFloat(l.qty)||1;
-        const amt = Math.round(qty*price*100)/100;
-        grandTotal += amt;
-        lineRows += `<tr><td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">${qty}</td>
-          <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">${escHtml(l.desc)}<span style="color:#888;font-size:10px;margin-left:4px">${escHtml(l.unit||'')}</span></td>
-          <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(price)}</td>
-          <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(amt)}</td></tr>`;
-      });
-    } else {
-      const total = computed.total||0; grandTotal = total;
-      lineRows = `<tr><td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">1</td>
-        <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">As per ${escHtml(q.boqRef||'Client BoQ')}</td>
-        <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(total)}</td>
-        <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(total)}</td></tr>`;
-    }
-    const rowCount = (q.type==='bama'?(q.standardLines||[]).filter(l=>(l.price||0)>0).length:(q.customLines||[]).length)||1;
-    for (let i=rowCount; i<6; i++) lineRows += `<tr style="height:34px"><td style="border-bottom:1px solid #e5e7eb"></td><td style="border-bottom:1px solid #e5e7eb"></td><td style="border-bottom:1px solid #e5e7eb"></td><td style="border-bottom:1px solid #e5e7eb"></td></tr>`;
-        let depositRow = '';
-    if (q.showDeposit) {
-      const depPct=parseFloat(q.depositPct)||60, depAmt=Math.round(grandTotal*depPct/100*100)/100;
-      depositRow = `<tr><td colspan="3" style="padding:6px 10px;text-align:right;font-size:12px;color:#555">Deposit Required (${depPct}%)</td><td style="padding:6px 10px;text-align:right;font-size:12px;font-weight:600;color:#D0021B">${fmtGBP(depAmt)}</td></tr>`;
-    }
-
-    const quoteHtml = buildPdfPage(`Quotation ${escHtml(q.ref)}${revStr}`, `
-      ${docHeader}
-      <table>
-        <thead><tr>
-          <th style="width:60px">Quantity</th><th>Description</th>
-          <th style="text-align:right;width:110px">Unit Price</th>
-          <th style="text-align:right;width:110px">Amount</th>
-        </tr></thead>
-        <tbody>${lineRows}</tbody>
-      </table>
-      <div class="totals-block">
-        <div class="total-row"><span>Subtotal (excl. VAT)</span><span>${fmtGBP(grandTotal)}</span></div>
-        ${depositRow}
-        <div class="total-row grand"><span>TOTAL</span><span class="val">${fmtGBP(grandTotal)}</span></div>
-        <div style="padding:6px 10px;font-size:10px;color:#888">All prices are exclusive of VAT</div>
-      </div>
-      <div class="doc-footer">
-        <div class="footer-note">If you have any questions concerning this quotation, please contact:<br>
-          <a href="mailto:info@bamafabrication.co.uk">info@bamafabrication.co.uk</a><br><br>Thank you for your business!
-        </div>
-      </div>
-      ${tcHtml}
-    `);
-
-    if (mode === 'quote') { openPdfWindow(quoteHtml); return; }
-  }
-
-  // ── BREAKDOWN PDF ─────────────────────────────────────────
-  const margin = parseFloat(document.getElementById('marginSlider')?.value)||q.margin||20;
-  const totals = [
-    ['Steel Material (raw)',        (computed.material||0) - (computed.fittingsCostVal||0) - (computed.fixingsCost||0) - (parseFloat(q.miscMaterial)||0)],
-    ['Fittings & Connections',      computed.fittingsCostVal||0],
-    computed.fixingsCost > 0 ? ['Fixings & Consumables',   computed.fixingsCost||0] : null,
-    (parseFloat(q.miscMaterial)||0) > 0 ? ['Misc Material', parseFloat(q.miscMaterial)||0] : null,
-    ['Installation (labour + plant)', computed.installation||0],
-    ['Fabrication + Consumables',   computed.fabrication||0],
-    ['Design',                      computed.design||0],
-    ['Galvanising',                 computed.galvanising||0],
-    ['Painting / Finishing',        computed.painting||0],
-    ['Survey',                      computed.survey||0],
-    ['Delivery',                    computed.delivery||0],
-    ['Prelims',                     computed.prelims||0],
-    ['Purlins',                     computed.purlins||0],
-  ].filter(row => row && row[1] > 0);
-  const subtotal = totals.reduce((s,[,v]) => s+v, 0);
-  const marginAmt = Math.round(subtotal*margin/100*100)/100;
-  const total = Math.round((subtotal+marginAmt)*100)/100;
-  const totalKg = totalTakeoffKg();
-
-  const bkRows = totals.map(([label,val]) => `
-    <tr>
-      <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">${escHtml(label)}</td>
-      <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right;font-family:monospace">${fmtGBP(val)}</td>
-      <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right;color:#888;font-size:11px">${subtotal>0?(val/subtotal*100).toFixed(1)+'%':''}</td>
-    </tr>`).join('');
-
-  // Takeoff — individual rows with length, qty, kg, cost
-  const tkRows = (q.takeoff||[]).filter(r => r.type).map(r => {
-    const kg = (r.length/1000) * (r.kgm||0) * (r.qty||1);
-    const cost = kg * (r.rate||0);
-    const lenM = r.length ? (r.length/1000).toFixed(2)+'m' : '—';
-    return `<tr>
-      <td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;font-family:monospace;font-size:11px">${escHtml(r.type)}</td>
-      <td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;text-align:right;font-size:11px">${lenM}</td>
-      <td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;text-align:right;font-size:11px">${r.qty||1}</td>
-      <td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;text-align:right;font-size:11px">${kg>0?kg.toFixed(1)+' kg':'—'}</td>
-      <td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;text-align:right;font-size:11px">${cost>0?fmtGBP(cost):'—'}</td>
-    </tr>`;
-  }).join('');
-  const tkTotalKg = (q.takeoff||[]).reduce((s,r) => s + (r.length/1000)*(r.kgm||0)*(r.qty||1), 0);
-  const tkTotalCost = (q.takeoff||[]).reduce((s,r) => s + (r.length/1000)*(r.kgm||0)*(r.qty||1)*(r.rate||0), 0);
-
-  // ── Handover Pack data ────────────────────────────────────
-  const fabHrsVal   = parseFloat(document.getElementById('fab-hours')?.value) || q.fabHours || 0;
-  const fabRateVal  = parseFloat(document.getElementById('fab-rate')?.value)  || q.fabRate  || 45;
-  const designHrsVal    = parseFloat(document.getElementById('design-hours')?.value)    || q.designHours    || 0;
-  const structEngHrsVal = parseFloat(document.getElementById('struct-eng-hours')?.value) || q.structEngHours || 0;
-  const architectHrsVal = parseFloat(document.getElementById('architect-hours')?.value)  || q.architectHours || 0;
-  const fabpackHrsVal   = parseFloat(document.getElementById('fabpack-hours')?.value)    || q.fabpackHours   || 0;
-  const connDesignHrsVal = parseFloat(document.getElementById('conn-design-hours')?.value) || q.connDesignHours || 0;
-  const instDaysVal = parseFloat(document.getElementById('inst-days')?.value) || q.instDays || 0;
-  const instOpsVal  = parseFloat(document.getElementById('inst-operatives')?.value) || q.instOperatives || 0;
-
-  // Labour rows
-  const labourRowsForPack = (q.labourRows||[]).map(r =>
-    `<tr><td style="padding:5px 10px;border-bottom:1px solid #f0f0f0">${escHtml(r.label||r.type)}</td><td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;text-align:right">${r.qty||1} operative${(r.qty||1)!==1?'s':''}</td><td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;text-align:right">${instDaysVal} day${instDaysVal!==1?'s':''}</td><td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;text-align:right;font-family:monospace">${fmtGBP(r.rate||0)}/day</td></tr>`
-  ).join('');
-
-  // Plant / equipment rows
-  const plantRowsForPack = (q.plantRows||[]).map(r =>
-    `<tr><td style="padding:5px 10px;border-bottom:1px solid #f0f0f0">${escHtml(r.label||r.type)}</td><td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;text-align:right">${r.qty||1} day${(r.qty||1)!==1?'s':''}</td><td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;text-align:right;font-family:monospace">${fmtGBP(r.rate||0)}/day</td><td style="padding:5px 10px;border-bottom:1px solid #f0f0f0;text-align:right;font-weight:600;font-family:monospace">${fmtGBP((r.qty||1)*(r.rate||0))}</td></tr>`
-  ).join('');
-
-  const exclusionsText = (q.projectTCs||'').trim();
-
-  const handoverHtml = `
-    <div style="page-break-before:always"></div>
-    <h2 style="font-size:16px;font-weight:900;margin:20px 0 4px;letter-spacing:0.5px">ESTIMATING HANDOVER PACK</h2>
-    <div style="font-size:10px;color:#888;margin-bottom:16px;padding-bottom:10px;border-bottom:2px solid #D0021B">Internal reference — to be retained with the quote file</div>
-
-    <!-- Project summary -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
-      <div style="background:#f5f5f5;border-radius:6px;padding:12px 14px">
-        <div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:#888;font-weight:700;margin-bottom:6px">Project</div>
-        <div style="font-size:13px;font-weight:700;color:#111;margin-bottom:2px">${escHtml(q.project||'—')}</div>
-        <div style="font-size:11px;color:#555">${escHtml(q.company||'—')}</div>
-        <div style="font-size:11px;color:#888;margin-top:4px">Ref: ${escHtml(q.ref||'—')}</div>
-      </div>
-      <div style="background:#f5f5f5;border-radius:6px;padding:12px 14px">
-        <div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:#888;font-weight:700;margin-bottom:6px">Site Address</div>
-        <div style="font-size:11px;color:#111;line-height:1.6;white-space:pre-wrap">${escHtml(q.siteAddress||'Not specified')}</div>
-      </div>
-    </div>
-
-    <!-- Tonnage summary -->
-    ${tkTotalKg > 0 ? `
-    <div style="background:#1a1a2e;color:#fff;border-radius:6px;padding:10px 16px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center">
-      <span style="font-size:11px;opacity:0.7">Total Steelwork</span>
-      <span style="font-size:20px;font-weight:900;color:#ff6b00">${(tkTotalKg/1000).toFixed(2)}t</span>
-      <span style="font-size:11px;opacity:0.7">${tkTotalKg.toFixed(0)} kg</span>
-      <span style="font-size:11px;opacity:0.7">Material: ${fmtGBP(tkTotalCost)}</span>
-    </div>` : ''}
-
-    <!-- Fabrication -->
-    <h3 style="font-size:12px;font-weight:700;margin:14px 0 8px;padding:4px 0;border-bottom:1px solid #e5e7eb;color:#1a1a2e">🔩 Fabrication</h3>
-    <table style="margin-bottom:12px">
-      <tbody>
-        <tr style="background:#f9f9f9"><td style="padding:6px 10px;font-weight:600">Fab Hours Allowed</td><td style="padding:6px 10px;text-align:right;font-family:monospace">${fabHrsVal}h</td><td style="padding:6px 10px;text-align:right;font-family:monospace">@ ${fmtGBP(fabRateVal)}/hr</td><td style="padding:6px 10px;text-align:right;font-weight:700;font-family:monospace">${fmtGBP(fabHrsVal*fabRateVal)}</td></tr>
-        ${tkTotalKg > 0 && fabHrsVal > 0 ? `<tr><td style="padding:4px 10px;color:#888;font-size:10px" colspan="4">= ${(fabHrsVal/(tkTotalKg/1000)).toFixed(1)} hrs/tonne</td></tr>` : ''}
-      </tbody>
-    </table>
-
-    <!-- Design & Drawings -->
-    <h3 style="font-size:12px;font-weight:700;margin:14px 0 8px;padding:4px 0;border-bottom:1px solid #e5e7eb;color:#1a1a2e">📐 Design & Drawings</h3>
-    <table style="margin-bottom:12px">
-      <tbody>
-        ${designHrsVal > 0 ? `<tr style="background:#f9f9f9"><td style="padding:5px 10px">Draughtsman / Detailing</td><td style="padding:5px 10px;text-align:right;font-family:monospace">${designHrsVal}h</td><td colspan="2" style="padding:5px 10px;text-align:right;font-family:monospace">${fmtGBP(designHrsVal*(q.designRate||50))}</td></tr>` : ''}
-        ${structEngHrsVal > 0 ? `<tr><td style="padding:5px 10px">Structural Engineer</td><td style="padding:5px 10px;text-align:right;font-family:monospace">${structEngHrsVal}h</td><td colspan="2" style="padding:5px 10px;text-align:right;font-family:monospace">${fmtGBP(structEngHrsVal*(q.structEngRate||90))}</td></tr>` : ''}
-        ${architectHrsVal > 0 ? `<tr style="background:#f9f9f9"><td style="padding:5px 10px">Architect</td><td style="padding:5px 10px;text-align:right;font-family:monospace">${architectHrsVal}h</td><td colspan="2" style="padding:5px 10px;text-align:right;font-family:monospace">${fmtGBP(architectHrsVal*(q.architectRate||90))}</td></tr>` : ''}
-        ${fabpackHrsVal > 0 ? `<tr><td style="padding:5px 10px">Approval &amp; Fabrication Pack</td><td style="padding:5px 10px;text-align:right;font-family:monospace">${fabpackHrsVal}h</td><td colspan="2" style="padding:5px 10px;text-align:right;font-family:monospace">${fmtGBP(fabpackHrsVal*(q.fabpackRate||50))}</td></tr>` : ''}
-        ${connDesignHrsVal > 0 ? `<tr style="background:#f9f9f9"><td style="padding:5px 10px">Connection Design</td><td style="padding:5px 10px;text-align:right;font-family:monospace">${connDesignHrsVal}h</td><td colspan="2" style="padding:5px 10px;text-align:right;font-family:monospace">${fmtGBP(connDesignHrsVal*(q.connDesignRate||50))}</td></tr>` : ''}
-        ${(designHrsVal+structEngHrsVal+architectHrsVal+fabpackHrsVal+connDesignHrsVal) === 0 ? `<tr><td colspan="4" style="padding:6px 10px;color:#aaa;font-style:italic">No design fees included</td></tr>` : ''}
-      </tbody>
-    </table>
-
-    <!-- Installation -->
-    ${(labourRowsForPack || instDaysVal > 0) ? `
-    <h3 style="font-size:12px;font-weight:700;margin:14px 0 8px;padding:4px 0;border-bottom:1px solid #e5e7eb;color:#1a1a2e">👷 Installation Crew</h3>
-    <div style="font-size:11px;color:#555;margin-bottom:6px">${instOpsVal} operative${instOpsVal!==1?'s':''} · ${instDaysVal} day${instDaysVal!==1?'s':''} on site</div>
-    ${labourRowsForPack ? `<table style="margin-bottom:12px"><thead><tr><th style="text-align:left;padding:6px 10px;background:#1a1a2e;color:#fff;font-size:10px">Role</th><th style="text-align:right;padding:6px 10px;background:#1a1a2e;color:#fff;font-size:10px">Qty</th><th style="text-align:right;padding:6px 10px;background:#1a1a2e;color:#fff;font-size:10px">Days</th><th style="text-align:right;padding:6px 10px;background:#1a1a2e;color:#fff;font-size:10px">Rate</th></tr></thead><tbody>${labourRowsForPack}</tbody></table>` : ''}` : ''}
-
-    <!-- Plant & Equipment -->
-    ${plantRowsForPack ? `
-    <h3 style="font-size:12px;font-weight:700;margin:14px 0 8px;padding:4px 0;border-bottom:1px solid #e5e7eb;color:#1a1a2e">🏗️ Plant & Equipment</h3>
-    <table style="margin-bottom:12px"><thead><tr><th style="text-align:left;padding:6px 10px;background:#1a1a2e;color:#fff;font-size:10px">Equipment</th><th style="text-align:right;padding:6px 10px;background:#1a1a2e;color:#fff;font-size:10px">Duration</th><th style="text-align:right;padding:6px 10px;background:#1a1a2e;color:#fff;font-size:10px">Rate</th><th style="text-align:right;padding:6px 10px;background:#1a1a2e;color:#fff;font-size:10px">Cost</th></tr></thead><tbody>${plantRowsForPack}</tbody></table>` : ''}
-
-    <!-- Exclusions -->
-    ${exclusionsText ? `
-    <h3 style="font-size:12px;font-weight:700;margin:14px 0 8px;padding:4px 0;border-bottom:1px solid #e5e7eb;color:#1a1a2e">📋 Exclusions & Special Conditions</h3>
-    <div style="background:#fff8e1;border-left:3px solid #f59e0b;padding:10px 14px;border-radius:0 6px 6px 0;font-size:10.5px;line-height:1.7;color:#333;white-space:pre-wrap">${escHtml(exclusionsText)}</div>` : ''}
-
-    <!-- Prepared by -->
-    <div style="margin-top:24px;padding-top:12px;border-top:1px solid #ddd;font-size:10px;color:#888">
-      Prepared by: ${escHtml(q.contact||'BAMA Fabrication')} &nbsp;·&nbsp; Date quoted: ${escHtml(q.date||new Date().toLocaleDateString('en-GB'))} &nbsp;·&nbsp; Ref: ${escHtml(q.ref||'—')}
-    </div>
-  `;
-
-  const breakdownHtml = buildPdfPage(`Cost Breakdown — ${escHtml(q.ref)}${revStr}`, `
-    ${docHeader}
-    <div style="background:#fff3e0;border:1px solid #ffcc80;border-radius:6px;padding:8px 14px;margin-bottom:16px;font-size:11px;color:#e65100">
-      ⚠ CONFIDENTIAL — Internal cost breakdown. Not for client distribution.
-    </div>
-    <h2 style="font-size:13px;font-weight:700;margin:0 0 10px;padding-bottom:4px;border-bottom:2px solid #D0021B">Cost Summary</h2>
-    <table>
-      <thead><tr>
-        <th>Cost Element</th>
-        <th style="text-align:right;width:120px">Net Cost</th>
-        <th style="text-align:right;width:80px">% of Sub</th>
-      </tr></thead>
-      <tbody>${bkRows}</tbody>
-    </table>
-    <div style="margin-top:0;border-top:2px solid #1a1a2e">
-      <div style="display:flex;justify-content:space-between;padding:6px 10px;font-size:12px"><span>Sub-total</span><span style="font-family:monospace">${fmtGBP(subtotal)}</span></div>
-      <div style="display:flex;justify-content:space-between;padding:6px 10px;font-size:12px"><span>Margin (${margin}%)</span><span style="font-family:monospace">${fmtGBP(marginAmt)}</span></div>
-      <div style="display:flex;justify-content:space-between;padding:10px;background:#1a1a2e;color:#fff;font-size:14px;font-weight:700"><span>TOTAL</span><span style="color:#ff6b00;font-family:monospace">${fmtGBP(total)}</span></div>
-      ${totalKg > 0 ? `<div style="display:flex;justify-content:space-between;padding:6px 10px;font-size:11px;color:#888"><span>Cost per kg (incl. margin)</span><span style="font-family:monospace">£${(total/totalKg).toFixed(2)}/kg</span></div>` : ''}
-    </div>
-    ${tkRows ? `
-    <h2 style="font-size:13px;font-weight:700;margin:20px 0 10px;padding-bottom:4px;border-bottom:2px solid #D0021B">Steel Takeoff Summary</h2>
-    <table>
-      <thead><tr><th>Section</th><th style="text-align:right">Length</th><th style="text-align:right">Qty</th><th style="text-align:right">Total kg</th><th style="text-align:right">Material £</th></tr></thead>
-      <tbody>${tkRows}</tbody>
-      <tfoot><tr>
-        <td style="padding:8px 10px;font-weight:700" colspan="3">Total</td>
-        <td style="padding:8px 10px;text-align:right;font-weight:700;font-size:11px">${tkTotalKg.toFixed(1)} kg</td>
-        <td style="padding:8px 10px;text-align:right;font-weight:700;font-size:11px">${fmtGBP(tkTotalCost)}</td>
-      </tr></tfoot>
-    </table>` : ''}
-    ${handoverHtml}
-  `);
-
-  if (mode === 'breakdown') { openPdfWindow(breakdownHtml); return; }
-
-  // ── COMBINED — quote + breakdown in same window ──────────
-  const combined = buildPdfPage(`${escHtml(q.ref)} — Quote + Breakdown`, `
-    ${buildPdfPage(`Quotation ${escHtml(q.ref)}${revStr}`, `
-      ${docHeader}
-      <table>
-        <thead><tr><th style="width:60px">Quantity</th><th>Description</th><th style="text-align:right;width:110px">Unit Price</th><th style="text-align:right;width:110px">Amount</th></tr></thead>
-        <tbody>${lineRows||''}</tbody>
-      </table>
-      <div class="totals-block">
-        <div class="total-row grand"><span>TOTAL</span><span class="val">${fmtGBP(grandTotal)}</span></div>
-        <div style="padding:6px 10px;font-size:10px;color:#888">All prices are exclusive of VAT</div>
-      </div>
-      ${tcHtml}
-    `).replace('<!DOCTYPE html><html><head>','').replace('</html>','')}
-    <div style="page-break-before:always"></div>
-    ${breakdownHtml.replace('<!DOCTYPE html><html><head>','').replace('</html>','')}
-  `);
-  openPdfWindow(combined);
-}
-
-function buildPdfPage(title, body) {
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${title}</title><style>
-    * { box-sizing:border-box; margin:0; padding:0; }
-    body { font-family:Arial,Helvetica,sans-serif; font-size:12px; color:#111; background:#fff; }
-    .page { max-width:210mm; margin:0 auto; padding:16mm 16mm 12mm; }
-    .doc-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:24px; padding-bottom:16px; border-bottom:3px solid #D0021B; }
-    .doc-header-left { display:flex; flex-direction:column; gap:6px; }
-    .doc-type { font-size:28px; font-weight:900; letter-spacing:1px; color:#111; margin-top:4px; }
-    .addr { font-size:10px; color:#555; line-height:1.5; margin-top:4px; }
-    .doc-meta { text-align:right; font-size:11px; line-height:1.7; }
-    .doc-meta strong { display:inline-block; min-width:130px; color:#333; }
-    .doc-meta .val { font-weight:600; }
-    .info-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:20px; }
-    .info-block label { font-size:9px; text-transform:uppercase; letter-spacing:1px; color:#888; font-weight:700; display:block; margin-bottom:4px; }
-    .info-block .info-val { font-size:12px; color:#111; line-height:1.5; }
-    .scope-block { background:#f9f9f9; border-left:3px solid #D0021B; padding:10px 14px; margin-bottom:20px; font-size:11px; line-height:1.6; color:#333; }
-    .scope-block label { font-size:9px; text-transform:uppercase; letter-spacing:1px; color:#888; font-weight:700; display:block; margin-bottom:6px; }
-    table { width:100%; border-collapse:collapse; margin-bottom:0; }
-    thead tr { background:#1a1a2e; }
-    thead th { color:#fff; padding:9px 10px; font-size:11px; font-weight:700; text-align:left; letter-spacing:0.3px; }
-    tbody tr:nth-child(even) { background:#fafafa; }
-    .totals-block { border-top:2px solid #1a1a2e; }
-    .total-row { display:flex; justify-content:space-between; padding:5px 10px; font-size:12px; }
-    .total-row.grand { background:#1a1a2e; color:#fff; font-size:14px; font-weight:700; padding:10px; }
-    .total-row.grand .val { color:#ff6b00; }
-    .doc-footer { margin-top:28px; padding-top:12px; border-top:1px solid #ddd; font-size:10px; color:#888; }
-    .doc-footer a { color:#D0021B; text-decoration:none; }
-    .no-print { display:block; }
-    @media print { .no-print { display:none !important; } body { print-color-adjust:exact; -webkit-print-color-adjust:exact; } .page { padding:10mm 12mm; } }
-  </style></head><body>
-  <div class="no-print" style="text-align:right;padding:8px 16px">
-    <button onclick="window.print()" style="background:#D0021B;color:#fff;border:none;padding:8px 20px;border-radius:4px;font-size:13px;cursor:pointer;font-weight:600">🖨 Print / Save as PDF</button>
-  </div>
-  <div class="page">${body}</div>
-  </body></html>`;
-}
-
-function openPdfWindow(html) {
-  const win = window.open('', '_blank', 'width=900,height=1100');
-  win.document.write(html);
-  win.document.close();
-}
-
-function escHtml(s) {
-  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-// ── Logo upload for PDF ──
-function openLogoUpload() {
-  const inp = document.createElement('input');
-  inp.type = 'file'; inp.accept = 'image/*';
-  inp.onchange = e => {
-    const file = e.target.files[0]; if (!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => {
-      localStorage.setItem('bama_logo_b64', ev.target.result);
-      toast('Logo saved — will appear on PDFs', 'success');
-    };
-    reader.readAsDataURL(file);
-  };
-  inp.click();
-}
-</script>
+<!-- PDF INJECTION
