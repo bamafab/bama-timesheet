@@ -2069,9 +2069,59 @@ tr.drag-dragging { opacity:0.35; }
             <div class="wiz-tile" data-design="design_check" onclick="wizSelectDesign(this)">Design Check Only<br><span style="font-size:10px;color:var(--muted)">Review client's calcs</span></div>
             <div class="wiz-tile" data-design="none" onclick="wizSelectDesign(this)">No Design Fee<br><span style="font-size:10px;color:var(--muted)">Repeat / simple job</span></div>
           </div>
-          <div id="wiz-design-hours-preview" style="font-size:12px;color:var(--muted);padding:8px;background:var(--card);border-radius:6px;border:1px solid var(--border)">
-            Suggested hours will appear after wizard runs
+
+          <!-- Design complexity questions — shown when design is needed -->
+          <div id="wiz-design-complexity" style="display:none;margin-top:10px;border-top:1px solid var(--border);padding-top:10px">
+            <div style="font-size:10px;color:var(--muted);font-weight:600;letter-spacing:1px;margin-bottom:8px">DRAWING COMPLEXITY</div>
+
+            <div style="margin-bottom:8px">
+              <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Connection type</div>
+              <div style="display:flex;flex-wrap:wrap;gap:4px" id="dwiz-connections">
+                <button class="dwiz-tile active" data-val="simple" onclick="dwizSelect('connections',this)">Simple bolted<br><span style="font-size:9px;opacity:0.7">standard end plates</span></button>
+                <button class="dwiz-tile" data-val="standard" onclick="dwizSelect('connections',this)">Standard<br><span style="font-size:9px;opacity:0.7">stiffeners, cleats</span></button>
+                <button class="dwiz-tile" data-val="moment" onclick="dwizSelect('connections',this)">Moment resistance<br><span style="font-size:9px;opacity:0.7">rigid frame</span></button>
+                <button class="dwiz-tile" data-val="complex" onclick="dwizSelect('connections',this)">Complex / special<br><span style="font-size:9px;opacity:0.7">cantilever, trusses</span></button>
+              </div>
+            </div>
+
+            <div style="margin-bottom:8px">
+              <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Repetition</div>
+              <div style="display:flex;flex-wrap:wrap;gap:4px" id="dwiz-repetition">
+                <button class="dwiz-tile active" data-val="high" onclick="dwizSelect('repetition',this)">High<br><span style="font-size:9px;opacity:0.7">portal frames, warehouse</span></button>
+                <button class="dwiz-tile" data-val="medium" onclick="dwizSelect('repetition',this)">Medium<br><span style="font-size:9px;opacity:0.7">mixed details</span></button>
+                <button class="dwiz-tile" data-val="low" onclick="dwizSelect('repetition',this)">Low<br><span style="font-size:9px;opacity:0.7">every member different</span></button>
+              </div>
+            </div>
+
+            <div style="margin-bottom:8px">
+              <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Materials</div>
+              <div style="display:flex;flex-wrap:wrap;gap:4px" id="dwiz-material">
+                <button class="dwiz-tile active" data-val="steel" onclick="dwizSelect('material',this)">Steel only<br><span style="font-size:9px;opacity:0.7">standard</span></button>
+                <button class="dwiz-tile" data-val="grp" onclick="dwizSelect('material',this)">Includes GRP<br><span style="font-size:9px;opacity:0.7">+15%</span></button>
+                <button class="dwiz-tile" data-val="mixed" onclick="dwizSelect('material',this)">Mixed<br><span style="font-size:9px;opacity:0.7">aluminium / SS / GRP</span></button>
+              </div>
+            </div>
+
+            <div style="margin-bottom:10px">
+              <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Unique connection details</div>
+              <div style="display:flex;flex-wrap:wrap;gap:4px" id="dwiz-details">
+                <button class="dwiz-tile active" data-val="few" onclick="dwizSelect('details',this)">&lt;5 types<br><span style="font-size:9px;opacity:0.7">simple, repetitive</span></button>
+                <button class="dwiz-tile" data-val="medium" onclick="dwizSelect('details',this)">5–15 types<br><span style="font-size:9px;opacity:0.7">typical project</span></button>
+                <button class="dwiz-tile" data-val="many" onclick="dwizSelect('details',this)">15+ types<br><span style="font-size:9px;opacity:0.7">complex geometry</span></button>
+              </div>
+            </div>
+
+            <div id="dwiz-result" style="background:var(--card);border:1px solid rgba(255,107,0,0.3);border-radius:6px;padding:8px 12px;font-size:12px">
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <span style="color:var(--muted)">Suggested draughtsman hours:</span>
+                <span id="dwiz-range" style="font-weight:700;color:var(--accent);font-family:var(--font-mono)">—</span>
+              </div>
+              <div style="font-size:10px;color:var(--muted);margin-top:3px" id="dwiz-factors"></div>
+              <div style="font-size:10px;color:var(--muted);margin-top:4px;font-style:italic">Midpoint will be applied when you click Generate Quote. You can edit after.</div>
+            </div>
           </div>
+
+          <div id="wiz-design-hours-preview" style="display:none"></div>
         </div>
       </div>
 
@@ -4792,6 +4842,10 @@ function openWizard(q) {
   if (jt) jt.value = '';
   // Update badges
   wizUpdateAllBadges();
+  // Show design complexity panel (fab_pack_only is default active)
+  const complex = document.getElementById('wiz-design-complexity');
+  if (complex) complex.style.display = '';
+  dwizCalc();
   document.getElementById('wizardModal').classList.add('active');
 }
 
@@ -5028,6 +5082,11 @@ function wizSelectDesign(el) {
   document.querySelectorAll('#wiz-design-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
   el.classList.add('active');
   wizUpdateDesignBadge();
+  // Show complexity questions whenever design work is involved
+  const needsDrawings = ['fab_pack_only','full_design','client_design','design_check'].includes(el.dataset.design);
+  const complex = document.getElementById('wiz-design-complexity');
+  if (complex) complex.style.display = needsDrawings ? '' : 'none';
+  if (needsDrawings) dwizCalc();
 }
 
 function wizSelectDelivery(el) {
@@ -5187,17 +5246,19 @@ function applyWizard() {
 
   // ── Design ────────────────────────────────────────────────
   const designChoice = document.querySelector('#wiz-design-tiles .wiz-tile.active')?.dataset.design || 'fab_pack_only';
-  const { draughtHrs, structEngHrs, fabpackHrs } = autoDesignHours(q.takeoff);
+  // Use dwiz midpoint for draughtsman hours (calibrated formula)
+  const dwizMid = parseInt((document.getElementById('wiz-design-complexity') || document.getElementById('design-wizard-panel'))?.dataset.mid || '0') || dwizCalcMid();
+  const { structEngHrs, fabpackHrs } = autoDesignHours(q.takeoff); // still use for struct eng + fabpack
   if (designChoice === 'none') {
     q.designHours = 0; q.structEngHrs = 0; q.fabpackHours = 0;
   } else if (designChoice === 'client_design') {
-    q.designHours = draughtHrs; q.structEngHrs = 0; q.fabpackHours = fabpackHrs;
+    q.designHours = dwizMid; q.structEngHrs = 0; q.fabpackHours = fabpackHrs;
   } else if (designChoice === 'design_check') {
-    q.designHours = Math.round(draughtHrs * 0.3); q.structEngHrs = Math.round(structEngHrs * 0.5); q.fabpackHours = 0;
+    q.designHours = Math.round(dwizMid * 0.3); q.structEngHrs = Math.round(structEngHrs * 0.5); q.fabpackHours = 0;
   } else if (designChoice === 'fab_pack_only') {
-    q.designHours = draughtHrs; q.structEngHrs = 0; q.fabpackHours = fabpackHrs;
+    q.designHours = dwizMid; q.structEngHrs = 0; q.fabpackHours = fabpackHrs;
   } else { // full_design
-    q.designHours = draughtHrs; q.structEngHrs = structEngHrs; q.fabpackHours = fabpackHrs;
+    q.designHours = dwizMid; q.structEngHrs = structEngHrs; q.fabpackHours = fabpackHrs;
   }
 
   // ── Fab hours ─────────────────────────────────────────────
@@ -5714,6 +5775,25 @@ function dwizSelect(group, el) {
   dwizCalc();
 }
 
+// Returns just the midpoint using current wizard selections (no DOM update)
+function dwizCalcMid() {
+  const conn   = document.querySelector('#dwiz-connections .dwiz-tile.active')?.dataset.val || 'simple';
+  const rep    = document.querySelector('#dwiz-repetition .dwiz-tile.active')?.dataset.val  || 'high';
+  const mat    = document.querySelector('#dwiz-material .dwiz-tile.active')?.dataset.val    || 'steel';
+  const det    = document.querySelector('#dwiz-details .dwiz-tile.active')?.dataset.val     || 'few';
+  const q      = getQuote();
+  const tonnes = q ? (q.takeoff||[]).reduce((s,r) => s + (r.length/1000)*(r.kgm||0)*(r.qty||1), 0) / 1000 : 0;
+  const baseRate  = { simple:2.5, standard:3.2, moment:4.2, complex:5.0 }[conn];
+  const repMult   = { high:0.82, medium:1.00, low:1.18 }[rep];
+  const matMult   = { steel:1.00, grp:1.15, mixed:1.10 }[mat];
+  const detMult   = { few:0.88, medium:1.00, many:1.18 }[det];
+  const scaleMult = tonnes > 8 ? Math.max(0.72, 1-(Math.min(tonnes,120)-8)*0.002) : 1;
+  const overhead  = { simple:12, standard:16, moment:20, complex:28 }[conn];
+  const floor     = { simple:10, standard:14, moment:16, complex:22 }[conn];
+  const hrs = tonnes > 0 ? overhead + tonnes*baseRate*repMult*matMult*detMult*scaleMult : overhead;
+  return Math.max(floor, Math.round(hrs));
+}
+
 function dwizCalc() {
   const q = getQuote();
   const totalKg = q ? (q.takeoff||[]).reduce((s,r) => s + (r.length/1000)*(r.kgm||0)*(r.qty||1), 0) : 0;
@@ -5763,11 +5843,11 @@ function dwizCalc() {
   document.getElementById('dwiz-factors').textContent = factors.join(' · ') || 'brak danych z takeoff — szacunek bazowy';
 
   // Store midpoint for apply
-  document.getElementById('design-wizard-panel').dataset.mid = midHrs;
+  const _dwizPanel = document.getElementById('design-wizard-panel') || document.getElementById('wiz-design-complexity'); if(_dwizPanel) _dwizPanel.dataset.mid = midHrs;
 }
 
 function dwizApply() {
-  const mid = parseInt(document.getElementById('design-wizard-panel')?.dataset.mid || '0');
+  const mid = parseInt((document.getElementById('wiz-design-complexity') || document.getElementById('design-wizard-panel'))?.dataset.mid || '0');
   if (!mid) { toast('Najpierw oblicz zakres', 'error'); return; }
   document.getElementById('design-hours').value = mid;
   saveAll(); recalcAll();
