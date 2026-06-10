@@ -3338,9 +3338,9 @@ function takeoffRowHTML(row, i) {
     </td>
     <td style="padding:3px 4px"><div class="ac-wrap" id="ac-wrap-${i}">
       <input class="ac-input" value="${row.type||''}" placeholder="e.g. UB203x133x25"
-        oninput="onTakeoffTypeInput(${i},this.value)"
-        onkeydown="onTakeoffTypeKey(event,${i})"
-        onfocus="onTakeoffTypeInput(${i},this.value)"
+        oninput="onTakeoffTypeInput(${i},this.value,this)"
+        onkeydown="onTakeoffTypeKey(event,${i},this)"
+        onfocus="onTakeoffTypeInput(${i},this.value,this)"
         autocomplete="off" style="width:100%;font-size:12px"
         data-row="${i}" data-col="type">
     </div></td>
@@ -3362,6 +3362,7 @@ function takeoffRowHTML(row, i) {
     </td>
     <td style="${nc}"><input type="number" value="${kgm||''}" placeholder="auto"
         oninput="updateTakeoffRow(${i},'kgm',this.value)"
+        data-col="kgm"
         style="${ni};color:${row.kgm?'var(--text)':'var(--subtle)'}"></td>
     <td style="padding:2px 3px">
       <select onchange="updateTakeoffRow(${i},'finish',this.value)"
@@ -3376,7 +3377,7 @@ function takeoffRowHTML(row, i) {
     </td>
     <td style="${nc};color:var(--muted);font-family:var(--font-mono);font-size:12px">${totalKg>0?totalKg.toFixed(2):''}</td>
     <td style="${nc}"><input type="number" value="${row.rate||''}" placeholder="—" step="0.1"
-        oninput="updateTakeoffRow(${i},'rate',this.value)" style="${ni}"></td>
+        oninput="updateTakeoffRow(${i},'rate',this.value)" data-col="rate" style="${ni}"></td>
     <td style="${nc};color:${mat>0?'var(--accent)':'var(--muted)'};font-family:var(--font-mono);font-size:12px;font-weight:${mat>0?'600':'400'}">${mat>0?'£'+mat.toFixed(2):''}</td>
     <td style="padding:4px 2px;text-align:center">
       <button class="btn-icon" onclick="removeTakeoffRow(${i})" style="padding:3px 6px;font-size:12px" title="Delete row">✕</button>
@@ -3619,7 +3620,7 @@ document.addEventListener('click', e => {
 });
 
 // Takeoff row autocomplete handlers
-function onTakeoffTypeInput(i, val) {
+function onTakeoffTypeInput(i, val, inputEl) {
   const q = getQuote(); if (!q) return;
   const row = q.takeoff[i];
   if (row) {
@@ -3627,32 +3628,30 @@ function onTakeoffTypeInput(i, val) {
     const kgm = lookupKgM(row.type);
     if (kgm) row.kgm = kgm;
     row.rate = row.rate || sectionMaterialRate(row.type);
-    const tbody = document.getElementById('takeoffBody');
-    if (tbody && tbody.rows[i]) {
-      const r = tbody.rows[i];
-      r.cells[4].querySelector('input').value = row.kgm || '';
-      r.cells[4].querySelector('input').style.color = row.kgm ? 'var(--text)' : 'var(--subtle)';
-      r.cells[6].querySelector('input').value = row.rate || '';
+    // update kg/m and rate inputs in the same row (use row ID, not tbody.rows index)
+    const tr = document.getElementById('takeoff-row-' + i);
+    if (tr) {
+      const kgmInput = tr.querySelector('input[data-col="kgm"]');
+      const rateInput = tr.querySelector('input[data-col="rate"]');
+      if (kgmInput) { kgmInput.value = row.kgm || ''; kgmInput.style.color = row.kgm ? 'var(--text)' : 'var(--subtle)'; }
+      if (rateInput) rateInput.value = row.rate || '';
     }
     saveAll(); updateTakeoffTotals(); recalcAll();
   }
-  const inputEl = document.querySelector(`input[data-row="${i}"][data-col="type"]`);
   if (!inputEl) return;
   const results = _acFilter(val);
   _acShow(inputEl, results, key => {
     inputEl.value = key;
-    onTakeoffTypeInput(i, key);
-    // move focus to length col
+    onTakeoffTypeInput(i, key, inputEl);
     const next = document.querySelector(`input[data-row="${i}"][data-col="length"]`);
     if (next) next.focus();
   });
 }
 
-function onTakeoffTypeKey(e, i) {
-  const inputEl = document.querySelector(`input[data-row="${i}"][data-col="type"]`);
+function onTakeoffTypeKey(e, i, inputEl) {
   _acNavigate(e, inputEl, key => {
     if (inputEl) inputEl.value = key;
-    onTakeoffTypeInput(i, key);
+    onTakeoffTypeInput(i, key, inputEl);
     const next = document.querySelector(`input[data-row="${i}"][data-col="length"]`);
     if (next) next.focus();
   });
