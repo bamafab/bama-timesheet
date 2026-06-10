@@ -1006,8 +1006,8 @@ For each urgent quote, give a practical recommendation — e.g. if a quote has a
 // ─── Init ─────────────────────────────────────────────────
 function setTimeOfDay() {
   // Set user name from token
-  const el = document.getElementById('userName');
-  if (el) el.textContent = getUserDisplayName();
+  const userNameEl = document.getElementById('userName');
+  if (userNameEl) userNameEl.textContent = getUserDisplayName();
   const h = new Date().getHours();
   const el = document.getElementById('timeOfDay');
   if (h < 12) el.textContent = 'morning';
