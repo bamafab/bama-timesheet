@@ -390,9 +390,13 @@ tr.drag-dragging { opacity:0.35; }
                   <input type="date" id="hDateSent" oninput="autosave()">
                 </div>
                 <div class="field">
-                  <label style="display:flex;justify-content:space-between;align-items:center">Decision Due <span id="decisionDueAgo" style="font-size:10px;color:var(--muted);font-weight:400"></span></label>
-                  <input type="date" id="hDecisionDue" oninput="autosave();updateDecisionDueAgo()">
+                  <label style="display:flex;justify-content:space-between;align-items:center">Quote Due (deadline to submit) <span id="decisionDueAgo" style="font-size:10px;color:var(--muted);font-weight:400"></span></label>
+                  <input type="date" id="hDecisionDue" oninput="autosave();updateDecisionDueAgo()" placeholder="When must this be sent?">
                 </div>
+              </div>
+              <div class="field">
+                <label>Chasing Date <span style="font-size:11px;color:var(--muted);font-weight:400">(when to follow up)</span></label>
+                <input type="date" id="hChasingDate" oninput="autosave()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%">
               </div>
               <div class="field">
                 <label style="display:flex;justify-content:space-between;align-items:center">
@@ -1516,7 +1520,7 @@ tr.drag-dragging { opacity:0.35; }
       <button class="btn btn-ghost btn-sm" onclick="pipelineFilter('lost')" id="pf-lost">Lost</button>
     </div>
     <select id="pipelineSort" onchange="renderPipeline()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:12px">
-      <option value="decision">Sort: Decision Due</option>
+      <option value="due">Sort: Due Date</option>
       <option value="value">Sort: Value</option>
       <option value="date">Sort: Created</option>
       <option value="status">Sort: Status</option>
@@ -2947,6 +2951,7 @@ function autosave() {
   q.validUntil = document.getElementById('hValidUntil')?.value || q.validUntil;
   q.dateSent    = document.getElementById('hDateSent')?.value || q.dateSent || '';
   q.decisionDue = document.getElementById('hDecisionDue')?.value || q.decisionDue || '';
+  q.chasingDate = document.getElementById('hChasingDate')?.value || q.chasingDate || '';
   q.preparedBy = document.getElementById('hPreparedBy')?.value || q.preparedBy;
   q.company    = document.getElementById('hCompany')?.value || '';
   renderClientHistory(q.company);
@@ -3228,6 +3233,7 @@ function loadQuoteEditor() {
   document.getElementById('hValidUntil').value = q.validUntil;
   const dsEl = document.getElementById('hDateSent'); if (dsEl) dsEl.value = q.dateSent || '';
   const ddEl = document.getElementById('hDecisionDue'); if (ddEl) ddEl.value = q.decisionDue || '';
+  const chEl = document.getElementById('hChasingDate'); if (chEl) chEl.value = q.chasingDate || '';
   updateDecisionDueAgo();
   document.getElementById('hPreparedBy').value = q.preparedBy;
   document.getElementById('hCompany').value    = q.company || '';
@@ -8467,17 +8473,17 @@ function renderPipeline() {
   const sent  = qs.filter(q => q.status === 'sent');
   const won   = qs.filter(q => q.status === 'won');
   const lost  = qs.filter(q => q.status === 'lost');
-  const sentVal  = sent.reduce((s,q)  => s + (q._computed?.total || 0), 0);
-  const wonVal   = won.reduce((s,q)   => s + (q._computed?.total || 0), 0);
-  const totalSentWon = sentVal + wonVal;
-  const winRate = (sent.length + won.length + lost.length) > 0
-    ? Math.round(won.length / (won.length + lost.length) * 100) || 0 : 0;
+  const draft = qs.filter(q => q.status === 'draft');
+  const sentVal = sent.reduce((s,q)  => s + (q._computed?.total || 0), 0);
+  const wonVal  = won.reduce((s,q)   => s + (q._computed?.total || 0), 0);
+  const winRate = (won.length + lost.length) > 0
+    ? Math.round(won.length / (won.length + lost.length) * 100) : 0;
 
   document.getElementById('pipelineStats').innerHTML = [
-    { label: 'Live (Sent)', val: sent.length + ' quotes', sub: fmtGBP(sentVal), color: '#3b82f6' },
-    { label: 'Won', val: won.length + ' quotes', sub: fmtGBP(wonVal), color: '#22c55e' },
-    { label: 'Win Rate', val: winRate + '%', sub: (won.length + lost.length) + ' decided', color: '#ff6b00' },
-    { label: 'Pipeline Value', val: fmtGBP(totalSentWon), sub: 'sent + won', color: '#a855f7' }
+    { label: 'In Progress',  val: draft.length + ' drafts',   sub: 'being built',                   color: 'var(--muted)' },
+    { label: 'Sent / Live',  val: sent.length + ' quotes',    sub: fmtGBP(sentVal),                 color: '#3b82f6' },
+    { label: 'Won',          val: won.length + ' quotes',     sub: fmtGBP(wonVal),                  color: '#22c55e' },
+    { label: 'Win Rate',     val: winRate + '%',              sub: (won.length+lost.length)+' decided', color: '#ff6b00' }
   ].map(s => `
     <div style="padding:12px 16px;border-right:1px solid var(--border);background:var(--surface)">
       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:2px">${s.label}</div>
@@ -8487,10 +8493,10 @@ function renderPipeline() {
 
   // Filter + sort
   let list = _pipelineFilter === 'all' ? qs : qs.filter(q => q.status === _pipelineFilter);
-  const sortBy = document.getElementById('pipelineSort')?.value || 'decision';
+  const sortBy = document.getElementById('pipelineSort')?.value || 'due';
   list = [...list].sort((a, b) => {
-    if (sortBy === 'decision') {
-      if (!a.decisionDue && !b.decisionDue) return 0;
+    if (sortBy === 'due') {
+      if (!a.decisionDue && !b.decisionDue) return (b.date||'').localeCompare(a.date||'');
       if (!a.decisionDue) return 1;
       if (!b.decisionDue) return -1;
       return a.decisionDue.localeCompare(b.decisionDue);
@@ -8498,63 +8504,90 @@ function renderPipeline() {
     if (sortBy === 'value') return (b._computed?.total||0) - (a._computed?.total||0);
     if (sortBy === 'date') return (b.date||'').localeCompare(a.date||'');
     if (sortBy === 'status') {
-      const order = {sent:0,draft:1,won:2,lost:3};
+      const order = {draft:0, sent:1, won:2, lost:3};
       return (order[a.status]??9) - (order[b.status]??9);
     }
     return 0;
   });
 
+  const pipeList = document.getElementById('pipelineList');
   if (!list.length) {
-    document.getElementById('pipelineList').innerHTML =
-      '<div style="padding:40px;text-align:center;color:var(--muted)">No quotes found</div>';
+    pipeList.innerHTML = '<div style="padding:40px;text-align:center;color:var(--muted)">No quotes found</div>';
     return;
   }
 
-  document.getElementById('pipelineList').innerHTML = list.map(q => {
-    const total = q._computed?.total || 0;
-    const statusColors = { draft:'var(--muted)', sent:'#3b82f6', won:'#22c55e', lost:'var(--red)' };
-    const statusLabels = { draft:'Draft', sent:'Sent', won:'Won', lost:'Lost' };
-    const sColor = statusColors[q.status] || 'var(--muted)';
+  pipeList.innerHTML = `
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead>
+        <tr style="background:var(--surface);position:sticky;top:0;z-index:10">
+          <th style="padding:8px 10px;text-align:left;font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:0.04em;border-bottom:2px solid var(--border);white-space:nowrap">Quote No</th>
+          <th style="padding:8px 10px;text-align:left;font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:0.04em;border-bottom:2px solid var(--border);white-space:nowrap">Due Date</th>
+          <th style="padding:8px 10px;text-align:left;font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:0.04em;border-bottom:2px solid var(--border)">Company</th>
+          <th style="padding:8px 10px;text-align:left;font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:0.04em;border-bottom:2px solid var(--border)">Project</th>
+          <th style="padding:8px 10px;text-align:right;font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:0.04em;border-bottom:2px solid var(--border);white-space:nowrap">Value</th>
+          <th style="padding:8px 10px;text-align:left;font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:0.04em;border-bottom:2px solid var(--border);white-space:nowrap">Sent</th>
+          <th style="padding:8px 10px;text-align:left;font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:0.04em;border-bottom:2px solid var(--border);white-space:nowrap">Chasing</th>
+          <th style="padding:8px 10px;text-align:center;font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:0.04em;border-bottom:2px solid var(--border)">WIN</th>
+          <th style="padding:8px 10px;text-align:left;font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:0.04em;border-bottom:2px solid var(--border)">Comments</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${list.map((q, idx) => {
+          const total = q._computed?.total || 0;
 
-    // Decision due urgency
-    let decisionBadge = '';
-    if (q.decisionDue && q.status === 'sent') {
-      const due = new Date(q.decisionDue + 'T00:00:00');
-      const diff = Math.round((due - today) / 86400000);
-      if (diff < 0)      decisionBadge = `<span style="background:#ef4444;color:#fff;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:700">OVERDUE ${Math.abs(diff)}d</span>`;
-      else if (diff <= 3) decisionBadge = `<span style="background:#f97316;color:#fff;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:700">Due in ${diff}d</span>`;
-      else if (diff <= 7) decisionBadge = `<span style="background:#eab308;color:#fff;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:700">Due in ${diff}d</span>`;
-      else               decisionBadge = `<span style="background:var(--surface);color:var(--muted);font-size:10px;padding:2px 7px;border-radius:10px;border:1px solid var(--border)">${fmtDate(q.decisionDue)}</span>`;
-    }
+          // Due date urgency colouring (for draft/sent quotes only)
+          let dueBadge = '—';
+          if (q.decisionDue) {
+            const due = new Date(q.decisionDue + 'T00:00:00');
+            const diff = Math.round((due - today) / 86400000);
+            let bg = 'transparent', col = 'var(--muted)', bold = '';
+            if (q.status === 'draft' || q.status === 'sent') {
+              if (diff < 0)       { bg='#ef4444'; col='#fff'; bold='font-weight:700'; }
+              else if (diff <= 1) { bg='#f97316'; col='#fff'; bold='font-weight:700'; }
+              else if (diff <= 3) { bg='#eab308'; col='#111'; bold='font-weight:600'; }
+            }
+            dueBadge = '<span style="background:'+bg+';color:'+col+';'+bold+';padding:2px 7px;border-radius:4px;white-space:nowrap;font-size:11px">'+fmtDate(q.decisionDue)+'</span>';
+          }
 
-    const lossInfo = q.status === 'lost' && q.lossReason
-      ? `<span style="font-size:10px;color:var(--muted);margin-left:6px">${lossReasonLabel(q.lossReason)}${q.lossCompetitor ? ' — ' + q.lossCompetitor : ''}</span>` : '';
+          // WIN column
+          let winCell = '—';
+          if (q.status === 'won')  winCell = '<span style="color:#22c55e;font-weight:800;font-size:15px">✓</span>';
+          if (q.status === 'lost') winCell = '<span style="color:#ef4444;font-weight:800;font-size:15px">✗</span>';
+          if (q.status === 'sent') winCell = '<span style="color:#3b82f6;font-size:11px">?</span>';
 
-    return `<div onclick="openQuoteFromPipeline('${q.id}')"
-      style="padding:12px 16px;border-bottom:1px solid var(--border);cursor:pointer;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;transition:background 0.1s"
-      onmouseover="this.style.background='rgba(255,107,0,0.04)'" onmouseout="this.style.background=''">
-      <div>
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:3px">
-          <span style="font-weight:700;font-size:13px">${escHtml(q.ref || '—')}</span>
-          <span style="font-size:11px;font-weight:600;color:${sColor}">${statusLabels[q.status]||q.status}</span>
-          ${decisionBadge}
-          ${lossInfo}
-        </div>
-        <div style="font-size:12px;color:var(--muted)">${escHtml(q.company||'No client')} · ${escHtml(q.project||q.comments||'—')}</div>
-        <div style="font-size:11px;color:var(--subtle);margin-top:2px">
-          Created ${fmtDate(q.date)}
-          ${q.dateSent ? ' · Sent ' + fmtDate(q.dateSent) : ''}
-          ${q.revision ? ' · ' + q.revision : ''}
-        </div>
-      </div>
-      <div style="text-align:right">
-        <div style="font-size:16px;font-weight:800;color:var(--accent);font-family:var(--font-mono)">${total > 0 ? fmtGBP(total) : '—'}</div>
-        ${q.decisionDue && q.status !== 'sent' ? `<div style="font-size:10px;color:var(--muted)">Decision: ${fmtDate(q.decisionDue)}</div>` : ''}
-      </div>
-    </div>`;
-  }).join('');
+          // Comments
+          let comments = '';
+          if (q.status === 'lost' && q.lossReason) {
+            comments = lossReasonLabel(q.lossReason) + (q.lossCompetitor ? ' — ' + q.lossCompetitor : '') + (q.lossComment ? ': ' + q.lossComment : '');
+          } else {
+            comments = q.comments || '';
+          }
+
+          const rowBg = idx % 2 === 0 ? '' : 'background:rgba(255,255,255,0.02)';
+          const hoverBg = idx % 2 === 0 ? '' : 'rgba(255,255,255,0.02)';
+
+                    const trId = q.id.replace(/'/g, '');
+          return '<tr data-qid="'+trId+'" style="'+rowBg+';cursor:pointer"'
+            +' onclick="openQuoteFromPipeline(this.dataset.qid)"'
+            +' onmouseover="this.style.background=\'rgba(255,107,0,0.07)\'"'
+            +' onmouseout="this.style.background=\''+hoverBg+'\'">'
+            +'<td style="padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap">'
+            +'<span style="font-weight:700;font-family:var(--font-mono);font-size:12px">'+escHtml(q.ref||'—')+'</span>'
+            +(q.revision ? '<span style="font-size:10px;color:var(--muted);margin-left:4px">'+escHtml(q.revision)+'</span>' : '')
+            +'</td>'
+            +'<td style="padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap">'+dueBadge+'</td>'
+            +'<td style="padding:8px 10px;border-bottom:1px solid var(--border);font-weight:600">'+escHtml(q.company||'—')+'</td>'
+            +'<td style="padding:8px 10px;border-bottom:1px solid var(--border);color:var(--muted);font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escHtml(q.project||q.qScope||'—')+'</td>'
+            +'<td style="padding:8px 10px;border-bottom:1px solid var(--border);text-align:right;font-family:var(--font-mono);font-weight:'+(total>0?'700':'400')+';color:'+(total>0?'var(--accent)':'var(--muted)')+'">'+( total > 0 ? fmtGBP(total) : '—')+'</td>'
+            +'<td style="padding:8px 10px;border-bottom:1px solid var(--border);color:var(--muted);font-size:11px;white-space:nowrap">'+(q.dateSent ? fmtDate(q.dateSent) : '—')+'</td>'
+            +'<td style="padding:8px 10px;border-bottom:1px solid var(--border);color:'+(q.chasingDate?'#eab308':'var(--muted)')+';font-size:11px;white-space:nowrap">'+(q.chasingDate ? fmtDate(q.chasingDate) : '—')+'</td>'
+            +'<td style="padding:8px 10px;border-bottom:1px solid var(--border);text-align:center">'+winCell+'</td>'
+            +'<td style="padding:8px 10px;border-bottom:1px solid var(--border);color:var(--muted);font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+escHtml(comments)+'">'+escHtml(comments||'—')+'</td>'
+            +'</tr>';
+        }).join('')}
+      </tbody>
+    </table>`;
 }
-
 function openQuoteFromPipeline(id) {
   const qs = JSON.parse(localStorage.getItem('bama_quotes') || '[]');
   const idx = qs.findIndex(q => q.id === id);
