@@ -403,7 +403,7 @@
   <div class="briefing-panel">
     <div class="briefing-header">
       <div class="briefing-greeting">
-        <h2>Good <span id="timeOfDay">morning</span>, Mateusz.</h2>
+        <h2>Good <span id="timeOfDay">morning</span>, <span id="userName">…</span>.</h2>
         <div class="briefing-date" id="todayDate"></div>
       </div>
       <div class="briefing-actions">
@@ -483,6 +483,19 @@ const BAMA_DRIVE_ID   = 'b!CxTKk9lEwkyweUqAo3CRas-huywW4KtLqOk2tNzmx-P7CX86DNhTQ
 const TRACKER_ITEM_ID = '012IX7LSLSQCGVKF7BOVGYBXZ2IUZNZCOS';
 
 // ─── Auth ─────────────────────────────────────────────────
+function getUserDisplayName() {
+  // Decode JWT to get name — same token used across all ERP pages
+  const token = sessionStorage.getItem('bama_token');
+  if (!token) return 'there';
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
+    // Try common name fields in Microsoft JWT
+    const full = payload.name || payload.preferred_username || payload.unique_name || payload.upn || '';
+    // Return first name only
+    return full.split(/[\s@]/)[0] || 'there';
+  } catch(e) { return 'there'; }
+}
+
 function getToken() {
   const token  = sessionStorage.getItem('bama_token');
   const expiry = parseInt(sessionStorage.getItem('bama_token_expiry') || '0');
@@ -579,8 +592,18 @@ async function loadTrackerData() {
       console.log('Last tracker ref saved:', lastRef);
     }
 
-    // Trigger AI briefing after data loads
-    generateBriefing();
+    // Trigger AI briefing — only once per day (cached in sessionStorage)
+    const today = new Date().toISOString().slice(0,10);
+    const cached = sessionStorage.getItem('bama_briefing_date');
+    const cachedText = sessionStorage.getItem('bama_briefing_text');
+    if (cached === today && cachedText) {
+      document.getElementById('aiMessage').className = 'ai-message';
+      document.getElementById('aiMessage').innerHTML = mdToHtml(cachedText);
+      document.getElementById('refreshBriefingBtn').disabled = false;
+      document.getElementById('refreshBriefingBtn').textContent = '↻ Refresh briefing';
+    } else {
+      generateBriefing();
+    }
 
   } catch(e) {
     console.error('Tracker load error:', e);
@@ -942,7 +965,8 @@ async function generateBriefing() {
 
   const fmt = q => `${q.ref} (${q.company}${q.project ? ' — ' + q.project : ''}${q.due ? ', due ' + fmtDate(q.due) : ''}${q.value > 0 ? ', £' + Math.round(q.value).toLocaleString() : ''})`;
 
-  const prompt = `You are a helpful assistant for Mateusz, an estimator at BAMA Fabrication Ltd, a structural steel fabrication company in Peterborough. Today is ${new Date().toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'long', year:'numeric'})}.
+  const userName = getUserDisplayName();
+  const prompt = `You are a helpful assistant for ${userName}, an estimator at BAMA Fabrication Ltd, a structural steel fabrication company in Peterborough. Today is ${new Date().toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'long', year:'numeric'})}.
 
 Here is the current state of his quote tracker:
 
@@ -953,7 +977,7 @@ DUE THIS WEEK (${dueWeek.length} total): ${dueWeek.map(fmt).join('; ') || 'none'
 WIN RATE: ${winRate}% (${won.length} won, ${lost.length} lost)
 OPEN PIPELINE: ${fmtGBP(open.reduce((s,q)=>s+q.value,0))} across ${open.length} open quotes
 
-Write a brief, friendly, conversational morning briefing for Mateusz in English. Start with a quick summary of what's urgent. Prioritise: 1) overdue quotes (flag them clearly), 2) quotes due today or tomorrow, 3) anything due this week. 
+Write a brief, friendly, conversational morning briefing for ${userName} in English. Start with a quick summary of what's urgent. Prioritise: 1) overdue quotes (flag them clearly), 2) quotes due today or tomorrow, 3) anything due this week. 
 
 For each urgent quote, give a practical recommendation — e.g. if a quote has a high value, note it's worth prioritising; if it looks like a small/quick job, say so. Keep it punchy and useful — not more than 150 words. Speak directly to Mateusz, use "you" not "the estimator". Be conversational, not robotic. If there's nothing urgent, say so and give a brief overview instead.`;
 
@@ -966,6 +990,9 @@ For each urgent quote, give a practical recommendation — e.g. if a quote has a
     const text = data.content?.[0]?.text || 'Could not generate briefing.';
     document.getElementById('aiMessage').className = 'ai-message';
     document.getElementById('aiMessage').innerHTML = mdToHtml(text);
+    // Cache for the day
+    sessionStorage.setItem('bama_briefing_date', new Date().toISOString().slice(0,10));
+    sessionStorage.setItem('bama_briefing_text', text);
   } catch(e) {
     document.getElementById('aiMessage').className = 'ai-message';
     document.getElementById('aiMessage').textContent = `AI briefing unavailable right now. You have ${overdue.length} overdue and ${dueToday.length} due today.`;
@@ -978,6 +1005,9 @@ For each urgent quote, give a practical recommendation — e.g. if a quote has a
 
 // ─── Init ─────────────────────────────────────────────────
 function setTimeOfDay() {
+  // Set user name from token
+  const el = document.getElementById('userName');
+  if (el) el.textContent = getUserDisplayName();
   const h = new Date().getHours();
   const el = document.getElementById('timeOfDay');
   if (h < 12) el.textContent = 'morning';
