@@ -8399,12 +8399,12 @@ function generateHandoverPack() {
   const plantRows = (q.plantRows || []);
   const plantHTML = plantRows.length > 0
     ? plantRows.map(r => {
-        const isDaily = r.type && !['fuel','fixed'].includes(r.type);
-        const cost = isDaily ? (r.qty||1)*(r.rate||0) : (r.rate||0);
-        const desc = r.desc || r.type || 'Plant';
-        const detail = isDaily ? `${r.qty||1} days × £${r.rate||0}/day` : `£${r.rate||0} flat`;
+        const label = r.label || r.type || 'Plant';
+        const days = r.qty || 1;
+        const cost = days * (r.rate || 0);
+        const detail = `${days} day${days !== 1 ? 's' : ''} × £${r.rate || 0}/day`;
         return `<tr>
-          <td>${esc(desc)}${r.supplierNote ? `<br><span style="font-size:10px;color:#888">${esc(r.supplierNote)}</span>` : ''}</td>
+          <td>${esc(label)}${r.supplierNote ? `<br><span style="font-size:10px;color:#888">${esc(r.supplierNote)}</span>` : ''}</td>
           <td colspan="3" style="color:#666">${detail}</td>
           <td style="text-align:right">${fmt(cost)}</td>
         </tr>`;
@@ -8419,7 +8419,7 @@ function generateHandoverPack() {
           galvanise:'Hot-dip Galvanising', primer_tonne:'Primer (£/t)', powder_coat_m:'Powder Coat (m²)',
           powder_coat_bay:'Powder Coat (bay)', intumescent_m:'Intumescent (m²)', touch_up:'Touch-up on Site'
         };
-        const label = labelMap[r.type] || r.type || 'Finish';
+        const label = r.label || labelMap[r.type] || r.type || 'Finish';
         const cost  = (r.qty||0)*(r.rate||0);
         return `<tr>
           <td>${esc(label)}</td>
@@ -8433,23 +8433,48 @@ function generateHandoverPack() {
 
   // ── Survey rows ──
   const surveyRows = (q.surveyVisitRows || []);
-  const surveyHTML = surveyRows.length > 0 || q.surveyVisits > 0
-    ? (surveyRows.length > 0
-        ? surveyRows.map(r => `<tr><td>${esc(r.attendees||'')}</td><td style="text-align:center">${r.visits||1} visit(s)</td><td colspan="3"></td></tr>`).join('')
-        : `<tr><td>${q.surveyVisitors||1} person(s)</td><td style="text-align:center">${q.surveyVisits||1} visit(s)</td><td colspan="3"></td></tr>`)
+  const surveyHTML = surveyRows.length > 0
+    ? surveyRows.map(r => {
+        const visits = r.qty || r.visits || 1;
+        const cost = visits * (r.rate || 0);
+        return `<tr>
+          <td>${esc(r.label || r.type || 'Surveyor')}</td>
+          <td style="text-align:center">${visits} visit${visits !== 1 ? 's' : ''}</td>
+          <td style="text-align:right">£${r.rate || 0}/visit</td>
+          <td colspan="1"></td>
+          <td style="text-align:right">${fmt(cost)}</td>
+        </tr>`;
+      }).join('')
     : '<tr><td colspan="5" style="color:#888;font-style:italic">No survey scheduled</td></tr>';
 
   // ── Prelims ──
-  const prelimRows = (q.prelimRows || []).filter(r => r.active !== false && r.rate > 0);
+  const prelimRows = (q.prelimRows || []).filter(r => r.active !== false && (r.rate || 0) > 0);
   const prelimHTML = prelimRows.length > 0
     ? prelimRows.map(r => {
-        const cost = r.isDaily ? (r.qty||1)*(r.rate||0) : (r.rate||0);
-        const detail = r.isDaily ? `${r.qty||1} days × £${r.rate||0}` : `£${r.rate||0} flat`;
-        return `<tr><td>${esc(r.desc||r.type||'Prelim')}</td><td colspan="3" style="color:#666">${detail}</td><td style="text-align:right">${fmt(cost)}</td></tr>`;
+        const isDaily = (rates.prelims?.[r.type]?.type === 'daily') || r.isDaily;
+        const qty = r.qty || 1;
+        const cost = isDaily ? qty * (r.rate || 0) : (r.rate || 0);
+        const detail = isDaily ? `${qty} day${qty !== 1 ? 's' : ''} × £${r.rate || 0}/day` : `£${r.rate || 0} flat`;
+        return `<tr><td>${esc(r.label || r.type || 'Prelim')}</td><td colspan="3" style="color:#666">${detail}</td><td style="text-align:right">${fmt(cost)}</td></tr>`;
       }).join('')
     : '<tr><td colspan="5" style="color:#888;font-style:italic">No prelims</td></tr>';
 
-  // ── Takeoff summary ──
+  // ── Travel distance (live calc from stored coords) ──
+  let travelInfo = '';
+  if (q._siteLat && q._siteLng) {
+    const R = 6371;
+    const dLat = (q._siteLat - BAMA_LAT) * Math.PI / 180;
+    const dLng = (q._siteLng - BAMA_LNG) * Math.PI / 180;
+    const a = Math.sin(dLat/2)**2 + Math.cos(BAMA_LAT*Math.PI/180)*Math.cos(q._siteLat*Math.PI/180)*Math.sin(dLng/2)**2;
+    const sl = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    const rd = Math.round(sl * 1.3);
+    const hrs = rd / 60;
+    const driveStr = hrs < 1 ? Math.round(hrs * 60) + ' min' : hrs.toFixed(1) + ' hrs';
+    const fuelCost = Math.round(rd * 2 * 0.25);
+    travelInfo = `~${rd} miles · ~${driveStr} each way · ~£${fuelCost} fuel (return)`;
+  } else if ((q.siteAddress || '').trim()) {
+    travelInfo = 'Use 📍 Estimate Travel button on Header tab to calculate';
+  }
   const totByType = {};
   let totalKgAll = 0;
   (q.takeoff || []).forEach(row => {
@@ -8471,7 +8496,6 @@ function generateHandoverPack() {
     : '<li style="color:#888;font-style:italic">No exclusions noted</li>';
 
   const siteAddr = (q.siteAddress || '').trim() || 'Not specified';
-  const travelInfo = q._siteLat ? `${q._siteDist||'?'} miles from Yaxley · ~${q._siteTime||'?'} drive` : '';
 
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
 <title>Handover Pack — ${esc(q.ref)} ${esc(q.company)}</title>
