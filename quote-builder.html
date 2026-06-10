@@ -360,6 +360,7 @@ tr.drag-dragging { opacity:0.35; }
         <button class="tab-btn" onclick="switchTab('calcs',this)">🧮 Calcs</button>
         <button class="tab-btn" onclick="switchTab('quotation',this)">📋 Quotation</button>
         <button class="tab-btn" onclick="switchTab('helper',this)">🤖 Quote Helper</button>
+        <button class="tab-btn" onclick="switchTab('pipeline',this)">📊 Pipeline</button>
       </div>
 
       <!-- ══════════════════════════════════════════
@@ -382,6 +383,16 @@ tr.drag-dragging { opacity:0.35; }
               <div class="form-grid form-grid-2">
                 <div class="field"><label>Date</label><input type="date" id="hDate" oninput="autosave()"></div>
                 <div class="field"><label>Valid Until</label><input type="date" id="hValidUntil" oninput="autosave()"></div>
+              </div>
+              <div class="form-grid form-grid-2">
+                <div class="field">
+                  <label>Date Sent to Client</label>
+                  <input type="date" id="hDateSent" oninput="autosave()">
+                </div>
+                <div class="field">
+                  <label style="display:flex;justify-content:space-between;align-items:center">Decision Due <span id="decisionDueAgo" style="font-size:10px;color:var(--muted);font-weight:400"></span></label>
+                  <input type="date" id="hDecisionDue" oninput="autosave();updateDecisionDueAgo()">
+                </div>
               </div>
               <div class="field">
                 <label style="display:flex;justify-content:space-between;align-items:center">
@@ -1489,6 +1500,64 @@ tr.drag-dragging { opacity:0.35; }
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeSplitModal()">Cancel</button>
       <button class="btn btn-primary" onclick="confirmSplitMove()">Move</button>
+    </div>
+  </div>
+</div>
+
+<!-- PIPELINE TAB -->
+<div class="tab-content" id="tab-pipeline" style="padding:0">
+  <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <span style="font-weight:700;font-size:14px">📊 Quote Pipeline</span>
+    <div style="display:flex;gap:6px;margin-left:auto;flex-wrap:wrap">
+      <button class="btn btn-ghost btn-sm" onclick="pipelineFilter('all')" id="pf-all" style="border-color:var(--accent);color:var(--accent)">All</button>
+      <button class="btn btn-ghost btn-sm" onclick="pipelineFilter('draft')" id="pf-draft">Draft</button>
+      <button class="btn btn-ghost btn-sm" onclick="pipelineFilter('sent')" id="pf-sent">Sent</button>
+      <button class="btn btn-ghost btn-sm" onclick="pipelineFilter('won')" id="pf-won">Won</button>
+      <button class="btn btn-ghost btn-sm" onclick="pipelineFilter('lost')" id="pf-lost">Lost</button>
+    </div>
+    <select id="pipelineSort" onchange="renderPipeline()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:12px">
+      <option value="decision">Sort: Decision Due</option>
+      <option value="value">Sort: Value</option>
+      <option value="date">Sort: Created</option>
+      <option value="status">Sort: Status</option>
+    </select>
+  </div>
+  <div id="pipelineStats" style="display:grid;grid-template-columns:repeat(4,1fr);gap:0;border-bottom:1px solid var(--border)"></div>
+  <div id="pipelineList" style="overflow-y:auto;max-height:calc(100vh - 320px)"></div>
+</div>
+
+<!-- LOSS MODAL -->
+<div class="modal-overlay" id="lossModal">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-title" style="color:var(--red)">😞 Quote Lost</div>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:16px;line-height:1.6">Record why this quote was lost — helps improve future bids.</p>
+    <div class="form-grid" style="gap:12px">
+      <div class="field">
+        <label>Reason Lost</label>
+        <select id="lossReason" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%">
+          <option value="">— Select reason —</option>
+          <option value="price">Price — too expensive</option>
+          <option value="competitor">Competitor won</option>
+          <option value="no_decision">Client no decision / cancelled</option>
+          <option value="scope_change">Scope changed</option>
+          <option value="timing">Timing / programme</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Competitor (if known)</label>
+        <input type="text" id="lossCompetitor" placeholder="e.g. Billington, SH Structures…"
+          style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%">
+      </div>
+      <div class="field">
+        <label>Comments</label>
+        <textarea id="lossComment" rows="3" placeholder="Any notes — feedback from client, price differential, etc."
+          style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%;resize:vertical"></textarea>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeLossModal()">Skip</button>
+      <button class="btn btn-primary" onclick="saveLossModal()">Save</button>
     </div>
   </div>
 </div>
@@ -2825,6 +2894,7 @@ function newQuote() {
     ref, revision: '', status: 'draft', type: 'bama',
     date: now.toISOString().slice(0,10),
     validUntil: new Date(now.getTime()+14*86400000).toISOString().slice(0,10),
+    dateSent: '', decisionDue: '', lossReason: '', lossCompetitor: '', lossComment: '',
     preparedBy: 'Mateusz Braczyk',
     company: '', contact: '', email: '', phone: '', siteAddress: '',
     comments: '', qScope: '', boqRef: '', boqFile: '', projectTCs: '',
@@ -2875,6 +2945,8 @@ function autosave() {
   q.revision   = document.getElementById('hRevision')?.value || q.revision;
   q.date       = document.getElementById('hDate')?.value || q.date;
   q.validUntil = document.getElementById('hValidUntil')?.value || q.validUntil;
+  q.dateSent    = document.getElementById('hDateSent')?.value || q.dateSent || '';
+  q.decisionDue = document.getElementById('hDecisionDue')?.value || q.decisionDue || '';
   q.preparedBy = document.getElementById('hPreparedBy')?.value || q.preparedBy;
   q.company    = document.getElementById('hCompany')?.value || '';
   renderClientHistory(q.company);
@@ -2977,6 +3049,8 @@ function setStatus(val) {
   saveAll();
   renderRevHistory(q);
   if (val === 'won' && prev !== 'won') showWonModal();
+  if (val === 'lost' && prev !== 'lost') showLossModal();
+  if (val === 'sent' && !q.dateSent) { q.dateSent = new Date().toISOString().slice(0,10); const el = document.getElementById('hDateSent'); if (el) el.value = q.dateSent; saveAll(); }
 }
 
 function _updateRevDisplay(q) {
@@ -3152,6 +3226,9 @@ function loadQuoteEditor() {
   document.getElementById('hRevision').value   = q.revision;
   document.getElementById('hDate').value       = q.date;
   document.getElementById('hValidUntil').value = q.validUntil;
+  const dsEl = document.getElementById('hDateSent'); if (dsEl) dsEl.value = q.dateSent || '';
+  const ddEl = document.getElementById('hDecisionDue'); if (ddEl) ddEl.value = q.decisionDue || '';
+  updateDecisionDueAgo();
   document.getElementById('hPreparedBy').value = q.preparedBy;
   document.getElementById('hCompany').value    = q.company || '';
   const caEl = document.getElementById('hClientAddress');
@@ -4686,6 +4763,7 @@ function switchTab(name, btn) {
   document.getElementById('tab-'+name).classList.add('active');
   if (name==='calcs') recalcAll();
   if (name==='quotation') { recalcAll(); renderQuotationLines(); }
+  if (name==='pipeline') renderPipeline();
 }
 
 function toggleBlock(name) {
@@ -8367,6 +8445,169 @@ function openLogoUpload() {
 
 
 // ============================================================
+// PIPELINE TAB
+// ============================================================
+let _pipelineFilter = 'all';
+
+function pipelineFilter(f) {
+  _pipelineFilter = f;
+  document.querySelectorAll('[id^="pf-"]').forEach(b => {
+    b.style.borderColor = ''; b.style.color = '';
+  });
+  const btn = document.getElementById('pf-' + f);
+  if (btn) { btn.style.borderColor = 'var(--accent)'; btn.style.color = 'var(--accent)'; }
+  renderPipeline();
+}
+
+function renderPipeline() {
+  const qs = JSON.parse(localStorage.getItem('bama_quotes') || '[]');
+  const today = new Date(); today.setHours(0,0,0,0);
+
+  // Stats strip
+  const sent  = qs.filter(q => q.status === 'sent');
+  const won   = qs.filter(q => q.status === 'won');
+  const lost  = qs.filter(q => q.status === 'lost');
+  const sentVal  = sent.reduce((s,q)  => s + (q._computed?.total || 0), 0);
+  const wonVal   = won.reduce((s,q)   => s + (q._computed?.total || 0), 0);
+  const totalSentWon = sentVal + wonVal;
+  const winRate = (sent.length + won.length + lost.length) > 0
+    ? Math.round(won.length / (won.length + lost.length) * 100) || 0 : 0;
+
+  document.getElementById('pipelineStats').innerHTML = [
+    { label: 'Live (Sent)', val: sent.length + ' quotes', sub: fmtGBP(sentVal), color: '#3b82f6' },
+    { label: 'Won', val: won.length + ' quotes', sub: fmtGBP(wonVal), color: '#22c55e' },
+    { label: 'Win Rate', val: winRate + '%', sub: (won.length + lost.length) + ' decided', color: '#ff6b00' },
+    { label: 'Pipeline Value', val: fmtGBP(totalSentWon), sub: 'sent + won', color: '#a855f7' }
+  ].map(s => `
+    <div style="padding:12px 16px;border-right:1px solid var(--border);background:var(--surface)">
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:2px">${s.label}</div>
+      <div style="font-size:18px;font-weight:800;color:${s.color}">${s.val}</div>
+      <div style="font-size:11px;color:var(--muted)">${s.sub}</div>
+    </div>`).join('');
+
+  // Filter + sort
+  let list = _pipelineFilter === 'all' ? qs : qs.filter(q => q.status === _pipelineFilter);
+  const sortBy = document.getElementById('pipelineSort')?.value || 'decision';
+  list = [...list].sort((a, b) => {
+    if (sortBy === 'decision') {
+      if (!a.decisionDue && !b.decisionDue) return 0;
+      if (!a.decisionDue) return 1;
+      if (!b.decisionDue) return -1;
+      return a.decisionDue.localeCompare(b.decisionDue);
+    }
+    if (sortBy === 'value') return (b._computed?.total||0) - (a._computed?.total||0);
+    if (sortBy === 'date') return (b.date||'').localeCompare(a.date||'');
+    if (sortBy === 'status') {
+      const order = {sent:0,draft:1,won:2,lost:3};
+      return (order[a.status]??9) - (order[b.status]??9);
+    }
+    return 0;
+  });
+
+  if (!list.length) {
+    document.getElementById('pipelineList').innerHTML =
+      '<div style="padding:40px;text-align:center;color:var(--muted)">No quotes found</div>';
+    return;
+  }
+
+  document.getElementById('pipelineList').innerHTML = list.map(q => {
+    const total = q._computed?.total || 0;
+    const statusColors = { draft:'var(--muted)', sent:'#3b82f6', won:'#22c55e', lost:'var(--red)' };
+    const statusLabels = { draft:'Draft', sent:'Sent', won:'Won', lost:'Lost' };
+    const sColor = statusColors[q.status] || 'var(--muted)';
+
+    // Decision due urgency
+    let decisionBadge = '';
+    if (q.decisionDue && q.status === 'sent') {
+      const due = new Date(q.decisionDue + 'T00:00:00');
+      const diff = Math.round((due - today) / 86400000);
+      if (diff < 0)      decisionBadge = `<span style="background:#ef4444;color:#fff;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:700">OVERDUE ${Math.abs(diff)}d</span>`;
+      else if (diff <= 3) decisionBadge = `<span style="background:#f97316;color:#fff;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:700">Due in ${diff}d</span>`;
+      else if (diff <= 7) decisionBadge = `<span style="background:#eab308;color:#fff;font-size:10px;padding:2px 7px;border-radius:10px;font-weight:700">Due in ${diff}d</span>`;
+      else               decisionBadge = `<span style="background:var(--surface);color:var(--muted);font-size:10px;padding:2px 7px;border-radius:10px;border:1px solid var(--border)">${fmtDate(q.decisionDue)}</span>`;
+    }
+
+    const lossInfo = q.status === 'lost' && q.lossReason
+      ? `<span style="font-size:10px;color:var(--muted);margin-left:6px">${lossReasonLabel(q.lossReason)}${q.lossCompetitor ? ' — ' + q.lossCompetitor : ''}</span>` : '';
+
+    return `<div onclick="openQuoteFromPipeline('${q.id}')"
+      style="padding:12px 16px;border-bottom:1px solid var(--border);cursor:pointer;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;transition:background 0.1s"
+      onmouseover="this.style.background='rgba(255,107,0,0.04)'" onmouseout="this.style.background=''">
+      <div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:3px">
+          <span style="font-weight:700;font-size:13px">${escHtml(q.ref || '—')}</span>
+          <span style="font-size:11px;font-weight:600;color:${sColor}">${statusLabels[q.status]||q.status}</span>
+          ${decisionBadge}
+          ${lossInfo}
+        </div>
+        <div style="font-size:12px;color:var(--muted)">${escHtml(q.company||'No client')} · ${escHtml(q.project||q.comments||'—')}</div>
+        <div style="font-size:11px;color:var(--subtle);margin-top:2px">
+          Created ${fmtDate(q.date)}
+          ${q.dateSent ? ' · Sent ' + fmtDate(q.dateSent) : ''}
+          ${q.revision ? ' · ' + q.revision : ''}
+        </div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:16px;font-weight:800;color:var(--accent);font-family:var(--font-mono)">${total > 0 ? fmtGBP(total) : '—'}</div>
+        ${q.decisionDue && q.status !== 'sent' ? `<div style="font-size:10px;color:var(--muted)">Decision: ${fmtDate(q.decisionDue)}</div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function openQuoteFromPipeline(id) {
+  const qs = JSON.parse(localStorage.getItem('bama_quotes') || '[]');
+  const idx = qs.findIndex(q => q.id === id);
+  if (idx < 0) return;
+  currentQuoteIndex = idx;
+  loadQuoteIntoForm(qs[idx]);
+  // switch to header tab
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.getElementById('tab-header').classList.add('active');
+  document.querySelector('.tab-btn[onclick*="header"]').classList.add('active');
+}
+
+function lossReasonLabel(r) {
+  return { price:'Price', competitor:'Competitor', no_decision:'No decision', scope_change:'Scope change', timing:'Timing', other:'Other' }[r] || r;
+}
+
+// ── Decision Due countdown ──
+function updateDecisionDueAgo() {
+  const val = document.getElementById('hDecisionDue')?.value;
+  const el  = document.getElementById('decisionDueAgo');
+  if (!el) return;
+  if (!val) { el.textContent = ''; return; }
+  const due  = new Date(val + 'T00:00:00');
+  const today = new Date(); today.setHours(0,0,0,0);
+  const diff  = Math.round((due - today) / 86400000);
+  if (diff === 0)      el.textContent = 'today';
+  else if (diff > 0)   el.textContent = `in ${diff} day${diff>1?'s':''}`;
+  else                 el.textContent = `${Math.abs(diff)}d overdue`;
+  el.style.color = diff < 0 ? 'var(--red)' : diff <= 3 ? '#f97316' : 'var(--muted)';
+}
+
+// ── Loss Modal ──
+function showLossModal() {
+  document.getElementById('lossReason').value = '';
+  document.getElementById('lossCompetitor').value = '';
+  document.getElementById('lossComment').value = '';
+  document.getElementById('lossModal').classList.add('active');
+}
+function closeLossModal() {
+  document.getElementById('lossModal').classList.remove('active');
+}
+function saveLossModal() {
+  const q = getQuote(); if (!q) return;
+  q.lossReason     = document.getElementById('lossReason').value;
+  q.lossCompetitor = document.getElementById('lossCompetitor').value.trim();
+  q.lossComment    = document.getElementById('lossComment').value.trim();
+  saveAll();
+  closeLossModal();
+  toast('Loss recorded', 'success');
+}
+
+// ============================================================
 // HANDOVER PACK PDF
 // ============================================================
 function generateHandoverPack() {
@@ -9083,6 +9324,7 @@ function qqSaveAsDraft() {
     ref, revision: '', status: 'draft', type: 'bama',
     date: now.toISOString().slice(0,10),
     validUntil: new Date(now.getTime()+14*86400000).toISOString().slice(0,10),
+    dateSent: '', decisionDue: '', lossReason: '', lossCompetitor: '', lossComment: '',
     preparedBy: 'Mateusz Braczyk',
     company: '', contact: '', email: '', phone: '', siteAddress: '',
     comments: `Quick Quote — ${r2.tonnes.toFixed(2)}t ${profileLabels[r2.profile]}, ${scopeLabel}, ${finishLabels[r2.finish]}, ${r2.margin}% margin`,
