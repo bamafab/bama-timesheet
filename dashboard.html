@@ -1,0 +1,914 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BAMA Estimating Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="bama.css?v=20260610a">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── Top bar ── */
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 20px;
+    height: 52px;
+    border-bottom: 1px solid var(--border);
+    background: var(--card);
+    flex-shrink: 0;
+  }
+  .topbar-logo {
+    font-family: var(--font-display);
+    font-size: 22px;
+    letter-spacing: 2px;
+    color: var(--text);
+  }
+  .topbar-logo span { color: var(--accent); }
+  .topbar-nav {
+    display: flex;
+    gap: 4px;
+    margin-left: auto;
+  }
+  .topbar-nav a {
+    padding: 5px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted);
+    text-decoration: none;
+    border-radius: 5px;
+    transition: all 0.15s;
+  }
+  .topbar-nav a:hover { background: var(--surface); color: var(--text); }
+  .topbar-nav a.active { color: var(--accent); background: rgba(255,107,0,0.1); }
+
+  /* ── Layout ── */
+  .layout {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ── LEFT: Quote list ── */
+  .quote-list-panel {
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--card);
+  }
+  .ql-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .ql-header-title {
+    font-size: 13px;
+    font-weight: 700;
+    flex: 1;
+  }
+  .ql-filter {
+    display: flex;
+    gap: 4px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+  .ql-filter button {
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-family: var(--font-body);
+    transition: all 0.15s;
+  }
+  .ql-filter button.active { border-color: var(--accent); color: var(--accent); background: rgba(255,107,0,0.08); }
+  .ql-list {
+    overflow-y: auto;
+    flex: 1;
+    scrollbar-width: thin;
+    scrollbar-color: #333 transparent;
+  }
+  .ql-item {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: background 0.1s;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 4px;
+    align-items: start;
+  }
+  .ql-item:hover { background: rgba(255,107,0,0.06); }
+  .ql-item.selected { background: rgba(255,107,0,0.1); border-left: 3px solid var(--accent); }
+  .ql-item-ref {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text);
+  }
+  .ql-item-company {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    margin-top: 1px;
+  }
+  .ql-item-project {
+    font-size: 11px;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 220px;
+  }
+  .ql-item-meta {
+    font-size: 10px;
+    color: var(--subtle, #555);
+    margin-top: 3px;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .ql-item-right { text-align: right; }
+  .ql-item-value {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--accent);
+  }
+  .due-badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+  .due-overdue  { background: #ef4444; color: #fff; }
+  .due-today    { background: #f97316; color: #fff; }
+  .due-soon     { background: #eab308; color: #111; }
+  .due-ok       { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
+  .win-yes { color: #22c55e; font-weight: 700; }
+  .win-no  { color: #ef4444; font-weight: 700; }
+
+  /* ── RIGHT: Briefing panel ── */
+  .briefing-panel {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .briefing-header {
+    padding: 16px 24px 12px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+  }
+  .briefing-greeting {
+    flex: 1;
+  }
+  .briefing-greeting h2 {
+    font-family: var(--font-display);
+    font-size: 28px;
+    letter-spacing: 1px;
+    line-height: 1.1;
+    margin-bottom: 2px;
+  }
+  .briefing-greeting h2 span { color: var(--accent); }
+  .briefing-date {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .briefing-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .briefing-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 24px;
+    scrollbar-width: thin;
+    scrollbar-color: #333 transparent;
+  }
+
+  /* AI Message */
+  .ai-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin-bottom: 20px;
+    position: relative;
+  }
+  .ai-card::before {
+    content: '🤖 AI BRIEFING';
+    display: block;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 0.1em;
+    margin-bottom: 12px;
+  }
+  .ai-message {
+    font-size: 13px;
+    line-height: 1.8;
+    color: var(--text);
+    white-space: pre-wrap;
+  }
+  .ai-message .highlight { color: var(--accent); font-weight: 600; }
+  .ai-loading {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    color: var(--muted);
+    padding: 8px 0;
+  }
+  .ai-spinner {
+    width: 16px; height: 16px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    flex-shrink: 0;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Stats row */
+  .stats-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .stat-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .stat-label {
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 4px;
+  }
+  .stat-value {
+    font-size: 22px;
+    font-weight: 800;
+    font-family: var(--font-mono);
+    line-height: 1;
+  }
+  .stat-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  /* Quote detail card */
+  .detail-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+    display: none;
+  }
+  .detail-card.visible { display: block; }
+  .detail-card h3 {
+    font-size: 15px;
+    font-weight: 700;
+    margin-bottom: 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .detail-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px 20px;
+    font-size: 12px;
+  }
+  .detail-row { display: flex; flex-direction: column; }
+  .detail-row label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 2px; }
+  .detail-row span { color: var(--text); font-weight: 500; }
+
+  .folder-files {
+    margin-top: 12px;
+    padding: 10px 14px;
+    background: var(--surface);
+    border-radius: 6px;
+    font-size: 12px;
+  }
+  .folder-files .fl-label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+  .folder-files .fl-items { display: flex; flex-wrap: wrap; gap: 6px; }
+  .folder-tag {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-family: var(--font-mono);
+  }
+
+  .btn { padding: 8px 16px; border: none; border-radius: 6px; font-family: var(--font-body); font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: #e05a00; }
+  .btn-ghost { background: none; border: 1px solid var(--border); color: var(--text); }
+  .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-sm { padding: 5px 12px; font-size: 12px; }
+
+  /* Error / loading states */
+  .state-empty {
+    text-align: center;
+    padding: 48px 24px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .state-empty .state-icon { font-size: 32px; margin-bottom: 12px; }
+
+  /* Scrollbar */
+  .ql-list::-webkit-scrollbar,
+  .briefing-body::-webkit-scrollbar { width: 6px; }
+  .ql-list::-webkit-scrollbar-thumb,
+  .briefing-body::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<!-- Top bar -->
+<div class="topbar">
+  <div class="topbar-logo">BAMA<span>.</span></div>
+  <span style="font-size:12px;color:var(--muted)">Estimating Dashboard</span>
+  <nav class="topbar-nav">
+    <a href="dashboard.html" class="active">📊 Dashboard</a>
+    <a href="quote-builder.html">📐 Quote Builder</a>
+    <a href="tenders.html">📁 Tenders</a>
+    <a href="quotes.html">💷 Quotes</a>
+    <a href="hub.html">⬡ Hub</a>
+  </nav>
+</div>
+
+<!-- Main layout -->
+<div class="layout">
+
+  <!-- LEFT: Quote list -->
+  <div class="quote-list-panel">
+    <div class="ql-header">
+      <span class="ql-header-title">Quotes</span>
+      <select id="qlYear" onchange="loadTrackerData()" style="background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:3px 8px;color:var(--text);font-size:12px;font-family:var(--font-body)">
+        <option value="2026">2026</option>
+        <option value="2025">2025</option>
+      </select>
+      <button class="btn btn-ghost btn-sm" onclick="loadTrackerData()" title="Refresh">↻</button>
+    </div>
+    <div class="ql-filter">
+      <button class="active" data-filter="all" onclick="setFilter(this,'all')">All</button>
+      <button data-filter="open" onclick="setFilter(this,'open')">Open</button>
+      <button data-filter="overdue" onclick="setFilter(this,'overdue')">🔴 Overdue</button>
+      <button data-filter="won" onclick="setFilter(this,'won')">✓ Won</button>
+      <button data-filter="lost" onclick="setFilter(this,'lost')">✗ Lost</button>
+    </div>
+    <div class="ql-list" id="qlList">
+      <div class="state-empty">
+        <div class="state-icon">⏳</div>
+        Loading quotes…
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT: Briefing + detail -->
+  <div class="briefing-panel">
+    <div class="briefing-header">
+      <div class="briefing-greeting">
+        <h2>Good <span id="timeOfDay">morning</span>, Mateusz.</h2>
+        <div class="briefing-date" id="todayDate"></div>
+      </div>
+      <div class="briefing-actions">
+        <button class="btn btn-ghost btn-sm" onclick="generateBriefing()" id="refreshBriefingBtn">↻ Refresh briefing</button>
+        <button class="btn btn-primary btn-sm" onclick="window.location.href='quote-builder.html'">+ New Quote</button>
+      </div>
+    </div>
+    <div class="briefing-body">
+
+      <!-- Stats row -->
+      <div class="stats-row" id="statsRow">
+        <div class="stat-card"><div class="stat-label">Total 2026</div><div class="stat-value" id="statTotal">—</div><div class="stat-sub">quotes sent</div></div>
+        <div class="stat-card"><div class="stat-label">Win Rate</div><div class="stat-value" id="statWinRate" style="color:#22c55e">—</div><div class="stat-sub" id="statWinSub">—</div></div>
+        <div class="stat-card"><div class="stat-label">Pipeline</div><div class="stat-value" id="statPipeline" style="color:var(--accent)">—</div><div class="stat-sub">open value</div></div>
+        <div class="stat-card"><div class="stat-label">Due This Week</div><div class="stat-value" id="statDueWeek" style="color:#eab308">—</div><div class="stat-sub">quotes to submit</div></div>
+      </div>
+
+      <!-- AI Briefing -->
+      <div class="ai-card" id="aiCard">
+        <div class="ai-message ai-loading" id="aiMessage">
+          <div class="ai-spinner"></div>
+          Loading your briefing…
+        </div>
+      </div>
+
+      <!-- Selected quote detail -->
+      <div class="detail-card" id="detailCard">
+        <h3>
+          <span id="detailTitle">Quote Details</span>
+          <button class="btn btn-primary btn-sm" id="detailOpenBtn" onclick="openInBuilder()">Open in Builder →</button>
+        </h3>
+        <div class="detail-grid" id="detailGrid"></div>
+        <div class="folder-files" id="folderFiles" style="display:none">
+          <div class="fl-label">📎 Tender Folder Files</div>
+          <div class="fl-items" id="folderFilesList"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── Config ───────────────────────────────────────────────
+const AUTH_CLIENT_ID  = '04b702fd-c53c-4f38-94bc-0334ce91d954';
+const AUTH_TENANT_ID  = 'c92626f5-e391-499a-9059-0113bd07da2d';
+const AUTH_REDIRECT   = 'https://proud-dune-0dee63110.2.azurestaticapps.net';
+const AUTH_SCOPES     = 'https://graph.microsoft.com/Files.ReadWrite https://graph.microsoft.com/Sites.ReadWrite.All';
+const BAMA_DRIVE_ID   = 'b!CxTKk9lEwkyweUqAo3CRas-huywW4KtLqOk2tNzmx-P7CX86DNhTQo14pLuU_tZu';
+// QUOTE TRACKER NEW.xlsx item ID
+const TRACKER_ITEM_ID = '012IX7LSLSQCGVKF7BOVGYBXZ2IUZNZCOS';
+
+// ─── Auth ─────────────────────────────────────────────────
+function getToken() {
+  const token  = sessionStorage.getItem('bama_token');
+  const expiry = parseInt(sessionStorage.getItem('bama_token_expiry') || '0');
+  if (token && Date.now() < expiry) return token;
+  return null;
+}
+
+function login(interactive = false) {
+  sessionStorage.setItem('bama_return_page', window.location.pathname);
+  const url = new URL(`https://login.microsoftonline.com/${AUTH_TENANT_ID}/oauth2/v2.0/authorize`);
+  url.searchParams.set('client_id', AUTH_CLIENT_ID);
+  url.searchParams.set('response_type', 'token');
+  url.searchParams.set('redirect_uri', AUTH_REDIRECT);
+  url.searchParams.set('scope', AUTH_SCOPES);
+  url.searchParams.set('response_mode', 'fragment');
+  url.searchParams.set('nonce', Math.random().toString(36).slice(2));
+  if (!interactive) url.searchParams.set('prompt', 'none');
+  window.location.href = url.toString();
+}
+
+function handleRedirect() {
+  if (!window.location.hash) return false;
+  const params = new URLSearchParams(window.location.hash.replace('#', '?'));
+  const token = params.get('access_token');
+  const expiresIn = parseInt(params.get('expires_in') || '3600');
+  if (token) {
+    sessionStorage.setItem('bama_token', token);
+    sessionStorage.setItem('bama_token_expiry', (Date.now() + (expiresIn - 60) * 1000).toString());
+    window.history.replaceState({}, '', window.location.pathname);
+    const returnTo = sessionStorage.getItem('bama_return_page');
+    if (returnTo && returnTo !== '/dashboard.html') {
+      sessionStorage.removeItem('bama_return_page');
+      window.location.href = returnTo;
+      return true;
+    }
+    return true;
+  }
+  const error = params.get('error');
+  if (error === 'login_required' || error === 'interaction_required') {
+    login(true);
+  }
+  return false;
+}
+
+async function graphGet(url) {
+  const token = getToken();
+  if (!token) { login(); return null; }
+  const res = await fetch(`https://graph.microsoft.com/v1.0${url}`, {
+    headers: { 'Authorization': `Bearer ${token}` }
+  });
+  if (res.status === 401) { login(true); return null; }
+  if (!res.ok) throw new Error(`Graph ${res.status}: ${url}`);
+  return res.json();
+}
+
+// ─── Data ─────────────────────────────────────────────────
+let allQuotes = [];
+let currentFilter = 'all';
+let selectedQuote = null;
+let trackerFolderId = null; // Quotation folder ID for browsing tender subfolders
+
+async function loadTrackerData() {
+  const year = document.getElementById('qlYear').value;
+  document.getElementById('qlList').innerHTML = `<div class="state-empty"><div class="ai-spinner" style="margin:0 auto"></div></div>`;
+
+  try {
+    const token = getToken();
+    if (!token) { login(); return; }
+
+    // Read QUOTE TRACKER NEW.xlsx via Excel API
+    const url = `/drives/${BAMA_DRIVE_ID}/items/${TRACKER_ITEM_ID}/workbook/worksheets`;
+    const sheetsData = await graphGet(url);
+    if (!sheetsData) return;
+
+    // Find the sheet for the selected year
+    const sheets = sheetsData.value || [];
+    const sheet = sheets.find(s => s.name.includes(year)) || sheets[0];
+    if (!sheet) { showError('No sheet found for ' + year); return; }
+
+    const sheetName = encodeURIComponent(sheet.name);
+    const rangeUrl = `/drives/${BAMA_DRIVE_ID}/items/${TRACKER_ITEM_ID}/workbook/worksheets('${sheetName}')/usedRange`;
+    const rangeData = await graphGet(rangeUrl);
+    if (!rangeData) return;
+
+    allQuotes = parseTrackerRows(rangeData.values || [], year);
+    renderQuoteList();
+    updateStats();
+
+    // Trigger AI briefing after data loads
+    generateBriefing();
+
+  } catch(e) {
+    console.error('Tracker load error:', e);
+    document.getElementById('qlList').innerHTML = `<div class="state-empty"><div class="state-icon">❌</div>${e.message}</div>`;
+  }
+}
+
+function parseTrackerRows(rows, year) {
+  // Find header row
+  let headerIdx = -1;
+  let colMap = {};
+  for (let i = 0; i < Math.min(10, rows.length); i++) {
+    const row = rows[i].map(c => String(c||'').trim().toLowerCase());
+    if (row.some(c => c.includes('quote') && c.includes('no'))) {
+      headerIdx = i;
+      row.forEach((c, j) => {
+        if (c.includes('quote') && c.includes('no')) colMap.ref = j;
+        else if (c.includes('due')) colMap.due = j;
+        else if (c.includes('company')) colMap.company = j;
+        else if (c.includes('project')) colMap.project = j;
+        else if (c === 'value' || c.includes('total')) colMap.value = j;
+        else if (c.includes('done') || c.includes('by')) colMap.doneBy = j;
+        else if (c.includes('sent')) colMap.sent = j;
+        else if (c.includes('chas')) colMap.chasing = j;
+        else if (c === 'win' || c.includes('win')) colMap.win = j;
+        else if (c.includes('comment')) colMap.comments = j;
+        else if (c.includes('email')) colMap.email = j;
+      });
+      break;
+    }
+  }
+  if (headerIdx < 0) return [];
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  const quotes = [];
+
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const row = rows[i];
+    const ref = String(row[colMap.ref] || '').trim();
+    if (!ref || !ref.match(/^Q\d{6}/i)) continue;
+
+    // Parse due date — Excel stores as serial number or date string
+    let due = null;
+    const rawDue = row[colMap.due];
+    if (rawDue) {
+      if (typeof rawDue === 'number' && rawDue > 40000) {
+        // Excel serial date — convert
+        const excelEpoch = new Date(1899, 11, 30);
+        due = new Date(excelEpoch.getTime() + rawDue * 86400000);
+      } else {
+        const d = new Date(rawDue);
+        if (!isNaN(d)) due = d;
+      }
+      if (due) due.setHours(0,0,0,0);
+    }
+
+    const winRaw = String(row[colMap.win] || '').trim().toLowerCase();
+    let win = null;
+    if (winRaw === 'yes' || winRaw === 'true' || winRaw === '1') win = true;
+    else if (winRaw === 'no' || winRaw === 'false' || winRaw === '0') win = false;
+    else if (['too late','not interested','cancelled','n/a'].some(v => winRaw.includes(v))) win = false;
+
+    const dueMs = due ? due - today : null;
+    let urgency = 'none';
+    if (due && win === null) {
+      if (dueMs < 0) urgency = 'overdue';
+      else if (dueMs < 86400000) urgency = 'today';
+      else if (dueMs < 3 * 86400000) urgency = 'soon';
+      else urgency = 'ok';
+    }
+
+    quotes.push({
+      ref,
+      due,
+      dueMs,
+      urgency,
+      company:  String(row[colMap.company]  || '').trim(),
+      project:  String(row[colMap.project]  || '').trim(),
+      value:    parseFloat(String(row[colMap.value] || '0').replace(/[£,]/g,'')) || 0,
+      doneBy:   String(row[colMap.doneBy]   || '').trim(),
+      sent:     row[colMap.sent] ? parseDateVal(row[colMap.sent]) : null,
+      chasing:  row[colMap.chasing] ? parseDateVal(row[colMap.chasing]) : null,
+      win,
+      comments: String(row[colMap.comments] || '').trim(),
+      email:    String(row[colMap.email]    || '').trim(),
+    });
+  }
+
+  // Sort: overdue first, then by due date asc, then no-date at bottom
+  return quotes.sort((a, b) => {
+    const urgencyOrder = { overdue: 0, today: 1, soon: 2, ok: 3, none: 4 };
+    const ua = urgencyOrder[a.urgency] ?? 5;
+    const ub = urgencyOrder[b.urgency] ?? 5;
+    if (ua !== ub) return ua - ub;
+    if (a.due && b.due) return a.due - b.due;
+    if (a.due) return -1;
+    if (b.due) return 1;
+    return a.ref.localeCompare(b.ref);
+  });
+}
+
+function parseDateVal(v) {
+  if (!v) return null;
+  if (typeof v === 'number' && v > 40000) {
+    const e = new Date(1899, 11, 30);
+    return new Date(e.getTime() + v * 86400000);
+  }
+  const d = new Date(v);
+  return isNaN(d) ? null : d;
+}
+
+function fmtDate(d) {
+  if (!d) return '—';
+  return d.toLocaleDateString('en-GB', { day:'2-digit', month:'short' });
+}
+function fmtGBP(v) {
+  if (!v) return '—';
+  if (v >= 1000000) return '£' + (v/1000000).toFixed(1) + 'm';
+  if (v >= 1000) return '£' + Math.round(v/1000) + 'k';
+  return '£' + Math.round(v).toLocaleString();
+}
+
+// ─── Render list ──────────────────────────────────────────
+function setFilter(btn, filter) {
+  document.querySelectorAll('.ql-filter button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  currentFilter = filter;
+  renderQuoteList();
+}
+
+function renderQuoteList() {
+  const today = new Date(); today.setHours(0,0,0,0);
+  let list = allQuotes;
+
+  if (currentFilter === 'open') list = list.filter(q => q.win === null);
+  else if (currentFilter === 'overdue') list = list.filter(q => q.urgency === 'overdue');
+  else if (currentFilter === 'won') list = list.filter(q => q.win === true);
+  else if (currentFilter === 'lost') list = list.filter(q => q.win === false);
+
+  const el = document.getElementById('qlList');
+  if (!list.length) {
+    el.innerHTML = `<div class="state-empty"><div class="state-icon">📭</div>No quotes</div>`;
+    return;
+  }
+
+  el.innerHTML = list.map(q => {
+    const dueBadge = q.due
+      ? `<span class="due-badge due-${q.urgency}">${fmtDate(q.due)}</span>` : '';
+    const winMark = q.win === true ? '<span class="win-yes">✓</span>' : q.win === false ? '<span class="win-no">✗</span>' : '';
+    const isSelected = selectedQuote?.ref === q.ref;
+    return `<div class="ql-item ${isSelected ? 'selected' : ''}" onclick="selectQuote(${JSON.stringify(q.ref).replace(/"/g,'&quot;')})">
+      <div>
+        <div class="ql-item-ref">${q.ref}</div>
+        <div class="ql-item-company">${q.company || '—'}</div>
+        <div class="ql-item-project">${q.project || '—'}</div>
+        <div class="ql-item-meta">${dueBadge}${winMark}</div>
+      </div>
+      <div class="ql-item-right">
+        <div class="ql-item-value">${q.value > 0 ? fmtGBP(q.value) : '—'}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ─── Stats ────────────────────────────────────────────────
+function updateStats() {
+  const today = new Date(); today.setHours(0,0,0,0);
+  const weekEnd = new Date(today.getTime() + 7 * 86400000);
+
+  const decided = allQuotes.filter(q => q.win !== null);
+  const won = allQuotes.filter(q => q.win === true);
+  const open = allQuotes.filter(q => q.win === null);
+  const dueThisWeek = open.filter(q => q.due && q.due >= today && q.due <= weekEnd);
+  const pipeline = open.reduce((s, q) => s + q.value, 0);
+  const winRate = decided.length ? Math.round(won.length / decided.length * 100) : 0;
+
+  document.getElementById('statTotal').textContent = allQuotes.length;
+  document.getElementById('statWinRate').textContent = winRate + '%';
+  document.getElementById('statWinSub').textContent = won.length + ' won / ' + decided.length + ' decided';
+  document.getElementById('statPipeline').textContent = fmtGBP(pipeline);
+  document.getElementById('statDueWeek').textContent = dueThisWeek.length;
+}
+
+// ─── Quote detail ─────────────────────────────────────────
+function selectQuote(ref) {
+  selectedQuote = allQuotes.find(q => q.ref === ref);
+  renderQuoteList(); // re-render to show selection
+
+  const card = document.getElementById('detailCard');
+  const grid = document.getElementById('detailGrid');
+  card.classList.add('visible');
+  document.getElementById('detailTitle').textContent = ref + (selectedQuote.company ? ' — ' + selectedQuote.company : '');
+
+  const rows = [
+    ['Company',   selectedQuote.company  || '—'],
+    ['Project',   selectedQuote.project  || '—'],
+    ['Due Date',  selectedQuote.due ? fmtDate(selectedQuote.due) + (selectedQuote.urgency === 'overdue' ? ' ⚠️ OVERDUE' : '') : '—'],
+    ['Value',     selectedQuote.value > 0 ? '£' + selectedQuote.value.toLocaleString('en-GB', {minimumFractionDigits:2}) : '—'],
+    ['Done By',   selectedQuote.doneBy  || '—'],
+    ['Sent',      selectedQuote.sent    ? fmtDate(selectedQuote.sent)    : '—'],
+    ['Chasing',   selectedQuote.chasing ? fmtDate(selectedQuote.chasing) : '—'],
+    ['Status',    selectedQuote.win === true ? '✅ Won' : selectedQuote.win === false ? '❌ Lost' : '🔵 Open'],
+    ['Comments',  selectedQuote.comments || '—'],
+    ['Email',     selectedQuote.email   || '—'],
+  ];
+  grid.innerHTML = rows.map(([label, val]) =>
+    `<div class="detail-row"><label>${label}</label><span>${val}</span></div>`
+  ).join('');
+
+  // Try to load folder file count
+  loadTenderFolderFiles(ref);
+}
+
+async function loadTenderFolderFiles(ref) {
+  const folderEl = document.getElementById('folderFiles');
+  const listEl   = document.getElementById('folderFilesList');
+  folderEl.style.display = 'none';
+
+  try {
+    const token = getToken();
+    if (!token) return;
+
+    // Search for the tender folder by quote ref name
+    const year = document.getElementById('qlYear').value;
+    const yearNum = parseInt(year) - 2023;
+    const yearFolder = `${yearNum.toString().padStart(2,'0')} - ${year}`;
+    const path = `Quotation/${yearFolder}`;
+
+    // List subfolders to find one starting with this ref
+    const enc = encodeURIComponent(path);
+    const data = await graphGet(`/drives/${BAMA_DRIVE_ID}/root:/${enc}:/children?$top=200&$select=name,id,folder`);
+    if (!data) return;
+
+    const match = (data.value || []).find(f => f.folder && f.name.toUpperCase().startsWith(ref.toUpperCase()));
+    if (!match) return;
+
+    // Get the 00 - Tender subfolder
+    const subData = await graphGet(`/drives/${BAMA_DRIVE_ID}/items/${match.id}/children?$select=name,id,folder,file`);
+    if (!subData) return;
+
+    const tenderFolder = (subData.value || []).find(f => f.folder && f.name.startsWith('00'));
+    let files = [];
+    if (tenderFolder) {
+      const fileData = await graphGet(`/drives/${BAMA_DRIVE_ID}/items/${tenderFolder.id}/children?$select=name,file,size`);
+      files = (fileData?.value || []).filter(f => f.file);
+    }
+
+    if (files.length === 0) {
+      listEl.innerHTML = '<span style="color:var(--muted);font-size:11px">No files in tender folder</span>';
+    } else {
+      listEl.innerHTML = files.map(f => {
+        const ext = f.name.split('.').pop().toUpperCase();
+        const sizekb = Math.round((f.size || 0) / 1024);
+        return `<span class="folder-tag">${f.name.length > 30 ? f.name.slice(0,28)+'…' : f.name} <span style="color:var(--muted)">${sizekb}kb</span></span>`;
+      }).join('');
+    }
+
+    const totalFiles = files.length;
+    document.querySelector('#folderFiles .fl-label').textContent = `📎 Tender Folder — ${totalFiles} file${totalFiles !== 1 ? 's' : ''}`;
+    folderEl.style.display = '';
+
+  } catch(e) {
+    console.warn('Folder load:', e.message);
+  }
+}
+
+function openInBuilder() {
+  if (!selectedQuote) return;
+  // Store selected ref so quote builder can highlight it
+  sessionStorage.setItem('dash_open_ref', selectedQuote.ref);
+  window.location.href = 'quote-builder.html';
+}
+
+// ─── AI Briefing ──────────────────────────────────────────
+async function generateBriefing() {
+  if (!allQuotes.length) return;
+
+  const btn = document.getElementById('refreshBriefingBtn');
+  btn.disabled = true;
+  btn.textContent = '…';
+
+  document.getElementById('aiMessage').innerHTML = `<div class="ai-loading"><div class="ai-spinner"></div>Generating briefing…</div>`;
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  const week = new Date(today.getTime() + 7 * 86400000);
+
+  const open    = allQuotes.filter(q => q.win === null);
+  const overdue = open.filter(q => q.urgency === 'overdue');
+  const dueToday = open.filter(q => q.urgency === 'today');
+  const dueSoon  = open.filter(q => q.urgency === 'soon');
+  const dueWeek  = open.filter(q => q.due && q.due >= today && q.due <= week);
+  const won      = allQuotes.filter(q => q.win === true);
+  const lost     = allQuotes.filter(q => q.win === false);
+  const winRate  = (won.length + lost.length) > 0 ? Math.round(won.length / (won.length + lost.length) * 100) : 0;
+
+  const fmt = q => `${q.ref} (${q.company}${q.project ? ' — ' + q.project : ''}${q.due ? ', due ' + fmtDate(q.due) : ''}${q.value > 0 ? ', £' + Math.round(q.value).toLocaleString() : ''})`;
+
+  const prompt = `You are a helpful assistant for Mateusz, an estimator at BAMA Fabrication Ltd, a structural steel fabrication company in Peterborough. Today is ${new Date().toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'long', year:'numeric'})}.
+
+Here is the current state of his quote tracker:
+
+OVERDUE QUOTES (${overdue.length}): ${overdue.map(fmt).join('; ') || 'none'}
+DUE TODAY (${dueToday.length}): ${dueToday.map(fmt).join('; ') || 'none'}
+DUE IN 1-3 DAYS (${dueSoon.length}): ${dueSoon.map(fmt).join('; ') || 'none'}
+DUE THIS WEEK (${dueWeek.length} total): ${dueWeek.map(fmt).join('; ') || 'none'}
+WIN RATE: ${winRate}% (${won.length} won, ${lost.length} lost)
+OPEN PIPELINE: ${fmtGBP(open.reduce((s,q)=>s+q.value,0))} across ${open.length} open quotes
+
+Write a brief, friendly, conversational morning briefing for Mateusz in English. Start with a quick summary of what's urgent. Prioritise: 1) overdue quotes (flag them clearly), 2) quotes due today or tomorrow, 3) anything due this week. 
+
+For each urgent quote, give a practical recommendation — e.g. if a quote has a high value, note it's worth prioritising; if it looks like a small/quick job, say so. Keep it punchy and useful — not more than 150 words. Speak directly to Mateusz, use "you" not "the estimator". Be conversational, not robotic. If there's nothing urgent, say so and give a brief overview instead.`;
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+    const data = await res.json();
+    const text = data.content?.[0]?.text || 'Could not generate briefing.';
+
+    document.getElementById('aiMessage').className = 'ai-message';
+    document.getElementById('aiMessage').textContent = text;
+  } catch(e) {
+    document.getElementById('aiMessage').className = 'ai-message';
+    document.getElementById('aiMessage').textContent = `Could not connect to AI. Check your data above — you have ${overdue.length} overdue and ${dueToday.length} due today.`;
+  }
+
+  btn.disabled = false;
+  btn.textContent = '↻ Refresh briefing';
+}
+
+// ─── Init ─────────────────────────────────────────────────
+function setTimeOfDay() {
+  const h = new Date().getHours();
+  const el = document.getElementById('timeOfDay');
+  if (h < 12) el.textContent = 'morning';
+  else if (h < 17) el.textContent = 'afternoon';
+  else el.textContent = 'evening';
+
+  document.getElementById('todayDate').textContent = new Date().toLocaleDateString('en-GB', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric'
+  });
+}
+
+function showError(msg) {
+  document.getElementById('qlList').innerHTML = `<div class="state-empty"><div class="state-icon">❌</div>${msg}</div>`;
+}
+
+// Startup
+setTimeOfDay();
+if (handleRedirect()) {
+  // was a redirect — data will load below
+}
+const token = getToken();
+if (token) {
+  loadTrackerData();
+} else {
+  login();
+}
+</script>
+</body>
+</html>
