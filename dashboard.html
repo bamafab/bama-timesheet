@@ -893,6 +893,20 @@ function openInBuilder() {
 }
 
 // ─── AI Briefing ──────────────────────────────────────────
+function mdToHtml(md) {
+  return md
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/^#{1,3}\s+(.+)$/gm, '<div style="font-weight:800;font-size:14px;margin:14px 0 6px;color:var(--text)">$1</div>')
+    .replace(/^[-•]\s+(.+)$/gm, '<div style="padding:3px 0 3px 12px;border-left:2px solid var(--border);margin:3px 0;color:var(--text)">$1</div>')
+    .replace(/
+
+/g, '<div style="height:10px"></div>')
+    .replace(/
+/g, '<br>');
+}
+
 async function generateBriefing() {
   if (!allQuotes.length) return;
 
@@ -939,7 +953,7 @@ For each urgent quote, give a practical recommendation — e.g. if a quote has a
     });
     const text = data.content?.[0]?.text || 'Could not generate briefing.';
     document.getElementById('aiMessage').className = 'ai-message';
-    document.getElementById('aiMessage').textContent = text;
+    document.getElementById('aiMessage').innerHTML = mdToHtml(text);
   } catch(e) {
     document.getElementById('aiMessage').className = 'ai-message';
     document.getElementById('aiMessage').textContent = `AI briefing unavailable right now. You have ${overdue.length} overdue and ${dueToday.length} due today.`;
