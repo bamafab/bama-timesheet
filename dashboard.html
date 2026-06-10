@@ -169,6 +169,7 @@
   .due-today    { background: #f97316; color: #fff; }
   .due-soon     { background: #eab308; color: #111; }
   .due-ok       { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
+  .due-sent     { background: rgba(59,130,246,0.15); color: #60a5fa; border: 1px solid rgba(59,130,246,0.3); }
   .win-yes { color: #22c55e; font-weight: 700; }
   .win-no  { color: #ef4444; font-weight: 700; }
 
@@ -384,7 +385,8 @@
     </div>
     <div class="ql-filter">
       <button class="active" data-filter="all" onclick="setFilter(this,'all')">All</button>
-      <button data-filter="open" onclick="setFilter(this,'open')">Open</button>
+      <button data-filter="open" onclick="setFilter(this,'open')">Pending</button>
+      <button data-filter="sent" onclick="setFilter(this,'sent')">📤 Sent</button>
       <button data-filter="overdue" onclick="setFilter(this,'overdue')">🔴 Overdue</button>
       <button data-filter="won" onclick="setFilter(this,'won')">✓ Won</button>
       <button data-filter="lost" onclick="setFilter(this,'lost')">✗ Lost</button>
@@ -634,18 +636,35 @@ function parseTrackerRows(rows, year) {
     const due = colMap.due !== undefined ? parseDateVal(row[colMap.due]) : null;
 
     const winRaw = String(row[colMap.win] ?? '').trim().toLowerCase();
+    const commentRaw = String(row[colMap.comments] ?? '').trim().toLowerCase();
     let win = null;
     if (winRaw === 'yes' || winRaw === 'true') win = true;
     else if (winRaw === 'no') win = false;
-    else if (['too late','not interested','cancelled','not interested','same as','awaiting'].some(v => winRaw.startsWith(v))) win = false;
+    else if (['too late','not interested','cancelled','same as','no works','included in','tender removed','concrete only'].some(v => winRaw.includes(v) || commentRaw.startsWith(v))) win = false;
+    // Also treat "awaiting" / "client waiting" comments as still open (not lost)
 
     const dueMs = due ? due - today : null;
+
+    // Determine sent status from Sent Date column
+    const sentDate = colMap.sent !== undefined ? parseDateVal(row[colMap.sent]) : null;
+    const hasSent = !!sentDate;
+
+    // Urgency logic:
+    // - Already sent (has sent date) or decided (win !== null) → not urgent/overdue
+    // - Due in past + not sent → overdue (missed deadline)
+    // - Due today or tomorrow + not sent → today
+    // - Due in 1-3 days + not sent → soon
+    // - Otherwise → ok or none
     let urgency = 'none';
-    if (due && win === null) {
-      if (dueMs < 0)                  urgency = 'overdue';
-      else if (dueMs < 86400000)      urgency = 'today';
-      else if (dueMs < 3*86400000)    urgency = 'soon';
-      else                            urgency = 'ok';
+    if (win !== null) {
+      urgency = 'none'; // decided — no urgency
+    } else if (hasSent) {
+      urgency = 'sent'; // awaiting client decision
+    } else if (due) {
+      if (dueMs < 0)               urgency = 'overdue';
+      else if (dueMs < 86400000)   urgency = 'today';
+      else if (dueMs < 3*86400000) urgency = 'soon';
+      else                         urgency = 'ok';
     }
 
     const rawVal = row[colMap.value] ?? 0;
@@ -657,7 +676,7 @@ function parseTrackerRows(rows, year) {
       project:  String(row[colMap.project]  ?? '').trim(),
       value:    val,
       doneBy:   String(row[colMap.doneBy]   ?? '').trim(),
-      sent:     colMap.sent    !== undefined ? parseDateVal(row[colMap.sent])    : null,
+      sent:     sentDate,
       chasing:  colMap.chasing !== undefined ? parseDateVal(row[colMap.chasing]) : null,
       win,
       comments: String(row[colMap.comments] ?? '').trim(),
@@ -667,8 +686,8 @@ function parseTrackerRows(rows, year) {
 
   // Sort: overdue → today → soon → ok → no-date; within same urgency sort by date asc
   return quotes.sort((a, b) => {
-    const ord = { overdue:0, today:1, soon:2, ok:3, none:4 };
-    const ua = ord[a.urgency] ?? 5, ub = ord[b.urgency] ?? 5;
+    const ord = { overdue:0, today:1, soon:2, ok:3, sent:4, none:5 };
+    const ua = ord[a.urgency] ?? 6, ub = ord[b.urgency] ?? 6;
     if (ua !== ub) return ua - ub;
     if (a.due && b.due) return a.due - b.due;
     if (a.due) return -1;
@@ -700,7 +719,8 @@ function renderQuoteList() {
   const today = new Date(); today.setHours(0,0,0,0);
   let list = allQuotes;
 
-  if (currentFilter === 'open') list = list.filter(q => q.win === null);
+  if (currentFilter === 'open') list = list.filter(q => q.win === null && q.urgency !== 'sent');
+  else if (currentFilter === 'sent') list = list.filter(q => q.urgency === 'sent');
   else if (currentFilter === 'overdue') list = list.filter(q => q.urgency === 'overdue');
   else if (currentFilter === 'won') list = list.filter(q => q.win === true);
   else if (currentFilter === 'lost') list = list.filter(q => q.win === false);
@@ -738,7 +758,8 @@ function updateStats() {
   const decided = allQuotes.filter(q => q.win !== null);
   const won = allQuotes.filter(q => q.win === true);
   const open = allQuotes.filter(q => q.win === null);
-  const dueThisWeek = open.filter(q => q.due && q.due >= today && q.due <= weekEnd);
+  const pending = open.filter(q => q.urgency !== 'sent');
+  const dueThisWeek = pending.filter(q => q.due && q.due >= today && q.due <= weekEnd);
   const pipeline = open.reduce((s, q) => s + q.value, 0);
   const winRate = decided.length ? Math.round(won.length / decided.length * 100) : 0;
 

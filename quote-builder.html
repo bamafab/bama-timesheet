@@ -289,7 +289,10 @@ tr.drag-dragging { opacity:0.35; }
 <body>
 
 <div class="topbar">
-  <div class="logo"><span>BAMA</span> QUOTE BUILDER <span style="font-size:11px;color:var(--subtle);margin-left:8px;font-family:var(--font-mono)">OFFLINE</span></div>
+  <div class="logo" style="display:flex;align-items:center;gap:12px">
+    <a href="dashboard.html" style="font-size:12px;color:var(--muted);text-decoration:none;display:flex;align-items:center;gap:5px;padding:4px 8px;border:1px solid var(--border);border-radius:5px;transition:all 0.15s" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">← Dashboard</a>
+    <span><span>BAMA</span> QUOTE BUILDER <span style="font-size:11px;color:var(--subtle);margin-left:8px;font-family:var(--font-mono)">OFFLINE</span></span>
+  </div>
   <div class="topbar-right">
     <button class="btn btn-ghost btn-sm" onclick="openLogoUpload()" title="Upload logo for PDF">🖼 Logo</button>
     <button class="btn btn-ghost btn-sm" onclick="openEmailModal()" id="emailBtn" title="Email quote to client">✉ Send</button>
