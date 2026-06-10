@@ -543,6 +543,14 @@ async function loadTrackerData() {
     renderQuoteList();
     updateStats();
 
+    // Save the highest ref number so quote builder can continue the sequence
+    const yearRefs = allQuotes.filter(q => q.ref.startsWith('Q' + String(year).slice(2)));
+    if (yearRefs.length > 0) {
+      const lastRef = yearRefs.reduce((best, q) => q.ref > best ? q.ref : best, '');
+      sessionStorage.setItem('bama_last_tracker_ref', lastRef);
+      console.log('Last tracker ref saved:', lastRef);
+    }
+
     // Trigger AI briefing after data loads
     generateBriefing();
 
@@ -552,108 +560,121 @@ async function loadTrackerData() {
   }
 }
 
+function parseDateVal(v) {
+  if (!v) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  // Excel serial number
+  if (typeof v === 'number' && v > 40000) {
+    const e = new Date(1899, 11, 30);
+    const d = new Date(e.getTime() + v * 86400000);
+    d.setHours(0,0,0,0);
+    return d;
+  }
+  // MM/DD/YYYY (US format from Graph API)
+  const usMatch = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (usMatch) {
+    const d = new Date(parseInt(usMatch[3]), parseInt(usMatch[1])-1, parseInt(usMatch[2]));
+    d.setHours(0,0,0,0);
+    return isNaN(d) ? null : d;
+  }
+  // DD/MM/YYYY (UK)
+  const ukMatch = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (ukMatch) {
+    const d = new Date(parseInt(ukMatch[3]), parseInt(ukMatch[2])-1, parseInt(ukMatch[1]));
+    d.setHours(0,0,0,0);
+    return isNaN(d) ? null : d;
+  }
+  // ISO or other — try native parse
+  const d = new Date(s);
+  if (!isNaN(d)) { d.setHours(0,0,0,0); return d; }
+  return null;
+}
+
 function parseTrackerRows(rows, year) {
-  // Find header row
+  // Find header row — look for "Quote No" pattern
   let headerIdx = -1;
   let colMap = {};
-  for (let i = 0; i < Math.min(10, rows.length); i++) {
+  for (let i = 0; i < Math.min(15, rows.length); i++) {
     const row = rows[i].map(c => String(c||'').trim().toLowerCase());
-    if (row.some(c => c.includes('quote') && c.includes('no'))) {
+    if (row.some(c => c === 'quote no' || (c.includes('quote') && c.includes('no')))) {
       headerIdx = i;
       row.forEach((c, j) => {
-        if (c.includes('quote') && c.includes('no')) colMap.ref = j;
-        else if (c.includes('due')) colMap.due = j;
+        if (c === 'quote no' || (c.includes('quote') && c.includes('no') && !c.includes('work'))) colMap.ref = j;
+        else if (c === 'due date' || c === 'due') colMap.due = j;
         else if (c.includes('company')) colMap.company = j;
-        else if (c.includes('project')) colMap.project = j;
-        else if (c === 'value' || c.includes('total')) colMap.value = j;
-        else if (c.includes('done') || c.includes('by')) colMap.doneBy = j;
-        else if (c.includes('sent')) colMap.sent = j;
+        else if (c === 'project' || c.includes('project')) colMap.project = j;
+        else if (c === 'total') colMap.value = j;          // "Total" column = value incl. margin
+        else if (c === 'value' && colMap.value === undefined) colMap.value = j;
+        else if (c.includes('done by') || c === 'done by') colMap.doneBy = j;
+        else if (c === 'sent date' || c.includes('sent')) colMap.sent = j;
         else if (c.includes('chas')) colMap.chasing = j;
-        else if (c === 'win' || c.includes('win')) colMap.win = j;
+        else if (c === 'win') colMap.win = j;
         else if (c.includes('comment')) colMap.comments = j;
         else if (c.includes('email')) colMap.email = j;
       });
       break;
     }
   }
-  if (headerIdx < 0) return [];
+  if (headerIdx < 0) {
+    console.warn('Header row not found in tracker. First 5 rows:', rows.slice(0,5));
+    return [];
+  }
+  console.log('colMap:', colMap, 'headerIdx:', headerIdx);
 
   const today = new Date(); today.setHours(0,0,0,0);
   const quotes = [];
 
   for (let i = headerIdx + 1; i < rows.length; i++) {
     const row = rows[i];
-    const ref = String(row[colMap.ref] || '').trim();
-    if (!ref || !ref.match(/^Q\d{6}/i)) continue;
+    if (!row || !row.length) continue;
+    const ref = String(row[colMap.ref] ?? '').trim();
+    if (!ref || !ref.match(/^Q\d{4,}/i)) continue;
 
-    // Parse due date — Excel stores as serial number or date string
-    let due = null;
-    const rawDue = row[colMap.due];
-    if (rawDue) {
-      if (typeof rawDue === 'number' && rawDue > 40000) {
-        // Excel serial date — convert
-        const excelEpoch = new Date(1899, 11, 30);
-        due = new Date(excelEpoch.getTime() + rawDue * 86400000);
-      } else {
-        const d = new Date(rawDue);
-        if (!isNaN(d)) due = d;
-      }
-      if (due) due.setHours(0,0,0,0);
-    }
+    const due = colMap.due !== undefined ? parseDateVal(row[colMap.due]) : null;
 
-    const winRaw = String(row[colMap.win] || '').trim().toLowerCase();
+    const winRaw = String(row[colMap.win] ?? '').trim().toLowerCase();
     let win = null;
-    if (winRaw === 'yes' || winRaw === 'true' || winRaw === '1') win = true;
-    else if (winRaw === 'no' || winRaw === 'false' || winRaw === '0') win = false;
-    else if (['too late','not interested','cancelled','n/a'].some(v => winRaw.includes(v))) win = false;
+    if (winRaw === 'yes' || winRaw === 'true') win = true;
+    else if (winRaw === 'no') win = false;
+    else if (['too late','not interested','cancelled','not interested','same as','awaiting'].some(v => winRaw.startsWith(v))) win = false;
 
     const dueMs = due ? due - today : null;
     let urgency = 'none';
     if (due && win === null) {
-      if (dueMs < 0) urgency = 'overdue';
-      else if (dueMs < 86400000) urgency = 'today';
-      else if (dueMs < 3 * 86400000) urgency = 'soon';
-      else urgency = 'ok';
+      if (dueMs < 0)                  urgency = 'overdue';
+      else if (dueMs < 86400000)      urgency = 'today';
+      else if (dueMs < 3*86400000)    urgency = 'soon';
+      else                            urgency = 'ok';
     }
 
+    const rawVal = row[colMap.value] ?? 0;
+    const val = parseFloat(String(rawVal).replace(/[£,\s]/g,'')) || 0;
+
     quotes.push({
-      ref,
-      due,
-      dueMs,
-      urgency,
-      company:  String(row[colMap.company]  || '').trim(),
-      project:  String(row[colMap.project]  || '').trim(),
-      value:    parseFloat(String(row[colMap.value] || '0').replace(/[£,]/g,'')) || 0,
-      doneBy:   String(row[colMap.doneBy]   || '').trim(),
-      sent:     row[colMap.sent] ? parseDateVal(row[colMap.sent]) : null,
-      chasing:  row[colMap.chasing] ? parseDateVal(row[colMap.chasing]) : null,
+      ref, due, dueMs, urgency,
+      company:  String(row[colMap.company]  ?? '').trim(),
+      project:  String(row[colMap.project]  ?? '').trim(),
+      value:    val,
+      doneBy:   String(row[colMap.doneBy]   ?? '').trim(),
+      sent:     colMap.sent    !== undefined ? parseDateVal(row[colMap.sent])    : null,
+      chasing:  colMap.chasing !== undefined ? parseDateVal(row[colMap.chasing]) : null,
       win,
-      comments: String(row[colMap.comments] || '').trim(),
-      email:    String(row[colMap.email]    || '').trim(),
+      comments: String(row[colMap.comments] ?? '').trim(),
+      email:    String(row[colMap.email]    ?? '').trim(),
     });
   }
 
-  // Sort: overdue first, then by due date asc, then no-date at bottom
+  // Sort: overdue → today → soon → ok → no-date; within same urgency sort by date asc
   return quotes.sort((a, b) => {
-    const urgencyOrder = { overdue: 0, today: 1, soon: 2, ok: 3, none: 4 };
-    const ua = urgencyOrder[a.urgency] ?? 5;
-    const ub = urgencyOrder[b.urgency] ?? 5;
+    const ord = { overdue:0, today:1, soon:2, ok:3, none:4 };
+    const ua = ord[a.urgency] ?? 5, ub = ord[b.urgency] ?? 5;
     if (ua !== ub) return ua - ub;
     if (a.due && b.due) return a.due - b.due;
     if (a.due) return -1;
     if (b.due) return 1;
     return a.ref.localeCompare(b.ref);
   });
-}
-
-function parseDateVal(v) {
-  if (!v) return null;
-  if (typeof v === 'number' && v > 40000) {
-    const e = new Date(1899, 11, 30);
-    return new Date(e.getTime() + v * 86400000);
-  }
-  const d = new Date(v);
-  return isNaN(d) ? null : d;
 }
 
 function fmtDate(d) {

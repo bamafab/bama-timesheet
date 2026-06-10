@@ -2887,11 +2887,54 @@ let currentId = null;
 
 function getQuote() { return quotes.find(q => q.id === currentId); }
 
+
+// ── Next quote ref (continues from SharePoint tracker if available) ──
+function nextQuoteRef() {
+  const now = new Date();
+  const yy = String(now.getFullYear()).slice(2);
+  const mm = String(now.getMonth()+1).padStart(2,'0');
+  const lastTrackerRef = sessionStorage.getItem('bama_last_tracker_ref');
+  let seq;
+  if (lastTrackerRef && lastTrackerRef.startsWith('Q' + yy)) {
+    const tMm = lastTrackerRef.slice(3,5);
+    const tSeq = parseInt(lastTrackerRef.slice(5)) || 0;
+    if (tMm === mm) {
+      // Count local quotes created this session with same month too
+      const localThisMonth = quotes.filter(q => q.ref.startsWith('Q'+yy+mm)).length;
+      seq = Math.max(tSeq + 1, localThisMonth + 1);
+    } else {
+      seq = quotes.filter(q => q.ref.startsWith('Q'+yy+mm)).length + 1;
+    }
+  } else {
+    seq = quotes.filter(q => q.ref.startsWith('Q'+yy+mm)).length + 1;
+  }
+  return `Q${yy}${mm}${String(seq).padStart(2,'0')}`;
+}
+
 function newQuote() {
   const now = new Date();
   const yy = String(now.getFullYear()).slice(2);
   const mm = String(now.getMonth()+1).padStart(2,'0');
-  const seq = String(quotes.filter(q=>q.ref.startsWith('Q'+yy+mm)).length + 1).padStart(2,'0');
+
+  // Try to continue from tracker sequence (set by dashboard)
+  let seq;
+  const lastTrackerRef = sessionStorage.getItem('bama_last_tracker_ref');
+  if (lastTrackerRef && lastTrackerRef.startsWith('Q' + yy)) {
+    // Extract sequence from last tracker ref e.g. Q260612 → 12 for month 06
+    const trackerMm = lastTrackerRef.slice(3,5);
+    const trackerSeq = parseInt(lastTrackerRef.slice(5)) || 0;
+    if (trackerMm === mm) {
+      // Same month — continue from tracker
+      seq = String(trackerSeq + 1).padStart(2,'0');
+    } else {
+      // New month — start from 01 but check local quotes too
+      const localSeq = quotes.filter(q => q.ref.startsWith('Q'+yy+mm)).length + 1;
+      seq = String(localSeq).padStart(2,'0');
+    }
+  } else {
+    // No tracker data — count local quotes for this month
+    seq = String(quotes.filter(q => q.ref.startsWith('Q'+yy+mm)).length + 1).padStart(2,'0');
+  }
   const ref = `Q${yy}${mm}${seq}`;
   const q = {
     id: Date.now().toString(),
@@ -3019,11 +3062,7 @@ async function deleteQuote() {
 function duplicateQuote(id) {
   const source = quotes.find(q => q.id === (id || currentId));
   if (!source) return;
-  const now = new Date();
-  const yy  = String(now.getFullYear()).slice(2);
-  const mm  = String(now.getMonth()+1).padStart(2,'0');
-  const seq = String(quotes.filter(q=>q.ref.startsWith('Q'+yy+mm)).length + 1).padStart(2,'0');
-  const ref = 'Q'+yy+mm+seq;
+  const ref = nextQuoteRef();
 
   // Deep copy — strip runtime/ERP fields, reset identity
   const copy = JSON.parse(JSON.stringify(source));
@@ -9345,8 +9384,7 @@ function qqSaveAsDraft() {
   const now = new Date();
   const yy  = String(now.getFullYear()).slice(2);
   const mm  = String(now.getMonth()+1).padStart(2,'0');
-  const seq = String(quotes.filter(q=>q.ref.startsWith('Q'+yy+mm)).length + 1).padStart(2,'0');
-  const ref = `Q${yy}${mm}${seq}`;
+  const ref = nextQuoteRef();
 
   const profileLabels = { ub_uc: 'UB/UC', pfc_rsa: 'PFC/Angles', hollow: 'RHS/SHS/CHS' };
   const finishLabels  = { primer: 'Primer', galv: 'Galvanising', none: 'None/TBC' };
