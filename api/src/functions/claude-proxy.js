@@ -10,7 +10,7 @@
 
 const { app } = require('@azure/functions');
 const { requireAuth } = require('../auth');
-const { ok, badRequest, serverError, preflight } = require('../responses');
+const { ok, badRequest, serverError, preflight, corsHeaders } = require('../responses');
 
 app.http('claude-proxy', {
     methods: ['POST', 'OPTIONS'],
@@ -53,11 +53,14 @@ app.http('claude-proxy', {
             const data = await upstream.json();
 
             if (!upstream.ok) {
-                // Surface Anthropic error detail without leaking the key
-                return serverError(
-                    `Anthropic API error ${upstream.status}: ${data?.error?.message || 'unknown'}`,
-                    request
-                );
+                // Forward Anthropic's status code (e.g. 429 rate-limit, 529
+                // overloaded) so the client's retry logic still fires. The body
+                // carries only the error detail — the API key is never exposed.
+                return {
+                    status: upstream.status,
+                    jsonBody: { error: { message: data?.error?.message || 'Anthropic API error', type: data?.error?.type || 'api_error' } },
+                    headers: { 'Content-Type': 'application/json', ...corsHeaders(request) }
+                };
             }
 
             return ok(data, request);

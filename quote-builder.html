@@ -4913,9 +4913,9 @@ Rules:
 - If a row has no valid section type, skip it
 - Include every line item row — do not summarise or group`;
 
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const response = await fetch('/api/claude-proxy', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${sessionStorage.getItem('bama_token')}` },
       body: JSON.stringify({
         model: 'claude-sonnet-4-6',
         max_tokens: 4000,
@@ -7209,14 +7209,11 @@ Please read this tender document and give me a full pricing briefing for my trad
       }
     } catch(e) { /* fall through */ }
 
-    const ANTHROPIC_API_KEY = atob('c2stYW50LWFwaTAzLU1CSlFNWHBBdC1XeXY3X3dIQWJqaEJ0d0hiaElKcjdjZjliUFZ1RTZzQnBObm5kZXBnNjM1cExnR01LM1ByRlNWdWNONGVTU1dlOXBfUElzU2kzeWtnLXh5ZXlkd0FB');
-    const doFetch = () => fetch('https://api.anthropic.com/v1/messages', {
+    const doFetch = () => fetch('/api/claude-proxy', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true'
+        'Authorization': `Bearer ${sessionStorage.getItem('bama_token')}`
       },
       body: JSON.stringify(requestBody)
     });

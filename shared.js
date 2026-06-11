@@ -3,35 +3,25 @@
 // ═══════════════════════════════════════════
 const API_BASE = 'https://bama-erp-api-deauckd2cja7ebd5.uksouth-01.azurewebsites.net';
 
-// Anthropic API key — used for PDF/document parsing (quote parse, PO parse, Babcock OCR).
-// Direct browser calls are enabled via anthropic-dangerous-direct-browser-access header.
-// Safe for an internal tool behind Microsoft login.
-const ANTHROPIC_API_KEY = atob("c2stYW50LWFwaTAzLU1CSlFNWHBBdC1XeXY3X3dIQWJqaEJ0d0hiaElKcjdjZjliUFZ1RTZzQnBObm5kZXBnNjM1cExnR01LM1ByRlNWdWNONGVTU1dlOXBfUElzU2kzeWtnLXh5ZXlkd0FB");
-
-// Shared helper — replaces the server-side claude-proxy for all AI calls.
+// Shared helper — routes all AI calls through the server-side proxy
+// (/api/claude-proxy), which holds the Anthropic key in Function App settings.
+// The key is NEVER present in client-side code. Auth (Bearer token) and the
+// 401 silent-refresh are handled by api.post → apiCall.
 // Retries up to 4 times on 529 (overloaded) with exponential backoff.
 async function callClaude(body, { maxRetries = 4 } = {}) {
   const delay = ms => new Promise(r => setTimeout(r, ms));
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true'
-      },
-      body: JSON.stringify(body)
-    });
-    if (res.ok) return res.json();
-    if (res.status === 529 && attempt < maxRetries) {
-      const wait = 2000 * Math.pow(2, attempt); // 2s, 4s, 8s, 16s
-      console.warn(`Anthropic overloaded (529), retrying in ${wait / 1000}s… (attempt ${attempt + 1}/${maxRetries})`);
-      await delay(wait);
-      continue;
+    try {
+      return await api.post('/api/claude-proxy', body);
+    } catch (e) {
+      if (e.status === 529 && attempt < maxRetries) {
+        const wait = 2000 * Math.pow(2, attempt); // 2s, 4s, 8s, 16s
+        console.warn(`Anthropic overloaded (529), retrying in ${wait / 1000}s… (attempt ${attempt + 1}/${maxRetries})`);
+        await delay(wait);
+        continue;
+      }
+      throw e;
     }
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err?.error?.message || `Anthropic API error ${res.status}`);
   }
 }
 
