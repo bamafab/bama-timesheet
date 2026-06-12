@@ -8361,6 +8361,19 @@ async function saveClientToBook() {
   document.getElementById('clientSaveBtn').style.display = 'none';
 }
 
+const BAMA_TC = [
+  { h: 'Quotation Validity', t: 'This quotation is valid for 14 days from the date of issue unless stated otherwise, and is subject to written acceptance. BAMA Fabrication reserves the right to withdraw or amend this quotation at any time prior to acceptance.' },
+  { h: 'VAT', t: 'All prices are exclusive of VAT, which will be charged at the prevailing rate.' },
+  { h: 'Material Price Fluctuation', t: 'Structural steel prices are subject to market fluctuation. BAMA Fabrication reserves the right to apply a price adjustment based on the Steel Market Index (Spons or equivalent) should procurement be delayed beyond 8 weeks from the date of this quotation.' },
+  { h: 'Design & Drawing Information', t: 'This quotation is based on information available at the time of submission. Any changes to drawings, specifications or scope after acceptance may result in additional costs, which will be notified by formal variation.' },
+  { h: 'Payment Terms', t: 'Unless otherwise agreed in writing: 30% deposit on order, interim applications monthly in line with progress, final payment within 30 days of practical completion of our works. BAMA Fabrication reserves the right to suspend works for non-payment.' },
+  { h: 'Retention', t: 'Unless stated in the accepted terms, BAMA Fabrication does not accept retention deductions. If retention is a condition of contract, this must be agreed prior to order and may affect the quoted price.' },
+  { h: 'CDM 2015', t: 'BAMA Fabrication will act as Designer under CDM 2015 for structural elements within our scope. The Principal Designer and Principal Contractor roles remain with the Client or their appointed party.' },
+  { h: 'Access & Site Conditions', t: 'This quotation assumes clear and unrestricted access to all working areas during normal working hours (07:00–17:30 Mon–Fri). Any working restrictions, out-of-hours requirements, or abnormal site conditions must be advised prior to acceptance.' },
+  { h: 'Exclusions', t: 'Unless explicitly included in this quotation, the following are excluded: groundworks, concrete foundations, crane pads, fire engineering, M&E services, cladding fixings beyond our scope, and statutory fees or inspections.' },
+  { h: 'Governing Law', t: 'This quotation and any resulting contract shall be governed by and construed in accordance with the laws of England and Wales.' }
+];
+
 function togglePdfMenu() {
   const menu = document.getElementById('pdfMenu');
   menu.style.display = menu.style.display === 'none' ? '' : 'none';
@@ -8738,6 +8751,10 @@ function fmtDateLong(s) {
   const d = new Date(isoDate + 'T00:00:00');
   if (isNaN(d.getTime())) return String(s);
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
+}
+function fmtGBP(v) {
+  if (v === null || v === undefined || v === '') return '—';
+  return '£' + Number(v).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function openPdfWindow(html) {
