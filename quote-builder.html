@@ -2383,17 +2383,196 @@ const STEEL_KGM = {};
 // Flat bar
 [["10x100",7.85],["10x150",11.8],["10x200",15.7],["12x100",9.42],["15x100",11.8],["15x150",17.7],["20x100",15.7]].forEach(([k,v])=>{ STEEL_KGM['FLT'+k]=v; STEEL_KGM['FLT'+k.replace(/x/g,'*')]=v; STEEL_KGM['FLAT'+k]=v; });
 
+// ============================================================
+// ROBUST FUZZY SECTION MATCHER — findSteelProfile(input)
+// ============================================================
+// Replaces/extends normaliseSectionName + lookupKgM.
+// Returns: { canonical, prefix, dims, kgm, matched, confidence }
+//   canonical  — clean display string e.g. "UB 203x133x25"
+//   prefix     — type token e.g. "UB"
+//   dims       — array of numbers e.g. [203, 133, 25.1]
+//   kgm        — kg/m from DB (null if not found)
+//   matched    — the exact DB key that was used
+//   confidence — 'exact' | 'fuzzy' | 'none'
+// ============================================================
+
+// Alias map: every alternative spelling → canonical prefix
+const _SP_ALIASES = {
+  // UB
+  'UNIVERSAL BEAM':'UB','UNIVERSALBEAM':'UB','I BEAM':'UB','IBEAM':'UB','IPE':'UB',
+  'HEA':'UB','HEB':'UB','HEM':'UB','IPN':'UB','I-BEAM':'UB','UKB':'UB',
+  // UC
+  'UNIVERSAL COLUMN':'UC','UNIVERSALCOLUMN':'UC','H SECTION':'UC','HSECTION':'UC',
+  'H-SECTION':'UC','UKC':'UC',
+  // PFC
+  'PARALLEL FLANGE CHANNEL':'PFC','CHANNEL':'PFC','C SECTION':'PFC','C-SECTION':'PFC',
+  'CSECTION':'PFC','UKC PFC':'PFC',
+  // SHS
+  'SQUARE HOLLOW SECTION':'SHS','SQUARE HOLLOW':'SHS','SQUAREHOLLOW':'SHS',
+  'BOX SECTION':'SHS','BOXSECTION':'SHS',
+  // RHS
+  'RECTANGULAR HOLLOW SECTION':'RHS','RECTANGULAR HOLLOW':'RHS','RECTANGULARHOLLOW':'RHS',
+  'RECT HOLLOW':'RHS','RECTHOLLLOW':'RHS',
+  // CHS
+  'CIRCULAR HOLLOW SECTION':'CHS','CIRCULAR HOLLOW':'CHS','CIRCULARHOLLLOW':'CHS',
+  'PIPE':'CHS','TUBE':'CHS','CHS PIPE':'CHS',
+  // Angles
+  'EQUAL ANGLE':'EA','EQUALANGLE':'EA','ANGLE':'EA','RSA':'EA','UNEQUAL ANGLE':'RSA',
+  'UNEQUALANGLE':'RSA',
+  // Flat / plate
+  'FLAT BAR':'FLT','FLATBAR':'FLT','FLAT':'FLT','PLATE':'PLT','PL':'PLT','PLT':'PLT',
+  'FLT':'FLT','FLAT PLATE':'FLT'
+};
+
+// Canonical display spacing per prefix (for formatted output)
+const _SP_DISPLAY = {
+  UB:'UB ', UC:'UC ', PFC:'PFC ', SHS:'SHS ', RHS:'RHS ',
+  CHS:'CHS ', EA:'EA ', RSA:'RSA ', FLT:'FLT ', FLAT:'FLT ',
+  PLT:'PLT '
+};
+
+// Cache: normalised input → result  (cleared when STEEL_KGM is mutated)
+const _SP_CACHE = new Map();
+
+function findSteelProfile(raw) {
+  if (!raw) return { canonical:'', prefix:'', dims:[], kgm:null, matched:null, confidence:'none' };
+
+  // ── 1. Normalise ─────────────────────────────────────────
+  let s = String(raw)
+    .toUpperCase()
+    .replace(/[×✕]/g, 'X')    // unicode multiply signs
+    .replace(/\*/g, 'X')       // asterisks used as separators
+    .replace(/\//g, 'X')       // slashes
+    .replace(/\s+/g, ' ')      // collapse whitespace
+    .trim();
+
+  const cacheKey = s;
+  if (_SP_CACHE.has(cacheKey)) return _SP_CACHE.get(cacheKey);
+
+  // ── 2. Identify prefix ────────────────────────────────────
+  let prefix = '';
+
+  // a) Try multi-word aliases first (longest match wins)
+  const aliasKeys = Object.keys(_SP_ALIASES).sort((a,b) => b.length - a.length);
+  for (const alias of aliasKeys) {
+    if (s.startsWith(alias)) {
+      prefix = _SP_ALIASES[alias];
+      s = s.slice(alias.length).trim();
+      break;
+    }
+    // alias anywhere in string (e.g. "203x133x25 UNIVERSAL BEAM")
+    const idx = s.indexOf(alias);
+    if (idx > 0) {
+      prefix = _SP_ALIASES[alias];
+      s = (s.slice(0, idx) + s.slice(idx + alias.length)).trim();
+      break;
+    }
+  }
+
+  // b) If no alias matched, try known 2-5 letter prefix tokens
+  if (!prefix) {
+    const knownPrefixes = ['SHS','RHS','CHS','PFC','RSA','UKB','UKC','FLT','FLAT','PLT','UB','UC','EA'];
+    for (const p of knownPrefixes) {
+      // prefix at start: "UB203..." or "UB 203..."
+      if (s.startsWith(p)) {
+        // make sure it's not part of a number (e.g. "UB203" vs "UB203x..." — both fine)
+        prefix = _SP_ALIASES[p] || p;
+        s = s.slice(p.length).replace(/^[\sX]/, '').trim();
+        break;
+      }
+      // prefix at end: "203x133x25UB"
+      const tailRe = new RegExp('\\s*' + p + '\\s*$');
+      if (tailRe.test(s)) {
+        prefix = _SP_ALIASES[p] || p;
+        s = s.replace(tailRe, '').trim();
+        break;
+      }
+    }
+  }
+
+  // ── 3. Extract numeric dimensions ────────────────────────
+  // Split remaining string on X and pull out all numbers
+  const parts = s.split(/X/).map(t => t.replace(/[^0-9.]/g, '')).filter(Boolean);
+  const dims  = parts.map(Number).filter(n => !isNaN(n) && n > 0);
+
+  if (!dims.length) {
+    const r = { canonical: raw, prefix, dims, kgm:null, matched:null, confidence:'none' };
+    _SP_CACHE.set(cacheKey, r); return r;
+  }
+
+  // If no prefix found but we have dims, try to infer from count + magnitudes:
+  // 2 dims → CHS or PFC;  3 dims with d1==d2 → SHS;  3 dims d1!=d2 → RHS/UB/UC
+  if (!prefix && dims.length === 3) {
+    prefix = dims[0] === dims[1] ? 'SHS' : (dims[0] > 200 ? 'UB' : 'RHS');
+  } else if (!prefix && dims.length === 2) {
+    prefix = dims[0] > 100 ? 'PFC' : 'CHS';
+  }
+
+  // ── 4. Build lookup key and try exact match ───────────────
+  const dimsKey  = dims.join('x');
+  const exactKey = prefix + dimsKey;
+
+  if (STEEL_KGM[exactKey] !== undefined) {
+    const kgm = STEEL_KGM[exactKey];
+    const canonical = (_SP_DISPLAY[prefix] || prefix + ' ') + dimsKey.replace(/x/g, 'x');
+    const r = { canonical: canonical.trimEnd(), prefix, dims, kgm, matched: exactKey, confidence:'exact' };
+    _SP_CACHE.set(cacheKey, r); return r;
+  }
+
+  // ── 5. Fuzzy match within same prefix ────────────────────
+  // Collect all keys for this prefix (x-separated only, no * variants)
+  const candidates = Object.entries(STEEL_KGM)
+    .filter(([k]) => k.startsWith(prefix) && k.includes('x'))
+    .map(([k, v]) => {
+      const dimStr = k.slice(prefix.length);
+      const cDims  = dimStr.split('x').map(Number);
+      return { key: k, kgm: v, dims: cDims };
+    });
+
+  if (!candidates.length) {
+    const r = { canonical: exactKey, prefix, dims, kgm: null, matched: null, confidence:'none' };
+    _SP_CACHE.set(cacheKey, r); return r;
+  }
+
+  // Score each candidate: weighted sum of per-dimension absolute differences
+  // The last dimension (mass designation) is most likely to be rounded/typed wrong
+  // so weight it lower than depth and width.
+  const dimWeights = [1, 1, 0.5];  // depth, width/flange, mass/thickness
+
+  let bestScore = Infinity, bestCand = null;
+  for (const cand of candidates) {
+    if (cand.dims.length !== dims.length) continue; // dim count mismatch — skip
+    let score = 0;
+    for (let j = 0; j < dims.length; j++) {
+      const w = dimWeights[j] ?? 0.5;
+      score += w * Math.abs(dims[j] - cand.dims[j]);
+    }
+    if (score < bestScore) { bestScore = score; bestCand = cand; }
+  }
+
+  // Accept fuzzy match only if reasonably close (≤15% error on first dim)
+  const tolerance = dims[0] * 0.15;
+  if (bestCand && bestScore <= tolerance) {
+    const canonical = (_SP_DISPLAY[prefix] || prefix + ' ') + bestCand.dims.join('x');
+    const r = { canonical: canonical.trimEnd(), prefix, dims: bestCand.dims,
+                kgm: bestCand.kgm, matched: bestCand.key, confidence:'fuzzy' };
+    _SP_CACHE.set(cacheKey, r); return r;
+  }
+
+  // ── 6. No usable match ────────────────────────────────────
+  const r = { canonical: exactKey, prefix, dims, kgm: null, matched: null, confidence:'none' };
+  _SP_CACHE.set(cacheKey, r); return r;
+}
+
+
 function lookupKgM(type) {
   if (!type) return null;
-  // normalise first (handles PFC stripping, * → x etc.)
-  const normalised = normaliseSectionName(type);
-  const clean = normalised.replace(/\s+/g,'');
-  if (STEEL_KGM[clean]) return STEEL_KGM[clean];
-  // try without prefix
-  for (const [k,v] of Object.entries(STEEL_KGM)) {
-    if (k.toUpperCase() === clean) return v;
-  }
-  return null;
+  // Use findSteelProfile for fuzzy matching — falls back to exact lookup
+  const match = findSteelProfile(type);
+  if (match.kgm !== null) return match.kgm;
+  // Legacy exact fallback (handles edge cases not covered by fuzzy)
+  const clean = String(type).replace(/\s+/g,'').toUpperCase().replace(/[*×]/g,'X').replace(/X/g,'x');
+  return STEEL_KGM[clean] ?? null;
 }
 
 // ============================================================
@@ -3891,17 +4070,21 @@ function onTakeoffTypeInput(i, val, inputEl) {
   const q = getQuote(); if (!q) return;
   const row = q.takeoff[i];
   if (row) {
-    row.type = normaliseSectionName(val);
-    const kgm = lookupKgM(row.type);
-    if (kgm) row.kgm = kgm;
+    const match = findSteelProfile(val);
+    row.type = match.canonical || normaliseSectionName(val);
+    if (match.kgm) row.kgm = match.kgm;
     row.rate = row.rate || sectionMaterialRate(row.type);
-    // update kg/m and rate inputs in the same row (use row ID, not tbody.rows index)
+    // update the input itself to canonical form (on blur — not while typing)
     const tr = document.getElementById('takeoff-row-' + i);
     if (tr) {
       const kgmInput = tr.querySelector('input[data-col="kgm"]');
       const rateInput = tr.querySelector('input[data-col="rate"]');
       if (kgmInput) { kgmInput.value = row.kgm || ''; kgmInput.style.color = row.kgm ? 'var(--text)' : 'var(--subtle)'; }
       if (rateInput) rateInput.value = row.rate || '';
+      // Snap input to canonical on commit (autocomplete selection or blur)
+      if (inputEl && match.confidence !== 'none' && inputEl !== document.activeElement) {
+        inputEl.value = row.type;
+      }
     }
     saveAll(); updateTakeoffTotals(); recalcAll();
   }
@@ -3928,17 +4111,20 @@ function updateTakeoffRow(i, field, val) {
   const q = getQuote(); if (!q) return;
   const row = q.takeoff[i];
   if (field === 'type') {
-    row.type = normaliseSectionName(val);
-    const kgm = lookupKgM(row.type);
-    if (kgm) row.kgm = kgm;
+    const match = findSteelProfile(val);
+    row.type = match.canonical || normaliseSectionName(val);
+    if (match.kgm) row.kgm = match.kgm;
     row.rate = row.rate || sectionMaterialRate(row.type);
-    // re-render this row to show auto-filled kgm
+    // re-render this row to show auto-filled kgm and snap type to canonical
     const tbody = document.getElementById('takeoffBody');
-    const tr = tbody.rows[i];
+    const tr = tbody ? tbody.querySelector('#takeoff-row-' + i) || tbody.rows[i] : null;
     if (tr) {
-      tr.cells[4].querySelector('input').value = row.kgm || '';
-      tr.cells[4].querySelector('input').style.color = row.kgm ? 'var(--text)' : 'var(--subtle)';
-      tr.cells[6].querySelector('input').value = row.rate || '';
+      const typeInput = tr.querySelector('input[data-col="type"]');
+      if (typeInput && match.confidence !== 'none') typeInput.value = row.type;
+      const kgmCell = tr.querySelector('input[data-col="kgm"]') || tr.cells[4]?.querySelector('input');
+      if (kgmCell) { kgmCell.value = row.kgm || ''; kgmCell.style.color = row.kgm ? 'var(--text)' : 'var(--subtle)'; }
+      const rateCell = tr.querySelector('input[data-col="rate"]') || tr.cells[6]?.querySelector('input');
+      if (rateCell) rateCell.value = row.rate || '';
     }
   } else if (field === 'kgm') {
     row.kgm = parseFloat(val) || null;
