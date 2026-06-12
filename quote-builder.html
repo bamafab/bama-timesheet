@@ -9828,6 +9828,69 @@ async function qqSaveAsDraft() {
   }
 
   // Rates from localStorage still OK (device-specific, not user data)
+
+  // ── Open from Dashboard ──────────────────────────────────
+  const dashRef = sessionStorage.getItem('dash_open_ref');
+  if (dashRef) {
+    sessionStorage.removeItem('dash_open_ref');
+    const dashQuoteRaw = sessionStorage.getItem('dash_open_quote');
+    sessionStorage.removeItem('dash_open_quote');
+    const dashMeta = dashQuoteRaw ? JSON.parse(dashQuoteRaw) : {};
+
+    // Try to find existing quote with this ref
+    const existing = quotes.find(q => q.ref === dashRef);
+    if (existing) {
+      selectQuote(existing.id);
+      toast(`Opened quote ${dashRef}`, 'success');
+    } else {
+      // Not in QB yet — create a new quote pre-filled from dashboard data
+      const now = new Date();
+      const preparedBy = sessionStorage.getItem('bama_qb_user') || 'Mateusz Braczyk';
+      const qData = {
+        ref: dashRef, revision: '', status: 'draft', type: 'bama',
+        date: now.toISOString().slice(0,10),
+        validUntil: new Date(now.getTime()+14*86400000).toISOString().slice(0,10),
+        dateSent:    dashMeta.dateSent    || '',
+        decisionDue: dashMeta.decisionDue || '',
+        lossReason: '', lossCompetitor: '', lossComment: '',
+        preparedBy,
+        company:     dashMeta.company  || '',
+        contact:     dashMeta.contact  || '',
+        email:       dashMeta.email    || '',
+        phone:       '',
+        siteAddress: '',
+        comments: '', qScope: '', boqRef: '', boqFile: '', projectTCs: '',
+        takeoff: [], areas: [],
+        fittingsPct: 10, fittingsRate: 1.30, miscMaterial: 0, miscMaterialNote: '',
+        materialLinks: [],
+        instDays: 0, instOperatives: 2, globalDays: true,
+        labourRows: [], plantRows: [], paintRows: [], deliveryRows: [], prelimRows: [], consumableRows: [], surveyVisitRows: [],
+        fabHours: 0, fabRate: 45, fabpackHours: 0, fabpackRate: 50,
+        structEngHours: 0, structEngRate: 90, architectHours: 0, architectRate: 90, designHours: 0, designRate: 50,
+        surveyParking: 0, ralColour: '', ralFinish: 'tbc',
+        purlinM: 0, purlinRate: 0,
+        margin: 20, showDeposit: false, depositPct: 60,
+        standardLines: getDefaultStandardLines(),
+        customLines: []
+      };
+      try {
+        const row = await qbFetch('POST', '/api/qb-quotes', {
+          reference:    dashRef,
+          date_created: now.toISOString().slice(0,10),
+          prepared_by:  preparedBy,
+          company:      qData.company,
+          quote_data:   JSON.stringify(qData)
+        });
+        const q = { ...qData, ...row, ref: row.reference, date: row.date_created, _fromSQL: true };
+        quotes.unshift(q);
+        renderSidebar();
+        selectQuote(q.id);
+        toast(`Created new quote ${dashRef} from dashboard`, 'success');
+      } catch(e) {
+        toast('Could not create quote: ' + e.message, 'error');
+      }
+    }
+  }
 })();
 </script>
 </body>

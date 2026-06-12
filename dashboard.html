@@ -950,8 +950,18 @@ async function loadTenderFolderFiles(ref) {
 
 function openInBuilder() {
   if (!selectedQuote) return;
-  // Store selected ref so quote builder can highlight it
+  // Store full quote snapshot so QB can open or pre-fill it
   sessionStorage.setItem('dash_open_ref', selectedQuote.ref);
+  sessionStorage.setItem('dash_open_quote', JSON.stringify({
+    ref:        selectedQuote.ref,
+    company:    selectedQuote.company  || '',
+    project:    selectedQuote.project  || '',
+    contact:    selectedQuote.contact  || '',
+    email:      selectedQuote.email    || '',
+    decisionDue: selectedQuote.due ? (selectedQuote.due instanceof Date ? selectedQuote.due.toISOString().slice(0,10) : String(selectedQuote.due).split('T')[0]) : '',
+    dateSent:   selectedQuote.sent ? (selectedQuote.sent instanceof Date ? selectedQuote.sent.toISOString().slice(0,10) : String(selectedQuote.sent).split('T')[0]) : '',
+    value:      selectedQuote.value || 0
+  }));
   window.location.href = 'quote-builder.html';
 }
 
