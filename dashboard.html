@@ -449,11 +449,12 @@
 <script>
 // Anthropic calls go through the server-side proxy (/api/claude-proxy), which
 // holds the API key in Function App settings. No key in client code.
-// Same-origin relative path: Azure SWA routes /api/* to the Function App.
+// Full URL required — SWA does not proxy /api/* to the Function App automatically.
+const CLAUDE_PROXY_URL = 'https://bama-erp-api-deauckd2cja7ebd5.uksouth-01.azurewebsites.net/api/claude-proxy';
 async function callClaude(body, { maxRetries = 4 } = {}) {
   const delay = ms => new Promise(r => setTimeout(r, ms));
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const res = await fetch('/api/claude-proxy', {
+    const res = await fetch(CLAUDE_PROXY_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
