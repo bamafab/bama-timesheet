@@ -4935,36 +4935,51 @@ function validateTechnicalRisks(q, C) {
   }
 
   // ── Rule 2: Single-item weight > 2.5 t with HIAB delivery ────────────────
-  if (hasHIABDelivery || hasHIABPlant) {
-    for (let i = 0; i < takeoff.length; i++) {
-      const row = takeoff[i];
-      const singleKg = rowSingleKg(row);
-      if (singleKg > 2500) {
+  // Always scan — HIAB flag just changes the message wording
+  for (let i = 0; i < takeoff.length; i++) {
+    const row = takeoff[i];
+    const singleKg = rowSingleKg(row);
+    if (singleKg > 2500) {
+      if (hasHIABDelivery || hasHIABPlant) {
         alerts.push({
           type: 'warning',
           rule: 'hiab-overweight',
           message: `${rowLabel(row, i)}: Single item <strong>${Math.round(singleKg).toLocaleString('en-GB')} kg</strong> ` +
                    `(${(singleKg/1000).toFixed(2)} t) may exceed standard HIAB safe working load. ` +
-                   `Check duty chart at intended radius before confirming HIAB delivery.`
+                   `Check crane duty chart at working radius before confirming HIAB offload.`
+        });
+      } else if (singleKg > 5000) {
+        // No HIAB configured but element is extremely heavy — flag regardless
+        alerts.push({
+          type: 'warning',
+          rule: 'hiab-overweight',
+          message: `${rowLabel(row, i)}: Single item <strong>${Math.round(singleKg).toLocaleString('en-GB')} kg</strong> ` +
+                   `(${(singleKg/1000).toFixed(2)} t) is very heavy. Confirm offloading method — standard HIAB or forklift will be insufficient.`
         });
       }
     }
   }
 
   // ── Rule 3: Heavy lift vs crane tonnage ──────────────────
-  if (craneTonnage !== null && craneTonnage < 50) {
-    for (let i = 0; i < takeoff.length; i++) {
-      const row = takeoff[i];
-      const singleKg = rowSingleKg(row);
-      if (singleKg > 3000) {
-        alerts.push({
-          type: 'critical',
-          rule: 'crane-capacity',
-          message: `${rowLabel(row, i)}: Heavy lift <strong>${Math.round(singleKg).toLocaleString('en-GB')} kg</strong> ` +
-                   `(${(singleKg/1000).toFixed(2)} t) with a <strong>${craneTonnage} t crane</strong> configured. ` +
-                   `Verify crane capacity at working radius — may require larger crane or tandem lift.`
-        });
-      }
+  // Fires when: (a) crane < 50t configured, OR (b) NO crane configured at all.
+  // A 5 t element with no crane selected is just as dangerous as with a 25 t crane.
+  for (let i = 0; i < takeoff.length; i++) {
+    const row = takeoff[i];
+    const singleKg = rowSingleKg(row);
+    if (singleKg <= 3000) continue;
+
+    const craneOk = craneTonnage !== null && craneTonnage >= 50;
+    if (!craneOk) {
+      const craneDesc = craneTonnage !== null
+        ? `<strong>${craneTonnage} t crane</strong> configured`
+        : `<strong>no crane</strong> configured in Plant`;
+      alerts.push({
+        type: 'critical',
+        rule: 'crane-capacity',
+        message: `${rowLabel(row, i)}: Heavy lift <strong>${Math.round(singleKg).toLocaleString('en-GB')} kg</strong> ` +
+                 `(${(singleKg/1000).toFixed(2)} t) with ${craneDesc}. ` +
+                 `Verify crane capacity at working radius — minimum 50 t crane likely required.`
+      });
     }
   }
 
