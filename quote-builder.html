@@ -1269,6 +1269,80 @@ tr.drag-dragging { opacity:0.35; }
           </div>
           <div class="info-box mt-8">This text appears under "Comments or Special Instructions" on the client-facing PDF.</div>
         </div>
+
+        <!-- ══════════════════════════════════════════
+             COMMERCIAL & PAYMENT STRATEGY
+        ══════════════════════════════════════════ -->
+        <div class="card" id="commercialStrategyCard" style="margin-top:0">
+          <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
+            <span>💳 Commercial &amp; Payment Strategy</span>
+            <span style="font-size:10px;color:var(--muted);font-weight:400">Reactive — updates quote PDF terms automatically</span>
+          </div>
+
+          <!-- Method selector -->
+          <div class="field" style="margin-bottom:12px">
+            <label>Payment Method</label>
+            <select id="cps-method" onchange="cpsRender()"
+              style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%">
+              <option value="single">Single Invoice (100% upon Practical Completion)</option>
+              <option value="stage">Stage / Milestone Payments (Fixed deposit &amp; split stages)</option>
+              <option value="afp">Monthly Application for Payment (AFP Workflow — for larger contracts)</option>
+            </select>
+          </div>
+
+          <!-- ── Panel: Single Invoice ── -->
+          <div id="cps-panel-single" style="display:none">
+            <div style="background:rgba(62,207,142,0.06);border:1px solid rgba(62,207,142,0.25);border-radius:8px;padding:12px 14px;font-size:13px;line-height:1.7">
+              <div style="font-weight:600;color:#3ecf8e;margin-bottom:4px">📄 Single Invoice</div>
+              <div style="color:var(--text)">100% of the contract value (<strong id="cps-single-total">£—</strong>) will be invoiced upon Practical Completion of the Works.</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:6px">Payment Terms: 30 days from date of invoice, unless otherwise agreed in writing.</div>
+            </div>
+          </div>
+
+          <!-- ── Panel: Stage Payments ── -->
+          <div id="cps-panel-stage" style="display:none">
+            <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Adjust percentages — must total 100%. Values update in real time.</div>
+            <div id="cps-stage-rows" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px"></div>
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+              <button class="btn btn-ghost btn-sm" onclick="cpsAddStage()">+ Add Stage</button>
+              <button class="btn btn-ghost btn-sm" onclick="cpsResetStages()">↺ Reset to Default</button>
+              <span id="cps-stage-pct-total" style="font-size:12px;margin-left:auto;font-family:var(--font-mono)">Total: 0%</span>
+            </div>
+            <div id="cps-stage-table" style="font-size:12px"></div>
+          </div>
+
+          <!-- ── Panel: AFP ── -->
+          <div id="cps-panel-afp" style="display:none">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+              <div class="field">
+                <label>Project Duration (Months)</label>
+                <input type="number" id="cps-afp-months" value="6" min="1" max="60" oninput="cpsRenderAFP()"
+                  style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:14px;font-family:var(--font-mono);width:100%;text-align:center">
+              </div>
+              <div class="field">
+                <label>Payment Terms (days)</label>
+                <input type="number" id="cps-afp-terms" value="30" min="7" max="90" oninput="cpsRenderAFP()"
+                  style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:14px;font-family:var(--font-mono);width:100%;text-align:center">
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px">
+              <input type="checkbox" id="cps-afp-retention" onchange="cpsRenderAFP()" style="width:16px;height:16px;accent-color:var(--accent)">
+              <div>
+                <div style="font-size:13px;font-weight:600">Apply Retention Clause (5%)</div>
+                <div style="font-size:11px;color:var(--muted)">2.5% released at Practical Completion · 2.5% released after 12-month Defects Liability Period</div>
+              </div>
+              <div id="cps-afp-retention-total" style="margin-left:auto;font-family:var(--font-mono);font-size:12px;color:var(--accent2)"></div>
+            </div>
+            <div id="cps-afp-table"></div>
+          </div>
+
+          <!-- ── Generated commercial terms (injected into quote PDF) ── -->
+          <div id="cps-terms-preview" style="display:none;margin-top:12px">
+            <div style="font-size:10px;color:var(--muted);font-weight:600;letter-spacing:1px;margin-bottom:6px">GENERATED PAYMENT TERMS (appended to quote PDF)</div>
+            <div id="cps-terms-text" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:10px 12px;font-size:12px;line-height:1.7;color:var(--text);white-space:pre-wrap;font-family:var(--font-body)"></div>
+            <button class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="cpsInjectIntoScope()">↪ Insert into Scope / Commercial Terms field</button>
+          </div>
+        </div>
       </div>
 
       <!-- ══════════════════════════════════════════
@@ -3357,6 +3431,7 @@ function getDefaultStandardLines() {
 
 function autosave() {
   const q = getQuote(); if (!q) return;
+  cpsSyncFromDOM(); // ensure commercial state is up to date before save
   q.ref        = document.getElementById('hRef')?.value || q.ref;
   q.revision   = document.getElementById('hRevision')?.value || q.revision;
   q.date       = document.getElementById('hDate')?.value || q.date;
@@ -3481,6 +3556,8 @@ function setStatus(val) {
   takeRevSnapshot('status_' + val, q); // snapshot before status change
   q.status = val;
   renderStatusBadge(q);
+  // Load commercial strategy state
+  setTimeout(cpsLoadToDOM, 0);
   saveAll();
   renderRevHistory(q);
   if (val === 'won' && prev !== 'won') showWonModal();
@@ -5158,6 +5235,296 @@ function renderTechRiskAlerts(alerts) {
 }
 
 
+// ============================================================
+// COMMERCIAL & PAYMENT STRATEGY MODULE (CPS)
+// ============================================================
+// State stored on quote object: q.cps = { method, stages[], afpMonths, afpTerms, afpRetention }
+// Reactive: cpsRender() called from recalcAll() and loadQuoteEditor()
+
+const CPS_DEFAULT_STAGES = [
+  { label: 'Deposit / Mobilisation Payment',            pct: 30 },
+  { label: 'On Delivery of Steelwork to Site',          pct: 40 },
+  { label: 'On Practical Completion of Site Erection',  pct: 30 },
+];
+
+function cpsGetState() {
+  const q = getQuote(); if (!q) return null;
+  if (!q.cps) q.cps = { method: 'single', stages: JSON.parse(JSON.stringify(CPS_DEFAULT_STAGES)), afpMonths: 6, afpTerms: 30, afpRetention: false };
+  return q.cps;
+}
+
+// ── Sync DOM → state ─────────────────────────────────────────
+function cpsSyncFromDOM() {
+  const s = cpsGetState(); if (!s) return;
+  s.method      = document.getElementById('cps-method')?.value || 'single';
+  s.afpMonths   = parseInt(document.getElementById('cps-afp-months')?.value) || 6;
+  s.afpTerms    = parseInt(document.getElementById('cps-afp-terms')?.value)  || 30;
+  s.afpRetention = document.getElementById('cps-afp-retention')?.checked || false;
+  // Stages synced live in cpsStageInput()
+}
+
+// ── Sync state → DOM ─────────────────────────────────────────
+function cpsLoadToDOM() {
+  const s = cpsGetState(); if (!s) return;
+  const mSel = document.getElementById('cps-method');
+  if (mSel) mSel.value = s.method;
+  const mEl = document.getElementById('cps-afp-months');  if (mEl) mEl.value = s.afpMonths;
+  const tEl = document.getElementById('cps-afp-terms');   if (tEl) tEl.value = s.afpTerms;
+  const rEl = document.getElementById('cps-afp-retention'); if (rEl) rEl.checked = s.afpRetention;
+  cpsRender();
+}
+
+// ── Main render dispatcher ────────────────────────────────────
+function cpsRender() {
+  cpsSyncFromDOM();
+  const s = cpsGetState(); if (!s) return;
+  const total = getQuote()?._computed?.total || 0;
+
+  // Show/hide panels
+  ['single','stage','afp'].forEach(m => {
+    const el = document.getElementById('cps-panel-' + m);
+    if (el) el.style.display = s.method === m ? '' : 'none';
+  });
+
+  if (s.method === 'single') cpsRenderSingle(total);
+  if (s.method === 'stage')  cpsRenderStages(total, s);
+  if (s.method === 'afp')    cpsRenderAFP();
+
+  // Always update the terms preview
+  cpsUpdateTermsPreview(total, s);
+  autosave();
+}
+
+// ── Single Invoice ────────────────────────────────────────────
+function cpsRenderSingle(total) {
+  const el = document.getElementById('cps-single-total');
+  if (el) el.textContent = total > 0 ? '£' + total.toLocaleString('en-GB', {minimumFractionDigits:2,maximumFractionDigits:2}) : '£—';
+}
+
+// ── Stage Payments ────────────────────────────────────────────
+function cpsRenderStages(total, s) {
+  const cont = document.getElementById('cps-stage-rows'); if (!cont) return;
+  cont.innerHTML = s.stages.map((st, i) => `
+    <div style="display:grid;grid-template-columns:1fr 70px 28px;gap:6px;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px">
+      <input type="text" value="${escHtml(st.label)}" placeholder="Stage description"
+        oninput="cpsStageInput(${i},'label',this.value)"
+        style="background:transparent;border:none;color:var(--text);font-size:12px;outline:none;width:100%">
+      <div style="display:flex;align-items:center;gap:4px">
+        <input type="number" value="${st.pct}" min="0" max="100" step="1"
+          oninput="cpsStageInput(${i},'pct',this.value)"
+          style="background:var(--card);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:13px;font-family:var(--font-mono);width:48px;padding:3px 5px;text-align:center">
+        <span style="font-size:11px;color:var(--muted)">%</span>
+      </div>
+      <button onclick="cpsRemoveStage(${i})" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;line-height:1" title="Remove">×</button>
+    </div>`
+  ).join('');
+
+  const pctTotal = s.stages.reduce((sum, st) => sum + (parseFloat(st.pct)||0), 0);
+  const pctEl = document.getElementById('cps-stage-pct-total');
+  if (pctEl) {
+    pctEl.textContent = `Total: ${pctTotal}%`;
+    pctEl.style.color = Math.abs(pctTotal - 100) < 0.1 ? '#3ecf8e' : '#e05e00';
+  }
+
+  // Summary table
+  const tblEl = document.getElementById('cps-stage-table'); if (!tblEl) return;
+  if (total <= 0) { tblEl.innerHTML = '<div style="font-size:11px;color:var(--muted)">Enter costs to see amounts.</div>'; return; }
+  const fmt2 = v => '£' + v.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2});
+  tblEl.innerHTML = `
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead>
+        <tr style="border-bottom:2px solid var(--accent)">
+          <th style="text-align:left;padding:5px 8px;color:var(--muted);font-weight:600">Stage</th>
+          <th style="text-align:right;padding:5px 8px;color:var(--muted);font-weight:600">%</th>
+          <th style="text-align:right;padding:5px 8px;color:var(--muted);font-weight:600">Amount (excl. VAT)</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${s.stages.map(st => {
+          const amt = total * (parseFloat(st.pct)||0) / 100;
+          return `<tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:6px 8px;color:var(--text)">${escHtml(st.label)}</td>
+            <td style="padding:6px 8px;text-align:right;font-family:var(--font-mono);color:var(--muted)">${st.pct}%</td>
+            <td style="padding:6px 8px;text-align:right;font-family:var(--font-mono);color:var(--accent);font-weight:600">${fmt2(amt)}</td>
+          </tr>`;
+        }).join('')}
+        <tr style="border-top:2px solid var(--border)">
+          <td style="padding:6px 8px;font-weight:700">TOTAL CONTRACT VALUE</td>
+          <td style="padding:6px 8px;text-align:right;font-family:var(--font-mono);font-weight:700">${pctTotal}%</td>
+          <td style="padding:6px 8px;text-align:right;font-family:var(--font-mono);font-weight:700;color:var(--accent)">${fmt2(total)}</td>
+        </tr>
+      </tbody>
+    </table>`;
+}
+
+function cpsStageInput(i, field, val) {
+  const s = cpsGetState(); if (!s) return;
+  if (!s.stages[i]) return;
+  s.stages[i][field] = field === 'pct' ? parseFloat(val)||0 : val;
+  const total = getQuote()?._computed?.total || 0;
+  cpsRenderStages(total, s);
+  cpsUpdateTermsPreview(total, s);
+  autosave();
+}
+function cpsAddStage() {
+  const s = cpsGetState(); if (!s) return;
+  s.stages.push({ label: 'Additional Stage', pct: 0 });
+  cpsRender();
+}
+function cpsRemoveStage(i) {
+  const s = cpsGetState(); if (!s) return;
+  s.stages.splice(i, 1);
+  cpsRender();
+}
+function cpsResetStages() {
+  const s = cpsGetState(); if (!s) return;
+  s.stages = JSON.parse(JSON.stringify(CPS_DEFAULT_STAGES));
+  cpsRender();
+}
+
+// ── AFP / Monthly Cashflow ────────────────────────────────────
+function cpsRenderAFP() {
+  cpsSyncFromDOM();
+  const s = cpsGetState(); if (!s) return;
+  const total     = getQuote()?._computed?.total || 0;
+  const months    = Math.max(1, s.afpMonths);
+  const retention = s.afpRetention;
+  const retPct    = retention ? 5 : 0;
+  const retTotal  = total * retPct / 100;
+
+  const retEl = document.getElementById('cps-afp-retention-total');
+  if (retEl) retEl.textContent = retention ? `Retention: £${retTotal.toLocaleString('en-GB',{minimumFractionDigits:2})}` : '';
+
+  const tblEl = document.getElementById('cps-afp-table'); if (!tblEl) return;
+  if (total <= 0) { tblEl.innerHTML = '<div style="font-size:11px;color:var(--muted)">Enter costs to see cashflow.</div>'; return; }
+
+  const fmt2 = v => '£' + v.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const grossPerMonth = total / months;
+  const retPerMonth   = grossPerMonth * retPct / 100;
+  const netPerMonth   = grossPerMonth - retPerMonth;
+
+  // Build rows — last month note if retention applies
+  let rows = '';
+  let cumGross = 0, cumRet = 0, cumNet = 0;
+  for (let m = 1; m <= months; m++) {
+    cumGross += grossPerMonth;
+    cumRet   += retPerMonth;
+    cumNet   += netPerMonth;
+    rows += `<tr style="border-bottom:1px solid var(--border)${m===months?' font-weight:600':''}" >
+      <td style="padding:5px 8px;font-family:var(--font-mono);color:var(--muted);text-align:center">${m}</td>
+      <td style="padding:5px 8px;font-family:var(--font-mono)">${fmt2(grossPerMonth)}</td>
+      <td style="padding:5px 8px;font-family:var(--font-mono);color:${retention?'#e05e00':'var(--muted)'}">
+        ${retention ? fmt2(retPerMonth) : '—'}
+      </td>
+      <td style="padding:5px 8px;font-family:var(--font-mono);color:var(--accent);font-weight:600">${fmt2(netPerMonth)}</td>
+    </tr>`;
+  }
+
+  // Retention release rows
+  let retReleaseRows = '';
+  if (retention) {
+    const half = retTotal / 2;
+    retReleaseRows = `
+      <tr style="background:rgba(62,207,142,0.05);border-top:1px dashed rgba(62,207,142,0.3)">
+        <td style="padding:5px 8px;font-size:11px;color:var(--muted);text-align:center">PC</td>
+        <td colspan="2" style="padding:5px 8px;font-size:11px;color:var(--muted)">Retention Release — Practical Completion (2.5%)</td>
+        <td style="padding:5px 8px;font-family:var(--font-mono);color:#3ecf8e;font-weight:600">${fmt2(half)}</td>
+      </tr>
+      <tr style="background:rgba(62,207,142,0.05)">
+        <td style="padding:5px 8px;font-size:11px;color:var(--muted);text-align:center">DLP</td>
+        <td colspan="2" style="padding:5px 8px;font-size:11px;color:var(--muted)">Retention Release — End of 12-Month Defects Liability Period (2.5%)</td>
+        <td style="padding:5px 8px;font-family:var(--font-mono);color:#3ecf8e;font-weight:600">${fmt2(half)}</td>
+      </tr>`;
+  }
+
+  tblEl.innerHTML = `
+    <div style="font-size:10px;color:var(--muted);font-weight:600;letter-spacing:1px;margin-bottom:6px">MONTHLY CASHFLOW FORECAST</div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead>
+        <tr style="border-bottom:2px solid var(--accent)">
+          <th style="padding:5px 8px;text-align:center;color:var(--muted);font-weight:600">Month</th>
+          <th style="padding:5px 8px;text-align:left;color:var(--muted);font-weight:600">Gross Application (excl. VAT)</th>
+          <th style="padding:5px 8px;text-align:left;color:var(--muted);font-weight:600">Retention Withheld${retention?' (5%)':''}</th>
+          <th style="padding:5px 8px;text-align:left;color:var(--muted);font-weight:600">Net Amount Due</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows}
+        ${retReleaseRows}
+        <tr style="border-top:2px solid var(--border);background:var(--surface)">
+          <td style="padding:6px 8px;font-weight:700;text-align:center">—</td>
+          <td style="padding:6px 8px;font-family:var(--font-mono);font-weight:700">${fmt2(total)}</td>
+          <td style="padding:6px 8px;font-family:var(--font-mono);font-weight:700;color:${retention?'#e05e00':'var(--muted)'}">
+            ${retention ? fmt2(retTotal) : '—'}
+          </td>
+          <td style="padding:6px 8px;font-family:var(--font-mono);font-weight:700;color:var(--accent)">${fmt2(total)}</td>
+        </tr>
+      </tbody>
+    </table>
+    <div style="font-size:11px;color:var(--muted);margin-top:8px">
+      Payment Terms: ${s.afpTerms} days from date of each interim certificate.
+      ${retention ? ' · Retention held at 5% until Practical Completion, then split equally over DLP.' : ''}
+    </div>`;
+
+  cpsUpdateTermsPreview(total, s);
+  autosave();
+}
+
+// ── Terms text generator ─────────────────────────────────────
+function cpsGenerateTermsText(total, s) {
+  const fmt2 = v => '£' + v.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const totalStr = total > 0 ? fmt2(total) : '[Contract Value]';
+
+  if (s.method === 'single') {
+    return `PAYMENT TERMS\n100% of the contract value (${totalStr}) shall be invoiced upon Practical Completion of the Works. Payment is due within 30 days of the invoice date. All prices are exclusive of VAT.`;
+  }
+
+  if (s.method === 'stage') {
+    const pctOk = Math.abs(s.stages.reduce((a,st) => a+(parseFloat(st.pct)||0), 0) - 100) < 0.1;
+    const lines = s.stages.map((st, i) => {
+      const amt = total > 0 ? ` (${fmt2(total * (parseFloat(st.pct)||0) / 100)})` : '';
+      return `  ${i+1}. ${st.label}: ${st.pct}%${amt}`;
+    }).join('\n');
+    return `PAYMENT TERMS — STAGE PAYMENTS\nThe contract value of ${totalStr} (excl. VAT) shall be invoiced in stages as follows:\n\n${lines}\n\nPayment is due within 30 days of each stage invoice date. All amounts are exclusive of VAT. Stage payments are subject to written confirmation of milestone completion.${pctOk ? '' : '\n\n⚠ NOTE: Stage percentages do not sum to 100%.'}`;
+  }
+
+  if (s.method === 'afp') {
+    const months = Math.max(1, s.afpMonths);
+    const grossPM = total > 0 ? fmt2(total / months) : '[monthly value]';
+    const retClause = s.afpRetention
+      ? `\n\nRETENTION: A retention of 5% shall be withheld from each interim payment certificate. Retention shall be released as follows:\n  - 2.5% upon issue of the Practical Completion Certificate.\n  - 2.5% upon expiry of the 12-Month Defects Liability Period.`
+      : '';
+    return `PAYMENT TERMS — MONTHLY APPLICATION FOR PAYMENT\nThis contract is to be administered under a monthly Application for Payment (AFP) regime over a programme of ${months} month${months>1?'s':''}.\n\nGross monthly application value (indicative): ${grossPM} (excl. VAT).\nPayment Terms: ${s.afpTerms} days from the date of each interim payment certificate.\nAll prices are exclusive of VAT.${retClause}`;
+  }
+  return '';
+}
+
+function cpsUpdateTermsPreview(total, s) {
+  const preview = document.getElementById('cps-terms-preview');
+  const textEl  = document.getElementById('cps-terms-text');
+  if (!preview || !textEl) return;
+  const text = cpsGenerateTermsText(total, s);
+  if (!text) { preview.style.display = 'none'; return; }
+  textEl.textContent = text;
+  preview.style.display = '';
+}
+
+function cpsInjectIntoScope() {
+  const s = cpsGetState(); if (!s) return;
+  const total = getQuote()?._computed?.total || 0;
+  const text  = cpsGenerateTermsText(total, s);
+  const scopeEl = document.getElementById('qScope');
+  if (!scopeEl) return;
+  const existing = scopeEl.value.trim();
+  const SEP = '\n\n---\n';
+  // Remove any previous CPS block
+  const stripped = existing.split(SEP)[0].trim();
+  scopeEl.value = stripped + (stripped ? SEP : '') + text;
+  autosave();
+  toast('Payment terms injected into Scope field', 'success');
+}
+
+
 function recalcAll() {
   const q = getQuote(); if (!q) return;
 
@@ -5344,6 +5711,8 @@ function recalcAll() {
 
   // ── Technical risk alerts ─────────────────────────────
   renderTechRiskAlerts(validateTechnicalRisks(getQuote(), q._computed));
+  // CPS reactive update — runs after totals are computed
+  cpsRender();
 
   // Ideas 6/7/8: scenario, cost bars, productivity
   const scenSlider2=document.getElementById('scenarioSlider');
