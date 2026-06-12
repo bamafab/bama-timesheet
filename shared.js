@@ -11282,29 +11282,61 @@ async function findProjectFolder(projectId) {
   return searchData.value?.find(item => item.folder && item.name.includes(projectId));
 }
 
-async function createFolderInDrive(parentItemId, folderName, driveId) {
-  const token = await getToken();
+// Creates a folder under parentItemId. Retries on transient Graph failures
+// (429 throttling, 5xx, network drops) with exponential backoff, honouring
+// Retry-After when present. SharePoint throttles rapid sequential creates and
+// has brief eventual-consistency lag right after a parent folder is made, so
+// without this the early folders in a burst (e.g. "01 - Order") can silently
+// fail. 201 = created, 409 = already exists (resolved via path GET).
+async function createFolderInDrive(parentItemId, folderName, driveId, opts = {}) {
   const dId = driveId || BAMA_DRIVE_ID;
-  const res = await fetch(
-    `https://graph.microsoft.com/v1.0/drives/${dId}/items/${parentItemId}/children`,
-    {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: folderName, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' })
+  const maxRetries = opts.maxRetries != null ? opts.maxRetries : 4;
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  const backoff = a => Math.min(8000, 400 * Math.pow(2, a)) + Math.floor(Math.random() * 200);
+  const TRANSIENT = [429, 500, 502, 503, 504];
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const token = await getToken();
+    let res;
+    try {
+      res = await fetch(
+        `https://graph.microsoft.com/v1.0/drives/${dId}/items/${parentItemId}/children`,
+        {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: folderName, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' })
+        }
+      );
+    } catch (netErr) {
+      // Network-level failure (dropped connection, DNS, etc.) — retry
+      if (attempt < maxRetries) { await wait(backoff(attempt)); continue; }
+      throw new Error(`Create folder "${folderName}" failed (network) after ${maxRetries + 1} attempts: ${netErr.message}`);
     }
-  );
-  if (res.status === 201) return await res.json();
-  if (res.status === 409) {
-    // Folder already exists — fetch by path (reliable; $filter on children is not)
-    const getRes = await fetch(
-      `https://graph.microsoft.com/v1.0/drives/${dId}/items/${parentItemId}:/${encodeURIComponent(folderName)}`,
-      { headers: { 'Authorization': `Bearer ${token}` } }
-    );
-    if (getRes.ok) return await getRes.json();
-    throw new Error(`Folder "${folderName}" exists (409) but could not be retrieved: ${getRes.status}`);
+
+    if (res.status === 201) return await res.json();
+
+    if (res.status === 409) {
+      // Folder already exists — fetch by path (reliable; $filter on children is not)
+      const getRes = await fetch(
+        `https://graph.microsoft.com/v1.0/drives/${dId}/items/${parentItemId}:/${encodeURIComponent(folderName)}`,
+        { headers: { 'Authorization': `Bearer ${token}` } }
+      );
+      if (getRes.ok) return await getRes.json();
+      throw new Error(`Folder "${folderName}" exists (409) but could not be retrieved: ${getRes.status}`);
+    }
+
+    // Transient — back off and retry (honour Retry-After header when present)
+    if (TRANSIENT.includes(res.status) && attempt < maxRetries) {
+      const retryAfter = parseInt(res.headers.get('Retry-After') || '', 10);
+      const waitMs = Number.isFinite(retryAfter) ? retryAfter * 1000 : backoff(attempt);
+      console.warn(`Graph create "${folderName}" got ${res.status}; retrying in ${waitMs}ms (attempt ${attempt + 1}/${maxRetries})`);
+      await wait(waitMs);
+      continue;
+    }
+
+    throw new Error(`Create folder "${folderName}" failed: ${res.status}`);
   }
-  if (!res.ok) throw new Error(`Create folder failed: ${res.status}`);
-  return await res.json();
+  throw new Error(`Create folder "${folderName}" failed after ${maxRetries + 1} attempts`);
 }
 
 async function getOrCreateSubfolder(parentItemId, folderName, driveId) {
@@ -21344,13 +21376,20 @@ async function submitCreateProject() {
         const projectFolder = await createFolderInDrive(projectsRoot.id, folderName);
         projectFolderId = projectFolder.id;
 
-        // Standard 9 subfolders
+        // Standard 9 subfolders. createFolderInDrive now retries transient
+        // Graph throttling/5xx internally; any folder that still fails after
+        // retries is collected and surfaced rather than silently skipped.
+        const failedSubs = [];
         for (const sub of PROJECT_SUBFOLDERS) {
           try {
             await createFolderInDrive(projectFolder.id, sub);
           } catch (e) {
             console.warn(`Subfolder "${sub}" creation failed:`, e);
+            failedSubs.push(sub);
           }
+        }
+        if (failedSubs.length) {
+          toast(`Project created, but these folders failed: ${failedSubs.join(', ')} — open SharePoint and add them manually`, 'warning');
         }
       } catch (e) {
         console.warn('SharePoint folder creation failed (non-fatal):', e);
