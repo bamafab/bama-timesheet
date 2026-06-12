@@ -2907,7 +2907,7 @@ async function qbFetch(method, path, body) {
 let quotes = [];
 let currentId = null; // SQL id (integer)
 
-function getQuote() { return quotes.find(q => q.id === currentId); }
+function getQuote() { return quotes.find(q => q.id == currentId); }
 
 // Load quote list from SQL. Called on init and after create/delete.
 async function loadQuotesFromSQL() {
@@ -2971,7 +2971,7 @@ async function saveAll() {
     };
     const updated = await qbFetch('PUT', `/api/qb-quotes/${q.id}`, payload);
     // Sync updated_at back
-    const local = quotes.find(x => x.id === q.id);
+    const local = quotes.find(x => x.id == q.id);
     if (local) { local.updated_at = updated.updated_at; local.total_ex_vat = updated.total_ex_vat; }
   } catch (e) {
     console.error('saveAll error:', e);
@@ -3124,7 +3124,7 @@ async function deleteQuote() {
   const id = currentId;
   try {
     await qbFetch('DELETE', `/api/qb-quotes/${id}`);
-    quotes = quotes.filter(q => q.id !== id);
+    quotes = quotes.filter(q => q.id != id);
     currentId = null;
     renderSidebar();
     document.getElementById('quoteEditor').style.display = 'none';
@@ -3135,7 +3135,7 @@ async function deleteQuote() {
 }
 
 async function duplicateQuote(id) {
-  const source = quotes.find(q => q.id === (id || currentId));
+  const source = quotes.find(q => q.id == (id || currentId));
   if (!source) return;
   // Load full blob if not already loaded
   let sourceData = source;
@@ -3297,7 +3297,7 @@ Current state will be saved as a new snapshot first.`;
   takeRevSnapshot('before_restore', q);
   // Restore data but preserve snapshot history
   const history = [...(q.revSnapshots || [])];
-  const idx = quotes.findIndex(x => x.id === q.id);
+  const idx = quotes.findIndex(x => x.id == q.id);
   if (idx < 0) return;
   const restored = JSON.parse(JSON.stringify(snap.data));
   restored.revSnapshots = history; // keep full history
@@ -3314,10 +3314,10 @@ function renderSidebar() {
   const list = document.getElementById('quoteList');
   if (!quotes.length) { list.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--subtle);text-align:center">No quotes yet</div>'; return; }
   list.innerHTML = [...quotes].reverse().map(q => `
-    <div class="quote-item ${q.id===currentId?'active':''}" onclick="selectQuote('${q.id}')">
+    <div class="quote-item ${q.id==currentId?'active':''}" onclick="selectQuote(${q.id})">
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
         <div class="quote-item-ref">${q.ref}${q.revision ? ' <span style="font-size:10px;opacity:0.7">'+q.revision+'</span>' : ''}</div>
-        <button onclick="event.stopPropagation();duplicateQuote('${q.id}')" title="Duplicate" style="background:none;border:none;color:var(--subtle);cursor:pointer;font-size:11px;padding:0;line-height:1;flex-shrink:0" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--subtle)'">⧉</button>
+        <button onclick="event.stopPropagation();duplicateQuote(${q.id})" title="Duplicate" style="background:none;border:none;color:var(--subtle);cursor:pointer;font-size:11px;padding:0;line-height:1;flex-shrink:0" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--subtle)'">⧉</button>
       </div>
       <div class="quote-item-name">${q.company || q.contact || 'No client'}</div>
       <div class="quote-item-status">${statusLabel(q.status)} · ${fmtDate(q.date)}</div>
@@ -3335,9 +3335,9 @@ function updateSidebarItem(q) {
 }
 
 async function selectQuote(id) {
-  currentId = id;
+  currentId = parseInt(id) || id;
   renderSidebar();
-  const existing = quotes.find(q => q.id === id);
+  const existing = quotes.find(q => q.id == id);
   // If we don't have the full blob yet (sidebar only has metadata), load it
   if (existing && !existing.takeoff) {
     try {
@@ -6823,11 +6823,11 @@ function openCompareModal() {
   document.getElementById('compareB').innerHTML = opts;
 
   // Default: current quote in A, previous quote in B if exists
-  const idx = quotes.findIndex(q => q.id === currentId);
+  const idx = quotes.findIndex(q => q.id == currentId);
   if (idx >= 0) {
     document.getElementById('compareA').value = quotes[idx].id;
     // Try to find same ref with different revision, else just pick adjacent
-    const sameRef = quotes.find(q => q.id !== currentId &&
+    const sameRef = quotes.find(q => q.id != currentId &&
       q.ref === quotes[idx].ref);
     document.getElementById('compareB').value = sameRef
       ? sameRef.id
@@ -6853,8 +6853,8 @@ function getQuoteComputedTotals(q) {
 function runComparison() {
   const idA = document.getElementById('compareA').value;
   const idB = document.getElementById('compareB').value;
-  const qA  = quotes.find(q => q.id === idA);
-  const qB  = quotes.find(q => q.id === idB);
+  const qA  = quotes.find(q => q.id == idA);
+  const qB  = quotes.find(q => q.id == idB);
   if (!qA || !qB) return;
 
   const cA = getQuoteComputedTotals(qA);
@@ -7106,59 +7106,85 @@ async function createProjectFromQuote() {
 
   try {
     // 1. Find or create client
-    const clientsRes = await fetch('/api/clients', { credentials: 'include' });
-    if (!clientsRes.ok) throw new Error('Could not load clients — are you logged into the ERP?');
-    const clientsBody = await clientsRes.json();
-    const clientList  = clientsBody.data || clientsBody || [];
+    const clientList = await qbFetch('GET', '/api/clients');
     let clientId = null;
-    const match = clientList.find(c =>
-      (c.name || c.company_name || '').toLowerCase() === client.toLowerCase()
+    const match = (Array.isArray(clientList) ? clientList : []).find(c =>
+      (c.company_name || c.name || '').toLowerCase() === client.toLowerCase()
     );
     if (match) {
       clientId = match.id;
-      status.textContent = 'Client found: ' + (match.name || match.company_name);
+      status.textContent = 'Client found: ' + (match.company_name || match.name);
     } else {
       status.textContent = 'Client not found — creating...';
-      const newClientRes = await fetch('/api/clients', {
-        method: 'POST', credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: client, company_name: client })
-      });
-      if (!newClientRes.ok) throw new Error('Failed to create client');
-      const nc = await newClientRes.json();
-      clientId = nc.id || nc.data?.id;
+      const nc = await qbFetch('POST', '/api/clients', { company_name: client });
+      clientId = nc.id;
       status.textContent = 'Client created (ID ' + clientId + ')';
     }
 
-    // 2. Create project
-    status.textContent = 'Creating project in ERP...';
-    const projRes = await fetch('/api/projects', {
-      method: 'POST', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        project_name:    name,
-        client_id:       clientId,
-        status:          'In Progress',
-        quote_value:     value,
-        start_date:      start,
-        comments:        notes || null,
-        source_quote_id: null,
-        created_by:      'Quote Builder'
-      })
-    });
-    if (!projRes.ok) {
-      const err = await projRes.json().catch(() => ({}));
-      throw new Error(err.message || err.error || 'HTTP ' + projRes.status);
-    }
-    const proj = await projRes.json();
-    const projId = proj.id || proj.data?.id || proj.project_id;
+    // 2. Create SharePoint project folders
+    status.textContent = 'Creating SharePoint folders...';
+    let spProjectFolderId = null;
+    const spQuoteFolderId = q.sharepointFolderId || q.sharepoint_folder_id || null;
+    try {
+      const token = qbToken();
+      const projectNumber = q.ref.replace(/^Q/i, 'C');
+      const clientPart  = (client || '').replace(/[\\/:*?"<>|]/g, '-').trim().slice(0, 40);
+      const projectPart = (name || '').replace(/[\\/:*?"<>|]/g, '-').trim().slice(0, 40);
+      const folderName  = [projectNumber, clientPart, projectPart].filter(Boolean).join(' - ');
+      const driveId = 'b!CxTKk9lEwkyweUqAo3CRas-huywW4KtLqOk2tNzmx-P7CX86DNhTQo14pLuU_tZu';
+      const g = 'https://graph.microsoft.com/v1.0';
+      const hdr = { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' };
 
-    // 3. Save ERP project ID on the local quote
-    q.erpProjectId = projId;
-    saveAll();
+      // Get Projects/ root
+      let projectsRootId;
+      const rootRes = await fetch(g + '/drives/' + driveId + '/root:/Projects', { headers: hdr });
+      if (rootRes.ok) { projectsRootId = (await rootRes.json()).id; }
+      else {
+        const cr = await fetch(g + '/drives/' + driveId + '/root/children', {
+          method: 'POST', headers: hdr,
+          body: JSON.stringify({ name: 'Projects', folder: {}, '@microsoft.graph.conflictBehavior': 'fail' })
+        });
+        projectsRootId = (await cr.json()).id;
+      }
+      // Create project folder
+      const pfRes = await fetch(g + '/drives/' + driveId + '/items/' + projectsRootId + '/children', {
+        method: 'POST', headers: hdr,
+        body: JSON.stringify({ name: folderName, folder: {}, '@microsoft.graph.conflictBehavior': 'rename' })
+      });
+      if (pfRes.ok) {
+        spProjectFolderId = (await pfRes.json()).id;
+        const subs = ['00 - RAMS','01 - Order','02 - Drawings','03 - Quote','04 - Built Ins','05 - Conversations','06 - Survey','07 - Deliveries','08 - Application for payment'];
+        for (const sub of subs) {
+          await fetch(g + '/drives/' + driveId + '/items/' + spProjectFolderId + '/children', {
+            method: 'POST', headers: hdr,
+            body: JSON.stringify({ name: sub, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' })
+          }).catch(() => {});
+        }
+      }
+    } catch(e) { console.warn('SharePoint folders failed (non-fatal):', e); }
+
+    // 3. Mark as won via API — creates Project row
+    status.textContent = 'Creating project in ERP...';
+    const result = await qbFetch('PUT', '/api/qb-quotes/' + q.id + '/mark-won', {
+      project_name:                 name,
+      client_id:                    clientId,
+      quote_value:                  value,
+      deadline_date:                start,
+      comments:                     notes || null,
+      sharepoint_project_folder_id: spProjectFolderId,
+      sharepoint_quote_folder_id:   spQuoteFolderId
+    });
+
+    q.status     = 'won';
+    q.project_id = result.project?.id || null;
+    q.erpProjectId = result.project?.project_number || null;
+    renderSidebar();
+    renderStatusBadge(q);
+    const badge = document.getElementById('erpProjectBadge');
+    if (badge && q.erpProjectId) { badge.textContent = q.erpProjectId; badge.style.display = ''; }
 
     status.style.color = 'var(--green)';
-    status.textContent = '✓ Project created! ID: ' + projId;
+    status.textContent = '✓ Project ' + (result.project?.project_number || '') + ' created!';
     btn.textContent = '✓ Done';
     toast('Project created in ERP — ' + name, 'success');
     setTimeout(() => closeWonModal(), 2500);
@@ -8627,7 +8653,7 @@ function pipelineFilter(f) {
 }
 
 function renderPipeline() {
-  const qs = JSON.parse(localStorage.getItem('bama_quotes') || '[]');
+  const qs = quotes; // in-memory array loaded from SQL
   const today = new Date(); today.setHours(0,0,0,0);
 
   // Stats strip
@@ -8750,16 +8776,14 @@ function renderPipeline() {
     </table>`;
 }
 function openQuoteFromPipeline(id) {
-  const qs = JSON.parse(localStorage.getItem('bama_quotes') || '[]');
-  const idx = qs.findIndex(q => q.id === id);
-  if (idx < 0) return;
-  currentQuoteIndex = idx;
-  loadQuoteIntoForm(qs[idx]);
-  // switch to header tab
+  // id is the SQL integer id — convert from string (dataset.qid)
+  const numId = parseInt(id) || id;
+  selectQuote(numId);
+  // Switch to the Header tab
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-  document.getElementById('tab-header').classList.add('active');
-  document.querySelector('.tab-btn[onclick*="header"]').classList.add('active');
+  document.getElementById('tab-header')?.classList.add('active');
+  document.querySelector('.tab-btn[onclick*="header"]')?.classList.add('active');
 }
 
 function lossReasonLabel(r) {
