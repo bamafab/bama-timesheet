@@ -435,6 +435,12 @@
           <span id="detailTitle">Quote Details</span>
           <button class="btn btn-primary btn-sm" id="detailOpenBtn" onclick="openInBuilder()">Open in Builder →</button>
         </h3>
+        <div id="detailActions" style="display:none;margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <span style="font-size:11px;color:var(--muted);margin-right:4px">Mark as:</span>
+          <button class="btn btn-sm" id="actWonBtn"  onclick="markQuoteStatus('won')"  style="background:#1a4731;color:#3ecf8e;border:1px solid #3ecf8e">✓ Won</button>
+          <button class="btn btn-sm" id="actLostBtn" onclick="markQuoteStatus('lost')" style="background:#3b1a1a;color:#e05e00;border:1px solid #e05e00">✗ Lost</button>
+          <button class="btn btn-sm" id="actOpenBtn" onclick="markQuoteStatus('open')" style="background:var(--surface);color:var(--muted);border:1px solid var(--border)">↺ Re-open</button>
+        </div>
         <div class="detail-grid" id="detailGrid"></div>
         <div class="folder-files" id="folderFiles" style="display:none">
           <div class="fl-label">📎 Tender Folder Files</div>
@@ -626,6 +632,7 @@ async function loadTrackerData() {
 
     // SQL quotes first (newest), then SP archive below
     allQuotes = [...sqlQuotes, ...spQuotes];
+    applySpOverrides();
     renderQuoteList();
     updateStats();
 
@@ -891,6 +898,7 @@ function selectQuote(ref) {
     `<div class="detail-row"><label>${label}</label><span>${val}</span></div>`
   ).join('');
 
+  updateActionButtons();
   // Try to load folder file count
   loadTenderFolderFiles(ref);
 }
@@ -946,6 +954,113 @@ async function loadTenderFolderFiles(ref) {
   } catch(e) {
     console.warn('Folder load:', e.message);
   }
+}
+
+// ─── Status overrides for SP quotes (in-memory + sessionStorage) ──
+function getSpOverrides() {
+  try { return JSON.parse(sessionStorage.getItem('dash_sp_overrides') || '{}'); }
+  catch(e) { return {}; }
+}
+function saveSpOverride(ref, data) {
+  const ov = getSpOverrides();
+  ov[ref] = { ...ov[ref], ...data };
+  sessionStorage.setItem('dash_sp_overrides', JSON.stringify(ov));
+}
+function applySpOverrides() {
+  const ov = getSpOverrides();
+  allQuotes.forEach(q => {
+    if (ov[q.ref]) Object.assign(q, ov[q.ref]);
+  });
+}
+
+async function markQuoteStatus(status) {
+  if (!selectedQuote) return;
+  if (status === 'lost') { openLossModal(); return; }
+
+  const winVal = status === 'won' ? true : null;
+  if (selectedQuote._source === 'sql' && selectedQuote.id) {
+    try {
+      await fetch(`https://bama-erp-api-deauckd2cja7ebd5.uksouth-01.azurewebsites.net/api/qb-quotes/${selectedQuote.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getToken()}` },
+        body: JSON.stringify({ status: status === 'won' ? 'won' : 'draft' })
+      });
+    } catch(e) { showToast('Save failed: ' + e.message, 'error'); return; }
+  } else {
+    saveSpOverride(selectedQuote.ref, { win: winVal });
+  }
+  selectedQuote.win = winVal;
+  selectedQuote.urgency = status === 'won' ? 'won' : (selectedQuote.urgency === 'sent' ? 'sent' : 'open');
+  updateActionButtons();
+  renderQuoteList();
+  updateStats();
+  showToast(status === 'won' ? `✓ ${selectedQuote.ref} marked Won` : `↺ ${selectedQuote.ref} re-opened`, status === 'won' ? 'success' : '');
+}
+
+function openLossModal() {
+  document.getElementById('lossReasonSel').value = '';
+  document.getElementById('lossCompetitorInp').value = '';
+  document.getElementById('lossCommentInp').value = '';
+  const m = document.getElementById('lossModal');
+  m.style.display = 'flex';
+}
+function closeLossModal() {
+  document.getElementById('lossModal').style.display = 'none';
+}
+async function confirmLoss() {
+  if (!selectedQuote) return;
+  const reason     = document.getElementById('lossReasonSel').value;
+  const competitor = document.getElementById('lossCompetitorInp').value.trim();
+  const comment    = document.getElementById('lossCommentInp').value.trim();
+  closeLossModal();
+
+  if (selectedQuote._source === 'sql' && selectedQuote.id) {
+    try {
+      await fetch(`https://bama-erp-api-deauckd2cja7ebd5.uksouth-01.azurewebsites.net/api/qb-quotes/${selectedQuote.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getToken()}` },
+        body: JSON.stringify({ status: 'lost', loss_reason: reason, loss_competitor: competitor, loss_comment: comment })
+      });
+    } catch(e) { showToast('Save failed: ' + e.message, 'error'); return; }
+  } else {
+    saveSpOverride(selectedQuote.ref, { win: false, lossReason: reason, lossCompetitor: competitor, lossComment: comment });
+  }
+  selectedQuote.win = false;
+  selectedQuote.urgency = 'lost';
+  updateActionButtons();
+  renderQuoteList();
+  updateStats();
+  showToast(`✗ ${selectedQuote.ref} marked Lost`, 'error');
+}
+
+function updateActionButtons() {
+  const el = document.getElementById('detailActions');
+  if (!el || !selectedQuote) return;
+  el.style.display = 'flex';
+  const won  = document.getElementById('actWonBtn');
+  const lost = document.getElementById('actLostBtn');
+  const open = document.getElementById('actOpenBtn');
+  // Highlight current state
+  won.style.opacity  = selectedQuote.win === true  ? '1' : '0.5';
+  lost.style.opacity = selectedQuote.win === false ? '1' : '0.5';
+  open.style.opacity = selectedQuote.win === null  ? '1' : '0.5';
+  // Hide re-open if already open
+  open.style.display = selectedQuote.win === null ? 'none' : '';
+}
+
+function showToast(msg, type) {
+  let t = document.getElementById('dashToast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'dashToast';
+    t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 20px;font-size:13px;z-index:2000;box-shadow:0 4px 16px rgba(0,0,0,0.4);transition:opacity 0.3s';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.opacity = '1';
+  t.style.color = type === 'success' ? '#3ecf8e' : type === 'error' ? '#e05e00' : 'var(--text)';
+  clearTimeout(t._hide);
+  t._hide = setTimeout(() => t.style.opacity = '0', 2500);
 }
 
 function openInBuilder() {
@@ -1085,5 +1200,34 @@ if (token) {
   login();
 }
 </script>
+<!-- Loss reason modal -->
+<div id="lossModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center">
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:28px;width:380px;max-width:95vw">
+    <h3 style="margin:0 0 16px">Mark as Lost</h3>
+    <div style="margin-bottom:12px">
+      <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Reason</label>
+      <select id="lossReasonSel" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text)">
+        <option value="">— select —</option>
+        <option value="price">Price — too expensive</option>
+        <option value="competitor">Lost to competitor</option>
+        <option value="no_order">No order placed</option>
+        <option value="scope_change">Scope changed / cancelled</option>
+        <option value="other">Other</option>
+      </select>
+    </div>
+    <div style="margin-bottom:12px">
+      <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Competitor (optional)</label>
+      <input id="lossCompetitorInp" type="text" placeholder="Company name" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);box-sizing:border-box">
+    </div>
+    <div style="margin-bottom:20px">
+      <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Comments (optional)</label>
+      <textarea id="lossCommentInp" rows="3" placeholder="Any notes…" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);resize:vertical;box-sizing:border-box"></textarea>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn btn-ghost btn-sm" onclick="closeLossModal()">Cancel</button>
+      <button class="btn btn-sm" onclick="confirmLoss()" style="background:#3b1a1a;color:#e05e00;border:1px solid #e05e00">Confirm Lost</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>
