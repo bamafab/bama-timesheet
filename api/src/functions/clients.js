@@ -157,12 +157,16 @@ app.http('client-contacts-list', {
 
         try {
             const clientId = parseInt(request.query.get('client_id'));
-            if (!clientId) return badRequest('client_id is required', request);
 
-            const result = await query(
-                `SELECT * FROM ClientContacts WHERE client_id = @clientId ORDER BY created_at DESC`,
-                { clientId }
-            );
+            const result = clientId
+                ? await query(
+                    `SELECT * FROM ClientContacts WHERE client_id = @clientId ORDER BY created_at DESC`,
+                    { clientId }
+                  )
+                : await query(
+                    `SELECT * FROM ClientContacts ORDER BY created_at DESC`,
+                    {}
+                  );
             return ok(result.recordset, request);
         } catch (err) {
             context.error('Error fetching contacts:', err);
