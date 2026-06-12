@@ -236,6 +236,7 @@
     <div id="poNewBudgetWarn" style="color:var(--orange,#e67e22);font-size:12px;min-height:16px;margin-bottom:6px"></div>
 
     <div class="modal-actions">
+      <button class="btn btn-danger" id="poDeleteBtn" onclick="deletePoFromEdit()" style="display:none;margin-right:auto">Delete PO</button>
       <button class="btn btn-ghost" onclick="closePoNewModal()">Cancel</button>
       <button class="btn btn-primary" id="poNewSaveBtn" onclick="savePoNew()">Create PO</button>
     </div>
@@ -493,6 +494,6 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260612a"></script>
+<script src="shared.js?v=20260612b"></script>
 </body>
 </html>

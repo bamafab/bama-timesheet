@@ -26762,6 +26762,7 @@ let _poCostCentres     = {};   // { "5099": "Office", "8099": "Workshop", ... } 
 let _poNewState        = null; // { scope, projectId, supplierId, jobNumber, lineItems[] }
 let _poPendingPinUser  = null;
 let _poEditingId       = null; // when set, savePoNew() updates instead of creating
+let _poEditingRef      = null; // human reference (P######) of the PO being edited, for the delete prompt
 let _poProjectBudgets  = {};   // { projectId: { contractValue, poSpend } } — for budget warn
 
 // ── Page entry ──
@@ -27395,6 +27396,7 @@ function openPoNewModal() {
   document.getElementById('poNewBudgetWarn').textContent = '';
   _poQuoteParseStatus('', 'hidden');
   document.getElementById('poNewSaveBtn').textContent = 'Create PO';
+  document.getElementById('poDeleteBtn').style.display = 'none';
 
   // Populate cost-centre dropdown
   const ccSel = document.getElementById('poNewCostCentre');
@@ -27655,6 +27657,42 @@ async function savePoNew() {
   } finally {
     btn.disabled = false;
     btn.textContent = _poEditingId ? 'Save Changes' : 'Create PO';
+  }
+}
+
+// Hard-delete the PO currently open in the edit modal. Gated by the same
+// editPurchaseOrders permission as edit. Cascades POLineItems + POAttachments
+// (FK ON DELETE CASCADE); nothing else in the schema references po_id.
+async function deletePoFromEdit() {
+  if (!_poEditingId) return;
+  const perms = getUserPermissions(currentManagerUser) || {};
+  if (!perms.editPurchaseOrders) { toast('You don\'t have permission to delete POs.', 'error'); return; }
+
+  const ref = _poEditingRef || `#${_poEditingId}`;
+  const confirmed = await showConfirmAsync(
+    `Delete ${escapeHtml(ref)}?`,
+    `<div style="margin-bottom:14px">This permanently removes purchase order <b>${escapeHtml(ref)}</b>, along with its line items and any attached delivery notes / supplier invoices.</div>
+     <div style="font-size:12px;color:var(--subtle)">This can't be undone. If the PO was already sent to the supplier, consider editing its status to <b>Cancelled</b> instead to keep the audit trail.</div>`,
+    { okLabel: 'Delete PO', cancelLabel: 'Cancel', danger: true }
+  );
+  if (!confirmed) return;
+
+  const btn = document.getElementById('poDeleteBtn');
+  const errEl = document.getElementById('poNewError');
+  errEl.textContent = '';
+  btn.disabled = true;
+  btn.textContent = 'Deleting…';
+  try {
+    await api.delete(`/api/purchase-orders/${_poEditingId}`);
+    toast(`${ref} deleted ✓`, 'success');
+    closePoNewModal();
+    await loadPoTracker();
+  } catch (e) {
+    console.error('PO delete failed:', e);
+    errEl.textContent = (e && e.message) ? e.message : 'Delete failed';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Delete PO';
   }
 }
 
@@ -28112,6 +28150,8 @@ async function openPoEditModal(poId) {
   document.getElementById('poNewError').textContent = '';
   document.getElementById('poNewBudgetWarn').textContent = '';
   document.getElementById('poNewSaveBtn').textContent = 'Save Changes';
+  _poEditingRef = p.reference || null;
+  document.getElementById('poDeleteBtn').style.display = 'inline-flex';
 
   document.getElementById('poNewModal').classList.add('active');
   updatePoBudgetWarn();
