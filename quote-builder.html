@@ -6109,31 +6109,177 @@ function wizSetScope(scope) {
 // ── Job type presets ──────────────────────────────────────────
 function wizApplyJobType(type) {
   if (!type) return;
+
+  // ── Static presets (finish / design / prelims) ─────────────
   const presets = {
-    structural_frame:  { finish:['primer_tonne'], design:'fab_pack_only', prelims:['rams','ppe','weld_inspect'] },
-    mezzanine:         { finish:['primer_tonne','galvanise'], design:'fab_pack_only', prelims:['rams','ppe'] },
-    agricultural:      { finish:['primer_tonne'], design:'client_design', prelims:['rams','ppe'] },
-    architectural:     { finish:['galvanise','powder_coat_m'], design:'fab_pack_only', prelims:['rams','ppe'] },
-    stairs:            { finish:['galvanise'], design:'fab_pack_only', prelims:['rams','ppe'] },
-    residential:       { finish:['primer_tonne'], design:'none', prelims:['rams','ppe'] },
-    industrial:        { finish:['primer_tonne'], design:'full_design', prelims:['rams','ppe','weld_inspect','proj_manager'] },
-    supply_only:       { finish:['primer_tonne'], design:'fab_pack_only', prelims:['rams'] },
+    structural_frame: { finish:['primer_tonne'],              design:'fab_pack_only',  prelims:['rams','ppe','weld_inspect'] },
+    mezzanine:        { finish:['primer_tonne','galvanise'],   design:'fab_pack_only',  prelims:['rams','ppe'] },
+    agricultural:     { finish:['primer_tonne'],              design:'client_design',  prelims:['rams','ppe'] },
+    architectural:    { finish:['galvanise','powder_coat_m'], design:'fab_pack_only',  prelims:['rams','ppe'] },
+    stairs:           { finish:['galvanise'],                 design:'fab_pack_only',  prelims:['rams','ppe'] },
+    residential:      { finish:['primer_tonne'],              design:'none',           prelims:['rams','ppe'] },
+    industrial:       { finish:['primer_tonne'],              design:'full_design',    prelims:['rams','ppe','weld_inspect','proj_manager'] },
+    supply_only:      { finish:['primer_tonne'],              design:'fab_pack_only',  prelims:['rams'] },
   };
-  const p = presets[type]; if (!p) return;
-  // Apply finish
-  document.querySelectorAll('#wiz-finish-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
-  p.finish.forEach(f => document.querySelector(`[data-finish="${f}"]`)?.classList.add('active'));
-  // Apply design
-  document.querySelectorAll('#wiz-design-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
-  document.querySelector(`[data-design="${p.design}"]`)?.classList.add('active');
-  // Apply prelims
-  document.querySelectorAll('#wiz-prelim-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
-  p.prelims.forEach(k => document.querySelector(`[data-prelim="${k}"]`)?.classList.add('active'));
-  // Scope
-  if (type === 'supply_only') wizSetScope('supply');
-  // Badges
+  const p = presets[type];
+  if (p) {
+    document.querySelectorAll('#wiz-finish-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
+    p.finish.forEach(f => document.querySelector(`[data-finish="${f}"]`)?.classList.add('active'));
+    document.querySelectorAll('#wiz-design-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
+    document.querySelector(`[data-design="${p.design}"]`)?.classList.add('active');
+    document.querySelectorAll('#wiz-prelim-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
+    p.prelims.forEach(k => document.querySelector(`[data-prelim="${k}"]`)?.classList.add('active'));
+    if (type === 'supply_only') wizSetScope('supply');
+  }
+
+  // ── Derive tonnage & max single-element weight from takeoff ─
+  const q = _wizQuote;
+  const takeoff = q?.takeoff || [];
+  const totalTonnes = window._wizTonnes || 0;
+  let maxSingleKg = 0;
+  takeoff.forEach(row => {
+    const kgm = resolveKgM(row);
+    if (!kgm) return;
+    const singleKg = (parseFloat(row.length) / 1000) * kgm;
+    if (singleKg > maxSingleKg) maxSingleKg = singleKg;
+  });
+
+  // ── Helper: set a role tile (active + qty) ───────────────────
+  function setRole(role, qty, active = true) {
+    const tile = document.querySelector(`[data-role="${role}"]`);
+    if (!tile) return;
+    tile.classList.toggle('active', active);
+    const inp = tile.querySelector('.wiz-role-qty');
+    if (inp) inp.value = qty;
+  }
+
+  // ── Helper: deactivate all roles then activate specified set ─
+  function applyRoles(roleMap) {
+    document.querySelectorAll('#wiz-roles .wiz-role-tile').forEach(t => t.classList.remove('active'));
+    Object.entries(roleMap).forEach(([role, qty]) => setRole(role, qty, true));
+  }
+
+  // ── Helper: select crane tile by key ────────────────────────
+  function selectCrane(key) {
+    const tile = document.querySelector(`[data-crane="${key}"]`);
+    if (tile) wizSelectCrane(tile);
+  }
+
+  // ── Helper: activate/deactivate a MEWP row ──────────────────
+  function setMewp(key, active, qty = 1, days = 1) {
+    const row = document.querySelector(`[data-mewp="${key}"]`);
+    if (!row) return;
+    if (active) {
+      document.querySelector('[data-mewp="none"]')?.classList.remove('active');
+      row.classList.add('active');
+      const qtyInp  = row.querySelector('.wiz-mewp-qty');
+      const daysInp = row.querySelector('.wiz-mewp-days');
+      if (qtyInp)  qtyInp.value  = qty;
+      if (daysInp) daysInp.value = days;
+    } else {
+      row.classList.remove('active');
+    }
+    wizUpdateMewpBadge();
+  }
+
+  // ── Smart crane selection based on max single element weight ─
+  function smartCrane(minCraneKey) {
+    // minCraneKey is the baseline; upgrade if max element needs it
+    const CRANE_ORDER = ['none','crane_spider','crane_25t','crane_50t','crane_100t','crane_160t','crane_250t','crane_400t'];
+    const THRESHOLDS = [
+      { kg: 15000, key: 'crane_160t' },
+      { kg:  8000, key: 'crane_100t' },
+      { kg:  3000, key: 'crane_50t'  },
+    ];
+    let required = minCraneKey;
+    for (const { kg, key } of THRESHOLDS) {
+      if (maxSingleKg > kg) { required = key; break; }
+    }
+    // If required is heavier than baseline, upgrade; otherwise use baseline
+    const reqIdx = CRANE_ORDER.indexOf(required);
+    const baseIdx = CRANE_ORDER.indexOf(minCraneKey);
+    const finalKey = (reqIdx > baseIdx) ? required : minCraneKey;
+    selectCrane(finalKey);
+    return finalKey;
+  }
+
+  // ── Clear all MEWPs to a clean slate ─────────────────────────
+  function clearMewps() {
+    document.querySelectorAll('.wiz-mewp-row').forEach(r => r.classList.remove('active'));
+    document.querySelector('[data-mewp="none"]')?.classList.add('active');
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // PRESET: Residential (RSJ / Beams)
+  // ════════════════════════════════════════════════════════════
+  if (type === 'residential') {
+    const days = totalTonnes > 3 ? 2 : 1;
+    document.getElementById('wiz-days').value = days;
+    document.getElementById('wiz-operatives').value = 2;
+    applyRoles({ erector: 2 });
+    clearMewps();
+    if (totalTonnes > 3) {
+      // Over 3t: use telehandler for a domestic/RSJ job
+      smartCrane('crane_25t');
+    } else {
+      setMewp('telehandler_7m', true, 1, days);
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // PRESET: Structural Frame
+  // ════════════════════════════════════════════════════════════
+  else if (type === 'structural_frame') {
+    const days = Math.max(2, Math.ceil(totalTonnes / 5));
+    document.getElementById('wiz-days').value = days;
+    document.getElementById('wiz-operatives').value = 4;
+    applyRoles({ supervisor: 1, erector: 2, slinger: 1 });
+    clearMewps();
+    // Smart crane: 25t baseline, upgrades automatically
+    const craneKey = smartCrane('crane_25t');
+    document.getElementById('wiz-crane-days').value = days;
+    // Default access: rough terrain scissor for structural work
+    setMewp('scissor_rt', true, 1, days);
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // PRESET: Industrial / Process
+  // ════════════════════════════════════════════════════════════
+  else if (type === 'industrial') {
+    const days = Math.max(3, Math.ceil(totalTonnes / 4));
+    document.getElementById('wiz-days').value = days;
+    document.getElementById('wiz-operatives').value = 5;
+    applyRoles({ supervisor: 1, erector: 3, slinger: 1, welder: 1 });
+    clearMewps();
+    // Minimum 100t crane for industrial; upgrade if heavier elements present
+    smartCrane('crane_100t');
+    document.getElementById('wiz-crane-days').value = days;
+    // 2x Rough Terrain Scissor lifts for industrial access
+    setMewp('scissor_rt', true, 2, days);
+  }
+
+  // ════════════════════════════════════════════════════════════
+  // PRESET: Mezzanine / Platform
+  // ════════════════════════════════════════════════════════════
+  else if (type === 'mezzanine') {
+    const days = Math.max(2, Math.ceil(totalTonnes / 3));
+    document.getElementById('wiz-days').value = days;
+    document.getElementById('wiz-operatives').value = 3;
+    applyRoles({ supervisor: 1, erector: 2 });
+    clearMewps();
+    selectCrane('none');
+    // 2x Electric Scissor 19ft for indoor mezzanine work
+    setMewp('scissor_19', true, 2, days);
+  }
+
+  // ── Refresh all badges and costs ────────────────────────────
   wizUpdateAllBadges();
-  toast(`Preset applied: ${document.getElementById('wiz-job-type').options[document.getElementById('wiz-job-type').selectedIndex].text}`, 'success');
+  wizUpdateDays();
+
+  const label = document.getElementById('wiz-job-type')?.options[
+    document.getElementById('wiz-job-type')?.selectedIndex
+  ]?.text || type;
+  toast(`Preset applied: ${label}`, 'success');
 }
 
 function applyWizard() {
