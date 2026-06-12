@@ -3410,13 +3410,14 @@ function loadQuoteEditor() {
   revEl.style.display = q.revision ? '' : 'none';
   renderStatusBadge(q);
 
+  const toDateInput = v => v ? String(v).split('T')[0] : '';
   document.getElementById('hRef').value        = q.ref;
   document.getElementById('hRevision').value   = q.revision;
-  document.getElementById('hDate').value       = q.date;
-  document.getElementById('hValidUntil').value = q.validUntil;
-  const dsEl = document.getElementById('hDateSent'); if (dsEl) dsEl.value = q.dateSent || '';
-  const ddEl = document.getElementById('hDecisionDue'); if (ddEl) ddEl.value = q.decisionDue || '';
-  const chEl = document.getElementById('hChasingDate'); if (chEl) chEl.value = q.chasingDate || '';
+  document.getElementById('hDate').value       = toDateInput(q.date);
+  document.getElementById('hValidUntil').value = toDateInput(q.validUntil);
+  const dsEl = document.getElementById('hDateSent'); if (dsEl) dsEl.value = toDateInput(q.dateSent);
+  const ddEl = document.getElementById('hDecisionDue'); if (ddEl) ddEl.value = toDateInput(q.decisionDue);
+  const chEl = document.getElementById('hChasingDate'); if (chEl) chEl.value = toDateInput(q.chasingDate);
   updateDecisionDueAgo();
   document.getElementById('hPreparedBy').value = q.preparedBy;
   document.getElementById('hCompany').value    = q.company || '';
