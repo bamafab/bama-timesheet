@@ -565,34 +565,71 @@ async function loadTrackerData() {
     const token = getToken();
     if (!token) { login(); return; }
 
-    // Read QUOTE TRACKER NEW.xlsx via Excel API
-    const url = `/drives/${BAMA_DRIVE_ID}/items/${TRACKER_ITEM_ID}/workbook/worksheets`;
-    const sheetsData = await graphGet(url);
-    if (!sheetsData) return;
+    // ── SQL first ────────────────────────────────────────────
+    let sqlQuotes = [];
+    try {
+      const apiBase = 'https://bama-erp-api-deauckd2cja7ebd5.uksouth-01.azurewebsites.net';
+      const res = await fetch(`${apiBase}/api/qb-quotes?year=${String(year).slice(2)}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const rows = await res.json();
+        sqlQuotes = rows.map(r => ({
+          ref:      r.reference,
+          company:  r.company || '',
+          contact:  r.contact || '',
+          value:    r.total_ex_vat || 0,
+          dateSent: r.date_sent ? r.date_sent.slice(0,10) : null,
+          due:      r.decision_due ? r.decision_due.slice(0,10) : null,
+          win:      r.status === 'won' ? true : r.status === 'lost' ? false : null,
+          status:   r.status,
+          comments: r.loss_comment || '',
+          id:       r.id,
+          _source:  'sql',
+          // keep for sidebar rendering
+          project:  r.company || ''
+        }));
+      }
+    } catch(e) {
+      console.warn('SQL quotes load failed, falling back to SharePoint:', e);
+    }
 
-    // Find the sheet for the selected year
-    const sheets = sheetsData.value || [];
-    const sheet = sheets.find(s => s.name.includes(year)) || sheets[0];
-    if (!sheet) { showError('No sheet found for ' + year); return; }
+    // ── SharePoint fallback ──────────────────────────────────
+    let spQuotes = [];
+    try {
+      const url = `/drives/${BAMA_DRIVE_ID}/items/${TRACKER_ITEM_ID}/workbook/worksheets`;
+      const sheetsData = await graphGet(url);
+      if (sheetsData) {
+        const sheets = sheetsData.value || [];
+        const sheet = sheets.find(s => s.name.includes(year)) || sheets[0];
+        if (sheet) {
+          const sheetName = encodeURIComponent(sheet.name);
+          const rangeUrl = `/drives/${BAMA_DRIVE_ID}/items/${TRACKER_ITEM_ID}/workbook/worksheets('${sheetName}')/usedRange`;
+          const rangeData = await graphGet(rangeUrl);
+          if (rangeData) {
+            const parsed = parseTrackerRows(rangeData.values || [], year);
+            // Only include SP quotes that are NOT already in SQL (avoid duplicates by ref)
+            const sqlRefs = new Set(sqlQuotes.map(q => q.ref));
+            spQuotes = parsed.filter(q => !sqlRefs.has(q.ref)).map(q => ({ ...q, _source: 'sharepoint' }));
+            // Save last ref for QB sequence continuity
+            const allRefs = [...sqlQuotes, ...spQuotes].filter(q => q.ref.startsWith('Q' + String(year).slice(2)));
+            if (allRefs.length > 0) {
+              const lastRef = allRefs.reduce((best, q) => q.ref > best ? q.ref : best, '');
+              sessionStorage.setItem('bama_last_tracker_ref', lastRef);
+            }
+          }
+        }
+      }
+    } catch(e) {
+      console.warn('SharePoint tracker load failed:', e);
+    }
 
-    const sheetName = encodeURIComponent(sheet.name);
-    const rangeUrl = `/drives/${BAMA_DRIVE_ID}/items/${TRACKER_ITEM_ID}/workbook/worksheets('${sheetName}')/usedRange`;
-    const rangeData = await graphGet(rangeUrl);
-    if (!rangeData) return;
-
-    allQuotes = parseTrackerRows(rangeData.values || [], year);
+    // SQL quotes first (newest), then SP archive below
+    allQuotes = [...sqlQuotes, ...spQuotes];
     renderQuoteList();
     updateStats();
 
-    // Save the highest ref number so quote builder can continue the sequence
-    const yearRefs = allQuotes.filter(q => q.ref.startsWith('Q' + String(year).slice(2)));
-    if (yearRefs.length > 0) {
-      const lastRef = yearRefs.reduce((best, q) => q.ref > best ? q.ref : best, '');
-      sessionStorage.setItem('bama_last_tracker_ref', lastRef);
-      console.log('Last tracker ref saved:', lastRef);
-    }
-
-    // Trigger AI briefing — only once per day (cached in sessionStorage)
+    // AI briefing — once per day
     const today = new Date().toISOString().slice(0,10);
     const cached = sessionStorage.getItem('bama_briefing_date');
     const cachedText = sessionStorage.getItem('bama_briefing_text');

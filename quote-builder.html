@@ -291,7 +291,7 @@ tr.drag-dragging { opacity:0.35; }
 <div class="topbar">
   <div class="logo" style="display:flex;align-items:center;gap:12px">
     <a href="dashboard.html" style="font-size:12px;color:var(--muted);text-decoration:none;display:flex;align-items:center;gap:5px;padding:4px 8px;border:1px solid var(--border);border-radius:5px;transition:all 0.15s" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">← Dashboard</a>
-    <span><span>BAMA</span> QUOTE BUILDER <span style="font-size:11px;color:var(--subtle);margin-left:8px;font-family:var(--font-mono)">OFFLINE</span></span>
+    <span><span>BAMA</span> QUOTE BUILDER <span id="qbUserBadge" style="font-size:11px;color:var(--subtle);margin-left:8px;font-family:var(--font-mono)">loading…</span></span>
   </div>
   <div class="topbar-right">
     <button class="btn btn-ghost btn-sm" onclick="openLogoUpload()" title="Upload logo for PDF">🖼 Logo</button>
@@ -2883,76 +2883,137 @@ function sectionMaterialRate(type) {
 }
 
 // ============================================================
-// DATA
+// DATA — SQL-backed via /api/qb-quotes
 // ============================================================
-let quotes = JSON.parse(localStorage.getItem('bama_quotes') || '[]');
-let currentId = null;
+const QB_API = 'https://bama-erp-api-deauckd2cja7ebd5.uksouth-01.azurewebsites.net';
+
+function qbToken() { return sessionStorage.getItem('bama_token') || ''; }
+
+async function qbFetch(method, path, body) {
+  const opts = {
+    method,
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${qbToken()}` }
+  };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(QB_API + path, opts);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `API ${res.status}`);
+  }
+  return res.json();
+}
+
+// In-memory list (metadata only — no blob). Full blob loaded on selectQuote.
+let quotes = [];
+let currentId = null; // SQL id (integer)
 
 function getQuote() { return quotes.find(q => q.id === currentId); }
 
-
-// ── Next quote ref (continues from SharePoint tracker if available) ──
-function nextQuoteRef() {
-  const now = new Date();
-  const yy = String(now.getFullYear()).slice(2);
-  const mm = String(now.getMonth()+1).padStart(2,'0');
-  const lastTrackerRef = sessionStorage.getItem('bama_last_tracker_ref');
-  let seq;
-  if (lastTrackerRef && lastTrackerRef.startsWith('Q' + yy)) {
-    const tMm = lastTrackerRef.slice(3,5);
-    const tSeq = parseInt(lastTrackerRef.slice(5)) || 0;
-    if (tMm === mm) {
-      // Count local quotes created this session with same month too
-      const localThisMonth = quotes.filter(q => q.ref.startsWith('Q'+yy+mm)).length;
-      seq = Math.max(tSeq + 1, localThisMonth + 1);
-    } else {
-      seq = quotes.filter(q => q.ref.startsWith('Q'+yy+mm)).length + 1;
-    }
-  } else {
-    seq = quotes.filter(q => q.ref.startsWith('Q'+yy+mm)).length + 1;
+// Load quote list from SQL. Called on init and after create/delete.
+async function loadQuotesFromSQL() {
+  try {
+    const rows = await qbFetch('GET', '/api/qb-quotes');
+    // rows have no quote_data blob — just metadata for sidebar
+    quotes = rows.map(r => ({
+      ...r,
+      // keep QB field names consistent with existing renderer
+      ref:        r.reference,
+      date:       r.date_created,
+      dateSent:   r.date_sent   || '',
+      decisionDue: r.decision_due || '',
+      _fromSQL:   true
+    }));
+    renderSidebar();
+  } catch (e) {
+    console.error('loadQuotesFromSQL failed:', e);
+    toast('Could not load quotes from server', 'error');
   }
-  return `Q${yy}${mm}${String(seq).padStart(2,'0')}`;
 }
 
-function newQuote() {
-  const now = new Date();
-  const yy = String(now.getFullYear()).slice(2);
-  const mm = String(now.getMonth()+1).padStart(2,'0');
-
-  // Try to continue from tracker sequence (set by dashboard)
-  let seq;
-  const lastTrackerRef = sessionStorage.getItem('bama_last_tracker_ref');
-  if (lastTrackerRef && lastTrackerRef.startsWith('Q' + yy)) {
-    // Extract sequence from last tracker ref e.g. Q260612 → 12 for month 06
-    const trackerMm = lastTrackerRef.slice(3,5);
-    const trackerSeq = parseInt(lastTrackerRef.slice(5)) || 0;
-    if (trackerMm === mm) {
-      // Same month — continue from tracker
-      seq = String(trackerSeq + 1).padStart(2,'0');
-    } else {
-      // New month — start from 01 but check local quotes too
-      const localSeq = quotes.filter(q => q.ref.startsWith('Q'+yy+mm)).length + 1;
-      seq = String(localSeq).padStart(2,'0');
-    }
-  } else {
-    // No tracker data — count local quotes for this month
-    seq = String(quotes.filter(q => q.ref.startsWith('Q'+yy+mm)).length + 1).padStart(2,'0');
+// Save full quote blob back to SQL (called by saveAll / autosave).
+// _sqlSaving flag prevents re-entrant saves.
+let _sqlSaving = false;
+async function saveAll() {
+  const q = getQuote();
+  if (!q || _sqlSaving) return;
+  _sqlSaving = true;
+  try {
+    const totals = (() => { try { return computeQuoteTotals(q, null); } catch(e) { return {}; } })();
+    const payload = {
+      revision:    q.revision   || '',
+      status:      q.status     || 'draft',
+      date_sent:   q.dateSent   || null,
+      decision_due: q.decisionDue || null,
+      valid_until: q.validUntil || null,
+      company:     q.company    || '',
+      contact:     q.contact    || '',
+      email:       q.email      || '',
+      phone:       q.phone      || '',
+      site_address: q.siteAddress || '',
+      prepared_by: q.preparedBy || '',
+      loss_reason:     q.lossReason     || '',
+      loss_competitor: q.lossCompetitor || '',
+      loss_comment:    q.lossComment    || '',
+      total_ex_vat:       totals.total        ?? null,
+      total_kg:           totals.totalKg      ?? null,
+      margin_pct:         q.margin            ?? null,
+      cost_material:      totals.material     ?? null,
+      cost_installation:  totals.installation ?? null,
+      cost_fabrication:   totals.fabrication  ?? null,
+      cost_design:        totals.design       ?? null,
+      cost_painting:      (totals.painting || 0) + (totals.galvanising || 0) || null,
+      cost_survey:        totals.survey       ?? null,
+      cost_delivery:      totals.delivery     ?? null,
+      cost_prelims:       totals.prelims      ?? null,
+      sharepoint_folder_id:        q.sharepointFolderId       || null,
+      sharepoint_tender_folder_id: q.sharepointTenderFolderId || null,
+      quote_data: JSON.stringify(q)
+    };
+    const updated = await qbFetch('PUT', `/api/qb-quotes/${q.id}`, payload);
+    // Sync updated_at back
+    const local = quotes.find(x => x.id === q.id);
+    if (local) { local.updated_at = updated.updated_at; local.total_ex_vat = updated.total_ex_vat; }
+  } catch (e) {
+    console.error('saveAll error:', e);
+    toast('Auto-save failed: ' + e.message, 'error');
+  } finally {
+    _sqlSaving = false;
   }
-  const ref = `Q${yy}${mm}${seq}`;
-  const q = {
-    id: Date.now().toString(),
+}
+
+
+// ── Next quote ref — asks SQL API (scans QB + Tenders) ──
+async function nextQuoteRef() {
+  try {
+    const data = await qbFetch('GET', '/api/qb-quotes/next-ref');
+    return data.reference;
+  } catch (e) {
+    const now = new Date();
+    const yy = String(now.getFullYear()).slice(2);
+    const mm = String(now.getMonth()+1).padStart(2,'0');
+    const seq = quotes.filter(q => q.ref.startsWith('Q'+yy+mm)).length + 1;
+    return `Q${yy}${mm}${String(seq).padStart(2,'0')}`;
+  }
+}
+
+async function newQuote() {
+  const now = new Date();
+  let ref;
+  try { ref = await nextQuoteRef(); }
+  catch(e) { toast('Could not get next reference: ' + e.message, 'error'); return; }
+
+  const preparedBy = sessionStorage.getItem('bama_qb_user') || 'Mateusz Braczyk';
+  const qData = {
     ref, revision: '', status: 'draft', type: 'bama',
     date: now.toISOString().slice(0,10),
     validUntil: new Date(now.getTime()+14*86400000).toISOString().slice(0,10),
     dateSent: '', decisionDue: '', lossReason: '', lossCompetitor: '', lossComment: '',
-    preparedBy: 'Mateusz Braczyk',
+    preparedBy,
     company: '', contact: '', email: '', phone: '', siteAddress: '',
     comments: '', qScope: '', boqRef: '', boqFile: '', projectTCs: '',
-    takeoff: [],
-    areas: [],  // [{id, name, collapsed}]
+    takeoff: [], areas: [],
     fittingsPct: 10, fittingsRate: 1.30, miscMaterial: 0, miscMaterialNote: '',
     materialLinks: [],
-    // calcs
     instDays: 0, instOperatives: 2, globalDays: true,
     labourRows: [], plantRows: [], paintRows: [], deliveryRows: [], prelimRows: [], consumableRows: [], surveyVisitRows: [],
     fabHours: 0, fabRate: 45, fabpackHours: 0, fabpackRate: 50,
@@ -2960,14 +3021,23 @@ function newQuote() {
     surveyParking: 0, ralColour: '', ralFinish: 'tbc',
     purlinM: 0, purlinRate: 0,
     margin: 20, showDeposit: false, depositPct: 60,
-    // quotation
     standardLines: getDefaultStandardLines(),
     customLines: []
   };
-  quotes.push(q);
-  saveAll();
-  selectQuote(q.id);
-  renderSidebar();
+  try {
+    const row = await qbFetch('POST', '/api/qb-quotes', {
+      reference:    ref,
+      date_created: now.toISOString().slice(0,10),
+      prepared_by:  preparedBy,
+      quote_data:   JSON.stringify(qData)
+    });
+    const q = { ...qData, ...row, ref: row.reference, date: row.date_created, _fromSQL: true };
+    quotes.unshift(q);
+    renderSidebar();
+    selectQuote(q.id);
+  } catch(e) {
+    toast('Failed to create quote: ' + e.message, 'error');
+  }
 }
 
 function getDefaultStandardLines() {
@@ -2985,9 +3055,6 @@ function getDefaultStandardLines() {
   ];
 }
 
-function saveAll() {
-  localStorage.setItem('bama_quotes', JSON.stringify(quotes));
-}
 
 function autosave() {
   const q = getQuote(); if (!q) return;
@@ -3024,7 +3091,7 @@ function autosave() {
   saveAll();
 }
 
-function saveCurrentQuote() {
+async function saveCurrentQuote() {
   autosave();
   const q = getQuote(); if (!q) return;
   // save calcs fields
@@ -3048,42 +3115,64 @@ function saveCurrentQuote() {
   q.margin         = parseFloat(document.getElementById('marginSlider')?.value) || 20;
   q.showDeposit    = document.getElementById('showDeposit')?.checked || false;
   q.depositPct     = parseFloat(document.getElementById('depositPct')?.value) || 60;
-  saveAll();
-  toast('Quote saved', 'success');
+  await saveAll();
+  toast('Quote saved ✓', 'success');
 }
 
 async function deleteQuote() {
   if (!await bamaConfirm('Delete this quote? This cannot be undone.', 'Delete Quote')) return;
-  quotes = quotes.filter(q => q.id !== currentId);
-  currentId = null;
-  saveAll();
-  renderSidebar();
-  document.getElementById('quoteEditor').style.display = 'none';
-  document.getElementById('emptyState').style.display = '';
+  const id = currentId;
+  try {
+    await qbFetch('DELETE', `/api/qb-quotes/${id}`);
+    quotes = quotes.filter(q => q.id !== id);
+    currentId = null;
+    renderSidebar();
+    document.getElementById('quoteEditor').style.display = 'none';
+    document.getElementById('emptyState').style.display = '';
+  } catch(e) {
+    toast('Failed to delete quote: ' + e.message, 'error');
+  }
 }
 
-function duplicateQuote(id) {
+async function duplicateQuote(id) {
   const source = quotes.find(q => q.id === (id || currentId));
   if (!source) return;
-  const ref = nextQuoteRef();
-
-  // Deep copy — strip runtime/ERP fields, reset identity
-  const copy = JSON.parse(JSON.stringify(source));
-  copy.id          = Date.now().toString();
+  // Load full blob if not already loaded
+  let sourceData = source;
+  if (!source.takeoff) {
+    try {
+      const row = await qbFetch('GET', `/api/qb-quotes/${source.id}`);
+      sourceData = { ...source, ...JSON.parse(row.quote_data || '{}'), id: source.id, _fromSQL: true };
+    } catch(e) { toast('Could not load source quote', 'error'); return; }
+  }
+  let ref;
+  try { ref = await nextQuoteRef(); } catch(e) { toast('Could not get next reference', 'error'); return; }
+  const now = new Date();
+  const copy = JSON.parse(JSON.stringify(sourceData));
   copy.ref         = ref;
   copy.revision    = '';
   copy.status      = 'draft';
   copy.date        = now.toISOString().slice(0,10);
   copy.validUntil  = new Date(now.getTime()+14*86400000).toISOString().slice(0,10);
+  copy.dateSent    = '';
   copy.erpProjectId = undefined;
   copy._computed   = undefined;
-  copy._helperScopeDraft = undefined;
-
-  quotes.push(copy);
-  saveAll();
-  renderSidebar();
-  selectQuote(copy.id);
-  toast('Duplicated as ' + ref, 'success');
+  delete copy.id;
+  try {
+    const row = await qbFetch('POST', '/api/qb-quotes', {
+      reference:    ref,
+      date_created: copy.date,
+      prepared_by:  copy.preparedBy || 'Mateusz Braczyk',
+      quote_data:   JSON.stringify(copy)
+    });
+    const q = { ...copy, ...row, ref: row.reference, date: row.date_created, _fromSQL: true };
+    quotes.unshift(q);
+    renderSidebar();
+    selectQuote(q.id);
+    toast('Duplicated as ' + ref, 'success');
+  } catch(e) {
+    toast('Failed to duplicate: ' + e.message, 'error');
+  }
 }
 
 function setStatus(val) {
@@ -3138,7 +3227,6 @@ function removeRevision() {
 function takeRevSnapshot(reason, passedQ) {
   const q = passedQ || getQuote();
   if (!q) return;
-  // Gather current computed total
   let total = 0;
   try { total = computeQuoteTotals(q, null).total || 0; } catch(e) {}
   const snapshot = {
@@ -3149,16 +3237,25 @@ function takeRevSnapshot(reason, passedQ) {
     revision: q.revision || '—',
     status:   q.status || 'draft',
     total,
-    data:     JSON.parse(JSON.stringify(q))  // deep copy
+    data:     JSON.parse(JSON.stringify(q))
   };
   q.revSnapshots = q.revSnapshots || [];
-  // Avoid double-snapshot within 30s
   const last = q.revSnapshots[q.revSnapshots.length - 1];
   if (last && (snapshot.ts - last.ts) < 30000 && reason === 'auto') return;
   q.revSnapshots.push(snapshot);
-  // Keep max 20 snapshots
   if (q.revSnapshots.length > 20) q.revSnapshots = q.revSnapshots.slice(-20);
-  saveAll();
+  saveAll(); // saves full blob including snapshots
+  // Also persist to QuoteBuilderSnapshots table (fire-and-forget)
+  if (q._fromSQL && q.id) {
+    qbFetch('POST', '/api/qb-snapshots', {
+      quote_id:       q.id,
+      snapshot_ts:    snapshot.ts,
+      reason:         snapshot.reason,
+      revision_label: snapshot.revision,
+      status:         snapshot.status,
+      data_snapshot:  JSON.stringify(snapshot.data)
+    }).catch(e => console.warn('snapshot save failed:', e));
+  }
   if (!passedQ) renderRevHistory(q);
   if (reason === 'manual') toast('Snapshot saved', 'success');
 }
@@ -3237,9 +3334,34 @@ function updateSidebarItem(q) {
   });
 }
 
-function selectQuote(id) {
+async function selectQuote(id) {
   currentId = id;
   renderSidebar();
+  const existing = quotes.find(q => q.id === id);
+  // If we don't have the full blob yet (sidebar only has metadata), load it
+  if (existing && !existing.takeoff) {
+    try {
+      const row = await qbFetch('GET', `/api/qb-quotes/${id}`);
+      const blob = JSON.parse(row.quote_data || '{}');
+      // Merge SQL fields into local entry — SQL fields win for status/revision
+      Object.assign(existing, blob, {
+        id:           row.id,
+        ref:          row.reference,
+        revision:     row.revision    || blob.revision || '',
+        status:       row.status      || blob.status   || 'draft',
+        date:         row.date_created || blob.date,
+        dateSent:     row.date_sent   || blob.dateSent || '',
+        decisionDue:  row.decision_due || blob.decisionDue || '',
+        sharepointFolderId:       row.sharepoint_folder_id        || null,
+        sharepointTenderFolderId: row.sharepoint_tender_folder_id || null,
+        project_id:   row.project_id  || null,
+        _fromSQL:     true
+      });
+    } catch(e) {
+      toast('Could not load quote data: ' + e.message, 'error');
+      return;
+    }
+  }
   loadQuoteEditor();
 }
 
@@ -9378,7 +9500,7 @@ function qqCalc() {
   document.getElementById('qq-save-btn').style.opacity = '1';
 }
 
-function qqSaveAsDraft() {
+async function qqSaveAsDraft() {
   if (!_qqResult) return;
   const r2 = _qqResult;
   const now = new Date();
@@ -9427,14 +9549,62 @@ function qqSaveAsDraft() {
   if (r2.finish === 'primer') q.standardLines.find(l=>l.key==='painting').price    = Math.round(r2.finishCost);
   if (r2.finish === 'galv')   q.standardLines.find(l=>l.key==='galvanising').price = Math.round(r2.finishCost);
 
-  quotes.push(q);
-  saveAll();
-  selectQuote(q.id);
-  renderSidebar();
+  try {
+    const row = await qbFetch('POST', '/api/qb-quotes', {
+      reference:    q.ref,
+      date_created: q.date,
+      prepared_by:  q.preparedBy || 'Mateusz Braczyk',
+      quote_data:   JSON.stringify(q)
+    });
+    const saved = { ...q, ...row, ref: row.reference, date: row.date_created, _fromSQL: true };
+    quotes.unshift(saved);
+    renderSidebar();
+    selectQuote(saved.id);
+  } catch(e) {
+    toast('Failed to save Quick Quote: ' + e.message, 'error');
+    return;
+  }
   closeQuickQuote();
 }
 </script>
 
+<script>
+// ── Auth check + init ─────────────────────────────────────
+(async function qbInit() {
+  // Check Microsoft token — redirect to hub if missing/expired
+  const token   = sessionStorage.getItem('bama_token');
+  const expiry  = parseInt(sessionStorage.getItem('bama_token_expiry') || '0');
+  if (!token || Date.now() >= expiry) {
+    sessionStorage.setItem('bama_return_page', window.location.pathname);
+    const tenantId  = 'c92626f5-e391-499a-9059-0113bd07da2d';
+    const clientId  = '04b702fd-c53c-4f38-94bc-0334ce91d954';
+    const redirectUri = encodeURIComponent('https://proud-dune-0dee63110.2.azurestaticapps.net');
+    const scope       = encodeURIComponent('Files.ReadWrite Sites.ReadWrite.All Mail.Send');
+    window.location.href =
+      `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/authorize` +
+      `?client_id=${clientId}&response_type=token&redirect_uri=${redirectUri}` +
+      `&scope=${scope}&prompt=none&response_mode=fragment` +
+      `&state=${encodeURIComponent(window.location.pathname)}`;
+    return;
+  }
+
+  // Decode user name from JWT
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
+    const name = payload.name || payload.preferred_username || payload.upn || 'Unknown';
+    sessionStorage.setItem('bama_qb_user', name);
+    const badge = document.getElementById('qbUserBadge');
+    if (badge) badge.textContent = name;
+  } catch(e) {
+    const badge = document.getElementById('qbUserBadge');
+    if (badge) badge.textContent = '';
+  }
+
+  // Load quotes from SQL
+  await loadQuotesFromSQL();
+
+  // Rates from localStorage still OK (device-specific, not user data)
+})();
 </script>
 </body>
 </html>
