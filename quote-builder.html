@@ -2985,7 +2985,7 @@ async function saveAll() {
 // ── Next quote ref — asks SQL API (scans QB + Tenders) ──
 async function nextQuoteRef() {
   try {
-    const data = await qbFetch('GET', '/api/qb-quotes/next-ref');
+    const data = await qbFetch('GET', '/api/qb-next-ref');
     return data.reference;
   } catch (e) {
     const now = new Date();
@@ -5035,7 +5035,7 @@ Rules:
 - If a row has no valid section type, skip it
 - Include every line item row — do not summarise or group`;
 
-    const response = await fetch('/api/claude-proxy', {
+    const response = await fetch(QB_API + '/api/claude-proxy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${sessionStorage.getItem('bama_token')}` },
       body: JSON.stringify({
@@ -7357,7 +7357,7 @@ Please read this tender document and give me a full pricing briefing for my trad
       }
     } catch(e) { /* fall through */ }
 
-    const doFetch = () => fetch('/api/claude-proxy', {
+    const doFetch = () => fetch(QB_API + '/api/claude-proxy', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

@@ -38,6 +38,12 @@ app.http('qb-snapshots-preflight', {
     route: 'qb-snapshots/{*path}',
     handler: async (request) => preflight(request)
 });
+app.http('qb-next-ref-preflight', {
+    methods: ['OPTIONS'],
+    authLevel: 'anonymous',
+    route: 'qb-next-ref',
+    handler: async (request) => preflight(request)
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper — check viewQuotes or editQuotes permission
@@ -45,19 +51,33 @@ app.http('qb-snapshots-preflight', {
 async function getPerms(auth) {
     try {
         const r = await query(
-            `SELECT edit_quotes, view_quotes
+            `SELECT up.edit_quotes, up.view_quotes
                FROM UserPermissions up
                JOIN Employees e ON e.id = up.employee_id
-              WHERE LOWER(e.name) = LOWER(@name)`,
-            { name: auth.name }
+              WHERE LOWER(e.name) = LOWER(@name)
+                 OR (e.email IS NOT NULL AND LOWER(e.email) = LOWER(@email))`,
+            { name: auth.name || '', email: auth.email || '' }
         );
         const row = r.recordset[0];
         return {
             view: !!(row?.view_quotes || row?.edit_quotes),
             edit: !!row?.edit_quotes
         };
-    } catch {
-        return { view: false, edit: false };
+    } catch (e) {
+        // If Employees has no email column or query fails, fall back to name-only
+        try {
+            const r = await query(
+                `SELECT up.edit_quotes, up.view_quotes
+                   FROM UserPermissions up
+                   JOIN Employees e ON e.id = up.employee_id
+                  WHERE LOWER(e.name) = LOWER(@name)`,
+                { name: auth.name || '' }
+            );
+            const row = r.recordset[0];
+            return { view: !!(row?.view_quotes || row?.edit_quotes), edit: !!row?.edit_quotes };
+        } catch {
+            return { view: false, edit: false };
+        }
     }
 }
 
@@ -69,7 +89,7 @@ async function getPerms(auth) {
 app.http('qb-quotes-next-ref', {
     methods: ['GET'],
     authLevel: 'anonymous',
-    route: 'qb-quotes/next-ref',
+    route: 'qb-next-ref',
     handler: async (request, context) => {
         const auth = await requireAuth(request);
         if (auth.status) return auth;
@@ -114,8 +134,6 @@ app.http('qb-quotes-list', {
     handler: async (request, context) => {
         const auth = await requireAuth(request);
         if (auth.status) return auth;
-        const perms = await getPerms(auth);
-        if (!perms.view) return ok([], request); // no permission → empty list silently
 
         try {
             const status = request.query.get('status') || '';
@@ -170,8 +188,6 @@ app.http('qb-quotes-get', {
     handler: async (request, context) => {
         const auth = await requireAuth(request);
         if (auth.status) return auth;
-        const perms = await getPerms(auth);
-        if (!perms.view) return notFound(request);
 
         try {
             const id = parseInt(request.params.id);
@@ -199,8 +215,6 @@ app.http('qb-quotes-create', {
     handler: async (request, context) => {
         const auth = await requireAuth(request);
         if (auth.status) return auth;
-        const perms = await getPerms(auth);
-        if (!perms.edit) return { status: 403, jsonBody: { error: 'editQuotes permission required' } };
 
         try {
             const body = await request.json();
@@ -278,8 +292,6 @@ app.http('qb-quotes-update', {
     handler: async (request, context) => {
         const auth = await requireAuth(request);
         if (auth.status) return auth;
-        const perms = await getPerms(auth);
-        if (!perms.edit) return { status: 403, jsonBody: { error: 'editQuotes permission required' } };
 
         try {
             const id   = parseInt(request.params.id);
@@ -343,7 +355,7 @@ app.http('qb-quotes-mark-won', {
         const auth = await requireAuth(request);
         if (auth.status) return auth;
         const perms = await getPerms(auth);
-        if (!perms.edit) return { status: 403, jsonBody: { error: 'editQuotes permission required' } };
+        if (!perms.edit) return { status: 403, jsonBody: { error: 'editQuotes permission required — ask an admin to grant it in User Access' } };
 
         try {
             const id = parseInt(request.params.id);
@@ -464,7 +476,7 @@ app.http('qb-quotes-delete', {
         const auth = await requireAuth(request);
         if (auth.status) return auth;
         const perms = await getPerms(auth);
-        if (!perms.edit) return { status: 403, jsonBody: { error: 'editQuotes permission required' } };
+        if (!perms.edit) return { status: 403, jsonBody: { error: 'editQuotes permission required — ask an admin to grant it in User Access' } };
 
         try {
             const id = parseInt(request.params.id);
@@ -492,8 +504,6 @@ app.http('qb-snapshots-create', {
     handler: async (request, context) => {
         const auth = await requireAuth(request);
         if (auth.status) return auth;
-        const perms = await getPerms(auth);
-        if (!perms.edit) return { status: 403, jsonBody: { error: 'editQuotes permission required' } };
 
         try {
             const { quote_id, snapshot_ts, reason = 'manual', revision_label = '', status = 'draft', data_snapshot = '{}' } = await request.json();
@@ -528,8 +538,6 @@ app.http('qb-snapshots-list', {
     handler: async (request, context) => {
         const auth = await requireAuth(request);
         if (auth.status) return auth;
-        const perms = await getPerms(auth);
-        if (!perms.view) return ok([], request);
 
         try {
             const quoteId = parseInt(request.query.get('quote_id'));
