@@ -790,7 +790,10 @@ function parseTrackerRows(rows, year) {
 
 function fmtDate(d) {
   if (!d) return '—';
-  return d.toLocaleDateString('en-GB', { day:'2-digit', month:'short' });
+  // Accept both Date objects and YYYY-MM-DD strings (SQL source)
+  const obj = (d instanceof Date) ? d : new Date(String(d).split('T')[0] + 'T00:00:00');
+  if (isNaN(obj.getTime())) return '—';
+  return obj.toLocaleDateString('en-GB', { day:'2-digit', month:'short' });
 }
 function fmtGBP(v) {
   if (!v) return '—';

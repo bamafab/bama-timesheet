@@ -7800,6 +7800,7 @@ function helperExportPDF() {
   </body></html>`;
 
   const win = window.open('', '_blank', 'width=900,height:1100');
+  if (!win) { toast('Przeglądarka zablokowała popup — zezwól na popupy dla tej strony i spróbuj ponownie', 'error'); return; }
   win.document.write(html);
   win.document.close();
 }
@@ -8731,8 +8732,17 @@ function buildPdfPage(title, body) {
   </body></html>`;
 }
 
+function fmtDateLong(s) {
+  if (!s) return '';
+  const isoDate = String(s).split('T')[0];
+  const d = new Date(isoDate + 'T00:00:00');
+  if (isNaN(d.getTime())) return String(s);
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
+}
+
 function openPdfWindow(html) {
   const win = window.open('', '_blank', 'width=900,height=1100');
+  if (!win) { toast('Przeglądarka zablokowała popup — zezwól na popupy dla tej strony i spróbuj ponownie', 'error'); return; }
   win.document.write(html);
   win.document.close();
 }
@@ -9260,6 +9270,7 @@ function generateHandoverPack() {
 </body></html>`;
 
   const win = window.open('', '_blank', 'width=960,height:1100');
+  if (!win) { toast('Przeglądarka zablokowała popup — zezwól na popupy dla tej strony i spróbuj ponownie', 'error'); return; }
   win.document.write(html);
   win.document.close();
 }
