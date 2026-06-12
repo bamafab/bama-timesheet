@@ -1823,13 +1823,13 @@ tr.drag-dragging { opacity:0.35; }
         <div class="wiz-panel-body">
           <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px" id="wiz-crane-tiles">
             <div class="wiz-tile active" data-crane="none" onclick="wizSelectCrane(this)">No crane</div>
+            <div class="wiz-tile" data-crane="crane_spider" onclick="wizSelectCrane(this)">Spider Crane<br><span style="font-size:10px;color:var(--muted)">£950/day</span></div>
             <div class="wiz-tile" data-crane="crane_25t" onclick="wizSelectCrane(this)">25t Mobile Crane<br><span style="font-size:10px;color:var(--muted)">£1,200/day</span></div>
             <div class="wiz-tile" data-crane="crane_50t" onclick="wizSelectCrane(this)">50t Mobile Crane<br><span style="font-size:10px;color:var(--muted)">£1,850/day</span></div>
             <div class="wiz-tile" data-crane="crane_100t" onclick="wizSelectCrane(this)">100t Mobile Crane<br><span style="font-size:10px;color:var(--muted)">£2,800/day</span></div>
-            <div class="wiz-tile" data-crane="crane_spider" onclick="wizSelectCrane(this)">Spider Crane<br><span style="font-size:10px;color:var(--muted)">£950/day</span></div>
-            <div class="wiz-tile" data-crane="crane_hiab" onclick="wizSelectCrane(this)">HIAB Lorry Crane<br><span style="font-size:10px;color:var(--muted)">£800/day</span></div>
-            <div class="wiz-tile" data-crane="crane_telehandler" onclick="wizSelectCrane(this)">Telehandler / Forklift<br><span style="font-size:10px;color:var(--muted)">£350/day</span></div>
-            <div class="wiz-tile" data-crane="crane_minipick" onclick="wizSelectCrane(this)">Mini Pick &amp; Carry<br><span style="font-size:10px;color:var(--muted)">£550/day</span></div>
+            <div class="wiz-tile" data-crane="crane_160t" onclick="wizSelectCrane(this)">160t Heavy Crane<br><span style="font-size:10px;color:var(--muted)">£4,200/day</span></div>
+            <div class="wiz-tile" data-crane="crane_250t" onclick="wizSelectCrane(this)">250t Heavy Crane<br><span style="font-size:10px;color:var(--muted)">£6,500/day</span></div>
+            <div class="wiz-tile" data-crane="crane_400t" onclick="wizSelectCrane(this)">400t Heavy Crane<br><span style="font-size:10px;color:var(--muted)">£12,500/day</span></div>
           </div>
           <div id="wiz-crane-days-wrap" style="display:none;margin-top:4px">
             <label style="font-size:11px;color:var(--muted)">Crane days on site</label>
@@ -1903,7 +1903,7 @@ tr.drag-dragging { opacity:0.35; }
         </div>
         <div class="wiz-panel-body">
           <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Select all equipment needed. Set quantity and days per item.</div>
-          <div style="display:flex;flex-direction:column;gap:6px" id="wiz-mewp-tiles">
+                    <div style="display:flex;flex-direction:column;gap:6px" id="wiz-mewp-tiles">
             <!-- None -->
             <div class="wiz-mewp-row" data-mewp="none" onclick="wizToggleMewp(this)">
               <div style="display:flex;align-items:center;gap:8px">
@@ -1911,12 +1911,25 @@ tr.drag-dragging { opacity:0.35; }
                 <div style="font-size:13px;font-weight:600">None needed</div>
               </div>
             </div>
-            <!-- Scissor lifts -->
+            <div style="font-size:10px;color:var(--muted);font-weight:600;letter-spacing:1px;margin-top:4px">LOW-LEVEL ACCESS</div>
+            <div class="wiz-mewp-row" data-mewp="pav_lift" onclick="wizToggleMewp(this)">
+              <div style="display:flex;align-items:center;gap:8px;flex:1">
+                <div class="wiz-mewp-check"></div>
+                <div><div style="font-size:13px;font-weight:600">Low-Level PAV Lift (~3.5m–4.2m WH)</div><div style="font-size:10px;color:var(--muted)">Pecolift / Pop-Up · indoor panel lifts</div></div>
+              </div>
+              <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
+                <span style="font-size:11px;color:var(--muted)">Qty</span>
+                <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
+                <span style="font-size:11px;color:var(--muted)">Days</span>
+                <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
+                <span style="font-size:11px;color:var(--muted);min-width:60px">£45/day</span>
+              </div>
+            </div>
             <div style="font-size:10px;color:var(--muted);font-weight:600;letter-spacing:1px;margin-top:4px">SCISSOR LIFTS</div>
             <div class="wiz-mewp-row" data-mewp="scissor_19" onclick="wizToggleMewp(this)">
               <div style="display:flex;align-items:center;gap:8px;flex:1">
                 <div class="wiz-mewp-check"></div>
-                <div><div style="font-size:13px;font-weight:600">Electric Scissor 19ft</div><div style="font-size:10px;color:var(--muted)">Up to 6m working height · indoor</div></div>
+                <div><div style="font-size:13px;font-weight:600">Electric Scissor 19ft (~5.8m WH)</div><div style="font-size:10px;color:var(--muted)">Indoor / flat floor · narrow aisle</div></div>
               </div>
               <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
                 <span style="font-size:11px;color:var(--muted)">Qty</span>
@@ -1929,22 +1942,47 @@ tr.drag-dragging { opacity:0.35; }
             <div class="wiz-mewp-row" data-mewp="scissor_26" onclick="wizToggleMewp(this)">
               <div style="display:flex;align-items:center;gap:8px;flex:1">
                 <div class="wiz-mewp-check"></div>
-                <div><div style="font-size:13px;font-weight:600">Rough Terrain Scissor 26ft</div><div style="font-size:10px;color:var(--muted)">Up to 10m · outdoor / uneven ground</div></div>
+                <div><div style="font-size:13px;font-weight:600">Electric Scissor 26ft/32ft (~8.0m–10.0m WH)</div><div style="font-size:10px;color:var(--muted)">Narrow aisle · hard flat surfaces</div></div>
               </div>
               <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
                 <span style="font-size:11px;color:var(--muted)">Qty</span>
                 <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
                 <span style="font-size:11px;color:var(--muted)">Days</span>
                 <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
-                <span style="font-size:11px;color:var(--muted);min-width:60px">£120/day</span>
+                <span style="font-size:11px;color:var(--muted);min-width:60px">£110/day</span>
               </div>
             </div>
-            <!-- Boom lifts -->
-            <div style="font-size:10px;color:var(--muted);font-weight:600;letter-spacing:1px;margin-top:4px">BOOM LIFTS (GENIE / SIMILAR)</div>
-            <div class="wiz-mewp-row" data-mewp="boom_z30" onclick="wizToggleMewp(this)">
+            <div class="wiz-mewp-row" data-mewp="scissor_rt" onclick="wizToggleMewp(this)">
               <div style="display:flex;align-items:center;gap:8px;flex:1">
                 <div class="wiz-mewp-check"></div>
-                <div><div style="font-size:13px;font-weight:600">Articulating Boom 30ft (Genie Z-30)</div><div style="font-size:10px;color:var(--muted)">Up to 11m · tight access</div></div>
+                <div><div style="font-size:13px;font-weight:600">Rough Terrain Diesel Scissor (~8.0m–10.0m WH)</div><div style="font-size:10px;color:var(--muted)">With outriggers · outdoor/uneven ground</div></div>
+              </div>
+              <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
+                <span style="font-size:11px;color:var(--muted)">Qty</span>
+                <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
+                <span style="font-size:11px;color:var(--muted)">Days</span>
+                <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
+                <span style="font-size:11px;color:var(--muted);min-width:60px">£140/day</span>
+              </div>
+            </div>
+            <div class="wiz-mewp-row" data-mewp="scissor_superdeck" onclick="wizToggleMewp(this)">
+              <div style="display:flex;align-items:center;gap:8px;flex:1">
+                <div class="wiz-mewp-check"></div>
+                <div><div style="font-size:13px;font-weight:600">Super Deck Diesel Scissor 43ft/53ft (~15.0m–18.0m WH)</div><div style="font-size:10px;color:var(--muted)">Large platform · high bays / steelwork</div></div>
+              </div>
+              <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
+                <span style="font-size:11px;color:var(--muted)">Qty</span>
+                <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
+                <span style="font-size:11px;color:var(--muted)">Days</span>
+                <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
+                <span style="font-size:11px;color:var(--muted);min-width:60px">£220/day</span>
+              </div>
+            </div>
+            <div style="font-size:10px;color:var(--muted);font-weight:600;letter-spacing:1px;margin-top:4px">BOOM LIFTS (CHERRY PICKERS)</div>
+            <div class="wiz-mewp-row" data-mewp="boom_elec_30" onclick="wizToggleMewp(this)">
+              <div style="display:flex;align-items:center;gap:8px;flex:1">
+                <div class="wiz-mewp-check"></div>
+                <div><div style="font-size:13px;font-weight:600">Electric Articulated Boom 30ft/33ft (~11.0m WH)</div><div style="font-size:10px;color:var(--muted)">Indoor / narrow access · zero emissions</div></div>
               </div>
               <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
                 <span style="font-size:11px;color:var(--muted)">Qty</span>
@@ -1957,7 +1995,7 @@ tr.drag-dragging { opacity:0.35; }
             <div class="wiz-mewp-row" data-mewp="boom_z45" onclick="wizToggleMewp(this)">
               <div style="display:flex;align-items:center;gap:8px;flex:1">
                 <div class="wiz-mewp-check"></div>
-                <div><div style="font-size:13px;font-weight:600">Articulating Boom 45ft (Genie Z-45)</div><div style="font-size:10px;color:var(--muted)">Up to 16m working height</div></div>
+                <div><div style="font-size:13px;font-weight:600">Diesel Articulated Boom 45ft (~15.7m WH)</div><div style="font-size:10px;color:var(--muted)">Genie Z-45 style · general construction</div></div>
               </div>
               <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
                 <span style="font-size:11px;color:var(--muted)">Qty</span>
@@ -1970,48 +2008,46 @@ tr.drag-dragging { opacity:0.35; }
             <div class="wiz-mewp-row" data-mewp="boom_z60" onclick="wizToggleMewp(this)">
               <div style="display:flex;align-items:center;gap:8px;flex:1">
                 <div class="wiz-mewp-check"></div>
-                <div><div style="font-size:13px;font-weight:600">Articulating Boom 60ft (Genie Z-60)</div><div style="font-size:10px;color:var(--muted)">Up to 20m working height</div></div>
+                <div><div style="font-size:13px;font-weight:600">Diesel Articulated Boom 60ft/80ft (~20.0m–26.0m WH)</div><div style="font-size:10px;color:var(--muted)">Rough terrain · outdoor steelwork</div></div>
               </div>
               <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
                 <span style="font-size:11px;color:var(--muted)">Qty</span>
                 <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
                 <span style="font-size:11px;color:var(--muted)">Days</span>
                 <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
-                <span style="font-size:11px;color:var(--muted);min-width:60px">£230/day</span>
+                <span style="font-size:11px;color:var(--muted);min-width:60px">£240/day</span>
               </div>
             </div>
-            <div class="wiz-mewp-row" data-mewp="telehandler_boom" onclick="wizToggleMewp(this)">
+            <div class="wiz-mewp-row" data-mewp="boom_tele_40_85" onclick="wizToggleMewp(this)">
               <div style="display:flex;align-items:center;gap:8px;flex:1">
                 <div class="wiz-mewp-check"></div>
-                <div><div style="font-size:13px;font-weight:600">Telescopic Boom (S-40 / S-65)</div><div style="font-size:10px;color:var(--muted)">Straight boom · outdoor use</div></div>
+                <div><div style="font-size:13px;font-weight:600">Telescopic Straight Boom 40ft–85ft (~14.0m–28.0m WH)</div><div style="font-size:10px;color:var(--muted)">Fast horizontal outreach · outdoor</div></div>
               </div>
               <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
                 <span style="font-size:11px;color:var(--muted)">Qty</span>
                 <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
                 <span style="font-size:11px;color:var(--muted)">Days</span>
                 <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
-                <span style="font-size:11px;color:var(--muted);min-width:60px">£190/day</span>
+                <span style="font-size:11px;color:var(--muted);min-width:60px">£210/day</span>
               </div>
             </div>
-            <!-- Cherry pickers -->
-            <div style="font-size:10px;color:var(--muted);font-weight:600;letter-spacing:1px;margin-top:4px">CHERRY PICKERS (TRUCK / VAN MOUNT)</div>
-            <div class="wiz-mewp-row" data-mewp="cherry_12m" onclick="wizToggleMewp(this)">
+            <div class="wiz-mewp-row" data-mewp="boom_ultra_120" onclick="wizToggleMewp(this)">
               <div style="display:flex;align-items:center;gap:8px;flex:1">
                 <div class="wiz-mewp-check"></div>
-                <div><div style="font-size:13px;font-weight:600">Van Mount Cherry Picker 12m</div><div style="font-size:10px;color:var(--muted)">Self-drive / van-mounted</div></div>
+                <div><div style="font-size:13px;font-weight:600">Ultra Telescopic Boom 120ft–150ft (~38.0m–47.0m WH)</div><div style="font-size:10px;color:var(--muted)">Heavy industrial / infrastructure</div></div>
               </div>
               <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
                 <span style="font-size:11px;color:var(--muted)">Qty</span>
                 <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
                 <span style="font-size:11px;color:var(--muted)">Days</span>
                 <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
-                <span style="font-size:11px;color:var(--muted);min-width:60px">£160/day</span>
+                <span style="font-size:11px;color:var(--muted);min-width:60px">£480/day</span>
               </div>
             </div>
-            <div class="wiz-mewp-row" data-mewp="cherry_18m" onclick="wizToggleMewp(this)">
+            <div class="wiz-mewp-row" data-mewp="spider_lift" onclick="wizToggleMewp(this)">
               <div style="display:flex;align-items:center;gap:8px;flex:1">
                 <div class="wiz-mewp-check"></div>
-                <div><div style="font-size:13px;font-weight:600">Truck Mount Cherry Picker 18m+</div><div style="font-size:10px;color:var(--muted)">High reach · operator sometimes included</div></div>
+                <div><div style="font-size:13px;font-weight:600">Tracked Spider Lift 15m–25m WH</div><div style="font-size:10px;color:var(--muted)">Narrow access / low ground pressure</div></div>
               </div>
               <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
                 <span style="font-size:11px;color:var(--muted)">Qty</span>
@@ -2021,7 +2057,59 @@ tr.drag-dragging { opacity:0.35; }
                 <span style="font-size:11px;color:var(--muted);min-width:60px">£350/day</span>
               </div>
             </div>
-            <!-- Other access -->
+            <div style="font-size:10px;color:var(--muted);font-weight:600;letter-spacing:1px;margin-top:4px">TELEHANDLERS & FORKLIFTS</div>
+            <div class="wiz-mewp-row" data-mewp="forklift_yard" onclick="wizToggleMewp(this)">
+              <div style="display:flex;align-items:center;gap:8px;flex:1">
+                <div class="wiz-mewp-check"></div>
+                <div><div style="font-size:13px;font-weight:600">Standard Yard Forklift – Gas/Diesel (2.5t–3.5t lift)</div><div style="font-size:10px;color:var(--muted)">Yard / loading bay use</div></div>
+              </div>
+              <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
+                <span style="font-size:11px;color:var(--muted)">Qty</span>
+                <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
+                <span style="font-size:11px;color:var(--muted)">Days</span>
+                <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
+                <span style="font-size:11px;color:var(--muted);min-width:60px">£120/day</span>
+              </div>
+            </div>
+            <div class="wiz-mewp-row" data-mewp="telehandler_7m" onclick="wizToggleMewp(this)">
+              <div style="display:flex;align-items:center;gap:8px;flex:1">
+                <div class="wiz-mewp-check"></div>
+                <div><div style="font-size:13px;font-weight:600">Site Telehandler 7m–10m Reach</div><div style="font-size:10px;color:var(--muted)">Standard outreach · most common on site</div></div>
+              </div>
+              <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
+                <span style="font-size:11px;color:var(--muted)">Qty</span>
+                <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
+                <span style="font-size:11px;color:var(--muted)">Days</span>
+                <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
+                <span style="font-size:11px;color:var(--muted);min-width:60px">£180/day</span>
+              </div>
+            </div>
+            <div class="wiz-mewp-row" data-mewp="telehandler_14m" onclick="wizToggleMewp(this)">
+              <div style="display:flex;align-items:center;gap:8px;flex:1">
+                <div class="wiz-mewp-check"></div>
+                <div><div style="font-size:13px;font-weight:600">Heavy Duty Telehandler 14m–17m Reach</div><div style="font-size:10px;color:var(--muted)">With stabilisers · heavy lift capacity</div></div>
+              </div>
+              <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
+                <span style="font-size:11px;color:var(--muted)">Qty</span>
+                <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
+                <span style="font-size:11px;color:var(--muted)">Days</span>
+                <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
+                <span style="font-size:11px;color:var(--muted);min-width:60px">£250/day</span>
+              </div>
+            </div>
+            <div class="wiz-mewp-row" data-mewp="telehandler_roto" onclick="wizToggleMewp(this)">
+              <div style="display:flex;align-items:center;gap:8px;flex:1">
+                <div class="wiz-mewp-check"></div>
+                <div><div style="font-size:13px;font-weight:600">Rotational Telehandler – Roto 21m–26m Reach</div><div style="font-size:10px;color:var(--muted)">With winch option · heavy placing</div></div>
+              </div>
+              <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
+                <span style="font-size:11px;color:var(--muted)">Qty</span>
+                <input type="number" class="wiz-mewp-qty" value="1" min="1" max="5" style="width:45px">
+                <span style="font-size:11px;color:var(--muted)">Days</span>
+                <input type="number" class="wiz-mewp-days" value="1" min="1" max="60" style="width:45px">
+                <span style="font-size:11px;color:var(--muted);min-width:60px">£480/day</span>
+              </div>
+            </div>
             <div style="font-size:10px;color:var(--muted);font-weight:600;letter-spacing:1px;margin-top:4px">OTHER ACCESS</div>
             <div class="wiz-mewp-row" data-mewp="scaffold_tower" onclick="wizToggleMewp(this)">
               <div style="display:flex;align-items:center;gap:8px;flex:1">
@@ -2039,18 +2127,19 @@ tr.drag-dragging { opacity:0.35; }
             <div class="wiz-mewp-row" data-mewp="scaffold_system" onclick="wizToggleMewp(this)">
               <div style="display:flex;align-items:center;gap:8px;flex:1">
                 <div class="wiz-mewp-check"></div>
-                <div><div style="font-size:13px;font-weight:600">Erected Scaffold (subcontract)</div><div style="font-size:10px;color:var(--muted)">Full scaffold erection — allow lump sum</div></div>
+                <div><div style="font-size:13px;font-weight:600">Erected Scaffold (Subcontract)</div><div style="font-size:10px;color:var(--muted)">Full scaffold erection — allow lump sum</div></div>
               </div>
               <div class="wiz-mewp-controls" onclick="event.stopPropagation()">
                 <span style="font-size:11px;color:var(--muted)">Qty</span>
                 <input type="number" class="wiz-mewp-qty" value="1" min="1" max="1" style="width:45px">
                 <span style="font-size:11px;color:var(--muted)">£ lump</span>
-                <input type="number" class="wiz-mewp-days" value="0" min="0" style="width:65px">
-                <span style="font-size:11px;color:var(--muted);min-width:60px">lump sum</span>
+                <input type="number" class="wiz-mewp-days" value="0" min="0" max="60" style="width:65px">
+                <span style="font-size:11px;color:var(--muted);min-width:60px">£0/lump</span>
               </div>
             </div>
           </div>
         </div>
+      </div>
       </div>
 
       <!-- SURVEY (always visible) -->
@@ -2960,29 +3049,38 @@ const DEFAULT_RATES = {
     labour:     { label: 'General Labour', rate: 220 }
   },
   plant: {
-    // Genie lifts
-    'genie_sla10':  { label: 'Genie SLA-10',        rate: 80 },
-    'genie_sla15':  { label: 'Genie SLA-15',        rate: 95 },
-    'genie_sla20':  { label: 'Genie SLA-20',        rate: 110 },
-    'genie_z30':    { label: 'Genie Z-30 Boom',      rate: 130 },
-    'genie_z45':    { label: 'Genie Z-45 Boom',      rate: 175 },
-    'genie_z60':    { label: 'Genie Z-60 Boom',      rate: 230 },
-    'genie_s40':    { label: 'Genie S-40 Telescopic',rate: 190 },
-    'genie_s65':    { label: 'Genie S-65 Telescopic',rate: 280 },
-    // MEWPs
-    'scissor_skyjack': { label: 'Scissor Lift – Skyjack SJ3219', rate: 120 },
-    'scissor_jlg':     { label: 'Scissor Lift – JLG 2630ES',     rate: 130 },
-    'cherry_z45':      { label: 'Cherry Picker – Z45',           rate: 200 },
-    'cherry_z60':      { label: 'Cherry Picker – Z60',           rate: 260 },
-    'cherry_z80':      { label: 'Cherry Picker – Z80',           rate: 320 },
-    // Cranes
-    'crane_50t':    { label: 'Mobile Crane – 50t',  rate: 1850 },
-    'crane_25t':    { label: 'Mobile Crane – 25t',  rate: 1200 },
-    'crane_spider': { label: 'Spider Crane',         rate: 950 },
-    'crane_hiab':   { label: 'HIAB (lorry-mounted)', rate: 800 },
-    // Other
-    'scaffold':     { label: 'Tower Scaffold',       rate: 150 },
-    'van':          { label: 'Van',                  rate: 25 },
+    // Mobile Cranes & Lifting Plant
+    'crane_spider':      { label: 'Spider Crane (e.g., Maeda compact crawler)',                rate: 950   },
+    'crane_25t':         { label: '25t Mobile Crane (Standard taxi crane)',                    rate: 1200  },
+    'crane_50t':         { label: '50t Mobile Crane (General construction workhorse)',         rate: 1850  },
+    'crane_100t':        { label: '100t Mobile Crane (Heavy duty / long radius)',              rate: 2800  },
+    'crane_160t':        { label: '160t Heavy Mobile Crane (Specialist heavy lift)',           rate: 4200  },
+    'crane_250t':        { label: '250t Heavy Mobile Crane (Infrastructure & heavy industrial)', rate: 6500 },
+    'crane_400t':        { label: '400t Heavy Mobile Crane (e.g., Liebherr LTM 1400)',        rate: 12500 },
+    // Low-Level Access
+    'pav_lift':          { label: 'Low-Level PAV Lift (~3.5m–4.2m WH - Pecolift/Pop-Up)',     rate: 45    },
+    // Scissor Lifts
+    'scissor_19':        { label: 'Electric Scissor 19ft (~5.8m WH - Indoor/Flat floor)',     rate: 90    },
+    'scissor_26':        { label: 'Electric Scissor 26ft/32ft (~8.0m–10.0m WH - Narrow aisle)', rate: 110 },
+    'scissor_rt':        { label: 'Rough Terrain Diesel Scissor (~8.0m–10.0m WH - With outriggers)', rate: 140 },
+    'scissor_superdeck': { label: 'Super Deck Diesel Scissor 43ft/53ft (~15.0m–18.0m WH)',    rate: 220   },
+    // Boom Lifts
+    'boom_elec_30':      { label: 'Electric Articulated Boom 30ft/33ft (~11.0m WH)',          rate: 130   },
+    'boom_z45':          { label: 'Diesel Articulated Boom 45ft (~15.7m WH - Genie Z-45 style)', rate: 175 },
+    'boom_z60':          { label: 'Diesel Articulated Boom 60ft/80ft (~20.0m–26.0m WH)',      rate: 240   },
+    'boom_tele_40_85':   { label: 'Telescopic Straight Boom 40ft–85ft (~14.0m–28.0m WH)',     rate: 210   },
+    'boom_ultra_120':    { label: 'Ultra Telescopic Boom 120ft–150ft (~38.0m–47.0m WH)',      rate: 480   },
+    'spider_lift':       { label: 'Tracked Spider Lift 15m–25m WH',                           rate: 350   },
+    // Telehandlers & Forklifts
+    'forklift_yard':     { label: 'Standard Yard Forklift – Gas/Diesel (2.5t–3.5t lift)',     rate: 120   },
+    'telehandler_7m':    { label: 'Site Telehandler 7m–10m Reach',                            rate: 180   },
+    'telehandler_14m':   { label: 'Heavy Duty Telehandler 14m–17m Reach (With stabilisers)',  rate: 250   },
+    'telehandler_roto':  { label: 'Rotational Telehandler – Roto 21m–26m Reach',              rate: 480   },
+    // Other Access
+    'scaffold':          { label: 'Tower Scaffold',                                            rate: 150   },
+    'scaffold_tower':    { label: 'Tower Scaffold',                                            rate: 150   },
+    'scaffold_system':   { label: 'Erected Scaffold (Subcontract)',                            rate: 0     },
+    'van':               { label: 'Van',                                                       rate: 25    },
     'fuel':         { label: 'Fuel',                 rate: 25 },
     'tools':        { label: 'Tools',                rate: 25 },
     'lodging':      { label: 'Lodging (per person/night)', rate: 80 },
@@ -4892,11 +4990,16 @@ function validateTechnicalRisks(q, C) {
     for (const r of plantRows) {
       const key   = (r.type  || '').toLowerCase();
       const label = (r.label || '').toLowerCase();
+      if (key === 'crane_400t' || /400\s*t/.test(label)) return 400;
+      if (key === 'crane_250t' || /250\s*t/.test(label)) return 250;
+      if (key === 'crane_160t' || /160\s*t/.test(label)) return 160;
       if (key === 'crane_100t' || /100\s*t/.test(label)) return 100;
       if (key === 'crane_50t'  || /50\s*t/.test(label))  return 50;
       if (key === 'crane_25t'  || /25\s*t/.test(label))  return 25;
-      // Generic "crane" with no tonnage — treat as 25t (conservative)
-      if (/crane/.test(key) && !/spider|hiab|mini/.test(key))   return 25;
+      // Spider crane / compact crawler — treat as 5t (conservative)
+      if (key === 'crane_spider' || /spider/.test(label)) return 5;
+      // Generic crane with no tonnage — treat as 25t (conservative)
+      if (/crane/.test(key) && !/spider|hiab|mini/.test(key)) return 25;
     }
     return null; // no crane configured
   }
@@ -6059,8 +6162,19 @@ function applyWizard() {
 
   // ── Crane ─────────────────────────────────────────────────
   q.plantRows = (q.plantRows||[]).filter(r => !r._auto);
-  const craneRates = { crane_25t:1200, crane_50t:1850, crane_100t:2800, crane_spider:950, crane_hiab:800, crane_telehandler:350, crane_minipick:550 };
-  const craneLabels = { crane_25t:'25t Mobile Crane', crane_50t:'50t Mobile Crane', crane_100t:'100t Mobile Crane', crane_spider:'Spider Crane', crane_hiab:'HIAB Lorry Crane', crane_telehandler:'Telehandler', crane_minipick:'Mini Pick & Carry' };
+  const craneRates = {
+    crane_spider:950, crane_25t:1200, crane_50t:1850, crane_100t:2800,
+    crane_160t:4200, crane_250t:6500, crane_400t:12500
+  };
+  const craneLabels = {
+    crane_spider:'Spider Crane (Maeda compact crawler)',
+    crane_25t:'25t Mobile Crane (Standard taxi crane)',
+    crane_50t:'50t Mobile Crane (General construction workhorse)',
+    crane_100t:'100t Mobile Crane (Heavy duty / long radius)',
+    crane_160t:'160t Heavy Mobile Crane (Specialist heavy lift)',
+    crane_250t:'250t Heavy Mobile Crane (Infrastructure & heavy industrial)',
+    crane_400t:'400t Heavy Mobile Crane (e.g., Liebherr LTM 1400)'
+  };
   let craneType = 'none';
   if (isInstall) {
     const craneTile = document.querySelector('#wiz-crane-tiles .wiz-tile.active');
@@ -6072,8 +6186,37 @@ function applyWizard() {
     }
 
     // MEWP rows (new structure with qty + days)
-    const mewpRates = { scissor_19:90, scissor_26:120, boom_z30:130, boom_z45:175, boom_z60:230, telehandler_boom:190, cherry_12m:160, cherry_18m:350, scaffold_tower:150, scaffold_system:0, genie_sla10:80, genie_sla15:95, genie_sla20:110, genie_sla25:125 };
-    const mewpLabels = { scissor_19:'Electric Scissor 19ft', scissor_26:'Rough Terrain Scissor 26ft', boom_z30:'Articulating Boom 30ft', boom_z45:'Articulating Boom 45ft', boom_z60:'Articulating Boom 60ft', telehandler_boom:'Telescopic Boom', cherry_12m:'Cherry Picker 12m', cherry_18m:'Cherry Picker 18m+', scaffold_tower:'Tower Scaffold', scaffold_system:'Erected Scaffold (sub)', genie_sla10:'Genie SLA-10', genie_sla15:'Genie SLA-15', genie_sla20:'Genie SLA-20', genie_sla25:'Genie SLA-25' };
+    const mewpRates = {
+      pav_lift:45, scissor_19:90, scissor_26:110, scissor_rt:140, scissor_superdeck:220,
+      boom_elec_30:130, boom_z45:175, boom_z60:240, boom_tele_40_85:210, boom_ultra_120:480, spider_lift:350,
+      forklift_yard:120, telehandler_7m:180, telehandler_14m:250, telehandler_roto:480,
+      scaffold_tower:150, scaffold_system:0,
+      // legacy keys kept for backwards compat
+      scissor_rt:140, boom_z30:130, telehandler_boom:210, cherry_12m:160, cherry_18m:350,
+      genie_sla10:80, genie_sla15:95, genie_sla20:110, genie_sla25:125
+    };
+    const mewpLabels = {
+      pav_lift:'Low-Level PAV Lift (~3.5m–4.2m WH)',
+      scissor_19:'Electric Scissor 19ft (~5.8m WH)',
+      scissor_26:'Electric Scissor 26ft/32ft (~8.0m–10.0m WH)',
+      scissor_rt:'Rough Terrain Diesel Scissor (~8.0m–10.0m WH)',
+      scissor_superdeck:'Super Deck Diesel Scissor 43ft/53ft (~15.0m–18.0m WH)',
+      boom_elec_30:'Electric Articulated Boom 30ft/33ft (~11.0m WH)',
+      boom_z45:'Diesel Articulated Boom 45ft (~15.7m WH)',
+      boom_z60:'Diesel Articulated Boom 60ft/80ft (~20.0m–26.0m WH)',
+      boom_tele_40_85:'Telescopic Straight Boom 40ft–85ft (~14.0m–28.0m WH)',
+      boom_ultra_120:'Ultra Telescopic Boom 120ft–150ft (~38.0m–47.0m WH)',
+      spider_lift:'Tracked Spider Lift 15m–25m WH',
+      forklift_yard:'Standard Yard Forklift – Gas/Diesel (2.5t–3.5t lift)',
+      telehandler_7m:'Site Telehandler 7m–10m Reach',
+      telehandler_14m:'Heavy Duty Telehandler 14m–17m Reach',
+      telehandler_roto:'Rotational Telehandler – Roto 21m–26m Reach',
+      scaffold_tower:'Tower Scaffold', scaffold_system:'Erected Scaffold (Subcontract)',
+      // legacy
+      boom_z30:'Electric Articulated Boom 30ft (~11.0m WH)', telehandler_boom:'Telescopic Straight Boom',
+      cherry_12m:'Van Mount Cherry Picker 12m', cherry_18m:'Truck Mount Cherry Picker 18m+',
+      genie_sla10:'Genie SLA-10', genie_sla15:'Genie SLA-15', genie_sla20:'Genie SLA-20', genie_sla25:'Genie SLA-25'
+    };
     document.querySelectorAll('.wiz-mewp-row.active').forEach(row => {
       if (row.dataset.mewp === 'none') return;
       const mewpType = row.dataset.mewp;
