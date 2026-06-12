@@ -2982,18 +2982,37 @@ async function saveAll() {
 }
 
 
-// ── Next quote ref — asks SQL API (scans QB + Tenders) ──
+// ── Next quote ref — asks SQL API (scans QB + Tenders), bumps to beat
+//    any SharePoint tracker ref the dashboard has seen so we never collide
+//    with the old Excel tracker.
 async function nextQuoteRef() {
+  const now = new Date();
+  const yy = String(now.getFullYear()).slice(2);
+  const mm = String(now.getMonth()+1).padStart(2,'0');
+  const prefix = `Q${yy}${mm}`;
+
+  let apiSeq = 0;
   try {
     const data = await qbFetch('GET', '/api/qb-next-ref');
-    return data.reference;
+    // data.reference like "Q260612" → extract trailing sequence
+    const m = String(data.reference || '').match(/^Q\d{4}(\d+)$/);
+    if (m) apiSeq = parseInt(m[1], 10) || 0;
   } catch (e) {
-    const now = new Date();
-    const yy = String(now.getFullYear()).slice(2);
-    const mm = String(now.getMonth()+1).padStart(2,'0');
-    const seq = quotes.filter(q => q.ref.startsWith('Q'+yy+mm)).length + 1;
-    return `Q${yy}${mm}${String(seq).padStart(2,'0')}`;
+    console.warn('qb-next-ref API failed:', e);
   }
+
+  // Local fallback / tie-breaker: count this month's quotes in memory
+  const localSeq = quotes.filter(q => (q.ref || '').startsWith(prefix)).length + 1;
+
+  // SharePoint tracker last-ref (set by dashboard on load)
+  let trackerSeq = 0;
+  const lastTrackerRef = sessionStorage.getItem('bama_last_tracker_ref') || '';
+  if (lastTrackerRef.startsWith(prefix)) {
+    trackerSeq = (parseInt(lastTrackerRef.slice(prefix.length), 10) || 0) + 1;
+  }
+
+  const seq = Math.max(apiSeq, localSeq, trackerSeq, 1);
+  return `${prefix}${String(seq).padStart(2,'0')}`;
 }
 
 async function newQuote() {
@@ -7938,19 +7957,92 @@ const SEED_CLIENTS = [
   }
 ];
 
-let clientBook = JSON.parse(localStorage.getItem('bama_clients') || '[]');
+// Client database — loaded from SQL via /api/clients on QB init.
+// We keep `clientBook` as the in-memory cache. New clients/contacts created
+// in QB go straight to SQL; the seed list is only used as fallback if SQL
+// is unreachable (e.g. during dev/offline).
+let clientBook = [];
 
-// Seed dummy clients if not already present
-SEED_CLIENTS.forEach(seed => {
-  if (!clientBook.find(c => c.id === seed.id || c.company === seed.company)) {
-    clientBook.push(seed);
+async function loadClientBookFromSQL() {
+  try {
+    const [clients, contacts] = await Promise.all([
+      qbFetch('GET', '/api/clients'),
+      qbFetch('GET', '/api/client-contacts').catch(() => [])
+    ]);
+    const list = Array.isArray(clients) ? clients : [];
+    const contactList = Array.isArray(contacts) ? contacts : [];
+    clientBook = list.map(c => {
+      const addr = [c.address_line1, c.address_line2, c.city, c.county, c.postcode]
+        .filter(Boolean).join(', ');
+      const cContacts = contactList
+        .filter(ct => ct.client_id === c.id)
+        .map(ct => ({
+          name:  ct.contact_name  || '',
+          role:  ct.role          || '',
+          email: ct.contact_email || '',
+          phone: ct.contact_phone || ''
+        }));
+      // If no contacts in ClientContacts but the client row itself has a
+      // primary contact (legacy), surface it as the first contact.
+      if (cContacts.length === 0 && (c.contact_name || c.contact_email || c.contact_phone)) {
+        cContacts.push({
+          name:  c.contact_name  || '',
+          role:  '',
+          email: c.contact_email || '',
+          phone: c.contact_phone || ''
+        });
+      }
+      return {
+        id:       c.id,
+        company:  c.company_name || '',
+        address:  addr,
+        contact:  cContacts[0]?.name  || c.contact_name  || '',
+        email:    cContacts[0]?.email || c.contact_email || '',
+        phone:    cContacts[0]?.phone || c.contact_phone || '',
+        contacts: cContacts
+      };
+    });
+  } catch (e) {
+    console.warn('Could not load clients from SQL:', e);
+    // Fall back to seed list only if SQL is unreachable
+    clientBook = [...SEED_CLIENTS];
   }
-});
-localStorage.setItem('bama_clients', JSON.stringify(clientBook));
-
-function saveClientBook() {
-  localStorage.setItem('bama_clients', JSON.stringify(clientBook));
 }
+
+// Persist a new client to SQL. Returns the SQL row.
+async function saveClientToSQL(client) {
+  const body = {
+    company_name: client.company,
+    contact_name: client.contact || (client.contacts?.[0]?.name) || null,
+    contact_email: client.email   || (client.contacts?.[0]?.email) || null,
+    contact_phone: client.phone   || (client.contacts?.[0]?.phone) || null
+  };
+  // Split address into parts (best effort)
+  if (client.address) {
+    const parts = String(client.address).split(',').map(s => s.trim()).filter(Boolean);
+    if (parts[0])              body.address_line1 = parts[0];
+    if (parts.length > 1)      body.address_line2 = parts[1];
+    if (parts.length > 2)      body.city          = parts[2];
+    if (parts.length > 3)      body.county        = parts[3];
+    if (parts.length > 4)      body.postcode      = parts[4];
+  }
+  return await qbFetch('POST', '/api/clients', body);
+}
+
+// Persist a new contact to SQL. client_id is required.
+async function saveContactToSQL(clientId, contact) {
+  return await qbFetch('POST', '/api/client-contacts', {
+    client_id:    clientId,
+    contact_name: contact.name  || '',
+    contact_email: contact.email || '',
+    contact_phone: contact.phone || '',
+    role:         contact.role  || ''
+  });
+}
+
+// saveClientBook is a no-op now — SQL is the source of truth. Kept for
+// backward compatibility with old call sites.
+function saveClientBook() { /* SQL writes happen at the call site */ }
 
 // ── Contact management ────────────────────────────────────────
 function populateContactDropdown(company, selectedName) {
@@ -7998,7 +8090,7 @@ function openAddContactModal() {
   setTimeout(() => document.getElementById('addContactName').focus(), 50);
 }
 
-function saveNewContact() {
+async function saveNewContact() {
   const name = document.getElementById('addContactName')?.value?.trim();
   if (!name) { toast('Name is required', 'error'); return; }
   const company = document.getElementById('addContactCompanyLabel')?.textContent;
@@ -8007,14 +8099,25 @@ function saveNewContact() {
   const phone   = document.getElementById('addContactPhone')?.value?.trim();
 
   let client = clientBook.find(c => c.company === company);
-  if (!client) {
-    // Create new client entry
-    client = { id: 'c_' + Date.now(), company, address: '', contacts: [] };
-    clientBook.push(client);
+  try {
+    if (!client) {
+      // Create a new client in SQL first
+      const row = await saveClientToSQL({ company, contact: name, email, phone });
+      client = {
+        id: row.id, company, address: '', contact: name, email, phone,
+        contacts: [{ name, role, email, phone }]
+      };
+      clientBook.push(client);
+    } else {
+      // Existing client — just add the contact in SQL
+      if (!client.contacts) client.contacts = [];
+      const saved = await saveContactToSQL(client.id, { name, role, email, phone });
+      client.contacts.push({ name, role, email, phone, _sqlId: saved?.id });
+    }
+  } catch (e) {
+    toast('Could not save contact to database: ' + e.message, 'error');
+    return;
   }
-  if (!client.contacts) client.contacts = [];
-  client.contacts.push({ name, role, email, phone });
-  saveClientBook();
 
   // Fill the fields with the new contact
   document.getElementById('hContact').value = name;
@@ -8218,24 +8321,42 @@ function showClientSave() {
   if (btn) btn.style.display = company ? '' : 'none';
 }
 
-function saveClientToBook() {
+async function saveClientToBook() {
   const company = document.getElementById('hCompany')?.value?.trim();
   if (!company) return;
   const contact = document.getElementById('hContact')?.value?.trim() || '';
   const email   = document.getElementById('hEmail')?.value?.trim()   || '';
   const phone   = document.getElementById('hPhone')?.value?.trim()   || '';
 
-  const existing = clientBook.findIndex(c => c.company.toLowerCase() === company.toLowerCase());
-  const record = { company, contact, email, phone, updated: new Date().toISOString() };
+  const existing = clientBook.find(c => c.company.toLowerCase() === company.toLowerCase());
 
-  if (existing >= 0) {
-    clientBook[existing] = record;
-    toast('Client updated: ' + company, 'success');
-  } else {
-    clientBook.push(record);
-    toast('Client saved: ' + company, 'success');
+  try {
+    if (existing) {
+      // Update existing — patch via API
+      await qbFetch('PUT', '/api/clients/' + existing.id, {
+        company_name: company,
+        contact_name: contact || null,
+        contact_email: email   || null,
+        contact_phone: phone   || null
+      });
+      existing.company = company;
+      existing.contact = contact;
+      existing.email   = email;
+      existing.phone   = phone;
+      toast('Client updated: ' + company, 'success');
+    } else {
+      // Create new
+      const row = await saveClientToSQL({ company, contact, email, phone });
+      clientBook.push({
+        id: row.id, company, address: '', contact, email, phone,
+        contacts: contact ? [{ name: contact, role: '', email, phone }] : []
+      });
+      toast('Client saved: ' + company, 'success');
+    }
+  } catch (e) {
+    toast('Could not save client to database: ' + e.message, 'error');
+    return;
   }
-  saveClientBook();
   document.getElementById('clientSaveBtn').style.display = 'none';
 }
 
@@ -8621,6 +8742,15 @@ function escHtml(s) {
 }
 
 // ── Logo upload for PDF ──
+function getLogoHtml() {
+  const b64 = localStorage.getItem('bama_logo_b64');
+  if (b64) {
+    return '<img src="' + b64 + '" style="max-height:60px;max-width:200px;object-fit:contain" alt="BAMA">';
+  }
+  // Fallback: hosted logo image
+  return '<img src="https://proud-dune-0dee63110.2.azurestaticapps.net/bama-logo.png" style="max-height:60px;max-width:200px;object-fit:contain" alt="BAMA" onerror="this.style.display=\'none\'">';
+}
+
 function openLogoUpload() {
   const inp = document.createElement('input');
   inp.type = 'file'; inp.accept = 'image/*';
@@ -9625,7 +9755,48 @@ async function qqSaveAsDraft() {
   }
 
   // Load quotes from SQL
-  await loadQuotesFromSQL();
+  // Load quotes and client book from SQL in parallel
+  await Promise.all([
+    loadQuotesFromSQL(),
+    loadClientBookFromSQL()
+  ]);
+
+  // Lightweight SharePoint tracker scan — only to seed bama_last_tracker_ref
+  // so nextQuoteRef() doesn't collide with refs from the old Excel tracker.
+  // Skipped if dashboard has already populated this value this session.
+  if (!sessionStorage.getItem('bama_last_tracker_ref')) {
+    try {
+      const driveId = 'b!CxTKk9lEwkyweUqAo3CRas-huywW4KtLqOk2tNzmx-P7CX86DNhTQo14pLuU_tZu';
+      const trackerId = '012IX7LSLSQCGVKF7BOVGYBXZ2IUZNZCOS';
+      const yy = String(new Date().getFullYear()).slice(2);
+      const hdr = { 'Authorization': 'Bearer ' + qbToken() };
+      const sheetsRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${trackerId}/workbook/worksheets`, { headers: hdr });
+      if (sheetsRes.ok) {
+        const sheetsData = await sheetsRes.json();
+        const sheet = (sheetsData.value || []).find(s => s.name.includes('20'+yy)) || (sheetsData.value || [])[0];
+        if (sheet) {
+          const rangeRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${trackerId}/workbook/worksheets('${encodeURIComponent(sheet.name)}')/usedRange?$select=values`, { headers: hdr });
+          if (rangeRes.ok) {
+            const range = await rangeRes.json();
+            const rows = range.values || [];
+            let maxRef = '';
+            for (const row of rows) {
+              for (const cell of row) {
+                const v = String(cell || '').trim();
+                if (/^Q\d{6}$/.test(v) && v.startsWith('Q' + yy) && v > maxRef) maxRef = v;
+              }
+            }
+            if (maxRef) {
+              sessionStorage.setItem('bama_last_tracker_ref', maxRef);
+              console.log('[qb] last tracker ref seeded:', maxRef);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[qb] tracker scan failed (non-fatal):', e);
+    }
+  }
 
   // Rates from localStorage still OK (device-specific, not user data)
 })();
