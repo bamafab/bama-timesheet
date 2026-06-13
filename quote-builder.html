@@ -740,7 +740,17 @@ tr.drag-dragging { opacity:0.35; }
               </div>
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
                   <div style="font-size:11px;color:var(--muted);font-weight:600">WORKSHOP</div>
-                  <button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px" onclick="autoFillFabHours()" title="Auto-fill hours from takeoff weight">⚡ From takeoff</button>
+                  <div style="display:flex;align-items:center;gap:6px">
+                    <label style="font-size:10px;color:var(--muted);white-space:nowrap">Complexity:</label>
+                    <select id="fabComplexitySelect" title="Construction Complexity Factor — multiplied on top of per-profile base hours"
+                      onchange="onFabComplexityChange(this.value)"
+                      style="background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:2px 6px;color:var(--text);font-size:11px;font-family:var(--font-body);cursor:pointer">
+                      <option value="low">Low ×1.0</option>
+                      <option value="medium" selected>Medium ×1.25</option>
+                      <option value="high">High ×1.5</option>
+                    </select>
+                    <button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px" onclick="autoFillFabHours()" title="Auto-fill hours from takeoff weight · applies selected complexity factor">⚡ From takeoff</button>
+                  </div>
                 </div>
                 <div class="cost-row cost-row-4">
                   <span class="cost-label">Workshop fabrication</span>
@@ -2385,6 +2395,26 @@ tr.drag-dragging { opacity:0.35; }
           </div>
 
           <div id="wiz-design-hours-preview" style="display:none"></div>
+
+          <!-- Fabrication Complexity Factor -->
+          <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
+            <div style="font-size:10px;color:var(--muted);font-weight:600;letter-spacing:1px;margin-bottom:6px">FABRICATION COMPLEXITY</div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Multiplier on workshop hours when using ⚡ From takeoff.</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap" id="wiz-fab-complexity-tiles">
+              <div class="wiz-tile" data-complexity="low" onclick="wizSelectFabComplexity(this)" style="flex:1;min-width:110px">
+                Low <span style="font-family:var(--font-mono);color:var(--accent)">×1.0</span><br>
+                <span style="font-size:10px;color:var(--muted)">Simple frames / columns</span>
+              </div>
+              <div class="wiz-tile active" data-complexity="medium" onclick="wizSelectFabComplexity(this)" style="flex:1;min-width:110px">
+                Medium <span style="font-family:var(--font-mono);color:var(--accent)">×1.25</span><br>
+                <span style="font-size:10px;color:var(--muted)">Standard / mezzanine</span>
+              </div>
+              <div class="wiz-tile" data-complexity="high" onclick="wizSelectFabComplexity(this)" style="flex:1;min-width:110px">
+                High <span style="font-family:var(--font-mono);color:var(--accent)">×1.5</span><br>
+                <span style="font-size:10px;color:var(--muted)">Dense bracings / shutters</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -2774,6 +2804,23 @@ const FAB_HRS_PER_TONNE = {
   default: 12
 };
 
+// ── Construction Complexity Factor ──────────────────────────────────────────
+// Applied as a multiplier on top of the per-profile FAB_HRS_PER_TONNE base.
+// Reflects the real-world premium for more intricate fabrication work:
+//   Low    (×1.0) — Simple frames, columns, clean tonnage. Highly repetitive
+//                   connections, minimal weld preparation.
+//   Medium (×1.25)— Standard commercial structures, typical mezzanine floors,
+//                   mixed sections, normal connection complexity.
+//   High   (×1.5) — Complex fabrication: dense bracing, moment frames, bespoke
+//                   architectural details, roller-shutter / door-frame packages,
+//                   fine tolerance work with heavy weld preparation.
+const FAB_COMPLEXITY = {
+  low:    { label: 'Low — Simple frames / clean tonnage',          factor: 1.0  },
+  medium: { label: 'Medium — Standard structures / mezzanine',     factor: 1.25 },
+  high:   { label: 'High — Complex details / bracings / shutters', factor: 1.5  },
+};
+const FAB_COMPLEXITY_DEFAULT = 'medium';
+
 function profileComplexity(type) {
   if (!type) return FAB_HRS_PER_TONNE.default;
   const prefix = (type.match(/^[A-Za-z]+/) || [''])[0].toUpperCase();
@@ -2828,27 +2875,48 @@ function rowFinishType(row) {
 }
 
 /**
- * Fix 4: Auto-calculate recommended fabrication hours from takeoff.
- * Breaks down by profile type complexity, returns hours and breakdown.
+ * Auto-calculate recommended fabrication hours from takeoff.
+ * Breaks down by profile type, then applies a Construction Complexity Factor.
+ *
+ * @param {Array}  takeoff         - Quote takeoff rows
+ * @param {number} [complexityFactor=1.0] - Multiplier from FAB_COMPLEXITY
+ *   (1.0 = Low, 1.25 = Medium, 1.5 = High). Applied after per-profile base hrs.
+ *
+ * Returns { totalHours, breakdown, complexityFactor }
  */
-function autoFabHours(takeoff) {
+function autoFabHours(takeoff, complexityFactor) {
+  const cf = (typeof complexityFactor === 'number' && complexityFactor > 0)
+    ? complexityFactor
+    : 1.0; // raw base — caller responsible for resolving from q.fabComplexity
+
   const byType = {};
   takeoff.forEach(row => {
     const { kg, isValid } = rowWeight(row);
     if (!isValid || !kg) return;
-    const hrs = profileComplexity(row.type);
-    const prefix = (row.type?.match(/^[A-Za-z]+/) || ['OTHER'])[0].toUpperCase();
-    if (!byType[prefix]) byType[prefix] = { tonnes: 0, hrsPerTonne: hrs };
+    const baseHrs = profileComplexity(row.type);
+    const prefix  = (row.type?.match(/^[A-Za-z]+/) || ['OTHER'])[0].toUpperCase();
+    if (!byType[prefix]) byType[prefix] = { tonnes: 0, hrsPerTonne: baseHrs };
     byType[prefix].tonnes += kg / 1000;
   });
-  const breakdown = Object.entries(byType).map(([prefix, { tonnes, hrsPerTonne }]) => ({
-    prefix,
-    tonnes: Math.round(tonnes * 1000) / 1000,
-    hrsPerTonne,
-    hours: Math.round(tonnes * hrsPerTonne)
-  }));
+
+  const breakdown = Object.entries(byType).map(([prefix, { tonnes, hrsPerTonne }]) => {
+    const adjustedHrs = hrsPerTonne * cf;
+    return {
+      prefix,
+      tonnes:      Math.round(tonnes * 1000) / 1000,
+      hrsPerTonne: Math.round(adjustedHrs * 100) / 100, // store adjusted for display
+      hours:       Math.round(tonnes * adjustedHrs)
+    };
+  });
+
   const totalHours = breakdown.reduce((s, b) => s + b.hours, 0);
-  return { totalHours, breakdown };
+  return { totalHours, breakdown, complexityFactor: cf };
+}
+
+/** Resolve the numeric FAB_COMPLEXITY factor from a quote's fabComplexity key. */
+function resolveFabComplexityFactor(q) {
+  const key = (q?.fabComplexity || FAB_COMPLEXITY_DEFAULT);
+  return (FAB_COMPLEXITY[key] || FAB_COMPLEXITY[FAB_COMPLEXITY_DEFAULT]).factor;
 }
 
 /**
@@ -3406,7 +3474,8 @@ async function newQuote() {
     margin: 20, showDeposit: false, depositPct: 60,
     standardLines: getDefaultStandardLines(),
     customLines: [],
-    galvanizer: 'premier_corby'
+    galvanizer: 'premier_corby',
+    fabComplexity: 'medium'
   };
   try {
     const row = await qbFetch('POST', '/api/qb-quotes', {
@@ -3853,6 +3922,7 @@ function loadQuoteEditor() {
   updateMoveToAreaOptions();
   loadBlockNA(q);
   loadBlockNotes(q);
+  loadFabComplexityUI(q);
   recalcAll();
   renderQuotationLines();
   renderClientHistory(q.company);
@@ -6258,6 +6328,8 @@ function openWizard(q) {
     const isGalvActive = !!document.querySelector('#wiz-finish-tiles [data-finish="galvanise"].active');
     galvWrap.style.display = isGalvActive ? 'block' : 'none';
   }
+  // Restore fab complexity selection
+  loadFabComplexityUI(q);
   document.querySelectorAll('#wiz-survey-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
   document.querySelector('[data-survey="no"]')?.classList.add('active');
   document.getElementById('wiz-survey-visits-wrap').style.display = 'none';
@@ -6296,7 +6368,8 @@ function openWizard(q) {
 function closeWizard() {
   document.getElementById('wizardModal').classList.remove('active');
   if (_wizQuote) {
-    const { totalHours: fabHrs } = autoFabHours(_wizQuote.takeoff);
+    const cf = resolveFabComplexityFactor(_wizQuote);
+    const { totalHours: fabHrs } = autoFabHours(_wizQuote.takeoff, cf);
     const { draughtHrs, structEngHrs, fabpackHrs } = autoDesignHours(_wizQuote.takeoff);
     _wizQuote.fabHours = fabHrs;
     _wizQuote.designHours = draughtHrs;
@@ -6496,6 +6569,43 @@ function wizToggleMewp(el) {
     el.classList.toggle('active');
   }
   wizUpdateMewpBadge();
+}
+
+// ── Fabrication Complexity ────────────────────────────────────────────────────
+
+function wizSelectFabComplexity(el) {
+  document.querySelectorAll('#wiz-fab-complexity-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  // Persist immediately to quote so autoFillFabHours reads updated value
+  const q = getQuote();
+  if (q) { q.fabComplexity = el.dataset.complexity || FAB_COMPLEXITY_DEFAULT; saveAll(); }
+  // Also sync the Calcs editor select if it exists
+  const sel = document.getElementById('fabComplexitySelect');
+  if (sel) sel.value = el.dataset.complexity || FAB_COMPLEXITY_DEFAULT;
+}
+
+function onFabComplexityChange(value) {
+  // Called by the Calcs editor <select>
+  const q = getQuote();
+  if (!q) return;
+  q.fabComplexity = value || FAB_COMPLEXITY_DEFAULT;
+  saveAll();
+  // Sync wizard tiles if open
+  document.querySelectorAll('#wiz-fab-complexity-tiles .wiz-tile').forEach(t => {
+    t.classList.toggle('active', t.dataset.complexity === value);
+  });
+}
+
+/** Sync complexity state to both UIs when a quote is loaded. */
+function loadFabComplexityUI(q) {
+  const key = q?.fabComplexity || FAB_COMPLEXITY_DEFAULT;
+  // Calcs editor select
+  const sel = document.getElementById('fabComplexitySelect');
+  if (sel) sel.value = key;
+  // Wizard tiles
+  document.querySelectorAll('#wiz-fab-complexity-tiles .wiz-tile').forEach(t => {
+    t.classList.toggle('active', t.dataset.complexity === key);
+  });
 }
 
 function wizToggleFinish(el) {
@@ -6904,7 +7014,11 @@ function applyWizard() {
   }
 
   // ── Fab hours ─────────────────────────────────────────────
-  const { totalHours: fabHrs } = autoFabHours(q.takeoff);
+  // Read complexity from active tile in wizard
+  const wizComplexityActive = document.querySelector('#wiz-fab-complexity-tiles .wiz-tile.active');
+  if (wizComplexityActive) q.fabComplexity = wizComplexityActive.dataset.complexity || FAB_COMPLEXITY_DEFAULT;
+  const cf = resolveFabComplexityFactor(q);
+  const { totalHours: fabHrs } = autoFabHours(q.takeoff, cf);
   q.fabHours = fabHrs;
 
   // ── Prelims (from tile selection) ─────────────────────────
@@ -7512,15 +7626,18 @@ function autoFillDesignHours() { toggleDesignWizard(); }
 function autoFillFabHours() {
   const q = getQuote(); if (!q) return;
   if (!q.takeoff?.length) { toast('No takeoff yet — add members first', 'error'); return; }
-  const { totalHours, breakdown } = autoFabHours(q.takeoff);
+  const cf = resolveFabComplexityFactor(q);
+  const { totalHours, breakdown } = autoFabHours(q.takeoff, cf);
   if (!totalHours) { toast('No valid weights in takeoff — check kg/m values', 'error'); return; }
   document.getElementById('fab-hours').value = totalHours;
-  const detail = breakdown.map(b =>
+  const cfKey   = q.fabComplexity || FAB_COMPLEXITY_DEFAULT;
+  const cfLabel = FAB_COMPLEXITY[cfKey]?.label || cfKey;
+  const detail  = breakdown.map(b =>
     `${b.prefix}: ${b.tonnes.toFixed(2)}t × ${b.hrsPerTonne} hrs/t = ${b.hours} hrs`
   ).join('\n');
   recalcAll();
-  toast(`Auto-filled ${totalHours} hrs based on profile complexity`, 'success');
-  console.log('Fab hours breakdown:\n' + detail);
+  toast(`Auto-filled ${totalHours} hrs · Complexity: ${cfLabel}`, 'success');
+  console.log(`Fab hours breakdown (cf=${cf}):\n` + detail);
 }
 
 // ── Idea 4: N/A toggle per block ──
