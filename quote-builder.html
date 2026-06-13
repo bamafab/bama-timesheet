@@ -310,7 +310,7 @@ tr.drag-dragging { opacity:0.35; }
       <div id="pdfMenu" style="display:none;position:absolute;top:100%;right:0;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.4);min-width:200px;z-index:500;margin-top:4px;overflow:hidden">
         <div onclick="generateQuotePDF('quote');togglePdfMenu()" style="padding:10px 16px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)" onmouseover="this.style.background='rgba(255,107,0,0.08)'" onmouseout="this.style.background=''">📋 Quote (client-facing)</div>
         <div onclick="generateQuotePDF('breakdown');togglePdfMenu()" style="padding:10px 16px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)" onmouseover="this.style.background='rgba(255,107,0,0.08)'" onmouseout="this.style.background=''">🔢 Cost Breakdown</div>
-        <div onclick="generateQuotePDF('combined');togglePdfMenu()" style="padding:10px 16px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)" onmouseover="this.style.background='rgba(255,107,0,0.08)'" onmouseout="this.style.background=''">📄 Quote + Breakdown</div>
+        <div onclick="generateQuotePDF('combined');togglePdfMenu()" style="padding:10px 16px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)" onmouseover="this.style.background='rgba(255,107,0,0.08)'" onmouseout="this.style.background=''">📄 Quote + Breakdown (internal)</div>
         <div onclick="generateHandoverPack();togglePdfMenu()" style="padding:10px 16px;cursor:pointer;font-size:13px" onmouseover="this.style.background='rgba(255,107,0,0.08)'" onmouseout="this.style.background=''">📦 Handover Pack (internal)</div>
       </div>
     </div>
@@ -9894,7 +9894,8 @@ function generateQuotePDF(mode = 'quote') {
       <span style="font-size:11px;opacity:0.7">Material: ${fmtGBP(tkTotalCost)}</span>
     </div>` : ''}
 
-    <!-- Fabrication -->
+    <!-- Fabrication (internal) -->
+    <div class="internal-only">
     <h3 style="font-size:12px;font-weight:700;margin:14px 0 8px;padding:4px 0;border-bottom:1px solid #e5e7eb;color:#1a1a2e">🔩 Fabrication</h3>
     <table style="margin-bottom:12px">
       <tbody>
@@ -9915,6 +9916,8 @@ function generateQuotePDF(mode = 'quote') {
         ${(designHrsVal+structEngHrsVal+architectHrsVal+fabpackHrsVal+connDesignHrsVal) === 0 ? `<tr><td colspan="4" style="padding:6px 10px;color:#aaa;font-style:italic">No design fees included</td></tr>` : ''}
       </tbody>
     </table>
+
+    </div><!-- /internal-only fab+design -->
 
     <!-- Installation -->
     ${(labourRowsForPack || instDaysVal > 0) ? `
@@ -9940,6 +9943,8 @@ function generateQuotePDF(mode = 'quote') {
 
   const breakdownHtml = buildPdfPage(`Cost Breakdown — ${escHtml(q.ref)}${revStr}`, `
     ${docHeader}
+    <!-- Override: internal-only elements ARE visible in this breakdown document -->
+    <style>.internal-only { display:block !important; }</style>
     <div style="background:#fff3e0;border:1px solid #ffcc80;border-radius:6px;padding:8px 14px;margin-bottom:16px;font-size:11px;color:#e65100">
       ⚠ CONFIDENTIAL — Internal cost breakdown. Not for client distribution.
     </div>
@@ -9954,7 +9959,7 @@ function generateQuotePDF(mode = 'quote') {
     </table>
     <div style="margin-top:0;border-top:2px solid #1a1a2e">
       <div style="display:flex;justify-content:space-between;padding:6px 10px;font-size:12px"><span>Sub-total</span><span style="font-family:monospace">${fmtGBP(subtotal)}</span></div>
-      <div style="display:flex;justify-content:space-between;padding:6px 10px;font-size:12px"><span>Margin (${margin}%)</span><span style="font-family:monospace">${fmtGBP(marginAmt)}</span></div>
+      <div class="internal-only" style="display:flex;justify-content:space-between;padding:6px 10px;font-size:12px"><span>Margin (${margin}%)</span><span style="font-family:monospace">${fmtGBP(marginAmt)}</span></div>
       <div style="display:flex;justify-content:space-between;padding:10px;background:#1a1a2e;color:#fff;font-size:14px;font-weight:700"><span>TOTAL</span><span style="color:#ff6b00;font-family:monospace">${fmtGBP(total)}</span></div>
       ${totalKg > 0 ? `<div style="display:flex;justify-content:space-between;padding:6px 10px;font-size:11px;color:#888"><span>Cost per kg (incl. margin)</span><span style="font-family:monospace">£${(total/totalKg).toFixed(2)}/kg</span></div>` : ''}
     </div>
@@ -10022,6 +10027,8 @@ function buildPdfPage(title, body) {
     .doc-footer { margin-top:28px; padding-top:12px; border-top:1px solid #ddd; font-size:10px; color:#888; }
     .doc-footer a { color:#D0021B; text-decoration:none; }
     .no-print { display:block; }
+    /* Internal-only elements are hidden in client-facing pages by default */
+    .internal-only { display:none !important; }
     @media print { .no-print { display:none !important; } body { print-color-adjust:exact; -webkit-print-color-adjust:exact; } .page { padding:10mm 12mm; } }
   </style></head><body>
   <div class="no-print" style="text-align:right;padding:8px 16px">
@@ -10403,7 +10410,8 @@ function generateHandoverPack() {
         const label = r.label || r.type || 'Plant';
         const days = r.qty || 1;
         const cost = days * (r.rate || 0);
-        const detail = `${days} day${days !== 1 ? 's' : ''} × £${r.rate || 0}/day`;
+        const rateFormatted = '£' + Number(r.rate || 0).toLocaleString('en-GB', {minimumFractionDigits:2, maximumFractionDigits:2});
+        const detail = `${days} day${days !== 1 ? 's' : ''} @ ${rateFormatted}/day`;
         return `<tr>
           <td>${esc(label)}${r.supplierNote ? `<br><span style="font-size:10px;color:#888">${esc(r.supplierNote)}</span>` : ''}</td>
           <td colspan="3" style="color:#666">${detail}</td>
