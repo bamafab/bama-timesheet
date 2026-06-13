@@ -5976,10 +5976,8 @@ function recalcAll() {
     document.getElementById('sum-deposit').textContent = fmt(total * depPct / 100);
   }
 
-  // store computed totals for quotation tab
-  if (q) {
-    q._computed = { material, installation, fabrication, design, painting, survey, delivery, prelims, purlins, subtotal, marginAmt, total };
-  }
+  // q._computed is already set to the full C object above (line q._computed = C).
+  // No second assignment needed — keeping it would overwrite galvanising, consumablesCost etc.
 
   // auto-fill standard lines from calcs
   // ── Design sub-components (computed locally, not in C) ──────────────────
@@ -6053,7 +6051,11 @@ function buildClientLines(q) {
   //      NEVER appear here — they live only in standardLines internally.
   //   5. Lines with sell value = 0 are filtered out automatically.
 
-  const C  = q._computed || {};
+  // Use _computed if available (set by recalcAll). If not (e.g. quote just loaded
+  // from SQL before first recalcAll), run the engine directly so lines are always correct.
+  const C  = (q._computed && q._computed.total != null)
+    ? q._computed
+    : (() => { try { return computeQuoteTotals(q, null); } catch(e) { return {}; } })();
   const na = q.blockNA   || {};
 
   // Derive margin multiplier from computed values
