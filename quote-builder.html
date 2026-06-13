@@ -3169,6 +3169,7 @@ function computeQuoteTotals(quote, ratesObj) {
     painting, galvanising, survey, delivery, prelims, purlins,
     fittingsCostVal: Math.round(fittingsCostVal * 100) / 100,
     fixingsCost: Math.round(fixingsCost * 100) / 100,
+    consumablesCost: Math.round(consumablesCost * 100) / 100,
     subtotal, marginAmt, total,
     // Weight
     totalKg: Math.round(totalKg * 10) / 10,
@@ -3498,16 +3499,23 @@ async function newQuote() {
 }
 
 function getDefaultStandardLines() {
+  // Design is split into individual line items so the client can see
+  // exactly what they are paying for in each discipline.
+  // fabrication = workshop hours + consumables only (fabpack is a separate line).
   return [
-    { key: 'prelims',         desc: 'Prelims',                       qty: 1, price: 0 },
-    { key: 'survey',          desc: 'Survey',                        qty: 1, price: 0 },
-    { key: 'material',        desc: 'Material cost',                 qty: 1, price: 0 },
-    { key: 'fabrication',     desc: 'Fabrication',                   qty: 1, price: 0 },
-    { key: 'design',          desc: 'Design',                        qty: 1, price: 0 },
-    { key: 'painting',        desc: 'Painting / Finishing',          qty: 1, price: 0 },
-    { key: 'galvanising',     desc: 'Galvanising',                   qty: 1, price: 0 },
-    { key: 'installation',    desc: 'Installation',                  qty: 1, price: 0 },
-    { key: 'delivery',        desc: 'Delivery',                      qty: 1, price: 0 }
+    { key: 'prelims',             desc: 'Prelims',                                qty: 1, price: 0 },
+    { key: 'survey',              desc: 'Survey',                                  qty: 1, price: 0 },
+    { key: 'material',            desc: 'Material cost',                           qty: 1, price: 0 },
+    { key: 'fabrication',         desc: 'Fabrication',                             qty: 1, price: 0 },
+    { key: 'approval_fab',        desc: 'Approval & Fabrication Pack',             qty: 1, price: 0 },
+    { key: 'design_draughtsman',  desc: 'Design — Internal Draughtsman / Detailing', qty: 1, price: 0 },
+    { key: 'design_struct_eng',   desc: 'Design — Structural Engineer',            qty: 1, price: 0 },
+    { key: 'design_architect',    desc: 'Design — Architect',                      qty: 1, price: 0 },
+    { key: 'design_connections',  desc: 'Design — Connection Design',              qty: 1, price: 0 },
+    { key: 'painting',            desc: 'Painting / Finishing',                    qty: 1, price: 0 },
+    { key: 'galvanising',         desc: 'Galvanising',                             qty: 1, price: 0 },
+    { key: 'installation',        desc: 'Installation',                            qty: 1, price: 0 },
+    { key: 'delivery',            desc: 'Delivery',                                qty: 1, price: 0 }
   ];
 }
 
@@ -3834,23 +3842,29 @@ function loadQuoteEditor() {
   document.getElementById('quoteEditor').style.display = '';
 
   // ── standardLines migration guard ────────────────────────────────────────
-  // Ensures quotes saved before schema fixes have all required line keys.
+  // Ensures quotes saved before schema fixes have all required line keys,
+  // and migrates old single 'design' key to granular sub-components.
   if (q.standardLines) {
-    const REQUIRED_KEYS = ['prelims','survey','material','fabrication',
-                           'design','painting','galvanising','installation','delivery'];
-    const DESCS = { prelims:'Prelims', survey:'Survey', material:'Material cost',
-                    fabrication:'Fabrication', design:'Design',
-                    painting:'Painting / Finishing', galvanising:'Galvanising',
-                    installation:'Installation', delivery:'Delivery' };
     const existing = new Set(q.standardLines.map(l => l.key));
-    // Add any missing keys
-    REQUIRED_KEYS.forEach(k => {
-      if (!existing.has(k)) {
-        q.standardLines.push({ key: k, desc: DESCS[k] || k, qty: 1, price: 0 });
+
+    // New granular keys to add if missing
+    const ADD_IF_MISSING = [
+      { key: 'survey',             desc: 'Survey' },
+      { key: 'approval_fab',       desc: 'Approval & Fabrication Pack' },
+      { key: 'design_draughtsman', desc: 'Design — Internal Draughtsman / Detailing' },
+      { key: 'design_struct_eng',  desc: 'Design — Structural Engineer' },
+      { key: 'design_architect',   desc: 'Design — Architect' },
+      { key: 'design_connections', desc: 'Design — Connection Design' },
+    ];
+    ADD_IF_MISSING.forEach(({ key, desc }) => {
+      if (!existing.has(key)) {
+        q.standardLines.push({ key, desc, qty: 1, price: 0 });
       }
     });
-    // Remove the dead 'approval_fab' key (was never mapped, always £0)
-    q.standardLines = q.standardLines.filter(l => l.key !== 'approval_fab');
+
+    // Keep legacy 'design' key in old quotes for backwards compat —
+    // recalcAll will set it to combined design total so it still shows.
+    // It will be filtered to £0 if all granular keys are also £0.
   }
 
   // Restore saved helper analysis if present
@@ -5863,19 +5877,32 @@ function recalcAll() {
   }
 
   // auto-fill standard lines from calcs
+  // ── Design sub-components (computed locally, not in C) ──────────────────
+  const _fabWorkshopOnly = (q.fabHours     || 0) * (q.fabRate     || 45);
+  const _fabPackOnly     = (q.fabpackHours || 0) * (q.fabpackRate || 50);
+  const _draughtCost     = (q.designHours      || 0) * (q.designRate     || 50);
+  const _structEngCost   = (q.structEngHours   || 0) * (q.structEngRate  || 90);
+  const _architectCost   = (q.architectHours   || 0) * (q.architectRate  || 90);
+  const _connDesignCost  = (q.connDesignHours  || 0) * (q.connDesignRate || 50);
+
   if (q?.type === 'bama' && q.standardLines) {
     q.standardLines.forEach(l => {
-      if      (l.key === 'material')     l.price = material;
-      else if (l.key === 'fabrication')  l.price = fabrication;
-      else if (l.key === 'design')       l.price = design;
-      else if (l.key === 'painting')     l.price = painting;
-      else if (l.key === 'galvanising')  l.price = galvanising;
-      else if (l.key === 'installation') l.price = installation;
-      else if (l.key === 'delivery')     l.price = delivery;
-      else if (l.key === 'prelims')      l.price = prelims;
-      else if (l.key === 'survey')       l.price = survey;
-      // 'approval_fab' intentionally omitted: fabpack cost is
-      // already included inside 'fabrication' — no double-count.
+      if      (l.key === 'material')           l.price = material;
+      // fabrication = workshop hours + consumables only (fabpack is separate line)
+      else if (l.key === 'fabrication')        l.price = Math.round((_fabWorkshopOnly + (C.consumablesCost||0)) * 100) / 100;
+      else if (l.key === 'approval_fab')       l.price = Math.round(_fabPackOnly * 100) / 100;
+      else if (l.key === 'design_draughtsman') l.price = Math.round(_draughtCost   * 100) / 100;
+      else if (l.key === 'design_struct_eng')  l.price = Math.round(_structEngCost  * 100) / 100;
+      else if (l.key === 'design_architect')   l.price = Math.round(_architectCost  * 100) / 100;
+      else if (l.key === 'design_connections') l.price = Math.round(_connDesignCost * 100) / 100;
+      // legacy 'design' key — old quotes: set to combined total for backwards compat
+      else if (l.key === 'design')             l.price = design;
+      else if (l.key === 'painting')           l.price = painting;
+      else if (l.key === 'galvanising')        l.price = galvanising;
+      else if (l.key === 'installation')       l.price = installation;
+      else if (l.key === 'delivery')           l.price = delivery;
+      else if (l.key === 'prelims')            l.price = prelims;
+      else if (l.key === 'survey')             l.price = survey;
     });
     renderQuotationLines();
   }
