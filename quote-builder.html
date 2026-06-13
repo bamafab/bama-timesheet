@@ -5937,28 +5937,47 @@ function recalcAll() {
 // QUOTATION TAB
 // ============================================================
 function buildClientLines(q) {
-  // Returns the client-facing line items built purely from computed totals.
-  // ORDER and LABELS are the canonical client view — never expose internal
-  // sub-keys (approval_fab, design_draughtsman, etc.) to the client.
-  const C = q._computed || {};
-  const na = q.blockNA || {};
+  // ── Client-facing commercial line items ────────────────────────────────
+  // RULES:
+  //   1. Values are POST-MARGIN sell prices so each line × qty = sell price,
+  //      and sum of all lines = grand total (£188,778.46 style).
+  //   2. Margin is applied pro-rata: each cost bucket × marginMultiplier.
+  //   3. Survey is EXCLUDED — subsumed into Prelims for the client view.
+  //      (Survey cost still flows through the engine subtotal correctly.)
+  //   4. Internal sub-keys (approval_fab, design_draughtsman, etc.)
+  //      NEVER appear here — they live only in standardLines internally.
+  //   5. Lines with sell value = 0 are filtered out automatically.
+
+  const C  = q._computed || {};
+  const na = q.blockNA   || {};
+
+  // Derive margin multiplier from computed values
+  // marginMultiplier = total / subtotal  (handles edge case subtotal=0)
+  const _sub = C.subtotal || 0;
+  const _tot = C.total    || 0;
+  const _mm  = _sub > 0 ? _tot / _sub : 1;   // e.g. 1.25 for 20% margin
+
+  // Helper: cost bucket → sell price, rounded to 2dp
+  const sell = v => Math.round((v || 0) * _mm * 100) / 100;
+
   const raw = [
-    { key: 'prelims',     desc: 'Prelims',                  value: na.prelims      ? 0 : (C.prelims      || 0) },
-    { key: 'survey',      desc: 'Survey',                   value: na.survey       ? 0 : (C.survey       || 0) },
-    { key: 'material',    desc: 'Material cost',             value:                      (C.material      || 0) },
-    { key: 'fabrication', desc: 'Fabrication',              value: na.fabrication  ? 0 : (C.fabrication  || 0) },
-    { key: 'design',      desc: 'Design',                   value: na.design       ? 0 : (C.design       || 0) },
-    { key: 'painting',    desc: 'Painting / Finishing',     value: na.painting     ? 0 : (C.painting     || 0) },
-    { key: 'galvanising', desc: 'Galvanising',              value: na.painting     ? 0 : (C.galvanising  || 0) },
-    { key: 'installation',desc: 'Installation',             value: na.installation ? 0 : (C.installation || 0) },
-    { key: 'delivery',    desc: 'Delivery',                 value: na.delivery     ? 0 : (C.delivery     || 0) },
-    { key: 'purlins',     desc: 'Purlins',                  value: na.purlins      ? 0 : (C.purlins      || 0) },
+    { key: 'prelims',      desc: 'Prelims',              value: na.prelims      ? 0 : sell(C.prelims      + (C.survey || 0)) },
+    { key: 'material',     desc: 'Material cost',        value:                      sell(C.material)                        },
+    { key: 'fabrication',  desc: 'Fabrication',          value: na.fabrication  ? 0 : sell(C.fabrication)                   },
+    { key: 'design',       desc: 'Design',               value: na.design       ? 0 : sell(C.design)                        },
+    { key: 'painting',     desc: 'Painting / Finishing', value: na.painting     ? 0 : sell(C.painting)                      },
+    { key: 'galvanising',  desc: 'Galvanising',          value: na.painting     ? 0 : sell(C.galvanising)                   },
+    { key: 'installation', desc: 'Installation',         value: na.installation ? 0 : sell(C.installation)                  },
+    { key: 'delivery',     desc: 'Delivery',             value: na.delivery     ? 0 : sell(C.delivery)                      },
+    { key: 'purlins',      desc: 'Purlins',              value: na.purlins      ? 0 : sell(C.purlins)                       },
   ];
-  // Allow user to override description via standardLines custom desc
+
+  // Allow user to override description via standardLines _customDesc
   const descOverrides = {};
   (q.standardLines || []).forEach(l => {
     if (l._customDesc && l.key) descOverrides[l.key] = l._customDesc;
   });
+
   return raw
     .filter(l => l.value > 0)
     .map(l => ({ ...l, desc: descOverrides[l.key] || l.desc }));
@@ -5985,8 +6004,8 @@ function renderQuotationLines() {
         <div class="ql-total">${fmt(amt)}</div>
       </div>`;
     }).join('');
-    // Total shown is the margin-inclusive total from engine, not sum of lines
-    updateQuotationTotals(q._computed?.total || sub);
+    // Lines are post-margin sell prices — their sum equals the grand total
+    updateQuotationTotals(sub || q._computed?.total || 0);
 
   } else if (q.type === 'custom') {
     let sub = 0;
@@ -9973,8 +9992,9 @@ function generateQuotePDF(mode = 'quote') {
           <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(l.value)}</td>
           <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(amt)}</td></tr>`;
       });
-      // computed.total is authoritative (includes margin) — always use it
-      grandTotal = computed.total || grandTotal;
+      // grandTotal is sum of post-margin sell lines = grand total
+      // Reconcile with computed.total — should be within rounding tolerance
+      if (computed.total && Math.abs(computed.total - grandTotal) > 2) grandTotal = computed.total;
     } else if (q.type === 'custom') {
       (q.customLines||[]).forEach(l => {
         const price = parseFloat(l.price)||0, qty = parseFloat(l.qty)||1;
