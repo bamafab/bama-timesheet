@@ -291,7 +291,7 @@ tr.drag-dragging { opacity:0.35; }
 <div class="topbar">
   <div class="logo" style="display:flex;align-items:center;gap:12px">
     <a href="dashboard.html" style="font-size:12px;color:var(--muted);text-decoration:none;display:flex;align-items:center;gap:5px;padding:4px 8px;border:1px solid var(--border);border-radius:5px;transition:all 0.15s" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">← Dashboard</a>
-    <span><span>BAMA</span> QUOTE BUILDER <span id="qbUserBadge" style="font-size:11px;color:var(--subtle);margin-left:8px;font-family:var(--font-mono)">loading…</span></span>
+    <span><span>BAMA</span> QUOTE BUILDER <span id="qbUserBadge" style="font-size:11px;color:var(--subtle);margin-left:8px;font-family:var(--font-mono)">loading…</span><span id="saveStatus" style="font-size:11px;margin-left:10px;font-family:var(--font-mono);padding:2px 8px;border-radius:4px;display:none"></span></span>
   </div>
   <div class="topbar-right">
     <button class="btn btn-ghost btn-sm" onclick="openLogoUpload()" title="Upload logo for PDF">🖼 Logo</button>
@@ -308,7 +308,7 @@ tr.drag-dragging { opacity:0.35; }
     <div style="position:relative;display:inline-block" id="pdfMenuWrap">
       <button class="btn btn-ghost btn-sm" onclick="togglePdfMenu()" id="pdfBtn">📄 PDF ▾</button>
       <div id="pdfMenu" style="display:none;position:absolute;top:100%;right:0;background:var(--card);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.4);min-width:200px;z-index:500;margin-top:4px;overflow:hidden">
-        <div onclick="generateQuotePDF('quote');togglePdfMenu()" style="padding:10px 16px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)" onmouseover="this.style.background='rgba(255,107,0,0.08)'" onmouseout="this.style.background=''">📋 Quote (client-facing)</div>
+        <div onclick="togglePdfMenu();runPreflight('generate the client quote', () => generateQuotePDF('quote'))" style="padding:10px 16px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)" onmouseover="this.style.background='rgba(255,107,0,0.08)'" onmouseout="this.style.background=''">📋 Quote (client-facing)</div>
         <div onclick="generateQuotePDF('breakdown');togglePdfMenu()" style="padding:10px 16px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)" onmouseover="this.style.background='rgba(255,107,0,0.08)'" onmouseout="this.style.background=''">🔢 Cost Breakdown</div>
         <div onclick="generateQuotePDF('combined');togglePdfMenu()" style="padding:10px 16px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)" onmouseover="this.style.background='rgba(255,107,0,0.08)'" onmouseout="this.style.background=''">📄 Quote + Breakdown (internal)</div>
         <div onclick="generateHandoverPack();togglePdfMenu()" style="padding:10px 16px;cursor:pointer;font-size:13px" onmouseover="this.style.background='rgba(255,107,0,0.08)'" onmouseout="this.style.background=''">📦 Handover Pack (internal)</div>
@@ -3331,18 +3331,36 @@ const QB_API = 'https://bama-erp-api-deauckd2cja7ebd5.uksouth-01.azurewebsites.n
 
 function qbToken() { return sessionStorage.getItem('bama_token') || ''; }
 
-async function qbFetch(method, path, body) {
+async function qbFetch(method, path, body, retries = 3) {
   const opts = {
     method,
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${qbToken()}` }
   };
   if (body) opts.body = JSON.stringify(body);
-  const res = await fetch(QB_API + path, opts);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `API ${res.status}`);
+
+  let lastErr;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(QB_API + path, opts);
+      if (res.ok) return res.json();
+      // 429/503/529 = transient overload — retry with backoff
+      if ([429, 503, 529].includes(res.status) && attempt < retries) {
+        await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt))); // 1s/2s/4s
+        continue;
+      }
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `API ${res.status}`);
+    } catch (e) {
+      lastErr = e;
+      // Network error (fetch threw) — retry with backoff
+      if (e instanceof TypeError && attempt < retries) {
+        await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)));
+        continue;
+      }
+      if (attempt >= retries) throw lastErr;
+    }
   }
-  return res.json();
+  throw lastErr;
 }
 
 // In-memory list (metadata only — no blob). Full blob loaded on selectQuote.
@@ -3372,13 +3390,53 @@ async function loadQuotesFromSQL() {
   }
 }
 
+// ── Save status indicator ──────────────────────────────────────────────
+function setSaveStatus(state) {
+  const el = document.getElementById('saveStatus');
+  if (!el) return;
+  const map = {
+    saving: { txt: '● Saving…',   bg: 'rgba(255,255,255,0.08)', col: 'var(--muted)' },
+    saved:  { txt: '✓ Saved',     bg: 'rgba(62,207,142,0.12)',  col: 'var(--green)' },
+    failed: { txt: '⚠ Save failed — retrying', bg: 'rgba(224,94,0,0.15)', col: 'var(--accent)' },
+    offline:{ txt: '⚠ Unsaved changes', bg: 'rgba(239,68,68,0.15)', col: 'var(--red)' },
+  };
+  const s = map[state];
+  if (!s) { el.style.display = 'none'; return; }
+  el.textContent = s.txt;
+  el.style.background = s.bg;
+  el.style.color = s.col;
+  el.style.display = '';
+  // auto-hide 'saved' after 2s
+  if (state === 'saved') {
+    clearTimeout(el._hideTimer);
+    el._hideTimer = setTimeout(() => { el.style.display = 'none'; }, 2000);
+  }
+}
+
+// ── localStorage emergency backup ──────────────────────────────────────
+// Survives a failed SQL save so work is never lost. Cleared on success.
+function backupQuoteLocally(q) {
+  try { localStorage.setItem('qb_backup_' + q.id, JSON.stringify({ q, ts: Date.now() })); } catch(e) {}
+}
+function clearLocalBackup(id) {
+  try { localStorage.removeItem('qb_backup_' + id); } catch(e) {}
+}
+function hasLocalBackup(id) {
+  try { return !!localStorage.getItem('qb_backup_' + id); } catch(e) { return false; }
+}
+
 // Save full quote blob back to SQL (called by saveAll / autosave).
-// _sqlSaving flag prevents re-entrant saves.
-let _sqlSaving = false;
+// Coalescing model: if a save is in flight, mark _savePending and the
+// in-flight save will re-run when it finishes — no silent dropped saves.
+let _sqlSaving  = false;
+let _savePending = false;
 async function saveAll() {
   const q = getQuote();
-  if (!q || _sqlSaving) return;
+  if (!q) return;
+  if (_sqlSaving) { _savePending = true; return; }  // coalesce — don't drop
   _sqlSaving = true;
+  backupQuoteLocally(q);   // emergency backup before attempting save
+  setSaveStatus('saving');
   try {
     const totals = (() => { try { return computeQuoteTotals(q, null); } catch(e) { return {}; } })();
     const payload = {
@@ -3415,13 +3473,33 @@ async function saveAll() {
     // Sync updated_at back
     const local = quotes.find(x => x.id == q.id);
     if (local) { local.updated_at = updated.updated_at; local.total_ex_vat = updated.total_ex_vat; }
+    clearLocalBackup(q.id);   // save confirmed — drop emergency backup
+    setSaveStatus('saved');
   } catch (e) {
     console.error('saveAll error:', e);
-    toast('Auto-save failed: ' + e.message, 'error');
+    // Keep the localStorage backup; surface the failure clearly.
+    setSaveStatus('offline');
+    toast('Auto-save failed — your work is backed up locally and will retry. ' + e.message, 'error');
+    // Schedule one retry after a short delay
+    clearTimeout(_saveRetryTimer);
+    _saveRetryTimer = setTimeout(() => { _savePending = false; saveAll(); }, 5000);
   } finally {
     _sqlSaving = false;
+    // If changes arrived while saving, run again immediately (coalesced).
+    if (_savePending) { _savePending = false; saveAll(); }
   }
 }
+let _saveRetryTimer = null;
+
+// Warn before leaving if there are unsaved local backups
+window.addEventListener('beforeunload', (e) => {
+  const q = getQuote();
+  if (q && hasLocalBackup(q.id)) {
+    e.preventDefault();
+    e.returnValue = 'You have unsaved changes that failed to save to the server. Leave anyway?';
+    return e.returnValue;
+  }
+});
 
 
 // ── Next quote ref — asks SQL API (scans QB + Tenders), bumps to beat
@@ -3657,7 +3735,7 @@ function setStatus(val) {
   setTimeout(cpsLoadToDOM, 0);
   saveAll();
   renderRevHistory(q);
-  if (val === 'won' && prev !== 'won') showWonModal();
+  if (val === 'won' && prev !== 'won') runPreflight('mark this quote as Won', showWonModal);
   if (val === 'lost' && prev !== 'lost') showLossModal();
   if (val === 'sent' && !q.dateSent) { q.dateSent = new Date().toISOString().slice(0,10); const el = document.getElementById('hDateSent'); if (el) el.value = q.dateSent; saveAll(); }
 }
@@ -9813,6 +9891,116 @@ document.addEventListener('click', e => {
 // Single source of truth for all three document types:
 // client quote, cost breakdown, and handover pack.
 // Produces identical three-section layout in every document.
+// ══════════════════════════════════════════════════════════════
+// PRE-FLIGHT CHECK — validate a quote before PDF / mark-won
+// Returns { errors: [], warnings: [], ok: bool }
+//   errors   = must-fix before sending (blocks with confirmation)
+//   warnings = should-review (non-blocking)
+// ══════════════════════════════════════════════════════════════
+function preflightCheck(q) {
+  const errors = [], warnings = [];
+  if (!q) return { errors: ['No quote loaded'], warnings: [], ok: false };
+
+  let C = {};
+  try { C = computeQuoteTotals(q, null); } catch(e) {}
+  const na = q.blockNA || {};
+
+  // ── ERRORS (block) ──────────────────────────────────────────
+  // Missing kg/m — material cost incomplete
+  if (C.missingKgm && C.missingKgm.length) {
+    errors.push(`${C.missingKgm.length} takeoff section${C.missingKgm.length>1?'s':''} missing kg/m (tonnage & material cost incomplete): ${C.missingKgm.join(', ')}`);
+  }
+
+  // Unresolved CRITICAL technical risks (e.g. galvanising bath/crane)
+  try {
+    const risks = validateTechnicalRisks(q, C) || [];
+    const crits = risks.filter(r => r.type === 'critical');
+    crits.forEach(r => errors.push('CRITICAL — ' + String(r.message || 'unresolved technical risk').replace(/<[^>]+>/g,'')));
+  } catch(e) {}
+
+  // Zero grand total
+  if (!(C.total > 0)) {
+    errors.push('Grand total is £0 — nothing priced yet.');
+  }
+
+  // Number reconciliation — sum of client lines must equal grand total
+  try {
+    const lines = buildClientLines(q);
+    const lineSum = lines.reduce((s,l) => s + (l.value||0), 0);
+    if (C.total > 0 && Math.abs(lineSum - C.total) > 1) {
+      errors.push(`Line items (£${Math.round(lineSum).toLocaleString('en-GB')}) don't reconcile with grand total (£${Math.round(C.total).toLocaleString('en-GB')}). Save and reopen the quote.`);
+    }
+  } catch(e) {}
+
+  // ── WARNINGS (review) ───────────────────────────────────────
+  if (!q.company || !q.company.trim()) warnings.push('No client company name set (Header tab).');
+  if (!q.validUntil) warnings.push('No "Valid Until" date set — defaults will be used.');
+  if (!q.preparedBy || !q.preparedBy.trim()) warnings.push('No "Prepared by" name set.');
+
+  const marginPct = parseFloat(q.margin) || 0;
+  if (marginPct === 0) warnings.push('Margin is 0% — quote will sell at cost.');
+  else if (marginPct < 10) warnings.push(`Margin is only ${marginPct}% — unusually low, double-check.`);
+  else if (marginPct > 40) warnings.push(`Margin is ${marginPct}% — unusually high, double-check.`);
+
+  // Non-N/A cost blocks sitting at exactly £0 (probably forgotten)
+  const blockChecks = [
+    ['installation', C.installation, 'Installation'],
+    ['fabrication',  C.fabrication,  'Fabrication'],
+    ['delivery',     C.delivery,     'Delivery'],
+  ];
+  blockChecks.forEach(([key, val, label]) => {
+    if (!na[key] && !(val > 0)) warnings.push(`${label} is £0 but not marked N/A — did you forget it?`);
+  });
+
+  // No takeoff at all
+  if (!(q.takeoff || []).filter(r => r.type).length) {
+    warnings.push('Takeoff is empty — no steel members listed.');
+  }
+
+  return { errors, warnings, ok: errors.length === 0 };
+}
+
+// Show pre-flight results in a modal. onProceed() runs if user continues.
+function runPreflight(actionLabel, onProceed) {
+  const q = getQuote();
+  const { errors, warnings, ok } = preflightCheck(q);
+
+  // Clean bill of health and no warnings → just proceed silently
+  if (ok && warnings.length === 0) { onProceed(); return; }
+
+  const errHtml = errors.length ? `
+    <div style="margin-bottom:14px">
+      <div style="font-size:12px;font-weight:700;color:var(--red);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px">⛔ Must fix (${errors.length})</div>
+      ${errors.map(e => `<div style="display:flex;gap:8px;padding:5px 0;font-size:12.5px;color:var(--text);line-height:1.5;border-bottom:1px solid rgba(239,68,68,0.12)"><span style="color:var(--red);flex-shrink:0">✗</span><span>${escHtml(e)}</span></div>`).join('')}
+    </div>` : '';
+
+  const warnHtml = warnings.length ? `
+    <div style="margin-bottom:14px">
+      <div style="font-size:12px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px">⚠ Review (${warnings.length})</div>
+      ${warnings.map(w => `<div style="display:flex;gap:8px;padding:5px 0;font-size:12.5px;color:var(--muted);line-height:1.5;border-bottom:1px solid rgba(255,255,255,0.04)"><span style="color:var(--accent);flex-shrink:0">!</span><span>${escHtml(w)}</span></div>`).join('')}
+    </div>` : '';
+
+  const ov = document.getElementById('preflightOverlay');
+  const bodyEl = document.getElementById('preflightBody');
+  const proceedBtn = document.getElementById('preflightProceed');
+
+  document.getElementById('preflightTitle').textContent =
+    ok ? `Ready to ${actionLabel}` : `Issues before you ${actionLabel}`;
+  bodyEl.innerHTML = errHtml + warnHtml +
+    (ok ? '<div style="font-size:12px;color:var(--green);margin-top:4px">No blocking errors — review warnings above, then continue.</div>' : '');
+
+  // If there are hard errors, proceed button warns it's overriding
+  proceedBtn.textContent = errors.length ? 'Override & continue anyway' : `Continue to ${actionLabel}`;
+  proceedBtn.style.background = errors.length ? 'var(--red)' : '';
+  proceedBtn.onclick = () => { ov.style.display = 'none'; onProceed(); };
+
+  ov.style.display = 'flex';
+}
+
+function closePreflight() {
+  document.getElementById('preflightOverlay').style.display = 'none';
+}
+
 function buildTcHtml(q) {
   function _stripMarkers(s) {
     return (s || '').replace(/\[\s*[X?✓\s]\s*\]/gi, '').replace(/^[-•*]\s*/gm, '').trim();
@@ -12094,6 +12282,26 @@ async function qqSaveAsDraft() {
   }
 })();
 </script>
+
+
+<!-- ═══════════════════════ PRE-FLIGHT MODAL ═══════════════════════ -->
+<div id="preflightOverlay" onclick="if(event.target===this)closePreflight()"
+  style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:850;
+         align-items:center;justify-content:center;backdrop-filter:blur(2px)">
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;
+              width:520px;max-width:92vw;max-height:80vh;display:flex;flex-direction:column;
+              box-shadow:0 16px 48px rgba(0,0,0,0.5);overflow:hidden">
+    <div style="padding:16px 20px;border-bottom:1px solid var(--border);background:var(--surface)">
+      <div style="font-size:15px;font-weight:700;color:var(--text)" id="preflightTitle">Pre-flight check</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:2px">Review before generating the document</div>
+    </div>
+    <div id="preflightBody" style="flex:1;overflow-y:auto;padding:18px 20px"></div>
+    <div style="padding:14px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;background:var(--surface)">
+      <button class="btn btn-ghost" onclick="closePreflight()">Cancel</button>
+      <button class="btn btn-primary" id="preflightProceed">Continue</button>
+    </div>
+  </div>
+</div>
 
 <!-- ═══════════════════════ HELP DRAWER ═══════════════════════ -->
 <div id="helpOverlay" onclick="closeHelp()"
