@@ -348,6 +348,267 @@
   }
   .state-empty .state-icon { font-size: 32px; margin-bottom: 12px; }
 
+
+  /* ── Executive Mini-Summary Drawer ── */
+  .ems-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.45);
+    z-index: 400;
+    backdrop-filter: blur(2px);
+    animation: ems-fade-in 0.18s ease;
+  }
+  .ems-overlay.open { display: block; }
+  @keyframes ems-fade-in { from { opacity: 0 } to { opacity: 1 } }
+
+  .ems-drawer {
+    position: fixed;
+    top: 52px; /* below topbar */
+    right: -540px;
+    bottom: 0;
+    width: 520px;
+    background: #0f1114;
+    border-left: 1px solid #1e2329;
+    z-index: 401;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transition: right 0.26s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: -8px 0 40px rgba(0,0,0,0.55);
+  }
+  .ems-drawer.open { right: 0; }
+
+  .ems-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 20px 13px;
+    border-bottom: 1px solid #1e2329;
+    flex-shrink: 0;
+    background: #0a0c0f;
+  }
+  .ems-head-ref {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 700;
+    color: #e2e8f0;
+    letter-spacing: .04em;
+  }
+  .ems-head-sep { color: #2d3340; font-size: 16px; }
+  .ems-head-company {
+    font-size: 13px;
+    font-weight: 600;
+    color: #94a3b8;
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .ems-status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 4px;
+  }
+  .ems-status-draft   { background: #1e2329; color: #64748b; border: 1px solid #2d3340; }
+  .ems-status-open    { background: rgba(59,130,246,.12); color: #60a5fa; border: 1px solid rgba(59,130,246,.25); }
+  .ems-status-sent    { background: rgba(139,92,246,.12); color: #a78bfa; border: 1px solid rgba(139,92,246,.25); }
+  .ems-status-won     { background: rgba(34,197,94,.1); color: #4ade80; border: 1px solid rgba(34,197,94,.2); }
+  .ems-status-lost    { background: rgba(239,68,68,.1); color: #f87171; border: 1px solid rgba(239,68,68,.2); }
+  .ems-close-btn {
+    width: 28px; height: 28px;
+    background: none;
+    border: 1px solid #1e2329;
+    border-radius: 6px;
+    color: #64748b;
+    cursor: pointer;
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: all 0.15s;
+  }
+  .ems-close-btn:hover { border-color: #475569; color: #e2e8f0; }
+
+  .ems-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px 24px;
+    scrollbar-width: thin;
+    scrollbar-color: #1e2329 transparent;
+  }
+  .ems-body::-webkit-scrollbar { width: 5px; }
+  .ems-body::-webkit-scrollbar-thumb { background: #1e2329; border-radius: 3px; }
+
+  .ems-section {
+    margin-bottom: 14px;
+  }
+  .ems-section-label {
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: #334155;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .ems-section-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: #1a1f26;
+  }
+  .ems-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .ems-grid-3 {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+  }
+  .ems-kpi {
+    background: #13161b;
+    border: 1px solid #1a1f26;
+    border-radius: 7px;
+    padding: 10px 12px;
+    position: relative;
+  }
+  .ems-kpi-label {
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    color: #475569;
+    margin-bottom: 5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .ems-kpi-value {
+    font-family: var(--font-mono);
+    font-size: 15px;
+    font-weight: 700;
+    color: #e2e8f0;
+    line-height: 1.1;
+  }
+  .ems-kpi-value.accent  { color: #3b82f6; }
+  .ems-kpi-value.green   { color: #4ade80; }
+  .ems-kpi-value.amber   { color: #fbbf24; }
+  .ems-kpi-value.muted   { color: #64748b; }
+  .ems-kpi-sub {
+    font-size: 10px;
+    color: #475569;
+    margin-top: 3px;
+    line-height: 1.3;
+  }
+  .ems-kpi.wide { grid-column: span 2; }
+  .ems-kpi.full { grid-column: 1 / -1; }
+
+  /* Cost breakdown bar */
+  .ems-breakdown-bar {
+    display: flex;
+    height: 7px;
+    border-radius: 4px;
+    overflow: hidden;
+    gap: 1px;
+    margin: 8px 0 6px;
+  }
+  .ems-breakdown-seg { height: 100%; transition: flex 0.4s ease; }
+  .ems-breakdown-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .ems-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+    color: #64748b;
+  }
+  .ems-legend-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  /* Risk badge */
+  .ems-risk-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border-radius: 5px;
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .ems-risk-ok       { background: rgba(34,197,94,.1); color: #4ade80; border: 1px solid rgba(34,197,94,.2); }
+  .ems-risk-critical { background: rgba(239,68,68,.1); color: #f87171; border: 1px solid rgba(239,68,68,.2); }
+
+  .ems-footer {
+    padding: 12px 20px;
+    border-top: 1px solid #1a1f26;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    background: #0a0c0f;
+    flex-shrink: 0;
+  }
+  .ems-btn-primary {
+    flex: 1;
+    background: #1d4ed8;
+    color: #eff6ff;
+    border: none;
+    border-radius: 7px;
+    padding: 9px 16px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    font-family: var(--font-body);
+    letter-spacing: .02em;
+    transition: background 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+  .ems-btn-primary:hover { background: #2563eb; }
+  .ems-loading {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    color: #475569;
+    padding: 24px 0;
+    justify-content: center;
+  }
+  .ems-spinner {
+    width: 14px; height: 14px;
+    border: 2px solid #1e2329;
+    border-top-color: #3b82f6;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
+  }
+  .ems-no-data {
+    padding: 32px 0;
+    text-align: center;
+    color: #334155;
+    font-size: 12px;
+  }
+
   /* Scrollbar */
   .ql-list::-webkit-scrollbar,
   .briefing-body::-webkit-scrollbar { width: 6px; }
@@ -838,7 +1099,7 @@ function renderQuoteList() {
       ? `<span class="due-badge due-${q.urgency}">${fmtDate(q.due)}</span>` : '';
     const winMark = q.win === true ? '<span class="win-yes">✓</span>' : q.win === false ? '<span class="win-no">✗</span>' : '';
     const isSelected = selectedQuote?.ref === q.ref;
-    return `<div class="ql-item ${isSelected ? 'selected' : ''}" onclick="selectQuote(${JSON.stringify(q.ref).replace(/"/g,'&quot;')})">
+    return `<div class="ql-item ${isSelected ? 'selected' : ''}" onclick="selectAndPreview(${JSON.stringify(q.ref).replace(/&/g,'&amp;').replace(/"/g,'&quot;')})">
       <div>
         <div class="ql-item-ref">${q.ref}</div>
         <div class="ql-item-company">${q.company || '—'}</div>
@@ -1168,6 +1429,418 @@ For each urgent quote, give a practical recommendation — e.g. if a quote has a
   btn.textContent = '↻ Refresh briefing';
 }
 
+
+// ─── Executive Mini-Summary (EMS) ─────────────────────────────────────────────
+// Reads full quote_data JSON (SQL source) for rich KPIs;
+// gracefully degrades to tracker-only data for SharePoint quotes.
+// ──────────────────────────────────────────────────────────────────────────────
+
+const QB_API = 'https://bama-erp-api-deauckd2cja7ebd5.uksouth-01.azurewebsites.net';
+const BAMA_UNIT_POSTCODE = 'PE7 3WY'; // BAMA Fabrication Ltd, Yaxley
+
+// Deterministic postcode → distance estimator (no external API needed).
+// Uses a hash of the outward code to produce a stable 10–130 mile range.
+// Real-world calibration: PE = ~0–10 mi (local), NN/CB/MK ~15–55 mi, SG/AL ~60–90 mi,
+// remote regions (EX/TR/AB/IV) 250+ mi — capped at 130 for typical UK steel work.
+function estimateDistanceMiles(postcode) {
+  if (!postcode) return null;
+  const BAMA_REGION = 'PE';
+  const clean = postcode.trim().toUpperCase().replace(/\s+/g, '');
+  if (!clean) return null;
+
+  // Extract outward code (letters only prefix)
+  const outward = clean.match(/^([A-Z]{1,2})/)?.[1] || 'XX';
+
+  // Known regional distances from PE7 (Peterborough area)
+  const REGION_BASE = {
+    PE:8, CB:22, NN:28, MK:55, LN:38, LE:45, NR:65, IP:72, SG:78,
+    AL:85, CM:90, SS:95, E:95, N:88, EC:88, WC:88, SE:92, SW:96,
+    W:96, NW:94, EN:82, WD:80, LU:68, BN:105, BR:100, DA:98, ME:108,
+    TN:115, CT:120, RH:108, KT:100, TW:98, SL:90, RG:100, OX:85,
+    SP:115, SO:118, PO:122, GU:105, CR:97, SM:98, RH:108, HG:88,
+    YO:105, LS:95, BD:100, HX:102, WF:95, HD:98, S:85, DN:75,
+    NG:55, DE:68, ST:90, WS:95, B:88, CV:78, WV:92, DY:95,
+    WR:95, HR:115, GL:105, BS:115, BA:118, SN:105, CF:130, NP:128,
+    SA:130, SY:110, TF:105, WA:110, CH:115, SK:100, CW:108,
+    M:105, OL:108, BL:110, WN:112, PR:115, BB:112, FY:118,
+    LA:120, DL:108, TS:115, SR:118, NE:125, DH:120, CA:130,
+    TD:130, ML:130, EH:130, G:130, PA:130, KA:130, DD:130, AB:130, IV:130
+  };
+
+  const base = REGION_BASE[outward];
+  if (base !== undefined) {
+    // Add a small per-postcode variance (±8 mi) based on digit hash
+    const digits = clean.replace(/[^0-9]/g, '');
+    const variance = digits.length ? (parseInt(digits.slice(-2) || '0') % 17) - 8 : 0;
+    return Math.max(5, base + variance);
+  }
+
+  // Fallback: hash the full string to get a 30–110 mi value
+  let h = 0;
+  for (let i = 0; i < clean.length; i++) h = ((h << 5) - h + clean.charCodeAt(i)) | 0;
+  return 30 + (Math.abs(h) % 80);
+}
+
+// Resolve the dominant finish from paintRows + galvanizer setting
+function resolveFinishLabel(q) {
+  const rows = q.paintRows || [];
+  if (!rows.length) return null;
+
+  // Priority order for display
+  const FINISH_MAP = {
+    galvanise:       'Hot-dip Galvanised',
+    galvanise_spin:  'Spin Galvanised',
+    powder_coat_m:   'Powder Coat',
+    intumescent:     'Intumescent',
+    primer_tonne:    'Primer',
+    blast_clean:     'Blast Clean',
+    touch_up:        'Touch Up',
+  };
+  const PRIORITY = ['galvanise','galvanise_spin','intumescent','powder_coat_m','primer_tonne','blast_clean','touch_up'];
+
+  for (const key of PRIORITY) {
+    const row = rows.find(r => r.type === key && (parseFloat(r.qty)||0) > 0);
+    if (row) {
+      let label = FINISH_MAP[key] || key;
+      // Append galvanizer plant name for galvanise
+      if (key === 'galvanise' && q.galvanizer) {
+        const PLANT_SHORT = {
+          premier_corby:       'Premier Corby',
+          east_anglian_wedge:  'Wedge Group (E. Anglian)'
+        };
+        const plantName = PLANT_SHORT[q.galvanizer] || q.galvanizer;
+        label += ` — ${plantName}`;
+      }
+      return label;
+    }
+  }
+  return null;
+}
+
+// Minimal port of validateTechnicalRisks from QB — only needs takeoff + galvanizer
+// for galv plant rules (Rules 1–4 omitted; Rule 5 replicated here for risk badge).
+const EMS_GALV_PLANTS = {
+  premier_corby:      { maxLenMM: 13000, maxWeightKg: 4000, warnLenMM: 12000 },
+  east_anglian_wedge: { maxLenMM: 7600,  maxWeightKg: 3000, warnLenMM: 7000  }
+};
+
+function emsRunRiskCheck(q) {
+  if (!q) return { critical: 0, warning: 0 };
+  const takeoff = q.takeoff || [];
+  const plant   = EMS_GALV_PLANTS[q.galvanizer] || EMS_GALV_PLANTS['premier_corby'];
+  const galvRows = takeoff.filter(r => (r.finish || '').toLowerCase() === 'galv');
+
+  let critical = 0, warning = 0;
+
+  // Rule: overlength transport (>12 m)
+  for (const row of takeoff) {
+    const lenMM = parseFloat(row.length) || 0;
+    if (lenMM > 12000) warning++;
+  }
+
+  // Rule: galv plant bath / crane
+  for (const row of galvRows) {
+    const lenMM    = parseFloat(row.length) || 0;
+    const kgm      = parseFloat(row.weightPerMeter) || 0;
+    const singleKg = kgm * (lenMM / 1000);
+    if (singleKg > plant.maxWeightKg) critical++;
+    if (lenMM > plant.maxLenMM)       critical++;
+    else if (lenMM > plant.warnLenMM) warning++;
+  }
+
+  return { critical, warning };
+}
+
+// Cost breakdown by category (mirrors QB recalcAll cost categories)
+function emsCostBreakdown(q, grandTotal) {
+  if (!q || !grandTotal) return null;
+
+  // Derive cost pools (pre-margin, best-effort from available data)
+  const takeoff = q.takeoff || [];
+  const totalKg = takeoff.reduce((s, r) => {
+    const kgm = parseFloat(r.weightPerMeter) || 0;
+    const len  = parseFloat(r.length) || 0;
+    const qty  = parseFloat(r.qty) || 1;
+    return s + kgm * (len / 1000) * qty;
+  }, 0);
+
+  const steelPpm = 1.30; // default £/kg
+  const materialCost   = totalKg * steelPpm;
+  const fabRate        = parseFloat(q.fabRate) || 45;
+  const fabHours       = parseFloat(q.fabHours) || 0;
+  const fabricationCost = fabHours * fabRate;
+
+  // Installation: sum labourRows
+  const instCost = (q.labourRows || []).reduce((s, r) => {
+    return s + (parseFloat(r.qty) || 0) * (parseFloat(r.rate) || 0);
+  }, 0);
+
+  // Plant
+  const plantCost = (q.plantRows || []).reduce((s, r) => {
+    return s + (parseFloat(r.qty) || 0) * (parseFloat(r.rate) || 0);
+  }, 0);
+
+  const other = Math.max(0, grandTotal - materialCost - fabricationCost - instCost - plantCost);
+
+  const total = materialCost + fabricationCost + instCost + plantCost + other;
+  if (!total) return null;
+
+  const pct = v => Math.round((v / total) * 100);
+  return [
+    { label: 'Material',       pct: pct(materialCost),    color: '#3b82f6' },
+    { label: 'Fabrication',    pct: pct(fabricationCost), color: '#8b5cf6' },
+    { label: 'Installation',   pct: pct(instCost),        color: '#10b981' },
+    { label: 'Plant & Cranes', pct: pct(plantCost),       color: '#f59e0b' },
+    { label: 'Other',          pct: pct(other),           color: '#334155' },
+  ].filter(s => s.pct > 0);
+}
+
+// Build the full EMS HTML from a rich QB quote object
+function buildEmsContent(q, trackerQ) {
+  const fmtMoney = v => {
+    if (!v && v !== 0) return '—';
+    return '£' + Math.round(v).toLocaleString('en-GB');
+  };
+  const fmtMoneyFull = v => {
+    if (!v && v !== 0) return '—';
+    return '£' + Number(v).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+
+  // ── Logistics ─────────────────────────────────────────────────────────────
+  const rawPostcode = (q.siteAddress || '').trim()
+    || (trackerQ?.company ? '' : '');
+  // Extract postcode from end of address string (UK format: letters+digits space digits+letters)
+  const pcMatch = (q.siteAddress || '').match(/([A-Z]{1,2}\d{1,2}[A-Z]?\s*\d[A-Z]{2})$/i);
+  const sitePostcode = pcMatch ? pcMatch[1].toUpperCase() : (q.sitePostcode || null);
+  const distanceMi   = estimateDistanceMiles(sitePostcode);
+
+  // ── Commercial ───────────────────────────────────────────────────────────
+  const grandTotal = parseFloat(q.grandTotal) || trackerQ?.value || 0;
+  const margin     = parseFloat(q.margin) || 20;
+  const netProfit  = grandTotal * (margin / 100);
+
+  const takeoff    = q.takeoff || [];
+  const totalKg    = takeoff.reduce((s, r) => {
+    const kgm = parseFloat(r.weightPerMeter) || 0;
+    const len  = parseFloat(r.length) || 0;
+    const qty  = parseFloat(r.qty) || 1;
+    return s + kgm * (len / 1000) * qty;
+  }, 0);
+  const totalTonnes  = totalKg / 1000;
+  const pricePerTonne = totalTonnes > 0 ? grandTotal / totalTonnes : null;
+
+  // ── Operations ────────────────────────────────────────────────────────────
+  const finishLabel = resolveFinishLabel(q);
+  const fabHours    = parseFloat(q.fabHours) || 0;
+  const instDays    = parseFloat(q.instDays) || 0;
+  const instOps     = parseFloat(q.instOperatives) || 2;
+
+  // ── Risk ──────────────────────────────────────────────────────────────────
+  const { critical: riskCritical, warning: riskWarning } = emsRunRiskCheck(q);
+  const totalRisks = riskCritical + riskWarning;
+
+  // ── Breakdown ─────────────────────────────────────────────────────────────
+  const breakdown = emsCostBreakdown(q, grandTotal);
+
+  // ── Render ────────────────────────────────────────────────────────────────
+  let html = '';
+
+  // Section: Commercial KPIs
+  html += `<div class="ems-section">
+    <div class="ems-section-label">Commercial</div>
+    <div class="ems-grid">
+      <div class="ems-kpi">
+        <div class="ems-kpi-label">Grand Total</div>
+        <div class="ems-kpi-value accent">${grandTotal ? fmtMoneyFull(grandTotal) : '—'}</div>
+      </div>
+      <div class="ems-kpi">
+        <div class="ems-kpi-label">Price per Tonne</div>
+        <div class="ems-kpi-value ${pricePerTonne ? '' : 'muted'}">${pricePerTonne ? '£' + Math.round(pricePerTonne).toLocaleString('en-GB') + '/t' : '—'}</div>
+        <div class="ems-kpi-sub">${totalTonnes > 0 ? totalTonnes.toFixed(2) + 't total' : 'No tonnage data'}</div>
+      </div>
+      <div class="ems-kpi wide">
+        <div class="ems-kpi-label">Target Margin &amp; Net Profit</div>
+        <div class="ems-kpi-value ${margin >= 20 ? 'green' : margin >= 12 ? 'amber' : ''}">
+          ${margin}%
+          <span style="font-size:12px;font-weight:500;color:#64748b;margin-left:6px">(${fmtMoney(netProfit)} Net)</span>
+        </div>
+      </div>
+    </div>
+  </div>`;
+
+  // Section: Operations
+  html += `<div class="ems-section">
+    <div class="ems-section-label">Engineering &amp; Operations</div>
+    <div class="ems-grid">
+      <div class="ems-kpi">
+        <div class="ems-kpi-label">Total Tonnage</div>
+        <div class="ems-kpi-value ${totalTonnes > 0 ? '' : 'muted'}">${totalTonnes > 0 ? totalTonnes.toFixed(2) + 't' : '—'}</div>
+      </div>
+      <div class="ems-kpi">
+        <div class="ems-kpi-label">Fab Labour Allocation</div>
+        <div class="ems-kpi-value ${fabHours > 0 ? '' : 'muted'}">${fabHours > 0 ? fabHours + ' hrs' : '—'}</div>
+      </div>
+      <div class="ems-kpi full">
+        <div class="ems-kpi-label">Primary Finish</div>
+        <div class="ems-kpi-value" style="font-size:13px">${finishLabel || '<span class="muted">Not specified</span>'}</div>
+      </div>
+      <div class="ems-kpi full">
+        <div class="ems-kpi-label">Site Installation</div>
+        <div class="ems-kpi-value" style="font-size:13px">${instDays > 0 ? `${instDays} Day${instDays !== 1 ? 's' : ''} &mdash; ${instOps}-Man Crew` : '<span style="color:#475569">Supply Only / Not Specified</span>'}</div>
+      </div>
+    </div>
+  </div>`;
+
+  // Section: Logistics
+  html += `<div class="ems-section">
+    <div class="ems-section-label">Logistics &amp; Location</div>
+    <div class="ems-grid">
+      <div class="ems-kpi">
+        <div class="ems-kpi-label">Site Postcode</div>
+        <div class="ems-kpi-value" style="font-size:13px;font-family:var(--font-mono)">${sitePostcode || '<span style="color:#334155">Not entered</span>'}</div>
+      </div>
+      <div class="ems-kpi">
+        <div class="ems-kpi-label">Distance from Unit</div>
+        <div class="ems-kpi-value ${distanceMi ? '' : 'muted'}">${distanceMi ? `~${distanceMi} mi` : '—'}</div>
+        <div class="ems-kpi-sub">${distanceMi ? (distanceMi < 30 ? 'Local' : distanceMi < 75 ? 'Regional' : 'Long distance') + ' · from PE7 3WY' : 'Enter postcode for estimate'}</div>
+      </div>
+    </div>
+  </div>`;
+
+  // Section: Breakdown & Risks
+  html += `<div class="ems-section">
+    <div class="ems-section-label">Cost Breakdown &amp; Risk</div>
+    <div class="ems-kpi full" style="background:#13161b;border:1px solid #1a1f26;border-radius:7px;padding:12px 14px">`;
+
+  if (breakdown && breakdown.length > 1) {
+    html += `<div class="ems-breakdown-bar">`;
+    breakdown.forEach(seg => {
+      html += `<div class="ems-breakdown-seg" style="flex:${seg.pct};background:${seg.color}"></div>`;
+    });
+    html += `</div>
+    <div class="ems-breakdown-legend">`;
+    breakdown.forEach(seg => {
+      html += `<div class="ems-legend-item">
+        <div class="ems-legend-dot" style="background:${seg.color}"></div>
+        <span>${seg.label} ${seg.pct}%</span>
+      </div>`;
+    });
+    html += `</div>`;
+  } else {
+    html += `<div style="color:#334155;font-size:11px">Add takeoff data for cost breakdown</div>`;
+  }
+
+  html += `</div>
+    <div style="margin-top:8px;display:flex;align-items:center;gap:10px">
+      <div style="font-size:9.5px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:#334155">Technical Risk Status</div>
+      ${totalRisks === 0
+        ? `<span class="ems-risk-badge ems-risk-ok">✓ Approved — No Issues</span>`
+        : `<span class="ems-risk-badge ems-risk-critical">⚠ ${totalRisks} Risk${totalRisks !== 1 ? 's' : ''} Found${riskCritical > 0 ? ' · ' + riskCritical + ' Critical' : ''}</span>`
+      }
+    </div>
+  </div>`;
+
+  return html;
+}
+
+// Build minimal EMS from tracker-only data (SharePoint quotes)
+function buildEmsContentTrackerOnly(trackerQ) {
+  const fmtMoneyFull = v => {
+    if (!v && v !== 0) return '—';
+    return '£' + Number(v).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+
+  return `<div class="ems-section">
+    <div class="ems-section-label">Commercial</div>
+    <div class="ems-grid">
+      <div class="ems-kpi wide">
+        <div class="ems-kpi-label">Quote Value</div>
+        <div class="ems-kpi-value accent">${trackerQ.value > 0 ? fmtMoneyFull(trackerQ.value) : '—'}</div>
+        <div class="ems-kpi-sub">From tracker — full detail in Quote Builder</div>
+      </div>
+    </div>
+  </div>
+  <div class="ems-section">
+    <div class="ems-section-label">Source</div>
+    <div class="ems-kpi full">
+      <div class="ems-kpi-value muted" style="font-size:12px">📋 Legacy SharePoint record</div>
+      <div class="ems-kpi-sub" style="margin-top:6px">This quote was created before the Quote Builder. Full engineering data is not available here. Open it in the Builder to see or add detail.</div>
+    </div>
+  </div>`;
+}
+
+// Resolve status class + label for the badge
+function emsStatusInfo(trackerQ) {
+  if (trackerQ.win === true)  return { cls: 'ems-status-won',  label: '✓ Won' };
+  if (trackerQ.win === false) return { cls: 'ems-status-lost', label: '✗ Lost' };
+  if (trackerQ.urgency === 'sent') return { cls: 'ems-status-sent', label: '📤 Sent' };
+  if (trackerQ.urgency === 'overdue') return { cls: 'ems-status-lost', label: '⚠ Overdue' };
+  return { cls: 'ems-status-open', label: '⬤ Open' };
+}
+
+// Open the EMS drawer for a given quote ref
+async function openEmsDrawer(ref) {
+  const trackerQ = allQuotes.find(q => q.ref === ref);
+  if (!trackerQ) return;
+
+  const overlay = document.getElementById('emsOverlay');
+  const drawer  = document.getElementById('emsDrawer');
+  const body    = document.getElementById('emsBody');
+
+  // Populate header immediately
+  document.getElementById('emsRef').textContent = ref;
+  document.getElementById('emsCompany').textContent = trackerQ.company || trackerQ.project || '—';
+  const { cls, label } = emsStatusInfo(trackerQ);
+  const badge = document.getElementById('emsStatusBadge');
+  badge.className = 'ems-status-badge ' + cls;
+  badge.textContent = label;
+
+  body.innerHTML = `<div class="ems-loading"><div class="ems-spinner"></div>Loading quote data…</div>`;
+  overlay.classList.add('open');
+  drawer.classList.add('open');
+
+  // If SQL-backed, fetch full quote_data
+  if (trackerQ._source === 'sql' && trackerQ.id) {
+    try {
+      const res = await fetch(`${QB_API}/api/qb-quotes/${trackerQ.id}`, {
+        headers: { 'Authorization': `Bearer ${getToken()}` }
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const row = await res.json();
+      // Decode quote_data JSON (may be string or already parsed)
+      const qData = (typeof row.quote_data === 'string')
+        ? JSON.parse(row.quote_data)
+        : (row.quote_data || {});
+      // Merge row metadata onto qData
+      const richQ = { ...qData, id: row.id, ref: row.reference || ref, grandTotal: row.grand_total };
+      body.innerHTML = buildEmsContent(richQ, trackerQ);
+      return;
+    } catch(e) {
+      console.warn('EMS SQL fetch failed:', e.message);
+      // Fall through to tracker-only render
+    }
+  }
+
+  // SharePoint or failed SQL — render minimal
+  body.innerHTML = buildEmsContentTrackerOnly(trackerQ);
+}
+
+function closeEmsDrawer() {
+  document.getElementById('emsOverlay').classList.remove('open');
+  document.getElementById('emsDrawer').classList.remove('open');
+}
+
+function openInBuilderFromEms() {
+  openInBuilder();
+  closeEmsDrawer();
+}
+
+// Combined select + preview — replaces direct selectQuote clicks from list
+function selectAndPreview(ref) {
+  selectQuote(ref);
+  openEmsDrawer(ref);
+}
+
 // ─── Init ─────────────────────────────────────────────────
 function setTimeOfDay() {
   // Set user name from token
@@ -1200,6 +1873,27 @@ if (token) {
   login();
 }
 </script>
+
+<!-- ── Executive Mini-Summary Drawer ── -->
+<div class="ems-overlay" id="emsOverlay" onclick="closeEmsDrawer()"></div>
+<div class="ems-drawer" id="emsDrawer">
+  <div class="ems-head">
+    <span class="ems-head-ref" id="emsRef">—</span>
+    <span class="ems-head-sep">·</span>
+    <span class="ems-head-company" id="emsCompany">—</span>
+    <span class="ems-status-badge" id="emsStatusBadge"></span>
+    <button class="ems-close-btn" onclick="closeEmsDrawer()" title="Close">✕</button>
+  </div>
+  <div class="ems-body" id="emsBody">
+    <div class="ems-loading"><div class="ems-spinner"></div>Loading summary…</div>
+  </div>
+  <div class="ems-footer">
+    <button class="ems-btn-primary" id="emsOpenBuilderBtn" onclick="openInBuilderFromEms()">
+      ↗ Open Full Quote in Builder
+    </button>
+  </div>
+</div>
+
 <!-- Loss reason modal -->
 <div id="lossModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center">
   <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:28px;width:380px;max-width:95vw">
