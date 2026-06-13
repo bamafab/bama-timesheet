@@ -2454,120 +2454,129 @@ tr.drag-dragging { opacity:0.35; }
   </div>
 </div>
 
-<div class="modal-overlay" id="settingsModal">
-  <div class="modal" style="max-width:560px">
-    <div class="modal-title">⚙ Default Rates</div>
-    <p style="font-size:12px;color:var(--muted);margin-bottom:16px">Click a tile to expand. These are defaults when adding items — override per quote any time.</p>
+<!-- ═══════════════════ RATES DRAWER ═══════════════════ -->
+<div id="ratesOverlay" onclick="closeSettings()"
+  style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:800;backdrop-filter:blur(2px)"></div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+<div id="ratesDrawer"
+  style="display:none;position:fixed;top:0;right:0;bottom:0;width:420px;
+         background:var(--card);border-left:1px solid var(--border);z-index:801;
+         flex-direction:column;box-shadow:-8px 0 32px rgba(0,0,0,0.4);overflow:hidden">
 
-      <div class="settings-tile" id="tile-labour">
-        <div class="settings-tile-header" onclick="toggleSettingsTile('labour')">
-          <span>👷 Labour</span><span class="settings-tile-count" id="count-labour"></span><span class="settings-tile-chevron">▾</span>
-        </div>
-        <div class="settings-tile-body" id="body-labour" style="display:none">
-          <div style="font-size:10px;color:var(--muted);margin-bottom:6px">£ per day</div>
-          <div id="settingsLabour"></div>
-        </div>
+  <!-- Header -->
+  <div style="padding:16px 20px;border-bottom:1px solid var(--border);
+              display:flex;align-items:center;gap:12px;flex-shrink:0;background:var(--surface)">
+    <div style="flex:1">
+      <div style="font-size:15px;font-weight:700;color:var(--text)">⚙ Default Rates</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:1px">
+        Defaults when adding items — override per quote any time
       </div>
-
-      <div class="settings-tile" id="tile-plant">
-        <div class="settings-tile-header" onclick="toggleSettingsTile('plant')">
-          <span>🏗 Plant & Equipment</span><span class="settings-tile-count" id="count-plant"></span><span class="settings-tile-chevron">▾</span>
-        </div>
-        <div class="settings-tile-body" id="body-plant" style="display:none">
-          <div style="font-size:10px;color:var(--muted);margin-bottom:6px">£ per day</div>
-          <div id="settingsPlant"></div>
-        </div>
-      </div>
-
-      <div class="settings-tile" id="tile-fab">
-        <div class="settings-tile-header" onclick="toggleSettingsTile('fab')">
-          <span>🔧 Fabrication</span><span class="settings-tile-count" id="count-fab"></span><span class="settings-tile-chevron">▾</span>
-        </div>
-        <div class="settings-tile-body" id="body-fab" style="display:none">
-          <div style="font-size:10px;color:var(--muted);margin-bottom:6px">£ per hour</div>
-          <div id="settingsFab"></div>
-        </div>
-      </div>
-
-      <div class="settings-tile" id="tile-material">
-        <div class="settings-tile-header" onclick="toggleSettingsTile('material')">
-          <span>🧱 Material</span><span class="settings-tile-count" id="count-material"></span><span class="settings-tile-chevron">▾</span>
-        </div>
-        <div class="settings-tile-body" id="body-material" style="display:none">
-          <div style="font-size:10px;color:var(--muted);margin-bottom:6px">£ per kg by section type</div>
-          <div id="settingsMaterial"></div>
-        </div>
-      </div>
-
-      <div class="settings-tile" id="tile-delivery">
-        <div class="settings-tile-header" onclick="toggleSettingsTile('delivery')">
-          <span>🚛 Delivery</span><span class="settings-tile-count" id="count-delivery"></span><span class="settings-tile-chevron">▾</span>
-        </div>
-        <div class="settings-tile-body" id="body-delivery" style="display:none">
-          <div style="font-size:10px;color:var(--muted);margin-bottom:6px">£ per load</div>
-          <div id="settingsDelivery"></div>
-        </div>
-      </div>
-
-      <div class="settings-tile" id="tile-prelims">
-        <div class="settings-tile-header" onclick="toggleSettingsTile('prelims')">
-          <span>📋 Prelims</span><span class="settings-tile-count" id="count-prelims"></span><span class="settings-tile-chevron">▾</span>
-        </div>
-        <div class="settings-tile-body" id="body-prelims" style="display:none">
-          <div style="font-size:10px;color:var(--muted);margin-bottom:6px">£ lump sum defaults</div>
-          <div id="settingsPrelims"></div>
-        </div>
-      </div>
-
-      <div class="settings-tile" id="tile-consumables">
-        <div class="settings-tile-header" onclick="toggleSettingsTile('consumables')">
-          <span>🔩 Consumables</span><span class="settings-tile-count" id="count-consumables"></span><span class="settings-tile-chevron">▾</span>
-        </div>
-        <div class="settings-tile-body" id="body-consumables" style="display:none">
-          <div style="font-size:10px;color:var(--muted);margin-bottom:6px">£ lump sum defaults</div>
-          <div id="settingsConsumables"></div>
-        </div>
-      </div>
-
-      <div class="settings-tile" id="tile-survey">
-        <div class="settings-tile-header" onclick="toggleSettingsTile('survey')">
-          <span>📏 Survey</span><span class="settings-tile-count" id="count-survey"></span><span class="settings-tile-chevron">▾</span>
-        </div>
-        <div class="settings-tile-body" id="body-survey" style="display:none">
-          <div style="font-size:10px;color:var(--muted);margin-bottom:6px">£ per visit/day</div>
-          <div id="settingsSurvey"></div>
-        </div>
-      </div>
-
-      <div class="settings-tile" id="tile-paint">
-        <div class="settings-tile-header" onclick="toggleSettingsTile('paint')">
-          <span>🎨 Painting</span><span class="settings-tile-count" id="count-paint"></span><span class="settings-tile-chevron">▾</span>
-        </div>
-        <div class="settings-tile-body" id="body-paint" style="display:none">
-          <div style="font-size:10px;color:var(--muted);margin-bottom:6px">rates by finish type</div>
-          <div id="settingsPaint"></div>
-        </div>
-      </div>
-
-      <div class="settings-tile" id="tile-design">
-        <div class="settings-tile-header" onclick="toggleSettingsTile('design')">
-          <span>📐 Design</span><span class="settings-tile-count" id="count-design"></span><span class="settings-tile-chevron">▾</span>
-        </div>
-        <div class="settings-tile-body" id="body-design" style="display:none">
-          <div style="font-size:10px;color:var(--muted);margin-bottom:6px">£ per hour</div>
-          <div id="settingsDesign"></div>
-        </div>
-      </div>
-
     </div>
-
-    <div class="modal-actions">
-      <button class="btn btn-ghost" onclick="closeSettings()">Cancel</button>
-      <button class="btn btn-primary" onclick="saveSettings()">Save Rates</button>
-    </div>
+    <button onclick="closeSettings()"
+      style="background:none;border:1px solid var(--border);border-radius:6px;color:var(--muted);
+             cursor:pointer;font-size:16px;width:30px;height:30px;display:flex;align-items:center;justify-content:center"
+      title="Close">✕</button>
   </div>
+
+  <!-- Scrollable body — all sections expanded, no accordion needed -->
+  <div style="flex:1;overflow-y:auto;padding:16px 20px;scrollbar-width:thin;scrollbar-color:#333 transparent">
+
+    <div class="rd-section">
+      <div class="rd-head">👷 Labour <span class="rd-count" id="count-labour"></span></div>
+      <div class="rd-sub">£ per operative per day</div>
+      <div id="settingsLabour"></div>
+    </div>
+
+    <div class="rd-section">
+      <div class="rd-head">🏗 Plant &amp; Equipment <span class="rd-count" id="count-plant"></span></div>
+      <div class="rd-sub">£ per day</div>
+      <div id="settingsPlant"></div>
+    </div>
+
+    <div class="rd-section">
+      <div class="rd-head">🔧 Fabrication <span class="rd-count" id="count-fab"></span></div>
+      <div class="rd-sub">£ per hour</div>
+      <div id="settingsFab"></div>
+    </div>
+
+    <div class="rd-section">
+      <div class="rd-head">🧱 Material <span class="rd-count" id="count-material"></span></div>
+      <div class="rd-sub">£ per kg by section type</div>
+      <div id="settingsMaterial"></div>
+    </div>
+
+    <div class="rd-section">
+      <div class="rd-head">🚛 Delivery <span class="rd-count" id="count-delivery"></span></div>
+      <div class="rd-sub">£ per load</div>
+      <div id="settingsDelivery"></div>
+    </div>
+
+    <div class="rd-section">
+      <div class="rd-head">📋 Prelims <span class="rd-count" id="count-prelims"></span></div>
+      <div class="rd-sub">£ lump sum defaults</div>
+      <div id="settingsPrelims"></div>
+    </div>
+
+    <div class="rd-section">
+      <div class="rd-head">🔩 Consumables <span class="rd-count" id="count-consumables"></span></div>
+      <div class="rd-sub">£ lump sum defaults</div>
+      <div id="settingsConsumables"></div>
+    </div>
+
+    <div class="rd-section">
+      <div class="rd-head">📏 Survey <span class="rd-count" id="count-survey"></span></div>
+      <div class="rd-sub">£ per visit / day</div>
+      <div id="settingsSurvey"></div>
+    </div>
+
+    <div class="rd-section">
+      <div class="rd-head">🎨 Painting &amp; Finishing <span class="rd-count" id="count-paint"></span></div>
+      <div class="rd-sub">rates by finish type</div>
+      <div id="settingsPaint"></div>
+    </div>
+
+    <div class="rd-section" style="margin-bottom:0">
+      <div class="rd-head">📐 Design <span class="rd-count" id="count-design"></span></div>
+      <div class="rd-sub">£ per hour</div>
+      <div id="settingsDesign"></div>
+    </div>
+
+  </div>
+
+  <!-- Footer -->
+  <div style="padding:14px 20px;border-top:1px solid var(--border);
+              display:flex;justify-content:flex-end;gap:10px;flex-shrink:0;background:var(--surface)">
+    <button class="btn btn-ghost" onclick="closeSettings()">Cancel</button>
+    <button class="btn btn-primary" onclick="saveSettings()">Save Rates</button>
+  </div>
+</div>
+
+<style>
+.rd-section {
+  margin-bottom: 20px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+.rd-head {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 3px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.rd-count {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.rd-sub {
+  font-size: 10px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+</style>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -7525,9 +7534,13 @@ function bamaPrompt(msg, placeholder='', title='Enter value') {
 
 function openSettings() {
   renderSettingsForm();
-  document.getElementById('settingsModal').classList.add('active');
+  document.getElementById('ratesDrawer').style.display  = 'flex';
+  document.getElementById('ratesOverlay').style.display = 'block';
 }
-function closeSettings() { document.getElementById('settingsModal').classList.remove('active'); }
+function closeSettings() {
+  document.getElementById('ratesDrawer').style.display  = 'none';
+  document.getElementById('ratesOverlay').style.display = 'none';
+}
 
 function settingsRateRow(category, key, def) {
   return `<div class="settings-rate-grid">
@@ -7564,14 +7577,7 @@ function renderSettingsForm() {
   });
 }
 
-function toggleSettingsTile(name) {
-  const tile = document.getElementById('tile-'+name);
-  const body = document.getElementById('body-'+name);
-  if (!tile || !body) return;
-  const open = body.style.display !== 'none';
-  body.style.display = open ? 'none' : '';
-  tile.classList.toggle('open', !open);
-}
+// toggleSettingsTile removed — rates drawer shows all sections expanded
 
 function saveSettings() {
   ['labour','plant','fab','material','delivery','prelims','consumables','survey','paint','design'].forEach(cat => {
@@ -11703,8 +11709,10 @@ function showHelpSection(key) {
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
-    const d = document.getElementById('helpDrawer');
-    if (d && d.style.display === 'flex') closeHelp();
+    const h = document.getElementById('helpDrawer');
+    if (h && h.style.display === 'flex') { closeHelp(); return; }
+    const r = document.getElementById('ratesDrawer');
+    if (r && r.style.display === 'flex') closeSettings();
   }
 });
 
