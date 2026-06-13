@@ -2255,6 +2255,16 @@ tr.drag-dragging { opacity:0.35; }
             <div class="wiz-tile" data-finish="blast_clean" onclick="wizToggleFinish(this)">Blast Clean<br><span style="font-size:10px;color:var(--muted)">SA2.5 before coating</span></div>
             <div class="wiz-tile" data-finish="none" onclick="wizToggleFinish(this)">None / By Others</div>
           </div>
+          <!-- Galvanizing plant selector — shown when galvanise finish is active -->
+          <div id="wiz-galvanizer-wrap" style="display:none;margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
+            <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:6px">&#127981; Galvanizing Plant</label>
+            <select id="wiz-galvanizer-select"
+              onchange="wizGalvanizerChange(this.value)"
+              style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:12px;font-family:var(--font-mono)">
+              <option value="premier_corby">Premier Galvanizing Corby (Max 13.0m, Max 4.0t)</option>
+              <option value="east_anglian_wedge">East Anglian Galvanising – Wedge Group (Max 7.6m, Max 3.0t)</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -3395,7 +3405,8 @@ async function newQuote() {
     purlinM: 0, purlinRate: 0,
     margin: 20, showDeposit: false, depositPct: 60,
     standardLines: getDefaultStandardLines(),
-    customLines: []
+    customLines: [],
+    galvanizer: 'premier_corby'
   };
   try {
     const row = await qbFetch('POST', '/api/qb-quotes', {
@@ -5026,6 +5037,26 @@ function fmt(n) { return '£'+n.toFixed(2); }
 // Called at end of recalcAll() — pure function, no side-effects except DOM render.
 // ============================================================
 
+// ── Galvanizing plant capacity registry ─────────────────────────────────────
+// Keyed by the value stored in q.galvanizer.
+// maxLenMM   : absolute bath length limit — structural splicing is mandatory
+// maxWeightKg : crane lifting capacity — splicing or alternative plant required
+// warnLenMM  : early-warning threshold — verify diagonal clearance / venting
+const GALV_PLANTS = {
+  premier_corby: {
+    name:        'Premier Galvanizing Corby',
+    maxLenMM:    13000,
+    maxWeightKg: 4000,
+    warnLenMM:   12000
+  },
+  east_anglian_wedge: {
+    name:        'East Anglian Galvanising – Wedge Group',
+    maxLenMM:    7600,
+    maxWeightKg: 3000,
+    warnLenMM:   7000
+  }
+};
+
 function validateTechnicalRisks(q, C) {
   if (!q) return [];
   const alerts = [];
@@ -5172,6 +5203,51 @@ function validateTechnicalRisks(q, C) {
                `No safety netting or edge protection found in Prelims / Plant. ` +
                `Ensure these are factored in or explicitly excluded per CDM 2015.`
     });
+  }
+
+  // ── Rule 5: Galvanizing plant bath & crane capacity ─────
+  // Fires for any takeoff row where finish = 'galv' (Hot-dip Galvanising).
+  // Plant limits are read from GALV_PLANTS using q.galvanizer (default: premier_corby).
+  const galvPlant = GALV_PLANTS[q.galvanizer] || GALV_PLANTS['premier_corby'];
+  const galvRows = takeoff.filter(row => (row.finish || '').toLowerCase() === 'galv');
+
+  for (let i = 0; i < galvRows.length; i++) {
+    // Find the original index in the full takeoff array for consistent row numbering
+    const row    = galvRows[i];
+    const rowIdx = takeoff.indexOf(row);
+    const lenMM  = parseFloat(row.length) || 0;
+    const singleKg = rowSingleKg(row);
+    const rowNum = rowIdx + 1;
+
+    // CRITICAL — single member weight exceeds crane lifting capacity
+    if (singleKg > 0 && singleKg > galvPlant.maxWeightKg) {
+      alerts.push({
+        type: 'critical',
+        rule: 'galv-weight',
+        message: `Row ${rowNum}: Single member weight (<strong>${Math.round(singleKg).toLocaleString('en-GB')} kg</strong>) ` +
+                 `exceeds selected plant crane lifting capacity (${galvPlant.maxWeightKg.toLocaleString('en-GB')} kg). ` +
+                 `Splicing or alternative heavy-duty galvanizer required.`
+      });
+    }
+
+    // CRITICAL — element length exceeds bath size
+    if (lenMM > galvPlant.maxLenMM) {
+      alerts.push({
+        type: 'critical',
+        rule: 'galv-length',
+        message: `Row ${rowNum}: Element length (<strong>${lenMM.toLocaleString('en-GB')} mm</strong>) ` +
+                 `exceeds selected plant bath size (${galvPlant.maxLenMM.toLocaleString('en-GB')} mm). ` +
+                 `Structural splicing is mandatory.`
+      });
+    } else if (lenMM > galvPlant.warnLenMM) {
+      // WARNING — length close to bath limits but within range
+      alerts.push({
+        type: 'warning',
+        rule: 'galv-length-warn',
+        message: `Row ${rowNum}: Element length is close to bath limits. ` +
+                 `Verify diagonal clearance / venting hole positions with the plant.`
+      });
+    }
   }
 
   return alerts;
@@ -6173,6 +6249,14 @@ function openWizard(q) {
   if (!finishMatched) {
     document.querySelector('[data-finish="primer_tonne"]')?.classList.add('active');
   }
+  // Restore galvanizer plant selection from quote state
+  const galvSel = document.getElementById('wiz-galvanizer-select');
+  if (galvSel) galvSel.value = q.galvanizer || 'premier_corby';
+  const galvWrap = document.getElementById('wiz-galvanizer-wrap');
+  if (galvWrap) {
+    const isGalvActive = !!document.querySelector('#wiz-finish-tiles [data-finish="galvanise"].active');
+    galvWrap.style.display = isGalvActive ? 'block' : 'none';
+  }
   document.querySelectorAll('#wiz-survey-tiles .wiz-tile').forEach(t => t.classList.remove('active'));
   document.querySelector('[data-survey="no"]')?.classList.add('active');
   document.getElementById('wiz-survey-visits-wrap').style.display = 'none';
@@ -6428,6 +6512,18 @@ function wizToggleFinish(el) {
     el.classList.toggle('active');
   }
   wizUpdateFinishBadge();
+  // Show/hide galvanizer plant selector based on whether galvanise is selected
+  const galvActive = !!document.querySelector('#wiz-finish-tiles [data-finish="galvanise"].active');
+  const wrap = document.getElementById('wiz-galvanizer-wrap');
+  if (wrap) wrap.style.display = galvActive ? 'block' : 'none';
+}
+
+function wizGalvanizerChange(value) {
+  const q = getQuote();
+  if (q) { q.galvanizer = value; saveAll(); }
+  // Re-run technical risk validation immediately
+  const q2 = getQuote();
+  if (q2) renderTechRiskAlerts(validateTechnicalRisks(q2, q2._computed));
 }
 
 function wizSelectSurvey(el) {
@@ -6854,6 +6950,10 @@ function applyWizard() {
   set('design-hours', q.designHours);
   set('fabpack-hours', q.fabpackHours);
   const gtEl = document.getElementById('globalDaysToggle'); if (gtEl) gtEl.checked = true;
+
+  // ── Galvanizer plant ─────────────────────────────────────
+  const galvSel = document.getElementById('wiz-galvanizer-select');
+  if (galvSel) q.galvanizer = galvSel.value;
 
   saveAll();
   renderLabourRows(); renderPlantRows(); renderDeliveryRows();
