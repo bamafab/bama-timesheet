@@ -3121,11 +3121,15 @@ function computeQuoteTotals(quote, ratesObj) {
 
   // ── Apply N/A blocks ─────────────────────────────────────
   const na = quote.blockNA || {};
+  // NOTE: painting (non-galv finishes) and galvanising are split during
+  // computation for line-item reporting, but both feed the same N/A gate
+  // ('painting' block covers all surface finishing incl. galvanising).
   const subtotal = [
     na.installation ? 0 : installation,
     na.fabrication  ? 0 : fabrication,
     na.design       ? 0 : design,
     na.painting     ? 0 : painting,
+    na.painting     ? 0 : galvanising,   // galvanising is part of 'painting' block
     na.survey       ? 0 : survey,
     na.delivery     ? 0 : delivery,
     na.prelims      ? 0 : prelims,
@@ -5784,7 +5788,7 @@ function recalcAll() {
   // block totals
   document.getElementById('total-installation').textContent = fmt(installation);
   document.getElementById('total-fabrication').textContent  = fmt(fabrication);
-  document.getElementById('total-painting').textContent     = fmt(painting);
+  document.getElementById('total-painting').textContent     = fmt(painting + galvanising);
   document.getElementById('total-survey').textContent       = fmt(survey);
   document.getElementById('total-delivery').textContent     = fmt(delivery);
   document.getElementById('total-prelims').textContent      = fmt(prelims);
@@ -5817,7 +5821,7 @@ function recalcAll() {
   document.getElementById('sum-installation').textContent = fmt(installation);
   document.getElementById('sum-fabrication').textContent  = fmt(fabrication);
   document.getElementById('sum-design').textContent       = fmt(design);
-  document.getElementById('sum-painting').textContent     = fmt(painting);
+  document.getElementById('sum-painting').textContent     = fmt(painting + galvanising);
   document.getElementById('sum-survey').textContent       = fmt(survey);
   document.getElementById('sum-delivery').textContent     = fmt(delivery);
   document.getElementById('sum-prelims').textContent      = fmt(prelims);
@@ -5867,7 +5871,7 @@ function recalcAll() {
   const _q=getQuote();
   if(_q){
     const _na=_q.blockNA||{};
-    updateCostBars([['Material',_na.material?0:material],['Installation',_na.installation?0:installation],['Fabrication',_na.fabrication?0:fabrication],['Design',_na.design?0:design],['Painting',_na.painting?0:painting],['Survey',_na.survey?0:survey],['Delivery',_na.delivery?0:delivery],['Prelims',_na.prelims?0:prelims]]);
+    updateCostBars([['Material',_na.material?0:material],['Installation',_na.installation?0:installation],['Fabrication',_na.fabrication?0:fabrication],['Design',_na.design?0:design],['Painting / Finishing',_na.painting?0:(painting+galvanising)],['Survey',_na.survey?0:survey],['Delivery',_na.delivery?0:delivery],['Prelims',_na.prelims?0:prelims]]);
     const _fh=parseFloat(document.getElementById('fab-hours')?.value)||0;
     const _id2=parseFloat(document.getElementById('inst-days')?.value)||0;
     const _kg=totalTakeoffKg(),_t=_kg/1000;
