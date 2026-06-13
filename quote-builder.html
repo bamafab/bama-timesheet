@@ -6748,12 +6748,12 @@ function wizUpdateSurveyBadge() {
 function wizUpdateFinishBadge() {
   const active = [...document.querySelectorAll('#wiz-finish-tiles .wiz-tile.active')].filter(t => t.dataset.finish !== 'none');
   const el = document.getElementById('wiz-badge-finish');
-  if (el) el.textContent = active.length ? active.map(t => t.textContent.split('\n')[0].trim()).join(', ') : 'None';
+  if (el) el.textContent = active.length ? active.map(t => (t.firstChild?.textContent || t.textContent).trim()).join(', ') : 'None';
 }
 function wizUpdateDeliveryBadge() {
   const active = document.querySelector('#wiz-delivery-tiles .wiz-tile.active');
   const el = document.getElementById('wiz-badge-delivery');
-  if (el) el.textContent = active?.textContent.split('\n')[0].trim() || 'Auto';
+  if (el) el.textContent = active ? (active.firstChild?.textContent || active.textContent).trim() : 'Auto';
 }
 function wizUpdateFixingsBadge() {
   const enabled = document.getElementById('wiz-fixings-enabled')?.checked;
@@ -6764,12 +6764,12 @@ function wizUpdateFixingsBadge() {
 function wizUpdateDesignBadge() {
   const active = document.querySelector('#wiz-design-tiles .wiz-tile.active');
   const el = document.getElementById('wiz-badge-design');
-  if (el) el.textContent = active?.textContent.split('\n')[0].trim() || 'Fab Pack only';
+  if (el) el.textContent = active ? (active.firstChild?.textContent || active.textContent).trim() : 'Fab Pack only';
 }
 function wizUpdatePrelimsBadge() {
   const active = [...document.querySelectorAll('#wiz-prelim-tiles .wiz-tile.active')];
   const el = document.getElementById('wiz-badge-prelims');
-  if (el) el.textContent = active.length ? active.map(t => t.textContent.split('\n')[0].trim()).join(', ') : 'None';
+  if (el) el.textContent = active.length ? active.map(t => (t.firstChild?.textContent || t.textContent).trim()).join(', ') : 'None';
 }
 
 function wizUpdateDesignPreview() {
