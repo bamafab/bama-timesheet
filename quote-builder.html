@@ -3500,7 +3500,6 @@ async function newQuote() {
 function getDefaultStandardLines() {
   return [
     { key: 'prelims',         desc: 'Prelims',                       qty: 1, price: 0 },
-    { key: 'approval_fab',    desc: 'Approval and Fabrication Pack', qty: 1, price: 0 },
     { key: 'survey',          desc: 'Survey',                        qty: 1, price: 0 },
     { key: 'material',        desc: 'Material cost',                 qty: 1, price: 0 },
     { key: 'fabrication',     desc: 'Fabrication',                   qty: 1, price: 0 },
@@ -3833,6 +3832,26 @@ function loadQuoteEditor() {
   const q = getQuote(); if (!q) return;
   document.getElementById('emptyState').style.display = 'none';
   document.getElementById('quoteEditor').style.display = '';
+
+  // ── standardLines migration guard ────────────────────────────────────────
+  // Ensures quotes saved before schema fixes have all required line keys.
+  if (q.standardLines) {
+    const REQUIRED_KEYS = ['prelims','survey','material','fabrication',
+                           'design','painting','galvanising','installation','delivery'];
+    const DESCS = { prelims:'Prelims', survey:'Survey', material:'Material cost',
+                    fabrication:'Fabrication', design:'Design',
+                    painting:'Painting / Finishing', galvanising:'Galvanising',
+                    installation:'Installation', delivery:'Delivery' };
+    const existing = new Set(q.standardLines.map(l => l.key));
+    // Add any missing keys
+    REQUIRED_KEYS.forEach(k => {
+      if (!existing.has(k)) {
+        q.standardLines.push({ key: k, desc: DESCS[k] || k, qty: 1, price: 0 });
+      }
+    });
+    // Remove the dead 'approval_fab' key (was never mapped, always £0)
+    q.standardLines = q.standardLines.filter(l => l.key !== 'approval_fab');
+  }
 
   // Restore saved helper analysis if present
   if (q.helperAnalysis) {
@@ -5846,14 +5865,17 @@ function recalcAll() {
   // auto-fill standard lines from calcs
   if (q?.type === 'bama' && q.standardLines) {
     q.standardLines.forEach(l => {
-      if (l.key === 'material')        l.price = material;
-      else if (l.key === 'fabrication') l.price = fabrication;
-      else if (l.key === 'design')      l.price = design;
-      else if (l.key === 'painting')    l.price = painting;
-      else if (l.key === 'galvanising') l.price = galvanising;
+      if      (l.key === 'material')     l.price = material;
+      else if (l.key === 'fabrication')  l.price = fabrication;
+      else if (l.key === 'design')       l.price = design;
+      else if (l.key === 'painting')     l.price = painting;
+      else if (l.key === 'galvanising')  l.price = galvanising;
       else if (l.key === 'installation') l.price = installation;
-      else if (l.key === 'delivery')    l.price = delivery;
-      else if (l.key === 'prelims')     l.price = prelims;
+      else if (l.key === 'delivery')     l.price = delivery;
+      else if (l.key === 'prelims')      l.price = prelims;
+      else if (l.key === 'survey')       l.price = survey;
+      // 'approval_fab' intentionally omitted: fabpack cost is
+      // already included inside 'fabrication' — no double-count.
     });
     renderQuotationLines();
   }
