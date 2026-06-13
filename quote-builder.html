@@ -10793,6 +10793,11 @@ function generateHandoverPack() {
       ).join('') + `<tr style="font-weight:700;border-top:2px solid #1a1a2e"><td>TOTAL</td><td style="text-align:right">${(totalKgAll/1000).toFixed(3)}t</td><td></td></tr>`
     : '<tr><td colspan="3" style="color:#888;font-style:italic">No takeoff data</td></tr>';
 
+  // Aliases — the redesigned HP template uses these names (consistent with generateQuotePDF)
+  const tkTotalKg   = totalKgAll;
+  const tkTotalCost = (q.takeoff||[]).reduce((s,r) =>
+    s + (parseFloat(r.length)||0)/1000 * (parseFloat(r.kgm)||0) * (parseFloat(r.qty)||1) * (parseFloat(r.rate)||0), 0);
+
   // ── Exclusions / T&Cs ──
   const exclusions = (q.projectTCs || '').trim();
   const exclusionsHTML = exclusions
