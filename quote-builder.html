@@ -9804,6 +9804,107 @@ document.addEventListener('click', e => {
   }
 });
 
+// ── T&C / Exclusions / Clarifications HTML builder ──────────────────────────
+// Single source of truth for all three document types:
+// client quote, cost breakdown, and handover pack.
+// Produces identical three-section layout in every document.
+function buildTcHtml(q) {
+  function _stripMarkers(s) {
+    return (s || '').replace(/\[\s*[X?✓\s]\s*\]/gi, '').replace(/^[-•*]\s*/gm, '').trim();
+  }
+
+  const _ha            = q.helperAnalysis || null;
+  const _haTcNotes     = (_ha?.tc_notes || []).filter(t => t.heading || t.text);
+  const _projectTCsRaw = (q.projectTCs || '').trim();
+
+  // Section 01 — Project Specific Clarifications
+  let _s1Rows = '';
+  if (_haTcNotes.length) {
+    _s1Rows = _haTcNotes.map(t => {
+      const heading = _stripMarkers(t.heading || 'Note');
+      const text    = _stripMarkers(t.text    || '');
+      if (!heading && !text) return '';
+      return `
+        <div style="margin-bottom:9px;padding:9px 12px;background:#fafbff;
+                    border-left:3px solid #1a1a2e;border-radius:0 4px 4px 0">
+          <div style="font-size:9.5px;font-weight:700;color:#1a1a2e;
+                      text-transform:uppercase;letter-spacing:0.04em;margin-bottom:3px">
+            ${escHtml(heading)}
+          </div>
+          <div style="font-size:9.5px;color:#333;line-height:1.6">${escHtml(text)}</div>
+        </div>`;
+    }).filter(Boolean).join('');
+  } else if (_projectTCsRaw) {
+    _s1Rows = _projectTCsRaw
+      .split(/\n{2,}/)
+      .map(s => _stripMarkers(s))
+      .filter(Boolean)
+      .map(para => `
+        <div style="margin-bottom:8px;padding:8px 12px;background:#fafbff;
+                    border-left:3px solid #1a1a2e;border-radius:0 4px 4px 0;
+                    font-size:9.5px;color:#333;line-height:1.6;white-space:pre-wrap">
+          ${escHtml(para)}
+        </div>`).join('');
+  }
+
+  // Section 02 — Standard Exclusions
+  const _s2Rows = BAMA_EXCLUSIONS.map(e => `
+    <div style="display:flex;gap:10px;padding:4px 0;border-bottom:1px solid #f0f0f4;
+                font-size:9.5px;color:#333;line-height:1.5;align-items:flex-start">
+      <span style="flex-shrink:0;font-weight:700;color:#1a1a2e">—</span>
+      <span>${escHtml(e)}</span>
+    </div>`).join('');
+
+  // Section 03 — Commercial Terms & Conditions
+  const _s3Rows = BAMA_TC
+    .filter(tc => tc.h !== 'Exclusions')
+    .map(tc => `
+      <div style="margin-bottom:8px;padding:7px 0;
+                  border-bottom:1px solid #f0f0f4;font-size:9.5px;line-height:1.55">
+        <strong style="color:#1a1a2e">${escHtml(tc.h)}:</strong>
+        <span style="color:#444;margin-left:4px">${escHtml(tc.t)}</span>
+      </div>`).join('');
+
+  const _head = (num, title, colour) =>
+    `<div style="display:flex;align-items:baseline;gap:10px;
+                 margin:0 0 8px;padding:7px 10px;
+                 background:${colour};border-radius:3px">
+       <span style="font-size:9px;font-weight:900;color:#fff;
+                    letter-spacing:0.08em;white-space:nowrap">${num}</span>
+       <span style="font-size:10px;font-weight:800;color:#fff;
+                    text-transform:uppercase;letter-spacing:0.06em">${title}</span>
+     </div>`;
+
+  return `
+    <div style="margin-top:28px;padding-top:0;border-top:3px solid #1a1a2e">
+
+      <div style="margin-bottom:20px">
+        ${_head('01', 'Project Specific Clarifications', '#1a1a2e')}
+        ${!_s1Rows
+          ? `<div style="padding:10px 12px;font-size:9.5px;color:#888;
+                         font-style:italic;border-left:2px solid #ddd;margin-left:2px">
+               No project-specific clarifications noted. Run Quote Helper → T&amp;Cs
+               on the tender document to auto-populate this section.
+             </div>`
+          : _s1Rows}
+      </div>
+
+      <div style="margin-bottom:20px">
+        ${_head('02', 'Standard Exclusions', '#D0021B')}
+        <div style="padding:4px 2px">${_s2Rows}</div>
+        <div style="margin-top:6px;font-size:9px;color:#888;font-style:italic">
+          The above exclusions apply unless a line item explicitly includes them within the body of this quotation.
+        </div>
+      </div>
+
+      <div style="margin-bottom:8px">
+        ${_head('03', 'Commercial Terms &amp; Conditions', '#2c3e50')}
+        <div style="padding:4px 2px">${_s3Rows}</div>
+      </div>
+
+    </div>`;
+}
+
 function generateQuotePDF(mode = 'quote') {
   const q = getQuote();
   if (!q) { toast('No quote selected', 'error'); return; }
@@ -9851,130 +9952,7 @@ function generateQuotePDF(mode = 'quote') {
   // Section 1: Project Specific Clarifications
   //   Source A: q.helperAnalysis (structured AI output — preferred)
   //   Source B: q.projectTCs free-text fallback
-  // Section 2: Standard Exclusions (BAMA_EXCLUSIONS bullet list)
-  // Section 3: Commercial Terms & Conditions (BAMA_TC narrative)
-
-  // ── Section 1 data ───────────────────────────────────────────────────────
-  const _ha = q.helperAnalysis || null;
-  const _haTcNotes    = (_ha?.tc_notes      || []).filter(t => t.heading || t.text);
-  const _haExclusions = (_ha?.exclusions    || []).filter(Boolean);
-  const _haRisks      = (_ha?.contract_risks|| []).filter(r => r.risk);
-  const _projectTCsRaw = (q.projectTCs || '').trim();
-
-  // ── Section 01: Project Specific Clarifications ─────────────────────────
-  // Source priority:
-  //   A) q.helperAnalysis.tc_notes — structured AI-interpreted risk notes
-  //      (heading + explanatory text). These are the ONLY helperAnalysis
-  //      fields shown to the client. contract_risks and exclusions are
-  //      internal-only and never rendered in the client document.
-  //   B) q.projectTCs plain-text fallback — split on double newline.
-  // [X]/[?] checkbox markers and raw exclusion lists are stripped entirely.
-
-  // Strip any [X], [?], [✓], [ ] checkbox markers from a string
-  function _stripMarkers(s) {
-    return (s || '').replace(/\[\s*[X?✓\s]\s*\]/gi, '').replace(/^[-•*]\s*/gm, '').trim();
-  }
-
-  let _s1Rows = '';
-
-  if (_haTcNotes.length) {
-    // Source A: only tc_notes — interpreted, clean, suitable for client
-    _s1Rows = _haTcNotes.map(t => {
-      const heading = _stripMarkers(t.heading || 'Note');
-      const text    = _stripMarkers(t.text    || '');
-      if (!heading && !text) return '';
-      return `
-        <div style="margin-bottom:9px;padding:9px 12px;background:#fafbff;
-                    border-left:3px solid #1a1a2e;border-radius:0 4px 4px 0">
-          <div style="font-size:9.5px;font-weight:700;color:#1a1a2e;
-                      text-transform:uppercase;letter-spacing:0.04em;margin-bottom:3px">
-            ${escHtml(heading)}
-          </div>
-          <div style="font-size:9.5px;color:#333;line-height:1.6">${escHtml(text)}</div>
-        </div>`;
-    }).filter(Boolean).join('');
-  } else if (_projectTCsRaw) {
-    // Source B: plain-text fallback — strip markers, split on double newline
-    const _ptcLines = _projectTCsRaw
-      .split(/\n{2,}/)
-      .map(s => _stripMarkers(s))
-      .filter(Boolean);
-    _s1Rows = _ptcLines.map(para => `
-      <div style="margin-bottom:8px;padding:8px 12px;background:#fafbff;
-                  border-left:3px solid #1a1a2e;border-radius:0 4px 4px 0;
-                  font-size:9.5px;color:#333;line-height:1.6;white-space:pre-wrap">
-        ${escHtml(para)}
-      </div>`).join('');
-  }
-
-  const _s1Empty = !_s1Rows;
-
-  // ── Section 2: Standard Exclusions bullet list ───────────────────────────
-  const _s2Rows = BAMA_EXCLUSIONS.map(e => `
-    <div style="display:flex;gap:10px;padding:4px 0;border-bottom:1px solid #f0f0f4;
-                font-size:9.5px;color:#333;line-height:1.5;align-items:flex-start">
-      <span style="flex-shrink:0;font-weight:700;color:#1a1a2e">—</span>
-      <span>${escHtml(e)}</span>
-    </div>`).join('');
-
-  // ── Section 3: Commercial T&C narrative ─────────────────────────────────
-  // Split BAMA_TC into commercial-terms only (exclude 'Exclusions' — those
-  // are now Section 2 above, plus project-specifics are Section 1).
-  const _s3Rows = BAMA_TC
-    .filter(tc => tc.h !== 'Exclusions')
-    .map(tc => `
-      <div style="margin-bottom:8px;padding:7px 0;
-                  border-bottom:1px solid #f0f0f4;font-size:9.5px;line-height:1.55">
-        <strong style="color:#1a1a2e">${escHtml(tc.h)}:</strong>
-        <span style="color:#444;margin-left:4px">${escHtml(tc.t)}</span>
-      </div>`).join('');
-
-  // ── Compose full tcHtml ───────────────────────────────────────────────────
-  const _sectionHead = (num, title, colour) =>
-    `<div style="display:flex;align-items:baseline;gap:10px;
-                 margin:0 0 8px;padding:7px 10px;
-                 background:${colour};border-radius:3px">
-       <span style="font-size:9px;font-weight:900;color:#fff;
-                    letter-spacing:0.08em;white-space:nowrap">${num}</span>
-       <span style="font-size:10px;font-weight:800;color:#fff;
-                    text-transform:uppercase;letter-spacing:0.06em">${title}</span>
-     </div>`;
-
-  const tcHtml = `
-    <div style="margin-top:28px;padding-top:0;border-top:3px solid #1a1a2e">
-
-      <!-- ── SECTION 1 ── -->
-      <div style="margin-bottom:20px">
-        ${_sectionHead('01', 'Project Specific Clarifications', '#1a1a2e')}
-        ${_s1Empty
-          ? `<div style="padding:10px 12px;font-size:9.5px;color:#888;
-                         font-style:italic;border-left:2px solid #ddd;margin-left:2px">
-               No project-specific clarifications noted. Run Quote Helper → T&amp;Cs
-               on the tender document to auto-populate this section.
-             </div>`
-          : _s1Rows}
-      </div>
-
-      <!-- ── SECTION 2 ── -->
-      <div style="margin-bottom:20px">
-        ${_sectionHead('02', 'Standard Exclusions', '#D0021B')}
-        <div style="padding:4px 2px">
-          ${_s2Rows}
-        </div>
-        <div style="margin-top:6px;font-size:9px;color:#888;font-style:italic">
-          The above exclusions apply unless a line item explicitly includes them within the body of this quotation.
-        </div>
-      </div>
-
-      <!-- ── SECTION 3 ── -->
-      <div style="margin-bottom:8px">
-        ${_sectionHead('03', 'Commercial Terms &amp; Conditions', '#2c3e50')}
-        <div style="padding:4px 2px">
-          ${_s3Rows}
-        </div>
-      </div>
-
-    </div>`;
+  const tcHtml = buildTcHtml(q);
 
   // ── QUOTE PDF ────────────────────────────────────────────
   let lineRows = '', grandTotal = 0;
@@ -10166,14 +10144,8 @@ function generateQuotePDF(mode = 'quote') {
       bdTable(`<tr><th>Equipment / Item</th><th colspan="3">Detail</th><th style="text-align:right;width:110px">Cost (£)</th></tr>`, plantRowsForPack)
     ) : ''}
 
-    <!-- Exclusions -->
-    ${exclusionsText ? `
-    <div class="bd-section">
-      <div class="bd-sec-head" style="background:#b45309">⚠ Exclusions &amp; Special Conditions</div>
-      <div style="padding:10px 14px;background:#fffbeb;border-top:1px solid #fde68a">
-        <div style="font-size:10px;color:#44312a;line-height:1.8;white-space:pre-wrap">${escHtml(exclusionsText)}</div>
-      </div>
-    </div>` : ''}
+    <!-- T&Cs / Exclusions / Clarifications (same format as client quote) -->
+    ${buildTcHtml(q)}
 
     <!-- Footer -->
     <div style="margin-top:16px;padding-top:10px;border-top:1px solid #dde0ee;font-size:9.5px;color:#9ca3af;display:flex;justify-content:space-between">
@@ -11245,14 +11217,8 @@ function generateHandoverPack() {
     </div>
   </div>
 
-  <!-- ── Exclusions / T&Cs ── -->
-  ${exclusions ? `
-  <div class="section">
-    <div class="sec-head amber">⚠ Exclusions &amp; Project T&amp;Cs</div>
-    <div class="excl-body">
-      <ul>${exclusionsHTML}</ul>
-    </div>
-  </div>` : ''}
+  <!-- T&Cs / Exclusions / Clarifications (same format as client quote) -->
+  ${buildTcHtml(q)}
 
   <!-- ── Footer ── -->
   <div class="doc-footer-strip">
