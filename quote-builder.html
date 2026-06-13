@@ -5936,23 +5936,57 @@ function recalcAll() {
 // ============================================================
 // QUOTATION TAB
 // ============================================================
+function buildClientLines(q) {
+  // Returns the client-facing line items built purely from computed totals.
+  // ORDER and LABELS are the canonical client view — never expose internal
+  // sub-keys (approval_fab, design_draughtsman, etc.) to the client.
+  const C = q._computed || {};
+  const na = q.blockNA || {};
+  const raw = [
+    { key: 'prelims',     desc: 'Prelims',                  value: na.prelims      ? 0 : (C.prelims      || 0) },
+    { key: 'survey',      desc: 'Survey',                   value: na.survey       ? 0 : (C.survey       || 0) },
+    { key: 'material',    desc: 'Material cost',             value:                      (C.material      || 0) },
+    { key: 'fabrication', desc: 'Fabrication',              value: na.fabrication  ? 0 : (C.fabrication  || 0) },
+    { key: 'design',      desc: 'Design',                   value: na.design       ? 0 : (C.design       || 0) },
+    { key: 'painting',    desc: 'Painting / Finishing',     value: na.painting     ? 0 : (C.painting     || 0) },
+    { key: 'galvanising', desc: 'Galvanising',              value: na.painting     ? 0 : (C.galvanising  || 0) },
+    { key: 'installation',desc: 'Installation',             value: na.installation ? 0 : (C.installation || 0) },
+    { key: 'delivery',    desc: 'Delivery',                 value: na.delivery     ? 0 : (C.delivery     || 0) },
+    { key: 'purlins',     desc: 'Purlins',                  value: na.purlins      ? 0 : (C.purlins      || 0) },
+  ];
+  // Allow user to override description via standardLines custom desc
+  const descOverrides = {};
+  (q.standardLines || []).forEach(l => {
+    if (l._customDesc && l.key) descOverrides[l.key] = l._customDesc;
+  });
+  return raw
+    .filter(l => l.value > 0)
+    .map(l => ({ ...l, desc: descOverrides[l.key] || l.desc }));
+}
+
 function renderQuotationLines() {
   const q = getQuote(); if (!q) return;
   const cont = document.getElementById('quotationLines');
 
   if (q.type === 'bama') {
+    const lines = buildClientLines(q);
     let sub = 0;
-    cont.innerHTML = (q.standardLines||[]).map((l,i) => {
-      const amt = (l.qty||1) * (l.price||0);
+    cont.innerHTML = lines.map((l, i) => {
+      const amt = l.value;
       sub += amt;
       return `<div class="quotation-line quotation-line-standard">
-        <input class="ql-input" value="${l.desc}" oninput="updateStdLine(${i},'desc',this.value)" style="background:transparent;border-color:transparent">
-        <input class="ql-input" type="number" value="${l.qty||1}" oninput="updateStdLine(${i},'qty',this.value)" style="text-align:right">
-        <input class="ql-input" type="number" value="${l.price||0}" oninput="updateStdLine(${i},'price',this.value)" style="text-align:right;font-family:var(--font-mono)">
+        <input class="ql-input" value="${escHtml(l.desc)}"
+          oninput="updateClientLineDesc('${l.key}',this.value)"
+          style="background:transparent;border-color:transparent">
+        <input class="ql-input" type="number" value="1"
+          style="text-align:right;background:transparent;border-color:transparent;pointer-events:none" readonly>
+        <input class="ql-input" type="number" value="${l.value.toFixed(2)}"
+          style="text-align:right;font-family:var(--font-mono);background:transparent;border-color:transparent;pointer-events:none" readonly>
         <div class="ql-total">${fmt(amt)}</div>
       </div>`;
     }).join('');
-    updateQuotationTotals(sub);
+    // Total shown is the margin-inclusive total from engine, not sum of lines
+    updateQuotationTotals(q._computed?.total || sub);
 
   } else if (q.type === 'custom') {
     let sub = 0;
@@ -5992,6 +6026,17 @@ function updateQuotationTotals(sub) {
     document.getElementById('depositLineLabel').textContent = `Deposit (${depPct}%)`;
     document.getElementById('qlDeposit').textContent = fmt(sub * depPct / 100);
   }
+}
+
+function updateClientLineDesc(key, val) {
+  // Allows user to rename a client-facing line description.
+  // Stored as _customDesc on the matching standardLines entry.
+  const q = getQuote(); if (!q) return;
+  q.standardLines = q.standardLines || [];
+  let entry = q.standardLines.find(l => l.key === key);
+  if (!entry) { entry = { key, desc: val, qty: 1, price: 0 }; q.standardLines.push(entry); }
+  entry._customDesc = val;
+  saveAll();
 }
 
 function updateStdLine(i, field, val) {
@@ -9926,19 +9971,20 @@ function generateQuotePDF(mode = 'quote') {
   let lineRows = '', grandTotal = 0;
   if (mode === 'quote' || mode === 'combined') {
     if (q.type === 'bama') {
-      // Use standardLines for line items, computed.total as authoritative total
-      const allLines = (q.standardLines||[]).filter(l => (parseFloat(l.price)||0) !== 0);
-      allLines.forEach(l => {
-        const price = parseFloat(l.price)||0, qty = parseFloat(l.qty)||1;
-        const amt = Math.round(qty*price*100)/100;
+      // Build client lines from computed totals — NOT from raw standardLines.
+      // This ensures internal keys (approval_fab, design_draughtsman, etc.)
+      // never appear on the client document regardless of standardLines state.
+      const clientLines = buildClientLines(q);
+      clientLines.forEach(l => {
+        const amt = Math.round(l.value * 100) / 100;
         grandTotal += amt;
-        lineRows += `<tr><td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">${qty!==1?qty:'1'}</td>
+        lineRows += `<tr><td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">1</td>
           <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">${escHtml(l.desc)}</td>
-          <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(price)}</td>
+          <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(l.value)}</td>
           <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(amt)}</td></tr>`;
       });
-      // computed.total is authoritative — override if they differ by more than £1
-      if (computed.total && Math.abs(computed.total - grandTotal) > 1) grandTotal = computed.total;
+      // computed.total is authoritative (includes margin) — always use it
+      grandTotal = computed.total || grandTotal;
     } else if (q.type === 'custom') {
       (q.customLines||[]).forEach(l => {
         const price = parseFloat(l.price)||0, qty = parseFloat(l.qty)||1;
@@ -9956,7 +10002,7 @@ function generateQuotePDF(mode = 'quote') {
         <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(total)}</td>
         <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(total)}</td></tr>`;
     }
-    const rowCount = (q.type==='bama'?(q.standardLines||[]).filter(l=>(l.price||0)>0).length:(q.customLines||[]).length)||1;
+    const rowCount = (q.type==='bama' ? buildClientLines(q).length : (q.customLines||[]).length) || 1;
     for (let i=rowCount; i<6; i++) lineRows += `<tr style="height:34px"><td style="border-bottom:1px solid #e5e7eb"></td><td style="border-bottom:1px solid #e5e7eb"></td><td style="border-bottom:1px solid #e5e7eb"></td><td style="border-bottom:1px solid #e5e7eb"></td></tr>`;
         let depositRow = '';
     if (q.showDeposit) {
