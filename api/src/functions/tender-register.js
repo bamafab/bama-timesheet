@@ -258,9 +258,9 @@ app.http('tender-register-create', {
                 date_received:     date_received      || new Date().toISOString().slice(0, 10),
                 notes:             notes              || '',
                 created_by:        auth.name          || auth.email || ''
-            });
+            })).recordset;
 
-            const tenderId = result.recordset?.[0]?.id;
+            const tenderId = result[0]?.id;
 
             // Auto-create SharePoint folder in background (non-fatal)
             let spResult = null;
@@ -294,7 +294,7 @@ app.http('tender-register-create', {
                     const assignees = (await query(
                         `SELECT email FROM TenderAssignees WHERE full_name = @name AND active = 1`,
                         { name: assigned_to || '' }
-                    );
+                    )).recordset;
                     await sendEmailNotification(sp_token, {
                         reference, client, project,
                         assignedTo:    assigned_to || '',
@@ -531,7 +531,7 @@ app.http('tender-assignees-create', {
                 INSERT INTO TenderAssignees (full_name, email)
                 OUTPUT INSERTED.id
                 VALUES (@name, @email)
-            `, { name: full_name, email: email || '' });
+            `, { name: full_name, email: email || '' })).recordset;
 
             return created({ id: result[0]?.id }, req);
         } catch (e) {
