@@ -5810,15 +5810,29 @@ function addTakeoffRow() {
 let _acRow = null, _acCtx = null, _acIdx = -1;
 
 function _acGetKeys() {
-  return Object.keys(STEEL_KGM).filter(k => !k.includes('*')).sort();
+  // Return canonical display keys (with space after prefix) so autocomplete
+  // inserts the same format that findSteelProfile produces as canonical
+  return Object.keys(STEEL_KGM)
+    .filter(k => !k.includes('*'))
+    .map(k => {
+      for (const [p, disp] of Object.entries(_SP_DISPLAY)) {
+        if (k.startsWith(p) && !k.slice(p.length).match(/^[A-Z]/)) {
+          return disp + k.slice(p.length); // e.g. "SHS " + "180x180x10"
+        }
+      }
+      return k;
+    });
 }
 
 function _acFilter(query) {
   if (!query) return [];
-  const q = query.toUpperCase().replace(/[*x]/g, 'X');
+  // normalise query: uppercase, collapse spaces, unify separators
+  const q = query.toUpperCase().replace(/[*x]/g, 'X').replace(/\s+/g, '');
   const keys = _acGetKeys();
-  const prefix = keys.filter(k => k.toUpperCase().startsWith(q));
-  const contains = keys.filter(k => !k.toUpperCase().startsWith(q) && k.toUpperCase().includes(q));
+  // normalise each key the same way for comparison, but return original (spaced) key
+  const norm = k => k.toUpperCase().replace(/[*x]/g, 'X').replace(/\s+/g, '');
+  const prefix = keys.filter(k => norm(k).startsWith(q));
+  const contains = keys.filter(k => !norm(k).startsWith(q) && norm(k).includes(q));
   // Sort numerically by first dimension so SHS100→SHS400 appear in size order
   function numSort(a, b) {
     const na = a.match(/\d+/g) || [], nb = b.match(/\d+/g) || [];
