@@ -194,7 +194,7 @@ app.http('tender-register-list', {
               FROM TenderRegister
              WHERE reference LIKE @yearPat
         `;
-        const params = { yearPat: `Q${year}-%` };
+        const params = { yearPat: `Q${year}%` };
 
         if (status && status !== 'all') {
             sql += ` AND status = @status`;
