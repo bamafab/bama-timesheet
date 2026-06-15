@@ -8,6 +8,20 @@ management, and a standalone UK steel section reference.
 
 - **Always run `node --check shared.js` after editing it.** It's ~9700 lines of
   untested global-scope JS — a syntax error breaks every page at once.
+- **Run `python3 preflight.py <file.html>` before every push that touches an
+  HTML file.** Acorn only catches *syntax* — it sails past the bugs that have
+  actually cost us hours: a `getElementById` for an id that doesn't exist (modal
+  never opens — the babcockEmailModal bug), an `async` function called without
+  `await` (result is a Promise, renders as `[object Promise]` — the nextQuoteRef
+  bug), an `onclick="foo()"` with no `foo` defined (nothing happens on click).
+  `preflight.py` runs Acorn on every inline `<script>` block PLUS these intent
+  checks. **ERRORS block the push; fix them. WARNINGS need an eyeball** — most are
+  fire-and-forget async (fine) or ids defined in shared.js (fine), but a missing
+  `await` on `qbFetch`/`trFetch`, or a `getElementById('x')?.value` where `x`
+  doesn't exist (silent — value never reads, defaults silently) are real and
+  must be checked. Run `python3 preflight.py` with no args to check all pages.
+  Tune `FIRE_AND_FORGET` / `GLOBALS` sets in the script when a warning is a
+  confirmed false positive, rather than ignoring the output.
 - **Do not touch hub.html OAuth logic without asking first.** The token-handoff
   dance (`#access_token` capture → sessionStorage → `bama_return_page` bounce) is
   load-bearing for every authenticated page. Changes here have broken prod before.
