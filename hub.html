@@ -186,21 +186,42 @@
 <script>
 // Handle OAuth redirect — token arrives here at the root URL
 (function() {
-  if (window.location.hash && window.location.hash.includes('access_token')) {
+  const tenantId   = 'c92626f5-e391-499a-9059-0113bd07da2d';
+  const clientId   = '04b702fd-c53c-4f38-94bc-0334ce91d954';
+  const redirectUri = encodeURIComponent('https://proud-dune-0dee63110.2.azurestaticapps.net');
+  const scope       = encodeURIComponent('Files.ReadWrite Sites.ReadWrite.All Mail.Send');
+
+  function doInteractiveLogin() {
+    window.location.href =
+      `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/authorize` +
+      `?client_id=${clientId}&response_type=token&redirect_uri=${redirectUri}` +
+      `&scope=${scope}&prompt=select_account&response_mode=fragment` +
+      `&state=${encodeURIComponent(sessionStorage.getItem('bama_return_page') || '/')}`;
+  }
+
+  if (window.location.hash) {
     const params = new URLSearchParams(window.location.hash.replace('#', '?'));
     const token = params.get('access_token');
-    const expiresIn = parseInt(params.get('expires_in') || '3600');
+    const error = params.get('error');
+
     if (token) {
+      const expiresIn = parseInt(params.get('expires_in') || '3600');
       sessionStorage.setItem('bama_token', token);
       sessionStorage.setItem('bama_token_expiry', (Date.now() + (expiresIn - 60) * 1000).toString());
       window.history.replaceState({}, '', window.location.pathname);
       // Bounce back to the page that triggered login
-      const returnTo = sessionStorage.getItem('bama_return_page');
+      const state = params.get('state');
+      const returnTo = state || sessionStorage.getItem('bama_return_page');
       if (returnTo && returnTo !== '/' && returnTo !== '/hub.html') {
         sessionStorage.removeItem('bama_return_page');
         window.location.href = returnTo;
         return;
       }
+    } else if (error) {
+      // prompt=none failed (session expired) — do interactive login
+      window.history.replaceState({}, '', window.location.pathname);
+      doInteractiveLogin();
+      return;
     }
   }
 })();
