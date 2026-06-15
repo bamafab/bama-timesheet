@@ -4899,10 +4899,16 @@ async function saveAll() {
     console.error('saveAll error:', e);
     // Keep the localStorage backup; surface the failure clearly.
     setSaveStatus('offline');
-    toast('Auto-save failed — your work is backed up locally and will retry. ' + e.message, 'error');
-    // Schedule one retry after a short delay
-    clearTimeout(_saveRetryTimer);
-    _saveRetryTimer = setTimeout(() => { _savePending = false; saveAll(); }, 5000);
+    // Don't retry on 401 — token is expired, redirect already triggered
+    if (e.message && e.message.includes('Unauthorized')) {
+      toast('Session expired — please log in again.', 'error');
+      clearTimeout(_saveRetryTimer);
+    } else {
+      toast('Auto-save failed — your work is backed up locally and will retry. ' + e.message, 'error');
+      // Schedule one retry after a short delay
+      clearTimeout(_saveRetryTimer);
+      _saveRetryTimer = setTimeout(() => { _savePending = false; saveAll(); }, 5000);
+    }
   } finally {
     _sqlSaving = false;
     // If changes arrived while saving, run again immediately (coalesced).
@@ -12294,7 +12300,7 @@ function renderPipeline() {
           const rowBg = idx % 2 === 0 ? '' : 'background:rgba(255,255,255,0.02)';
           const hoverBg = idx % 2 === 0 ? '' : 'rgba(255,255,255,0.02)';
 
-                    const trId = q.id.replace(/'/g, '');
+                    const trId = String(q.id).replace(/'/g, '');
           return '<tr data-qid="'+trId+'" style="'+rowBg+';cursor:pointer"'
             +' onclick="openQuoteFromPipeline(this.dataset.qid)"'
             +' onmouseover="this.style.background=\'rgba(255,107,0,0.07)\'"'
