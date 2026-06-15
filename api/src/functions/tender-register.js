@@ -198,6 +198,7 @@ app.http('tender-register-list', {
                    assigned_to, deadline, date_received, status, no_bid_reason,
                    sp_tender_folder_id, sp_subfolder_id, sp_folder_url,
                    qb_quote_id, opened_in_qb_at, opened_in_qb_by,
+                   notified_at, notified_by,
                    notes, created_by, created_at, updated_at
               FROM TenderRegister
              WHERE reference LIKE @yearPat
@@ -297,6 +298,7 @@ app.http('tender-register-create', {
             }
 
             // Send email notification
+            let emailSent = false;
             if (sp_token) {
                 try {
                     // Get assignee email
@@ -312,6 +314,14 @@ app.http('tender-register-create', {
                         assigneeEmail: assignees[0]?.email || '',
                         mateuszEmail:  'matt@bamafabrication.co.uk'
                     });
+                    emailSent = true;
+                    // Mark notified in DB
+                    await query(`
+                        UPDATE TenderRegister SET
+                            notified_at = GETUTCDATE(),
+                            notified_by = @by
+                        WHERE id = @id
+                    `, { by: auth.name || auth.email || '', id: tenderId });
                 } catch (mailErr) {
                     console.warn('Email failed:', mailErr.message);
                 }
@@ -433,6 +443,61 @@ app.http('tender-register-open-in-qb', {
             `, { id, qbId: qb_quote_id, by: auth.name || auth.email || '' });
 
             return ok({ updated: true }, req);
+        } catch (e) {
+            return serverError(e.message, req);
+        }
+    }
+});
+
+// ── PUT /api/tender-register/:id/resend-notify ────────────────────────────────
+app.http('tender-register-resend-notify', {
+    methods: ['PUT'], authLevel: 'anonymous',
+    route: 'tender-register/{id}/resend-notify',
+    handler: async (req) => {
+        const auth = await requireAuth(req);
+        if (auth.status) return auth;
+
+        const id = parseInt(req.params.id);
+        if (!id) return badRequest('invalid id', req);
+
+        let body;
+        try { body = await req.json(); } catch { return badRequest('Invalid JSON', req); }
+        const { sp_token } = body;
+        if (!sp_token) return badRequest('sp_token required', req);
+
+        try {
+            const rows = (await query(
+                `SELECT reference, client, project, assigned_to, deadline FROM TenderRegister WHERE id = @id`,
+                { id }
+            )).recordset;
+            if (!rows.length) return notFound('Tender not found', req);
+            const t = rows[0];
+
+            const assignees = (await query(
+                `SELECT email FROM TenderAssignees WHERE full_name = @name AND active = 1`,
+                { name: t.assigned_to || '' }
+            )).recordset;
+
+            await sendEmailNotification(sp_token, {
+                reference:     t.reference,
+                client:        t.client,
+                project:       t.project,
+                assignedTo:    t.assigned_to || '',
+                deadline:      t.deadline,
+                createdBy:     auth.name || auth.email || '',
+                assigneeEmail: assignees[0]?.email || '',
+                mateuszEmail:  'matt@bamafabrication.co.uk'
+            });
+
+            await query(`
+                UPDATE TenderRegister SET
+                    notified_at = GETUTCDATE(),
+                    notified_by = @by,
+                    updated_at  = GETUTCDATE()
+                WHERE id = @id
+            `, { by: auth.name || auth.email || '', id });
+
+            return ok({ sent: true }, req);
         } catch (e) {
             return serverError(e.message, req);
         }
