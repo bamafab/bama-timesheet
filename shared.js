@@ -17546,7 +17546,7 @@ async function submitNewTender() {
 
     // Find or create the year folder under Quotation
     const quotationFolder = await getOrCreateFolderByPath(QUOTATION_FOLDER_PATH, token);
-    const yearFolder = await createFolderInDrive(quotationFolder.id, yearFolderName);
+    const yearFolder = await getOrCreateSubfolder(quotationFolder.id, yearFolderName);
     const quoteFolderName = `${reference} - ${companyName} - ${projectName}`;
     const quoteFolder = await createFolderInDrive(yearFolder.id, quoteFolderName);
     const tenderSubFolder = await createFolderInDrive(quoteFolder.id, '00 - Tender');
@@ -19172,7 +19172,7 @@ async function submitNewQuote() {
     } else {
       // Create fresh folder structure
       const quotationRoot   = await getOrCreateFolderByPath(QUOTATION_FOLDER_PATH, token);
-      const yearFolder      = await createFolderInDrive(quotationRoot.id, yearFolderName);
+      const yearFolder      = await getOrCreateSubfolder(quotationRoot.id, yearFolderName);
       const quoteFolder     = await createFolderInDrive(yearFolder.id, reference);
       const tenderSubFolder = await createFolderInDrive(quoteFolder.id, '00 - Tender');
       quoteFolderId  = quoteFolder.id;
