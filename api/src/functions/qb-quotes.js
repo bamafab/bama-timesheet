@@ -99,21 +99,36 @@ app.http('qb-quotes-next-ref', {
             const mm    = String(now.getMonth() + 1).padStart(2, '0');
             const prefix = `Q${yy}${mm}`;
 
-            // Count matching refs in both tables
-            const [qbRes, tRes] = await Promise.all([
+            // Find highest sequence number in both tables
+            const [qbRes, tRes, trRes] = await Promise.all([
                 query(
-                    `SELECT COUNT(*) AS cnt FROM QuoteBuilderQuotes WHERE reference LIKE @prefix + '%'`,
+                    `SELECT MAX(CAST(SUBSTRING(reference, LEN(@prefix)+1, 10) AS INT)) AS maxSeq
+                       FROM QuoteBuilderQuotes
+                      WHERE reference LIKE @prefix + '%'
+                        AND ISNUMERIC(SUBSTRING(reference, LEN(@prefix)+1, 10)) = 1`,
                     { prefix }
                 ),
                 query(
-                    `SELECT COUNT(*) AS cnt FROM Tenders WHERE reference LIKE @prefix + '%'`,
+                    `SELECT MAX(CAST(SUBSTRING(reference, LEN(@prefix)+1, 10) AS INT)) AS maxSeq
+                       FROM Tenders
+                      WHERE reference LIKE @prefix + '%'
+                        AND ISNUMERIC(SUBSTRING(reference, LEN(@prefix)+1, 10)) = 1`,
+                    { prefix }
+                ),
+                query(
+                    `SELECT MAX(CAST(SUBSTRING(reference, LEN(@prefix)+1, 10) AS INT)) AS maxSeq
+                       FROM TenderRegister
+                      WHERE reference LIKE @prefix + '%'
+                        AND ISNUMERIC(SUBSTRING(reference, LEN(@prefix)+1, 10)) = 1`,
                     { prefix }
                 )
             ]);
-            const count = Math.max(
-                qbRes.recordset[0].cnt,
-                tRes.recordset[0].cnt
-            ) + 1;
+            const maxSeq = Math.max(
+                qbRes.recordset[0].maxSeq  || 0,
+                tRes.recordset[0].maxSeq   || 0,
+                trRes.recordset[0].maxSeq  || 0
+            );
+            const count = maxSeq + 1;
             const reference = `${prefix}${String(count).padStart(2, '0')}`;
             return ok({ reference, prefix, count }, request);
         } catch (err) {
