@@ -2147,7 +2147,7 @@ async function openNewTenderModal() {
   // Get next ref
   try {
     const refData = await trFetch('/api/qb-next-ref');
-    document.getElementById('trNewRef').value = refData.ref || '';
+    document.getElementById('trNewRef').value = refData.reference || refData.ref || '';
   } catch(e) { document.getElementById('trNewRef').value = '—'; }
 
   // Reset fields
