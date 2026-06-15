@@ -5815,12 +5815,22 @@ function _acGetKeys() {
 
 function _acFilter(query) {
   if (!query) return [];
-  const q = query.toUpperCase().replace(/[*x]/g, 'x');
+  const q = query.toUpperCase().replace(/[*x]/g, 'X');
   const keys = _acGetKeys();
-  // exact prefix first, then fuzzy contains
   const prefix = keys.filter(k => k.toUpperCase().startsWith(q));
   const contains = keys.filter(k => !k.toUpperCase().startsWith(q) && k.toUpperCase().includes(q));
-  return [...prefix, ...contains].slice(0, 20);
+  // Sort numerically by first dimension so SHS100→SHS400 appear in size order
+  function numSort(a, b) {
+    const na = a.match(/\d+/g) || [], nb = b.match(/\d+/g) || [];
+    for (let i = 0; i < Math.min(na.length, nb.length); i++) {
+      const d = parseInt(na[i]) - parseInt(nb[i]);
+      if (d !== 0) return d;
+    }
+    return a.localeCompare(b);
+  }
+  prefix.sort(numSort);
+  contains.sort(numSort);
+  return [...prefix, ...contains].slice(0, 40);
 }
 
 function _acShow(inputEl, results, onSelect) {
