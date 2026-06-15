@@ -652,6 +652,16 @@
       <button data-filter="won" onclick="setFilter(this,'won')">✓ Won</button>
       <button data-filter="lost" onclick="setFilter(this,'lost')">✗ Lost</button>
     </div>
+    <div style="display:flex;align-items:center;gap:6px;padding:6px 12px;border-bottom:1px solid var(--border)">
+      <select id="dashSort" onchange="renderQuoteList()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--text);font-size:12px;flex:1">
+        <option value="urgency">Sort: Priority</option>
+        <option value="ref">Sort: Reference</option>
+        <option value="value">Sort: Value</option>
+        <option value="due">Sort: Due Date</option>
+        <option value="company">Sort: Company</option>
+      </select>
+      <button id="dashSortDir" onclick="toggleDashSortDir()" title="Toggle sort direction" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--text);font-size:13px;cursor:pointer;min-width:28px">↓</button>
+    </div>
     <div class="ql-list" id="qlList">
       <div class="state-empty">
         <div class="state-icon">⏳</div>
@@ -821,6 +831,13 @@ async function graphGet(url) {
 // ─── Data ─────────────────────────────────────────────────
 let allQuotes = [];
 let currentFilter = 'all';
+let _dashSortDir = 1; // 1=asc, -1=desc
+function toggleDashSortDir() {
+  _dashSortDir *= -1;
+  const btn = document.getElementById('dashSortDir');
+  if (btn) btn.textContent = _dashSortDir === 1 ? '↓' : '↑';
+  renderQuoteList();
+}
 let selectedQuote = null;
 let trackerFolderId = null; // Quotation folder ID for browsing tender subfolders
 
@@ -1089,6 +1106,30 @@ function renderQuoteList() {
   else if (currentFilter === 'overdue') list = list.filter(q => q.urgency === 'overdue');
   else if (currentFilter === 'won') list = list.filter(q => q.win === true);
   else if (currentFilter === 'lost') list = list.filter(q => q.win === false);
+
+  // Apply user sort
+  const sortBy = document.getElementById('dashSort')?.value || 'urgency';
+  const dir = _dashSortDir;
+  const urgOrd = { overdue:0, today:1, soon:2, ok:3, sent:4, open:5, none:6 };
+  list = [...list].sort((a, b) => {
+    let cmp = 0;
+    if (sortBy === 'urgency') {
+      const ua = urgOrd[a.urgency] ?? 7, ub = urgOrd[b.urgency] ?? 7;
+      cmp = ua !== ub ? ua - ub : a.ref.localeCompare(b.ref);
+    } else if (sortBy === 'ref') {
+      cmp = a.ref.localeCompare(b.ref);
+    } else if (sortBy === 'value') {
+      cmp = (a.value || 0) - (b.value || 0);
+    } else if (sortBy === 'due') {
+      if (!a.due && !b.due) cmp = 0;
+      else if (!a.due) cmp = 1;
+      else if (!b.due) cmp = -1;
+      else cmp = String(a.due).localeCompare(String(b.due));
+    } else if (sortBy === 'company') {
+      cmp = (a.company || '').localeCompare(b.company || '');
+    }
+    return cmp * dir;
+  });
 
   const el = document.getElementById('qlList');
   if (!list.length) {
