@@ -2175,12 +2175,17 @@ function renderTenderTable() {
     const folderBtn = t.sp_folder_url
       ? `<a href="${t.sp_folder_url}" target="_blank" onclick="event.stopPropagation()" title="Open SharePoint folder" style="color:var(--accent);text-decoration:none;font-size:16px">📁</a>`
       : `<button onclick="event.stopPropagation();trSyncFolder(${t.id})" title="Create SharePoint folder" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:15px">📂</button>`;
+    const deleteBtn = `<button onclick="event.stopPropagation();trDeleteTender(${t.id},'${t.reference}')" title="Delete" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:13px;padding:2px 4px">🗑</button>`;
     const actions = t.status === 'New' ? `
       <div style="display:flex;gap:4px;justify-content:center">
         <button onclick="event.stopPropagation();trOpenInQB(${t.id})" title="Open in QB" style="background:var(--accent);color:#fff;border:none;border-radius:4px;padding:3px 7px;font-size:11px;cursor:pointer">QB →</button>
         <button onclick="event.stopPropagation();openTrNoBidModal(${t.id})" title="No Bid" style="background:var(--surface);color:var(--muted);border:1px solid var(--border);border-radius:4px;padding:3px 7px;font-size:11px;cursor:pointer">✗</button>
-      </div>` : t.status === 'In QB' && t.qb_quote_id ?
-      `<button onclick="event.stopPropagation();window.location='quote-builder.html?quote=${t.qb_quote_id}'" style="background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);border-radius:4px;padding:3px 7px;font-size:11px;cursor:pointer">View QB</button>` : '';
+        ${deleteBtn}
+      </div>` : t.status === 'In QB' && t.qb_quote_id ? `
+      <div style="display:flex;gap:4px;justify-content:center">
+        <button onclick="event.stopPropagation();window.location='quote-builder.html?quote=${t.qb_quote_id}'" style="background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);border-radius:4px;padding:3px 7px;font-size:11px;cursor:pointer">View QB</button>
+        ${deleteBtn}
+      </div>` : deleteBtn;
 
     return `<tr onclick="trSelectRow(${t.id})" class="${_trSelectedId === t.id ? 'tr-selected' : ''}">
       <td style="font-family:var(--font-mono);font-size:12px;color:var(--accent)">${t.reference}</td>
@@ -2347,6 +2352,21 @@ async function trOpenInQB(tenderId) {
     window.location.href = `quote-builder.html?quote=${qbId}`;
   } catch(e) {
     bamaAlert('Error creating QB quote: ' + e.message);
+  }
+}
+
+// ── Delete tender ────────────────────────────────────────────
+async function trDeleteTender(id, ref) {
+  if (!await bamaConfirm(`Delete tender ${ref}? This cannot be undone.`, 'Delete Tender')) return;
+  try {
+    await trFetch(`/api/tender-register/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ status: 'Deleted', _hardDelete: true })
+    });
+    _trTenders = _trTenders.filter(t => t.id !== id);
+    renderTenderTable();
+  } catch(e) {
+    bamaAlert('Error: ' + e.message);
   }
 }
 

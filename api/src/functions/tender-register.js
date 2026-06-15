@@ -204,6 +204,7 @@ app.http('tender-register-list', {
             sql += ` AND assigned_to = @assigned`;
             params.assigned = assigned;
         }
+        sql += ` AND status != 'Deleted'`;
         sql += ` ORDER BY CASE WHEN deadline IS NULL THEN 1 ELSE 0 END, deadline ASC, created_at DESC`;
 
         try {
