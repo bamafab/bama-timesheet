@@ -13717,7 +13717,7 @@ async function qqSaveAsDraft() {
   const now = new Date();
   const yy  = String(now.getFullYear()).slice(2);
   const mm  = String(now.getMonth()+1).padStart(2,'0');
-  const ref = nextQuoteRef();
+  const ref = await nextQuoteRef();
 
   const profileLabels = { ub_uc: 'UB/UC', pfc_rsa: 'PFC/Angles', hollow: 'RHS/SHS/CHS' };
   const finishLabels  = { primer: 'Primer', galv: 'Galvanising', none: 'None/TBC' };
