@@ -83,13 +83,11 @@ async function spCreateFolder(token, parentId, name) {
     });
 }
 
-// Ensure year folder exists e.g. "06 - 2026"
+// Ensure year folder exists e.g. "03 - 2026" (year - 2023, zero-padded)
 async function spEnsureYearFolder(token) {
-    const now = new Date();
-    const yy = String(now.getFullYear()).slice(-2);
-    const yyyy = now.getFullYear();
-    const mm = String(now.getMonth() + 1).padStart(2, '0');
-    const yearFolderName = `${mm} - ${yyyy}`;
+    const yyyy = new Date().getFullYear();
+    const prefix = String(yyyy - 2023).padStart(2, '0'); // 2026→03, 2027→04
+    const yearFolderName = `${prefix} - ${yyyy}`;
 
     const root = await spGetQuotationRoot(token);
     let yearFolder = await spFindChild(token, root.id, yearFolderName);
@@ -108,9 +106,17 @@ async function spEnsureTenderFolder(token, reference, client, project) {
 
     const yearFolder = await spEnsureYearFolder(token);
 
-    // Check if tender folder already exists
-    let tenderFolder = await spFindChild(token, yearFolder.id, tenderFolderName);
-    let alreadyExisted = !!tenderFolder;
+    // Check if a folder with this reference prefix already exists (match by ref prefix,
+    // not exact name — client/project name may differ slightly on retry)
+    const allChildren = await spFetch(token,
+        `/drives/${SP_DRIVE_ID}/items/${yearFolder.id}/children?$select=id,name,webUrl&$top=500`
+    );
+    const existingByRef = (allChildren.value || []).find(
+        i => i.name && i.name.toUpperCase().startsWith(reference.toUpperCase())
+    );
+
+    let tenderFolder = existingByRef || null;
+    const alreadyExisted = !!tenderFolder;
 
     if (!tenderFolder) {
         tenderFolder = await spCreateFolder(token, yearFolder.id, tenderFolderName);
@@ -154,7 +160,7 @@ async function sendEmailNotification(token, { reference, client, project, assign
     `.trim();
 
     try {
-        await spFetch(token, `/users/${mateuszEmail}/sendMail`, {
+        await spFetch(token, `/me/sendMail`, {
             method: 'POST',
             body: JSON.stringify({
                 message: {
