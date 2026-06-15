@@ -98,33 +98,37 @@ app.http('qb-quotes-next-ref', {
             const yy    = String(now.getFullYear()).slice(2);
             const mm    = String(now.getMonth() + 1).padStart(2, '0');
             const prefix = `Q${yy}${mm}`;
+            const yearPat = `Q${yy}%`;
 
-            // Find highest sequence number across all tables
+            // Scan ALL references this year across all tables, find highest sequence
             const [qbRes, tRes, trRes] = await Promise.all([
                 query(
                     `SELECT TOP 1 reference FROM QuoteBuilderQuotes
-                      WHERE reference LIKE @prefix + '%' AND status != 'deleted'
-                      ORDER BY reference DESC`,
-                    { prefix }
+                      WHERE reference LIKE @yearPat AND status != 'deleted'
+                      ORDER BY LEN(reference) DESC, reference DESC`,
+                    { yearPat }
                 ),
                 query(
                     `SELECT TOP 1 reference FROM Tenders
-                      WHERE reference LIKE @prefix + '%'
-                      ORDER BY reference DESC`,
-                    { prefix }
+                      WHERE reference LIKE @yearPat
+                      ORDER BY LEN(reference) DESC, reference DESC`,
+                    { yearPat }
                 ),
                 query(
                     `SELECT TOP 1 reference FROM TenderRegister
-                      WHERE reference LIKE @prefix + '%' AND status != 'Deleted'
-                      ORDER BY reference DESC`,
-                    { prefix }
+                      WHERE reference LIKE @yearPat AND status != 'Deleted'
+                      ORDER BY LEN(reference) DESC, reference DESC`,
+                    { yearPat }
                 )
             ]);
             const extractSeq = (ref) => {
                 if (!ref) return 0;
-                const s = String(ref).slice(prefix.length);
-                const n = parseInt(s, 10);
-                return isNaN(n) ? 0 : n;
+                // ref like Q260613: Q(1) + yy(2) + mm(2) + seq = prefix is 5 chars
+                // But ref may be from a different month this year e.g. Q260508
+                // Strip Q + yy (3 chars) then skip next 2 (month) to get seq
+                const afterYear = String(ref).slice(3); // e.g. "0613"
+                const seq = parseInt(afterYear.slice(2), 10); // skip "06" → "13"
+                return isNaN(seq) ? 0 : seq;
             };
             const maxSeq = Math.max(
                 extractSeq(qbRes.recordset[0]?.reference),
