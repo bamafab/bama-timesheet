@@ -628,6 +628,7 @@
 #trTable tbody tr:hover { background:rgba(255,255,255,0.03) }
 #trTable tbody tr.tr-selected { background:rgba(255,107,0,0.07) }
 #trTable td { padding:10px 12px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis;white-space:nowrap }
+#trTable td:nth-child(2) { white-space:normal;min-width:140px }
 #trTable th { padding:8px 12px }
 </style>
 </head>
@@ -2190,7 +2191,7 @@ function renderTenderTable() {
     return `<tr onclick="trSelectRow(${t.id})" class="${_trSelectedId === t.id ? 'tr-selected' : ''}">
       <td style="font-family:var(--font-mono);font-size:12px;color:var(--accent)">${t.reference}</td>
       <td title="${t.client}">${t.client}</td>
-      <td title="${t.project}" style="color:var(--muted);font-size:12px">${t.project}</td>
+      <td title="${t.project}" style="color:var(--muted);font-size:12px;white-space:normal;line-height:1.4">${t.project}</td>
       <td style="font-size:12px">${t.assigned_to || '—'}</td>
       <td style="text-align:center;font-size:12px;${dlStyle}">${dlStr}</td>
       <td style="text-align:center">${badge}</td>
@@ -2446,7 +2447,7 @@ async function trSyncFolder(tenderId) {
       <thead>
         <tr>
           <th style="width:90px">Ref</th>
-          <th style="width:200px">Client</th>
+          <th>Client</th>
           <th>Project</th>
           <th style="width:130px">Assigned To</th>
           <th style="width:90px;text-align:center">Deadline</th>
