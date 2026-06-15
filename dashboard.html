@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Estimating Dashboard</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260610a">
+<link rel="stylesheet" href="bama.css?v=20260615a">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -633,6 +633,39 @@
 </style>
 </head>
 <body>
+
+<!-- ═══════════════════ LOGIN SCREEN ═══════════════════ -->
+<div id="screenDashSelect" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:800;overflow-y:auto">
+  <div class="mgr-select-wrap" style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 20px">
+    <div class="mgr-select-title">ESTIMATING DASHBOARD</div>
+    <div class="mgr-select-sub">Select your name to log in</div>
+    <div class="mgr-emp-grid" id="dashEmployeeGrid">
+      <div class="empty-state"><div class="spinner"></div></div>
+    </div>
+    <div style="text-align:center;margin-top:24px">
+      <a href="hub.html" style="text-decoration:none"><button class="btn btn-ghost">&#8592; Back to Hub</button></a>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ PIN MODAL ═══════════════════ -->
+<div class="modal-overlay" id="dashPinModal" style="z-index:900">
+  <div class="modal" style="max-width:340px;text-align:center">
+    <div class="modal-title">🔐 Enter PIN</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:16px" id="dashPinUser">—</div>
+    <input type="password" class="field-input" id="dashPinInput" maxlength="6"
+      style="text-align:center;font-size:24px;letter-spacing:8px;max-width:180px;margin:0 auto"
+      onkeydown="if(event.key==='Enter')verifyDashPin()">
+    <div id="dashPinError" style="color:var(--red);font-size:12px;margin-top:8px;min-height:18px"></div>
+    <div class="modal-actions" style="margin-top:16px">
+      <button class="btn btn-ghost" onclick="document.getElementById('dashPinModal').classList.remove('active')">Cancel</button>
+      <button class="btn btn-primary" onclick="verifyDashPin()">Unlock</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ MAIN CONTENT (hidden until logged in) ═══════════════════ -->
+<div id="dashMainContent" style="display:none;flex-direction:column;height:100vh">
 
 <!-- Top bar -->
 <div class="topbar">
@@ -1936,15 +1969,154 @@ function showError(msg) {
 
 // Startup
 setTimeOfDay();
-if (handleRedirect()) {
-  // was a redirect — data will load below
+// ─── Dashboard PIN gate ────────────────────────────────────
+const DASH_API = 'https://bama-erp-api-deauckd2cja7ebd5.uksouth-01.azurewebsites.net';
+let _dashCurrentUser = null;
+let _dashPendingUser = null;
+let _dashEmployees = [];
+let _dashUserPerms = {};
+
+function dashSessionGet() {
+  try { return sessionStorage.getItem('bama_mgr_authed') || null; } catch(_) { return null; }
 }
-const token = getToken();
-if (token) {
+function dashSessionSet(name) {
+  try { sessionStorage.setItem('bama_mgr_authed', name); } catch(_) {}
+}
+
+async function initDashGate() {
+  // Load employees and user-access in parallel
+  const token = getToken();
+  if (!token) { login(); return; }
+
+  try {
+    const [empsRes, permsRes] = await Promise.all([
+      fetch(`${DASH_API}/api/employees?all=true`, { headers: { 'Authorization': `Bearer ${token}` } }),
+      fetch(`${DASH_API}/api/user-access`,        { headers: { 'Authorization': `Bearer ${token}` } })
+    ]);
+    _dashEmployees = empsRes.ok ? await empsRes.json() : [];
+    const permsArr = permsRes.ok ? await permsRes.json() : [];
+    // Build name → perms map
+    _dashUserPerms = {};
+    (Array.isArray(permsArr) ? permsArr : []).forEach(row => {
+      _dashUserPerms[row.employee_name] = {
+        estimatingDashboard: !!row.estimating_dashboard,
+        tenders: !!row.tenders,
+        editQuotes: !!row.edit_quotes,
+        viewQuotes: !!row.view_quotes,
+      };
+    });
+  } catch(e) {
+    console.error('initDashGate load failed:', e);
+  }
+
+  // Check if already authenticated via session
+  const authed = dashSessionGet();
+  if (authed) {
+    const p = _dashUserPerms[authed];
+    if (p && p.estimatingDashboard) {
+      _dashCurrentUser = authed;
+      showDashMain();
+      return;
+    }
+  }
+
+  // Show login screen
+  renderDashEmployeeGrid();
+  document.getElementById('screenDashSelect').style.display = 'block';
+}
+
+function renderDashEmployeeGrid() {
+  const grid = document.getElementById('dashEmployeeGrid');
+  if (!grid) return;
+  const empList = (_dashEmployees || []).filter(e =>
+    e.is_active !== false && e.active !== false &&
+    ((e.staff_type || e.staffType || 'workshop') === 'office')
+  );
+  if (!empList.length) {
+    grid.innerHTML = '<div class="empty-state" style="padding:30px"><div style="font-size:28px;margin-bottom:10px">👤</div><div>No office staff set up yet.</div></div>';
+    return;
+  }
+  const empColor = name => {
+    let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt(0)) & 0xffffffff;
+    return `hsl(${Math.abs(h) % 360},55%,38%)`;
+  };
+  grid.innerHTML = empList.map(emp => {
+    const name = emp.name || '';
+    const ini = name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+    const col = empColor(name);
+    const hasPin = !!(emp.pin || emp.has_pin || emp.hasPin);
+    return `
+      <div class="emp-btn" onclick="selectDashEmployee('${name.replace(/'/g, "\\'")}')" style="padding:22px 14px 16px">
+        <div class="emp-avatar" style="width:48px;height:48px;font-size:19px;background:linear-gradient(135deg,${col},#3e1a00)">${ini}</div>
+        <div class="emp-name" style="font-size:13px">${name}</div>
+        <div style="font-size:10px;color:var(--subtle);margin-top:3px">${hasPin ? '🔒 PIN set' : '🔓 No PIN'}</div>
+      </div>`;
+  }).join('');
+}
+
+function selectDashEmployee(name) {
+  const emp = (_dashEmployees || []).find(e => e.name === name);
+  if (!emp) return;
+  const hasPin = !!(emp.pin || emp.has_pin || emp.hasPin);
+  if (!hasPin) {
+    alert('No PIN set for this user. Set one in Staff management first.');
+    return;
+  }
+  _dashPendingUser = { name, empId: emp.id };
+  document.getElementById('dashPinUser').textContent = name;
+  document.getElementById('dashPinInput').value = '';
+  document.getElementById('dashPinError').textContent = '';
+  document.getElementById('dashPinModal').classList.add('active');
+  setTimeout(() => document.getElementById('dashPinInput').focus(), 200);
+}
+
+async function verifyDashPin() {
+  if (!_dashPendingUser) return;
+  const pin = document.getElementById('dashPinInput').value;
+  if (!pin) return;
+  const token = getToken();
+  try {
+    const res = await fetch(`${DASH_API}/api/auth/verify-pin`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ employee_id: _dashPendingUser.empId, pin })
+    });
+    const result = await res.json();
+    if (!result || !result.valid) {
+      document.getElementById('dashPinError').textContent = (result && result.reason) || 'Incorrect PIN';
+      document.getElementById('dashPinInput').value = '';
+      return;
+    }
+    // PIN correct — check permissions
+    const name = _dashPendingUser.name;
+    const p = _dashUserPerms[name];
+    if (!p || !p.estimatingDashboard) {
+      document.getElementById('dashPinError').textContent = 'You don\'t have permission to access the Estimating Dashboard.';
+      document.getElementById('dashPinInput').value = '';
+      return;
+    }
+    _dashCurrentUser = name;
+    dashSessionSet(name);
+    document.getElementById('dashPinModal').classList.remove('active');
+    document.getElementById('screenDashSelect').style.display = 'none';
+    showDashMain();
+  } catch(e) {
+    document.getElementById('dashPinError').textContent = 'Error verifying PIN: ' + e.message;
+  }
+}
+
+function showDashMain() {
+  const el = document.getElementById('dashMainContent');
+  if (el) { el.style.display = 'flex'; el.style.flexDirection = 'column'; }
+  // Run the original startup
   loadTrackerData();
-} else {
-  login();
 }
+
+if (handleRedirect()) {
+  // was a redirect — data will load after gate check
+}
+// Gate: load employees + permissions, show login screen or main content
+initDashGate();
 
 async function dashDeleteQuote() {
   if (!selectedQuote?.id || selectedQuote._source !== 'sql') {
@@ -2641,6 +2813,8 @@ async function trSyncFolder(tenderId) {
     </div>
   </div>
 </div>
+
+</div><!-- /#dashMainContent -->
 
 </body>
 </html>

@@ -11192,7 +11192,8 @@ async function loadUserAccessData() {
           editPurchaseOrders: !!row.edit_purchase_orders,
           invoicing: !!row.invoicing,
           afps: !!row.afps,
-          reconcile: !!row.reconcile
+          reconcile: !!row.reconcile,
+          estimatingDashboard: !!row.estimating_dashboard
         }
       };
     });
@@ -11254,7 +11255,8 @@ const PERMISSION_DEFS = [
   { key: 'editPurchaseOrders', label: 'Edit Purchase Orders', desc: 'Raise, edit, approve and send purchase orders' },
   { key: 'invoicing', label: 'Invoicing', desc: 'Full access to the Invoice Tracker (AFPs aside, Sales / Supplier Invoices)' },
   { key: 'afps', label: 'AFPs (Applications for Payment)', desc: 'Create, submit, certify and invoice Applications for Payment on projects' },
-  { key: 'reconcile', label: 'Bank Reconciliation', desc: 'Upload bank statements, match transactions and reconcile accounts' }
+  { key: 'reconcile', label: 'Bank Reconciliation', desc: 'Upload bank statements, match transactions and reconcile accounts' },
+  { key: 'estimatingDashboard', label: 'Estimating Dashboard', desc: 'Access the Estimating Dashboard (quote pipeline overview)' }
 ];
 
 const PERM_TO_TAB = {
@@ -15097,7 +15099,7 @@ async function toggleUserPermission(empName, permKey, enabled) {
         tenders: false, editQuotes: false, viewQuotes: false,
         editProjects: false, viewProjects: false,
         viewPurchaseOrders: false, editPurchaseOrders: false,
-        invoicing: false, afps: false, reconcile: false
+        invoicing: false, afps: false, reconcile: false, estimatingDashboard: false
       }
     };
   }
@@ -28602,6 +28604,7 @@ const CURRENT_PAGE = (() => {
   if (path.includes('po-tracker')) return 'poTracker';
   if (path.includes('invoice-tracker')) return 'invoiceTracker';
   if (path.includes('reconcile')) return 'reconcile';
+  if (path.includes('dashboard')) return 'dashboard';
   if (path.includes('reports')) return 'reports';
   if (path.includes('projects') || path.includes('project')) return 'projects';
   if (path.includes('hub')) return 'hub';
@@ -28656,7 +28659,7 @@ async function init() {
     : Promise.resolve();
 
   // User access needed on manager and office pages (still from SharePoint for now)
-  const userAccessPromise = (CURRENT_PAGE === 'manager' || CURRENT_PAGE === 'office' || CURRENT_PAGE === 'projects' || CURRENT_PAGE === 'projectTracker' || CURRENT_PAGE === 'poTracker' || CURRENT_PAGE === 'invoiceTracker' || CURRENT_PAGE === 'tenders' || CURRENT_PAGE === 'quotes' || CURRENT_PAGE === 'babcock' || CURRENT_PAGE === 'reports' || CURRENT_PAGE === 'reconcile')
+  const userAccessPromise = (CURRENT_PAGE === 'manager' || CURRENT_PAGE === 'office' || CURRENT_PAGE === 'projects' || CURRENT_PAGE === 'projectTracker' || CURRENT_PAGE === 'poTracker' || CURRENT_PAGE === 'invoiceTracker' || CURRENT_PAGE === 'tenders' || CURRENT_PAGE === 'quotes' || CURRENT_PAGE === 'babcock' || CURRENT_PAGE === 'reports' || CURRENT_PAGE === 'reconcile' || CURRENT_PAGE === 'dashboard')
     ? Promise.race([
         loadUserAccessData(),
         new Promise((_, rej) => setTimeout(() => rej(new Error('Timeout')), 6000))
