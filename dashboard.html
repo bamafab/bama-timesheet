@@ -1971,7 +1971,8 @@ async function trFetch(path, opts = {}) {
 // ── Load assignees ────────────────────────────────────────────
 async function loadTrAssignees() {
   try {
-    _trAssignees = await trFetch('/api/tender-assignees');
+    const raw = await trFetch('/api/tender-assignees');
+    _trAssignees = Array.isArray(raw) ? raw : (raw?.value || raw?.data || []);
     // Populate filter dropdown
     const sel = document.getElementById('trFilterAssigned');
     if (sel) {
