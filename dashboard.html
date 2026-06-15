@@ -1945,7 +1945,7 @@ async function dashDeleteQuote() {
   if (!confirm(`Delete "${q.ref} — ${q.company}"?\n\nThis will hide it from your list (recoverable by changing status in QB).`)) return;
   try {
     const token = sessionStorage.getItem('bama_token') || '';
-    const res = await fetch(`${apiBase}/api/qb-quotes/${q.id}`, {
+    const res = await fetch(`${TR_API}/api/qb-quotes/${q.id}`, {
       method: 'PUT',
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'deleted' })
