@@ -99,36 +99,37 @@ app.http('qb-quotes-next-ref', {
             const mm    = String(now.getMonth() + 1).padStart(2, '0');
             const prefix = `Q${yy}${mm}`;
 
-            // Find highest sequence number in both tables
+            // Find highest sequence number across all tables
             const [qbRes, tRes, trRes] = await Promise.all([
                 query(
-                    `SELECT MAX(CAST(SUBSTRING(reference, LEN(@prefix)+1, 10) AS INT)) AS maxSeq
-                       FROM QuoteBuilderQuotes
-                      WHERE reference LIKE @prefix + '%'
-                        AND ISNUMERIC(SUBSTRING(reference, LEN(@prefix)+1, 10)) = 1
-                        AND status != 'deleted'`,
+                    `SELECT TOP 1 reference FROM QuoteBuilderQuotes
+                      WHERE reference LIKE @prefix + '%' AND status != 'deleted'
+                      ORDER BY reference DESC`,
                     { prefix }
                 ),
                 query(
-                    `SELECT MAX(CAST(SUBSTRING(reference, LEN(@prefix)+1, 10) AS INT)) AS maxSeq
-                       FROM Tenders
+                    `SELECT TOP 1 reference FROM Tenders
                       WHERE reference LIKE @prefix + '%'
-                        AND ISNUMERIC(SUBSTRING(reference, LEN(@prefix)+1, 10)) = 1`,
+                      ORDER BY reference DESC`,
                     { prefix }
                 ),
                 query(
-                    `SELECT MAX(CAST(SUBSTRING(reference, LEN(@prefix)+1, 10) AS INT)) AS maxSeq
-                       FROM TenderRegister
-                      WHERE reference LIKE @prefix + '%'
-                        AND ISNUMERIC(SUBSTRING(reference, LEN(@prefix)+1, 10)) = 1
-                        AND status != 'Deleted'`,
+                    `SELECT TOP 1 reference FROM TenderRegister
+                      WHERE reference LIKE @prefix + '%' AND status != 'Deleted'
+                      ORDER BY reference DESC`,
                     { prefix }
                 )
             ]);
+            const extractSeq = (ref) => {
+                if (!ref) return 0;
+                const s = String(ref).slice(prefix.length);
+                const n = parseInt(s, 10);
+                return isNaN(n) ? 0 : n;
+            };
             const maxSeq = Math.max(
-                qbRes.recordset[0].maxSeq  || 0,
-                tRes.recordset[0].maxSeq   || 0,
-                trRes.recordset[0].maxSeq  || 0
+                extractSeq(qbRes.recordset[0]?.reference),
+                extractSeq(tRes.recordset[0]?.reference),
+                extractSeq(trRes.recordset[0]?.reference)
             );
             const count = maxSeq + 1;
             const reference = `${prefix}${String(count).padStart(2, '0')}`;
