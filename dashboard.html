@@ -1966,15 +1966,48 @@ function trClientInput(val) {
     </div>`).join('');
 }
 
+let _trContactsCache = {};
+
 function trFillClient(company) {
   const c = _trClientBook.find(x => x.company_name === company);
   if (!c) return;
   document.getElementById('trNewClient').value = c.company_name;
-  // Fill contact fields if not skipped
-  if (!document.getElementById('trNewSkipContact').checked) {
-      // Contact fields populated separately — just fill company for now
-  }
   trCloseClientDD();
+  if (!document.getElementById('trNewSkipContact').checked) {
+    trLoadContacts(c.id);
+  }
+}
+
+async function trLoadContacts(clientId) {
+  if (!clientId) return;
+  try {
+    const res = _trContactsCache[clientId]
+      ? _trContactsCache[clientId]
+      : await trFetch(`/api/client-contacts?client_id=${clientId}`);
+    const contacts = Array.isArray(res) ? res : (res?.recordset || []);
+    _trContactsCache[clientId] = contacts;
+
+    const wrap = document.getElementById('trContactSelectWrap');
+    const sel  = document.getElementById('trContactSelect');
+    if (!contacts.length) { wrap.style.display = 'none'; return; }
+
+    sel.innerHTML = '<option value="">— or enter manually below —</option>' +
+      contacts.map((c,i) => `<option value="${i}">${c.name}${c.job_title ? ' — '+c.job_title : ''}</option>`).join('');
+    wrap.style.display = '';
+    wrap._contacts = contacts;
+  } catch(e) { console.warn('Contacts load failed:', e); }
+}
+
+function trFillContact(idx) {
+  if (idx === '') return;
+  const wrap = document.getElementById('trContactSelectWrap');
+  const contacts = wrap._contacts || [];
+  const c = contacts[parseInt(idx)];
+  if (!c) return;
+  if (c.name)      document.getElementById('trNewContactName').value  = c.name;
+  if (c.job_title) document.getElementById('trNewContactTitle').value = c.job_title;
+  if (c.email)     document.getElementById('trNewContactEmail').value = c.email;
+  if (c.phone)     document.getElementById('trNewContactPhone').value = c.phone;
 }
 
 function trCloseClientDD() {
@@ -2126,6 +2159,8 @@ async function openNewTenderModal() {
   document.getElementById('trNewDeadline').value = '';
   document.getElementById('trNewSkipContact').checked = false;
   document.getElementById('trContactFields').style.display = '';
+  document.getElementById('trContactSelectWrap').style.display = 'none';
+  document.getElementById('trContactSelect').innerHTML = '<option value="">— or enter manually below —</option>';
   document.getElementById('trNewAssigned').value = '';
 
   const modal = document.getElementById('trNewModal');
@@ -2429,6 +2464,13 @@ async function trSyncFolder(tenderId) {
           </label>
         </div>
         <div id="trContactFields">
+          <!-- Existing contacts dropdown -->
+          <div id="trContactSelectWrap" style="display:none;margin-bottom:10px">
+            <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:3px">Select existing contact</label>
+            <select id="trContactSelect" onchange="trFillContact(this.value)" style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:13px;box-sizing:border-box">
+              <option value="">— or enter manually below —</option>
+            </select>
+          </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
             <div>
               <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:3px">Full Name</label>
