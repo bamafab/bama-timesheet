@@ -708,6 +708,7 @@
         <div class="stat-card"><div class="stat-label">Win Rate</div><div class="stat-value" id="statWinRate" style="color:#22c55e">—</div><div class="stat-sub" id="statWinSub">—</div></div>
         <div class="stat-card"><div class="stat-label">Pipeline</div><div class="stat-value" id="statPipeline" style="color:var(--accent)">—</div><div class="stat-sub">open value</div></div>
         <div class="stat-card"><div class="stat-label">Due This Week</div><div class="stat-value" id="statDueWeek" style="color:#eab308">—</div><div class="stat-sub">quotes to submit</div></div>
+        <div class="stat-card" onclick="switchDashTab('tenders')" style="cursor:pointer" title="Go to Tender Register"><div class="stat-label">New Tenders</div><div class="stat-value" id="statNewTenders" style="color:var(--accent)">—</div><div class="stat-sub">awaiting quote</div></div>
       </div>
 
       <!-- AI Briefing -->
@@ -1434,6 +1435,11 @@ function mdToHtml(md) {
 
 async function generateBriefing() {
   if (!allQuotes.length) return;
+  // Load tenders if not already loaded
+  if (!_trTenders.length) await loadTenderRegister().catch(() => {});
+  const newTendersCount = _trTenders.filter(t => t.status === 'New').length;
+  const statEl = document.getElementById('statNewTenders');
+  if (statEl) statEl.textContent = newTendersCount;
 
   const btn = document.getElementById('refreshBriefingBtn');
   btn.disabled = true;
@@ -1456,6 +1462,8 @@ async function generateBriefing() {
   const fmt = q => `${q.ref} (${q.company}${q.project ? ' — ' + q.project : ''}${q.due ? ', due ' + fmtDate(q.due) : ''}${q.value > 0 ? ', £' + Math.round(q.value).toLocaleString() : ''})`;
 
   const userName = getUserDisplayName();
+  const newTenders = _trTenders.filter(t => t.status === 'New');
+  const fmtT = t => `${t.reference} (${t.client} — ${t.project}${t.deadline ? ', deadline ' + fmtDate(new Date(t.deadline)) : ''})`;
   const prompt = `You are a helpful assistant for ${userName}, an estimator at BAMA Fabrication Ltd, a structural steel fabrication company in Peterborough. Today is ${new Date().toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'long', year:'numeric'})}.
 
 Here is the current state of his quote tracker:
@@ -1464,10 +1472,11 @@ OVERDUE QUOTES (${overdue.length}): ${overdue.map(fmt).join('; ') || 'none'}
 DUE TODAY (${dueToday.length}): ${dueToday.map(fmt).join('; ') || 'none'}
 DUE IN 1-3 DAYS (${dueSoon.length}): ${dueSoon.map(fmt).join('; ') || 'none'}
 DUE THIS WEEK (${dueWeek.length} total): ${dueWeek.map(fmt).join('; ') || 'none'}
+NEW TENDERS AWAITING QUOTE (${newTenders.length}): ${newTenders.map(fmtT).join('; ') || 'none'}
 WIN RATE: ${winRate}% (${won.length} won, ${lost.length} lost)
 OPEN PIPELINE: ${fmtGBP(open.reduce((s,q)=>s+q.value,0))} across ${open.length} open quotes
 
-Write a brief, friendly, conversational morning briefing for ${userName} in English. Start with a quick summary of what's urgent. Prioritise: 1) overdue quotes (flag them clearly), 2) quotes due today or tomorrow, 3) anything due this week. 
+Write a brief, friendly, conversational morning briefing for ${userName} in English. Start with a quick summary of what's urgent. Prioritise: 1) overdue quotes (flag them clearly), 2) quotes due today or tomorrow, 3) anything due this week, 4) new tenders waiting to be quoted (mention how many). 
 
 For each urgent quote, give a practical recommendation — e.g. if a quote has a high value, note it's worth prioritising; if it looks like a small/quick job, say so. Keep it punchy and useful — not more than 150 words. Speak directly to Mateusz, use "you" not "the estimator". Be conversational, not robotic. If there's nothing urgent, say so and give a brief overview instead.`;
 
@@ -1485,7 +1494,7 @@ For each urgent quote, give a practical recommendation — e.g. if a quote has a
     sessionStorage.setItem('bama_briefing_text', text);
   } catch(e) {
     document.getElementById('aiMessage').className = 'ai-message';
-    document.getElementById('aiMessage').textContent = `AI briefing unavailable right now. You have ${overdue.length} overdue and ${dueToday.length} due today.`;
+    document.getElementById('aiMessage').textContent = `AI briefing unavailable right now. You have ${overdue.length} overdue, ${dueToday.length} due today, and ${newTenders.length} new tender${newTenders.length !== 1 ? 's' : ''} waiting.`;
     console.error('AI briefing error:', e);
   }
 
