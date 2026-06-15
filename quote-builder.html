@@ -4007,6 +4007,40 @@ STEEL_KGM['SQB130']=133;
 STEEL_KGM['SQB140']=154;
 STEEL_KGM['SQB150']=177;
 // ──────────────────────────────────────────────────────────────────
+const _SP_ALIASES = {
+  // UB
+  'UNIVERSAL BEAM':'UB','UNIVERSALBEAM':'UB','I BEAM':'UB','IBEAM':'UB','IPE':'UB',
+  'HEA':'UB','HEB':'UB','HEM':'UB','IPN':'UB','I-BEAM':'UB','UKB':'UB',
+  // UC
+  'UNIVERSAL COLUMN':'UC','UNIVERSALCOLUMN':'UC','H SECTION':'UC','HSECTION':'UC',
+  'H-SECTION':'UC','UKC':'UC',
+  // PFC
+  'PARALLEL FLANGE CHANNEL':'PFC','CHANNEL':'PFC','C SECTION':'PFC','C-SECTION':'PFC',
+  'CSECTION':'PFC','UKC PFC':'PFC',
+  // SHS
+  'SQUARE HOLLOW SECTION':'SHS','SQUARE HOLLOW':'SHS','SQUAREHOLLOW':'SHS',
+  'BOX SECTION':'SHS','BOXSECTION':'SHS',
+  // RHS
+  'RECTANGULAR HOLLOW SECTION':'RHS','RECTANGULAR HOLLOW':'RHS','RECTANGULARHOLLOW':'RHS',
+  'RECT HOLLOW':'RHS','RECTHOLLLOW':'RHS',
+  // CHS
+  'CIRCULAR HOLLOW SECTION':'CHS','CIRCULAR HOLLOW':'CHS','CIRCULARHOLLLOW':'CHS',
+  'PIPE':'CHS','TUBE':'CHS','CHS PIPE':'CHS',
+  // Angles
+  'EQUAL ANGLE':'EA','EQUALANGLE':'EA','ANGLE':'EA','RSA':'EA','UNEQUAL ANGLE':'UA',
+  'UNEQUALANGLE':'UA',
+  // Flat / plate
+  'FLAT BAR':'FLT','FLATBAR':'FLT','FLAT':'FLT','PLATE':'PLT','PL':'PLT','PLT':'PLT',
+  'FLT':'FLT','FLAT PLATE':'FLT'
+};
+
+// Canonical display spacing per prefix (for formatted output)
+const _SP_DISPLAY = {
+  UB:'UB ', UC:'UC ', PFC:'PFC ', SHS:'SHS ', RHS:'RHS ',
+  CHS:'CHS ', EA:'EA ', RSA:'RSA ', FLT:'FLT ', FLAT:'FLT ',
+  PLT:'PLT '
+};
+
 // Cache: normalised input → result  (cleared when STEEL_KGM is mutated)
 const _SP_CACHE = new Map();
 
