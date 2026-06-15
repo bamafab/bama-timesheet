@@ -301,7 +301,7 @@ app.http('tender-register-create', {
                         deadline,
                         createdBy:     auth.name || auth.email || '',
                         assigneeEmail: assignees[0]?.email || '',
-                        mateuszEmail:  'mateusz.braczyk@bamafab.co.uk'
+                        mateuszEmail:  'matt@bamafabrication.co.uk'
                     });
                 } catch (mailErr) {
                     console.warn('Email failed:', mailErr.message);

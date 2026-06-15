@@ -26,8 +26,8 @@ CREATE TABLE TenderAssignees (
 
 -- Seed initial assignees
 INSERT INTO TenderAssignees (full_name, email, sort_order) VALUES
-    ('Mateusz Braczyk',  'mateusz.braczyk@bamafab.co.uk',   1),
-    ('Andrew McDermid',  'andrew.mcdermid@bamafab.co.uk',   2);
+    ('Mateusz Braczyk',  'matt@bamafabrication.co.uk',   1),
+    ('Andrew McDermid',  'macca@bamafabrication.co.uk',  2);
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
