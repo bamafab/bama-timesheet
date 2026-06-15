@@ -15426,6 +15426,25 @@ const TEMPLATE_DEFAULTS = {
           'Invoice amount: {{net_invoice_total}}\n\n' +
           'Many thanks.'
   },
+  emailNewTender: {
+    subject: 'New Tender: {{tender_ref}} — {{project_name}} ({{company_name}})',
+    body: 'Hi {{handler_name}},\n\n' +
+          'A new tender has been logged:\n\n' +
+          '  Reference:  {{tender_ref}}\n' +
+          '  Client:     {{company_name}}\n' +
+          '  Project:    {{project_name}}\n' +
+          '  Deadline:   {{deadline_date}}\n' +
+          '  Logged by:  {{sender_name}}\n\n' +
+          'Please log in to the BAMA ERP to review and action.'
+  },
+  emailQuoteClient: {
+    subject: 'Quotation {{quote_ref}} — {{project_name}}',
+    body: 'Dear {{contact_name}},\n\n' +
+          'Thank you for your enquiry. Please find attached our quotation ref {{quote_ref}} for {{project_name}}.\n\n' +
+          'This quotation is valid for 30 days from the date of issue.\n\n' +
+          'If you have any questions or require any amendments, please do not hesitate to contact us.\n\n' +
+          'We look forward to hearing from you.'
+  },
   emailSignature: {
     // HTML content — appended to every Babcock workflow email after the
     // body. Logos can be embedded as <img src="data:..."> when ready.
@@ -15534,6 +15553,26 @@ const EMAIL_TOKEN_DEFS = {
     { token: 'sender_name',             label: 'Logged-in user name',        sample: 'Lee Kirtley' },
     { token: 'sender_email',            label: 'Logged-in user email',       sample: 'lee@bamafabrication.co.uk' },
     { token: 'date_today',              label: 'Today\u2019s date',          sample: '07 May 2026' }
+  ],
+  emailNewTender: [
+    { token: 'tender_ref',    label: 'Tender reference',       sample: 'Q260601' },
+    { token: 'project_name',  label: 'Project name',           sample: 'Office Mezzanine' },
+    { token: 'company_name',  label: 'Client company name',    sample: 'Acme Ltd' },
+    { token: 'handler_name',  label: 'Assigned quote handler', sample: 'Mateusz Braczyk' },
+    { token: 'deadline_date', label: 'Tender deadline date',   sample: '30 June 2026' },
+    { token: 'sender_name',   label: 'Logged-in user name',    sample: 'Natasza Laucis' },
+    { token: 'sender_email',  label: 'Logged-in user email',   sample: 'info@bamafabrication.co.uk' },
+    { token: 'date_today',    label: "Today's date",           sample: '15 June 2026' }
+  ],
+  emailQuoteClient: [
+    { token: 'contact_name',  label: 'Client contact name',    sample: 'John Smith' },
+    { token: 'quote_ref',     label: 'Quote reference',        sample: 'Q260601' },
+    { token: 'project_name',  label: 'Project name',           sample: 'Office Mezzanine' },
+    { token: 'company_name',  label: 'Client company name',    sample: 'Acme Ltd' },
+    { token: 'total_value',   label: 'Quote total (£)',        sample: '£12,500.00' },
+    { token: 'sender_name',   label: 'Logged-in user name',    sample: 'Mateusz Braczyk' },
+    { token: 'sender_email',  label: 'Logged-in user email',   sample: 'info@bamafabrication.co.uk' },
+    { token: 'date_today',    label: "Today's date",           sample: '15 June 2026' }
   ],
   emailSignature: [
     { token: 'sender_name',  label: 'Logged-in user name',  sample: 'Natasza Laucis' },
@@ -15910,9 +15949,16 @@ function refreshTemplatePreview() {
     };
     html = buildDnHtmlV2(mockDn, getMockProject(), getMockJob());
     if (label) label.textContent = 'Delivery Note \u2014 sample data';
-  } else if (tplCurrent === 'emailQuoteSent' || tplCurrent === 'emailBamaSwInvoice' || tplCurrent === 'emailBamaSwPo') {
+  } else if (tplCurrent === 'emailQuoteSent' || tplCurrent === 'emailBamaSwInvoice' || tplCurrent === 'emailBamaSwPo' || tplCurrent === 'emailNewTender' || tplCurrent === 'emailQuoteClient') {
     html = buildEmailPreviewHTML(tplCurrent, tplDraft);
-    if (label) label.textContent = (tplCurrent === 'emailQuoteSent' ? 'Babcock Quote Email' : tplCurrent === 'emailBamaSwPo' ? 'Bama SW PO Email' : 'Bama SW Remittance Email') + ' \u2014 sample data';
+    const labels = {
+      emailQuoteSent:    'Babcock Quote Email',
+      emailBamaSwPo:     'Bama SW PO Email',
+      emailBamaSwInvoice:'Bama SW Remittance Email',
+      emailNewTender:    'New Tender Notification Email',
+      emailQuoteClient:  'Quote to Client Email (QB)'
+    };
+    if (label) label.textContent = (labels[tplCurrent] || tplCurrent) + ' \u2014 sample data';
   } else if (tplCurrent === 'emailSignature') {
     // For the signature alone, show it inside an envelope so the user
     // sees what it looks like at the bottom of an actual email body.
@@ -17545,6 +17591,9 @@ async function submitNewTender() {
     // Go straight to detail view with success message
     toast(`Tender ${reference} created ✓ — Upload your documents below`, 'success');
     currentTender = tender;
+
+    // Notify quote handler — open email modal (non-blocking; user can skip)
+    sendNewTenderNotification(tender).catch(e => console.warn('Tender notification email failed:', e));
 
     // Show detail view directly
     document.querySelectorAll('#tenderLayout .tab-content').forEach(el => {
@@ -21939,6 +21988,88 @@ async function openBabcockEmailModal(opts) {
 
   // Return a promise that resolves on send/cancel — enables `await`
   return await new Promise(resolve => { _bemailContext._resolve = resolve; });
+}
+
+// ── Send new-tender notification ────────────────────────────────────────────
+// Called from submitNewTender() after the tender is created.
+// Sends to the quote handler (assigned person in Settings) and CCs the
+// currently logged-in user so they have a record of the notification.
+async function sendNewTenderNotification(tender) {
+  const settings = (state.timesheetData && state.timesheetData.settings) || {};
+  const handlerName  = settings.quoteHandlerName  || '';
+  const handlerEmail = settings.quoteHandlerEmail || '';
+
+  if (!handlerEmail) {
+    toast('No quote handler email set in Settings — skipping notification email', 'warn');
+    return;
+  }
+
+  // CC = currently logged-in user's Microsoft email
+  const me = await getCurrentMicrosoftUser();
+  const myEmail = (me && me.email) || '';
+
+  // Format deadline date nicely
+  let deadlineStr = tender.deadline_date || '';
+  if (deadlineStr) {
+    try {
+      deadlineStr = new Date(deadlineStr).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
+    } catch (_) {}
+  }
+
+  await openBabcockEmailModal({
+    title: 'Notify Quote Handler — New Tender',
+    templateKey: 'emailNewTender',
+    to:  handlerEmail,
+    cc:  myEmail !== handlerEmail ? myEmail : '',
+    tokens: {
+      tender_ref:   tender.reference   || '',
+      project_name: tender.project_name || '',
+      company_name: tender.company_name || tender.client_name || '',
+      handler_name: handlerName,
+      deadline_date: deadlineStr
+    }
+  });
+}
+
+// ── Send quote to client from Quote Builder ──────────────────────────────────
+// Called by the "✉ Send to Client" button in QB.
+// Generates the client-facing PDF, then opens the email modal pre-filled
+// with the client contact details from the saved quote.
+async function sendQuoteToClient(quote, pdfBase64) {
+  if (!quote) { toast('No quote loaded', 'error'); return; }
+
+  const contactEmail = quote.clientEmail || quote.contact_email || '';
+  const contactName  = quote.clientName  || quote.contact_name  || '';
+  const companyName  = quote.company     || quote.company_name  || '';
+
+  // CC = currently logged-in user
+  const me = await getCurrentMicrosoftUser();
+  const myEmail = (me && me.email) || '';
+
+  const grandTotal = typeof quote.grandTotal === 'number'
+    ? '£' + quote.grandTotal.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : '';
+
+  const attachment = pdfBase64 ? {
+    name: `${quote.ref || 'Quote'} - ${companyName || 'Client'}.pdf`,
+    contentType: 'application/pdf',
+    contentBase64: pdfBase64
+  } : null;
+
+  await openBabcockEmailModal({
+    title: 'Send Quote to Client',
+    templateKey: 'emailQuoteClient',
+    to:  contactEmail,
+    cc:  myEmail,
+    tokens: {
+      contact_name: contactName,
+      quote_ref:    quote.ref     || '',
+      project_name: quote.project || '',
+      company_name: companyName,
+      total_value:  grandTotal
+    },
+    attachment
+  });
 }
 
 function closeBabcockEmailModal() {

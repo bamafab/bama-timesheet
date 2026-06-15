@@ -8,6 +8,7 @@
 <meta http-equiv="Expires" content="0">
 <title>BAMA Quote Builder</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -319,6 +320,7 @@ tr.drag-dragging { opacity:0.35; }
       </div>
     </div>
     <button class="btn btn-ghost btn-sm" onclick="openHelp()" title="Help &amp; guidance" style="font-size:15px;padding:4px 10px;line-height:1">?</button>
+    <button class="btn btn-ghost btn-sm" onclick="emailQuoteToClient()" title="Send client-facing quote PDF by email" id="btnEmailClient">✉ Email Client</button>
     <button class="btn btn-primary btn-sm" onclick="saveCurrentQuote()">Save</button>
   </div>
 </div>
@@ -10769,7 +10771,7 @@ function helperExportPDF() {
   </body></html>`;
 
   const win = window.open('', '_blank', 'width=900,height:1100');
-  if (!win) { toast('Przeglądarka zablokowała popup — zezwól na popupy dla tej strony i spróbuj ponownie', 'error'); return; }
+  if (!win) { toast('Popup blocked — please allow popups for this site and try again', 'error'); return; }
   win.document.write(html);
   win.document.close();
 }
@@ -11995,9 +11997,141 @@ function fmtGBP(v) {
 
 function openPdfWindow(html) {
   const win = window.open('', '_blank', 'width=900,height=1100');
-  if (!win) { toast('Przeglądarka zablokowała popup — zezwól na popupy dla tej strony i spróbuj ponownie', 'error'); return; }
+  if (!win) { toast('Popup blocked — please allow popups for this site and try again', 'error'); return; }
   win.document.write(html);
   win.document.close();
+}
+
+// ── Email client-facing quote PDF to client ───────────────────────────────
+// Renders the quote PDF silently via html2pdf, then opens the email modal
+// (babcockEmailModal from shared.js) pre-filled with client details.
+async function emailQuoteToClient() {
+  const q = getQuote();
+  if (!q) { toast('No quote selected', 'error'); return; }
+  if (!q.company && !q.contact) { toast('No client details on this quote — add a company name first', 'error'); return; }
+
+  const btn = document.getElementById('btnEmailClient');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating PDF…'; }
+
+  try {
+    // Build the same HTML used for print/PDF
+    const revStr = q.revision ? ` · ${q.revision}` : '';
+    // Temporarily call generateQuotePDF logic to get the HTML — we need
+    // the same quoteHtml that mode='quote' produces but as a string, not
+    // opened in a window. Re-use buildPdfPage + the line-building logic
+    // by calling a silent render.
+    const pdfBase64 = await renderQuotePdfToBase64(q);
+
+    if (btn) { btn.disabled = false; btn.textContent = '✉ Email Client'; }
+
+    // sendQuoteToClient lives in shared.js and opens the babcockEmailModal
+    await sendQuoteToClient(q, pdfBase64);
+
+  } catch(e) {
+    console.error('emailQuoteToClient error:', e);
+    toast('Failed to generate PDF: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '✉ Email Client'; }
+  }
+}
+
+// Render the client-facing quote to a base64 PDF string using html2pdf.js
+async function renderQuotePdfToBase64(q) {
+  // Build the same HTML as generateQuotePDF('quote') but return base64
+  const revStr  = q.revision ? ` · ${q.revision}` : '';
+  const scope   = (q.qScope || q.comments || '').replace(/\n/g,'<br>');
+  const logoHtml = getLogoHtml();
+  const computed = q._computed || {};
+
+  const docHeader = `
+    <div class="doc-header">
+      <div class="doc-header-left">
+        ${logoHtml}
+        <div class="addr">11 Enterprise Way, Enterprise Park<br>Yaxley, PE7 3WY, Peterborough<br>01733 855212 · info@bamafabrication.co.uk</div>
+      </div>
+      <div style="text-align:right">
+        <div class="doc-type">Quotation</div>
+        <div class="doc-meta" style="margin-top:10px">
+          <div><strong>Date:</strong><span class="val"> ${fmtDateLong(q.date)}</span></div>
+          <div><strong>Quotation #:</strong><span class="val"> ${escHtml(q.ref)}${revStr}</span></div>
+          <div><strong>Prepared by:</strong><span class="val"> ${escHtml(q.preparedBy||'—')}</span></div>
+          <div><strong>Valid until:</strong><span class="val"> ${fmtDateLong(q.validUntil)}</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="info-grid">
+      <div class="info-block">
+        <label>Quotation For</label>
+        <div class="info-val">
+          ${q.contact ? escHtml(q.contact)+'<br>' : ''}
+          <strong>${escHtml(q.company||'—')}</strong>
+          ${q.email ? '<br><span style="color:#555">'+escHtml(q.email)+'</span>' : ''}
+          ${q.phone ? '<br><span style="color:#555">'+escHtml(q.phone)+'</span>' : ''}
+        </div>
+      </div>
+    </div>
+    ${scope ? `<div class="scope-block"><label>Comments or Special Instructions</label>${scope}</div>` : ''}`;
+
+  // Build line rows (client-facing: only summary lines, no internal breakdown)
+  let lineRows = '', grandTotal = 0;
+  const lines = q.standardLines || [];
+  const internalKeys = new Set(['approval_fab','approval_survey','design_draughtsman','design_struct_eng','design_architect','design_conn']);
+  lines.forEach(l => {
+    if (internalKeys.has(l.key)) return;
+    if (l.excluded || l.na) return;
+    const price = parseFloat(l.price) || 0;
+    if (price === 0 && !l.desc) return;
+    grandTotal += price;
+    lineRows += `<tr><td>${escHtml(l.desc||'')}</td><td class="amt">£${price.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>`;
+  });
+  grandTotal = Math.round(grandTotal * 100) / 100;
+  const vatAmt = Math.round(grandTotal * 0.2 * 100) / 100;
+  const totalIncVat = Math.round((grandTotal + vatAmt) * 100) / 100;
+
+  const priceTable = `
+    <table class="line-table">
+      <thead><tr><th>Description</th><th class="amt">Amount</th></tr></thead>
+      <tbody>${lineRows}</tbody>
+      <tfoot>
+        <tr class="subtotal-row"><td>Subtotal (ex. VAT)</td><td class="amt">£${grandTotal.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>
+        <tr><td>VAT @ 20%</td><td class="amt">£${vatAmt.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>
+        <tr class="grand-total-row"><td>TOTAL (inc. VAT)</td><td class="amt">£${totalIncVat.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>
+      </tfoot>
+    </table>`;
+
+  const tcHtml = buildTcHtml ? buildTcHtml(q) : '';
+  const fullHtml = buildPdfPage(`Quotation ${escHtml(q.ref)}${revStr}`, docHeader + priceTable + tcHtml);
+
+  // Render to PDF blob via html2pdf.js
+  const container = document.createElement('div');
+  container.innerHTML = fullHtml;
+  // Extract just the body content for html2pdf (it needs the inner HTML, not a full page)
+  const bodyMatch = fullHtml.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+  const bodyContent = bodyMatch ? bodyMatch[1] : fullHtml;
+
+  const tempDiv = document.createElement('div');
+  tempDiv.innerHTML = bodyContent;
+  tempDiv.style.cssText = 'position:absolute;left:-9999px;top:0;width:210mm;background:#fff;color:#000';
+  document.body.appendChild(tempDiv);
+
+  try {
+    const blob = await html2pdf().set({
+      margin: [12, 14, 12, 14],
+      filename: `${q.ref||'Quote'} - ${q.company||'Client'}.pdf`,
+      image: { type: 'jpeg', quality: 0.95 },
+      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    }).from(tempDiv).outputPdf('blob');
+
+    // Convert blob to base64
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  } finally {
+    document.body.removeChild(tempDiv);
+  }
 }
 
 function escHtml(s) {
@@ -12920,7 +13054,7 @@ function generateHandoverPack() {
 </body></html>`;
 
   const win = window.open('', '_blank', 'width=960,height:1100');
-  if (!win) { toast('Przeglądarka zablokowała popup — zezwól na popupy dla tej strony i spróbuj ponownie', 'error'); return; }
+  if (!win) { toast('Popup blocked — please allow popups for this site and try again', 'error'); return; }
   win.document.write(html);
   win.document.close();
 }
