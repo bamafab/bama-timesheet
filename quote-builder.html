@@ -3798,6 +3798,7 @@ function addRevision() {
   const cur = revs.indexOf(q.revision);
   if (cur >= revs.length - 1) { toast('Max revision reached', 'error'); return; }
   q.revision = revs[cur + 1];
+  q.status = 'open';  // reset status — new revision not yet sent
   _updateRevDisplay(q);
   saveAll();
   renderRevHistory(q);

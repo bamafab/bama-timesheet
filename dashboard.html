@@ -850,6 +850,8 @@ async function loadTrackerData() {
           due:      r.decision_due ? r.decision_due.slice(0,10) : null,
           win:      r.status === 'won' ? true : r.status === 'lost' ? false : null,
           status:   r.status,
+          urgency:  r.status === 'sent' ? 'sent' : r.status === 'open' ? 'open' : r.status,
+          revision: r.revision || '',
           comments: r.loss_comment || '',
           id:       r.id,
           _source:  'sql',
@@ -1099,12 +1101,15 @@ function renderQuoteList() {
       ? `<span class="due-badge due-${q.urgency}">${fmtDate(q.due)}</span>` : '';
     const winMark = q.win === true ? '<span class="win-yes">✓</span>' : q.win === false ? '<span class="win-no">✗</span>' : '';
     const isSelected = selectedQuote?.ref === q.ref;
+    const { cls, label } = emsStatusInfo(q);
+    const statusBadge = q._source === 'sql' ? `<span class="ems-status-badge ${cls}" style="font-size:10px;padding:1px 6px">${label}</span>` : '';
+    const revBadge = q.revision ? `<span style="font-family:var(--font-mono);font-size:10px;background:rgba(255,107,0,0.1);color:var(--accent);padding:1px 5px;border-radius:3px;border:1px solid rgba(255,107,0,0.2);margin-left:4px">${q.revision}</span>` : '';
     return `<div class="ql-item ${isSelected ? 'selected' : ''}" onclick="selectAndPreview(${JSON.stringify(q.ref).replace(/&/g,'&amp;').replace(/"/g,'&quot;')})">
       <div>
-        <div class="ql-item-ref">${q.ref}</div>
+        <div class="ql-item-ref">${q.ref}${revBadge}</div>
         <div class="ql-item-company">${q.company || '—'}</div>
         <div class="ql-item-project">${q.project || '—'}</div>
-        <div class="ql-item-meta">${dueBadge}${winMark}</div>
+        <div class="ql-item-meta">${statusBadge}${dueBadge}${winMark}</div>
       </div>
       <div class="ql-item-right">
         <div class="ql-item-value">${q.value > 0 ? fmtGBP(q.value) : '—'}</div>
