@@ -5943,6 +5943,22 @@ function onTakeoffTypeInput(i, val, inputEl) {
   });
 }
 
+function takeoffGridKey(e, i, col) {
+  if (e.key === 'Enter' || e.key === 'Tab') {
+    e.preventDefault();
+    const cols = ['type','length','qty'];
+    const cur = cols.indexOf(col);
+    const nextCol = cols[cur + 1];
+    if (nextCol) {
+      const next = document.querySelector(`input[data-row="${i}"][data-col="${nextCol}"]`);
+      if (next) { next.focus(); next.select(); return; }
+    }
+    // last col — move to type of next row
+    const next = document.querySelector(`input[data-row="${i+1}"][data-col="type"]`);
+    if (next) { next.focus(); next.select(); }
+  }
+}
+
 function onTakeoffTypeKey(e, i, inputEl) {
   _acNavigate(e, inputEl, key => {
     if (inputEl) inputEl.value = key;
