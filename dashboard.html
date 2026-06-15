@@ -1993,8 +1993,12 @@ async function loadTrAssignees() {
 async function loadTenderRegister() {
   const year = document.getElementById('trFilterYear')?.value || '26';
   try {
-    _trTenders = await trFetch(`/api/tender-register?year=${year}`);
-    if (!_trAssignees.length) await loadTrAssignees();
+    // Load assignees and tenders in parallel
+    const [tenders] = await Promise.all([
+      trFetch(`/api/tender-register?year=${year}`),
+      _trAssignees.length ? Promise.resolve() : loadTrAssignees()
+    ]);
+    _trTenders = tenders;
     renderTenderTable();
   } catch(e) {
     document.getElementById('trBody').innerHTML =
@@ -2057,8 +2061,8 @@ function trSelectRow(id) {
 
 // ── New Tender Modal ──────────────────────────────────────────
 async function openNewTenderModal() {
-  // Load assignees if needed
-  if (!_trAssignees.length) await loadTrAssignees();
+  // Always reload assignees to make sure dropdown is populated
+  await loadTrAssignees();
 
   // Get next ref
   try {
