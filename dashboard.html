@@ -614,6 +614,21 @@
   .briefing-body::-webkit-scrollbar { width: 6px; }
   .ql-list::-webkit-scrollbar-thumb,
   .briefing-body::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+/* ── Dash tabs ── */
+.dash-tab { background:transparent;border:1px solid var(--border);border-radius:6px;padding:5px 14px;color:var(--muted);font-size:13px;cursor:pointer;font-family:var(--font-body);transition:all .15s }
+.dash-tab:hover { background:var(--surface);color:var(--text) }
+.dash-tab.active { background:var(--accent);color:#fff;border-color:var(--accent) }
+/* ── Tender status badges ── */
+.tr-badge { display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap }
+.tr-badge-new   { background:rgba(255,107,0,0.15);color:var(--accent);border:1px solid rgba(255,107,0,0.3) }
+.tr-badge-inqb  { background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3) }
+.tr-badge-nobid { background:rgba(100,100,100,0.15);color:var(--muted);border:1px solid var(--border) }
+/* ── Tender table ── */
+#trTable tbody tr { cursor:pointer;transition:background .1s }
+#trTable tbody tr:hover { background:rgba(255,255,255,0.03) }
+#trTable tbody tr.tr-selected { background:rgba(255,107,0,0.07) }
+#trTable td { padding:10px 12px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis;white-space:nowrap }
+#trTable th { padding:8px 12px }
 </style>
 </head>
 <body>
@@ -623,15 +638,17 @@
   <div class="topbar-logo">BAMA<span>.</span></div>
   <span style="font-size:12px;color:var(--muted)">Estimating Dashboard</span>
   <nav class="topbar-nav">
-    <a href="dashboard.html" class="active">📊 Dashboard</a>
     <a href="quote-builder.html">📐 Quote Builder</a>
-    <a href="tenders.html">📁 Tenders</a>
-    <a href="quotes.html">💷 Quotes</a>
     <a href="hub.html">⬡ Hub</a>
   </nav>
+  <div style="display:flex;gap:4px;margin-left:auto">
+    <button class="dash-tab active" id="tabQuotes" onclick="switchDashTab('quotes')">📊 Quotes</button>
+    <button class="dash-tab" id="tabTenders" onclick="switchDashTab('tenders')">📋 Tender Register</button>
+  </div>
 </div>
 
 <!-- Main layout -->
+<div id="dashQuotesView">
 <div class="layout">
 
   <!-- LEFT: Quote list -->
@@ -1918,6 +1935,292 @@ if (token) {
 } else {
   login();
 }
+
+// ═══════════════════════════════════════════════════════════════
+// TENDER REGISTER
+// ═══════════════════════════════════════════════════════════════
+const TR_API = 'https://bama-erp-api-deauckd2cja7ebd5.uksouth-01.azurewebsites.net';
+let _trTenders = [];
+let _trAssignees = [];
+let _trSelectedId = null;
+let _trNoBidTargetId = null;
+
+// ── Tab switching ─────────────────────────────────────────────
+function switchDashTab(tab) {
+  document.getElementById('tabQuotes').classList.toggle('active', tab === 'quotes');
+  document.getElementById('tabTenders').classList.toggle('active', tab === 'tenders');
+  document.getElementById('dashQuotesView').style.display  = tab === 'quotes'  ? '' : 'none';
+  document.getElementById('dashTendersView').style.display = tab === 'tenders' ? '' : 'none';
+  if (tab === 'tenders' && !_trTenders.length) loadTenderRegister();
+}
+
+// ── API fetch helper ──────────────────────────────────────────
+async function trFetch(path, opts = {}) {
+  const token = sessionStorage.getItem('bama_token') || '';
+  const res = await fetch(`${TR_API}${path}`, {
+    ...opts,
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...(opts.headers||{}) }
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `API ${res.status}`);
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+// ── Load assignees ────────────────────────────────────────────
+async function loadTrAssignees() {
+  try {
+    _trAssignees = await trFetch('/api/tender-assignees');
+    // Populate filter dropdown
+    const sel = document.getElementById('trFilterAssigned');
+    if (sel) {
+      const cur = sel.value;
+      sel.innerHTML = '<option value="all">All Assignees</option>' +
+        _trAssignees.map(a => `<option value="${a.full_name}">${a.full_name}</option>`).join('');
+      sel.value = cur;
+    }
+    // Populate new tender modal dropdown
+    const newSel = document.getElementById('trNewAssigned');
+    if (newSel) {
+      newSel.innerHTML = '<option value="">— Select —</option>' +
+        _trAssignees.map(a => `<option value="${a.full_name}">${a.full_name}</option>`).join('');
+    }
+  } catch(e) { console.warn('Assignees load failed:', e); }
+}
+
+// ── Load tenders ──────────────────────────────────────────────
+async function loadTenderRegister() {
+  const year = document.getElementById('trFilterYear')?.value || '26';
+  try {
+    _trTenders = await trFetch(`/api/tender-register?year=${year}`);
+    if (!_trAssignees.length) await loadTrAssignees();
+    renderTenderTable();
+  } catch(e) {
+    document.getElementById('trBody').innerHTML =
+      `<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--red)">Failed to load: ${e.message}</td></tr>`;
+  }
+}
+
+// ── Render table ──────────────────────────────────────────────
+function renderTenderTable() {
+  const statusF   = document.getElementById('trFilterStatus')?.value  || 'all';
+  const assignedF = document.getElementById('trFilterAssigned')?.value || 'all';
+
+  let list = _trTenders;
+  if (statusF   !== 'all') list = list.filter(t => t.status === statusF);
+  if (assignedF !== 'all') list = list.filter(t => t.assigned_to === assignedF);
+
+  document.getElementById('trCount').textContent = `${list.length} tender${list.length !== 1 ? 's' : ''}`;
+
+  if (!list.length) {
+    document.getElementById('trBody').innerHTML =
+      `<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--muted)">No tenders found</td></tr>`;
+    return;
+  }
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  document.getElementById('trBody').innerHTML = list.map(t => {
+    const dl = t.deadline ? new Date(t.deadline) : null;
+    const dlStr = dl ? dl.toLocaleDateString('en-GB', {day:'2-digit',month:'short',year:'2-digit'}) : '—';
+    const dlStyle = dl && dl < today ? 'color:var(--red);font-weight:600' : '';
+    const badge = t.status === 'New'    ? '<span class="tr-badge tr-badge-new">New</span>'
+                : t.status === 'In QB'  ? '<span class="tr-badge tr-badge-inqb">In QB</span>'
+                : '<span class="tr-badge tr-badge-nobid">No Bid</span>';
+    const folderBtn = t.sp_folder_url
+      ? `<a href="${t.sp_folder_url}" target="_blank" onclick="event.stopPropagation()" title="Open SharePoint folder" style="color:var(--accent);text-decoration:none;font-size:16px">📁</a>`
+      : `<button onclick="event.stopPropagation();trSyncFolder(${t.id})" title="Create SharePoint folder" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:15px">📂</button>`;
+    const actions = t.status === 'New' ? `
+      <div style="display:flex;gap:4px;justify-content:center">
+        <button onclick="event.stopPropagation();trOpenInQB(${t.id})" title="Open in QB" style="background:var(--accent);color:#fff;border:none;border-radius:4px;padding:3px 7px;font-size:11px;cursor:pointer">QB →</button>
+        <button onclick="event.stopPropagation();openTrNoBidModal(${t.id})" title="No Bid" style="background:var(--surface);color:var(--muted);border:1px solid var(--border);border-radius:4px;padding:3px 7px;font-size:11px;cursor:pointer">✗</button>
+      </div>` : t.status === 'In QB' && t.qb_quote_id ?
+      `<button onclick="event.stopPropagation();window.location='quote-builder.html?quote=${t.qb_quote_id}'" style="background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);border-radius:4px;padding:3px 7px;font-size:11px;cursor:pointer">View QB</button>` : '';
+
+    return `<tr onclick="trSelectRow(${t.id})" class="${_trSelectedId === t.id ? 'tr-selected' : ''}">
+      <td style="font-family:var(--font-mono);font-size:12px;color:var(--accent)">${t.reference}</td>
+      <td title="${t.client}">${t.client}</td>
+      <td title="${t.project}" style="color:var(--muted);font-size:12px">${t.project}</td>
+      <td style="font-size:12px">${t.assigned_to || '—'}</td>
+      <td style="text-align:center;font-size:12px;${dlStyle}">${dlStr}</td>
+      <td style="text-align:center">${badge}</td>
+      <td style="text-align:center">${folderBtn}</td>
+      <td style="text-align:center">${actions}</td>
+    </tr>`;
+  }).join('');
+}
+
+function trSelectRow(id) {
+  _trSelectedId = _trSelectedId === id ? null : id;
+  renderTenderTable();
+}
+
+// ── New Tender Modal ──────────────────────────────────────────
+async function openNewTenderModal() {
+  // Load assignees if needed
+  if (!_trAssignees.length) await loadTrAssignees();
+
+  // Get next ref
+  try {
+    const refData = await trFetch('/api/qb-next-ref');
+    document.getElementById('trNewRef').value = refData.ref || '';
+  } catch(e) { document.getElementById('trNewRef').value = '—'; }
+
+  // Reset fields
+  ['trNewClient','trNewProject','trNewContactName','trNewContactTitle',
+   'trNewContactEmail','trNewContactPhone','trNewNotes'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  document.getElementById('trNewDeadline').value = '';
+  document.getElementById('trNewSkipContact').checked = false;
+  document.getElementById('trContactFields').style.display = '';
+  document.getElementById('trNewAssigned').value = '';
+
+  const modal = document.getElementById('trNewModal');
+  modal.style.display = 'flex';
+  setTimeout(() => document.getElementById('trNewClient').focus(), 50);
+}
+
+function closeTrNewModal() {
+  document.getElementById('trNewModal').style.display = 'none';
+}
+
+function toggleTrContactFields() {
+  const skip = document.getElementById('trNewSkipContact').checked;
+  document.getElementById('trContactFields').style.display = skip ? 'none' : '';
+}
+
+async function submitNewTender() {
+  const ref     = document.getElementById('trNewRef').value;
+  const client  = document.getElementById('trNewClient').value.trim();
+  const project = document.getElementById('trNewProject').value.trim();
+  const assigned = document.getElementById('trNewAssigned').value;
+  const skip    = document.getElementById('trNewSkipContact').checked;
+
+  if (!client)   { alert('Please enter a client name.'); return; }
+  if (!project)  { alert("Ops, you haven't entered a project name… Mateusz won't be happy! 😄"); return; }
+  if (!assigned) { alert('Please select who this is assigned to.'); return; }
+
+  const btn = document.getElementById('trNewSubmitBtn');
+  btn.disabled = true; btn.textContent = 'Registering…';
+
+  try {
+    const payload = {
+      reference:         ref,
+      client,
+      project,
+      assigned_to:       assigned,
+      deadline:          document.getElementById('trNewDeadline').value || null,
+      date_received:     new Date().toISOString().slice(0,10),
+      contact_skipped:   skip,
+      contact_name:      skip ? '' : document.getElementById('trNewContactName').value.trim(),
+      contact_email:     skip ? '' : document.getElementById('trNewContactEmail').value.trim(),
+      contact_phone:     skip ? '' : document.getElementById('trNewContactPhone').value.trim(),
+      contact_job_title: skip ? '' : document.getElementById('trNewContactTitle').value.trim(),
+      notes:             document.getElementById('trNewNotes').value.trim(),
+      sp_token:          sessionStorage.getItem('bama_token') || ''
+    };
+
+    await trFetch('/api/tender-register', { method: 'POST', body: JSON.stringify(payload) });
+
+    closeTrNewModal();
+    await loadTenderRegister();
+    // Switch to tenders tab if not already
+    switchDashTab('tenders');
+    // toast-like feedback
+    const t = document.createElement('div');
+    t.textContent = `✓ Tender ${ref} registered`;
+    t.style.cssText = 'position:fixed;bottom:20px;right:20px;background:var(--accent);color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;z-index:9999;animation:fadeIn .2s';
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 3000);
+  } catch(e) {
+    alert('Error: ' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = '⚡ Register Tender';
+  }
+}
+
+// ── No Bid modal ──────────────────────────────────────────────
+function openTrNoBidModal(id) {
+  _trNoBidTargetId = id;
+  document.getElementById('trNoBidReason').value = '';
+  document.getElementById('trNoBidModal').style.display = 'flex';
+}
+function closeTrNoBidModal() {
+  document.getElementById('trNoBidModal').style.display = 'none';
+  _trNoBidTargetId = null;
+}
+async function confirmNoBid() {
+  const reason = document.getElementById('trNoBidReason').value;
+  if (!reason) { alert('Please select a reason.'); return; }
+  const t = _trTenders.find(x => x.id === _trNoBidTargetId);
+  if (!t) return;
+  try {
+    await trFetch(`/api/tender-register/${_trNoBidTargetId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ ...t, status: 'No Bid', no_bid_reason: reason })
+    });
+    closeTrNoBidModal();
+    await loadTenderRegister();
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+// ── Open in QB ────────────────────────────────────────────────
+async function trOpenInQB(tenderId) {
+  const t = _trTenders.find(x => x.id === tenderId);
+  if (!t) return;
+
+  if (!confirm(`Create QB quote for ${t.reference} — ${t.client}?`)) return;
+
+  try {
+    // Create QB quote with tender data pre-filled
+    const qbPayload = {
+      reference:   t.reference,
+      company:     t.client,
+      contact:     t.contact_skipped ? '' : (t.contact_name || ''),
+      email:       t.contact_skipped ? '' : (t.contact_email || ''),
+      phone:       t.contact_skipped ? '' : (t.contact_phone || ''),
+      prepared_by: t.assigned_to || '',
+      status:      'draft',
+      date_created: new Date().toISOString().slice(0,10),
+      quote_data:  JSON.stringify({ name: t.project, company: t.client })
+    };
+
+    const qbRes = await trFetch('/api/qb-quotes', { method: 'POST', body: JSON.stringify(qbPayload) });
+    const qbId = qbRes.id;
+
+    // Link tender → QB quote
+    await trFetch(`/api/tender-register/${tenderId}/open-in-qb`, {
+      method: 'PUT',
+      body: JSON.stringify({ qb_quote_id: qbId })
+    });
+
+    // Redirect to QB with the new quote
+    window.location.href = `quote-builder.html?quote=${qbId}`;
+  } catch(e) {
+    alert('Error creating QB quote: ' + e.message);
+  }
+}
+
+// ── Sync SharePoint folder ────────────────────────────────────
+async function trSyncFolder(tenderId) {
+  const t = _trTenders.find(x => x.id === tenderId);
+  if (!t) return;
+  try {
+    const res = await trFetch(`/api/tender-sp/${tenderId}`, {
+      method: 'POST',
+      body: JSON.stringify({ sp_token: sessionStorage.getItem('bama_token') || '' })
+    });
+    // Update local cache
+    t.sp_folder_url = res.folderUrl || t.sp_folder_url;
+    renderTenderTable();
+    alert(res.alreadyExisted ? '📁 Folder already existed — linked!' : '📁 Folder created successfully!');
+  } catch(e) {
+    alert('SharePoint error: ' + e.message);
+  }
+}
+
 </script>
 
 <!-- ── Executive Mini-Summary Drawer ── -->
@@ -1937,6 +2240,57 @@ if (token) {
     <button class="ems-btn-primary" id="emsOpenBuilderBtn" onclick="openInBuilderFromEms()">
       ↗ Open Full Quote in Builder
     </button>
+  </div>
+</div>
+</div><!-- end dashQuotesView -->
+
+<!-- ═══════════════════ TENDER REGISTER VIEW ═══════════════════ -->
+<div id="dashTendersView" style="display:none;padding:20px;max-width:1400px;margin:0 auto">
+
+  <!-- Header row -->
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+    <h2 style="margin:0;font-size:18px;font-weight:700">📋 Tender Register</h2>
+    <button class="btn btn-primary btn-sm" onclick="openNewTenderModal()" style="margin-left:auto">+ New Tender</button>
+  </div>
+
+  <!-- Filters -->
+  <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
+    <select id="trFilterStatus" onchange="renderTenderTable()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px">
+      <option value="all">All Statuses</option>
+      <option value="New">New</option>
+      <option value="In QB">In QB</option>
+      <option value="No Bid">No Bid</option>
+    </select>
+    <select id="trFilterAssigned" onchange="renderTenderTable()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px">
+      <option value="all">All Assignees</option>
+    </select>
+    <select id="trFilterYear" onchange="loadTenderRegister()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px">
+      <option value="26">2026</option>
+      <option value="25">2025</option>
+    </select>
+    <button class="btn btn-ghost btn-sm" onclick="loadTenderRegister()">↻ Refresh</button>
+    <span id="trCount" style="font-size:12px;color:var(--muted);margin-left:auto"></span>
+  </div>
+
+  <!-- Table -->
+  <div style="overflow-x:auto;border:1px solid var(--border);border-radius:10px">
+    <table class="data-table" id="trTable" style="width:100%;table-layout:fixed">
+      <thead>
+        <tr>
+          <th style="width:90px">Ref</th>
+          <th style="width:140px">Client</th>
+          <th>Project</th>
+          <th style="width:130px">Assigned To</th>
+          <th style="width:90px;text-align:center">Deadline</th>
+          <th style="width:80px;text-align:center">Status</th>
+          <th style="width:70px;text-align:center">Folder</th>
+          <th style="width:80px;text-align:center">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="trBody">
+        <tr><td colspan="8" style="text-align:center;padding:40px;color:var(--muted)">Loading…</td></tr>
+      </tbody>
+    </table>
   </div>
 </div>
 
@@ -1969,5 +2323,111 @@ if (token) {
     </div>
   </div>
 </div>
+<!-- ═══════════════════ NEW TENDER MODAL ═══════════════════ -->
+<div id="trNewModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:600;align-items:center;justify-content:center;padding:20px">
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:560px;max-height:90vh;display:flex;flex-direction:column;overflow:hidden">
+    <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-shrink:0">
+      <div style="font-size:16px;font-weight:700">📋 Register New Tender</div>
+      <button onclick="closeTrNewModal()" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer">✕</button>
+    </div>
+    <div style="padding:18px 20px;overflow-y:auto;flex:1 1 0%;min-height:0">
+
+      <!-- Ref (read-only) -->
+      <div style="margin-bottom:14px">
+        <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Reference (auto)</label>
+        <input id="trNewRef" readonly style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--accent);font-family:var(--font-mono);font-size:13px;box-sizing:border-box">
+      </div>
+
+      <!-- Client + Project -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Client <span style="color:var(--red)">*</span></label>
+          <input id="trNewClient" type="text" placeholder="e.g. Balfour Beatty" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-size:13px;box-sizing:border-box">
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Project <span style="color:var(--red)">*</span></label>
+          <input id="trNewProject" type="text" placeholder="e.g. Structural Steel Frame" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-size:13px;box-sizing:border-box">
+        </div>
+      </div>
+
+      <!-- Assigned + Deadline -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Assigned To <span style="color:var(--red)">*</span></label>
+          <select id="trNewAssigned" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-size:13px;box-sizing:border-box">
+            <option value="">— Select —</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Quote Deadline</label>
+          <input id="trNewDeadline" type="date" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-size:13px;box-sizing:border-box">
+        </div>
+      </div>
+
+      <!-- Contact section -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <span style="font-size:12px;font-weight:600;color:var(--muted);letter-spacing:1px">CLIENT CONTACT</span>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer">
+            <input type="checkbox" id="trNewSkipContact" onchange="toggleTrContactFields()" style="accent-color:var(--accent)"> Skip for now
+          </label>
+        </div>
+        <div id="trContactFields">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+            <div>
+              <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:3px">Full Name</label>
+              <input id="trNewContactName" type="text" placeholder="John Smith" style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:13px;box-sizing:border-box">
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:3px">Job Title</label>
+              <input id="trNewContactTitle" type="text" placeholder="Project Manager" style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:13px;box-sizing:border-box">
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div>
+              <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:3px">Email</label>
+              <input id="trNewContactEmail" type="email" placeholder="j.smith@company.com" style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:13px;box-sizing:border-box">
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:3px">Phone</label>
+              <input id="trNewContactPhone" type="tel" placeholder="+44 7700 900000" style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:13px;box-sizing:border-box">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Notes -->
+      <div style="margin-bottom:6px">
+        <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Notes</label>
+        <textarea id="trNewNotes" rows="3" placeholder="Scope summary, special requirements…" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-size:13px;resize:vertical;box-sizing:border-box"></textarea>
+      </div>
+    </div>
+    <div style="padding:14px 20px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-shrink:0">
+      <button class="btn btn-ghost btn-sm" onclick="closeTrNewModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitNewTender()" id="trNewSubmitBtn" style="padding:8px 24px">⚡ Register Tender</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ NO BID MODAL ═══════════════════ -->
+<div id="trNoBidModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:700;align-items:center;justify-content:center;padding:20px">
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:28px;width:100%;max-width:400px">
+    <h3 style="margin:0 0 16px;font-size:16px">Mark as No Bid</h3>
+    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px">Reason <span style="color:var(--red)">*</span></label>
+    <select id="trNoBidReason" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;margin-bottom:20px">
+      <option value="">— Select reason —</option>
+      <option>Capacity / Too Busy</option>
+      <option>Out of Scope</option>
+      <option>Deadline Too Short</option>
+      <option>Low Margin / High Risk</option>
+      <option>Poor Client History</option>
+    </select>
+    <div style="display:flex;gap:10px;justify-content:flex-end">
+      <button class="btn btn-ghost btn-sm" onclick="closeTrNoBidModal()">Cancel</button>
+      <button class="btn btn-sm" onclick="confirmNoBid()" style="background:#1a1a2e;color:#e05e00;border:1px solid #e05e00">Confirm No Bid</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
