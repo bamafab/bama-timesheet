@@ -86,7 +86,9 @@ async function spCreateFolder(token, parentId, name) {
 // Ensure year folder exists e.g. "03 - 2026" (year - 2023, zero-padded)
 async function spEnsureYearFolder(token) {
     const yyyy = new Date().getFullYear();
-    const prefix = String(yyyy - 2023).padStart(2, '0'); // 2026→03, 2027→04
+    // Prefix = years since BAMA started (2023=00, 2024=01, 2025=02, 2026=03…)
+    // Sorting convention only — no other meaning.
+    const prefix = String(yyyy - 2023).padStart(2, '0');
     const yearFolderName = `${prefix} - ${yyyy}`;
 
     const root = await spGetQuotationRoot(token);
