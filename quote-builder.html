@@ -6077,7 +6077,7 @@ function buildClientLines(q) {
   const sell = v => Math.round((v || 0) * _mm * 100) / 100;
 
   const raw = [
-    { key: 'prelims',      desc: 'Prelims',              value: na.prelims      ? 0 : sell(C.prelims      + (C.survey || 0)) },
+    { key: 'prelims',      desc: 'Prelims',              value: na.prelims      ? 0 : sell(C.prelims)                       },
     { key: 'material',     desc: 'Material cost',        value:                      sell(C.material)                        },
     { key: 'fabrication',  desc: 'Fabrication',          value: na.fabrication  ? 0 : sell(C.fabrication)                   },
     { key: 'design',       desc: 'Design',               value: na.design       ? 0 : sell(C.design)                        },
@@ -6085,6 +6085,7 @@ function buildClientLines(q) {
     { key: 'galvanising',  desc: 'Galvanising',          value: na.painting     ? 0 : sell(C.galvanising)                   },
     { key: 'installation', desc: 'Installation',         value: na.installation ? 0 : sell(C.installation)                  },
     { key: 'delivery',     desc: 'Delivery',             value: na.delivery     ? 0 : sell(C.delivery)                      },
+    { key: 'survey',       desc: 'Pre-Construction Survey', value: na.survey    ? 0 : sell(C.survey || 0)                   },
     { key: 'purlins',      desc: 'Purlins',              value: na.purlins      ? 0 : sell(C.purlins)                       },
   ];
 
