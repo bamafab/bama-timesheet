@@ -22,9 +22,11 @@ app.http('tenders-list', {
 
         try {
             const status = request.query.get('status') || '';
-            let sqlText = `SELECT t.*, c.company_name, c.contact_name, c.contact_email, c.contact_phone
+            let sqlText = `SELECT t.*, c.company_name, c.contact_name, c.contact_email, c.contact_phone,
+                                  e.name AS assigned_to_name
                            FROM Tenders t
-                           JOIN Clients c ON c.id = t.client_id`;
+                           JOIN Clients c ON c.id = t.client_id
+                           LEFT JOIN Employees e ON e.id = t.assigned_to_id`;
             const params = {};
 
             if (status) {
@@ -55,9 +57,11 @@ app.http('tenders-get', {
             const id = parseInt(request.params.id);
             const result = await query(
                 `SELECT t.*, c.company_name, c.address_line1, c.address_line2, c.city, c.county, c.postcode,
-                        c.contact_name, c.contact_email, c.contact_phone
+                        c.contact_name, c.contact_email, c.contact_phone,
+                        e.name AS assigned_to_name
                  FROM Tenders t
                  JOIN Clients c ON c.id = t.client_id
+                 LEFT JOIN Employees e ON e.id = t.assigned_to_id
                  WHERE t.id = @id`,
                 { id }
             );
@@ -115,7 +119,8 @@ app.http('tenders-create', {
             const { reference, client_id, project_name, comments,
                     sharepoint_folder_id, sharepoint_tender_folder_id, created_by,
                     contact_name, contact_email, contact_phone, deadline_date,
-                    status, quote_value, sent_date } = body;
+                    status, quote_value, sent_date,
+                    assigned_to_id, notified_at, notified_by } = body;
 
             if (!reference) return badRequest('reference is required', request);
             if (!client_id) return badRequest('client_id is required', request);
@@ -129,12 +134,12 @@ app.http('tenders-create', {
                 `INSERT INTO Tenders (reference, client_id, project_name, comments, status,
                     sharepoint_folder_id, sharepoint_tender_folder_id, created_by,
                     contact_name, contact_email, contact_phone, deadline_date,
-                    quote_value, sent_date)
+                    quote_value, sent_date, assigned_to_id, notified_at, notified_by)
                  OUTPUT INSERTED.*
                  VALUES (@reference, @client_id, @project_name, @comments, @status,
                     @sharepoint_folder_id, @sharepoint_tender_folder_id, @created_by,
                     @contact_name, @contact_email, @contact_phone, @deadline_date,
-                    @quote_value, @sent_date)`,
+                    @quote_value, @sent_date, @assigned_to_id, @notified_at, @notified_by)`,
                 {
                     reference,
                     client_id: parseInt(client_id),
@@ -149,7 +154,10 @@ app.http('tenders-create', {
                     contact_phone: contact_phone || null,
                     deadline_date: deadline_date || null,
                     quote_value: quote_value != null ? parseFloat(quote_value) : null,
-                    sent_date: sent_date || null
+                    sent_date: sent_date || null,
+                    assigned_to_id: assigned_to_id != null ? parseInt(assigned_to_id) : null,
+                    notified_at: notified_at || null,
+                    notified_by: notified_by || null
                 }
             );
 
@@ -183,7 +191,8 @@ app.http('tenders-update', {
             const allowed = ['project_name', 'comments', 'status', 'quote_handler_id',
                            'sharepoint_folder_id', 'sharepoint_tender_folder_id',
                            'converted_by', 'contact_name', 'contact_email', 'contact_phone',
-                           'deadline_date', 'quote_value', 'sent_date', 'chasing_date'];
+                           'deadline_date', 'quote_value', 'sent_date', 'chasing_date',
+                           'assigned_to_id', 'notified_at', 'notified_by'];
 
             for (const key of allowed) {
                 if (body[key] !== undefined) {

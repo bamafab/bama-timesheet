@@ -610,6 +610,7 @@
 
     <div class="modal-actions" style="flex:0 0 auto;margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
       <button class="btn btn-ghost" onclick="closeBabcockEmailModal()">Cancel</button>
+      <button class="btn btn-ghost" id="bemailSendLaterBtn" onclick="closeBabcockEmailModalLater()" style="display:none" title="Close without sending — task already created">⏸ Send Later</button>
       <button class="btn btn-primary" id="bemailSendBtn" onclick="sendBabcockEmail()">Send Email</button>
     </div>
   </div>
@@ -1052,6 +1053,6 @@
 <!-- PDF.js: used by the "Approved to Pay" step to OCR the uploaded COUPA invoice -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
-<script src="shared.js?v=20260612b"></script>
+<script src="shared.js?v=20260615a"></script>
 </body>
 </html>

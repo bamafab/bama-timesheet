@@ -15429,13 +15429,14 @@ const TEMPLATE_DEFAULTS = {
   emailNewTender: {
     subject: 'New Tender: {{tender_ref}} — {{project_name}} ({{company_name}})',
     body: 'Hi {{handler_name}},\n\n' +
-          'A new tender has been logged:\n\n' +
+          'A new tender has been logged in the BAMA ERP:\n\n' +
           '  Reference:  {{tender_ref}}\n' +
           '  Client:     {{company_name}}\n' +
           '  Project:    {{project_name}}\n' +
           '  Deadline:   {{deadline_date}}\n' +
           '  Logged by:  {{sender_name}}\n\n' +
-          'Please log in to the BAMA ERP to review and action.'
+          '{{sharepoint_link}}\n\n' +
+          'Please review and action at your earliest convenience.'
   },
   emailQuoteClient: {
     subject: 'Quotation {{quote_ref}} — {{project_name}}',
@@ -15555,14 +15556,15 @@ const EMAIL_TOKEN_DEFS = {
     { token: 'date_today',              label: 'Today\u2019s date',          sample: '07 May 2026' }
   ],
   emailNewTender: [
-    { token: 'tender_ref',    label: 'Tender reference',       sample: 'Q260601' },
-    { token: 'project_name',  label: 'Project name',           sample: 'Office Mezzanine' },
-    { token: 'company_name',  label: 'Client company name',    sample: 'Acme Ltd' },
-    { token: 'handler_name',  label: 'Assigned quote handler', sample: 'Mateusz Braczyk' },
-    { token: 'deadline_date', label: 'Tender deadline date',   sample: '30 June 2026' },
-    { token: 'sender_name',   label: 'Logged-in user name',    sample: 'Natasza Laucis' },
-    { token: 'sender_email',  label: 'Logged-in user email',   sample: 'info@bamafabrication.co.uk' },
-    { token: 'date_today',    label: "Today's date",           sample: '15 June 2026' }
+    { token: 'tender_ref',      label: 'Tender reference',          sample: 'Q260601' },
+    { token: 'project_name',    label: 'Project name',              sample: 'Office Mezzanine' },
+    { token: 'company_name',    label: 'Client company name',       sample: 'Acme Ltd' },
+    { token: 'handler_name',    label: 'Assigned quote handler',    sample: 'Mateusz Braczyk' },
+    { token: 'deadline_date',   label: 'Tender deadline date',      sample: '30 June 2026' },
+    { token: 'sharepoint_link', label: 'Link to SharePoint folder', sample: 'View files: https://bamafabrication.sharepoint.com/...' },
+    { token: 'sender_name',     label: 'Logged-in user name',       sample: 'Natasza Laucis' },
+    { token: 'sender_email',    label: 'Logged-in user email',      sample: 'info@bamafabrication.co.uk' },
+    { token: 'date_today',      label: "Today's date",              sample: '15 June 2026' }
   ],
   emailQuoteClient: [
     { token: 'contact_name',  label: 'Client contact name',    sample: 'John Smith' },
@@ -17550,6 +17552,14 @@ async function submitNewTender() {
     const tenderSubFolder = await createFolderInDrive(quoteFolder.id, '00 - Tender');
 
     // Step 3: Create the tender record
+    // Resolve assigned person — quote handler by default
+    const settings = (state.timesheetData && state.timesheetData.settings) || {};
+    const handlerName  = settings.quoteHandlerName  || '';
+    const handlerEmail = settings.quoteHandlerEmail || '';
+    // Find the employee ID for the quote handler
+    const handlerEmp = (state.timesheetData.employees || []).find(e => e.name === handlerName);
+    const assignedToId = handlerEmp ? handlerEmp.id : null;
+
     const tender = await api.post('/api/tenders', {
       reference,
       client_id: parseInt(clientId),
@@ -17561,8 +17571,12 @@ async function submitNewTender() {
       contact_name: document.getElementById('ntContactName').value.trim() || null,
       contact_email: document.getElementById('ntContactEmail').value.trim() || null,
       contact_phone: document.getElementById('ntContactPhone').value.trim() || null,
-      deadline_date: deadline
+      deadline_date: deadline,
+      assigned_to_id: assignedToId
     });
+    // Attach local display fields
+    tender.assigned_to_id   = assignedToId;
+    tender.assigned_to_name = handlerName || null;
 
     tender.company_name = companyName;
     tender.contact_name = document.getElementById('ntContactName').value.trim() || null;
@@ -17592,8 +17606,8 @@ async function submitNewTender() {
     toast(`Tender ${reference} created ✓ — Upload your documents below`, 'success');
     currentTender = tender;
 
-    // Notify quote handler — open email modal (non-blocking; user can skip)
-    sendNewTenderNotification(tender).catch(e => console.warn('Tender notification email failed:', e));
+    // Notify assigned person — open email modal + create task
+    openTenderNotifyModal(tender).catch(e => console.warn('Tender notification failed:', e));
 
     // Show detail view directly
     document.querySelectorAll('#tenderLayout .tab-content').forEach(el => {
@@ -17755,6 +17769,9 @@ async function openTenderDetail(id) {
     ${contactsHtml || '<div style="font-size:12px;color:var(--subtle)">No contact details</div>'}
   `;
 
+  // Assigned bar
+  renderTenderAssignedBar(tender);
+
   // Show/hide convert button
   document.getElementById('convertToQuoteSection').style.display = tender.status === 'tender' ? '' : 'none';
 
@@ -17770,6 +17787,49 @@ async function openTenderDetail(id) {
 
   // Load comments
   loadTenderComments();
+}
+
+// ── Render the assigned person bar in tender detail ─────────────────────────
+function renderTenderAssignedBar(tender) {
+  const bar = document.getElementById('tenderAssignedBar');
+  if (!bar) return;
+
+  const assignedName = tender.assigned_to_name || tender.assignedToName || '—';
+  const notified     = tender.notified_at;
+  const notifiedStr  = notified
+    ? 'Notified ' + new Date(notified).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+    : 'Not notified';
+  const notifiedColor = notified ? 'var(--green,#22c55e)' : 'var(--red)';
+
+  // Build office staff list for reassign dropdown (excluding current assigned)
+  const officeStaff = (state.timesheetData.employees || [])
+    .filter(e => e.active !== false && (e.staffType || 'workshop') === 'office');
+
+  const options = officeStaff
+    .filter(e => e.name !== assignedName)
+    .map(e => `<option value="${escapeHtml(e.name)}">${escapeHtml(e.name)}</option>`)
+    .join('');
+
+  bar.innerHTML = `
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.5px">Assigned to</span>
+        <span style="font-size:13px;font-weight:700;color:var(--text)">${escapeHtml(assignedName)}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="font-size:11px;font-weight:600;color:${notifiedColor}">${notifiedStr}</span>
+        ${!notified ? `<button class="btn btn-ghost" style="font-size:11px;padding:3px 10px" onclick="openTenderNotifyModal(currentTender).then(()=>renderTenderAssignedBar(currentTender))">✉ Notify now</button>` : ''}
+      </div>
+      ${options ? `
+      <div style="margin-left:auto;display:flex;align-items:center;gap:6px">
+        <span style="font-size:11px;color:var(--muted)">Reassign:</span>
+        <select style="background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:3px 8px;color:var(--text);font-size:12px;font-family:var(--font-body)"
+          onchange="if(this.value){reassignTender(this.value);this.value=''}">
+          <option value="">— Select person —</option>
+          ${options}
+        </select>
+      </div>` : ''}
+    </div>`;
 }
 
 function closeTenderDetail() {
@@ -21982,6 +22042,9 @@ async function openBabcockEmailModal(opts) {
   // Reset the Send button (in case a previous send left it disabled)
   const btn = document.getElementById('bemailSendBtn');
   if (btn) { btn.disabled = false; btn.textContent = 'Send Email'; }
+  // Show 'Send Later' only when opened from tender notify flow
+  const laterBtn = document.getElementById('bemailSendLaterBtn');
+  if (laterBtn) laterBtn.style.display = _tenderNotifyMode ? '' : 'none';
 
   document.getElementById('babcockEmailModal').classList.add('active');
   setTimeout(() => document.getElementById('bemailTo')?.focus(), 80);
@@ -21990,45 +22053,127 @@ async function openBabcockEmailModal(opts) {
   return await new Promise(resolve => { _bemailContext._resolve = resolve; });
 }
 
-// ── Send new-tender notification ────────────────────────────────────────────
-// Called from submitNewTender() after the tender is created.
-// Sends to the quote handler (assigned person in Settings) and CCs the
-// currently logged-in user so they have a record of the notification.
-async function sendNewTenderNotification(tender) {
-  const settings = (state.timesheetData && state.timesheetData.settings) || {};
-  const handlerName  = settings.quoteHandlerName  || '';
-  const handlerEmail = settings.quoteHandlerEmail || '';
-
-  if (!handlerEmail) {
-    toast('No quote handler email set in Settings — skipping notification email', 'warn');
-    return;
+// ── Tender notification modal ────────────────────────────────────────────────
+// Opens the email modal for a new tender notification.
+// Returns 'sent' | 'later' | 'skip' based on user action.
+// Also always creates an office task for the assigned person.
+async function openTenderNotifyModal(tender) {
+  // Always create a task for the assigned person (regardless of email)
+  const assignedName = tender.assigned_to_name || tender.assignedToName || '';
+  if (assignedName) {
+    try {
+      await api.post('/api/office-tasks', {
+        title: `📋 New tender: ${tender.reference} — ${tender.company_name || ''} — ${tender.project_name || ''}`,
+        description: `Deadline: ${tender.deadline_date ? new Date(tender.deadline_date).toLocaleDateString('en-GB') : 'Not set'}`,
+        assigned_to: assignedName,
+        assigned_by: currentManagerUser || 'System',
+        priority: 'high'
+      });
+    } catch(e) { console.warn('Failed to create tender task:', e); }
   }
 
-  // CC = currently logged-in user's Microsoft email
+  // Build email details
   const me = await getCurrentMicrosoftUser();
   const myEmail = (me && me.email) || '';
 
-  // Format deadline date nicely
-  let deadlineStr = tender.deadline_date || '';
-  if (deadlineStr) {
+  // Find assigned person's email
+  // If assigned = logged-in user, use their Microsoft email directly
+  // Otherwise, leave To: blank and let the user fill it in the modal
+  let assignedEmail = '';
+  if (assignedName === currentManagerUser) {
+    assignedEmail = myEmail;
+  } else {
+    // Try to get email via Graph for the assigned person
     try {
-      deadlineStr = new Date(deadlineStr).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
-    } catch (_) {}
+      const usersRes = await fetch(`https://graph.microsoft.com/v1.0/users?$filter=displayName eq '${encodeURIComponent(assignedName)}'&$select=mail,userPrincipalName`, {
+        headers: { 'Authorization': `Bearer ${AUTH.getToken()}` }
+      });
+      if (usersRes.ok) {
+        const usersData = await usersRes.json();
+        const found = (usersData.value || [])[0];
+        if (found) assignedEmail = found.mail || found.userPrincipalName || '';
+      }
+    } catch(_) {}
   }
 
-  await openBabcockEmailModal({
-    title: 'Notify Quote Handler — New Tender',
+  // CC = me, unless I am the assigned person
+  const ccEmail = (myEmail && myEmail.toLowerCase() !== assignedEmail.toLowerCase()) ? myEmail : '';
+
+  // Format deadline
+  let deadlineStr = tender.deadline_date || '';
+  if (deadlineStr) {
+    try { deadlineStr = new Date(deadlineStr).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' }); } catch(_) {}
+  }
+
+  // SharePoint link
+  const spLink = tender.sharepoint_folder_id
+    ? `https://bamafabrication.sharepoint.com/sites/BAMA/_layouts/15/guestaccess.aspx?folderid=${tender.sharepoint_folder_id}`
+    : '';
+
+  // Inject custom buttons into modal via _tenderNotifyMode flag
+  _tenderNotifyMode = true;
+
+  const result = await openBabcockEmailModal({
+    title: '✉ Notify Assigned Person — New Tender',
     templateKey: 'emailNewTender',
-    to:  handlerEmail,
-    cc:  myEmail !== handlerEmail ? myEmail : '',
+    to:  assignedEmail,
+    cc:  ccEmail,
     tokens: {
-      tender_ref:   tender.reference   || '',
-      project_name: tender.project_name || '',
-      company_name: tender.company_name || tender.client_name || '',
-      handler_name: handlerName,
-      deadline_date: deadlineStr
+      tender_ref:      tender.reference    || '',
+      project_name:    tender.project_name || '',
+      company_name:    tender.company_name || tender.client_name || '',
+      handler_name:    assignedName,
+      deadline_date:   deadlineStr,
+      sharepoint_link: spLink ? `View files: ${spLink}` : ''
     }
   });
+
+  _tenderNotifyMode = false;
+
+  if (result && result.sent) {
+    // Mark tender as notified
+    try {
+      await api.put(`/api/tenders/${tender.id}`, {
+        notified_at:  new Date().toISOString(),
+        notified_by:  currentManagerUser || ''
+      });
+      tender.notified_at = new Date().toISOString();
+      tender.notified_by = currentManagerUser || '';
+    } catch(e) { console.warn('Failed to mark tender as notified:', e); }
+    return 'sent';
+  }
+  return result && result.later ? 'later' : 'skip';
+}
+let _tenderNotifyMode = false;
+
+// ── Reassign tender to a different person ────────────────────────────────────
+async function reassignTender(newEmployeeName) {
+  if (!currentTender) return;
+  const emp = (state.timesheetData.employees || []).find(e => e.name === newEmployeeName);
+  if (!emp) return;
+
+  try {
+    await api.put(`/api/tenders/${currentTender.id}`, {
+      assigned_to_id: emp.id,
+      notified_at: null,   // reset notification — new person hasn't been notified
+      notified_by: null
+    });
+    currentTender.assigned_to_id   = emp.id;
+    currentTender.assigned_to_name = emp.name;
+    currentTender.notified_at      = null;
+
+    // Update local cache
+    const idx = tendersData.findIndex(t => String(t.id) === String(currentTender.id));
+    if (idx >= 0) Object.assign(tendersData[idx], currentTender);
+
+    renderTenderAssignedBar(currentTender);
+    toast(`Tender reassigned to ${emp.name}`, 'success');
+
+    // Open notify modal for new assignee
+    await openTenderNotifyModal(currentTender);
+  } catch(e) {
+    toast('Failed to reassign: ' + e.message, 'error');
+  }
 }
 
 // ── Send quote to client from Quote Builder ──────────────────────────────────
@@ -22078,6 +22223,13 @@ function closeBabcockEmailModal() {
     _bemailContext._resolve(_bemailContext.sentResult || null);
   }
   _bemailContext = null;
+}
+
+function closeBabcockEmailModalLater() {
+  // Resolve with {later:true} so openTenderNotifyModal knows user chose Send Later
+  if (_bemailContext) _bemailContext.sentResult = { later: true };
+  closeBabcockEmailModal();
+  toast('Notification deferred — task already created for assigned person', 'info');
 }
 
 function toggleBabcockEmailSignature() {
@@ -22167,6 +22319,7 @@ async function sendBabcockEmail() {
     if (res.ok || res.status === 202) {
       const result = {
         ok: true,
+        sent: true,
         to,
         cc: ccList,
         subject,
