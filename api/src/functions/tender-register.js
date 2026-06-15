@@ -207,7 +207,7 @@ app.http('tender-register-list', {
         sql += ` ORDER BY CASE WHEN deadline IS NULL THEN 1 ELSE 0 END, deadline ASC, created_at DESC`;
 
         try {
-            const rows = await query(sql, params);
+            const rows = (await query(sql, params)).recordset;
             return ok(rows, req);
         } catch (e) {
             return serverError(e.message, req);
@@ -236,7 +236,7 @@ app.http('tender-register-create', {
 
         try {
             // Insert tender record
-            const result = await query(`
+            const result = (await query(`
                 INSERT INTO TenderRegister
                     (reference, client, project,
                      contact_name, contact_email, contact_phone, contact_job_title, contact_skipped,
@@ -260,7 +260,7 @@ app.http('tender-register-create', {
                 created_by:        auth.name          || auth.email || ''
             });
 
-            const tenderId = result[0]?.id;
+            const tenderId = result.recordset?.[0]?.id;
 
             // Auto-create SharePoint folder in background (non-fatal)
             let spResult = null;
@@ -291,7 +291,7 @@ app.http('tender-register-create', {
             if (sp_token) {
                 try {
                     // Get assignee email
-                    const assignees = await query(
+                    const assignees = (await query(
                         `SELECT email FROM TenderAssignees WHERE full_name = @name AND active = 1`,
                         { name: assigned_to || '' }
                     );
@@ -330,11 +330,12 @@ app.http('tender-register-get', {
         if (!id) return badRequest('invalid id', req);
 
         try {
-            const rows = await query(
+            const rows = (await query(
                 `SELECT * FROM TenderRegister WHERE id = @id`, { id }
-            );
-            if (!rows.length) return notFound('Tender not found', req);
-            return ok(rows[0], req);
+            )).recordset;
+            const rowset = rows.recordset || rows;
+            if (!rowset.length) return notFound('Tender not found', req);
+            return ok(rowset[0], req);
         } catch (e) {
             return serverError(e.message, req);
         }
@@ -446,10 +447,10 @@ app.http('tender-sp-sync', {
         if (!sp_token) return badRequest('sp_token required', req);
 
         try {
-            const rows = await query(
+            const rows = (await query(
                 `SELECT reference, client, project, sp_tender_folder_id FROM TenderRegister WHERE id = @id`,
                 { id }
-            );
+            )).recordset;
             if (!rows.length) return notFound('Tender not found', req);
 
             const t = rows[0];
@@ -501,9 +502,9 @@ app.http('tender-assignees-list', {
         if (auth.status) return auth;
 
         try {
-            const rows = await query(
+            const rows = (await query(
                 `SELECT id, full_name, email, active FROM TenderAssignees WHERE active = 1 ORDER BY sort_order, full_name`
-            );
+            )).recordset;
             return ok(rows, req);
         } catch (e) {
             return serverError(e.message, req);
@@ -526,7 +527,7 @@ app.http('tender-assignees-create', {
         if (!full_name) return badRequest('full_name required', req);
 
         try {
-            const result = await query(`
+            const result = (await query(`
                 INSERT INTO TenderAssignees (full_name, email)
                 OUTPUT INSERTED.id
                 VALUES (@name, @email)
