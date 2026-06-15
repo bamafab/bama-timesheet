@@ -5916,7 +5916,9 @@ function onTakeoffTypeInput(i, val, inputEl) {
   const row = q.takeoff[i];
   if (row) {
     const match = findSteelProfile(val);
-    row.type = match.canonical || normaliseSectionName(val);
+    // Only use canonical from match if it actually found a steel section;
+    // for free-text descriptions (e.g. "Cantilever Beam 1") keep the raw value
+    row.type = (match.confidence !== 'none' ? match.canonical : null) || val.trim();
     if (match.kgm) row.kgm = match.kgm;
     row.rate = row.rate || sectionMaterialRate(row.type);
     // update the input itself to canonical form (on blur — not while typing)
