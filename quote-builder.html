@@ -3352,6 +3352,22 @@ async function qbFetch(method, path, body, retries = 3) {
     try {
       const res = await fetch(QB_API + path, opts);
       if (res.ok) return res.json();
+      // 401 = token expired — silent refresh via hub
+      if (res.status === 401) {
+        sessionStorage.removeItem('bama_token');
+        sessionStorage.removeItem('bama_token_expiry');
+        sessionStorage.setItem('bama_return_page', window.location.pathname);
+        const tenantId   = 'c92626f5-e391-499a-9059-0113bd07da2d';
+        const clientId   = '04b702fd-c53c-4f38-94bc-0334ce91d954';
+        const redirectUri = encodeURIComponent('https://proud-dune-0dee63110.2.azurestaticapps.net');
+        const scope       = encodeURIComponent('Files.ReadWrite Sites.ReadWrite.All Mail.Send');
+        window.location.href =
+          `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/authorize` +
+          `?client_id=${clientId}&response_type=token&redirect_uri=${redirectUri}` +
+          `&scope=${scope}&prompt=none&response_mode=fragment` +
+          `&state=${encodeURIComponent(window.location.pathname)}`;
+        throw new Error('Unauthorized — valid Microsoft token required');
+      }
       // 429/503/529 = transient overload — retry with backoff
       if ([429, 503, 529].includes(res.status) && attempt < retries) {
         await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt))); // 1s/2s/4s
