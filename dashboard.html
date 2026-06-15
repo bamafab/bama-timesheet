@@ -1938,11 +1938,11 @@ if (token) {
 
 async function dashDeleteQuote() {
   if (!selectedQuote?.id || selectedQuote._source !== 'sql') {
-    alert('Can only delete SQL-based quotes from here. Open in QB to delete SharePoint quotes.');
+    bamaAlert('Can only delete SQL-based quotes from here. Open in QB to delete SharePoint quotes.'); return;
     return;
   }
   const q = selectedQuote;
-  if (!confirm(`Delete "${q.ref} — ${q.company}"?\n\nThis will hide it from your list (recoverable by changing status in QB).`)) return;
+  if (!await bamaConfirm(`Delete "${q.ref} — ${q.company}"? It will be hidden from your list but recoverable via QB.`, 'Delete Quote')) return;
   try {
     const token = sessionStorage.getItem('bama_token') || '';
     const res = await fetch(`${TR_API}/api/qb-quotes/${q.id}`, {
@@ -2044,6 +2044,36 @@ function trFillContact(idx) {
 function trCloseClientDD() {
   const dd = document.getElementById('trClientDD');
   if (dd) dd.style.display = 'none';
+}
+
+function bamaConfirm(msg, title='Confirm') {
+  return new Promise(resolve => {
+    document.getElementById('bamaConfirmTitle').textContent = title;
+    document.getElementById('bamaConfirmMsg').textContent = msg;
+    const okBtn = document.getElementById('bamaConfirmOk');
+    okBtn.textContent = 'Confirm';
+    if (/delete|remove/i.test(msg)) {
+      okBtn.style.cssText = 'background:var(--red);color:#fff;padding:8px 18px;border-radius:6px;border:none;cursor:pointer;font-weight:600';
+    } else {
+      okBtn.style.cssText = '';
+    }
+    document.getElementById('bamaConfirmModal').classList.add('active');
+    const ok = document.getElementById('bamaConfirmOk');
+    const cancel = document.getElementById('bamaConfirmCancel');
+    const cleanup = () => {
+      document.getElementById('bamaConfirmModal').classList.remove('active');
+      ok.replaceWith(ok.cloneNode(true));
+      cancel.replaceWith(cancel.cloneNode(true));
+    };
+    document.getElementById('bamaConfirmOk').onclick = () => { cleanup(); resolve(true); };
+    document.getElementById('bamaConfirmCancel').onclick = () => { cleanup(); resolve(false); };
+  });
+}
+
+function bamaAlert(msg, title='Notice') {
+  document.getElementById('bamaAlertTitle').textContent = title;
+  document.getElementById('bamaAlertMsg').textContent = msg;
+  document.getElementById('bamaAlertModal').classList.add('active');
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -2215,9 +2245,9 @@ async function submitNewTender() {
   const assigned = document.getElementById('trNewAssigned').value;
   const skip    = document.getElementById('trNewSkipContact').checked;
 
-  if (!client)   { alert('Please enter a client name.'); return; }
-  if (!project)  { alert("Ops, you haven't entered a project name… Mateusz won't be happy! 😄"); return; }
-  if (!assigned) { alert('Please select who this is assigned to.'); return; }
+  if (!client)   { bamaAlert('Please enter a client name.', 'Missing info'); return; }
+  if (!project)  { bamaAlert("Ops, you haven't entered a project name… Mateusz won't be happy! 😄", 'Missing info'); return; }
+  if (!assigned) { bamaAlert('Please select who this is assigned to.', 'Missing info'); return; }
 
   const btn = document.getElementById('trNewSubmitBtn');
   btn.disabled = true; btn.textContent = 'Registering…';
@@ -2252,7 +2282,7 @@ async function submitNewTender() {
     document.body.appendChild(t);
     setTimeout(() => t.remove(), 3000);
   } catch(e) {
-    alert('Error: ' + e.message);
+    bamaAlert('Error: ' + e.message);
   } finally {
     btn.disabled = false; btn.textContent = '⚡ Register Tender';
   }
@@ -2270,7 +2300,7 @@ function closeTrNoBidModal() {
 }
 async function confirmNoBid() {
   const reason = document.getElementById('trNoBidReason').value;
-  if (!reason) { alert('Please select a reason.'); return; }
+  if (!reason) { bamaAlert('Please select a reason.', 'Missing info'); return; }
   const t = _trTenders.find(x => x.id === _trNoBidTargetId);
   if (!t) return;
   try {
@@ -2280,7 +2310,7 @@ async function confirmNoBid() {
     });
     closeTrNoBidModal();
     await loadTenderRegister();
-  } catch(e) { alert('Error: ' + e.message); }
+  } catch(e) { bamaAlert('Error: ' + e.message); }
 }
 
 // ── Open in QB ────────────────────────────────────────────────
@@ -2288,7 +2318,7 @@ async function trOpenInQB(tenderId) {
   const t = _trTenders.find(x => x.id === tenderId);
   if (!t) return;
 
-  if (!confirm(`Create QB quote for ${t.reference} — ${t.client}?`)) return;
+  if (!await bamaConfirm(`Create QB quote for ${t.reference} — ${t.client}?`, 'Open in QB')) return;
 
   try {
     // Create QB quote with tender data pre-filled
@@ -2316,7 +2346,7 @@ async function trOpenInQB(tenderId) {
     // Redirect to QB with the new quote
     window.location.href = `quote-builder.html?quote=${qbId}`;
   } catch(e) {
-    alert('Error creating QB quote: ' + e.message);
+    bamaAlert('Error creating QB quote: ' + e.message);
   }
 }
 
@@ -2332,9 +2362,9 @@ async function trSyncFolder(tenderId) {
     // Update local cache
     t.sp_folder_url = res.folderUrl || t.sp_folder_url;
     renderTenderTable();
-    alert(res.alreadyExisted ? '📁 Folder already existed — linked!' : '📁 Folder created successfully!');
+    bamaAlert(res.alreadyExisted ? '📁 Folder already existed — linked!' : '📁 Folder created successfully!', 'SharePoint');
   } catch(e) {
-    alert('SharePoint error: ' + e.message);
+    bamaAlert('SharePoint error: ' + e.message, 'SharePoint Error');
   }
 }
 
@@ -2555,6 +2585,29 @@ async function trSyncFolder(tenderId) {
     <div style="display:flex;gap:10px;justify-content:flex-end">
       <button class="btn btn-ghost btn-sm" onclick="closeTrNoBidModal()">Cancel</button>
       <button class="btn btn-sm" onclick="confirmNoBid()" style="background:#1a1a2e;color:#e05e00;border:1px solid #e05e00">Confirm No Bid</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ BAMA CONFIRM MODAL ═══════════════════ -->
+<div class="modal-overlay" id="bamaConfirmModal" style="z-index:9999">
+  <div class="modal" style="max-width:420px;padding:24px 24px 20px">
+    <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:10px" id="bamaConfirmTitle">Confirm</div>
+    <div style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:16px" id="bamaConfirmMsg"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-ghost" id="bamaConfirmCancel">Cancel</button>
+      <button class="btn btn-primary" id="bamaConfirmOk">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════ BAMA ALERT MODAL ═══════════════════ -->
+<div class="modal-overlay" id="bamaAlertModal" style="z-index:9999">
+  <div class="modal" style="max-width:420px;padding:24px 24px 20px">
+    <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:10px" id="bamaAlertTitle">Notice</div>
+    <div style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:16px" id="bamaAlertMsg"></div>
+    <div style="display:flex;justify-content:flex-end">
+      <button class="btn btn-primary" onclick="document.getElementById('bamaAlertModal').classList.remove('active')">OK</button>
     </div>
   </div>
 </div>
