@@ -1936,6 +1936,37 @@ if (token) {
   login();
 }
 
+async function dashDeleteQuote() {
+  if (!selectedQuote?.id || selectedQuote._source !== 'sql') {
+    alert('Can only delete SQL-based quotes from here. Open in QB to delete SharePoint quotes.');
+    return;
+  }
+  const q = selectedQuote;
+  if (!confirm(`Delete "${q.ref} — ${q.company}"?\n\nThis will hide it from your list (recoverable by changing status in QB).`)) return;
+  try {
+    const token = sessionStorage.getItem('bama_token') || '';
+    const res = await fetch(`${apiBase}/api/qb-quotes/${q.id}`, {
+      method: 'PUT',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'deleted' })
+    });
+    if (!res.ok) throw new Error('API ' + res.status);
+    // Remove from local list and re-render
+    allQuotes = allQuotes.filter(x => x.id !== q.id);
+    selectedQuote = null;
+    renderQuoteList();
+    document.getElementById('emsDrawer').classList.remove('open');
+    // Small toast
+    const t = document.createElement('div');
+    t.textContent = `✓ ${q.ref} deleted`;
+    t.style.cssText = 'position:fixed;bottom:20px;right:20px;background:var(--red);color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;z-index:9999';
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 3000);
+  } catch(e) {
+    alert('Error: ' + e.message);
+  }
+}
+
 // ── Tender modal client autocomplete ─────────────────────────
 let _trClientBook = [];
 
@@ -2322,10 +2353,11 @@ async function trSyncFolder(tenderId) {
   <div class="ems-body" id="emsBody">
     <div class="ems-loading"><div class="ems-spinner"></div>Loading summary…</div>
   </div>
-  <div class="ems-footer">
-    <button class="ems-btn-primary" id="emsOpenBuilderBtn" onclick="openInBuilderFromEms()">
+  <div class="ems-footer" style="display:flex;gap:8px">
+    <button class="ems-btn-primary" id="emsOpenBuilderBtn" onclick="openInBuilderFromEms()" style="flex:1">
       ↗ Open Full Quote in Builder
     </button>
+    <button onclick="dashDeleteQuote()" title="Delete quote" style="background:transparent;border:1px solid var(--red);color:var(--red);border-radius:6px;padding:8px 12px;cursor:pointer;font-size:13px;flex-shrink:0">🗑</button>
   </div>
 </div>
 </div><!-- end dashQuotesView -->
