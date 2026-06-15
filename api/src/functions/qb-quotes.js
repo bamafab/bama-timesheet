@@ -105,7 +105,8 @@ app.http('qb-quotes-next-ref', {
                     `SELECT MAX(CAST(SUBSTRING(reference, LEN(@prefix)+1, 10) AS INT)) AS maxSeq
                        FROM QuoteBuilderQuotes
                       WHERE reference LIKE @prefix + '%'
-                        AND ISNUMERIC(SUBSTRING(reference, LEN(@prefix)+1, 10)) = 1`,
+                        AND ISNUMERIC(SUBSTRING(reference, LEN(@prefix)+1, 10)) = 1
+                        AND status != 'deleted'`,
                     { prefix }
                 ),
                 query(
