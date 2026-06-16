@@ -376,6 +376,14 @@ app.http('tender-register-update', {
         try { body = await req.json(); } catch { return badRequest('Invalid JSON', req); }
 
         try {
+            // If the assignee has changed, reset the notify state so the badge
+            // flips back to "not notified" — prompting a resend to the new person.
+            const prev = (await query(
+                `SELECT assigned_to FROM TenderRegister WHERE id = @id`, { id }
+            )).recordset[0];
+            const assigneeChanged = !!prev && (prev.assigned_to || '') !== (body.assigned_to || '');
+            const notifyResetSql = assigneeChanged ? 'notified_at = NULL, notified_by = NULL,' : '';
+
             await query(`
                 UPDATE TenderRegister SET
                     client            = @client,
@@ -390,6 +398,7 @@ app.http('tender-register-update', {
                     status            = @status,
                     no_bid_reason     = @no_bid_reason,
                     notes             = @notes,
+                    ${notifyResetSql}
                     updated_at        = GETUTCDATE()
                 WHERE id = @id
             `, {

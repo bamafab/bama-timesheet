@@ -973,8 +973,7 @@ async function loadTrackerData() {
     const cached = sessionStorage.getItem('bama_briefing_date');
     const cachedText = sessionStorage.getItem('bama_briefing_text');
     if (cached === today && cachedText) {
-      document.getElementById('aiMessage').className = 'ai-message';
-      document.getElementById('aiMessage').innerHTML = mdToHtml(cachedText);
+      displayBriefing(cachedText);
       document.getElementById('refreshBriefingBtn').disabled = false;
       document.getElementById('refreshBriefingBtn').textContent = '↻ Refresh briefing';
     } else {
@@ -1466,6 +1465,55 @@ function mdToHtml(md) {
   return out.join('');
 }
 
+const BRIEFING_LEVELS = {
+  critical: { label: 'Needs attention now',         icon: '\uD83D\uDD34', color: 'var(--red)' },
+  today:    { label: 'Due today / tomorrow',        icon: '\uD83D\uDFE0', color: 'var(--accent)' },
+  week:     { label: 'Later this week',             icon: '\uD83D\uDFE1', color: 'var(--accent2)' },
+  tenders:  { label: 'New tenders awaiting quote',  icon: '\uD83D\uDCCB', color: '#60a5fa' }
+};
+
+function renderBriefing(b) {
+  const esc = s => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const parts = [];
+  parts.push(`<div style="font-weight:700;font-size:15px;color:var(--text);margin-bottom:2px">${esc(b.greeting||'')}${b.date_line ? ` <span style="color:var(--muted);font-weight:500">\u00B7 ${esc(b.date_line)}</span>` : ''}</div>`);
+  if (b.headline) parts.push(`<div style="font-size:13px;color:var(--text);margin-bottom:12px;line-height:1.6">${esc(b.headline)}</div>`);
+  const groups = Array.isArray(b.groups) ? b.groups.filter(g => g && Array.isArray(g.items) && g.items.length) : [];
+  if (!groups.length) {
+    parts.push(`<div style="font-size:13px;color:var(--muted)">Nothing urgent on the board right now \u2014 you're on top of things.</div>`);
+  }
+  for (const g of groups) {
+    const lv = BRIEFING_LEVELS[g.level] || { label: g.level || 'Other', icon: '\u2022', color: 'var(--muted)' };
+    parts.push(`<div style="display:flex;align-items:center;gap:7px;margin:13px 0 5px">
+      <span style="font-size:12px">${lv.icon}</span>
+      <span style="font-size:11px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:${lv.color}">${esc(lv.label)}</span>
+      <span style="font-size:11px;color:var(--subtle)">${g.items.length}</span>
+    </div>`);
+    for (const it of g.items) {
+      parts.push(`<div style="padding:6px 0 6px 12px;border-left:2px solid ${lv.color};margin:4px 0">
+        <div style="font-size:13px;line-height:1.5">${it.ref ? `<span style="font-family:var(--font-mono);font-weight:700;color:var(--accent)">${esc(it.ref)}</span> ` : ''}<span style="color:var(--text)">${esc(it.label||'')}</span></div>
+        ${it.note ? `<div style="font-size:12px;color:var(--muted);margin-top:2px">${esc(it.note)}</div>` : ''}
+      </div>`);
+    }
+  }
+  const el = document.getElementById('aiMessage');
+  el.className = 'ai-message';
+  el.innerHTML = parts.join('');
+}
+
+// Try to render the briefing as structured priorities; fall back to prose.
+function displayBriefing(text) {
+  try {
+    const clean = String(text).replace(/^```json\s*/i,'').replace(/```\s*$/,'').trim();
+    const obj = JSON.parse(clean);
+    if (obj && (obj.greeting || obj.headline || Array.isArray(obj.groups))) { renderBriefing(obj); return; }
+    throw new Error('not briefing JSON');
+  } catch(e) {
+    const el = document.getElementById('aiMessage');
+    el.className = 'ai-message';
+    el.innerHTML = mdToHtml(String(text));
+  }
+}
+
 async function generateBriefing() {
   if (!allQuotes.length) return;
   // Load tenders if not already loaded
@@ -1509,19 +1557,35 @@ NEW TENDERS AWAITING QUOTE (${newTenders.length}): ${newTenders.map(fmtT).join('
 WIN RATE: ${winRate}% (${won.length} won, ${lost.length} lost)
 OPEN PIPELINE: ${fmtGBP(open.reduce((s,q)=>s+q.value,0))} across ${open.length} open quotes
 
-Write a brief, friendly, conversational morning briefing for ${userName} in English. Start with a quick summary of what's urgent. Prioritise: 1) overdue quotes (flag them clearly), 2) quotes due today or tomorrow, 3) anything due this week, 4) new tenders waiting to be quoted (mention how many). 
+Respond ONLY with valid JSON — no markdown, no preamble, no code fences. Use this exact shape:
+{
+  "greeting": "Good morning, ${userName}!",
+  "date_line": "weekday and date, e.g. Tuesday 16 June",
+  "headline": "ONE short sentence: the single most important thing for ${userName} to know right now",
+  "groups": [
+    { "level": "critical", "items": [ { "ref": "Q260515", "label": "Client — Project", "note": "why it matters + what to do, max ~15 words" } ] },
+    { "level": "today",    "items": [] },
+    { "level": "week",     "items": [] },
+    { "level": "tenders",  "items": [] }
+  ]
+}
 
-For each urgent quote, give a practical recommendation — e.g. if a quote has a high value, note it's worth prioritising; if it looks like a small/quick job, say so. Keep it punchy and useful — not more than 150 words. Speak directly to Mateusz, use "you" not "the estimator". Be conversational, not robotic. If there's nothing urgent, say so and give a brief overview instead.`;
+RULES:
+- level meanings: "critical" = overdue quotes (act today); "today" = due today or tomorrow; "week" = due later this week; "tenders" = new tenders awaiting a quote.
+- Order groups by urgency: critical, then today, week, tenders. OMIT any group with no items entirely — do NOT include empty groups.
+- Put each quote/tender in exactly ONE group, at its most urgent applicable level.
+- "label": client and project, concise. "note": a sharp, practical recommendation — flag if high value, say if it's a small/quick job, say "chase or close out" for very old ones. Keep notes punchy (max ~15 words).
+- If nothing is urgent at all (nothing overdue/today/this week and no new tenders), return "groups": [] and put a short reassuring line in "headline".
+- Strictly UK English. Do not invent any quote or tender not listed above.`;
 
   try {
     const data = await callClaude({
       model: 'claude-sonnet-4-6',
-      max_tokens: 1000,
+      max_tokens: 1500,
       messages: [{ role: 'user', content: prompt }]
     });
     const text = data.content?.[0]?.text || 'Could not generate briefing.';
-    document.getElementById('aiMessage').className = 'ai-message';
-    document.getElementById('aiMessage').innerHTML = mdToHtml(text);
+    displayBriefing(text);
     // Cache for the day
     sessionStorage.setItem('bama_briefing_date', new Date().toISOString().slice(0,10));
     sessionStorage.setItem('bama_briefing_text', text);
@@ -2205,7 +2269,11 @@ async function trLoadContacts(clientId) {
     if (!contacts.length) { wrap.style.display = 'none'; return; }
 
     sel.innerHTML = '<option value="">— or enter manually below —</option>' +
-      contacts.map((c,i) => `<option value="${i}">${c.name}${c.job_title ? ' — '+c.job_title : ''}</option>`).join('');
+      contacts.map((c,i) => {
+        const nm = c.contact_name || c.name || '(no name)';
+        const rl = c.role || c.job_title || '';
+        return `<option value="${i}">${nm}${rl ? ' — '+rl : ''}</option>`;
+      }).join('');
     wrap.style.display = '';
     wrap._contacts = contacts;
   } catch(e) { console.warn('Contacts load failed:', e); }
@@ -2217,10 +2285,14 @@ function trFillContact(idx) {
   const contacts = wrap._contacts || [];
   const c = contacts[parseInt(idx)];
   if (!c) return;
-  if (c.name)      document.getElementById('trNewContactName').value  = c.name;
-  if (c.job_title) document.getElementById('trNewContactTitle').value = c.job_title;
-  if (c.email)     document.getElementById('trNewContactEmail').value = c.email;
-  if (c.phone)     document.getElementById('trNewContactPhone').value = c.phone;
+  const nm = c.contact_name || c.name || '';
+  const rl = c.role || c.job_title || '';
+  const em = c.contact_email || c.email || '';
+  const ph = c.contact_phone || c.phone || '';
+  if (nm) document.getElementById('trNewContactName').value  = nm;
+  if (rl) document.getElementById('trNewContactTitle').value = rl;
+  if (em) document.getElementById('trNewContactEmail').value = em;
+  if (ph) document.getElementById('trNewContactPhone').value = ph;
 }
 
 function trCloseClientDD() {
