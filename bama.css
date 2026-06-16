@@ -728,6 +728,7 @@
   .toast.success { border-left: 3px solid var(--green); }
   .toast.error { border-left: 3px solid var(--red); }
   .toast.info { border-left: 3px solid var(--accent); }
+  .toast.warn { border-left: 3px solid #eab308; }
 
   /* loading */
   .loading-bar {

@@ -14155,27 +14155,48 @@ async function onAssemblyFilesPicked(fileList) {
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
     banner.textContent = `Uploading ${i + 1} / ${files.length} — ${file.name}`;
+
+    // Step 1 — upload to SharePoint. If THIS fails there's no file in SP,
+    // so skip the item entirely (nothing to recover).
+    let uploaded;
     try {
       const arrayBuffer = await file.arrayBuffer();
-      const uploaded = await uploadFileToFolder(asmFolder.id, file.name, arrayBuffer, file.type, driveId);
-
-      banner.textContent = `Parsing ${i + 1} / ${files.length} — ${file.name}`;
-      const ocr = await ocrAssemblyPdf(file);
-
-      queue.push({
-        file,
-        sharepoint: {
-          fileId:  uploaded.id,
-          driveId: uploaded.parentReference?.driveId || driveId,
-          webUrl:  uploaded.webUrl,
-          fileName: file.name
-        },
-        ocr
-      });
+      uploaded = await uploadFileToFolder(asmFolder.id, file.name, arrayBuffer, file.type, driveId);
     } catch (e) {
-      console.warn(`Failed on ${file.name}:`, e);
-      toast(`${file.name}: ${e.message}`, 'error');
+      console.warn(`Upload failed on ${file.name}:`, e);
+      toast(`${file.name}: upload failed — ${e.message}`, 'error');
+      continue;
     }
+
+    const sharepoint = {
+      fileId:  uploaded.id,
+      driveId: uploaded.parentReference?.driveId || driveId,
+      webUrl:  uploaded.webUrl,
+      fileName: file.name
+    };
+
+    // Step 2 — OCR. The file is ALREADY in SharePoint at this point, so an
+    // OCR failure must NOT discard it (that's what left files orphaned in SP
+    // with no JobAssemblies row). Instead, queue it for manual entry with a
+    // blank-but-editable OCR stub, carrying the real SharePoint reference so
+    // the saved assembly still gets a working "Open PDF" link.
+    banner.textContent = `Parsing ${i + 1} / ${files.length} — ${file.name}`;
+    let ocr, ocrFailed = false;
+    try {
+      ocr = await ocrAssemblyPdf(file);
+    } catch (e) {
+      console.warn(`OCR failed on ${file.name} (file is in SharePoint, queued for manual entry):`, e);
+      toast(`${file.name}: couldn't auto-read the drawing — enter the details manually.`, 'warn');
+      ocrFailed = true;
+      ocr = {
+        assembly_mark: '', quantity: null, finish_label_raw: null,
+        total_area_m2: null, total_weight_kg: null,
+        parts: [{ part_mark: '', quantity: 1, profile: '', length_mm: null,
+                  material: 'S355JR', area_m2: null, weight_kg: null }]
+      };
+    }
+
+    queue.push({ file, sharepoint, ocr, ocrFailed });
   }
 
   banner.remove();
@@ -14277,6 +14298,10 @@ function renderAssemblyReview() {
 
   document.getElementById('armCounter').textContent = `${idx + 1} of ${total}`;
   document.getElementById('armFileName').textContent = item.sharepoint.fileName;
+
+  // Show the manual-entry notice when OCR couldn't read this drawing.
+  const ocrFailNotice = document.getElementById('armOcrFailedNotice');
+  if (ocrFailNotice) ocrFailNotice.style.display = item.ocrFailed ? '' : 'none';
 
   const ocr = item.ocr || {};
   document.getElementById('armMark').value = ocr.assembly_mark || '';

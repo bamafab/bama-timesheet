@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Projects & Jobs</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260528o">
+<link rel="stylesheet" href="bama.css?v=20260616a">
 </head>
 <body>
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
@@ -328,6 +328,10 @@
     </div>
     <div id="armFileName" style="color:var(--muted);font-size:12px;margin-bottom:16px"></div>
 
+    <div id="armOcrFailedNotice" style="display:none;background:rgba(234,179,8,.1);border:1px solid rgba(234,179,8,.35);color:#fcd34d;border-radius:8px;padding:10px 12px;font-size:12px;margin-bottom:16px;line-height:1.4">
+      &#9888; Couldn't auto-read this drawing. The PDF is saved in SharePoint &mdash; enter the assembly mark, quantity and parts manually below, then save. The &ldquo;Open PDF&rdquo; link will still work.
+    </div>
+
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
       <div>
         <div class="field-label">ASSEMBLY MARK</div>
@@ -524,6 +528,6 @@
 <script>pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
-<script src="shared.js?v=20260612b"></script>
+<script src="shared.js?v=20260616a"></script>
 </body>
 </html>
