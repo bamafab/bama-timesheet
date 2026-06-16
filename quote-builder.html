@@ -218,6 +218,15 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 .area-header-chevron { font-size:10px;color:var(--muted);transition:transform 0.15s; }
 .area-header.collapsed .area-header-chevron { transform:rotate(-90deg); }
 .area-header.unspecified { background:rgba(136,136,136,0.06); border-color:rgba(136,136,136,0.15); }
+.subarea-header { display:flex;align-items:center;gap:8px;padding:4px 8px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:5px;margin:2px 0 2px 22px;cursor:pointer;user-select:none; }
+.subarea-header-name { font-size:11px;font-weight:600;color:var(--text);flex:1; }
+.subarea-header-chevron { font-size:9px;color:var(--muted);transition:transform 0.15s; }
+.subarea-header.collapsed .subarea-header-chevron { transform:rotate(-90deg); }
+.subarea-header.drop-target { background:rgba(255,107,0,0.2) !important; border-color:var(--accent) !important; outline:2px solid var(--accent); }
+.subarea-name-input { background:transparent;border:none;outline:none;color:var(--text);font-size:11px;font-weight:600;font-family:var(--font-body);width:150px; }
+.subarea-name-input:focus { border-bottom:1px solid var(--accent); }
+.area-header-addsub { background:transparent;border:1px solid rgba(255,107,0,0.3);color:var(--accent);cursor:pointer;font-size:10px;padding:1px 6px;border-radius:4px; }
+.area-header-addsub:hover { background:rgba(255,107,0,0.12); }
 /* Drag and drop */
 .drag-handle { cursor:grab;color:var(--subtle);font-size:13px;padding:0 4px;user-select:none;opacity:0.4;transition:opacity 0.1s; }
 .drag-handle:hover { opacity:1;color:var(--accent); }
@@ -5274,7 +5283,7 @@ async function newQuote() {
     preparedBy,
     company: '', contact: '', email: '', phone: '', siteAddress: '',
     comments: '', qScope: '', boqRef: '', boqFile: '', projectTCs: '',
-    takeoff: [], areas: [],
+    takeoff: [], areas: [], subareas: [],
     fittingsPct: 10, fittingsRate: 1.30, miscMaterial: 0, miscMaterialNote: '',
     materialLinks: [],
     instDays: 0, instOperatives: 2, globalDays: true,
@@ -5867,6 +5876,8 @@ function renderTakeoff() {
                   onblur="renameArea('${areaId}',this.value)">`
             }
             <span class="area-header-stats">${rows.length} rows · ${areaKg.toFixed(1)} kg · £${areaCost.toFixed(2)}</span>
+            ${!isUnspec ? `<button onclick="event.stopPropagation();addSubarea('${areaId}')"
+              class="area-header-addsub" title="Add a sub-area">＋ sub</button>` : ''}
             ${!isUnspec ? `<button onclick="event.stopPropagation();deleteArea('${areaId}')"
               style="background:transparent;border:none;color:var(--subtle);cursor:pointer;font-size:12px;padding:0 4px" title="Delete area">✕</button>` : ''}
           </div>
@@ -5875,13 +5886,46 @@ function renderTakeoff() {
     }
 
     if (!collapsed) {
-      rows.forEach(({r,i}) => { html += takeoffRowHTML(r,i); });
+      const subs   = (q.subareas||[]).filter(s => s.areaId === areaId);
+      const subIds = subs.map(s => s.id);
+      subs.forEach(sub => {
+        const subRows = rows.filter(({r}) => r.subarea === sub.id);
+        const subKg   = subRows.reduce((s,{r}) => s + (r.length/1000)*(r.kgm||0)*(r.qty||1), 0);
+        const subCost = subRows.reduce((s,{r}) => s + (r.length/1000)*(r.kgm||0)*(r.qty||1)*(r.rate||0), 0);
+        html += subareaHeaderHTML(sub, subRows.length, subKg, subCost);
+        if (!sub.collapsed) subRows.forEach(({r,i}) => { html += takeoffRowHTML(r,i); });
+      });
+      // rows directly under the area (no sub-area, or orphaned sub-area ref)
+      rows.filter(({r}) => !r.subarea || !subIds.includes(r.subarea))
+          .forEach(({r,i}) => { html += takeoffRowHTML(r,i); });
     }
   });
 
   body.innerHTML = html;
   updateTakeoffTotals();
   checkRalVisibility();
+}
+
+function subareaHeaderHTML(sub, count, kg, cost) {
+  return `<tr data-subarea-hdr="${escHtml(sub.id)}">
+    <td colspan="10" style="padding:1px 0">
+      <div class="subarea-header ${sub.collapsed?'collapsed':''}"
+        onclick="toggleSubarea('${sub.id}')"
+        ondragover="onSubareaDragOver(event,'${sub.areaId}','${sub.id}')"
+        ondragleave="onSubareaDragLeave(event)"
+        ondrop="onSubareaDrop(event,'${sub.areaId}','${sub.id}')"
+        data-subarea-id="${sub.id}">
+        <span class="subarea-header-chevron">▾</span>
+        <input class="subarea-name-input" value="${escHtml(sub.name)}"
+          onclick="event.stopPropagation()"
+          onchange="renameSubarea('${sub.id}',this.value)"
+          onblur="renameSubarea('${sub.id}',this.value)">
+        <span class="area-header-stats">${count} rows · ${kg.toFixed(1)} kg · £${cost.toFixed(2)}</span>
+        <button onclick="event.stopPropagation();deleteSubarea('${sub.id}')"
+          style="background:transparent;border:none;color:var(--subtle);cursor:pointer;font-size:12px;padding:0 4px" title="Delete sub-area">✕</button>
+      </div>
+    </td>
+  </tr>`;
 }
 
 function takeoffRowHTML(row, i) {
@@ -5892,7 +5936,16 @@ function takeoffRowHTML(row, i) {
   const isEA = row._unit === 'EA';
   const nc = 'padding:4px 4px;text-align:right';
   const ni = 'background:transparent;border:1px solid transparent;border-radius:4px;padding:4px 5px;color:var(--text);font-family:var(--font-mono);font-size:12px;text-align:right;width:100%;transition:border-color 0.15s';
-  const sel = (getQuote()?.areas||[]).map(a=>`<option value="${a.id}" ${row.area===a.id?'selected':''} >${escHtml(a.name)}</option>`).join('');
+  const _q = getQuote();
+  const _areas = _q?.areas||[];
+  const _subs  = _q?.subareas||[];
+  const _rowSub = (row.subarea && _subs.find(s=>s.id===row.subarea && s.areaId===row.area)) ? row.subarea : '';
+  const sel = _areas.map(a=>{
+    const aSel = (row.area===a.id && !_rowSub) ? 'selected' : '';
+    const subOpts = _subs.filter(s=>s.areaId===a.id)
+      .map(s=>`<option value="s:${s.id}" ${_rowSub===s.id?'selected':''}>&nbsp;&nbsp;↳ ${escHtml(s.name)}</option>`).join('');
+    return `<optgroup label="${escHtml(a.name)}"><option value="a:${a.id}" ${aSel}>${escHtml(a.name)} (whole area)</option>${subOpts}</optgroup>`;
+  }).join('');
   return `<tr id="takeoff-row-${i}" data-idx="${i}" draggable="true"
     ondragstart="onRowDragStart(event,${i})"
     ondragover="onRowDragOver(event,${i})"
@@ -5924,7 +5977,7 @@ function takeoffRowHTML(row, i) {
         onkeydown="takeoffGridKey(event,${i},'qty')"
         style="${ni}" data-row="${i}" data-col="qty"></td>
     <td style="padding:2px 3px">
-      <select onchange="updateTakeoffRow(${i},'area',this.value)"
+      <select onchange="setRowPlace(${i},this.value)"
         style="background:transparent;border:1px solid transparent;border-radius:4px;padding:3px 4px;color:var(--muted);font-size:11px;width:100%;cursor:pointer"
         onfocus="this.style.borderColor='var(--accent)'" onblur="this.style.borderColor='transparent'">
         <option value="" ${!row.area?'selected':''}>Unspecified</option>
@@ -6035,11 +6088,12 @@ function onRowDrop(event, targetIdx) {
   if (!_dragIndices.length || _dragIndices.includes(targetIdx)) { onDragEnd(); return; }
   const q = getQuote(); if (!q) return;
 
-  // Get target area from the row being dropped onto
+  // Get target area + sub-area from the row being dropped onto
   const targetArea = q.takeoff[targetIdx]?.area || '';
+  const targetSub  = q.takeoff[targetIdx]?.subarea || '';
 
-  // Move selected rows to target area and reorder
-  moveRowsToPosition(q, _dragIndices, targetIdx, targetArea);
+  // Move selected rows to target area/sub-area and reorder
+  moveRowsToPosition(q, _dragIndices, targetIdx, targetArea, targetSub);
   saveAll(); renderTakeoff(); recalcAll();
   onDragEnd();
 }
@@ -6065,16 +6119,16 @@ function onAreaDrop(event, areaId) {
 
   const realAreaId = areaId === '__unspec__' ? '' : areaId;
   // Move rows to this area (append at end of area)
-  _dragIndices.forEach(i => { if (q.takeoff[i]) q.takeoff[i].area = realAreaId; });
+  _dragIndices.forEach(i => { if (q.takeoff[i]) { q.takeoff[i].area = realAreaId; q.takeoff[i].subarea = ''; } });
 
   saveAll(); renderTakeoff(); recalcAll();
   onDragEnd();
   toast(`${_dragIndices.length} row${_dragIndices.length>1?'s':''} moved`, 'success');
 }
 
-function moveRowsToPosition(q, draggedIndices, targetIdx, targetArea) {
-  // Assign target area to all dragged rows
-  draggedIndices.forEach(i => { if (q.takeoff[i]) q.takeoff[i].area = targetArea; });
+function moveRowsToPosition(q, draggedIndices, targetIdx, targetArea, targetSub) {
+  // Assign target area/sub-area to all dragged rows
+  draggedIndices.forEach(i => { if (q.takeoff[i]) { q.takeoff[i].area = targetArea; q.takeoff[i].subarea = targetSub || ''; } });
 
   // Reorder: remove dragged rows, insert at target position
   const dragged = draggedIndices.map(i => q.takeoff[i]);
@@ -6104,7 +6158,7 @@ function onDragEnd() {
 
 function addTakeoffRow() {
   const q = getQuote(); if (!q) return;
-  q.takeoff.push({ type:'', length:0, qty:1, kgm:null, rate:null, area:'' });
+  q.takeoff.push({ type:'', length:0, qty:1, kgm:null, rate:null, area:'', subarea:'' });
   saveAll(); renderTakeoff(); recalcAll();
 }
 
@@ -6385,6 +6439,79 @@ function addTakeoffArea() {
   toast('Area added — rename it by clicking the title');
 }
 
+function setRowPlace(i, val) {
+  const q = getQuote(); if (!q) return;
+  const row = q.takeoff[i]; if (!row) return;
+  if (!val) { row.area = ''; row.subarea = ''; }
+  else if (val.startsWith('a:')) { row.area = val.slice(2); row.subarea = ''; }
+  else if (val.startsWith('s:')) {
+    const subId = val.slice(2);
+    const sub = (q.subareas||[]).find(s => s.id === subId);
+    row.subarea = subId;
+    row.area = sub ? sub.areaId : (row.area || '');
+  }
+  saveAll(); renderTakeoff(); recalcAll();
+}
+
+// ── Sub-area management ──────────────────────────────────────
+function addSubarea(areaId) {
+  const q = getQuote(); if (!q) return;
+  q.subareas = q.subareas || [];
+  const id = 'sub_' + Date.now();
+  const n  = q.subareas.filter(s => s.areaId === areaId).length + 1;
+  q.subareas.push({ id, areaId, name: 'Sub-area ' + n, collapsed: false });
+  const a = (q.areas||[]).find(a => a.id === areaId); if (a) a.collapsed = false;
+  saveAll(); renderTakeoff();
+  toast('Sub-area added — rename it by clicking the title');
+}
+
+function renameSubarea(id, name) {
+  const q = getQuote(); if (!q) return;
+  const s = (q.subareas||[]).find(s => s.id === id);
+  if (s && name.trim()) { s.name = name.trim(); saveAll(); }
+}
+
+function toggleSubarea(id) {
+  const q = getQuote(); if (!q) return;
+  const s = (q.subareas||[]).find(s => s.id === id);
+  if (s) { s.collapsed = !s.collapsed; saveAll(); renderTakeoff(); }
+}
+
+async function deleteSubarea(id) {
+  const q = getQuote(); if (!q) return;
+  const s = (q.subareas||[]).find(s => s.id === id);
+  const name = s?.name || 'this sub-area';
+  const rowCount = (q.takeoff||[]).filter(r => r.subarea === id).length;
+  const msg = rowCount > 0
+    ? `Delete sub-area "${name}"? Its ${rowCount} member${rowCount>1?'s':''} will move up to the parent area.`
+    : `Delete empty sub-area "${name}"?`;
+  if (!await bamaConfirm(msg, 'Delete Sub-area')) return;
+  (q.takeoff||[]).forEach(r => { if (r.subarea === id) r.subarea = ''; });
+  q.subareas = (q.subareas||[]).filter(s => s.id !== id);
+  saveAll(); renderTakeoff(); recalcAll();
+  toast('Sub-area deleted');
+}
+
+// ── Sub-area drag/drop targets ──────────────────────────────
+function onSubareaDragOver(event, areaId, subId) {
+  if (!_dragIndices.length) return;
+  event.preventDefault(); event.stopPropagation();
+  event.dataTransfer.dropEffect = 'move';
+  event.currentTarget.classList.add('drop-target');
+}
+function onSubareaDragLeave(event) { event.currentTarget.classList.remove('drop-target'); }
+function onSubareaDrop(event, areaId, subId) {
+  event.preventDefault(); event.stopPropagation();
+  event.currentTarget.classList.remove('drop-target');
+  if (!_dragIndices.length) return;
+  const q = getQuote(); if (!q) return;
+  _dragIndices.forEach(i => { if (q.takeoff[i]) { q.takeoff[i].area = areaId; q.takeoff[i].subarea = subId; } });
+  const n = _dragIndices.length;
+  saveAll(); renderTakeoff(); recalcAll();
+  onDragEnd();
+  toast(`${n} row${n>1?'s':''} moved`, 'success');
+}
+
 function renameArea(id, name) {
   const q = getQuote(); if (!q) return;
   const a = (q.areas||[]).find(a => a.id === id);
@@ -6417,7 +6544,8 @@ async function deleteArea(id) {
     showDeleteAreaModal(id, name, rowCount);
   } else {
     if (!await bamaConfirm(msg, 'Delete Area')) return;
-    q.areas = (q.areas||[]).filter(a => a.id !== id);
+    q.areas    = (q.areas||[]).filter(a => a.id !== id);
+    q.subareas = (q.subareas||[]).filter(s => s.areaId !== id);
     saveAll(); renderTakeoff(); updateMoveToAreaOptions();
     toast('Area deleted');
   }
@@ -6433,8 +6561,9 @@ function showDeleteAreaModal(id, name, rowCount) {
 function confirmDeleteAreaKeepRows() {
   const id = document.getElementById('deleteAreaModal').dataset.areaId;
   const q = getQuote(); if (!q) return;
-  (q.takeoff||[]).forEach(r => { if (r.area === id) r.area = ''; });
-  q.areas = (q.areas||[]).filter(a => a.id !== id);
+  (q.takeoff||[]).forEach(r => { if (r.area === id) { r.area = ''; r.subarea = ''; } });
+  q.areas    = (q.areas||[]).filter(a => a.id !== id);
+  q.subareas = (q.subareas||[]).filter(s => s.areaId !== id);
   saveAll(); renderTakeoff(); updateMoveToAreaOptions();
   document.getElementById('deleteAreaModal').classList.remove('active');
   toast('Area deleted — members moved to Unspecified');
@@ -6443,8 +6572,9 @@ function confirmDeleteAreaKeepRows() {
 function confirmDeleteAreaWithRows() {
   const id = document.getElementById('deleteAreaModal').dataset.areaId;
   const q = getQuote(); if (!q) return;
-  q.takeoff = (q.takeoff||[]).filter(r => r.area !== id);
-  q.areas   = (q.areas||[]).filter(a => a.id !== id);
+  q.takeoff  = (q.takeoff||[]).filter(r => r.area !== id);
+  q.areas    = (q.areas||[]).filter(a => a.id !== id);
+  q.subareas = (q.subareas||[]).filter(s => s.areaId !== id);
   saveAll(); renderTakeoff(); updateMoveToAreaOptions(); recalcAll();
   document.getElementById('deleteAreaModal').classList.remove('active');
   toast('Area and all members deleted');
@@ -6522,7 +6652,7 @@ function moveSelectedToArea(areaId) {
 
   if (!needsSplit) {
     // Simple move — all qty 1 rows
-    selected.forEach(i => { if (q.takeoff[i]) q.takeoff[i].area = areaId; });
+    selected.forEach(i => { if (q.takeoff[i]) { q.takeoff[i].area = areaId; q.takeoff[i].subarea = ''; } });
     saveAll(); renderTakeoff();
     toast(`Moved ${selected.length} row${selected.length>1?'s':''} to area`);
     return;
@@ -14090,7 +14220,7 @@ async function qqSaveAsDraft() {
     company: '', contact: '', email: '', phone: '', siteAddress: '',
     comments: `Quick Quote — ${r2.tonnes.toFixed(2)}t ${profileLabels[r2.profile]}, ${scopeLabel}, ${finishLabels[r2.finish]}, ${r2.margin}% margin`,
     qScope: '', boqRef: '', boqFile: '', projectTCs: '',
-    takeoff: [], areas: [],
+    takeoff: [], areas: [], subareas: [],
     fittingsPct: 10, fittingsRate: 1.30, miscMaterial: 0, miscMaterialNote: '',
     materialLinks: [],
     instDays: r2.scope === 'supply_install' ? r2.instDays : 0,
@@ -14245,7 +14375,7 @@ async function qqSaveAsDraft() {
         phone:       '',
         siteAddress: '',
         comments: '', qScope: '', boqRef: '', boqFile: '', projectTCs: '',
-        takeoff: [], areas: [],
+        takeoff: [], areas: [], subareas: [],
         fittingsPct: 10, fittingsRate: 1.30, miscMaterial: 0, miscMaterialNote: '',
         materialLinks: [],
         instDays: 0, instOperatives: 2, globalDays: true,
