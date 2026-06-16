@@ -2579,9 +2579,30 @@ async function trResendNotify(tenderId) {
   const t = _trTenders.find(x => x.id === tenderId);
   if (!t) return;
   const alreadyNotified = !!t.notified_at;
-  const msg = alreadyNotified
+
+  // Mirror the API recipient logic: Mateusz always, plus the assignee
+  // (resolved by name from the assignee book) when their email differs.
+  // Showing the names lets the user catch a wrong assignee before sending —
+  // cancel, edit the tender's assignee, then resend.
+  const MATT_EMAIL = 'matt@bamafabrication.co.uk';
+  const recips = [{ name: 'Mateusz Braczyk', email: MATT_EMAIL }];
+  const assigneeName = (t.assigned_to || '').trim();
+  let assigneeWarning = '';
+  if (assigneeName) {
+    const a = _trAssignees.find(x => x.full_name === assigneeName);
+    const aEmail = (a && a.email ? a.email : '').trim();
+    if (aEmail && aEmail.toLowerCase() !== MATT_EMAIL.toLowerCase()) {
+      recips.push({ name: assigneeName, email: aEmail });
+    } else if (!aEmail) {
+      assigneeWarning = `\n⚠ ${assigneeName} has no email on file — they will NOT be notified.`;
+    }
+  }
+  const recipLine = 'Recipients: ' + recips.map(r => r.name).join(', ');
+
+  const head = alreadyNotified
     ? `Resend notification email for ${t.reference} — ${t.client}?`
     : `Send notification email for ${t.reference} — ${t.client}?`;
+  const msg = `${head}\n\n${recipLine}${assigneeWarning}`;
   if (!await bamaConfirm(msg, 'Email Notification')) return;
   try {
     await trFetch(`/api/tender-register/${tenderId}/resend-notify`, {
@@ -2826,7 +2847,7 @@ async function trResendNotify(tenderId) {
 <div class="modal-overlay" id="bamaConfirmModal" style="z-index:9999">
   <div class="modal" style="max-width:420px;padding:24px 24px 20px">
     <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:10px" id="bamaConfirmTitle">Confirm</div>
-    <div style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:16px" id="bamaConfirmMsg"></div>
+    <div style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:16px;white-space:pre-line" id="bamaConfirmMsg"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end">
       <button class="btn btn-ghost" id="bamaConfirmCancel">Cancel</button>
       <button class="btn btn-primary" id="bamaConfirmOk">Confirm</button>
