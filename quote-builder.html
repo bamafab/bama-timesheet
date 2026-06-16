@@ -4330,7 +4330,7 @@ const _SP_ALIASES = {
 // Canonical display spacing per prefix (for formatted output)
 const _SP_DISPLAY = {
   UB:'UB ', UC:'UC ', PFC:'PFC ', SHS:'SHS ', RHS:'RHS ',
-  CHS:'CHS ', EA:'EA ', RSA:'RSA ', FLT:'FLT ', FLAT:'FLT ',
+  CHS:'CHS ', EA:'EA ', UA:'UA ', RSA:'RSA ', FLT:'FLT ', FLAT:'FLT ',
   PLT:'PLT '
 };
 
@@ -5984,7 +5984,7 @@ function takeoffRowHTML(row, i, inSub) {
       <input class="ac-input" value="${row.type||''}" placeholder="e.g. UB203x133x25"
         oninput="onTakeoffTypeInput(${i},this.value,this)"
         onkeydown="onTakeoffTypeKey(event,${i},this)"
-        onfocus="onTakeoffTypeInput(${i},this.value,this)"
+        onfocus="this.select();onTakeoffTypeInput(${i},this.value,this)"
         autocomplete="off" style="width:100%;font-size:12px"
         data-row="${i}" data-col="type">
     </div></td>
