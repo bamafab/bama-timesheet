@@ -7820,33 +7820,37 @@ function renderAreaBreakdown() {
   if (!hasAreas || !on) { if (wrap) wrap.style.display = 'none'; return; }
 
   const bd = computeAreaBreakdown(q);
-  const th = t => `<th style="padding:4px 2px;font-weight:600">${t}</th>`;
-  const td = (v,extra='') => `<td style="padding:5px 2px;font-family:var(--font-mono);${extra}">${v}</td>`;
-  let html = `<table style="width:100%;border-collapse:collapse;font-size:11px">
-    <thead><tr style="color:var(--muted);text-align:right">
-      <th style="text-align:left;padding:4px 2px;font-weight:600">Area</th>
-      ${th('Tonnes')}${th('Material')}${th('Shared*')}${th('Margin')}${th('Total')}
+  const f0 = v => '£' + Math.round(v).toLocaleString('en-GB');
+  const money = (v, extra='') => `<td style="padding:5px 3px;text-align:right;font-family:var(--font-mono);white-space:nowrap;${extra}">${f0(v)}</td>`;
+  const hd = (t) => `<th style="padding:4px 3px;text-align:right;font-weight:600">${t}</th>`;
+  let html = `<table style="width:100%;table-layout:fixed;border-collapse:collapse;font-size:11px">
+    <colgroup><col style="width:31%"><col style="width:23%"><col style="width:23%"><col style="width:23%"></colgroup>
+    <thead><tr style="color:var(--muted)">
+      <th style="text-align:left;padding:4px 3px;font-weight:600">Area</th>
+      ${hd('Material')}${hd('Shared*')}${hd('Total')}
     </tr></thead><tbody>`;
   bd.rows.forEach(r => {
-    html += `<tr style="text-align:right;border-top:1px solid var(--border)">
-      <td style="text-align:left;padding:5px 2px;color:var(--text)">${escHtml(r.name)}</td>
-      ${td((r.kg/1000).toFixed(2),'color:var(--muted)')}
-      ${td(fmt(r.material))}
-      ${td(fmt(r.shared),'color:var(--muted)')}
-      ${td(fmt(r.margin),'color:var(--muted)')}
-      ${td(fmt(r.total),'color:var(--accent);font-weight:600')}
+    html += `<tr style="border-top:1px solid var(--border)">
+      <td style="padding:5px 3px;text-align:left">
+        <div style="color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(r.name)}</div>
+        <div style="font-size:10px;color:var(--subtle);font-family:var(--font-mono)">${(r.kg/1000).toFixed(2)} t</div>
+      </td>
+      ${money(r.material)}
+      ${money(r.shared, 'color:var(--muted)')}
+      ${money(r.total, 'color:var(--accent);font-weight:600')}
     </tr>`;
   });
-  html += `<tr style="text-align:right;border-top:2px solid var(--border);font-weight:600">
-      <td style="text-align:left;padding:6px 2px">Total</td>
-      ${td((bd.grand.kg/1000).toFixed(2),'color:var(--muted)')}
-      ${td(fmt(bd.grand.material))}
-      ${td(fmt(bd.grand.shared),'color:var(--muted)')}
-      ${td(fmt(bd.grand.margin),'color:var(--muted)')}
-      ${td(fmt(bd.grand.total),'color:var(--accent)')}
+  html += `<tr style="border-top:2px solid var(--border)">
+      <td style="padding:6px 3px;text-align:left;font-weight:600">
+        <div>Total</div>
+        <div style="font-size:10px;color:var(--subtle);font-family:var(--font-mono);font-weight:400">${(bd.grand.kg/1000).toFixed(2)} t</div>
+      </td>
+      ${money(bd.grand.material, 'font-weight:600')}
+      ${money(bd.grand.shared, 'color:var(--muted);font-weight:600')}
+      ${money(bd.grand.total, 'color:var(--accent);font-weight:600')}
     </tr></tbody></table>
     <div style="font-size:10px;color:var(--subtle);margin-top:8px;line-height:1.5">
-      Material is costed per area from its takeoff. *Shared costs (install, fab, design, finishing, survey, delivery, prelims, purlins) and margin are apportioned by tonnage for now — the next step gives each area its own editable pricing.
+      Material is costed per area from its takeoff. *Shared costs (install, fab, design, finishing, survey, delivery, prelims, purlins) and the ${bd.marginPct}% margin are split by tonnage for now — the next step gives each area its own editable pricing.
     </div>`;
   wrap.style.display = '';
   wrap.innerHTML = html;
