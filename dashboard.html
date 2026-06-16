@@ -1474,30 +1474,22 @@ const BRIEFING_LEVELS = {
 
 function renderBriefing(b) {
   const esc = s => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  const parts = [];
-  parts.push(`<div style="font-weight:700;font-size:15px;color:var(--text);margin-bottom:2px">${esc(b.greeting||'')}${b.date_line ? ` <span style="color:var(--muted);font-weight:500">\u00B7 ${esc(b.date_line)}</span>` : ''}</div>`);
-  if (b.headline) parts.push(`<div style="font-size:13px;color:var(--text);margin-bottom:12px;line-height:1.6">${esc(b.headline)}</div>`);
+  const p = [];
+  p.push(`<div style="font-weight:700;font-size:14px;color:var(--text)">${esc(b.greeting||'')}${b.date_line ? ` <span style="color:var(--muted);font-weight:500">\u00B7 ${esc(b.date_line)}</span>` : ''}</div>`);
+  if (b.headline) p.push(`<div style="font-size:12.5px;color:var(--text);margin:3px 0 8px;line-height:1.5">${esc(b.headline)}</div>`);
   const groups = Array.isArray(b.groups) ? b.groups.filter(g => g && Array.isArray(g.items) && g.items.length) : [];
-  if (!groups.length) {
-    parts.push(`<div style="font-size:13px;color:var(--muted)">Nothing urgent on the board right now \u2014 you're on top of things.</div>`);
-  }
-  for (const g of groups) {
-    const lv = BRIEFING_LEVELS[g.level] || { label: g.level || 'Other', icon: '\u2022', color: 'var(--muted)' };
-    parts.push(`<div style="display:flex;align-items:center;gap:7px;margin:13px 0 5px">
-      <span style="font-size:12px">${lv.icon}</span>
-      <span style="font-size:11px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:${lv.color}">${esc(lv.label)}</span>
-      <span style="font-size:11px;color:var(--subtle)">${g.items.length}</span>
-    </div>`);
-    for (const it of g.items) {
-      parts.push(`<div style="padding:6px 0 6px 12px;border-left:2px solid ${lv.color};margin:4px 0">
-        <div style="font-size:13px;line-height:1.5">${it.ref ? `<span style="font-family:var(--font-mono);font-weight:700;color:var(--accent)">${esc(it.ref)}</span> ` : ''}<span style="color:var(--text)">${esc(it.label||'')}</span></div>
-        ${it.note ? `<div style="font-size:12px;color:var(--muted);margin-top:2px">${esc(it.note)}</div>` : ''}
-      </div>`);
-    }
-  }
+  if (!groups.length) p.push(`<div style="font-size:12.5px;color:var(--muted)">Nothing urgent on the board right now \u2014 you're on top of things.</div>`);
+  groups.forEach((g, gi) => {
+    const lv = BRIEFING_LEVELS[g.level] || { label: g.level || 'Other', color: 'var(--muted)' };
+    p.push(`<div style="display:flex;align-items:center;gap:6px;margin:${gi===0?'4':'11'}px 0 3px"><span style="font-size:8px;color:${lv.color};line-height:1">\u25CF</span><span style="font-size:10.5px;font-weight:700;letter-spacing:0.03em;text-transform:uppercase;color:${lv.color}">${esc(lv.label)}</span><span style="font-size:10.5px;color:var(--subtle)">${g.items.length}</span></div>`);
+    g.items.forEach(it => {
+      p.push(`<div style="padding:2px 0 2px 10px;border-left:2px solid ${lv.color};margin:3px 0"><div style="font-size:12.5px;line-height:1.45">${it.ref ? `<span style="font-family:var(--font-mono);font-weight:700;color:var(--accent)">${esc(it.ref)}</span> ` : ''}<span style="color:var(--text)">${esc(it.label||'')}</span></div>${it.note ? `<div style="font-size:11.5px;color:var(--muted);margin-top:1px;line-height:1.4">${esc(it.note)}</div>` : ''}</div>`);
+    });
+  });
   const el = document.getElementById('aiMessage');
   el.className = 'ai-message';
-  el.innerHTML = parts.join('');
+  el.style.whiteSpace = 'normal';
+  el.innerHTML = p.join('');
 }
 
 // Try to render the briefing as structured priorities; fall back to prose.
@@ -1510,6 +1502,7 @@ function displayBriefing(text) {
   } catch(e) {
     const el = document.getElementById('aiMessage');
     el.className = 'ai-message';
+    el.style.whiteSpace = '';
     el.innerHTML = mdToHtml(String(text));
   }
 }
