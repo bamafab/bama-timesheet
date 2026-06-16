@@ -1406,6 +1406,20 @@ tr.drag-dragging { opacity:0.35; }
             </div>
           </div>
 
+          <!-- Quote scenario: Supply Only vs Supply & Install — tailors the analysis -->
+          <div style="margin-top:16px">
+            <label style="display:block;font-size:12px;color:var(--muted);margin-bottom:6px">Quote scenario — the analysis (scope, T&amp;Cs, exclusions) is tailored to this</label>
+            <div style="display:flex;gap:8px;flex-wrap:wrap" id="qhScopeTiles">
+              <button type="button" class="dwiz-tile" data-scope="supply_only" onclick="qhSetScope('supply_only')" style="flex:1;min-width:170px;padding:11px 12px;font-size:12px">
+                Supply Only<br><span style="font-size:10px;opacity:0.7">Fabrication &amp; delivery — no site installation</span>
+              </button>
+              <button type="button" class="dwiz-tile active" data-scope="supply_install" onclick="qhSetScope('supply_install')" style="flex:1;min-width:170px;padding:11px 12px;font-size:12px">
+                Supply &amp; Install<br><span style="font-size:10px;opacity:0.7">Fabrication, delivery &amp; site installation</span>
+              </button>
+            </div>
+            <div id="qhScopeStale" style="display:none;margin-top:8px;font-size:12px;color:var(--accent2);background:rgba(255,179,71,0.08);border:1px solid rgba(255,179,71,0.25);border-radius:6px;padding:8px 10px"></div>
+          </div>
+
           <div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
             <button class="btn btn-primary" id="helperAnalyseBtn" onclick="runQuoteHelper()" disabled style="opacity:0.4">
               🔍 Analyse Document
@@ -1424,7 +1438,8 @@ tr.drag-dragging { opacity:0.35; }
             <button class="btn btn-ghost btn-sm" onclick="helperPushTCs()" title="Push T&Cs and exclusions to quote">📋 T&amp;Cs → Quote</button>
             <button class="btn btn-primary btn-sm" onclick="helperApplyStructure()" title="Create takeoff areas from suggested quote structure">📐 Apply Structure to Quote</button>
             <button class="btn btn-ghost btn-sm" onclick="helperExportPDF()">📄 Export Briefing PDF</button>
-            <div style="margin-left:auto;font-size:11px;color:var(--subtle)" id="helperDocRef"></div>
+            <span id="helperScopeBadge" style="margin-left:auto;font-size:11px;font-weight:600;padding:3px 9px;border-radius:20px;border:1px solid var(--accent);color:var(--accent);display:none"></span>
+            <div style="font-size:11px;color:var(--subtle)" id="helperDocRef"></div>
           </div>
 
           <!-- TILES grid -->
@@ -5402,11 +5417,14 @@ function loadQuoteEditor() {
   // Restore saved helper analysis if present
   if (q.helperAnalysis) {
     window._helperParsed = q.helperAnalysis;
+    window._helperScopeShown = q.helperScope || 'supply_install';
+    if (typeof qhSetScope === 'function') qhSetScope(window._helperScopeShown);
     renderHelperOutput(q.helperAnalysis);
     const statusEl = document.getElementById('helperStatus');
     if (statusEl) statusEl.textContent = 'Analysis restored from saved quote';
   } else {
     window._helperParsed = null;
+    window._helperScopeShown = null;
     document.getElementById('helperOutput').style.display = 'none';
   }
 
@@ -10248,6 +10266,36 @@ function removeHelperFile(i) {
   updateHelperFileList();
 }
 
+let _qhScope = 'supply_install'; // 'supply_only' | 'supply_install'
+const QH_SCOPE_LABEL = { supply_only: 'Supply Only', supply_install: 'Supply & Install' };
+
+function qhSetScope(scope) {
+  if (!QH_SCOPE_LABEL[scope]) return;
+  _qhScope = scope;
+  document.querySelectorAll('#qhScopeTiles .dwiz-tile').forEach(t =>
+    t.classList.toggle('active', t.dataset.scope === scope));
+  qhUpdateStaleHint();
+}
+
+// If an analysis is on screen for a different scenario, prompt a re-analyse.
+function qhUpdateStaleHint() {
+  const stale = document.getElementById('qhScopeStale');
+  const btn   = document.getElementById('helperAnalyseBtn');
+  if (!stale) return;
+  const shown = window._helperScopeShown;
+  const outputVisible = document.getElementById('helperOutput')?.style.display !== 'none';
+  if (outputVisible && shown && shown !== _qhScope) {
+    stale.style.display = 'block';
+    stale.textContent = `\u26A0 The analysis below is for ${QH_SCOPE_LABEL[shown]}. Click \u201CAnalyse\u201D to regenerate it for ${QH_SCOPE_LABEL[_qhScope]}.`;
+    if (btn && !btn.disabled) btn.textContent = `\uD83D\uDD04 Re-analyse for ${QH_SCOPE_LABEL[_qhScope]}`;
+  } else {
+    stale.style.display = 'none';
+    if (btn && !btn.disabled && /Re-analyse|Analyse Document/.test(btn.textContent)) {
+      btn.textContent = '\uD83D\uDD0D Analyse Document';
+    }
+  }
+}
+
 async function runQuoteHelper() {
   if (!_helperFiles.length) { toast('Upload at least one document first', 'error'); return; }
 
@@ -10255,6 +10303,20 @@ async function runQuoteHelper() {
   const focus   = document.getElementById('helperFocus')?.value || '';
   const q       = getQuote();
   const project = q?.company ? `Client: ${q.company}. ` : '';
+
+  const scope = _qhScope;
+  const scopeLabel = QH_SCOPE_LABEL[scope];
+  const scopeDirective = scope === 'supply_only'
+    ? `THIS QUOTE IS SUPPLY ONLY — BAMA fabricates and delivers only; NO site installation by BAMA.
+- scope_draft MUST use "Supply and delivery of..." wording. Do NOT describe installation, erection or site fixing as part of BAMA's scope.
+- exclusions MUST explicitly include: offloading at site, installation/erection, site fixing, craneage/lifting, site access & welfare, scaffolding/MEWPs, setting out on site, grouting/packing — all by others.
+- tc_notes MUST reflect supply-only terms: delivery to a single accessible hardstanding, offloading by others, no site attendance, no site survey or installation programme allowed.
+- pricing_items and contract_risks should focus on fabrication, materials, finish and delivery — not installation labour, plant or site programme.`
+    : `THIS QUOTE IS SUPPLY & INSTALL — BAMA fabricates, delivers AND installs on site.
+- scope_draft MUST use "Supply, delivery and carry out installation of..." wording.
+- exclusions should cover the usual install items (builder's work, temporary works by others, attendance, making good) but must NOT exclude installation itself.
+- tc_notes should reflect install terms: site access & working hours, attendance, programme/sequencing, craneage and plant where relevant.
+- pricing_items and contract_risks should include installation labour, plant/access and site programme as well as fabrication.`;
 
   const btn = document.getElementById('helperAnalyseBtn');
   const status = document.getElementById('helperStatus');
@@ -10278,22 +10340,27 @@ Respond ONLY in valid JSON with these exact keys — no markdown, no preamble:
   "drawings_to_check": [{"ref": "drawing/doc reference or type", "reason": "why BAMA needs to check this"}],
   "quote_structure_short": "1 sentence recommendation",
   "quote_structure_detail": "Full recommendation — standard vs custom lines, areas, separate line items, anything to split out",
-  "scope_draft": "Draft scope text for the quote — as it would appear under Comments or Special Instructions on the client PDF. Write in BAMA's voice: 'Supply, delivery and carry out installation of...' Include finish, material grade, drawings referenced. Keep it professional and concise.",
+  "scope_draft": "Draft scope text for the quote — as it would appear under Comments or Special Instructions on the client PDF. Write in BAMA's voice, using the wording required by the SCOPE OF THIS QUOTE directive below. Include finish, material grade, drawings referenced. Keep it professional and concise.",
   "tc_notes": [{"heading": "short heading", "text": "full T&C / exclusion / commercial note text"}],
   "exclusions": ["list of things explicitly excluded or that BAMA should exclude"]
 }
+
+SCOPE OF THIS QUOTE — tailor scope_draft, tc_notes and exclusions to this:
+${scopeDirective}
 
 CRITICAL INSTRUCTIONS:
 - Return ALL JSON keys — use empty arrays/strings if nothing to report
 - pricing_items: list every priceable element — keep each "detail" to 2 sentences max
 - contract_risks: flag contract type, LD, retention, design liability, programme, access constraints — 2 sentences per risk max
 - drawings_to_check: list every drawing/spec reference mentioned
-- scope_draft: professional scope statement, "Supply, delivery and carry out installation of..." format, 100 words max
+- scope_draft: professional scope statement following the SCOPE OF THIS QUOTE directive, 100 words max
 - tc_notes: key commercial flags only, concise
 Be direct. Address Mateusz by first name.`;
 
   // Detect if this is an incremental update (existing analysis + new document)
-  const isIncremental = !!(window._helperParsed && window._helperParsed.summary_short &&
+  // A scope switch forces a full re-analysis (not an incremental merge).
+  const scopeChanged = !!(window._helperScopeShown && window._helperScopeShown !== scope);
+  const isIncremental = !scopeChanged && !!(window._helperParsed && window._helperParsed.summary_short &&
     window._helperParsed.summary_short !== 'Could not parse structured response — see full AI notes below.');
 
   let userPrompt;
@@ -10307,7 +10374,7 @@ Be direct. Address Mateusz by first name.`;
       scope_draft: window._helperParsed.scope_draft||'',
       exclusions: window._helperParsed.exclusions||[]
     }, null, 2);
-    userPrompt = `${project}Our trade: ${trade}.${focus ? ` Pay particular attention to: ${focus}.` : ''}
+    userPrompt = `${project}Our trade: ${trade}.${focus ? ` Pay particular attention to: ${focus}.` : ''} This quote is ${scopeLabel}.
 
 EXISTING ANALYSIS (from previous documents):
 ${existingSummary}
@@ -10317,6 +10384,8 @@ NEW DOCUMENT: ${_helperFiles[_helperFiles.length-1]?.name || 'attached'}
 Compare the new document against the existing analysis and return ONLY what is new, changed, or contradicts the existing analysis. Return the same JSON structure but only populate fields that have updates — use empty arrays for unchanged sections. For pricing_items, only list items NOT already in the existing analysis. For contract_risks, only list new risks or significant updates to existing ones. Update scope_draft and summary to reflect the combined picture.`;
   } else {
     userPrompt = `${project}Our trade: ${trade}.${focus ? ` Pay particular attention to: ${focus}.` : ''}
+
+This quote is ${scopeLabel}. ${scope === 'supply_only' ? 'BAMA fabricates and delivers only — there is NO site installation by BAMA. Tailor the scope, T&Cs and exclusions accordingly.' : 'BAMA fabricates, delivers and installs on site. Tailor the scope, T&Cs and exclusions accordingly.'}
 
 Please read this tender document and give me a full pricing briefing for my trade.`;
   }
@@ -10442,12 +10511,14 @@ Please read this tender document and give me a full pricing briefing for my trad
       status.textContent += ' (merged with previous analysis)';
     }
 
+    window._helperScopeShown = scope;
     renderHelperOutput(parsed);
     window._helperParsed = parsed;
     // Persist on the quote so it survives page reload / quote switch
     const _q = getQuote();
-    if (_q) { _q.helperAnalysis = parsed; saveAll(); }
-    status.textContent = `Analysis complete — ${_helperFiles.map(f=>f.name).join(', ')}`;
+    if (_q) { _q.helperAnalysis = parsed; _q.helperScope = scope; saveAll(); }
+    status.textContent = `Analysis complete (${scopeLabel}) — ${_helperFiles.map(f=>f.name).join(', ')}`;
+    qhUpdateStaleHint();
 
   } catch(err) {
     status.textContent = '❌ Error: ' + err.message;
@@ -10558,6 +10629,14 @@ function renderHelperOutput(data) {
   // Doc ref in action bar
   const q = getQuote();
   document.getElementById('helperDocRef').textContent = _helperFiles.map(f=>f.name).join(' · ');
+
+  // Scope badge — which scenario this analysis was generated for
+  const _badge = document.getElementById('helperScopeBadge');
+  if (_badge) {
+    const sc = window._helperScopeShown;
+    if (sc && QH_SCOPE_LABEL[sc]) { _badge.textContent = QH_SCOPE_LABEL[sc]; _badge.style.display = ''; }
+    else { _badge.style.display = 'none'; }
+  }
 
   // Store scope draft on the quote for "→ Header" button
   if (q) q._helperScopeDraft = data.scope_draft || '';
