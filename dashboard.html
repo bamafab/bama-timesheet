@@ -1447,7 +1447,7 @@ function mdToHtml(md) {
   for (const raw of lines) {
     const line = raw
       .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-      .replace(/[*][*](.+?)[*][*]/g,'<strong>$1</strong>')
+      .replace(/[*][*](.+?)[*][*]/g,'<span class="highlight">$1</span>')
       .replace(/[*]([^*]+)[*]/g,'<em>$1</em>');
     if (!line.trim()) {
       if (!prevBlank) out.push('<div style="height:8px"></div>');
@@ -2265,6 +2265,7 @@ const TR_API = 'https://bama-erp-api-deauckd2cja7ebd5.uksouth-01.azurewebsites.n
 let _trTenders = [];
 let _trAssignees = [];
 let _trSelectedId = null;
+let _trEditId = null;
 let _trNoBidTargetId = null;
 
 // ── Tab switching ─────────────────────────────────────────────
@@ -2362,16 +2363,17 @@ function renderTenderTable() {
       ? `<span title="Notified ${notifiedStr} — click to resend" onclick="event.stopPropagation();trResendNotify(${t.id})" style="color:var(--accent);font-size:14px;cursor:pointer">✉️</span>`
       : `<button onclick="event.stopPropagation();trResendNotify(${t.id})" title="Not notified — click to send email" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px">📧</button>`;
     const deleteBtn = `<button onclick="event.stopPropagation();trDeleteTender(${t.id},'${t.reference}')" title="Delete" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:13px;padding:2px 4px">🗑</button>`;
+    const editBtn = `<button onclick="event.stopPropagation();openEditTenderModal(${t.id})" title="Edit tender" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:2px 4px">✏️</button>`;
     const actions = t.status === 'New' ? `
       <div style="display:flex;gap:4px;justify-content:center">
         <button onclick="event.stopPropagation();trOpenInQB(${t.id})" title="Open in QB" style="background:var(--accent);color:#fff;border:none;border-radius:4px;padding:3px 7px;font-size:11px;cursor:pointer">QB →</button>
         <button onclick="event.stopPropagation();openTrNoBidModal(${t.id})" title="No Bid" style="background:var(--surface);color:var(--muted);border:1px solid var(--border);border-radius:4px;padding:3px 7px;font-size:11px;cursor:pointer">✗</button>
-        ${deleteBtn}
+        ${editBtn}${deleteBtn}
       </div>` : t.status === 'In QB' && t.qb_quote_id ? `
       <div style="display:flex;gap:4px;justify-content:center">
         <button onclick="event.stopPropagation();window.location='quote-builder.html?quote=${t.qb_quote_id}'" style="background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);border-radius:4px;padding:3px 7px;font-size:11px;cursor:pointer">View QB</button>
-        ${deleteBtn}
-      </div>` : deleteBtn;
+        ${editBtn}${deleteBtn}
+      </div>` : `<div style="display:flex;gap:4px;justify-content:center">${editBtn}${deleteBtn}</div>`;
 
     return `<tr onclick="trSelectRow(${t.id})" class="${_trSelectedId === t.id ? 'tr-selected' : ''}">
       <td style="font-family:var(--font-mono);font-size:12px;color:var(--accent)">${t.reference}</td>
@@ -2394,6 +2396,9 @@ function trSelectRow(id) {
 
 // ── New Tender Modal ──────────────────────────────────────────
 async function openNewTenderModal() {
+  _trEditId = null;
+  document.getElementById('trNewModalTitle').textContent = '📋 Register New Tender';
+  document.getElementById('trNewSubmitBtn').textContent = '⚡ Register Tender';
   // Always reload assignees to make sure dropdown is populated
   await Promise.all([loadTrAssignees(), trLoadClientBook()]);
 
@@ -2423,6 +2428,46 @@ async function openNewTenderModal() {
 
 function closeTrNewModal() {
   document.getElementById('trNewModal').style.display = 'none';
+  _trEditId = null;
+}
+
+// ── Edit existing tender (reuses the New Tender modal in edit mode) ───────────
+async function openEditTenderModal(id) {
+  const t = _trTenders.find(x => x.id === id);
+  if (!t) return;
+  await Promise.all([loadTrAssignees(), trLoadClientBook()]);
+  _trEditId = id;
+  document.getElementById('trNewModalTitle').textContent = '✏️ Edit Tender';
+  document.getElementById('trNewSubmitBtn').textContent = '💾 Save Changes';
+
+  document.getElementById('trNewRef').value      = t.reference || '';
+  document.getElementById('trNewClient').value   = t.client || '';
+  document.getElementById('trNewProject').value  = t.project || '';
+  document.getElementById('trNewDeadline').value = t.deadline ? String(t.deadline).slice(0,10) : '';
+  document.getElementById('trNewNotes').value    = t.notes || '';
+
+  // Assignee — add the saved value as an option if it is not in the active list
+  const aSel = document.getElementById('trNewAssigned');
+  if (t.assigned_to && !Array.from(aSel.options).some(o => o.value === t.assigned_to)) {
+    const opt = document.createElement('option');
+    opt.value = t.assigned_to; opt.textContent = t.assigned_to + ' (inactive)';
+    aSel.appendChild(opt);
+  }
+  aSel.value = t.assigned_to || '';
+
+  // Contact block
+  const skip = !!t.contact_skipped;
+  document.getElementById('trNewSkipContact').checked = skip;
+  document.getElementById('trContactFields').style.display = skip ? 'none' : '';
+  document.getElementById('trContactSelectWrap').style.display = 'none';
+  document.getElementById('trNewContactName').value  = t.contact_name || '';
+  document.getElementById('trNewContactTitle').value = t.contact_job_title || '';
+  document.getElementById('trNewContactEmail').value = t.contact_email || '';
+  document.getElementById('trNewContactPhone').value = t.contact_phone || '';
+
+  const modal = document.getElementById('trNewModal');
+  modal.style.display = 'flex';
+  setTimeout(() => document.getElementById('trNewAssigned').focus(), 50);
 }
 
 function toggleTrContactFields() {
@@ -2461,22 +2506,30 @@ async function submitNewTender() {
       sp_token:          sessionStorage.getItem('bama_token') || ''
     };
 
-    await trFetch('/api/tender-register', { method: 'POST', body: JSON.stringify(payload) });
+    if (_trEditId) {
+      const existing = _trTenders.find(x => x.id === _trEditId) || {};
+      payload.status = existing.status || 'New';            // preserve status on edit
+      payload.no_bid_reason = existing.no_bid_reason || ''; // preserve no-bid reason
+      await trFetch(`/api/tender-register/${_trEditId}`, { method: 'PUT', body: JSON.stringify(payload) });
+    } else {
+      await trFetch('/api/tender-register', { method: 'POST', body: JSON.stringify(payload) });
+    }
 
+    const _wasEdit = !!_trEditId;
     closeTrNewModal();
     await loadTenderRegister();
     // Switch to tenders tab if not already
     switchDashTab('tenders');
     // toast-like feedback
     const t = document.createElement('div');
-    t.textContent = `✓ Tender ${ref} registered`;
+    t.textContent = `✓ Tender ${ref} ${_wasEdit ? 'updated' : 'registered'}`;
     t.style.cssText = 'position:fixed;bottom:20px;right:20px;background:var(--accent);color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;z-index:9999;animation:fadeIn .2s';
     document.body.appendChild(t);
     setTimeout(() => t.remove(), 3000);
   } catch(e) {
     bamaAlert('Error: ' + e.message);
   } finally {
-    btn.disabled = false; btn.textContent = '⚡ Register Tender';
+    btn.disabled = false; btn.textContent = _trEditId ? '💾 Save Changes' : '⚡ Register Tender';
   }
 }
 
@@ -2729,7 +2782,7 @@ async function trResendNotify(tenderId) {
 <div id="trNewModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:600;align-items:center;justify-content:center;padding:20px">
   <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:560px;max-height:90vh;display:flex;flex-direction:column;overflow:hidden">
     <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-shrink:0">
-      <div style="font-size:16px;font-weight:700">📋 Register New Tender</div>
+      <div id="trNewModalTitle" style="font-size:16px;font-weight:700">📋 Register New Tender</div>
       <button onclick="closeTrNewModal()" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer">✕</button>
     </div>
     <div style="padding:18px 20px;overflow-y:auto;flex:1 1 0%;min-height:0">
