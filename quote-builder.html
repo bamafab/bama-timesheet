@@ -227,6 +227,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 .subarea-name-input:focus { border-bottom:1px solid var(--accent); }
 .area-header-addsub { background:transparent;border:1px solid rgba(255,107,0,0.3);color:var(--accent);cursor:pointer;font-size:10px;padding:1px 6px;border-radius:4px; }
 .area-header-addsub:hover { background:rgba(255,107,0,0.12); }
+tr.subrow > td:first-child { box-shadow: inset 3px 0 0 rgba(255,107,0,0.55); padding-left:12px; }
 /* Drag and drop */
 .drag-handle { cursor:grab;color:var(--subtle);font-size:13px;padding:0 4px;user-select:none;opacity:0.4;transition:opacity 0.1s; }
 .drag-handle:hover { opacity:1;color:var(--accent); }
@@ -4425,6 +4426,9 @@ function findSteelProfile(raw) {
     prefix = dims[0] > 100 ? 'PFC' : 'CHS';
   }
 
+  // RSA is generic: an angle with unequal legs is an Unequal Angle (UA), not EA
+  if (prefix === 'EA' && dims.length >= 2 && dims[0] !== dims[1]) prefix = 'UA';
+
   // ── 4. Build lookup key and try exact match ───────────────
   const dimsKey  = dims.join('x');
   const exactKey = prefix + dimsKey;
@@ -4448,6 +4452,21 @@ function findSteelProfile(raw) {
 
   if (!candidates.length) {
     const r = { canonical: exactKey, prefix, dims, kgm: null, matched: null, confidence:'none' };
+    _SP_CACHE.set(cacheKey, r); return r;
+  }
+
+  // ── 4b. Size given without its mass designation ──────────────
+  // e.g. "PFC200x90" → "PFC 200x90x30". Resolve only when the input
+  // dims are a leading subset of exactly ONE fuller candidate, so a
+  // genuinely ambiguous size (e.g. "UB203x133" → x25/x30) stays open.
+  const subset = candidates.filter(c =>
+    c.dims.length > dims.length && dims.every((d, j) => d === c.dims[j])
+  );
+  if (subset.length === 1) {
+    const c = subset[0];
+    const canonical = (_SP_DISPLAY[prefix] || prefix + ' ') + c.dims.join('x');
+    const r = { canonical: canonical.trimEnd(), prefix, dims: c.dims,
+                kgm: c.kgm, matched: c.key, confidence:'exact' };
     _SP_CACHE.set(cacheKey, r); return r;
   }
 
@@ -5888,16 +5907,17 @@ function renderTakeoff() {
     if (!collapsed) {
       const subs   = (q.subareas||[]).filter(s => s.areaId === areaId);
       const subIds = subs.map(s => s.id);
+      // the area's own loose rows first — directly under the header, not nested
+      rows.filter(({r}) => !r.subarea || !subIds.includes(r.subarea))
+          .forEach(({r,i}) => { html += takeoffRowHTML(r,i); });
+      // then each sub-area below, with its rows visually nested (notched)
       subs.forEach(sub => {
         const subRows = rows.filter(({r}) => r.subarea === sub.id);
         const subKg   = subRows.reduce((s,{r}) => s + (r.length/1000)*(r.kgm||0)*(r.qty||1), 0);
         const subCost = subRows.reduce((s,{r}) => s + (r.length/1000)*(r.kgm||0)*(r.qty||1)*(r.rate||0), 0);
         html += subareaHeaderHTML(sub, subRows.length, subKg, subCost);
-        if (!sub.collapsed) subRows.forEach(({r,i}) => { html += takeoffRowHTML(r,i); });
+        if (!sub.collapsed) subRows.forEach(({r,i}) => { html += takeoffRowHTML(r,i,true); });
       });
-      // rows directly under the area (no sub-area, or orphaned sub-area ref)
-      rows.filter(({r}) => !r.subarea || !subIds.includes(r.subarea))
-          .forEach(({r,i}) => { html += takeoffRowHTML(r,i); });
     }
   });
 
@@ -5928,7 +5948,7 @@ function subareaHeaderHTML(sub, count, kg, cost) {
   </tr>`;
 }
 
-function takeoffRowHTML(row, i) {
+function takeoffRowHTML(row, i, inSub) {
   const kgm = row.kgm || 0;
   const lengthMM = row.length || 0;
   const totalKg = (lengthMM/1000) * kgm * (row.qty||1);
@@ -5946,7 +5966,7 @@ function takeoffRowHTML(row, i) {
       .map(s=>`<option value="s:${s.id}" ${_rowSub===s.id?'selected':''}>&nbsp;&nbsp;↳ ${escHtml(s.name)}</option>`).join('');
     return `<optgroup label="${escHtml(a.name)}"><option value="a:${a.id}" ${aSel}>${escHtml(a.name)} (whole area)</option>${subOpts}</optgroup>`;
   }).join('');
-  return `<tr id="takeoff-row-${i}" data-idx="${i}" draggable="true"
+  return `<tr id="takeoff-row-${i}" data-idx="${i}" class="${inSub?'subrow':''}" draggable="true"
     ondragstart="onRowDragStart(event,${i})"
     ondragover="onRowDragOver(event,${i})"
     ondragleave="onRowDragLeave(event)"
@@ -8297,7 +8317,8 @@ function parsePlanswiftRows(rows, filename) {
     const rawType = String(r[colType] || '').trim();
     if (!rawType) continue;
 
-    const typeVal = normaliseSectionName(rawType);
+    const _sp     = findSteelProfile(rawType);
+    const typeVal = _sp.confidence !== 'none' ? _sp.canonical : normaliseSectionName(rawType);
     const unitVal = colUnit >= 0 ? String(r[colUnit] || '').trim().toUpperCase() : 'MM';
     const rawVal  = parseFloat(String(r[colLength] || '').replace(/[^0-9.]/g, ''));
     if (isNaN(rawVal) || rawVal === 0) continue;
@@ -8319,7 +8340,7 @@ function parsePlanswiftRows(rows, filename) {
     }
 
     const kgmFile = colKgm >= 0 ? parseFloat(r[colKgm]) || null : null;
-    const kgm   = kgmFile || lookupKgM(typeVal);
+    const kgm   = kgmFile || (_sp.kgm ?? lookupKgM(typeVal));
     const rate  = sectionMaterialRate(typeVal);
     const notes = colNotes >= 0 ? String(r[colNotes]||'').trim() : '';
     _psRows.push({ type: typeVal, length: lengthMM, qty, kgm, rate,
@@ -8355,7 +8376,8 @@ function parsePastePreview() {
   _psRows = [];
   raw.split('\n').filter(l=>l.trim()).forEach(line => {
     const parts = line.split(/\t|,/).map(p=>p.trim());
-    const typeVal = normaliseSectionName(parts[0]);
+    const _sp     = findSteelProfile(parts[0]);
+    const typeVal = _sp.confidence !== 'none' ? _sp.canonical : normaliseSectionName(parts[0]);
     const lenRaw  = parseFloat(parts[1]);
     const unit    = (parts[3] || parts[2] || 'MM').toUpperCase().replace(/[^A-Z]/g,'') || 'MM';
     let lengthMM, qty;
@@ -8363,7 +8385,7 @@ function parsePastePreview() {
     else if (unit === 'M') { lengthMM = Math.round(lenRaw * 1000); qty = 1; }
     else { lengthMM = Math.round(lenRaw); qty = parseFloat(parts[2]) || 1; }
     if (!typeVal || isNaN(lenRaw)) return;
-    const kgm = lookupKgM(typeVal);
+    const kgm = _sp.kgm ?? lookupKgM(typeVal);
     _psRows.push({ type: typeVal, length: lengthMM, qty, kgm, rate: sectionMaterialRate(typeVal), _unit: unit });
   });
   _psRows = groupPsRows(_psRows);
