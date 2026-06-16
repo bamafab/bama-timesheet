@@ -1115,6 +1115,20 @@ tr.drag-dragging { opacity:0.35; }
                 <div id="tonnageBars" style="display:flex;gap:2px;height:6px;border-radius:3px;overflow:hidden;background:var(--border)"></div>
               </div>
 
+              <div id="areaPricingBlock" style="display:none;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:14px">
+                <div class="toggle-row" style="margin:0">
+                  <div>
+                    <div class="toggle-label">Price areas separately</div>
+                    <div class="toggle-sub">Per-area price breakdown</div>
+                  </div>
+                  <label class="toggle">
+                    <input type="checkbox" id="areaPricingToggle" onchange="onAreaPricingToggle()">
+                    <span class="toggle-slider"></span>
+                  </label>
+                </div>
+                <div id="areaBreakdownWrap" style="display:none;margin-top:12px"></div>
+              </div>
+
               <div style="font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);margin-bottom:14px;font-weight:600">Cost Summary</div>
 
               <div class="summary-line">
@@ -5303,6 +5317,7 @@ async function newQuote() {
     company: '', contact: '', email: '', phone: '', siteAddress: '',
     comments: '', qScope: '', boqRef: '', boqFile: '', projectTCs: '',
     takeoff: [], areas: [], subareas: [],
+    pricingMode: 'global', apportionBasis: 'tonnage', areaPricing: {}, activeAreaId: '',
     fittingsPct: 10, fittingsRate: 1.30, miscMaterial: 0, miscMaterialNote: '',
     materialLinks: [],
     instDays: 0, instOperatives: 2, globalDays: true,
@@ -5924,6 +5939,7 @@ function renderTakeoff() {
   body.innerHTML = html;
   updateTakeoffTotals();
   checkRalVisibility();
+  renderAreaBreakdown();
 }
 
 function subareaHeaderHTML(sub, count, kg, cost) {
@@ -7729,6 +7745,113 @@ function cpsInjectIntoScope() {
 }
 
 
+// ============================================================
+// PER-AREA PRICE BREAKDOWN (Phase 2a — additive view)
+// ============================================================
+// Costs each area's material from its own takeoff slice (true per-area),
+// and apportions the shared costs (install, fab, design, finishing, survey,
+// delivery, prelims, purlins, misc material) by tonnage. The per-area totals
+// reconcile to the global total, so this never disagrees with the headline.
+function computeAreaBreakdown(q) {
+  const takeoff = q.takeoff || [];
+  const areas   = q.areas || [];
+  const namedIds = areas.map(a => a.id);
+
+  const buckets = namedIds.map(id => ({ id, name: (areas.find(a => a.id === id)?.name) || id }));
+  if (takeoff.some(r => !namedIds.includes(r.area || ''))) {
+    buckets.push({ id: '', name: 'Unspecified' });
+  }
+
+  // Global figures drive the shared-cost pool (already post-N/A).
+  const G = computeQuoteTotals(q, rates);
+  const sharedCats = ['installation','fabrication','design','painting','galvanising',
+                      'survey','delivery','prelims','purlins'];
+  const pool = sharedCats.reduce((s,k) => s + (G[k]||0), 0) + (parseFloat(q.miscMaterial)||0);
+  const marginPct = parseFloat(q.margin) || 0;
+
+  const rows = [];
+  let totalKg = 0;
+  buckets.forEach(b => {
+    const areaRows = takeoff.filter(r => (r.area || '') === b.id);
+    const sub = { takeoff: areaRows, fittingsPct: q.fittingsPct,
+                  fittingsRate: q.fittingsRate, miscMaterial: 0, fixingsPct: q.fixingsPct };
+    const c = computeQuoteTotals(sub, rates);
+    rows.push({ id: b.id, name: b.name, kg: c.totalKg, material: c.material });
+    totalKg += c.totalKg;
+  });
+
+  rows.forEach(r => {
+    const share = totalKg > 0 ? r.kg / totalKg : (rows.length ? 1 / rows.length : 0);
+    r.share    = share;
+    r.shared   = Math.round(pool * share * 100) / 100;
+    r.subtotal = Math.round((r.material + r.shared) * 100) / 100;
+    r.margin   = Math.round(r.subtotal * marginPct / 100 * 100) / 100;
+    r.total    = Math.round((r.subtotal + r.margin) * 100) / 100;
+  });
+
+  const sum = k => Math.round(rows.reduce((s,r) => s + r[k], 0) * 100) / 100;
+  return {
+    rows, marginPct,
+    grand: { kg: totalKg, material: sum('material'), shared: sum('shared'),
+             subtotal: sum('subtotal'), margin: sum('margin'), total: sum('total') }
+  };
+}
+
+function onAreaPricingToggle() {
+  const q = getQuote(); if (!q) return;
+  q.pricingMode = document.getElementById('areaPricingToggle')?.checked ? 'area' : 'global';
+  saveAll();
+  renderAreaBreakdown();
+}
+
+function renderAreaBreakdown() {
+  const q = getQuote(); if (!q) return;
+  const block = document.getElementById('areaPricingBlock');
+  const wrap  = document.getElementById('areaBreakdownWrap');
+  if (!block) return;
+
+  const hasAreas = (q.areas||[]).length > 0 || (q.takeoff||[]).some(r => r.area);
+  block.style.display = hasAreas ? '' : 'none';
+
+  const on = q.pricingMode === 'area';
+  const toggle = document.getElementById('areaPricingToggle');
+  if (toggle) toggle.checked = on;
+
+  if (!hasAreas || !on) { if (wrap) wrap.style.display = 'none'; return; }
+
+  const bd = computeAreaBreakdown(q);
+  const th = t => `<th style="padding:4px 2px;font-weight:600">${t}</th>`;
+  const td = (v,extra='') => `<td style="padding:5px 2px;font-family:var(--font-mono);${extra}">${v}</td>`;
+  let html = `<table style="width:100%;border-collapse:collapse;font-size:11px">
+    <thead><tr style="color:var(--muted);text-align:right">
+      <th style="text-align:left;padding:4px 2px;font-weight:600">Area</th>
+      ${th('Tonnes')}${th('Material')}${th('Shared*')}${th('Margin')}${th('Total')}
+    </tr></thead><tbody>`;
+  bd.rows.forEach(r => {
+    html += `<tr style="text-align:right;border-top:1px solid var(--border)">
+      <td style="text-align:left;padding:5px 2px;color:var(--text)">${escHtml(r.name)}</td>
+      ${td((r.kg/1000).toFixed(2),'color:var(--muted)')}
+      ${td(fmt(r.material))}
+      ${td(fmt(r.shared),'color:var(--muted)')}
+      ${td(fmt(r.margin),'color:var(--muted)')}
+      ${td(fmt(r.total),'color:var(--accent);font-weight:600')}
+    </tr>`;
+  });
+  html += `<tr style="text-align:right;border-top:2px solid var(--border);font-weight:600">
+      <td style="text-align:left;padding:6px 2px">Total</td>
+      ${td((bd.grand.kg/1000).toFixed(2),'color:var(--muted)')}
+      ${td(fmt(bd.grand.material))}
+      ${td(fmt(bd.grand.shared),'color:var(--muted)')}
+      ${td(fmt(bd.grand.margin),'color:var(--muted)')}
+      ${td(fmt(bd.grand.total),'color:var(--accent)')}
+    </tr></tbody></table>
+    <div style="font-size:10px;color:var(--subtle);margin-top:8px;line-height:1.5">
+      Material is costed per area from its takeoff. *Shared costs (install, fab, design, finishing, survey, delivery, prelims, purlins) and margin are apportioned by tonnage for now — the next step gives each area its own editable pricing.
+    </div>`;
+  wrap.style.display = '';
+  wrap.innerHTML = html;
+}
+
 function recalcAll() {
   const q = getQuote(); if (!q) return;
 
@@ -7890,6 +8013,8 @@ function recalcAll() {
     const depPct = parseFloat(document.getElementById('depositPct')?.value) || 60;
     document.getElementById('sum-deposit').textContent = fmt(total * depPct / 100);
   }
+
+  renderAreaBreakdown();
 
   // q._computed is already set to the full C object above (line q._computed = C).
   // No second assignment needed — keeping it would overwrite galvanising, consumablesCost etc.
@@ -14243,6 +14368,7 @@ async function qqSaveAsDraft() {
     comments: `Quick Quote — ${r2.tonnes.toFixed(2)}t ${profileLabels[r2.profile]}, ${scopeLabel}, ${finishLabels[r2.finish]}, ${r2.margin}% margin`,
     qScope: '', boqRef: '', boqFile: '', projectTCs: '',
     takeoff: [], areas: [], subareas: [],
+    pricingMode: 'global', apportionBasis: 'tonnage', areaPricing: {}, activeAreaId: '',
     fittingsPct: 10, fittingsRate: 1.30, miscMaterial: 0, miscMaterialNote: '',
     materialLinks: [],
     instDays: r2.scope === 'supply_install' ? r2.instDays : 0,
@@ -14398,6 +14524,7 @@ async function qqSaveAsDraft() {
         siteAddress: '',
         comments: '', qScope: '', boqRef: '', boqFile: '', projectTCs: '',
         takeoff: [], areas: [], subareas: [],
+    pricingMode: 'global', apportionBasis: 'tonnage', areaPricing: {}, activeAreaId: '',
         fittingsPct: 10, fittingsRate: 1.30, miscMaterial: 0, miscMaterialNote: '',
         materialLinks: [],
         instDays: 0, instOperatives: 2, globalDays: true,
