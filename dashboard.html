@@ -170,6 +170,18 @@
   .due-soon     { background: #eab308; color: #111; }
   .due-ok       { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
   .due-sent     { background: rgba(59,130,246,0.15); color: #60a5fa; border: 1px solid rgba(59,130,246,0.3); }
+  .chase-badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 3px;
+    white-space: nowrap;
+    background: rgba(234,179,8,0.15);
+    color: #eab308;
+    border: 1px solid rgba(234,179,8,0.35);
+  }
+  .chase-badge.chase-due { background: #eab308; color: #111; }
   .win-yes { color: #22c55e; font-weight: 700; }
   .win-no  { color: #ef4444; font-weight: 700; }
 
@@ -699,6 +711,7 @@
       <button class="active" data-filter="all" onclick="setFilter(this,'all')">All</button>
       <button data-filter="open" onclick="setFilter(this,'open')">Pending</button>
       <button data-filter="sent" onclick="setFilter(this,'sent')">📤 Sent</button>
+      <button data-filter="chase" onclick="setFilter(this,'chase')">🔔 To chase</button>
       <button data-filter="overdue" onclick="setFilter(this,'overdue')">🔴 Overdue</button>
       <button data-filter="won" onclick="setFilter(this,'won')">✓ Won</button>
       <button data-filter="lost" onclick="setFilter(this,'lost')">✗ Lost</button>
@@ -910,23 +923,44 @@ async function loadTrackerData() {
       });
       if (res.ok) {
         const rows = await res.json();
-        sqlQuotes = rows.map(r => ({
-          ref:      r.reference,
-          company:  r.company || '',
-          contact:  r.contact || '',
-          value:    r.total_ex_vat || 0,
-          dateSent: r.date_sent ? r.date_sent.slice(0,10) : null,
-          due:      r.decision_due ? r.decision_due.slice(0,10) : null,
-          win:      r.status === 'won' ? true : r.status === 'lost' ? false : null,
-          status:   r.status,
-          urgency:  r.status === 'sent' ? 'sent' : r.status === 'open' ? 'open' : r.status,
-          revision: r.revision || '',
-          comments: r.loss_comment || '',
-          id:       r.id,
-          _source:  'sql',
-          // keep for sidebar rendering
-          project:  r.company || ''
-        }));
+        sqlQuotes = rows.map(r => {
+          const dueDate = r.decision_due ? r.decision_due.slice(0,10) : null;
+          const win = r.status === 'won' ? true : r.status === 'lost' ? false : null;
+          // Urgency: decided quotes keep their status; undecided (draft/open/sent)
+          // are flagged by their decision due date so drafts can show overdue too.
+          let urgency;
+          if (win !== null) {
+            urgency = r.status; // won / lost
+          } else if (dueDate) {
+            const today = new Date(); today.setHours(0,0,0,0);
+            const due = new Date(dueDate + 'T00:00:00');
+            const diff = due - today;
+            if (diff < 0)               urgency = 'overdue';
+            else if (diff < 86400000)   urgency = 'today';
+            else if (diff < 3*86400000) urgency = 'soon';
+            else                        urgency = 'ok';
+          } else {
+            urgency = r.status === 'sent' ? 'sent' : 'open';
+          }
+          return {
+            ref:      r.reference,
+            company:  r.company || '',
+            contact:  r.contact || '',
+            value:    r.total_ex_vat || 0,
+            dateSent: r.date_sent ? r.date_sent.slice(0,10) : null,
+            due:      dueDate,
+            chasing:  r.chasing_date ? r.chasing_date.slice(0,10) : null,
+            win,
+            status:   r.status,
+            urgency,
+            revision: r.revision || '',
+            comments: r.loss_comment || '',
+            id:       r.id,
+            _source:  'sql',
+            // keep for sidebar rendering
+            project:  r.company || ''
+          };
+        });
       }
     } catch(e) {
       console.warn('SQL quotes load failed, falling back to SharePoint:', e);
@@ -1148,12 +1182,26 @@ function setFilter(btn, filter) {
   renderQuoteList();
 }
 
+// A quote "needs chasing" when it's still open (not won/lost), has been sent,
+// and has a chasing/follow-up date set. Chasing value may be a Date (SharePoint
+// path) or a YYYY-MM-DD string (SQL path) — normalise both.
+function chaseDate(q) {
+  if (!q.chasing) return null;
+  if (q.chasing instanceof Date) return isNaN(q.chasing) ? null : q.chasing;
+  const d = new Date(String(q.chasing).slice(0,10) + 'T00:00:00');
+  return isNaN(d) ? null : d;
+}
+function needsChase(q) {
+  return q.win === null && q.status === 'sent' && !!chaseDate(q);
+}
+
 function renderQuoteList() {
   const today = new Date(); today.setHours(0,0,0,0);
   let list = allQuotes;
 
   if (currentFilter === 'open') list = list.filter(q => q.win === null && q.urgency !== 'sent');
   else if (currentFilter === 'sent') list = list.filter(q => q.urgency === 'sent');
+  else if (currentFilter === 'chase') list = list.filter(q => needsChase(q));
   else if (currentFilter === 'overdue') list = list.filter(q => q.urgency === 'overdue');
   else if (currentFilter === 'won') list = list.filter(q => q.win === true);
   else if (currentFilter === 'lost') list = list.filter(q => q.win === false);
@@ -1195,13 +1243,16 @@ function renderQuoteList() {
     const isSelected = selectedQuote?.ref === q.ref;
     const { cls, label } = emsStatusInfo(q);
     const statusBadge = q._source === 'sql' ? `<span class="ems-status-badge ${cls}" style="font-size:10px;padding:1px 6px">${label}</span>` : '';
+    const cd = needsChase(q) ? chaseDate(q) : null;
+    const chaseBadge = cd
+      ? `<span class="chase-badge${cd <= new Date(new Date().setHours(0,0,0,0)) ? ' chase-due' : ''}" title="Chase ${fmtDate(cd)}">🔔 ${fmtDate(cd)}</span>` : '';
     const revBadge = q.revision ? `<span style="font-family:var(--font-mono);font-size:10px;background:rgba(255,107,0,0.1);color:var(--accent);padding:1px 5px;border-radius:3px;border:1px solid rgba(255,107,0,0.2);margin-left:4px">${q.revision}</span>` : '';
     return `<div class="ql-item ${isSelected ? 'selected' : ''}" onclick="selectAndPreview(${JSON.stringify(q.ref).replace(/&/g,'&amp;').replace(/"/g,'&quot;')})">
       <div>
         <div class="ql-item-ref">${q.ref}${revBadge}</div>
         <div class="ql-item-company">${q.company || '—'}</div>
         <div class="ql-item-project">${q.project || '—'}</div>
-        <div class="ql-item-meta">${statusBadge}${dueBadge}${winMark}</div>
+        <div class="ql-item-meta">${statusBadge}${dueBadge}${chaseBadge}${winMark}</div>
       </div>
       <div class="ql-item-right">
         <div class="ql-item-value">${q.value > 0 ? fmtGBP(q.value) : '—'}</div>

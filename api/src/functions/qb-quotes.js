@@ -164,7 +164,7 @@ app.http('qb-quotes-list', {
 
             let sql = `
                 SELECT id, reference, revision, status,
-                       date_created, date_sent, decision_due, valid_until,
+                       date_created, date_sent, decision_due, valid_until, chasing_date,
                        company, contact, email, phone,
                        prepared_by, loss_reason, loss_competitor,
                        total_ex_vat, total_kg, margin_pct,
@@ -243,6 +243,7 @@ app.http('qb-quotes-create', {
             const {
                 reference, revision = '', status = 'draft',
                 date_created, date_sent = null, decision_due = null, valid_until = null,
+                chasing_date = null,
                 company = '', contact = '', email = '', phone = '', site_address = '',
                 prepared_by = '',
                 loss_reason = '', loss_competitor = '', loss_comment = '',
@@ -260,7 +261,7 @@ app.http('qb-quotes-create', {
             const result = await query(
                 `INSERT INTO QuoteBuilderQuotes (
                     reference, revision, status,
-                    date_created, date_sent, decision_due, valid_until,
+                    date_created, date_sent, decision_due, valid_until, chasing_date,
                     company, contact, email, phone, site_address, prepared_by,
                     loss_reason, loss_competitor, loss_comment,
                     total_ex_vat, total_kg, margin_pct,
@@ -271,7 +272,7 @@ app.http('qb-quotes-create', {
                 ) OUTPUT INSERTED.*
                 VALUES (
                     @reference, @revision, @status,
-                    @date_created, @date_sent, @decision_due, @valid_until,
+                    @date_created, @date_sent, @decision_due, @valid_until, @chasing_date,
                     @company, @contact, @email, @phone, @site_address, @prepared_by,
                     @loss_reason, @loss_competitor, @loss_comment,
                     @total_ex_vat, @total_kg, @margin_pct,
@@ -282,7 +283,7 @@ app.http('qb-quotes-create', {
                 )`,
                 {
                     reference, revision, status,
-                    date_created, date_sent, decision_due, valid_until,
+                    date_created, date_sent, decision_due, valid_until, chasing_date,
                     company, contact, email, phone, site_address, prepared_by,
                     loss_reason, loss_competitor, loss_comment,
                     total_ex_vat, total_kg, margin_pct,
@@ -322,7 +323,7 @@ app.http('qb-quotes-update', {
 
             const allowed = [
                 'revision', 'status',
-                'date_sent', 'decision_due', 'valid_until',
+                'date_sent', 'decision_due', 'valid_until', 'chasing_date',
                 'company', 'contact', 'email', 'phone', 'site_address', 'prepared_by',
                 'loss_reason', 'loss_competitor', 'loss_comment',
                 'total_ex_vat', 'total_kg', 'margin_pct',

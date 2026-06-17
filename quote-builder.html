@@ -5252,6 +5252,7 @@ async function saveAll() {
       status:      q.status     || 'draft',
       date_sent:   q.dateSent   || null,
       decision_due: q.decisionDue || null,
+      chasing_date: q.chasingDate || null,
       valid_until: q.validUntil || null,
       company:     q.company    || '',
       contact:     q.contact    || '',
@@ -5573,6 +5574,18 @@ function setStatus(val) {
   if (val === 'won' && prev !== 'won') runPreflight('mark this quote as Won', showWonModal);
   if (val === 'lost' && prev !== 'lost') showLossModal();
   if (val === 'sent' && !q.dateSent) { q.dateSent = new Date().toISOString().slice(0,10); const el = document.getElementById('hDateSent'); if (el) el.value = q.dateSent; saveAll(); }
+  if (val === 'sent') autoSetChasingDate(q);
+}
+
+// Auto-set a follow-up date one month ahead when a quote is sent, unless one is
+// already set (user may have chosen a tighter chase). Fully editable in QB.
+function autoSetChasingDate(q) {
+  if (!q || q.chasingDate) return;
+  const d = new Date(); d.setMonth(d.getMonth() + 1);
+  q.chasingDate = d.toISOString().slice(0,10);
+  const el = document.getElementById('hChasingDate');
+  if (el) el.value = q.chasingDate;
+  saveAll();
 }
 
 function _updateRevDisplay(q) {
@@ -10938,6 +10951,8 @@ async function sendQuoteEmail() {
       btn.textContent = '✓ Sent';
       // Mark quote as sent
       q.status = 'sent';
+      if (!q.dateSent) { q.dateSent = new Date().toISOString().slice(0,10); const dsEl = document.getElementById('hDateSent'); if (dsEl) dsEl.value = q.dateSent; }
+      autoSetChasingDate(q);
       renderStatusBadge(q);
       document.getElementById('statusSelect').value = 'sent';
       saveAll(); renderSidebar();
