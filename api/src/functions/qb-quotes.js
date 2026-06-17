@@ -165,6 +165,7 @@ app.http('qb-quotes-list', {
             let sql = `
                 SELECT id, reference, revision, status,
                        date_created, date_sent, decision_due, valid_until, chasing_date,
+                       chased_at, chased_by, chase_count,
                        company, contact, email, phone,
                        prepared_by, loss_reason, loss_competitor,
                        total_ex_vat, total_kg, margin_pct,
@@ -369,6 +370,57 @@ app.http('qb-quotes-update', {
 //
 // Body: { project_name, client_id, quote_value, deadline_date,
 //          sharepoint_project_folder_id, sharepoint_quote_folder_id }
+// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// PUT /api/qb-quotes/:id/log-chase — record a chase-up was sent.
+// Stamps chased_at / chased_by, increments chase_count, and either rolls the
+// chasing_date forward to a supplied date or clears it. The email itself is
+// sent client-side via Graph; this endpoint only logs.
+// Body: { next_chase_date: 'YYYY-MM-DD' | null }
+//   - a date string  → set chasing_date to it (re-surfaces later)
+//   - null / omitted  → clear chasing_date (drops off the to-chase list)
+// ─────────────────────────────────────────────────────────────────────────────
+app.http('qb-quotes-log-chase', {
+    methods: ['PUT'],
+    authLevel: 'anonymous',
+    route: 'qb-quotes/{id}/log-chase',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+        const perms = await getPerms(auth);
+        if (!perms.edit) return { status: 403, jsonBody: { error: 'editQuotes permission required — ask an admin to grant it in User Access' } };
+
+        try {
+            const id = parseInt(request.params.id);
+            if (!id) return badRequest('Invalid id', request);
+
+            let body = {};
+            try { body = await request.json(); } catch { /* empty body allowed → clear */ }
+            const nextChase = body.next_chase_date || null;
+
+            const result = await query(`
+                UPDATE QuoteBuilderQuotes SET
+                    chased_at    = GETUTCDATE(),
+                    chased_by    = @by,
+                    chase_count  = ISNULL(chase_count, 0) + 1,
+                    chasing_date = @nextChase,
+                    updated_at   = GETUTCDATE()
+                OUTPUT INSERTED.id, INSERTED.chased_at, INSERTED.chased_by,
+                       INSERTED.chase_count, INSERTED.chasing_date
+                WHERE id = @id
+            `, { id, by: auth.name || auth.email || 'unknown', nextChase });
+
+            if (!result.recordset.length) return notFound(request);
+            return ok(result.recordset[0], request);
+        } catch (err) {
+            context.error('qb-quotes-log-chase:', err);
+            return serverError('Failed to log chase', request);
+        }
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PUT /api/qb-quotes/:id/mark-won — promote to Won + create linked project
 // ─────────────────────────────────────────────────────────────────────────────
 app.http('qb-quotes-mark-won', {
     methods: ['PUT'],

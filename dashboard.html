@@ -769,6 +769,7 @@
       <div class="detail-card" id="detailCard">
         <h3>
           <span id="detailTitle">Quote Details</span>
+          <button class="btn btn-sm" id="detailChaseBtn" onclick="openChaseModal()" style="display:none;background:rgba(234,179,8,0.15);color:#eab308;border:1px solid rgba(234,179,8,0.35);margin-right:6px">🔔 Chase up</button>
           <button class="btn btn-primary btn-sm" id="detailOpenBtn" onclick="openInBuilder()">Open in Builder →</button>
         </h3>
         <div id="detailActions" style="display:none;margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -950,6 +951,8 @@ async function loadTrackerData() {
             dateSent: r.date_sent ? r.date_sent.slice(0,10) : null,
             due:      dueDate,
             chasing:  r.chasing_date ? r.chasing_date.slice(0,10) : null,
+            chasedAt: r.chased_at || null,
+            chaseCount: r.chase_count || 0,
             win,
             status:   r.status,
             urgency,
@@ -1298,7 +1301,7 @@ function selectQuote(ref) {
     ['Value',     selectedQuote.value > 0 ? '£' + selectedQuote.value.toLocaleString('en-GB', {minimumFractionDigits:2}) : '—'],
     ['Done By',   selectedQuote.doneBy  || '—'],
     ['Sent',      selectedQuote.sent    ? fmtDate(selectedQuote.sent)    : '—'],
-    ['Chasing',   selectedQuote.chasing ? fmtDate(selectedQuote.chasing) : '—'],
+    ['Chasing',   selectedQuote.chasing ? fmtDate(chaseDate(selectedQuote)) + (selectedQuote.chaseCount > 0 ? ` · chased ${selectedQuote.chaseCount}×` : '') : (selectedQuote.chaseCount > 0 ? `chased ${selectedQuote.chaseCount}×` : '—')],
     ['Status',    selectedQuote.win === true ? '✅ Won' : selectedQuote.win === false ? '❌ Lost' : '🔵 Open'],
     ['Comments',  selectedQuote.comments || '—'],
     ['Email',     selectedQuote.email   || '—'],
@@ -1308,6 +1311,13 @@ function selectQuote(ref) {
   ).join('');
 
   updateActionButtons();
+  // Show the Chase-up button only for sent, undecided SQL quotes that need chasing
+  const chaseBtn = document.getElementById('detailChaseBtn');
+  if (chaseBtn) {
+    const show = selectedQuote._source === 'sql' && needsChase(selectedQuote);
+    chaseBtn.style.display = show ? '' : 'none';
+    chaseBtn.textContent = selectedQuote.chaseCount > 0 ? `🔔 Chase up (${selectedQuote.chaseCount}×)` : '🔔 Chase up';
+  }
   // Try to load folder file count
   loadTenderFolderFiles(ref);
 }
@@ -1415,6 +1425,196 @@ function openLossModal() {
 }
 function closeLossModal() {
   document.getElementById('lossModal').style.display = 'none';
+}
+
+// ─── Chase-up flow ────────────────────────────────────────
+let _chaseQuoteData = null; // full blob for the quote being chased
+
+async function openChaseModal() {
+  if (!selectedQuote || selectedQuote._source !== 'sql' || !selectedQuote.id) return;
+  const m = document.getElementById('chaseModal');
+  document.getElementById('chaseRef').textContent = selectedQuote.ref;
+  document.getElementById('chaseStatus').textContent = '';
+  document.getElementById('chaseSendBtn').disabled = false;
+  document.getElementById('chaseTone').value = 'warm';
+  // Default next-chase date: +1 month from today (editable; blank = clear)
+  const nd = new Date(); nd.setMonth(nd.getMonth() + 1);
+  document.getElementById('chaseNextDate').value = nd.toISOString().slice(0,10);
+  document.getElementById('chaseTo').value = selectedQuote.email || '';
+  document.getElementById('chaseSubject').value = `Following up — quote ${selectedQuote.ref}${selectedQuote.project ? ' (' + selectedQuote.project + ')' : ''}`;
+  document.getElementById('chaseBody').value = 'Drafting…';
+  m.style.display = 'flex';
+
+  // Fetch the full quote blob for recipient + context
+  _chaseQuoteData = null;
+  try {
+    const res = await fetch(`${QB_API}/api/qb-quotes/${selectedQuote.id}`, {
+      headers: { 'Authorization': `Bearer ${getToken()}` }
+    });
+    if (res.ok) {
+      const row = await res.json();
+      const blob = (typeof row.quote_data === 'string') ? JSON.parse(row.quote_data) : (row.quote_data || {});
+      _chaseQuoteData = { ...blob, grandTotal: row.grand_total, total_ex_vat: row.total_ex_vat };
+      // Fill recipient from blob if the list didn't carry it
+      if (!document.getElementById('chaseTo').value && (blob.email || blob.contactEmail)) {
+        document.getElementById('chaseTo').value = blob.email || blob.contactEmail || '';
+      }
+    }
+  } catch(e) { console.warn('Chase blob fetch failed:', e.message); }
+
+  draftChaseEmail();
+}
+
+function closeChaseModal() {
+  document.getElementById('chaseModal').style.display = 'none';
+  _chaseQuoteData = null;
+}
+
+async function draftChaseEmail() {
+  const q = selectedQuote; if (!q) return;
+  const tone = document.getElementById('chaseTone').value;
+  const bodyEl = document.getElementById('chaseBody');
+  const btn = document.getElementById('chaseRedraftBtn');
+  bodyEl.value = 'Drafting…';
+  if (btn) btn.disabled = true;
+
+  const blob = _chaseQuoteData || {};
+  const contactName = blob.contact || q.contact || '';
+  const company = q.company || blob.company || '';
+  const project = q.project || blob.project || blob.qScope || '';
+  const value = q.value || blob.total_ex_vat || 0;
+  const sentStr = q.dateSent ? new Date(q.dateSent + 'T00:00:00').toLocaleDateString('en-GB', {day:'numeric', month:'long'}) : '';
+  const daysSince = q.dateSent ? Math.round((Date.now() - new Date(q.dateSent + 'T00:00:00')) / 86400000) : null;
+  const userName = getUserDisplayName();
+  const chasedBefore = (q.chaseCount || 0) > 0 ? `This is follow-up number ${(q.chaseCount || 0) + 1}; keep it polite and not pushy.` : 'This is the first follow-up.';
+
+  const toneGuide = {
+    warm:  'Warm and friendly, relationship-first. Light and unhurried.',
+    brief: 'Very short and to the point — three or four sentences maximum, no filler.',
+    firm:  'Polite but direct — make clear we need a decision to plan our workload, without being aggressive.'
+  }[tone];
+
+  const prompt = `Write a follow-up (chase) email from ${userName} at BAMA Fabrication Ltd, a structural steel fabrication company in Peterborough, to a client who was sent a quotation and has not yet responded.
+
+Quote details:
+- Reference: ${q.ref}
+- Client contact: ${contactName || 'the client'}${company ? ' at ' + company : ''}
+- Project: ${project || 'their project'}
+${value > 0 ? '- Quote value: £' + Math.round(value).toLocaleString() : ''}
+${sentStr ? '- Originally sent: ' + sentStr + (daysSince != null ? ' (' + daysSince + ' days ago)' : '') : ''}
+
+Tone: ${toneGuide}
+${chasedBefore}
+
+RULES:
+- Write ONLY the email body. No subject line, no "Subject:", no preamble, no sign-off block beyond a simple closing.
+- Open with an appropriate greeting using the contact's first name if available, otherwise "Hello".
+- Do NOT restate the full price or quote terms — just gently reference the quotation sent and ask whether they have had a chance to review it / need anything further to make a decision.
+- Offer to answer questions or revise if needed.
+- Close with "Kind regards," then "${userName}" then "BAMA Fabrication Ltd" on separate lines.
+- Strictly UK English. Keep it natural — no marketing fluff, no exclamation marks.`;
+
+  try {
+    const data = await callClaude({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 800,
+      messages: [{ role: 'user', content: prompt }]
+    });
+    const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+    bodyEl.value = text || 'Could not draft — please write the message manually.';
+  } catch(e) {
+    bodyEl.value = '';
+    document.getElementById('chaseStatus').style.color = 'var(--red)';
+    document.getElementById('chaseStatus').textContent = 'AI draft failed — write the message manually. (' + e.message + ')';
+  }
+  if (btn) btn.disabled = false;
+}
+
+async function sendChaseEmail() {
+  const q = selectedQuote; if (!q) return;
+  const to  = document.getElementById('chaseTo').value.trim();
+  const sub = document.getElementById('chaseSubject').value.trim();
+  const msg = document.getElementById('chaseBody').value.trim();
+  const nextDate = document.getElementById('chaseNextDate').value || null;
+  const btn = document.getElementById('chaseSendBtn');
+  const sts = document.getElementById('chaseStatus');
+
+  if (!to)  { sts.style.color = 'var(--red)'; sts.textContent = '⚠ Recipient email required'; return; }
+  if (!sub) { sts.style.color = 'var(--red)'; sts.textContent = '⚠ Subject required'; return; }
+  if (!msg || msg === 'Drafting…') { sts.style.color = 'var(--red)'; sts.textContent = '⚠ Message is empty'; return; }
+
+  const token = getToken();
+  if (!token) { sts.style.color = 'var(--red)'; sts.textContent = '⚠ Not logged in'; return; }
+
+  btn.disabled = true;
+  sts.style.color = 'var(--muted)';
+  sts.textContent = 'Sending…';
+
+  const htmlBody = msg.split('\n')
+    .map(l => l.trim() === '' ? '<br>' : `<p style="margin:0 0 4px;font-family:Arial,sans-serif;font-size:13px;color:#111">${escHtmlDash(l)}</p>`)
+    .join('');
+
+  const emailPayload = {
+    message: {
+      subject: sub,
+      body: {
+        contentType: 'HTML',
+        content: `
+          <div style="max-width:600px;font-family:Arial,sans-serif">
+            <div style="border-bottom:3px solid #D0021B;padding-bottom:12px;margin-bottom:20px">
+              <img src="https://proud-dune-0dee63110.2.azurestaticapps.net/bama-logo.png" style="height:40px" onerror="this.style.display='none'">
+            </div>
+            ${htmlBody}
+            <div style="margin-top:24px;padding-top:12px;border-top:1px solid #eee;font-size:11px;color:#888">
+              BAMA Fabrication Ltd · 11 Enterprise Way, Enterprise Park, Yaxley, PE7 3WY · 01733 855212
+            </div>
+          </div>`
+      },
+      toRecipients: [{ emailAddress: { address: to } }]
+    },
+    saveToSentItems: true
+  };
+
+  try {
+    const res = await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(emailPayload)
+    });
+    if (res.status !== 202 && res.status !== 200) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error?.message || `HTTP ${res.status}`);
+    }
+
+    // Log the chase + roll/clear the chasing date
+    const logRes = await fetch(`${QB_API}/api/qb-quotes/${q.id}/log-chase`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ next_chase_date: nextDate })
+    });
+    if (logRes.ok) {
+      const row = await logRes.json();
+      // Reflect new state locally so the list/detail update without a full reload
+      q.chaseCount = row.chase_count;
+      q.chasedAt   = row.chased_at;
+      q.chasing    = row.chasing_date ? String(row.chasing_date).slice(0,10) : null;
+    }
+
+    sts.style.color = 'var(--green)';
+    sts.textContent = '✓ Chase sent' + (nextDate ? ' — next chase ' + fmtDate(nextDate) : ' — flag cleared');
+    showToast('Chase sent for ' + q.ref, 'success');
+    renderQuoteList();
+    setTimeout(() => { closeChaseModal(); selectQuote(q.ref); }, 1400);
+  } catch(e) {
+    sts.style.color = 'var(--red)';
+    sts.textContent = '❌ ' + e.message;
+    btn.disabled = false;
+  }
+}
+
+// Local HTML-escape (dashboard has no shared escHtml in scope here)
+function escHtmlDash(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 async function confirmLoss() {
   if (!selectedQuote) return;
@@ -2891,6 +3091,53 @@ async function trResendNotify(tenderId) {
     <div style="display:flex;gap:10px;justify-content:flex-end">
       <button class="btn btn-ghost btn-sm" onclick="closeLossModal()">Cancel</button>
       <button class="btn btn-sm" onclick="confirmLoss()" style="background:#3b1a1a;color:#e05e00;border:1px solid #e05e00">Confirm Lost</button>
+    </div>
+  </div>
+</div>
+<!-- ═══════════════════ CHASE-UP MODAL ═══════════════════ -->
+<div id="chaseModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center;padding:20px">
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:600px;max-height:92vh;display:flex;flex-direction:column;overflow:hidden">
+    <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-shrink:0">
+      <h3 style="margin:0;font-size:16px">🔔 Chase up <span id="chaseRef" style="color:var(--accent);font-family:var(--font-mono)"></span></h3>
+      <button class="btn btn-ghost btn-sm" onclick="closeChaseModal()">✕</button>
+    </div>
+    <div style="padding:20px;overflow-y:auto">
+      <div style="display:flex;gap:10px;margin-bottom:12px">
+        <div style="flex:1">
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">To</label>
+          <input id="chaseTo" type="email" placeholder="client@example.com" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);box-sizing:border-box">
+        </div>
+        <div style="width:160px">
+          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Tone</label>
+          <select id="chaseTone" onchange="draftChaseEmail()" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text)">
+            <option value="warm">Warm</option>
+            <option value="brief">Brief</option>
+            <option value="firm">Firm</option>
+          </select>
+        </div>
+      </div>
+      <div style="margin-bottom:12px">
+        <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Subject</label>
+        <input id="chaseSubject" type="text" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);box-sizing:border-box">
+      </div>
+      <div style="margin-bottom:12px">
+        <label style="font-size:12px;color:var(--muted);display:flex;justify-content:space-between;margin-bottom:4px">
+          <span>Message</span>
+          <button class="btn btn-ghost btn-sm" onclick="draftChaseEmail()" id="chaseRedraftBtn" style="font-size:11px;padding:2px 8px">↻ Re-draft with AI</button>
+        </label>
+        <textarea id="chaseBody" rows="11" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:10px;color:var(--text);resize:vertical;box-sizing:border-box;font-size:13px;line-height:1.5"></textarea>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;padding:12px;background:var(--surface);border-radius:8px;margin-bottom:4px">
+        <span style="font-size:12px;color:var(--muted)">After sending, next chase:</span>
+        <input id="chaseNextDate" type="date" style="background:var(--card);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:13px">
+        <button class="btn btn-ghost btn-sm" onclick="document.getElementById('chaseNextDate').value=''" style="font-size:11px;padding:3px 8px" title="Leave blank to clear the chase flag">Clear</button>
+      </div>
+      <div style="font-size:11px;color:var(--muted)">Blank date = remove from the to-chase list until you set a new one.</div>
+      <div id="chaseStatus" style="font-size:12px;margin-top:10px;min-height:16px"></div>
+    </div>
+    <div style="padding:14px 20px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end;flex-shrink:0">
+      <button class="btn btn-ghost btn-sm" onclick="closeChaseModal()">Cancel</button>
+      <button class="btn btn-primary btn-sm" id="chaseSendBtn" onclick="sendChaseEmail()">✉ Send chase</button>
     </div>
   </div>
 </div>
