@@ -839,6 +839,23 @@ function getUserDisplayName() {
   } catch(e) { return 'there'; }
 }
 
+// Full name + email from the logged-in JWT (for email signatures).
+function getUserIdentity() {
+  const token = sessionStorage.getItem('bama_token');
+  const out = { name: '', email: '' };
+  if (!token) return out;
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
+    out.name  = payload.name || '';
+    out.email = payload.preferred_username || payload.upn || payload.unique_name || payload.email || '';
+    // If no display name, derive something readable from the email local-part
+    if (!out.name && out.email) {
+      out.name = out.email.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    }
+  } catch(e) { /* leave blank */ }
+  return out;
+}
+
 function getToken() {
   const token  = sessionStorage.getItem('bama_token');
   const expiry = parseInt(sessionStorage.getItem('bama_token_expiry') || '0');
@@ -1521,7 +1538,7 @@ RULES:
 - Open with an appropriate greeting using the contact's first name if available, otherwise "Hello".
 - Do NOT restate the full price or quote terms — just gently reference the quotation sent and ask whether they have had a chance to review it / need anything further to make a decision.
 - Offer to answer questions or revise if needed.
-- Close with "Kind regards," then "${userName}" then "BAMA Fabrication Ltd" on separate lines.
+- Do NOT write any sign-off, closing, "Kind regards", name, or company name at the end — a signature block is added automatically. End the body with the last sentence of the message.
 - Strictly UK English. Keep it natural — no marketing fluff, no exclamation marks.`;
 
   try {
@@ -1571,12 +1588,9 @@ async function sendChaseEmail() {
         contentType: 'HTML',
         content: `
           <div style="max-width:600px;font-family:Arial,sans-serif">
-            <div style="border-bottom:3px solid #D0021B;padding-bottom:12px;margin-bottom:20px">
-              <img src="https://proud-dune-0dee63110.2.azurestaticapps.net/bama-logo.png" style="height:40px" onerror="this.style.display='none'">
-            </div>
             ${htmlBody}
-            <div style="margin-top:24px;padding-top:12px;border-top:1px solid #eee;font-size:11px;color:#888">
-              BAMA Fabrication Ltd · 11 Enterprise Way, Enterprise Park, Yaxley, PE7 3WY · 01733 855212
+            <div style="margin-top:8px">
+              ${buildChaseSignature()}
             </div>
           </div>`
       },
@@ -1625,6 +1639,32 @@ async function sendChaseEmail() {
 // Local HTML-escape (dashboard has no shared escHtml in scope here)
 function escHtmlDash(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// BAMA email signature — mirrors the standard company signature, populated with
+// the logged-in user's name + email. Logo served from the SWA host.
+function buildChaseSignature() {
+  const me = getUserIdentity();
+  const name = escHtmlDash(me.name || 'BAMA Fabrication');
+  const email = me.email || 'info@bamafabrication.co.uk';
+  const safeEmail = escHtmlDash(email);
+  return `
+    <p style="margin:18px 0 2px 0;font-family:Arial,sans-serif;font-size:13px;color:#111">Kind regards,</p>
+    <p style="margin:0;font-family:Arial,sans-serif;font-weight:bold;font-size:16px;color:#111">${name}</p>
+    <p style="margin:0 0 12px 0;font-family:Arial,sans-serif;font-size:12px;color:#D0021B;font-weight:bold">Director · BAMA Fabrication</p>
+    <table style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:12px;color:#333"><tr>
+      <td style="padding-right:18px;vertical-align:middle;border-right:1px solid #ddd">
+        <img src="https://proud-dune-0dee63110.2.azurestaticapps.net/bama-logo.png" alt="BAMA Fabrication" style="height:52px;width:auto;display:block" onerror="this.style.display='none'">
+      </td>
+      <td style="padding-left:18px;vertical-align:middle;line-height:1.7">
+        <span style="color:#888">M</span> 07714 002259&nbsp;&nbsp;|&nbsp;&nbsp;<span style="color:#888">O</span> 01733 855212<br>
+        <a href="mailto:${safeEmail}" style="color:#1f6feb;text-decoration:none">${safeEmail}</a>&nbsp;|&nbsp;<a href="https://www.bamafabrication.co.uk" style="color:#1f6feb;text-decoration:none">www.bamafabrication.co.uk</a><br>
+        <span style="color:#555">11 Enterprise Way, Enterprise Park, Yaxley, Peterborough, PE7 3WY</span>
+      </td>
+    </tr></table>
+    <p style="margin:16px 0 0 0;font-family:Arial,sans-serif;font-size:10px;color:#999;line-height:1.5;border-top:1px solid #eee;padding-top:10px">
+      Confidential: this email is intended solely for the addressee. If received in error, please notify the sender and delete. BAMA Fabrication accepts no liability for viruses in this message or its attachments.
+    </p>`;
 }
 async function confirmLoss() {
   if (!selectedQuote) return;
@@ -3136,6 +3176,7 @@ async function trResendNotify(tenderId) {
           <button class="btn btn-ghost btn-sm" onclick="draftChaseEmail()" id="chaseRedraftBtn" style="font-size:11px;padding:2px 8px">↻ Re-draft with AI</button>
         </label>
         <textarea id="chaseBody" rows="11" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:10px;color:var(--text);resize:vertical;box-sizing:border-box;font-size:13px;line-height:1.5"></textarea>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">Your BAMA signature (logo, contact details, confidentiality) is added automatically on send — no need to sign off.</div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;padding:12px;background:var(--surface);border-radius:8px;margin-bottom:4px">
         <span style="font-size:12px;color:var(--muted)">After sending, next chase:</span>
