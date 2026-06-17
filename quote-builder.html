@@ -1439,10 +1439,13 @@ tr.drag-dragging { opacity:0.35; }
             ondrop="event.preventDefault();this.classList.remove('dragover');handleHelperDrop(event)">
             <div class="icon">📄</div>
             <div id="helperDropzoneText"><strong>Click to upload</strong> or drag &amp; drop — multiple PDFs supported</div>
-            <div style="font-size:11px;color:var(--muted);margin-top:4px">PDF, Word (.doc/.docx) · spec, drawings schedule, contract docs</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:4px">PDF, Word (.doc/.docx), images (.png/.jpg) · spec, drawings schedule, contract docs</div>
             <div id="helperFileList" style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;justify-content:center"></div>
           </div>
-          <input type="file" id="helperFileInput" style="display:none" accept=".pdf,.doc,.docx" multiple onchange="handleHelperFile(this)">
+          <div id="helperImageWarning" style="display:none;margin-top:10px;font-size:12px;line-height:1.5;color:var(--accent2);background:rgba(255,179,71,0.08);border:1px solid rgba(255,179,71,0.3);border-radius:6px;padding:9px 11px">
+            ⚠ <strong>Image attached.</strong> The AI reads dimensions, member sizes and quantities from images <em>less reliably</em> than from PDFs or text. Double- and triple-check every figure against the image before sending anything to a client.
+          </div>
+          <input type="file" id="helperFileInput" style="display:none" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.gif,.webp" multiple onchange="handleHelperFile(this)">
 
           <!-- Optional context -->
           <div class="form-grid form-grid-2" style="margin-top:14px;gap:10px">
@@ -11155,16 +11158,23 @@ async function createProjectFromQuote() {
 let _helperFiles = []; // [{name, base64}]
 
 function isHelperFileSupported(f) {
-  return f.name.match(/\.(pdf|doc|docx)$/i);
+  return f.name.match(/\.(pdf|doc|docx|png|jpg|jpeg|gif|webp)$/i);
+}
+function helperIsImage(name) {
+  return /\.(png|jpe?g|gif|webp)$/i.test(name);
 }
 function helperMediaType(name) {
   if (name.match(/\.pdf$/i)) return 'application/pdf';
+  if (name.match(/\.png$/i)) return 'image/png';
+  if (name.match(/\.jpe?g$/i)) return 'image/jpeg';
+  if (name.match(/\.gif$/i)) return 'image/gif';
+  if (name.match(/\.webp$/i)) return 'image/webp';
   return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 }
 
 function handleHelperDrop(e) {
   const files = [...e.dataTransfer.files].filter(isHelperFileSupported);
-  if (!files.length) { toast('Please drop PDF or Word files', 'error'); return; }
+  if (!files.length) { toast('Please drop a PDF, Word or image file', 'error'); return; }
   files.forEach(loadHelperFile);
 }
 function handleHelperFile(input) {
@@ -11177,7 +11187,7 @@ function loadHelperFile(file) {
   if (_helperFiles.find(f => f.name === file.name)) { toast(file.name + ' already added', 'error'); return; }
   const reader = new FileReader();
   reader.onload = e => {
-    _helperFiles.push({ name: file.name, base64: e.target.result.split(',')[1], mediaType: helperMediaType(file.name) });
+    _helperFiles.push({ name: file.name, base64: e.target.result.split(',')[1], mediaType: helperMediaType(file.name), isImage: helperIsImage(file.name) });
     updateHelperFileList();
   };
   reader.readAsDataURL(file);
@@ -11187,7 +11197,7 @@ function updateHelperFileList() {
   const list = document.getElementById('helperFileList');
   list.innerHTML = _helperFiles.map((f,i) => `
     <div style="display:inline-flex;align-items:center;gap:5px;background:rgba(255,107,0,0.1);border:1px solid rgba(255,107,0,0.25);border-radius:20px;padding:3px 10px;font-size:11px;color:var(--accent)">
-      ${f.name.match(/\.docx?$/i) ? "📝" : "📄"} ${escHtml(f.name)}
+      ${f.isImage ? "🖼️" : (f.name.match(/\.docx?$/i) ? "📝" : "📄")} ${escHtml(f.name)}
       <button onclick="removeHelperFile(${i})" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:12px;padding:0;line-height:1" title="Remove">✕</button>
     </div>`).join('');
   document.getElementById('helperDropzoneText').innerHTML =
@@ -11198,6 +11208,8 @@ function updateHelperFileList() {
   const btn = document.getElementById('helperAnalyseBtn');
   btn.disabled = !_helperFiles.length;
   btn.style.opacity = _helperFiles.length ? '1' : '0.4';
+  const warn = document.getElementById('helperImageWarning');
+  if (warn) warn.style.display = _helperFiles.some(f => f.isImage) ? 'block' : 'none';
 }
 
 function removeHelperFile(i) {
@@ -11337,11 +11349,11 @@ Please read this tender document and give me a full pricing briefing for my trad
       messages: [{
         role: 'user',
         content: [
-          ..._helperFiles.map((f, i) => ({
-            type: 'document',
-            source: { type: 'base64', media_type: f.mediaType || 'application/pdf', data: f.base64 },
-            title: f.name
-          })),
+          ..._helperFiles.map((f, i) => (
+            f.isImage
+              ? { type: 'image', source: { type: 'base64', media_type: f.mediaType, data: f.base64 } }
+              : { type: 'document', source: { type: 'base64', media_type: f.mediaType || 'application/pdf', data: f.base64 }, title: f.name }
+          )),
           { type: 'text', text: userPrompt }
         ]
       }]
