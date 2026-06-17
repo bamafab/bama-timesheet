@@ -716,6 +716,14 @@
       <button data-filter="won" onclick="setFilter(this,'won')">✓ Won</button>
       <button data-filter="lost" onclick="setFilter(this,'lost')">✗ Lost</button>
     </div>
+    <div style="padding:6px 12px;border-bottom:1px solid var(--border)">
+      <div style="position:relative">
+        <input id="dashSearch" type="text" placeholder="Search ref, company or project…" oninput="dashSearchInput(this.value)"
+          style="width:100%;box-sizing:border-box;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:5px 28px 5px 10px;color:var(--text);font-size:12px;font-family:var(--font-body)">
+        <span id="dashSearchClear" onclick="clearDashSearch()" title="Clear"
+          style="display:none;position:absolute;right:8px;top:50%;transform:translateY(-50%);cursor:pointer;color:var(--muted);font-size:14px">✕</span>
+      </div>
+    </div>
     <div style="display:flex;align-items:center;gap:6px;padding:6px 12px;border-bottom:1px solid var(--border)">
       <select id="dashSort" onchange="renderQuoteList()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--text);font-size:12px;flex:1">
         <option value="urgency">Sort: Priority</option>
@@ -915,6 +923,18 @@ async function graphGet(url) {
 let allQuotes = [];
 let currentFilter = 'all';
 let _dashSortDir = 1; // 1=asc, -1=desc
+let _dashSearch = '';
+function dashSearchInput(val) {
+  _dashSearch = String(val || '').trim().toLowerCase();
+  const clr = document.getElementById('dashSearchClear');
+  if (clr) clr.style.display = _dashSearch ? 'block' : 'none';
+  renderQuoteList();
+}
+function clearDashSearch() {
+  const inp = document.getElementById('dashSearch');
+  if (inp) inp.value = '';
+  dashSearchInput('');
+}
 function toggleDashSortDir() {
   _dashSortDir *= -1;
   const btn = document.getElementById('dashSortDir');
@@ -1234,6 +1254,16 @@ function renderQuoteList() {
   else if (currentFilter === 'won') list = list.filter(q => q.win === true);
   else if (currentFilter === 'lost') list = list.filter(q => q.win === false);
 
+  // Free-text search across ref, company and project
+  if (_dashSearch) {
+    const q = _dashSearch;
+    list = list.filter(item =>
+      String(item.ref || '').toLowerCase().includes(q) ||
+      String(item.company || '').toLowerCase().includes(q) ||
+      String(item.project || '').toLowerCase().includes(q)
+    );
+  }
+
   // Apply user sort
   const sortBy = document.getElementById('dashSort')?.value || 'urgency';
   const dir = _dashSortDir;
@@ -1260,7 +1290,9 @@ function renderQuoteList() {
 
   const el = document.getElementById('qlList');
   if (!list.length) {
-    el.innerHTML = `<div class="state-empty"><div class="state-icon">📭</div>No quotes</div>`;
+    el.innerHTML = _dashSearch
+      ? `<div class="state-empty"><div class="state-icon">🔍</div>No quotes match "${_dashSearch}"</div>`
+      : `<div class="state-empty"><div class="state-icon">📭</div>No quotes</div>`;
     return;
   }
 
