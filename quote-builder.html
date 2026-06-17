@@ -12554,7 +12554,7 @@ function buildInternalAreaTableHtml(q) {
   const bd = computeAreaBreakdown(q);
   if (!bd.rows.length) return '';
 
-  const th = 'padding:6px 5px;border-bottom:2px solid #333;text-align:right;font-size:8.5px;text-transform:uppercase;letter-spacing:0.3px;color:#555';
+  const th = 'padding:6px 5px;text-align:right;font-size:8.5px;text-transform:uppercase;letter-spacing:0.3px;color:#fff;background:#1a1a2e';
   const thL = th.replace('text-align:right', 'text-align:left');
   const td = 'padding:5px 5px;border-bottom:1px solid #eee;text-align:right;font-family:monospace;font-size:9.5px;white-space:nowrap';
   const tdL = 'padding:5px 5px;border-bottom:1px solid #eee;text-align:left;font-size:9.5px';
@@ -12618,7 +12618,7 @@ function buildClientAreaTableHtml(q) {
   const marginMult = 1 + (bd.marginPct / 100);
   const sell = v => Math.round(v * marginMult * 100) / 100;
 
-  const th = 'padding:7px 6px;border-bottom:2px solid #ccc;text-align:right;font-size:9.5px;color:#555';
+  const th = 'padding:7px 6px;text-align:right;font-size:9.5px;color:#fff;background:#1a1a2e';
   const thL = th.replace('text-align:right', 'text-align:left');
   const td = 'padding:7px 6px;border-bottom:1px solid #e5e7eb;text-align:right;font-family:monospace;font-size:10px;white-space:nowrap';
   const tdL = 'padding:7px 6px;border-bottom:1px solid #e5e7eb;text-align:left;font-size:10px';
