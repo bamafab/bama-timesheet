@@ -12253,7 +12253,15 @@ function buildClientTakeoffHtml(q) {
     </tr>`;
   });
 
-  const totalStr = totalKgSum > 0 ? totalKgSum.toFixed(1) + ' kg' : '—';
+  const fittingsPct = parseFloat(q.fittingsPct) || 10;
+  const fittingsKg  = totalKgSum * (fittingsPct / 100);
+  const grandKg     = totalKgSum + fittingsKg;
+  const membersStr  = totalKgSum > 0 ? totalKgSum.toFixed(1) + ' kg' : '—';
+  const fittingsStr = fittingsKg > 0 ? fittingsKg.toFixed(1) + ' kg' : '—';
+  const grandStr    = grandKg   > 0 ? grandKg.toFixed(1)   + ' kg' : '—';
+
+  const tdFS = 'padding:6px 10px;font-size:10px;color:#555';
+  const tdFR = 'padding:6px 10px;text-align:right;font-size:10px;color:#555';
 
   return `
     <div style="margin-top:24px;page-break-inside:avoid">
@@ -12271,9 +12279,17 @@ function buildClientTakeoffHtml(q) {
         </thead>
         <tbody>${tkRows}</tbody>
         <tfoot>
+          ${totalKgSum > 0 ? `<tr style="background:#f5f5f5">
+            <td colspan="3" style="${tdFS}">Structural Members subtotal</td>
+            <td style="${tdFR}">${membersStr}</td>
+          </tr>` : ''}
+          ${fittingsKg > 0 ? `<tr style="background:#f5f5f5">
+            <td colspan="3" style="${tdFS}">Fittings &amp; Connections (${fittingsPct}%)</td>
+            <td style="${tdFR}">${fittingsStr}</td>
+          </tr>` : ''}
           <tr style="background:#f9fafb">
             <td colspan="3" style="padding:7px 10px;font-weight:700;font-size:11px;color:#1a1a2e;border-top:2px solid #d1d5db">Total Steel Weight</td>
-            <td style="padding:7px 10px;text-align:right;font-weight:700;font-size:11px;font-family:monospace;color:#1a1a2e;border-top:2px solid #d1d5db">${totalStr}</td>
+            <td style="padding:7px 10px;text-align:right;font-weight:700;font-size:11px;font-family:monospace;color:#1a1a2e;border-top:2px solid #d1d5db">${grandStr}</td>
           </tr>
         </tfoot>
       </table>
@@ -12609,11 +12625,23 @@ function generateQuotePDF(mode = 'quote') {
           <th style="text-align:right">Material £</th>
         </tr></thead>
         <tbody>${tkRows}</tbody>
-        <tfoot><tr>
-          <td colspan="3" style="padding:7px 10px;font-weight:700">Total</td>
-          <td style="padding:7px 10px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums">${tkTotalKg.toFixed(1)} kg</td>
-          <td style="padding:7px 10px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums">${fmtGBP(tkTotalCost)}</td>
-        </tr></tfoot>
+        <tfoot>
+          <tr style="background:#f5f5f5">
+            <td colspan="3" style="padding:6px 10px;font-size:10px;color:#555">Structural Members subtotal</td>
+            <td style="padding:6px 10px;text-align:right;font-size:10px;color:#555;font-variant-numeric:tabular-nums">${tkTotalKg.toFixed(1)} kg</td>
+            <td style="padding:6px 10px;text-align:right;font-size:10px;color:#555;font-variant-numeric:tabular-nums">${fmtGBP(tkTotalCost)}</td>
+          </tr>
+          ${computed.fittingsKg > 0 ? `<tr style="background:#f5f5f5">
+            <td colspan="3" style="padding:6px 10px;font-size:10px;color:#555">Fittings &amp; Connections (${parseFloat(q.fittingsPct)||10}% of members)</td>
+            <td style="padding:6px 10px;text-align:right;font-size:10px;color:#555;font-variant-numeric:tabular-nums">${(computed.fittingsKg||0).toFixed(1)} kg</td>
+            <td style="padding:6px 10px;text-align:right;font-size:10px;color:#555;font-variant-numeric:tabular-nums">${fmtGBP(computed.fittingsCostVal||0)}</td>
+          </tr>` : ''}
+          <tr>
+            <td colspan="3" style="padding:7px 10px;font-weight:700;border-top:2px solid #d1d5db">Total Steel Weight</td>
+            <td style="padding:7px 10px;text-align:right;font-weight:700;border-top:2px solid #d1d5db;font-variant-numeric:tabular-nums">${(tkTotalKg + (computed.fittingsKg||0)).toFixed(1)} kg</td>
+            <td style="padding:7px 10px;text-align:right;font-weight:700;border-top:2px solid #d1d5db;font-variant-numeric:tabular-nums">${fmtGBP(tkTotalCost + (computed.fittingsCostVal||0))}</td>
+          </tr>
+        </tfoot>
       </table>
     </div>` : ''}
 
