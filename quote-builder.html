@@ -12554,10 +12554,10 @@ function buildInternalAreaTableHtml(q) {
   const bd = computeAreaBreakdown(q);
   if (!bd.rows.length) return '';
 
-  const th = 'padding:7px 8px;border-bottom:2px solid #333;text-align:right;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:#555';
+  const th = 'padding:6px 5px;border-bottom:2px solid #333;text-align:right;font-size:8.5px;text-transform:uppercase;letter-spacing:0.3px;color:#555';
   const thL = th.replace('text-align:right', 'text-align:left');
-  const td = 'padding:6px 8px;border-bottom:1px solid #eee;text-align:right;font-family:monospace;font-size:11px';
-  const tdL = 'padding:6px 8px;border-bottom:1px solid #eee;text-align:left;font-size:11px';
+  const td = 'padding:5px 5px;border-bottom:1px solid #eee;text-align:right;font-family:monospace;font-size:9.5px;white-space:nowrap';
+  const tdL = 'padding:5px 5px;border-bottom:1px solid #eee;text-align:left;font-size:9.5px';
 
   const body = bd.rows.map(r => `<tr>
       <td style="${tdL}"><strong>${escHtml(r.name)}</strong><br><span style="color:#999;font-size:10px">${(r.kg/1000).toFixed(2)} t</span></td>
@@ -12580,7 +12580,8 @@ function buildInternalAreaTableHtml(q) {
 
   return `<div style="margin-top:22px;page-break-inside:avoid">
     <h3 style="font-size:13px;margin:0 0 8px;color:#333">Per-Area Cost Breakdown</h3>
-    <table style="width:100%;border-collapse:collapse">
+    <table style="width:100%;border-collapse:collapse;table-layout:fixed">
+      <colgroup><col style="width:15%"><col style="width:11.5%"><col style="width:10%"><col style="width:9%"><col style="width:9.5%"><col style="width:11%"><col style="width:10%"><col style="width:11%"><col style="width:13%"></colgroup>
       <thead><tr>
         <th style="${thL}">Area</th>
         <th style="${th}">Material</th><th style="${th}">Install</th><th style="${th}">Fab</th>
@@ -12617,10 +12618,10 @@ function buildClientAreaTableHtml(q) {
   const marginMult = 1 + (bd.marginPct / 100);
   const sell = v => Math.round(v * marginMult * 100) / 100;
 
-  const th = 'padding:8px 10px;border-bottom:2px solid #ccc;text-align:right;font-size:11px;color:#555';
+  const th = 'padding:7px 6px;border-bottom:2px solid #ccc;text-align:right;font-size:9.5px;color:#555';
   const thL = th.replace('text-align:right', 'text-align:left');
-  const td = 'padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right;font-family:monospace;font-size:12px';
-  const tdL = 'padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:left;font-size:12px';
+  const td = 'padding:7px 6px;border-bottom:1px solid #e5e7eb;text-align:right;font-family:monospace;font-size:10px;white-space:nowrap';
+  const tdL = 'padding:7px 6px;border-bottom:1px solid #e5e7eb;text-align:left;font-size:10px';
 
   if (!detailed) {
     // Summary: area, tonnes, total sell price.
@@ -12667,7 +12668,8 @@ function buildClientAreaTableHtml(q) {
   const gJw  = sell(bd.rows.reduce((s,r)=>s+r.jobwide,0));
   return `<div style="margin-top:22px;page-break-inside:avoid">
     <h3 style="font-size:13px;margin:0 0 8px;color:#333">Price by Area</h3>
-    <table style="width:100%;border-collapse:collapse">
+    <table style="width:100%;border-collapse:collapse;table-layout:fixed">
+      <colgroup><col style="width:17%"><col style="width:12%"><col style="width:11%"><col style="width:12%"><col style="width:11%"><col style="width:12%"><col style="width:13%"><col style="width:12%"></colgroup>
       <thead><tr>
         <th style="${thL}">Area</th><th style="${th}">Material</th><th style="${th}">Install</th>
         <th style="${th}">Fabrication</th><th style="${th}">Design</th><th style="${th}">Finishing</th>
