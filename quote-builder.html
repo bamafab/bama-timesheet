@@ -618,6 +618,14 @@ tr.drag-dragging { opacity:0.35; }
               Use PlanSwift Import to upload your exported file directly.
             </div>
           </div>
+
+          <div id="wizardAreaPricingRow" style="display:none;margin-top:10px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:7px;display:none;align-items:center;gap:8px;flex-wrap:wrap">
+            <div style="font-size:11px;color:var(--muted);font-weight:600;letter-spacing:0.5px">PER-AREA PRICING</div>
+            <select class="area-active-select" onchange="onActiveAreaChange(this.value)"
+              style="flex:1 1 160px;min-width:130px;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px"></select>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="editActiveArea()">Edit pricing</button>
+            <div style="font-size:10px;color:var(--subtle);flex-basis:100%">Edits install/fab/design/finishing per area. Full breakdown is in the Cost Summary.</div>
+          </div>
         </div>
 
         <!-- Fittings / misc material -->
@@ -1550,6 +1558,27 @@ tr.drag-dragging { opacity:0.35; }
 
     </div><!-- end quoteEditor -->
   </main>
+</div>
+
+<!-- PER-AREA PRICING DRAWER (Phase 2b) -->
+<style>
+  #areaDrawerOverlay{position:fixed;inset:0;background:rgba(0,0,0,0.45);opacity:0;pointer-events:none;transition:opacity .2s;z-index:8000}
+  #areaDrawerOverlay.open{opacity:1;pointer-events:auto}
+  #areaDrawer{position:fixed;top:0;right:0;height:100%;width:340px;max-width:88vw;background:var(--bg,#15171c);border-left:1px solid var(--border);box-shadow:-8px 0 24px rgba(0,0,0,0.35);transform:translateX(100%);transition:transform .22s ease;z-index:8001;display:flex;flex-direction:column}
+  #areaDrawer.open{transform:translateX(0)}
+  #areaDrawer .drawer-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--border)}
+  #areaDrawer .drawer-body{padding:16px 18px;overflow-y:auto;flex:1}
+</style>
+<div id="areaDrawerOverlay" onclick="closeAreaDrawer()"></div>
+<div id="areaDrawer" aria-label="Per-area pricing">
+  <div class="drawer-head">
+    <div>
+      <div style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted)">Area pricing</div>
+      <div id="areaDrawerTitle" style="font-size:15px;font-weight:600;color:var(--text)">Area</div>
+    </div>
+    <button type="button" onclick="closeAreaDrawer()" style="background:none;border:none;color:var(--muted);font-size:22px;line-height:1;cursor:pointer">×</button>
+  </div>
+  <div class="drawer-body" id="areaDrawerBody"></div>
 </div>
 
 <!-- PLANSWIFT IMPORT MODAL -->
@@ -5320,6 +5349,7 @@ async function newQuote() {
     comments: '', qScope: '', boqRef: '', boqFile: '', projectTCs: '',
     takeoff: [], areas: [], subareas: [],
     pricingMode: 'global', apportionBasis: 'tonnage', areaPricing: {}, activeAreaId: '',
+    areaPricingLocks: [], areaRebalanceMode: 'fixed',
     fittingsPct: 10, fittingsRate: 1.30, miscMaterial: 0, miscMaterialNote: '',
     materialLinks: [],
     instDays: 0, instOperatives: 2, globalDays: true,
@@ -5711,6 +5741,12 @@ function loadQuoteEditor() {
   const q = getQuote(); if (!q) return;
   document.getElementById('emptyState').style.display = 'none';
   document.getElementById('quoteEditor').style.display = '';
+
+  // ── 2b per-area pricing field backfill (older quotes) ────────────────────
+  if (q.areaPricing == null)      q.areaPricing = {};
+  if (!Array.isArray(q.areaPricingLocks)) q.areaPricingLocks = [];
+  if (q.areaRebalanceMode !== 'float') q.areaRebalanceMode = 'fixed';
+  if (q.pricingMode !== 'area')   q.pricingMode = 'global';
 
   // ── standardLines migration guard ────────────────────────────────────────
   // Ensures quotes saved before schema fixes have all required line keys,
@@ -7748,6 +7784,17 @@ function cpsInjectIntoScope() {
 // and apportions the shared costs (install, fab, design, finishing, survey,
 // delivery, prelims, purlins, misc material) by tonnage. The per-area totals
 // reconcile to the global total, so this never disagrees with the headline.
+// Per-area editable cost categories (map 1:1 onto computeQuoteTotals buckets).
+const AREA_PRICE_CATS = ['installation','fabrication','design','painting','galvanising'];
+const AREA_CAT_LABELS = {
+  installation:'Installation', fabrication:'Fabrication', design:'Design',
+  painting:'Painting', galvanising:'Galvanising'
+};
+// Job-wide costs: apportioned by tonnage, never per-area editable.
+const AREA_JOBWIDE_CATS = ['survey','delivery','prelims','purlins'];
+
+function r2(v){ return Math.round((parseFloat(v)||0) * 100) / 100; }
+
 function computeAreaBreakdown(q) {
   const takeoff = q.takeoff || [];
   const areas   = q.areas || [];
@@ -7758,36 +7805,84 @@ function computeAreaBreakdown(q) {
     buckets.push({ id: '', name: 'Unspecified' });
   }
 
-  // Global figures drive the shared-cost pool (already post-N/A).
+  // Global figures (already post-N/A) — the source totals to apportion / hold.
   const G = computeQuoteTotals(q, rates);
-  const sharedCats = ['installation','fabrication','design','painting','galvanising',
-                      'survey','delivery','prelims','purlins'];
-  const pool = sharedCats.reduce((s,k) => s + (G[k]||0), 0) + (parseFloat(q.miscMaterial)||0);
   const marginPct = parseFloat(q.margin) || 0;
+  const miscMaterial = parseFloat(q.miscMaterial) || 0;
+  const mode = q.areaRebalanceMode === 'float' ? 'float' : 'fixed';
+  const overrides = q.areaPricing || {};
+  const lockSet = new Set(q.areaPricingLocks || []);
 
-  const rows = [];
+  // Per-area real material + weight (unchanged from 2a — costed from own slice).
   let totalKg = 0;
   buckets.forEach(b => {
     const areaRows = takeoff.filter(r => (r.area || '') === b.id);
     const sub = { takeoff: areaRows, fittingsPct: q.fittingsPct,
                   fittingsRate: q.fittingsRate, miscMaterial: 0, fixingsPct: q.fixingsPct };
     const c = computeQuoteTotals(sub, rates);
-    rows.push({ id: b.id, name: b.name, kg: c.totalKg, material: c.material });
+    b.kg = c.totalKg;
+    b.material = c.material;
     totalKg += c.totalKg;
   });
+  const ids = buckets.map(b => b.id);
+  const kgOf = id => (buckets.find(b => b.id === id)?.kg) || 0;
+  const share = id => totalKg > 0 ? kgOf(id) / totalKg : (ids.length ? 1 / ids.length : 0);
 
-  rows.forEach(r => {
-    const share = totalKg > 0 ? r.kg / totalKg : (rows.length ? 1 / rows.length : 0);
-    r.share    = share;
-    r.shared   = Math.round(pool * share * 100) / 100;
-    r.subtotal = Math.round((r.material + r.shared) * 100) / 100;
-    r.margin   = Math.round(r.subtotal * marginPct / 100 * 100) / 100;
-    r.total    = Math.round((r.subtotal + r.margin) * 100) / 100;
+  const hasOv  = (id,c) => overrides[id] && overrides[id][c] != null && overrides[id][c] !== '';
+  const isLock = (id,c) => lockSet.has(id + '|' + c) || hasOv(id,c);
+
+  // ── Per-category area figures ────────────────────────────
+  // Default: tonnage-apportioned share of the global category amount.
+  // Overridden/locked: held at the user's value.
+  // FIXED mode: unlocked areas absorb (globalAmt − Σlocked) by tonnage,
+  //             so each category's job total stays == globalAmt.
+  // FLOAT mode: overrides simply replace the baseline; total may move.
+  const catFig = {}; // catFig[cat][id] = number
+  AREA_PRICE_CATS.forEach(c => {
+    const globalAmt = G[c] || 0;
+    const out = {};
+    if (mode === 'float') {
+      ids.forEach(id => { out[id] = hasOv(id,c) ? (parseFloat(overrides[id][c])||0) : globalAmt * share(id); });
+    } else {
+      let lockedSum = 0, unlockedKg = 0, unlockedCount = 0;
+      ids.forEach(id => {
+        if (isLock(id,c)) {
+          out[id] = hasOv(id,c) ? (parseFloat(overrides[id][c])||0) : globalAmt * share(id);
+          lockedSum += out[id];
+        } else { unlockedKg += kgOf(id); unlockedCount++; }
+      });
+      const remainder = globalAmt - lockedSum;
+      ids.forEach(id => {
+        if (out[id] != null) return;
+        const w = unlockedKg > 0 ? kgOf(id) / unlockedKg : (unlockedCount ? 1 / unlockedCount : 0);
+        out[id] = remainder * w;
+      });
+    }
+    catFig[c] = out;
   });
 
-  const sum = k => Math.round(rows.reduce((s,r) => s + r[k], 0) * 100) / 100;
+  // ── Job-wide pool (always tonnage-split) ─────────────────
+  const pool = AREA_JOBWIDE_CATS.reduce((s,k) => s + (G[k]||0), 0) + miscMaterial;
+
+  // ── Assemble rows ────────────────────────────────────────
+  const rows = buckets.map(b => {
+    const cats = {};
+    let catSum = 0;
+    AREA_PRICE_CATS.forEach(c => { cats[c] = r2(catFig[c][b.id]); catSum += cats[c]; });
+    const jobwide  = r2(pool * share(b.id));
+    const subtotal = r2(b.material + catSum + jobwide);
+    const margin   = r2(subtotal * marginPct / 100);
+    return {
+      id: b.id, name: b.name, kg: b.kg, share: share(b.id),
+      material: b.material, cats, jobwide,
+      shared: r2(catSum + jobwide), // legacy field: all non-material cost
+      subtotal, margin, total: r2(subtotal + margin)
+    };
+  });
+
+  const sum = k => r2(rows.reduce((s,r) => s + r[k], 0));
   return {
-    rows, marginPct,
+    rows, marginPct, mode,
     grand: { kg: totalKg, material: sum('material'), shared: sum('shared'),
              subtotal: sum('subtotal'), margin: sum('margin'), total: sum('total') }
   };
@@ -7798,6 +7893,52 @@ function onAreaPricingToggle() {
   q.pricingMode = document.getElementById('areaPricingToggle')?.checked ? 'area' : 'global';
   saveAll();
   renderAreaBreakdown();
+  renderAreaSelectors();
+}
+
+// List of {id,name} area buckets, including a trailing 'Unspecified' if any
+// takeoff rows sit outside a named area. Shared by selectors and breakdown.
+function areaBuckets(q) {
+  const areas = q.areas || [];
+  const takeoff = q.takeoff || [];
+  const namedIds = areas.map(a => a.id);
+  const buckets = namedIds.map(id => ({ id, name: (areas.find(a => a.id === id)?.name) || id }));
+  if (takeoff.some(r => !namedIds.includes(r.area || ''))) buckets.push({ id: '', name: 'Unspecified' });
+  return buckets;
+}
+
+// Renders the active-area <select> wherever it appears (summary + wizard).
+function renderAreaSelectors() {
+  const q = getQuote(); if (!q) return;
+  const buckets = areaBuckets(q);
+  const on = q.pricingMode === 'area';
+  const opts = buckets.map(b =>
+    `<option value="${escHtml(b.id)}"${b.id === q.activeAreaId ? ' selected' : ''}>${escHtml(b.name)}</option>`
+  ).join('');
+  document.querySelectorAll('.area-active-select').forEach(sel => {
+    sel.innerHTML = `<option value="">— select area —</option>` + opts;
+    sel.value = q.activeAreaId || '';
+    sel.disabled = !on || buckets.length === 0;
+  });
+  const wizardRow = document.getElementById('wizardAreaPricingRow');
+  if (wizardRow) wizardRow.style.display = (on && buckets.length > 0) ? 'flex' : 'none';
+}
+
+// Called from either selector. Empty value just closes the drawer.
+function onActiveAreaChange(id) {
+  const q = getQuote(); if (!q) return;
+  q.activeAreaId = id || '';
+  renderAreaSelectors();
+  if (q.activeAreaId) openAreaDrawer(q.activeAreaId);
+  else closeAreaDrawer();
+}
+
+function onRebalanceModeToggle() {
+  const q = getQuote(); if (!q) return;
+  q.areaRebalanceMode = document.getElementById('areaRebalanceToggle')?.checked ? 'float' : 'fixed';
+  saveAll();
+  renderAreaBreakdown();
+  if (q.activeAreaId) renderAreaDrawer();
 }
 
 function renderAreaBreakdown() {
@@ -7813,22 +7954,46 @@ function renderAreaBreakdown() {
   const toggle = document.getElementById('areaPricingToggle');
   if (toggle) toggle.checked = on;
 
-  if (!hasAreas || !on) { if (wrap) wrap.style.display = 'none'; return; }
+  renderAreaSelectors();
+
+  if (!hasAreas || !on) { if (wrap) wrap.style.display = 'none'; closeAreaDrawer(); return; }
 
   const bd = computeAreaBreakdown(q);
   const f0 = v => '£' + Math.round(v).toLocaleString('en-GB');
   const money = (v, extra='') => `<td style="padding:5px 3px;text-align:right;font-family:var(--font-mono);white-space:nowrap;${extra}">${f0(v)}</td>`;
   const hd = (t) => `<th style="padding:4px 3px;text-align:right;font-weight:600">${t}</th>`;
-  let html = `<table style="width:100%;table-layout:fixed;border-collapse:collapse;font-size:11px">
+
+  // Controls: active-area selector + rebalance mode toggle.
+  const fixed = bd.mode !== 'float';
+  let html = `<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+      <select class="area-active-select" onchange="onActiveAreaChange(this.value)"
+        style="flex:1 1 140px;min-width:120px;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px"></select>
+      <button type="button" onclick="editActiveArea()"
+        style="padding:6px 10px;background:var(--accent);border:none;border-radius:6px;color:#fff;font-size:12px;cursor:pointer;white-space:nowrap">Edit area</button>
+    </div>
+    <div class="toggle-row" style="margin:0 0 10px">
+      <div>
+        <div class="toggle-label" style="font-size:12px">Hold job total fixed</div>
+        <div class="toggle-sub" style="font-size:10px">${fixed ? 'Edits rebalance other areas; total stays put' : 'Off: edits move the job total'}</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="areaRebalanceToggle" ${fixed ? '' : 'checked'} onchange="onRebalanceModeToggle()">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>`;
+
+  html += `<table style="width:100%;table-layout:fixed;border-collapse:collapse;font-size:11px">
     <colgroup><col style="width:31%"><col style="width:23%"><col style="width:23%"><col style="width:23%"></colgroup>
     <thead><tr style="color:var(--muted)">
       <th style="text-align:left;padding:4px 3px;font-weight:600">Area</th>
-      ${hd('Material')}${hd('Shared*')}${hd('Total')}
+      ${hd('Material')}${hd('Other*')}${hd('Total')}
     </tr></thead><tbody>`;
   bd.rows.forEach(r => {
-    html += `<tr style="border-top:1px solid var(--border)">
+    const isActive = r.id === q.activeAreaId;
+    const anyLock = AREA_PRICE_CATS.some(c => (q.areaPricingLocks||[]).includes(r.id+'|'+c) || (q.areaPricing[r.id] && q.areaPricing[r.id][c] != null));
+    html += `<tr onclick="onActiveAreaChange('${escHtml(r.id)}')" style="border-top:1px solid var(--border);cursor:pointer;${isActive ? 'background:var(--surface-2,rgba(255,255,255,0.04))' : ''}">
       <td style="padding:5px 3px;text-align:left">
-        <div style="color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(r.name)}</div>
+        <div style="color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(r.name)}${anyLock ? ' <span title="has manual overrides" style="color:var(--accent)">●</span>' : ''}</div>
         <div style="font-size:10px;color:var(--subtle);font-family:var(--font-mono)">${(r.kg/1000).toFixed(2)} t</div>
       </td>
       ${money(r.material)}
@@ -7846,10 +8011,113 @@ function renderAreaBreakdown() {
       ${money(bd.grand.total, 'color:var(--accent);font-weight:600')}
     </tr></tbody></table>
     <div style="font-size:10px;color:var(--subtle);margin-top:8px;line-height:1.5">
-      Material is costed per area from its takeoff. *Shared costs (install, fab, design, finishing, survey, delivery, prelims, purlins) and the ${bd.marginPct}% margin are split by tonnage for now — the next step gives each area its own editable pricing.
+      Material is costed per area from its takeoff. *Other = install, fab, design, finishing (per-area editable) plus survey, delivery, prelims, purlins (job-wide, split by tonnage) and the ${bd.marginPct}% margin. Tap an area to edit its figures.
     </div>`;
   wrap.style.display = '';
   wrap.innerHTML = html;
+
+  // Keep an open drawer in sync after a recompute.
+  if (q.activeAreaId && document.getElementById('areaDrawer')?.classList.contains('open')) renderAreaDrawer();
+}
+
+// ── Per-area editing drawer ───────────────────────────────
+function openAreaDrawer(id) {
+  const q = getQuote(); if (!q) return;
+  q.activeAreaId = id || '';
+  if (!q.activeAreaId) { closeAreaDrawer(); return; }
+  const drawer = document.getElementById('areaDrawer');
+  const overlay = document.getElementById('areaDrawerOverlay');
+  if (!drawer) return;
+  renderAreaDrawer();
+  drawer.classList.add('open');
+  if (overlay) overlay.classList.add('open');
+}
+
+function closeAreaDrawer() {
+  document.getElementById('areaDrawer')?.classList.remove('open');
+  document.getElementById('areaDrawerOverlay')?.classList.remove('open');
+}
+
+function editActiveArea() {
+  const q = getQuote(); if (!q) return;
+  if (q.activeAreaId) openAreaDrawer(q.activeAreaId);
+  else toast('Pick an area first', 'error');
+}
+
+function renderAreaDrawer() {
+  const q = getQuote(); if (!q) return;
+  const body = document.getElementById('areaDrawerBody');
+  const titleEl = document.getElementById('areaDrawerTitle');
+  if (!body) return;
+  const id = q.activeAreaId;
+  const bd = computeAreaBreakdown(q);
+  const row = bd.rows.find(r => r.id === id);
+  if (!row) { closeAreaDrawer(); return; }
+  if (titleEl) titleEl.textContent = row.name;
+
+  const f2 = v => Math.round(v * 100) / 100;
+  const locks = q.areaPricingLocks || [];
+  const ov = q.areaPricing[id] || {};
+
+  let html = `<div style="font-size:11px;color:var(--subtle);font-family:var(--font-mono);margin-bottom:14px">${(row.kg/1000).toFixed(2)} t · ${(row.share*100).toFixed(1)}% of tonnage</div>`;
+
+  AREA_PRICE_CATS.forEach(c => {
+    const locked = locks.includes(id+'|'+c) || (ov[c] != null && ov[c] !== '');
+    const val = f2(row.cats[c]);
+    html += `<div style="margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <label style="font-size:12px;color:var(--text)">${AREA_CAT_LABELS[c]}</label>
+        ${locked
+          ? `<button type="button" onclick="resetAreaCost('${c}')" style="font-size:10px;padding:2px 7px;background:none;border:1px solid var(--border);border-radius:5px;color:var(--muted);cursor:pointer">↺ auto</button>`
+          : `<span style="font-size:10px;color:var(--subtle)">auto</span>`}
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="color:var(--muted);font-size:13px">£</span>
+        <input type="number" step="0.01" value="${val}" data-cat="${c}"
+          onchange="setAreaCost('${c}', this.value)"
+          style="flex:1;padding:7px 9px;background:var(--bg);border:1px solid ${locked ? 'var(--accent)' : 'var(--border)'};border-radius:6px;color:var(--text);font-family:var(--font-mono);font-size:13px">
+      </div>
+    </div>`;
+  });
+
+  // Job-wide + reconciliation summary for this area.
+  const f0 = v => '£' + Math.round(v).toLocaleString('en-GB');
+  html += `<div style="border-top:1px solid var(--border);margin-top:6px;padding-top:12px;font-size:12px">
+      <div style="display:flex;justify-content:space-between;color:var(--muted);margin-bottom:4px"><span>Material (from takeoff)</span><span style="font-family:var(--font-mono)">${f0(row.material)}</span></div>
+      <div style="display:flex;justify-content:space-between;color:var(--muted);margin-bottom:4px"><span>Job-wide (survey/delivery/prelims/purlins)</span><span style="font-family:var(--font-mono)">${f0(row.jobwide)}</span></div>
+      <div style="display:flex;justify-content:space-between;color:var(--muted);margin-bottom:4px"><span>Margin (${bd.marginPct}%)</span><span style="font-family:var(--font-mono)">${f0(row.margin)}</span></div>
+      <div style="display:flex;justify-content:space-between;color:var(--accent);font-weight:600;border-top:1px solid var(--border);margin-top:6px;padding-top:6px"><span>Area total</span><span style="font-family:var(--font-mono)">${f0(row.total)}</span></div>
+      <div style="display:flex;justify-content:space-between;color:var(--subtle);font-size:11px;margin-top:4px"><span>of job total ${f0(bd.grand.total)}</span><span style="font-family:var(--font-mono)">${bd.grand.total ? (row.total/bd.grand.total*100).toFixed(1) : '0.0'}%</span></div>
+    </div>
+    <div style="font-size:10px;color:var(--subtle);margin-top:12px;line-height:1.5">
+      ${bd.mode === 'float'
+        ? 'Float mode: editing a figure changes the job total directly.'
+        : 'Fixed mode: editing a figure rebalances the other areas so the job total stays the same. Edited fields are pinned (↺ to release).'}
+    </div>`;
+  body.innerHTML = html;
+}
+
+function setAreaCost(cat, value) {
+  const q = getQuote(); if (!q) return;
+  const id = q.activeAreaId; if (!id && id !== '') return;
+  const v = parseFloat(value);
+  if (!q.areaPricing[id]) q.areaPricing[id] = {};
+  q.areaPricing[id][cat] = isNaN(v) ? 0 : Math.round(v * 100) / 100;
+  const key = id + '|' + cat;
+  if (!(q.areaPricingLocks || []).includes(key)) q.areaPricingLocks = [...(q.areaPricingLocks||[]), key];
+  saveAll();
+  renderAreaBreakdown();
+  renderAreaDrawer();
+}
+
+function resetAreaCost(cat) {
+  const q = getQuote(); if (!q) return;
+  const id = q.activeAreaId;
+  if (q.areaPricing[id]) delete q.areaPricing[id][cat];
+  q.areaPricingLocks = (q.areaPricingLocks||[]).filter(k => k !== id + '|' + cat);
+  saveAll();
+  renderAreaBreakdown();
+  renderAreaDrawer();
 }
 
 function recalcAll() {
@@ -14460,6 +14728,7 @@ async function qqSaveAsDraft() {
     qScope: '', boqRef: '', boqFile: '', projectTCs: '',
     takeoff: [], areas: [], subareas: [],
     pricingMode: 'global', apportionBasis: 'tonnage', areaPricing: {}, activeAreaId: '',
+    areaPricingLocks: [], areaRebalanceMode: 'fixed',
     fittingsPct: 10, fittingsRate: 1.30, miscMaterial: 0, miscMaterialNote: '',
     materialLinks: [],
     instDays: r2.scope === 'supply_install' ? r2.instDays : 0,
@@ -14616,6 +14885,7 @@ async function qqSaveAsDraft() {
         comments: '', qScope: '', boqRef: '', boqFile: '', projectTCs: '',
         takeoff: [], areas: [], subareas: [],
     pricingMode: 'global', apportionBasis: 'tonnage', areaPricing: {}, activeAreaId: '',
+    areaPricingLocks: [], areaRebalanceMode: 'fixed',
         fittingsPct: 10, fittingsRate: 1.30, miscMaterial: 0, miscMaterialNote: '',
         materialLinks: [],
         instDays: 0, instOperatives: 2, globalDays: true,
