@@ -95,11 +95,26 @@ def check_dom_orphans(html, fname):
             # Is the call followed by optional chaining (?.) or guarded?
             # `getElementById('x')?.value` → silent (undefined), WARN
             # `getElementById('x').value` → crashes, ERROR
+            # `const el = getElementById('x'); if (el) el.value` → guarded, SAFE
             tail = html[m.end():m.end()+3]
             if tail.startswith('?.'):
                 out.append(("WARN",
                     f"getElementById('{wanted}') — no id=\"{wanted}\" in {fname} (uses ?. so no crash, but value never read → silent bug)"))
             else:
+                # Assign-then-guard: `const VAR = ...getElementById('x')...;`
+                # followed within a few lines by `if (VAR)` / `if (!VAR)`.
+                head = html[max(0, m.start() - 80):m.start()]
+                assign_m = re.search(r'(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*[^;]*$', head)
+                guarded = False
+                if assign_m:
+                    var = assign_m.group(1)
+                    after = html[m.end():m.end() + 160]
+                    # look for an `if (var)` or `if (!var)` guard before the var is
+                    # dereferenced unconditionally
+                    if re.search(r'\bif\s*\(\s*!?\s*' + re.escape(var) + r'\b', after):
+                        guarded = True
+                if guarded:
+                    continue
                 out.append(("ERROR",
                     f"getElementById('{wanted}').<...> — no id=\"{wanted}\" in {fname} → will throw on access"))
     return out
@@ -146,9 +161,21 @@ def check_async_no_await(js, fname):
                 # inside an onclick/onchange HTML attribute → fire-and-forget, fine
                 if 'onclick=' in line or 'onchange=' in line or 'oninput=' in line or 'onsubmit=' in line:
                     continue
-                # Promise.all / Promise.race / .map(...) contexts → usually intended
+                # Promise.all / Promise.race / .map(...) contexts → usually intended.
+                # These can span multiple lines, e.g.
+                #   const [a, b] = await Promise.all([
+                #     qbFetch(...),          <- call is here, Promise.all is 1-2 lines up
+                #     qbFetch(...)
+                #   ]);
+                # so look back a few lines for an open Promise.all/race with await.
+                window = '\n'.join(lines[max(0, i - 4):i])
                 if 'Promise.all' in line or 'Promise.race' in line or '.then(' in line:
                     continue
+                if ('Promise.all' in window or 'Promise.race' in window) and 'await' in window:
+                    # only treat as awaited if the array literal is still open
+                    # (more close brackets after this point than open before it)
+                    if window.count('[') > window.count(']'):
+                        continue
                 # assigned to a variable WITHOUT await → the classic bug
                 # e.g.  const ref = nextQuoteRef();
                 assign_m = re.search(r'(?:const|let|var)\s+[\w$]+\s*=\s*$', stripped)

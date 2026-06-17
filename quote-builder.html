@@ -4811,14 +4811,16 @@ function computeQuoteTotals(quote, ratesObj) {
   (quote.consumableRows || []).forEach(r => {
     consumablesCost += (parseFloat(r.qty) || 0) * (parseFloat(r.rate) || 0);
   });
-  const fabrication = Math.round((fabWorkshop + fabPack + consumablesCost) * 100) / 100;
+  // fabPack (Approval & Fab Pack) is drawn up by the draughtsman — it belongs
+  // in Design, not Fabrication. Added to the design sum below.
+  const fabrication = Math.round((fabWorkshop + consumablesCost) * 100) / 100;
 
   // ── Design ───────────────────────────────────────────────
   const structEng  = (parseFloat(quote.structEngHours)  || 0) * (parseFloat(quote.structEngRate)  || 90);
   const architect  = (parseFloat(quote.architectHours)  || 0) * (parseFloat(quote.architectRate)  || 90);
   const draughtsman= (parseFloat(quote.designHours)     || 0) * (parseFloat(quote.designRate)     || 50);
   const connDesign = (parseFloat(quote.connDesignHours) || 0) * (parseFloat(quote.connDesignRate) || 50);
-  const design = Math.round((structEng + architect + draughtsman + connDesign) * 100) / 100;
+  const design = Math.round((structEng + architect + draughtsman + connDesign + fabPack) * 100) / 100;
 
   // ── Painting / Finishing ─────────────────────────────────
   let painting = 0, galvanising = 0;
@@ -5422,9 +5424,10 @@ async function saveCurrentQuote() {
   q.fabpackRate    = parseFloat(document.getElementById('fabpack-rate')?.value) || 50;
   q.connDesignHours = parseFloat(document.getElementById('conn-design-hours')?.value) || 0;
   q.connDesignRate  = parseFloat(document.getElementById('conn-design-rate')?.value) || 50;
-  q.surveyVisits   = parseFloat(document.getElementById('survey-visits')?.value) || 0;
-  q.surveyVisitors = parseFloat(document.getElementById('survey-visitors')?.value) || 1;
-  q.surveyRate     = parseFloat(document.getElementById('survey-rate')?.value) || 250;
+  // NOTE: survey-visits / survey-visitors / survey-rate inputs no longer exist —
+  // survey is now computed from surveyVisitRows (multi-row model). The old
+  // single-row q.surveyVisits/surveyVisitors/surveyRate fields are unused and
+  // were removed from this snapshot.
   q.surveyParking  = parseFloat(document.getElementById('survey-parking')?.value) || 0;
   q.purlinM        = parseFloat(document.getElementById('purlins-m')?.value) || 0;
   q.purlinRate     = parseFloat(document.getElementById('purlins-rate')?.value) || 0;
@@ -6979,16 +6982,9 @@ function sumLabour() {
 // ============================================================
 // PLANT ROWS
 // ============================================================
-function addPlantRow() {
-  const q = getQuote(); if (!q) return;
-  const type = document.getElementById('plantTypeSelect').value;
-  if (!type) return;
-  const def = rates.plant[type] || { label: type, rate: 0 };
-  const id = 'plant_'+Date.now();
-  q.plantRows = q.plantRows || [];
-  q.plantRows.push({ id, type, label: def.label, qty: 1, rate: def.rate });
-  saveAll(); renderPlantRows(); recalcAll();
-}
+// NOTE: the old addPlantRow() (dropdown-based) was removed — plant rows are
+// now added via addPlantFromSearch() (the #plantSearch typeahead box). The
+// old #plantTypeSelect dropdown no longer exists in the markup.
 
 function renderPlantRows() {
   const q = getQuote(); if (!q) return;
@@ -7901,10 +7897,11 @@ function recalcAll() {
     r.qty  = parseFloat(document.getElementById('qty-'+r.id)?.value)  || r.qty;
     r.rate = parseFloat(document.getElementById('rate-'+r.id)?.value) || r.rate;
   });
-  (q.prelimRows||[]).forEach(r => {
-    r.qty  = parseFloat(document.getElementById('qty-'+r.id)?.value)  || r.qty;
-    r.rate = parseFloat(document.getElementById('rate-'+r.id)?.value) || r.rate;
-  });
+  // NOTE: prelimRows are NOT snapshotted from DOM here. The Prelims block uses
+  // the quick-panel checklist (renderPrelimChecklist) whose inputs have no
+  // qty-/rate- ids — they write straight to state via updatePrelimQuickQty/Rate.
+  // The old hidden #prelimRows inputs hold stale values; reading them back here
+  // clobbered the user's edits (qty showed 3 but total used the stale 10).
   (q.consumableRows||[]).forEach(r => {
     r.qty  = parseFloat(document.getElementById('qty-'+r.id)?.value)  || 0;
     r.rate = parseFloat(document.getElementById('rate-'+r.id)?.value) || r.rate;
@@ -11446,6 +11443,7 @@ const SCOPE_TEMPLATES = [
 
 function toggleScopeTemplates() {
   const dd = document.getElementById('scopeTemplateDD');
+  if (!dd) return;
   dd.style.display = dd.style.display === 'none' ? '' : 'none';
 }
 document.addEventListener('click', e => {
@@ -11458,7 +11456,8 @@ function applyScopeTemplate(i) {
   const [,text] = SCOPE_TEMPLATES[i];
   const el = document.getElementById('hComments');
   if (el) { el.value = text; autosave(); }
-  document.getElementById('scopeTemplateDD').style.display = 'none';
+  const dd = document.getElementById('scopeTemplateDD');
+  if (dd) dd.style.display = 'none';
   toast('Template applied — edit as needed');
 }
 
@@ -14114,12 +14113,16 @@ let _qqResult = null;
 let _qqMembers = [];
 
 function qqGetRates() {
-  // Pull live rates from calcs inputs if available, else fall back to defaults
+  // Quick Quote material £/kg rates. These were meant to pull from per-profile
+  // calcs inputs (rate-ub-uc / rate-angle / rate-hollow) but those inputs were
+  // never built — the calcs section uses per-row material rates instead. Until
+  // Quick Quote is finished (deferred), use the standing defaults below. If/when
+  // per-profile rate inputs are added to calcs, read them here.
   return {
     matRates: {
-      ub_uc:   parseFloat(document.getElementById('rate-ub-uc')?.value)  || 1.10,
-      pfc_rsa: parseFloat(document.getElementById('rate-angle')?.value)  || 1.30,
-      hollow:  parseFloat(document.getElementById('rate-hollow')?.value) || 1.40
+      ub_uc:   1.10,
+      pfc_rsa: 1.30,
+      hollow:  1.40
     },
     fabRate:      parseFloat(document.getElementById('fab-rate')?.value)      || 45,
     erectorRate:  250,
