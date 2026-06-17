@@ -10971,6 +10971,62 @@ async function sendQuoteEmail() {
 // ============================================================
 // WON → CREATE PROJECT
 // ============================================================
+// Normalise a company name for fuzzy comparison: lowercase, drop punctuation,
+// spaces and common legal/descriptor suffixes.
+function qbNormaliseClient(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .replace(/\b(ltd|limited|plc|llp|inc|co|company|construction|constructions|contractors?|group|holdings?|services?|engineering|builders?|building|projects?|developments?|uk)\b/g, ' ')
+    .replace(/\s+/g, '')
+    .trim();
+}
+function qbSimilarity(a, b) {
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, (_, i) => [i, ...Array(n).fill(0)]);
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++)
+      dp[i][j] = Math.min(dp[i-1][j] + 1, dp[i][j-1] + 1, dp[i-1][j-1] + (a[i-1] === b[j-1] ? 0 : 1));
+  return 1 - dp[m][n] / Math.max(m, n);
+}
+// Returns { id, name } of the client to use (existing or newly created), or
+// null if the user cancelled. `status` is the modal status line element.
+async function qbResolveClient(clientList, typed, status) {
+  const list = Array.isArray(clientList) ? clientList : [];
+  const nameOf = c => c.company_name || c.name || '';
+  const normTyped = qbNormaliseClient(typed);
+
+  // 1. Exact normalised match → reuse silently.
+  const exact = list.find(c => qbNormaliseClient(nameOf(c)) === normTyped && normTyped);
+  if (exact) { status.textContent = 'Client found: ' + nameOf(exact); return { id: exact.id, name: nameOf(exact) }; }
+
+  // 2. Best close match.
+  let best = null, bestScore = 0;
+  if (normTyped) for (const c of list) {
+    const normC = qbNormaliseClient(nameOf(c));
+    let score = qbSimilarity(normTyped, normC);
+    if (normC && (normC.includes(normTyped) || normTyped.includes(normC))) score = Math.max(score, 0.9);
+    if (score > bestScore) { bestScore = score; best = c; }
+  }
+  if (best && bestScore >= 0.72) {
+    const useExisting = await bamaConfirm(
+      `Did you mean "${nameOf(best)}"?\n\nConfirm to use the existing client. Cancel to create "${typed}" as a new client.`,
+      'Possible existing client'
+    );
+    if (useExisting) { status.textContent = 'Client: ' + nameOf(best); return { id: best.id, name: nameOf(best) }; }
+  }
+
+  // 3. Create new.
+  status.textContent = 'Creating client "' + typed + '"...';
+  const nc = await qbFetch('POST', '/api/clients', { company_name: typed });
+  status.textContent = 'Client created (ID ' + nc.id + ')';
+  return { id: nc.id, name: typed };
+}
+
 function showWonModal() {
   const q = getQuote(); if (!q) return;
   const total = q._computed?.total || 0;
@@ -11008,21 +11064,15 @@ async function createProjectFromQuote() {
   status.textContent = 'Looking up client...';
 
   try {
-    // 1. Find or create client
+    // 1. Find or create client (fuzzy match against existing clients)
     const clientList = await qbFetch('GET', '/api/clients');
-    let clientId = null;
-    const match = (Array.isArray(clientList) ? clientList : []).find(c =>
-      (c.company_name || c.name || '').toLowerCase() === client.toLowerCase()
-    );
-    if (match) {
-      clientId = match.id;
-      status.textContent = 'Client found: ' + (match.company_name || match.name);
-    } else {
-      status.textContent = 'Client not found — creating...';
-      const nc = await qbFetch('POST', '/api/clients', { company_name: client });
-      clientId = nc.id;
-      status.textContent = 'Client created (ID ' + clientId + ')';
+    const resolved = await qbResolveClient(clientList, client, status);
+    if (!resolved) {  // user cancelled
+      status.textContent = '';
+      btn.disabled = false;
+      return;
     }
+    const clientId = resolved.id;
 
     // 2. Create SharePoint project folders
     status.textContent = 'Creating SharePoint folders...';
