@@ -1218,6 +1218,28 @@ tr.drag-dragging { opacity:0.35; }
               </div>
 
               <hr class="divider">
+              <div class="toggle-row">
+                <div>
+                  <div class="toggle-label">Show area breakdown on client quote</div>
+                  <div class="toggle-sub">Adds a per-area price table to the client PDF</div>
+                </div>
+                <label class="toggle">
+                  <input type="checkbox" id="showAreaPdf" onchange="onShowAreaPdfToggle()">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div id="areaPdfDetailSection" style="display:none;margin-top:6px">
+                <div class="summary-line" style="font-size:12px;align-items:center">
+                  <span>Detail level</span>
+                  <select id="clientAreaDetail" onchange="onClientAreaDetailChange(this.value)"
+                    style="background:var(--card);border:1px solid var(--border);border-radius:5px;padding:3px 8px;color:var(--text);font-size:12px">
+                    <option value="summary">Summary — area, tonnes, total</option>
+                    <option value="detailed">Detailed — full per-category</option>
+                  </select>
+                </div>
+              </div>
+
+              <hr class="divider">
 
               <!-- IDEA 6: Scenario slider -->
               <div style="margin:8px 0">
@@ -5359,6 +5381,7 @@ async function newQuote() {
     surveyParking: 0, ralColour: '', ralFinish: 'tbc',
     purlinM: 0, purlinRate: 0,
     margin: 20, showDeposit: false, depositPct: 60,
+    showAreaPdf: false, clientAreaDetail: 'summary',
     standardLines: getDefaultStandardLines(),
     customLines: [],
     galvanizer: 'premier_corby',
@@ -5856,6 +5879,14 @@ function loadQuoteEditor() {
   document.getElementById('marginSlider').value     = q.margin ?? 20;
   document.getElementById('showDeposit').checked    = q.showDeposit || false;
   document.getElementById('depositPct').value       = q.depositPct || 60;
+  const _sap = document.getElementById('showAreaPdf');
+  if (_sap) {
+    _sap.checked = q.showAreaPdf || false;
+    const _sec = document.getElementById('areaPdfDetailSection');
+    if (_sec) _sec.style.display = _sap.checked ? '' : 'none';
+  }
+  const _cad = document.getElementById('clientAreaDetail');
+  if (_cad) _cad.value = (q.clientAreaDetail === 'detailed') ? 'detailed' : 'summary';
 
   renderLabourRows();
   renderPlantRows();
@@ -7894,6 +7925,21 @@ function onAreaPricingToggle() {
   saveAll();
   renderAreaBreakdown();
   renderAreaSelectors();
+}
+
+function onShowAreaPdfToggle() {
+  const q = getQuote(); if (!q) return;
+  const on = document.getElementById('showAreaPdf')?.checked || false;
+  q.showAreaPdf = on;
+  const sec = document.getElementById('areaPdfDetailSection');
+  if (sec) sec.style.display = on ? '' : 'none';
+  saveAll();
+}
+
+function onClientAreaDetailChange(v) {
+  const q = getQuote(); if (!q) return;
+  q.clientAreaDetail = (v === 'detailed') ? 'detailed' : 'summary';
+  saveAll();
 }
 
 // List of {id,name} area buckets, including a trailing 'Unspecified' if any
@@ -12501,6 +12547,148 @@ function buildTcHtml(q) {
 // ── Client-facing steel takeoff table (Section Profile | Length | Qty | Total Kg) ──
 // Only rendered when the quote has takeoff rows with a section type.
 // No pricing is shown — client sees material schedule only.
+// ── Per-area pricing tables for PDFs (Phase 3) ───────────────────────────
+// Returns '' when area pricing is off or no areas — callers can concatenate freely.
+function buildInternalAreaTableHtml(q) {
+  if (!q || q.pricingMode !== 'area') return '';
+  const bd = computeAreaBreakdown(q);
+  if (!bd.rows.length) return '';
+
+  const th = 'padding:7px 8px;border-bottom:2px solid #333;text-align:right;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:#555';
+  const thL = th.replace('text-align:right', 'text-align:left');
+  const td = 'padding:6px 8px;border-bottom:1px solid #eee;text-align:right;font-family:monospace;font-size:11px';
+  const tdL = 'padding:6px 8px;border-bottom:1px solid #eee;text-align:left;font-size:11px';
+
+  const body = bd.rows.map(r => `<tr>
+      <td style="${tdL}"><strong>${escHtml(r.name)}</strong><br><span style="color:#999;font-size:10px">${(r.kg/1000).toFixed(2)} t</span></td>
+      <td style="${td}">${fmtGBP(r.material)}</td>
+      <td style="${td}">${fmtGBP(r.cats.installation)}</td>
+      <td style="${td}">${fmtGBP(r.cats.fabrication)}</td>
+      <td style="${td}">${fmtGBP(r.cats.design)}</td>
+      <td style="${td}">${fmtGBP(r.cats.painting + r.cats.galvanising)}</td>
+      <td style="${td};color:#888">${fmtGBP(r.jobwide)}</td>
+      <td style="${td};color:#888">${fmtGBP(r.margin)}</td>
+      <td style="${td};font-weight:700;color:#D0021B">${fmtGBP(r.total)}</td>
+    </tr>`).join('');
+
+  const g = bd.grand;
+  const finishGrand = bd.rows.reduce((s,r) => s + r.cats.painting + r.cats.galvanising, 0);
+  const instGrand   = bd.rows.reduce((s,r) => s + r.cats.installation, 0);
+  const fabGrand    = bd.rows.reduce((s,r) => s + r.cats.fabrication, 0);
+  const desGrand    = bd.rows.reduce((s,r) => s + r.cats.design, 0);
+  const jwGrand     = bd.rows.reduce((s,r) => s + r.jobwide, 0);
+
+  return `<div style="margin-top:22px;page-break-inside:avoid">
+    <h3 style="font-size:13px;margin:0 0 8px;color:#333">Per-Area Cost Breakdown</h3>
+    <table style="width:100%;border-collapse:collapse">
+      <thead><tr>
+        <th style="${thL}">Area</th>
+        <th style="${th}">Material</th><th style="${th}">Install</th><th style="${th}">Fab</th>
+        <th style="${th}">Design</th><th style="${th}">Finishing</th><th style="${th}">Job-wide</th>
+        <th style="${th}">Margin</th><th style="${th}">Total</th>
+      </tr></thead>
+      <tbody>${body}</tbody>
+      <tfoot><tr style="border-top:2px solid #333">
+        <td style="${tdL};font-weight:700">Total<br><span style="color:#999;font-size:10px;font-weight:400">${(g.kg/1000).toFixed(2)} t</span></td>
+        <td style="${td};font-weight:700">${fmtGBP(g.material)}</td>
+        <td style="${td};font-weight:700">${fmtGBP(instGrand)}</td>
+        <td style="${td};font-weight:700">${fmtGBP(fabGrand)}</td>
+        <td style="${td};font-weight:700">${fmtGBP(desGrand)}</td>
+        <td style="${td};font-weight:700">${fmtGBP(finishGrand)}</td>
+        <td style="${td};font-weight:700;color:#888">${fmtGBP(jwGrand)}</td>
+        <td style="${td};font-weight:700;color:#888">${fmtGBP(g.margin)}</td>
+        <td style="${td};font-weight:700;color:#D0021B">${fmtGBP(g.total)}</td>
+      </tr></tfoot>
+    </table>
+    <div style="font-size:9px;color:#999;margin-top:6px;line-height:1.5">
+      Finishing = painting + galvanising. Job-wide = survey, delivery, prelims, purlins (split by tonnage).
+      ${bd.mode === 'float' ? 'Float mode: per-area edits move the job total.' : 'Fixed mode: per-area edits rebalance other areas; job total held.'}
+    </div>
+  </div>`;
+}
+
+function buildClientAreaTableHtml(q) {
+  if (!q || q.pricingMode !== 'area' || !q.showAreaPdf) return '';
+  const bd = computeAreaBreakdown(q);
+  if (!bd.rows.length) return '';
+  const detailed = q.clientAreaDetail === 'detailed';
+
+  // Per-area cost subtotal × margin = sell price (mirrors buildClientLines pro-rata).
+  const marginMult = 1 + (bd.marginPct / 100);
+  const sell = v => Math.round(v * marginMult * 100) / 100;
+
+  const th = 'padding:8px 10px;border-bottom:2px solid #ccc;text-align:right;font-size:11px;color:#555';
+  const thL = th.replace('text-align:right', 'text-align:left');
+  const td = 'padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right;font-family:monospace;font-size:12px';
+  const tdL = 'padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:left;font-size:12px';
+
+  if (!detailed) {
+    // Summary: area, tonnes, total sell price.
+    const body = bd.rows.map(r => `<tr>
+        <td style="${tdL}"><strong>${escHtml(r.name)}</strong></td>
+        <td style="${td};color:#777">${(r.kg/1000).toFixed(2)} t</td>
+        <td style="${td};font-weight:700">${fmtGBP(r.total)}</td>
+      </tr>`).join('');
+    return `<div style="margin-top:22px;page-break-inside:avoid">
+      <h3 style="font-size:13px;margin:0 0 8px;color:#333">Price by Area</h3>
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr><th style="${thL}">Area</th><th style="${th}">Tonnes</th><th style="${th}">Price</th></tr></thead>
+        <tbody>${body}</tbody>
+        <tfoot><tr style="border-top:2px solid #333">
+          <td style="${tdL};font-weight:700">Total</td>
+          <td style="${td};font-weight:700;color:#777">${(bd.grand.kg/1000).toFixed(2)} t</td>
+          <td style="${td};font-weight:700">${fmtGBP(bd.grand.total)}</td>
+        </tr></tfoot>
+      </table>
+      <div style="font-size:9px;color:#999;margin-top:6px">Prices exclusive of VAT.</div>
+    </div>`;
+  }
+
+  // Detailed: per-area sell prices by client-facing category (post-margin).
+  const body = bd.rows.map(r => {
+    const mat = sell(r.material), inst = sell(r.cats.installation), fab = sell(r.cats.fabrication);
+    const des = sell(r.cats.design), fin = sell(r.cats.painting + r.cats.galvanising), jw = sell(r.jobwide);
+    return `<tr>
+      <td style="${tdL}"><strong>${escHtml(r.name)}</strong><br><span style="color:#999;font-size:10px">${(r.kg/1000).toFixed(2)} t</span></td>
+      <td style="${td}">${fmtGBP(mat)}</td>
+      <td style="${td}">${fmtGBP(inst)}</td>
+      <td style="${td}">${fmtGBP(fab)}</td>
+      <td style="${td}">${fmtGBP(des)}</td>
+      <td style="${td}">${fmtGBP(fin)}</td>
+      <td style="${td}">${fmtGBP(jw)}</td>
+      <td style="${td};font-weight:700">${fmtGBP(r.total)}</td>
+    </tr>`;
+  }).join('');
+  const gMat = sell(bd.grand.material);
+  const gInst = sell(bd.rows.reduce((s,r)=>s+r.cats.installation,0));
+  const gFab = sell(bd.rows.reduce((s,r)=>s+r.cats.fabrication,0));
+  const gDes = sell(bd.rows.reduce((s,r)=>s+r.cats.design,0));
+  const gFin = sell(bd.rows.reduce((s,r)=>s+r.cats.painting+r.cats.galvanising,0));
+  const gJw  = sell(bd.rows.reduce((s,r)=>s+r.jobwide,0));
+  return `<div style="margin-top:22px;page-break-inside:avoid">
+    <h3 style="font-size:13px;margin:0 0 8px;color:#333">Price by Area</h3>
+    <table style="width:100%;border-collapse:collapse">
+      <thead><tr>
+        <th style="${thL}">Area</th><th style="${th}">Material</th><th style="${th}">Install</th>
+        <th style="${th}">Fabrication</th><th style="${th}">Design</th><th style="${th}">Finishing</th>
+        <th style="${th}">Delivery/Prelims</th><th style="${th}">Total</th>
+      </tr></thead>
+      <tbody>${body}</tbody>
+      <tfoot><tr style="border-top:2px solid #333">
+        <td style="${tdL};font-weight:700">Total</td>
+        <td style="${td};font-weight:700">${fmtGBP(gMat)}</td>
+        <td style="${td};font-weight:700">${fmtGBP(gInst)}</td>
+        <td style="${td};font-weight:700">${fmtGBP(gFab)}</td>
+        <td style="${td};font-weight:700">${fmtGBP(gDes)}</td>
+        <td style="${td};font-weight:700">${fmtGBP(gFin)}</td>
+        <td style="${td};font-weight:700">${fmtGBP(gJw)}</td>
+        <td style="${td};font-weight:700">${fmtGBP(bd.grand.total)}</td>
+      </tr></tfoot>
+    </table>
+    <div style="font-size:9px;color:#999;margin-top:6px">All prices exclusive of VAT. Per-area prices are inclusive of margin.</div>
+  </div>`;
+}
+
 function buildClientTakeoffHtml(q) {
   const rows = (q.takeoff || []).filter(r => r.type);
   if (!rows.length) return '';
@@ -12678,6 +12866,7 @@ function generateQuotePDF(mode = 'quote') {
         <div style="padding:6px 10px;font-size:10px;color:#888">All prices are exclusive of VAT</div>
       </div>
       ${buildClientTakeoffHtml(q)}
+      ${buildClientAreaTableHtml(q)}
       <div class="doc-footer">
         <div class="footer-note">If you have any questions concerning this quotation, please contact:<br>
           <a href="mailto:info@bamafabrication.co.uk">info@bamafabrication.co.uk</a><br><br>Thank you for your business!
@@ -12883,6 +13072,8 @@ function generateQuotePDF(mode = 'quote') {
         ${totalKg > 0 ? `<div class="bd-meta">Cost per kg: £${(subtotal/totalKg).toFixed(2)}/kg net &nbsp;·&nbsp; £${(total/totalKg).toFixed(2)}/kg sell</div>` : ''}
       </div>
     </div>
+
+    ${buildInternalAreaTableHtml(q)}
 
     ${tkRows ? `
     <!-- Steel Takeoff -->
@@ -14040,6 +14231,8 @@ function generateHandoverPack() {
     </div>
   </div>
 
+  ${q.pricingMode === 'area' ? `<div class="section">${buildInternalAreaTableHtml(q)}</div>` : ''}
+
   <!-- T&Cs / Exclusions / Clarifications (same format as client quote) -->
   ${buildTcHtml(q)}
 
@@ -14899,6 +15092,8 @@ async function qqSaveAsDraft() {
         surveyParking: 0, ralColour: '', ralFinish: 'tbc',
         purlinM: 0, purlinRate: 0,
         margin: 20, showDeposit: false, depositPct: 60,
+        showAreaPdf: false, clientAreaDetail: 'summary',
+    showAreaPdf: false, clientAreaDetail: 'summary',
         standardLines: getDefaultStandardLines(),
         customLines: []
       };
