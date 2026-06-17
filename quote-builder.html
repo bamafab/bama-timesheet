@@ -12226,6 +12226,60 @@ function buildTcHtml(q) {
     </div>`;
 }
 
+// ── Client-facing steel takeoff table (Section Profile | Length | Qty | Total Kg) ──
+// Only rendered when the quote has takeoff rows with a section type.
+// No pricing is shown — client sees material schedule only.
+function buildClientTakeoffHtml(q) {
+  const rows = (q.takeoff || []).filter(r => r.type);
+  if (!rows.length) return '';
+
+  const tdS = 'padding:6px 10px;border-bottom:1px solid #e5e7eb;font-family:monospace;font-size:11px';
+  const tdR = 'padding:6px 10px;border-bottom:1px solid #e5e7eb;text-align:right;font-size:11px';
+
+  let tkRows = '';
+  let totalKgSum = 0;
+
+  rows.forEach(r => {
+    const isEA = r._unit === 'EA';
+    const lengthStr = isEA ? '—' : (r.length ? r.length.toLocaleString('en-GB') + ' mm' : '—');
+    const kg = isEA ? 0 : (r.length / 1000) * (r.kgm || 0) * (r.qty || 1);
+    totalKgSum += kg;
+    const kgStr = kg > 0 ? kg.toFixed(1) : '—';
+    tkRows += `<tr>
+      <td style="${tdS}">${escHtml(r.type)}</td>
+      <td style="${tdR}">${lengthStr}</td>
+      <td style="${tdR}">${r.qty || 1}</td>
+      <td style="${tdR}">${kgStr}${kg > 0 ? ' kg' : ''}</td>
+    </tr>`;
+  });
+
+  const totalStr = totalKgSum > 0 ? totalKgSum.toFixed(1) + ' kg' : '—';
+
+  return `
+    <div style="margin-top:24px;page-break-inside:avoid">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:#555;margin-bottom:6px;padding-bottom:4px;border-bottom:2px solid #D0021B">
+        Steel Section Schedule
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:11px">
+        <thead>
+          <tr style="background:#f3f4f6">
+            <th style="padding:6px 10px;text-align:left;font-size:10px;font-weight:700;color:#374151;border-bottom:2px solid #d1d5db;text-transform:uppercase;letter-spacing:0.04em">Section Profile</th>
+            <th style="padding:6px 10px;text-align:right;font-size:10px;font-weight:700;color:#374151;border-bottom:2px solid #d1d5db;text-transform:uppercase;letter-spacing:0.04em">Length</th>
+            <th style="padding:6px 10px;text-align:right;font-size:10px;font-weight:700;color:#374151;border-bottom:2px solid #d1d5db;text-transform:uppercase;letter-spacing:0.04em">Qty</th>
+            <th style="padding:6px 10px;text-align:right;font-size:10px;font-weight:700;color:#374151;border-bottom:2px solid #d1d5db;text-transform:uppercase;letter-spacing:0.04em">Total Kg</th>
+          </tr>
+        </thead>
+        <tbody>${tkRows}</tbody>
+        <tfoot>
+          <tr style="background:#f9fafb">
+            <td colspan="3" style="padding:7px 10px;font-weight:700;font-size:11px;color:#1a1a2e;border-top:2px solid #d1d5db">Total Steel Weight</td>
+            <td style="padding:7px 10px;text-align:right;font-weight:700;font-size:11px;font-family:monospace;color:#1a1a2e;border-top:2px solid #d1d5db">${totalStr}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>`;
+}
+
 function generateQuotePDF(mode = 'quote') {
   const q = getQuote();
   if (!q) { toast('No quote selected', 'error'); return; }
@@ -12335,6 +12389,7 @@ function generateQuotePDF(mode = 'quote') {
         <div class="total-row grand"><span>TOTAL</span><span class="val">${fmtGBP(grandTotal)}</span></div>
         <div style="padding:6px 10px;font-size:10px;color:#888">All prices are exclusive of VAT</div>
       </div>
+      ${buildClientTakeoffHtml(q)}
       <div class="doc-footer">
         <div class="footer-note">If you have any questions concerning this quotation, please contact:<br>
           <a href="mailto:info@bamafabrication.co.uk">info@bamafabrication.co.uk</a><br><br>Thank you for your business!
@@ -12742,7 +12797,8 @@ async function renderQuotePdfToBase64(q) {
     </table>`;
 
   const tcHtml = buildTcHtml ? buildTcHtml(q) : '';
-  const fullHtml = buildPdfPage(`Quotation ${escHtml(q.ref)}${revStr}`, docHeader + priceTable + tcHtml);
+  const takeoffHtml = typeof buildClientTakeoffHtml === 'function' ? buildClientTakeoffHtml(q) : '';
+  const fullHtml = buildPdfPage(`Quotation ${escHtml(q.ref)}${revStr}`, docHeader + priceTable + takeoffHtml + tcHtml);
 
   // Render to PDF blob via html2pdf.js
   const container = document.createElement('div');
