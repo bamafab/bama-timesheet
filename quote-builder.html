@@ -5883,23 +5883,31 @@ function renderSidebar() {
     return Math.round((dt - today) / 86400000);
   };
   const isSettled = (q) => q.status === 'won' || q.status === 'lost';
+  // The date that matters depends on lifecycle stage:
+  //  - draft/open: the SUBMIT deadline (decisionDue) — passed = genuinely overdue.
+  //  - sent: the submit date has normally already passed and is meaningless;
+  //          follow-up is governed by the CHASE date (chasingDate).
+  //  - won/lost: settled.
+  const relevantDate = (q) => q.status === 'sent' ? q.chasingDate : q.decisionDue;
   // urgency rank: lower = more urgent. Settled quotes pushed far down.
   const urgencyRank = (q) => {
     if (isSettled(q)) return 1e9;
-    const du = daysUntil(q.decisionDue);
-    if (du === null) return 1e8;       // active but no deadline → above settled, below dated
+    const du = daysUntil(relevantDate(q));
+    if (du === null) return 1e8;       // active but no relevant date → above settled, below dated
     return du;                          // overdue (negative) floats to top
   };
   // visual marker per quote
   const marker = (q) => {
     if (isSettled(q)) return { dot: q.status === 'won' ? '#22c55e' : '#ef4444', label: '' };
-    const du = daysUntil(q.decisionDue);
+    const sent = q.status === 'sent';
+    const du = daysUntil(relevantDate(q));
     if (du === null) return { dot: 'transparent', label: '' };
-    if (du < 0)  return { dot: '#ef4444', label: `${Math.abs(du)}d overdue` };
-    if (du === 0) return { dot: '#ef4444', label: 'due today' };
-    if (du <= 3) return { dot: '#f59e0b', label: `due in ${du}d` };
-    if (du <= 7) return { dot: '#eab308', label: `due in ${du}d` };
-    return { dot: '#3b82f6', label: `due in ${du}d` };
+    // For sent quotes the label refers to the chase, not a submit deadline.
+    if (du < 0)   return { dot: '#ef4444', label: sent ? `chase ${Math.abs(du)}d late` : `${Math.abs(du)}d overdue` };
+    if (du === 0) return { dot: '#ef4444', label: sent ? 'chase today' : 'due today' };
+    if (du <= 3)  return { dot: '#f59e0b', label: sent ? `chase in ${du}d` : `due in ${du}d` };
+    if (du <= 7)  return { dot: '#eab308', label: sent ? `chase in ${du}d` : `due in ${du}d` };
+    return { dot: '#3b82f6', label: sent ? `chase in ${du}d` : `due in ${du}d` };
   };
 
   // ── Sort ───────────────────────────────────────────────────

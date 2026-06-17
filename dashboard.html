@@ -274,7 +274,7 @@
   /* Stats row */
   .stats-row {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     gap: 12px;
     margin-bottom: 20px;
   }
@@ -1349,6 +1349,20 @@ function updateStats() {
   document.getElementById('statWinSub').textContent = won.length + ' won / ' + decided.length + ' decided';
   document.getElementById('statPipeline').textContent = fmtGBP(pipeline);
   document.getElementById('statDueWeek').textContent = dueThisWeek.length;
+  // New Tenders count is driven by live tender data on EVERY load — never
+  // coupled to the AI briefing cache (which only regenerates once per day).
+  updateNewTendersStat();
+}
+
+// Set the New Tenders tile from live _trTenders. Loads them if not yet present.
+async function updateNewTendersStat() {
+  const statEl = document.getElementById('statNewTenders');
+  if (!statEl) return;
+  if (!_trTenders.length) {
+    try { await loadTenderRegister(); } catch { /* leave as-is on failure */ }
+  }
+  const n = _trTenders.filter(t => (t.effStatus || t.status) === 'New').length;
+  statEl.textContent = n;
 }
 
 // ─── Quote detail ─────────────────────────────────────────
@@ -1852,7 +1866,7 @@ async function generateBriefing() {
   if (!allQuotes.length) return;
   // Load tenders if not already loaded
   if (!_trTenders.length) await loadTenderRegister().catch(() => {});
-  const newTendersCount = _trTenders.filter(t => t.status === 'New').length;
+  const newTendersCount = _trTenders.filter(t => (t.effStatus || t.status) === 'New').length;
   const statEl = document.getElementById('statNewTenders');
   if (statEl) statEl.textContent = newTendersCount;
 
