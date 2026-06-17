@@ -8016,6 +8016,10 @@ function renderAreaBreakdown() {
   wrap.style.display = '';
   wrap.innerHTML = html;
 
+  // The innerHTML above inserts a fresh, empty .area-active-select; populate it
+  // (the earlier renderAreaSelectors ran before this element existed).
+  renderAreaSelectors();
+
   // Keep an open drawer in sync after a recompute.
   if (q.activeAreaId && document.getElementById('areaDrawer')?.classList.contains('open')) renderAreaDrawer();
 }
