@@ -2841,6 +2841,115 @@ function toggleTrContactFields() {
   document.getElementById('trContactFields').style.display = skip ? 'none' : '';
 }
 
+// ── Smart client matching / creation ──────────────────────────
+// Normalise a company name for comparison: lowercase, drop punctuation,
+// spaces and common legal/descriptor suffixes.
+function trNormaliseClient(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .replace(/\b(ltd|limited|plc|llp|inc|co|company|construction|constructions|contractors?|group|holdings?|services?|engineering|builders?|building|projects?|developments?|uk)\b/g, ' ')
+    .replace(/\s+/g, '')
+    .trim();
+}
+
+// Levenshtein distance → similarity ratio 0..1
+function trSimilarity(a, b) {
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, (_, i) => [i, ...Array(n).fill(0)]);
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++)
+      dp[i][j] = Math.min(
+        dp[i-1][j] + 1,
+        dp[i][j-1] + 1,
+        dp[i-1][j-1] + (a[i-1] === b[j-1] ? 0 : 1)
+      );
+  return 1 - dp[m][n] / Math.max(m, n);
+}
+
+// Returns the canonical client name to store, or null to abort the save.
+// Handles: exact match (silent reuse), close match (confirm reuse vs create),
+// no match (confirm create new). Creates the client + contact when needed.
+async function trResolveClient(typed) {
+  await trLoadClientBook();
+  const normTyped = trNormaliseClient(typed);
+  if (!normTyped) return typed; // nothing meaningful to match
+
+  // 1. Exact normalised match → reuse silently.
+  const exact = _trClientBook.find(c => trNormaliseClient(c.company_name) === normTyped);
+  if (exact) return exact.company_name;
+
+  // 2. Score all clients; surface the best close match.
+  let best = null, bestScore = 0;
+  for (const c of _trClientBook) {
+    const normC = trNormaliseClient(c.company_name);
+    let score = trSimilarity(normTyped, normC);
+    // boost when one normalised name contains the other (e.g. rgcarter ⊂ rgcarterconstruction)
+    if (normC && normTyped && (normC.includes(normTyped) || normTyped.includes(normC))) {
+      score = Math.max(score, 0.9);
+    }
+    if (score > bestScore) { bestScore = score; best = c; }
+  }
+
+  if (best && bestScore >= 0.72) {
+    const useExisting = await bamaConfirm(
+      `Did you mean "${best.company_name}"?\n\nConfirm to use the existing client. Cancel to create "${typed}" as a brand-new client.`,
+      'Possible existing client'
+    );
+    if (useExisting) return best.company_name;
+  } else {
+    const create = await bamaConfirm(
+      `"${typed}" isn't in the client list yet. Add it as a new client?`,
+      'New client'
+    );
+    if (!create) return null; // user cancelled the whole save
+  }
+
+  // 3. Create the new client, then push to the local book.
+  try {
+    const created = await trFetch('/api/clients', {
+      method: 'POST',
+      body: JSON.stringify({
+        company_name:  typed,
+        contact_name:  document.getElementById('trNewContactName').value.trim()  || null,
+        contact_email: document.getElementById('trNewContactEmail').value.trim() || null,
+        contact_phone: document.getElementById('trNewContactPhone').value.trim() || null
+      })
+    });
+    const newClient = created?.recordset?.[0] || created;
+    if (newClient && newClient.company_name) {
+      _trClientBook.push(newClient);
+      // Save contact to ClientContacts too (API auto-dedupes).
+      if (newClient.id && !document.getElementById('trNewSkipContact').checked) {
+        const cn = document.getElementById('trNewContactName').value.trim();
+        const ce = document.getElementById('trNewContactEmail').value.trim();
+        const cp = document.getElementById('trNewContactPhone').value.trim();
+        if (cn || ce || cp) {
+          try {
+            await trFetch('/api/client-contacts', {
+              method: 'POST',
+              body: JSON.stringify({
+                client_id: newClient.id, contact_name: cn || null,
+                contact_email: ce || null, contact_phone: cp || null,
+                role: document.getElementById('trNewContactTitle').value.trim() || null
+              })
+            });
+          } catch (e) { console.warn('Contact save failed:', e); }
+        }
+      }
+      return newClient.company_name;
+    }
+  } catch (e) {
+    bamaAlert('Could not save the new client: ' + e.message, 'Client save failed');
+    return null;
+  }
+  return typed;
+}
+
 async function submitNewTender() {
   const ref     = document.getElementById('trNewRef').value;
   const client  = document.getElementById('trNewClient').value.trim();
@@ -2852,13 +2961,21 @@ async function submitNewTender() {
   if (!project)  { bamaAlert("Ops, you haven't entered a project name… Mateusz won't be happy! 😄", 'Missing info'); return; }
   if (!assigned) { bamaAlert('Please select who this is assigned to.', 'Missing info'); return; }
 
+  // Resolve client against the client book (skip on edit — client already set).
+  let resolvedClient = client;
+  if (!_trEditId) {
+    resolvedClient = await trResolveClient(client);
+    if (resolvedClient === null) return; // user cancelled new-client creation
+    document.getElementById('trNewClient').value = resolvedClient;
+  }
+
   const btn = document.getElementById('trNewSubmitBtn');
   btn.disabled = true; btn.textContent = 'Registering…';
 
   try {
     const payload = {
       reference:         ref,
-      client,
+      client:            resolvedClient,
       project,
       assigned_to:       assigned,
       deadline:          document.getElementById('trNewDeadline').value || null,
