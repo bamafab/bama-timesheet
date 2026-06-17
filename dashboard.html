@@ -2571,10 +2571,33 @@ function trClientInput(val) {
 
 let _trContactsCache = {};
 
+function trSetAddress(c, fromExisting) {
+  document.getElementById('trAddrLine1').value    = (c && c.address_line1) || '';
+  document.getElementById('trAddrLine2').value    = (c && c.address_line2) || '';
+  document.getElementById('trAddrCity').value     = (c && c.city) || '';
+  document.getElementById('trAddrCounty').value   = (c && c.county) || '';
+  document.getElementById('trAddrPostcode').value = (c && c.postcode) || '';
+  const note = document.getElementById('trAddrAutofillNote');
+  if (note) note.style.display = fromExisting ? 'block' : 'none';
+}
+function trClearAddress() {
+  trSetAddress(null, false);
+}
+function trReadAddress() {
+  return {
+    address_line1: document.getElementById('trAddrLine1').value.trim(),
+    address_line2: document.getElementById('trAddrLine2').value.trim(),
+    city:          document.getElementById('trAddrCity').value.trim(),
+    county:        document.getElementById('trAddrCounty').value.trim(),
+    postcode:      document.getElementById('trAddrPostcode').value.trim()
+  };
+}
+
 function trFillClient(company) {
   const c = _trClientBook.find(x => x.company_name === company);
   if (!c) return;
   document.getElementById('trNewClient').value = c.company_name;
+  trSetAddress(c, true);
   trCloseClientDD();
   if (!document.getElementById('trNewSkipContact').checked) {
     trLoadContacts(c.id);
@@ -2818,6 +2841,7 @@ async function openNewTenderModal() {
   document.getElementById('trContactSelectWrap').style.display = 'none';
   document.getElementById('trContactSelect').innerHTML = '<option value="">— or enter manually below —</option>';
   document.getElementById('trNewAssigned').value = '';
+  trClearAddress();
 
   const modal = document.getElementById('trNewModal');
   modal.style.display = 'flex';
@@ -2840,6 +2864,9 @@ async function openEditTenderModal(id) {
 
   document.getElementById('trNewRef').value      = t.reference || '';
   document.getElementById('trNewClient').value   = t.client || '';
+  // Address comes from the linked client record
+  const editClient = _trClientBook.find(c => c.company_name === t.client);
+  trSetAddress(editClient || null, !!editClient);
   document.getElementById('trNewProject').value  = t.project || '';
   document.getElementById('trNewDeadline').value = t.deadline ? String(t.deadline).slice(0,10) : '';
   document.getElementById('trNewNotes').value    = t.notes || '';
@@ -2943,10 +2970,16 @@ async function trResolveClient(typed) {
 
   // 3. Create the new client, then push to the local book.
   try {
+    const addr = trReadAddress();
     const created = await trFetch('/api/clients', {
       method: 'POST',
       body: JSON.stringify({
         company_name:  typed,
+        address_line1: addr.address_line1 || null,
+        address_line2: addr.address_line2 || null,
+        city:          addr.city          || null,
+        county:        addr.county        || null,
+        postcode:      addr.postcode      || null,
         contact_name:  document.getElementById('trNewContactName').value.trim()  || null,
         contact_email: document.getElementById('trNewContactEmail').value.trim() || null,
         contact_phone: document.getElementById('trNewContactPhone').value.trim() || null
@@ -2999,6 +3032,22 @@ async function submitNewTender() {
     resolvedClient = await trResolveClient(client);
     if (resolvedClient === null) return; // user cancelled new-client creation
     document.getElementById('trNewClient').value = resolvedClient;
+    // If an existing client was picked and its address was edited, sync it back.
+    const existingClient = _trClientBook.find(c => c.company_name === resolvedClient);
+    if (existingClient && existingClient.id) {
+      const addr = trReadAddress();
+      const changed = (existingClient.address_line1||'') !== addr.address_line1
+        || (existingClient.address_line2||'') !== addr.address_line2
+        || (existingClient.city||'')          !== addr.city
+        || (existingClient.county||'')        !== addr.county
+        || (existingClient.postcode||'')      !== addr.postcode;
+      if (changed && (addr.address_line1 || addr.city || addr.postcode)) {
+        try {
+          await trFetch(`/api/clients/${existingClient.id}`, { method: 'PUT', body: JSON.stringify(addr) });
+          Object.assign(existingClient, addr); // keep local book in sync
+        } catch (e) { console.warn('Client address update failed:', e); }
+      }
+    }
   }
 
   const btn = document.getElementById('trNewSubmitBtn');
@@ -3081,6 +3130,13 @@ async function trOpenInQB(tenderId) {
   if (!await bamaConfirm(`Create QB quote for ${t.reference} — ${t.client}?`, 'Open in QB')) return;
 
   try {
+    // Look up the client's structured address from the client book to pre-fill QB.
+    await trLoadClientBook();
+    const cb = _trClientBook.find(c => c.company_name === t.client) || {};
+    const addrParts = [cb.address_line1, cb.address_line2, cb.city, cb.county, cb.postcode]
+      .map(s => (s || '').trim()).filter(Boolean);
+    const clientAddress = addrParts.join('\n');
+
     // Create QB quote with tender data pre-filled
     const qbPayload = {
       reference:   t.reference,
@@ -3091,7 +3147,20 @@ async function trOpenInQB(tenderId) {
       prepared_by: t.assigned_to || '',
       status:      'draft',
       date_created: new Date().toISOString().slice(0,10),
-      quote_data:  JSON.stringify({ name: t.project, company: t.client })
+      decision_due: t.deadline ? String(t.deadline).slice(0,10) : null,
+      quote_data:  JSON.stringify({
+        name: t.project,
+        company: t.client,
+        clientAddress,
+        clientAddressParts: {
+          address_line1: cb.address_line1 || '',
+          address_line2: cb.address_line2 || '',
+          city:          cb.city || '',
+          county:        cb.county || '',
+          postcode:      cb.postcode || ''
+        },
+        decisionDue: t.deadline ? String(t.deadline).slice(0,10) : ''
+      })
     };
 
     const qbRes = await trFetch('/api/qb-quotes', { method: 'POST', body: JSON.stringify(qbPayload) });
@@ -3371,6 +3440,34 @@ async function trResendNotify(tenderId) {
           <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Project <span style="color:var(--red)">*</span></label>
           <input id="trNewProject" type="text" placeholder="e.g. Structural Steel Frame" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-size:13px;box-sizing:border-box">
         </div>
+      </div>
+
+      <!-- Client Address (structured — autofills for existing clients, saves to client DB for new ones) -->
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;margin-bottom:14px">
+        <div style="font-size:12px;font-weight:600;color:var(--muted);letter-spacing:1px;margin-bottom:10px">CLIENT ADDRESS</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div style="grid-column:1 / -1">
+            <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:3px">Address Line 1</label>
+            <input id="trAddrLine1" type="text" placeholder="e.g. Unit 4, Imperial Park" style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:13px;box-sizing:border-box">
+          </div>
+          <div style="grid-column:1 / -1">
+            <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:3px">Address Line 2</label>
+            <input id="trAddrLine2" type="text" placeholder="(optional)" style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:13px;box-sizing:border-box">
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:3px">City / Town</label>
+            <input id="trAddrCity" type="text" placeholder="e.g. Newport" style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:13px;box-sizing:border-box">
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:3px">County</label>
+            <input id="trAddrCounty" type="text" placeholder="(optional)" style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:13px;box-sizing:border-box">
+          </div>
+          <div>
+            <label style="font-size:11px;color:var(--muted);display:block;margin-bottom:3px">Postcode</label>
+            <input id="trAddrPostcode" type="text" placeholder="e.g. NP10 8UH" style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:13px;box-sizing:border-box">
+          </div>
+        </div>
+        <div id="trAddrAutofillNote" style="display:none;font-size:11px;color:var(--accent);margin-top:8px">↳ Filled from existing client record — edit if it has changed.</div>
       </div>
 
       <!-- Assigned + Deadline -->

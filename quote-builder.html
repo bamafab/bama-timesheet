@@ -462,9 +462,30 @@ tr.drag-dragging { opacity:0.35; }
               </div>
               <!-- Client address -->
               <div class="field">
-                <label>Client Address</label>
+                <label style="display:flex;justify-content:space-between;align-items:center">
+                  Client Address
+                  <button type="button" class="btn btn-ghost btn-sm" id="hAddrEditToggle" onclick="qbToggleAddressEditor()"
+                    style="font-size:10px;padding:2px 8px">✎ Edit fields</button>
+                </label>
+                <!-- Single readable view (default) -->
                 <textarea id="hClientAddress" rows="3" placeholder="Address line 1&#10;City&#10;Postcode" oninput="autosave();showClientSave()"
                   style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%;resize:vertical;font-family:inherit"></textarea>
+                <!-- Structured 5-row editor (hidden until toggled) -->
+                <div id="hAddrFields" style="display:none;flex-direction:column;gap:8px">
+                  <input id="hAddrLine1" type="text" placeholder="Address Line 1" oninput="qbOnAddrFieldInput()"
+                    style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%">
+                  <input id="hAddrLine2" type="text" placeholder="Address Line 2 (optional)" oninput="qbOnAddrFieldInput()"
+                    style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%">
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+                    <input id="hAddrCity" type="text" placeholder="City / Town" oninput="qbOnAddrFieldInput()"
+                      style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%">
+                    <input id="hAddrCounty" type="text" placeholder="County (optional)" oninput="qbOnAddrFieldInput()"
+                      style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%">
+                  </div>
+                  <input id="hAddrPostcode" type="text" placeholder="Postcode" oninput="qbOnAddrFieldInput()"
+                    style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%">
+                  <div style="font-size:11px;color:var(--subtle)">Saved as structured fields — the address above updates to match.</div>
+                </div>
               </div>
               <!-- Contact person with dropdown -->
               <div class="field">
@@ -5448,6 +5469,13 @@ function autosave() {
   renderMaterialLinks();
   renderCalcsTemplateBtn();
   q.clientAddress = document.getElementById('hClientAddress')?.value || '';
+  // Keep the structured parts in sync with the editable address string.
+  // When the 5-row editor is open, its inputs are the source of truth;
+  // otherwise we preserve whatever parts the quote already carries.
+  if (typeof qbReadAddressParts === 'function') {
+    const parts = qbReadAddressParts();
+    if (parts) q.clientAddressParts = parts;
+  }
   q.contact    = document.getElementById('hContact')?.value || '';
   q.contactRole= document.getElementById('hContactRole')?.value || '';
   q.email      = document.getElementById('hEmail')?.value || '';
@@ -5711,6 +5739,105 @@ Current state will be saved as a new snapshot first.`;
 }
 
 // ============================================================
+// CLIENT ADDRESS — single readable view ↔ structured 5-field editor
+// ============================================================
+// The 5 structured parts are the source of truth (stored on
+// q.clientAddressParts). The single textarea (q.clientAddress) is always
+// derived from them, so the on-screen tile and PDFs render identically to
+// before. Editing the 5 rows regenerates the string live.
+let _qbAddrEditing = false;
+
+function qbAddrPartsToString(p, sep) {
+  return [p.address_line1, p.address_line2, p.city, p.county, p.postcode]
+    .map(s => (s || '').trim()).filter(Boolean).join(sep || '\n');
+}
+
+// Best-effort split of a legacy free-text address into parts (only used once,
+// when a quote has no structured parts yet). Splits on newlines first, commas next.
+function qbAddrStringToParts(str) {
+  const lines = String(str || '')
+    .split(/\n|,/).map(s => s.trim()).filter(Boolean);
+  return {
+    address_line1: lines[0] || '',
+    address_line2: lines.length > 4 ? (lines[1] || '') : '',
+    city:          lines.length > 4 ? (lines[2] || '') : (lines[1] || ''),
+    county:        lines.length > 4 ? (lines[3] || '') : '',
+    postcode:      lines.length ? (lines[lines.length - 1] === lines[0] ? '' : lines[lines.length - 1]) : ''
+  };
+}
+
+function qbGetAddressParts(q) {
+  if (q && q.clientAddressParts && typeof q.clientAddressParts === 'object') {
+    return { ...q.clientAddressParts };
+  }
+  // Legacy quote: derive parts from the existing string and persist them.
+  const parts = qbAddrStringToParts(q ? q.clientAddress : '');
+  if (q) q.clientAddressParts = parts;
+  return parts;
+}
+
+// Reset editor to collapsed view on quote load and ensure parts exist.
+function qbSyncAddressOnLoad(q) {
+  _qbAddrEditing = false;
+  const fields = document.getElementById('hAddrFields');
+  const ta     = document.getElementById('hClientAddress');
+  const toggle = document.getElementById('hAddrEditToggle');
+  if (fields) fields.style.display = 'none';
+  if (ta)     ta.style.display = '';
+  if (toggle) toggle.textContent = '✎ Edit fields';
+  // Make sure structured parts exist for this quote (derive from string if needed).
+  qbGetAddressParts(q);
+}
+
+function qbToggleAddressEditor() {
+  const q = getQuote(); if (!q) return;
+  _qbAddrEditing = !_qbAddrEditing;
+  const fields = document.getElementById('hAddrFields');
+  const ta     = document.getElementById('hClientAddress');
+  const toggle = document.getElementById('hAddrEditToggle');
+
+  if (_qbAddrEditing) {
+    const p = qbGetAddressParts(q);
+    document.getElementById('hAddrLine1').value    = p.address_line1 || '';
+    document.getElementById('hAddrLine2').value    = p.address_line2 || '';
+    document.getElementById('hAddrCity').value     = p.city || '';
+    document.getElementById('hAddrCounty').value   = p.county || '';
+    document.getElementById('hAddrPostcode').value = p.postcode || '';
+    fields.style.display = 'flex';
+    ta.style.display = 'none';
+    toggle.textContent = '✓ Done';
+  } else {
+    fields.style.display = 'none';
+    ta.style.display = '';
+    toggle.textContent = '✎ Edit fields';
+  }
+}
+
+// Returns the parts from the 5-row editor IF it is open, else null
+// (so autosave preserves existing parts when the editor isn't in use).
+function qbReadAddressParts() {
+  if (!_qbAddrEditing) return null;
+  return {
+    address_line1: document.getElementById('hAddrLine1')?.value.trim() || '',
+    address_line2: document.getElementById('hAddrLine2')?.value.trim() || '',
+    city:          document.getElementById('hAddrCity')?.value.trim() || '',
+    county:        document.getElementById('hAddrCounty')?.value.trim() || '',
+    postcode:      document.getElementById('hAddrPostcode')?.value.trim() || ''
+  };
+}
+
+// Live-update the readable textarea string as the 5 rows are edited.
+function qbOnAddrFieldInput() {
+  const parts = qbReadAddressParts();
+  if (!parts) return;
+  const ta = document.getElementById('hClientAddress');
+  if (ta) ta.value = qbAddrPartsToString(parts, '\n');
+  autosave();
+  showClientSave();
+}
+
+
+// ============================================================
 // SIDEBAR
 // ============================================================
 function renderSidebar() {
@@ -5847,6 +5974,7 @@ function loadQuoteEditor() {
   document.getElementById('hCompany').value    = q.company || '';
   const caEl = document.getElementById('hClientAddress');
   if (caEl) caEl.value = q.clientAddress || '';
+  qbSyncAddressOnLoad(q);
   const crEl = document.getElementById('hContactRole');
   if (crEl) crEl.value = q.contactRole || '';
   document.getElementById('hContact').value    = q.contact || '';
@@ -12006,6 +12134,13 @@ async function loadClientBookFromSQL() {
         id:       c.id,
         company:  c.company_name || '',
         address:  addr,
+        addressParts: {
+          address_line1: c.address_line1 || '',
+          address_line2: c.address_line2 || '',
+          city:          c.city || '',
+          county:        c.county || '',
+          postcode:      c.postcode || ''
+        },
         contact:  cContacts[0]?.name  || c.contact_name  || '',
         email:    cContacts[0]?.email || c.contact_email || '',
         phone:    cContacts[0]?.phone || c.contact_phone || '',
@@ -12252,6 +12387,13 @@ function fillClientFields(company) {
   document.getElementById('hCompany').value = client.company;
   const caEl = document.getElementById('hClientAddress');
   if (caEl) caEl.value = client.address || '';
+  // Set structured parts so the 5-row editor (and DB sync) stay consistent.
+  const _q = getQuote();
+  if (_q && client.addressParts) {
+    _q.clientAddressParts = { ...client.addressParts };
+    if (caEl) caEl.value = qbAddrPartsToString(client.addressParts, '\n') || client.address || '';
+    if (_qbAddrEditing) qbToggleAddressEditor(); // collapse back to readable view
+  }
   // Default contact = first in contacts array, or legacy single contact
   const contacts = client.contacts || (client.contact ? [{ name: client.contact, email: client.email, phone: client.phone, role: '' }] : []);
   const defaultContact = contacts[0] || {};
