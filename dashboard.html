@@ -634,7 +634,15 @@
 .tr-badge { display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;white-space:nowrap }
 .tr-badge-new   { background:rgba(255,107,0,0.15);color:var(--accent);border:1px solid rgba(255,107,0,0.3) }
 .tr-badge-inqb  { background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3) }
+.tr-badge-sent  { background:rgba(168,130,255,0.15);color:#a882ff;border:1px solid rgba(168,130,255,0.35) }
+.tr-badge-won   { background:rgba(34,197,94,0.15);color:#22c55e;border:1px solid rgba(34,197,94,0.35) }
+.tr-badge-lost  { background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.35) }
+.tr-badge-removed { background:rgba(120,120,120,0.15);color:#9aa0a6;border:1px dashed rgba(150,150,150,0.45) }
 .tr-badge-nobid { background:rgba(100,100,100,0.15);color:var(--muted);border:1px solid var(--border) }
+.tr-action-qb { background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);border-radius:4px;padding:3px 9px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap }
+.tr-action-qb:hover { background:rgba(59,130,246,0.28) }
+.tr-action-readd { background:rgba(255,107,0,0.12);color:var(--accent);border:1px solid rgba(255,107,0,0.35);border-radius:4px;padding:3px 9px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap }
+.tr-action-readd:hover { background:rgba(255,107,0,0.25) }
 /* ── Tender table ── */
 #trTable tbody tr { cursor:pointer;transition:background .1s }
 #trTable tbody tr:hover { background:rgba(255,255,255,0.03) }
@@ -2744,11 +2752,55 @@ async function loadTenderRegister() {
       _trAssignees.length ? Promise.resolve() : loadTrAssignees()
     ]);
     _trTenders = tenders;
+    await trEnrichQbStatus();
     renderTenderTable();
   } catch(e) {
     document.getElementById('trBody').innerHTML =
       `<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--red)">Failed to load: ${e.message}</td></tr>`;
   }
+}
+
+// Map a QB quote status → the TR lifecycle status.
+function trMapQbStatus(qbStatus) {
+  switch (qbStatus) {
+    case 'sent':    return 'Sent';
+    case 'won':     return 'Won';
+    case 'lost':    return 'Lost';
+    case 'deleted': return 'Removed from QB';
+    case 'draft':
+    case 'open':    return 'In QB';
+    default:        return 'In QB';
+  }
+}
+
+// For tenders linked to a QB quote, derive their live status from that quote.
+// The QB quote is the single source of truth once converted — no two-way sync.
+// A missing QB quote (hard-deleted) also surfaces as "Removed from QB".
+async function trEnrichQbStatus() {
+  const linked = _trTenders.filter(t => t.qb_quote_id);
+  if (!linked.length) {
+    _trTenders.forEach(t => { t.effStatus = t.status; });
+    return;
+  }
+  let qbMap = {};
+  try {
+    // No status filter → returns ALL quotes incl. deleted, so we can detect removal.
+    const rows = await trFetch('/api/qb-quotes');
+    const list = Array.isArray(rows) ? rows : (rows?.recordset || []);
+    list.forEach(r => { qbMap[r.id] = r.status; });
+  } catch (e) {
+    console.warn('QB status enrich failed:', e);
+  }
+  _trTenders.forEach(t => {
+    if (t.qb_quote_id) {
+      const qbStatus = qbMap[t.qb_quote_id];
+      // Quote no longer present in QB → treat as removed.
+      t.effStatus = qbStatus === undefined ? 'Removed from QB' : trMapQbStatus(qbStatus);
+      t.qbMissing = qbStatus === undefined || qbStatus === 'deleted';
+    } else {
+      t.effStatus = t.status; // 'New' or 'No Bid'
+    }
+  });
 }
 
 // ── Render table ──────────────────────────────────────────────
@@ -2757,7 +2809,7 @@ function renderTenderTable() {
   const assignedF = document.getElementById('trFilterAssigned')?.value || 'all';
 
   let list = _trTenders;
-  if (statusF   !== 'all') list = list.filter(t => t.status === statusF);
+  if (statusF   !== 'all') list = list.filter(t => (t.effStatus || t.status) === statusF);
   if (assignedF !== 'all') list = list.filter(t => t.assigned_to === assignedF);
 
   document.getElementById('trCount').textContent = `${list.length} tender${list.length !== 1 ? 's' : ''}`;
@@ -2773,9 +2825,17 @@ function renderTenderTable() {
     const dl = t.deadline ? new Date(t.deadline) : null;
     const dlStr = dl ? dl.toLocaleDateString('en-GB', {day:'2-digit',month:'short',year:'2-digit'}) : '—';
     const dlStyle = dl && dl < today ? 'color:var(--red);font-weight:600' : '';
-    const badge = t.status === 'New'    ? '<span class="tr-badge tr-badge-new">New</span>'
-                : t.status === 'In QB'  ? '<span class="tr-badge tr-badge-inqb">In QB</span>'
-                : '<span class="tr-badge tr-badge-nobid">No Bid</span>';
+    const st = t.effStatus || t.status;
+    const badgeMap = {
+      'New':             'tr-badge-new',
+      'In QB':           'tr-badge-inqb',
+      'Sent':            'tr-badge-sent',
+      'Won':             'tr-badge-won',
+      'Lost':            'tr-badge-lost',
+      'Removed from QB': 'tr-badge-removed',
+      'No Bid':          'tr-badge-nobid'
+    };
+    const badge = `<span class="tr-badge ${badgeMap[st] || 'tr-badge-nobid'}">${st}</span>`;
     const folderBtn = t.sp_folder_url
       ? `<a href="${t.sp_folder_url}" target="_blank" onclick="event.stopPropagation()" title="Open SharePoint folder" style="color:var(--accent);text-decoration:none;font-size:16px">📁</a>`
       : `<button onclick="event.stopPropagation();trSyncFolder(${t.id})" title="Create SharePoint folder" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:15px">📂</button>`;
@@ -2785,16 +2845,25 @@ function renderTenderTable() {
       : `<button onclick="event.stopPropagation();trResendNotify(${t.id})" title="Not notified — click to send email" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px">📧</button>`;
     const deleteBtn = `<button onclick="event.stopPropagation();trDeleteTender(${t.id},'${t.reference}')" title="Delete" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:13px;padding:2px 4px">🗑</button>`;
     const editBtn = `<button onclick="event.stopPropagation();openEditTenderModal(${t.id})" title="Edit tender" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:2px 4px">✏️</button>`;
-    const actions = t.status === 'New' ? `
+    const viewQbBtn = `<button onclick="event.stopPropagation();window.location='quote-builder.html?quote=${t.qb_quote_id}'" title="Open in Quote Builder" class="tr-action-qb">View QB</button>`;
+    const reAddBtn = `<button onclick="event.stopPropagation();trReopenInQB(${t.id})" title="Create a fresh QB quote for this tender" class="tr-action-readd">↻ Re-add to QB</button>`;
+
+    let actions;
+    if (st === 'New') {
+      actions = `
       <div style="display:flex;gap:4px;justify-content:center">
         <button onclick="event.stopPropagation();trOpenInQB(${t.id})" title="Open in QB" style="background:var(--accent);color:#fff;border:none;border-radius:4px;padding:3px 7px;font-size:11px;cursor:pointer">QB →</button>
         <button onclick="event.stopPropagation();openTrNoBidModal(${t.id})" title="No Bid" style="background:var(--surface);color:var(--muted);border:1px solid var(--border);border-radius:4px;padding:3px 7px;font-size:11px;cursor:pointer">✗</button>
         ${editBtn}${deleteBtn}
-      </div>` : t.status === 'In QB' && t.qb_quote_id ? `
-      <div style="display:flex;gap:4px;justify-content:center">
-        <button onclick="event.stopPropagation();window.location='quote-builder.html?quote=${t.qb_quote_id}'" style="background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);border-radius:4px;padding:3px 7px;font-size:11px;cursor:pointer">View QB</button>
-        ${editBtn}${deleteBtn}
-      </div>` : `<div style="display:flex;gap:4px;justify-content:center">${editBtn}${deleteBtn}</div>`;
+      </div>`;
+    } else if (st === 'Removed from QB') {
+      actions = `<div style="display:flex;gap:4px;justify-content:center">${reAddBtn}${editBtn}${deleteBtn}</div>`;
+    } else if (t.qb_quote_id && !t.qbMissing) {
+      // In QB / Sent / Won / Lost — linked and live
+      actions = `<div style="display:flex;gap:4px;justify-content:center">${viewQbBtn}${editBtn}${deleteBtn}</div>`;
+    } else {
+      actions = `<div style="display:flex;gap:4px;justify-content:center">${editBtn}${deleteBtn}</div>`;
+    }
 
     return `<tr onclick="trSelectRow(${t.id})" class="${_trSelectedId === t.id ? 'tr-selected' : ''}">
       <td style="font-family:var(--font-mono);font-size:12px;color:var(--accent)">${t.reference}</td>
@@ -3123,11 +3192,26 @@ async function confirmNoBid() {
 }
 
 // ── Open in QB ────────────────────────────────────────────────
-async function trOpenInQB(tenderId) {
+// Re-add a tender to QB after its quote was removed/deleted. Creates a fresh
+// QB quote (the old one is gone) and re-links. New reference is the same tender
+// reference — QB allocates the quote row, the tender ref is unchanged.
+async function trReopenInQB(tenderId) {
+  const t = _trTenders.find(x => x.id === tenderId);
+  if (!t) return;
+  if (!await bamaConfirm(
+    `Re-add ${t.reference} — ${t.client} to Quote Builder?\n\nThe previous QB quote was removed. This creates a fresh QB quote linked to this tender.`,
+    'Re-add to QB'
+  )) return;
+  // Clear the stale link first so trOpenInQB's create path runs cleanly.
+  t.qb_quote_id = null;
+  await trOpenInQB(tenderId, true);
+}
+
+async function trOpenInQB(tenderId, skipConfirm) {
   const t = _trTenders.find(x => x.id === tenderId);
   if (!t) return;
 
-  if (!await bamaConfirm(`Create QB quote for ${t.reference} — ${t.client}?`, 'Open in QB')) return;
+  if (!skipConfirm && !await bamaConfirm(`Create QB quote for ${t.reference} — ${t.client}?`, 'Open in QB')) return;
 
   try {
     // Look up the client's structured address from the client book to pre-fill QB.
@@ -3297,6 +3381,10 @@ async function trResendNotify(tenderId) {
       <option value="all">All Statuses</option>
       <option value="New">New</option>
       <option value="In QB">In QB</option>
+      <option value="Sent">Sent</option>
+      <option value="Won">Won</option>
+      <option value="Lost">Lost</option>
+      <option value="Removed from QB">Removed from QB</option>
       <option value="No Bid">No Bid</option>
     </select>
     <select id="trFilterAssigned" onchange="renderTenderTable()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px">
