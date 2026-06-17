@@ -927,11 +927,19 @@ async function loadTrackerData() {
         sqlQuotes = rows.map(r => {
           const dueDate = r.decision_due ? r.decision_due.slice(0,10) : null;
           const win = r.status === 'won' ? true : r.status === 'lost' ? false : null;
-          // Urgency: decided quotes keep their status; undecided (draft/open/sent)
-          // are flagged by their decision due date so drafts can show overdue too.
+          // Urgency drives the date badge + status label on the left list.
+          //  - Won/Lost  → keep status, no due colouring.
+          //  - Sent       → always 'sent'. The decision_due date has usually
+          //                 passed by the time a quote is sent, so it must NOT
+          //                 be treated as "overdue" — follow-up is governed by
+          //                 the chasing date (shown separately as the 🔔 badge).
+          //  - Draft/Open → flagged by decision_due: this is the date we must
+          //                 submit the quote by, so a passed date is genuinely overdue.
           let urgency;
           if (win !== null) {
             urgency = r.status; // won / lost
+          } else if (r.status === 'sent') {
+            urgency = 'sent';
           } else if (dueDate) {
             const today = new Date(); today.setHours(0,0,0,0);
             const due = new Date(dueDate + 'T00:00:00');
@@ -941,7 +949,7 @@ async function loadTrackerData() {
             else if (diff < 3*86400000) urgency = 'soon';
             else                        urgency = 'ok';
           } else {
-            urgency = r.status === 'sent' ? 'sent' : 'open';
+            urgency = 'open';
           }
           return {
             ref:      r.reference,
@@ -1240,7 +1248,9 @@ function renderQuoteList() {
   }
 
   el.innerHTML = list.map(q => {
-    const dueBadge = q.due
+    // Decision-date badge: only meaningful before a quote is sent. Once sent, the
+    // decision date has passed and follow-up is shown by the chase badge instead.
+    const dueBadge = (q.due && q.urgency !== 'sent')
       ? `<span class="due-badge due-${q.urgency}">${fmtDate(q.due)}</span>` : '';
     const winMark = q.win === true ? '<span class="win-yes">✓</span>' : q.win === false ? '<span class="win-no">✗</span>' : '';
     const isSelected = selectedQuote?.ref === q.ref;
