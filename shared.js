@@ -12117,7 +12117,10 @@ async function deleteBomItem(id) {
 
 async function bomAdvance(id, newStatus) {
   try {
-    await api.patch(`/api/job-bom-items/${id}`, { status: newStatus });
+    // Status changes go through the dedicated state-machine endpoint
+    // (PUT /api/job-bom-items/{id}/status). The bare PUT /{id} route only
+    // edits description/quantity/finish and would reject a `status` body.
+    await api.put(`/api/job-bom-items/${id}/status`, { status: newStatus });
     const jobId = currentJob?.id ? parseInt(currentJob.id) : null;
     if (jobId) await loadJobBomItems(jobId);
     renderBOM();
