@@ -580,6 +580,7 @@ tr.drag-dragging { opacity:0.35; }
             <div class="section-title">Steel Takeoff</div>
             <div class="flex gap-8">
               <button class="btn btn-ghost btn-sm" onclick="openPlanswiftImport()">↑ PlanSwift Import</button>
+              <button class="btn btn-ghost btn-sm" onclick="openStaircaseWizard()" title="Generate staircase steel and inject into takeoff">🪜 Staircase</button>
               <button class="btn btn-ghost btn-sm" onclick="sortTakeoffByType()" title="Sort by section type">⇅ Sort</button>
               <button class="btn btn-ghost btn-sm" onclick="addTakeoffArea()" title="Add named area">＋ Area</button>
               <button class="btn btn-primary btn-sm" onclick="addTakeoffRow()">+ Row</button>
@@ -1700,6 +1701,89 @@ tr.drag-dragging { opacity:0.35; }
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closePlanswiftModal()">Cancel</button>
       <button class="btn btn-primary" id="psImportBtn" onclick="importPlanswift()" disabled style="opacity:0.4">Import rows</button>
+    </div>
+  </div>
+</div>
+
+<!-- STAIRCASE WIZARD MODAL (Phase 1 — straight stair) -->
+<div class="modal-overlay" id="staircaseModal">
+  <div class="modal" style="max-width:760px">
+    <div class="modal-title">🪜 Staircase Builder <span style="font-size:11px;color:var(--muted);font-weight:400">— straight flight</span></div>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:14px">
+      Enter the basics — the engine sizes risers, going and pitch to UK Approved Document K, then injects fully editable steel into the takeoff as a new area. All defaults below are editable.
+    </p>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
+      <!-- LEFT: inputs -->
+      <div>
+        <div class="form-grid" style="gap:10px">
+          <div class="field">
+            <label>Stair class</label>
+            <select id="scClass" onchange="scRecompute()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%">
+              <option value="semipublic" selected>Semi-public (commercial / industrial)</option>
+              <option value="private">Private (domestic)</option>
+              <option value="public">Public (assembly)</option>
+            </select>
+          </div>
+          <div class="form-grid form-grid-2" style="gap:8px">
+            <div class="field"><label>Total rise — floor to floor (mm)</label><input type="number" id="scTotalRise" value="3000" oninput="scRecompute()"></div>
+            <div class="field"><label>Clear width (mm)</label><input type="number" id="scWidth" value="1000" oninput="scRecompute()"></div>
+          </div>
+          <div class="field"><label>Going override (mm) <span style="color:var(--subtle);font-size:10px">— blank = engine minimum</span></label><input type="number" id="scGoing" placeholder="auto" oninput="scRecompute()"></div>
+
+          <div style="border-top:1px solid var(--border);margin:4px 0;padding-top:8px;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted)">Components</div>
+          <div class="field"><label>Stringers (2 off)</label><input type="text" id="scStringer" value="FLT 250x12" oninput="scRecompute()"></div>
+          <div class="form-grid form-grid-2" style="gap:8px">
+            <div class="field"><label>Tread plate (mm)</label><input type="number" id="scTreadPlate" value="4.5" step="0.5" oninput="scRecompute()"></div>
+            <div class="field"><label>Tread depth (mm) <span style="color:var(--subtle);font-size:10px">blank=going+25</span></label><input type="number" id="scTreadDepth" placeholder="auto" oninput="scRecompute()"></div>
+          </div>
+          <div class="field"><label>Tread cleats / bent plate</label><input type="text" id="scCleat" value="EA50x50x5" oninput="scRecompute()"></div>
+          <div class="form-grid form-grid-2" style="gap:8px">
+            <div class="field"><label>Cleat length (mm)</label><input type="number" id="scCleatLen" value="150" oninput="scRecompute()"></div>
+            <div class="field" style="display:flex;align-items:flex-end;padding-bottom:6px">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--text)">
+                <input type="checkbox" id="scClosedRiser" checked onchange="scRecompute()" style="accent-color:var(--accent)"> Closed risers
+              </label>
+            </div>
+          </div>
+          <div class="field"><label>Inject as area named</label><input type="text" id="scAreaName" value="Staircase 1"></div>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:10px;line-height:1.5">
+          ⚠️ Treads, cleats, risers and baseplates are priced <strong>per piece</strong> (EA) — the kg shown in that column is the weight of one item, not kg/m.
+        </div>
+      </div>
+
+      <!-- RIGHT: live preview -->
+      <div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px">
+          <div style="font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Geometry</div>
+          <div id="scGeometry" style="font-size:12px;color:var(--text);line-height:1.7"></div>
+          <div id="scWarnings" style="margin-top:8px"></div>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-top:10px">
+          <div style="font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Steel to inject</div>
+          <div style="overflow-x:auto">
+            <table class="data-table" id="scPreviewTable" style="font-size:11px;width:100%">
+              <thead><tr>
+                <th>Item</th>
+                <th style="text-align:right">Len/EA</th>
+                <th style="text-align:right">Qty</th>
+                <th style="text-align:right">kg</th>
+              </tr></thead>
+              <tbody id="scPreviewBody"></tbody>
+              <tfoot><tr style="border-top:1px solid var(--border);font-weight:600">
+                <td colspan="3" style="text-align:right;padding:6px 8px">Total</td>
+                <td style="text-align:right;padding:6px 8px;color:var(--accent)" id="scTotalKg">0 kg</td>
+              </tr></tfoot>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeStaircaseWizard()">Cancel</button>
+      <button class="btn btn-primary" id="scInjectBtn" onclick="injectStaircase()">Inject into takeoff</button>
     </div>
   </div>
 </div>
@@ -6387,6 +6471,177 @@ function setQuoteType(type, save=true) {
   if (save) {
     const q = getQuote(); if (q) { q.type = type; saveAll(); renderQuotationLines(); }
   }
+}
+
+// ============================================================
+// STAIRCASE BUILDER (Phase 1 — straight stair)
+// Pure deterministic geometry + weight. No AI. Injects editable
+// takeoff rows. UK Approved Document K limits baked in.
+// ============================================================
+const STAIR_CLASSES = {
+  private:    { label:'Private (domestic)',                 maxRise:220, minGoing:220, maxPitch:42, maxRisesPerFlight:36, idealRise:190 },
+  semipublic: { label:'Semi-public (commercial/industrial)', maxRise:190, minGoing:250, maxPitch:38, maxRisesPerFlight:16, idealRise:178 },
+  public:     { label:'Public (assembly)',                  maxRise:180, minGoing:280, maxPitch:33, maxRisesPerFlight:16, idealRise:170 },
+};
+const STAIR_STEEL_DENSITY = 7850; // kg/m3
+function scRound1(n){ return Math.round(n*10)/10; }
+function scPlateKg(thkMM, wMM, dMM){ return (thkMM/1000)*(wMM/1000)*(dMM/1000)*STAIR_STEEL_DENSITY; }
+
+// Resolve a kg/m from the steel DB; returns 0 if not found (caller warns)
+function scResolveKgm(typeStr){
+  const p = findSteelProfile(typeStr);
+  return p && p.kgm ? p.kgm : 0;
+}
+
+function computeStraightStair(input){
+  const warnings = [];
+  const cls = STAIR_CLASSES[input.stairClass] || STAIR_CLASSES.semipublic;
+  const totalRise = Number(input.totalRiseMM)||0;
+  const width = Number(input.widthMM)||1000;
+  const plate = Number(input.treadPlateMM)||4.5;
+  const stringerType = input.stringerType || 'FLT 250x12';
+  const cleatType = input.cleatType || 'EA50x50x5';
+
+  if (totalRise<=0) return { ok:false, warnings:['Total rise (floor-to-floor) is required.'], geometry:{}, components:[] };
+
+  let nRisers = Math.ceil(totalRise/cls.maxRise); if (nRisers<1) nRisers=1;
+  const idealN = Math.round(totalRise/cls.idealRise);
+  if (idealN>nRisers) nRisers=idealN;
+  let rise = totalRise/nRisers;
+  while (rise>cls.maxRise){ nRisers++; rise=totalRise/nRisers; }
+  const nTreads = nRisers-1;
+
+  let going = Number(input.goingMM)||cls.minGoing;
+  if (going<cls.minGoing) warnings.push(`Going ${going}mm is below the ${cls.label} minimum of ${cls.minGoing}mm.`);
+  let pitch = Math.atan(rise/going)*180/Math.PI;
+  if (pitch>cls.maxPitch){
+    going = Math.ceil(rise/Math.tan(cls.maxPitch*Math.PI/180));
+    pitch = Math.atan(rise/going)*180/Math.PI;
+  }
+  const twoRplusG = 2*rise+going;
+  if (twoRplusG<550 || twoRplusG>700) warnings.push(`2R+G = ${Math.round(twoRplusG)}mm is outside the comfort range 550-700mm.`);
+  if (nRisers>cls.maxRisesPerFlight) warnings.push(`${nRisers} risers exceeds the ${cls.maxRisesPerFlight}-riser limit for ${cls.label} — a landing / additional flight is required (Phase 3).`);
+
+  const horizRun = nTreads*going;
+  const slopeLen = Math.sqrt(totalRise*totalRise+horizRun*horizRun);
+  const stringerCutMM = Math.round(slopeLen+150);
+  const treadDepth = Number(input.treadDepthMM)||(going+25);
+
+  const components = [];
+  // stringers — length x kg/m
+  let strKgm = scResolveKgm(stringerType);
+  if (!strKgm){ strKgm = 23.6; warnings.push(`Stringer "${stringerType}" not found in steel DB — using ${strKgm} kg/m. Edit in takeoff if wrong.`); }
+  components.push({ role:'stringer', type:stringerType, length:stringerCutMM, qty:2, kgm:strKgm, _unit:'',
+    note:`2 stringers, sloped length ~${Math.round(slopeLen)}mm (+150 fixing allowance)` });
+  // treads — chequer plate EA (Option A)
+  const treadKg = scPlateKg(plate,width,treadDepth)*1.06;
+  components.push({ role:'tread', type:`Chequer ${plate}mm tread ${width}x${treadDepth}`, length:1000, qty:nTreads, kgm:scRound1(treadKg), _unit:'EA',
+    note:`Per-tread weight (EA): chequer ${plate}mm ${width}x${treadDepth}mm incl. 6% pattern allowance` });
+  // cleats — 2 per tread, EA
+  let cleatKgm = scResolveKgm(cleatType);
+  if (!cleatKgm){ cleatKgm = 3.77; warnings.push(`Cleat "${cleatType}" not found — using ${cleatKgm} kg/m.`); }
+  const cleatLen = Number(input.cleatLenMM)||150;
+  components.push({ role:'cleat', type:`${cleatType} cleat ${cleatLen}mm (tread support)`, length:1000, qty:nTreads*2, kgm:scRound1((cleatLen/1000)*cleatKgm), _unit:'EA',
+    note:`Per-cleat weight (EA): 2 per tread, ${cleatLen}mm long` });
+  // risers (toggle)
+  if (input.closedRiser){
+    const riserKg = scPlateKg(3,width,rise);
+    components.push({ role:'riser', type:`Riser plate 3mm ${width}x${Math.round(rise)}`, length:1000, qty:nRisers, kgm:scRound1(riserKg), _unit:'EA',
+      note:`Per-riser weight (EA): 3mm plate ${width}x${Math.round(rise)}mm` });
+  }
+  // baseplates — 2 off
+  components.push({ role:'baseplate', type:`Baseplate 200x150x10`, length:1000, qty:2, kgm:scRound1(scPlateKg(10,200,150)), _unit:'EA',
+    note:`Per-baseplate weight (EA): 10mm plate 200x150mm` });
+
+  return { ok:true, warnings, geometry:{
+    stairClassLabel:cls.label, totalRiseMM:totalRise, nRisers, nTreads,
+    riseMM:scRound1(rise), goingMM:Math.round(going), pitchDeg:scRound1(pitch), twoRplusG:Math.round(twoRplusG),
+    widthMM:width, horizRunMM:Math.round(horizRun), slopeLenMM:Math.round(slopeLen), stringerCutMM,
+  }, components };
+}
+
+// ── wizard controller ─────────────────────────────────────
+let _scLastResult = null;
+function openStaircaseWizard(){
+  if (!getQuote()){ toast('Open or create a quote first'); return; }
+  document.getElementById('staircaseModal').classList.add('active');
+  scRecompute();
+}
+function closeStaircaseWizard(){ document.getElementById('staircaseModal').classList.remove('active'); }
+
+function scReadInputs(){
+  return {
+    stairClass: document.getElementById('scClass').value,
+    totalRiseMM: document.getElementById('scTotalRise').value,
+    widthMM: document.getElementById('scWidth').value,
+    goingMM: document.getElementById('scGoing').value || null,
+    stringerType: document.getElementById('scStringer').value.trim(),
+    treadPlateMM: document.getElementById('scTreadPlate').value,
+    treadDepthMM: document.getElementById('scTreadDepth').value || null,
+    cleatType: document.getElementById('scCleat').value.trim(),
+    cleatLenMM: document.getElementById('scCleatLen').value,
+    closedRiser: document.getElementById('scClosedRiser').checked,
+  };
+}
+
+function scRecompute(){
+  const r = computeStraightStair(scReadInputs());
+  _scLastResult = r;
+  const geo = document.getElementById('scGeometry');
+  const warn = document.getElementById('scWarnings');
+  const body = document.getElementById('scPreviewBody');
+  const totEl = document.getElementById('scTotalKg');
+  const btn = document.getElementById('scInjectBtn');
+  if (!r.ok){
+    geo.innerHTML = `<span style="color:var(--muted)">${escHtml(r.warnings[0]||'Enter total rise')}</span>`;
+    warn.innerHTML=''; body.innerHTML=''; totEl.textContent='0 kg';
+    btn.disabled = true; btn.style.opacity='0.4'; return;
+  }
+  const g = r.geometry;
+  geo.innerHTML =
+    `<strong>${escHtml(g.stairClassLabel)}</strong><br>`+
+    `${g.nRisers} risers @ ${g.riseMM}mm · ${g.nTreads} treads<br>`+
+    `Going ${g.goingMM}mm · pitch ${g.pitchDeg}° · 2R+G ${g.twoRplusG}<br>`+
+    `Stringer cut ${g.stringerCutMM}mm (slope ${g.slopeLenMM}mm)`;
+  warn.innerHTML = r.warnings.length
+    ? r.warnings.map(w=>`<div style="font-size:11px;color:var(--amber,#e0a020);margin-top:2px">⚠️ ${escHtml(w)}</div>`).join('')
+    : `<div style="font-size:11px;color:var(--green)">✓ Within Approved Document K limits</div>`;
+  let tot=0;
+  body.innerHTML = r.components.map(c=>{
+    const kg=(c.length/1000)*c.kgm*c.qty; tot+=kg;
+    const lenDisp = c._unit==='EA' ? `${c.kgm} ea` : `${c.length}mm`;
+    return `<tr title="${escHtml(c.note)}">
+      <td style="padding:4px 8px">${escHtml(c.type)}</td>
+      <td style="padding:4px 8px;text-align:right;font-family:var(--font-mono)">${lenDisp}</td>
+      <td style="padding:4px 8px;text-align:right;font-family:var(--font-mono)">${c.qty}</td>
+      <td style="padding:4px 8px;text-align:right;font-family:var(--font-mono)">${scRound1(kg)}</td>
+    </tr>`;
+  }).join('');
+  totEl.textContent = `${scRound1(tot)} kg`;
+  btn.disabled=false; btn.style.opacity='1';
+}
+
+async function injectStaircase(){
+  const q = getQuote(); if (!q){ toast('No quote open'); return; }
+  const r = _scLastResult; if (!r || !r.ok){ toast('Nothing to inject'); return; }
+  q.areas = q.areas || []; q.takeoff = q.takeoff || []; q.staircases = q.staircases || [];
+
+  const name = (document.getElementById('scAreaName').value||'Staircase').trim() || 'Staircase';
+  const id = 'area_' + Date.now();
+  q.areas.push({ id, name, collapsed:false });
+
+  // store the spec so it can be regenerated/edited later
+  q.staircases.push({ areaId:id, kind:'straight', input:scReadInputs(), geometry:r.geometry, ts:Date.now() });
+
+  r.components.forEach(c=>{
+    q.takeoff.push({ type:c.type, length:c.length, qty:c.qty, kgm:c.kgm, rate:null,
+      area:id, subarea:'', _unit:c._unit||'', _stairRole:c.role, _stairNote:c.note });
+  });
+
+  await saveAll();
+  renderTakeoff(); recalcAll();
+  closeStaircaseWizard();
+  toast(`Injected ${r.components.length} rows into "${name}" — fully editable`);
 }
 
 // ============================================================
