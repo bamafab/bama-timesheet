@@ -1733,6 +1733,22 @@ tr.drag-dragging { opacity:0.35; }
               <option value="public">Public (assembly)</option>
             </select>
           </div>
+          <div class="field">
+            <label>Configuration</label>
+            <select id="scConfig" onchange="scConfigChange()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%">
+              <option value="straight" selected>Straight flight</option>
+              <option value="quarter">Quarter-turn (90°, 1 landing)</option>
+              <option value="halfturn">Half-turn / dog-leg (180°, 1 landing)</option>
+              <option value="ushape">U-shape (180°, 2 landings)</option>
+              <option value="switchback">Switchback / fire escape (multi-flight)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--text);line-height:1.4">
+              <input type="checkbox" id="scSelfSupport" onchange="scSelfSupportChange();scRecompute()" style="accent-color:var(--accent);flex:0 0 auto;width:15px;height:15px">
+              <span>Self-supported <span style="color:var(--subtle)">— freestanding on posts + bracing (any config)</span></span>
+            </label>
+          </div>
           <div class="form-grid form-grid-2" style="gap:8px">
             <div class="field"><label>Total rise — floor to floor (mm)</label><input type="number" id="scTotalRise" value="3000" oninput="scRecompute()"></div>
             <div class="field"><label>Clear width (mm)</label><input type="number" id="scWidth" value="1000" oninput="scRecompute()"></div>
@@ -1742,6 +1758,42 @@ tr.drag-dragging { opacity:0.35; }
           <!-- ADVANCED ONLY -->
           <div class="sc-adv" style="display:none">
             <div class="field"><label>Going override (mm) <span style="color:var(--subtle);font-size:10px">— blank = engine minimum</span></label><input type="number" id="scGoing" placeholder="auto" oninput="scRecompute()"></div>
+
+            <!-- F3: per-flight rise overrides (multi-flight configs only) -->
+            <div id="scFlightSplitWrap" style="display:none">
+              <div style="border-top:1px solid var(--border);margin:8px 0 4px;padding-top:8px;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted)">Flight rise split <span style="text-transform:none;letter-spacing:0;color:var(--subtle)">— blank = auto-balance</span></div>
+              <div class="form-grid form-grid-3" style="gap:8px">
+                <div class="field"><label>Flight 1 rise (mm)</label><input type="number" id="scFlight1Rise" placeholder="auto" oninput="scRecompute()"></div>
+                <div class="field"><label>Flight 2 rise (mm)</label><input type="number" id="scFlight2Rise" placeholder="auto" oninput="scRecompute()"></div>
+                <div class="field" id="scFlight3Wrap"><label>Flight 3 rise (mm)</label><input type="number" id="scFlight3Rise" placeholder="auto" oninput="scRecompute()"></div>
+              </div>
+            </div>
+
+            <!-- F3: self-support components -->
+            <div id="scSelfSupportWrap" style="display:none">
+              <div style="border-top:1px solid var(--border);margin:8px 0 4px;padding-top:8px;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted)">Self-support structure</div>
+              <div class="field">
+                <label>Support post section</label>
+                <select id="scPostPreset" onchange="scApplyPreset('Post')" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%;margin-bottom:5px">
+                  <option value="SHS100x100x6.3" selected>SHS 100×100×6.3 (default)</option>
+                  <option value="SHS120x120x6.3">SHS 120×120×6.3</option>
+                  <option value="SHS150x150x8">SHS 150×150×8</option>
+                  <option value="RHS150x100x6.3">RHS 150×100×6.3</option>
+                  <option value="UC152x152x23">UC 152×152×23</option>
+                  <option value="UC203x203x46">UC 203×203×46</option>
+                  <option value="UB203x133x25">UB 203×133×25</option>
+                  <option value="PFC 200x90x30">PFC 200×90×30</option>
+                  <option value="__custom">Custom…</option>
+                </select>
+                <input type="text" id="scPost" value="SHS100x100x6.3" oninput="scRecompute()" style="display:none">
+              </div>
+              <div class="form-grid form-grid-3" style="gap:8px">
+                <div class="field"><label>No. of posts <span style="color:var(--subtle);font-size:10px">blank=auto</span></label><input type="number" id="scNPosts" placeholder="auto" min="0" step="1" oninput="scRecompute()"></div>
+                <div class="field"><label>Post length (mm) <span style="color:var(--subtle);font-size:10px">blank=auto</span></label><input type="number" id="scPostLen" placeholder="auto" oninput="scRecompute()"></div>
+                <div class="field"><label>Bracing allowance (%)</label><input type="number" id="scBracingPct" value="8" step="0.5" oninput="scRecompute()"></div>
+              </div>
+              <div style="font-size:10px;color:var(--subtle);margin:-2px 0 6px">Auto posts = 2 per landing + 2 at flight head. Post length auto = total rise + 1100mm handrail standoff. Bracing covers diagonals, knee-braces, gussets.</div>
+            </div>
 
             <div style="border-top:1px solid var(--border);margin:8px 0 4px;padding-top:8px;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted)">Components</div>
             <div class="field">
@@ -6596,6 +6648,15 @@ const STAIR_CLASSES = {
   public:     { label:'Public (assembly)',                  maxRise:180, minGoing:280, maxPitch:33, maxRisesPerFlight:16, idealRise:170 },
 };
 const STAIR_STEEL_DENSITY = 7850; // kg/m3
+// F3 — staircase configurations. nFlights = how many straight runs; landings
+// = structural platforms BETWEEN flights (turns). All overridable in wizard.
+const STAIR_CONFIGS = {
+  straight:    { label:'Straight flight',            nFlights:1, landings:0, turn:0,   plan:'straight' },
+  quarter:     { label:'Quarter-turn (90°)',         nFlights:2, landings:1, turn:90,  plan:'quarter' },
+  halfturn:    { label:'Half-turn / dog-leg (180°)', nFlights:2, landings:1, turn:180, plan:'dogleg' },
+  ushape:      { label:'U-shape (180°, twin landing)',nFlights:3, landings:2, turn:180, plan:'ushape' },
+  switchback:  { label:'Switchback / fire escape',   nFlights:3, landings:2, turn:180, plan:'switchback' },
+};
 // UK open-bar grating presets (BS 4592). Weights kg/m² for plain bearing bars
 // at 30/41mm pitch — typical BAMA-spec values; all editable in the wizard.
 const GRATING_PRESETS = {
@@ -6614,16 +6675,23 @@ function scResolveKgm(typeStr){
   return p && p.kgm ? p.kgm : 0;
 }
 
-function computeStraightStair(input){
+// ── F3 single-flight helper ───────────────────────────────
+// Computes geometry + components for ONE straight run of `flightRise` mm.
+// This is the proven F1/F2 logic, extracted verbatim so multi-flight configs
+// reuse it. `opts.suffix` tags component descriptions per flight (e.g. " (flight 2)").
+// `opts.noFittings` defers the fittings allowance to the assembly level.
+function _scComputeFlight(input, flightRise, opts){
+  opts = opts || {};
   const warnings = [];
   const cls = STAIR_CLASSES[input.stairClass] || STAIR_CLASSES.semipublic;
-  const totalRise = Number(input.totalRiseMM)||0;
+  const totalRise = Number(flightRise)||0;
   const width = Number(input.widthMM)||1000;
   const plate = Number(input.treadPlateMM)||4.5;
   const stringerType = input.stringerType || 'FLT 250x12';
   const cleatType = input.cleatType || 'EA50x50x5';
+  const sfx = opts.suffix || '';
 
-  if (totalRise<=0) return { ok:false, warnings:['Total rise (floor-to-floor) is required.'], geometry:{}, components:[] };
+  if (totalRise<=0) return { ok:false, warnings:['Flight rise is zero.'], geometry:{}, components:[] };
 
   let nRisers = Math.ceil(totalRise/cls.maxRise); if (nRisers<1) nRisers=1;
   const idealN = Math.round(totalRise/cls.idealRise);
@@ -6633,67 +6701,52 @@ function computeStraightStair(input){
   const nTreads = nRisers-1;
 
   let going = Number(input.goingMM)||cls.minGoing;
-  if (going<cls.minGoing) warnings.push(`Going ${going}mm is below the ${cls.label} minimum of ${cls.minGoing}mm.`);
+  if (going<cls.minGoing) warnings.push(`Going ${going}mm is below the ${cls.label} minimum of ${cls.minGoing}mm${sfx}.`);
   let pitch = Math.atan(rise/going)*180/Math.PI;
   if (pitch>cls.maxPitch){
     going = Math.ceil(rise/Math.tan(cls.maxPitch*Math.PI/180));
     pitch = Math.atan(rise/going)*180/Math.PI;
   }
   const twoRplusG = 2*rise+going;
-  if (twoRplusG<550 || twoRplusG>700) warnings.push(`2R+G = ${Math.round(twoRplusG)}mm is outside the comfort range 550-700mm.`);
-  if (nRisers>cls.maxRisesPerFlight) warnings.push(`${nRisers} risers exceeds the ${cls.maxRisesPerFlight}-riser limit for ${cls.label} — a landing / additional flight is required (Phase 3).`);
+  if (twoRplusG<550 || twoRplusG>700) warnings.push(`2R+G = ${Math.round(twoRplusG)}mm is outside the comfort range 550-700mm${sfx}.`);
+  if (nRisers>cls.maxRisesPerFlight) warnings.push(`${nRisers} risers in a flight exceeds the ${cls.maxRisesPerFlight}-riser limit for ${cls.label}${sfx} — split into more flights / landings.`);
 
   const horizRun = nTreads*going;
   const slopeLen = Math.sqrt(totalRise*totalRise+horizRun*horizRun);
   const stringerCutMM = Math.round(slopeLen+150);
 
   const components = [];
-  // canonicalise section names so display matches the rest of the takeoff
-  // (e.g. FLT shows thickness-first via findSteelProfile, not as typed)
   const _canon = (t) => { const p = findSteelProfile(t); return (p && p.confidence !== 'none' && p.canonical) ? p.canonical : t; };
   const stringerDisp = _canon(stringerType);
   const cleatDisp = _canon(cleatType);
-  // stringers — length x kg/m
   let strKgm = scResolveKgm(stringerType);
   if (!strKgm){ strKgm = 23.6; warnings.push(`Stringer "${stringerType}" not found in steel DB — using ${strKgm} kg/m. Edit in takeoff if wrong.`); }
-  components.push({ role:'stringer', type:stringerDisp, length:stringerCutMM, qty:2, kgm:strKgm, _unit:'',
-    note:`2 stringers, sloped length ~${Math.round(slopeLen)}mm (+150 fixing allowance)` });
-  // ── TREADS ─────────────────────────────────────────────
-  // A tread is ALWAYS a folded plate (never flat). The developed length
-  // depends on whether the riser is closed or open:
-  //   • grating  → always open: flat panel + edge downstands
-  //   • open     → going + top downstand + bottom downstand (default 25+25)
-  //   • closed   → tread+riser are ONE bent plate: going + rise(front) + bend
-  //   • concrete → folded tray: going + 2× shelf upstand (default 50mm)
-  // There is NO separate riser component — the closed riser is the front
-  // fold of this single plate.
-  const treadType = input.treadType || 'chequer';
-  const closedRiser = !!input.closedRiser && treadType !== 'grating'; // grating can't close
-  // unified model — tread plate develops as: going + riser + downstand.
-  // closed → two editable values (riser defaults to geometric rise, downstand def 50)
-  // open   → one editable value used for both folds (def 25)
-  const riserMM    = Number(input.riserMM)!=null && input.riserMM!=='' ? Number(input.riserMM) : rise;
-  const downstandMM= Number(input.downstandMM)!=null && input.downstandMM!=='' ? Number(input.downstandMM) : 50;
-  const openFoldMM = Number(input.openFoldMM)!=null && input.openFoldMM!=='' ? Number(input.openFoldMM) : 25;
-  const shelfMM = Number(input.concreteShelfMM)!=null && input.concreteShelfMM!=='' ? Number(input.concreteShelfMM) : 50;
+  components.push({ role:'stringer', type:stringerDisp+sfx, length:stringerCutMM, qty:2, kgm:strKgm, _unit:'',
+    note:`2 stringers, sloped length ~${Math.round(slopeLen)}mm (+150 fixing allowance)${sfx}` });
 
-  // developed depth of the folded plate (the run of material before bending)
+  const treadType = input.treadType || 'chequer';
+  const closedRiser = !!input.closedRiser && treadType !== 'grating';
+  const _hasVal = v => v!=null && v!=='' && !isNaN(Number(v));
+  const riserMM    = _hasVal(input.riserMM) ? Number(input.riserMM) : rise;
+  const downstandMM= _hasVal(input.downstandMM) ? Number(input.downstandMM) : 50;
+  const openFoldMM = _hasVal(input.openFoldMM) ? Number(input.openFoldMM) : 25;
+  const shelfMM = _hasVal(input.concreteShelfMM) ? Number(input.concreteShelfMM) : 50;
+
   let devDepth, foldDesc;
   if (treadType === 'concrete'){
-    devDepth = going + 2*shelfMM;                       // tray: going + two upstands
+    devDepth = going + 2*shelfMM;
     foldDesc = `${shelfMM}mm concrete shelf tray`;
   } else if (closedRiser){
-    devDepth = going + riserMM + downstandMM;           // going + riser front + bottom downstand
+    devDepth = going + riserMM + downstandMM;
     foldDesc = `closed (going ${Math.round(going)} + riser ${Math.round(riserMM)} + ${downstandMM} downstand)`;
   } else {
-    devDepth = going + openFoldMM + openFoldMM;          // open: going + downstand each edge
+    devDepth = going + openFoldMM + openFoldMM;
     foldDesc = `open (going ${Math.round(going)} + ${openFoldMM}/${openFoldMM} folds)`;
   }
   const devAreaM2 = (width/1000)*(devDepth/1000);
 
   let treadKg, treadDesc;
   if (treadType === 'grating'){
-    // open bar grating panel: weight from kg/m² (NOT plate density)
     const gKgm2 = Number(input.gratingKgm2) || (GRATING_PRESETS[input.gratingPreset]?.kgm2) || 31;
     treadKg = devAreaM2 * gKgm2;
     treadDesc = `Open grating ${gKgm2}kg/m² tread ${width}x${Math.round(devDepth)} dev`;
@@ -6704,61 +6757,17 @@ function computeStraightStair(input){
     treadKg = scPlateKg(plate,width,devDepth);
     treadDesc = `Concrete-tray ${plate}mm tread ${width}x${Math.round(devDepth)} dev`;
   } else {
-    // chequer / durbar + 6% pattern allowance
     treadKg = scPlateKg(plate,width,devDepth)*1.06;
     treadDesc = `Chequer ${plate}mm folded tread ${width}x${Math.round(devDepth)} dev`;
   }
-  components.push({ role:'tread', type:treadDesc, length:1000, qty:nTreads, kgm:scRound1(treadKg), _unit:'EA',
-    note:`Per-tread weight (EA): ${foldDesc}${treadType==='chequer'?', incl. 6% pattern':treadType==='grating'?', kg/m² model':''}` });
-  // cleats — 2 per tread, EA
+  components.push({ role:'tread', type:treadDesc+sfx, length:1000, qty:nTreads, kgm:scRound1(treadKg), _unit:'EA',
+    note:`Per-tread weight (EA): ${foldDesc}${treadType==='chequer'?', incl. 6% pattern':treadType==='grating'?', kg/m² model':''}${sfx}` });
+
   let cleatKgm = scResolveKgm(cleatType);
   if (!cleatKgm){ cleatKgm = 3.77; warnings.push(`Cleat "${cleatType}" not found — using ${cleatKgm} kg/m.`); }
   const cleatLen = Number(input.cleatLenMM)||150;
-  components.push({ role:'cleat', type:`${cleatDisp} cleat ${cleatLen}mm (tread support)`, length:1000, qty:nTreads*2, kgm:scRound1((cleatLen/1000)*cleatKgm), _unit:'EA',
-    note:`Per-cleat weight (EA): 2 per tread, ${cleatLen}mm long` });
-  // landings (intermediate / top) — perimeter frame (PFC default) + deck
-  const nLandings = Math.max(0, Math.floor(Number(input.nLandings)||0));
-  if (nLandings > 0){
-    const lW = Number(input.landingWidthMM) || width;
-    const lD = Number(input.landingDepthMM) || width; // square by default
-    const landingFrameType = input.landingFrameType || 'PFC 150x75x18';
-    const lFrameDisp = _canon(landingFrameType);
-    let lFrameKgm = scResolveKgm(landingFrameType);
-    if (!lFrameKgm){ lFrameKgm = 17.9; warnings.push(`Landing frame "${landingFrameType}" not found — using ${lFrameKgm} kg/m.`); }
-    // perimeter frame: 2×(width+depth) per landing, as one EA piece carrying its weight
-    const perimM = 2*(lW+lD)/1000;
-    const frameKg = perimM * lFrameKgm;
-    components.push({ role:'landing_frame', type:`${lFrameDisp} landing frame ${lW}x${lD}`, length:1000, qty:nLandings, kgm:scRound1(frameKg), _unit:'EA',
-      note:`Per-landing frame (EA): perimeter ${Math.round(perimM*1000)}mm of ${lFrameDisp}` });
-    // landing deck — independent type (chequer / solid / grating / concrete tray / timber-support)
-    const lType = input.landingDeckType || 'chequer';
-    const lAreaM2 = (lW/1000)*(lD/1000);
-    const lShelf = Number(input.landingShelfMM)!=null && input.landingShelfMM!=='' ? Number(input.landingShelfMM) : 50;
-    let lDeckKg, lDeckDesc;
-    if (lType === 'grating'){
-      const gKgm2 = Number(input.gratingKgm2) || (GRATING_PRESETS[input.gratingPreset]?.kgm2) || 31;
-      lDeckKg = lAreaM2*gKgm2; lDeckDesc = `Open grating ${gKgm2}kg/m² landing deck ${lW}x${lD}`;
-    } else if (lType === 'solid'){
-      lDeckKg = scPlateKg(plate,lW,lD); lDeckDesc = `Solid ${plate}mm landing deck ${lW}x${lD}`;
-    } else if (lType === 'concrete'){
-      lDeckKg = scPlateKg(plate,lW,lD); lDeckDesc = `Concrete-tray ${plate}mm landing deck ${lW}x${lD} (${lShelf}mm shelf)`;
-    } else if (lType === 'timber'){
-      // plate substrate under timber — same as solid plate
-      lDeckKg = scPlateKg(plate,lW,lD); lDeckDesc = `Plate-under-timber ${plate}mm landing deck ${lW}x${lD}`;
-    } else {
-      lDeckKg = scPlateKg(plate,lW,lD)*1.06; lDeckDesc = `Chequer ${plate}mm landing deck ${lW}x${lD}`;
-    }
-    components.push({ role:'landing_deck', type:lDeckDesc, length:1000, qty:nLandings, kgm:scRound1(lDeckKg), _unit:'EA',
-      note:`Per-landing deck (EA): ${lDeckDesc}` });
-  }
-  // staircase fittings allowance — replaces explicit baseplate/connection modelling.
-  // EA single line carrying its own weight; excluded from the global fittings base.
-  const fitPct = Number(input.fittingsPct)!=null && input.fittingsPct!=='' ? Number(input.fittingsPct) : 7.5;
-  // sum steel weight so far for the allowance base
-  const steelKgSoFar = components.reduce((s,c)=> s + (c.length/1000)*c.kgm*c.qty, 0);
-  const fitKg = scRound1(steelKgSoFar * (fitPct/100));
-  components.push({ role:'fittings', type:`Staircase fittings & connections (${fitPct}%)`, length:1000, qty:1, kgm:fitKg, _unit:'EA',
-    note:`${fitPct}% fittings allowance on ${scRound1(steelKgSoFar)}kg staircase steel — covers baseplates, brackets, bolts, welds` });
+  components.push({ role:'cleat', type:`${cleatDisp} cleat ${cleatLen}mm (tread support)${sfx}`, length:1000, qty:nTreads*2, kgm:scRound1((cleatLen/1000)*cleatKgm), _unit:'EA',
+    note:`Per-cleat weight (EA): 2 per tread, ${cleatLen}mm long${sfx}` });
 
   return { ok:true, warnings, geometry:{
     stairClassLabel:cls.label, totalRiseMM:totalRise, nRisers, nTreads,
@@ -6767,17 +6776,177 @@ function computeStraightStair(input){
   }, components };
 }
 
+// ── F3 landing builder ────────────────────────────────────
+// One structural landing: perimeter frame + deck. Shared by all configs.
+function _scBuildLanding(input, idx, warnings){
+  const out = [];
+  const width = Number(input.widthMM)||1000;
+  const _canon = (t) => { const p = findSteelProfile(t); return (p && p.confidence !== 'none' && p.canonical) ? p.canonical : t; };
+  const plate = Number(input.treadPlateMM)||4.5;
+  const lW = Number(input.landingWidthMM) || width;
+  const lD = Number(input.landingDepthMM) || width;
+  const landingFrameType = input.landingFrameType || 'PFC 150x75x18';
+  const lFrameDisp = _canon(landingFrameType);
+  let lFrameKgm = scResolveKgm(landingFrameType);
+  if (!lFrameKgm){ lFrameKgm = 17.9; warnings.push(`Landing frame "${landingFrameType}" not found — using ${lFrameKgm} kg/m.`); }
+  const perimM = 2*(lW+lD)/1000;
+  const frameKg = perimM * lFrameKgm;
+  out.push({ role:'landing_frame', type:`${lFrameDisp} landing ${idx} frame ${lW}x${lD}`, length:1000, qty:1, kgm:scRound1(frameKg), _unit:'EA',
+    note:`Landing ${idx} frame (EA): perimeter ${Math.round(perimM*1000)}mm of ${lFrameDisp}` });
+  const lType = input.landingDeckType || 'chequer';
+  const lAreaM2 = (lW/1000)*(lD/1000);
+  const lShelf = (input.landingShelfMM!=null && input.landingShelfMM!=='' && !isNaN(Number(input.landingShelfMM))) ? Number(input.landingShelfMM) : 50;
+  let lDeckKg, lDeckDesc;
+  if (lType === 'grating'){
+    const gKgm2 = Number(input.gratingKgm2) || (GRATING_PRESETS[input.gratingPreset]?.kgm2) || 31;
+    lDeckKg = lAreaM2*gKgm2; lDeckDesc = `Open grating ${gKgm2}kg/m² landing ${idx} deck ${lW}x${lD}`;
+  } else if (lType === 'solid'){
+    lDeckKg = scPlateKg(plate,lW,lD); lDeckDesc = `Solid ${plate}mm landing ${idx} deck ${lW}x${lD}`;
+  } else if (lType === 'concrete'){
+    lDeckKg = scPlateKg(plate,lW,lD); lDeckDesc = `Concrete-tray ${plate}mm landing ${idx} deck ${lW}x${lD} (${lShelf}mm shelf)`;
+  } else if (lType === 'timber'){
+    lDeckKg = scPlateKg(plate,lW,lD); lDeckDesc = `Plate-under-timber ${plate}mm landing ${idx} deck ${lW}x${lD}`;
+  } else {
+    lDeckKg = scPlateKg(plate,lW,lD)*1.06; lDeckDesc = `Chequer ${plate}mm landing ${idx} deck ${lW}x${lD}`;
+  }
+  out.push({ role:'landing_deck', type:lDeckDesc, length:1000, qty:1, kgm:scRound1(lDeckKg), _unit:'EA',
+    note:`Landing ${idx} deck (EA): ${lDeckDesc}` });
+  return out;
+}
+
+// ── F3 assembly orchestrator ──────────────────────────────
+// Splits total rise across flights per the chosen configuration, runs each
+// flight through _scComputeFlight, inserts structural landings between flights,
+// optionally adds self-supporting posts + bracing, then a single fittings line.
+function computeStaircase(input){
+  const cfg = STAIR_CONFIGS[input.configuration] || STAIR_CONFIGS.straight;
+  const totalRise = Number(input.totalRiseMM)||0;
+  if (totalRise<=0) return { ok:false, warnings:['Total rise (floor-to-floor) is required.'], geometry:{}, components:[] };
+
+  // structural landing count: config default, overridable
+  const nLandings = (input.nLandings!=null && input.nLandings!=='')
+    ? Math.max(0, Math.floor(Number(input.nLandings))) : cfg.landings;
+  // flight count tracks landings (N landings between flights → N+1 flights),
+  // but never below the config's own flight count for plan/SVG correctness.
+  let nFlights = Math.max(cfg.nFlights, nLandings+1);
+  if (cfg.plan==='straight') nFlights = 1;
+
+  // rise split — auto-balance, with optional per-flight overrides (Advanced)
+  const overrides = Array.isArray(input.flightRises) ? input.flightRises : [];
+  const flightRises = [];
+  let remaining = totalRise, autoFlights = nFlights;
+  for (let i=0;i<nFlights;i++){
+    const ov = Number(overrides[i]);
+    if (overrides[i]!=null && overrides[i]!=='' && ov>0){ flightRises.push(ov); remaining-=ov; autoFlights--; }
+    else flightRises.push(null);
+  }
+  const autoEach = autoFlights>0 ? remaining/autoFlights : 0;
+  for (let i=0;i<nFlights;i++) if (flightRises[i]==null) flightRises[i]=autoEach;
+
+  const warnings = [];
+  let components = [];
+  const flightGeoms = [];
+  for (let i=0;i<nFlights;i++){
+    const sfx = nFlights>1 ? ` (flight ${i+1})` : '';
+    const f = _scComputeFlight(input, flightRises[i], { suffix:sfx, noFittings:true });
+    if (!f.ok) return { ok:false, warnings:f.warnings, geometry:{}, components:[] };
+    f.warnings.forEach(w=>warnings.push(w));
+    components = components.concat(f.components);
+    flightGeoms.push(f.geometry);
+  }
+  // structural landings between flights
+  for (let i=0;i<nLandings;i++){
+    components = components.concat(_scBuildLanding(input, i+1, warnings));
+  }
+
+  // ── self-supported: posts + bracing (orthogonal to config) ──
+  const selfSupported = !!input.selfSupported;
+  if (selfSupported){
+    const _canon = (t) => { const p = findSteelProfile(t); return (p && p.confidence !== 'none' && p.canonical) ? p.canonical : t; };
+    const postType = input.postType || 'SHS100x100x6.3';
+    const postDisp = _canon(postType);
+    let postKgm = scResolveKgm(postType);
+    if (!postKgm){ postKgm = 17.8; warnings.push(`Support post "${postType}" not found — using ${postKgm} kg/m.`); }
+    // post height defaults to total rise + 1100 handrail standoff; editable
+    const postLen = Number(input.postLenMM)>0 ? Number(input.postLenMM) : Math.round(totalRise + 1100);
+    // post count: a pair at each landing + a pair at the top flight head (min 2).
+    // Straight self-supported: 2 (head) + 2 (mid) if tall.
+    let nPosts;
+    if (input.nPosts!=null && input.nPosts!=='') nPosts = Math.max(0, Math.floor(Number(input.nPosts)));
+    else nPosts = Math.max(2, nLandings*2 + 2);
+    components.push({ role:'post', type:`${postDisp} support post ${postLen}mm`, length:postLen, qty:nPosts, kgm:postKgm, _unit:'',
+      note:`Self-supporting: ${nPosts} posts @ ${postLen}mm (${postDisp}) — landing legs + flight head` });
+    // bracing allowance — % of steel so far, EA line
+    const bracePct = Number(input.bracingPct)!=null && input.bracingPct!=='' ? Number(input.bracingPct) : 8;
+    const kgSoFar = components.reduce((s,c)=> s + (c.length/1000)*c.kgm*c.qty, 0);
+    const braceKg = scRound1(kgSoFar * (bracePct/100));
+    components.push({ role:'bracing', type:`Self-support bracing & knee-braces (${bracePct}%)`, length:1000, qty:1, kgm:braceKg, _unit:'EA',
+      note:`${bracePct}% bracing allowance on ${scRound1(kgSoFar)}kg — diagonal braces, knee-braces, gussets to posts` });
+  }
+
+  // ── fittings allowance (assembly level, once) ──
+  const fitPct = Number(input.fittingsPct)!=null && input.fittingsPct!=='' ? Number(input.fittingsPct) : 7.5;
+  const steelKgSoFar = components.reduce((s,c)=> s + (c.length/1000)*c.kgm*c.qty, 0);
+  const fitKg = scRound1(steelKgSoFar * (fitPct/100));
+  components.push({ role:'fittings', type:`Staircase fittings & connections (${fitPct}%)`, length:1000, qty:1, kgm:fitKg, _unit:'EA',
+    note:`${fitPct}% fittings allowance on ${scRound1(steelKgSoFar)}kg staircase steel — covers baseplates, brackets, bolts, welds` });
+
+  // aggregate geometry for display (primary = flight 1, plus assembly summary)
+  const g0 = flightGeoms[0];
+  const totRiseDisp = flightGeoms.reduce((a,g)=>a+g.totalRiseMM,0);
+  return { ok:true, warnings, geometry:{
+    configLabel: cfg.label, plan: cfg.plan, turn: cfg.turn,
+    nFlights, nLandings, selfSupported,
+    flights: flightGeoms,
+    // primary-flight fields kept for the existing geometry readout
+    stairClassLabel:g0.stairClassLabel, totalRiseMM:totRiseDisp, nRisers:g0.nRisers, nTreads:g0.nTreads,
+    riseMM:g0.riseMM, goingMM:g0.goingMM, pitchDeg:g0.pitchDeg, twoRplusG:g0.twoRplusG,
+    widthMM:g0.widthMM, horizRunMM:g0.horizRunMM, slopeLenMM:g0.slopeLenMM, stringerCutMM:g0.stringerCutMM,
+  }, components };
+}
+
+// Back-compat wrapper — straight single flight (unchanged behaviour).
+function computeStraightStair(input){
+  return computeStaircase(Object.assign({}, input, { configuration:'straight' }));
+}
+
 // ── wizard controller ─────────────────────────────────────
 let _scLastResult = null;
 function openStaircaseWizard(){
   if (!getQuote()){ toast('Open or create a quote first'); return; }
   document.getElementById('staircaseModal').classList.add('active');
   scSetView('basic');
+  scConfigChange();
+  scSelfSupportChange();
   scTreadTypeChange();
   scLandingDeckChange();
   scRecompute();
 }
 function closeStaircaseWizard(){ document.getElementById('staircaseModal').classList.remove('active'); }
+
+// F3: configuration change — show/hide flight-split & landing fields, sync count
+function scConfigChange(){
+  const cfgKey = document.getElementById('scConfig')?.value || 'straight';
+  const cfg = (typeof STAIR_CONFIGS!=='undefined' && STAIR_CONFIGS[cfgKey]) ? STAIR_CONFIGS[cfgKey] : { nFlights:1, landings:0 };
+  const multi = cfg.nFlights > 1;
+  const fsw = document.getElementById('scFlightSplitWrap');
+  if (fsw) fsw.style.display = multi ? '' : 'none';
+  const f3w = document.getElementById('scFlight3Wrap');
+  if (f3w) f3w.style.display = cfg.nFlights >= 3 ? '' : 'none';
+  // default the landing count to the config's structural landings (user can override)
+  const nl = document.getElementById('scNLandings');
+  if (nl) nl.value = cfg.landings;
+  // update title
+  const titleSpan = document.querySelector('#staircaseModal .modal-title span');
+  if (titleSpan) titleSpan.textContent = '— ' + cfg.label.toLowerCase();
+  scRecompute();
+}
+// F3: self-support toggle — reveal post/bracing fields
+function scSelfSupportChange(){
+  const on = !!document.getElementById('scSelfSupport')?.checked;
+  const w = document.getElementById('scSelfSupportWrap');
+  if (w) w.style.display = on ? '' : 'none';
+}
 
 // Basic shows rise/width/class/name only; Advanced reveals all components.
 function scSetView(mode){
@@ -6881,11 +7050,19 @@ function scReadInputs(){
     landingFrameType: (v('scLandingFrame')||'').trim() || null,
     landingDeckType: v('scLandingDeckType') || 'chequer',
     landingShelfMM: v('scLandingShelf') || null,
+    // F3
+    configuration: v('scConfig') || 'straight',
+    flightRises: ['scFlight1Rise','scFlight2Rise','scFlight3Rise'].map(id=>{ const el=document.getElementById(id); return el?el.value:''; }),
+    selfSupported: chk('scSelfSupport'),
+    postType: (v('scPost')||'').trim() || null,
+    postLenMM: v('scPostLen') || null,
+    nPosts: v('scNPosts') || null,
+    bracingPct: v('scBracingPct') || null,
   };
 }
 
 function scRecompute(){
-  const r = computeStraightStair(scReadInputs());
+  const r = computeStaircase(scReadInputs());
   _scLastResult = r;
   const geo = document.getElementById('scGeometry');
   const warn = document.getElementById('scWarnings');
@@ -6898,9 +7075,18 @@ function scRecompute(){
     btn.disabled = true; btn.style.opacity='0.4'; return;
   }
   const g = r.geometry;
+  const cfgLine = (g.nFlights>1 || g.configLabel)
+    ? `<span style="color:var(--accent)">${escHtml(g.configLabel||'Straight flight')}</span>${g.selfSupported?' · <span style="color:var(--accent)">self-supported</span>':''}<br>`
+      + (g.nFlights>1 ? `${g.nFlights} flights${g.nLandings?` · ${g.nLandings} landing${g.nLandings>1?'s':''}`:''} · total rise ${g.totalRiseMM}mm<br>` : '')
+    : '';
+  const flightLine = (g.flights && g.flights.length>1)
+    ? `<span style="color:var(--subtle);font-size:11px">${g.flights.map((f,i)=>`F${i+1}: ${f.nRisers}R@${f.riseMM}`).join(' · ')}</span><br>`
+    : '';
   geo.innerHTML =
+    cfgLine +
     `<strong>${escHtml(g.stairClassLabel)}</strong><br>`+
-    `${g.nRisers} risers @ ${g.riseMM}mm · ${g.nTreads} treads<br>`+
+    `${g.nRisers} risers @ ${g.riseMM}mm · ${g.nTreads} treads${g.nFlights>1?' <span style="color:var(--subtle)">(flight 1)</span>':''}<br>`+
+    flightLine +
     `Going ${g.goingMM}mm · pitch ${g.pitchDeg}° · 2R+G ${g.twoRplusG}<br>`+
     `Stringer cut ${g.stringerCutMM}mm (slope ${g.slopeLenMM}mm)`;
   warn.innerHTML = r.warnings.length
@@ -6929,52 +7115,103 @@ function scRecompute(){
 }
 
 // ── SVG schematic — drawn purely from geometry, no AI ─────
-// Side elevation (stair profile with rise/going/pitch) + plan view.
+// Multi-flight elevation (flights + landing platforms between them, switchback
+// folds back on itself) + plan view showing the turn footprint.
 function scBuildSVG(g){
   if (!g || !g.nRisers) return '';
-  const n = g.nTreads, rise = g.riseMM, going = g.goingMM, width = g.widthMM;
-  const totalRise = g.totalRiseMM, run = g.horizRunMM;
-  // ELEVATION — scale to fit 300x180 box with 30px margin
-  const W=320, H=210, m=34;
-  const sx = run>0 ? (W-2*m)/run : 1;
-  const sy = (H-2*m)/totalRise;
-  const s = Math.min(sx, sy); // uniform scale
-  const ox = m, oy = H-m; // origin bottom-left
-  // build stepped profile path
-  let d = `M ${ox} ${oy}`;
-  let cx = ox, cy = oy;
-  for (let i=0;i<n;i++){
-    cy -= rise*s; d += ` L ${cx.toFixed(1)} ${cy.toFixed(1)}`;     // up (riser)
-    cx += going*s; d += ` L ${cx.toFixed(1)} ${cy.toFixed(1)}`;    // along (going)
+  const flights = (g.flights && g.flights.length) ? g.flights : [{
+    nTreads:g.nTreads, riseMM:g.riseMM, goingMM:g.goingMM, widthMM:g.widthMM,
+    totalRiseMM:g.totalRiseMM, horizRunMM:g.horizRunMM
+  }];
+  const plan = g.plan || 'straight';
+  const nLandings = g.nLandings || 0;
+  const width = g.widthMM;
+  const landingDepth = width; // square landing footprint for the schematic
+
+  // ELEVATION ----------------------------------------------------------
+  // Lay flights left→right; for switchback/dogleg/ushape alternate direction
+  // so the profile folds back, with a flat landing platform between flights.
+  const W=340, H=230, m=34;
+  const alt = (plan==='dogleg'||plan==='ushape'||plan==='switchback');
+  // total horizontal extent (worst case all flights laid end-to-end if straight,
+  // or stacked width if alternating) and total rise for scaling
+  let maxRun = 0; flights.forEach(f=>{ if(f.horizRunMM>maxRun) maxRun=f.horizRunMM; });
+  const landRun = landingDepth;
+  const totalRun = alt ? (maxRun + landRun) : flights.reduce((a,f)=>a+f.horizRunMM,0) + nLandings*landRun;
+  const totalRise = flights.reduce((a,f)=>a+f.totalRiseMM,0);
+  const sx = totalRun>0 ? (W-2*m)/totalRun : 1;
+  const sy = totalRise>0 ? (H-2*m)/totalRise : 1;
+  const s = Math.min(sx, sy);
+  let cx = m, cy = H-m, dir = 1; // start bottom-left, going right
+  let profile = `M ${cx.toFixed(1)} ${cy.toFixed(1)}`;
+  let stringers = '';
+  let landingMarks = '';
+  flights.forEach((f, fi)=>{
+    const fStart = {x:cx, y:cy};
+    for (let i=0;i<f.nTreads+1;i++){
+      cy -= f.riseMM*s; profile += ` L ${cx.toFixed(1)} ${cy.toFixed(1)}`;          // riser up
+      if (i<f.nTreads){ cx += dir*f.goingMM*s; profile += ` L ${cx.toFixed(1)} ${cy.toFixed(1)}`; } // going
+    }
+    stringers += `<path d="M ${fStart.x.toFixed(1)} ${fStart.y.toFixed(1)} L ${cx.toFixed(1)} ${cy.toFixed(1)}" stroke="var(--accent)" stroke-width="1.6" fill="none" opacity="0.5"/>`;
+    // landing platform between flights
+    if (fi < flights.length-1){
+      const lStartX = cx;
+      const platW = landRun*s;
+      const nx = alt ? cx : cx + platW;       // alternating: landing sits above, reverse dir
+      // draw a flat platform segment
+      const px2 = alt ? cx + dir*platW : cx + platW;
+      profile += ` L ${px2.toFixed(1)} ${cy.toFixed(1)}`;
+      landingMarks += `<rect x="${Math.min(lStartX,px2).toFixed(1)}" y="${(cy-3).toFixed(1)}" width="${platW.toFixed(1)}" height="6" fill="var(--accent)" opacity="0.25"/>`
+        + `<text x="${((lStartX+px2)/2).toFixed(1)}" y="${(cy-7).toFixed(1)}" fill="var(--muted)" font-size="8" text-anchor="middle">L${fi+1}</text>`;
+      cx = px2;
+      if (alt) dir = -dir; // fold back for next flight
+    }
+  });
+
+  // PLAN ---------------------------------------------------------------
+  // Footprint differs by config. Boxes scaled into a 340x150 area.
+  const PW=340, PH=160, pm=22;
+  const fRunPlan = flights[0].horizRunMM;
+  let planSVG='';
+  function box(x,y,w,h,label,accent){
+    return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" stroke="${accent?'var(--accent)':'var(--text)'}" stroke-width="1.3" fill="${accent?'var(--accent)':'none'}" fill-opacity="${accent?0.12:0}"/>`
+      + (label?`<text x="${(x+w/2).toFixed(1)}" y="${(y+h/2+3).toFixed(1)}" fill="var(--muted)" font-size="8" text-anchor="middle">${label}</text>`:'');
   }
-  cy -= rise*s; d += ` L ${cx.toFixed(1)} ${cy.toFixed(1)}`;        // final riser to top
-  // stringer line (sloped) from bottom origin to top of last step
-  const stringer = `M ${ox} ${oy} L ${cx.toFixed(1)} ${cy.toFixed(1)}`;
-  // PLAN — width x run, simple rectangle with tread divisions, separate box
-  const PW=320, PH=110, pm=24;
-  const psx = run>0 ? (PW-2*pm)/run : 1;
-  const psy = (PH-2*pm)/width;
-  const ps = Math.min(psx, psy);
-  const planW = run*ps, planH = width*ps;
-  let treadLines='';
-  for (let i=1;i<n;i++){ const x=pm+i*going*ps; treadLines += `<line x1="${x.toFixed(1)}" y1="${pm}" x2="${x.toFixed(1)}" y2="${(pm+planH).toFixed(1)}" stroke="var(--border)" stroke-width="1"/>`; }
+  // unit scale based on a representative flight run + width
+  const ps = Math.min((PW-2*pm)/((fRunPlan||1)+landingDepth*1.2), (PH-2*pm)/((width||1)*2.4));
+  const fw = (fRunPlan||1)*ps, ww = (width||1)*ps, lw = landingDepth*ps;
+  if (plan==='straight'){
+    planSVG = box(pm, PH/2-ww/2, fw, ww, 'flight', false);
+  } else if (plan==='quarter'){
+    planSVG = box(pm, PH-pm-ww, fw, ww, 'F1', false)
+      + box(pm, PH-pm-ww-lw, lw, lw, 'L', true)
+      + box(pm, pm, lw, Math.min(fw,PH-2*pm-lw), 'F2', false);
+  } else if (plan==='dogleg' || plan==='switchback'){
+    planSVG = box(pm, PH/2+2, fw, ww, 'F1', false)
+      + box(pm+fw-lw, PH/2-ww-lw+2, lw, ww+lw, 'L', true)
+      + box(pm+fw-lw-fw, PH/2-ww-2, fw, ww, 'F2', false).replace(`x="${(pm+fw-lw-fw).toFixed(1)}"`, `x="${pm.toFixed(1)}"`);
+  } else if (plan==='ushape'){
+    planSVG = box(pm, PH/2+2, fw*0.7, ww, 'F1', false)
+      + box(pm+fw*0.7, PH/2-ww/2, lw, ww, 'L1', true)
+      + box(pm+fw*0.7, PH/2-ww/2-ww-4, lw, ww, 'L2', true)
+      + box(pm, PH/2-ww-2-ww, fw*0.7, ww, 'F3', false).replace(`y="${(PH/2-ww-2-ww).toFixed(1)}"`, `y="${(PH/2-ww*2-6).toFixed(1)}"`);
+  } else {
+    planSVG = box(pm, PH/2-ww/2, fw, ww, 'flight', false);
+  }
+
   return `
-  <div style="font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Elevation</div>
+  <div style="font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Elevation${flights.length>1?` · ${flights.length} flights`:''}</div>
   <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;background:var(--bg,#111);border:1px solid var(--border);border-radius:6px">
-    <path d="${stringer}" stroke="var(--accent)" stroke-width="2" fill="none" opacity="0.55"/>
-    <path d="${d}" stroke="var(--text)" stroke-width="1.6" fill="none"/>
-    <line x1="${ox}" y1="${oy}" x2="${ox}" y2="${m}" stroke="var(--subtle)" stroke-dasharray="3 3" stroke-width="1"/>
-    <text x="${ox-6}" y="${(m+oy)/2}" fill="var(--muted)" font-size="9" text-anchor="end" transform="rotate(-90 ${ox-6} ${(m+oy)/2})">${totalRise}mm rise</text>
-    <text x="${(ox+cx)/2}" y="${oy+16}" fill="var(--muted)" font-size="9" text-anchor="middle">run ${run}mm · ${n} treads</text>
-    <text x="${cx-4}" y="${cy-5}" fill="var(--accent)" font-size="9" text-anchor="end">${g.pitchDeg}°</text>
-    <text x="${ox+going*s*0.5}" y="${oy-rise*s-4}" fill="var(--subtle)" font-size="8">R${rise} G${going}</text>
+    ${stringers}
+    <path d="${profile}" stroke="var(--text)" stroke-width="1.6" fill="none"/>
+    ${landingMarks}
+    <line x1="${m}" y1="${H-m}" x2="${m}" y2="${m}" stroke="var(--subtle)" stroke-dasharray="3 3" stroke-width="1"/>
+    <text x="${m-6}" y="${H/2}" fill="var(--muted)" font-size="9" text-anchor="middle" transform="rotate(-90 ${m-6} ${H/2})">${totalRise}mm total rise</text>
   </svg>
-  <div style="font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);margin:8px 0 4px">Plan</div>
+  <div style="font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);margin:8px 0 4px">Plan${plan!=='straight'?` · ${escHtml(g.configLabel||'')}`:''}</div>
   <svg viewBox="0 0 ${PW} ${PH}" style="width:100%;height:auto;background:var(--bg,#111);border:1px solid var(--border);border-radius:6px">
-    <rect x="${pm}" y="${pm}" width="${planW.toFixed(1)}" height="${planH.toFixed(1)}" stroke="var(--text)" stroke-width="1.4" fill="none"/>
-    ${treadLines}
-    <text x="${pm+planW/2}" y="${pm+planH+14}" fill="var(--muted)" font-size="9" text-anchor="middle">run ${run}mm</text>
-    <text x="${pm-6}" y="${pm+planH/2}" fill="var(--muted)" font-size="9" text-anchor="middle" transform="rotate(-90 ${pm-6} ${pm+planH/2})">width ${width}mm</text>
+    ${planSVG}
+    <text x="${PW-8}" y="${PH-6}" fill="var(--subtle)" font-size="8" text-anchor="end">width ${width}mm</text>
   </svg>`;
 }
 
@@ -6988,7 +7225,8 @@ async function injectStaircase(){
   q.areas.push({ id, name, collapsed:false });
 
   // store the spec so it can be regenerated/edited later
-  q.staircases.push({ areaId:id, kind:'straight', input:scReadInputs(), geometry:r.geometry, ts:Date.now() });
+  const _scin = scReadInputs();
+  q.staircases.push({ areaId:id, kind:_scin.configuration||'straight', input:_scin, geometry:r.geometry, ts:Date.now() });
 
   r.components.forEach(c=>{
     q.takeoff.push({ type:c.type, length:c.length, qty:c.qty, kgm:c.kgm,
