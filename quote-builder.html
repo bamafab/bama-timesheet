@@ -1786,16 +1786,16 @@ tr.drag-dragging { opacity:0.35; }
                 <span>Closed riser <span style="color:var(--subtle)">— tread &amp; riser formed as one bent plate</span></span>
               </label>
               <div style="font-size:10px;color:var(--subtle);margin-top:4px;padding-left:23px">
-                Developed plate length is computed automatically: closed = going + rise + bend; open = going + downstands. You only set the fold allowance below.
+                Developed length = going + riser + downstand. Closed sets riser + bottom downstand; open uses one fold value on both edges.
               </div>
             </div>
-            <div class="form-grid form-grid-2" id="scOpenFoldWrap" style="gap:8px;display:none">
-              <div class="field"><label>Top downstand (mm)</label><input type="number" id="scDsTop" value="25" oninput="scRecompute()"></div>
-              <div class="field"><label>Btm downstand (mm)</label><input type="number" id="scDsBot" value="25" oninput="scRecompute()"></div>
+            <div class="form-grid form-grid-2" id="scClosedFoldWrap" style="gap:8px">
+              <div class="field"><label>Riser height (mm) <span style="color:var(--subtle);font-size:10px">blank=auto</span></label><input type="number" id="scRiser" placeholder="auto" oninput="scRecompute()"></div>
+              <div class="field"><label>Bottom downstand (mm)</label><input type="number" id="scDownstand" value="50" oninput="scRecompute()"></div>
             </div>
-            <div class="field" id="scClosedBendWrap">
-              <label>Closed riser bend allowance (mm) <span style="color:var(--subtle);font-size:10px">— front fold</span></label>
-              <input type="number" id="scClosedBend" value="50" oninput="scRecompute()">
+            <div class="field" id="scOpenFoldWrap" style="display:none">
+              <label>Edge fold / downstand (mm) <span style="color:var(--subtle);font-size:10px">— applied both edges</span></label>
+              <input type="number" id="scOpenFold" value="25" oninput="scRecompute()">
             </div>
             <div class="field" id="scConcreteShelfWrap" style="display:none">
               <label>Concrete tray shelf height (mm)</label>
@@ -1818,7 +1818,7 @@ tr.drag-dragging { opacity:0.35; }
               <div class="field"><label>Landing width (mm)</label><input type="number" id="scLandingWidth" placeholder="=stair" oninput="scRecompute()"></div>
               <div class="field"><label>Landing depth (mm)</label><input type="number" id="scLandingDepth" placeholder="=width" oninput="scRecompute()"></div>
             </div>
-            <div style="font-size:10px;color:var(--subtle);margin:-2px 0 6px">Set <strong>No. of landings = 0</strong> to remove them. A blank width/depth defaults to the stair width — it does not remove the landing.</div>
+            <div style="font-size:10px;color:var(--subtle);margin:-2px 0 6px">Set count = 0 to remove. Blank width/depth = stair width.</div>
             <div class="field">
               <label>Landing frame section</label>
               <select id="scLandingFramePreset" onchange="scApplyPreset('LandingFrame')" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%;margin-bottom:5px">
@@ -6669,9 +6669,12 @@ function computeStraightStair(input){
   // fold of this single plate.
   const treadType = input.treadType || 'chequer';
   const closedRiser = !!input.closedRiser && treadType !== 'grating'; // grating can't close
-  const dsTop = Number(input.dsTopMM)!=null && input.dsTopMM!=='' ? Number(input.dsTopMM) : 25;
-  const dsBot = Number(input.dsBotMM)!=null && input.dsBotMM!=='' ? Number(input.dsBotMM) : 25;
-  const closedBend = Number(input.closedBendMM)!=null && input.closedBendMM!=='' ? Number(input.closedBendMM) : 50;
+  // unified model — tread plate develops as: going + riser + downstand.
+  // closed → two editable values (riser defaults to geometric rise, downstand def 50)
+  // open   → one editable value used for both folds (def 25)
+  const riserMM    = Number(input.riserMM)!=null && input.riserMM!=='' ? Number(input.riserMM) : rise;
+  const downstandMM= Number(input.downstandMM)!=null && input.downstandMM!=='' ? Number(input.downstandMM) : 50;
+  const openFoldMM = Number(input.openFoldMM)!=null && input.openFoldMM!=='' ? Number(input.openFoldMM) : 25;
   const shelfMM = Number(input.concreteShelfMM)!=null && input.concreteShelfMM!=='' ? Number(input.concreteShelfMM) : 50;
 
   // developed depth of the folded plate (the run of material before bending)
@@ -6680,11 +6683,11 @@ function computeStraightStair(input){
     devDepth = going + 2*shelfMM;                       // tray: going + two upstands
     foldDesc = `${shelfMM}mm concrete shelf tray`;
   } else if (closedRiser){
-    devDepth = going + rise + closedBend;               // tread face + riser front + bend
-    foldDesc = `closed (going ${Math.round(going)} + riser ${Math.round(rise)} + ${closedBend} bend)`;
+    devDepth = going + riserMM + downstandMM;           // going + riser front + bottom downstand
+    foldDesc = `closed (going ${Math.round(going)} + riser ${Math.round(riserMM)} + ${downstandMM} downstand)`;
   } else {
-    devDepth = going + dsTop + dsBot;                   // open: going + 2 downstands
-    foldDesc = `open (going ${Math.round(going)} + ${dsTop}/${dsBot} downstands)`;
+    devDepth = going + openFoldMM + openFoldMM;          // open: going + downstand each edge
+    foldDesc = `open (going ${Math.round(going)} + ${openFoldMM}/${openFoldMM} folds)`;
   }
   const devAreaM2 = (width/1000)*(devDepth/1000);
 
@@ -6813,10 +6816,12 @@ function scTreadTypeChange(){
 function scSyncFoldFields(){
   const t = document.getElementById('scTreadType')?.value;
   const closed = !!document.getElementById('scClosedRiser')?.checked && t !== 'grating';
+  const closedW = document.getElementById('scClosedFoldWrap');
   const openW = document.getElementById('scOpenFoldWrap');
-  const closedW = document.getElementById('scClosedBendWrap');
-  if (openW) openW.style.display = closed ? 'none' : '';
-  if (closedW) closedW.style.display = closed ? '' : 'none';
+  // both hidden for concrete (uses shelf field instead)
+  const isConcrete = t === 'concrete';
+  if (closedW) closedW.style.display = (closed && !isConcrete) ? '' : 'none';
+  if (openW)   openW.style.display   = (!closed && !isConcrete) ? '' : 'none';
 }
 // Landing deck concrete shelf visibility
 function scLandingDeckChange(){
@@ -6866,9 +6871,9 @@ function scReadInputs(){
     treadType: v('scTreadType') || 'chequer',
     gratingPreset: v('scGratingPreset') || null,
     gratingKgm2: v('scGratingKgm2') || null,
-    dsTopMM: v('scDsTop') || null,
-    dsBotMM: v('scDsBot') || null,
-    closedBendMM: v('scClosedBend') || null,
+    riserMM: v('scRiser') || null,
+    downstandMM: v('scDownstand') || null,
+    openFoldMM: v('scOpenFold') || null,
     concreteShelfMM: v('scConcreteShelf') || null,
     nLandings: v('scNLandings') || null,
     landingWidthMM: v('scLandingWidth') || null,
