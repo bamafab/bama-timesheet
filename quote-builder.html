@@ -5980,6 +5980,10 @@ async function selectQuote(id) {
         project_id:   row.project_id  || null,
         _fromSQL:     true
       });
+      // Guard: older blobs may lack these arrays — ensure they exist before render
+      if (!Array.isArray(existing.takeoff))  existing.takeoff  = [];
+      if (!Array.isArray(existing.areas))    existing.areas    = [];
+      if (!Array.isArray(existing.subareas)) existing.subareas = [];
     } catch(e) {
       toast('Could not load quote data: ' + e.message, 'error');
       return;
@@ -5993,6 +5997,9 @@ async function selectQuote(id) {
 // ============================================================
 function loadQuoteEditor() {
   const q = getQuote(); if (!q) return;
+  if (!Array.isArray(q.takeoff))  q.takeoff  = [];
+  if (!Array.isArray(q.areas))    q.areas    = [];
+  if (!Array.isArray(q.subareas)) q.subareas = [];
   document.getElementById('emptyState').style.display = 'none';
   document.getElementById('quoteEditor').style.display = '';
 
