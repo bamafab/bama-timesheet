@@ -231,6 +231,31 @@
 </div>
 
 <!-- ═══════════════════════════════════════
+     CLOSE JOB MODAL (Mark Site Complete)
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="closeJobModal">
+  <div class="modal" style="max-width:460px;width:95vw;text-align:center">
+    <div style="font-size:48px;margin-bottom:12px">&#127919;</div>
+    <div class="modal-title" style="font-size:20px;margin-bottom:8px">Close Job?</div>
+    <div id="closeJobMessage" style="color:var(--muted);font-size:14px;line-height:1.7;margin-bottom:20px"></div>
+    <div style="margin-bottom:20px;text-align:left">
+      <div class="field-label" style="margin-bottom:6px">COMPLETED BY</div>
+      <select class="field-input" id="closeJobPerson" style="font-size:14px;padding:10px 12px">
+        <option value="">Select your name...</option>
+      </select>
+    </div>
+    <button class="btn btn-primary btn-full" id="closeJobConfirmBtn"
+      onclick="confirmCloseJob()"
+      style="padding:14px;font-size:15px;opacity:.4;cursor:not-allowed" disabled>
+      Close Job &amp; Notify
+    </button>
+    <button class="btn btn-ghost btn-full" onclick="closeCloseJobModal()" style="margin-top:10px;padding:12px">
+      Cancel
+    </button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
      CREATE JOB MODAL
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="createJobModal">
