@@ -1761,6 +1761,27 @@ tr.drag-dragging { opacity:0.35; }
               <div class="field"><label>Tread depth (mm) <span style="color:var(--subtle);font-size:10px">blank=going+25</span></label><input type="number" id="scTreadDepth" placeholder="auto" oninput="scRecompute()"></div>
             </div>
             <div class="field">
+              <label>Tread type</label>
+              <select id="scTreadType" onchange="scTreadTypeChange()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%">
+                <option value="chequer" selected>Chequer / durbar plate (BAMA default)</option>
+                <option value="solid">Solid smooth plate</option>
+                <option value="grating">Open bar grating</option>
+              </select>
+            </div>
+            <div id="scGratingWrap" style="display:none">
+              <div class="field">
+                <label>Grating spec</label>
+                <select id="scGratingPreset" onchange="scGratingPresetChange()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%;margin-bottom:5px">
+                  <option value="30x3@30">30×3 @ 30mm — 21 kg/m² (light)</option>
+                  <option value="30x5@30" selected>30×5 @ 30mm — 31 kg/m²</option>
+                  <option value="40x5@30">40×5 @ 30mm — 36 kg/m² (heavy)</option>
+                  <option value="25x5@30">25×5 @ 30mm — 27 kg/m²</option>
+                  <option value="40x5@41">40×5 @ 41mm — 28 kg/m² (economy)</option>
+                </select>
+                <input type="number" id="scGratingKgm2" value="31" step="0.5" oninput="scRecompute()" title="kg/m² — editable">
+              </div>
+            </div>
+            <div class="field">
               <label>Tread cleats / bent plate</label>
               <select id="scCleatPreset" onchange="scApplyPreset('Cleat')" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%;margin-bottom:5px">
                 <option value="EA50x50x5" selected>EA50x50x5 (BAMA default)</option>
@@ -1783,6 +1804,13 @@ tr.drag-dragging { opacity:0.35; }
               <div class="field"><label>Top bend (mm)</label><input type="number" id="scRiserBendTop" value="150" oninput="scRecompute()"></div>
               <div class="field"><label>Btm bend (mm)</label><input type="number" id="scRiserBendBot" value="50" oninput="scRecompute()"></div>
             </div>
+            <div style="border-top:1px solid var(--border);margin:8px 0 4px;padding-top:8px;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted)">Landings</div>
+            <div class="form-grid form-grid-3" style="gap:8px">
+              <div class="field"><label>No. of landings</label><input type="number" id="scNLandings" value="0" min="0" step="1" oninput="scRecompute()"></div>
+              <div class="field"><label>Landing width (mm)</label><input type="number" id="scLandingWidth" placeholder="=stair" oninput="scRecompute()"></div>
+              <div class="field"><label>Landing depth (mm)</label><input type="number" id="scLandingDepth" placeholder="=width" oninput="scRecompute()"></div>
+            </div>
+            <div class="field"><label>Landing frame section <span style="color:var(--subtle);font-size:10px">— blank = cleat section</span></label><input type="text" id="scLandingFrame" placeholder="e.g. EA60x60x6" oninput="scRecompute()"></div>
             <div class="field"><label>Staircase fittings allowance (%) <span style="color:var(--subtle);font-size:10px">— baseplates, brackets, bolts, welds</span></label><input type="number" id="scFittingsPct" value="7.5" step="0.5" oninput="scRecompute()"></div>
           </div>
         </div>
@@ -1820,6 +1848,10 @@ tr.drag-dragging { opacity:0.35; }
             </table>
           </div>
           <div style="font-size:10px;color:var(--subtle);margin-top:6px">£ uses global material rates (£/kg) — fully editable per row after injection.</div>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-top:10px">
+          <div style="font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Schematic</div>
+          <div id="scSchematic"></div>
         </div>
       </div>
     </div>
@@ -6532,6 +6564,15 @@ const STAIR_CLASSES = {
   public:     { label:'Public (assembly)',                  maxRise:180, minGoing:280, maxPitch:33, maxRisesPerFlight:16, idealRise:170 },
 };
 const STAIR_STEEL_DENSITY = 7850; // kg/m3
+// UK open-bar grating presets (BS 4592). Weights kg/m² for plain bearing bars
+// at 30/41mm pitch — typical BAMA-spec values; all editable in the wizard.
+const GRATING_PRESETS = {
+  '30x3@30':  { label:'30×3 bearing @ 30mm pitch (light duty)', kgm2:21 },
+  '30x5@30':  { label:'30×5 bearing @ 30mm pitch',              kgm2:31 },
+  '40x5@30':  { label:'40×5 bearing @ 30mm pitch (heavy duty)', kgm2:36 },
+  '25x5@30':  { label:'25×5 bearing @ 30mm pitch',              kgm2:27 },
+  '40x5@41':  { label:'40×5 bearing @ 41mm pitch (economy)',    kgm2:28 },
+};
 function scRound1(n){ return Math.round(n*10)/10; }
 function scPlateKg(thkMM, wMM, dMM){ return (thkMM/1000)*(wMM/1000)*(dMM/1000)*STAIR_STEEL_DENSITY; }
 
@@ -6586,10 +6627,26 @@ function computeStraightStair(input){
   if (!strKgm){ strKgm = 23.6; warnings.push(`Stringer "${stringerType}" not found in steel DB — using ${strKgm} kg/m. Edit in takeoff if wrong.`); }
   components.push({ role:'stringer', type:stringerDisp, length:stringerCutMM, qty:2, kgm:strKgm, _unit:'',
     note:`2 stringers, sloped length ~${Math.round(slopeLen)}mm (+150 fixing allowance)` });
-  // treads — chequer plate EA (Option A)
-  const treadKg = scPlateKg(plate,width,treadDepth)*1.06;
-  components.push({ role:'tread', type:`Chequer ${plate}mm tread ${width}x${treadDepth}`, length:1000, qty:nTreads, kgm:scRound1(treadKg), _unit:'EA',
-    note:`Per-tread weight (EA): chequer ${plate}mm ${width}x${treadDepth}mm incl. 6% pattern allowance` });
+  // treads — type-dependent weight model (EA, Option A)
+  const treadType = input.treadType || 'chequer';
+  const treadAreaM2 = (width/1000)*(treadDepth/1000);
+  let treadKg, treadDesc;
+  if (treadType === 'grating'){
+    // open bar grating: weight from kg/m² (NOT plate density)
+    const gKgm2 = Number(input.gratingKgm2) || (GRATING_PRESETS[input.gratingPreset]?.kgm2) || 31;
+    treadKg = treadAreaM2 * gKgm2;
+    treadDesc = `Open grating ${gKgm2}kg/m² tread ${width}x${treadDepth}`;
+  } else if (treadType === 'solid'){
+    // smooth solid plate: plate density, no pattern allowance
+    treadKg = scPlateKg(plate,width,treadDepth);
+    treadDesc = `Solid ${plate}mm plate tread ${width}x${treadDepth}`;
+  } else {
+    // chequer / durbar: plate density + 6% pattern allowance
+    treadKg = scPlateKg(plate,width,treadDepth)*1.06;
+    treadDesc = `Chequer ${plate}mm tread ${width}x${treadDepth}`;
+  }
+  components.push({ role:'tread', type:treadDesc, length:1000, qty:nTreads, kgm:scRound1(treadKg), _unit:'EA',
+    note:`Per-tread weight (EA): ${treadDesc}, ${treadType==='chequer'?'incl. 6% pattern allowance':treadType==='grating'?'kg/m² model':'smooth plate'}` });
   // cleats — 2 per tread, EA
   let cleatKgm = scResolveKgm(cleatType);
   if (!cleatKgm){ cleatKgm = 3.77; warnings.push(`Cleat "${cleatType}" not found — using ${cleatKgm} kg/m.`); }
@@ -6605,6 +6662,34 @@ function computeStraightStair(input){
     const riserKg = scPlateKg(riserThk,width,developed);
     components.push({ role:'riser', type:`Bent riser plate ${riserThk}mm ${width}x${Math.round(developed)} dev`, length:1000, qty:nRisers, kgm:scRound1(riserKg), _unit:'EA',
       note:`Per-riser weight (EA): ${riserThk}mm bent plate, developed ${Math.round(developed)}mm (face ${Math.round(rise)} + ${bendTop} top + ${bendBot} btm), ${width}mm wide` });
+  }
+  // landings (intermediate / top) — frame (perimeter angle) + deck (same tread type)
+  const nLandings = Math.max(0, Math.floor(Number(input.nLandings)||0));
+  if (nLandings > 0){
+    const lW = Number(input.landingWidthMM) || width;
+    const lD = Number(input.landingDepthMM) || width; // square by default
+    const landingFrameType = input.landingFrameType || cleatType;
+    const lFrameDisp = _canon(landingFrameType);
+    let lFrameKgm = scResolveKgm(landingFrameType);
+    if (!lFrameKgm){ lFrameKgm = 3.77; warnings.push(`Landing frame "${landingFrameType}" not found — using ${lFrameKgm} kg/m.`); }
+    // perimeter frame: 2×(width+depth) per landing, as one EA piece carrying its weight
+    const perimM = 2*(lW+lD)/1000;
+    const frameKg = perimM * lFrameKgm;
+    components.push({ role:'landing_frame', type:`${lFrameDisp} landing frame ${lW}x${lD}`, length:1000, qty:nLandings, kgm:scRound1(frameKg), _unit:'EA',
+      note:`Per-landing frame (EA): perimeter ${Math.round(perimM*1000)}mm of ${lFrameDisp}` });
+    // landing deck — same weight model as treads
+    const lAreaM2 = (lW/1000)*(lD/1000);
+    let lDeckKg, lDeckDesc;
+    if (treadType === 'grating'){
+      const gKgm2 = Number(input.gratingKgm2) || (GRATING_PRESETS[input.gratingPreset]?.kgm2) || 31;
+      lDeckKg = lAreaM2*gKgm2; lDeckDesc = `Open grating ${gKgm2}kg/m² landing deck ${lW}x${lD}`;
+    } else if (treadType === 'solid'){
+      lDeckKg = scPlateKg(plate,lW,lD); lDeckDesc = `Solid ${plate}mm landing deck ${lW}x${lD}`;
+    } else {
+      lDeckKg = scPlateKg(plate,lW,lD)*1.06; lDeckDesc = `Chequer ${plate}mm landing deck ${lW}x${lD}`;
+    }
+    components.push({ role:'landing_deck', type:lDeckDesc, length:1000, qty:nLandings, kgm:scRound1(lDeckKg), _unit:'EA',
+      note:`Per-landing deck (EA): ${lDeckDesc}` });
   }
   // staircase fittings allowance — replaces explicit baseplate/connection modelling.
   // EA single line carrying its own weight; excluded from the global fittings base.
@@ -6644,6 +6729,22 @@ function scSetView(mode){
   }
 }
 
+// Show/hide grating spec block when tread type changes
+function scTreadTypeChange(){
+  const t = document.getElementById('scTreadType')?.value;
+  const wrap = document.getElementById('scGratingWrap');
+  if (wrap) wrap.style.display = (t === 'grating') ? '' : 'none';
+  scRecompute();
+}
+// Grating preset → fill editable kg/m²
+function scGratingPresetChange(){
+  const key = document.getElementById('scGratingPreset')?.value;
+  const kgm2 = (typeof GRATING_PRESETS!=='undefined' && GRATING_PRESETS[key]) ? GRATING_PRESETS[key].kgm2 : null;
+  const el = document.getElementById('scGratingKgm2');
+  if (el && kgm2!=null) el.value = kgm2;
+  scRecompute();
+}
+
 // Preset dropdown → text field. 'Custom…' reveals the text input for free entry.
 function scApplyPreset(which){
   const presetEl = document.getElementById('sc'+which+'Preset');
@@ -6677,6 +6778,13 @@ function scReadInputs(){
     riserBendTopMM: v('scRiserBendTop') || null,
     riserBendBotMM: v('scRiserBendBot') || null,
     fittingsPct: v('scFittingsPct') || null,
+    treadType: v('scTreadType') || 'chequer',
+    gratingPreset: v('scGratingPreset') || null,
+    gratingKgm2: v('scGratingKgm2') || null,
+    nLandings: v('scNLandings') || null,
+    landingWidthMM: v('scLandingWidth') || null,
+    landingDepthMM: v('scLandingDepth') || null,
+    landingFrameType: (v('scLandingFrame')||'').trim() || null,
   };
 }
 
@@ -6719,7 +6827,59 @@ function scRecompute(){
   totEl.textContent = `${scRound1(tot)} kg`;
   const totCostEl = document.getElementById('scTotalCost');
   if (totCostEl) totCostEl.textContent = '£' + Math.round(totCost).toLocaleString();
+  const svgEl = document.getElementById('scSchematic');
+  if (svgEl) svgEl.innerHTML = scBuildSVG(g);
   btn.disabled=false; btn.style.opacity='1';
+}
+
+// ── SVG schematic — drawn purely from geometry, no AI ─────
+// Side elevation (stair profile with rise/going/pitch) + plan view.
+function scBuildSVG(g){
+  if (!g || !g.nRisers) return '';
+  const n = g.nTreads, rise = g.riseMM, going = g.goingMM, width = g.widthMM;
+  const totalRise = g.totalRiseMM, run = g.horizRunMM;
+  // ELEVATION — scale to fit 300x180 box with 30px margin
+  const W=320, H=210, m=34;
+  const sx = run>0 ? (W-2*m)/run : 1;
+  const sy = (H-2*m)/totalRise;
+  const s = Math.min(sx, sy); // uniform scale
+  const ox = m, oy = H-m; // origin bottom-left
+  // build stepped profile path
+  let d = `M ${ox} ${oy}`;
+  let cx = ox, cy = oy;
+  for (let i=0;i<n;i++){
+    cy -= rise*s; d += ` L ${cx.toFixed(1)} ${cy.toFixed(1)}`;     // up (riser)
+    cx += going*s; d += ` L ${cx.toFixed(1)} ${cy.toFixed(1)}`;    // along (going)
+  }
+  cy -= rise*s; d += ` L ${cx.toFixed(1)} ${cy.toFixed(1)}`;        // final riser to top
+  // stringer line (sloped) from bottom origin to top of last step
+  const stringer = `M ${ox} ${oy} L ${cx.toFixed(1)} ${cy.toFixed(1)}`;
+  // PLAN — width x run, simple rectangle with tread divisions, separate box
+  const PW=320, PH=110, pm=24;
+  const psx = run>0 ? (PW-2*pm)/run : 1;
+  const psy = (PH-2*pm)/width;
+  const ps = Math.min(psx, psy);
+  const planW = run*ps, planH = width*ps;
+  let treadLines='';
+  for (let i=1;i<n;i++){ const x=pm+i*going*ps; treadLines += `<line x1="${x.toFixed(1)}" y1="${pm}" x2="${x.toFixed(1)}" y2="${(pm+planH).toFixed(1)}" stroke="var(--border)" stroke-width="1"/>`; }
+  return `
+  <div style="font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Elevation</div>
+  <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;background:var(--bg,#111);border:1px solid var(--border);border-radius:6px">
+    <path d="${stringer}" stroke="var(--accent)" stroke-width="2" fill="none" opacity="0.55"/>
+    <path d="${d}" stroke="var(--text)" stroke-width="1.6" fill="none"/>
+    <line x1="${ox}" y1="${oy}" x2="${ox}" y2="${m}" stroke="var(--subtle)" stroke-dasharray="3 3" stroke-width="1"/>
+    <text x="${ox-6}" y="${(m+oy)/2}" fill="var(--muted)" font-size="9" text-anchor="end" transform="rotate(-90 ${ox-6} ${(m+oy)/2})">${totalRise}mm rise</text>
+    <text x="${(ox+cx)/2}" y="${oy+16}" fill="var(--muted)" font-size="9" text-anchor="middle">run ${run}mm · ${n} treads</text>
+    <text x="${cx-4}" y="${cy-5}" fill="var(--accent)" font-size="9" text-anchor="end">${g.pitchDeg}°</text>
+    <text x="${ox+going*s*0.5}" y="${oy-rise*s-4}" fill="var(--subtle)" font-size="8">R${rise} G${going}</text>
+  </svg>
+  <div style="font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);margin:8px 0 4px">Plan</div>
+  <svg viewBox="0 0 ${PW} ${PH}" style="width:100%;height:auto;background:var(--bg,#111);border:1px solid var(--border);border-radius:6px">
+    <rect x="${pm}" y="${pm}" width="${planW.toFixed(1)}" height="${planH.toFixed(1)}" stroke="var(--text)" stroke-width="1.4" fill="none"/>
+    ${treadLines}
+    <text x="${pm+planW/2}" y="${pm+planH+14}" fill="var(--muted)" font-size="9" text-anchor="middle">run ${run}mm</text>
+    <text x="${pm-6}" y="${pm+planH/2}" fill="var(--muted)" font-size="9" text-anchor="middle" transform="rotate(-90 ${pm-6} ${pm+planH/2})">width ${width}mm</text>
+  </svg>`;
 }
 
 async function injectStaircase(){
