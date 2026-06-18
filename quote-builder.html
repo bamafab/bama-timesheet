@@ -1713,6 +1713,14 @@ tr.drag-dragging { opacity:0.35; }
       Enter the basics — the engine sizes risers, going and pitch to UK Approved Document K, then injects fully editable steel into the takeoff as a new area. All defaults below are editable.
     </p>
 
+    <!-- Basic / Advanced toggle -->
+    <div style="display:flex;gap:6px;margin-bottom:14px">
+      <button type="button" id="scViewBasic" class="btn btn-sm btn-primary" onclick="scSetView('basic')" style="flex:0 0 auto">Basic</button>
+      <button type="button" id="scViewAdv" class="btn btn-sm btn-ghost" onclick="scSetView('advanced')" style="flex:0 0 auto">Advanced</button>
+      <span style="flex:1"></span>
+      <span style="font-size:11px;color:var(--subtle);align-self:center">Basic = rise, width, class. Advanced = all components.</span>
+    </div>
+
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
       <!-- LEFT: inputs -->
       <div>
@@ -1729,27 +1737,57 @@ tr.drag-dragging { opacity:0.35; }
             <div class="field"><label>Total rise — floor to floor (mm)</label><input type="number" id="scTotalRise" value="3000" oninput="scRecompute()"></div>
             <div class="field"><label>Clear width (mm)</label><input type="number" id="scWidth" value="1000" oninput="scRecompute()"></div>
           </div>
-          <div class="field"><label>Going override (mm) <span style="color:var(--subtle);font-size:10px">— blank = engine minimum</span></label><input type="number" id="scGoing" placeholder="auto" oninput="scRecompute()"></div>
-
-          <div style="border-top:1px solid var(--border);margin:4px 0;padding-top:8px;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted)">Components</div>
-          <div class="field"><label>Stringers (2 off)</label><input type="text" id="scStringer" value="FLT 250x12" oninput="scRecompute()"></div>
-          <div class="form-grid form-grid-2" style="gap:8px">
-            <div class="field"><label>Tread plate (mm)</label><input type="number" id="scTreadPlate" value="4.5" step="0.5" oninput="scRecompute()"></div>
-            <div class="field"><label>Tread depth (mm) <span style="color:var(--subtle);font-size:10px">blank=going+25</span></label><input type="number" id="scTreadDepth" placeholder="auto" oninput="scRecompute()"></div>
-          </div>
-          <div class="field"><label>Tread cleats / bent plate</label><input type="text" id="scCleat" value="EA50x50x5" oninput="scRecompute()"></div>
-          <div class="form-grid form-grid-2" style="gap:8px">
-            <div class="field"><label>Cleat length (mm)</label><input type="number" id="scCleatLen" value="150" oninput="scRecompute()"></div>
-            <div class="field" style="display:flex;align-items:flex-end;padding-bottom:6px">
-              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--text)">
-                <input type="checkbox" id="scClosedRiser" checked onchange="scRecompute()" style="accent-color:var(--accent)"> Closed risers
-              </label>
-            </div>
-          </div>
           <div class="field"><label>Inject as area named</label><input type="text" id="scAreaName" value="Staircase 1"></div>
+
+          <!-- ADVANCED ONLY -->
+          <div class="sc-adv" style="display:none">
+            <div class="field"><label>Going override (mm) <span style="color:var(--subtle);font-size:10px">— blank = engine minimum</span></label><input type="number" id="scGoing" placeholder="auto" oninput="scRecompute()"></div>
+
+            <div style="border-top:1px solid var(--border);margin:8px 0 4px;padding-top:8px;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted)">Components</div>
+            <div class="field">
+              <label>Stringers (2 off)</label>
+              <select id="scStringerPreset" onchange="scApplyPreset('Stringer')" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%;margin-bottom:5px">
+                <option value="FLT 250x12" selected>FLT 250x12 (BAMA default)</option>
+                <option value="FLT 300x12">FLT 300x12</option>
+                <option value="FLT 300x15">FLT 300x15</option>
+                <option value="PFC 260x90">PFC 260x90 (channel)</option>
+                <option value="PFC 300x90">PFC 300x90 (channel)</option>
+                <option value="__custom">Custom…</option>
+              </select>
+              <input type="text" id="scStringer" value="FLT 250x12" oninput="scRecompute()" style="display:none">
+            </div>
+            <div class="form-grid form-grid-2" style="gap:8px">
+              <div class="field"><label>Tread plate (mm)</label><input type="number" id="scTreadPlate" value="4.5" step="0.5" oninput="scRecompute()"></div>
+              <div class="field"><label>Tread depth (mm) <span style="color:var(--subtle);font-size:10px">blank=going+25</span></label><input type="number" id="scTreadDepth" placeholder="auto" oninput="scRecompute()"></div>
+            </div>
+            <div class="field">
+              <label>Tread cleats / bent plate</label>
+              <select id="scCleatPreset" onchange="scApplyPreset('Cleat')" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%;margin-bottom:5px">
+                <option value="EA50x50x5" selected>EA50x50x5 (BAMA default)</option>
+                <option value="EA60x60x6">EA60x60x6</option>
+                <option value="EA75x75x6">EA75x75x6</option>
+                <option value="__custom">Custom…</option>
+              </select>
+              <input type="text" id="scCleat" value="EA50x50x5" oninput="scRecompute()" style="display:none">
+            </div>
+            <div class="form-grid form-grid-2" style="gap:8px">
+              <div class="field"><label>Cleat length (mm)</label><input type="number" id="scCleatLen" value="150" oninput="scRecompute()"></div>
+              <div class="field" style="display:flex;align-items:flex-end;padding-bottom:6px">
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--text)">
+                  <input type="checkbox" id="scClosedRiser" checked onchange="scRecompute()" style="accent-color:var(--accent)"> Closed (bent) risers
+                </label>
+              </div>
+            </div>
+            <div class="form-grid form-grid-3" style="gap:8px">
+              <div class="field"><label>Riser thk (mm)</label><input type="number" id="scRiserThk" value="3" step="0.5" oninput="scRecompute()"></div>
+              <div class="field"><label>Top bend (mm)</label><input type="number" id="scRiserBendTop" value="150" oninput="scRecompute()"></div>
+              <div class="field"><label>Btm bend (mm)</label><input type="number" id="scRiserBendBot" value="50" oninput="scRecompute()"></div>
+            </div>
+            <div class="field"><label>Staircase fittings allowance (%) <span style="color:var(--subtle);font-size:10px">— baseplates, brackets, bolts, welds</span></label><input type="number" id="scFittingsPct" value="7.5" step="0.5" oninput="scRecompute()"></div>
+          </div>
         </div>
         <div style="font-size:11px;color:var(--muted);margin-top:10px;line-height:1.5">
-          ⚠️ Treads, cleats, risers and baseplates are priced <strong>per piece</strong> (EA) — the kg shown in that column is the weight of one item, not kg/m.
+          ⚠️ Treads, cleats, risers and fittings are priced <strong>per piece</strong> (EA) — the kg shown in that column is the weight of one item, not kg/m. Staircase weight is excluded from the main takeoff fittings %.
         </div>
       </div>
 
@@ -1769,14 +1807,19 @@ tr.drag-dragging { opacity:0.35; }
                 <th style="text-align:right">Len/EA</th>
                 <th style="text-align:right">Qty</th>
                 <th style="text-align:right">kg</th>
+                <th style="text-align:right">£</th>
               </tr></thead>
               <tbody id="scPreviewBody"></tbody>
-              <tfoot><tr style="border-top:1px solid var(--border);font-weight:600">
-                <td colspan="3" style="text-align:right;padding:6px 8px">Total</td>
-                <td style="text-align:right;padding:6px 8px;color:var(--accent)" id="scTotalKg">0 kg</td>
-              </tr></tfoot>
+              <tfoot>
+                <tr style="border-top:1px solid var(--border);font-weight:600">
+                  <td colspan="3" style="text-align:right;padding:6px 8px">Total weight</td>
+                  <td style="text-align:right;padding:6px 8px;color:var(--accent)" id="scTotalKg">0 kg</td>
+                  <td style="text-align:right;padding:6px 8px;color:var(--accent)" id="scTotalCost">£0</td>
+                </tr>
+              </tfoot>
             </table>
           </div>
+          <div style="font-size:10px;color:var(--subtle);margin-top:6px">£ uses global material rates (£/kg) — fully editable per row after injection.</div>
         </div>
       </div>
     </div>
@@ -5141,6 +5184,10 @@ function buildPrelimRowsFromRates(ratesObj, checkedKeys, overrides) {
 function computeQuoteTotals(quote, ratesObj) {
   // ── Takeoff ──────────────────────────────────────────────
   let totalKg = 0, materialCost = 0;
+  // fittingsBaseKg excludes any staircase-injected rows: the staircase
+  // carries its own fittings allowance internally, so the global fittings
+  // multiplier must NOT see ANY staircase weight (else double-counting).
+  let fittingsBaseKg = 0;
   const missingKgm = [];
   const finishQty  = { galv_t: 0, ppc_kg: 0, primer_t: 0 };
 
@@ -5148,6 +5195,7 @@ function computeQuoteTotals(quote, ratesObj) {
     const { kg, isValid, missing } = rowWeight(row);
     if (!isValid) { if (missing && !missingKgm.includes(missing)) missingKgm.push(missing); return; }
     totalKg      += kg;
+    if (!row._excludeFromFittingsBase) fittingsBaseKg += kg;
     materialCost += kg * (parseFloat(row.rate) || 0);
     // finish auto-accumulation
     const fin = rowFinishType(row);
@@ -5156,10 +5204,10 @@ function computeQuoteTotals(quote, ratesObj) {
     if (fin === 'primer') finishQty.primer_t += kg / 1000;
   });
 
-  // Fittings
+  // Fittings (computed on fittingsBaseKg — staircase weight excluded)
   const fittingsPct  = parseFloat(quote.fittingsPct)  || 10;
   const fittingsRate = parseFloat(quote.fittingsRate) || 1.30;
-  const fittingsKg   = totalKg * (fittingsPct / 100);
+  const fittingsKg   = fittingsBaseKg * (fittingsPct / 100);
   const fittingsCostVal = fittingsKg * fittingsRate;
   const miscMaterial    = parseFloat(quote.miscMaterial) || 0;
   // Fixings & consumables (% of raw material cost, from wizard)
@@ -6528,10 +6576,15 @@ function computeStraightStair(input){
   const treadDepth = Number(input.treadDepthMM)||(going+25);
 
   const components = [];
+  // canonicalise section names so display matches the rest of the takeoff
+  // (e.g. FLT shows thickness-first via findSteelProfile, not as typed)
+  const _canon = (t) => { const p = findSteelProfile(t); return (p && p.confidence !== 'none' && p.canonical) ? p.canonical : t; };
+  const stringerDisp = _canon(stringerType);
+  const cleatDisp = _canon(cleatType);
   // stringers — length x kg/m
   let strKgm = scResolveKgm(stringerType);
   if (!strKgm){ strKgm = 23.6; warnings.push(`Stringer "${stringerType}" not found in steel DB — using ${strKgm} kg/m. Edit in takeoff if wrong.`); }
-  components.push({ role:'stringer', type:stringerType, length:stringerCutMM, qty:2, kgm:strKgm, _unit:'',
+  components.push({ role:'stringer', type:stringerDisp, length:stringerCutMM, qty:2, kgm:strKgm, _unit:'',
     note:`2 stringers, sloped length ~${Math.round(slopeLen)}mm (+150 fixing allowance)` });
   // treads — chequer plate EA (Option A)
   const treadKg = scPlateKg(plate,width,treadDepth)*1.06;
@@ -6541,17 +6594,26 @@ function computeStraightStair(input){
   let cleatKgm = scResolveKgm(cleatType);
   if (!cleatKgm){ cleatKgm = 3.77; warnings.push(`Cleat "${cleatType}" not found — using ${cleatKgm} kg/m.`); }
   const cleatLen = Number(input.cleatLenMM)||150;
-  components.push({ role:'cleat', type:`${cleatType} cleat ${cleatLen}mm (tread support)`, length:1000, qty:nTreads*2, kgm:scRound1((cleatLen/1000)*cleatKgm), _unit:'EA',
+  components.push({ role:'cleat', type:`${cleatDisp} cleat ${cleatLen}mm (tread support)`, length:1000, qty:nTreads*2, kgm:scRound1((cleatLen/1000)*cleatKgm), _unit:'EA',
     note:`Per-cleat weight (EA): 2 per tread, ${cleatLen}mm long` });
-  // risers (toggle)
+  // bent riser plate (closed) — developed length = face + top bend + bottom bend
   if (input.closedRiser){
-    const riserKg = scPlateKg(3,width,rise);
-    components.push({ role:'riser', type:`Riser plate 3mm ${width}x${Math.round(rise)}`, length:1000, qty:nRisers, kgm:scRound1(riserKg), _unit:'EA',
-      note:`Per-riser weight (EA): 3mm plate ${width}x${Math.round(rise)}mm` });
+    const riserThk  = Number(input.riserThkMM)||3;
+    const bendTop   = Number(input.riserBendTopMM)!=null && input.riserBendTopMM!=='' ? Number(input.riserBendTopMM) : 150;
+    const bendBot   = Number(input.riserBendBotMM)!=null && input.riserBendBotMM!=='' ? Number(input.riserBendBotMM) : 50;
+    const developed = rise + bendTop + bendBot;
+    const riserKg = scPlateKg(riserThk,width,developed);
+    components.push({ role:'riser', type:`Bent riser plate ${riserThk}mm ${width}x${Math.round(developed)} dev`, length:1000, qty:nRisers, kgm:scRound1(riserKg), _unit:'EA',
+      note:`Per-riser weight (EA): ${riserThk}mm bent plate, developed ${Math.round(developed)}mm (face ${Math.round(rise)} + ${bendTop} top + ${bendBot} btm), ${width}mm wide` });
   }
-  // baseplates — 2 off
-  components.push({ role:'baseplate', type:`Baseplate 200x150x10`, length:1000, qty:2, kgm:scRound1(scPlateKg(10,200,150)), _unit:'EA',
-    note:`Per-baseplate weight (EA): 10mm plate 200x150mm` });
+  // staircase fittings allowance — replaces explicit baseplate/connection modelling.
+  // EA single line carrying its own weight; excluded from the global fittings base.
+  const fitPct = Number(input.fittingsPct)!=null && input.fittingsPct!=='' ? Number(input.fittingsPct) : 7.5;
+  // sum steel weight so far for the allowance base
+  const steelKgSoFar = components.reduce((s,c)=> s + (c.length/1000)*c.kgm*c.qty, 0);
+  const fitKg = scRound1(steelKgSoFar * (fitPct/100));
+  components.push({ role:'fittings', type:`Staircase fittings & connections (${fitPct}%)`, length:1000, qty:1, kgm:fitKg, _unit:'EA',
+    note:`${fitPct}% fittings allowance on ${scRound1(steelKgSoFar)}kg staircase steel — covers baseplates, brackets, bolts, welds` });
 
   return { ok:true, warnings, geometry:{
     stairClassLabel:cls.label, totalRiseMM:totalRise, nRisers, nTreads,
@@ -6565,22 +6627,56 @@ let _scLastResult = null;
 function openStaircaseWizard(){
   if (!getQuote()){ toast('Open or create a quote first'); return; }
   document.getElementById('staircaseModal').classList.add('active');
+  scSetView('basic');
   scRecompute();
 }
 function closeStaircaseWizard(){ document.getElementById('staircaseModal').classList.remove('active'); }
 
+// Basic shows rise/width/class/name only; Advanced reveals all components.
+function scSetView(mode){
+  const adv = mode === 'advanced';
+  document.querySelectorAll('.sc-adv').forEach(el => el.style.display = adv ? '' : 'none');
+  const b = document.getElementById('scViewBasic');
+  const a = document.getElementById('scViewAdv');
+  if (b && a){
+    b.className = 'btn btn-sm ' + (adv ? 'btn-ghost' : 'btn-primary');
+    a.className = 'btn btn-sm ' + (adv ? 'btn-primary' : 'btn-ghost');
+  }
+}
+
+// Preset dropdown → text field. 'Custom…' reveals the text input for free entry.
+function scApplyPreset(which){
+  const presetEl = document.getElementById('sc'+which+'Preset');
+  const textEl   = document.getElementById('sc'+which);
+  if (!presetEl || !textEl) return;
+  if (presetEl.value === '__custom'){
+    textEl.style.display = '';
+    textEl.focus();
+  } else {
+    textEl.value = presetEl.value;
+    textEl.style.display = 'none';
+    scRecompute();
+  }
+}
+
 function scReadInputs(){
+  const v = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+  const chk = id => { const el = document.getElementById(id); return el ? el.checked : false; };
   return {
-    stairClass: document.getElementById('scClass').value,
-    totalRiseMM: document.getElementById('scTotalRise').value,
-    widthMM: document.getElementById('scWidth').value,
-    goingMM: document.getElementById('scGoing').value || null,
-    stringerType: document.getElementById('scStringer').value.trim(),
-    treadPlateMM: document.getElementById('scTreadPlate').value,
-    treadDepthMM: document.getElementById('scTreadDepth').value || null,
-    cleatType: document.getElementById('scCleat').value.trim(),
-    cleatLenMM: document.getElementById('scCleatLen').value,
-    closedRiser: document.getElementById('scClosedRiser').checked,
+    stairClass: v('scClass'),
+    totalRiseMM: v('scTotalRise'),
+    widthMM: v('scWidth'),
+    goingMM: v('scGoing') || null,
+    stringerType: (v('scStringer')||'').trim(),
+    treadPlateMM: v('scTreadPlate'),
+    treadDepthMM: v('scTreadDepth') || null,
+    cleatType: (v('scCleat')||'').trim(),
+    cleatLenMM: v('scCleatLen'),
+    closedRiser: chk('scClosedRiser'),
+    riserThkMM: v('scRiserThk') || null,
+    riserBendTopMM: v('scRiserBendTop') || null,
+    riserBendBotMM: v('scRiserBendBot') || null,
+    fittingsPct: v('scFittingsPct') || null,
   };
 }
 
@@ -6606,18 +6702,23 @@ function scRecompute(){
   warn.innerHTML = r.warnings.length
     ? r.warnings.map(w=>`<div style="font-size:11px;color:var(--amber,#e0a020);margin-top:2px">⚠️ ${escHtml(w)}</div>`).join('')
     : `<div style="font-size:11px;color:var(--green)">✓ Within Approved Document K limits</div>`;
-  let tot=0;
+  let tot=0, totCost=0;
   body.innerHTML = r.components.map(c=>{
     const kg=(c.length/1000)*c.kgm*c.qty; tot+=kg;
+    const rate = sectionMaterialRate(c.type);
+    const cost = kg * rate; totCost+=cost;
     const lenDisp = c._unit==='EA' ? `${c.kgm} ea` : `${c.length}mm`;
     return `<tr title="${escHtml(c.note)}">
       <td style="padding:4px 8px">${escHtml(c.type)}</td>
       <td style="padding:4px 8px;text-align:right;font-family:var(--font-mono)">${lenDisp}</td>
       <td style="padding:4px 8px;text-align:right;font-family:var(--font-mono)">${c.qty}</td>
       <td style="padding:4px 8px;text-align:right;font-family:var(--font-mono)">${scRound1(kg)}</td>
+      <td style="padding:4px 8px;text-align:right;font-family:var(--font-mono)">£${cost.toFixed(0)}</td>
     </tr>`;
   }).join('');
   totEl.textContent = `${scRound1(tot)} kg`;
+  const totCostEl = document.getElementById('scTotalCost');
+  if (totCostEl) totCostEl.textContent = '£' + Math.round(totCost).toLocaleString();
   btn.disabled=false; btn.style.opacity='1';
 }
 
@@ -6634,8 +6735,10 @@ async function injectStaircase(){
   q.staircases.push({ areaId:id, kind:'straight', input:scReadInputs(), geometry:r.geometry, ts:Date.now() });
 
   r.components.forEach(c=>{
-    q.takeoff.push({ type:c.type, length:c.length, qty:c.qty, kgm:c.kgm, rate:null,
-      area:id, subarea:'', _unit:c._unit||'', _stairRole:c.role, _stairNote:c.note });
+    q.takeoff.push({ type:c.type, length:c.length, qty:c.qty, kgm:c.kgm,
+      rate: sectionMaterialRate(c.type),
+      area:id, subarea:'', _unit:c._unit||'', _stairRole:c.role, _stairNote:c.note,
+      _excludeFromFittingsBase:true });
   });
 
   await saveAll();
@@ -7624,15 +7727,20 @@ function totalTakeoffKg() {
 }
 
 function fittingsCost() {
-  const totalKg  = totalTakeoffKg();
+  const q = getQuote();
+  // Base excludes staircase-injected rows (they carry own fittings allowance)
+  const baseKg = q ? q.takeoff.reduce((s,row) => {
+    if (row._excludeFromFittingsBase) return s;
+    const {kg} = rowWeight(row); return s + kg;
+  }, 0) : 0;
   const pct      = parseFloat(document.getElementById('fittingsPct')?.value) || 10;
   const rate     = parseFloat(document.getElementById('fittingsRate')?.value) || 1.30;
-  const fittingsKg = totalKg * (pct / 100);
+  const fittingsKg = baseKg * (pct / 100);
   const cost = Math.round(fittingsKg * rate * 100) / 100;
   // update hint and computed display
   const hint = document.getElementById('fittingsKgHint');
   const comp = document.getElementById('fittingsComputed');
-  if (hint) hint.textContent = `Based on ${fittingsKg.toFixed(1)} kg (${pct}% of ${totalKg.toFixed(1)} kg)`;
+  if (hint) hint.textContent = `Based on ${fittingsKg.toFixed(1)} kg (${pct}% of ${baseKg.toFixed(1)} kg, excl. staircase)`;
   if (comp) comp.textContent = '£' + cost.toFixed(2);
   return cost;
 }
