@@ -4643,7 +4643,7 @@ function findSteelProfile(raw) {
   // ── 3. Extract numeric dimensions ────────────────────────
   // Split remaining string on X and pull out all numbers
   const parts = s.split(/X/).map(t => t.replace(/[^0-9.]/g, '')).filter(Boolean);
-  const dims  = parts.map(Number).filter(n => !isNaN(n) && n > 0);
+  let dims  = parts.map(Number).filter(n => !isNaN(n) && n > 0);
 
   if (!dims.length) {
     const r = { canonical: raw, prefix, dims, kgm:null, matched:null, confidence:'none' };
@@ -4660,6 +4660,14 @@ function findSteelProfile(raw) {
 
   // RSA is generic: an angle with unequal legs is an Unequal Angle (UA), not EA
   if (prefix === 'EA' && dims.length >= 2 && dims[0] !== dims[1]) prefix = 'UA';
+
+  // Flat bar is symmetric (width × thickness = thickness × width) and users
+  // enter it either way (FLT10x200 thickness-first, or FLT200x10 width-first).
+  // The DB is keyed width-first (larger dim first), so order the two dims
+  // descending before building the key — resolves both inputs to one entry.
+  if (prefix === 'FLT' && dims.length === 2) {
+    dims = [...dims].sort((a, b) => b - a);
+  }
 
   // ── 4. Build lookup key and try exact match ───────────────
   const dimsKey  = dims.join('x');
