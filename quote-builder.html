@@ -5403,7 +5403,7 @@ async function newQuote() {
     dateSent: '', decisionDue: '', lossReason: '', lossCompetitor: '', lossComment: '',
     preparedBy,
     company: '', contact: '', email: '', phone: '', siteAddress: '',
-    comments: '', qScope: '', boqRef: '', boqFile: '', projectTCs: '',
+    comments: '', qScope: '', boqRef: '', boqLumpDesc: '', boqFile: '', projectTCs: '',
     takeoff: [], areas: [], subareas: [],
     pricingMode: 'global', apportionBasis: 'tonnage', areaPricing: {}, activeAreaId: '',
     areaPricingLocks: [], areaRebalanceMode: 'fixed',
@@ -8731,10 +8731,14 @@ function renderQuotationLines() {
   } else {
     // BoQ — just show total from calcs
     const total = q._computed?.total || 0;
-    cont.innerHTML = `<div class="info-box" style="margin:8px 0">Client BoQ quote — lump sum from Calcs tab</div>
-      <div style="display:flex;justify-content:space-between;padding:12px 0">
-        <span style="font-size:13px">Lump Sum (as per BoQ ref: ${q.boqRef||'—'})</span>
-        <span style="font-family:var(--font-mono);font-size:15px;color:var(--accent)">${fmt(total)}</span>
+    const defaultDesc = `As per Client BoQ ref: ${q.boqRef||'—'}`;
+    const lumpDesc = (q.boqLumpDesc != null && q.boqLumpDesc !== '') ? q.boqLumpDesc : defaultDesc;
+    cont.innerHTML = `<div class="info-box" style="margin:8px 0">Client BoQ quote — lump sum from Calcs tab. Edit the description below as needed.</div>
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:12px 0">
+        <textarea id="boqLumpDesc" rows="2" oninput="updateBoqLumpDesc(this.value)"
+          style="flex:1;font-size:13px;resize:vertical;min-height:38px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--text)"
+          placeholder="${escHtml(defaultDesc)}">${escHtml(lumpDesc)}</textarea>
+        <span style="font-family:var(--font-mono);font-size:15px;color:var(--accent);white-space:nowrap;padding-top:8px">${fmt(total)}</span>
       </div>`;
     updateQuotationTotals(total);
   }
@@ -8751,6 +8755,12 @@ function updateQuotationTotals(sub) {
     document.getElementById('depositLineLabel').textContent = `Deposit (${depPct}%)`;
     document.getElementById('qlDeposit').textContent = fmt(sub * depPct / 100);
   }
+}
+
+function updateBoqLumpDesc(val) {
+  const q = getQuote(); if (!q) return;
+  q.boqLumpDesc = val;
+  autosave();
 }
 
 function updateClientLineDesc(key, val) {
@@ -13152,8 +13162,9 @@ function generateQuotePDF(mode = 'quote') {
       });
     } else {
       const total = computed.total||0; grandTotal = total;
+      const _lumpDesc = (q.boqLumpDesc != null && q.boqLumpDesc !== '') ? q.boqLumpDesc : `As per ${q.boqRef||'Client BoQ'}`;
       lineRows = `<tr><td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">1</td>
-        <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">As per ${escHtml(q.boqRef||'Client BoQ')}</td>
+        <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb">${escHtml(_lumpDesc)}</td>
         <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(total)}</td>
         <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:right">${fmtGBP(total)}</td></tr>`;
     }
