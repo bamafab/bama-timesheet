@@ -1756,10 +1756,7 @@ tr.drag-dragging { opacity:0.35; }
               </select>
               <input type="text" id="scStringer" value="FLT 250x12" oninput="scRecompute()" style="display:none">
             </div>
-            <div class="form-grid form-grid-2" style="gap:8px">
-              <div class="field"><label>Tread plate (mm)</label><input type="number" id="scTreadPlate" value="4.5" step="0.5" oninput="scRecompute()"></div>
-              <div class="field"><label>Tread depth (mm) <span style="color:var(--subtle);font-size:10px">blank=going+25</span></label><input type="number" id="scTreadDepth" placeholder="auto" oninput="scRecompute()"></div>
-            </div>
+            <div class="field"><label>Tread plate thickness (mm)</label><input type="number" id="scTreadPlate" value="4.5" step="0.5" oninput="scRecompute()"></div>
             <div class="field">
               <label>Tread type</label>
               <select id="scTreadType" onchange="scTreadTypeChange()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%">
@@ -1783,10 +1780,14 @@ tr.drag-dragging { opacity:0.35; }
               </div>
             </div>
             <!-- Closed/open riser — treads are ALWAYS folded; this sets the fold -->
-            <div class="field" id="scClosedRiserWrap">
-              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--text)">
-                <input type="checkbox" id="scClosedRiser" checked onchange="scSyncFoldFields();scRecompute()" style="accent-color:var(--accent)"> Closed riser (tread &amp; riser are one bent plate)
+            <div class="field" id="scClosedRiserWrap" style="margin-top:4px">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--text);line-height:1.4">
+                <input type="checkbox" id="scClosedRiser" checked onchange="scSyncFoldFields();scRecompute()" style="accent-color:var(--accent);flex:0 0 auto;width:15px;height:15px">
+                <span>Closed riser <span style="color:var(--subtle)">— tread &amp; riser formed as one bent plate</span></span>
               </label>
+              <div style="font-size:10px;color:var(--subtle);margin-top:4px;padding-left:23px">
+                Developed plate length is computed automatically: closed = going + rise + bend; open = going + downstands. You only set the fold allowance below.
+              </div>
             </div>
             <div class="form-grid form-grid-2" id="scOpenFoldWrap" style="gap:8px;display:none">
               <div class="field"><label>Top downstand (mm)</label><input type="number" id="scDsTop" value="25" oninput="scRecompute()"></div>
@@ -1801,7 +1802,7 @@ tr.drag-dragging { opacity:0.35; }
               <input type="number" id="scConcreteShelf" value="50" oninput="scRecompute()">
             </div>
             <div class="field">
-              <label>Tread cleats / bent plate</label>
+              <label>Tread support cleats (2 per tread)</label>
               <select id="scCleatPreset" onchange="scApplyPreset('Cleat')" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%;margin-bottom:5px">
                 <option value="EA50x50x5" selected>EA50x50x5 (BAMA default)</option>
                 <option value="EA60x60x6">EA60x60x6</option>
@@ -1817,6 +1818,7 @@ tr.drag-dragging { opacity:0.35; }
               <div class="field"><label>Landing width (mm)</label><input type="number" id="scLandingWidth" placeholder="=stair" oninput="scRecompute()"></div>
               <div class="field"><label>Landing depth (mm)</label><input type="number" id="scLandingDepth" placeholder="=width" oninput="scRecompute()"></div>
             </div>
+            <div style="font-size:10px;color:var(--subtle);margin:-2px 0 6px">Set <strong>No. of landings = 0</strong> to remove them. A blank width/depth defaults to the stair width — it does not remove the landing.</div>
             <div class="field">
               <label>Landing frame section</label>
               <select id="scLandingFramePreset" onchange="scApplyPreset('LandingFrame')" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%;margin-bottom:5px">
@@ -6857,7 +6859,6 @@ function scReadInputs(){
     goingMM: v('scGoing') || null,
     stringerType: (v('scStringer')||'').trim(),
     treadPlateMM: v('scTreadPlate'),
-    treadDepthMM: v('scTreadDepth') || null,
     cleatType: (v('scCleat')||'').trim(),
     cleatLenMM: v('scCleatLen'),
     closedRiser: chk('scClosedRiser'),
