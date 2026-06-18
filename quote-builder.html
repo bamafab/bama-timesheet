@@ -1765,7 +1765,8 @@ tr.drag-dragging { opacity:0.35; }
               <select id="scTreadType" onchange="scTreadTypeChange()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%">
                 <option value="chequer" selected>Chequer / durbar plate (BAMA default)</option>
                 <option value="solid">Solid smooth plate</option>
-                <option value="grating">Open bar grating</option>
+                <option value="grating">Open bar grating (always open riser)</option>
+                <option value="concrete">Plate tray — concrete infill</option>
               </select>
             </div>
             <div id="scGratingWrap" style="display:none">
@@ -1781,6 +1782,24 @@ tr.drag-dragging { opacity:0.35; }
                 <input type="number" id="scGratingKgm2" value="31" step="0.5" oninput="scRecompute()" title="kg/m² — editable">
               </div>
             </div>
+            <!-- Closed/open riser — treads are ALWAYS folded; this sets the fold -->
+            <div class="field" id="scClosedRiserWrap">
+              <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--text)">
+                <input type="checkbox" id="scClosedRiser" checked onchange="scSyncFoldFields();scRecompute()" style="accent-color:var(--accent)"> Closed riser (tread &amp; riser are one bent plate)
+              </label>
+            </div>
+            <div class="form-grid form-grid-2" id="scOpenFoldWrap" style="gap:8px;display:none">
+              <div class="field"><label>Top downstand (mm)</label><input type="number" id="scDsTop" value="25" oninput="scRecompute()"></div>
+              <div class="field"><label>Btm downstand (mm)</label><input type="number" id="scDsBot" value="25" oninput="scRecompute()"></div>
+            </div>
+            <div class="field" id="scClosedBendWrap">
+              <label>Closed riser bend allowance (mm) <span style="color:var(--subtle);font-size:10px">— front fold</span></label>
+              <input type="number" id="scClosedBend" value="50" oninput="scRecompute()">
+            </div>
+            <div class="field" id="scConcreteShelfWrap" style="display:none">
+              <label>Concrete tray shelf height (mm)</label>
+              <input type="number" id="scConcreteShelf" value="50" oninput="scRecompute()">
+            </div>
             <div class="field">
               <label>Tread cleats / bent plate</label>
               <select id="scCleatPreset" onchange="scApplyPreset('Cleat')" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%;margin-bottom:5px">
@@ -1791,26 +1810,37 @@ tr.drag-dragging { opacity:0.35; }
               </select>
               <input type="text" id="scCleat" value="EA50x50x5" oninput="scRecompute()" style="display:none">
             </div>
-            <div class="form-grid form-grid-2" style="gap:8px">
-              <div class="field"><label>Cleat length (mm)</label><input type="number" id="scCleatLen" value="150" oninput="scRecompute()"></div>
-              <div class="field" style="display:flex;align-items:flex-end;padding-bottom:6px">
-                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--text)">
-                  <input type="checkbox" id="scClosedRiser" checked onchange="scRecompute()" style="accent-color:var(--accent)"> Closed (bent) risers
-                </label>
-              </div>
-            </div>
-            <div class="form-grid form-grid-3" style="gap:8px">
-              <div class="field"><label>Riser thk (mm)</label><input type="number" id="scRiserThk" value="3" step="0.5" oninput="scRecompute()"></div>
-              <div class="field"><label>Top bend (mm)</label><input type="number" id="scRiserBendTop" value="150" oninput="scRecompute()"></div>
-              <div class="field"><label>Btm bend (mm)</label><input type="number" id="scRiserBendBot" value="50" oninput="scRecompute()"></div>
-            </div>
+            <div class="field"><label>Cleat length (mm)</label><input type="number" id="scCleatLen" value="150" oninput="scRecompute()"></div>
             <div style="border-top:1px solid var(--border);margin:8px 0 4px;padding-top:8px;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted)">Landings</div>
             <div class="form-grid form-grid-3" style="gap:8px">
               <div class="field"><label>No. of landings</label><input type="number" id="scNLandings" value="0" min="0" step="1" oninput="scRecompute()"></div>
               <div class="field"><label>Landing width (mm)</label><input type="number" id="scLandingWidth" placeholder="=stair" oninput="scRecompute()"></div>
               <div class="field"><label>Landing depth (mm)</label><input type="number" id="scLandingDepth" placeholder="=width" oninput="scRecompute()"></div>
             </div>
-            <div class="field"><label>Landing frame section <span style="color:var(--subtle);font-size:10px">— blank = cleat section</span></label><input type="text" id="scLandingFrame" placeholder="e.g. EA60x60x6" oninput="scRecompute()"></div>
+            <div class="field">
+              <label>Landing frame section</label>
+              <select id="scLandingFramePreset" onchange="scApplyPreset('LandingFrame')" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%;margin-bottom:5px">
+                <option value="PFC 150x75x18" selected>PFC 150x75x18 (BAMA default)</option>
+                <option value="PFC 200x75x23">PFC 200x75x23</option>
+                <option value="PFC 200x90x30">PFC 200x90x30</option>
+                <option value="__custom">Custom…</option>
+              </select>
+              <input type="text" id="scLandingFrame" value="PFC 150x75x18" oninput="scRecompute()" style="display:none">
+            </div>
+            <div class="field">
+              <label>Landing deck type</label>
+              <select id="scLandingDeckType" onchange="scLandingDeckChange()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%">
+                <option value="chequer" selected>Chequer / durbar plate</option>
+                <option value="solid">Solid smooth plate</option>
+                <option value="grating">Open bar grating</option>
+                <option value="concrete">Plate tray — concrete infill</option>
+                <option value="timber">Plate substrate under timber</option>
+              </select>
+            </div>
+            <div class="field" id="scLandingShelfWrap" style="display:none">
+              <label>Landing concrete shelf height (mm)</label>
+              <input type="number" id="scLandingShelf" value="50" oninput="scRecompute()">
+            </div>
             <div class="field"><label>Staircase fittings allowance (%) <span style="color:var(--subtle);font-size:10px">— baseplates, brackets, bolts, welds</span></label><input type="number" id="scFittingsPct" value="7.5" step="0.5" oninput="scRecompute()"></div>
           </div>
         </div>
@@ -6614,7 +6644,6 @@ function computeStraightStair(input){
   const horizRun = nTreads*going;
   const slopeLen = Math.sqrt(totalRise*totalRise+horizRun*horizRun);
   const stringerCutMM = Math.round(slopeLen+150);
-  const treadDepth = Number(input.treadDepthMM)||(going+25);
 
   const components = [];
   // canonicalise section names so display matches the rest of the takeoff
@@ -6627,64 +6656,90 @@ function computeStraightStair(input){
   if (!strKgm){ strKgm = 23.6; warnings.push(`Stringer "${stringerType}" not found in steel DB — using ${strKgm} kg/m. Edit in takeoff if wrong.`); }
   components.push({ role:'stringer', type:stringerDisp, length:stringerCutMM, qty:2, kgm:strKgm, _unit:'',
     note:`2 stringers, sloped length ~${Math.round(slopeLen)}mm (+150 fixing allowance)` });
-  // treads — type-dependent weight model (EA, Option A)
+  // ── TREADS ─────────────────────────────────────────────
+  // A tread is ALWAYS a folded plate (never flat). The developed length
+  // depends on whether the riser is closed or open:
+  //   • grating  → always open: flat panel + edge downstands
+  //   • open     → going + top downstand + bottom downstand (default 25+25)
+  //   • closed   → tread+riser are ONE bent plate: going + rise(front) + bend
+  //   • concrete → folded tray: going + 2× shelf upstand (default 50mm)
+  // There is NO separate riser component — the closed riser is the front
+  // fold of this single plate.
   const treadType = input.treadType || 'chequer';
-  const treadAreaM2 = (width/1000)*(treadDepth/1000);
+  const closedRiser = !!input.closedRiser && treadType !== 'grating'; // grating can't close
+  const dsTop = Number(input.dsTopMM)!=null && input.dsTopMM!=='' ? Number(input.dsTopMM) : 25;
+  const dsBot = Number(input.dsBotMM)!=null && input.dsBotMM!=='' ? Number(input.dsBotMM) : 25;
+  const closedBend = Number(input.closedBendMM)!=null && input.closedBendMM!=='' ? Number(input.closedBendMM) : 50;
+  const shelfMM = Number(input.concreteShelfMM)!=null && input.concreteShelfMM!=='' ? Number(input.concreteShelfMM) : 50;
+
+  // developed depth of the folded plate (the run of material before bending)
+  let devDepth, foldDesc;
+  if (treadType === 'concrete'){
+    devDepth = going + 2*shelfMM;                       // tray: going + two upstands
+    foldDesc = `${shelfMM}mm concrete shelf tray`;
+  } else if (closedRiser){
+    devDepth = going + rise + closedBend;               // tread face + riser front + bend
+    foldDesc = `closed (going ${Math.round(going)} + riser ${Math.round(rise)} + ${closedBend} bend)`;
+  } else {
+    devDepth = going + dsTop + dsBot;                   // open: going + 2 downstands
+    foldDesc = `open (going ${Math.round(going)} + ${dsTop}/${dsBot} downstands)`;
+  }
+  const devAreaM2 = (width/1000)*(devDepth/1000);
+
   let treadKg, treadDesc;
   if (treadType === 'grating'){
-    // open bar grating: weight from kg/m² (NOT plate density)
+    // open bar grating panel: weight from kg/m² (NOT plate density)
     const gKgm2 = Number(input.gratingKgm2) || (GRATING_PRESETS[input.gratingPreset]?.kgm2) || 31;
-    treadKg = treadAreaM2 * gKgm2;
-    treadDesc = `Open grating ${gKgm2}kg/m² tread ${width}x${treadDepth}`;
+    treadKg = devAreaM2 * gKgm2;
+    treadDesc = `Open grating ${gKgm2}kg/m² tread ${width}x${Math.round(devDepth)} dev`;
   } else if (treadType === 'solid'){
-    // smooth solid plate: plate density, no pattern allowance
-    treadKg = scPlateKg(plate,width,treadDepth);
-    treadDesc = `Solid ${plate}mm plate tread ${width}x${treadDepth}`;
+    treadKg = scPlateKg(plate,width,devDepth);
+    treadDesc = `Solid ${plate}mm folded tread ${width}x${Math.round(devDepth)} dev`;
+  } else if (treadType === 'concrete'){
+    treadKg = scPlateKg(plate,width,devDepth);
+    treadDesc = `Concrete-tray ${plate}mm tread ${width}x${Math.round(devDepth)} dev`;
   } else {
-    // chequer / durbar: plate density + 6% pattern allowance
-    treadKg = scPlateKg(plate,width,treadDepth)*1.06;
-    treadDesc = `Chequer ${plate}mm tread ${width}x${treadDepth}`;
+    // chequer / durbar + 6% pattern allowance
+    treadKg = scPlateKg(plate,width,devDepth)*1.06;
+    treadDesc = `Chequer ${plate}mm folded tread ${width}x${Math.round(devDepth)} dev`;
   }
   components.push({ role:'tread', type:treadDesc, length:1000, qty:nTreads, kgm:scRound1(treadKg), _unit:'EA',
-    note:`Per-tread weight (EA): ${treadDesc}, ${treadType==='chequer'?'incl. 6% pattern allowance':treadType==='grating'?'kg/m² model':'smooth plate'}` });
+    note:`Per-tread weight (EA): ${foldDesc}${treadType==='chequer'?', incl. 6% pattern':treadType==='grating'?', kg/m² model':''}` });
   // cleats — 2 per tread, EA
   let cleatKgm = scResolveKgm(cleatType);
   if (!cleatKgm){ cleatKgm = 3.77; warnings.push(`Cleat "${cleatType}" not found — using ${cleatKgm} kg/m.`); }
   const cleatLen = Number(input.cleatLenMM)||150;
   components.push({ role:'cleat', type:`${cleatDisp} cleat ${cleatLen}mm (tread support)`, length:1000, qty:nTreads*2, kgm:scRound1((cleatLen/1000)*cleatKgm), _unit:'EA',
     note:`Per-cleat weight (EA): 2 per tread, ${cleatLen}mm long` });
-  // bent riser plate (closed) — developed length = face + top bend + bottom bend
-  if (input.closedRiser){
-    const riserThk  = Number(input.riserThkMM)||3;
-    const bendTop   = Number(input.riserBendTopMM)!=null && input.riserBendTopMM!=='' ? Number(input.riserBendTopMM) : 150;
-    const bendBot   = Number(input.riserBendBotMM)!=null && input.riserBendBotMM!=='' ? Number(input.riserBendBotMM) : 50;
-    const developed = rise + bendTop + bendBot;
-    const riserKg = scPlateKg(riserThk,width,developed);
-    components.push({ role:'riser', type:`Bent riser plate ${riserThk}mm ${width}x${Math.round(developed)} dev`, length:1000, qty:nRisers, kgm:scRound1(riserKg), _unit:'EA',
-      note:`Per-riser weight (EA): ${riserThk}mm bent plate, developed ${Math.round(developed)}mm (face ${Math.round(rise)} + ${bendTop} top + ${bendBot} btm), ${width}mm wide` });
-  }
-  // landings (intermediate / top) — frame (perimeter angle) + deck (same tread type)
+  // landings (intermediate / top) — perimeter frame (PFC default) + deck
   const nLandings = Math.max(0, Math.floor(Number(input.nLandings)||0));
   if (nLandings > 0){
     const lW = Number(input.landingWidthMM) || width;
     const lD = Number(input.landingDepthMM) || width; // square by default
-    const landingFrameType = input.landingFrameType || cleatType;
+    const landingFrameType = input.landingFrameType || 'PFC 150x75x18';
     const lFrameDisp = _canon(landingFrameType);
     let lFrameKgm = scResolveKgm(landingFrameType);
-    if (!lFrameKgm){ lFrameKgm = 3.77; warnings.push(`Landing frame "${landingFrameType}" not found — using ${lFrameKgm} kg/m.`); }
+    if (!lFrameKgm){ lFrameKgm = 17.9; warnings.push(`Landing frame "${landingFrameType}" not found — using ${lFrameKgm} kg/m.`); }
     // perimeter frame: 2×(width+depth) per landing, as one EA piece carrying its weight
     const perimM = 2*(lW+lD)/1000;
     const frameKg = perimM * lFrameKgm;
     components.push({ role:'landing_frame', type:`${lFrameDisp} landing frame ${lW}x${lD}`, length:1000, qty:nLandings, kgm:scRound1(frameKg), _unit:'EA',
       note:`Per-landing frame (EA): perimeter ${Math.round(perimM*1000)}mm of ${lFrameDisp}` });
-    // landing deck — same weight model as treads
+    // landing deck — independent type (chequer / solid / grating / concrete tray / timber-support)
+    const lType = input.landingDeckType || 'chequer';
     const lAreaM2 = (lW/1000)*(lD/1000);
+    const lShelf = Number(input.landingShelfMM)!=null && input.landingShelfMM!=='' ? Number(input.landingShelfMM) : 50;
     let lDeckKg, lDeckDesc;
-    if (treadType === 'grating'){
+    if (lType === 'grating'){
       const gKgm2 = Number(input.gratingKgm2) || (GRATING_PRESETS[input.gratingPreset]?.kgm2) || 31;
       lDeckKg = lAreaM2*gKgm2; lDeckDesc = `Open grating ${gKgm2}kg/m² landing deck ${lW}x${lD}`;
-    } else if (treadType === 'solid'){
+    } else if (lType === 'solid'){
       lDeckKg = scPlateKg(plate,lW,lD); lDeckDesc = `Solid ${plate}mm landing deck ${lW}x${lD}`;
+    } else if (lType === 'concrete'){
+      lDeckKg = scPlateKg(plate,lW,lD); lDeckDesc = `Concrete-tray ${plate}mm landing deck ${lW}x${lD} (${lShelf}mm shelf)`;
+    } else if (lType === 'timber'){
+      // plate substrate under timber — same as solid plate
+      lDeckKg = scPlateKg(plate,lW,lD); lDeckDesc = `Plate-under-timber ${plate}mm landing deck ${lW}x${lD}`;
     } else {
       lDeckKg = scPlateKg(plate,lW,lD)*1.06; lDeckDesc = `Chequer ${plate}mm landing deck ${lW}x${lD}`;
     }
@@ -6713,6 +6768,8 @@ function openStaircaseWizard(){
   if (!getQuote()){ toast('Open or create a quote first'); return; }
   document.getElementById('staircaseModal').classList.add('active');
   scSetView('basic');
+  scTreadTypeChange();
+  scLandingDeckChange();
   scRecompute();
 }
 function closeStaircaseWizard(){ document.getElementById('staircaseModal').classList.remove('active'); }
@@ -6729,11 +6786,41 @@ function scSetView(mode){
   }
 }
 
-// Show/hide grating spec block when tread type changes
+// Show/hide fields based on tread type + closed/open riser
 function scTreadTypeChange(){
   const t = document.getElementById('scTreadType')?.value;
-  const wrap = document.getElementById('scGratingWrap');
-  if (wrap) wrap.style.display = (t === 'grating') ? '' : 'none';
+  const gw = document.getElementById('scGratingWrap');
+  if (gw) gw.style.display = (t === 'grating') ? '' : 'none';
+  // grating is always open — disable & uncheck the closed-riser toggle
+  const crWrap = document.getElementById('scClosedRiserWrap');
+  const cr = document.getElementById('scClosedRiser');
+  if (t === 'grating'){
+    if (cr){ cr.checked = false; cr.disabled = true; }
+    if (crWrap) crWrap.style.opacity = '0.45';
+  } else {
+    if (cr){ cr.disabled = false; }
+    if (crWrap) crWrap.style.opacity = '1';
+  }
+  // concrete shelf field only for concrete tray
+  const csw = document.getElementById('scConcreteShelfWrap');
+  if (csw) csw.style.display = (t === 'concrete') ? '' : 'none';
+  scSyncFoldFields();
+  scRecompute();
+}
+// Open downstands vs closed bend visibility follows the closed-riser checkbox
+function scSyncFoldFields(){
+  const t = document.getElementById('scTreadType')?.value;
+  const closed = !!document.getElementById('scClosedRiser')?.checked && t !== 'grating';
+  const openW = document.getElementById('scOpenFoldWrap');
+  const closedW = document.getElementById('scClosedBendWrap');
+  if (openW) openW.style.display = closed ? 'none' : '';
+  if (closedW) closedW.style.display = closed ? '' : 'none';
+}
+// Landing deck concrete shelf visibility
+function scLandingDeckChange(){
+  const t = document.getElementById('scLandingDeckType')?.value;
+  const w = document.getElementById('scLandingShelfWrap');
+  if (w) w.style.display = (t === 'concrete') ? '' : 'none';
   scRecompute();
 }
 // Grating preset → fill editable kg/m²
@@ -6774,17 +6861,20 @@ function scReadInputs(){
     cleatType: (v('scCleat')||'').trim(),
     cleatLenMM: v('scCleatLen'),
     closedRiser: chk('scClosedRiser'),
-    riserThkMM: v('scRiserThk') || null,
-    riserBendTopMM: v('scRiserBendTop') || null,
-    riserBendBotMM: v('scRiserBendBot') || null,
     fittingsPct: v('scFittingsPct') || null,
     treadType: v('scTreadType') || 'chequer',
     gratingPreset: v('scGratingPreset') || null,
     gratingKgm2: v('scGratingKgm2') || null,
+    dsTopMM: v('scDsTop') || null,
+    dsBotMM: v('scDsBot') || null,
+    closedBendMM: v('scClosedBend') || null,
+    concreteShelfMM: v('scConcreteShelf') || null,
     nLandings: v('scNLandings') || null,
     landingWidthMM: v('scLandingWidth') || null,
     landingDepthMM: v('scLandingDepth') || null,
     landingFrameType: (v('scLandingFrame')||'').trim() || null,
+    landingDeckType: v('scLandingDeckType') || 'chequer',
+    landingShelfMM: v('scLandingShelf') || null,
   };
 }
 
@@ -7038,7 +7128,7 @@ function takeoffRowHTML(row, i, inSub) {
         onchange="onTakeoffCheck()" onclick="onCbClick(event,${i})" style="cursor:pointer;accent-color:var(--accent)">
     </td>
     <td style="padding:3px 4px"><div class="ac-wrap" id="ac-wrap-${i}">
-      <input class="ac-input" value="${row.type||''}" placeholder="e.g. UB203x133x25"
+      <input class="ac-input" value="${row.type||''}" title="${escHtml(row.type||'')}" placeholder="e.g. UB203x133x25"
         oninput="onTakeoffTypeInput(${i},this.value,this)"
         onkeydown="onTakeoffTypeKey(event,${i},this)"
         onfocus="this.select();onTakeoffTypeInput(${i},this.value,this)"
