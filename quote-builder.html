@@ -6000,6 +6000,9 @@ function loadQuoteEditor() {
   if (!Array.isArray(q.takeoff))  q.takeoff  = [];
   if (!Array.isArray(q.areas))    q.areas    = [];
   if (!Array.isArray(q.subareas)) q.subareas = [];
+  // Guard: quotes created outside QB (e.g. TR → QB) may have no type set.
+  // An absent/unknown type previously fell through to BoQ rendering — default to standard.
+  if (!['bama','custom','boq'].includes(q.type)) q.type = 'bama';
   document.getElementById('emptyState').style.display = 'none';
   document.getElementById('quoteEditor').style.display = '';
 

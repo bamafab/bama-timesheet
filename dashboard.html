@@ -3248,6 +3248,7 @@ async function trOpenInQB(tenderId, skipConfirm) {
       decision_due: t.deadline ? String(t.deadline).slice(0,10) : null,
       quote_data:  JSON.stringify({
         name: t.project,
+        type: 'bama',
         company: t.client,
         clientAddress,
         clientAddressParts: {
