@@ -4569,6 +4569,15 @@ const _SP_DISPLAY = {
 // Cache: normalised input → result  (cleared when STEEL_KGM is mutated)
 const _SP_CACHE = new Map();
 
+// Display-order dims string. Flat bar is stored width-first in the DB but the
+// BAMA convention is thickness × width, so show the smaller dimension first.
+function _dispDims(prefix, dimsArr) {
+  if (prefix === 'FLT' && dimsArr.length === 2) {
+    return [...dimsArr].sort((a, b) => a - b).join('x');
+  }
+  return dimsArr.join('x');
+}
+
 function findSteelProfile(raw) {
   if (!raw) return { canonical:'', prefix:'', dims:[], kgm:null, matched:null, confidence:'none' };
 
@@ -4675,7 +4684,7 @@ function findSteelProfile(raw) {
 
   if (STEEL_KGM[exactKey] !== undefined) {
     const kgm = STEEL_KGM[exactKey];
-    const canonical = (_SP_DISPLAY[prefix] || prefix + ' ') + dimsKey.replace(/x/g, 'x');
+    const canonical = (_SP_DISPLAY[prefix] || prefix + ' ') + _dispDims(prefix, dims);
     const r = { canonical: canonical.trimEnd(), prefix, dims, kgm, matched: exactKey, confidence:'exact' };
     _SP_CACHE.set(cacheKey, r); return r;
   }
@@ -4704,7 +4713,7 @@ function findSteelProfile(raw) {
   );
   if (subset.length === 1) {
     const c = subset[0];
-    const canonical = (_SP_DISPLAY[prefix] || prefix + ' ') + c.dims.join('x');
+    const canonical = (_SP_DISPLAY[prefix] || prefix + ' ') + _dispDims(prefix, c.dims);
     const r = { canonical: canonical.trimEnd(), prefix, dims: c.dims,
                 kgm: c.kgm, matched: c.key, confidence:'exact' };
     _SP_CACHE.set(cacheKey, r); return r;
@@ -4729,7 +4738,7 @@ function findSteelProfile(raw) {
   // Accept fuzzy match only if reasonably close (≤15% error on first dim)
   const tolerance = dims[0] * 0.15;
   if (bestCand && bestScore <= tolerance) {
-    const canonical = (_SP_DISPLAY[prefix] || prefix + ' ') + bestCand.dims.join('x');
+    const canonical = (_SP_DISPLAY[prefix] || prefix + ' ') + _dispDims(prefix, bestCand.dims);
     const r = { canonical: canonical.trimEnd(), prefix, dims: bestCand.dims,
                 kgm: bestCand.kgm, matched: bestCand.key, confidence:'fuzzy' };
     _SP_CACHE.set(cacheKey, r); return r;
@@ -6488,10 +6497,10 @@ function takeoffRowHTML(row, i, inSub) {
         <option value="paint"  ${row.finish==='paint' ?'selected':''}>Paint</option>
       </select>
     </td>
-    <td style="${nc};color:var(--muted);font-family:var(--font-mono);font-size:12px">${totalKg>0?totalKg.toFixed(2):''}</td>
+    <td data-col="totalkg" style="${nc};color:var(--muted);font-family:var(--font-mono);font-size:12px">${totalKg>0?totalKg.toFixed(2):''}</td>
     <td style="${nc}"><input type="number" value="${row.rate||''}" placeholder="—" step="0.1"
         oninput="updateTakeoffRow(${i},'rate',this.value)" data-col="rate" style="${ni}"></td>
-    <td style="${nc};color:${mat>0?'var(--accent)':'var(--muted)'};font-family:var(--font-mono);font-size:12px;font-weight:${mat>0?'600':'400'}">${mat>0?'£'+mat.toFixed(2):''}</td>
+    <td data-col="mat" style="${nc};color:${mat>0?'var(--accent)':'var(--muted)'};font-family:var(--font-mono);font-size:12px;font-weight:${mat>0?'600':'400'}">${mat>0?'£'+mat.toFixed(2):''}</td>
     <td style="padding:4px 2px;text-align:center">
       <button class="btn-icon" onclick="removeTakeoffRow(${i})" style="padding:3px 6px;font-size:12px" title="Delete row">✕</button>
     </td>
@@ -6664,7 +6673,16 @@ function _acGetKeys() {
     .map(k => {
       for (const [p, disp] of Object.entries(_SP_DISPLAY)) {
         if (k.startsWith(p) && !k.slice(p.length).match(/^[A-Z]/)) {
-          return disp + k.slice(p.length); // e.g. "SHS " + "180x180x10"
+          let dimPart = k.slice(p.length);
+          // Flat bar is stored width-first in the DB but BAMA convention is
+          // thickness × width (e.g. FLT 10x200). Show the smaller dim first.
+          if (p === 'FLT') {
+            const d = dimPart.split('x').map(Number);
+            if (d.length === 2 && d.every(n => !isNaN(n))) {
+              dimPart = [...d].sort((a, b) => a - b).join('x');
+            }
+          }
+          return disp + dimPart; // e.g. "SHS " + "180x180x10"
         }
       }
       return k;
@@ -6836,6 +6854,7 @@ function updateTakeoffRow(i, field, val) {
       const rateCell = tr.querySelector('input[data-col="rate"]') || tr.cells[6]?.querySelector('input');
       if (rateCell) rateCell.value = row.rate || '';
     }
+    _refreshTakeoffRowCells(i);
   } else if (field === 'kgm') {
     row.kgm = parseFloat(val) || null;
   } else if (field === 'length') {
@@ -6849,7 +6868,33 @@ function updateTakeoffRow(i, field, val) {
   } else if (field === 'finish') {
     row.finish = val;
   }
+  // Live-refresh the row's computed cells (total kg + material £) for any
+  // field that affects them — previously these stayed stale until a full
+  // re-render (page refresh). The 'type' branch already patches its own cells.
+  if (['kgm','length','qty','rate'].includes(field)) {
+    _refreshTakeoffRowCells(i);
+  }
   saveAll(); updateTakeoffTotals(); recalcAll();
+}
+
+// Recompute and write the read-only computed cells (total kg, material £)
+// for a single takeoff row, without re-rendering the whole table.
+function _refreshTakeoffRowCells(i) {
+  const q = getQuote(); if (!q) return;
+  const row = q.takeoff[i]; if (!row) return;
+  const tbody = document.getElementById('takeoffBody');
+  const tr = tbody ? (tbody.querySelector('#takeoff-row-' + i) || tbody.rows[i]) : null;
+  if (!tr) return;
+  const totalKg = ((row.length||0)/1000) * (row.kgm||0) * (row.qty||1);
+  const mat = totalKg * (row.rate || 0);
+  const kgCell  = tr.querySelector('td[data-col="totalkg"]');
+  const matCell = tr.querySelector('td[data-col="mat"]');
+  if (kgCell)  kgCell.textContent = totalKg > 0 ? totalKg.toFixed(2) : '';
+  if (matCell) {
+    matCell.textContent = mat > 0 ? '£' + mat.toFixed(2) : '';
+    matCell.style.color = mat > 0 ? 'var(--accent)' : 'var(--muted)';
+    matCell.style.fontWeight = mat > 0 ? '600' : '400';
+  }
 }
 
 function removeTakeoffRow(i) {
