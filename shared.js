@@ -11121,6 +11121,7 @@ function _applyElementDataToJob(job, data) {
       id: r.id,
       type: r.type,
       number: r.number,
+      constructionNumber: r.constructionNumber,
       status: r.status,
       statusUpdatedAt: r.statusUpdatedAt,
       uploadedAt: r.uploadedAt,
@@ -12981,11 +12982,21 @@ async function bmrSaveAndNext() {
 // ELEMENT 2: APPROVAL
 // ═══════════════════════════════════════════
 // A revision's display label follows its approval state, not just which button
-// created it: pending/rejected → "PO1", approved → "C01". Folder names in
-// SharePoint mirror this (renamed on approve — see updateApprovalStatus).
-function approvalRevLabel(type, number, status) {
+// created it: pending/rejected → "PO1", approved → "C01". The C-counter is a
+// per-job monotonic sequence assigned at first approval (stored as
+// construction_number in DB), independent of the PO number — so the first
+// approved revision is always C01 regardless of how many PO rounds preceded
+// it. Folder names in SharePoint mirror this (renamed on approve — see
+// updateApprovalStatus).
+function approvalRevLabel(type, number, status, constructionNumber) {
   const approved = type === 'CO' || status === 'approved';
-  return approved ? 'C' + String(number).padStart(2, '0') : 'PO' + number;
+  if (approved) {
+    // Fallback to revision number only if construction_number is somehow
+    // missing (legacy row that escaped backfill). Should be rare.
+    const cnum = (constructionNumber != null) ? constructionNumber : number;
+    return 'C' + String(cnum).padStart(2, '0');
+  }
+  return 'PO' + number;
 }
 
 function renderApproval() {
@@ -13000,7 +13011,7 @@ function renderApproval() {
   const latestApproved = sortedDesc.find(r => r.type === 'CO' || r.status === 'approved');
   const latestPO = sortedDesc.find(r => r.type === 'PO');
   if (latestApproved) {
-    status.textContent = `${approvalRevLabel(latestApproved.type, latestApproved.number, latestApproved.status)} Approved`;
+    status.textContent = `${approvalRevLabel(latestApproved.type, latestApproved.number, latestApproved.status, latestApproved.constructionNumber)} Approved`;
     status.style.cssText = 'color:var(--green);background:rgba(62,207,142,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600';
   } else if (latestPO) {
     if (latestPO.status === 'rejected') {
@@ -13031,7 +13042,7 @@ function renderApproval() {
     // Status toggles for latest PO revision (draftsman can change status)
     if (latestPO && latestPO.type === 'PO') {
       html += `<div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
-        <span style="font-size:12px;color:var(--muted);font-weight:500">${approvalRevLabel(latestPO.type, latestPO.number, latestPO.status)} Status:</span>
+        <span style="font-size:12px;color:var(--muted);font-weight:500">${approvalRevLabel(latestPO.type, latestPO.number, latestPO.status, latestPO.constructionNumber)} Status:</span>
         <label class="toggle-chip"><input type="radio" name="approvalStatusToggle" value="sent" ${latestPO.status==='sent'?'checked':''} style="display:none" onchange="updateApprovalStatus('${latestPO.id}','sent')"><span>&#128232; Sent</span></label>
         <label class="toggle-chip"><input type="radio" name="approvalStatusToggle" value="approved" ${latestPO.status==='approved'?'checked':''} style="display:none" onchange="updateApprovalStatus('${latestPO.id}','approved')"><span>&#9989; Approved</span></label>
         <label class="toggle-chip"><input type="radio" name="approvalStatusToggle" value="rejected" ${latestPO.status==='rejected'?'checked':''} style="display:none" onchange="updateApprovalStatus('${latestPO.id}','rejected')"><span>&#10060; Not Approved</span></label>
@@ -13057,7 +13068,7 @@ function renderApproval() {
 
     html += `<div class="revision-group ${isCurrent ? 'current' : ''} ${isGrayed ? 'grayed' : ''}">
       <div class="revision-header">
-        <span class="revision-badge ${badgeClass}">${approvalRevLabel(rev.type, rev.number, rev.status)}</span>
+        <span class="revision-badge ${badgeClass}">${approvalRevLabel(rev.type, rev.number, rev.status, rev.constructionNumber)}</span>
         ${labelHtml}
         <span style="font-size:11px;color:var(--subtle);margin-left:auto">${new Date(rev.uploadedAt).toLocaleDateString('en-GB')}</span>
       </div>`;
@@ -13093,14 +13104,19 @@ async function updateApprovalStatus(revisionId, newStatus) {
   if (!rev) return;
   try {
     setLoading(true);
-    await api.patch(`/api/drawing-elements/${jobIdInt}/approval-revision/${revisionId}/status`, { status: newStatus });
+    // PATCH may assign a construction_number on first approval; capture it
+    // so the local rev (and the folder rename below) get the right C number.
+    const resp = await api.patch(`/api/drawing-elements/${jobIdInt}/approval-revision/${revisionId}/status`, { status: newStatus });
     rev.status = newStatus;
     rev.statusUpdatedAt = new Date().toISOString();
+    if (resp && resp.constructionNumber != null) {
+      rev.constructionNumber = resp.constructionNumber;
+    }
 
     // Mirror approval in SharePoint: an approved revision lives in a "C01" folder,
     // a pending/rejected one in a "PO1" folder. Rename the revision folder so the
     // file store matches the in-app label (PO1 → C01 on approval, and back).
-    const targetName = approvalRevLabel(rev.type, rev.number, newStatus);
+    const targetName = approvalRevLabel(rev.type, rev.number, newStatus, rev.constructionNumber);
     try {
       await renameApprovalRevisionFolder(rev, targetName);
     } catch (e) {
@@ -13768,17 +13784,21 @@ async function confirmUploadFile() {
     } else if (element === 'approval') {
       const approvalFolder = await getOrCreateSubfolder(targetFolderId, ELEMENT_FOLDERS.approval, driveId);
       // Folder name follows the effective approval state, not just the button:
-      // approved → "C01", pending/rejected → "PO1".
+      //   - approved (CO upload OR pre-approved PO) → "C##" using the next
+      //     construction_number for this job (max + 1)
+      //   - pending/rejected PO → "PO#" using the next PO sequence number
+      // The construction_number is the per-job approved counter — independent
+      // of PO sequence — so the first approved revision is always C01.
       const revisions = job.approval?.revisions || [];
       const chipStatus = document.querySelector('input[name="approvalStatus"]:checked')?.value || 'sent';
       const isApproved = subElement === 'CO' || chipStatus === 'approved';
       let folderName;
-      if (subElement === 'CO') {
-        const coCount = revisions.filter(r => r.type === 'CO').length;
-        folderName = `C${String(coCount + 1).padStart(2, '0')}`;
+      if (isApproved) {
+        const maxCon = revisions.reduce((m, r) => Math.max(m, r.constructionNumber || 0), 0);
+        folderName = `C${String(maxCon + 1).padStart(2, '0')}`;
       } else {
         const num = revisions.filter(r => r.type === 'PO').length + 1;
-        folderName = isApproved ? `C${String(num).padStart(2, '0')}` : `PO${num}`;
+        folderName = `PO${num}`;
       }
       const revFolder = await createFolderInDrive(approvalFolder.id, folderName, driveId);
       targetFolderId = revFolder.id;
@@ -13849,6 +13869,7 @@ async function confirmUploadFile() {
       });
       job.approval.revisions.push({
         id: saved.id, type: saved.type, number: saved.number,
+        constructionNumber: saved.constructionNumber,
         status: saved.status, uploadedAt: saved.uploadedAt,
         files: saved.files
       });

@@ -46,6 +46,7 @@ app.http('drawing-elements-get', {
                 id: r.id,
                 type: r.revision_type,
                 number: r.revision_number,
+                constructionNumber: r.construction_number,
                 status: r.status,
                 statusUpdatedAt: r.status_updated_at,
                 uploadedAt: r.uploaded_at,
@@ -137,11 +138,28 @@ app.http('drawing-elements-revision-create', {
             );
             const num = (countRes.recordset[0].cnt || 0) + 1;
 
+            const effectiveStatus = type === 'CO' ? 'approved' : (status || 'sent');
+
+            // Construction number is assigned when a revision is "approved-ish":
+            //   - any CO upload, OR
+            //   - a PO uploaded with status already 'approved'
+            // It's a per-job monotonic counter independent of the PO sequence,
+            // so the first approved revision is always C01 regardless of how
+            // many PO rounds preceded it.
+            let conNum = null;
+            if (type === 'CO' || effectiveStatus === 'approved') {
+                const maxRes = await query(
+                    'SELECT ISNULL(MAX(construction_number), 0) AS mx FROM DrawingApprovalRevisions WHERE job_id = @jobId',
+                    { jobId }
+                );
+                conNum = (maxRes.recordset[0].mx || 0) + 1;
+            }
+
             const revRes = await query(
-                `INSERT INTO DrawingApprovalRevisions (job_id, revision_type, revision_number, status, uploaded_by)
+                `INSERT INTO DrawingApprovalRevisions (job_id, revision_type, revision_number, status, uploaded_by, construction_number)
                  OUTPUT INSERTED.*
-                 VALUES (@jobId, @type, @num, @status, @uploadedBy)`,
-                { jobId, type, num, status: type === 'CO' ? 'approved' : (status || 'sent'), uploadedBy: uploadedBy || null }
+                 VALUES (@jobId, @type, @num, @status, @uploadedBy, @conNum)`,
+                { jobId, type, num, status: effectiveStatus, uploadedBy: uploadedBy || null, conNum }
             );
             const rev = revRes.recordset[0];
 
@@ -170,6 +188,7 @@ app.http('drawing-elements-revision-create', {
                 id: rev.id,
                 type: rev.revision_type,
                 number: rev.revision_number,
+                constructionNumber: rev.construction_number,
                 status: rev.status,
                 uploadedAt: rev.uploaded_at,
                 files: insertedFiles.map(f => ({
@@ -206,14 +225,45 @@ app.http('drawing-elements-revision-status', {
         if (!['sent','approved','rejected'].includes(status)) return badRequest('Invalid status', request);
 
         try {
+            // When flipping to 'approved' for the first time, assign a
+            // construction_number (per-job monotonic counter). Once assigned,
+            // it sticks even if the revision is later un-approved — so a
+            // re-approval keeps the same C number, and approving a different
+            // revision gets the next number up. Avoids any renumbering.
+            const existing = await query(
+                'SELECT job_id, construction_number FROM DrawingApprovalRevisions WHERE id = @revId',
+                { revId }
+            );
+            if (!existing.recordset.length) return notFound('Revision not found', request);
+            const { job_id: jobId, construction_number: currentConNum } = existing.recordset[0];
+
+            let assignedConNum = currentConNum;
+            if (status === 'approved' && currentConNum === null) {
+                const maxRes = await query(
+                    'SELECT ISNULL(MAX(construction_number), 0) AS mx FROM DrawingApprovalRevisions WHERE job_id = @jobId',
+                    { jobId }
+                );
+                assignedConNum = (maxRes.recordset[0].mx || 0) + 1;
+                await query(
+                    'UPDATE DrawingApprovalRevisions SET construction_number = @conNum WHERE id = @revId',
+                    { conNum: assignedConNum, revId }
+                );
+            }
+
             const res = await query(
                 `UPDATE DrawingApprovalRevisions SET status = @status, status_updated_at = SYSUTCDATETIME()
-                 OUTPUT INSERTED.id, INSERTED.status, INSERTED.status_updated_at
+                 OUTPUT INSERTED.id, INSERTED.status, INSERTED.status_updated_at, INSERTED.construction_number
                  WHERE id = @revId`,
                 { status, revId }
             );
             if (!res.recordset.length) return notFound('Revision not found', request);
-            return ok(res.recordset[0], request);
+            const out = res.recordset[0];
+            return ok({
+                id: out.id,
+                status: out.status,
+                status_updated_at: out.status_updated_at,
+                constructionNumber: out.construction_number
+            }, request);
         } catch (err) {
             context.error('revision-status error:', err);
             return serverError('Failed to update status', request);
