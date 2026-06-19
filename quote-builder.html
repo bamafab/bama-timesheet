@@ -1719,7 +1719,39 @@ tr.drag-dragging { opacity:0.35; }
       <button type="button" id="scViewBasic" class="btn btn-sm btn-primary" onclick="scSetView('basic')" style="flex:0 0 auto">Basic</button>
       <button type="button" id="scViewAdv" class="btn btn-sm btn-ghost" onclick="scSetView('advanced')" style="flex:0 0 auto">Advanced</button>
       <span style="flex:1"></span>
+      <button type="button" id="scRecogniseBtn" class="btn btn-sm btn-ghost" onclick="scToggleRecognise()" style="flex:0 0 auto" title="Read stair type & geometry from a drawing or photo">📐 Recognise from drawing</button>
       <span style="font-size:11px;color:var(--subtle);align-self:center">Basic = rise, width, class. Advanced = all components.</span>
+    </div>
+
+    <!-- F5: Quote Helper — recognise staircase from drawing/photo -->
+    <div id="scRecogniseWrap" style="display:none;border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:14px;background:var(--surface)">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:8px">
+        Upload a GA drawing, section detail or site photo. The AI <strong>reads geometry and section sizes only</strong> — all weights and quantities are still computed by the engine. Review what it found before applying.
+      </div>
+      <div class="upload-zone" id="scRecogniseDrop"
+           onclick="document.getElementById('scRecogniseInput').click()"
+           ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
+           ondragleave="this.style.borderColor=''"
+           ondrop="event.preventDefault();this.style.borderColor='';scHandleRecogniseDrop(event)"
+           style="border:1.5px dashed var(--border);border-radius:6px;padding:14px;text-align:center;cursor:pointer;font-size:12px;color:var(--muted)">
+        <div id="scRecogniseDropText"><strong>Click to upload</strong> or drag &amp; drop — PDF or image</div>
+      </div>
+      <input type="file" id="scRecogniseInput" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none" onchange="scHandleRecogniseFile(this)">
+      <div id="scRecogniseFileList" style="margin-top:6px"></div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+        <button type="button" id="scRecogniseRun" class="btn btn-sm btn-primary" onclick="scRunRecognise()" disabled style="opacity:0.4">Read drawing</button>
+        <span id="scRecogniseStatus" style="font-size:11px;color:var(--subtle)"></span>
+      </div>
+      <!-- review panel -->
+      <div id="scRecogniseReview" style="display:none;margin-top:10px;border-top:1px dashed var(--border);padding-top:10px">
+        <div style="font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Found in drawing — review before applying</div>
+        <div id="scRecogniseFields" style="font-size:12px"></div>
+        <div id="scRecogniseNotes" style="font-size:11px;color:var(--subtle);margin-top:8px"></div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button type="button" class="btn btn-sm btn-primary" onclick="scApplyRecognised()">Apply to wizard</button>
+          <button type="button" class="btn btn-sm btn-ghost" onclick="scToggleRecognise()">Cancel</button>
+        </div>
+      </div>
     </div>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
@@ -7241,6 +7273,238 @@ function scPopulateSteelDatalist(){
   _scSteelDatalistDone = true;
 }
 function closeStaircaseWizard(){ document.getElementById('staircaseModal').classList.remove('active'); }
+
+// ─────────────────────────────────────────────────────────────────────────
+// F5: Quote Helper — recognise staircase type & geometry from a drawing/photo.
+// TWO-ENGINE PRINCIPLE: the AI only READS the drawing (classification +
+// dimensions + section sizes it can see). It NEVER computes weights, quantities
+// or balanced rises — that stays with the deterministic JS engine. Recognised
+// values are mapped to the wizard input fields; the engine does all arithmetic.
+// ─────────────────────────────────────────────────────────────────────────
+let _scRecogniseFile = null;   // {name, base64, mediaType, isImage}
+let _scRecognised = null;      // last parsed AI result, for Apply
+
+function scToggleRecognise(){
+  const wrap = document.getElementById('scRecogniseWrap');
+  if (!wrap) return;
+  const showing = wrap.style.display !== 'none';
+  if (showing){
+    wrap.style.display = 'none';
+  } else {
+    wrap.style.display = '';
+    // reset state each time it opens
+    _scRecogniseFile = null;
+    _scRecognised = null;
+    document.getElementById('scRecogniseFileList').innerHTML = '';
+    document.getElementById('scRecogniseDropText').innerHTML = '<strong>Click to upload</strong> or drag &amp; drop — PDF or image';
+    document.getElementById('scRecogniseReview').style.display = 'none';
+    document.getElementById('scRecogniseStatus').textContent = '';
+    const r = document.getElementById('scRecogniseRun');
+    r.disabled = true; r.style.opacity = '0.4';
+  }
+}
+
+function scHandleRecogniseDrop(e){
+  const f = [...(e.dataTransfer?.files||[])].find(f => /\.(pdf|png|jpe?g|webp)$/i.test(f.name));
+  if (!f){ toast('Drop a PDF or image', 'error'); return; }
+  scLoadRecogniseFile(f);
+}
+function scHandleRecogniseFile(input){
+  const f = input.files && input.files[0];
+  if (f) scLoadRecogniseFile(f);
+}
+function scLoadRecogniseFile(file){
+  const reader = new FileReader();
+  reader.onload = e => {
+    _scRecogniseFile = {
+      name: file.name,
+      base64: e.target.result.split(',')[1],
+      mediaType: helperMediaType(file.name),
+      isImage: helperIsImage(file.name),
+    };
+    document.getElementById('scRecogniseFileList').innerHTML =
+      `<span style="font-size:12px;color:var(--text)">${_scRecogniseFile.isImage?'🖼️':'📄'} ${escHtml(file.name)}</span>`;
+    document.getElementById('scRecogniseDropText').innerHTML = '<strong>1 file loaded</strong> — click or drop to replace';
+    const r = document.getElementById('scRecogniseRun');
+    r.disabled = false; r.style.opacity = '1';
+  };
+  reader.readAsDataURL(file);
+}
+
+async function scRunRecognise(){
+  if (!_scRecogniseFile){ toast('Upload a drawing first', 'error'); return; }
+  const btn = document.getElementById('scRecogniseRun');
+  const status = document.getElementById('scRecogniseStatus');
+  btn.disabled = true; btn.style.opacity = '0.5'; btn.textContent = '⏳ Reading...';
+  status.textContent = 'Reading drawing — this may take 15–30 seconds...';
+  document.getElementById('scRecogniseReview').style.display = 'none';
+
+  const systemPrompt = `You are a steel staircase estimator's assistant for BAMA Fabrication. Read the supplied staircase drawing or photo and EXTRACT what you can see — classification and dimensions only.
+
+CRITICAL — you are a READER, not a calculator:
+- Report only values that are DIMENSIONED or clearly LABELLED on the drawing, plus the stair TYPE you can infer from the layout.
+- NEVER calculate riser heights, number of steps, going from pitch, weights, or balanced rise splits. The downstream engine does all arithmetic. If a value is not shown, return null — do NOT estimate it.
+- For section sizes (stringer, posts, landing frame, landing joist), report the designation exactly as written on the drawing (e.g. "PFC 200x90x30", "SHS 100x100x6.3", "FLT 250x12"). If not labelled, return null.
+
+Respond ONLY in valid JSON with these exact keys — no markdown, no preamble:
+{
+  "configuration": "one of: straight | quarter | halfturn | ushape | switchback (best fit from layout; null if unclear)",
+  "stairClass": "one of: private | semipublic | public (infer from context — domestic=private, commercial/industrial=semipublic, assembly/public building=public; null if unclear)",
+  "totalRiseMM": number or null (floor-to-floor rise if dimensioned),
+  "widthMM": number or null (clear/going width if dimensioned),
+  "goingMM": number or null (individual tread going if dimensioned),
+  "nFlights": number or null (count of flights if countable from the drawing),
+  "nLandings": number or null (count of intermediate landings if shown),
+  "treadType": "one of: chequer | grating | concrete (tread/plate type if identifiable; null if unclear)",
+  "closedRiser": true/false/null (true if risers are closed/plated, false if open),
+  "selfSupported": true/false/null (true if free-standing on its own posts/columns, false if wall/structure supported),
+  "stringerType": "section designation as written, or null",
+  "postType": "section designation as written, or null",
+  "landingFrameType": "section designation as written, or null",
+  "landingJoistType": "section designation as written, or null",
+  "notes": "1-2 short sentences: what the drawing shows, and call out anything ambiguous or any dimension you could NOT find"
+}`;
+
+  const userPrompt = 'Read this staircase drawing and return the JSON. Remember: report only what is shown — null for anything not dimensioned or labelled. Do not calculate.';
+
+  try {
+    const f = _scRecogniseFile;
+    const requestBody = {
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1500,
+      system: systemPrompt,
+      messages: [{
+        role: 'user',
+        content: [
+          f.isImage
+            ? { type: 'image', source: { type: 'base64', media_type: f.mediaType, data: f.base64 } }
+            : { type: 'document', source: { type: 'base64', media_type: f.mediaType || 'application/pdf', data: f.base64 }, title: f.name },
+          { type: 'text', text: userPrompt }
+        ]
+      }]
+    };
+
+    const doFetch = () => fetch(QB_API + '/api/claude-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${sessionStorage.getItem('bama_token')}` },
+      body: JSON.stringify(requestBody)
+    });
+
+    let response = await doFetch();
+    let data = await response.json();
+    if (response.status === 429){
+      status.textContent = 'Rate limit — waiting 30s before retry...';
+      await new Promise(r => setTimeout(r, 30000));
+      response = await doFetch(); data = await response.json();
+      if (response.status === 429) throw new Error('Still rate limited — wait a minute and try again.');
+    }
+    if (data.error) throw new Error(data.error.message);
+
+    const raw = data.content?.find(b => b.type === 'text')?.text || '';
+    let parsed;
+    try {
+      parsed = JSON.parse(raw.replace(/^```json\s*/,'').replace(/```\s*$/,'').trim());
+    } catch(e){
+      throw new Error('Could not parse AI response. Raw: ' + raw.slice(0, 200));
+    }
+
+    _scRecognised = parsed;
+    scRenderRecogniseReview(parsed);
+    status.textContent = 'Done — review below, then Apply.';
+  } catch(err){
+    status.textContent = 'Error: ' + err.message;
+    toast('Recognition failed: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false; btn.style.opacity = '1'; btn.textContent = 'Read drawing';
+  }
+}
+
+// Map recognised keys to human labels + the valid enum display where relevant
+const SC_RECOG_LABELS = {
+  configuration: 'Configuration', stairClass: 'Stair class', totalRiseMM: 'Total rise (mm)',
+  widthMM: 'Clear width (mm)', goingMM: 'Going (mm)', nFlights: 'No. of flights',
+  nLandings: 'No. of landings', treadType: 'Tread type', closedRiser: 'Closed riser',
+  selfSupported: 'Self-supported', stringerType: 'Stringer section', postType: 'Post section',
+  landingFrameType: 'Landing frame', landingJoistType: 'Landing joist',
+};
+const SC_CONFIG_LABELS = { straight:'Straight flight', quarter:'Quarter-turn', halfturn:'Half-turn / dog-leg', ushape:'U-shape', switchback:'Switchback / fire escape' };
+const SC_CLASS_LABELS  = { private:'Private (domestic)', semipublic:'Semi-public', public:'Public (assembly)' };
+
+function scRenderRecogniseReview(p){
+  const rows = [];
+  const show = (key, val) => {
+    if (val === null || val === undefined || val === '') return;
+    let disp = val;
+    if (key === 'configuration') disp = SC_CONFIG_LABELS[val] || val;
+    else if (key === 'stairClass') disp = SC_CLASS_LABELS[val] || val;
+    else if (typeof val === 'boolean') disp = val ? 'Yes' : 'No';
+    rows.push(`<div style="display:flex;justify-content:space-between;gap:12px;padding:3px 0;border-bottom:1px solid var(--border)">
+      <span style="color:var(--muted)">${SC_RECOG_LABELS[key]||key}</span>
+      <span style="color:var(--text);font-weight:600">${escHtml(String(disp))}</span></div>`);
+  };
+  Object.keys(SC_RECOG_LABELS).forEach(k => show(k, p[k]));
+  const fieldsEl = document.getElementById('scRecogniseFields');
+  fieldsEl.innerHTML = rows.length ? rows.join('') : '<div style="color:var(--subtle)">Nothing readable was found on the drawing.</div>';
+  const notesEl = document.getElementById('scRecogniseNotes');
+  notesEl.textContent = p.notes ? ('Note: ' + p.notes) : '';
+  document.getElementById('scRecogniseReview').style.display = '';
+}
+
+// Apply recognised values to the wizard inputs, then fire the change-handler
+// chain so dependent fields rebuild and the engine recomputes. Only sets fields
+// the AI actually returned (non-null) — leaves everything else at its default.
+function scApplyRecognised(){
+  const p = _scRecognised;
+  if (!p){ return; }
+  const setVal = (id, val) => { const el = document.getElementById(id); if (el && val!=null && val!=='') el.value = val; };
+  const setChk = (id, val) => { const el = document.getElementById(id); if (el && val!=null) el.checked = !!val; };
+
+  // ensure advanced fields are visible so we can populate them
+  scSetView('advanced');
+
+  // configuration first — it rebuilds flight/landing rows
+  if (p.configuration && STAIR_CONFIGS[p.configuration]) setVal('scConfig', p.configuration);
+  scConfigChange();
+
+  setVal('scClass', p.stairClass && SC_CLASS_LABELS[p.stairClass] ? p.stairClass : null);
+  setVal('scTotalRise', p.totalRiseMM);
+  setVal('scWidth', p.widthMM);
+  setVal('scGoing', p.goingMM);
+  // explicit counts override config defaults
+  if (p.nFlights!=null) { setVal('scNFlights', p.nFlights); scFlightCountChange(); }
+  if (p.nLandings!=null) { setVal('scNLandings', p.nLandings); }
+
+  // tread type drives field visibility — set then fire handler
+  if (p.treadType && ['chequer','grating','concrete'].includes(p.treadType)) setVal('scTreadType', p.treadType);
+  scTreadTypeChange();
+  // grating forces open riser; otherwise honour recognised closed/open
+  if (p.treadType !== 'grating' && p.closedRiser!=null){ setChk('scClosedRiser', p.closedRiser); scSyncFoldFields(); }
+
+  // self-support toggle reveals post fields
+  if (p.selfSupported!=null){ setChk('scSelfSupport', p.selfSupported); scSelfSupportChange(); }
+
+  // section sizes — only set if the AI read a designation. Custom text inputs
+  // are revealed via their preset dropdown's __custom path.
+  scApplyRecognisedSection('Stringer', 'scStringer', p.stringerType);
+  scApplyRecognisedSection('Post', 'scPost', p.postType);
+  scApplyRecognisedSection('LandingFrame', 'scLandingFrame', p.landingFrameType);
+  scApplyRecognisedSection('LandingJoist', 'scLandingJoist', p.landingJoistType);
+
+  scBuildLandingSupportRows();
+  scRecompute();
+  scToggleRecognise();
+  toast('Applied recognised geometry — check the values & adjust as needed', 'success');
+}
+
+// Set a preset-backed section field to a custom designation: flip its preset
+// dropdown to Custom… so the text input is shown, then write the value.
+function scApplyRecognisedSection(which, textId, val){
+  if (val==null || val==='') return;
+  const presetEl = document.getElementById('sc'+which+'Preset');
+  const textEl = document.getElementById(textId);
+  if (presetEl){ presetEl.value = '__custom'; }
+  if (textEl){ textEl.style.display = ''; textEl.value = val; }
+}
 
 // F3: configuration change — set flight/landing defaults, rebuild rise fields
 function scConfigChange(){
