@@ -15106,37 +15106,54 @@ async function renderQuotePdfToBase64(q) {
   const fullHtml = generateQuotePDF('quote', true);
   if (!fullHtml) throw new Error('Could not build quote document');
 
-  // html2pdf only renders the element we hand it, so the <head><style> block
-  // must be injected into the offscreen container alongside the body markup.
+  // Extract stylesheet + body so we can render the styled content in a real,
+  // painted in-document container. html2canvas needs the element actually laid
+  // out and visible (not opacity:0 / display:none / off-screen with mm widths,
+  // all of which produced a blank capture). A4 at 96dpi ≈ 794px wide.
   const styleMatch = fullHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
   const styleCss   = styleMatch ? styleMatch[1] : '';
   const bodyMatch  = fullHtml.match(/<body[^>]*>([\s\S]*)<\/body>/i);
   let bodyContent  = bodyMatch ? bodyMatch[1] : fullHtml;
-  // Drop the on-screen "Print / Save as PDF" button — it must not appear in the PDF
   bodyContent = bodyContent.replace(/<div class="no-print"[\s\S]*?<\/button>\s*<\/div>\s*/i, '');
 
-  // Render in a real, fixed-PIXEL-width container that is on-page but scrolled
-  // out of view. Off-screen `left:-9999px` + mm widths caused html2canvas to
-  // measure zero height -> blank page. A4 at 96dpi ≈ 794px. We also neutralise
-  // the .page max-width/auto-margin so the content fills the measured width.
   const PAGE_W = 794;
-  const tempDiv = document.createElement('div');
-  tempDiv.innerHTML = `<style>${styleCss} .page{max-width:none !important;margin:0 !important;width:${PAGE_W}px !important;}</style>${bodyContent}`;
-  tempDiv.style.cssText = `position:fixed;top:0;left:0;width:${PAGE_W}px;background:#fff;color:#000;z-index:-1;opacity:0;pointer-events:none`;
-  document.body.appendChild(tempDiv);
+  // Wrapper sits behind the page (low z-index) and far down, but is fully
+  // painted (no opacity:0), which is what html2canvas requires.
+  const wrap = document.createElement('div');
+  wrap.style.cssText = `position:absolute;left:0;top:0;width:${PAGE_W}px;z-index:-9999;background:#fff`;
+  wrap.innerHTML = `<style>${styleCss} .page{max-width:none !important;margin:0 !important;width:${PAGE_W}px !important;box-sizing:border-box;}</style>${bodyContent}`;
+  document.body.appendChild(wrap);
 
-  // Give the browser a tick to lay out and start loading the logo image
-  await new Promise(r => setTimeout(r, 60));
+  const pageEl = wrap.querySelector('.page') || wrap;
+
+  // Wait for images (logo) inside the wrapper to load before capture
+  await new Promise(resolve => {
+    const imgs = Array.from(wrap.querySelectorAll('img'));
+    let pending = imgs.filter(im => !im.complete).length;
+    if (pending === 0) { setTimeout(resolve, 80); return; }
+    const done = () => { if (--pending <= 0) resolve(); };
+    imgs.forEach(im => { if (!im.complete) { im.onload = done; im.onerror = done; } });
+    setTimeout(resolve, 2500); // safety timeout
+  });
 
   try {
     const blob = await html2pdf().set({
       margin: [12, 14, 12, 14],
       filename: `${q.ref||'Quote'} - ${q.company||'Client'}.pdf`,
       image: { type: 'jpeg', quality: 0.95 },
-      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', windowWidth: PAGE_W, scrollX: 0, scrollY: 0 },
+      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', windowWidth: PAGE_W },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
       pagebreak: { mode: ['css', 'legacy'] }
-    }).from(tempDiv).outputPdf('blob');
+    }).from(pageEl).outputPdf('blob');
+
+    // Diagnostic: a healthy A4 quote PDF is tens of KB. A few KB means a blank
+    // capture — log the measured layout so we can see what html2canvas saw.
+    console.log('[QB PDF] rendered blob size:', blob.size, 'bytes; .page rect:',
+      pageEl.getBoundingClientRect());
+    if (blob.size < 8000) {
+      console.warn('[QB PDF] PDF looks blank (size < 8KB). pageEl scrollHeight:',
+        pageEl.scrollHeight, 'offsetHeight:', pageEl.offsetHeight);
+    }
 
     return await new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -15145,7 +15162,7 @@ async function renderQuotePdfToBase64(q) {
       reader.readAsDataURL(blob);
     });
   } finally {
-    document.body.removeChild(tempDiv);
+    document.body.removeChild(wrap);
   }
 }
 
