@@ -12612,13 +12612,20 @@ function buildEmailBody(q, total, revStr) {
 function buildQuoteEmailSignature(q) {
   const name = escHtml((q && q.preparedBy) || sessionStorage.getItem('bama_qb_user') || 'BAMA Fabrication');
   const email = 'info@bamafabrication.co.uk';
+  // Embed the logo as base64 (same source as the PDF) so it shows reliably in
+  // Outlook without the external-image block. If no logo is stored, fall back
+  // to a clean text mark rather than a broken-image placeholder.
+  const logoB64 = localStorage.getItem('bama_logo_b64');
+  const logoCell = logoB64
+    ? `<img src="${logoB64}" alt="BAMA Fabrication" style="height:52px;width:auto;display:block">`
+    : `<span style="font-family:Arial,sans-serif;font-weight:900;font-size:20px;color:#D0021B;letter-spacing:1px">BAMA</span>`;
   return `
     <p style="margin:18px 0 2px 0;font-family:Arial,sans-serif;font-size:13px;color:#111">Kind regards,</p>
     <p style="margin:0;font-family:Arial,sans-serif;font-weight:bold;font-size:16px;color:#111">${name}</p>
     <p style="margin:0 0 12px 0;font-family:Arial,sans-serif;font-size:12px;color:#D0021B;font-weight:bold">BAMA Fabrication Ltd</p>
     <table style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:12px;color:#333"><tr>
       <td style="padding-right:18px;vertical-align:middle;border-right:1px solid #ddd">
-        <img src="https://proud-dune-0dee63110.2.azurestaticapps.net/bama-logo.png" alt="BAMA Fabrication" style="height:52px;width:auto;display:block" onerror="this.style.display='none'">
+        ${logoCell}
       </td>
       <td style="padding-left:18px;vertical-align:middle;line-height:1.7">
         <span style="color:#888">O</span> 01733 855212<br>
@@ -15061,8 +15068,7 @@ async function renderQuotePdfToBase64(q) {
   if (!fullHtml) throw new Error('Could not build quote document');
 
   // html2pdf only renders the element we hand it, so the <head><style> block
-  // must be injected into the offscreen container alongside the body markup —
-  // otherwise it renders unstyled and collapses to a blank page.
+  // must be injected into the offscreen container alongside the body markup.
   const styleMatch = fullHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
   const styleCss   = styleMatch ? styleMatch[1] : '';
   const bodyMatch  = fullHtml.match(/<body[^>]*>([\s\S]*)<\/body>/i);
@@ -15070,18 +15076,27 @@ async function renderQuotePdfToBase64(q) {
   // Drop the on-screen "Print / Save as PDF" button — it must not appear in the PDF
   bodyContent = bodyContent.replace(/<div class="no-print"[\s\S]*?<\/button>\s*<\/div>\s*/i, '');
 
+  // Render in a real, fixed-PIXEL-width container that is on-page but scrolled
+  // out of view. Off-screen `left:-9999px` + mm widths caused html2canvas to
+  // measure zero height -> blank page. A4 at 96dpi ≈ 794px. We also neutralise
+  // the .page max-width/auto-margin so the content fills the measured width.
+  const PAGE_W = 794;
   const tempDiv = document.createElement('div');
-  tempDiv.innerHTML = `<style>${styleCss}</style>${bodyContent}`;
-  tempDiv.style.cssText = 'position:absolute;left:-9999px;top:0;width:210mm;background:#fff;color:#000';
+  tempDiv.innerHTML = `<style>${styleCss} .page{max-width:none !important;margin:0 !important;width:${PAGE_W}px !important;}</style>${bodyContent}`;
+  tempDiv.style.cssText = `position:fixed;top:0;left:0;width:${PAGE_W}px;background:#fff;color:#000;z-index:-1;opacity:0;pointer-events:none`;
   document.body.appendChild(tempDiv);
+
+  // Give the browser a tick to lay out and start loading the logo image
+  await new Promise(r => setTimeout(r, 60));
 
   try {
     const blob = await html2pdf().set({
       margin: [12, 14, 12, 14],
       filename: `${q.ref||'Quote'} - ${q.company||'Client'}.pdf`,
       image: { type: 'jpeg', quality: 0.95 },
-      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', windowWidth: PAGE_W, scrollX: 0, scrollY: 0 },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      pagebreak: { mode: ['css', 'legacy'] }
     }).from(tempDiv).outputPdf('blob');
 
     return await new Promise((resolve, reject) => {
