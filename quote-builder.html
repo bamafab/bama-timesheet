@@ -12609,15 +12609,49 @@ function buildEmailBody(q, total, revStr) {
 // BAMA email signature for the quote covering email — mirrors the company
 // signature used in the ED chase-up flow. Name comes from the quote's
 // preparedBy (falling back to the logged-in QB user).
-function buildQuoteEmailSignature(q) {
+// ── Company logo as data URI (mirrors the babcock quote approach) ──────────
+// The logo lives in SharePoint; its itemId is stored in /api/settings under
+// templates.global.logoItemId. We fetch it via Graph and cache it as a base64
+// data URI so it embeds directly in emails (no external-image block) and PDFs.
+let _bamaLogoDataUri = null;
+async function loadBamaLogoDataUri(force) {
+  if (_bamaLogoDataUri && !force) return _bamaLogoDataUri;
+  // Prefer a locally-uploaded logo if one exists (instant, offline)
+  const local = localStorage.getItem('bama_logo_b64');
+  if (local) { _bamaLogoDataUri = local; return _bamaLogoDataUri; }
+  try {
+    const settings = await qbFetch('GET', '/api/settings');
+    const itemId = settings?.templates?.global?.logoItemId;
+    if (!itemId) return '';
+    const driveId = 'b!CxTKk9lEwkyweUqAo3CRas-huywW4KtLqOk2tNzmx-P7CX86DNhTQo14pLuU_tZu';
+    const token = sessionStorage.getItem('bama_token');
+    const res = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/content`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    if (!res.ok) { console.warn('Logo fetch failed:', res.status); return ''; }
+    const blob = await res.blob();
+    _bamaLogoDataUri = await new Promise(resolve => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => resolve('');
+      reader.readAsDataURL(blob);
+    });
+    return _bamaLogoDataUri;
+  } catch (e) {
+    console.warn('Logo load error:', e.message);
+    return '';
+  }
+}
+
+function buildQuoteEmailSignature(q, logoDataUri) {
   const name = escHtml((q && q.preparedBy) || sessionStorage.getItem('bama_qb_user') || 'BAMA Fabrication');
   const email = 'info@bamafabrication.co.uk';
-  // Embed the logo as base64 (same source as the PDF) so it shows reliably in
-  // Outlook without the external-image block. If no logo is stored, fall back
+  // logoDataUri is fetched from SharePoint (or local upload) before sending so
+  // it embeds directly in Outlook without the external-image block. Falls back
   // to a clean text mark rather than a broken-image placeholder.
-  const logoB64 = localStorage.getItem('bama_logo_b64');
-  const logoCell = logoB64
-    ? `<img src="${logoB64}" alt="BAMA Fabrication" style="height:52px;width:auto;display:block">`
+  const logoCell = logoDataUri
+    ? `<img src="${logoDataUri}" alt="BAMA Fabrication" style="height:52px;width:auto;display:block">`
     : `<span style="font-family:Arial,sans-serif;font-weight:900;font-size:20px;color:#D0021B;letter-spacing:1px">BAMA</span>`;
   return `
     <p style="margin:18px 0 2px 0;font-family:Arial,sans-serif;font-size:13px;color:#111">Kind regards,</p>
@@ -12662,6 +12696,11 @@ async function sendQuoteEmail() {
   sts.style.color = 'var(--muted)';
   sts.textContent = 'Generating quote PDF…';
 
+  // Fetch the company logo (SharePoint / local) as a data URI first, so it can
+  // embed in BOTH the PDF and the email signature. Non-fatal if it fails.
+  let logoDataUri = '';
+  try { logoDataUri = await loadBamaLogoDataUri(); } catch(e) { /* non-fatal */ }
+
   // Generate the client-facing quote PDF and attach it to the email
   let pdfBase64 = '';
   try {
@@ -12695,7 +12734,7 @@ async function sendQuoteEmail() {
         content: `
           <div style="max-width:600px;font-family:Arial,sans-serif">
             ${htmlBody}
-            ${buildQuoteEmailSignature(q)}
+            ${buildQuoteEmailSignature(q, logoDataUri)}
           </div>`
       },
       toRecipients,
@@ -15116,12 +15155,15 @@ function escHtml(s) {
 
 // ── Logo upload for PDF ──
 function getLogoHtml() {
-  const b64 = localStorage.getItem('bama_logo_b64');
+  // Prefer a locally-uploaded logo, then the SharePoint logo cached by
+  // loadBamaLogoDataUri() (populated before PDF render in the email flow).
+  const b64 = localStorage.getItem('bama_logo_b64')
+           || (typeof _bamaLogoDataUri !== 'undefined' ? _bamaLogoDataUri : '');
   if (b64) {
     return '<img src="' + b64 + '" style="max-height:60px;max-width:200px;object-fit:contain" alt="BAMA">';
   }
-  // Fallback: hosted logo image
-  return '<img src="https://proud-dune-0dee63110.2.azurestaticapps.net/bama-logo.png" style="max-height:60px;max-width:200px;object-fit:contain" alt="BAMA" onerror="this.style.display=\'none\'">';
+  // Final fallback: a clean text mark (the hosted bama-logo.png does not exist)
+  return '<div style="font-size:24px;font-weight:900;color:#D0021B;letter-spacing:1px">BAMA</div>';
 }
 
 function openLogoUpload() {
