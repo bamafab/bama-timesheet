@@ -1707,6 +1707,7 @@ tr.drag-dragging { opacity:0.35; }
 
 <!-- STAIRCASE WIZARD MODAL (Phase 1 — straight stair) -->
 <div class="modal-overlay" id="staircaseModal">
+  <datalist id="scSteelSections"></datalist>
   <div class="modal" style="max-width:760px">
     <div class="modal-title">🪜 Staircase Builder <span style="font-size:11px;color:var(--muted);font-weight:400">— straight flight</span></div>
     <p style="font-size:12px;color:var(--muted);margin-bottom:14px">
@@ -1789,7 +1790,7 @@ tr.drag-dragging { opacity:0.35; }
                   <option value="PFC 200x90x30">PFC 200×90×30</option>
                   <option value="__custom">Custom…</option>
                 </select>
-                <input type="text" id="scPost" value="SHS100x100x6.3" oninput="scRecompute()" style="display:none">
+                <input type="text" id="scPost" list="scSteelSections" value="SHS100x100x6.3" oninput="scRecompute()" style="display:none">
               </div>
               <div class="form-grid form-grid-3" style="gap:8px">
                 <div class="field"><label>Post overrun (mm) <span style="color:var(--subtle);font-size:10px">above landing</span></label><input type="number" id="scPostOverrun" value="100" min="0" step="10" oninput="scRecompute()"></div>
@@ -1812,7 +1813,7 @@ tr.drag-dragging { opacity:0.35; }
                 <option value="PFC 300x90">PFC 300x90 (channel)</option>
                 <option value="__custom">Custom…</option>
               </select>
-              <input type="text" id="scStringer" value="FLT 250x12" oninput="scRecompute()" style="display:none">
+              <input type="text" id="scStringer" list="scSteelSections" value="FLT 250x12" oninput="scRecompute()" style="display:none">
             </div>
             <div class="field"><label>Tread plate thickness (mm)</label><input type="number" id="scTreadPlate" value="4.5" step="0.5" oninput="scRecompute()"></div>
             <div class="field">
@@ -1867,7 +1868,7 @@ tr.drag-dragging { opacity:0.35; }
                 <option value="EA75x75x6">EA75x75x6</option>
                 <option value="__custom">Custom…</option>
               </select>
-              <input type="text" id="scCleat" value="EA50x50x5" oninput="scRecompute()" style="display:none">
+              <input type="text" id="scCleat" list="scSteelSections" value="EA50x50x5" oninput="scRecompute()" style="display:none">
             </div>
             <div class="field"><label>Cleat length (mm)</label><input type="number" id="scCleatLen" value="150" oninput="scRecompute()"></div>
             <div style="border-top:1px solid var(--border);margin:8px 0 4px;padding-top:8px;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted)">Landings <span style="text-transform:none;letter-spacing:0;color:var(--subtle)">— count set above in Flights &amp; landings</span></div>
@@ -1897,7 +1898,15 @@ tr.drag-dragging { opacity:0.35; }
                 <option value="PFC 200x90x30">PFC 200x90x30</option>
                 <option value="__custom">Custom…</option>
               </select>
-              <input type="text" id="scLandingFrame" value="PFC 150x75x18" oninput="scRecompute()" style="display:none">
+              <input type="text" id="scLandingFrame" list="scSteelSections" value="PFC 150x75x18" oninput="scRecompute()" style="display:none">
+            </div>
+            <div class="field">
+              <label>Landing frame sides <span style="color:var(--subtle);font-size:10px">— sides not against a wall / stringer</span></label>
+              <select id="scLandingFrameSides" onchange="scRecompute()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%">
+                <option value="4">4 sides — full perimeter</option>
+                <option value="3" selected>3 sides — one edge against wall/flight</option>
+                <option value="2">2 sides — two edges supported (corner)</option>
+              </select>
             </div>
             <div class="field">
               <label>Landing deck type</label>
@@ -1928,7 +1937,7 @@ tr.drag-dragging { opacity:0.35; }
                   <option value="RHS 80x40x3">RHS 80x40x3</option>
                   <option value="__custom">Custom…</option>
                 </select>
-                <input type="text" id="scLandingJoist" value="PFC 100x50x10" oninput="scRecompute()" style="display:none">
+                <input type="text" id="scLandingJoist" list="scSteelSections" value="PFC 100x50x10" oninput="scRecompute()" style="display:none">
               </div>
               <div class="field"><label>Joist spacing (mm)</label><input type="number" id="scLandingJoistSpacing" value="450" min="100" step="50" oninput="scRecompute()"></div>
             </div>
@@ -6831,10 +6840,18 @@ function _scBuildLanding(input, idx, warnings, opts){
   const lFrameDisp = _canon(landingFrameType);
   let lFrameKgm = scResolveKgm(landingFrameType);
   if (!lFrameKgm){ lFrameKgm = 17.9; warnings.push(`Landing frame "${landingFrameType}" not found — using ${lFrameKgm} kg/m.`); }
-  const perimM = 2*(lW+lD)/1000;
+  // frame sides: 4 = full perimeter; 3 = drop one long side (against wall/flight);
+  // 2 = two adjacent sides only (corner-supported).
+  const sides = Math.max(2, Math.min(4, Math.floor(Number(input.landingFrameSides)) || 3));
+  const longSide = Math.max(lW, lD), shortSide = Math.min(lW, lD);
+  let perimMM;
+  if (sides === 4) perimMM = 2*(lW+lD);
+  else if (sides === 3) perimMM = 2*shortSide + longSide;   // drop one long edge
+  else perimMM = lW + lD;                                     // two adjacent edges
+  const perimM = perimMM/1000;
   const frameKg = perimM * lFrameKgm;
-  out.push({ role:'landing_frame', type:`${lFrameDisp} landing ${lbl} frame ${lW}x${lD}`, length:1000, qty:1, kgm:scRound1(frameKg), _unit:'EA',
-    note:`Landing ${lbl} frame (EA): perimeter ${Math.round(perimM*1000)}mm of ${lFrameDisp}` });
+  out.push({ role:'landing_frame', type:`${lFrameDisp} landing ${lbl} frame ${lW}x${lD} (${sides}-sided)`, length:1000, qty:1, kgm:scRound1(frameKg), _unit:'EA',
+    note:`Landing ${lbl} frame (EA): ${sides}-sided, ${Math.round(perimMM)}mm of ${lFrameDisp}` });
   // internal joists: span the shorter dimension, spaced across the longer.
   // Perimeter is carried by the frame, so only interior joists count.
   const joistSpacing = (input.landingJoistSpacingMM!=null && input.landingJoistSpacingMM!=='' && !isNaN(Number(input.landingJoistSpacingMM)))
@@ -7036,6 +7053,7 @@ function computeStraightStair(input){
 let _scLastResult = null;
 function openStaircaseWizard(){
   if (!getQuote()){ toast('Open or create a quote first'); return; }
+  scPopulateSteelDatalist();
   document.getElementById('staircaseModal').classList.add('active');
   scSetView('basic');
   scConfigChange();
@@ -7043,6 +7061,17 @@ function openStaircaseWizard(){
   scTreadTypeChange();
   scLandingDeckChange();
   scRecompute();
+}
+// Fill the shared <datalist> from the steel DB once, so every Custom… text input
+// gets native autocomplete over all section keys.
+let _scSteelDatalistDone = false;
+function scPopulateSteelDatalist(){
+  if (_scSteelDatalistDone) return;
+  const dl = document.getElementById('scSteelSections');
+  if (!dl || typeof STEEL_KGM === 'undefined') return;
+  const keys = Object.keys(STEEL_KGM).sort();
+  dl.innerHTML = keys.map(k=>`<option value="${k}">`).join('');
+  _scSteelDatalistDone = true;
 }
 function closeStaircaseWizard(){ document.getElementById('staircaseModal').classList.remove('active'); }
 
@@ -7236,6 +7265,7 @@ function scReadInputs(){
     landingWidthMM: v('scLandingWidth') || null,
     landingDepthMM: v('scLandingDepth') || null,
     landingFrameType: (v('scLandingFrame')||'').trim() || null,
+    landingFrameSides: v('scLandingFrameSides') || '3',
     landingDeckType: v('scLandingDeckType') || 'chequer',
     landingShelfMM: v('scLandingShelf') || null,
     landingFoldMM: v('scLandingFold') || null,
