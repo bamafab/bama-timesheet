@@ -1980,6 +1980,53 @@ tr.drag-dragging { opacity:0.35; }
           </div>
           <div style="font-size:10px;color:var(--subtle);margin-top:6px">£ uses global material rates (£/kg) — fully editable per row after injection.</div>
         </div>
+
+        <!-- F4: labour & rates -->
+        <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-top:10px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div style="font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted)">Labour &amp; rates</div>
+            <button class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 8px" onclick="scResetLabourRates()" title="Reset all labour rates to the global defaults">↺ Reset to defaults</button>
+          </div>
+          <div id="scLabourSummary" style="font-size:12px;color:var(--text);line-height:1.7;margin-bottom:10px"></div>
+
+          <details id="scLabourDetails" style="margin-top:4px">
+            <summary style="cursor:pointer;font-size:11px;color:var(--accent);user-select:none">Adjust rates &amp; hours ▾</summary>
+            <div style="margin-top:10px">
+              <div style="font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);margin-bottom:6px">Fabrication</div>
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+                <label style="font-size:11px;color:var(--text);display:flex;align-items:center;gap:6px;cursor:pointer">
+                  <input type="checkbox" id="scTreadsByUs" checked oninput="scRecompute()"> Treads made by us
+                </label>
+                <span style="font-size:10px;color:var(--subtle)">(uncheck = treads in material price → tread fab = 0)</span>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+                <div class="field"><label>Per flight (hrs)</label><input type="number" id="scFabPerFlight" step="0.1" min="0" placeholder="9" oninput="scRecompute()"></div>
+                <div class="field"><label>Per tread (hrs)</label><input type="number" id="scFabPerTread" step="0.05" min="0" placeholder="0.15" oninput="scRecompute()"></div>
+                <div class="field"><label>Per landing (hrs)</label><input type="number" id="scFabPerLanding" step="0.1" min="0" placeholder="1.5" oninput="scRecompute()"></div>
+                <div class="field"><label>Per post (hrs)</label><input type="number" id="scFabPerPost" step="0.1" min="0" placeholder="0.4" oninput="scRecompute()"></div>
+                <div class="field"><label>Workshop rate (£/hr)</label><input type="number" id="scFabRate" step="1" min="0" placeholder="45" oninput="scRecompute()"></div>
+              </div>
+
+              <div style="font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);margin:10px 0 6px">Design</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+                <div class="field"><label>Base — 1st flight (hrs)</label><input type="number" id="scDesignBase" step="0.5" min="0" placeholder="12" oninput="scRecompute()"></div>
+                <div class="field"><label>Per extra flight (hrs)</label><input type="number" id="scDesignPerExtraFlight" step="0.5" min="0" placeholder="6" oninput="scRecompute()"></div>
+                <div class="field"><label>Per landing (hrs)</label><input type="number" id="scDesignPerLanding" step="0.5" min="0" placeholder="3" oninput="scRecompute()"></div>
+                <div class="field"><label>Design rate (£/hr)</label><input type="number" id="scDesignRate" step="1" min="0" placeholder="50" oninput="scRecompute()"></div>
+              </div>
+
+              <div style="font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);margin:10px 0 6px">Install <span style="text-transform:none;color:var(--subtle)">· crew × days × day-rate · balustrades excluded</span></div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+                <div class="field"><label>Crew size (people)</label><input type="number" id="scInstallCrew" step="1" min="1" placeholder="2" oninput="scRecompute()"></div>
+                <div class="field"><label>Days <span style="color:var(--subtle);font-size:10px">blank=auto</span></label><input type="number" id="scInstallDays" step="0.5" min="0" placeholder="auto" oninput="scRecompute()"></div>
+                <div class="field"><label>Days per flight (auto)</label><input type="number" id="scInstallDaysPerFlight" step="0.5" min="0" placeholder="1" oninput="scRecompute()"></div>
+                <div class="field"><label>Day rate (£/person/day)</label><input type="number" id="scInstallDayRate" step="10" min="0" placeholder="280" oninput="scRecompute()"></div>
+              </div>
+            </div>
+          </details>
+          <div style="font-size:10px;color:var(--subtle);margin-top:8px">Staircase labour is computed independently from the per-tonne fab estimate — these rows won't be double-counted. Defaults come from global rates; changes here apply to this staircase only.</div>
+        </div>
+
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-top:10px">
           <div style="font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Schematic</div>
           <div id="scSchematic"></div>
@@ -5229,6 +5276,7 @@ function autoFabHours(takeoff, complexityFactor) {
 
   const byType = {};
   takeoff.forEach(row => {
+    if (row._excludeFromFabHours) return; // F4: staircase rows carry their own labour
     const { kg, isValid } = rowWeight(row);
     if (!isValid || !kg) return;
     const baseHrs = profileComplexity(row.type);
@@ -5464,15 +5512,36 @@ function computeQuoteTotals(quote, ratesObj) {
   const purlins = Math.round(
     (parseFloat(quote.purlinM) || 0) * (parseFloat(quote.purlinRate) || 0) * 100) / 100;
 
+  // ── F4: staircase labour ─────────────────────────────────
+  // Each injected staircase carries its own element-based labour (fab/design/
+  // install). Fold those into the matching buckets so they ride the existing
+  // N/A gates + margin. Staircase takeoff rows are _excludeFromFabHours, so the
+  // per-tonne autoFabHours estimate never double-counts this.
+  let stairFab = 0, stairDesign = 0, stairInstall = 0;
+  (quote.staircases || []).forEach(sc => {
+    const l = sc && sc.labour;
+    if (!l) return;
+    stairFab     += (l.fab     && l.fab.cost)     || 0;
+    stairDesign  += (l.design  && l.design.cost)  || 0;
+    stairInstall += (l.install && l.install.cost) || 0;
+  });
+  stairFab = Math.round(stairFab*100)/100;
+  stairDesign = Math.round(stairDesign*100)/100;
+  stairInstall = Math.round(stairInstall*100)/100;
+  const stairLabourTotal = Math.round((stairFab+stairDesign+stairInstall)*100)/100;
+  const fabricationAll  = Math.round((fabrication  + stairFab)*100)/100;
+  const designAll       = Math.round((design       + stairDesign)*100)/100;
+  const installationAll = Math.round((installation + stairInstall)*100)/100;
+
   // ── Apply N/A blocks ─────────────────────────────────────
   const na = quote.blockNA || {};
   // NOTE: painting (non-galv finishes) and galvanising are split during
   // computation for line-item reporting, but both feed the same N/A gate
   // ('painting' block covers all surface finishing incl. galvanising).
   const subtotal = [
-    na.installation ? 0 : installation,
-    na.fabrication  ? 0 : fabrication,
-    na.design       ? 0 : design,
+    na.installation ? 0 : installationAll,
+    na.fabrication  ? 0 : fabricationAll,
+    na.design       ? 0 : designAll,
     na.painting     ? 0 : painting,
     na.painting     ? 0 : galvanising,   // galvanising is part of 'painting' block
     na.survey       ? 0 : survey,
@@ -5509,9 +5578,14 @@ function computeQuoteTotals(quote, ratesObj) {
   });
 
   return {
-    // Cost buckets
-    material, installation, fabrication, design,
+    // Cost buckets (installation/fabrication/design INCLUDE staircase labour)
+    material,
+    installation: installationAll, fabrication: fabricationAll, design: designAll,
     painting, galvanising, survey, delivery, prelims, purlins,
+    // base buckets (excl. staircase labour) for line-item drilldown if needed
+    installationBase: installation, fabricationBase: fabrication, designBase: design,
+    // staircase labour breakdown
+    stairFab, stairDesign, stairInstall, stairLabourTotal,
     fittingsCostVal: Math.round(fittingsCostVal * 100) / 100,
     fixingsCost: Math.round(fixingsCost * 100) / 100,
     consumablesCost: Math.round(consumablesCost * 100) / 100,
@@ -5645,7 +5719,24 @@ const DEFAULT_RATES = {
     struct_eng: { label: 'Structural Engineer',rate: 350 },
     other_survey:{ label: 'Other',             rate: 250 }
   },
-  survey_rate: 250
+  survey_rate: 250,
+  // ── F4: staircase labour model (element-based, NOT hrs/tonne) ──
+  // FAB hours built per element; DESIGN built per flight/landing; INSTALL is
+  // crew × days × day-rate. All values overridable per quote in the wizard.
+  staircase: {
+    fab_per_flight:        { label: 'Fab per flight — both stringers + cleats (hrs)', rate: 9 },
+    fab_per_tread:         { label: 'Fab per tread — when we make them (hrs)',         rate: 0.15 },
+    fab_per_landing:       { label: 'Fab per landing — frame + deck + joists (hrs)',   rate: 1.5 },
+    fab_per_post:          { label: 'Fab per support post (hrs)',                       rate: 0.4 },
+    fab_rate:              { label: 'Staircase workshop rate (£/hr)',                   rate: 45 },
+    design_base:           { label: 'Design base — first flight (hrs)',                 rate: 12 },
+    design_per_extra_flight:{ label: 'Design per additional flight (hrs)',              rate: 6 },
+    design_per_landing:    { label: 'Design per landing (hrs)',                          rate: 3 },
+    design_rate:           { label: 'Staircase design rate (£/hr)',                     rate: 50 },
+    install_days_per_flight:{ label: 'Install days per flight (auto-suggest)',          rate: 1 },
+    install_crew:          { label: 'Default install crew size (people)',               rate: 2 },
+    install_day_rate:      { label: 'Install day rate (£/person/day)',                  rate: 280 }
+  }
 };
 
 let rates = JSON.parse(localStorage.getItem('bama_rates') || 'null') || JSON.parse(JSON.stringify(DEFAULT_RATES));
@@ -7057,8 +7148,76 @@ function computeStraightStair(input){
   return computeStaircase(Object.assign({}, input, { configuration:'straight' }));
 }
 
+// ── F4: staircase labour engine ───────────────────────────
+// Deterministic element-based labour. NO AI arithmetic. Reads element counts
+// from geometry + component roles, applies per-element fab hours, per-flight/
+// landing design hours, and a crew × days × day-rate install cost.
+// `sc` carries per-quote overrides (falls back to rates.staircase defaults).
+// Returns { fab:{...}, design:{...}, install:{...}, totals:{...} }.
+function computeStaircaseLabour(geometry, components, sc){
+  sc = sc || {};
+  const R = (rates && rates.staircase) || {};
+  // resolve a value: explicit override on sc → rates.staircase default → hard fallback
+  const num = (v, d) => (v!=null && v!=='' && !isNaN(Number(v))) ? Number(v) : d;
+  const rr  = (key, d) => num(R[key] && R[key].rate, d);
+
+  const fabPerFlight   = num(sc.fabPerFlight,   rr('fab_per_flight', 9));
+  const fabPerTread    = num(sc.fabPerTread,    rr('fab_per_tread', 0.15));
+  const fabPerLanding  = num(sc.fabPerLanding,  rr('fab_per_landing', 1.5));
+  const fabPerPost     = num(sc.fabPerPost,     rr('fab_per_post', 0.4));
+  const fabRate        = num(sc.fabRate,        rr('fab_rate', 45));
+  const designBase     = num(sc.designBase,     rr('design_base', 12));
+  const designExtraFl  = num(sc.designPerExtraFlight, rr('design_per_extra_flight', 6));
+  const designPerLand  = num(sc.designPerLanding, rr('design_per_landing', 3));
+  const designRate     = num(sc.designRate,     rr('design_rate', 50));
+  const dayRate        = num(sc.installDayRate, rr('install_day_rate', 280));
+
+  // element counts — flights/landings from geometry; treads/posts from components
+  const nFlights  = Math.max(1, Number(geometry.nFlights) || 1);
+  const nLandings = Math.max(0, Number(geometry.nLandings) || 0);
+  const comps = Array.isArray(components) ? components : [];
+  const totalTreads = comps.filter(c=>c.role==='tread').reduce((s,c)=> s + (Number(c.qty)||0), 0);
+  const totalPosts  = comps.filter(c=>c.role==='post').reduce((s,c)=> s + (Number(c.qty)||0), 0);
+
+  // tread fab: only when WE make them ('w cenie materiału' → treadsByUs=false → 0)
+  const treadsByUs = (sc.treadsByUs===false) ? false : true; // default: we make them
+  const treadFabHrs = treadsByUs ? (totalTreads * fabPerTread) : 0;
+
+  // ── FAB ──
+  const flightFabHrs  = nFlights  * fabPerFlight;
+  const landingFabHrs = nLandings * fabPerLanding;
+  const postFabHrs    = totalPosts * fabPerPost;
+  const fabHrs = flightFabHrs + treadFabHrs + landingFabHrs + postFabHrs;
+  const fabCost = fabHrs * fabRate;
+
+  // ── DESIGN ──
+  const designHrs = designBase
+    + Math.max(0, nFlights-1) * designExtraFl
+    + nLandings * designPerLand;
+  const designCost = designHrs * designRate;
+
+  // ── INSTALL (crew × days × day-rate; balustrades excluded, separate module) ──
+  const suggestedDays = nFlights * num(sc.installDaysPerFlight, rr('install_days_per_flight', 1));
+  const crew = Math.max(1, Math.round(num(sc.installCrew, rr('install_crew', 2))));
+  const days = num(sc.installDays, suggestedDays);   // user override wins; else suggestion
+  const installCost = crew * days * dayRate;
+
+  const r1 = (x)=> Math.round(x*100)/100;
+  const r0 = (x)=> Math.round(x);
+  return {
+    fab: { flightHrs:r1(flightFabHrs), treadHrs:r1(treadFabHrs), landingHrs:r1(landingFabHrs),
+           postHrs:r1(postFabHrs), hrs:r1(fabHrs), rate:fabRate, cost:r0(fabCost),
+           treadsByUs, totalTreads, totalPosts },
+    design: { hrs:r1(designHrs), rate:designRate, cost:r0(designCost) },
+    install: { crew, days:r1(days), suggestedDays:r1(suggestedDays), dayRate, cost:r0(installCost) },
+    totals: { labourCost: r0(fabCost + designCost + installCost),
+              fabHrs:r1(fabHrs), designHrs:r1(designHrs) }
+  };
+}
+
 // ── wizard controller ─────────────────────────────────────
 let _scLastResult = null;
+let _scLastLabour = null;
 function openStaircaseWizard(){
   if (!getQuote()){ toast('Open or create a quote first'); return; }
   scPopulateSteelDatalist();
@@ -7295,6 +7454,32 @@ function scReadInputs(){
     // per-landing support toggle + height override (built dynamically)
     landingSupport: [1,2,3,4,5,6].map(i=>{ const el=document.getElementById('scLandingSupport'+i); return el ? el.checked : true; }),
     landingPostHeights: [1,2,3,4,5,6].map(i=>{ const el=document.getElementById('scLandingPostHeight'+i); return el?el.value:''; }),
+    // F4 labour overrides (blank = use rates.staircase default)
+    labour: scReadLabourInputs(),
+  };
+}
+
+// F4: read labour override fields. Blank inputs stay null so the engine falls
+// back to the global rates.staircase defaults.
+function scReadLabourInputs(){
+  const v = id => { const el=document.getElementById(id); return el ? el.value : ''; };
+  const chk = id => { const el=document.getElementById(id); return el ? el.checked : true; };
+  const n = x => (x!=null && x!=='' && !isNaN(Number(x))) ? Number(x) : null;
+  return {
+    treadsByUs:          chk('scTreadsByUs'),
+    fabPerFlight:        n(v('scFabPerFlight')),
+    fabPerTread:         n(v('scFabPerTread')),
+    fabPerLanding:       n(v('scFabPerLanding')),
+    fabPerPost:          n(v('scFabPerPost')),
+    fabRate:             n(v('scFabRate')),
+    designBase:          n(v('scDesignBase')),
+    designPerExtraFlight:n(v('scDesignPerExtraFlight')),
+    designPerLanding:    n(v('scDesignPerLanding')),
+    designRate:          n(v('scDesignRate')),
+    installCrew:         n(v('scInstallCrew')),
+    installDays:         n(v('scInstallDays')),
+    installDaysPerFlight:n(v('scInstallDaysPerFlight')),
+    installDayRate:      n(v('scInstallDayRate')),
   };
 }
 
@@ -7348,7 +7533,38 @@ function scRecompute(){
   if (totCostEl) totCostEl.textContent = '£' + Math.round(totCost).toLocaleString();
   const svgEl = document.getElementById('scSchematic');
   if (svgEl) svgEl.innerHTML = scBuildSVG(g);
+  // F4: labour breakdown
+  const _scin = scReadInputs();
+  const lab = computeStaircaseLabour(g, r.components, _scin.labour);
+  _scLastLabour = lab;
+  scRenderLabourSummary(lab);
   btn.disabled=false; btn.style.opacity='1';
+}
+
+// F4: render the live labour breakdown into the wizard panel.
+function scRenderLabourSummary(lab){
+  const el = document.getElementById('scLabourSummary');
+  if (!el || !lab) return;
+  const f = lab.fab, d = lab.design, ins = lab.install, t = lab.totals;
+  const treadNote = f.treadsByUs
+    ? `${f.totalTreads} treads × fab`
+    : `treads in material — no fab`;
+  el.innerHTML =
+    `<div style="display:flex;justify-content:space-between"><span>FAB <span style="color:var(--subtle);font-size:10px">${f.hrs}h · ${escHtml(treadNote)}</span></span><strong style="color:var(--accent)">£${f.cost.toLocaleString()}</strong></div>`+
+    `<div style="display:flex;justify-content:space-between"><span>DESIGN <span style="color:var(--subtle);font-size:10px">${d.hrs}h @ £${d.rate}/h</span></span><strong style="color:var(--accent)">£${d.cost.toLocaleString()}</strong></div>`+
+    `<div style="display:flex;justify-content:space-between"><span>INSTALL <span style="color:var(--subtle);font-size:10px">${ins.crew} crew × ${ins.days}d × £${ins.dayRate}</span></span><strong style="color:var(--accent)">£${ins.cost.toLocaleString()}</strong></div>`+
+    `<div style="display:flex;justify-content:space-between;border-top:1px solid var(--border);margin-top:4px;padding-top:4px;font-weight:600"><span>Labour total</span><strong style="color:var(--accent)">£${t.labourCost.toLocaleString()}</strong></div>`+
+    `<div style="font-size:10px;color:var(--subtle);margin-top:3px">Excludes steel material (priced per row above) and balustrades (separate).</div>`;
+}
+
+// F4: reset labour override fields to blank → engine uses global defaults.
+function scResetLabourRates(){
+  ['scFabPerFlight','scFabPerTread','scFabPerLanding','scFabPerPost','scFabRate',
+   'scDesignBase','scDesignPerExtraFlight','scDesignPerLanding','scDesignRate',
+   'scInstallCrew','scInstallDays','scInstallDaysPerFlight','scInstallDayRate'
+  ].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
+  const tb = document.getElementById('scTreadsByUs'); if (tb) tb.checked = true;
+  scRecompute();
 }
 
 // ── SVG schematic — drawn purely from geometry, no AI ─────
@@ -7525,13 +7741,14 @@ async function injectStaircase(){
 
   // store the spec so it can be regenerated/edited later
   const _scin = scReadInputs();
-  q.staircases.push({ areaId:id, kind:_scin.configuration||'straight', input:_scin, geometry:r.geometry, ts:Date.now() });
+  const _lab = _scLastLabour || computeStaircaseLabour(r.geometry, r.components, _scin.labour);
+  q.staircases.push({ areaId:id, kind:_scin.configuration||'straight', input:_scin, geometry:r.geometry, labour:_lab, ts:Date.now() });
 
   r.components.forEach(c=>{
     q.takeoff.push({ type:c.type, length:c.length, qty:c.qty, kgm:c.kgm,
       rate: sectionMaterialRate(c.type),
       area:id, subarea:'', _unit:c._unit||'', _stairRole:c.role, _stairNote:c.note,
-      _excludeFromFittingsBase:true });
+      _excludeFromFittingsBase:true, _excludeFromFabHours:true });
   });
 
   await saveAll();
