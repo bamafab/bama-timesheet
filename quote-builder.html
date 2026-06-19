@@ -1763,7 +1763,7 @@ tr.drag-dragging { opacity:0.35; }
             <div style="border-top:1px solid var(--border);margin:8px 0 4px;padding-top:8px;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted)">Flights &amp; landings</div>
             <div class="form-grid form-grid-2" style="gap:8px">
               <div class="field"><label>No. of flights <span style="color:var(--subtle);font-size:10px">blank=config default</span></label><input type="number" id="scNFlights" placeholder="auto" min="1" max="6" step="1" oninput="scFlightCountChange()"></div>
-              <div class="field"><label>No. of landings</label><input type="number" id="scNLandings" value="0" min="0" step="1" oninput="scRecompute()"></div>
+              <div class="field"><label>No. of landings</label><input type="number" id="scNLandings" value="0" min="0" step="1" oninput="scBuildLandingSupportRows();scRecompute()"></div>
             </div>
             <div style="font-size:10px;color:var(--subtle);margin:-2px 0 6px">Flights and landings are independent. Normally landings = flights−1; the engine warns (not blocks) if they don't match.</div>
 
@@ -1792,11 +1792,13 @@ tr.drag-dragging { opacity:0.35; }
                 <input type="text" id="scPost" value="SHS100x100x6.3" oninput="scRecompute()" style="display:none">
               </div>
               <div class="form-grid form-grid-3" style="gap:8px">
-                <div class="field"><label>No. of posts <span style="color:var(--subtle);font-size:10px">blank=auto</span></label><input type="number" id="scNPosts" placeholder="auto" min="0" step="1" oninput="scRecompute()"></div>
-                <div class="field"><label>Post length (mm) <span style="color:var(--subtle);font-size:10px">blank=auto</span></label><input type="number" id="scPostLen" placeholder="auto" oninput="scRecompute()"></div>
+                <div class="field"><label>Post overrun (mm) <span style="color:var(--subtle);font-size:10px">above landing</span></label><input type="number" id="scPostOverrun" value="100" min="0" step="10" oninput="scRecompute()"></div>
                 <div class="field"><label>Bracing allowance (%)</label><input type="number" id="scBracingPct" value="8" step="0.5" oninput="scRecompute()"></div>
+                <div class="field"><label>Manual post count <span style="color:var(--subtle);font-size:10px">blank=auto</span></label><input type="number" id="scNPosts" placeholder="auto" min="0" step="1" oninput="scRecompute()"></div>
               </div>
-              <div style="font-size:10px;color:var(--subtle);margin:-2px 0 6px">Auto posts = 2 per landing + 2 at flight head. Post length auto = total rise + 1100mm handrail standoff. Bracing covers diagonals, knee-braces, gussets.</div>
+              <div style="font-size:10px;color:var(--subtle);margin:-2px 0 6px">Auto: one pair of posts per supported landing, length = that landing's height + overrun. Toggle support and override height per landing below. Manual count is a single lumped escape hatch.</div>
+              <div id="scLandingSupportRows"></div>
+              <input type="hidden" id="scPostLen">
             </div>
 
             <div style="border-top:1px solid var(--border);margin:8px 0 4px;padding-top:8px;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted)">Components</div>
@@ -1873,7 +1875,20 @@ tr.drag-dragging { opacity:0.35; }
               <div class="field"><label>Landing width (mm)</label><input type="number" id="scLandingWidth" placeholder="=stair" oninput="scRecompute()"></div>
               <div class="field"><label>Landing depth (mm)</label><input type="number" id="scLandingDepth" placeholder="=width" oninput="scRecompute()"></div>
             </div>
-            <div style="font-size:10px;color:var(--subtle);margin:-2px 0 6px">Blank width/depth = stair width. Default dimensions; per-landing overrides come with the top-landing toggle.</div>
+            <div style="font-size:10px;color:var(--subtle);margin:-2px 0 6px">Blank width/depth = stair width. Applies to inter-flight landings.</div>
+            <div class="field">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--text);line-height:1.4">
+                <input type="checkbox" id="scIncludeTopLanding" onchange="scTopLandingChange();scRecompute()" style="accent-color:var(--accent);flex:0 0 auto;width:15px;height:15px">
+                <span>Include top landing <span style="color:var(--subtle)">— counts as the last of the landings above; sits at floor level</span></span>
+              </label>
+            </div>
+            <div id="scTopLandingWrap" style="display:none">
+              <div class="form-grid form-grid-2" style="gap:8px">
+                <div class="field"><label>Top landing width (mm)</label><input type="number" id="scTopLandingWidth" placeholder="=landing" oninput="scRecompute()"></div>
+                <div class="field"><label>Top landing depth (mm)</label><input type="number" id="scTopLandingDepth" placeholder="=landing" oninput="scRecompute()"></div>
+              </div>
+              <div style="font-size:10px;color:var(--subtle);margin:-2px 0 6px">Top landing is often larger than the half-turn landings. Blank = same as inter-flight landing dimensions.</div>
+            </div>
             <div class="field">
               <label>Landing frame section</label>
               <select id="scLandingFramePreset" onchange="scApplyPreset('LandingFrame')" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%;margin-bottom:5px">
@@ -6801,21 +6816,25 @@ function _scComputeFlight(input, flightRise, opts){
 
 // ── F3 landing builder ────────────────────────────────────
 // One structural landing: perimeter frame + deck. Shared by all configs.
-function _scBuildLanding(input, idx, warnings){
+// opts.isTop / opts.wOverride / opts.dOverride / opts.label support the top landing,
+// which can be larger than the inter-flight landings.
+function _scBuildLanding(input, idx, warnings, opts){
+  opts = opts || {};
   const out = [];
   const width = Number(input.widthMM)||1000;
   const _canon = (t) => { const p = findSteelProfile(t); return (p && p.confidence !== 'none' && p.canonical) ? p.canonical : t; };
   const plate = Number(input.treadPlateMM)||4.5;
-  const lW = Number(input.landingWidthMM) || width;
-  const lD = Number(input.landingDepthMM) || width;
+  const lW = (opts.wOverride && Number(opts.wOverride)>0) ? Number(opts.wOverride) : (Number(input.landingWidthMM) || width);
+  const lD = (opts.dOverride && Number(opts.dOverride)>0) ? Number(opts.dOverride) : (Number(input.landingDepthMM) || width);
+  const lbl = opts.label || idx;   // 'top' or numeric index for descriptions
   const landingFrameType = input.landingFrameType || 'PFC 150x75x18';
   const lFrameDisp = _canon(landingFrameType);
   let lFrameKgm = scResolveKgm(landingFrameType);
   if (!lFrameKgm){ lFrameKgm = 17.9; warnings.push(`Landing frame "${landingFrameType}" not found — using ${lFrameKgm} kg/m.`); }
   const perimM = 2*(lW+lD)/1000;
   const frameKg = perimM * lFrameKgm;
-  out.push({ role:'landing_frame', type:`${lFrameDisp} landing ${idx} frame ${lW}x${lD}`, length:1000, qty:1, kgm:scRound1(frameKg), _unit:'EA',
-    note:`Landing ${idx} frame (EA): perimeter ${Math.round(perimM*1000)}mm of ${lFrameDisp}` });
+  out.push({ role:'landing_frame', type:`${lFrameDisp} landing ${lbl} frame ${lW}x${lD}`, length:1000, qty:1, kgm:scRound1(frameKg), _unit:'EA',
+    note:`Landing ${lbl} frame (EA): perimeter ${Math.round(perimM*1000)}mm of ${lFrameDisp}` });
   // internal joists: span the shorter dimension, spaced across the longer.
   // Perimeter is carried by the frame, so only interior joists count.
   const joistSpacing = (input.landingJoistSpacingMM!=null && input.landingJoistSpacingMM!=='' && !isNaN(Number(input.landingJoistSpacingMM)))
@@ -6830,8 +6849,8 @@ function _scBuildLanding(input, idx, warnings){
       let jKgm = scResolveKgm(joistType);
       if (!jKgm){ jKgm = 10.2; warnings.push(`Landing joist "${joistType}" not found — using ${jKgm} kg/m.`); }
       const joistEachKg = (span/1000) * jKgm;   // weight of ONE joist
-      out.push({ role:'landing_joist', type:`${jDisp} landing ${idx} joist ${Math.round(span)}mm`, length:1000, qty:nJoists, kgm:scRound1(joistEachKg), _unit:'EA',
-        note:`Landing ${idx} reinforcement (EA): ${nJoists} × ${Math.round(span)}mm ${jDisp} @ ${joistSpacing}mm c/c` });
+      out.push({ role:'landing_joist', type:`${jDisp} landing ${lbl} joist ${Math.round(span)}mm`, length:1000, qty:nJoists, kgm:scRound1(joistEachKg), _unit:'EA',
+        note:`Landing ${lbl} reinforcement (EA): ${nJoists} × ${Math.round(span)}mm ${jDisp} @ ${joistSpacing}mm c/c` });
     }
   }
   const lType = input.landingDeckType || 'chequer';
@@ -6848,18 +6867,18 @@ function _scBuildLanding(input, idx, warnings){
   }
   if (lType === 'grating'){
     const gKgm2 = Number(input.gratingKgm2) || (GRATING_PRESETS[input.gratingPreset]?.kgm2) || 31;
-    lDeckKg = lAreaM2*gKgm2; lDeckDesc = `Open grating ${gKgm2}kg/m² landing ${idx} deck ${lW}x${lD}`;
+    lDeckKg = lAreaM2*gKgm2; lDeckDesc = `Open grating ${gKgm2}kg/m² landing ${lbl} deck ${lW}x${lD}`;
   } else if (lType === 'solid'){
-    lDeckKg = scPlateKg(plate,lW,lD) + foldKg; lDeckDesc = `Solid ${plate}mm landing ${idx} deck ${lW}x${lD}${foldNote}`;
+    lDeckKg = scPlateKg(plate,lW,lD) + foldKg; lDeckDesc = `Solid ${plate}mm landing ${lbl} deck ${lW}x${lD}${foldNote}`;
   } else if (lType === 'concrete'){
-    lDeckKg = scPlateKg(plate,lW,lD); lDeckDesc = `Concrete-tray ${plate}mm landing ${idx} deck ${lW}x${lD} (${lShelf}mm shelf)`;
+    lDeckKg = scPlateKg(plate,lW,lD); lDeckDesc = `Concrete-tray ${plate}mm landing ${lbl} deck ${lW}x${lD} (${lShelf}mm shelf)`;
   } else if (lType === 'timber'){
-    lDeckKg = scPlateKg(plate,lW,lD) + foldKg; lDeckDesc = `Plate-under-timber ${plate}mm landing ${idx} deck ${lW}x${lD}${foldNote}`;
+    lDeckKg = scPlateKg(plate,lW,lD) + foldKg; lDeckDesc = `Plate-under-timber ${plate}mm landing ${lbl} deck ${lW}x${lD}${foldNote}`;
   } else {
-    lDeckKg = scPlateKg(plate,lW,lD) + foldKg; lDeckDesc = `Chequer ${plate}mm landing ${idx} deck ${lW}x${lD}${foldNote}`;
+    lDeckKg = scPlateKg(plate,lW,lD) + foldKg; lDeckDesc = `Chequer ${plate}mm landing ${lbl} deck ${lW}x${lD}${foldNote}`;
   }
   out.push({ role:'landing_deck', type:lDeckDesc, length:1000, qty:1, kgm:scRound1(lDeckKg), _unit:'EA',
-    note:`Landing ${idx} deck (EA): ${lDeckDesc}` });
+    note:`Landing ${lbl} deck (EA): ${lDeckDesc}` });
   return out;
 }
 
@@ -6915,9 +6934,19 @@ function computeStaircase(input){
     components = components.concat(f.components);
     flightGeoms.push(f.geometry);
   }
-  // structural landings between flights
+  // structural landings. When includeTopLanding is on, the LAST of nLandings is
+  // the top landing (at floor level, own optional dimensions, larger if needed).
+  const includeTop = !!input.includeTopLanding;
   for (let i=0;i<nLandings;i++){
-    components = components.concat(_scBuildLanding(input, i+1, warnings));
+    const isTop = includeTop && (i === nLandings-1);
+    if (isTop){
+      components = components.concat(_scBuildLanding(input, i+1, warnings, {
+        isTop:true, label:'top',
+        wOverride: input.topLandingWidthMM, dOverride: input.topLandingDepthMM
+      }));
+    } else {
+      components = components.concat(_scBuildLanding(input, i+1, warnings));
+    }
   }
 
   // ── self-supported: posts + bracing (orthogonal to config) ──
@@ -6928,21 +6957,53 @@ function computeStaircase(input){
     const postDisp = _canon(postType);
     let postKgm = scResolveKgm(postType);
     if (!postKgm){ postKgm = 17.8; warnings.push(`Support post "${postType}" not found — using ${postKgm} kg/m.`); }
-    // post height defaults to total rise + 1100 handrail standoff; editable
-    const postLen = Number(input.postLenMM)>0 ? Number(input.postLenMM) : Math.round(totalRise + 1100);
-    // post count: a pair at each landing + a pair at the top flight head (min 2).
-    // Straight self-supported: 2 (head) + 2 (mid) if tall.
-    let nPosts;
-    if (input.nPosts!=null && input.nPosts!=='') nPosts = Math.max(0, Math.floor(Number(input.nPosts)));
-    else nPosts = Math.max(2, nLandings*2 + 2);
-    components.push({ role:'post', type:`${postDisp} support post ${postLen}mm`, length:postLen, qty:nPosts, kgm:postKgm, _unit:'',
-      note:`Self-supporting: ${nPosts} posts @ ${postLen}mm (${postDisp}) — landing legs + flight head` });
+    const overrun = (input.postOverrunMM!=null && input.postOverrunMM!=='' && !isNaN(Number(input.postOverrunMM)))
+      ? Number(input.postOverrunMM) : 100;
+    // cumulative landing heights: landing i sits at the top of flight i,
+    // so its floor-to-landing height = sum of flight rises 1..i.
+    // If the top landing is included, it sits at floor level (= totalRise).
+    const includeTopPosts = !!input.includeTopLanding;
+    let cum = 0;
+    const landingHeights = [];
+    for (let i=0;i<nFlights;i++){ cum += flightRises[i]; if (i < nLandings) landingHeights.push(Math.round(cum)); }
+    if (includeTopPosts && landingHeights.length) landingHeights[landingHeights.length-1] = Math.round(totalRise);
+    // per-landing support toggles + per-landing height overrides (arrays, optional)
+    const supportFlags = Array.isArray(input.landingSupport) ? input.landingSupport : [];
+    const heightOverrides = Array.isArray(input.landingPostHeights) ? input.landingPostHeights : [];
+    // manual override of post pair count per landing is gone; one pair per supported landing.
+    let totalPosts = 0;
+    if (input.nPosts!=null && input.nPosts!==''){
+      // legacy/manual escape hatch: single lumped post line at tallest landing height
+      const nPosts = Math.max(0, Math.floor(Number(input.nPosts)));
+      const tallest = landingHeights.length ? Math.max(...landingHeights) : totalRise;
+      const postLen = Number(input.postLenMM)>0 ? Number(input.postLenMM) : Math.round(tallest + overrun);
+      if (nPosts>0){
+        components.push({ role:'post', type:`${postDisp} support post ${postLen}mm`, length:postLen, qty:nPosts, kgm:postKgm, _unit:'',
+          note:`Manual: ${nPosts} posts @ ${postLen}mm (${postDisp})` });
+        totalPosts = nPosts;
+      }
+    } else {
+      // auto: one pair of posts per SUPPORTED landing, at that landing's height + overrun
+      landingHeights.forEach((h, i) => {
+        const supported = (supportFlags[i]===false) ? false : true;  // default supported
+        if (!supported) return;
+        const hOv = (heightOverrides[i]!=null && heightOverrides[i]!=='' && Number(heightOverrides[i])>0)
+          ? Math.round(Number(heightOverrides[i])) : h;
+        const postLen = hOv + overrun;
+        components.push({ role:'post', type:`${postDisp} support post ${postLen}mm (landing ${i+1})`, length:postLen, qty:2, kgm:postKgm, _unit:'',
+          note:`Landing ${i+1} legs: 2 × ${postLen}mm (${postDisp}) = ${Math.round(hOv)}mm landing height + ${overrun}mm overrun` });
+        totalPosts += 2;
+      });
+      if (totalPosts === 0){
+        warnings.push('Self-supported is on but no supported landings produced posts — add a landing or enable support, or set No. of posts manually.');
+      }
+    }
     // bracing allowance — % of steel so far, EA line
     const bracePct = Number(input.bracingPct)!=null && input.bracingPct!=='' ? Number(input.bracingPct) : 8;
     const kgSoFar = components.reduce((s,c)=> s + (c.length/1000)*c.kgm*c.qty, 0);
     const braceKg = scRound1(kgSoFar * (bracePct/100));
     components.push({ role:'bracing', type:`Self-support bracing & knee-braces (${bracePct}%)`, length:1000, qty:1, kgm:braceKg, _unit:'EA',
-      note:`${bracePct}% bracing allowance on ${scRound1(kgSoFar)}kg — diagonal braces, knee-braces, gussets to posts` });
+      note:`${bracePct}% bracing allowance on ${scRound1(kgSoFar)}kg — diagonal braces, knee-braces, gussets to ${totalPosts} posts` });
   }
 
   // ── fittings allowance (assembly level, once) ──
@@ -7021,6 +7082,7 @@ function scFlightCountChange(){
     rows.innerHTML = html;
   }
   if (wrap) wrap.style.display = n>1 ? '' : 'none';
+  scBuildLandingSupportRows();
   scRecompute();
 }
 
@@ -7029,6 +7091,46 @@ function scSelfSupportChange(){
   const on = !!document.getElementById('scSelfSupport')?.checked;
   const w = document.getElementById('scSelfSupportWrap');
   if (w) w.style.display = on ? '' : 'none';
+  scBuildLandingSupportRows();
+}
+
+// F3: top landing toggle — reveal top landing dimension fields
+function scTopLandingChange(){
+  const on = !!document.getElementById('scIncludeTopLanding')?.checked;
+  const w = document.getElementById('scTopLandingWrap');
+  if (w) w.style.display = on ? '' : 'none';
+  scBuildLandingSupportRows();
+}
+
+// F3: build per-landing support toggle + height override rows, one per landing.
+// Only shown when self-supported is on. Preserves existing values.
+function scBuildLandingSupportRows(){
+  const host = document.getElementById('scLandingSupportRows');
+  if (!host) return;
+  const selfOn = !!document.getElementById('scSelfSupport')?.checked;
+  const nlEl = document.getElementById('scNLandings');
+  const n = (nlEl && nlEl.value!=='') ? Math.max(0, Math.floor(Number(nlEl.value))) : 0;
+  if (!selfOn || n === 0){ host.innerHTML = ''; return; }
+  const includeTop = !!document.getElementById('scIncludeTopLanding')?.checked;
+  // capture existing
+  const prevChk = {}, prevH = {};
+  for (let i=1;i<=6;i++){
+    const c=document.getElementById('scLandingSupport'+i); if (c) prevChk[i]=c.checked;
+    const h=document.getElementById('scLandingPostHeight'+i); if (h) prevH[i]=h.value;
+  }
+  let html = '<div style="border-top:1px dashed var(--border);margin:6px 0;padding-top:6px;font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted)">Per-landing supports</div>';
+  for (let i=1;i<=n;i++){
+    const isTop = includeTop && i===n;
+    const lbl = isTop ? 'Top landing' : ('Landing '+i);
+    const checked = (prevChk[i]===undefined) ? 'checked' : (prevChk[i]?'checked':'');
+    html += `<div class="form-grid form-grid-2" style="gap:8px;align-items:end;margin-bottom:4px">
+      <div class="field"><label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--text)">
+        <input type="checkbox" id="scLandingSupport${i}" ${checked} onchange="scRecompute()" style="accent-color:var(--accent);width:14px;height:14px">
+        <span>${lbl} support</span></label></div>
+      <div class="field"><label>Post height (mm) <span style="color:var(--subtle);font-size:10px">blank=auto</span></label><input type="number" id="scLandingPostHeight${i}" placeholder="auto" value="${prevH[i]||''}" oninput="scRecompute()"></div>
+    </div>`;
+  }
+  host.innerHTML = html;
 }
 
 // Basic shows rise/width/class/name only; Advanced reveals all components.
@@ -7139,6 +7241,9 @@ function scReadInputs(){
     landingFoldMM: v('scLandingFold') || null,
     landingJoistType: (v('scLandingJoist')||'').trim() || null,
     landingJoistSpacingMM: v('scLandingJoistSpacing') || null,
+    includeTopLanding: chk('scIncludeTopLanding'),
+    topLandingWidthMM: v('scTopLandingWidth') || null,
+    topLandingDepthMM: v('scTopLandingDepth') || null,
     // F3
     configuration: v('scConfig') || 'straight',
     nFlights: v('scNFlights') || null,
@@ -7146,8 +7251,12 @@ function scReadInputs(){
     selfSupported: chk('scSelfSupport'),
     postType: (v('scPost')||'').trim() || null,
     postLenMM: v('scPostLen') || null,
+    postOverrunMM: v('scPostOverrun') || null,
     nPosts: v('scNPosts') || null,
     bracingPct: v('scBracingPct') || null,
+    // per-landing support toggle + height override (built dynamically)
+    landingSupport: [1,2,3,4,5,6].map(i=>{ const el=document.getElementById('scLandingSupport'+i); return el ? el.checked : true; }),
+    landingPostHeights: [1,2,3,4,5,6].map(i=>{ const el=document.getElementById('scLandingPostHeight'+i); return el?el.value:''; }),
   };
 }
 
