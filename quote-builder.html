@@ -1895,6 +1895,10 @@ tr.drag-dragging { opacity:0.35; }
               <label>Landing concrete shelf height (mm)</label>
               <input type="number" id="scLandingShelf" value="50" oninput="scRecompute()">
             </div>
+            <div class="field" id="scLandingFoldWrap">
+              <label>Landing deck fold / nosing downstand (mm) <span style="color:var(--subtle);font-size:10px">— one folded edge across stair width</span></label>
+              <input type="number" id="scLandingFold" value="50" min="0" step="5" oninput="scRecompute()">
+            </div>
             <div class="form-grid form-grid-2" style="gap:8px">
               <div class="field">
                 <label>Landing joist section</label>
@@ -6822,26 +6826,34 @@ function _scBuildLanding(input, idx, warnings){
       const jDisp = _canon(joistType);
       let jKgm = scResolveKgm(joistType);
       if (!jKgm){ jKgm = 10.2; warnings.push(`Landing joist "${joistType}" not found — using ${jKgm} kg/m.`); }
-      const joistKg = (span/1000) * jKgm * nJoists;
-      out.push({ role:'landing_joist', type:`${jDisp} landing ${idx} joists ×${nJoists} @ ${joistSpacing}mm`, length:1000, qty:1, kgm:scRound1(joistKg), _unit:'EA',
+      const joistEachKg = (span/1000) * jKgm;   // weight of ONE joist
+      out.push({ role:'landing_joist', type:`${jDisp} landing ${idx} joist ${Math.round(span)}mm`, length:1000, qty:nJoists, kgm:scRound1(joistEachKg), _unit:'EA',
         note:`Landing ${idx} reinforcement (EA): ${nJoists} × ${Math.round(span)}mm ${jDisp} @ ${joistSpacing}mm c/c` });
     }
   }
   const lType = input.landingDeckType || 'chequer';
   const lAreaM2 = (lW/1000)*(lD/1000);
   const lShelf = (input.landingShelfMM!=null && input.landingShelfMM!=='' && !isNaN(Number(input.landingShelfMM))) ? Number(input.landingShelfMM) : 50;
+  const lFold = (input.landingFoldMM!=null && input.landingFoldMM!=='' && !isNaN(Number(input.landingFoldMM))) ? Number(input.landingFoldMM) : 50;
   let lDeckKg, lDeckDesc;
+  let foldKg = 0, foldNote = '';
+  // bent-plate decks get an explicit folded nosing edge (one section across stair width)
+  const isBentPlate = (lType==='chequer' || lType==='solid' || lType==='timber');
+  if (isBentPlate && lFold > 0){
+    foldKg = scPlateKg(plate, lW, lFold);   // fold strip: stair width × fold depth
+    foldNote = ` + ${lFold}mm fold across ${lW}mm`;
+  }
   if (lType === 'grating'){
     const gKgm2 = Number(input.gratingKgm2) || (GRATING_PRESETS[input.gratingPreset]?.kgm2) || 31;
     lDeckKg = lAreaM2*gKgm2; lDeckDesc = `Open grating ${gKgm2}kg/m² landing ${idx} deck ${lW}x${lD}`;
   } else if (lType === 'solid'){
-    lDeckKg = scPlateKg(plate,lW,lD); lDeckDesc = `Solid ${plate}mm landing ${idx} deck ${lW}x${lD}`;
+    lDeckKg = scPlateKg(plate,lW,lD) + foldKg; lDeckDesc = `Solid ${plate}mm landing ${idx} deck ${lW}x${lD}${foldNote}`;
   } else if (lType === 'concrete'){
     lDeckKg = scPlateKg(plate,lW,lD); lDeckDesc = `Concrete-tray ${plate}mm landing ${idx} deck ${lW}x${lD} (${lShelf}mm shelf)`;
   } else if (lType === 'timber'){
-    lDeckKg = scPlateKg(plate,lW,lD); lDeckDesc = `Plate-under-timber ${plate}mm landing ${idx} deck ${lW}x${lD}`;
+    lDeckKg = scPlateKg(plate,lW,lD) + foldKg; lDeckDesc = `Plate-under-timber ${plate}mm landing ${idx} deck ${lW}x${lD}${foldNote}`;
   } else {
-    lDeckKg = scPlateKg(plate,lW,lD)*1.06; lDeckDesc = `Chequer ${plate}mm landing ${idx} deck ${lW}x${lD}`;
+    lDeckKg = scPlateKg(plate,lW,lD) + foldKg; lDeckDesc = `Chequer ${plate}mm landing ${idx} deck ${lW}x${lD}${foldNote}`;
   }
   out.push({ role:'landing_deck', type:lDeckDesc, length:1000, qty:1, kgm:scRound1(lDeckKg), _unit:'EA',
     note:`Landing ${idx} deck (EA): ${lDeckDesc}` });
@@ -7031,6 +7043,9 @@ function scLandingDeckChange(){
   const t = document.getElementById('scLandingDeckType')?.value;
   const w = document.getElementById('scLandingShelfWrap');
   if (w) w.style.display = (t === 'concrete') ? '' : 'none';
+  // fold/nosing only applies to bent-plate decks
+  const fw = document.getElementById('scLandingFoldWrap');
+  if (fw) fw.style.display = (t==='grating' || t==='concrete') ? 'none' : '';
   scRecompute();
 }
 // Grating preset → fill editable kg/m²
@@ -7084,6 +7099,7 @@ function scReadInputs(){
     landingFrameType: (v('scLandingFrame')||'').trim() || null,
     landingDeckType: v('scLandingDeckType') || 'chequer',
     landingShelfMM: v('scLandingShelf') || null,
+    landingFoldMM: v('scLandingFold') || null,
     landingJoistType: (v('scLandingJoist')||'').trim() || null,
     landingJoistSpacingMM: v('scLandingJoistSpacing') || null,
     // F3
