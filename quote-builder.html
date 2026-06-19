@@ -330,7 +330,7 @@ tr.drag-dragging { opacity:0.35; }
       </div>
     </div>
     <button class="btn btn-ghost btn-sm" onclick="openHelp()" title="Help &amp; guidance" style="font-size:15px;padding:4px 10px;line-height:1">?</button>
-    <button class="btn btn-ghost btn-sm" onclick="emailQuoteToClient()" title="Send client-facing quote PDF by email" id="btnEmailClient">✉ Email Client</button>
+    <button class="btn btn-ghost btn-sm" onclick="openEmailModal()" title="Send client-facing quote PDF by email" id="btnEmailClient">✉ Email Client</button>
     <button class="btn btn-primary btn-sm" onclick="saveCurrentQuote()">Save</button>
   </div>
 </div>
@@ -2110,7 +2110,7 @@ tr.drag-dragging { opacity:0.35; }
   <div class="modal" style="max-width:540px">
     <div class="modal-title">✉ Send Quote by Email</div>
     <p style="font-size:13px;color:var(--muted);margin-bottom:16px;line-height:1.6">
-      Sends from your Microsoft account. The quote PDF is described in the email body — attach the PDF manually from the Print/Save PDF window if needed.
+      Sends from your Microsoft account with the quote PDF attached automatically. The message below is AI-drafted — edit it or change the tone and redraft.
     </p>
     <div class="form-grid" style="gap:10px">
       <div class="field">
@@ -2126,11 +2126,19 @@ tr.drag-dragging { opacity:0.35; }
         <input type="text" id="emailSubject" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%">
       </div>
       <div class="field">
-        <label>Message</label>
+        <label>Message <span style="font-size:11px;color:var(--muted);font-weight:400">(AI-drafted — editable)</span></label>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+          <select id="emailTone" onchange="draftQuoteEmail()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px">
+            <option value="warm">Warm</option>
+            <option value="brief">Brief</option>
+            <option value="firm">Firm</option>
+          </select>
+          <button type="button" class="btn btn-ghost btn-sm" id="emailRedraftBtn" onclick="draftQuoteEmail()">↻ Redraft</button>
+        </div>
         <textarea id="emailBody" rows="8" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%;resize:vertical;font-family:var(--font-body)"></textarea>
       </div>
       <div class="info-box" style="font-size:11px">
-        💡 Tip — after sending, use <strong>📄 PDF → Quote</strong> to open the quote PDF, then save and attach it to the email in Outlook.
+        📎 The client-facing quote PDF is generated and attached automatically when you send. A BAMA signature is added below your message.
       </div>
     </div>
     <div id="emailStatus" style="margin-top:10px;font-size:12px;min-height:18px"></div>
@@ -12476,17 +12484,101 @@ function runComparison() {
 function openEmailModal() {
   const q = getQuote(); if (!q) return;
   const revStr = q.revision ? ' ' + q.revision : '';
-  const total  = q._computed?.total || 0;
 
   document.getElementById('emailTo').value      = q.email || '';
   document.getElementById('emailCc').value      = '';
   document.getElementById('emailSubject').value = `Quotation ${q.ref}${revStr} — ${q.company || 'BAMA Fabrication'}`;
-  document.getElementById('emailBody').value    = buildEmailBody(q, total, revStr);
+  document.getElementById('emailTone').value    = 'warm';
   document.getElementById('emailStatus').textContent = '';
   document.getElementById('emailStatus').style.color = 'var(--muted)';
   document.getElementById('emailSendBtn').disabled   = false;
   document.getElementById('emailSendBtn').textContent = '✉ Send Email';
   document.getElementById('emailModal').classList.add('active');
+  // AI-draft the body (falls back to a fixed template if the AI call fails)
+  draftQuoteEmail();
+}
+
+// AI-draft the quote covering email, mirroring the ED chase-up drafting flow.
+// On any failure it falls back to the deterministic buildEmailBody template.
+async function draftQuoteEmail() {
+  const q = getQuote(); if (!q) return;
+  const revStr  = q.revision ? ' ' + q.revision : '';
+  const total   = q._computed?.total || 0;
+  const tone    = document.getElementById('emailTone')?.value || 'warm';
+  const bodyEl  = document.getElementById('emailBody');
+  const btn     = document.getElementById('emailRedraftBtn');
+  const sts     = document.getElementById('emailStatus');
+  if (!bodyEl) return;
+
+  bodyEl.value = 'Drafting…';
+  if (btn) btn.disabled = true;
+
+  const userName = q.preparedBy || sessionStorage.getItem('bama_qb_user') || 'Mateusz Braczyk';
+  const contactName = q.contact || '';
+  const company = q.company || '';
+  const project = q.qScope || q.project || q.comments || '';
+  const validStr = q.validUntil
+    ? new Date(q.validUntil + 'T12:00:00').toLocaleDateString('en-GB', {day:'numeric', month:'long', year:'numeric'})
+    : '14 days from date of issue';
+
+  const toneGuide = {
+    warm:  'Warm and friendly, relationship-first. Light and unhurried.',
+    brief: 'Very short and to the point — three or four sentences maximum, no filler.',
+    firm:  'Polite but direct — convey quiet confidence in the quotation and invite a decision, without being pushy.'
+  }[tone];
+
+  const prompt = `Write a covering email from ${userName} at BAMA Fabrication Ltd, a structural steel fabrication company in Peterborough, to a client, accompanying a quotation we are sending them. The quotation PDF is attached to the email.
+
+Quote details:
+- Reference: ${q.ref}${revStr}
+- Client contact: ${contactName || 'the client'}${company ? ' at ' + company : ''}
+${project ? '- Project / scope: ' + project : ''}
+${total > 0 ? '- Total (excl. VAT): £' + Math.round(total).toLocaleString() : ''}
+- Quotation valid until: ${validStr}
+
+Tone: ${toneGuide}
+
+RULES:
+- Write ONLY the email body. No subject line, no "Subject:", no preamble.
+- Open with an appropriate greeting using the contact's first name if available, otherwise "Dear Sir/Madam".
+- State that our quotation is attached for their project.
+- You may mention the total excl. VAT and the validity date once, briefly — do not restate detailed terms.
+- Offer to answer any questions or discuss the proposal further.
+- Do NOT write any sign-off, "Kind regards", name, company name, or signature block at the end — a signature is added automatically. End with the last sentence of the message.
+- Strictly UK English. Natural, professional, no marketing fluff, no exclamation marks.`;
+
+  try {
+    const requestBody = {
+      model: 'claude-sonnet-4-6',
+      max_tokens: 800,
+      messages: [{ role: 'user', content: prompt }]
+    };
+    const doFetch = () => fetch(QB_API + '/api/claude-proxy', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${sessionStorage.getItem('bama_token')}`
+      },
+      body: JSON.stringify(requestBody)
+    });
+    let response = await doFetch();
+    let data = await response.json();
+    if (response.status === 429) {
+      if (sts) sts.textContent = 'Rate limit — waiting 30 seconds before retry...';
+      await new Promise(r => setTimeout(r, 30000));
+      response = await doFetch();
+      data = await response.json();
+    }
+    if (data.error) throw new Error(data.error.message);
+    const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+    bodyEl.value = text || buildEmailBody(q, total, revStr);
+    if (sts) sts.textContent = '';
+  } catch(e) {
+    // Graceful fallback to the deterministic template
+    bodyEl.value = buildEmailBody(q, total, revStr);
+    if (sts) { sts.style.color = 'var(--muted)'; sts.textContent = 'AI draft unavailable — using standard template (' + e.message + ')'; }
+  }
+  if (btn) btn.disabled = false;
 }
 
 function closeEmailModal() {
@@ -12536,6 +12628,20 @@ async function sendQuoteEmail() {
 
   btn.disabled = true;
   sts.style.color = 'var(--muted)';
+  sts.textContent = 'Generating quote PDF…';
+
+  // Generate the client-facing quote PDF and attach it to the email
+  let pdfBase64 = '';
+  try {
+    pdfBase64 = await renderQuotePdfToBase64(q);
+  } catch(e) {
+    sts.style.color = 'var(--red)';
+    sts.textContent = '❌ Could not generate quote PDF: ' + e.message;
+    btn.disabled = false;
+    return;
+  }
+  const pdfName = `${q.ref || 'Quote'}${q.revision ? ' ' + q.revision : ''} - ${q.company || 'Client'}.pdf`;
+
   sts.textContent = 'Sending...';
 
   // Build HTML version of email body
@@ -12567,7 +12673,13 @@ async function sendQuoteEmail() {
           </div>`
       },
       toRecipients,
-      ccRecipients: ccRecipients.length ? ccRecipients : undefined
+      ccRecipients: ccRecipients.length ? ccRecipients : undefined,
+      attachments: [{
+        '@odata.type': '#microsoft.graph.fileAttachment',
+        name: pdfName,
+        contentType: 'application/pdf',
+        contentBytes: pdfBase64
+      }]
     },
     saveToSentItems: true
   };
@@ -12581,7 +12693,7 @@ async function sendQuoteEmail() {
 
     if (res.status === 202 || res.status === 200) {
       sts.style.color = 'var(--green)';
-      sts.textContent = '✓ Email sent successfully — saved to Sent Items';
+      sts.textContent = '✓ Quote sent with PDF attached — saved to Sent Items';
       btn.textContent = '✓ Sent';
       // Mark quote as sent
       q.status = 'sent';
@@ -14917,36 +15029,9 @@ function openPdfWindow(html) {
 }
 
 // ── Email client-facing quote PDF to client ───────────────────────────────
-// Renders the quote PDF silently via html2pdf, then opens the email modal
-// (babcockEmailModal from shared.js) pre-filled with client details.
-async function emailQuoteToClient() {
-  const q = getQuote();
-  if (!q) { toast('No quote selected', 'error'); return; }
-  if (!q.company && !q.contact) { toast('No client details on this quote — add a company name first', 'error'); return; }
-
-  const btn = document.getElementById('btnEmailClient');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating PDF…'; }
-
-  try {
-    // Build the same HTML used for print/PDF
-    const revStr = q.revision ? ` · ${q.revision}` : '';
-    // Temporarily call generateQuotePDF logic to get the HTML — we need
-    // the same quoteHtml that mode='quote' produces but as a string, not
-    // opened in a window. Re-use buildPdfPage + the line-building logic
-    // by calling a silent render.
-    const pdfBase64 = await renderQuotePdfToBase64(q);
-
-    if (btn) { btn.disabled = false; btn.textContent = '✉ Email Client'; }
-
-    // sendQuoteToClient lives in shared.js and opens the babcockEmailModal
-    await sendQuoteToClient(q, pdfBase64);
-
-  } catch(e) {
-    console.error('emailQuoteToClient error:', e);
-    toast('Failed to generate PDF: ' + e.message, 'error');
-    if (btn) { btn.disabled = false; btn.textContent = '✉ Email Client'; }
-  }
-}
+// The ✉ Email Client toolbar button now opens openEmailModal(), which AI-drafts
+// the covering message and attaches the quote PDF (rendered by
+// renderQuotePdfToBase64) when sent — see sendQuoteEmail(). No shared.js dependency.
 
 // Render the client-facing quote to a base64 PDF string using html2pdf.js
 async function renderQuotePdfToBase64(q) {
