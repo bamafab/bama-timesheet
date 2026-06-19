@@ -1895,6 +1895,22 @@ tr.drag-dragging { opacity:0.35; }
               <label>Landing concrete shelf height (mm)</label>
               <input type="number" id="scLandingShelf" value="50" oninput="scRecompute()">
             </div>
+            <div class="form-grid form-grid-2" style="gap:8px">
+              <div class="field">
+                <label>Landing joist section</label>
+                <select id="scLandingJoistPreset" onchange="scApplyPreset('LandingJoist')" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%;margin-bottom:5px">
+                  <option value="PFC 100x50x10" selected>PFC 100x50x10 (BAMA default)</option>
+                  <option value="PFC 125x65x15">PFC 125x65x15</option>
+                  <option value="PFC 150x75x18">PFC 150x75x18</option>
+                  <option value="RHS 100x50x3">RHS 100x50x3</option>
+                  <option value="RHS 80x40x3">RHS 80x40x3</option>
+                  <option value="__custom">Custom…</option>
+                </select>
+                <input type="text" id="scLandingJoist" value="PFC 100x50x10" oninput="scRecompute()" style="display:none">
+              </div>
+              <div class="field"><label>Joist spacing (mm)</label><input type="number" id="scLandingJoistSpacing" value="450" min="100" step="50" oninput="scRecompute()"></div>
+            </div>
+            <div style="font-size:10px;color:var(--subtle);margin:-2px 0 6px">Internal joists span the shorter landing dimension, spaced across the longer; perimeter is carried by the frame. Spacing 0 / blank = no joists.</div>
             <div class="field"><label>Staircase fittings allowance (%) <span style="color:var(--subtle);font-size:10px">— baseplates, brackets, bolts, welds</span></label><input type="number" id="scFittingsPct" value="7.5" step="0.5" oninput="scRecompute()"></div>
           </div>
         </div>
@@ -6793,6 +6809,24 @@ function _scBuildLanding(input, idx, warnings){
   const frameKg = perimM * lFrameKgm;
   out.push({ role:'landing_frame', type:`${lFrameDisp} landing ${idx} frame ${lW}x${lD}`, length:1000, qty:1, kgm:scRound1(frameKg), _unit:'EA',
     note:`Landing ${idx} frame (EA): perimeter ${Math.round(perimM*1000)}mm of ${lFrameDisp}` });
+  // internal joists: span the shorter dimension, spaced across the longer.
+  // Perimeter is carried by the frame, so only interior joists count.
+  const joistSpacing = (input.landingJoistSpacingMM!=null && input.landingJoistSpacingMM!=='' && !isNaN(Number(input.landingJoistSpacingMM)))
+    ? Number(input.landingJoistSpacingMM) : 450;
+  if (joistSpacing > 0){
+    const span = Math.min(lW, lD);        // joists run across the shorter dimension
+    const along = Math.max(lW, lD);       // distributed along the longer dimension
+    const nJoists = Math.max(0, Math.ceil(along / joistSpacing) - 1);  // interior bays only
+    if (nJoists > 0){
+      const joistType = input.landingJoistType || 'PFC 100x50x10';
+      const jDisp = _canon(joistType);
+      let jKgm = scResolveKgm(joistType);
+      if (!jKgm){ jKgm = 10.2; warnings.push(`Landing joist "${joistType}" not found — using ${jKgm} kg/m.`); }
+      const joistKg = (span/1000) * jKgm * nJoists;
+      out.push({ role:'landing_joist', type:`${jDisp} landing ${idx} joists ×${nJoists} @ ${joistSpacing}mm`, length:1000, qty:1, kgm:scRound1(joistKg), _unit:'EA',
+        note:`Landing ${idx} reinforcement (EA): ${nJoists} × ${Math.round(span)}mm ${jDisp} @ ${joistSpacing}mm c/c` });
+    }
+  }
   const lType = input.landingDeckType || 'chequer';
   const lAreaM2 = (lW/1000)*(lD/1000);
   const lShelf = (input.landingShelfMM!=null && input.landingShelfMM!=='' && !isNaN(Number(input.landingShelfMM))) ? Number(input.landingShelfMM) : 50;
@@ -7050,6 +7084,8 @@ function scReadInputs(){
     landingFrameType: (v('scLandingFrame')||'').trim() || null,
     landingDeckType: v('scLandingDeckType') || 'chequer',
     landingShelfMM: v('scLandingShelf') || null,
+    landingJoistType: (v('scLandingJoist')||'').trim() || null,
+    landingJoistSpacingMM: v('scLandingJoistSpacing') || null,
     // F3
     configuration: v('scConfig') || 'straight',
     flightRises: ['scFlight1Rise','scFlight2Rise','scFlight3Rise'].map(id=>{ const el=document.getElementById(id); return el?el.value:''; }),
@@ -7169,35 +7205,97 @@ function scBuildSVG(g){
   });
 
   // PLAN ---------------------------------------------------------------
-  // Footprint differs by config. Boxes scaled into a 340x150 area.
-  const PW=340, PH=160, pm=22;
-  const fRunPlan = flights[0].horizRunMM;
+  // True footprint per config, viewed from above. Each flight box uses its
+  // own horizontal run length (not the landing width) so turns read correctly.
+  const PW=340, PH=180, pm=24;
+  const f1Run = flights[0].horizRunMM || 1;
+  const f2Run = (flights[1] ? flights[1].horizRunMM : f1Run) || 1;
+  const f3Run = (flights[2] ? flights[2].horizRunMM : f1Run) || 1;
   let planSVG='';
   function box(x,y,w,h,label,accent){
     return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" stroke="${accent?'var(--accent)':'var(--text)'}" stroke-width="1.3" fill="${accent?'var(--accent)':'none'}" fill-opacity="${accent?0.12:0}"/>`
       + (label?`<text x="${(x+w/2).toFixed(1)}" y="${(y+h/2+3).toFixed(1)}" fill="var(--muted)" font-size="8" text-anchor="middle">${label}</text>`:'');
   }
-  // unit scale based on a representative flight run + width
-  const ps = Math.min((PW-2*pm)/((fRunPlan||1)+landingDepth*1.2), (PH-2*pm)/((width||1)*2.4));
-  const fw = (fRunPlan||1)*ps, ww = (width||1)*ps, lw = landingDepth*ps;
+  // up-arrow marking direction of travel along a flight (from low end to high end)
+  function dirArrow(x1,y1,x2,y2){
+    return `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="var(--subtle)" stroke-width="1" marker-end="url(#scArrow)" opacity="0.8"/>`;
+  }
+  const arrowDef = `<defs><marker id="scArrow" markerWidth="6" markerHeight="6" refX="4" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--subtle)"/></marker></defs>`;
   if (plan==='straight'){
-    planSVG = box(pm, PH/2-ww/2, fw, ww, 'flight', false);
+    // scale a single flight into the box
+    const ps = Math.min((PW-2*pm)/f1Run, (PH-2*pm)/(width||1));
+    const fw=f1Run*ps, ww=(width||1)*ps;
+    planSVG = box(pm, PH/2-ww/2, fw, ww, 'flight', false)
+      + dirArrow(pm+6, PH/2, pm+fw-6, PH/2);
   } else if (plan==='quarter'){
-    planSVG = box(pm, PH-pm-ww, fw, ww, 'F1', false)
-      + box(pm, PH-pm-ww-lw, lw, lw, 'L', true)
-      + box(pm, pm, lw, Math.min(fw,PH-2*pm-lw), 'F2', false);
+    // L-shape: F1 along the bottom, square landing in the corner, F2 going up.
+    // overall footprint: width = landing + F2run? no — F1run + landing along X,
+    // height = landing + F2run along Y. Fit both extents.
+    const extX = f1Run + width;            // F1 run then turn into landing column
+    const extY = width + f2Run;            // landing depth + F2 run upward
+    const ps = Math.min((PW-2*pm)/extX, (PH-2*pm)/extY);
+    const fw1=f1Run*ps, fw2=f2Run*ps, ww=(width||1)*ps;
+    const baseY = PH-pm;                    // bottom datum
+    // F1: bottom strip, running right toward the landing
+    planSVG  = box(pm, baseY-ww, fw1, ww, 'F1', false)
+      + dirArrow(pm+6, baseY-ww/2, pm+fw1-6, baseY-ww/2);
+    // landing: square at the inside corner (right end of F1)
+    const lx = pm+fw1;
+    planSVG += box(lx, baseY-ww, ww, ww, 'L', true);
+    // F2: rises upward out of the landing
+    planSVG += box(lx, baseY-ww-fw2, ww, fw2, 'F2', false)
+      + dirArrow(lx+ww/2, baseY-ww-6, lx+ww/2, baseY-ww-fw2+6);
   } else if (plan==='dogleg' || plan==='switchback'){
-    planSVG = box(pm, PH/2+2, fw, ww, 'F1', false)
-      + box(pm+fw-lw, PH/2-ww-lw+2, lw, ww+lw, 'L', true)
-      + box(pm+fw-lw-fw, PH/2-ww-2, fw, ww, 'F2', false).replace(`x="${(pm+fw-lw-fw).toFixed(1)}"`, `x="${pm.toFixed(1)}"`);
+    // Two parallel flights running opposite ways, landing bridging one end.
+    // footprint: length = max(f1Run,f2Run)+landing, height = 2*width + gap.
+    const gap = width*0.12;
+    const longRun = Math.max(f1Run, f2Run);
+    const extX = longRun + width;          // flights + turning landing at the end
+    const extY = 2*width + gap;
+    const ps = Math.min((PW-2*pm)/extX, (PH-2*pm)/extY);
+    const fw1=f1Run*ps, fw2=f2Run*ps, ww=(width||1)*ps, gp=gap*ps, lw=(width||1)*ps;
+    const topY = pm;
+    // F1: top strip, running right toward the landing
+    planSVG  = box(pm, topY, fw1, ww, 'F1', false)
+      + dirArrow(pm+6, topY+ww/2, pm+fw1-6, topY+ww/2);
+    // landing: bridges the right end across both flights
+    const lx = pm + Math.max(fw1,fw2);
+    planSVG += box(lx, topY, lw, 2*ww+gp, 'L', true);
+    // F2: bottom strip, running back left (away from landing)
+    const f2y = topY+ww+gp;
+    planSVG += box(pm, f2y, fw2, ww, 'F2', false)
+      + dirArrow(pm+fw2-6, f2y+ww/2, pm+6, f2y+ww/2);
   } else if (plan==='ushape'){
-    planSVG = box(pm, PH/2+2, fw*0.7, ww, 'F1', false)
-      + box(pm+fw*0.7, PH/2-ww/2, lw, ww, 'L1', true)
-      + box(pm+fw*0.7, PH/2-ww/2-ww-4, lw, ww, 'L2', true)
-      + box(pm, PH/2-ww-2-ww, fw*0.7, ww, 'F3', false).replace(`y="${(PH/2-ww-2-ww).toFixed(1)}"`, `y="${(PH/2-ww*2-6).toFixed(1)}"`);
+    // Three flights around two stacked landings — full U footprint.
+    const gap = width*0.12;
+    const longRun = Math.max(f1Run, f2Run, f3Run);
+    const extX = longRun + width;
+    const extY = 3*width + 2*gap;
+    const ps = Math.min((PW-2*pm)/extX, (PH-2*pm)/extY);
+    const fw1=f1Run*ps, fw2=f2Run*ps, fw3=f3Run*ps, ww=(width||1)*ps, gp=gap*ps, lw=(width||1)*ps;
+    const topY = pm;
+    const lx = pm + longRun*ps;
+    // F1 top, runs right to L1
+    planSVG  = box(pm, topY, fw1, ww, 'F1', false)
+      + dirArrow(pm+6, topY+ww/2, pm+fw1-6, topY+ww/2);
+    // L1 bridges F1 (top) and F2 (middle)
+    planSVG += box(lx, topY, lw, 2*ww+gp, 'L1', true);
+    // F2 middle, runs left to L2 — short half-width flight is common but use real run
+    const f2y = topY+ww+gp;
+    planSVG += box(pm, f2y, fw2, ww, 'F2', false)
+      + dirArrow(pm+fw2-6, f2y+ww/2, pm+6, f2y+ww/2);
+    // L2 bridges F2 (middle) and F3 (bottom) on the LEFT
+    planSVG += box(pm, f2y, lw, 2*ww+gp, 'L2', true);
+    // F3 bottom, runs right
+    const f3y = topY+2*ww+2*gp;
+    planSVG += box(pm, f3y, fw3, ww, 'F3', false)
+      + dirArrow(pm+6, f3y+ww/2, pm+fw3-6, f3y+ww/2);
   } else {
+    const ps = Math.min((PW-2*pm)/f1Run, (PH-2*pm)/(width||1));
+    const fw=f1Run*ps, ww=(width||1)*ps;
     planSVG = box(pm, PH/2-ww/2, fw, ww, 'flight', false);
   }
+  planSVG = arrowDef + planSVG;
 
   return `
   <div style="font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Elevation${flights.length>1?` · ${flights.length} flights`:''}</div>
