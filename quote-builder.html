@@ -1759,14 +1759,18 @@ tr.drag-dragging { opacity:0.35; }
           <div class="sc-adv" style="display:none">
             <div class="field"><label>Going override (mm) <span style="color:var(--subtle);font-size:10px">— blank = engine minimum</span></label><input type="number" id="scGoing" placeholder="auto" oninput="scRecompute()"></div>
 
-            <!-- F3: per-flight rise overrides (multi-flight configs only) -->
+            <!-- F3: explicit flight + landing counts (independent) -->
+            <div style="border-top:1px solid var(--border);margin:8px 0 4px;padding-top:8px;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted)">Flights &amp; landings</div>
+            <div class="form-grid form-grid-2" style="gap:8px">
+              <div class="field"><label>No. of flights <span style="color:var(--subtle);font-size:10px">blank=config default</span></label><input type="number" id="scNFlights" placeholder="auto" min="1" max="6" step="1" oninput="scFlightCountChange()"></div>
+              <div class="field"><label>No. of landings</label><input type="number" id="scNLandings" value="0" min="0" step="1" oninput="scRecompute()"></div>
+            </div>
+            <div style="font-size:10px;color:var(--subtle);margin:-2px 0 6px">Flights and landings are independent. Normally landings = flights−1; the engine warns (not blocks) if they don't match.</div>
+
+            <!-- F3: per-flight rise overrides — dynamically built to match flight count -->
             <div id="scFlightSplitWrap" style="display:none">
               <div style="border-top:1px solid var(--border);margin:8px 0 4px;padding-top:8px;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted)">Flight rise split <span style="text-transform:none;letter-spacing:0;color:var(--subtle)">— blank = auto-balance</span></div>
-              <div class="form-grid form-grid-3" style="gap:8px">
-                <div class="field"><label>Flight 1 rise (mm)</label><input type="number" id="scFlight1Rise" placeholder="auto" oninput="scRecompute()"></div>
-                <div class="field"><label>Flight 2 rise (mm)</label><input type="number" id="scFlight2Rise" placeholder="auto" oninput="scRecompute()"></div>
-                <div class="field" id="scFlight3Wrap"><label>Flight 3 rise (mm)</label><input type="number" id="scFlight3Rise" placeholder="auto" oninput="scRecompute()"></div>
-              </div>
+              <div class="form-grid form-grid-3" style="gap:8px" id="scFlightRiseRows"></div>
             </div>
 
             <!-- F3: self-support components -->
@@ -1864,13 +1868,12 @@ tr.drag-dragging { opacity:0.35; }
               <input type="text" id="scCleat" value="EA50x50x5" oninput="scRecompute()" style="display:none">
             </div>
             <div class="field"><label>Cleat length (mm)</label><input type="number" id="scCleatLen" value="150" oninput="scRecompute()"></div>
-            <div style="border-top:1px solid var(--border);margin:8px 0 4px;padding-top:8px;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted)">Landings</div>
-            <div class="form-grid form-grid-3" style="gap:8px">
-              <div class="field"><label>No. of landings</label><input type="number" id="scNLandings" value="0" min="0" step="1" oninput="scRecompute()"></div>
+            <div style="border-top:1px solid var(--border);margin:8px 0 4px;padding-top:8px;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted)">Landings <span style="text-transform:none;letter-spacing:0;color:var(--subtle)">— count set above in Flights &amp; landings</span></div>
+            <div class="form-grid form-grid-2" style="gap:8px">
               <div class="field"><label>Landing width (mm)</label><input type="number" id="scLandingWidth" placeholder="=stair" oninput="scRecompute()"></div>
               <div class="field"><label>Landing depth (mm)</label><input type="number" id="scLandingDepth" placeholder="=width" oninput="scRecompute()"></div>
             </div>
-            <div style="font-size:10px;color:var(--subtle);margin:-2px 0 6px">Set count = 0 to remove. Blank width/depth = stair width.</div>
+            <div style="font-size:10px;color:var(--subtle);margin:-2px 0 6px">Blank width/depth = stair width. Default dimensions; per-landing overrides come with the top-landing toggle.</div>
             <div class="field">
               <label>Landing frame section</label>
               <select id="scLandingFramePreset" onchange="scApplyPreset('LandingFrame')" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%;margin-bottom:5px">
@@ -6867,15 +6870,27 @@ function _scBuildLanding(input, idx, warnings){
 function computeStaircase(input){
   const cfg = STAIR_CONFIGS[input.configuration] || STAIR_CONFIGS.straight;
   const totalRise = Number(input.totalRiseMM)||0;
+  const warnings = [];
   if (totalRise<=0) return { ok:false, warnings:['Total rise (floor-to-floor) is required.'], geometry:{}, components:[] };
 
-  // structural landing count: config default, overridable
+  // structural landing count: explicit field, else config default
   const nLandings = (input.nLandings!=null && input.nLandings!=='')
     ? Math.max(0, Math.floor(Number(input.nLandings))) : cfg.landings;
-  // flight count tracks landings (N landings between flights → N+1 flights),
-  // but never below the config's own flight count for plan/SVG correctness.
-  let nFlights = Math.max(cfg.nFlights, nLandings+1);
-  if (cfg.plan==='straight') nFlights = 1;
+  // flight count: now INDEPENDENT — explicit field, else config default,
+  // else derived from landings (N landings → N+1 flights) as a sensible fallback.
+  let nFlights;
+  if (input.nFlights!=null && input.nFlights!=='' && Number(input.nFlights)>0){
+    nFlights = Math.max(1, Math.floor(Number(input.nFlights)));
+  } else {
+    nFlights = Math.max(cfg.nFlights, nLandings+1);
+  }
+  if (cfg.plan==='straight' && (input.nFlights==null || input.nFlights==='')) nFlights = 1;
+  // soft consistency check — flights and landings can differ, but flag the odd ones
+  if (nLandings > nFlights){
+    warnings.push(`${nLandings} landings with only ${nFlights} flight(s) is unusual — normally landings ≤ flights−1. Check the layout.`);
+  } else if (nFlights > 1 && nLandings < nFlights-1){
+    warnings.push(`${nFlights} flights but only ${nLandings} landing(s) — expected ${nFlights-1} for a continuous run. Intentional? (split run / external supports)`);
+  }
 
   // rise split — auto-balance, with optional per-flight overrides (Advanced)
   const overrides = Array.isArray(input.flightRises) ? input.flightRises : [];
@@ -6888,8 +6903,8 @@ function computeStaircase(input){
   }
   const autoEach = autoFlights>0 ? remaining/autoFlights : 0;
   for (let i=0;i<nFlights;i++) if (flightRises[i]==null) flightRises[i]=autoEach;
+  if (remaining < 0) warnings.push(`Flight rise overrides total ${totalRise-remaining}mm, exceeding the ${totalRise}mm floor-to-floor rise.`);
 
-  const warnings = [];
   let components = [];
   const flightGeoms = [];
   for (let i=0;i<nFlights;i++){
@@ -6970,23 +6985,45 @@ function openStaircaseWizard(){
 }
 function closeStaircaseWizard(){ document.getElementById('staircaseModal').classList.remove('active'); }
 
-// F3: configuration change — show/hide flight-split & landing fields, sync count
+// F3: configuration change — set flight/landing defaults, rebuild rise fields
 function scConfigChange(){
   const cfgKey = document.getElementById('scConfig')?.value || 'straight';
   const cfg = (typeof STAIR_CONFIGS!=='undefined' && STAIR_CONFIGS[cfgKey]) ? STAIR_CONFIGS[cfgKey] : { nFlights:1, landings:0 };
-  const multi = cfg.nFlights > 1;
-  const fsw = document.getElementById('scFlightSplitWrap');
-  if (fsw) fsw.style.display = multi ? '' : 'none';
-  const f3w = document.getElementById('scFlight3Wrap');
-  if (f3w) f3w.style.display = cfg.nFlights >= 3 ? '' : 'none';
-  // default the landing count to the config's structural landings (user can override)
+  // seed the explicit count fields from the config (user can then override either)
+  const nf = document.getElementById('scNFlights');
+  if (nf) nf.value = cfg.nFlights;
   const nl = document.getElementById('scNLandings');
   if (nl) nl.value = cfg.landings;
   // update title
   const titleSpan = document.querySelector('#staircaseModal .modal-title span');
   if (titleSpan) titleSpan.textContent = '— ' + cfg.label.toLowerCase();
+  scFlightCountChange();   // builds rise rows + recomputes
+}
+
+// F3: flight count changed — (re)build the per-flight rise inputs to match,
+// preserving any values the user already typed.
+function scFlightCountChange(){
+  const cfgKey = document.getElementById('scConfig')?.value || 'straight';
+  const cfg = (typeof STAIR_CONFIGS!=='undefined' && STAIR_CONFIGS[cfgKey]) ? STAIR_CONFIGS[cfgKey] : { nFlights:1 };
+  const nfEl = document.getElementById('scNFlights');
+  let n = (nfEl && nfEl.value!=='' && Number(nfEl.value)>0) ? Math.floor(Number(nfEl.value)) : cfg.nFlights;
+  n = Math.max(1, Math.min(6, n));
+  const wrap = document.getElementById('scFlightSplitWrap');
+  const rows = document.getElementById('scFlightRiseRows');
+  if (rows){
+    // capture existing values
+    const prev = {};
+    for (let i=1;i<=6;i++){ const el=document.getElementById('scFlight'+i+'Rise'); if (el) prev[i]=el.value; }
+    let html='';
+    for (let i=1;i<=n;i++){
+      html += `<div class="field"><label>Flight ${i} rise (mm)</label><input type="number" id="scFlight${i}Rise" placeholder="auto" value="${prev[i]||''}" oninput="scRecompute()"></div>`;
+    }
+    rows.innerHTML = html;
+  }
+  if (wrap) wrap.style.display = n>1 ? '' : 'none';
   scRecompute();
 }
+
 // F3: self-support toggle — reveal post/bracing fields
 function scSelfSupportChange(){
   const on = !!document.getElementById('scSelfSupport')?.checked;
@@ -7104,7 +7141,8 @@ function scReadInputs(){
     landingJoistSpacingMM: v('scLandingJoistSpacing') || null,
     // F3
     configuration: v('scConfig') || 'straight',
-    flightRises: ['scFlight1Rise','scFlight2Rise','scFlight3Rise'].map(id=>{ const el=document.getElementById(id); return el?el.value:''; }),
+    nFlights: v('scNFlights') || null,
+    flightRises: [1,2,3,4,5,6].map(i=>{ const el=document.getElementById('scFlight'+i+'Rise'); return el?el.value:''; }),
     selfSupported: chk('scSelfSupport'),
     postType: (v('scPost')||'').trim() || null,
     postLenMM: v('scPostLen') || null,
