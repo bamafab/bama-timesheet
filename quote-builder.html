@@ -6253,6 +6253,10 @@ function setStatus(val) {
   if (val === 'lost' && prev !== 'lost') showLossModal();
   if (val === 'sent' && !q.dateSent) { q.dateSent = new Date().toISOString().slice(0,10); const el = document.getElementById('hDateSent'); if (el) el.value = q.dateSent; saveAll(); }
   if (val === 'sent') autoSetChasingDate(q);
+  // Repaint the pipeline list so the sent-state highlight, dateSent and chase
+  // countdown update immediately (previously only appeared after re-selecting
+  // the quote). Guarded — only renders if the pipeline view is present.
+  if (document.getElementById('pipelineStats')) renderPipeline();
 }
 
 // Auto-set a follow-up date one month ahead when a quote is sent, unless one is
@@ -13248,6 +13252,7 @@ async function sendQuoteEmail() {
       renderStatusBadge(q);
       document.getElementById('statusSelect').value = 'sent';
       saveAll(); renderSidebar();
+      if (document.getElementById('pipelineStats')) renderPipeline();
       setTimeout(() => closeEmailModal(), 2500);
     } else {
       const err = await res.json().catch(() => ({}));
