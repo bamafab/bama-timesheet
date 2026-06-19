@@ -12606,6 +12606,31 @@ function buildEmailBody(q, total, revStr) {
   return lines.join('\n');
 }
 
+// BAMA email signature for the quote covering email — mirrors the company
+// signature used in the ED chase-up flow. Name comes from the quote's
+// preparedBy (falling back to the logged-in QB user).
+function buildQuoteEmailSignature(q) {
+  const name = escHtml((q && q.preparedBy) || sessionStorage.getItem('bama_qb_user') || 'BAMA Fabrication');
+  const email = 'info@bamafabrication.co.uk';
+  return `
+    <p style="margin:18px 0 2px 0;font-family:Arial,sans-serif;font-size:13px;color:#111">Kind regards,</p>
+    <p style="margin:0;font-family:Arial,sans-serif;font-weight:bold;font-size:16px;color:#111">${name}</p>
+    <p style="margin:0 0 12px 0;font-family:Arial,sans-serif;font-size:12px;color:#D0021B;font-weight:bold">BAMA Fabrication Ltd</p>
+    <table style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:12px;color:#333"><tr>
+      <td style="padding-right:18px;vertical-align:middle;border-right:1px solid #ddd">
+        <img src="https://proud-dune-0dee63110.2.azurestaticapps.net/bama-logo.png" alt="BAMA Fabrication" style="height:52px;width:auto;display:block" onerror="this.style.display='none'">
+      </td>
+      <td style="padding-left:18px;vertical-align:middle;line-height:1.7">
+        <span style="color:#888">O</span> 01733 855212<br>
+        <a href="mailto:${email}" style="color:#1f6feb;text-decoration:none">${email}</a>&nbsp;|&nbsp;<a href="https://www.bamafabrication.co.uk" style="color:#1f6feb;text-decoration:none">www.bamafabrication.co.uk</a><br>
+        <span style="color:#555">11 Enterprise Way, Enterprise Park, Yaxley, Peterborough, PE7 3WY</span>
+      </td>
+    </tr></table>
+    <p style="margin:16px 0 0 0;font-family:Arial,sans-serif;font-size:10px;color:#999;line-height:1.5;border-top:1px solid #eee;padding-top:10px">
+      Confidential: this email is intended solely for the addressee. If received in error, please notify the sender and delete. BAMA Fabrication accepts no liability for viruses in this message or its attachments.
+    </p>`;
+}
+
 async function sendQuoteEmail() {
   const q   = getQuote(); if (!q) return;
   const to  = document.getElementById('emailTo').value.trim();
@@ -12662,14 +12687,8 @@ async function sendQuoteEmail() {
         contentType: 'HTML',
         content: `
           <div style="max-width:600px;font-family:Arial,sans-serif">
-            <div style="border-bottom:3px solid #D0021B;padding-bottom:12px;margin-bottom:20px">
-              <img src="https://proud-dune-0dee63110.2.azurestaticapps.net/bama-logo.png"
-                style="height:40px" onerror="this.style.display='none'">
-            </div>
             ${htmlBody}
-            <div style="margin-top:24px;padding-top:12px;border-top:1px solid #eee;font-size:11px;color:#888">
-              BAMA Fabrication Ltd · 11 Enterprise Way, Enterprise Park, Yaxley, PE7 3WY · 01733 855212
-            </div>
+            ${buildQuoteEmailSignature(q)}
           </div>`
       },
       toRecipients,
@@ -14592,7 +14611,7 @@ function buildClientTakeoffHtml(q) {
     </div>`;
 }
 
-function generateQuotePDF(mode = 'quote') {
+function generateQuotePDF(mode = 'quote', returnHtml = false) {
   const q = getQuote();
   if (!q) { toast('No quote selected', 'error'); return; }
 
@@ -14712,6 +14731,7 @@ function generateQuotePDF(mode = 'quote') {
       ${tcHtml}
     `);
 
+    if (returnHtml) return quoteHtml;
     if (mode === 'quote') { openPdfWindow(quoteHtml); return; }
   }
 
@@ -15033,83 +15053,25 @@ function openPdfWindow(html) {
 // the covering message and attaches the quote PDF (rendered by
 // renderQuotePdfToBase64) when sent — see sendQuoteEmail(). No shared.js dependency.
 
-// Render the client-facing quote to a base64 PDF string using html2pdf.js
+// Render the client-facing quote to a base64 PDF string using html2pdf.js.
+// Reuses generateQuotePDF('quote', true) so the attached PDF is byte-for-byte
+// the same document as the Print/Save PDF window — single source of truth.
 async function renderQuotePdfToBase64(q) {
-  // Build the same HTML as generateQuotePDF('quote') but return base64
-  const revStr  = q.revision ? ` · ${q.revision}` : '';
-  const scope   = (q.qScope || q.comments || '').replace(/\n/g,'<br>');
-  const logoHtml = getLogoHtml();
-  const computed = q._computed || {};
+  const fullHtml = generateQuotePDF('quote', true);
+  if (!fullHtml) throw new Error('Could not build quote document');
 
-  const docHeader = `
-    <div class="doc-header">
-      <div class="doc-header-left">
-        ${logoHtml}
-        <div class="addr">11 Enterprise Way, Enterprise Park<br>Yaxley, PE7 3WY, Peterborough<br>01733 855212 · info@bamafabrication.co.uk</div>
-      </div>
-      <div style="text-align:right">
-        <div class="doc-type">Quotation</div>
-        <div class="doc-meta" style="margin-top:10px">
-          <div><strong>Date:</strong><span class="val"> ${fmtDateLong(q.date)}</span></div>
-          <div><strong>Quotation #:</strong><span class="val"> ${escHtml(q.ref)}${revStr}</span></div>
-          <div><strong>Prepared by:</strong><span class="val"> ${escHtml(q.preparedBy||'—')}</span></div>
-          <div><strong>Valid until:</strong><span class="val"> ${fmtDateLong(q.validUntil)}</span></div>
-        </div>
-      </div>
-    </div>
-    <div class="info-grid">
-      <div class="info-block">
-        <label>Quotation For</label>
-        <div class="info-val">
-          ${q.contact ? escHtml(q.contact)+'<br>' : ''}
-          <strong>${escHtml(q.company||'—')}</strong>
-          ${q.email ? '<br><span style="color:#555">'+escHtml(q.email)+'</span>' : ''}
-          ${q.phone ? '<br><span style="color:#555">'+escHtml(q.phone)+'</span>' : ''}
-        </div>
-      </div>
-    </div>
-    ${scope ? `<div class="scope-block"><label>Comments or Special Instructions</label>${scope}</div>` : ''}`;
-
-  // Build line rows (client-facing: only summary lines, no internal breakdown)
-  let lineRows = '', grandTotal = 0;
-  const lines = q.standardLines || [];
-  const internalKeys = new Set(['approval_fab','approval_survey','design_draughtsman','design_struct_eng','design_architect','design_conn']);
-  lines.forEach(l => {
-    if (internalKeys.has(l.key)) return;
-    if (l.excluded || l.na) return;
-    const price = parseFloat(l.price) || 0;
-    if (price === 0 && !l.desc) return;
-    grandTotal += price;
-    lineRows += `<tr><td>${escHtml(l.desc||'')}</td><td class="amt">£${price.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>`;
-  });
-  grandTotal = Math.round(grandTotal * 100) / 100;
-  const vatAmt = Math.round(grandTotal * 0.2 * 100) / 100;
-  const totalIncVat = Math.round((grandTotal + vatAmt) * 100) / 100;
-
-  const priceTable = `
-    <table class="line-table">
-      <thead><tr><th>Description</th><th class="amt">Amount</th></tr></thead>
-      <tbody>${lineRows}</tbody>
-      <tfoot>
-        <tr class="subtotal-row"><td>Subtotal (ex. VAT)</td><td class="amt">£${grandTotal.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>
-        <tr><td>VAT @ 20%</td><td class="amt">£${vatAmt.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>
-        <tr class="grand-total-row"><td>TOTAL (inc. VAT)</td><td class="amt">£${totalIncVat.toLocaleString('en-GB',{minimumFractionDigits:2,maximumFractionDigits:2})}</td></tr>
-      </tfoot>
-    </table>`;
-
-  const tcHtml = buildTcHtml ? buildTcHtml(q) : '';
-  const takeoffHtml = typeof buildClientTakeoffHtml === 'function' ? buildClientTakeoffHtml(q) : '';
-  const fullHtml = buildPdfPage(`Quotation ${escHtml(q.ref)}${revStr}`, docHeader + priceTable + takeoffHtml + tcHtml);
-
-  // Render to PDF blob via html2pdf.js
-  const container = document.createElement('div');
-  container.innerHTML = fullHtml;
-  // Extract just the body content for html2pdf (it needs the inner HTML, not a full page)
-  const bodyMatch = fullHtml.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-  const bodyContent = bodyMatch ? bodyMatch[1] : fullHtml;
+  // html2pdf only renders the element we hand it, so the <head><style> block
+  // must be injected into the offscreen container alongside the body markup —
+  // otherwise it renders unstyled and collapses to a blank page.
+  const styleMatch = fullHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
+  const styleCss   = styleMatch ? styleMatch[1] : '';
+  const bodyMatch  = fullHtml.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+  let bodyContent  = bodyMatch ? bodyMatch[1] : fullHtml;
+  // Drop the on-screen "Print / Save as PDF" button — it must not appear in the PDF
+  bodyContent = bodyContent.replace(/<div class="no-print"[\s\S]*?<\/button>\s*<\/div>\s*/i, '');
 
   const tempDiv = document.createElement('div');
-  tempDiv.innerHTML = bodyContent;
+  tempDiv.innerHTML = `<style>${styleCss}</style>${bodyContent}`;
   tempDiv.style.cssText = 'position:absolute;left:-9999px;top:0;width:210mm;background:#fff;color:#000';
   document.body.appendChild(tempDiv);
 
@@ -15122,7 +15084,6 @@ async function renderQuotePdfToBase64(q) {
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
     }).from(tempDiv).outputPdf('blob');
 
-    // Convert blob to base64
     return await new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result.split(',')[1]);
