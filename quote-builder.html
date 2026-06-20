@@ -18995,7 +18995,7 @@ const HELP_CONTENT = {
           <li><span class="h-step-num">4</span><div>Set <strong>Finish</strong>: Galvanised, Primer, Powder Coat, or None — feeds galvanising tonnage in Calcs automatically.</div></li>
           <li><span class="h-step-num">5</span><div>Use <strong>Areas</strong> to group members by location (Ground Floor, Mezzanine, Roof).</div></li>
         </ul>
-        <div class="h-tip">Import from PlanSwift with the ↑ PlanSwift button — paste the schedule and the system parses it automatically.</div>
+        <div class="h-tip">Import from PlanSwift with the ↑ PlanSwift button — paste the schedule and the system parses it automatically. For stairs, spiral stairs or balustrades, use the 🪜 / 🌀 / 🛡 wizards in the Takeoff bar (see the <strong>Wizards</strong> help tab) to build and price them automatically.</div>
       </div>
       <div class="h-section">
         <div class="h-heading"><span class="h-icon">❓</span> FAQ</div>
@@ -19007,6 +19007,63 @@ const HELP_CONTENT = {
         <div class="h-a">Each row going for galvanising must have Finish set to "Galvanised". Untagged rows are excluded from the total.</div></div>
         <div class="h-faq"><div class="h-q">Do I include bolts and cleats?</div>
         <div class="h-a">No — the Fittings % in Calcs (default 10%) covers that. List main structural members only.</div></div>
+      </div>`
+  },
+
+  wizards: {
+    subtitle: 'Staircase, Spiral & Balustrade engines',
+    html: `
+      <div class="h-section">
+        <div class="h-heading"><span class="h-icon">🪜</span> What the wizards do</div>
+        <p class="h-p">Three calculators in the Takeoff bar build a fully-priced item — steel, weight, fab/design/install labour — in minutes, and inject editable rows straight into your takeoff. Each opens its own modal with a <strong>Basic</strong> / <strong>Advanced</strong> toggle. They all share one principle: a deterministic geometry engine does every calculation (BS-aware, density 7850) — the AI never does arithmetic, it only reads drawings.</p>
+        <div class="h-tip">Everything a wizard injects is an ordinary takeoff row you can edit, re-rate, or delete afterwards. Labour from the wizard is kept separate from the global fab-hours figure so it is never double-counted. Per-area PDF and BOQ pick the rows up automatically.</div>
+      </div>
+
+      <div class="h-section">
+        <div class="h-heading"><span class="h-icon">🪜</span> Staircase <span class="h-kbd">🪜 Staircase</span></div>
+        <p class="h-p">Straight and multi-flight stairs — quarter-turn, dog-leg/half-turn, U-shape, switchback/fire-escape — with landings, per-flight rise overrides, and a self-supported toggle.</p>
+        <ul class="h-steps">
+          <li><span class="h-step-num">1</span><div>Pick the <strong>configuration</strong> and <strong>stair class</strong> (private / semi-public / public — sets going, rise and pitch limits per Approved Document K).</div></li>
+          <li><span class="h-step-num">2</span><div>Enter total rise, width and flights/landings. The engine derives risers, treads and pitch and warns if outside Part K.</div></li>
+          <li><span class="h-step-num">3</span><div>Choose <strong>tread type</strong> — closed (going + rise + downstand), open (going + folds), grating, or concrete tray. Each tread is one folded-plate row.</div></li>
+          <li><span class="h-step-num">4</span><div>Set steel sections for stringers, posts and landing frames/joists, then review the labour breakdown and inject.</div></li>
+        </ul>
+        <div class="h-tip"><strong>📐 Recognise from drawing</strong> — drop a PDF or photo and the AI reads configuration, dimensions, tread type and section sizes into the wizard. Always check the review panel before applying; the AI returns nothing rather than guessing.</div>
+      </div>
+
+      <div class="h-section">
+        <div class="h-heading"><span class="h-icon">🌀</span> Spiral &amp; Helical <span class="h-kbd">🌀 Spiral</span></div>
+        <p class="h-p">Round stairs to BS 5395-2. The <strong>Structure</strong> toggle switches between <em>spiral</em> (centre column, treads cantilevered off collars) and <em>helical</em> (open well, inner + outer helical stringers, no column).</p>
+        <ul class="h-steps">
+          <li><span class="h-step-num">1</span><div>Enter total rise, overall diameter and rotation. Basic mode snaps the column to the nearest CHS in the database.</div></li>
+          <li><span class="h-step-num">2</span><div>Choose <strong>tread type</strong> — stiffened plate (BAMA standard, default), chequer, solid, timber-on-steel-pan, or grating. Treads can be priced by weight (£/kg) or a fixed proprietary price each.</div></li>
+          <li><span class="h-step-num">3</span><div>Add a canopy, landings and set the build mode (prefab / hybrid / site-build) which scales install days.</div></li>
+          <li><span class="h-step-num">4</span><div>Review the live <strong>isometric + plan</strong> drawing and the all-in estimate, then inject.</div></li>
+        </ul>
+        <div class="h-tip">Treads are the most labour-intensive item on a round stair — the cost is dominated by them, not the stringers. The isometric is drawn purely from your geometry so you can sanity-check the shape before quoting.</div>
+      </div>
+
+      <div class="h-section">
+        <div class="h-heading"><span class="h-icon">🛡</span> Balustrade &amp; Handrail <span class="h-kbd">🛡 Balustrade</span></div>
+        <p class="h-p">Standalone balustrade/handrail runs, priced three ways:</p>
+        <ul class="h-steps">
+          <li><span class="h-step-num">1</span><div><strong>Common</strong> — pick a system family (welded steel, Kee-Klamp, frameless/posted glass, mesh, handrail-only, free-standing), then handrail, infill, posts, material, finish and mounting. Priced on a banded £/m rate — fast and consistent.</div></li>
+          <li><span class="h-step-num">2</span><div><strong>Feature</strong> — same build-up but bespoke; a complexity multiplier (moderate / complex) replaces the band rate for one-off architectural work.</div></li>
+          <li><span class="h-step-num">3</span><div><strong>Manual</strong> — build your own rows and enter labour hours directly. Use the "Borrow band" button to prefill from the Common rates as a starting point.</div></li>
+        </ul>
+        <div class="h-tip">Tick <strong>Raked</strong> for stair balustrades — height drops to 900mm on the pitch (landings stay 1100mm) and an uplift is applied. The envelope guardrail flags when your £/m falls outside the BAMA standard band for that family — it warns but never blocks, so you can override with a reason.</div>
+      </div>
+
+      <div class="h-section">
+        <div class="h-heading"><span class="h-icon">❓</span> FAQ</div>
+        <div class="h-faq"><div class="h-q">The wizard price looks off for an unusual job</div>
+        <div class="h-a">Open the <strong>Adjust rates</strong> panel inside the wizard — every default (fab/design rate, per-tread hours, complexity multiplier, band £/m, envelope) is editable per quote without touching anyone else's settings.</div></div>
+        <div class="h-faq"><div class="h-q">A section I typed isn't found</div>
+        <div class="h-a">Use SCI Blue Book format (CHS48.3x3.2, PFC200x90x30, FLT16x16). Spacing is ignored. If still missing the engine warns and the row reads as missing weight until you enter kg/m.</div></div>
+        <div class="h-faq"><div class="h-q">Can I edit a staircase after injecting?</div>
+        <div class="h-a">You can edit the individual takeoff rows directly. Re-opening the wizard to re-inject is on the roadmap; for now, delete the injected rows and re-run if the configuration changes substantially.</div></div>
+        <div class="h-faq"><div class="h-q">Why is balustrade labour shown as £/m?</div>
+        <div class="h-a">In Common mode the banded £/m is the authoritative headline price; the steel weight table is a guide showing what's included. Feature and Manual price off the takeoff plus their own labour.</div></div>
       </div>`
   },
 
@@ -19831,6 +19888,7 @@ async function qqSaveAsDraft() {
     <button class="help-pill active" onclick="showHelpSection('overview')">Overview</button>
     <button class="help-pill" onclick="showHelpSection('header')">Header</button>
     <button class="help-pill" onclick="showHelpSection('takeoff')">Takeoff</button>
+    <button class="help-pill" onclick="showHelpSection('wizards')">Wizards</button>
     <button class="help-pill" onclick="showHelpSection('calcs')">Calcs</button>
     <button class="help-pill" onclick="showHelpSection('quotation')">Quotation</button>
     <button class="help-pill" onclick="showHelpSection('helper')">AI Helper</button>
