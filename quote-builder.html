@@ -5767,7 +5767,26 @@ const DEFAULT_RATES = {
     design_rate:           { label: 'Staircase design rate (£/hr)',                     rate: 50 },
     install_days_per_flight:{ label: 'Install days per flight (auto-suggest)',          rate: 1 },
     install_crew:          { label: 'Default install crew size (people)',               rate: 2 },
-    install_day_rate:      { label: 'Install day rate (£/person/day)',                  rate: 280 }
+    install_day_rate:      { label: 'Install day rate (£/person/day)',                  rate: 280 },
+    // ── F6: spiral/helical element rates (PLACEHOLDER defaults — calibrate
+    //    against a real BAMA spiral quote; spiral fab is per-tread + column,
+    //    not per-flight). All overridable per-quote in the spiral wizard.
+    sp_fab_per_tread:      { label: 'Spiral: fab per wedge tread (hrs)',                 rate: 0.6 },
+    sp_fab_column_per_m:   { label: 'Spiral: fab centre column (hrs per m)',             rate: 0.8 },
+    sp_fab_per_collar:     { label: 'Spiral: fab per tread collar/bracket (hrs)',        rate: 0.3 },
+    sp_fab_stringer_per_m: { label: 'Spiral: fab helical stringer (hrs per m developed)',rate: 0.7 },
+    sp_fab_per_landing:    { label: 'Spiral: fab per landing (hrs)',                      rate: 3 },
+    sp_fab_canopy:         { label: 'Spiral: fab top canopy (hrs)',                       rate: 6 },
+    sp_design_base:        { label: 'Spiral: design base — first turn (hrs)',             rate: 16 },
+    sp_design_per_turn:    { label: 'Spiral: design per additional 360° turn (hrs)',      rate: 8 },
+    sp_design_per_landing: { label: 'Spiral: design per landing (hrs)',                   rate: 3 },
+    sp_install_days_per_turn:{ label: 'Spiral: install days per 360° turn (auto-suggest)',rate: 1.5 },
+    // F6b: complexity multiplier on fab+design hours (install days scale too).
+    // PLACEHOLDER — calibrate from real costed spirals. Simple = clean column,
+    // standard treads; Complex = tight tolerances, feature treads, bespoke bal
+    // junctions, restricted access. install day-RATE unaffected; days scale.
+    sp_cx_moderate:        { label: 'Spiral: Moderate complexity multiplier',           rate: 1.4 },
+    sp_cx_complex:         { label: 'Spiral: Complex complexity multiplier',            rate: 1.9 }
   }
 };
 
@@ -7447,6 +7466,95 @@ function computeStaircaseLabour(geometry, components, sc){
     fab: { flightHrs:r1(flightFabHrs), treadHrs:r1(treadFabHrs), landingHrs:r1(landingFabHrs),
            postHrs:r1(postFabHrs), hrs:r1(fabHrs), rate:fabRate, cost:r0(fabCost),
            treadsByUs, totalTreads, totalPosts },
+    design: { hrs:r1(designHrs), rate:designRate, cost:r0(designCost) },
+    install: { crew, days:r1(days), suggestedDays:r1(suggestedDays), dayRate, cost:r0(installCost) },
+    totals: { labourCost: r0(fabCost + designCost + installCost),
+              fabHrs:r1(fabHrs), designHrs:r1(designHrs) }
+  };
+}
+
+// F6b — spiral/helical labour. Sibling to computeStaircaseLabour because the
+// element model differs: spiral is per-TREAD fab + column (hrs/m) + collars +
+// helical stringer (hrs/m developed) + landings + canopy; design + install
+// scale with TURNS, not flights. Shares fab_rate / design_rate / install_day_rate
+// with the straight model (same workshop & crews). NO AI arithmetic.
+// geometry comes from computeSpiralStaircase; components carry roles+lengths.
+function computeSpiralLabour(geometry, components, sc){
+  sc = sc || {};
+  const R = (rates && rates.staircase) || {};
+  const num = (v, d) => (v!=null && v!=='' && !isNaN(Number(v))) ? Number(v) : d;
+  const rr  = (key, d) => num(R[key] && R[key].rate, d);
+
+  // rates (per-quote override → rates.staircase default → hard fallback)
+  const fabPerTread    = num(sc.fabPerTread,    rr('sp_fab_per_tread', 0.6));
+  const fabColPerM     = num(sc.fabColumnPerM,  rr('sp_fab_column_per_m', 0.8));
+  const fabPerCollar   = num(sc.fabPerCollar,   rr('sp_fab_per_collar', 0.3));
+  const fabStrPerM     = num(sc.fabStringerPerM,rr('sp_fab_stringer_per_m', 0.7));
+  const fabPerLanding  = num(sc.fabPerLanding,  rr('sp_fab_per_landing', 3));
+  const fabCanopy      = num(sc.fabCanopy,      rr('sp_fab_canopy', 6));
+  const fabRate        = num(sc.fabRate,        rr('fab_rate', 45));
+  const designBase     = num(sc.designBase,     rr('sp_design_base', 16));
+  const designPerTurn  = num(sc.designPerTurn,  rr('sp_design_per_turn', 8));
+  const designPerLand  = num(sc.designPerLanding,rr('sp_design_per_landing', 3));
+  const designRate     = num(sc.designRate,     rr('design_rate', 50));
+  const dayRate        = num(sc.installDayRate, rr('install_day_rate', 280));
+  const daysPerTurn    = num(sc.installDaysPerTurn, rr('sp_install_days_per_turn', 1.5));
+
+  // complexity multiplier on fab+design hours and install days (rate unaffected).
+  // 'simple' (default) = 1.0; level overridable, multipliers overridable per-quote.
+  const cxLevel = (sc.complexity==='complex' || sc.complexity==='moderate') ? sc.complexity : 'simple';
+  const cxMult = cxLevel==='complex'  ? num(sc.cxComplex,  rr('sp_cx_complex', 1.9))
+               : cxLevel==='moderate' ? num(sc.cxModerate, rr('sp_cx_moderate', 1.4))
+               : 1.0;
+
+  // element counts from geometry + components
+  const comps = Array.isArray(components) ? components : [];
+  const sumQty  = role => comps.filter(c=>c.role===role).reduce((s,c)=>s+(Number(c.qty)||0),0);
+  // developed length of all helical stringers, in metres (EA-less rows carry length mm)
+  const stringerM = comps.filter(c=>c.role==='stringer')
+    .reduce((s,c)=> s + ((Number(c.length)||0)/1000)*(Number(c.qty)||1), 0);
+  const columnM = comps.filter(c=>c.role==='column')
+    .reduce((s,c)=> s + ((Number(c.length)||0)/1000)*(Number(c.qty)||1), 0);
+  const nTreads   = sumQty('tread') || Math.max(0, Number(geometry.nTreads)||0);
+  const nCollars  = sumQty('collar');
+  const nLandings = comps.filter(c=>c.role==='landing_frame').reduce((s,c)=>s+(Number(c.qty)||0),0);
+  const hasCanopy = comps.some(c=>c.role==='canopy');
+  const turns     = Math.max(0, Number(geometry.turns) || ((Number(geometry.rotationDeg)||0)/360));
+
+  // tread fab only when WE make them (proprietary/cast treads → treadsByUs=false)
+  const treadsByUs = (sc.treadsByUs===false) ? false : true;
+  const treadFabHrs = treadsByUs ? (nTreads * fabPerTread) : 0;
+
+  // ── FAB ──
+  const columnFabHrs  = columnM * fabColPerM;
+  const collarFabHrs  = nCollars * fabPerCollar;
+  const stringerFabHrs= stringerM * fabStrPerM;
+  const landingFabHrs = nLandings * fabPerLanding;
+  const canopyFabHrs  = hasCanopy ? fabCanopy : 0;
+  const baseFabHrs = treadFabHrs + columnFabHrs + collarFabHrs + stringerFabHrs + landingFabHrs + canopyFabHrs;
+  const fabHrs = baseFabHrs * cxMult;
+  const fabCost = fabHrs * fabRate;
+
+  // ── DESIGN (scales with turns + landings, then complexity) ──
+  const baseDesignHrs = designBase
+    + Math.max(0, Math.ceil(turns) - 1) * designPerTurn
+    + nLandings * designPerLand;
+  const designHrs = baseDesignHrs * cxMult;
+  const designCost = designHrs * designRate;
+
+  // ── INSTALL (crew × days × day-rate; days scale with complexity, rate does not) ──
+  const suggestedDays = Math.max(1, turns * daysPerTurn * cxMult);
+  const crew = Math.max(1, Math.round(num(sc.installCrew, rr('install_crew', 2))));
+  const days = num(sc.installDays, suggestedDays);
+  const installCost = crew * days * dayRate;
+
+  const r1 = x=>Math.round(x*100)/100, r0 = x=>Math.round(x);
+  return {
+    complexity: { level:cxLevel, mult:cxMult, baseFabHrs:r1(baseFabHrs), baseDesignHrs:r1(baseDesignHrs) },
+    fab: { treadHrs:r1(treadFabHrs), columnHrs:r1(columnFabHrs), collarHrs:r1(collarFabHrs),
+           stringerHrs:r1(stringerFabHrs), landingHrs:r1(landingFabHrs), canopyHrs:r1(canopyFabHrs),
+           hrs:r1(fabHrs), rate:fabRate, cost:r0(fabCost),
+           treadsByUs, nTreads, nCollars, columnM:r1(columnM), stringerM:r1(stringerM), nLandings, hasCanopy },
     design: { hrs:r1(designHrs), rate:designRate, cost:r0(designCost) },
     install: { crew, days:r1(days), suggestedDays:r1(suggestedDays), dayRate, cost:r0(installCost) },
     totals: { labourCost: r0(fabCost + designCost + installCost),
