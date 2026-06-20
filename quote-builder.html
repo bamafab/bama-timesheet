@@ -9,6 +9,7 @@
 <title>BAMA Quote Builder</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.8.0/mammoth.browser.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -14456,6 +14457,27 @@ function handleHelperFile(input) {
 
 function loadHelperFile(file) {
   if (_helperFiles.find(f => f.name === file.name)) { toast(file.name + ' already added', 'error'); return; }
+  // Word/Office formats can't be sent to the API as document blocks — extract text first.
+  if (/\.docx$/i.test(file.name)) {
+    if (typeof mammoth === 'undefined') { toast('Word reader not loaded — try refreshing the page', 'error'); return; }
+    const reader = new FileReader();
+    reader.onload = e => {
+      mammoth.extractRawText({ arrayBuffer: e.target.result })
+        .then(result => {
+          const text = (result.value || '').trim();
+          if (!text) { toast(file.name + ' contained no readable text', 'error'); return; }
+          _helperFiles.push({ name: file.name, text, isText: true, isImage: false });
+          updateHelperFileList();
+        })
+        .catch(() => toast('Could not read ' + file.name, 'error'));
+    };
+    reader.readAsArrayBuffer(file);
+    return;
+  }
+  if (/\.doc$/i.test(file.name)) {
+    toast('Old .doc format not supported — please save as .docx or PDF', 'error');
+    return;
+  }
   const reader = new FileReader();
   reader.onload = e => {
     _helperFiles.push({ name: file.name, base64: e.target.result.split(',')[1], mediaType: helperMediaType(file.name), isImage: helperIsImage(file.name) });
@@ -14621,7 +14643,9 @@ Please read this tender document and give me a full pricing briefing for my trad
         role: 'user',
         content: [
           ..._helperFiles.map((f, i) => (
-            f.isImage
+            f.isText
+              ? { type: 'text', text: `--- Document: ${f.name} ---\n${f.text}` }
+              : f.isImage
               ? { type: 'image', source: { type: 'base64', media_type: f.mediaType, data: f.base64 } }
               : { type: 'document', source: { type: 'base64', media_type: f.mediaType || 'application/pdf', data: f.base64 }, title: f.name }
           )),
