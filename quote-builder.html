@@ -2113,7 +2113,7 @@ tr.drag-dragging { opacity:0.35; }
           <div class="field"><label>Total rise — floor to floor (mm)</label><input type="number" id="spTotalRise" value="3000" oninput="spRecompute()"></div>
 
           <div class="form-grid form-grid-2" style="gap:8px">
-            <div class="field" id="spColDiaWrap"><label>Centre column Ø (mm)</label><input type="number" id="spColDia" value="219" oninput="spRecompute()"></div>
+            <div class="field" id="spColDiaWrap"><label>Centre column Ø (mm) <span style="color:var(--subtle);font-size:10px">snaps to nearest CHS</span></label><input type="number" id="spColDia" value="193.7" step="0.1" oninput="spRecompute()"></div>
             <div class="field" id="spWellDiaWrap" style="display:none"><label>Open well Ø (mm) <span style="color:var(--subtle);font-size:10px">inner edge</span></label><input type="number" id="spWellDia" value="400" oninput="spRecompute()"></div>
             <div class="field"><label>Overall Ø (mm) <span style="color:var(--subtle);font-size:10px">outside of treads</span></label><input type="number" id="spOverallDia" value="1600" oninput="spRecompute()"></div>
           </div>
@@ -2153,14 +2153,20 @@ tr.drag-dragging { opacity:0.35; }
             <div class="field" id="spTreadTypeWrap">
               <label>Tread type</label>
               <select id="spTreadType" onchange="spTreadTypeChange()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%">
-                <option value="chequer" selected>Chequer / durbar wedge plate</option>
+                <option value="stiffened" selected>Smooth plate + underside stiffeners (BAMA standard)</option>
+                <option value="chequer">Chequer / durbar wedge plate</option>
                 <option value="solid">Solid smooth wedge plate</option>
+                <option value="timber">Steel pan — timber tread on top</option>
                 <option value="grating">Open bar grating wedge</option>
               </select>
             </div>
             <div class="form-grid form-grid-2" style="gap:8px" id="spTreadPlateWrap">
               <div class="field"><label>Tread plate thickness (mm)</label><input type="number" id="spTreadPlate" value="6" step="0.5" oninput="spRecompute()"></div>
               <div class="field"><label>Edge fold (mm)</label><input type="number" id="spTreadFold" value="30" step="5" oninput="spRecompute()"></div>
+            </div>
+            <div class="form-grid form-grid-2" style="gap:8px" id="spStiffenerWrap">
+              <div class="field"><label>Stiffener ribs / tread</label><input type="number" id="spStiffenerCount" value="2" min="0" step="1" oninput="spRecompute()"></div>
+              <div class="field"><label>Rib weight (kg/m)</label><input type="number" id="spStiffenerKgm" value="3.77" step="0.1" oninput="spRecompute()" title="e.g. 60×8 flat ≈ 3.77 kg/m"></div>
             </div>
             <div class="field" id="spGratingWrap" style="display:none">
               <label>Grating spec</label>
@@ -2242,7 +2248,14 @@ tr.drag-dragging { opacity:0.35; }
             <div class="field"><label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px"><input type="checkbox" id="spCanopy" onchange="spRecompute()" style="accent-color:var(--accent);width:15px;height:15px"> Top canopy ring frame</label></div>
             <div class="field" id="spCanopyTypeWrap" style="display:none">
               <label>Canopy frame section</label>
-              <input type="text" id="spCanopyType" list="spSteelSections" value="SHS 50x50x3" oninput="spRecompute()">
+              <select id="spCanopyPreset" onchange="spApplyPreset('Canopy')" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%;margin-bottom:5px">
+                <option value="SHS 50x50x3" selected>SHS 50×50×3 (default)</option>
+                <option value="SHS 60x60x3">SHS 60×60×3</option>
+                <option value="RHS 60x40x3">RHS 60×40×3</option>
+                <option value="CHS 48.3x4">CHS 48.3×4</option>
+                <option value="__custom">Custom…</option>
+              </select>
+              <input type="text" id="spCanopyType" list="spSteelSections" value="SHS 50x50x3" oninput="spRecompute()" style="display:none">
             </div>
           </div>
         </div>
@@ -2292,13 +2305,21 @@ tr.drag-dragging { opacity:0.35; }
             <label style="font-size:11px;color:var(--text)">Complexity
               <select id="spComplexity" onchange="spRecompute()" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 7px;color:var(--text);font-size:12px;margin-left:4px">
                 <option value="simple" selected>Simple ×1.0</option>
-                <option value="moderate">Moderate ×1.4</option>
-                <option value="complex">Complex ×1.9</option>
+                <option value="moderate">Moderate ×1.6</option>
+                <option value="complex">Complex ×2.5</option>
+              </select>
+            </label>
+            <label style="font-size:11px;color:var(--text)">Install build
+              <select id="spBuildMode" onchange="spRecompute()" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 7px;color:var(--text);font-size:12px;margin-left:4px">
+                <option value="prefab" selected>Prefab module</option>
+                <option value="hybrid">Hybrid</option>
+                <option value="sitebuild">Site-weld</option>
               </select>
             </label>
             <label style="font-size:11px;color:var(--text);display:flex;align-items:center;gap:6px;cursor:pointer">
               <input type="checkbox" id="spTreadsByUs" checked oninput="spRecompute()"> Treads made by us
             </label>
+            <label style="font-size:11px;color:var(--text);display:flex;align-items:center;gap:4px">Balustrade £<input type="number" id="spBalustradeAllow" placeholder="0" step="100" oninput="spRecompute()" style="width:80px;text-align:right;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:2px 6px;color:var(--text);font-size:11px"></label>
           </div>
           <div id="spLabourSummary" style="font-size:12px;color:var(--text);line-height:1.7;margin-bottom:10px"></div>
 
@@ -2321,6 +2342,7 @@ tr.drag-dragging { opacity:0.35; }
                 <div class="field"><label>Per extra turn (hrs)</label><input type="number" id="spDesignPerTurn" step="0.5" min="0" placeholder="8" oninput="spRecompute()"></div>
                 <div class="field"><label>Per landing (hrs)</label><input type="number" id="spDesignPerLanding" step="0.5" min="0" placeholder="3" oninput="spRecompute()"></div>
                 <div class="field"><label>Design rate (£/hr)</label><input type="number" id="spDesignRate" step="1" min="0" placeholder="50" oninput="spRecompute()"></div>
+                <div class="field"><label>Design complexity softening <span style="color:var(--subtle);font-size:10px">0=none, 1=full</span></label><input type="number" id="spDesignCxFactor" step="0.05" min="0" max="1" placeholder="0.4" oninput="spRecompute()"></div>
               </div>
               <div style="font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);margin:10px 0 6px">Install <span style="text-transform:none;color:var(--subtle)">· (crew×day-rate + per-day extras) × days + crane</span></div>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
@@ -6074,22 +6096,34 @@ const DEFAULT_RATES = {
     // ── F6: spiral/helical element rates (PLACEHOLDER defaults — calibrate
     //    against a real BAMA spiral quote; spiral fab is per-tread + column,
     //    not per-flight). All overridable per-quote in the spiral wizard.
-    sp_fab_per_tread:      { label: 'Spiral: fab per wedge tread (hrs)',                 rate: 0.6 },
+    // F6c: CALIBRATED against real BAMA jobs. Treads are smooth plate with
+    // stiffeners underneath — the dominant fab line (4-5h/tread). Anchor:
+    // Q250410 architectural helical = 250 fab-h / 16 treads, 50 design-h.
+    // Standard rates: fab £45/h, design £50/h (same as all other modules).
+    sp_fab_per_tread:      { label: 'Spiral: fab per stiffened-plate tread (hrs)',       rate: 4.5 },
     sp_fab_column_per_m:   { label: 'Spiral: fab centre column (hrs per m)',             rate: 0.8 },
     sp_fab_per_collar:     { label: 'Spiral: fab per tread collar/bracket (hrs)',        rate: 0.3 },
     sp_fab_stringer_per_m: { label: 'Spiral: fab helical stringer (hrs per m developed)',rate: 0.7 },
     sp_fab_per_landing:    { label: 'Spiral: fab per landing (hrs)',                      rate: 3 },
     sp_fab_canopy:         { label: 'Spiral: fab top canopy (hrs)',                       rate: 6 },
-    sp_design_base:        { label: 'Spiral: design base — first turn (hrs)',             rate: 16 },
+    sp_design_base:        { label: 'Spiral: design base — first turn (hrs)',             rate: 35 },
     sp_design_per_turn:    { label: 'Spiral: design per additional 360° turn (hrs)',      rate: 8 },
     sp_design_per_landing: { label: 'Spiral: design per landing (hrs)',                   rate: 3 },
     sp_install_days_per_turn:{ label: 'Spiral: install days per 360° turn (auto-suggest)',rate: 1.5 },
-    // F6b: complexity multiplier on fab+design hours (install days scale too).
-    // PLACEHOLDER — calibrate from real costed spirals. Simple = clean column,
-    // standard treads; Complex = tight tolerances, feature treads, bespoke bal
-    // junctions, restricted access. install day-RATE unaffected; days scale.
-    sp_cx_moderate:        { label: 'Spiral: Moderate complexity multiplier',           rate: 1.4 },
-    sp_cx_complex:         { label: 'Spiral: Complex complexity multiplier',            rate: 1.9 },
+    // F6c: complexity multiplier — CALIBRATED. Complex ×2.5 reproduces the real
+    // Q250410 250 fab-h. Applies fully to FAB hours and INSTALL days. DESIGN
+    // gets a SOFTENED version (full mult overshoots real 50h design): the design
+    // multiplier = 1 + (fabMult-1)×designCxFactor. All editable per-quote.
+    // Simple = clean column, standard stiffened treads, prefab module, good access.
+    // Complex = feature treads, curved-on-plan, tight tolerances, bespoke junctions.
+    sp_cx_moderate:        { label: 'Spiral: Moderate complexity multiplier',           rate: 1.6 },
+    sp_cx_complex:         { label: 'Spiral: Complex complexity multiplier',            rate: 2.5 },
+    sp_design_cx_factor:   { label: 'Spiral: design complexity softening (0-1 of fab)',  rate: 0.4 },
+    // F6c: install build mode day-count multipliers. prefab=lift & fix modules;
+    // hybrid=part-prefab, part site-weld; sitebuild=welders build from scratch.
+    sp_install_mode_prefab:   { label: 'Spiral: install days × (prefab module)',        rate: 1.0 },
+    sp_install_mode_hybrid:   { label: 'Spiral: install days × (hybrid)',               rate: 1.5 },
+    sp_install_mode_sitebuild:{ label: 'Spiral: install days × (full site-weld)',       rate: 2.2 },
     // F6b: install-extras buildup (per real BAMA helical cost sheet). Per-DAY
     // costs added on top of crew×days×day-rate, plus crane (£/day × crane-days).
     // Crane has NO default (varies by size — £1900 was a 50t); set per job.
@@ -7622,11 +7656,29 @@ function computeSpiralStaircase(input){
       const foldKg = scPlateKg(plate, outerArc, foldMM);
       const flat = scPlateKg(plate, 1000, 1000)*areaM2; // density*thk*area
       perTreadKg = flat + foldKg;
-      if (treadType==='chequer') perTreadKg *= 1.06;
-      desc = `${treadType==='chequer'?'Chequer':'Solid'} ${plate}mm wedge tread (Ri${Math.round(Ri)}–Ro${Math.round(Ro)}, ${scRound1(anglePerTread)}°)`;
+      let label;
+      if (treadType==='stiffened'){
+        // smooth plate + stiffeners underneath (BAMA standard) — two radial FLT
+        // ribs per wedge. Default 60x8 flat ≈ 3.77 kg/m, length ≈ clear width.
+        const ribKgm = Number(input.stiffenerKgm) || 3.77;
+        const ribLenM = (Ro-Ri)/1000;
+        const nRibs = Number(input.stiffenerCount) || 2;
+        perTreadKg += ribKgm * ribLenM * nRibs;
+        label = `Stiffened ${plate}mm wedge tread (${nRibs} ribs)`;
+      } else if (treadType==='timber'){
+        // steel pan/tray (plate + folds) carrying a timber tread on top. We model
+        // the STEEL only; timber is a material-line add or supplied by others.
+        label = `Steel pan ${plate}mm wedge (timber tread on top)`;
+      } else if (treadType==='chequer'){
+        perTreadKg *= 1.06;
+        label = `Chequer ${plate}mm wedge tread`;
+      } else {
+        label = `Solid ${plate}mm wedge tread`;
+      }
+      desc = `${label} (Ri${Math.round(Ri)}–Ro${Math.round(Ro)}, ${scRound1(anglePerTread)}°)`;
     }
     components.push({ role:'tread', type:desc, length:1000, qty:nTreads, kgm:scRound1(perTreadKg), _unit:'EA',
-      note:`Per-tread weight (EA): annular sector ${areaM2.toFixed(3)}m² at ${scRound1(anglePerTread)}° each${treadType==='chequer'?', incl. 6% pattern':''}` });
+      note:`Per-tread weight (EA): annular sector ${areaM2.toFixed(3)}m² at ${scRound1(anglePerTread)}° each${treadType==='chequer'?', incl. 6% pattern':treadType==='stiffened'?', incl. underside stiffener ribs':treadType==='timber'?', steel pan only — timber separate':''}` });
   } else {
     const perTread = Number(input.treadFixedPrice)||0;
     components.push({ role:'tread', type:`Proprietary spiral tread (${scRound1(anglePerTread)}° wedge)`, length:1000, qty:nTreads, kgm:0, _unit:'EA',
@@ -7716,6 +7768,8 @@ function computeSpiralStaircase(input){
     outerGoingMM: Math.round(outerGoing), walkGoingMM: Math.round(walkGoing),
     twoRplusG: Math.round(twoRplusG), pitchDeg: scRound1(pitchDeg),
     nLandings, canopy, columnDiaMM: colDia,
+    handedness: (input.hand==='anticlockwise') ? 'anticlockwise' : 'clockwise',
+    hasStringers: (addInner || addOuter), hasInnerStringer: addInner, hasOuterStringer: addOuter,
   }, components };
 }
 
@@ -7798,26 +7852,35 @@ function computeSpiralLabour(geometry, components, sc){
   const rr  = (key, d) => num(R[key] && R[key].rate, d);
 
   // rates (per-quote override → rates.staircase default → hard fallback)
-  const fabPerTread    = num(sc.fabPerTread,    rr('sp_fab_per_tread', 0.6));
+  const fabPerTread    = num(sc.fabPerTread,    rr('sp_fab_per_tread', 4.5));
   const fabColPerM     = num(sc.fabColumnPerM,  rr('sp_fab_column_per_m', 0.8));
   const fabPerCollar   = num(sc.fabPerCollar,   rr('sp_fab_per_collar', 0.3));
   const fabStrPerM     = num(sc.fabStringerPerM,rr('sp_fab_stringer_per_m', 0.7));
   const fabPerLanding  = num(sc.fabPerLanding,  rr('sp_fab_per_landing', 3));
   const fabCanopy      = num(sc.fabCanopy,      rr('sp_fab_canopy', 6));
   const fabRate        = num(sc.fabRate,        rr('fab_rate', 45));
-  const designBase     = num(sc.designBase,     rr('sp_design_base', 16));
+  const designBase     = num(sc.designBase,     rr('sp_design_base', 35));
   const designPerTurn  = num(sc.designPerTurn,  rr('sp_design_per_turn', 8));
   const designPerLand  = num(sc.designPerLanding,rr('sp_design_per_landing', 3));
   const designRate     = num(sc.designRate,     rr('design_rate', 50));
   const dayRate        = num(sc.installDayRate, rr('install_day_rate', 280));
   const daysPerTurn    = num(sc.installDaysPerTurn, rr('sp_install_days_per_turn', 1.5));
 
-  // complexity multiplier on fab+design hours and install days (rate unaffected).
-  // 'simple' (default) = 1.0; level overridable, multipliers overridable per-quote.
+  // complexity multiplier — applies fully to FAB hours and INSTALL days. DESIGN
+  // gets a SOFTENED version: designMult = 1 + (fabMult-1)×designCxFactor, because
+  // a full mult overshoots the real architectural-helical design hours (50h).
   const cxLevel = (sc.complexity==='complex' || sc.complexity==='moderate') ? sc.complexity : 'simple';
-  const cxMult = cxLevel==='complex'  ? num(sc.cxComplex,  rr('sp_cx_complex', 1.9))
-               : cxLevel==='moderate' ? num(sc.cxModerate, rr('sp_cx_moderate', 1.4))
+  const cxMult = cxLevel==='complex'  ? num(sc.cxComplex,  rr('sp_cx_complex', 2.5))
+               : cxLevel==='moderate' ? num(sc.cxModerate, rr('sp_cx_moderate', 1.6))
                : 1.0;
+  const designCxFactor = num(sc.designCxFactor, rr('sp_design_cx_factor', 0.4));
+  const designMult = 1 + (cxMult - 1) * designCxFactor;
+
+  // install build mode scales DAYS: prefab (lift & fix) < hybrid < full site-weld
+  const buildMode = (sc.buildMode==='hybrid' || sc.buildMode==='sitebuild') ? sc.buildMode : 'prefab';
+  const buildModeMult = buildMode==='sitebuild' ? num(sc.buildModeMult, rr('sp_install_mode_sitebuild', 2.2))
+                      : buildMode==='hybrid'    ? num(sc.buildModeMult, rr('sp_install_mode_hybrid', 1.5))
+                      : num(sc.buildModeMult, rr('sp_install_mode_prefab', 1.0));
 
   // element counts from geometry + components
   const comps = Array.isArray(components) ? components : [];
@@ -7847,17 +7910,17 @@ function computeSpiralLabour(geometry, components, sc){
   const fabHrs = baseFabHrs * cxMult;
   const fabCost = fabHrs * fabRate;
 
-  // ── DESIGN (scales with turns + landings, then complexity) ──
+  // ── DESIGN (scales with turns + landings, then SOFTENED complexity) ──
   const baseDesignHrs = designBase
     + Math.max(0, Math.ceil(turns) - 1) * designPerTurn
     + nLandings * designPerLand;
-  const designHrs = baseDesignHrs * cxMult;
+  const designHrs = baseDesignHrs * designMult;
   const designCost = designHrs * designRate;
 
   // ── INSTALL — real BAMA buildup (per costed helical sheet):
   //   (genie + lodging + van + tools + fuel + dayRate×crew) × days + crane×craneDays
   //   day-RATE and per-day extras are NOT scaled by complexity; suggested DAYS are.
-  const suggestedDays = Math.max(1, turns * daysPerTurn * cxMult);
+  const suggestedDays = Math.max(1, turns * daysPerTurn * cxMult * buildModeMult);
   const crew = Math.max(1, Math.round(num(sc.installCrew, rr('install_crew', 2))));
   const days = num(sc.installDays, suggestedDays);   // user override wins; else suggestion
   const geniePerDay  = num(sc.installGeniePerDay,  rr('sp_install_genie_per_day', 160));
@@ -7874,13 +7937,13 @@ function computeSpiralLabour(geometry, components, sc){
 
   const r1 = x=>Math.round(x*100)/100, r0 = x=>Math.round(x);
   return {
-    complexity: { level:cxLevel, mult:cxMult, baseFabHrs:r1(baseFabHrs), baseDesignHrs:r1(baseDesignHrs) },
+    complexity: { level:cxLevel, mult:cxMult, designMult:r1(designMult), baseFabHrs:r1(baseFabHrs), baseDesignHrs:r1(baseDesignHrs) },
     fab: { treadHrs:r1(treadFabHrs), columnHrs:r1(columnFabHrs), collarHrs:r1(collarFabHrs),
            stringerHrs:r1(stringerFabHrs), landingHrs:r1(landingFabHrs), canopyHrs:r1(canopyFabHrs),
            hrs:r1(fabHrs), rate:fabRate, cost:r0(fabCost),
            treadsByUs, nTreads, nCollars, columnM:r1(columnM), stringerM:r1(stringerM), nLandings, hasCanopy },
     design: { hrs:r1(designHrs), rate:designRate, cost:r0(designCost) },
-    install: { crew, days:r1(days), suggestedDays:r1(suggestedDays), dayRate,
+    install: { crew, days:r1(days), suggestedDays:r1(suggestedDays), dayRate, buildMode, buildModeMult:r1(buildModeMult),
                geniePerDay, lodgePerDay, vanPerDay, toolsPerDay, fuelPerDay,
                perDayExtras:r0(perDayExtras), labourPerDay:r0(labourPerDay),
                cranePerDay, craneDays:r1(craneDays), craneCost:r0(craneCost),
@@ -7985,7 +8048,23 @@ function spTreadTypeChange(){
   const g=document.getElementById('spGratingWrap'); if(g) g.style.display = (t==='grating')?'':'none';
   const pw=document.getElementById('spTreadPlateWrap');
   if (pw) pw.style.display = (t==='grating') ? 'none' : '';
+  const sw=document.getElementById('spStiffenerWrap'); if(sw) sw.style.display = (t==='stiffened')?'':'none';
   spRecompute();
+}
+// Snap a free diameter to the nearest available CHS section in the steel DB,
+// preferring an 8mm wall for columns (falls back to nearest wall present).
+function spNearestCHS(diaMM){
+  if (typeof STEEL_KGM === 'undefined' || !diaMM) return null;
+  let best=null, bestErr=Infinity;
+  for (const key of Object.keys(STEEL_KGM)){
+    const m = /^CHS\s?(\d+(?:\.\d+)?)[xX×](\d+(?:\.\d+)?)/.exec(key);
+    if (!m) continue;
+    const d=parseFloat(m[1]), w=parseFloat(m[2]);
+    // distance: diameter dominates; tie-break toward 8mm wall
+    const err = Math.abs(d-diaMM)*100 + Math.abs(w-8);
+    if (err<bestErr){ bestErr=err; best=key; }
+  }
+  return best;
 }
 function spGratingPresetChange(){
   const map={'30x3@30':21,'30x5@30':31,'40x5@30':36,'25x5@30':27};
@@ -7996,7 +8075,8 @@ function spGratingPresetChange(){
 // preset → text-input bridge (same idiom as scApplyPreset)
 function spApplyPreset(which){
   const sel=document.getElementById('sp'+which+'Preset');
-  const txt=document.getElementById('sp'+(which==='Col'?'ColType':which==='Collar'?'CollarType':which==='Stringer'?'Stringer':which==='LandingFrame'?'LandingFrame':which));
+  const map={Col:'ColType',Collar:'CollarType',Stringer:'Stringer',LandingFrame:'LandingFrame',Canopy:'CanopyType'};
+  const txt=document.getElementById('sp'+(map[which]||which));
   if (!sel||!txt) return;
   if (sel.value==='__custom'){ txt.style.display=''; txt.focus(); }
   else { txt.style.display='none'; txt.value=sel.value; }
@@ -8014,12 +8094,24 @@ const _spc = id => { const el=document.getElementById(id); return el?el.checked:
 function spReadInputs(){
   _spCanopyVis();
   const helical = _spv('spStructure')==='helical';
+  // Column section: if the preset is on Custom, honour the text box; otherwise
+  // the Basic-mode Ø drives it — snap to the nearest CHS in the DB.
+  const colPreset = _spv('spColPreset');
+  const colDiaVal = Number(_spv('spColDia'))||0;
+  let columnType;
+  if (colPreset==='__custom'){
+    columnType = _spv('spColType') || 'CHS 193.7x8';
+  } else if (colDiaVal>0){
+    columnType = spNearestCHS(colDiaVal) || _spv('spColType') || 'CHS 193.7x8';
+  } else {
+    columnType = _spv('spColType') || 'CHS 193.7x8';
+  }
   return {
     structure: helical?'helical':'spiral',
     helical,
     stairClass: _spv('spClass')||'semipublic',
     totalRiseMM: Number(_spv('spTotalRise'))||0,
-    columnDiaMM: helical?0:(Number(_spv('spColDia'))||0),
+    columnDiaMM: helical?0:colDiaVal,
     wellDiaMM: helical?(Number(_spv('spWellDia'))||0):0,
     overallDiaMM: Number(_spv('spOverallDia'))||0,
     rotationDeg: Number(_spv('spRotation'))||0,
@@ -8028,12 +8120,14 @@ function spReadInputs(){
     walklineRadiusMM: _spv('spWalklineRadius'),
     treadCostMode: _spv('spTreadCostMode')||'weight',
     treadFixedPrice: Number(_spv('spTreadFixedPrice'))||0,
-    treadType: _spv('spTreadType')||'chequer',
+    treadType: _spv('spTreadType')||'stiffened',
     treadPlateMM: Number(_spv('spTreadPlate'))||6,
     treadFoldMM: Number(_spv('spTreadFold'))||30,
+    stiffenerCount: Number(_spv('spStiffenerCount'))||0,
+    stiffenerKgm: Number(_spv('spStiffenerKgm'))||3.77,
     gratingPreset: _spv('spGratingPreset'),
     gratingKgm2: Number(_spv('spGratingKgm2'))||0,
-    columnType: _spv('spColType')||'CHS 193.7x8',
+    columnType,
     columnOverrunMM: Number(_spv('spColOverrun'))||150,
     collarType: _spv('spCollarType')||'EA60x60x6',
     collarLenMM: Number(_spv('spCollarLen'))||200,
@@ -8049,7 +8143,9 @@ function spReadInputs(){
     // labour overrides (blank → engine default)
     labour: {
       complexity: _spv('spComplexity')||'simple',
+      buildMode: _spv('spBuildMode')||'prefab',
       treadsByUs: _spc('spTreadsByUs'),
+      designCxFactor:_spv('spDesignCxFactor'),
       fabPerTread:_spv('spFabPerTread'), fabColumnPerM:_spv('spFabColumnPerM'),
       fabPerCollar:_spv('spFabPerCollar'), fabStringerPerM:_spv('spFabStringerPerM'),
       fabPerLanding:_spv('spFabPerLanding'), fabCanopy:_spv('spFabCanopy'),
@@ -8114,33 +8210,51 @@ function spRecompute(){
   // labour
   const lab = computeSpiralLabour(g, r.components, inp.labour);
   _spLastLabour = lab;
-  spRenderLabourSummary(lab);
+  spRenderLabourSummary(lab, totCost);
   // isometric
   const sv=document.getElementById('spSchematic'); if(sv) sv.innerHTML = spBuildSVG(g);
   if(btn){ btn.disabled=false; btn.style.opacity='1'; }
 }
 
-function spRenderLabourSummary(lab){
+function spRenderLabourSummary(lab, materialCost){
   const el=document.getElementById('spLabourSummary'); if(!el||!lab) return;
   const f=lab.fab, d=lab.design, ins=lab.install, t=lab.totals, cx=lab.complexity;
   const treadNote = f.treadsByUs ? `${f.nTreads} treads × fab` : 'treads in material — no fab';
   const cxNote = cx.mult!==1 ? ` · ${cx.level} ×${cx.mult}` : '';
+  const dCxNote = cx.designMult && cx.designMult!==1 ? ` · cx ×${cx.designMult}` : '';
+  const modeLabel = ins.buildMode==='sitebuild'?'site-weld':ins.buildMode==='hybrid'?'hybrid':'prefab';
   el.innerHTML =
     `<div style="display:flex;justify-content:space-between"><span>FAB <span style="color:var(--subtle);font-size:10px">${f.hrs}h · ${escHtml(treadNote)}${cxNote}</span></span><strong style="color:var(--accent)">£${f.cost.toLocaleString()}</strong></div>`+
-    `<div style="display:flex;justify-content:space-between"><span>DESIGN <span style="color:var(--subtle);font-size:10px">${d.hrs}h @ £${d.rate}/h</span></span><strong style="color:var(--accent)">£${d.cost.toLocaleString()}</strong></div>`+
-    `<div style="display:flex;justify-content:space-between"><span>INSTALL <span style="color:var(--subtle);font-size:10px">${ins.crew} crew × ${ins.days}d + extras£${ins.perDayExtras}/d${ins.craneCost?` + crane£${ins.craneCost}`:''}</span></span><strong style="color:var(--accent)">£${ins.cost.toLocaleString()}</strong></div>`+
-    `<div style="display:flex;justify-content:space-between;border-top:1px solid var(--border);margin-top:4px;padding-top:4px;font-weight:600"><span>Labour total</span><strong style="color:var(--accent)">£${t.labourCost.toLocaleString()}</strong></div>`+
-    `<div style="font-size:10px;color:var(--subtle);margin-top:3px">Excludes steel material (priced per row above) and balustrades (separate module).</div>`;
+    `<div style="display:flex;justify-content:space-between"><span>DESIGN <span style="color:var(--subtle);font-size:10px">${d.hrs}h @ £${d.rate}/h${dCxNote}</span></span><strong style="color:var(--accent)">£${d.cost.toLocaleString()}</strong></div>`+
+    `<div style="display:flex;justify-content:space-between"><span>INSTALL <span style="color:var(--subtle);font-size:10px">${ins.crew} crew × ${ins.days}d (${modeLabel}) + extras£${ins.perDayExtras}/d${ins.craneCost?` + crane£${ins.craneCost}`:''}</span></span><strong style="color:var(--accent)">£${ins.cost.toLocaleString()}</strong></div>`+
+    `<div style="display:flex;justify-content:space-between;border-top:1px solid var(--border);margin-top:4px;padding-top:4px;font-weight:600"><span>Labour total</span><strong style="color:var(--accent)">£${t.labourCost.toLocaleString()}</strong></div>`;
+  // ── all-in estimate: labour + material + balustrade allowance + margin ──
+  const mat = Math.round(Number(materialCost)||0);
+  const q = (typeof getQuote==='function') ? getQuote() : null;
+  const marginPct = q && q.margin!=null && q.margin!=='' ? (parseFloat(q.margin)||20) : 20;
+  const balEl = document.getElementById('spBalustradeAllow');
+  const balAllow = balEl && balEl.value!=='' ? Number(balEl.value)||0 : 0;
+  const preMargin = t.labourCost + mat + balAllow;
+  const allIn = Math.round(preMargin * (1 + marginPct/100));
+  el.innerHTML +=
+    `<div style="border-top:1px dashed var(--border);margin-top:8px;padding-top:8px">`+
+      `<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--subtle)"><span>+ Material (from rows)</span><span>£${mat.toLocaleString()}</span></div>`+
+      `<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--subtle)"><span>+ Balustrade allowance <span style="font-size:9px">(set below)</span></span><span>£${balAllow.toLocaleString()}</span></div>`+
+      `<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--subtle)"><span>+ Margin ${marginPct}%</span><span>£${Math.round(preMargin*marginPct/100).toLocaleString()}</span></div>`+
+      `<div style="display:flex;justify-content:space-between;margin-top:4px;font-weight:700"><span>Estimated all-in sell</span><strong style="color:var(--green)">£${allIn.toLocaleString()}</strong></div>`+
+    `</div>`+
+    `<div style="font-size:10px;color:var(--subtle);margin-top:6px">All-in = labour + material + balustrade allowance, ×(1+margin ${marginPct}% from quote). Rough guide; the QB pricing layer is authoritative once injected.</div>`;
 }
 function spResetLabourRates(){
   ['spFabPerTread','spFabColumnPerM','spFabPerCollar','spFabStringerPerM','spFabPerLanding','spFabCanopy','spFabRate',
-   'spDesignBase','spDesignPerTurn','spDesignPerLanding','spDesignRate',
+   'spDesignBase','spDesignPerTurn','spDesignPerLanding','spDesignRate','spDesignCxFactor',
    'spInstallCrew','spInstallDays','spInstallDaysPerTurn','spInstallDayRate',
    'spInstallGeniePerDay','spInstallLodgingPerDay','spInstallVanPerDay','spInstallToolsPerDay',
    'spInstallFuelPerDay','spInstallCranePerDay','spInstallCraneDays'
   ].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
   const tb=document.getElementById('spTreadsByUs'); if(tb) tb.checked=true;
   const cx=document.getElementById('spComplexity'); if(cx) cx.value='simple';
+  const bm=document.getElementById('spBuildMode'); if(bm) bm.value='prefab';
   spRecompute();
 }
 
@@ -8155,15 +8269,18 @@ function spBuildSVG(g){
   const Ri=g.innerRadiusMM, Ro=g.outerRadiusMM, rise=g.riseMM;
   const n=g.nTreads, rot=g.rotationDeg, hand = (g.handedness==='anticlockwise')?-1:1;
   const aStep = (rot/g.nRisers) * Math.PI/180 * hand;
+  const hasCanopy = !!g.canopy;
+  const nLandings = g.nLandings||0;
+  const showStringers = helical || g.hasStringers || g.hasOuterStringer || g.hasInnerStringer;
+  const showInner = helical || g.hasInnerStringer;
+  const showOuter = helical || g.hasOuterStringer;
 
   // ISOMETRIC ----------------------------------------------------------------
-  const IW=340, IH=300;
-  // dimetric: x' = (x - y)*cos30 ; y' = (x + y)*sin30 - z
+  const IW=340, IH=320;
   const cos30=Math.cos(Math.PI/6), sin30=Math.sin(Math.PI/6);
   const proj=(x,y,z)=>({ X:(x-y)*cos30, Y:(x+y)*sin30 - z });
-  // scale model coords to fit
-  const Rmax=Ro, totalH=g.totalRiseMM;
-  const pts=[]; // collect for bounds
+  const totalH=g.totalRiseMM;
+  const pts=[];
   const treads=[];
   for(let i=0;i<n;i++){
     const a0=i*aStep, a1=(i+1)*aStep, z=(i+1)*rise;
@@ -8175,54 +8292,105 @@ function spBuildSVG(g){
     ];
     c.forEach(p=>pts.push(p)); treads.push(c);
   }
-  // column endpoints
-  const colTop=proj(0,0,totalH+ (helical?0:150)), colBot=proj(0,0,0);
+  const colExtra = hasCanopy ? 350 : (helical?0:150);
+  const colTop=proj(0,0,totalH+colExtra), colBot=proj(0,0,0);
   pts.push(colTop,colBot);
+  // canopy ring points (full circle at top)
+  const canopyZ = totalH + colExtra;
+  const canopyPts=[];
+  if (hasCanopy){
+    for(let k=0;k<=24;k++){ const a=(k/24)*2*Math.PI; const p=proj(Ro*Math.cos(a),Ro*Math.sin(a),canopyZ); canopyPts.push(p); pts.push(p); }
+  }
   const minX=Math.min(...pts.map(p=>p.X)), maxX=Math.max(...pts.map(p=>p.X));
   const minY=Math.min(...pts.map(p=>p.Y)), maxY=Math.max(...pts.map(p=>p.Y));
   const sw=(maxX-minX)||1, sh=(maxY-minY)||1;
   const pad=24, s=Math.min((IW-2*pad)/sw,(IH-2*pad)/sh);
-  const tx=X=> pad + (X-minX)*s, ty=Y=> IH - (pad + (Y-minY)*s); // flip Y for screen-up
+  const tx=X=> pad + (X-minX)*s, ty=Y=> IH - (pad + (Y-minY)*s);
   const poly=c=>c.map(p=>`${tx(p.X).toFixed(1)},${ty(p.Y).toFixed(1)}`).join(' ');
 
   let iso='';
-  // column behind treads (spiral only)
+  // column (spiral) behind treads
   if (!helical){
     iso += `<line x1="${tx(colBot.X).toFixed(1)}" y1="${ty(colBot.Y).toFixed(1)}" x2="${tx(colTop.X).toFixed(1)}" y2="${ty(colTop.Y).toFixed(1)}" stroke="var(--accent)" stroke-width="6" stroke-linecap="round" opacity="0.55"/>`;
   }
-  // treads bottom→top so higher ones overdraw
+  // treads bottom→top
   treads.forEach((c,i)=>{
     const shade = 0.30 + 0.5*(i/Math.max(1,n-1));
     iso += `<polygon points="${poly(c)}" fill="var(--accent)" fill-opacity="${(0.18+0.22*shade).toFixed(2)}" stroke="var(--accent)" stroke-width="1" stroke-opacity="0.7"/>`;
   });
-  // helical stringers: connect outer (and inner) edges of successive treads
-  if (helical){
-    for(const R of [Ri,Ro]){
+  // landing platforms: a wider deck sector at the top of the run (and intermediate)
+  if (nLandings>0){
+    const landA = (90*Math.PI/180)*hand;
+    for(let li=0; li<nLandings; li++){
+      // place landings spread up the rise (rough visual: at top, and evenly below)
+      const frac = nLandings===1 ? 1 : (li+1)/nLandings;
+      const baseAngle = rot*Math.PI/180*hand*frac;
+      const z = totalH*frac;
+      const c=[
+        proj(Ri*Math.cos(baseAngle), Ri*Math.sin(baseAngle), z),
+        proj(Ro*Math.cos(baseAngle), Ro*Math.sin(baseAngle), z),
+        proj(Ro*Math.cos(baseAngle+landA), Ro*Math.sin(baseAngle+landA), z),
+        proj(Ri*Math.cos(baseAngle+landA), Ri*Math.sin(baseAngle+landA), z),
+      ];
+      iso += `<polygon points="${poly(c)}" fill="var(--green)" fill-opacity="0.30" stroke="var(--green)" stroke-width="1.2" stroke-opacity="0.8"/>`;
+    }
+  }
+  // stringers (spiral-optional or helical): inner/outer helices
+  if (showStringers){
+    const radii=[]; if(showInner) radii.push(Ri); if(showOuter) radii.push(Ro);
+    for(const R of radii){
       let d='';
       for(let i=0;i<=n;i++){ const a=i*aStep, z=i*rise; const p=proj(R*Math.cos(a),R*Math.sin(a),z); d+=(i?'L':'M')+`${tx(p.X).toFixed(1)} ${ty(p.Y).toFixed(1)} `; }
-      iso += `<path d="${d}" fill="none" stroke="var(--accent)" stroke-width="2.5" opacity="0.8"/>`;
+      iso += `<path d="${d}" fill="none" stroke="var(--accent2,#e0a020)" stroke-width="2.5" opacity="0.85"/>`;
     }
+  }
+  // canopy ring at top
+  if (hasCanopy && canopyPts.length){
+    let d = canopyPts.map((p,i)=>(i?'L':'M')+`${tx(p.X).toFixed(1)} ${ty(p.Y).toFixed(1)} `).join('');
+    iso += `<path d="${d}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-dasharray="4 3" opacity="0.7"/>`;
+    // posts from top tread ring up to canopy at a few points
+    for(let k=0;k<4;k++){ const a=(k/4)*2*Math.PI; const pa=proj(Ro*Math.cos(a),Ro*Math.sin(a),totalH); const pb=proj(Ro*Math.cos(a),Ro*Math.sin(a),canopyZ); iso += `<line x1="${tx(pa.X).toFixed(1)}" y1="${ty(pa.Y).toFixed(1)}" x2="${tx(pb.X).toFixed(1)}" y2="${ty(pb.Y).toFixed(1)}" stroke="var(--accent)" stroke-width="1.2" opacity="0.5"/>`; }
   }
 
   // PLAN ---------------------------------------------------------------------
-  const PW=340, PH=180, cx=PW/2, cy=PH/2, pr=Math.min(PW,PH)/2 - 14;
+  const PW=340, PH=190, cx=PW/2, cy=PH/2, pr=Math.min(PW,PH)/2 - 16;
   const ps=pr/Ro;
   const pIn=Ri*ps, pOut=Ro*ps;
   const pol=(R,a)=>`${(cx+R*Math.cos(a)).toFixed(1)},${(cy+R*Math.sin(a)).toFixed(1)}`;
   let plan='';
+  if (hasCanopy) plan += `<circle cx="${cx}" cy="${cy}" r="${pOut.toFixed(1)}" fill="none" stroke="var(--accent)" stroke-width="1" stroke-dasharray="4 3" opacity="0.6"/>`;
   plan += `<circle cx="${cx}" cy="${cy}" r="${pOut.toFixed(1)}" fill="none" stroke="var(--border)" stroke-width="1"/>`;
-  if (pIn>1) plan += `<circle cx="${cx}" cy="${cy}" r="${pIn.toFixed(1)}" fill="none" stroke="var(--border)" stroke-width="1"/>`;
+  if (pIn>1) plan += `<circle cx="${cx}" cy="${cy}" r="${pIn.toFixed(1)}" fill="none" stroke="${showInner?'var(--accent2,#e0a020)':'var(--border)'}" stroke-width="${showInner?2:1}"/>`;
+  if (showOuter) plan += `<circle cx="${cx}" cy="${cy}" r="${pOut.toFixed(1)}" fill="none" stroke="var(--accent2,#e0a020)" stroke-width="2"/>`;
   for(let i=0;i<n;i++){
     const a0=i*aStep, a1=(i+1)*aStep;
     const d=`M ${pol(pIn,a0)} L ${pol(pOut,a0)} A ${pOut.toFixed(1)} ${pOut.toFixed(1)} 0 0 ${hand>0?1:0} ${pol(pOut,a1)} L ${pol(pIn,a1)} A ${pIn.toFixed(1)} ${pIn.toFixed(1)} 0 0 ${hand>0?0:1} ${pol(pIn,a0)} Z`;
     plan += `<path d="${d}" fill="var(--accent)" fill-opacity="0.12" stroke="var(--accent)" stroke-width="0.8" stroke-opacity="0.6"/>`;
   }
+  // landing sectors on plan
+  if (nLandings>0){
+    const landA=(90*Math.PI/180)*hand;
+    for(let li=0; li<nLandings; li++){
+      const frac = nLandings===1 ? 1 : (li+1)/nLandings;
+      const a0 = rot*Math.PI/180*hand*frac;
+      const a1 = a0+landA;
+      const d=`M ${pol(pIn,a0)} L ${pol(pOut,a0)} A ${pOut.toFixed(1)} ${pOut.toFixed(1)} 0 0 ${hand>0?1:0} ${pol(pOut,a1)} L ${pol(pIn,a1)} A ${pIn.toFixed(1)} ${pIn.toFixed(1)} 0 0 ${hand>0?0:1} ${pol(pIn,a0)} Z`;
+      plan += `<path d="${d}" fill="var(--green)" fill-opacity="0.25" stroke="var(--green)" stroke-width="1" stroke-opacity="0.8"/>`;
+    }
+  }
   if (!helical) plan += `<circle cx="${cx}" cy="${cy}" r="3.5" fill="var(--accent)"/>`;
-  // direction arrow
-  plan += `<text x="${cx}" y="${cy- pOut - 3}" fill="var(--subtle)" font-size="9" text-anchor="middle">${hand>0?'⟳':'⟲'} ${rot}°</text>`;
+  plan += `<text x="${cx}" y="${cy- pOut - 4}" fill="var(--subtle)" font-size="9" text-anchor="middle">${hand>0?'⟳':'⟲'} ${rot}°</text>`;
+
+  const legend = [
+    'treads',
+    showStringers?'stringers':null,
+    nLandings>0?`${nLandings} landing${nLandings>1?'s':''}`:null,
+    hasCanopy?'canopy':null,
+    !helical?'column':null
+  ].filter(Boolean).join(' · ');
 
   return `
-    <div style="font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Isometric</div>
+    <div style="font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Isometric <span style="text-transform:none;letter-spacing:0;color:var(--subtle)">— ${legend}</span></div>
     <svg viewBox="0 0 ${IW} ${IH}" style="width:100%;height:auto;background:var(--bg,#111);border:1px solid var(--border);border-radius:6px">${iso}
       <text x="${IW-8}" y="${IH-6}" fill="var(--subtle)" font-size="8" text-anchor="end">rise ${g.totalRiseMM}mm · ${g.turns} turns</text>
     </svg>
