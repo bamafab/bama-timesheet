@@ -7185,6 +7185,209 @@ function computeStraightStair(input){
 }
 
 // ── F4: staircase labour engine ───────────────────────────
+// ============================================================
+// F6 — SPIRAL / HELICAL STAIRCASE ENGINE (BS 5395-2)
+// Pure JS geometry, deterministic, density 7850. Parallel to computeStaircase.
+// Spiral = centre column + cantilever treads. Helical = open well + helical
+// stringers, no column. Engine picks the structure from the inputs.
+// Going measured along the BS walkline (default inner edge + 270mm); toggle to
+// measure at outer edge or override per job. Rotation uncapped (multi-turn).
+// ============================================================
+
+// BS 5395-2 spiral/helical categories. centreGoingMin = min going at the CENTRE
+// of the tread; rise band per category; 2R+G(centre) comfort 480–800.
+const SPIRAL_CLASSES = {
+  utility:   { label:'Utility / private secondary', riseMin:170, riseMax:220, centreGoingMin:145, minClearWidth:600,  idealRise:200 },
+  private:   { label:'Private main access',         riseMin:170, riseMax:220, centreGoingMin:190, minClearWidth:800,  idealRise:195 },
+  semipublic:{ label:'Semi-public / general access',riseMin:170, riseMax:190, centreGoingMin:190, minClearWidth:800,  idealRise:185 },
+  public:    { label:'Public / assembly',           riseMin:150, riseMax:190, centreGoingMin:250, minClearWidth:1000, idealRise:178 },
+};
+
+function spResolveKgm(typeStr){ const p = findSteelProfile(typeStr); return p && p.kgm ? p.kgm : 0; }
+
+// Annular sector (wedge tread) plan area, m², between Ri and Ro over angle aDeg.
+function spWedgeAreaM2(RiMM, RoMM, aDeg){
+  const aRad = aDeg*Math.PI/180; const Ri = RiMM/1000, Ro = RoMM/1000;
+  return (aRad/2)*(Ro*Ro - Ri*Ri);
+}
+// Developed helix length (mm) at radius R over rotation rotDeg with given rise.
+function spHelixLenMM(RMM, rotDeg, riseMM){
+  const theta = rotDeg*Math.PI/180; const horiz = (RMM/1000)*theta; const vert = riseMM/1000;
+  return Math.sqrt(horiz*horiz + vert*vert)*1000;
+}
+
+function computeSpiralStaircase(input){
+  const warnings = [];
+  const cls = SPIRAL_CLASSES[input.stairClass] || SPIRAL_CLASSES.private;
+  const totalRise = Number(input.totalRiseMM)||0;
+  if (totalRise<=0) return { ok:false, warnings:['Total rise (floor-to-floor) is required.'], geometry:{}, components:[] };
+
+  // structure pick: helical when an open well is specified (no centre column)
+  const colDia = Number(input.columnDiaMM)||0;
+  const helical = !!input.helical || ((colDia<=0) && (Number(input.wellDiaMM)||0)>0);
+  const Ri = helical ? (Number(input.wellDiaMM)||0)/2 : Math.max(colDia/2, 0);
+  let Ro = Number(input.outerRadiusMM)||0;
+  if (Ro<=0){ const overall = Number(input.overallDiaMM)||0; Ro = overall>0 ? overall/2 : Ri + 700; }
+  if (Ro<=Ri){ warnings.push(`Outer radius ${Math.round(Ro)}mm must exceed inner radius ${Math.round(Ri)}mm.`); Ro = Ri+700; }
+  const clearWidth = Ro - Ri;
+  if (clearWidth < cls.minClearWidth) warnings.push(`Clear width ${Math.round(clearWidth)}mm is below the ${cls.label} minimum of ${cls.minClearWidth}mm.`);
+
+  // walkline radius (BS default Ri+270; 'outer' measures Ro-270; or explicit override)
+  let Rw;
+  if (input.walklineMode === 'outer') Rw = Ro - 270;
+  else if (input.walklineRadiusMM!=null && input.walklineRadiusMM!=='' && !isNaN(Number(input.walklineRadiusMM))) Rw = Number(input.walklineRadiusMM);
+  else Rw = Ri + 270;
+  if (Rw <= Ri) Rw = (Ri+Ro)/2;
+
+  // risers / treads — class-driven, same approach as the straight engine
+  let nRisers = Math.ceil(totalRise/cls.riseMax); if (nRisers<1) nRisers=1;
+  const idealN = Math.round(totalRise/cls.idealRise);
+  if (idealN>nRisers) nRisers = idealN;
+  let rise = totalRise/nRisers;
+  while (rise>cls.riseMax){ nRisers++; rise=totalRise/nRisers; }
+  while (rise<cls.riseMin && nRisers>1){ nRisers--; rise=totalRise/nRisers; }
+  const nTreads = nRisers-1;
+
+  // rotation & per-tread angle (rotation spread across nRisers angular steps)
+  const rot = Number(input.rotationDeg)>0 ? Number(input.rotationDeg) : 270;
+  const turns = rot/360;
+  const anglePerTread = rot/nRisers;
+
+  // goings at the BS reference radii (arc length = angle × radius)
+  const goingAt = (R)=> (anglePerTread*Math.PI/180)*R;
+  const innerGoing = goingAt(Ri), centreGoing = goingAt((Ri+Ro)/2);
+  const outerGoing = goingAt(Ro),  walkGoing   = goingAt(Rw);
+  if (centreGoing < cls.centreGoingMin)
+    warnings.push(`Centre going ${Math.round(centreGoing)}mm is below the ${cls.label} minimum of ${cls.centreGoingMin}mm — increase rotation, radius, or reduce treads.`);
+  const twoRplusG = 2*rise + centreGoing;
+  if (twoRplusG<480 || twoRplusG>800)
+    warnings.push(`2R+G(centre) = ${Math.round(twoRplusG)}mm is outside the BS 5395-2 comfort range 480–800mm.`);
+  if (rise<cls.riseMin || rise>cls.riseMax)
+    warnings.push(`Rise ${scRound1(rise)}mm is outside the ${cls.label} band ${cls.riseMin}–${cls.riseMax}mm.`);
+  // NB: spiral pitch is NOT capped at 42° like straight stairs — it is governed
+  // by going + clear width, so no pitch-ceiling warning here (by design).
+  const pitchDeg = Math.atan(rise/walkGoing)*180/Math.PI;
+
+  const nLandings = Math.max(0, Math.floor(Number(input.nLandings)||0));
+  const canopy = !!input.canopy;
+
+  // ── COMPONENTS ──
+  const components = [];
+  const _canon = (t)=>{ const p=findSteelProfile(t); return (p && p.confidence!=='none' && p.canonical)?p.canonical:t; };
+  const plate = Number(input.treadPlateMM)||6;
+  const treadMode = input.treadCostMode==='fixed' ? 'fixed' : 'weight';
+  const treadType = input.treadType || 'chequer';
+
+  if (treadMode === 'weight'){
+    const areaM2 = spWedgeAreaM2(Ri, Ro, anglePerTread);
+    let perTreadKg, desc;
+    if (treadType==='grating'){
+      const gKgm2 = Number(input.gratingKgm2) || (GRATING_PRESETS[input.gratingPreset]?.kgm2) || 31;
+      perTreadKg = areaM2*gKgm2;
+      desc = `Open grating ${gKgm2}kg/m² wedge tread (Ri${Math.round(Ri)}–Ro${Math.round(Ro)}, ${scRound1(anglePerTread)}°)`;
+    } else {
+      const foldMM = Number(input.treadFoldMM)||30;
+      const outerArc = (anglePerTread*Math.PI/180)*Ro;
+      const foldKg = scPlateKg(plate, outerArc, foldMM);
+      const flat = scPlateKg(plate, 1000, 1000)*areaM2; // density*thk*area
+      perTreadKg = flat + foldKg;
+      if (treadType==='chequer') perTreadKg *= 1.06;
+      desc = `${treadType==='chequer'?'Chequer':'Solid'} ${plate}mm wedge tread (Ri${Math.round(Ri)}–Ro${Math.round(Ro)}, ${scRound1(anglePerTread)}°)`;
+    }
+    components.push({ role:'tread', type:desc, length:1000, qty:nTreads, kgm:scRound1(perTreadKg), _unit:'EA',
+      note:`Per-tread weight (EA): annular sector ${areaM2.toFixed(3)}m² at ${scRound1(anglePerTread)}° each${treadType==='chequer'?', incl. 6% pattern':''}` });
+  } else {
+    const perTread = Number(input.treadFixedPrice)||0;
+    components.push({ role:'tread', type:`Proprietary spiral tread (${scRound1(anglePerTread)}° wedge)`, length:1000, qty:nTreads, kgm:0, _unit:'EA',
+      _fixedPrice:perTread, note:`Fixed price £${perTread}/tread (supplier/cast) — weight not modelled` });
+  }
+
+  // centre column (spiral only) + per-tread connection collar
+  if (!helical && colDia>0){
+    const overrun = Number(input.columnOverrunMM)||150;
+    const colLen = totalRise + overrun;
+    const colType = input.columnType || `CHS${colDia}x8`;
+    const colDisp = _canon(colType);
+    let colKgm = spResolveKgm(colType);
+    if (!colKgm){
+      const thk = Number(input.columnWallMM)||8;
+      colKgm = Math.PI*(colDia/1000)*(thk/1000)*STAIR_STEEL_DENSITY;
+      warnings.push(`Column "${colType}" not in steel DB — estimated ${scRound1(colKgm)} kg/m from Ø${colDia}×${thk}. Edit in takeoff if wrong.`);
+    }
+    components.push({ role:'column', type:`${colDisp} centre column`, length:colLen, qty:1, kgm:scRound1(colKgm), _unit:'',
+      note:`Centre column: ${totalRise}mm rise + ${overrun}mm overrun` });
+    const collarType = input.collarType || 'EA60x60x6';
+    const collarDisp = _canon(collarType);
+    let collarKgm = spResolveKgm(collarType);
+    if (!collarKgm){ collarKgm = 5.42; warnings.push(`Collar "${collarType}" not found — using ${collarKgm} kg/m.`); }
+    const collarLen = Number(input.collarLenMM)||200;
+    components.push({ role:'collar', type:`${collarDisp} tread collar/bracket ${collarLen}mm`, length:1000, qty:nTreads, kgm:scRound1((collarLen/1000)*collarKgm), _unit:'EA',
+      note:`Per-tread collar (EA): welded connection to column, ${collarLen}mm` });
+  }
+
+  // helical stringers (always for helical; optional add-ons for spiral)
+  const addInner = helical || !!input.innerStringer;
+  const addOuter = helical || !!input.outerStringer;
+  if (addInner || addOuter){
+    const stringerType = input.stringerType || 'FLT 250x12';
+    const strDisp = _canon(stringerType);
+    let strKgm = spResolveKgm(stringerType);
+    if (!strKgm){ strKgm = 23.6; warnings.push(`Stringer "${stringerType}" not found — using ${strKgm} kg/m.`); }
+    if (addInner){
+      const Lin = spHelixLenMM(Ri, rot, totalRise);
+      components.push({ role:'stringer', type:`${strDisp} inner helical stringer`, length:Math.round(Lin), qty:1, kgm:strKgm, _unit:'',
+        note:`Inner helix at R${Math.round(Ri)}mm over ${rot}° (${turns.toFixed(2)} turns), developed ~${Math.round(Lin)}mm` });
+    }
+    if (addOuter){
+      const Lout = spHelixLenMM(Ro, rot, totalRise);
+      components.push({ role:'stringer', type:`${strDisp} outer helical stringer`, length:Math.round(Lout), qty:1, kgm:strKgm, _unit:'',
+        note:`Outer helix at R${Math.round(Ro)}mm over ${rot}° (${turns.toFixed(2)} turns), developed ~${Math.round(Lout)}mm` });
+    }
+  }
+
+  // intermediate + top landing(s) — quarter-annulus sectors
+  if (nLandings>0 || input.includeTopLanding){
+    const totalLandings = nLandings + (input.includeTopLanding?1:0);
+    const lFrameType = input.landingFrameType || 'PFC 150x75x18';
+    const lFrameDisp = _canon(lFrameType);
+    let lFrameKgm = spResolveKgm(lFrameType);
+    if (!lFrameKgm){ lFrameKgm = 17.9; warnings.push(`Landing frame "${lFrameType}" not found — using ${lFrameKgm} kg/m.`); }
+    const landAngle = Number(input.landingAngleDeg)||90;
+    const outerArc = (landAngle*Math.PI/180)*Ro;
+    const perimMM = outerArc + 2*(Ro-Ri);
+    const frameKg = (perimMM/1000)*lFrameKgm;
+    const landAreaM2 = spWedgeAreaM2(Ri, Ro, landAngle);
+    const deckKg = scPlateKg(plate, 1000,1000)*landAreaM2;
+    components.push({ role:'landing_frame', type:`${lFrameDisp} landing frame (${landAngle}° sector)`, length:1000, qty:totalLandings, kgm:scRound1(frameKg), _unit:'EA',
+      note:`Landing frame (EA): ${landAngle}° sector, ${Math.round(perimMM)}mm perimeter of ${lFrameDisp}` });
+    components.push({ role:'landing_deck', type:`${plate}mm landing deck (${landAngle}° sector)`, length:1000, qty:totalLandings, kgm:scRound1(deckKg), _unit:'EA',
+      note:`Landing deck (EA): ${landAngle}° sector, ${landAreaM2.toFixed(3)}m²` });
+  }
+
+  // top canopy (optional)
+  if (canopy){
+    const canopyType = input.canopyType || 'SHS 50x50x3';
+    const cDisp = _canon(canopyType);
+    let cKgm = spResolveKgm(canopyType);
+    if (!cKgm){ cKgm = 4.35; warnings.push(`Canopy frame "${canopyType}" not found — using ${cKgm} kg/m.`); }
+    const ringMM = 2*Math.PI*Ro;
+    components.push({ role:'canopy', type:`${cDisp} top canopy frame`, length:Math.round(ringMM), qty:1, kgm:cKgm, _unit:'',
+      note:`Top canopy ring frame ~${Math.round(ringMM)}mm at R${Math.round(Ro)}` });
+  }
+
+  return { ok:true, warnings, geometry:{
+    structure: helical?'helical':'spiral', stairClassLabel: cls.label,
+    totalRiseMM: totalRise, nRisers, nTreads, riseMM: scRound1(rise),
+    innerRadiusMM: Math.round(Ri), outerRadiusMM: Math.round(Ro), walklineRadiusMM: Math.round(Rw),
+    clearWidthMM: Math.round(clearWidth), rotationDeg: rot, turns: Math.round(turns*100)/100,
+    anglePerTreadDeg: scRound1(anglePerTread),
+    innerGoingMM: Math.round(innerGoing), centreGoingMM: Math.round(centreGoing),
+    outerGoingMM: Math.round(outerGoing), walkGoingMM: Math.round(walkGoing),
+    twoRplusG: Math.round(twoRplusG), pitchDeg: scRound1(pitchDeg),
+    nLandings, canopy, columnDiaMM: colDia,
+  }, components };
+}
+
 // Deterministic element-based labour. NO AI arithmetic. Reads element counts
 // from geometry + component roles, applies per-element fab hours, per-flight/
 // landing design hours, and a crew × days × day-rate install cost.
