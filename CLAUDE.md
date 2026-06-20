@@ -416,6 +416,45 @@ in sync — same bucket math both sides.
   production, `SQL_CONNECTION_STRING`, `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` come
   from App Settings on the Function App. Never commit real secrets.
 
+### Quote Builder engines (staircase / spiral / balustrade)
+
+These apply to the wizard engines in `quote-builder.html`. They are hard
+conventions — the calibration *numbers* live in `DEFAULT_RATES` in code and are
+tuned live, so they are deliberately NOT duplicated here.
+
+- **Steel sections are thickness-first on display.** Flats show as `FLT 12x250`
+  (thickness × width), never width-first. `findSteelProfile` canonicalises a
+  designation by stripping spaces, upper-casing, and replacing `×`/`/` with `X`;
+  FLT lookup is order-insensitive, but every *displayed* form is thickness-first.
+  All section inputs (takeoff grid + every wizard Custom field) use
+  `attachSteelAutocomplete()` — never a raw native `<datalist>`.
+- **EA positional convention.** For per-piece rows: `_unit='EA'`,
+  `length=1000` (sentinel — not a real length), `kgm` = weight of ONE piece,
+  `qty` = number of pieces. Do not change how EA weight is calculated.
+- **Wizard rows are excluded from the global rollups.** Every row a wizard
+  injects carries `_excludeFromFabHours:true` (wizard computes its own labour,
+  so global fab-hours must not re-count it) and `_excludeFromFittingsBase:true`
+  (wizard adds its own fittings line, so the global fittings % must not stack).
+  Keep both flags on any new wizard row.
+- **`_fixedPrice` rows.** Proprietary items priced flat per piece (spiral
+  treads; future glass spigots) set `_fixedPrice` and `kgm=0`. `rowCost()` and
+  `rowWeight()` in the totals engine already honour this: a fixed-price row is a
+  valid zero-weight row, NOT a "missing kg/m" error. Don't reintroduce a
+  missing-weight warning for them.
+- **Two-engine principle.** Geometry/weight/labour is pure deterministic JS
+  (BS-aware, density 7850). The AI (drawing recognition) only READS — it never
+  does arithmetic, and returns null rather than guessing.
+- **Never guess domain values.** Section weights, labour rates, purlin weights,
+  spigot weights etc. come from published data or Mateusz's real workshop
+  figures — never invented.
+- **Help is part of done.** Any new Quote Builder feature updates the in-app
+  Help (`HELP_CONTENT` in `quote-builder.html`) in the same change, not later.
+
+For editing/testing protocol (anchor-based single-occurrence `str.replace` with
+an `assert count==1`, Node unit tests for pure engine functions before UI work,
+one logical change per commit) and the mandatory `preflight.py` run, see the
+**Rules for Claude Code** section at the top of this file.
+
 ## Modal → Page mapping
 
 Every `id=…Modal` element in the HTML, by page. Handy when tracing an
