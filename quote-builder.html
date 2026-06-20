@@ -7996,14 +7996,29 @@ function openStaircaseWizard(){
   scRecompute();
 }
 // Fill the shared <datalist> from the steel DB once, so every Custom… text input
-// gets native autocomplete over all section keys.
+// gets native autocomplete. We show the CANONICAL display form (thickness-first
+// for FLT, proper spacing) — NOT raw DB keys — and dedupe the *-variants.
+function _buildSteelDatalistOptions(){
+  if (typeof STEEL_KGM === 'undefined') return '';
+  const seen = new Set();
+  const labels = [];
+  for (const k of Object.keys(STEEL_KGM)){
+    if (k.includes('*')) continue;              // skip duplicate * variants
+    const p = (typeof findSteelProfile==='function') ? findSteelProfile(k) : null;
+    const label = (p && p.confidence!=='none' && p.canonical) ? p.canonical : k;
+    if (seen.has(label)) continue;
+    seen.add(label);
+    labels.push(label);
+  }
+  labels.sort((a,b)=> a.localeCompare(b, undefined, {numeric:true}));
+  return labels.map(l=>`<option value="${l}">`).join('');
+}
 let _scSteelDatalistDone = false;
 function scPopulateSteelDatalist(){
   if (_scSteelDatalistDone) return;
   const dl = document.getElementById('scSteelSections');
   if (!dl || typeof STEEL_KGM === 'undefined') return;
-  const keys = Object.keys(STEEL_KGM).sort();
-  dl.innerHTML = keys.map(k=>`<option value="${k}">`).join('');
+  dl.innerHTML = _buildSteelDatalistOptions();
   _scSteelDatalistDone = true;
 }
 function closeStaircaseWizard(){ document.getElementById('staircaseModal').classList.remove('active'); }
@@ -8021,7 +8036,7 @@ function spPopulateSteelDatalist(){
   if (_spSteelDatalistDone) return;
   const dl = document.getElementById('spSteelSections');
   if (!dl || typeof STEEL_KGM === 'undefined') return;
-  dl.innerHTML = Object.keys(STEEL_KGM).sort().map(k=>`<option value="${k}">`).join('');
+  dl.innerHTML = _buildSteelDatalistOptions();
   _spSteelDatalistDone = true;
 }
 function openSpiralWizard(){
