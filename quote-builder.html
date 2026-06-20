@@ -2541,6 +2541,7 @@ tr.drag-dragging { opacity:0.35; }
           <div style="font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Geometry</div>
           <div id="balGeometry" style="font-size:12px;color:var(--text);line-height:1.7"></div>
           <div id="balWarnings" style="margin-top:8px"></div>
+          <div id="balSchematic" style="margin-top:12px"></div>
         </div>
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-top:10px">
           <div style="font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);margin-bottom:8px">Steel to inject</div>
@@ -8991,6 +8992,181 @@ function spBuildSVG(g){
     </svg>`;
 }
 
+
+// ── Balustrade schematics: elevation + plan + isometric, pure from geometry ──
+// Drawn from computeBalustrade geometry/components — no AI. Posts at spacing,
+// top/bottom rails, infill (bars / glass / mesh / solid), base plates, raked
+// sections on the slope. Mirrors the spiral F6 schematic styling.
+function balBuildSVG(g, components, inp){
+  if (!g || g.manual || !g.runLengthMM) return '';
+  const runMM = g.runLengthMM, H = g.heightMM||1100;
+  const nPosts = g.nPosts||0, spacingMM = g.postSpacingMM||0;
+  const raked = !!g.raked;
+  const infillKey = g.infill || 'none';
+  const infMeta = BAL_INFILL[infillKey] || BAL_INFILL.none;
+  const fam = BAL_FAMILIES[g.family] || {};
+  const isGlass = (infillKey==='glass') || /glass/.test(g.family||'') || !!fam.channel;
+  const isMesh  = (infillKey==='mesh');
+  const isSheet = (infMeta.kind==='sheet') && !isMesh; // solid/plate
+  const isBars  = (infMeta.kind==='bars');
+  const hasBase = (inp && inp.baseFix==='baseplate') || !!fam.basePlate;
+  const hasTop  = components.some(c=>c.role==='toprail');
+  const hasBot  = components.some(c=>c.role==='botrail');
+  const infBarSpacing = (inp && Number(inp.infillSpacingMM)>0) ? Number(inp.infillSpacingMM)
+                        : (infMeta.defSpacingMM||100);
+
+  // ── ELEVATION ─────────────────────────────────────────────────────────────
+  const EW=340, EH=190, padL=14, padR=14, padT=14, padB=22;
+  const drawW = EW-padL-padR, drawH = EH-padT-padB;
+  // metres-to-px so both run and height fit; keep some headroom for rail above posts
+  const railTop = H;                       // top rail sits at post height
+  const visH = railTop * 1.05;
+  const sx = drawW / runMM;
+  const sy = drawH / visH;
+  const x0 = padL, baseY = EH-padB;        // ground line y
+  const px = mm => x0 + mm*sx;
+  const py = mmUp => baseY - mmUp*sy;      // height up from ground
+  // raked: lift the right end by a pitch so the rail slopes
+  const rakeRise = raked ? Math.min(runMM*0.5, visH*0.45) : 0; // visual slope
+  const topY = (mm)=> py(railTop) - (raked ? (mm/runMM)*rakeRise : 0);
+  let elev='';
+  // ground line
+  elev += `<line x1="${px(0).toFixed(1)}" y1="${baseY}" x2="${px(runMM).toFixed(1)}" y2="${baseY}" stroke="var(--border)" stroke-width="1.5"/>`;
+  if (raked){
+    // pitch reference line (string)
+    elev += `<line x1="${px(0).toFixed(1)}" y1="${baseY}" x2="${px(runMM).toFixed(1)}" y2="${(baseY-rakeRise).toFixed(1)}" stroke="var(--subtle)" stroke-width="1" stroke-dasharray="3 3" opacity="0.6"/>`;
+  }
+  // post x positions
+  const postXs=[];
+  if (nPosts>0){
+    if (nPosts===1){ postXs.push(runMM/2); }
+    else { for(let i=0;i<nPosts;i++) postXs.push((runMM/(nPosts-1))*i); }
+  }
+  const postBaseY = mm => raked ? (baseY - (mm/runMM)*rakeRise) : baseY;
+  // infill (drawn behind posts)
+  if (isBars){
+    const nBars = Math.max(0, Math.floor(runMM/infBarSpacing));
+    for(let i=1;i<=nBars;i++){
+      const mm=i*infBarSpacing; if(mm>=runMM) break;
+      const by=postBaseY(mm), ty=topY(mm);
+      elev += `<line x1="${px(mm).toFixed(1)}" y1="${(by-2).toFixed(1)}" x2="${px(mm).toFixed(1)}" y2="${(ty+6).toFixed(1)}" stroke="var(--accent)" stroke-width="1.4" opacity="0.8"/>`;
+    }
+  } else if (isGlass){
+    // glass panels between posts (or one panel if no posts)
+    const segs = postXs.length>1 ? postXs.length-1 : 1;
+    for(let i=0;i<segs;i++){
+      const a = postXs.length>1?postXs[i]:0, b = postXs.length>1?postXs[i+1]:runMM;
+      const inset=(b-a)*0.04;
+      const ax=px(a+inset), bx=px(b-inset);
+      const aTy=topY(a+inset), bTy=topY(b-inset);
+      const aBy=postBaseY(a+inset)-6, bBy=postBaseY(b-inset)-6;
+      elev += `<polygon points="${ax.toFixed(1)},${aTy.toFixed(1)} ${bx.toFixed(1)},${bTy.toFixed(1)} ${bx.toFixed(1)},${bBy.toFixed(1)} ${ax.toFixed(1)},${aBy.toFixed(1)}" fill="var(--accent)" fill-opacity="0.10" stroke="var(--accent)" stroke-width="0.8" stroke-opacity="0.5"/>`;
+    }
+  } else if (isMesh){
+    // diagonal hatch fill across the whole run
+    const step=14;
+    elev += `<defs><pattern id="balMeshHatch" width="${step}" height="${step}" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="${step}" stroke="var(--accent)" stroke-width="0.8" opacity="0.5"/></pattern></defs>`;
+    const ax=px(0), bx=px(runMM);
+    elev += `<polygon points="${ax.toFixed(1)},${topY(0).toFixed(1)} ${bx.toFixed(1)},${topY(runMM).toFixed(1)} ${bx.toFixed(1)},${(postBaseY(runMM)-6).toFixed(1)} ${ax.toFixed(1)},${(postBaseY(0)-6).toFixed(1)}" fill="url(#balMeshHatch)" stroke="var(--accent)" stroke-width="0.8" stroke-opacity="0.4"/>`;
+  } else if (isSheet){
+    const ax=px(0), bx=px(runMM);
+    elev += `<polygon points="${ax.toFixed(1)},${topY(0).toFixed(1)} ${bx.toFixed(1)},${topY(runMM).toFixed(1)} ${bx.toFixed(1)},${(postBaseY(runMM)-6).toFixed(1)} ${ax.toFixed(1)},${(postBaseY(0)-6).toFixed(1)}" fill="var(--accent)" fill-opacity="0.16" stroke="var(--accent)" stroke-width="0.8" stroke-opacity="0.5"/>`;
+  }
+  // bottom rail
+  if (hasBot){
+    const yOff=80; // ~80mm above ground typical
+    elev += `<line x1="${px(0).toFixed(1)}" y1="${(postBaseY(0)-yOff*sy).toFixed(1)}" x2="${px(runMM).toFixed(1)}" y2="${(postBaseY(runMM)-yOff*sy).toFixed(1)}" stroke="var(--accent2,#e0a020)" stroke-width="2"/>`;
+  }
+  // posts
+  postXs.forEach(mm=>{
+    elev += `<line x1="${px(mm).toFixed(1)}" y1="${postBaseY(mm).toFixed(1)}" x2="${px(mm).toFixed(1)}" y2="${topY(mm).toFixed(1)}" stroke="var(--accent)" stroke-width="3" stroke-linecap="round"/>`;
+    if (hasBase){
+      const w=7;
+      elev += `<rect x="${(px(mm)-w).toFixed(1)}" y="${(postBaseY(mm)-3).toFixed(1)}" width="${(w*2).toFixed(1)}" height="4" fill="var(--accent)" opacity="0.7"/>`;
+    }
+  });
+  // top rail (full run, sloped if raked)
+  if (hasTop){
+    elev += `<line x1="${px(0).toFixed(1)}" y1="${topY(0).toFixed(1)}" x2="${px(runMM).toFixed(1)}" y2="${topY(runMM).toFixed(1)}" stroke="var(--accent2,#e0a020)" stroke-width="3.5" stroke-linecap="round"/>`;
+  }
+  // height dimension
+  elev += `<text x="${px(runMM)+2}" y="${((topY(runMM)+postBaseY(runMM))/2).toFixed(1)}" fill="var(--subtle)" font-size="8">${H}</text>`;
+
+  const elevLegend = [
+    nPosts?`${nPosts} posts`:null,
+    spacingMM?`@${spacingMM}`:null,
+    isBars?`bars @${infBarSpacing}`:(isGlass?'glass':(isMesh?'mesh':(isSheet?'solid':null))),
+    raked?'raked':null
+  ].filter(Boolean).join(' · ');
+
+  // ── PLAN ───────────────────────────────────────────────────────────────────
+  const PW=340, PH=64, pPadL=14, pPadR=14, plY=PH/2;
+  const plDrawW=PW-pPadL-pPadR, plSx=plDrawW/runMM, plx=mm=>pPadL+mm*plSx;
+  let plan='';
+  // run line (top rail in plan)
+  plan += `<line x1="${plx(0).toFixed(1)}" y1="${plY}" x2="${plx(runMM).toFixed(1)}" y2="${plY}" stroke="var(--accent2,#e0a020)" stroke-width="2.5"/>`;
+  // posts as dots
+  postXs.forEach(mm=>{
+    plan += `<circle cx="${plx(mm).toFixed(1)}" cy="${plY}" r="3.2" fill="var(--accent)"/>`;
+    if (hasBase) plan += `<rect x="${(plx(mm)-5).toFixed(1)}" y="${plY-5}" width="10" height="10" fill="none" stroke="var(--accent)" stroke-width="0.8" opacity="0.6"/>`;
+  });
+  if (isGlass){
+    plan += `<line x1="${plx(0).toFixed(1)}" y1="${plY+6}" x2="${plx(runMM).toFixed(1)}" y2="${plY+6}" stroke="var(--accent)" stroke-width="1.5" opacity="0.4" stroke-dasharray="2 2"/>`;
+  }
+  plan += `<text x="${plx(runMM/2).toFixed(1)}" y="${PH-6}" fill="var(--subtle)" font-size="8" text-anchor="middle">${g.runM}m run</text>`;
+
+  // ── ISOMETRIC ────────────────────────────────────────────────────────────
+  const IW=340, IH=170, cos30=Math.cos(Math.PI/6), sin30=Math.sin(Math.PI/6);
+  // depth given to the panel thickness so it reads as 3D
+  const depthMM = Math.max(runMM*0.06, 120);
+  const proj=(x,y,z)=>({ X:(x-y)*cos30, Y:(x+y)*sin30 - z });
+  const ipts=[];
+  const isoPostXs = postXs;
+  const isoTop = mm => railTop - (raked ? (mm/runMM)* (railTop*0.5) : 0);
+  // collect extents
+  const sample=[[0,0,0],[runMM,0,0],[0,depthMM,0],[runMM,depthMM,0],[0,0,railTop],[runMM,0,isoTop(runMM)]];
+  sample.forEach(([x,y,z])=>ipts.push(proj(x,y,z)));
+  const iminX=Math.min(...ipts.map(p=>p.X)), imaxX=Math.max(...ipts.map(p=>p.X));
+  const iminY=Math.min(...ipts.map(p=>p.Y)), imaxY=Math.max(...ipts.map(p=>p.Y));
+  const isw=(imaxX-iminX)||1, ish=(imaxY-iminY)||1;
+  const ipad=18, iscale=Math.min((IW-2*ipad)/isw,(IH-2*ipad)/ish);
+  const itx=X=>ipad+(X-iminX)*iscale, ity=Y=>ipad+(Y-iminY)*iscale;
+  const P=(x,y,z)=>{ const p=proj(x,y,z); return `${itx(p.X).toFixed(1)},${ity(p.Y).toFixed(1)}`; };
+  let iso='';
+  // ground rectangle (the run footprint)
+  iso += `<polygon points="${P(0,0,0)} ${P(runMM,0,0)} ${P(runMM,depthMM,0)} ${P(0,depthMM,0)}" fill="var(--border)" fill-opacity="0.12" stroke="var(--border)" stroke-width="0.8"/>`;
+  // infill plane (front face, y=0)
+  if (isGlass || isSheet || isMesh){
+    const fill = isGlass?'0.10':(isMesh?'0.06':'0.16');
+    iso += `<polygon points="${P(0,0,0)} ${P(runMM,0,0)} ${P(runMM,0,isoTop(runMM))} ${P(0,0,railTop)}" fill="var(--accent)" fill-opacity="${fill}" stroke="var(--accent)" stroke-width="0.8" stroke-opacity="0.45"/>`;
+  } else if (isBars){
+    const nBars=Math.max(0,Math.floor(runMM/infBarSpacing));
+    for(let i=1;i<=nBars;i++){ const mm=i*infBarSpacing; if(mm>=runMM) break;
+      iso += `<line x1="${P(mm,0,0).split(',')[0]}" y1="${P(mm,0,0).split(',')[1]}" x2="${P(mm,0,isoTop(mm)).split(',')[0]}" y2="${P(mm,0,isoTop(mm)).split(',')[1]}" stroke="var(--accent)" stroke-width="1" opacity="0.7"/>`;
+    }
+  }
+  // bottom rail
+  if (hasBot){ iso += `<line x1="${P(0,0,80).split(',')[0]}" y1="${P(0,0,80).split(',')[1]}" x2="${P(runMM,0,isoTop(runMM)*0+80).split(',')[0]}" y2="${P(runMM,0,80).split(',')[1]}" stroke="var(--accent2,#e0a020)" stroke-width="1.5"/>`; }
+  // posts
+  isoPostXs.forEach(mm=>{
+    iso += `<line x1="${P(mm,0,0).split(',')[0]}" y1="${P(mm,0,0).split(',')[1]}" x2="${P(mm,0,isoTop(mm)).split(',')[0]}" y2="${P(mm,0,isoTop(mm)).split(',')[1]}" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/>`;
+    if (hasBase) iso += `<polygon points="${P(mm-40,depthMM*0.2,0)} ${P(mm+40,depthMM*0.2,0)} ${P(mm+40,-depthMM*0.2,0)} ${P(mm-40,-depthMM*0.2,0)}" fill="var(--accent)" fill-opacity="0.5"/>`;
+  });
+  // top rail
+  if (hasTop){ iso += `<line x1="${P(0,0,railTop).split(',')[0]}" y1="${P(0,0,railTop).split(',')[1]}" x2="${P(runMM,0,isoTop(runMM)).split(',')[0]}" y2="${P(runMM,0,isoTop(runMM)).split(',')[1]}" stroke="var(--accent2,#e0a020)" stroke-width="3" stroke-linecap="round"/>`; }
+
+  return `
+    <div style="font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);margin-bottom:4px">Elevation <span style="text-transform:none;letter-spacing:0;color:var(--subtle)">— ${elevLegend}</span></div>
+    <svg viewBox="0 0 ${EW} ${EH}" style="width:100%;height:auto;background:var(--bg,#111);border:1px solid var(--border);border-radius:6px">${elev}
+      <text x="${EW-8}" y="${EH-6}" fill="var(--subtle)" font-size="8" text-anchor="end">${g.runM}m × ${H}mm</text>
+    </svg>
+    <div style="font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);margin:8px 0 4px">Plan</div>
+    <svg viewBox="0 0 ${PW} ${PH}" style="width:100%;height:auto;background:var(--bg,#111);border:1px solid var(--border);border-radius:6px">${plan}</svg>
+    <div style="font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted);margin:8px 0 4px">Isometric</div>
+    <svg viewBox="0 0 ${IW} ${IH}" style="width:100%;height:auto;background:var(--bg,#111);border:1px solid var(--border);border-radius:6px">${iso}</svg>`;
+}
+
+
 async function injectSpiral(){
   const q=getQuote(); if(!q){ toast('No quote open'); return; }
   const r=_spLastResult; if(!r||!r.ok){ toast('Nothing to inject'); return; }
@@ -9217,6 +9393,7 @@ function balRecompute(){
     warn.innerHTML=''; body.innerHTML=''; totEl.textContent='0 kg';
     const tcEl=document.getElementById('balTotalCost'); if(tcEl) tcEl.textContent='£0';
     document.getElementById('balLabourSummary').innerHTML='';
+    const scEl0=document.getElementById('balSchematic'); if(scEl0) scEl0.innerHTML='';
     if(envEl) envEl.innerHTML='';
     if(btn){ btn.disabled=true; btn.style.opacity='0.4'; }
     return;
@@ -9235,6 +9412,9 @@ function balRecompute(){
   warn.innerHTML = r.warnings.length
     ? r.warnings.map(w=>`<div style="font-size:11px;color:var(--amber,#e0a020);margin-top:2px">⚠️ ${escHtml(w)}</div>`).join('')
     : `<div style="font-size:11px;color:var(--green)">✓ No geometry warnings</div>`;
+
+  const scEl=document.getElementById('balSchematic');
+  if (scEl){ try{ scEl.innerHTML = balBuildSVG(g, r.components, inp); }catch(e){ scEl.innerHTML=''; } }
 
   let tot=0, totCost=0;
   body.innerHTML = r.components.map(c=>{
