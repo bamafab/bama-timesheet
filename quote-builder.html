@@ -5786,7 +5786,16 @@ const DEFAULT_RATES = {
     // standard treads; Complex = tight tolerances, feature treads, bespoke bal
     // junctions, restricted access. install day-RATE unaffected; days scale.
     sp_cx_moderate:        { label: 'Spiral: Moderate complexity multiplier',           rate: 1.4 },
-    sp_cx_complex:         { label: 'Spiral: Complex complexity multiplier',            rate: 1.9 }
+    sp_cx_complex:         { label: 'Spiral: Complex complexity multiplier',            rate: 1.9 },
+    // F6b: install-extras buildup (per real BAMA helical cost sheet). Per-DAY
+    // costs added on top of crew×days×day-rate, plus crane (£/day × crane-days).
+    // Crane has NO default (varies by size — £1900 was a 50t); set per job.
+    sp_install_genie_per_day:  { label: 'Spiral install: genie/boom (£/day)',           rate: 160 },
+    sp_install_lodging_per_day:{ label: 'Spiral install: lodging (£/day)',               rate: 175 },
+    sp_install_van_per_day:    { label: 'Spiral install: van (£/day)',                   rate: 25 },
+    sp_install_tools_per_day:  { label: 'Spiral install: tools (£/day)',                 rate: 25 },
+    sp_install_fuel_per_day:   { label: 'Spiral install: fuel (£/day)',                  rate: 30 },
+    sp_install_crane_per_day:  { label: 'Spiral install: crane (£/day — set per job)',   rate: 0 }
   }
 };
 
@@ -7542,11 +7551,23 @@ function computeSpiralLabour(geometry, components, sc){
   const designHrs = baseDesignHrs * cxMult;
   const designCost = designHrs * designRate;
 
-  // ── INSTALL (crew × days × day-rate; days scale with complexity, rate does not) ──
+  // ── INSTALL — real BAMA buildup (per costed helical sheet):
+  //   (genie + lodging + van + tools + fuel + dayRate×crew) × days + crane×craneDays
+  //   day-RATE and per-day extras are NOT scaled by complexity; suggested DAYS are.
   const suggestedDays = Math.max(1, turns * daysPerTurn * cxMult);
   const crew = Math.max(1, Math.round(num(sc.installCrew, rr('install_crew', 2))));
-  const days = num(sc.installDays, suggestedDays);
-  const installCost = crew * days * dayRate;
+  const days = num(sc.installDays, suggestedDays);   // user override wins; else suggestion
+  const geniePerDay  = num(sc.installGeniePerDay,  rr('sp_install_genie_per_day', 160));
+  const lodgePerDay  = num(sc.installLodgingPerDay,rr('sp_install_lodging_per_day', 175));
+  const vanPerDay    = num(sc.installVanPerDay,    rr('sp_install_van_per_day', 25));
+  const toolsPerDay  = num(sc.installToolsPerDay,  rr('sp_install_tools_per_day', 25));
+  const fuelPerDay   = num(sc.installFuelPerDay,   rr('sp_install_fuel_per_day', 30));
+  const cranePerDay  = num(sc.installCranePerDay,  rr('sp_install_crane_per_day', 0));
+  const craneDays    = num(sc.installCraneDays, 0);
+  const perDayExtras = geniePerDay + lodgePerDay + vanPerDay + toolsPerDay + fuelPerDay;
+  const labourPerDay = dayRate * crew;
+  const craneCost    = cranePerDay * craneDays;
+  const installCost  = (labourPerDay + perDayExtras) * days + craneCost;
 
   const r1 = x=>Math.round(x*100)/100, r0 = x=>Math.round(x);
   return {
@@ -7556,7 +7577,11 @@ function computeSpiralLabour(geometry, components, sc){
            hrs:r1(fabHrs), rate:fabRate, cost:r0(fabCost),
            treadsByUs, nTreads, nCollars, columnM:r1(columnM), stringerM:r1(stringerM), nLandings, hasCanopy },
     design: { hrs:r1(designHrs), rate:designRate, cost:r0(designCost) },
-    install: { crew, days:r1(days), suggestedDays:r1(suggestedDays), dayRate, cost:r0(installCost) },
+    install: { crew, days:r1(days), suggestedDays:r1(suggestedDays), dayRate,
+               geniePerDay, lodgePerDay, vanPerDay, toolsPerDay, fuelPerDay,
+               perDayExtras:r0(perDayExtras), labourPerDay:r0(labourPerDay),
+               cranePerDay, craneDays:r1(craneDays), craneCost:r0(craneCost),
+               cost:r0(installCost) },
     totals: { labourCost: r0(fabCost + designCost + installCost),
               fabHrs:r1(fabHrs), designHrs:r1(designHrs) }
   };
