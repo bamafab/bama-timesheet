@@ -1840,7 +1840,7 @@ tr.drag-dragging { opacity:0.35; }
             <div class="field">
               <label>Stringers (2 off)</label>
               <select id="scStringerPreset" onchange="scApplyPreset('Stringer')" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%;margin-bottom:5px">
-                <option value="FLT 250x12" selected>FLT 250x12 (BAMA default)</option>
+                <option value="FLT 250x12" selected>FLT 12x250 (BAMA default)</option>
                 <option value="FLT 300x12">FLT 300x12</option>
                 <option value="FLT 300x15">FLT 300x15</option>
                 <option value="PFC 260x90">PFC 260x90 (channel)</option>
@@ -2128,6 +2128,16 @@ tr.drag-dragging { opacity:0.35; }
           </div>
           <div class="field"><label>Inject as area named</label><input type="text" id="spAreaName" value="Spiral staircase 1"></div>
 
+          <!-- BASIC quick-feature toggles: one-tap defaults for a guide price -->
+          <div id="spQuickFeatures" class="field">
+            <label style="font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted)">Quick features <span style="text-transform:none;letter-spacing:0;color:var(--subtle);font-size:10px">— tap to add with defaults</span></label>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px">
+              <button type="button" id="spQuickLanding" class="btn btn-sm btn-ghost" onclick="spQuickToggle('landing')" title="Add a top exit landing">+ Landing</button>
+              <button type="button" id="spQuickFlight" class="btn btn-sm btn-ghost" onclick="spQuickToggle('flight')" title="Add another 360° turn (more flights)">+ Flight (360°)</button>
+              <button type="button" id="spQuickCanopy" class="btn btn-sm btn-ghost" onclick="spQuickToggle('canopy')" title="Add a top canopy ring frame">+ Canopy</button>
+            </div>
+          </div>
+
           <!-- ADVANCED ONLY -->
           <div class="sp-adv" style="display:none">
             <div style="border-top:1px solid var(--border);margin:8px 0 4px;padding-top:8px;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted)">Walkline (BS 5395-2)</div>
@@ -2164,6 +2174,10 @@ tr.drag-dragging { opacity:0.35; }
               <div class="field"><label>Tread plate thickness (mm)</label><input type="number" id="spTreadPlate" value="6" step="0.5" oninput="spRecompute()"></div>
               <div class="field"><label>Edge fold (mm)</label><input type="number" id="spTreadFold" value="30" step="5" oninput="spRecompute()"></div>
             </div>
+            <div class="field" id="spTreadMatRateWrap">
+              <label>Laser-cut tread material (£/kg) <span style="font-size:10px;color:var(--subtle)">— chunky profiled plate, priced above plain section</span></label>
+              <input type="number" id="spTreadMaterialRate" value="4.0" step="0.1" min="0" oninput="spRecompute()" title="Applies to the weight-mode tread row only. Default £4/kg from the Q250410 anchor.">
+            </div>
             <div class="form-grid form-grid-2" style="gap:8px" id="spStiffenerWrap">
               <div class="field"><label>Stiffener ribs / tread</label><input type="number" id="spStiffenerCount" value="2" min="0" step="1" oninput="spRecompute()"></div>
               <div class="field"><label>Rib weight (kg/m)</label><input type="number" id="spStiffenerKgm" value="3.77" step="0.1" oninput="spRecompute()" title="e.g. 60×8 flat ≈ 3.77 kg/m"></div>
@@ -2191,7 +2205,7 @@ tr.drag-dragging { opacity:0.35; }
                   <option value="CHS 244.5x10">CHS 244.5×10</option>
                   <option value="__custom">Custom…</option>
                 </select>
-                <input type="text" id="spColType" list="spSteelSections" value="CHS 193.7x8" oninput="spRecompute()" style="display:none">
+                <input type="text" id="spColType" list="spSteelSections" value="CHS 193.7x8" placeholder="e.g. CHS 193.7x8" oninput="spRecompute()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%;display:none">
               </div>
               <div class="form-grid form-grid-2" style="gap:8px">
                 <div class="field"><label>Column overrun (mm) <span style="color:var(--subtle);font-size:10px">above top tread</span></label><input type="number" id="spColOverrun" value="150" step="10" oninput="spRecompute()"></div>
@@ -2205,7 +2219,7 @@ tr.drag-dragging { opacity:0.35; }
                   <option value="FLT 100x10">FLT 100×10 plate bracket</option>
                   <option value="__custom">Custom…</option>
                 </select>
-                <input type="text" id="spCollarType" list="spSteelSections" value="EA60x60x6" oninput="spRecompute()" style="display:none">
+                <input type="text" id="spCollarType" list="spSteelSections" value="EA60x60x6" placeholder="e.g. EA 60x60x6" oninput="spRecompute()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%;display:none" >
               </div>
             </div>
 
@@ -2219,13 +2233,13 @@ tr.drag-dragging { opacity:0.35; }
               <div class="field">
                 <label>Stringer section</label>
                 <select id="spStringerPreset" onchange="spApplyPreset('Stringer')" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%;margin-bottom:5px">
-                  <option value="FLT 250x12" selected>FLT 250×12 (BAMA default)</option>
-                  <option value="FLT 300x15">FLT 300×15</option>
+                  <option value="FLT 250x12" selected>FLT 12×250 (BAMA default)</option>
+                  <option value="FLT 300x15">FLT 15×300</option>
                   <option value="PFC 200x90x30">PFC 200×90×30</option>
                   <option value="RHS 200x100x8">RHS 200×100×8</option>
                   <option value="__custom">Custom…</option>
                 </select>
-                <input type="text" id="spStringer" list="spSteelSections" value="FLT 250x12" oninput="spRecompute()" style="display:none">
+                <input type="text" id="spStringer" list="spSteelSections" value="FLT 250x12" placeholder="e.g. FLT 12x250" oninput="spRecompute()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%;display:none" >
               </div>
               <div style="font-size:10px;color:var(--subtle);margin:-2px 0 6px">Helical stringers are developed-length curved members (length shown is the developed run over the rotation). Always included for helical; tick to add to a spiral.</div>
             </div>
@@ -2235,6 +2249,12 @@ tr.drag-dragging { opacity:0.35; }
               <div class="field"><label>Intermediate landings</label><input type="number" id="spNLandings" value="0" min="0" step="1" oninput="spRecompute()"></div>
               <div class="field"><label>Landing sector angle (°)</label><input type="number" id="spLandingAngle" value="90" step="5" oninput="spRecompute()"></div>
             </div>
+            <div class="field"><label>Landing shape</label>
+              <select id="spLandingShape" onchange="spRecompute()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%">
+                <option value="sector" selected>Curved sector (follows the helix)</option>
+                <option value="square">Square / rectangular deck</option>
+              </select>
+            </div>
             <div class="field"><label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px"><input type="checkbox" id="spIncludeTopLanding" onchange="spRecompute()" style="accent-color:var(--accent);width:15px;height:15px"> Include top exit landing</label></div>
             <div class="field">
               <label>Landing frame section</label>
@@ -2243,7 +2263,7 @@ tr.drag-dragging { opacity:0.35; }
                 <option value="PFC 200x90x30">PFC 200×90×30</option>
                 <option value="__custom">Custom…</option>
               </select>
-              <input type="text" id="spLandingFrame" list="spSteelSections" value="PFC 150x75x18" oninput="spRecompute()" style="display:none">
+              <input type="text" id="spLandingFrame" list="spSteelSections" value="PFC 150x75x18" placeholder="e.g. PFC 150x75x18" oninput="spRecompute()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%;display:none" >
             </div>
             <div class="field"><label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px"><input type="checkbox" id="spCanopy" onchange="spRecompute()" style="accent-color:var(--accent);width:15px;height:15px"> Top canopy ring frame</label></div>
             <div class="field" id="spCanopyTypeWrap" style="display:none">
@@ -2255,7 +2275,7 @@ tr.drag-dragging { opacity:0.35; }
                 <option value="CHS 48.3x4">CHS 48.3×4</option>
                 <option value="__custom">Custom…</option>
               </select>
-              <input type="text" id="spCanopyType" list="spSteelSections" value="SHS 50x50x3" oninput="spRecompute()" style="display:none">
+              <input type="text" id="spCanopyType" list="spSteelSections" value="SHS 50x50x3" placeholder="e.g. SHS 50x50x3" oninput="spRecompute()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%;display:none" >
             </div>
           </div>
         </div>
@@ -6100,6 +6120,11 @@ const DEFAULT_RATES = {
     // stiffeners underneath — the dominant fab line (4-5h/tread). Anchor:
     // Q250410 architectural helical = 250 fab-h / 16 treads, 50 design-h.
     // Standard rates: fab £45/h, design £50/h (same as all other modules).
+    // Treads are laser-cut chunky profiled plate — procured/priced FAR above
+    // plain section steel (£1.40/kg). Anchor: Q250410 ~£4/kg effective on the
+    // tread plate. This rate applies to the WEIGHT-mode tread row only; all
+    // other rows use the normal sectionMaterialRate. Editable per-quote.
+    sp_tread_material_rate:{ label: 'Spiral: laser-cut tread material (£/kg)',          rate: 4.0 },
     sp_fab_per_tread:      { label: 'Spiral: fab per stiffened-plate tread (hrs)',       rate: 4.5 },
     sp_fab_column_per_m:   { label: 'Spiral: fab centre column (hrs per m)',             rate: 0.8 },
     sp_fab_per_collar:     { label: 'Spiral: fab per tread collar/bracket (hrs)',        rate: 0.3 },
@@ -7678,7 +7703,8 @@ function computeSpiralStaircase(input){
       desc = `${label} (Ri${Math.round(Ri)}–Ro${Math.round(Ro)}, ${scRound1(anglePerTread)}°)`;
     }
     components.push({ role:'tread', type:desc, length:1000, qty:nTreads, kgm:scRound1(perTreadKg), _unit:'EA',
-      note:`Per-tread weight (EA): annular sector ${areaM2.toFixed(3)}m² at ${scRound1(anglePerTread)}° each${treadType==='chequer'?', incl. 6% pattern':treadType==='stiffened'?', incl. underside stiffener ribs':treadType==='timber'?', steel pan only — timber separate':''}` });
+      _materialRate: (Number(input.treadMaterialRate)>0 ? Number(input.treadMaterialRate) : null),
+      note:`Per-tread weight (EA): annular sector ${areaM2.toFixed(3)}m² at ${scRound1(anglePerTread)}° each${treadType==='chequer'?', incl. 6% pattern':treadType==='stiffened'?', incl. underside stiffener ribs':treadType==='timber'?', steel pan only — timber separate':''} · laser-cut tread rate` });
   } else {
     const perTread = Number(input.treadFixedPrice)||0;
     components.push({ role:'tread', type:`Proprietary spiral tread (${scRound1(anglePerTread)}° wedge)`, length:1000, qty:nTreads, kgm:0, _unit:'EA',
@@ -7768,6 +7794,8 @@ function computeSpiralStaircase(input){
     outerGoingMM: Math.round(outerGoing), walkGoingMM: Math.round(walkGoing),
     twoRplusG: Math.round(twoRplusG), pitchDeg: scRound1(pitchDeg),
     nLandings, canopy, columnDiaMM: colDia,
+    landingShape: (input.landingShape==='square') ? 'square' : 'sector',
+    landingAngleDeg: Number(input.landingAngleDeg)||90,
     handedness: (input.hand==='anticlockwise') ? 'anticlockwise' : 'clockwise',
     hasStringers: (addInner || addOuter), hasInnerStringer: addInner, hasOuterStringer: addOuter,
   }, components };
@@ -8015,6 +8043,31 @@ function spSetView(mode){
   const b=document.getElementById('spViewBasic'), a=document.getElementById('spViewAdv');
   if (b&&a){ b.className='btn btn-sm '+(adv?'btn-ghost':'btn-primary'); a.className='btn btn-sm '+(adv?'btn-primary':'btn-ghost'); }
 }
+
+// Basic-mode one-tap features. Each writes a sensible default into the same
+// fields the Advanced panel exposes — so toggling here and then opening Advanced
+// shows (and lets you fine-tune) exactly what was set. Guide-price convenience.
+function spQuickToggle(which){
+  if (which==='landing'){
+    const cb=document.getElementById('spIncludeTopLanding'); if(cb) cb.checked=!cb.checked;
+  } else if (which==='canopy'){
+    const cb=document.getElementById('spCanopy'); if(cb){ cb.checked=!cb.checked; _spCanopyVis(); }
+  } else if (which==='flight'){
+    // toggle one extra 360° turn on top of whatever the base rotation is
+    const el=document.getElementById('spRotation'); if(!el) return;
+    let r=Number(el.value)||270;
+    if (r>=630){ r-=360; } else { r+=360; }
+    el.value=r;
+  }
+  spRecompute();
+}
+// Reflect current state on the quick buttons (active = primary).
+function spSyncQuickButtons(){
+  const set=(id,on)=>{ const b=document.getElementById(id); if(b) b.className='btn btn-sm '+(on?'btn-primary':'btn-ghost'); };
+  set('spQuickLanding', !!document.getElementById('spIncludeTopLanding')?.checked);
+  set('spQuickCanopy',  !!document.getElementById('spCanopy')?.checked);
+  set('spQuickFlight',  (Number(document.getElementById('spRotation')?.value)||0) >= 360+270);
+}
 // structure toggle: spiral shows column + optional-stringer; helical shows well
 // + mandatory stringers and hides the column block.
 function spStructureChange(){
@@ -8039,6 +8092,7 @@ function spTreadCostModeChange(){
   show('spTreadFixedWrap', fixed);
   show('spTreadTypeWrap', !fixed);
   show('spTreadPlateWrap', !fixed);
+  show('spTreadMatRateWrap', !fixed);
   if (fixed){ const g=document.getElementById('spGratingWrap'); if(g) g.style.display='none'; }
   else spTreadTypeChange();
   spRecompute();
@@ -8121,6 +8175,7 @@ function spReadInputs(){
     treadCostMode: _spv('spTreadCostMode')||'weight',
     treadFixedPrice: Number(_spv('spTreadFixedPrice'))||0,
     treadType: _spv('spTreadType')||'stiffened',
+    treadMaterialRate: (function(){ const v=_spv('spTreadMaterialRate'); return v!=='' && !isNaN(Number(v)) ? Number(v) : ((DEFAULT_RATES.staircase&&DEFAULT_RATES.staircase.sp_tread_material_rate&&DEFAULT_RATES.staircase.sp_tread_material_rate.rate)||4.0); })(),
     treadPlateMM: Number(_spv('spTreadPlate'))||6,
     treadFoldMM: Number(_spv('spTreadFold'))||30,
     stiffenerCount: Number(_spv('spStiffenerCount'))||0,
@@ -8136,6 +8191,7 @@ function spReadInputs(){
     stringerType: _spv('spStringer')||'FLT 250x12',
     nLandings: Number(_spv('spNLandings'))||0,
     landingAngleDeg: Number(_spv('spLandingAngle'))||90,
+    landingShape: _spv('spLandingShape')||'sector',
     includeTopLanding: _spc('spIncludeTopLanding'),
     landingFrameType: _spv('spLandingFrame')||'PFC 150x75x18',
     canopy: _spc('spCanopy'),
@@ -8163,6 +8219,7 @@ function spReadInputs(){
 }
 
 function spRecompute(){
+  spSyncQuickButtons();
   const inp = spReadInputs();
   const r = computeSpiralStaircase(inp);
   _spLastResult = r;
@@ -8194,7 +8251,7 @@ function spRecompute(){
     tot += kg;
     let cost;
     if (c._fixedPrice!=null && c._fixedPrice>0){ cost = c._fixedPrice*c.qty; }
-    else { cost = kg * sectionMaterialRate(c.type); }
+    else { cost = kg * (c._materialRate>0 ? c._materialRate : sectionMaterialRate(c.type)); }
     totCost += cost;
     const lenDisp = ea ? (c._fixedPrice!=null&&c._fixedPrice>0 ? `£${c._fixedPrice}` : `${c.kgm} ea`) : `${c.length}mm`;
     return `<tr title="${escHtml(c.note||'')}">
@@ -8305,7 +8362,7 @@ function spBuildSVG(g){
   const minY=Math.min(...pts.map(p=>p.Y)), maxY=Math.max(...pts.map(p=>p.Y));
   const sw=(maxX-minX)||1, sh=(maxY-minY)||1;
   const pad=24, s=Math.min((IW-2*pad)/sw,(IH-2*pad)/sh);
-  const tx=X=> pad + (X-minX)*s, ty=Y=> IH - (pad + (Y-minY)*s);
+  const tx=X=> pad + (X-minX)*s, ty=Y=> pad + (Y-minY)*s;
   const poly=c=>c.map(p=>`${tx(p.X).toFixed(1)},${ty(p.Y).toFixed(1)}`).join(' ');
 
   let iso='';
@@ -8318,21 +8375,39 @@ function spBuildSVG(g){
     const shade = 0.30 + 0.5*(i/Math.max(1,n-1));
     iso += `<polygon points="${poly(c)}" fill="var(--accent)" fill-opacity="${(0.18+0.22*shade).toFixed(2)}" stroke="var(--accent)" stroke-width="1" stroke-opacity="0.7"/>`;
   });
-  // landing platforms: a wider deck sector at the top of the run (and intermediate)
+  // landing platforms: deck sectors at correct sweep & height. A single landing
+  // sits at the TOP of the run (top tread angle, full height); multiple landings
+  // spread evenly up the rise, each at the sweep angle reached at that height.
   if (nLandings>0){
-    const landA = (90*Math.PI/180)*hand;
+    const landDeg = (g.landingAngleDeg||90);
+    const landA = (landDeg*Math.PI/180)*hand;
+    const square = (g.landingShape==='square');
     for(let li=0; li<nLandings; li++){
-      // place landings spread up the rise (rough visual: at top, and evenly below)
       const frac = nLandings===1 ? 1 : (li+1)/nLandings;
-      const baseAngle = rot*Math.PI/180*hand*frac;
+      const baseAngle = (rot*Math.PI/180*hand)*frac;   // sweep reached at this height
       const z = totalH*frac;
-      const c=[
-        proj(Ri*Math.cos(baseAngle), Ri*Math.sin(baseAngle), z),
-        proj(Ro*Math.cos(baseAngle), Ro*Math.sin(baseAngle), z),
-        proj(Ro*Math.cos(baseAngle+landA), Ro*Math.sin(baseAngle+landA), z),
-        proj(Ri*Math.cos(baseAngle+landA), Ri*Math.sin(baseAngle+landA), z),
-      ];
-      iso += `<polygon points="${poly(c)}" fill="var(--green)" fill-opacity="0.30" stroke="var(--green)" stroke-width="1.2" stroke-opacity="0.8"/>`;
+      let c;
+      if (square){
+        // rectangular deck tangent to the outer radius at the landing angle
+        const ux=Math.cos(baseAngle), uy=Math.sin(baseAngle);     // radial dir
+        const vx=-uy, vy=ux;                                       // tangential dir
+        const W=(Ro-Ri), half=Ro*Math.sin(Math.min(landDeg,90)*Math.PI/180)/1.2;
+        const ox=(Ri+W/2)*ux, oy=(Ri+W/2)*uy;
+        c=[
+          proj(ox - (W/2)*ux - half*vx, oy - (W/2)*uy - half*vy, z),
+          proj(ox + (W/2)*ux - half*vx, oy + (W/2)*uy - half*vy, z),
+          proj(ox + (W/2)*ux + half*vx, oy + (W/2)*uy + half*vy, z),
+          proj(ox - (W/2)*ux + half*vx, oy - (W/2)*uy + half*vy, z),
+        ];
+      } else {
+        c=[
+          proj(Ri*Math.cos(baseAngle), Ri*Math.sin(baseAngle), z),
+          proj(Ro*Math.cos(baseAngle), Ro*Math.sin(baseAngle), z),
+          proj(Ro*Math.cos(baseAngle+landA), Ro*Math.sin(baseAngle+landA), z),
+          proj(Ri*Math.cos(baseAngle+landA), Ri*Math.sin(baseAngle+landA), z),
+        ];
+      }
+      iso += `<polygon points="${poly(c)}" fill="var(--green)" fill-opacity="0.30" stroke="var(--green)" stroke-width="1.2" stroke-opacity="0.85"/>`;
     }
   }
   // stringers (spiral-optional or helical): inner/outer helices
@@ -8369,13 +8444,24 @@ function spBuildSVG(g){
   }
   // landing sectors on plan
   if (nLandings>0){
-    const landA=(90*Math.PI/180)*hand;
+    const landDeg=(g.landingAngleDeg||90);
+    const landA=(landDeg*Math.PI/180)*hand;
+    const square=(g.landingShape==='square');
     for(let li=0; li<nLandings; li++){
       const frac = nLandings===1 ? 1 : (li+1)/nLandings;
       const a0 = rot*Math.PI/180*hand*frac;
-      const a1 = a0+landA;
-      const d=`M ${pol(pIn,a0)} L ${pol(pOut,a0)} A ${pOut.toFixed(1)} ${pOut.toFixed(1)} 0 0 ${hand>0?1:0} ${pol(pOut,a1)} L ${pol(pIn,a1)} A ${pIn.toFixed(1)} ${pIn.toFixed(1)} 0 0 ${hand>0?0:1} ${pol(pIn,a0)} Z`;
-      plan += `<path d="${d}" fill="var(--green)" fill-opacity="0.25" stroke="var(--green)" stroke-width="1" stroke-opacity="0.8"/>`;
+      if (square){
+        const ux=Math.cos(a0), uy=Math.sin(a0), vx=-uy*hand, vy=ux*hand;
+        const W=(pOut-pIn), half=pOut*Math.sin(Math.min(landDeg,90)*Math.PI/180)/1.2;
+        const ox=cx+(pIn+W/2)*ux, oy=cy+(pIn+W/2)*uy;
+        const pT=(sx,sy)=>`${(ox+sx).toFixed(1)},${(oy+sy).toFixed(1)}`;
+        const d=`M ${pT(-(W/2)*ux-half*vx,-(W/2)*uy-half*vy)} L ${pT((W/2)*ux-half*vx,(W/2)*uy-half*vy)} L ${pT((W/2)*ux+half*vx,(W/2)*uy+half*vy)} L ${pT(-(W/2)*ux+half*vx,-(W/2)*uy+half*vy)} Z`;
+        plan += `<path d="${d}" fill="var(--green)" fill-opacity="0.25" stroke="var(--green)" stroke-width="1" stroke-opacity="0.85"/>`;
+      } else {
+        const a1 = a0+landA;
+        const d=`M ${pol(pIn,a0)} L ${pol(pOut,a0)} A ${pOut.toFixed(1)} ${pOut.toFixed(1)} 0 0 ${hand>0?1:0} ${pol(pOut,a1)} L ${pol(pIn,a1)} A ${pIn.toFixed(1)} ${pIn.toFixed(1)} 0 0 ${hand>0?0:1} ${pol(pIn,a0)} Z`;
+        plan += `<path d="${d}" fill="var(--green)" fill-opacity="0.25" stroke="var(--green)" stroke-width="1" stroke-opacity="0.8"/>`;
+      }
     }
   }
   if (!helical) plan += `<circle cx="${cx}" cy="${cy}" r="3.5" fill="var(--accent)"/>`;
@@ -8412,7 +8498,7 @@ async function injectSpiral(){
   q.staircases.push({ areaId:id, kind:r.geometry.structure||'spiral', input:inp, geometry:r.geometry, labour:lab, ts:Date.now() });
   r.components.forEach(c=>{
     const row={ type:c.type, length:c.length, qty:c.qty, kgm:c.kgm,
-      rate: (c._fixedPrice!=null && c._fixedPrice>0) ? 0 : sectionMaterialRate(c.type),
+      rate: (c._fixedPrice!=null && c._fixedPrice>0) ? 0 : (c._materialRate>0 ? c._materialRate : sectionMaterialRate(c.type)),
       area:id, subarea:'', _unit:c._unit||'', _stairRole:c.role, _stairNote:c.note,
       _excludeFromFittingsBase:true, _excludeFromFabHours:true };
     if (c._fixedPrice!=null && c._fixedPrice>0){ row._fixedPrice=c._fixedPrice; row.kgm=0; }
