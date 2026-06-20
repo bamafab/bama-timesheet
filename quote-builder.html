@@ -1824,7 +1824,7 @@ tr.drag-dragging { opacity:0.35; }
                   <option value="PFC 200x90x30">PFC 200×90×30</option>
                   <option value="__custom">Custom…</option>
                 </select>
-                <input type="text" id="scPost" list="scSteelSections" value="SHS100x100x6.3" oninput="scRecompute()" style="display:none">
+                <input type="text" id="scPost" value="SHS100x100x6.3" placeholder="e.g. SHS 100x100x6.3" oninput="scRecompute()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%;display:none">
               </div>
               <div class="form-grid form-grid-3" style="gap:8px">
                 <div class="field"><label>Post overrun (mm) <span style="color:var(--subtle);font-size:10px">above landing</span></label><input type="number" id="scPostOverrun" value="100" min="0" step="10" oninput="scRecompute()"></div>
@@ -1847,7 +1847,7 @@ tr.drag-dragging { opacity:0.35; }
                 <option value="PFC 300x90">PFC 300x90 (channel)</option>
                 <option value="__custom">Custom…</option>
               </select>
-              <input type="text" id="scStringer" list="scSteelSections" value="FLT 250x12" oninput="scRecompute()" style="display:none">
+              <input type="text" id="scStringer" value="FLT 250x12" placeholder="e.g. FLT 12x250" oninput="scRecompute()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%;display:none">
             </div>
             <div class="field"><label>Tread plate thickness (mm)</label><input type="number" id="scTreadPlate" value="4.5" step="0.5" oninput="scRecompute()"></div>
             <div class="field">
@@ -1902,7 +1902,7 @@ tr.drag-dragging { opacity:0.35; }
                 <option value="EA75x75x6">EA75x75x6</option>
                 <option value="__custom">Custom…</option>
               </select>
-              <input type="text" id="scCleat" list="scSteelSections" value="EA50x50x5" oninput="scRecompute()" style="display:none">
+              <input type="text" id="scCleat" value="EA50x50x5" placeholder="e.g. EA 50x50x5" oninput="scRecompute()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%;display:none">
             </div>
             <div class="field"><label>Cleat length (mm)</label><input type="number" id="scCleatLen" value="150" oninput="scRecompute()"></div>
             <div style="border-top:1px solid var(--border);margin:8px 0 4px;padding-top:8px;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted)">Landings <span style="text-transform:none;letter-spacing:0;color:var(--subtle)">— count set above in Flights &amp; landings</span></div>
@@ -1932,7 +1932,7 @@ tr.drag-dragging { opacity:0.35; }
                 <option value="PFC 200x90x30">PFC 200x90x30</option>
                 <option value="__custom">Custom…</option>
               </select>
-              <input type="text" id="scLandingFrame" list="scSteelSections" value="PFC 150x75x18" oninput="scRecompute()" style="display:none">
+              <input type="text" id="scLandingFrame" value="PFC 150x75x18" placeholder="e.g. PFC 150x75x18" oninput="scRecompute()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%;display:none">
             </div>
             <div class="field">
               <label>Landing frame sides <span style="color:var(--subtle);font-size:10px">— sides not against a wall / stringer</span></label>
@@ -1971,7 +1971,7 @@ tr.drag-dragging { opacity:0.35; }
                   <option value="RHS 80x40x3">RHS 80x40x3</option>
                   <option value="__custom">Custom…</option>
                 </select>
-                <input type="text" id="scLandingJoist" list="scSteelSections" value="PFC 100x50x10" oninput="scRecompute()" style="display:none">
+                <input type="text" id="scLandingJoist" value="PFC 100x50x10" placeholder="e.g. PFC 100x50x10" oninput="scRecompute()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:13px;width:100%;display:none">
               </div>
               <div class="field"><label>Joist spacing (mm)</label><input type="number" id="scLandingJoistSpacing" value="450" min="100" step="50" oninput="scRecompute()"></div>
             </div>
@@ -7986,8 +7986,10 @@ let _scLastResult = null;
 let _scLastLabour = null;
 function openStaircaseWizard(){
   if (!getQuote()){ toast('Open or create a quote first'); return; }
-  scPopulateSteelDatalist();
   document.getElementById('staircaseModal').classList.add('active');
+  ['scPost','scStringer','scCleat','scLandingFrame','scLandingJoist'].forEach(id=>{
+    const el=document.getElementById(id); if(el) attachSteelAutocomplete(el, scRecompute);
+  });
   scSetView('basic');
   scConfigChange();
   scSelfSupportChange();
@@ -8041,8 +8043,10 @@ function spPopulateSteelDatalist(){
 }
 function openSpiralWizard(){
   if (!getQuote()){ toast('Open or create a quote first'); return; }
-  spPopulateSteelDatalist();
   document.getElementById('spiralModal').classList.add('active');
+  ['spColType','spCollarType','spStringer','spLandingFrame','spCanopyType'].forEach(id=>{
+    const el=document.getElementById(id); if(el) attachSteelAutocomplete(el, spRecompute);
+  });
   spSetView('basic');
   spStructureChange();
   spWalklineModeChange();
@@ -9685,6 +9689,40 @@ function _acHide() {
   const dd = document.getElementById('_steel_ac_dd');
   if (dd) dd.remove();
   _acIdx = -1;
+}
+
+// Generic: wire ANY text input into the same nice steel autocomplete the takeoff
+// grid uses (filtered, sorted, kg/m shown, keyboard nav, canonical snap). Used by
+// the spiral + staircase "Custom…" section inputs so they match the takeoff feel
+// instead of the raw native <datalist>. `onCommit` is called after a value is set.
+function attachSteelAutocomplete(inputEl, onCommit){
+  if (!inputEl || inputEl._acAttached) return;
+  inputEl._acAttached = true;
+  inputEl.classList.add('ac-input');
+  inputEl.setAttribute('autocomplete','off');
+  inputEl.removeAttribute('list');                 // drop native datalist dropdown
+  if (!inputEl.closest('.ac-wrap')){
+    const wrap=document.createElement('div'); wrap.className='ac-wrap';
+    inputEl.parentNode.insertBefore(wrap, inputEl); wrap.appendChild(inputEl);
+  }
+  const snap = (val, commit) => {
+    const m = findSteelProfile(val);
+    if (commit && m.confidence!=='none' && m.canonical) inputEl.value = m.canonical;
+    if (typeof onCommit==='function') onCommit();
+  };
+  inputEl.addEventListener('input', () => {
+    const results = _acFilter(inputEl.value);
+    _acShow(inputEl, results, key => {
+      inputEl.value = key;
+      snap(key, true);
+      _acHide();
+    });
+    snap(inputEl.value, false);
+  });
+  inputEl.addEventListener('keydown', e => {
+    if (_acNavigate(e, inputEl, key => { inputEl.value = key; snap(key, true); })) return;
+  });
+  inputEl.addEventListener('blur', () => { setTimeout(()=>{ snap(inputEl.value, true); }, 150); });
 }
 
 function _acNavigate(e, inputEl, onSelect) {
