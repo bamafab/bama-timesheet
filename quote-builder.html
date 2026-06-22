@@ -9557,33 +9557,98 @@ async function injectBalustrade(){
 // ---------------------------------------------------------------------------
 // Each injected item stores its computed labour on q.staircases[]/q.balustrades[].
 // Two labour shapes exist: staircase {fab:{cost},design:{cost},install:{cost}},
-// balustrade {fab,design,install} (flat). wizItemLabour() normalises both and
-// applies an optional item.labourOverride {fab,design,install} (user edits).
-// An override of 0 is honoured (only null/'' means "use engine value").
-// These figures are rolled into the global fab/design/install buckets in
-// computeQuoteTotals — never into takeoff rows, never double-counted with the
-// per-tonne estimate (wizard steel rows carry _excludeFromFabHours).
+// balustrade {fab,design,install} (flat). The override model is per-bucket:
+//   item.labourOverride = {
+//     fab:    {hrs?, rate?, amount?},   design: {hrs?, rate?, amount?},
+//     install:{crew?, days?, dayRate?, amount?} }
+// Each bucket resolves in priority order: Advanced drivers (hrs×rate, or
+// crew×days×dayRate) → Basic direct £ (amount) → engine value. A driver/amount
+// of 0 is honoured (only null/undefined falls through). Balustrade fab/design
+// have no hours (£/m banded), so only their £ (amount) and install drivers are
+// editable; install days are back-calculated from cost at default crew/dayRate
+// (same convention as the wizard Adjust panel) so the inputs reproduce engine £.
+// Rolled into global fab/design/install buckets in computeQuoteTotals — never
+// into takeoff rows, never double-counted (wizard rows carry _excludeFromFabHours).
 // ─────────────────────────────────────────────────────────────────────────
-function wizItemLabour(item){
-  if(!item) return {fab:0,design:0,install:0,_base:{fab:0,design:0,install:0}};
-  const L = item.labour || {};
-  const base = {
-    fab:     (L.fab     && typeof L.fab     === 'object') ? (L.fab.cost     || 0) : (Number(L.fab)     || 0),
-    design:  (L.design  && typeof L.design  === 'object') ? (L.design.cost  || 0) : (Number(L.design)  || 0),
-    install: (L.install && typeof L.install === 'object') ? (L.install.cost || 0) : (Number(L.install) || 0),
+
+// Engine baseline £ per bucket + the driver defaults (hrs/rate/crew/days/dayRate)
+// each bucket would use, normalised across staircase/spiral (nested) and
+// balustrade (flat) shapes.
+function wizEngineBuckets(item, kind){
+  const L = (item && item.labour) || {};
+  if (kind === 'balustrade'){
+    const bd = L.breakdown || {};
+    const installCost = Number(L.install) || 0;
+    const crew    = bd.crew    != null ? bd.crew    : 2;
+    const dayRate = bd.dayRate != null ? bd.dayRate : 280;
+    const days    = bd.days    != null ? bd.days    : (installCost>0 ? Math.round(installCost/(crew*dayRate)*10)/10 : 0);
+    return {
+      base: { fab:Number(L.fab)||0, design:Number(L.design)||0, install:installCost },
+      drivers: {
+        fab:     { rate:L.fabRate||45 },                 // no hrs — banded £/m
+        design:  { rate:L.designRate||50 },
+        install: { crew, days, dayRate }
+      },
+      hasHours: false
+    };
+  }
+  // staircase / spiral (nested)
+  const f=L.fab||{}, d=L.design||{}, ins=L.install||{};
+  return {
+    base: { fab:Number(f.cost)||0, design:Number(d.cost)||0, install:Number(ins.cost)||0 },
+    drivers: {
+      fab:     { hrs:f.hrs||0, rate:f.rate||45 },
+      design:  { hrs:d.hrs||0, rate:d.rate||50 },
+      install: { crew:ins.crew||2, days:ins.days||0, dayRate:ins.dayRate||280,
+                 perDayExtras:ins.perDayExtras||0, craneCost:ins.craneCost||0 }
+    },
+    hasHours: true
   };
-  const ov = item.labourOverride || {};
-  const pick = (k)=> (ov[k] != null && ov[k] !== '') ? Number(ov[k]) : base[k];
-  return { fab:pick('fab'), design:pick('design'), install:pick('install'), _base:base };
+}
+
+// Resolve one bucket's £ given engine baseline + this bucket's override object.
+function wizResolveBucket(kind, bucket, eng, ov){
+  if (ov == null) return eng.base[bucket];
+  // Legacy migration: an earlier build stored a plain number £ per bucket.
+  if (typeof ov === 'number') ov = { amount: ov };
+  const ed = eng.drivers[bucket];
+  if (bucket === 'install' && (ov.crew!=null || ov.days!=null || ov.dayRate!=null)){
+    const crew = ov.crew!=null    ? Number(ov.crew)    : ed.crew;
+    const days = ov.days!=null    ? Number(ov.days)    : ed.days;
+    const dr   = ov.dayRate!=null ? Number(ov.dayRate) : ed.dayRate;
+    if (kind!=='balustrade' && (ed.perDayExtras || ed.craneCost)){
+      return (crew*dr + ed.perDayExtras)*days + ed.craneCost;
+    }
+    return crew * days * dr;
+  }
+  if ((bucket==='fab'||bucket==='design') && kind!=='balustrade' && (ov.hrs!=null || ov.rate!=null)){
+    const hrs  = ov.hrs!=null  ? Number(ov.hrs)  : ed.hrs;
+    const rate = ov.rate!=null ? Number(ov.rate) : ed.rate;
+    return hrs * rate;
+  }
+  if (ov.amount!=null && ov.amount!=='') return Number(ov.amount);
+  return eng.base[bucket];
+}
+
+// Public: resolved {fab,design,install} £ for one item (engine + overrides).
+function wizItemLabour(item, kind){
+  if(!item) return {fab:0,design:0,install:0,_base:{fab:0,design:0,install:0}};
+  if(!kind) kind = (item.family || item.mode) ? 'balustrade' : 'staircase';
+  const eng = wizEngineBuckets(item, kind);
+  const ov  = item.labourOverride || {};
+  return {
+    fab:     wizResolveBucket(kind,'fab',eng,ov.fab),
+    design:  wizResolveBucket(kind,'design',eng,ov.design),
+    install: wizResolveBucket(kind,'install',eng,ov.install),
+    _base:   eng.base
+  };
 }
 
 // Sum all wizard labour across both item types — used by computeQuoteTotals.
 function wizLabourRollup(quote){
   let fab=0, design=0, install=0;
-  [...((quote&&quote.staircases)||[]), ...((quote&&quote.balustrades)||[])].forEach(it=>{
-    const l = wizItemLabour(it);
-    fab += l.fab; design += l.design; install += l.install;
-  });
+  ((quote&&quote.staircases)||[]).forEach(it=>{ const l=wizItemLabour(it,'staircase'); fab+=l.fab; design+=l.design; install+=l.install; });
+  ((quote&&quote.balustrades)||[]).forEach(it=>{ const l=wizItemLabour(it,'balustrade'); fab+=l.fab; design+=l.design; install+=l.install; });
   const r = x => Math.round(x*100)/100;
   return { fab:r(fab), design:r(design), install:r(install), total:r(fab+design+install) };
 }
@@ -9603,6 +9668,14 @@ function wizItemName(q, it){
   return 'Balustrade ' + (it.idx+1);
 }
 
+// True when this bucket of this item currently carries any override.
+function wizBucketOverridden(item, bucket){
+  const o = item.labourOverride && item.labourOverride[bucket];
+  if (o == null) return false;
+  if (typeof o === 'number') return true;            // legacy numeric override
+  return ['hrs','rate','crew','days','dayRate','amount'].some(k => o[k]!=null && o[k]!=='');
+}
+
 // Render the editable per-item labour block on the calc tab.
 function renderWizLabour(){
   const q = getQuote();
@@ -9613,76 +9686,107 @@ function renderWizLabour(){
   if (!items.length){ block.style.display='none'; list.innerHTML=''; return; }
   block.style.display='';
 
-  const adv = !!q._wizLabourAdvanced;
+  const adv  = !!q._wizLabourAdvanced;
   const fmtN = v => '£' + (Math.round(v)).toLocaleString('en-GB');
   const icon = k => k==='staircase' ? '🪜' : '🛡';
 
   let html = `<div style="display:flex;justify-content:flex-end;margin-bottom:8px">
     <label style="font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px;cursor:pointer">
-      <input type="checkbox" ${adv?'checked':''} onchange="wizLabourToggleAdvanced(this.checked)"> Advanced (show hours / makeup)
+      <input type="checkbox" ${adv?'checked':''} onchange="wizLabourToggleAdvanced(this.checked)"> Advanced — edit hours, crew, days &amp; rates
     </label></div>`;
 
   items.forEach(it=>{
-    const l = wizItemLabour(it.ref);
-    const ov = it.ref.labourOverride || {};
-    const isOv = k => (ov[k] != null && ov[k] !== '');
+    const kind = it.kind;
+    const l   = wizItemLabour(it.ref, kind);
+    const eng = wizEngineBuckets(it.ref, kind);
     const total = l.fab + l.design + l.install;
-    const key = `${it.kind}:${it.idx}`;
-    const dot = k => isOv(k) ? `<span title="Manually overridden — engine value ${fmtN(l._base[k])}" style="color:var(--accent);font-size:9px;margin-left:4px">●edited</span>` : '';
-    const cell = (k,label)=> `
+    const dot = b => wizBucketOverridden(it.ref, b)
+      ? `<span title="Overridden — engine value ${fmtN(l._base[b])}" style="color:var(--accent);font-size:9px;margin-left:4px">●edited</span>` : '';
+
+    // driver value for an input: override if set, else engine default
+    const dv = (b,field)=>{
+      const o = (it.ref.labourOverride||{})[b]||{};
+      if (o[field]!=null && o[field]!=='') return o[field];
+      return eng.drivers[b][field];
+    };
+    const r1 = x => Math.round(Number(x)*10)/10;
+
+    // BASIC: one £ box per bucket (amount override)
+    const basicCell = (b,label)=> `
       <div class="cost-row cost-row-4" style="margin-top:4px">
-        <span class="cost-label">${label}${dot(k)}</span>
+        <span class="cost-label">${label}${dot(b)}</span>
         <input type="number" class="cost-input" style="grid-column:span 2" min="0" step="1"
-          value="${Math.round(l[k])}"
-          oninput="wizLabourSet('${it.kind}',${it.idx},'${k}',this.value)"
-          title="Engine value: ${fmtN(l._base[k])}. Edit to override.">
-        <div class="cost-result">${fmtN(l[k])}</div>
+          value="${Math.round(l[b])}"
+          oninput="wizLabourSetAmount('${kind}',${it.idx},'${b}',this.value)"
+          title="Engine value: ${fmtN(l._base[b])}. Edit to override the £ directly.">
+        <div class="cost-result">${fmtN(l[b])}</div>
       </div>`;
 
-    let advMakeup = '';
-    if (adv){
-      advMakeup = `<div style="font-size:10px;color:var(--subtle);margin:6px 0 2px;line-height:1.6">${wizItemMakeup(it.ref, it.kind)}</div>`;
-    }
+    // ADVANCED: driver inputs per bucket
+    const drvNum = (b,field,ph)=> `<input type="number" class="cost-input" style="width:72px" min="0" step="${field==='days'?'0.5':(field==='hrs'?'0.5':'1')}"
+        value="${r1(dv(b,field))}" placeholder="${ph}"
+        oninput="wizLabourSetDriver('${kind}',${it.idx},'${b}','${field}',this.value)">`;
+
+    const advFabDesign = (b,label,rateDefault)=> {
+      if (kind==='balustrade'){
+        // no hours — show £ box + read-only £/m note
+        return `
+        <div style="margin-top:6px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span class="cost-label">${label}${dot(b)} <span style="color:var(--subtle);font-size:10px">(banded £/m — no hours)</span></span>
+            <div style="display:flex;align-items:center;gap:8px">
+              <input type="number" class="cost-input" style="width:90px" min="0" step="1" value="${Math.round(l[b])}"
+                oninput="wizLabourSetAmount('${kind}',${it.idx},'${b}',this.value)" title="Edit £ directly">
+              <div class="cost-result" style="min-width:70px;text-align:right">${fmtN(l[b])}</div>
+            </div>
+          </div>
+        </div>`;
+      }
+      return `
+        <div style="margin-top:6px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span class="cost-label">${label}${dot(b)}</span>
+            <div style="display:flex;align-items:center;gap:6px">
+              ${drvNum(b,'hrs','hrs')}<span style="color:var(--subtle);font-size:11px">h ×</span>
+              ${drvNum(b,'rate','£/hr')}<span style="color:var(--subtle);font-size:11px">£/hr</span>
+              <div class="cost-result" style="min-width:70px;text-align:right">${fmtN(l[b])}</div>
+            </div>
+          </div>
+        </div>`;
+    };
+
+    const advInstall = ()=> `
+      <div style="margin-top:6px">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span class="cost-label">Installation${dot('install')}</span>
+          <div style="display:flex;align-items:center;gap:6px">
+            ${drvNum('install','crew','crew')}<span style="color:var(--subtle);font-size:11px">crew ×</span>
+            ${drvNum('install','days','days')}<span style="color:var(--subtle);font-size:11px">d ×</span>
+            ${drvNum('install','dayRate','£/day')}<span style="color:var(--subtle);font-size:11px">£/day</span>
+            <div class="cost-result" style="min-width:70px;text-align:right">${fmtN(l.install)}</div>
+          </div>
+        </div>
+        ${(kind!=='balustrade' && (eng.drivers.install.perDayExtras||eng.drivers.install.craneCost))
+          ? `<div style="font-size:10px;color:var(--subtle);margin-top:3px">+ plant/crane carried from wizard: ${fmtN((eng.drivers.install.perDayExtras||0))}/day extras${eng.drivers.install.craneCost?` + ${fmtN(eng.drivers.install.craneCost)} crane`:''}</div>` : ''}
+      </div>`;
+
+    const body = adv
+      ? `${advFabDesign('fab','Fabrication')}${advFabDesign('design','Design')}${advInstall()}`
+      : `${basicCell('fab','Fabrication')}${basicCell('design','Design')}${basicCell('install','Installation')}`;
+
+    const anyOv = wizBucketOverridden(it.ref,'fab')||wizBucketOverridden(it.ref,'design')||wizBucketOverridden(it.ref,'install');
 
     html += `
       <div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px;background:rgba(255,255,255,0.02)">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-          <div style="font-size:12px;font-weight:700;color:var(--text)">${icon(it.kind)} ${escHtml(wizItemName(q,it))}</div>
+          <div style="font-size:12px;font-weight:700;color:var(--text)">${icon(kind)} ${escHtml(wizItemName(q,it))}</div>
           <div style="font-size:12px;font-weight:700;color:var(--accent)">${fmtN(total)}</div>
         </div>
-        ${advMakeup}
-        ${cell('fab','Fabrication')}
-        ${cell('design','Design')}
-        ${cell('install','Installation')}
-        ${(isOv('fab')||isOv('design')||isOv('install'))
-          ? `<div style="text-align:right;margin-top:6px"><button class="btn btn-ghost btn-sm" style="font-size:10px;padding:1px 7px" onclick="wizLabourResetItem('${it.kind}',${it.idx})">↺ Reset this item</button></div>`
-          : ''}
+        ${body}
+        ${anyOv ? `<div style="text-align:right;margin-top:6px"><button class="btn btn-ghost btn-sm" style="font-size:10px;padding:1px 7px" onclick="wizLabourResetItem('${kind}',${it.idx})">↺ Reset this item</button></div>` : ''}
       </div>`;
   });
   list.innerHTML = html;
-}
-
-// Advanced makeup string — read engine breakdown for transparency (read-only).
-function wizItemMakeup(item, kind){
-  const L = item.labour || {};
-  const r1 = x => Math.round(x*10)/10;
-  if (kind==='staircase'){
-    const f = L.fab||{}, d = L.design||{}, ins = L.install||{};
-    const parts = [];
-    if (f.hrs!=null)  parts.push(`Fab ${r1(f.hrs)}h × £${f.rate||45}`);
-    if (d.hrs!=null)  parts.push(`Design ${r1(d.hrs)}h × £${d.rate||50}`);
-    if (ins.crew!=null) parts.push(`Install ${ins.crew} crew × ${r1(ins.days)}d × £${ins.dayRate||280}`);
-    return parts.length ? parts.join('&nbsp; · &nbsp;') : 'Engine makeup not available for this item.';
-  } else {
-    const b = L.breakdown || {};
-    const parts = [];
-    if (b.mode) parts.push(`Mode: ${b.mode}`);
-    if (b.metres!=null) parts.push(`${b.metres}m`);
-    if (b.band) parts.push(`band ${b.band}`);
-    if (b.cxLevel) parts.push(`cx ${b.cxLevel}`);
-    if (L.effRatePerM!=null) parts.push(`≈ £${L.effRatePerM}/m all-in`);
-    return parts.length ? parts.join('&nbsp; · &nbsp;') : 'Engine makeup not available for this item.';
-  }
 }
 
 function wizLabourToggleAdvanced(on){
@@ -9691,29 +9795,50 @@ function wizLabourToggleAdvanced(on){
   renderWizLabour();
 }
 
-// Apply a user edit to one bucket of one item, then recalc live.
-function wizLabourSet(kind, idx, bucket, val){
-  const q = getQuote(); if(!q) return;
+function _wizGetItem(kind, idx){
+  const q = getQuote(); if(!q) return null;
   const arr = kind==='staircase' ? q.staircases : q.balustrades;
-  const item = arr && arr[idx]; if(!item) return;
+  return (arr && arr[idx]) || null;
+}
+
+// Basic mode: set a direct £ for a bucket. Clears any driver overrides on it.
+function wizLabourSetAmount(kind, idx, bucket, val){
+  const item = _wizGetItem(kind, idx); if(!item) return;
   item.labourOverride = item.labourOverride || {};
   if (val === '' || val == null){
-    delete item.labourOverride[bucket];           // empty = revert to engine
+    delete item.labourOverride[bucket];
   } else {
-    item.labourOverride[bucket] = Number(val);
+    item.labourOverride[bucket] = { amount: Number(val) };   // amount wins, drops drivers
   }
-  if (!Object.keys(item.labourOverride).length) delete item.labourOverride;
-  autosave();
-  recalcAll();   // re-renders the block + flows into fab/design/install totals
+  _wizCleanOverride(item);
+  autosave(); recalcAll();
+}
+
+// Advanced mode: set one driver (hrs/rate/crew/days/dayRate). Drops any amount.
+function wizLabourSetDriver(kind, idx, bucket, field, val){
+  const item = _wizGetItem(kind, idx); if(!item) return;
+  item.labourOverride = item.labourOverride || {};
+  const o = item.labourOverride[bucket] || {};
+  delete o.amount;                                   // editing a driver supersedes a direct £
+  if (val === '' || val == null){
+    delete o[field];
+  } else {
+    o[field] = Number(val);
+  }
+  if (Object.keys(o).length) item.labourOverride[bucket] = o;
+  else delete item.labourOverride[bucket];
+  _wizCleanOverride(item);
+  autosave(); recalcAll();
+}
+
+function _wizCleanOverride(item){
+  if (item.labourOverride && !Object.keys(item.labourOverride).length) delete item.labourOverride;
 }
 
 function wizLabourResetItem(kind, idx){
-  const q = getQuote(); if(!q) return;
-  const arr = kind==='staircase' ? q.staircases : q.balustrades;
-  const item = arr && arr[idx]; if(!item) return;
+  const item = _wizGetItem(kind, idx); if(!item) return;
   delete item.labourOverride;
-  autosave();
-  recalcAll();
+  autosave(); recalcAll();
   toast('Reverted to engine values', 'success');
 }
 
@@ -9723,8 +9848,7 @@ function wizLabourResetAll(){
   [...(q.staircases||[]), ...(q.balustrades||[])].forEach(it=>{
     if (it.labourOverride){ delete it.labourOverride; n++; }
   });
-  autosave();
-  recalcAll();
+  autosave(); recalcAll();
   toast(n ? `Cleared ${n} override${n>1?'s':''}` : 'No overrides to clear', 'success');
 }
 
@@ -19230,8 +19354,8 @@ const HELP_CONTENT = {
         <p class="h-p">When you inject a staircase, spiral or balustrade, its labour is computed by the wizard and shown in a dedicated, editable block on the Calcs tab (it only appears once at least one item is injected). This is where you tune stair and balustrade pricing.</p>
         <ul class="h-steps">
           <li><span class="h-step-num">1</span><div>Each injected item gets its own card showing <strong>Fabrication</strong>, <strong>Design</strong> and <strong>Installation</strong> £, plus the item total.</div></li>
-          <li><span class="h-step-num">2</span><div><strong>Basic</strong> — just edit the £ figure for any bucket. <strong>Advanced</strong> (the checkbox) reveals the engine makeup behind each item — fab hours × rate, install crew × days × day-rate, balustrade band &amp; £/m.</div></li>
-          <li><span class="h-step-num">3</span><div>Any figure you edit shows an <strong>●edited</strong> marker and overrides the engine for that item only. Your edit sticks (and re-prices the quote live) until you clear it or re-run the wizard. Clear the box to revert to the engine value, or use <strong>↺ Reset</strong> per item or for all.</div></li>
+          <li><span class="h-step-num">2</span><div><strong>Basic</strong> — edit the £ for any bucket directly. <strong>Advanced</strong> (the checkbox) lets you edit the underlying <strong>drivers</strong> — fab hours × £/hr, design hours × £/hr, and install crew × days × £/day — and the £ recomputes live. For balustrades, fab/design are banded £/m so they have no hours (edit the £ directly); install crew/days/rate are editable, pre-filled from the engine.</div></li>
+          <li><span class="h-step-num">3</span><div>Any figure you change shows an <strong>●edited</strong> marker and overrides the engine for that item only — your edit sticks (and re-prices the quote live) until you clear it or re-run the wizard. Editing a driver supersedes a direct £, and vice-versa. Use <strong>↺ Reset</strong> per item or for all to revert to engine values. Spiral plant/crane extras are carried through from the wizard.</div></li>
         </ul>
         <div class="h-tip">This block is the single home for stair/balustrade labour — there are no hidden labour figures. If a stair or balustrade is pricing too low or too high, this is where you see exactly which bucket is off and fix it. Deleting an injected area removes its labour from the quote automatically, so nothing is left counting in the background.</div>
       </div>
