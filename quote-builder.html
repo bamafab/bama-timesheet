@@ -11261,15 +11261,19 @@ async function deleteArea(id) {
     if (!await bamaConfirm(msg, 'Delete Area')) return;
     q.areas    = (q.areas||[]).filter(a => a.id !== id);
     q.subareas = (q.subareas||[]).filter(s => s.areaId !== id);
-    saveAll(); renderTakeoff(); updateMoveToAreaOptions();
+    purgeWizLabourForArea(q, id);
+    saveAll(); renderTakeoff(); updateMoveToAreaOptions(); recalcAll();
     toast('Area deleted');
   }
 }
 
 function showDeleteAreaModal(id, name, rowCount) {
   document.getElementById('deleteAreaModal').classList.add('active');
-  document.getElementById('deleteAreaMsg').textContent =
-    `"${name}" has ${rowCount} member${rowCount>1?'s':''} assigned.`;
+  const q = getQuote();
+  const hasWiz = q && ([...(q.staircases||[]), ...(q.balustrades||[])].some(it => it.areaId === id));
+  document.getElementById('deleteAreaMsg').innerHTML =
+    `"${escHtml(name)}" has ${rowCount} member${rowCount>1?'s':''} assigned.`
+    + (hasWiz ? `<br><span style="color:var(--accent);font-size:12px">This area has staircase/balustrade labour attached — that labour will be removed from the quote whichever option you choose.</span>` : '');
   document.getElementById('deleteAreaModal').dataset.areaId = id;
 }
 
@@ -11279,7 +11283,8 @@ function confirmDeleteAreaKeepRows() {
   (q.takeoff||[]).forEach(r => { if (r.area === id) { r.area = ''; r.subarea = ''; } });
   q.areas    = (q.areas||[]).filter(a => a.id !== id);
   q.subareas = (q.subareas||[]).filter(s => s.areaId !== id);
-  saveAll(); renderTakeoff(); updateMoveToAreaOptions();
+  purgeWizLabourForArea(q, id);
+  saveAll(); renderTakeoff(); updateMoveToAreaOptions(); recalcAll();
   document.getElementById('deleteAreaModal').classList.remove('active');
   toast('Area deleted — members moved to Unspecified');
 }
@@ -11290,9 +11295,19 @@ function confirmDeleteAreaWithRows() {
   q.takeoff  = (q.takeoff||[]).filter(r => r.area !== id);
   q.areas    = (q.areas||[]).filter(a => a.id !== id);
   q.subareas = (q.subareas||[]).filter(s => s.areaId !== id);
+  purgeWizLabourForArea(q, id);
   saveAll(); renderTakeoff(); updateMoveToAreaOptions(); recalcAll();
   document.getElementById('deleteAreaModal').classList.remove('active');
   toast('Area and all members deleted');
+}
+
+// Remove any wizard labour entries (staircase/spiral/balustrade) bound to a
+// deleted area, so their labour stops counting and no phantom card lingers in
+// the Calcs-tab labour block. Call from every area-deletion path.
+function purgeWizLabourForArea(q, id) {
+  if (!q) return;
+  if (q.staircases)  q.staircases  = q.staircases.filter(s => s.areaId !== id);
+  if (q.balustrades) q.balustrades = q.balustrades.filter(b => b.areaId !== id);
 }
 
 function updateMoveToAreaOptions() {
@@ -19218,7 +19233,7 @@ const HELP_CONTENT = {
           <li><span class="h-step-num">2</span><div><strong>Basic</strong> — just edit the £ figure for any bucket. <strong>Advanced</strong> (the checkbox) reveals the engine makeup behind each item — fab hours × rate, install crew × days × day-rate, balustrade band &amp; £/m.</div></li>
           <li><span class="h-step-num">3</span><div>Any figure you edit shows an <strong>●edited</strong> marker and overrides the engine for that item only. Your edit sticks (and re-prices the quote live) until you clear it or re-run the wizard. Clear the box to revert to the engine value, or use <strong>↺ Reset</strong> per item or for all.</div></li>
         </ul>
-        <div class="h-tip">This block is the single home for stair/balustrade labour — there are no hidden labour figures. If a stair or balustrade is pricing too low or too high, this is where you see exactly which bucket is off and fix it.</div>
+        <div class="h-tip">This block is the single home for stair/balustrade labour — there are no hidden labour figures. If a stair or balustrade is pricing too low or too high, this is where you see exactly which bucket is off and fix it. Deleting an injected area removes its labour from the quote automatically, so nothing is left counting in the background.</div>
       </div>
 
       <div class="h-section">
