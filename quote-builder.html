@@ -17567,12 +17567,15 @@ function buildTcHtml(q) {
   const _projectTCsRaw = (q.projectTCs || '').trim();
 
   // Section 01 — Project Specific Clarifications
-  // Render BOTH the (editable) AI clarification cards AND any manual free-text.
-  // Previously this was an either/or (else if) which meant edits to projectTCs
-  // were ignored whenever helperAnalysis.tc_notes existed — the stuck-line bug.
+  // SINGLE SOURCE OF TRUTH. When editable AI clarification cards exist, render
+  // ONLY the cards (edits/deletes write back into tc_notes, so what you see is
+  // what prints). The manual projectTCs free-text box is a FALLBACK used only
+  // when there are no cards — e.g. a hand-built quote with no Helper analysis.
+  // Rendering both at once caused Section 01 to duplicate when the old push
+  // button had flattened tc_notes into projectTCs.
   let _s1Rows = '';
   if (_haTcNotes.length) {
-    _s1Rows += _haTcNotes.map(t => {
+    _s1Rows = _haTcNotes.map(t => {
       const heading = _stripMarkers(t.heading || 'Note');
       const text    = _stripMarkers(t.text    || '');
       if (!heading && !text) return '';
@@ -17586,9 +17589,8 @@ function buildTcHtml(q) {
           <div style="font-size:9.5px;color:#333;line-height:1.6">${escHtml(text)}</div>
         </div>`;
     }).filter(Boolean).join('');
-  }
-  if (_projectTCsRaw) {
-    _s1Rows += _projectTCsRaw
+  } else if (_projectTCsRaw) {
+    _s1Rows = _projectTCsRaw
       .split(/\n{2,}/)
       .map(s => _stripMarkers(s))
       .filter(Boolean)
@@ -19533,7 +19535,7 @@ const HELP_CONTENT = {
           <li><span class="h-step-num">3</span><div><strong>T&Cs & Exclusions</strong> — project-specific clarifications shown as editable cards, plus exclusions and commercial notes.</div></li>
           <li><span class="h-step-num">4</span><div><strong>Scope draft</strong> — suggested scope paragraph to paste into the Header tab.</div></li>
         </ul>
-        <div class="h-tip">The <strong>Project Specific Clarifications</strong> cards under 📜 T&Cs are fully editable — change the heading or text inline, or delete a card with ✗. These render straight into <strong>Section 01</strong> of the quote PDF, so what you see is what prints. Edits save automatically and survive reopening the quote.<br><br>The <strong>→ T&Cs → Quote</strong> button now pushes only the <em>exclusions and commercial notes</em> into the Header free-text box (the clarification cards are already live in the PDF). Re-running the analysis will warn you before overwriting any cards you've edited.</div>
+        <div class="h-tip">The <strong>Project Specific Clarifications</strong> cards under 📜 T&Cs are fully editable — change the heading or text inline, or delete a card with ✗. These cards are the single source for <strong>Section 01</strong> of the quote PDF, so what you see is what prints. Edits save automatically and survive reopening the quote.<br><br>The Header tab's free-text T&Cs box is only used when a quote has <em>no</em> clarification cards (e.g. a hand-built quote). The <strong>→ Exclusions & Notes → Quote</strong> button pushes exclusions and commercial notes into that box for reference. Re-running the analysis will warn you before overwriting any cards you've edited.</div>
       </div>
       <div class="h-section">
         <div class="h-heading"><span class="h-icon">❓</span> FAQ</div>
