@@ -6520,6 +6520,7 @@ async function loadQuotesFromSQL() {
       date:       r.date_created,
       dateSent:   r.date_sent   || '',
       decisionDue: r.decision_due || '',
+      chasingDate: r.chasing_date || '',
       _fromSQL:   true
     }));
     renderSidebar();
