@@ -1543,7 +1543,7 @@ tr.drag-dragging { opacity:0.35; }
           <!-- Action bar -->
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
             <button class="btn btn-ghost btn-sm" onclick="helperDraftScope()" title="Send scope draft to Header tab comments">📝 Draft Scope → Header</button>
-            <button class="btn btn-ghost btn-sm" onclick="helperPushTCs()" title="Push T&Cs and exclusions to quote">📋 T&amp;Cs → Quote</button>
+            <button class="btn btn-ghost btn-sm" onclick="helperPushTCs()" title="Push exclusions and commercial notes to the Header T&Cs box (clarifications render to the PDF automatically)">📋 Exclusions &amp; Notes → Quote</button>
             <button class="btn btn-primary btn-sm" onclick="helperApplyStructure()" title="Create takeoff areas from suggested quote structure">📐 Apply Structure to Quote</button>
             <button class="btn btn-ghost btn-sm" onclick="helperExportPDF()">📄 Export Briefing PDF</button>
             <span id="helperScopeBadge" style="margin-left:auto;font-size:11px;font-weight:600;padding:3px 9px;border-radius:20px;border:1px solid var(--accent);color:var(--accent);display:none"></span>
@@ -16211,6 +16211,16 @@ function qhUpdateStaleHint() {
 async function runQuoteHelper() {
   if (!_helperFiles.length) { toast('Upload at least one document first', 'error'); return; }
 
+  // Warn before clobbering manually-edited T&C cards (Section 01 source of truth).
+  const _qEdit = getQuote();
+  const _existingTcs = _qEdit?.helperAnalysis?.tc_notes || [];
+  const _hasEdits = _existingTcs.some(t => t && t._edited);
+  if (_hasEdits) {
+    if (!confirm('You have edited the Project Specific Clarifications (T&C) cards.\n\nRe-running the analysis will overwrite them with fresh AI output and your edits will be lost.\n\nContinue?')) {
+      return;
+    }
+  }
+
   const trade   = document.getElementById('helperTrade')?.value || 'structural steelwork, balustrades, handrails';
   const focus   = document.getElementById('helperFocus')?.value || '';
   const q       = getQuote();
@@ -16529,11 +16539,11 @@ function renderHelperOutput(data) {
   document.getElementById('helperTcShort').innerHTML = tcs.length
     ? tcs.slice(0,1).map(t => `<div style="font-size:13px"><strong>${escHtml(t.heading||'')}</strong> — ${escHtml(t.text||'').substring(0,120)}${(t.text||'').length>120?'…':''}</div>`).join('') + (tcs.length>1?`<div style="font-size:11px;color:var(--muted);margin-top:4px">+ ${tcs.length-1} more — click to expand</div>`:'')
     : '<span style="color:var(--muted);font-size:13px">No specific T&C flags</span>';
-  let tcFull = tcs.map(t =>
-    `<div style="padding:8px 0;border-bottom:1px solid var(--border)">
-      <div style="font-size:13px;font-weight:600;color:var(--text)">${escHtml(t.heading||'')}</div>
-      <div style="font-size:12px;color:var(--muted);margin-top:3px">${escHtml(t.text||'')}</div>
-    </div>`).join('');
+  let tcFull = `<div style="font-size:11px;color:var(--muted);margin-bottom:8px;line-height:1.5">
+      These cards populate <strong>Section 01 — Project Specific Clarifications</strong> in the quote PDF.
+      Edit the text directly, or delete a card with ✗. Changes save automatically and appear in the PDF.
+    </div>
+    <div id="helperTcCards">${tcs.map((t, i) => qhTcCardHtml(t, i)).join('')}</div>`;
   if (excs.length) {
     tcFull += `<div style="margin-top:10px"><div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px">EXCLUSIONS</div>`
       + excs.map(e => `<div style="display:flex;gap:8px;padding:3px 0;font-size:12px;color:var(--muted)"><span>✗</span><span>${escHtml(e)}</span></div>`).join('') + '</div>';
@@ -16578,13 +16588,66 @@ function toggleHelperTile(name) {
   }
 }
 
+// ── Editable T&C clarification cards (Section 01 source of truth) ───────────
+// Each card binds to q.helperAnalysis.tc_notes[i]. Editing sets _edited so the
+// re-run guard can warn before clobbering. Cards render live into the PDF via
+// buildTcHtml — no "push" needed for these.
+function qhTcCardHtml(t, i) {
+  const heading = (t && t.heading) || '';
+  const text    = (t && t.text) || '';
+  return `<div class="qh-tc-card" data-idx="${i}" style="position:relative;padding:10px 12px;margin-bottom:8px;background:var(--surface);border:1px solid var(--border);border-radius:6px">
+      <button type="button" title="Delete this clarification"
+        onclick="event.stopPropagation();qhDeleteTcCard(${i})"
+        style="position:absolute;top:6px;right:6px;background:none;border:none;color:var(--muted);font-size:16px;line-height:1;cursor:pointer;padding:2px 6px">✗</button>
+      <input type="text" value="${escHtml(heading)}" placeholder="Heading"
+        onclick="event.stopPropagation()"
+        oninput="qhEditTcCard(${i},'heading',this.value)"
+        style="width:calc(100% - 28px);background:transparent;border:none;border-bottom:1px solid transparent;color:var(--text);font-size:13px;font-weight:600;padding:2px 0;outline:none"
+        onfocus="this.style.borderBottomColor='var(--accent)'" onblur="this.style.borderBottomColor='transparent'">
+      <textarea rows="3" placeholder="Clarification text"
+        onclick="event.stopPropagation()"
+        oninput="qhEditTcCard(${i},'text',this.value)"
+        style="width:100%;background:transparent;border:1px solid transparent;border-radius:4px;color:var(--muted);font-size:12px;line-height:1.6;margin-top:4px;padding:4px;outline:none;resize:vertical;font-family:inherit"
+        onfocus="this.style.borderColor='var(--border)'" onblur="this.style.borderColor='transparent'">${escHtml(text)}</textarea>
+    </div>`;
+}
+
+function qhEditTcCard(idx, field, value) {
+  const q = getQuote();
+  const notes = q?.helperAnalysis?.tc_notes;
+  if (!notes || !notes[idx]) return;
+  notes[idx][field] = value;
+  notes[idx]._edited = true;
+  if (window._helperParsed?.tc_notes?.[idx]) {
+    window._helperParsed.tc_notes[idx][field] = value;
+    window._helperParsed.tc_notes[idx]._edited = true;
+  }
+  if (typeof autosave === 'function') autosave(); else saveAll();
+}
+
+function qhDeleteTcCard(idx) {
+  const q = getQuote();
+  const notes = q?.helperAnalysis?.tc_notes;
+  if (!notes || !notes[idx]) return;
+  const label = (notes[idx].heading || notes[idx].text || 'this clarification').toString().substring(0, 60);
+  if (!confirm(`Delete clarification "${label}"?\n\nIt will be removed from the quote PDF and won't regenerate unless you re-run the analysis.`)) return;
+  notes.splice(idx, 1);
+  if (window._helperParsed?.tc_notes) window._helperParsed.tc_notes = notes;
+  if (typeof autosave === 'function') autosave(); else saveAll();
+  // Re-render the cards so indices stay in sync
+  const wrap = document.getElementById('helperTcCards');
+  if (wrap) wrap.innerHTML = notes.map((t, i) => qhTcCardHtml(t, i)).join('');
+  toast('Clarification deleted', 'success');
+}
+
+// Push button now handles ONLY exclusions + commercial-risk notes into the
+// Header free-text box. The tc_notes cards render directly into Section 01.
 function helperPushTCs() {
   const q = getQuote();
   if (!q) { toast('No active quote', 'error'); return; }
   const parsed = window._helperParsed;
   if (!parsed) { toast('Run analysis first', 'error'); return; }
 
-  const tcs   = parsed.tc_notes   || [];
   const excs  = parsed.exclusions || [];
   const risks = (parsed.contract_risks || []).filter(r => r.risk);
 
@@ -16596,13 +16659,6 @@ function helperPushTCs() {
     text += '\n';
   }
 
-  if (tcs.length) {
-    tcs.forEach(t => {
-      text += `${t.heading || 'Note'}: ${t.text || ''}\n`;
-    });
-    text += '\n';
-  }
-
   if (risks.length) {
     text += 'COMMERCIAL NOTES:\n';
     risks.slice(0, 4).forEach(r => {
@@ -16611,7 +16667,7 @@ function helperPushTCs() {
   }
 
   text = text.trim();
-  if (!text) { toast('No T&C content found in analysis', 'error'); return; }
+  if (!text) { toast('No exclusions or commercial notes to push — clarifications render to the PDF automatically.', 'error'); return; }
 
   const el = document.getElementById('hProjectTCs');
   if (el) {
@@ -16627,7 +16683,7 @@ function helperPushTCs() {
   if (headerBtn) headerBtn.classList.add('active');
   document.getElementById('tab-header')?.classList.add('active');
 
-  toast('T&Cs pushed to Header — review and edit as needed', 'success');
+  toast('Exclusions & commercial notes pushed to Header — review and edit as needed', 'success');
 }
 
 async function helperApplyStructure() {
@@ -17511,9 +17567,12 @@ function buildTcHtml(q) {
   const _projectTCsRaw = (q.projectTCs || '').trim();
 
   // Section 01 — Project Specific Clarifications
+  // Render BOTH the (editable) AI clarification cards AND any manual free-text.
+  // Previously this was an either/or (else if) which meant edits to projectTCs
+  // were ignored whenever helperAnalysis.tc_notes existed — the stuck-line bug.
   let _s1Rows = '';
   if (_haTcNotes.length) {
-    _s1Rows = _haTcNotes.map(t => {
+    _s1Rows += _haTcNotes.map(t => {
       const heading = _stripMarkers(t.heading || 'Note');
       const text    = _stripMarkers(t.text    || '');
       if (!heading && !text) return '';
@@ -17527,8 +17586,9 @@ function buildTcHtml(q) {
           <div style="font-size:9.5px;color:#333;line-height:1.6">${escHtml(text)}</div>
         </div>`;
     }).filter(Boolean).join('');
-  } else if (_projectTCsRaw) {
-    _s1Rows = _projectTCsRaw
+  }
+  if (_projectTCsRaw) {
+    _s1Rows += _projectTCsRaw
       .split(/\n{2,}/)
       .map(s => _stripMarkers(s))
       .filter(Boolean)
@@ -19470,10 +19530,10 @@ const HELP_CONTENT = {
         <ul class="h-steps">
           <li><span class="h-step-num">1</span><div><strong>Pricing items</strong> — everything that needs a price, extracted from the tender.</div></li>
           <li><span class="h-step-num">2</span><div><strong>Contract risks</strong> — LDs, design liability, retention, programme risk, access constraints.</div></li>
-          <li><span class="h-step-num">3</span><div><strong>T&Cs & Exclusions</strong> — project-specific notes ready to push into the quote header.</div></li>
+          <li><span class="h-step-num">3</span><div><strong>T&Cs & Exclusions</strong> — project-specific clarifications shown as editable cards, plus exclusions and commercial notes.</div></li>
           <li><span class="h-step-num">4</span><div><strong>Scope draft</strong> — suggested scope paragraph to paste into the Header tab.</div></li>
         </ul>
-        <div class="h-tip">After analysis, click <strong>→ T&Cs → Quote</strong> to push AI-generated exclusions directly into the Header. Always review before sending.</div>
+        <div class="h-tip">The <strong>Project Specific Clarifications</strong> cards under 📜 T&Cs are fully editable — change the heading or text inline, or delete a card with ✗. These render straight into <strong>Section 01</strong> of the quote PDF, so what you see is what prints. Edits save automatically and survive reopening the quote.<br><br>The <strong>→ T&Cs → Quote</strong> button now pushes only the <em>exclusions and commercial notes</em> into the Header free-text box (the clarification cards are already live in the PDF). Re-running the analysis will warn you before overwriting any cards you've edited.</div>
       </div>
       <div class="h-section">
         <div class="h-heading"><span class="h-icon">❓</span> FAQ</div>
@@ -19482,7 +19542,7 @@ const HELP_CONTENT = {
         <div class="h-faq"><div class="h-q">Can I upload multiple documents?</div>
         <div class="h-a">Yes — one at a time. Each upload adds to the analysis and the system cross-references between them.</div></div>
         <div class="h-faq"><div class="h-q">The AI missed something important</div>
-        <div class="h-a">Always read the tender yourself — especially preliminaries and special conditions. Add anything missed manually in the T&Cs box.</div></div>
+        <div class="h-a">Always read the tender yourself — especially preliminaries and special conditions. Edit the clarification cards directly, or add free-text notes in the Header T&Cs box.</div></div>
         <div class="h-faq"><div class="h-q">Analysis failed or returned garbled output</div>
         <div class="h-a">Try converting the PDF to plain format, or upload as a screenshot. If it persists, the AI service may be briefly busy — try again in a few minutes.</div></div>
       </div>`
