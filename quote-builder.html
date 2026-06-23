@@ -5642,7 +5642,7 @@ function findSteelProfile(raw) {
 
   // b) If no alias matched, try known 2-5 letter prefix tokens
   if (!prefix) {
-    const knownPrefixes = ['SHS','RHS','CHS','PFC','RSA','UKB','UKC','FLT','FLAT','PLT','UB','UC','EA'];
+    const knownPrefixes = ['SHS','RHS','CHS','PFC','RSA','UKB','UKC','FLT','FLAT','PLT','UB','UC','UA','EA'];
     for (const p of knownPrefixes) {
       // prefix at start: "UB203..." or "UB 203..."
       if (s.startsWith(p)) {
@@ -6699,7 +6699,7 @@ async function newQuote() {
     comments: '', qScope: '', boqRef: '', boqLumpDesc: '', boqFile: '', projectTCs: '',
     takeoff: [], areas: [], subareas: [],
     pricingMode: 'global', apportionBasis: 'tonnage', areaPricing: {}, activeAreaId: '',
-    areaPricingLocks: [], areaRebalanceMode: 'fixed',
+    areaPricingLocks: [], areaFullLocks: [], areaRebalanceMode: 'fixed',
     fittingsPct: 10, fittingsRate: 1.30, miscMaterial: 0, miscMaterialNote: '',
     materialLinks: [],
     instDays: 0, instOperatives: 2, globalDays: true,
@@ -7306,6 +7306,7 @@ function loadQuoteEditor() {
   // ── 2b per-area pricing field backfill (older quotes) ────────────────────
   if (q.areaPricing == null)      q.areaPricing = {};
   if (!Array.isArray(q.areaPricingLocks)) q.areaPricingLocks = [];
+  if (!Array.isArray(q.areaFullLocks)) q.areaFullLocks = [];
   if (q.areaRebalanceMode !== 'float') q.areaRebalanceMode = 'fixed';
   if (q.pricingMode !== 'area')   q.pricingMode = 'global';
 
@@ -9718,14 +9719,15 @@ function renderWizLabour(){
         <input type="number" class="cost-input" style="grid-column:span 2" min="0" step="1"
           value="${Math.round(l[b])}"
           oninput="wizLabourSetAmount('${kind}',${it.idx},'${b}',this.value)"
+          onblur="renderWizLabour()"
           title="Engine value: ${fmtN(l._base[b])}. Edit to override the £ directly.">
-        <div class="cost-result">${fmtN(l[b])}</div>
+        <div class="cost-result" id="wlres-${kind}-${it.idx}-${b}">${fmtN(l[b])}</div>
       </div>`;
 
     // ADVANCED: driver inputs per bucket
     const drvNum = (b,field,ph)=> `<input type="number" class="cost-input" style="width:72px" min="0" step="${field==='days'?'0.5':(field==='hrs'?'0.5':'1')}"
         value="${r1(dv(b,field))}" placeholder="${ph}"
-        oninput="wizLabourSetDriver('${kind}',${it.idx},'${b}','${field}',this.value)">`;
+        oninput="wizLabourSetDriver('${kind}',${it.idx},'${b}','${field}',this.value)" onblur="renderWizLabour()">`;
 
     const advFabDesign = (b,label,rateDefault)=> {
       if (kind==='balustrade'){
@@ -9736,8 +9738,8 @@ function renderWizLabour(){
             <span class="cost-label">${label}${dot(b)} <span style="color:var(--subtle);font-size:10px">(banded £/m — no hours)</span></span>
             <div style="display:flex;align-items:center;gap:8px">
               <input type="number" class="cost-input" style="width:90px" min="0" step="1" value="${Math.round(l[b])}"
-                oninput="wizLabourSetAmount('${kind}',${it.idx},'${b}',this.value)" title="Edit £ directly">
-              <div class="cost-result" style="min-width:70px;text-align:right">${fmtN(l[b])}</div>
+                oninput="wizLabourSetAmount('${kind}',${it.idx},'${b}',this.value)" onblur="renderWizLabour()" title="Edit £ directly">
+              <div class="cost-result" id="wlres-${kind}-${it.idx}-${b}" style="min-width:70px;text-align:right">${fmtN(l[b])}</div>
             </div>
           </div>
         </div>`;
@@ -9749,7 +9751,7 @@ function renderWizLabour(){
             <div style="display:flex;align-items:center;gap:6px">
               ${drvNum(b,'hrs','hrs')}<span style="color:var(--subtle);font-size:11px">h ×</span>
               ${drvNum(b,'rate','£/hr')}<span style="color:var(--subtle);font-size:11px">£/hr</span>
-              <div class="cost-result" style="min-width:70px;text-align:right">${fmtN(l[b])}</div>
+              <div class="cost-result" id="wlres-${kind}-${it.idx}-${b}" style="min-width:70px;text-align:right">${fmtN(l[b])}</div>
             </div>
           </div>
         </div>`;
@@ -9763,7 +9765,7 @@ function renderWizLabour(){
             ${drvNum('install','crew','crew')}<span style="color:var(--subtle);font-size:11px">crew ×</span>
             ${drvNum('install','days','days')}<span style="color:var(--subtle);font-size:11px">d ×</span>
             ${drvNum('install','dayRate','£/day')}<span style="color:var(--subtle);font-size:11px">£/day</span>
-            <div class="cost-result" style="min-width:70px;text-align:right">${fmtN(l.install)}</div>
+            <div class="cost-result" id="wlres-${kind}-${it.idx}-install" style="min-width:70px;text-align:right">${fmtN(l.install)}</div>
           </div>
         </div>
         ${(kind!=='balustrade' && (eng.drivers.install.perDayExtras||eng.drivers.install.craneCost))
@@ -9780,13 +9782,41 @@ function renderWizLabour(){
       <div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px;background:rgba(255,255,255,0.02)">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
           <div style="font-size:12px;font-weight:700;color:var(--text)">${icon(kind)} ${escHtml(wizItemName(q,it))}</div>
-          <div style="font-size:12px;font-weight:700;color:var(--accent)">${fmtN(total)}</div>
+          <div style="font-size:12px;font-weight:700;color:var(--accent)" id="wltot-${kind}-${it.idx}">${fmtN(total)}</div>
         </div>
         ${body}
         ${anyOv ? `<div style="text-align:right;margin-top:6px"><button class="btn btn-ghost btn-sm" style="font-size:10px;padding:1px 7px" onclick="wizLabourResetItem('${kind}',${it.idx})">↺ Reset this item</button></div>` : ''}
       </div>`;
   });
   list.innerHTML = html;
+}
+
+// Patch the £ result cells + per-item + block totals WITHOUT rebuilding the
+// input DOM. Called from recalcAll on every keystroke so the field you are
+// typing into keeps focus (full renderWizLabour blows the inputs away — that
+// was the "click → one digit → click → next digit" bug). Structural changes
+// (toggle advanced, inject/delete, reset) still call renderWizLabour.
+function updateWizLabourTotals(){
+  const q = getQuote(); if(!q) return;
+  const items = wizLabourItems(q);
+  if (!items.length) return;
+  const fmtN = v => '£' + (Math.round(v)).toLocaleString('en-GB');
+  let blockTot = 0;
+  items.forEach(it=>{
+    const kind = it.kind;
+    const l = wizItemLabour(it.ref, kind);
+    ['fab','design','install'].forEach(b=>{
+      const el = document.getElementById(`wlres-${kind}-${it.idx}-${b}`);
+      if (el) el.textContent = fmtN(l[b]);
+    });
+    const tot = l.fab + l.design + l.install;
+    const tEl = document.getElementById(`wltot-${kind}-${it.idx}`);
+    if (tEl) tEl.textContent = fmtN(tot);
+    blockTot += tot;
+  });
+  // The ●edited dots / reset buttons only change when an override is added or
+  // cleared, not on each digit; a one-shot full render on those events keeps
+  // them correct. Here we just touch the live numbers.
 }
 
 function wizLabourToggleAdvanced(on){
@@ -9838,7 +9868,7 @@ function _wizCleanOverride(item){
 function wizLabourResetItem(kind, idx){
   const item = _wizGetItem(kind, idx); if(!item) return;
   delete item.labourOverride;
-  autosave(); recalcAll();
+  autosave(); recalcAll(); renderWizLabour();
   toast('Reverted to engine values', 'success');
 }
 
@@ -9848,7 +9878,7 @@ function wizLabourResetAll(){
   [...(q.staircases||[]), ...(q.balustrades||[])].forEach(it=>{
     if (it.labourOverride){ delete it.labourOverride; n++; }
   });
-  autosave(); recalcAll();
+  autosave(); recalcAll(); renderWizLabour();
   toast(n ? `Cleared ${n} override${n>1?'s':''}` : 'No overrides to clear', 'success');
 }
 
@@ -12808,9 +12838,13 @@ function renderAreaBreakdown() {
   bd.rows.forEach(r => {
     const isActive = r.id === q.activeAreaId;
     const anyLock = AREA_PRICE_CATS.some(c => (q.areaPricingLocks||[]).includes(r.id+'|'+c) || (q.areaPricing[r.id] && q.areaPricing[r.id][c] != null));
+    const areaLocked = (q.areaFullLocks||[]).includes(r.id);
+    const lockBtn = `<span onclick="event.stopPropagation();toggleAreaLock('${escHtml(r.id)}')"
+        title="${areaLocked ? 'Area locked — click to release' : 'Lock this area price (held when you add areas)'}"
+        style="cursor:pointer;font-size:13px;margin-right:5px;${areaLocked ? '' : 'opacity:0.35'}">${areaLocked ? '🔒' : '🔓'}</span>`;
     html += `<tr onclick="onActiveAreaChange('${escHtml(r.id)}')" style="border-top:1px solid var(--border);cursor:pointer;${isActive ? 'background:var(--surface-2,rgba(255,255,255,0.04))' : ''}">
       <td style="padding:5px 3px;text-align:left">
-        <div style="color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(r.name)}${anyLock ? ' <span title="has manual overrides" style="color:var(--accent)">●</span>' : ''}</div>
+        <div style="color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${lockBtn}${escHtml(r.name)}${anyLock && !areaLocked ? ' <span title="has manual overrides" style="color:var(--accent)">●</span>' : ''}</div>
         <div style="font-size:10px;color:var(--subtle);font-family:var(--font-mono)">${(r.kg/1000).toFixed(2)} t</div>
       </td>
       ${money(r.material)}
@@ -12882,6 +12916,18 @@ function renderAreaDrawer() {
 
   let html = `<div style="font-size:11px;color:var(--subtle);font-family:var(--font-mono);margin-bottom:14px">${(row.kg/1000).toFixed(2)} t · ${(row.share*100).toFixed(1)}% of tonnage</div>`;
 
+  const areaLocked = (q.areaFullLocks||[]).includes(id);
+  html += `<div class="toggle-row" style="margin:0 0 14px;padding:8px 10px;background:var(--surface);border:1px solid ${areaLocked?'var(--accent)':'var(--border)'};border-radius:8px">
+      <div>
+        <div class="toggle-label" style="font-size:12px">${areaLocked?'🔒':'🔓'} Lock this area's price</div>
+        <div class="toggle-sub" style="font-size:10px">${areaLocked ? 'Held when you add or remove other areas. You can still edit it here.' : 'Pins these figures so new areas cannot make them drift'}</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" ${areaLocked?'checked':''} onchange="toggleAreaLock('${escHtml(id)}')">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>`;
+
   AREA_PRICE_CATS.forEach(c => {
     const locked = locks.includes(id+'|'+c) || (ov[c] != null && ov[c] !== '');
     const val = f2(row.cats[c]);
@@ -12939,6 +12985,53 @@ function resetAreaCost(cat) {
   saveAll();
   renderAreaBreakdown();
   renderAreaDrawer();
+}
+
+// True when the whole area is locked (all editable cats pinned at their
+// current value). Locked areas don't drift when a new area is added — their
+// figures are held; the rebalance pool comes only from unlocked areas.
+function isAreaLocked(id){
+  const q = getQuote(); if (!q) return false;
+  return (q.areaFullLocks || []).includes(id);
+}
+
+// Lock: snapshot this area's CURRENT computed figures (auto or already-edited)
+// into areaPricing as overrides and pin every cat, so adding/removing other
+// areas can't move it. Unlock: release the pins (figures revert to auto-share).
+// You can still hand-edit a locked area afterwards — setAreaCost just updates
+// the pinned value (the lock survives).
+function toggleAreaLock(id){
+  const q = getQuote(); if (!q) return;
+  if (id == null) return;
+  const locks = new Set(q.areaFullLocks || []);
+  if (locks.has(id)){
+    // UNLOCK — drop the pins for this area's cats and the area flag.
+    locks.delete(id);
+    if (q.areaPricing[id]){
+      AREA_PRICE_CATS.forEach(c => { delete q.areaPricing[id][c]; });
+      if (!Object.keys(q.areaPricing[id]).length) delete q.areaPricing[id];
+    }
+    q.areaPricingLocks = (q.areaPricingLocks||[]).filter(k => !k.startsWith(id + '|'));
+    toast('Area unlocked — figures will rebalance again', 'success');
+  } else {
+    // LOCK — capture current per-cat figures and pin them.
+    const bd  = computeAreaBreakdown(q);
+    const row = bd.rows.find(r => r.id === id);
+    if (!row){ toast('Nothing to lock for this area', 'error'); return; }
+    if (!q.areaPricing[id]) q.areaPricing[id] = {};
+    const lockList = new Set(q.areaPricingLocks || []);
+    AREA_PRICE_CATS.forEach(c => {
+      q.areaPricing[id][c] = r2(row.cats[c]);
+      lockList.add(id + '|' + c);
+    });
+    q.areaPricingLocks = [...lockList];
+    locks.add(id);
+    toast('Area locked — its price is held when you add areas', 'success');
+  }
+  q.areaFullLocks = [...locks];
+  saveAll();
+  renderAreaBreakdown();
+  if (document.getElementById('areaDrawer')?.classList.contains('open')) renderAreaDrawer();
 }
 
 function recalcAll() {
@@ -13060,10 +13153,12 @@ function recalcAll() {
   document.getElementById('total-prelims').textContent      = fmt(prelims);
   document.getElementById('total-purlins').textContent      = fmt(purlins);
 
-  // Staircase & balustrade labour block (editable per-item overrides)
+  // Staircase & balustrade labour block (editable per-item overrides).
+  // Patch totals in place — full renderWizLabour rebuilds inputs and steals
+  // focus mid-type. Structural changes call renderWizLabour explicitly.
   const _wlTotEl = document.getElementById('total-wizlabour');
   if (_wlTotEl) _wlTotEl.textContent = fmt(C.stairLabourTotal || 0);
-  renderWizLabour();
+  updateWizLabourTotals();
 
   // summary — values come from computeQuoteTotals (C)
   const totalKg  = C.totalKg;
@@ -19497,6 +19592,16 @@ const HELP_CONTENT = {
         <div class="h-a">Zeroes that block and hides it from the client PDF. Use for supply-only jobs or where the client handles their own survey.</div></div>
         <div class="h-faq"><div class="h-q">Fab hours look too high / too low</div>
         <div class="h-a">Auto-fill uses base rates per profile (UB/UC = 8 hrs/t, CHS = 16 hrs/t) × complexity factor. Override directly in the box if you have better data from similar past jobs.</div></div>
+      </div>
+      <div class="h-section">
+        <div class="h-heading"><span class="h-icon">🗂</span> Per-area pricing &amp; locking an area</div>
+        <p class="h-p">With <strong>Per-area price breakdown</strong> on, each area is costed from its own takeoff for material, and the shared costs (install, fab, design, finishing) are split between areas by tonnage. Tap an area, then <strong>Edit area</strong>, to override any figure.</p>
+        <ul class="h-steps">
+          <li><span class="h-step-num">1</span><div><strong>Hold job total fixed</strong> (default on) — when you edit one area's figure, the others rebalance so the headline job total stays put. Turn it off (Float) to let edits move the job total.</div></li>
+          <li><span class="h-step-num">2</span><div><strong>🔒 Lock area</strong> — when you're happy with an area, lock it (the padlock on each row, or the toggle in Edit area). Its figures are pinned at their current value, so adding or removing other areas can't make them drift. Only unlocked areas share the rebalance.</div></li>
+          <li><span class="h-step-num">3</span><div>A locked area is still <strong>editable</strong> — change a figure and it just updates the pinned value; the lock stays on until you switch it off.</div></li>
+        </ul>
+        <div class="h-tip">Workflow: price area 1, lock it; price area 2, lock it; and so on. Each locked area holds while you work on the next, so finished areas never move when you add the next one. Unlocking an area releases its pins and it rejoins the tonnage split.</div>
       </div>`
   },
 
@@ -20055,7 +20160,7 @@ async function qqSaveAsDraft() {
     qScope: '', boqRef: '', boqFile: '', projectTCs: '',
     takeoff: [], areas: [], subareas: [],
     pricingMode: 'global', apportionBasis: 'tonnage', areaPricing: {}, activeAreaId: '',
-    areaPricingLocks: [], areaRebalanceMode: 'fixed',
+    areaPricingLocks: [], areaFullLocks: [], areaRebalanceMode: 'fixed',
     fittingsPct: 10, fittingsRate: 1.30, miscMaterial: 0, miscMaterialNote: '',
     materialLinks: [],
     instDays: r2.scope === 'supply_install' ? r2.instDays : 0,
@@ -20212,7 +20317,7 @@ async function qqSaveAsDraft() {
         comments: '', qScope: '', boqRef: '', boqFile: '', projectTCs: '',
         takeoff: [], areas: [], subareas: [],
     pricingMode: 'global', apportionBasis: 'tonnage', areaPricing: {}, activeAreaId: '',
-    areaPricingLocks: [], areaRebalanceMode: 'fixed',
+    areaPricingLocks: [], areaFullLocks: [], areaRebalanceMode: 'fixed',
         fittingsPct: 10, fittingsRate: 1.30, miscMaterial: 0, miscMaterialNote: '',
         materialLinks: [],
         instDays: 0, instOperatives: 2, globalDays: true,

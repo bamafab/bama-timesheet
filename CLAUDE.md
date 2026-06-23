@@ -449,6 +449,27 @@ tuned live, so they are deliberately NOT duplicated here.
   figures — never invented.
 - **Help is part of done.** Any new Quote Builder feature updates the in-app
   Help (`HELP_CONTENT` in `quote-builder.html`) in the same change, not later.
+- **`knownPrefixes` must list UA explicitly.** `findSteelProfile`'s prefix
+  scan (`knownPrefixes`) includes `UA` (before `EA`). Without it, an explicit
+  `UA 200*100*10` falls through to the no-prefix dimension inference, which
+  mis-tags a 3-dim section as RHS. The separate `EA`→`UA` reclassification
+  (unequal legs) still handles bare `EA`/`ANGLE` input — both paths are needed.
+- **Don't full-render the wizard-labour list on every keystroke.** The
+  Staircase & Balustrade Labour block's inputs use `oninput` → `recalcAll`.
+  `recalcAll` calls `updateWizLabourTotals()` (patches the `£` result cells +
+  per-item/block totals in place by id: `wlres-{kind}-{idx}-{bucket}`,
+  `wltot-{kind}-{idx}`), NOT `renderWizLabour()`. A full `renderWizLabour`
+  rebuilds `innerHTML` and steals focus mid-type (the old "one digit then
+  re-click" bug). Structural changes only (advanced toggle, inject/delete,
+  reset, and `onblur` to surface the ●edited marker) call `renderWizLabour`.
+- **Per-area lock vs per-cat lock.** `areaPricingLocks` holds individual
+  `id|cat` pins (auto-created when a single category is hand-edited).
+  `areaFullLocks` holds whole-area locks: `toggleAreaLock(id)` snapshots the
+  area's current 5 computed cat figures into `areaPricing[id]` and pins all 5,
+  so the area's price is held when other areas are added/removed (only unlocked
+  areas share the fixed-mode rebalance). A locked area stays editable —
+  `setAreaCost` just updates the pinned value and leaves `areaFullLocks` intact.
+  Unlock clears that area's pins. Both are backfilled as `[]` for old quotes.
 
 For editing/testing protocol (anchor-based single-occurrence `str.replace` with
 an `assert count==1`, Node unit tests for pure engine functions before UI work,
