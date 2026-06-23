@@ -6174,7 +6174,11 @@ function computeQuoteTotals(quote, ratesObj) {
 
   const margin    = parseFloat(quote.margin) || 0;
   const marginAmt = Math.round(subtotal * margin / 100 * 100) / 100;
-  const total     = Math.round((subtotal + marginAmt) * 100) / 100;
+  const totalExact = Math.round((subtotal + marginAmt) * 100) / 100;
+  // Client-facing price is quoted to the whole pound. This is the authoritative
+  // grand total everywhere (Calcs summary, PDFs, area breakdown, deposit). The
+  // exact figure is kept as totalExact for any internal ratio (cost/kg etc.).
+  const total     = Math.round(totalExact);
   const totalTonnes = totalKg / 1000;
 
   // ── Productivity metrics ──────────────────────────────────
@@ -6210,7 +6214,7 @@ function computeQuoteTotals(quote, ratesObj) {
     fittingsCostVal: Math.round(fittingsCostVal * 100) / 100,
     fixingsCost: Math.round(fixingsCost * 100) / 100,
     consumablesCost: Math.round(consumablesCost * 100) / 100,
-    subtotal, marginAmt, total,
+    subtotal, marginAmt, total, totalExact,
     // Weight
     totalKg: Math.round(totalKg * 10) / 10,
     totalTonnes: Math.round(totalTonnes * 1000) / 1000,
@@ -6220,7 +6224,7 @@ function computeQuoteTotals(quote, ratesObj) {
     missingKgm,        // sections without a kg/m — costs incomplete
     // Productivity
     costPerKgExMargin: totalKg > 0 ? Math.round(subtotal / totalKg * 100) / 100 : null,
-    costPerKgIncMargin: totalKg > 0 ? Math.round(total   / totalKg * 100) / 100 : null,
+    costPerKgIncMargin: totalKg > 0 ? Math.round(totalExact / totalKg * 100) / 100 : null,
     fabHrsPerTonne:    totalTonnes > 0 && fabHrsTotal  > 0 ? Math.round(fabHrsTotal  / totalTonnes * 10) / 10 : null,
     instDaysPerTonne:  totalTonnes > 0 && instDaysTotal > 0 ? Math.round(instDaysTotal / totalTonnes * 100) / 100 : null,
     // Auto-fab suggestion
@@ -12018,7 +12022,7 @@ function sumPrelims() {
 // ============================================================
 // RECALC ALL
 // ============================================================
-function fmt(n) { return '£'+n.toFixed(2); }
+function fmt(n) { return '£'+Math.round(n).toLocaleString('en-GB'); }
 
 // ============================================================
 // TECHNICAL RISK VALIDATOR
@@ -13327,8 +13331,10 @@ function buildClientLines(q) {
   const _tot = C.total    || 0;
   const _mm  = _sub > 0 ? _tot / _sub : 1;   // e.g. 1.25 for 20% margin
 
-  // Helper: cost bucket → sell price, rounded to 2dp
-  const sell = v => Math.round((v || 0) * _mm * 100) / 100;
+  // Helper: cost bucket → post-margin sell price. Client prices are quoted to
+  // the whole pound, so round here; the lines are then reconciled to the
+  // (whole-pound) grand total below so they always sum exactly.
+  const sell = v => Math.round((v || 0) * _mm);
 
   const raw = [
     { key: 'prelims',      desc: 'Prelims',              value: na.prelims      ? 0 : sell(C.prelims)                       },
@@ -13349,9 +13355,24 @@ function buildClientLines(q) {
     if (l._customDesc && l.key) descOverrides[l.key] = l._customDesc;
   });
 
-  return raw
+  const lines = raw
     .filter(l => l.value > 0)
     .map(l => ({ ...l, desc: descOverrides[l.key] || l.desc }));
+
+  // Reconcile: rounding each line independently can leave the sum a few pounds
+  // off the (whole-pound) grand total. Settle the difference on the largest
+  // line so Σ lines == C.total exactly — the client never sees lines that don't
+  // add up to the headline price.
+  if (lines.length && _tot > 0) {
+    const lineSum = lines.reduce((s, l) => s + l.value, 0);
+    const diff = Math.round(_tot) - lineSum;
+    if (diff !== 0) {
+      const big = lines.reduce((a, b) => (b.value > a.value ? b : a), lines[0]);
+      big.value += diff;
+    }
+  }
+
+  return lines;
 }
 
 function renderQuotationLines() {
@@ -13370,7 +13391,7 @@ function renderQuotationLines() {
           style="background:transparent;border-color:transparent">
         <input class="ql-input" type="number" value="1"
           style="text-align:right;background:transparent;border-color:transparent;pointer-events:none" readonly>
-        <input class="ql-input" type="number" value="${l.value.toFixed(2)}"
+        <input class="ql-input" type="number" value="${Math.round(l.value)}"
           style="text-align:right;font-family:var(--font-mono);background:transparent;border-color:transparent;pointer-events:none" readonly>
         <div class="ql-total">${fmt(amt)}</div>
       </div>`;
@@ -17858,9 +17879,10 @@ function buildClientAreaTableHtml(q) {
   if (!bd.rows.length) return '';
   const detailed = q.clientAreaDetail === 'detailed';
 
-  // Per-area cost subtotal × margin = sell price (mirrors buildClientLines pro-rata).
+  // Per-area cost subtotal × margin = sell price (mirrors buildClientLines
+  // pro-rata). Client prices are quoted to the whole pound.
   const marginMult = 1 + (bd.marginPct / 100);
-  const sell = v => Math.round(v * marginMult * 100) / 100;
+  const sell = v => Math.round(v * marginMult);
 
   const th = 'padding:7px 6px;text-align:right;font-size:9.5px;color:#fff;background:#1a1a2e';
   const thL = th.replace('text-align:right', 'text-align:left');
@@ -18429,7 +18451,8 @@ function fmtDateLong(s) {
 }
 function fmtGBP(v) {
   if (v === null || v === undefined || v === '') return '—';
-  return '£' + Number(v).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // Client prices are quoted to the whole pound across all PDFs.
+  return '£' + Math.round(Number(v)).toLocaleString('en-GB');
 }
 
 function openPdfWindow(html) {
@@ -19651,6 +19674,7 @@ const HELP_CONTENT = {
           <li><span class="h-step-num">4</span><div>Tick <strong>Show Deposit</strong> to add a deposit line to the PDF.</div></li>
         </ul>
         <div class="h-tip">Survey is merged into the Prelims line on the client PDF — this is intentional to keep the quote clean and professional.</div>
+        <div class="h-tip">All client prices are quoted to the whole pound — line items and the grand total are rounded, and the line items always add up exactly to the headline total (the rounding lands on the largest line). The full-precision price is kept internally for cost/kg and other ratios.</div>
       </div>
       <div class="h-section">
         <div class="h-heading"><span class="h-icon">❓</span> FAQ</div>

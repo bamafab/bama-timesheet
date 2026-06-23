@@ -481,6 +481,15 @@ tuned live, so they are deliberately NOT duplicated here.
   final 1p residual is settled on its total. The global stays authoritative;
   the breakdown is adjusted to match it. Don't reintroduce a path where the
   area table and the headline can show different grand totals.
+- **Client prices are quoted to the whole pound.** `computeQuoteTotals`
+  returns `total` rounded to whole £ (the authoritative client price used by
+  the Calcs summary, all PDFs, the area breakdown and the deposit); `totalExact`
+  keeps the 2dp figure for internal ratios (cost/kg). `buildClientLines` rounds
+  each post-margin sell line to whole £ and then settles the rounding remainder
+  on the largest line so `Σ lines === Math.round(total)` exactly — the client
+  never sees line items that don't add up to the headline. `fmt` (Calcs) and
+  `fmtGBP` (PDFs) both display whole £. Don't reintroduce 2dp client prices or
+  a path where rounded lines don't reconcile to the rounded total.
 
 For editing/testing protocol (anchor-based single-occurrence `str.replace` with
 an `assert count==1`, Node unit tests for pure engine functions before UI work,
