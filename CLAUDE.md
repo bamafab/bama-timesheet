@@ -470,6 +470,17 @@ tuned live, so they are deliberately NOT duplicated here.
   areas share the fixed-mode rebalance). A locked area stays editable —
   `setAreaCost` just updates the pinned value and leaves `areaFullLocks` intact.
   Unlock clears that area's pins. Both are backfilled as `[]` for old quotes.
+- **Area breakdown reconciles to the global headline (penny-exact).**
+  `computeAreaBreakdown` ends with a reconciliation step: the sum of per-area
+  totals is forced to equal `G.total` (the single-pass `computeQuoteTotals`
+  figure the client PDF and Calcs summary quote). When areas are locked, the
+  pinned 2dp values can stop summing to `G.total` (no unlocked area absorbs the
+  remainder). The gap is folded into the **largest** area's pre-margin material
+  (a real cost line, so the detailed per-area PDF's category sums also
+  reconcile), then that row's subtotal/margin/total/shared are rebuilt and a
+  final 1p residual is settled on its total. The global stays authoritative;
+  the breakdown is adjusted to match it. Don't reintroduce a path where the
+  area table and the headline can show different grand totals.
 
 For editing/testing protocol (anchor-based single-occurrence `str.replace` with
 an `assert count==1`, Node unit tests for pure engine functions before UI work,

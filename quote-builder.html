@@ -12712,6 +12712,39 @@ function computeAreaBreakdown(q) {
     };
   });
 
+  // ── Reconcile to the headline (penny-exact) ──────────────
+  // The client PDF and the Calcs summary quote G.total (single-pass global).
+  // Per-area figures are independently 2dp-rounded, and when areas are LOCKED
+  // the pinned values may no longer sum back to G.total (no unlocked area is
+  // left to absorb the difference). To keep ONE price everywhere, fold the gap
+  // into the largest area's pre-margin cost, then rebuild that area's derived
+  // figures from it. Folding into a real pre-margin line (not just the total)
+  // means the detailed per-area PDF — which re-derives sell prices per category
+  // and sums them — also reconciles. The gap is tiny: rounding pennies, or the
+  // locked-snapshot drift the user has chosen to hold. Other areas are untouched.
+  if (rows.length) {
+    const preMarginSum = r2(rows.reduce((s, r) => s + r.subtotal, 0));
+    const targetPre    = marginPct ? r2((G.total || 0) / (1 + marginPct / 100)) : (G.total || 0);
+    const gapPre       = r2(targetPre - preMarginSum);
+    if (Math.abs(gapPre) >= 0.01) {
+      const big = rows.reduce((a, b) => (b.total > a.total ? b : a), rows[0]);
+      // Land the pre-margin gap on material (a genuine per-area cost line),
+      // then rebuild subtotal → margin → total → shared so the row stays
+      // internally additive and category sums reconcile.
+      big.material = r2(big.material + gapPre);
+      big.subtotal = r2(big.material + AREA_PRICE_CATS.reduce((s,c)=>s+big.cats[c],0) + big.jobwide);
+      big.margin   = r2(big.subtotal * marginPct / 100);
+      big.total    = r2(big.subtotal + big.margin);
+      big.shared   = r2(AREA_PRICE_CATS.reduce((s,c)=>s+big.cats[c],0) + big.jobwide);
+      // Final penny-exact correction: re-rounding margin can leave a 1p
+      // residual against the headline. Settle it on this area's total so the
+      // column sums to G.total exactly (the summary table/PDF read .total).
+      const resid = r2((G.total || 0) - r2(rows.reduce((s,r)=>s+r.total,0)));
+      if (resid) { big.total = r2(big.total + resid); big.margin = r2(big.total - big.subtotal); }
+      big._reconciled = gapPre; // diagnostic flag
+    }
+  }
+
   const sum = k => r2(rows.reduce((s,r) => s + r[k], 0));
   return {
     rows, marginPct, mode,
