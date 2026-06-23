@@ -17964,22 +17964,57 @@ function buildClientTakeoffHtml(q) {
   const tdS = 'padding:6px 10px;border-bottom:1px solid #e5e7eb;font-family:monospace;font-size:11px';
   const tdR = 'padding:6px 10px;border-bottom:1px solid #e5e7eb;text-align:right;font-size:11px';
 
-  let tkRows = '';
-  let totalKgSum = 0;
-
-  rows.forEach(r => {
+  // Single-row builder shared by flat + grouped layouts.
+  const rowKg = r => (r._unit === 'EA') ? 0 : (r.length / 1000) * (r.kgm || 0) * (r.qty || 1);
+  const rowHtml = r => {
     const isEA = r._unit === 'EA';
     const lengthStr = isEA ? '—' : (r.length ? r.length.toLocaleString('en-GB') + ' mm' : '—');
-    const kg = isEA ? 0 : (r.length / 1000) * (r.kgm || 0) * (r.qty || 1);
-    totalKgSum += kg;
+    const kg = rowKg(r);
     const kgStr = kg > 0 ? kg.toFixed(1) : '—';
-    tkRows += `<tr>
+    return `<tr>
       <td style="${tdS}">${escHtml(r.type)}</td>
       <td style="${tdR}">${lengthStr}</td>
       <td style="${tdR}">${r.qty || 1}</td>
       <td style="${tdR}">${kgStr}${kg > 0 ? ' kg' : ''}</td>
     </tr>`;
-  });
+  };
+
+  let totalKgSum = 0;
+  rows.forEach(r => { totalKgSum += rowKg(r); });
+
+  // Decide whether to group by area. Group only when rows actually fall under
+  // more than one distinct area (a single area — or all-unspecified — adds no
+  // clarity, so leave the schedule flat exactly as before).
+  const areas      = q.areas || [];
+  const namedIds   = areas.map(a => a.id);
+  const distinctAreas = [...new Set(rows.map(r => r.area || ''))];
+  const groupByArea = distinctAreas.length > 1;
+
+  let tkRows = '';
+  if (groupByArea) {
+    // Named areas first (defined order), then any used-but-unnamed ids, then unspecified ('') last.
+    const usedIds = [
+      ...namedIds.filter(id => distinctAreas.includes(id)),
+      ...distinctAreas.filter(id => id && !namedIds.includes(id)),
+      ...(distinctAreas.includes('') ? [''] : [])
+    ];
+    const subHdr = 'padding:7px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:#1a1a2e;background:#eef0f3;border-top:1px solid #d1d5db;border-bottom:1px solid #d1d5db';
+    const subVal = 'padding:7px 10px;font-size:10px;font-weight:700;text-align:right;color:#1a1a2e;background:#eef0f3;border-top:1px solid #d1d5db;border-bottom:1px solid #d1d5db;font-family:monospace';
+    usedIds.forEach(areaId => {
+      const areaDef  = areas.find(a => a.id === areaId);
+      const areaName = areaDef?.name || (areaId ? areaId : 'Unspecified');
+      const areaRows = rows.filter(r => (r.area || '') === areaId);
+      if (!areaRows.length) return;
+      const areaKg = areaRows.reduce((s, r) => s + rowKg(r), 0);
+      tkRows += `<tr>
+        <td colspan="3" style="${subHdr}">${escHtml(areaName)}</td>
+        <td style="${subVal}">${areaKg > 0 ? areaKg.toFixed(1) + ' kg' : '—'}</td>
+      </tr>`;
+      areaRows.forEach(r => { tkRows += rowHtml(r); });
+    });
+  } else {
+    rows.forEach(r => { tkRows += rowHtml(r); });
+  }
 
   const fittingsPct = parseFloat(q.fittingsPct) || 10;
   const fittingsKg  = totalKgSum * (fittingsPct / 100);
@@ -19758,6 +19793,8 @@ const HELP_CONTENT = {
         <div class="h-a">Check the margin slider and that no blocks are accidentally marked N/A. Save the quote and regenerate if Quotation tab and PDF don't match.</div></div>
         <div class="h-faq"><div class="h-q">Can I email the PDF directly?</div>
         <div class="h-a">Yes — click ✉ Send in the toolbar. Opens a pre-filled email with the client quote attached.</div></div>
+        <div class="h-faq"><div class="h-q">Steel Section Schedule by area</div>
+        <div class="h-a">When the takeoff has rows in more than one area, the Steel Section Schedule on the client quote automatically groups members under each area name (with a per-area weight subtotal), so the client and the team can see exactly what's included where. With a single area — or no areas — it stays a flat list. The Total Steel Weight figures are unchanged either way.</div></div>
       </div>`
   }
 };
