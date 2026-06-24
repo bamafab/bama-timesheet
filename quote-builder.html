@@ -341,6 +341,7 @@ tr.drag-dragging { opacity:0.35; }
   <aside class="sidebar">
     <button class="btn-new-quote" onclick="newQuote()">＋ New Quote</button>
     <button class="btn-new-quote" onclick="openQuickQuote()" style="background:var(--surface);color:var(--accent);border:1.5px solid var(--accent);margin-top:4px">⚡ Quick Quote</button>
+    <button class="btn-new-quote" onclick="openImportModal()" style="background:var(--surface);color:var(--muted);border:1.5px solid var(--border);margin-top:4px;font-size:12px" title="Bring a quote that was priced before QB into the pipeline">📥 Import old quote</button>
     <div class="sidebar-section">Quotes</div>
     <input type="text" id="quoteSearch" placeholder="🔍 Search ref / client…" oninput="renderSidebar()"
       style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-size:12px;box-sizing:border-box;margin-bottom:6px">
@@ -380,6 +381,7 @@ tr.drag-dragging { opacity:0.35; }
             <option value="lost">Lost</option>
           </select>
           <button class="btn btn-ghost btn-sm" onclick="duplicateQuote()" title="Duplicate this quote as a new draft">⧉ Duplicate</button>
+          <button class="btn btn-ghost btn-sm" onclick="backfillFromPDF()" title="Mark as imported and read header + line totals from the original quote PDF">📥 Backfill from PDF</button>
           <button class="btn btn-ghost btn-sm" onclick="deleteQuote()" style="color:var(--red);border-color:var(--red)">Delete</button>
         </div>
       </div>
@@ -402,6 +404,18 @@ tr.drag-dragging { opacity:0.35; }
            TAB: HEADER
       ══════════════════════════════════════════ -->
       <div class="tab-content active" id="tab-header">
+        <div id="importedBanner" style="display:none;background:rgba(255,179,71,0.08);border:1px solid rgba(255,179,71,0.35);border-radius:8px;padding:12px 14px;margin-bottom:14px">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span style="font-size:11px;font-weight:700;color:var(--accent2);border:1px solid var(--accent2);border-radius:4px;padding:1px 6px">📥 IMPORTED</span>
+            <span style="font-size:12px;color:var(--muted)">Priced before Quote Builder. The takeoff &amp; calc engine is <strong>not</strong> run for this quote — the price comes from the original document. You can still edit the figures below.</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;margin-top:10px">
+            <label style="font-size:12px;color:var(--text);font-weight:600">Quote value (£ ex VAT):</label>
+            <input type="number" id="importedHeadline" oninput="updateImportedHeadline(this.value)"
+              style="width:160px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-size:14px;font-family:var(--font-mono)">
+            <span style="font-size:11px;color:var(--subtle)">This is the authoritative client total. Line items in the Quotation tab are also editable.</span>
+          </div>
+        </div>
         <div class="form-grid form-grid-2">
           <div class="card">
             <div class="card-title">Quote Details</div>
@@ -1658,6 +1672,57 @@ tr.drag-dragging { opacity:0.35; }
 </div>
 
 <!-- PLANSWIFT IMPORT MODAL -->
+<!-- IMPORT OLD QUOTE MODAL -->
+<div class="modal-overlay" id="importModal">
+  <div class="modal" style="max-width:640px">
+    <div class="modal-title">📥 Import old quote</div>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:14px">
+      Bring a quote that was priced <strong>before Quote Builder</strong> into the pipeline so everything lives under one umbrella.
+      Drop the original quote PDF and AI will read the header and line totals — the takeoff / calc engine is <strong>not</strong> run for imported quotes; the price comes from the document.
+      You can still edit any figure afterwards.
+    </p>
+
+    <!-- DROP ZONE -->
+    <div class="upload-zone" id="impDropzone"
+      onclick="document.getElementById('impFileInput').click()"
+      ondragover="event.preventDefault();this.classList.add('dragover')"
+      ondragleave="this.classList.remove('dragover')"
+      ondrop="event.preventDefault();this.classList.remove('dragover');handleImportDrop(event)">
+      <div class="icon">📂</div>
+      <div id="impDropzoneText"><strong>Click to browse</strong> or drag &amp; drop the original quote here</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">.pdf · .png · .jpg accepted</div>
+    </div>
+    <input type="file" id="impFileInput" style="display:none" accept=".pdf,.png,.jpg,.jpeg" onchange="handleImportFileSelect(this.files)">
+
+    <div id="impStatus" style="font-size:12px;min-height:18px;margin-top:10px"></div>
+
+    <details style="margin-top:10px" id="impManualWrap">
+      <summary style="font-size:12px;color:var(--muted);cursor:pointer;user-select:none">Or enter the basics manually (no PDF)</summary>
+      <div class="form-grid form-grid-2" style="margin-top:10px;gap:10px">
+        <div class="field"><label style="font-size:11px;color:var(--muted)">Reference</label>
+          <input type="text" id="impRef" placeholder="e.g. Q251142" style="background:var(--card);border:1px solid var(--border);border-radius:5px;padding:7px 9px;color:var(--text);font-size:12px;width:100%;box-sizing:border-box"></div>
+        <div class="field"><label style="font-size:11px;color:var(--muted)">Quote value (£ ex VAT)</label>
+          <input type="number" id="impValue" placeholder="e.g. 18450" style="background:var(--card);border:1px solid var(--border);border-radius:5px;padding:7px 9px;color:var(--text);font-size:12px;width:100%;box-sizing:border-box"></div>
+        <div class="field"><label style="font-size:11px;color:var(--muted)">Client / company</label>
+          <input type="text" id="impCompany" placeholder="Company name" style="background:var(--card);border:1px solid var(--border);border-radius:5px;padding:7px 9px;color:var(--text);font-size:12px;width:100%;box-sizing:border-box"></div>
+        <div class="field"><label style="font-size:11px;color:var(--muted)">Project</label>
+          <input type="text" id="impProject" placeholder="Project name" style="background:var(--card);border:1px solid var(--border);border-radius:5px;padding:7px 9px;color:var(--text);font-size:12px;width:100%;box-sizing:border-box"></div>
+        <div class="field"><label style="font-size:11px;color:var(--muted)">Date</label>
+          <input type="date" id="impDate" style="background:var(--card);border:1px solid var(--border);border-radius:5px;padding:7px 9px;color:var(--text);font-size:12px;width:100%;box-sizing:border-box"></div>
+        <div class="field"><label style="font-size:11px;color:var(--muted)">Status</label>
+          <select id="impStatusSel" style="background:var(--card);border:1px solid var(--border);border-radius:5px;padding:7px 9px;color:var(--text);font-size:12px;width:100%;box-sizing:border-box">
+            <option value="sent">Sent</option><option value="won">Won</option><option value="lost">Lost</option><option value="draft">Draft</option>
+          </select></div>
+      </div>
+    </details>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeImportModal()">Cancel</button>
+      <button class="btn btn-primary" id="impCreateBtn" onclick="createImportedQuote()">Create imported quote</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="planswiftModal">
   <div class="modal" style="max-width:660px">
     <div class="modal-title">📐 PlanSwift Import</div>
@@ -2686,6 +2751,7 @@ tr.drag-dragging { opacity:0.35; }
       <button class="btn btn-ghost btn-sm" onclick="pipelineFilter('sent')" id="pf-sent">Sent</button>
       <button class="btn btn-ghost btn-sm" onclick="pipelineFilter('won')" id="pf-won">Won</button>
       <button class="btn btn-ghost btn-sm" onclick="pipelineFilter('lost')" id="pf-lost">Lost</button>
+      <button class="btn btn-ghost btn-sm" onclick="pipelineFilter('imported')" id="pf-imported">📥 Imported</button>
     </div>
     <select id="pipelineSort" onchange="renderPipeline()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:12px">
       <option value="due">Sort: Due Date</option>
@@ -6023,7 +6089,70 @@ function buildPrelimRowsFromRates(ratesObj, checkedKeys, overrides) {
  * Takes quote data + rates object, reads nothing from DOM.
  * Returns full cost breakdown with per-row detail.
  */
+// ═══════════════════════════════════════════
+// IMPORTED QUOTE TOTALS — pure, engine-free
+// Totals a legacy quote from its line items. The document headline value is
+// the authoritative client total (kept whole-pound, editable). If no headline
+// was captured, fall back to the line-item sum. marginAmt is informational
+// only (0) — an imported quote's price already includes whatever margin was
+// applied at the time, so we never re-apply margin on top.
+// ═══════════════════════════════════════════
+function computeImportedTotals(quote) {
+  const lines = quote.type === 'custom'
+    ? (quote.customLines || [])
+    : (quote.standardLines || []);
+  const lineSum = lines.reduce((s, l) =>
+    s + (parseFloat(l.price) || 0) * (parseFloat(l.qty) || 1), 0);
+
+  // Map standard line keys to the buckets the rest of QB expects, so the
+  // internal breakdown / PDF surfaces still show sensible line items.
+  const bucket = { material:0, installation:0, fabrication:0, design:0,
+                   painting:0, galvanising:0, survey:0, delivery:0, prelims:0, purlins:0 };
+  const KEY_TO_BUCKET = {
+    prelims:'prelims', survey:'survey', material:'material', fabrication:'fabrication',
+    approval_fab:'fabrication', design_draughtsman:'design', design_struct_eng:'design',
+    design_architect:'design', design_connections:'design',
+    painting:'painting', galvanising:'galvanising', installation:'installation', delivery:'delivery'
+  };
+  (quote.standardLines || []).forEach(l => {
+    const b = KEY_TO_BUCKET[l.key];
+    if (b) bucket[b] += (parseFloat(l.price) || 0) * (parseFloat(l.qty) || 1);
+  });
+
+  const headline = (quote._importedTotal != null && quote._importedTotal !== '')
+    ? (parseFloat(quote._importedTotal) || 0)
+    : Math.round(lineSum);
+  const subtotal = Math.round(lineSum * 100) / 100;
+  const total = Math.round(headline);
+
+  return {
+    material: bucket.material,
+    installation: bucket.installation, fabrication: bucket.fabrication, design: bucket.design,
+    painting: bucket.painting, galvanising: bucket.galvanising,
+    survey: bucket.survey, delivery: bucket.delivery, prelims: bucket.prelims, purlins: bucket.purlins,
+    installationBase: bucket.installation, fabricationBase: bucket.fabrication, designBase: bucket.design,
+    stairFab:0, stairDesign:0, stairInstall:0, stairLabourTotal:0,
+    fittingsCostVal:0, fixingsCost:0, consumablesCost:0,
+    subtotal, marginAmt:0, total, totalExact: Math.round(headline*100)/100,
+    totalKg:0, totalTonnes:0, fittingsKg:0,
+    tonnesBreakdown:{ubuc:0,pfc:0,hollow:0,other:0},
+    missingKgm:[],
+    costPerKgExMargin:null, costPerKgIncMargin:null, fabHrsPerTonne:null, instDaysPerTonne:null,
+    autoFab:0,
+    finishQty:{galv_t:0, ppc_kg:0, primer_t:0},
+    _imported:true
+  };
+}
+
 function computeQuoteTotals(quote, ratesObj) {
+  // ── Imported (legacy / pre-QB) quote ────────────────────
+  // These were priced outside QB. We do NOT run the takeoff/calc engine for
+  // them (there is no takeoff to drive it) — the price comes straight from the
+  // stored standardLines/customLines and the document headline (_importedTotal).
+  // Both remain editable; correcting a line or the headline just re-totals here.
+  if (quote && quote._imported) {
+    return computeImportedTotals(quote);
+  }
   // ── Takeoff ──────────────────────────────────────────────
   let totalKg = 0, materialCost = 0;
   // fittingsBaseKg excludes any staircase-injected rows: the staircase
@@ -7239,7 +7368,7 @@ function renderSidebar() {
     <div class="quote-item ${q.id==currentId?'active':''}" onclick="selectQuote(${q.id})" style="position:relative">
       <span style="position:absolute;left:0;top:0;bottom:0;width:3px;background:${m.dot};border-radius:3px 0 0 3px"></span>
       <div style="display:flex;justify-content:space-between;align-items:flex-start">
-        <div class="quote-item-ref">${q.ref}${q.revision ? ' <span style="font-size:10px;opacity:0.7">'+q.revision+'</span>' : ''}</div>
+        <div class="quote-item-ref">${q.ref}${q.revision ? ' <span style="font-size:10px;opacity:0.7">'+q.revision+'</span>' : ''}${q._imported ? ' <span title="Imported — priced before QB" style="font-size:9px;font-weight:700;color:var(--accent2);border:1px solid var(--accent2);border-radius:4px;padding:0 4px;vertical-align:middle">IMPORTED</span>' : ''}</div>
         <button onclick="event.stopPropagation();duplicateQuote(${q.id})" title="Duplicate" style="background:none;border:none;color:var(--subtle);cursor:pointer;font-size:11px;padding:0;line-height:1;flex-shrink:0" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--subtle)'">⧉</button>
       </div>
       <div class="quote-item-name">${q.company || q.contact || 'No client'}</div>
@@ -7307,6 +7436,18 @@ function loadQuoteEditor() {
   if (!['bama','custom','boq'].includes(q.type)) q.type = 'bama';
   document.getElementById('emptyState').style.display = 'none';
   document.getElementById('quoteEditor').style.display = '';
+
+  // ── Imported quote banner + headline ─────────────────────────────────────
+  const _impBanner = document.getElementById('importedBanner');
+  if (_impBanner) {
+    if (q._imported) {
+      _impBanner.style.display = 'block';
+      const hl = document.getElementById('importedHeadline');
+      if (hl) hl.value = (q._importedTotal != null && q._importedTotal !== '') ? q._importedTotal : '';
+    } else {
+      _impBanner.style.display = 'none';
+    }
+  }
 
   // ── 2b per-area pricing field backfill (older quotes) ────────────────────
   if (q.areaPricing == null)      q.areaPricing = {};
@@ -13271,7 +13412,9 @@ function recalcAll() {
   const _architectCost   = (q.architectHours   || 0) * (q.architectRate  || 90);
   const _connDesignCost  = (q.connDesignHours  || 0) * (q.connDesignRate || 50);
 
-  if (q?.type === 'bama' && q.standardLines) {
+  // Imported quotes carry their own line prices from the original document —
+  // never overwrite them with engine output (which is all zero here).
+  if (q?.type === 'bama' && q.standardLines && !q._imported) {
     q.standardLines.forEach(l => {
       if      (l.key === 'material')           l.price = material;
       // fabrication = workshop hours + consumables only (fabpack is separate line)
@@ -13290,6 +13433,9 @@ function recalcAll() {
       else if (l.key === 'prelims')            l.price = prelims;
       else if (l.key === 'survey')             l.price = survey;
     });
+    renderQuotationLines();
+  } else if (q?.type === 'bama' && q.standardLines && q._imported) {
+    // Imported: don't recompute prices, but still render the (editable) lines.
     renderQuotationLines();
   }
 
@@ -18667,7 +18813,9 @@ function renderPipeline() {
     </div>`).join('');
 
   // Filter + sort
-  let list = _pipelineFilter === 'all' ? qs : qs.filter(q => q.status === _pipelineFilter);
+  let list = _pipelineFilter === 'all' ? qs
+    : _pipelineFilter === 'imported' ? qs.filter(q => q._imported)
+    : qs.filter(q => q.status === _pipelineFilter);
   const sortBy = document.getElementById('pipelineSort')?.value || 'due';
   const pDir = _pipelineSortDir;
   list = [...list].sort((a, b) => {
@@ -19523,6 +19671,264 @@ function generateHandoverPack() {
 // HELP SYSTEM
 // ──────────────────────────────────────────────────────────────
 
+// ============================================================
+// IMPORT OLD QUOTE  (legacy / pre-QB quotes \u2192 pipeline)
+// ============================================================
+let _impFile = null;
+
+function openImportModal() {
+  _impFile = null;
+  document.getElementById('impDropzoneText').innerHTML = '<strong>Click to browse</strong> or drag &amp; drop the original quote here';
+  document.getElementById('impFileInput').value = '';
+  document.getElementById('impStatus').textContent = '';
+  ['impRef','impValue','impCompany','impProject','impDate'].forEach(id => { const el=document.getElementById(id); if(el) el.value=''; });
+  const sel = document.getElementById('impStatusSel'); if (sel) sel.value = 'sent';
+  document.getElementById('importModal').classList.add('active');
+}
+function closeImportModal() {
+  document.getElementById('importModal').classList.remove('active');
+  _impFile = null;
+}
+
+function handleImportDrop(ev) {
+  const files = ev.dataTransfer?.files;
+  if (files && files.length) handleImportFileSelect(files);
+}
+
+async function handleImportFileSelect(files) {
+  if (!files || !files.length) return;
+  _impFile = files[0];
+  document.getElementById('impDropzoneText').innerHTML = '\U0001F4C4 ' + escHtml(_impFile.name);
+  // Pre-fill ref from filename e.g. Q251142_-_Client_-_Project.pdf
+  const refMatch = _impFile.name.match(/^(Q\d{4,6})/i);
+  if (refMatch) { const r=document.getElementById('impRef'); if(r&&!r.value) r.value=refMatch[1].toUpperCase(); }
+  await parseImportFile();
+}
+
+async function parseImportFile() {
+  if (!_impFile) return;
+  const statusEl = document.getElementById('impStatus');
+  statusEl.style.color = 'var(--muted)';
+  statusEl.textContent = '\u23f3 Reading document\u2026';
+  try {
+    const b64 = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result.split(',')[1]);
+      r.onerror = () => reject(new Error('File read failed'));
+      r.readAsDataURL(_impFile);
+    });
+    const isPdf = _impFile.type === 'application/pdf' || _impFile.name.toLowerCase().endsWith('.pdf');
+    const isImg = /\.(png|jpe?g)$/i.test(_impFile.name);
+    let content;
+    if (isPdf) {
+      content = [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } },
+        { type: 'text', text: 'Extract the quote details from this document.' }
+      ];
+    } else if (isImg) {
+      content = [
+        { type: 'image', source: { type: 'base64', media_type: _impFile.type || 'image/jpeg', data: b64 } },
+        { type: 'text', text: 'Extract the quote details from this document.' }
+      ];
+    } else { throw new Error('Unsupported file \u2014 use PDF or image'); }
+
+    const systemPrompt = `You are extracting structured data from a construction/steel fabrication quote document that BAMA Fabrication issued to a client.
+Return ONLY a valid JSON object, no markdown fences, no explanation:
+{
+  "quote_ref": "quotation reference e.g. Q251142, or null",
+  "company_name": "the CLIENT this quote was addressed to (not BAMA, the issuer)",
+  "contact_name": "contact person or null",
+  "contact_email": "email or null",
+  "contact_phone": "phone or null",
+  "project_name": "project / job title or null",
+  "site_address": "site address or postcode or null",
+  "comments": "any scope / special-instructions text verbatim, lines joined with \\n, or null",
+  "quote_value": 12345.00,
+  "sent_date": "document date YYYY-MM-DD or null",
+  "valid_until": "valid-until date YYYY-MM-DD or null",
+  "line_items": {
+    "prelims": 0, "survey": 0, "material": 0, "fabrication": 0,
+    "approval_fab": 0, "painting": 0, "galvanising": 0, "installation": 0, "delivery": 0
+  }
+}
+quote_value is the headline total EXCLUDING VAT. Map each priced line on the document to its category key (unit price ex VAT); use 0 for absent lines. Dates YYYY-MM-DD. null for missing text fields.`;
+
+    const resp = await fetch(QB_API + '/api/claude-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${sessionStorage.getItem('bama_token')}` },
+      body: JSON.stringify({ model: 'claude-sonnet-4-6', max_tokens: 1500, system: systemPrompt, messages: [{ role: 'user', content }] })
+    });
+    if (!resp.ok) throw new Error('API error ' + resp.status);
+    const data = await resp.json();
+    const raw = (data.content || []).find(b => b.type === 'text')?.text || '';
+    const clean = raw.replace(/```json|```/g, '').trim();
+    const p = JSON.parse(clean);
+
+    const set = (id, v) => { const el = document.getElementById(id); if (el && v != null && v !== '') el.value = v; };
+    if (p.quote_ref)   set('impRef', String(p.quote_ref).toUpperCase());
+    if (p.quote_value != null) set('impValue', p.quote_value);
+    if (p.company_name) set('impCompany', p.company_name);
+    if (p.project_name) set('impProject', p.project_name);
+    if (p.sent_date)    set('impDate', p.sent_date);
+    // stash full parse for createImportedQuote
+    _impFile._parsed = p;
+    statusEl.style.color = 'var(--accent2)';
+    statusEl.textContent = '\u2713 Read \u2014 check the fields below, then Create. You can edit anything after.';
+  } catch (err) {
+    statusEl.style.color = 'var(--red)';
+    statusEl.textContent = 'Could not read document: ' + err.message + ' \u2014 enter the basics manually below.';
+    console.error('Import parse error:', err);
+  }
+}
+
+async function createImportedQuote() {
+  const btn = document.getElementById('impCreateBtn');
+  const ref = (document.getElementById('impRef').value || '').trim().toUpperCase();
+  if (!ref) { toast('Reference is required', 'error'); return; }
+  if (quotes.some(q => q.ref === ref && q.status !== 'deleted')) {
+    toast(`Ref ${ref} already exists \u2014 open it instead, or use a different ref`, 'error'); return;
+  }
+  const p = (_impFile && _impFile._parsed) || {};
+  const value = parseFloat(document.getElementById('impValue').value) || 0;
+  const company = (document.getElementById('impCompany').value || '').trim();
+  const project = (document.getElementById('impProject').value || '').trim();
+  const dateVal = document.getElementById('impDate').value || new Date().toISOString().slice(0,10);
+  const status  = document.getElementById('impStatusSel').value || 'sent';
+  const preparedBy = sessionStorage.getItem('bama_qb_user') || 'Mateusz Braczyk';
+
+  // Build standardLines from parsed line items (editable later)
+  const lines = getDefaultStandardLines();
+  const li = p.line_items || {};
+  const apply = (key, v) => { const l = lines.find(x => x.key === key); if (l && v != null) l.price = Math.round(parseFloat(v) || 0); };
+  apply('prelims', li.prelims); apply('survey', li.survey); apply('material', li.material);
+  apply('fabrication', li.fabrication); apply('approval_fab', li.approval_fab);
+  apply('painting', li.painting); apply('galvanising', li.galvanising);
+  apply('installation', li.installation); apply('delivery', li.delivery);
+
+  btn.disabled = true; btn.textContent = '\u23f3 Creating\u2026';
+  const now = new Date();
+  const qData = {
+    ref, revision: '', status, type: 'bama',
+    date: dateVal,
+    validUntil: p.valid_until || new Date(new Date(dateVal).getTime()+14*86400000).toISOString().slice(0,10),
+    dateSent: (status === 'sent' || status === 'won' || status === 'lost') ? dateVal : '',
+    decisionDue: '', chasingDate: '', lossReason: '', lossCompetitor: '', lossComment: '',
+    preparedBy,
+    company, contact: p.contact_name || '', email: p.contact_email || '', phone: p.contact_phone || '',
+    siteAddress: p.site_address || '',
+    projectName: project,
+    comments: (p.comments || '').replace(/\\n/g, '\n'), qScope: '', boqRef: '', boqLumpDesc: '', boqFile: '', projectTCs: '',
+    takeoff: [], areas: [], subareas: [],
+    pricingMode: 'global', apportionBasis: 'tonnage', areaPricing: {}, activeAreaId: '',
+    areaPricingLocks: [], areaFullLocks: [], areaRebalanceMode: 'fixed',
+    fittingsPct: 10, fittingsRate: 1.30, miscMaterial: 0, miscMaterialNote: '',
+    materialLinks: [],
+    instDays: 0, instOperatives: 2, globalDays: true,
+    labourRows: [], plantRows: [], paintRows: [], deliveryRows: [], prelimRows: [], consumableRows: [], surveyVisitRows: [],
+    fabHours: 0, fabRate: 45, fabpackHours: 0, fabpackRate: 50,
+    structEngHours: 0, structEngRate: 90, architectHours: 0, architectRate: 90, designHours: 0, designRate: 50,
+    surveyParking: 0, ralColour: '', ralFinish: 'tbc',
+    purlinM: 0, purlinRate: 0,
+    margin: 0, showDeposit: false, depositPct: 60,
+    showAreaPdf: false, clientAreaDetail: 'summary',
+    standardLines: lines,
+    customLines: [],
+    galvanizer: 'premier_corby',
+    fabComplexity: 'medium',
+    // \u2500\u2500 imported markers \u2500\u2500
+    _imported: true,
+    _importedTotal: value || null,
+    _importedAt: now.toISOString(),
+    _importedFile: (_impFile && _impFile.name) || ''
+  };
+  try {
+    const row = await qbFetch('POST', '/api/qb-quotes', {
+      reference: ref, date_created: dateVal, prepared_by: preparedBy, quote_data: JSON.stringify(qData)
+    });
+    const q = { ...qData, ...row, ref: row.reference, date: row.date_created, _fromSQL: true };
+    quotes.unshift(q);
+    renderSidebar();
+    closeImportModal();
+    selectQuote(q.id);
+    toast(`Imported ${ref}`, 'success');
+  } catch (e) {
+    toast('Failed to create imported quote: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Create imported quote';
+  }
+}
+
+// \u2500\u2500 Backfill an ALREADY-OPEN quote from a PDF (second entry point) \u2500\u2500\u2500\u2500
+async function backfillFromPDF() {
+  const q = getQuote();
+  if (!q) { toast('Open a quote first', 'error'); return; }
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.pdf,.png,.jpg,.jpeg';
+  inp.onchange = async () => {
+    if (!inp.files || !inp.files.length) return;
+    const file = inp.files[0];
+    toast('Reading document\u2026', 'info');
+    try {
+      const b64 = await new Promise((res, rej) => { const r=new FileReader(); r.onload=()=>res(r.result.split(',')[1]); r.onerror=()=>rej(new Error('read failed')); r.readAsDataURL(file); });
+      const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+      const media = isPdf ? 'application/pdf' : (file.type || 'image/jpeg');
+      const block = isPdf
+        ? { type:'document', source:{ type:'base64', media_type:media, data:b64 } }
+        : { type:'image',    source:{ type:'base64', media_type:media, data:b64 } };
+      const systemPrompt = `Extract structured data from this BAMA fabrication quote. Return ONLY JSON:
+{"company_name":"client or null","contact_name":null,"contact_email":null,"contact_phone":null,"site_address":null,"project_name":null,"comments":null,"quote_value":0,
+"line_items":{"prelims":0,"survey":0,"material":0,"fabrication":0,"approval_fab":0,"painting":0,"galvanising":0,"installation":0,"delivery":0}}
+quote_value = headline total ex VAT. Map priced lines to keys; 0 if absent.`;
+      const resp = await fetch(QB_API + '/api/claude-proxy', {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json', 'Authorization':`Bearer ${sessionStorage.getItem('bama_token')}` },
+        body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:1500, system:systemPrompt,
+          messages:[{ role:'user', content:[ block, { type:'text', text:'Extract the quote details.' } ] }] })
+      });
+      if (!resp.ok) throw new Error('API error ' + resp.status);
+      const data = await resp.json();
+      const raw = (data.content||[]).find(b=>b.type==='text')?.text || '';
+      const p = JSON.parse(raw.replace(/```json|```/g,'').trim());
+
+      // Mark as imported and fill only blank fields (don't clobber edits)
+      q._imported = true;
+      if (p.quote_value != null && p.quote_value !== 0) q._importedTotal = Math.round(parseFloat(p.quote_value)||0);
+      if (!q.company && p.company_name) q.company = p.company_name;
+      if (!q.contact && p.contact_name) q.contact = p.contact_name;
+      if (!q.email && p.contact_email) q.email = p.contact_email;
+      if (!q.phone && p.contact_phone) q.phone = p.contact_phone;
+      if (!q.siteAddress && p.site_address) q.siteAddress = p.site_address;
+      if (!q.comments && p.comments) q.comments = String(p.comments).replace(/\\n/g,'\n');
+      const li = p.line_items || {};
+      q.standardLines = q.standardLines || getDefaultStandardLines();
+      const apply = (key,v)=>{ const l=q.standardLines.find(x=>x.key===key); if(l&&v!=null) l.price=Math.round(parseFloat(v)||0); };
+      apply('prelims',li.prelims); apply('survey',li.survey); apply('material',li.material);
+      apply('fabrication',li.fabrication); apply('approval_fab',li.approval_fab);
+      apply('painting',li.painting); apply('galvanising',li.galvanising);
+      apply('installation',li.installation); apply('delivery',li.delivery);
+      q.margin = 0;
+      saveAll();
+      loadQuoteEditor();
+      renderSidebar();
+      toast('Quote marked as imported and backfilled \u2014 review the figures', 'success');
+    } catch (e) {
+      toast('Backfill failed: ' + e.message, 'error');
+      console.error('backfill error', e);
+    }
+  };
+  inp.click();
+}
+
+// Live-edit the imported headline value (authoritative client total).
+function updateImportedHeadline(val) {
+  const q = getQuote(); if (!q || !q._imported) return;
+  const v = parseFloat(val);
+  q._importedTotal = (val === '' || isNaN(v)) ? null : Math.round(v);
+  saveAll();
+  if (typeof recalcAll === 'function') recalcAll();
+  renderSidebar();
+}
+
 const HELP_CONTENT = {
 
   overview: {
@@ -19811,6 +20217,8 @@ const HELP_CONTENT = {
         <div class="h-a">Yes — click ✉ Send in the toolbar. Opens a pre-filled email with the client quote attached.</div></div>
         <div class="h-faq"><div class="h-q">Steel Section Schedule by area</div>
         <div class="h-a">When the takeoff has rows in more than one area, the Steel Section Schedule on the client quote automatically groups members under each area name (with a per-area weight subtotal), so the client and the team can see exactly what's included where. With a single area — or no areas — it stays a flat list. The Total Steel Weight figures are unchanged either way.</div></div>
+        <div class="h-faq"><div class="h-q">Importing an old quote priced before QB</div>
+        <div class="h-a">Use <strong>📥 Import old quote</strong> in the sidebar to bring a pre-QB quote into the pipeline. Drop the original PDF and AI reads the header and line totals; you can also type the basics manually. Imported quotes carry an <strong>IMPORTED</strong> badge, skip the takeoff/calc engine entirely, and take their price straight from the document — shown in an editable "Quote value" field on the Header tab and as editable line items on the Quotation tab. Filter to just these via the 📥 Imported button on the Pipeline tab. To convert a quote you already opened, use <strong>📥 Backfill from PDF</strong> in the toolbar — it marks the quote imported and fills blank fields from the PDF without overwriting anything you've already edited.</div></div>
       </div>`
   }
 };
