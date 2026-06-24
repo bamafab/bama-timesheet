@@ -13194,9 +13194,24 @@ function recalcAll() {
   // Staircase & balustrade labour block (editable per-item overrides).
   // Patch totals in place — full renderWizLabour rebuilds inputs and steals
   // focus mid-type. Structural changes call renderWizLabour explicitly.
-  const _wlTotEl = document.getElementById('total-wizlabour');
-  if (_wlTotEl) _wlTotEl.textContent = fmt(C.stairLabourTotal || 0);
-  updateWizLabourTotals();
+  // BUT: if the block is hidden while wizard items exist (fresh quote load,
+  // post-inject, post-revision), it has never been rendered — do a one-shot
+  // full render to make it appear. No live inputs exist yet, so no focus to
+  // steal. Once visible we fall back to the focus-safe totals patch.
+  const _wlBlock = document.getElementById('block-wizlabour');
+  const _wlHasItems = wizLabourItems(getQuote()).length > 0;
+  const _wlVisible = _wlBlock && _wlBlock.style.display !== 'none';
+  if (_wlBlock && (_wlHasItems !== _wlVisible)) {
+    // Mismatch between what should show and what is showing:
+    //  - hidden + has items  → never rendered (load/inject/revision); show it
+    //  - visible + no items  → last item just deleted; hide it cleanly
+    // Neither case has a live input mid-edit, so no focus to steal.
+    renderWizLabour();
+  } else {
+    const _wlTotEl = document.getElementById('total-wizlabour');
+    if (_wlTotEl) _wlTotEl.textContent = fmt(C.stairLabourTotal || 0);
+    updateWizLabourTotals();
+  }
 
   // summary — values come from computeQuoteTotals (C)
   const totalKg  = C.totalKg;
@@ -19600,7 +19615,7 @@ const HELP_CONTENT = {
 
       <div class="h-section">
         <div class="h-heading"><span class="h-icon">⚖️</span> Staircase &amp; Balustrade Labour block <span class="h-kbd">Calcs tab</span></div>
-        <p class="h-p">When you inject a staircase, spiral or balustrade, its labour is computed by the wizard and shown in a dedicated, editable block on the Calcs tab (it only appears once at least one item is injected). This is where you tune stair and balustrade pricing.</p>
+        <p class="h-p">When you inject a staircase, spiral or balustrade, its labour is computed by the wizard and shown in a dedicated, editable block on the Calcs tab (it only appears once at least one item is injected). The block reappears automatically every time you reopen the quote, bump a revision, or inject more items — so you can always edit fab/design/install figures here rather than dropping to per-area mode. This is where you tune stair and balustrade pricing.</p>
         <ul class="h-steps">
           <li><span class="h-step-num">1</span><div>Each injected item gets its own card showing <strong>Fabrication</strong>, <strong>Design</strong> and <strong>Installation</strong> £, plus the item total.</div></li>
           <li><span class="h-step-num">2</span><div><strong>Basic</strong> — edit the £ for any bucket directly. <strong>Advanced</strong> (the checkbox) lets you edit the underlying <strong>drivers</strong> — fab hours × £/hr, design hours × £/hr, and install crew × days × £/day — and the £ recomputes live. For balustrades, fab/design are banded £/m so they have no hours (edit the £ directly); install crew/days/rate are editable, pre-filled from the engine.</div></li>
