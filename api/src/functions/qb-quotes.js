@@ -499,8 +499,12 @@ app.http('qb-quotes-mark-won', {
                 delivery:         'cost_delivery'
             };
 
-            // Seed the 9 line items for this QB quote with REAL values pulled
-            // from the quote's stored cost columns (qty 1 × unit_price = cost).
+            // Seed the 9 line items for this QB quote with REAL sell values.
+            // The cost_* columns are NET (pre-margin); total_ex_vat is the sell
+            // price (with margin). We scale each line's cost by
+            // total_ex_vat / sum(costs) so the lines add up to the true quote
+            // value, then push any rounding remainder onto the largest line so
+            // the sum equals total_ex_vat to the penny.
             // Idempotent. Non-fatal.
             async function seedQbLineItems(qbQuoteId, srcQuote) {
                 try {
@@ -509,12 +513,33 @@ app.http('qb-quotes-mark-won', {
                         { q: qbQuoteId }
                     );
                     if (exists.recordset.length) return; // already seeded
-                    for (const l of SEED_LINES) {
+
+                    // 1. Raw net cost per line.
+                    const rows = SEED_LINES.map(l => {
                         const col = CATEGORY_COST[l.category];
-                        let price = 0;
-                        if (col && srcQuote && srcQuote[col] != null) {
-                            price = parseFloat(srcQuote[col]) || 0;
+                        let cost = 0;
+                        if (col && srcQuote && srcQuote[col] != null) cost = parseFloat(srcQuote[col]) || 0;
+                        return { ...l, cost, price: cost };
+                    });
+
+                    const sumCost   = rows.reduce((s, r) => s + r.cost, 0);
+                    const sellTotal = srcQuote && srcQuote.total_ex_vat != null
+                        ? parseFloat(srcQuote.total_ex_vat) || 0 : 0;
+
+                    // 2. Scale to sell price if we have both a cost base and a target.
+                    if (sumCost > 0 && sellTotal > 0) {
+                        const factor = sellTotal / sumCost;
+                        rows.forEach(r => { r.price = Math.round(r.cost * factor * 100) / 100; });
+                        // 3. Reconcile rounding drift onto the largest line.
+                        const drift = Math.round((sellTotal - rows.reduce((s, r) => s + r.price, 0)) * 100) / 100;
+                        if (drift !== 0) {
+                            let big = rows[0];
+                            for (const r of rows) if (r.price > big.price) big = r;
+                            big.price = Math.round((big.price + drift) * 100) / 100;
                         }
+                    }
+
+                    for (const r of rows) {
                         await query(
                             `INSERT INTO QuoteLineItems
                                 (tender_id, qb_quote_id, line_no, category, description,
@@ -523,8 +548,8 @@ app.http('qb-quotes-mark-won', {
                              VALUES
                                 (NULL, @q, @line_no, @category, @description,
                                  1, @unit_price, 1, 20.00, @is_labour, GETUTCDATE(), GETUTCDATE())`,
-                            { q: qbQuoteId, line_no: l.line_no, category: l.category,
-                              description: l.description, unit_price: price, is_labour: l.is_labour }
+                            { q: qbQuoteId, line_no: r.line_no, category: r.category,
+                              description: r.description, unit_price: r.price, is_labour: r.is_labour }
                         );
                     }
                 } catch (e) {
