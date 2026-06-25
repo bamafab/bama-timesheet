@@ -16553,6 +16553,11 @@ async function assignQuoteToExistingProject() {
 
 
 
+// ============================================================
+// QUOTE HELPER
+// ============================================================
+let _helperFiles = []; // [{name, base64}]
+
 function isHelperFileSupported(f) {
   return f.name.match(/\.(pdf|doc|docx|png|jpg|jpeg|gif|webp)$/i);
 }
