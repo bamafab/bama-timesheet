@@ -659,6 +659,17 @@
 .ov-edit:focus { outline:none;border-color:var(--accent);background:var(--surface) }
 .ov-edit-date { color-scheme:dark;min-width:108px }
 .ov-win { cursor:pointer;font-weight:600 }
+.ov-help { margin-bottom:14px;border:1px solid var(--border);border-radius:8px;background:var(--surface);overflow:hidden }
+.ov-help summary { cursor:pointer;padding:9px 14px;font-size:12px;font-weight:600;color:var(--accent);list-style:none;user-select:none }
+.ov-help summary::-webkit-details-marker { display:none }
+.ov-help summary::before { content:'▸ ';font-size:10px }
+.ov-help[open] summary::before { content:'▾ ' }
+.ov-help[open] summary { border-bottom:1px solid var(--border) }
+.ov-help-body { padding:6px 16px 12px;font-size:12px;color:var(--text);line-height:1.55 }
+.ov-help-body p { margin:8px 0 }
+.ov-help-body ul { margin:6px 0;padding-left:4px;list-style:none }
+.ov-help-body li { margin:5px 0 }
+.ov-key { display:inline-block;width:13px;height:13px;border-radius:3px;border:1px solid;vertical-align:-2px;margin-right:5px }
 </style>
 </head>
 <body>
@@ -3797,6 +3808,18 @@ async function trResendNotify(tenderId) {
     <button class="btn btn-ghost btn-sm" onclick="ovExportCsv()" style="margin-left:auto">⬇ Export CSV</button>
     <button class="btn btn-ghost btn-sm" onclick="loadOverview(true)">↻ Refresh</button>
   </div>
+
+  <!-- Help panel (collapsed by default) -->
+  <details class="ov-help">
+    <summary>ℹ️ How to read this</summary>
+    <div class="ov-help-body">
+      <p>This is a live view of <strong>every quote and tender</strong> for the year — it updates itself from the system, so there's nothing to keep in sync by hand.</p>
+      <p><strong>Quoting?</strong> — <span style="color:#5fd17a">Yes</span> means a quote already exists in the Quote Builder. <span style="color:var(--muted)">No</span> means it's still just a tender that hasn't been turned into a quote yet.</p>
+      <p><strong>Row colours</strong> follow the key just below this panel — same idea as the old spreadsheet. The one to watch is <strong>red (overdue)</strong>: due date passed and not yet sent, won or lost. Lost and closed-off jobs go <strong>grey with the quote number crossed out</strong>, deliberately kept separate from red so the two never get mixed up.</p>
+      <p><strong>Editing.</strong> On rows where <em>Quoting? = Yes</em>, the <strong>Done by</strong>, <strong>Chasing</strong>, <strong>WIN</strong> and <strong>Comments</strong> cells can be changed directly — just click and type or pick. Changes save straight away and show up on the Quotes tab too. Tender-only rows (<em>Quoting? = No</em>) can't be edited here until they've been opened in the Quote Builder.</p>
+      <p>Use the <strong>search box and filters</strong> to narrow things down, click a column heading to <strong>sort</strong>, and <strong>⬇ Export CSV</strong> to pull the current view out to a spreadsheet.</p>
+    </div>
+  </details>
 
   <!-- Filters -->
   <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
