@@ -650,6 +650,15 @@
 #trTable td { padding:10px 12px;vertical-align:middle;overflow:hidden;text-overflow:ellipsis;white-space:nowrap }
 #trTable td:nth-child(2) { white-space:normal;min-width:140px }
 #trTable th { padding:8px 12px }
+/* ── Overview table ── */
+#ovTable th { background:#141414;color:var(--muted);font-weight:500;padding:8px 8px;text-align:left;border-bottom:2px solid var(--accent);font-size:11px;letter-spacing:.3px;white-space:nowrap }
+#ovTable td { padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:middle }
+#ovTable tbody tr:hover td { background:rgba(255,107,0,0.04) !important }
+.ov-edit { width:100%;background:transparent;border:1px solid transparent;border-radius:4px;padding:3px 5px;color:var(--text);font-size:11px;font-family:var(--font-body) }
+.ov-edit:hover { border-color:var(--border) }
+.ov-edit:focus { outline:none;border-color:var(--accent);background:var(--surface) }
+.ov-edit-date { color-scheme:dark;min-width:108px }
+.ov-win { cursor:pointer;font-weight:600 }
 </style>
 </head>
 <body>
@@ -698,6 +707,7 @@
   <div style="display:flex;gap:4px;margin-left:auto">
     <button class="dash-tab active" id="tabQuotes" onclick="switchDashTab('quotes')">📊 Quotes</button>
     <button class="dash-tab" id="tabTenders" onclick="switchDashTab('tenders')">📋 Tender Register</button>
+    <button class="dash-tab" id="tabOverview" onclick="switchDashTab('overview')">📑 Overview</button>
   </div>
 </div>
 
@@ -2711,13 +2721,354 @@ let _trSelectedId = null;
 let _trEditId = null;
 let _trNoBidTargetId = null;
 
+// ═══════════════ OVERVIEW (spreadsheet-style tracker) ═══════════════
+// Merges live QB quotes (allQuotes) with Tender Register rows into one
+// spreadsheet-style view. QB quotes are the single source of truth and are
+// editable inline; tender-only rows (no qb_quote_id) show as "Quoting? No"
+// and are read-only until converted in QB.
+let _ovRows = [];
+let _ovSort = { key: 'ref', dir: 'asc' };
+
+async function loadOverview(force) {
+  const body = document.getElementById('ovBody');
+  body.innerHTML = '<tr><td colspan="12" style="text-align:center;padding:40px;color:var(--muted)"><div class="ai-spinner" style="margin:0 auto"></div></td></tr>';
+
+  const year = document.getElementById('ovYear').value;
+
+  // Ensure quotes are loaded for the chosen year. allQuotes is keyed to the
+  // Quotes-tab year selector, so if it differs, reload tracker data first.
+  try {
+    if (force || !allQuotes.length || document.getElementById('qlYear').value !== year) {
+      document.getElementById('qlYear').value = year;
+      await loadTrackerData();
+    }
+  } catch (e) { console.warn('Overview: quote load failed', e); }
+
+  // Ensure tenders are loaded (TR uses 2-digit year)
+  try {
+    if (force || !_trTenders.length) {
+      const trSel = document.getElementById('trFilterYear');
+      if (trSel) trSel.value = String(year).slice(2);
+      await loadTenderRegister();
+    }
+  } catch (e) { console.warn('Overview: tender load failed', e); }
+
+  buildOverviewRows();
+  populateOverviewFilters();
+  renderOverview();
+}
+
+// Build the merged row model. One row per quote ref; tenders not yet linked to
+// a QB quote are appended as quoting=No rows.
+function buildOverviewRows() {
+  const rows = [];
+  const quoteRefs = new Set();
+
+  for (const q of allQuotes) {
+    quoteRefs.add(q.ref);
+    rows.push({
+      ref:       q.ref,
+      due:       q.due || null,
+      company:   q.company || '',
+      project:   q.project && q.project !== q.company ? q.project : (q.projectName || ''),
+      value:     q.value || 0,
+      doneBy:    q.preparedBy || q.prepared_by || q.doneBy || '',
+      sent:      q.dateSent || null,
+      chasing:   q.chasing || null,
+      quoting:   true,
+      win:       q.win,           // true / false / null
+      status:    q.status,
+      comments:  q.comments || '',
+      id:        q.id || null,
+      editable:  q._source === 'sql' && !!q.id,
+      _src:      'quote'
+    });
+  }
+
+  // Tenders without a live QB quote → quoting = No, read-only
+  for (const t of _trTenders) {
+    const st = t.effStatus || t.status;
+    if (t.qb_quote_id) continue;            // already represented via its quote
+    if (quoteRefs.has(t.reference)) continue;
+    if (st === 'Removed from QB') continue; // not an active tender
+    rows.push({
+      ref:       t.reference,
+      due:       t.deadline ? t.deadline.slice(0,10) : null,
+      company:   t.client || '',
+      project:   t.project || '',
+      value:     0,
+      doneBy:    t.assigned_to || '',
+      sent:      null,
+      chasing:   null,
+      quoting:   false,
+      win:       null,
+      status:    st === 'No Bid' ? 'nobid' : 'new',
+      comments:  st === 'No Bid' ? 'No Bid' : '',
+      id:        null,
+      editable:  false,
+      _src:      'tender'
+    });
+  }
+
+  _ovRows = rows;
+}
+
+// Distinct companies + estimators into the filter dropdowns
+function populateOverviewFilters() {
+  const compSel = document.getElementById('ovFilterCompany');
+  const estSel  = document.getElementById('ovFilterEstimator');
+  const prevComp = compSel.value, prevEst = estSel.value;
+
+  const comps = [...new Set(_ovRows.map(r => r.company).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+  const ests  = [...new Set(_ovRows.map(r => r.doneBy).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+
+  compSel.innerHTML = '<option value="all">All Companies</option>' +
+    comps.map(c => `<option value="${escAttr(c)}">${escHtml(c)}</option>`).join('');
+  estSel.innerHTML = '<option value="all">All Estimators</option>' +
+    ests.map(e => `<option value="${escAttr(e)}">${escHtml(e)}</option>`).join('');
+
+  if (comps.includes(prevComp)) compSel.value = prevComp;
+  if (ests.includes(prevEst))   estSel.value  = prevEst;
+}
+
+// Classify a row → a colour band, mirroring the SharePoint tracker rules.
+//  won   → green ; lost/nobid/dead-comment → grey ; overdue → red ;
+//  ≤3 days → amber-strong ; ≤7 days → amber ; else → none (zebra only)
+function ovRowBand(r) {
+  const c = (r.comments || '').toLowerCase();
+  const deadComment = ['too late','not interested','same as','plymouth','no works','cancelled'].some(k => c.includes(k));
+
+  if (r.win === true || r.status === 'won')  return 'won';
+  if (r.win === false || r.status === 'lost' || r.status === 'nobid' || deadComment) return 'lost';
+  if (r.status === 'sent') return 'none';   // chasing governs sent rows, not due
+
+  if (r.due) {
+    const today = new Date(); today.setHours(0,0,0,0);
+    const due = new Date(r.due + 'T00:00:00');
+    const diff = due - today;
+    if (diff < 0)               return 'overdue';
+    if (diff <= 3*86400000)     return 'due3';
+    if (diff <= 7*86400000)     return 'due7';
+  }
+  return 'none';
+}
+
+const OV_BAND_STYLE = {
+  won:     'background:#16291a',
+  lost:    'background:#1c1c1c',
+  overdue: 'background:#3b1f1f',
+  due3:    'background:#3a2a1a',
+  due7:    'background:#33301a',
+  none:    ''
+};
+
+function ovFilteredSorted() {
+  const search = (document.getElementById('ovSearch').value || '').toLowerCase().trim();
+  const fStat  = document.getElementById('ovFilterStatus').value;
+  const fComp  = document.getElementById('ovFilterCompany').value;
+  const fEst   = document.getElementById('ovFilterEstimator').value;
+
+  let list = _ovRows.filter(r => {
+    if (search) {
+      const hay = `${r.ref} ${r.company} ${r.project} ${r.comments}`.toLowerCase();
+      if (!hay.includes(search)) return false;
+    }
+    if (fComp !== 'all' && r.company !== fComp) return false;
+    if (fEst  !== 'all' && r.doneBy !== fEst)  return false;
+    if (fStat !== 'all') {
+      if (fStat === 'tender') { if (r.quoting) return false; }
+      else if (fStat === 'new')  { if (!(r.quoting && (r.status === 'open' || r.status === 'draft' || r.status === 'new') && r.win == null)) return false; }
+      else if (fStat === 'sent') { if (r.status !== 'sent') return false; }
+      else if (fStat === 'won')  { if (!(r.win === true || r.status === 'won')) return false; }
+      else if (fStat === 'lost') { if (!(r.win === false || r.status === 'lost' || r.status === 'nobid')) return false; }
+    }
+    return true;
+  });
+
+  const { key, dir } = _ovSort;
+  const mul = dir === 'asc' ? 1 : -1;
+  list.sort((a,b) => {
+    let av = a[key], bv = b[key];
+    if (key === 'value') { av = av||0; bv = bv||0; return (av-bv)*mul; }
+    if (key === 'due')   { av = av||'9999'; bv = bv||'9999'; }
+    av = (av==null?'':String(av)).toLowerCase();
+    bv = (bv==null?'':String(bv)).toLowerCase();
+    return av < bv ? -1*mul : av > bv ? 1*mul : 0;
+  });
+  return list;
+}
+
+function ovSort(key) {
+  if (_ovSort.key === key) _ovSort.dir = _ovSort.dir === 'asc' ? 'desc' : 'asc';
+  else _ovSort = { key, dir: 'asc' };
+  renderOverview();
+}
+
+function renderOverview() {
+  const body = document.getElementById('ovBody');
+  if (!body) return;
+  const list = ovFilteredSorted();
+  document.getElementById('ovCount').textContent =
+    `${list.length} row${list.length!==1?'s':''}` + (list.length !== _ovRows.length ? ` of ${_ovRows.length}` : '');
+
+  if (!list.length) {
+    body.innerHTML = '<tr><td colspan="12" style="text-align:center;padding:40px;color:var(--muted)">No matching rows.</td></tr>';
+    return;
+  }
+
+  body.innerHTML = list.map((r, i) => {
+    const band = ovRowBand(r);
+    const bandStyle = OV_BAND_STYLE[band] || (i % 2 ? 'background:rgba(255,255,255,0.015)' : '');
+    const isLost = band === 'lost';
+    const refStyle = `font-family:var(--font-mono);font-size:11px;color:var(--accent);${isLost?'text-decoration:line-through;opacity:.7':''}`;
+    const total = r.value ? r.value * 1.20 : 0;
+    const idx = _ovRows.indexOf(r);
+
+    // Editable cells (only when backed by a live SQL quote)
+    const doneByCell = r.editable
+      ? `<input value="${escAttr(r.doneBy)}" onchange="ovEditField(${idx},'prepared_by',this.value)" class="ov-edit" placeholder="—">`
+      : escHtml(r.doneBy) || '<span style="color:var(--muted)">—</span>';
+    const chaseCell = r.editable
+      ? `<input type="date" value="${r.chasing||''}" onchange="ovEditField(${idx},'chasing_date',this.value)" class="ov-edit ov-edit-date">`
+      : (r.chasing ? fmtOvDate(r.chasing) : '<span style="color:var(--muted)">—</span>');
+    const commentCell = r.editable
+      ? `<input value="${escAttr(r.comments)}" onchange="ovEditField(${idx},'loss_comment',this.value)" class="ov-edit" placeholder="—">`
+      : escHtml(r.comments) || '';
+
+    // WIN cell — Yes/No/blank dropdown for editable rows
+    let winCell;
+    if (r.editable) {
+      const v = r.win === true ? 'yes' : r.win === false ? 'no' : '';
+      winCell = `<select onchange="ovEditWin(${idx},this.value)" class="ov-edit ov-win" style="${r.win===true?'color:#5fd17a':r.win===false?'color:#d98a8a':''}">
+        <option value=""${v===''?' selected':''}>—</option>
+        <option value="yes"${v==='yes'?' selected':''}>Yes</option>
+        <option value="no"${v==='no'?' selected':''}>No</option></select>`;
+    } else {
+      winCell = r.win === true ? '<span style="color:#5fd17a">Yes</span>'
+              : r.win === false ? '<span style="color:#d98a8a">No</span>'
+              : '<span style="color:var(--muted)">—</span>';
+    }
+
+    const quoting = r.quoting
+      ? '<span style="color:#5fd17a;font-weight:600">Yes</span>'
+      : '<span style="color:var(--muted)">No</span>';
+
+    const clickOpen = r.editable ? `onclick="window.location='quote-builder.html?quote=${r.id}'" style="cursor:pointer" title="Open in Quote Builder"` : '';
+
+    return `<tr style="${bandStyle}">
+      <td ${clickOpen} style="${refStyle}">${escHtml(r.ref)}</td>
+      <td style="text-align:center;font-size:11px">${r.due ? fmtOvDate(r.due) : '<span style="color:var(--muted)">—</span>'}</td>
+      <td style="font-size:12px">${escHtml(r.company) || '<span style="color:var(--muted)">—</span>'}</td>
+      <td style="font-size:11px;color:var(--muted);white-space:normal;line-height:1.35" title="${escAttr(r.project)}">${escHtml(r.project)}</td>
+      <td style="text-align:right;font-size:12px">${r.value ? '£'+fmtNum(r.value) : '<span style="color:var(--muted)">—</span>'}</td>
+      <td style="text-align:right;font-size:12px;color:var(--muted)">${total ? '£'+fmtNum(total) : '—'}</td>
+      <td style="font-size:11px">${doneByCell}</td>
+      <td style="text-align:center;font-size:11px">${r.sent ? fmtOvDate(r.sent) : '<span style="color:var(--muted)">—</span>'}</td>
+      <td style="text-align:center;font-size:11px">${chaseCell}</td>
+      <td style="text-align:center;font-size:11px">${quoting}</td>
+      <td style="text-align:center;font-size:11px">${winCell}</td>
+      <td style="font-size:11px">${commentCell}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Inline edit write-back (uses the same PUT endpoint as the Quotes tab) ──
+async function ovEditField(idx, field, value) {
+  const r = _ovRows[idx];
+  if (!r || !r.editable || !r.id) return;
+  const body = {}; body[field] = value || null;
+  try {
+    const res = await fetch(`${QB_API}/api/qb-quotes/${r.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getToken()}` },
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    // mirror into local models so Quotes tab stays consistent
+    if (field === 'chasing_date') r.chasing = value || null;
+    if (field === 'loss_comment') r.comments = value || '';
+    if (field === 'prepared_by')  r.doneBy = value || '';
+    const q = allQuotes.find(q => q.id === r.id);
+    if (q) { if (field==='chasing_date') q.chasing = value||null; if (field==='loss_comment') q.comments = value||''; }
+    showToast(`✓ ${r.ref} updated`, 'success');
+  } catch (e) {
+    showToast('Save failed: ' + e.message, 'error');
+    renderOverview(); // revert visual
+  }
+}
+
+async function ovEditWin(idx, val) {
+  const r = _ovRows[idx];
+  if (!r || !r.editable || !r.id) return;
+  // yes → won ; no → lost ; blank → re-open (draft)
+  const status = val === 'yes' ? 'won' : val === 'no' ? 'lost' : 'draft';
+  try {
+    const res = await fetch(`${QB_API}/api/qb-quotes/${r.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getToken()}` },
+      body: JSON.stringify({ status })
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    r.win = val === 'yes' ? true : val === 'no' ? false : null;
+    r.status = status === 'draft' ? 'open' : status;
+    const q = allQuotes.find(q => q.id === r.id);
+    if (q) { q.win = r.win; q.status = r.status; }
+    renderOverview();
+    showToast(val === 'yes' ? `✓ ${r.ref} marked Won` : val === 'no' ? `${r.ref} marked Lost` : `↺ ${r.ref} re-opened`, val==='yes'?'success':'');
+  } catch (e) {
+    showToast('Save failed: ' + e.message, 'error');
+    renderOverview();
+  }
+}
+
+// ── CSV export ──
+function ovExportCsv() {
+  const list = ovFilteredSorted();
+  const headers = ['Quote No','Due Date','Company','Project','Value','Total (inc VAT)','Done by','Sent Date','Chasing Date','Quoting','WIN','Comments'];
+  const esc = v => {
+    const s = v == null ? '' : String(v);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
+  };
+  const lines = [headers.join(',')];
+  for (const r of list) {
+    lines.push([
+      r.ref, r.due||'', r.company, r.project,
+      r.value||'', r.value ? (r.value*1.20).toFixed(2) : '',
+      r.doneBy, r.sent||'', r.chasing||'',
+      r.quoting ? 'Yes' : 'No',
+      r.win === true ? 'Yes' : r.win === false ? 'No' : '',
+      r.comments
+    ].map(esc).join(','));
+  }
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `quote-overview-${document.getElementById('ovYear').value}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// ── small helpers ──
+function fmtOvDate(s) {
+  if (!s) return '';
+  const d = new Date(s + (s.length === 10 ? 'T00:00:00' : ''));
+  return isNaN(d) ? s : d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'2-digit'});
+}
+function fmtNum(n) { return Math.round(n).toLocaleString('en-GB'); }
+function escHtml(s){ return (s==null?'':String(s)).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function escAttr(s){ return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
 // ── Tab switching ─────────────────────────────────────────────
 function switchDashTab(tab) {
   document.getElementById('tabQuotes').classList.toggle('active', tab === 'quotes');
   document.getElementById('tabTenders').classList.toggle('active', tab === 'tenders');
-  document.getElementById('dashQuotesView').style.display  = tab === 'quotes'  ? '' : 'none';
-  document.getElementById('dashTendersView').style.display = tab === 'tenders' ? '' : 'none';
+  document.getElementById('tabOverview').classList.toggle('active', tab === 'overview');
+  document.getElementById('dashQuotesView').style.display   = tab === 'quotes'   ? '' : 'none';
+  document.getElementById('dashTendersView').style.display  = tab === 'tenders'  ? '' : 'none';
+  document.getElementById('dashOverviewView').style.display = tab === 'overview' ? '' : 'none';
   if (tab === 'tenders' && !_trTenders.length) loadTenderRegister();
+  if (tab === 'overview') loadOverview();
 }
 
 // ── API fetch helper ──────────────────────────────────────────
@@ -3431,6 +3782,77 @@ async function trResendNotify(tenderId) {
       </thead>
       <tbody id="trBody">
         <tr><td colspan="8" style="text-align:center;padding:40px;color:var(--muted)">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════════════ OVERVIEW (spreadsheet-style tracker) ═══════════════ -->
+<div id="dashOverviewView" style="display:none;padding:20px;max-width:1600px;margin:0 auto">
+
+  <!-- Header -->
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap">
+    <h2 style="margin:0;font-size:18px;font-weight:700">📑 Quote Overview</h2>
+    <span style="font-size:12px;color:var(--muted)">Every quote &amp; tender at a glance — edit live where a quote exists</span>
+    <button class="btn btn-ghost btn-sm" onclick="ovExportCsv()" style="margin-left:auto">⬇ Export CSV</button>
+    <button class="btn btn-ghost btn-sm" onclick="loadOverview(true)">↻ Refresh</button>
+  </div>
+
+  <!-- Filters -->
+  <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
+    <input id="ovSearch" type="text" placeholder="🔍 Search ref, company, project…" oninput="renderOverview()"
+      style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;min-width:240px;flex:1;max-width:340px">
+    <select id="ovFilterStatus" onchange="renderOverview()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px">
+      <option value="all">All Statuses</option>
+      <option value="new">New / Pending</option>
+      <option value="sent">Sent</option>
+      <option value="won">Won</option>
+      <option value="lost">Lost</option>
+      <option value="tender">Tender only (not quoting)</option>
+    </select>
+    <select id="ovFilterCompany" onchange="renderOverview()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;max-width:200px">
+      <option value="all">All Companies</option>
+    </select>
+    <select id="ovFilterEstimator" onchange="renderOverview()" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px">
+      <option value="all">All Estimators</option>
+    </select>
+    <select id="ovYear" onchange="loadOverview(true)" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px">
+      <option value="2026">2026</option>
+      <option value="2025">2025</option>
+    </select>
+    <span id="ovCount" style="font-size:12px;color:var(--muted);margin-left:auto"></span>
+  </div>
+
+  <!-- Colour legend -->
+  <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:10px;font-size:11px;color:var(--muted)">
+    <span><span style="display:inline-block;width:11px;height:11px;border-radius:2px;background:#3b1f1f;border:1px solid #7a2e2e;vertical-align:-1px"></span> Overdue</span>
+    <span><span style="display:inline-block;width:11px;height:11px;border-radius:2px;background:#3a2a1a;border:1px solid #8a5a2a;vertical-align:-1px"></span> Due ≤3 days</span>
+    <span><span style="display:inline-block;width:11px;height:11px;border-radius:2px;background:#33301a;border:1px solid #6a6028;vertical-align:-1px"></span> Due this week</span>
+    <span><span style="display:inline-block;width:11px;height:11px;border-radius:2px;background:#16291a;border:1px solid #2e6a3a;vertical-align:-1px"></span> Won</span>
+    <span><span style="display:inline-block;width:11px;height:11px;border-radius:2px;background:#1c1c1c;border:1px solid #444;vertical-align:-1px"></span> Lost / closed</span>
+  </div>
+
+  <!-- Table -->
+  <div style="overflow-x:auto;border:1px solid var(--border);border-radius:10px">
+    <table class="data-table" id="ovTable" style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead>
+        <tr>
+          <th onclick="ovSort('ref')" style="cursor:pointer;width:80px">Quote No ⇅</th>
+          <th onclick="ovSort('due')" style="cursor:pointer;width:90px;text-align:center">Due ⇅</th>
+          <th onclick="ovSort('company')" style="cursor:pointer">Company ⇅</th>
+          <th>Project</th>
+          <th onclick="ovSort('value')" style="cursor:pointer;width:95px;text-align:right">Value ⇅</th>
+          <th style="width:95px;text-align:right">Total (+VAT)</th>
+          <th style="width:80px">Done by</th>
+          <th style="width:90px;text-align:center">Sent</th>
+          <th style="width:90px;text-align:center">Chasing</th>
+          <th style="width:60px;text-align:center">Quoting?</th>
+          <th style="width:70px;text-align:center">WIN</th>
+          <th>Comments</th>
+        </tr>
+      </thead>
+      <tbody id="ovBody">
+        <tr><td colspan="12" style="text-align:center;padding:40px;color:var(--muted)">Loading…</td></tr>
       </tbody>
     </table>
   </div>
