@@ -16545,14 +16545,7 @@ async function assignQuoteToExistingProject() {
     setTimeout(() => closeWonModal(), 2200);
   } catch(err) {
     status.style.color = 'var(--red)';
-    const msg = String(err.message || '');
-    // Assign path needs Daniel's mark-won backend (existing_project_id support).
-    // Until deployed the API rejects with "project_name required" / 400.
-    if (/project_name is required/i.test(msg) || /\b400\b/.test(msg)) {
-      status.textContent = '⚠ Attach-to-existing isn\u2019t live yet — backend update still pending. Use “Create New Project” for now.';
-    } else {
-      status.textContent = '❌ ' + msg;
-    }
+    status.textContent = '❌ ' + (err.message || 'Attach failed');
     btn.disabled = false;
   }
 }

@@ -456,6 +456,7 @@ app.http('qb-quotes-mark-won', {
 
             const body = await request.json();
             const {
+                existing_project_id = null,   // ASSIGN path: attach to a live project
                 project_name,
                 client_id        = null,
                 quote_value      = null,
@@ -465,6 +466,83 @@ app.http('qb-quotes-mark-won', {
                 comments         = null
             } = body;
 
+            const createdBy = auth.name || auth.email || 'unknown';
+
+            // The 9 fixed line categories seeded against every quote (mirrors
+            // DEFAULT_LINE_ITEMS in quote-financials.js — kept inline to avoid
+            // a cross-file import in the Functions bundle).
+            const SEED_LINES = [
+                { line_no: 1, category: 'prelims',           description: 'Prelims',                       is_labour: 0 },
+                { line_no: 2, category: 'approval_fab_pack', description: 'Approval and Fabrication Pack', is_labour: 1 },
+                { line_no: 3, category: 'survey',            description: 'Survey',                        is_labour: 1 },
+                { line_no: 4, category: 'material',          description: 'Material cost',                 is_labour: 0 },
+                { line_no: 5, category: 'fabrication',       description: 'Fabrication',                   is_labour: 1 },
+                { line_no: 6, category: 'painting',          description: 'Painting',                      is_labour: 1 },
+                { line_no: 7, category: 'galvanising',       description: 'Galvanising',                   is_labour: 0 },
+                { line_no: 8, category: 'installation',      description: 'Installation',                  is_labour: 1 },
+                { line_no: 9, category: 'delivery',          description: 'Delivery',                      is_labour: 0 }
+            ];
+
+            // Seed the 9 default line items for this QB quote (qb_quote_id link),
+            // unless they already exist. Non-fatal — a seed failure shouldn't block
+            // the project link.
+            async function seedQbLineItems(qbQuoteId) {
+                try {
+                    const exists = await query(
+                        `SELECT TOP 1 id FROM QuoteLineItems WHERE qb_quote_id = @q`,
+                        { q: qbQuoteId }
+                    );
+                    if (exists.recordset.length) return; // already seeded
+                    for (const l of SEED_LINES) {
+                        await query(
+                            `INSERT INTO QuoteLineItems
+                                (tender_id, qb_quote_id, line_no, category, description,
+                                 quantity, unit_price, vat_applies, vat_rate, is_labour,
+                                 created_at, updated_at)
+                             VALUES
+                                (NULL, @q, @line_no, @category, @description,
+                                 1, 0, 1, 20.00, @is_labour, GETUTCDATE(), GETUTCDATE())`,
+                            { q: qbQuoteId, line_no: l.line_no, category: l.category,
+                              description: l.description, is_labour: l.is_labour }
+                        );
+                    }
+                } catch (e) {
+                    context.warn('seedQbLineItems failed (non-fatal):', e.message);
+                }
+            }
+
+            // ── ASSIGN PATH: attach this quote to an existing live project ───────
+            if (existing_project_id) {
+                const pid = parseInt(existing_project_id);
+                const pRes = await query(`SELECT * FROM Projects WHERE id = @pid`, { pid });
+                if (!pRes.recordset.length) return badRequest('Existing project not found', request);
+                const project = pRes.recordset[0];
+
+                // Link as a secondary (non-primary) quote via qb_quote_id.
+                try {
+                    await query(
+                        `INSERT INTO ProjectQuotes (project_id, qb_quote_id, is_primary, added_by, added_at)
+                         VALUES (@pid, @qid, 0, @by, GETUTCDATE())`,
+                        { pid: project.id, qid: id, by: createdBy }
+                    );
+                } catch (e) {
+                    // Unique index will reject a duplicate attach — treat as already linked.
+                    context.warn('ProjectQuotes (assign) insert:', e.message);
+                }
+
+                await query(
+                    `UPDATE QuoteBuilderQuotes
+                        SET status = 'won', project_id = @pid, updated_at = GETUTCDATE()
+                      WHERE id = @id`,
+                    { pid: project.id, id }
+                );
+
+                await seedQbLineItems(id);
+
+                return ok({ quote: { ...quote, status: 'won', project_id: project.id }, project, assigned: true }, request);
+            }
+
+            // ── NEW PROJECT PATH ─────────────────────────────────────────────────
             if (!project_name) return badRequest('project_name is required', request);
 
             // Derive project number: Q260502 → C260502
@@ -478,8 +556,6 @@ app.http('qb-quotes-mark-won', {
             if (existingRes.recordset.length) {
                 return badRequest(`Project ${projectNumber} already exists`, request);
             }
-
-            const createdBy = auth.name || auth.email || 'unknown';
 
             // Create Project row
             const projRes = await query(
@@ -517,21 +593,18 @@ app.http('qb-quotes-mark-won', {
                 { pid: project.id, id }
             );
 
-            // Seed 9 default line items for the new project (same as convertQuoteToProject)
-            // We do this by inserting into QuoteLineItems with tender_id = NULL but
-            // linked via ProjectQuotes. First create the ProjectQuotes link:
+            // Link this quote as the primary quote on the project (qb_quote_id),
+            // then seed its 9 line items so Project Tracker tiles populate.
             try {
-                // We need a Tenders row for the ProjectQuotes FK — QB quotes don't have one.
-                // So we insert directly into QuoteLineItems with a special qb_quote_id column.
-                // For now, seed via project_id directly:
                 await query(
-                    `INSERT INTO ProjectQuotes (project_id, tender_id, is_primary, added_by, created_at)
-                     VALUES (@pid, NULL, 1, @by, GETUTCDATE())`,
-                    { pid: project.id, by: createdBy }
+                    `INSERT INTO ProjectQuotes (project_id, qb_quote_id, is_primary, added_by, added_at)
+                     VALUES (@pid, @qid, 1, @by, GETUTCDATE())`,
+                    { pid: project.id, qid: id, by: createdBy }
                 );
             } catch (e) {
                 context.warn('ProjectQuotes insert failed (non-fatal):', e.message);
             }
+            await seedQbLineItems(id);
 
             return ok({ quote: { ...quote, status: 'won', project_id: project.id }, project }, request);
         } catch (err) {

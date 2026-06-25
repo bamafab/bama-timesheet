@@ -212,13 +212,18 @@ app.http('project-quotes-list', {
             const projectId = parseInt(request.query.get('project_id'));
             if (!projectId) return badRequest('project_id is required', request);
             const result = await query(
-                `SELECT pq.project_id, pq.tender_id, pq.is_primary, pq.added_at, pq.added_by,
-                        t.reference, t.project_name AS quote_project_name, t.status AS quote_status,
-                        t.quote_value, t.comments AS quote_comments,
-                        t.client_id, c.company_name
+                `SELECT pq.project_id, pq.tender_id, pq.qb_quote_id, pq.is_primary, pq.added_at, pq.added_by,
+                        COALESCE(t.reference, q.reference)              AS reference,
+                        COALESCE(t.project_name, q.reference)           AS quote_project_name,
+                        COALESCE(t.status, q.status)                    AS quote_status,
+                        COALESCE(t.quote_value, q.total_ex_vat)         AS quote_value,
+                        t.comments                                      AS quote_comments,
+                        t.client_id                                     AS client_id,
+                        COALESCE(c.company_name, q.company)             AS company_name
                  FROM ProjectQuotes pq
-                 INNER JOIN Tenders t ON t.id = pq.tender_id
-                 LEFT JOIN Clients c ON c.id = t.client_id
+                 LEFT JOIN Tenders t            ON t.id  = pq.tender_id
+                 LEFT JOIN QuoteBuilderQuotes q ON q.id  = pq.qb_quote_id
+                 LEFT JOIN Clients c            ON c.id  = t.client_id
                  WHERE pq.project_id = @projectId
                  ORDER BY pq.is_primary DESC, pq.added_at ASC`,
                 { projectId }
