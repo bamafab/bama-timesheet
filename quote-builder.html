@@ -753,11 +753,11 @@ tr.drag-dragging { opacity:0.35; }
                 <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;padding:8px 10px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
                   <div style="display:flex;align-items:center;gap:6px">
                     <span style="font-size:11px;color:var(--muted)">Days on site:</span>
-                    <input type="number" class="cost-input" id="inst-days" style="width:60px" value="0" oninput="renderLabourRows();recalcAll()">
+                    <input type="number" step="any" class="cost-input" id="inst-days" style="width:60px" value="0" oninput="renderLabourRows();recalcAll()">
                   </div>
                   <div style="display:flex;align-items:center;gap:6px">
                     <span style="font-size:11px;color:var(--muted)">Operatives:</span>
-                    <input type="number" class="cost-input" id="inst-operatives" style="width:50px" value="2" oninput="recalcAll()">
+                    <input type="number" step="any" class="cost-input" id="inst-operatives" style="width:50px" value="2" oninput="recalcAll()">
                   </div>
                   <div style="display:flex;align-items:center;gap:6px;margin-left:auto">
                     <span style="font-size:11px;color:var(--muted)">Global days</span>
@@ -832,8 +832,8 @@ tr.drag-dragging { opacity:0.35; }
                 </div>
                 <div class="cost-row cost-row-4">
                   <span class="cost-label">Workshop fabrication</span>
-                  <input type="number" class="cost-input" id="fab-hours" value="0" placeholder="hrs" oninput="recalcAll()">
-                  <input type="number" class="cost-input" id="fab-rate" value="45" placeholder="£/hr" oninput="recalcAll()">
+                  <input type="number" step="any" class="cost-input" id="fab-hours" value="0" placeholder="hrs" oninput="recalcAll()">
+                  <input type="number" step="any" class="cost-input" id="fab-rate" value="45" placeholder="£/hr" oninput="recalcAll()">
                   <div class="cost-result" id="fab-result">£0.00</div>
                 </div>
                 <hr class="divider">
@@ -931,36 +931,36 @@ tr.drag-dragging { opacity:0.35; }
                 <!-- ── end design wizard ──────────────────────────── -->
                 <div class="cost-row cost-row-4">
                   <span class="cost-label">Structural engineer fee</span>
-                  <input type="number" class="cost-input" id="struct-eng-hours" value="0" placeholder="hrs" oninput="recalcAll()">
-                  <input type="number" class="cost-input" id="struct-eng-rate" value="90" placeholder="£/hr" oninput="recalcAll()">
+                  <input type="number" step="any" class="cost-input" id="struct-eng-hours" value="0" placeholder="hrs" oninput="recalcAll()">
+                  <input type="number" step="any" class="cost-input" id="struct-eng-rate" value="90" placeholder="£/hr" oninput="recalcAll()">
                   <div class="cost-result" id="struct-eng-result">£0.00</div>
                 </div>
                 <div class="cost-row cost-row-4" style="margin-top:4px">
                   <span class="cost-label">Architect fee</span>
-                  <input type="number" class="cost-input" id="architect-hours" value="0" placeholder="hrs" oninput="recalcAll()">
-                  <input type="number" class="cost-input" id="architect-rate" value="90" placeholder="£/hr" oninput="recalcAll()">
+                  <input type="number" step="any" class="cost-input" id="architect-hours" value="0" placeholder="hrs" oninput="recalcAll()">
+                  <input type="number" step="any" class="cost-input" id="architect-rate" value="90" placeholder="£/hr" oninput="recalcAll()">
                   <div class="cost-result" id="architect-result">£0.00</div>
                 </div>
                 <div class="cost-row cost-row-4" style="margin-top:4px">
                   <span class="cost-label">Draughtsman / Detailing</span>
-                  <input type="number" class="cost-input" id="design-hours" value="0" placeholder="hrs" oninput="recalcAll()">
-                  <input type="number" class="cost-input" id="design-rate" value="50" placeholder="£/hr" oninput="recalcAll()">
+                  <input type="number" step="any" class="cost-input" id="design-hours" value="0" placeholder="hrs" oninput="recalcAll()">
+                  <input type="number" step="any" class="cost-input" id="design-rate" value="50" placeholder="£/hr" oninput="recalcAll()">
                   <div class="cost-result" id="design-result">£0.00</div>
                 </div>
                 <hr class="divider">
                 <div style="font-size:11px;color:var(--muted);margin-bottom:4px;font-weight:600">APPROVAL &amp; FAB PACK</div>
                 <div class="cost-row cost-row-4">
                   <span class="cost-label">Approval &amp; Fab Pack</span>
-                  <input type="number" class="cost-input" id="fabpack-hours" value="0" placeholder="hrs" oninput="recalcAll()">
-                  <input type="number" class="cost-input" id="fabpack-rate" value="50" placeholder="£/hr" oninput="recalcAll()">
+                  <input type="number" step="any" class="cost-input" id="fabpack-hours" value="0" placeholder="hrs" oninput="recalcAll()">
+                  <input type="number" step="any" class="cost-input" id="fabpack-rate" value="50" placeholder="£/hr" oninput="recalcAll()">
                   <div class="cost-result" id="fabpack-result">£0.00</div>
                 </div>
                 <div class="cost-row cost-row-4" style="margin-top:4px">
                   <span class="cost-label" style="display:flex;align-items:center;gap:4px">Connection Design
                     <span style="font-size:9px;color:var(--muted);font-weight:400">(incl. in A&amp;FP by default)</span>
                   </span>
-                  <input type="number" class="cost-input" id="conn-design-hours" value="0" placeholder="hrs" oninput="recalcAll()">
-                  <input type="number" class="cost-input" id="conn-design-rate" value="50" placeholder="£/hr" oninput="recalcAll()">
+                  <input type="number" step="any" class="cost-input" id="conn-design-hours" value="0" placeholder="hrs" oninput="recalcAll()">
+                  <input type="number" step="any" class="cost-input" id="conn-design-rate" value="50" placeholder="£/hr" oninput="recalcAll()">
                   <div class="cost-result" id="conn-design-result">£0.00</div>
                 </div>
               </div>
@@ -1069,7 +1069,7 @@ tr.drag-dragging { opacity:0.35; }
                 <hr class="divider">
                 <div class="cost-row cost-row-5" style="margin-top:4px">
                   <span class="cost-label">Parking / other charges</span>
-                  <input type="number" class="cost-input" id="survey-parking" value="0" placeholder="£" oninput="recalcAll()">
+                  <input type="number" step="any" class="cost-input" id="survey-parking" value="0" placeholder="£" oninput="recalcAll()">
                   <span></span><span></span>
                   <div class="cost-result" id="survey-parking-result">£0.00</div>
                 </div>
@@ -1157,8 +1157,8 @@ tr.drag-dragging { opacity:0.35; }
               </div>
                 <div class="cost-row cost-row-4">
                   <span class="cost-label">Metrage</span>
-                  <input type="number" class="cost-input" id="purlins-m" value="0" placeholder="m" oninput="recalcAll()">
-                  <input type="number" class="cost-input" id="purlins-rate" value="0" placeholder="£/m" oninput="recalcAll()">
+                  <input type="number" step="any" class="cost-input" id="purlins-m" value="0" placeholder="m" oninput="recalcAll()">
+                  <input type="number" step="any" class="cost-input" id="purlins-rate" value="0" placeholder="£/m" oninput="recalcAll()">
                   <div class="cost-result" id="purlins-result">£0.00</div>
                 </div>
               </div>
@@ -1277,7 +1277,7 @@ tr.drag-dragging { opacity:0.35; }
               </div>
               <div id="depositSection" style="display:none">
                 <div class="summary-line" style="margin-top:6px">
-                  <span style="font-size:12px">Deposit % <input type="number" class="cost-input" id="depositPct" value="60" style="width:55px;display:inline-block;margin-left:6px" oninput="recalcAll()"></span>
+                  <span style="font-size:12px">Deposit % <input type="number" step="any" class="cost-input" id="depositPct" value="60" style="width:55px;display:inline-block;margin-left:6px" oninput="recalcAll()"></span>
                   <span class="val" id="sum-deposit">£0.00</span>
                 </div>
               </div>
@@ -11867,8 +11867,8 @@ function totalTakeoffCost() {
 function rowHTML(id, label, qty, rate, result, extraAttrs='') {
   return `<div class="cost-row cost-row-4" id="dynrow-${id}" ${extraAttrs}>
     <span class="cost-label">${label}</span>
-    <input type="number" class="cost-input" id="qty-${id}" value="${qty}" oninput="recalcAll()">
-    <input type="number" class="cost-input" id="rate-${id}" value="${rate}" oninput="recalcAll()">
+    <input type="number" step="any" class="cost-input" id="qty-${id}" value="${qty}" oninput="recalcAll()">
+    <input type="number" step="any" class="cost-input" id="rate-${id}" value="${rate}" oninput="recalcAll()">
     <div style="display:flex;gap:4px;align-items:center">
       <div class="cost-result" id="res-${id}">${result}</div>
       <button class="btn-icon" onclick="removeDynRow('${id}')" style="flex-shrink:0;height:28px">✕</button>
@@ -11939,7 +11939,7 @@ function renderLabourRows() {
         <span style="font-size:12px;font-weight:500;color:var(--text)">${r.label}</span>
         <div style="display:flex;align-items:center;gap:3px">
           <span style="font-size:10px;color:var(--muted)">No.</span>
-          <input type="number" class="cost-input" id="qty-${r.id}" value="${r.qty||1}" min="1"
+          <input type="number" step="any" class="cost-input" id="qty-${r.id}" value="${r.qty||1}" min="1"
             oninput="recalcAll()" style="width:44px" title="Number of this role">
         </div>
         <div style="display:flex;align-items:center;gap:3px">
@@ -11949,11 +11949,11 @@ function renderLabourRows() {
           </button>
           ${rowLocked
             ? `<div style="font-family:var(--font-mono);font-size:12px;color:var(--muted);padding:4px 6px;background:rgba(255,255,255,0.03);border-radius:4px;min-width:36px;text-align:right">${rowDays}d</div>`
-            : `<input type="number" class="cost-input" id="days-${r.id}" value="${rowDays}" min="0"
+            : `<input type="number" step="any" class="cost-input" id="days-${r.id}" value="${rowDays}" min="0"
                 oninput="updateLabourDays('${r.id}',this.value);recalcAll()" style="width:52px" title="Days for this role">`
           }
         </div>
-        <input type="number" class="cost-input" id="rate-${r.id}" value="${r.rate}" placeholder="£/day" oninput="recalcAll()">
+        <input type="number" step="any" class="cost-input" id="rate-${r.id}" value="${r.rate}" placeholder="£/day" oninput="recalcAll()">
         <div class="cost-result" id="res-${r.id}">£0.00</div>
         <button class="btn-icon" onclick="removeDynRow('${r.id}')" style="flex-shrink:0;height:28px">✕</button>
       </div>
@@ -12060,12 +12060,12 @@ function renderPaintRows() {
           <span style="font-size:10px;color:var(--subtle)">(${r.unit})</span>
         </span>
         <div style="display:flex;gap:4px;align-items:center">
-          <input type="number" class="cost-input" id="qty-${r.id}" value="${r.qty||''}"
+          <input type="number" step="any" class="cost-input" id="qty-${r.id}" value="${r.qty||''}"
             placeholder="${autoTonnes} auto" oninput="recalcAll()" style="flex:1;min-width:0">
           <button onclick="setAutoWeight('${r.id}')" title="Use takeoff weight (${autoTonnes}t)"
             style="background:${isAuto?'rgba(255,107,0,0.15)':'transparent'};border:1px solid ${isAuto?'var(--accent)':'var(--border)'};border-radius:4px;color:${isAuto?'var(--accent)':'var(--muted)'};cursor:pointer;padding:3px 5px;font-size:11px;white-space:nowrap;flex-shrink:0">↻</button>
         </div>
-        <input type="number" class="cost-input" id="rate-${r.id}" value="${r.rate}" oninput="recalcAll()">
+        <input type="number" step="any" class="cost-input" id="rate-${r.id}" value="${r.rate}" oninput="recalcAll()">
         <div style="display:flex;gap:4px;align-items:center">
           <div class="cost-result" id="res-${r.id}">£0.00</div>
           <button class="btn-icon" onclick="removeDynRow('${r.id}')" style="flex-shrink:0;height:28px">✕</button>
@@ -15450,8 +15450,8 @@ function rowHTMLWithNote(id, label, qty, rate, result, supplierNote='') {
   return `<div id="dynrow-${id}">
     <div class="cost-row cost-row-4">
       <span class="cost-label">${label}</span>
-      <input type="number" class="cost-input" id="qty-${id}" value="${qty}" oninput="recalcAll()">
-      <input type="number" class="cost-input" id="rate-${id}" value="${rate}" oninput="recalcAll()">
+      <input type="number" step="any" class="cost-input" id="qty-${id}" value="${qty}" oninput="recalcAll()">
+      <input type="number" step="any" class="cost-input" id="rate-${id}" value="${rate}" oninput="recalcAll()">
       <div style="display:flex;gap:4px;align-items:center">
         <div class="cost-result" id="res-${id}">${result}</div>
         <button class="btn-icon" onclick="removeDynRow('${id}')" style="flex-shrink:0;height:28px">✕</button>
