@@ -17303,6 +17303,10 @@ async function renderInlineClientContacts(clientId) {
           No contacts yet for this client.
           <button class="tiny-btn" onclick="quickAddContactToClient(${clientId})" style="padding:4px 12px;font-size:11px;margin-left:8px;background:var(--accent);color:#fff;border:none">+ Add Contact</button>
         </div>
+        <div style="display:flex;gap:6px;justify-content:flex-end;padding:0 4px 4px">
+          <button class="tiny-btn" onclick="openEditClientModal(${clientId})" style="padding:3px 10px;font-size:11px;background:var(--surface2);color:var(--muted);border:1px solid var(--border)">✏️ Edit</button>
+          <button class="tiny-btn" onclick="deleteClientFromTile(${clientId})" style="padding:3px 10px;font-size:11px;background:var(--surface2);color:var(--red);border:1px solid var(--border)">✕ Delete</button>
+        </div>
       `;
       return;
     }
