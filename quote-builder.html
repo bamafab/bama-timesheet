@@ -2872,10 +2872,39 @@ tr.drag-dragging { opacity:0.35; }
 <div class="modal-overlay" id="wonModal">
   <div class="modal" style="max-width:520px">
     <div class="modal-title" style="color:var(--green)">🎉 Quote Won — Create Project</div>
-    <p style="font-size:13px;color:var(--muted);margin-bottom:20px;line-height:1.6">
-      Push this quote into the ERP as a new project. Fields are pre-filled from the quote — review and adjust before creating.
+    <p style="font-size:13px;color:var(--muted);margin-bottom:16px;line-height:1.6">
+      Push this quote into the ERP. Create a brand-new project, or — when two quotes are really one job — attach it to an existing project.
     </p>
-    <div class="form-grid" style="gap:10px">
+
+    <!-- New vs Assign-to-existing choice -->
+    <div style="display:flex;gap:10px;margin-bottom:16px">
+      <label id="wonOptNew" class="won-opt-card" onclick="wonSelectMode('new')"
+             style="flex:1;display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border-radius:10px;border:2px solid var(--green);cursor:pointer;transition:border-color .15s,background .15s">
+        <div>
+          <div style="font-weight:600;font-size:13px;color:var(--text)">🏗 Create New Project</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">Derives a fresh C-number from the quote ref.</div>
+        </div>
+      </label>
+      <label id="wonOptAssign" class="won-opt-card" onclick="wonSelectMode('assign')"
+             style="flex:1;display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border-radius:10px;border:2px solid var(--border);cursor:pointer;transition:border-color .15s,background .15s">
+        <div>
+          <div style="font-weight:600;font-size:13px;color:var(--text)">🔗 Assign to Existing</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">Attach as a secondary quote on a live project.</div>
+        </div>
+      </label>
+    </div>
+
+    <!-- Existing-project picker (assign mode only) -->
+    <div id="wonAssignPicker" style="display:none;margin-bottom:18px">
+      <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:6px">Pick the live project to attach this quote to</label>
+      <input id="wonProjectSearch" type="text" placeholder="Search by number, name or client…" oninput="renderWonProjectList()"
+             style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%;margin-bottom:8px">
+      <div id="wonProjectList" style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;background:var(--surface)"></div>
+      <input type="hidden" id="wonSelectedProjectId" value="">
+      <div id="wonSelectedProjectLabel" style="margin-top:8px;font-size:12px;color:var(--green);min-height:16px"></div>
+    </div>
+
+    <div id="wonNewFields" class="form-grid" style="gap:10px">
       <div class="field">
         <label>Project Name</label>
         <input type="text" id="wonProjectName" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%">
@@ -2904,6 +2933,7 @@ tr.drag-dragging { opacity:0.35; }
         <textarea id="wonNotes" rows="3" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:13px;width:100%;resize:vertical"></textarea>
       </div>
     </div>
+    </div><!-- /#wonNewFields -->
     <div id="wonStatus" style="margin-top:12px;font-size:12px;color:var(--muted);min-height:20px"></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeWonModal()">Cancel</button>
@@ -16293,7 +16323,81 @@ function showWonModal() {
   document.getElementById('wonStatus').textContent  = '';
   document.getElementById('wonCreateBtn').disabled  = false;
   document.getElementById('wonCreateBtn').textContent = '🏗 Create Project in ERP';
+  wonSelectMode('new');
+  document.getElementById('wonProjectSearch').value = '';
+  document.getElementById('wonSelectedProjectId').value = '';
+  document.getElementById('wonSelectedProjectLabel').textContent = '';
+  _wonProjects = [];
+  loadWonProjects();
   document.getElementById('wonModal').classList.add('active');
+}
+
+// ── Won-modal mode + existing-project picker ───────────────────────────────
+let _wonProjects = [];
+
+function wonSelectMode(mode) {
+  const newCard    = document.getElementById('wonOptNew');
+  const assignCard = document.getElementById('wonOptAssign');
+  const picker     = document.getElementById('wonAssignPicker');
+  const newFields  = document.getElementById('wonNewFields');
+  const btn        = document.getElementById('wonCreateBtn');
+  if (!newCard) return;
+  if (mode === 'assign') {
+    newCard.style.borderColor    = 'var(--border)';
+    assignCard.style.borderColor = 'var(--green)';
+    newCard.dataset.selected = '';
+    assignCard.dataset.selected = '1';
+    picker.style.display    = 'block';
+    newFields.style.display = 'none';
+    btn.textContent = '🔗 Attach to Project';
+    renderWonProjectList();
+  } else {
+    newCard.style.borderColor    = 'var(--green)';
+    assignCard.style.borderColor = 'var(--border)';
+    newCard.dataset.selected = '1';
+    assignCard.dataset.selected = '';
+    picker.style.display    = 'none';
+    newFields.style.display = '';
+    btn.textContent = '🏗 Create Project in ERP';
+  }
+}
+
+async function loadWonProjects() {
+  try {
+    const rows = await qbFetch('GET', '/api/projects');
+    _wonProjects = (rows || []).filter(p => p.status === 'In Progress');
+  } catch (e) {
+    _wonProjects = [];
+  }
+  if (document.getElementById('wonOptAssign')?.dataset.selected === '1') renderWonProjectList();
+}
+
+function renderWonProjectList() {
+  const list = document.getElementById('wonProjectList');
+  if (!list) return;
+  const term = (document.getElementById('wonProjectSearch')?.value || '').toLowerCase().trim();
+  const filtered = _wonProjects.filter(p => {
+    if (!term) return true;
+    return `${p.project_number || ''} ${p.project_name || ''} ${p.client_name || p.company_name || ''}`.toLowerCase().includes(term);
+  });
+  if (!filtered.length) {
+    list.innerHTML = '<div style="padding:12px;font-size:12px;color:var(--muted)">No live projects found.</div>';
+    return;
+  }
+  const sel = document.getElementById('wonSelectedProjectId').value;
+  list.innerHTML = filtered.map(p => `
+    <div class="won-proj-row" data-id="${p.id}" data-num="${(p.project_number||'').replace(/"/g,'&quot;')}"
+         style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);background:${String(p.id)===String(sel)?'rgba(62,207,142,.12)':''}"
+         onclick="selectWonProject(this)">
+      <div style="font-size:13px;font-weight:600;color:var(--text)">${(p.project_number||'')} — ${(p.project_name||'')}</div>
+      ${(p.client_name||p.company_name) ? `<div style="font-size:11px;color:var(--muted)">${p.client_name||p.company_name}</div>` : ''}
+    </div>`).join('');
+}
+
+function selectWonProject(row) {
+  document.getElementById('wonSelectedProjectId').value = row.dataset.id;
+  document.getElementById('wonSelectedProjectLabel').textContent = 'Selected: ' + row.dataset.num;
+  renderWonProjectList();
 }
 
 function closeWonModal() {
@@ -16301,6 +16405,8 @@ function closeWonModal() {
 }
 
 async function createProjectFromQuote() {
+  const isAssign = document.getElementById('wonOptAssign')?.dataset.selected === '1';
+  if (isAssign) return assignQuoteToExistingProject();
   const q = getQuote(); if (!q) return;
   const btn    = document.getElementById('wonCreateBtn');
   const status = document.getElementById('wonStatus');
@@ -16403,10 +16509,49 @@ async function createProjectFromQuote() {
   }
 }
 
-// ============================================================
-// QUOTE HELPER
-// ============================================================
-let _helperFiles = []; // [{name, base64}]
+// Attach this won quote to an existing live project as a secondary quote.
+// Sends existing_project_id to mark-won; backend skips project creation,
+// inserts a non-primary ProjectQuotes row (qb_quote_id) + seeds line items.
+async function assignQuoteToExistingProject() {
+  const q = getQuote(); if (!q) return;
+  const btn       = document.getElementById('wonCreateBtn');
+  const status    = document.getElementById('wonStatus');
+  const projectId = document.getElementById('wonSelectedProjectId').value;
+
+  if (!projectId) { status.textContent = '⚠ Select a project to attach to'; status.style.color = 'var(--red)'; return; }
+  const proj = _wonProjects.find(p => String(p.id) === String(projectId));
+
+  btn.disabled = true;
+  status.style.color = 'var(--muted)';
+  status.textContent = 'Attaching to ' + (proj?.project_number || 'project') + '...';
+
+  try {
+    const result = await qbFetch('PUT', '/api/qb-quotes/' + q.id + '/mark-won', {
+      existing_project_id: parseInt(projectId, 10),
+      quote_value: q._computed?.total || null
+    });
+
+    q.status       = 'won';
+    q.project_id   = result.project?.id || parseInt(projectId, 10);
+    q.erpProjectId = result.project?.project_number || proj?.project_number || null;
+    renderSidebar();
+    renderStatusBadge(q);
+    const badge = document.getElementById('erpProjectBadge');
+    if (badge && q.erpProjectId) { badge.textContent = q.erpProjectId; badge.style.display = ''; }
+
+    status.style.color = 'var(--green)';
+    status.textContent = '✓ Attached to ' + (q.erpProjectId || 'project');
+    btn.textContent = '✓ Done';
+    toast('Quote attached to ' + (q.erpProjectId || 'existing project'), 'success');
+    setTimeout(() => closeWonModal(), 2200);
+  } catch(err) {
+    status.style.color = 'var(--red)';
+    status.textContent = '❌ ' + err.message;
+    btn.disabled = false;
+  }
+}
+
+
 
 function isHelperFileSupported(f) {
   return f.name.match(/\.(pdf|doc|docx|png|jpg|jpeg|gif|webp)$/i);
@@ -20181,7 +20326,7 @@ const HELP_CONTENT = {
           <li><span class="h-step-num">3</span><div>Set <strong>Sent</strong> when the quote goes to client. Set <strong>Won</strong> or <strong>Lost</strong> when you hear back.</div></li>
           <li><span class="h-step-num">4</span><div>When marking Lost, record the reason and competitor — feeds into win/loss analysis.</div></li>
         </ul>
-        <div class="h-tip">When you mark a quote as Won, a modal opens asking for project name, client, value, and deadline. Confirm it and the system automatically creates a live project in the Project Tracker and links it to this quote — you'll see a green ERP badge appear on the quote.</div>
+        <div class="h-tip">When you mark a quote as Won, a modal opens with two choices. <strong>Create New Project</strong> takes a project name, client, value and deadline, then creates a live project in the Project Tracker (deriving a C-number from the quote ref) and links it to this quote. <strong>Assign to Existing</strong> is for when two quotes are really one job — search your live projects, pick one, and this quote attaches to it as a secondary quote instead of spawning a duplicate project. Either way you'll see a green ERP badge appear on the quote.</div>
       </div>
       <div class="h-section">
         <div class="h-heading"><span class="h-icon">❓</span> FAQ</div>
