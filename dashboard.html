@@ -1034,8 +1034,10 @@ async function loadTrackerData() {
             comments: r.loss_comment || '',
             id:       r.id,
             _source:  'sql',
-            // keep for sidebar rendering
-            project:  r.company || ''
+            // Real project/job title (JSON_VALUE from quote_data, list endpoint).
+            // Falls back to company for the sidebar where project is absent.
+            projectName: r.project_name || '',
+            project:  r.project_name || r.company || ''
           };
         });
       }
@@ -2781,7 +2783,7 @@ function buildOverviewRows() {
       ref:       q.ref,
       due:       q.due || null,
       company:   q.company || '',
-      project:   q.project && q.project !== q.company ? q.project : (q.projectName || ''),
+      project:   q.projectName || (q.project && q.project !== q.company ? q.project : ''),
       value:     q.value || 0,
       doneBy:    q.preparedBy || q.prepared_by || q.doneBy || '',
       sent:      q.dateSent || null,
@@ -2931,7 +2933,7 @@ function renderOverview() {
     const band = ovRowBand(r);
     const bandStyle = OV_BAND_STYLE[band] || (i % 2 ? 'background:rgba(255,255,255,0.015)' : '');
     const isLost = band === 'lost';
-    const refStyle = `font-family:var(--font-mono);font-size:11px;color:var(--accent);${isLost?'text-decoration:line-through;opacity:.7':''}`;
+    const refStyle = `font-family:var(--font-mono);font-size:13px;color:var(--text);${isLost?'text-decoration:line-through;opacity:.6':''}`;
     const total = r.value ? r.value * 1.20 : 0;
     const idx = _ovRows.indexOf(r);
 
@@ -2964,10 +2966,11 @@ function renderOverview() {
       ? '<span style="color:#5fd17a;font-weight:600">Yes</span>'
       : '<span style="color:var(--muted)">No</span>';
 
-    const clickOpen = r.editable ? `onclick="window.location='quote-builder.html?quote=${r.id}'" style="cursor:pointer" title="Open in Quote Builder"` : '';
+    const clickOpen = r.editable ? `onclick="window.location='quote-builder.html?quote=${r.id}'" title="Open in Quote Builder"` : '';
+    const refCellStyle = refStyle + (r.editable ? ';cursor:pointer' : '');
 
     return `<tr style="${bandStyle}">
-      <td ${clickOpen} style="${refStyle}">${escHtml(r.ref)}</td>
+      <td ${clickOpen} style="${refCellStyle}">${escHtml(r.ref)}</td>
       <td style="text-align:center;font-size:11px">${r.due ? fmtOvDate(r.due) : '<span style="color:var(--muted)">—</span>'}</td>
       <td style="font-size:12px">${escHtml(r.company) || '<span style="color:var(--muted)">—</span>'}</td>
       <td style="font-size:11px;color:var(--muted);white-space:normal;line-height:1.35" title="${escAttr(r.project)}">${escHtml(r.project)}</td>
@@ -3744,7 +3747,7 @@ async function trResendNotify(tenderId) {
 </div><!-- end dashQuotesView -->
 
 <!-- ═══════════════════ TENDER REGISTER VIEW ═══════════════════ -->
-<div id="dashTendersView" style="display:none;padding:20px;max-width:1400px;margin:0 auto">
+<div id="dashTendersView" style="display:none;flex:1;min-height:0;overflow-y:auto;padding:20px"><div style="max-width:1400px;margin:0 auto">
 
   <!-- Header row -->
   <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
@@ -3796,6 +3799,7 @@ async function trResendNotify(tenderId) {
       </tbody>
     </table>
   </div>
+</div>
 </div>
 
 <!-- ═══════════════ OVERVIEW (spreadsheet-style tracker) ═══════════════ -->

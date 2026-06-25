@@ -172,7 +172,8 @@ app.http('qb-quotes-list', {
                        cost_material, cost_installation, cost_fabrication,
                        cost_design, cost_painting, cost_survey, cost_delivery, cost_prelims,
                        sharepoint_folder_id, sharepoint_tender_folder_id,
-                       project_id, created_by, created_at, updated_at
+                       project_id, created_by, created_at, updated_at,
+                       JSON_VALUE(quote_data, '$.project') AS project_name
                 FROM QuoteBuilderQuotes
                 WHERE 1=1`;
             const params = {};
