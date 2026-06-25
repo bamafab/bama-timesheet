@@ -483,10 +483,26 @@ app.http('qb-quotes-mark-won', {
                 { line_no: 9, category: 'delivery',          description: 'Delivery',                      is_labour: 0 }
             ];
 
-            // Seed the 9 default line items for this QB quote (qb_quote_id link),
-            // unless they already exist. Non-fatal — a seed failure shouldn't block
-            // the project link.
-            async function seedQbLineItems(qbQuoteId) {
+            // Map each line category to the QB cost column it should carry.
+            // QB writes these on every save (computeQuoteTotals). 'painting'
+            // already includes galvanising in QB, so galvanising stays 0 to
+            // avoid double-counting. approval_fab_pack carries cost_design.
+            const CATEGORY_COST = {
+                prelims:          'cost_prelims',
+                approval_fab_pack:'cost_design',
+                survey:           'cost_survey',
+                material:         'cost_material',
+                fabrication:      'cost_fabrication',
+                painting:         'cost_painting',
+                galvanising:      null,
+                installation:    'cost_installation',
+                delivery:         'cost_delivery'
+            };
+
+            // Seed the 9 line items for this QB quote with REAL values pulled
+            // from the quote's stored cost columns (qty 1 × unit_price = cost).
+            // Idempotent. Non-fatal.
+            async function seedQbLineItems(qbQuoteId, srcQuote) {
                 try {
                     const exists = await query(
                         `SELECT TOP 1 id FROM QuoteLineItems WHERE qb_quote_id = @q`,
@@ -494,6 +510,11 @@ app.http('qb-quotes-mark-won', {
                     );
                     if (exists.recordset.length) return; // already seeded
                     for (const l of SEED_LINES) {
+                        const col = CATEGORY_COST[l.category];
+                        let price = 0;
+                        if (col && srcQuote && srcQuote[col] != null) {
+                            price = parseFloat(srcQuote[col]) || 0;
+                        }
                         await query(
                             `INSERT INTO QuoteLineItems
                                 (tender_id, qb_quote_id, line_no, category, description,
@@ -501,9 +522,9 @@ app.http('qb-quotes-mark-won', {
                                  created_at, updated_at)
                              VALUES
                                 (NULL, @q, @line_no, @category, @description,
-                                 1, 0, 1, 20.00, @is_labour, GETUTCDATE(), GETUTCDATE())`,
+                                 1, @unit_price, 1, 20.00, @is_labour, GETUTCDATE(), GETUTCDATE())`,
                             { q: qbQuoteId, line_no: l.line_no, category: l.category,
-                              description: l.description, is_labour: l.is_labour }
+                              description: l.description, unit_price: price, is_labour: l.is_labour }
                         );
                     }
                 } catch (e) {
@@ -537,7 +558,7 @@ app.http('qb-quotes-mark-won', {
                     { pid: project.id, id }
                 );
 
-                await seedQbLineItems(id);
+                await seedQbLineItems(id, quote);
 
                 return ok({ quote: { ...quote, status: 'won', project_id: project.id }, project, assigned: true }, request);
             }
@@ -604,7 +625,7 @@ app.http('qb-quotes-mark-won', {
             } catch (e) {
                 context.warn('ProjectQuotes insert failed (non-fatal):', e.message);
             }
-            await seedQbLineItems(id);
+            await seedQbLineItems(id, quote);
 
             return ok({ quote: { ...quote, status: 'won', project_id: project.id }, project }, request);
         } catch (err) {

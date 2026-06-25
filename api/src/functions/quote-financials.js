@@ -328,20 +328,45 @@ app.http('project-quotes-delete', {
         if (auth.status) return auth;
         try {
             const projectId = parseInt(request.params.project_id);
-            const tenderId  = parseInt(request.params.tender_id);
+            const tenderParam = request.params.tender_id;
+            // QB quotes are detached with a "qb:" prefix (qb:28) since they have
+            // no tender_id; Tender quotes pass the numeric tender_id as before.
+            const isQb = typeof tenderParam === 'string' && tenderParam.startsWith('qb:');
+            const refId = isQb ? parseInt(tenderParam.slice(3)) : parseInt(tenderParam);
+
             const row = await query(
-                `SELECT is_primary FROM ProjectQuotes WHERE project_id = @pid AND tender_id = @tid`,
-                { pid: projectId, tid: tenderId }
+                isQb
+                    ? `SELECT is_primary FROM ProjectQuotes WHERE project_id = @pid AND qb_quote_id = @rid`
+                    : `SELECT is_primary FROM ProjectQuotes WHERE project_id = @pid AND tender_id = @rid`,
+                { pid: projectId, rid: refId }
             );
             if (!row.recordset.length) return notFound('Link not found', request);
             if (row.recordset[0].is_primary) {
                 return badRequest('Cannot detach the primary (originating) quote from a project', request);
             }
-            await query(
-                `DELETE FROM ProjectQuotes WHERE project_id = @pid AND tender_id = @tid`,
-                { pid: projectId, tid: tenderId }
-            );
-            return ok({ deleted: true, project_id: projectId, tender_id: tenderId }, request);
+            if (isQb) {
+                // Remove this QB quote's line items so a re-attach reseeds them
+                // with current values. Scoped to this quote only.
+                await query(`DELETE FROM QuoteLineItems WHERE qb_quote_id = @rid`, { rid: refId });
+                await query(
+                    `DELETE FROM ProjectQuotes WHERE project_id = @pid AND qb_quote_id = @rid`,
+                    { pid: projectId, rid: refId }
+                );
+                // Reset the quote's project link + won status ONLY if this project
+                // was the one it pointed at — lets it be re-attached cleanly.
+                await query(
+                    `UPDATE QuoteBuilderQuotes
+                        SET project_id = NULL, status = 'sent', updated_at = GETUTCDATE()
+                      WHERE id = @rid AND project_id = @pid`,
+                    { rid: refId, pid: projectId }
+                );
+            } else {
+                await query(
+                    `DELETE FROM ProjectQuotes WHERE project_id = @pid AND tender_id = @rid`,
+                    { pid: projectId, rid: refId }
+                );
+            }
+            return ok({ deleted: true, project_id: projectId, ref: tenderParam }, request);
         } catch (err) {
             context.error('project-quotes-delete:', err);
             return serverError('Failed to detach quote', request);

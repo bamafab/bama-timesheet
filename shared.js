@@ -21177,7 +21177,7 @@ function renderProjectFinancialDashboard() {
             <span style="font-size:11px;color:var(--subtle)">Excl. £${exclTotal.toFixed(2)} • Labour £${labourTotal.toFixed(2)}</span>
             ${q.is_primary
               ? ''
-              : `<button class="btn btn-ghost" style="font-size:11px;padding:4px 10px" onclick="detachProjectQuote(${q.tender_id})">Detach</button>`}
+              : `<button class="btn btn-ghost" style="font-size:11px;padding:4px 10px" onclick="detachProjectQuote('${q.qb_quote_id != null && q.tender_id == null ? 'qb:' + q.qb_quote_id : q.tender_id}')">Detach</button>`}
           </div>
         </div>
         ${scope ? `<div class="pt-quote-scope">${escapeHtml(scope)}</div>` : ''}
@@ -21239,18 +21239,25 @@ async function onProjectLineProgressChange(quoteLineItemId, value) {
   }, 600);
 }
 
-async function detachProjectQuote(tenderId) {
+async function detachProjectQuote(ref) {
   if (!currentProjectRecord) return;
-  const q = _projectFinancials.quotes.find(x => x.tender_id === tenderId);
+  const refStr = String(ref);
+  const isQb = refStr.startsWith('qb:');
+  const q = isQb
+    ? _projectFinancials.quotes.find(x => String(x.qb_quote_id) === refStr.slice(3))
+    : _projectFinancials.quotes.find(x => String(x.tender_id) === refStr);
   if (q && q.is_primary) { toast('Cannot detach the primary quote', 'error'); return; }
+  const note = isQb
+    ? 'Its line items will be removed too, so re-attaching will pull fresh values from the quote.'
+    : 'Its line items remain on the quote — only the link is removed. Per-line progress on this project will be orphaned.';
   const ok = await showConfirmAsync(
     'Detach this quote?',
-    `Quote <strong>${escapeHtml(q?.reference || '')}</strong> will be removed from this project. Its line items remain on the quote — only the link is removed. Per-line progress on this project will be orphaned.`,
+    `Quote <strong>${escapeHtml(q?.reference || '')}</strong> will be removed from this project. ${note}`,
     { okLabel: 'Detach', danger: true }
   );
   if (!ok) return;
   try {
-    await api.delete(`/api/project-quotes/${currentProjectRecord.id}/${tenderId}`);
+    await api.delete(`/api/project-quotes/${currentProjectRecord.id}/${encodeURIComponent(refStr)}`);
     await loadProjectFinancials(currentProjectRecord.id);
     toast('Quote detached', 'success');
   } catch (err) {
