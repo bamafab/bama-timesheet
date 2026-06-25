@@ -3512,6 +3512,26 @@ async function submitNewTender() {
           Object.assign(existingClient, addr); // keep local book in sync
         } catch (e) { console.warn('Client address update failed:', e); }
       }
+      // Save the typed contact to ClientContacts too (API auto-dedupes by name+email),
+      // so a person entered against an existing client becomes pickable next time.
+      if (!document.getElementById('trNewSkipContact').checked) {
+        const cn = document.getElementById('trNewContactName').value.trim();
+        const ce = document.getElementById('trNewContactEmail').value.trim();
+        const cp = document.getElementById('trNewContactPhone').value.trim();
+        if (cn || ce || cp) {
+          try {
+            await trFetch('/api/client-contacts', {
+              method: 'POST',
+              body: JSON.stringify({
+                client_id: existingClient.id, contact_name: cn || null,
+                contact_email: ce || null, contact_phone: cp || null,
+                role: document.getElementById('trNewContactTitle').value.trim() || null
+              })
+            });
+            delete _trContactsCache[existingClient.id]; // bust cache so it reloads next open
+          } catch (e) { console.warn('Contact save failed:', e); }
+        }
+      }
     }
   }
 
