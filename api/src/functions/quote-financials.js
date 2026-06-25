@@ -46,8 +46,16 @@ app.http('quote-line-items-list', {
         const auth = await requireAuth(request);
         if (auth.status) return auth;
         try {
-            const tenderId = parseInt(request.query.get('tender_id'));
-            if (!tenderId) return badRequest('tender_id is required', request);
+            const tenderId  = parseInt(request.query.get('tender_id'));
+            const qbQuoteId = parseInt(request.query.get('qb_quote_id'));
+            if (qbQuoteId) {
+                const result = await query(
+                    `SELECT * FROM QuoteLineItems WHERE qb_quote_id = @qbQuoteId ORDER BY line_no ASC`,
+                    { qbQuoteId }
+                );
+                return ok(result.recordset, request);
+            }
+            if (!tenderId) return badRequest('tender_id or qb_quote_id is required', request);
             const result = await query(
                 `SELECT * FROM QuoteLineItems WHERE tender_id = @tenderId ORDER BY line_no ASC`,
                 { tenderId }
@@ -99,6 +107,45 @@ app.http('quote-line-items-seed', {
         } catch (err) {
             context.error('quote-line-items-seed:', err);
             return serverError('Failed to seed quote line items', request);
+        }
+    }
+});
+
+// POST /api/quote-line-items/seed-qb/:qb_quote_id — same 9 defaults for a QB quote
+// (idempotent). Flat route to avoid colliding with the {tender_id} param route.
+app.http('quote-line-items-seed-qb', {
+    methods: ['POST'],
+    authLevel: 'anonymous',
+    route: 'quote-line-items/seed-qb/{qb_quote_id}',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+        try {
+            const qbQuoteId = parseInt(request.params.qb_quote_id);
+            if (!qbQuoteId) return badRequest('qb_quote_id is required', request);
+
+            const existing = await query(
+                `SELECT * FROM QuoteLineItems WHERE qb_quote_id = @qbQuoteId ORDER BY line_no ASC`,
+                { qbQuoteId }
+            );
+            if (existing.recordset.length > 0) return ok(existing.recordset, request);
+
+            for (const li of DEFAULT_LINE_ITEMS) {
+                await query(
+                    `INSERT INTO QuoteLineItems (tender_id, qb_quote_id, line_no, category, description, is_labour)
+                     VALUES (NULL, @qbQuoteId, @lineNo, @category, @description, @isLabour)`,
+                    { qbQuoteId, lineNo: li.line_no, category: li.category, description: li.description, isLabour: li.is_labour }
+                );
+            }
+
+            const result = await query(
+                `SELECT * FROM QuoteLineItems WHERE qb_quote_id = @qbQuoteId ORDER BY line_no ASC`,
+                { qbQuoteId }
+            );
+            return created(result.recordset, request);
+        } catch (err) {
+            context.error('quote-line-items-seed-qb:', err);
+            return serverError('Failed to seed QB quote line items', request);
         }
     }
 });

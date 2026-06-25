@@ -20786,15 +20786,25 @@ async function loadProjectFinancials(projectId) {
   }
 
   // For each attached quote, fetch (and seed if needed) its line items.
+  // QB-sourced quotes link via qb_quote_id (tender_id is NULL); Tender-sourced
+  // quotes link via tender_id.
   const withLines = await Promise.all((quotes || []).map(async q => {
     let lines = [];
+    const isQb = q.qb_quote_id != null && q.tender_id == null;
     try {
-      lines = await api.get(`/api/quote-line-items?tender_id=${q.tender_id}`);
-      if (!Array.isArray(lines) || lines.length === 0) {
-        lines = await api.post(`/api/quote-line-items/seed/${q.tender_id}`, {});
+      if (isQb) {
+        lines = await api.get(`/api/quote-line-items?qb_quote_id=${q.qb_quote_id}`);
+        if (!Array.isArray(lines) || lines.length === 0) {
+          lines = await api.post(`/api/quote-line-items/seed-qb/${q.qb_quote_id}`, {});
+        }
+      } else {
+        lines = await api.get(`/api/quote-line-items?tender_id=${q.tender_id}`);
+        if (!Array.isArray(lines) || lines.length === 0) {
+          lines = await api.post(`/api/quote-line-items/seed/${q.tender_id}`, {});
+        }
       }
     } catch (e) {
-      console.warn(`line items fetch failed for tender ${q.tender_id}:`, e);
+      console.warn(`line items fetch failed for quote ${q.qb_quote_id || q.tender_id}:`, e);
     }
     return Object.assign({}, q, { _lineItems: (lines || []).slice().sort((a, b) => a.line_no - b.line_no) });
   }));
