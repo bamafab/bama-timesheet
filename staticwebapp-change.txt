@@ -16,3 +16,5 @@ that exclusion list too — same place as /manager.html.
 
 No other changes to the config are needed. Microsoft login is triggered from
 shared.js at runtime, not enforced at the route level, matching the other pages.
+
+--- push pipeline test: 2026-06-26 12:58 UTC (no functional change) ---
