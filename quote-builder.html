@@ -18276,7 +18276,11 @@ function buildClientTakeoffHtml(q) {
   const tdR = 'padding:6px 10px;border-bottom:1px solid #e5e7eb;text-align:right;font-size:11px';
 
   // Single-row builder shared by flat + grouped layouts.
-  const rowKg = r => (r._unit === 'EA') ? 0 : (r.length / 1000) * (r.kgm || 0) * (r.qty || 1);
+  // EA rows carry per-piece weight in kgm (length=1000 is a sentinel, not a real
+  // length), so weigh them as kgm × qty. Linear rows weigh as length × kgm × qty.
+  const rowKg = r => (r._unit === 'EA')
+    ? (r.kgm || 0) * (r.qty || 1)
+    : (r.length / 1000) * (r.kgm || 0) * (r.qty || 1);
   const rowHtml = r => {
     const isEA = r._unit === 'EA';
     const lengthStr = isEA ? '—' : (r.length ? r.length.toLocaleString('en-GB') + ' mm' : '—');
