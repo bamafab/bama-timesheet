@@ -98,9 +98,13 @@ app.http('qb-quotes-next-ref', {
             const yy    = String(now.getFullYear()).slice(2);
             const mm    = String(now.getMonth() + 1).padStart(2, '0');
             const prefix = `Q${yy}${mm}`;
-            const yearPat = `Q${yy}%`;
+            // Sequence resets each month. Scan ONLY the current month's refs
+            // (Q<yy><mm>%) so July after a June ending on Q260631 restarts at
+            // Q260701 — not Q260732. Kept named yearPat as it's the LIKE param
+            // for all three table scans below.
+            const yearPat = `${prefix}%`;
 
-            // Scan ALL references this year across all tables, find highest sequence
+            // Scan this month's references across all tables, find highest sequence
             const [qbRes, tRes, trRes] = await Promise.all([
                 query(
                     `SELECT TOP 1 reference FROM QuoteBuilderQuotes
