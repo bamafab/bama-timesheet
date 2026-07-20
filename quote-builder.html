@@ -6174,12 +6174,14 @@ function computeImportedTotals(quote) {
 }
 
 function computeQuoteTotals(quote, ratesObj) {
-  // ── Imported (legacy / pre-QB) quote ────────────────────
-  // These were priced outside QB. We do NOT run the takeoff/calc engine for
-  // them (there is no takeoff to drive it) — the price comes straight from the
-  // stored standardLines/customLines and the document headline (_importedTotal).
-  // Both remain editable; correcting a line or the headline just re-totals here.
-  if (quote && quote._imported) {
+  // ── Imported (legacy / pre-QB) OR custom-line quote ──────
+  // Neither runs the takeoff/calc engine — there is no takeoff to drive it.
+  // The price comes straight from the stored standardLines/customLines and the
+  // document headline (_importedTotal). Custom-line quotes (someone else priced
+  // the job; user enters a lump sum + writeup) are always line-sum driven, even
+  // when never flagged _imported — otherwise the engine returns £0 and preflight
+  // blocks the quote as "nothing priced yet".
+  if (quote && (quote._imported || quote.type === 'custom')) {
     return computeImportedTotals(quote);
   }
   // ── Takeoff ──────────────────────────────────────────────
@@ -13498,6 +13500,23 @@ function recalcAll() {
 // QUOTATION TAB
 // ============================================================
 function buildClientLines(q) {
+  // ── Custom-line quotes ─────────────────────────────────────────────────
+  // These carry their own client-facing lines directly (someone else priced
+  // the job; user typed a lump sum + writeup). No cost buckets / margin engine
+  // — the line value IS the sell price. Returning them here keeps the preflight
+  // reconciliation (Σ lines == grand total) valid for custom quotes.
+  if (q && q.type === 'custom') {
+    return (q.customLines || [])
+      .map((l, i) => ({
+        key:   'custom_' + i,
+        desc:  l.desc || '',
+        qty:   parseFloat(l.qty) || 1,
+        unit:  l.unit || '',
+        value: Math.round((parseFloat(l.qty) || 1) * (parseFloat(l.price) || 0) * 100) / 100
+      }))
+      .filter(l => l.value > 0);
+  }
+
   // ── Client-facing commercial line items ────────────────────────────────
   // RULES:
   //   1. Values are POST-MARGIN sell prices so each line × qty = sell price,
