@@ -48,6 +48,19 @@ body { background: var(--bg); color: var(--text); font-family: var(--font-body);
 /* ── MAIN ── */
 .main { padding: 24px; overflow-y: auto; }
 
+/* ── SCROLLBARS (match ED's thin dark bar instead of Chrome default) ── */
+* { scrollbar-width: thin; scrollbar-color: #333 transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #444; }
+
+/* ── QUOTE STATUS FILTER PILLS ── */
+.qf-bar { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 8px 8px; }
+.qf-pill { font-family: var(--font-body); font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); cursor: pointer; transition: all 0.12s; display: inline-flex; align-items: center; gap: 5px; line-height: 1.6; }
+.qf-pill:hover { color: var(--text); }
+.qf-pill .qf-count { font-size: 10px; opacity: 0.85; font-family: var(--font-mono); }
+
 /* ── TABS ── */
 .tab-bar { display: flex; gap: 2px; border-bottom: 2px solid var(--border); margin-bottom: 24px; }
 .tab-btn { padding: 10px 20px; background: none; border: none; color: var(--muted); font-family: var(--font-body); font-size: 13px; font-weight: 500; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all 0.15s; white-space: nowrap; }
@@ -353,6 +366,7 @@ tr.drag-dragging { opacity:0.35; }
       <option value="ref">Sort: Reference</option>
       <option value="client">Sort: Client A–Z</option>
     </select>
+    <div class="qf-bar" id="quoteFilterBar"></div>
     <div class="quote-list" id="quoteList"></div>
   </aside>
 
@@ -7312,6 +7326,14 @@ function qbOnAddrFieldInput() {
 // ============================================================
 // SIDEBAR
 // ============================================================
+// Sidebar quote status filter (pills). 'all' | 'draft' | 'sent' | 'chase' | 'won' | 'lost'.
+// 'chase' is derived: a sent quote whose chase date is today or past.
+let _quoteStatusFilter = 'all';
+function setQuoteFilter(f) {
+  _quoteStatusFilter = f;
+  renderSidebar();
+}
+
 function renderSidebar() {
   const list = document.getElementById('quoteList');
   let visibleQuotes = quotes.filter(q => q.status !== 'deleted');
@@ -7333,6 +7355,59 @@ function renderSidebar() {
     list.innerHTML = `<div style="padding:16px;font-size:12px;color:var(--subtle);text-align:center">No quotes match "${escHtml(term)}"</div>`;
     return;
   }
+
+  // ── Status filter pills ────────────────────────────────────
+  // 'chase' = a sent quote whose chase date is today or overdue (the ones that
+  // otherwise light up red in the list). Lets you isolate "what needs quoting"
+  // (Draft) or "what needs chasing" (Chase) without reading every row.
+  const qbToday = new Date(); qbToday.setHours(0,0,0,0);
+  const chaseDue = (q) => {
+    if (q.status !== 'sent' || !q.chasingDate) return false;
+    const dt = new Date(String(q.chasingDate).split('T')[0] + 'T00:00:00');
+    return !isNaN(dt) && dt <= qbToday;
+  };
+  const matchFilter = (q, f) =>
+    f === 'all'   ? true :
+    f === 'chase' ? chaseDue(q) :
+    q.status === f;
+
+  const counts = { all: visibleQuotes.length, draft:0, sent:0, chase:0, won:0, lost:0 };
+  visibleQuotes.forEach(q => {
+    if      (q.status === 'draft') counts.draft++;
+    else if (q.status === 'sent') { counts.sent++; if (chaseDue(q)) counts.chase++; }
+    else if (q.status === 'won')   counts.won++;
+    else if (q.status === 'lost')  counts.lost++;
+  });
+
+  const FILTERS = [
+    { key:'all',   label:'All',   color:'#555'         },
+    { key:'draft', label:'Draft', color:'#3b82f6'      },
+    { key:'sent',  label:'Sent',  color:'var(--accent)'},
+    { key:'chase', label:'Chase', color:'var(--red)'   },
+    { key:'won',   label:'Won',   color:'var(--green)' },
+    { key:'lost',  label:'Lost',  color:'var(--subtle)'},
+  ];
+  const bar = document.getElementById('quoteFilterBar');
+  if (bar) {
+    bar.innerHTML = FILTERS.map(f => {
+      const active = _quoteStatusFilter === f.key;
+      const style = active
+        ? `background:${f.color};border-color:${f.color};color:#fff`
+        : `color:${f.color}`;
+      return `<button class="qf-pill" onclick="setQuoteFilter('${f.key}')" style="${style}">${f.label}<span class="qf-count">${counts[f.key]}</span></button>`;
+    }).join('');
+  }
+
+  // If the current filter has emptied out, fall back to All so the user is
+  // never staring at a blank list with no obvious way back.
+  if (_quoteStatusFilter !== 'all' && !visibleQuotes.some(q => matchFilter(q, _quoteStatusFilter))) {
+    _quoteStatusFilter = 'all';
+    if (bar) bar.querySelectorAll('.qf-pill').forEach((el, i) => {
+      const active = FILTERS[i].key === 'all';
+      el.style.cssText = active ? `background:${FILTERS[i].color};border-color:${FILTERS[i].color};color:#fff` : `color:${FILTERS[i].color}`;
+    });
+  }
+  visibleQuotes = visibleQuotes.filter(q => matchFilter(q, _quoteStatusFilter));
 
   // ── Urgency helper ─────────────────────────────────────────
   // Active quotes (draft/open/sent) get an urgency tier from their submit
@@ -20126,6 +20201,8 @@ const HELP_CONTENT = {
         <div class="h-a">Yes — to Azure SQL on every change. You can also press Save manually.</div></div>
         <div class="h-faq"><div class="h-q">Can I duplicate a quote?</div>
         <div class="h-a">Right-click a quote in the sidebar and choose Duplicate. Useful for variations or revisions.</div></div>
+        <div class="h-faq"><div class="h-q">How do I filter the sidebar list?</div>
+        <div class="h-a">Use the pills under the search box: <strong>All / Draft / Sent / Chase / Won / Lost</strong>. Each shows a live count. <strong>Draft</strong> = still to quote; <strong>Sent</strong> = all submitted; <strong>Chase</strong> = sent quotes whose chase date is today or overdue (the ones that show red). Tap a pill to see only those; tap All to clear.</div></div>
       </div>`
   },
 
