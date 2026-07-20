@@ -1870,14 +1870,32 @@ function renderBriefing(b) {
   el.innerHTML = p.join('');
 }
 
+// Plain-text summary shown when the AI briefing can't be produced or rendered
+// (API error, truncated JSON, unparseable response). Recomputes counts from
+// live state so it works whether called from generateBriefing or displayBriefing.
+function briefingFallback() {
+  const open      = (allQuotes || []).filter(q => q.win === null);
+  const overdue   = open.filter(q => q.urgency === 'overdue');
+  const dueToday  = open.filter(q => q.urgency === 'today');
+  const newTenders = (_trTenders || []).filter(t => (t.effStatus || t.status) === 'New');
+  const el = document.getElementById('aiMessage');
+  el.className = 'ai-message';
+  el.style.whiteSpace = '';
+  el.textContent = `AI briefing unavailable right now. You have ${overdue.length} overdue, ${dueToday.length} due today, and ${newTenders.length} new tender${newTenders.length !== 1 ? 's' : ''} waiting.`;
+}
+
 // Try to render the briefing as structured priorities; fall back to prose.
 function displayBriefing(text) {
+  const clean = String(text).replace(/^```json\s*/i,'').replace(/```\s*$/,'').trim();
   try {
-    const clean = String(text).replace(/^```json\s*/i,'').replace(/```\s*$/,'').trim();
     const obj = JSON.parse(clean);
     if (obj && (obj.greeting || obj.headline || Array.isArray(obj.groups))) { renderBriefing(obj); return; }
     throw new Error('not briefing JSON');
   } catch(e) {
+    // If it was meant to be a JSON briefing but is broken/truncated, DON'T dump
+    // the raw braces at the user — show the plain summary instead. Only treat as
+    // genuine prose (mdToHtml) when it clearly isn't JSON.
+    if (/^[{[]/.test(clean)) { briefingFallback(); return; }
     const el = document.getElementById('aiMessage');
     el.className = 'ai-message';
     el.style.whiteSpace = '';
@@ -1952,17 +1970,24 @@ RULES:
   try {
     const data = await callClaude({
       model: 'claude-sonnet-4-6',
-      max_tokens: 1500,
+      max_tokens: 4000,
       messages: [{ role: 'user', content: prompt }]
     });
-    const text = data.content?.[0]?.text || 'Could not generate briefing.';
-    displayBriefing(text);
-    // Cache for the day
-    sessionStorage.setItem('bama_briefing_date', new Date().toISOString().slice(0,10));
-    sessionStorage.setItem('bama_briefing_text', text);
+    // Truncation guard: if the model hit the token ceiling the JSON is
+    // incomplete and will never parse — don't try to render it, show the
+    // plain summary instead of dumping raw braces at the user.
+    if (data.stop_reason === 'max_tokens') {
+      briefingFallback();
+      console.warn('AI briefing truncated (stop_reason=max_tokens) — showing summary fallback.');
+    } else {
+      const text = data.content?.[0]?.text || 'Could not generate briefing.';
+      displayBriefing(text);
+      // Cache for the day
+      sessionStorage.setItem('bama_briefing_date', new Date().toISOString().slice(0,10));
+      sessionStorage.setItem('bama_briefing_text', text);
+    }
   } catch(e) {
-    document.getElementById('aiMessage').className = 'ai-message';
-    document.getElementById('aiMessage').textContent = `AI briefing unavailable right now. You have ${overdue.length} overdue, ${dueToday.length} due today, and ${newTenders.length} new tender${newTenders.length !== 1 ? 's' : ''} waiting.`;
+    briefingFallback();
     console.error('AI briefing error:', e);
   }
 
