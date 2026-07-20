@@ -3245,8 +3245,12 @@ function renderTenderTable() {
   document.getElementById('trBody').innerHTML = list.map(t => {
     const dl = t.deadline ? new Date(t.deadline) : null;
     const dlStr = dl ? dl.toLocaleDateString('en-GB', {day:'2-digit',month:'short',year:'2-digit'}) : '—';
-    const dlStyle = dl && dl < today ? 'color:var(--red);font-weight:600' : '';
     const st = t.effStatus || t.status;
+    // Only flag a passed deadline in red for still-live tenders (New / In QB) —
+    // once Sent / Won / Lost / No Bid / Removed there's nothing left to chase,
+    // so the date renders plainly (no red).
+    const dlStyle = (dl && dl < today && (st === 'New' || st === 'In QB'))
+      ? 'color:var(--red);font-weight:600' : '';
     const badgeMap = {
       'New':             'tr-badge-new',
       'In QB':           'tr-badge-inqb',
