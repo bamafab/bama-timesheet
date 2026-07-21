@@ -21121,31 +21121,28 @@ async function qqSaveAsDraft() {
 </script>
 
 <script>
-// ── Proactive session-expiry watcher ─────────────────────────
-// QB previously enforced token expiry in only two places: qbInit() at page
-// load (proactive) and qbFetch (reactive — only on a server 401). qbToken()
-// itself hands out expired tokens. So if the token expired while the page
-// sat open and the user only touched client-side controls (wizards, recalc,
-// viewing), no 401 ever fired and they stayed on a dead token; touch a field
-// that triggers saveAll and they'd get bounced to login. That made logout
-// non-deterministic ("sometimes it keeps me, sometimes it kicks me").
-// This watcher makes it consistent: once the token is actually expired, fire
-// the SAME silent prompt=none re-login the rest of the code already uses — on
-// a timer, instead of waiting for an API call to happen to notice.
-(function qbExpiryWatcher() {
+// ── Idle-timeout session reset ────────────────────────────────
+// Estimators keep QB open for long stretches, so interrupting an ACTIVE
+// session to re-auth is disruptive. We therefore do NOT bounce when the token
+// expires while work is ongoing. Instead we track real user activity and only
+// reset the login after 10 minutes with no movement. While the user is active,
+// qbInit() (page-load check) and qbFetch's 401 handler remain the safety nets.
+(function qbIdleWatcher() {
+  const IDLE_LIMIT = 10 * 60 * 1000;   // 10 minutes of no activity
+  let lastActivity = Date.now();
   let _redirecting = false;
+  const bump = () => { lastActivity = Date.now(); };
+  ['mousemove','mousedown','keydown','scroll','touchstart','click','wheel']
+    .forEach(ev => window.addEventListener(ev, bump, { passive: true }));
+
   function check() {
     if (_redirecting) return;
-    const token  = sessionStorage.getItem('bama_token');
-    const expiry = parseInt(sessionStorage.getItem('bama_token_expiry') || '0');
-    // Only act on the specific case this watcher owns: a token that EXISTS but
-    // has expired. Missing-token / mid-capture states are left to qbInit and
-    // hub.html so we don't fight the OAuth handoff.
-    if (!token || Date.now() < expiry) return;
+    if (Date.now() - lastActivity < IDLE_LIMIT) return;   // still active — leave alone
+    // Idle ≥ 10 min → reset the login (silent re-auth; returns here if the
+    // Microsoft SSO session is still alive, else shows the login screen).
     _redirecting = true;
-    // Preserve any in-flight edits before navigating away. The silent refresh
-    // returns to this page (via bama_return_page); loadQuotesFromSQL reloads
-    // from SQL, so the local backup covers edits not yet persisted.
+    // Preserve any unsaved edits first — on return, loadQuotesFromSQL reloads
+    // from SQL, so the local backup covers anything not yet persisted.
     try {
       const q = (typeof getQuote === 'function') ? getQuote() : null;
       if (q && typeof backupQuoteLocally === 'function') backupQuoteLocally(q);
@@ -21161,11 +21158,7 @@ async function qqSaveAsDraft() {
       `&scope=${scope}&prompt=none&response_mode=fragment` +
       `&state=${encodeURIComponent(window.location.pathname)}`;
   }
-  // Poll every 30s, plus an immediate check when the tab regains focus — the
-  // common real-world case is a QB tab left open (e.g. over lunch) coming back
-  // to a dead token.
   setInterval(check, 30000);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) check(); });
 })();
 </script>
 

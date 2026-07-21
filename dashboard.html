@@ -2580,6 +2580,39 @@ if (handleRedirect()) {
 // Gate: load employees + permissions, show login screen or main content
 initDashGate();
 
+// ── Idle-timeout session reset (ED) ───────────────────────────
+// Mirror QB's behaviour: don't interrupt active work, but reset back to the
+// name/PIN login gate after 10 minutes with no activity. This clears the ED
+// session gate only (bama_mgr_authed); the Microsoft token is left as-is and
+// is refreshed lazily by the next API call if it has also expired.
+function dashResetToLogin() {
+  try { sessionStorage.removeItem('bama_mgr_authed'); } catch(_) {}
+  _dashCurrentUser = null;
+  document.querySelectorAll('.modal-overlay.active').forEach(m => m.classList.remove('active'));
+  const main = document.getElementById('dashMainContent');
+  if (main) main.style.display = 'none';
+  renderDashEmployeeGrid();
+  const gate = document.getElementById('screenDashSelect');
+  if (gate) gate.style.display = 'block';
+}
+(function dashIdleWatcher() {
+  const IDLE_LIMIT = 10 * 60 * 1000;   // 10 minutes of no activity
+  let lastActivity = Date.now();
+  const bump = () => { lastActivity = Date.now(); };
+  ['mousemove','mousedown','keydown','scroll','touchstart','click','wheel']
+    .forEach(ev => window.addEventListener(ev, bump, { passive: true }));
+
+  function check() {
+    if (Date.now() - lastActivity < IDLE_LIMIT) { return; }
+    // Already sitting on the login gate? nothing to reset — just re-arm.
+    const gate = document.getElementById('screenDashSelect');
+    if (!gate || gate.style.display === 'block') { lastActivity = Date.now(); return; }
+    dashResetToLogin();
+    lastActivity = Date.now();
+  }
+  setInterval(check, 30000);
+})();
+
 async function dashDeleteQuote() {
   if (!selectedQuote?.id || selectedQuote._source !== 'sql') {
     bamaAlert('Can only delete SQL-based quotes from here. Open in QB to delete SharePoint quotes.'); return;
