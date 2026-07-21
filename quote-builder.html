@@ -21120,6 +21120,55 @@ async function qqSaveAsDraft() {
 })();
 </script>
 
+<script>
+// ── Proactive session-expiry watcher ─────────────────────────
+// QB previously enforced token expiry in only two places: qbInit() at page
+// load (proactive) and qbFetch (reactive — only on a server 401). qbToken()
+// itself hands out expired tokens. So if the token expired while the page
+// sat open and the user only touched client-side controls (wizards, recalc,
+// viewing), no 401 ever fired and they stayed on a dead token; touch a field
+// that triggers saveAll and they'd get bounced to login. That made logout
+// non-deterministic ("sometimes it keeps me, sometimes it kicks me").
+// This watcher makes it consistent: once the token is actually expired, fire
+// the SAME silent prompt=none re-login the rest of the code already uses — on
+// a timer, instead of waiting for an API call to happen to notice.
+(function qbExpiryWatcher() {
+  let _redirecting = false;
+  function check() {
+    if (_redirecting) return;
+    const token  = sessionStorage.getItem('bama_token');
+    const expiry = parseInt(sessionStorage.getItem('bama_token_expiry') || '0');
+    // Only act on the specific case this watcher owns: a token that EXISTS but
+    // has expired. Missing-token / mid-capture states are left to qbInit and
+    // hub.html so we don't fight the OAuth handoff.
+    if (!token || Date.now() < expiry) return;
+    _redirecting = true;
+    // Preserve any in-flight edits before navigating away. The silent refresh
+    // returns to this page (via bama_return_page); loadQuotesFromSQL reloads
+    // from SQL, so the local backup covers edits not yet persisted.
+    try {
+      const q = (typeof getQuote === 'function') ? getQuote() : null;
+      if (q && typeof backupQuoteLocally === 'function') backupQuoteLocally(q);
+    } catch(_) {}
+    sessionStorage.setItem('bama_return_page', window.location.pathname);
+    const tenantId    = 'c92626f5-e391-499a-9059-0113bd07da2d';
+    const clientId    = '04b702fd-c53c-4f38-94bc-0334ce91d954';
+    const redirectUri = encodeURIComponent('https://proud-dune-0dee63110.2.azurestaticapps.net');
+    const scope       = encodeURIComponent('Files.ReadWrite Sites.ReadWrite.All Mail.Send');
+    window.location.href =
+      `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/authorize` +
+      `?client_id=${clientId}&response_type=token&redirect_uri=${redirectUri}` +
+      `&scope=${scope}&prompt=none&response_mode=fragment` +
+      `&state=${encodeURIComponent(window.location.pathname)}`;
+  }
+  // Poll every 30s, plus an immediate check when the tab regains focus — the
+  // common real-world case is a QB tab left open (e.g. over lunch) coming back
+  // to a dead token.
+  setInterval(check, 30000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) check(); });
+})();
+</script>
+
 
 <!-- ═══════════════════════ PRE-FLIGHT MODAL ═══════════════════════ -->
 <div id="preflightOverlay" onclick="if(event.target===this)closePreflight()"
