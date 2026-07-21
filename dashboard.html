@@ -2496,9 +2496,11 @@ function renderDashEmployeeGrid() {
     grid.innerHTML = '<div class="empty-state" style="padding:30px"><div style="font-size:28px;margin-bottom:10px">👤</div><div>No office staff set up yet.</div></div>';
     return;
   }
+  // Match shared.js empColor so ED login avatars look identical to every
+  // other login page (office/manager/tenders/quotes/etc.) — orange palette.
   const empColor = name => {
-    let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt(0)) & 0xffffffff;
-    return `hsl(${Math.abs(h) % 360},55%,38%)`;
+    const colors = ['#ff6b00','#e05d00','#c84b00','#a83e00','#ff8c42','#f07030'];
+    return colors[(name || '').charCodeAt(0) % colors.length];
   };
   grid.innerHTML = empList.map(emp => {
     const name = emp.name || '';
