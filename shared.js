@@ -12956,8 +12956,13 @@ async function onBomManualFilesPicked(fileList) {
 
   if (!queue.length) { toast('No PDFs were parsed.', 'error'); return; }
 
-  _bomManualQueue = queue;
-  _bomManualReviewIndex = 0;
+  const modal = document.getElementById('bomManualReviewModal');
+  if (modal && modal.classList.contains('active') && _bomManualQueue.length) {
+    _bomManualQueue.push(...queue);
+    toast(`Added ${queue.length} more — ${_bomManualQueue.length} now queued.`, 'info');
+  } else {
+    _bomManualQueue = queue;
+  }
   openBomManualReviewModal();
 }
 
@@ -13011,12 +13016,17 @@ If a value is unknown, omit the key (don't use null in extras). Return an empty 
 }
 
 // ── Review modal: walks _bomManualQueue, lets user edit before save ──
+// ── Review modal (batch) ──
+// Single scrollable screen: every uploaded PDF is a collapsible card holding
+// its own finish + line items. Tick "looks good" per PDF (or "Accept all"),
+// then "Save all ticked" commits every ticked PDF in one pass. New uploads
+// append to the queue instead of replacing it.
 function openBomManualReviewModal() {
   if (!_bomManualQueue.length) return;
   const modal = document.getElementById('bomManualReviewModal');
   if (!modal) { console.warn('bomManualReviewModal not found'); return; }
   modal.classList.add('active');
-  renderBomManualReview();
+  renderBomManualBatch();
 }
 
 function closeBomManualReviewModal() {
@@ -13026,31 +13036,13 @@ function closeBomManualReviewModal() {
   _bomManualReviewIndex = 0;
 }
 
-function renderBomManualReview() {
-  const idx = _bomManualReviewIndex;
-  const total = _bomManualQueue.length;
-  const item = _bomManualQueue[idx];
-  if (!item) { closeBomManualReviewModal(); return; }
-
-  document.getElementById('bmrCounter').textContent = `${idx + 1} of ${total}`;
-  document.getElementById('bmrFileName').textContent = item.sharepoint.fileName;
-
-  // Finish dropdown — global for this whole PDF
-  const finishSel = document.getElementById('bmrFinish');
-  const finishes = _finishesCache || [];
-  let opts = '<option value="">(No finish — ready for despatch)</option>';
-  for (const f of finishes) {
-    opts += `<option value="${f.id}">${escapeHtml(f.name)}</option>`;
-  }
-  finishSel.innerHTML = opts;
-  finishSel.value = ''; // default: no finish
-
-  renderBomReviewRows(item.ocr.items || []);
+// A PDF is saveable once it has at least one line with a description.
+function _bomItemValid(item) {
+  const items = (item.ocr && item.ocr.items) || [];
+  return items.some(r => (r.description || '').trim() !== '');
 }
 
-function renderBomReviewRows(rows) {
-  const tbody = document.getElementById('bmrRowsTbody');
-  if (!tbody) return;
+function _bmrRowsHtml(rows, qi) {
   let html = '';
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i] || {};
@@ -13058,26 +13050,104 @@ function renderBomReviewRows(rows) {
     const extrasStr = Object.keys(extras).length
       ? Object.entries(extras).map(([k, v]) => `${k}: ${v}`).join(' · ')
       : '';
-    html += `<tr data-i="${i}">
+    html += `<tr class="bmr-row" data-i="${i}">
       <td style="padding:4px 6px 4px 0"><input data-f="description" value="${escapeHtml(r.description || '')}" class="bmr-cell" style="width:100%"></td>
       <td style="padding:4px"><input data-f="quantity" type="number" min="1" value="${r.quantity ?? 1}" class="bmr-cell" style="width:60px;text-align:right"></td>
-      <td style="padding:4px;color:var(--subtle);font-size:11px;font-family:var(--font-mono);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(extrasStr)}">${escapeHtml(extrasStr)}</td>
-      <td style="padding:4px 0 4px 4px;text-align:right"><button class="btn btn-ghost" style="padding:2px 8px;font-size:14px" onclick="bmrRemoveRow(${i})" title="Remove">&times;</button></td>
+      <td style="padding:4px;color:var(--subtle);font-size:11px;font-family:var(--font-mono);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(extrasStr)}">${escapeHtml(extrasStr)}</td>
+      <td style="padding:4px 0 4px 4px;text-align:right"><button class="btn btn-ghost" style="padding:2px 8px;font-size:14px" onclick="bmrRemoveRow(${qi}, ${i})" title="Remove">&times;</button></td>
     </tr>`;
   }
-  tbody.innerHTML = html;
+  return html;
 }
 
-function bmrCollectRows() {
-  const tbody = document.getElementById('bmrRowsTbody');
-  if (!tbody) return [];
-  // Read both visible inputs AND the extras text — but extras is read-only
-  // and stored in the original ocr.items by index. Reconstruct extras from
-  // the source by index.
-  const idx = _bomManualReviewIndex;
-  const ocrItems = _bomManualQueue[idx]?.ocr?.items || [];
+function renderBomManualBatch() {
+  const list = document.getElementById('bmrBatchList');
+  if (!list) return;
+  const total = _bomManualQueue.length;
+
+  const counter = document.getElementById('bmrCounter');
+  if (counter) counter.textContent = total ? `${total} PDF${total > 1 ? 's' : ''} queued` : '';
+
+  const finishes = _finishesCache || [];
+  const finishOptsFor = (selId) => {
+    let o = '<option value="">(No finish — ready for despatch)</option>';
+    for (const f of finishes) {
+      o += `<option value="${f.id}"${String(f.id) === String(selId) ? ' selected' : ''}>${escapeHtml(f.name)}</option>`;
+    }
+    return o;
+  };
+
+  let html = '';
+  for (let qi = 0; qi < total; qi++) {
+    const item = _bomManualQueue[qi];
+    if (item._reviewed === undefined) item._reviewed = false;
+    if (item._collapsed === undefined) item._collapsed = false;
+    if (item._finishId === undefined) item._finishId = '';
+    const rows = (item.ocr && item.ocr.items) || [];
+    const valid = _bomItemValid(item);
+    const lineCount = rows.filter(r => (r.description || '').trim()).length;
+
+    const flag = !valid
+      ? '<span style="color:var(--red);font-size:11px" title="No line items with a description">empty</span>'
+      : `<span style="color:var(--subtle);font-size:11px">${lineCount} line${lineCount > 1 ? 's' : ''}</span>`;
+
+    html += `<div class="bmr-card" data-qi="${qi}" style="border:1px solid var(--border);border-radius:8px;margin-bottom:10px;overflow:hidden">
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg-darker);cursor:pointer" onclick="bmrToggleCollapse(${qi})">
+        <span class="bmr-chev" style="font-size:11px;color:var(--subtle);width:12px">${item._collapsed ? '&#9656;' : '&#9662;'}</span>
+        <label onclick="event.stopPropagation()" style="display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none">
+          <input type="checkbox" class="bmr-ok" ${item._reviewed ? 'checked' : ''} onchange="bmrToggleReviewed(${qi}, this.checked)">
+          <span style="font-size:11px;color:var(--subtle)">looks good</span>
+        </label>
+        <span style="font-size:12px;color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(item.sharepoint.fileName || '')}</span>
+        ${flag}
+        <button class="btn btn-ghost" style="padding:2px 8px;font-size:14px" onclick="event.stopPropagation();bmrRemoveCard(${qi})" title="Remove from queue">&times;</button>
+      </div>
+      <div class="bmr-card-body" style="padding:12px;display:${item._collapsed ? 'none' : 'block'}">
+        <div style="margin-bottom:12px">
+          <div class="field-label">FINISH (applies to all lines from this PDF)</div>
+          <select class="field-input bmr-finish" onchange="bmrSetFinish(${qi}, this.value)">${finishOptsFor(item._finishId)}</select>
+          <div style="font-size:11px;color:var(--subtle);margin-top:4px">No finish = lines land in <i>Ready for despatch</i>. Pick a finish to send them to a supplier first.</div>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+          <div class="field-label" style="margin:0">LINES</div>
+          <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="bmrAddRow(${qi})">&#43; Add row</button>
+        </div>
+        <div style="background:var(--bg-darker);border:1px solid var(--border);border-radius:8px;padding:8px;overflow:auto;max-height:34vh">
+          <table style="width:100%;font-size:12px;border-collapse:collapse;min-width:520px">
+            <thead><tr style="color:var(--subtle);text-align:left">
+              <th style="font-weight:400;padding:4px 6px 4px 0">Description</th>
+              <th style="font-weight:400;padding:4px 6px;text-align:right">Qty</th>
+              <th style="font-weight:400;padding:4px 6px">Extras (read-only — discarded on save)</th>
+              <th></th>
+            </tr></thead>
+            <tbody id="bmrRows_${qi}">${_bmrRowsHtml(rows, qi)}</tbody>
+          </table>
+        </div>
+      </div>
+    </div>`;
+  }
+  list.innerHTML = html || '<div style="color:var(--subtle);font-size:12px;padding:20px;text-align:center">Nothing queued.</div>';
+  _bmrUpdateBar();
+}
+
+function _bmrUpdateBar() {
+  const bar = document.getElementById('bmrBar');
+  if (!bar) return;
+  const total = _bomManualQueue.length;
+  const ticked = _bomManualQueue.filter(it => it._reviewed && _bomItemValid(it)).length;
+  bar.textContent = total ? `${ticked} of ${total} ticked & ready to save` : '';
+}
+
+function _bmrSyncCardToItem(qi) {
+  const card = document.querySelector(`.bmr-card[data-qi="${qi}"]`);
+  if (!card) return;
+  const item = _bomManualQueue[qi];
+  if (!item) return;
+  const finEl = card.querySelector('.bmr-finish');
+  if (finEl) item._finishId = finEl.value || '';
+  const ocrItems = (item.ocr && item.ocr.items) || [];
   const out = [];
-  tbody.querySelectorAll('tr').forEach(tr => {
+  card.querySelectorAll('.bmr-row').forEach(tr => {
     const i = parseInt(tr.dataset.i);
     const desc = tr.querySelector('input[data-f="description"]')?.value?.trim() || '';
     const qtyRaw = tr.querySelector('input[data-f="quantity"]')?.value;
@@ -13085,77 +13155,129 @@ function bmrCollectRows() {
     const extras = ocrItems[i]?.extras || {};
     out.push({ description: desc, quantity: qty || 1, extras });
   });
-  return out;
+  item.ocr = item.ocr || {};
+  item.ocr.items = out;
 }
 
-function bmrAddRow() {
-  const rows = bmrCollectRows();
-  rows.push({ description: '', quantity: 1, extras: {} });
-  // Reflect into the current queue item so re-render picks it up via index
-  _bomManualQueue[_bomManualReviewIndex].ocr.items = rows;
-  renderBomReviewRows(rows);
+function _bmrSyncAll() {
+  for (let qi = 0; qi < _bomManualQueue.length; qi++) _bmrSyncCardToItem(qi);
 }
 
-function bmrRemoveRow(i) {
-  const rows = bmrCollectRows();
-  rows.splice(i, 1);
-  _bomManualQueue[_bomManualReviewIndex].ocr.items = rows;
-  renderBomReviewRows(rows);
+function bmrToggleCollapse(qi) {
+  const card = document.querySelector(`.bmr-card[data-qi="${qi}"]`);
+  if (!card) return;
+  const item = _bomManualQueue[qi];
+  if (!item) return;
+  item._collapsed = !item._collapsed;
+  const body = card.querySelector('.bmr-card-body');
+  const chev = card.querySelector('.bmr-chev');
+  if (body) body.style.display = item._collapsed ? 'none' : 'block';
+  if (chev) chev.innerHTML = item._collapsed ? '&#9656;' : '&#9662;';
 }
 
-function bmrSkipCurrent() {
-  _bomManualReviewIndex++;
-  if (_bomManualReviewIndex >= _bomManualQueue.length) {
-    closeBomManualReviewModal();
-    toast('No more PDFs to review.', 'info');
+function bmrToggleReviewed(qi, checked) {
+  if (_bomManualQueue[qi]) _bomManualQueue[qi]._reviewed = checked;
+  _bmrUpdateBar();
+}
+
+function bmrSetFinish(qi, val) {
+  if (_bomManualQueue[qi]) _bomManualQueue[qi]._finishId = val || '';
+}
+
+function bmrRemoveCard(qi) {
+  _bmrSyncAll();
+  _bomManualQueue.splice(qi, 1);
+  if (!_bomManualQueue.length) { closeBomManualReviewModal(); return; }
+  renderBomManualBatch();
+}
+
+function bmrAddRow(qi) {
+  _bmrSyncCardToItem(qi);
+  const item = _bomManualQueue[qi];
+  if (!item) return;
+  item.ocr = item.ocr || {};
+  item.ocr.items = item.ocr.items || [];
+  item.ocr.items.push({ description: '', quantity: 1, extras: {} });
+  const tb = document.getElementById(`bmrRows_${qi}`);
+  if (tb) tb.innerHTML = _bmrRowsHtml(item.ocr.items, qi);
+}
+
+function bmrRemoveRow(qi, i) {
+  _bmrSyncCardToItem(qi);
+  const item = _bomManualQueue[qi];
+  if (!item || !item.ocr) return;
+  (item.ocr.items || []).splice(i, 1);
+  const tb = document.getElementById(`bmrRows_${qi}`);
+  if (tb) tb.innerHTML = _bmrRowsHtml(item.ocr.items || [], qi);
+}
+
+function bmrAcceptAll() {
+  _bmrSyncAll();
+  let n = 0;
+  for (const item of _bomManualQueue) {
+    if (_bomItemValid(item)) { item._reviewed = true; item._collapsed = true; n++; }
+    else { item._reviewed = false; item._collapsed = false; }
+  }
+  renderBomManualBatch();
+  if (n < _bomManualQueue.length) {
+    toast(`Ticked ${n}. ${_bomManualQueue.length - n} have no line items.`, 'info');
+  }
+}
+
+async function bmrSaveAll() {
+  if (!currentJob) { toast('No job selected.', 'error'); return; }
+  _bmrSyncAll();
+
+  const targets = [];
+  for (let qi = 0; qi < _bomManualQueue.length; qi++) {
+    const item = _bomManualQueue[qi];
+    if (item._reviewed && _bomItemValid(item)) targets.push(qi);
+  }
+  if (!targets.length) {
+    toast('Tick "looks good" on the PDFs to save — or hit "Accept all".', 'error');
     return;
   }
-  renderBomManualReview();
-}
-
-async function bmrSaveAndNext() {
-  const item = _bomManualQueue[_bomManualReviewIndex];
-  if (!item) { closeBomManualReviewModal(); return; }
-
-  const rows = bmrCollectRows().filter(r => r.description); // drop empty description rows
-  if (!rows.length) {
-    toast('No items to save. Skip this PDF or add a row.', 'error');
-    return;
-  }
-  const finishVal = document.getElementById('bmrFinish').value;
-  const finishServiceId = finishVal ? parseInt(finishVal) : null;
 
   const saveBtn = document.getElementById('bmrSaveBtn');
   if (saveBtn) { saveBtn.disabled = true; saveBtn.style.opacity = '.6'; }
 
-  try {
-    await api.post('/api/job-bom-items/bulk', {
-      job_id:              parseInt(currentJob.id),
-      finish_service_id:   finishServiceId,
-      sharepoint_file_id:  item.sharepoint.fileId,
-      sharepoint_drive_id: item.sharepoint.driveId,
-      sharepoint_web_url:  item.sharepoint.webUrl,
-      file_name:           item.sharepoint.fileName,
-      items:               rows.map(r => ({ description: r.description, quantity: r.quantity }))
-    });
-  } catch (e) {
-    toast(`Save failed: ${e.message}`, 'error');
-    if (saveBtn) { saveBtn.disabled = false; saveBtn.style.opacity = '1'; }
-    return;
+  const savedIdx = [];
+  let savedPdfs = 0, savedLines = 0;
+  for (const qi of targets) {
+    const item = _bomManualQueue[qi];
+    const rows = ((item.ocr && item.ocr.items) || []).filter(r => (r.description || '').trim());
+    if (!rows.length) continue;
+    const finishServiceId = item._finishId ? parseInt(item._finishId) : null;
+    try {
+      await api.post('/api/job-bom-items/bulk', {
+        job_id:              parseInt(currentJob.id),
+        finish_service_id:   finishServiceId,
+        sharepoint_file_id:  item.sharepoint.fileId,
+        sharepoint_drive_id: item.sharepoint.driveId,
+        sharepoint_web_url:  item.sharepoint.webUrl,
+        file_name:           item.sharepoint.fileName,
+        items:               rows.map(r => ({ description: r.description, quantity: r.quantity }))
+      });
+      savedPdfs++; savedLines += rows.length; savedIdx.push(qi);
+    } catch (e) {
+      toast(`${item.sharepoint.fileName}: save failed — ${e.message}`, 'error');
+    }
   }
 
   if (saveBtn) { saveBtn.disabled = false; saveBtn.style.opacity = '1'; }
 
+  savedIdx.sort((a, b) => b - a).forEach(qi => _bomManualQueue.splice(qi, 1));
+
   if (currentJob?.id) await loadJobBomItems(parseInt(currentJob.id));
   renderBOM();
 
-  _bomManualReviewIndex++;
-  if (_bomManualReviewIndex >= _bomManualQueue.length) {
+  if (!_bomManualQueue.length) {
     closeBomManualReviewModal();
-    toast(`Saved ${rows.length} BOM line${rows.length>1?'s':''} from this PDF.`, 'success');
-    return;
+    toast(`Saved ${savedLines} BOM line${savedLines === 1 ? '' : 's'} from ${savedPdfs} PDF${savedPdfs === 1 ? '' : 's'}.`, 'success');
+  } else {
+    toast(`Saved ${savedLines} line${savedLines === 1 ? '' : 's'}. ${_bomManualQueue.length} PDF${_bomManualQueue.length === 1 ? '' : 's'} still queued.`, savedPdfs ? 'success' : 'info');
+    renderBomManualBatch();
   }
-  renderBomManualReview();
 }
 
 
@@ -14301,7 +14423,7 @@ function printAllParts(sub) {
 // placeholder; the "Open PDF" button will not appear on the assembly card.
 function openManualAssemblyModal() {
   if (!currentJob) { toast('No job selected.', 'error'); return; }
-  _assemblyQueue = [{
+  const blank = {
     file: { name: 'Manual entry' },
     sharepoint: {
       fileId:   'manual-entry',
@@ -14312,9 +14434,16 @@ function openManualAssemblyModal() {
     ocr: { assembly_mark: '', quantity: null, finish_label_raw: null,
            total_area_m2: null, total_weight_kg: null,
            parts: [{ part_mark: '', quantity: 1, profile: '', length_mm: null,
-                     material: 'S355JR', area_m2: null, weight_kg: null }] }
-  }];
-  _assemblyReviewIndex = 0;
+                     material: 'S355JR', area_m2: null, weight_kg: null }] },
+    ocrFailed: false, _reviewed: false, _collapsed: false
+  };
+  // Append to the open batch if the review modal is already up, otherwise start fresh.
+  const modal = document.getElementById('assemblyReviewModal');
+  if (modal && modal.classList.contains('active') && _assemblyQueue.length) {
+    _assemblyQueue.push(blank);
+  } else {
+    _assemblyQueue = [blank];
+  }
   openAssemblyReviewModal();
 }
 
@@ -14411,8 +14540,16 @@ async function onAssemblyFilesPicked(fileList) {
     return;
   }
 
-  _assemblyQueue = queue;
-  _assemblyReviewIndex = 0;
+  // If a review batch is already open, ADD these to it (don't wipe the ones
+  // still waiting to be reviewed — that was the "second batch replaces first"
+  // bug). Otherwise start a fresh batch.
+  const modal = document.getElementById('assemblyReviewModal');
+  if (modal && modal.classList.contains('active') && _assemblyQueue.length) {
+    _assemblyQueue.push(...queue);
+    toast(`Added ${queue.length} more — ${_assemblyQueue.length} now queued.`, 'info');
+  } else {
+    _assemblyQueue = queue;
+  }
   openAssemblyReviewModal();
 }
 
@@ -14477,12 +14614,18 @@ Set any field you cannot determine to null. Use null (not 0) for missing numeric
 }
 
 // ── Review modal ──
+// ── Review modal (batch) ──
+// The review is a single scrollable screen: every queued drawing is a
+// collapsible card. Tick "looks good" on the ones you've checked (or hit
+// "Accept all" to tick every readable one at once), then "Save all ticked"
+// commits them in one go. New uploads append to this queue rather than
+// replacing it.
 function openAssemblyReviewModal() {
   if (!_assemblyQueue.length) return;
   const modal = document.getElementById('assemblyReviewModal');
   if (!modal) return;
   modal.classList.add('active');
-  renderAssemblyReview();
+  renderAssemblyBatch();
 }
 
 function closeAssemblyReviewModal() {
@@ -14492,68 +14635,39 @@ function closeAssemblyReviewModal() {
   _assemblyReviewIndex = 0;
 }
 
-function renderAssemblyReview() {
-  const idx = _assemblyReviewIndex;
-  const total = _assemblyQueue.length;
-  const item = _assemblyQueue[idx];
-  if (!item) { closeAssemblyReviewModal(); return; }
-
-  document.getElementById('armCounter').textContent = `${idx + 1} of ${total}`;
-  document.getElementById('armFileName').textContent = item.sharepoint.fileName;
-
-  // Show the manual-entry notice when OCR couldn't read this drawing.
-  const ocrFailNotice = document.getElementById('armOcrFailedNotice');
-  if (ocrFailNotice) ocrFailNotice.style.display = item.ocrFailed ? '' : 'none';
-
+// A queued drawing is "valid" (saveable) once it has a mark, qty >= 1 and at
+// least one part with a mark or profile. Incomplete/unreadable ones can't be
+// auto-ticked by Accept-all and are flagged in their card header.
+function _asmItemValid(item) {
   const ocr = item.ocr || {};
-  document.getElementById('armMark').value = ocr.assembly_mark || '';
-  document.getElementById('armQty').value = ocr.quantity ?? '';
+  const hasMark = (ocr.assembly_mark || '').trim() !== '';
+  const qty = parseInt(ocr.quantity);
+  const parts = (ocr.parts || []).filter(p => (p.part_mark || p.profile));
+  return hasMark && qty >= 1 && parts.length >= 1;
+}
 
-  // Finish dropdown
-  const finishSel = document.getElementById('armFinish');
+// Preselect a finish for an item from its raw OCR text, once, storing the id
+// on the item so re-renders keep the user's choice.
+function _asmResolveFinishId(item) {
+  if (item._finishId !== undefined) return item._finishId;
   const finishes = _finishesCache || [];
-  let opts = '<option value="">(No finish required)</option>';
-  for (const f of finishes) {
-    opts += `<option value="${f.id}">${escapeHtml(f.name)}</option>`;
-  }
-  finishSel.innerHTML = opts;
-
-  // Try to preselect a finish based on case-insensitive match against raw OCR text
-  const raw = (ocr.finish_label_raw || '').trim().toLowerCase();
-  let matchedId = '';
+  const raw = ((item.ocr && item.ocr.finish_label_raw) || '').trim().toLowerCase();
+  let matched = '';
   if (raw) {
     for (const f of finishes) {
       const fname = (f.name || '').toLowerCase();
-      // Match if names equal, or raw starts with name, or name appears in raw
-      // (handles "Galvanised" → "Galvanising" via the "galvan" stem).
       if (fname === raw || raw.startsWith(fname) || fname.startsWith(raw) ||
           (raw.length > 4 && fname.includes(raw.slice(0, 5))) ||
           (fname.length > 4 && raw.includes(fname.slice(0, 5)))) {
-        matchedId = f.id; break;
+        matched = String(f.id); break;
       }
     }
   }
-  finishSel.value = matchedId;
-
-  // OCR hint
-  const hint = document.getElementById('armFinishHint');
-  if (ocr.finish_label_raw && !matchedId) {
-    hint.textContent = `OCR read: "${ocr.finish_label_raw}" — no matching finishing service. Add one in Settings → Service Types if needed.`;
-    hint.style.display = '';
-  } else if (ocr.finish_label_raw) {
-    hint.textContent = `OCR read: "${ocr.finish_label_raw}"`;
-    hint.style.display = '';
-  } else {
-    hint.style.display = 'none';
-  }
-
-  renderAssemblyReviewParts(ocr.parts || []);
+  item._finishId = matched;
+  return matched;
 }
 
-function renderAssemblyReviewParts(parts) {
-  const tbody = document.getElementById('armPartsTbody');
-  if (!tbody) return;
-  // Compute heaviest index for highlight
+function _armPartsRowsHtml(parts, qi) {
   const heavyIdx = heaviestPartIndex(parts);
   let rows = '';
   for (let i = 0; i < parts.length; i++) {
@@ -14561,7 +14675,7 @@ function renderAssemblyReviewParts(parts) {
     const hi = i === heavyIdx;
     const trStyle = hi ? 'background:rgba(255,107,0,.08)' : '';
     const accent = hi ? 'color:var(--accent)' : '';
-    rows += `<tr style="${trStyle}" data-i="${i}">
+    rows += `<tr class="arm-part-row" style="${trStyle}" data-i="${i}">
       <td style="padding:3px 4px 3px 0"><input data-f="part_mark" value="${escapeHtml(p.part_mark || '')}" style="width:48px;${accent}" class="arm-cell"/></td>
       <td style="padding:3px 4px"><input data-f="quantity" type="number" value="${p.quantity ?? ''}" style="width:42px" class="arm-cell"/></td>
       <td style="padding:3px 4px"><input data-f="profile" value="${escapeHtml(p.profile || '')}" style="width:88px;${accent}" class="arm-cell"/></td>
@@ -14569,138 +14683,275 @@ function renderAssemblyReviewParts(parts) {
       <td style="padding:3px 4px"><input data-f="material" value="${escapeHtml(p.material || '')}" style="width:60px" class="arm-cell"/></td>
       <td style="padding:3px 4px"><input data-f="area_m2" type="number" step="0.001" value="${p.area_m2 ?? ''}" style="width:54px;text-align:right" class="arm-cell"/></td>
       <td style="padding:3px 4px"><input data-f="weight_kg" type="number" step="0.001" value="${p.weight_kg ?? ''}" style="width:60px;text-align:right;${accent}" class="arm-cell"/></td>
-      <td style="padding:3px 0 3px 4px"><button class="btn btn-ghost" style="padding:2px 6px;font-size:12px" onclick="armRemoveRow(${i})" title="Remove">&times;</button></td>
+      <td style="padding:3px 0 3px 4px"><button class="btn btn-ghost" style="padding:2px 6px;font-size:12px" onclick="armRemoveRow(${qi}, ${i})" title="Remove">&times;</button></td>
     </tr>`;
   }
-  tbody.innerHTML = rows;
-
-  // Wire change handlers so editing weight re-tints heaviest
-  tbody.querySelectorAll('.arm-cell').forEach(input => {
-    input.addEventListener('input', () => {
-      // Re-render only if weight changed (heaviest may have moved).
-      // For simplicity, re-render on any weight edit.
-      if (input.dataset.f === 'weight_kg') {
-        const updated = armCollectParts();
-        renderAssemblyReviewParts(updated);
-      }
-    });
-  });
+  return rows;
 }
 
-function armCollectParts() {
-  const tbody = document.getElementById('armPartsTbody');
-  if (!tbody) return [];
-  const out = [];
-  tbody.querySelectorAll('tr').forEach(tr => {
+function renderAssemblyBatch() {
+  const list = document.getElementById('armBatchList');
+  if (!list) return;
+  const total = _assemblyQueue.length;
+
+  const counter = document.getElementById('armCounter');
+  if (counter) counter.textContent = total ? `${total} drawing${total > 1 ? 's' : ''} queued` : '';
+
+  const finishes = _finishesCache || [];
+  const finishOptsFor = (selId) => {
+    let o = '<option value="">(No finish required)</option>';
+    for (const f of finishes) {
+      o += `<option value="${f.id}"${String(f.id) === String(selId) ? ' selected' : ''}>${escapeHtml(f.name)}</option>`;
+    }
+    return o;
+  };
+
+  let html = '';
+  for (let qi = 0; qi < total; qi++) {
+    const item = _assemblyQueue[qi];
+    if (item._reviewed === undefined) item._reviewed = false;
+    if (item._collapsed === undefined) item._collapsed = false;
+    const ocr = item.ocr || {};
+    const valid = _asmItemValid(item);
+    const finishId = _asmResolveFinishId(item);
+
+    const flag = item.ocrFailed
+      ? '<span style="color:#fcd34d;font-size:11px" title="OCR could not read this — fill it in">&#9888; manual</span>'
+      : (!valid ? '<span style="color:var(--red);font-size:11px" title="Needs mark, qty and at least one part">incomplete</span>' : '');
+
+    const failNotice = item.ocrFailed
+      ? `<div style="background:rgba(234,179,8,.1);border:1px solid rgba(234,179,8,.35);color:#fcd34d;border-radius:8px;padding:8px 10px;font-size:11px;margin-bottom:10px;line-height:1.4">&#9888; Couldn't auto-read this drawing. It's saved in SharePoint &mdash; enter the mark, quantity and parts, then tick &ldquo;looks good&rdquo;.</div>`
+      : '';
+
+    html += `<div class="arm-card" data-qi="${qi}" style="border:1px solid var(--border);border-radius:8px;margin-bottom:10px;overflow:hidden">
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:var(--bg-darker);cursor:pointer" onclick="armToggleCollapse(${qi})">
+        <span class="arm-chev" style="font-size:11px;color:var(--subtle);width:12px">${item._collapsed ? '&#9656;' : '&#9662;'}</span>
+        <label onclick="event.stopPropagation()" style="display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none">
+          <input type="checkbox" class="arm-ok" ${item._reviewed ? 'checked' : ''} onchange="armToggleReviewed(${qi}, this.checked)">
+          <span style="font-size:11px;color:var(--subtle)">looks good</span>
+        </label>
+        <span style="font-family:var(--font-mono);font-size:12px;color:var(--text)">${escapeHtml(ocr.assembly_mark || '(no mark)')}</span>
+        <span style="font-size:11px;color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(item.sharepoint.fileName || '')}</span>
+        ${flag}
+        <button class="btn btn-ghost" style="padding:2px 8px;font-size:14px" onclick="event.stopPropagation();armRemoveCard(${qi})" title="Remove from queue">&times;</button>
+      </div>
+      <div class="arm-card-body" style="padding:12px;display:${item._collapsed ? 'none' : 'block'}">
+        ${failNotice}
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+          <div>
+            <div class="field-label">ASSEMBLY MARK</div>
+            <input type="text" class="field-input arm-mark" value="${escapeHtml(ocr.assembly_mark || '')}" placeholder="e.g. RL1" style="font-family:var(--font-mono)">
+          </div>
+          <div>
+            <div class="field-label">QUANTITY</div>
+            <input type="number" class="field-input arm-qty" min="1" value="${ocr.quantity ?? ''}" style="font-family:var(--font-mono)">
+          </div>
+        </div>
+        <div style="margin-bottom:12px">
+          <div class="field-label">FINISH</div>
+          <select class="field-input arm-finish" onchange="armSetFinish(${qi}, this.value)">${finishOptsFor(finishId)}</select>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+          <div class="field-label" style="margin:0">PARTS <span style="color:var(--subtle);font-weight:400;text-transform:none">&mdash; heaviest highlighted</span></div>
+          <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="armAddRow(${qi})">&#43; Add row</button>
+        </div>
+        <div style="background:var(--bg-darker);border:1px solid var(--border);border-radius:8px;padding:8px;overflow-x:auto">
+          <table style="width:100%;font-family:var(--font-mono);font-size:11px;border-collapse:collapse;min-width:560px">
+            <thead><tr style="color:var(--subtle);text-align:left">
+              <th style="font-weight:400;padding:4px 4px 4px 0">Mk</th>
+              <th style="font-weight:400;padding:4px">Qty</th>
+              <th style="font-weight:400;padding:4px">Profile</th>
+              <th style="font-weight:400;padding:4px">Length</th>
+              <th style="font-weight:400;padding:4px">Mat'l</th>
+              <th style="font-weight:400;padding:4px;text-align:right">Area</th>
+              <th style="font-weight:400;padding:4px;text-align:right">Wt (kg)</th>
+              <th></th>
+            </tr></thead>
+            <tbody id="armParts_${qi}">${_armPartsRowsHtml(ocr.parts || [], qi)}</tbody>
+          </table>
+        </div>
+      </div>
+    </div>`;
+  }
+  list.innerHTML = html || '<div style="color:var(--subtle);font-size:12px;padding:20px;text-align:center">Nothing queued.</div>';
+  _armUpdateBar();
+}
+
+function _armUpdateBar() {
+  const bar = document.getElementById('armBar');
+  if (!bar) return;
+  const total = _assemblyQueue.length;
+  const ticked = _assemblyQueue.filter(it => it._reviewed && _asmItemValid(it)).length;
+  bar.textContent = total ? `${ticked} of ${total} ticked & ready to save` : '';
+}
+
+// Read one card's DOM back into its queue item (mark, qty, finish, parts).
+function _armSyncCardToItem(qi) {
+  const card = document.querySelector(`.arm-card[data-qi="${qi}"]`);
+  if (!card) return;
+  const item = _assemblyQueue[qi];
+  if (!item) return;
+  const ocr = item.ocr || (item.ocr = {});
+  const markEl = card.querySelector('.arm-mark');
+  if (markEl) ocr.assembly_mark = markEl.value.trim();
+  const qtyEl = card.querySelector('.arm-qty');
+  if (qtyEl) { const n = parseInt(qtyEl.value); ocr.quantity = isNaN(n) ? null : n; }
+  const finEl = card.querySelector('.arm-finish');
+  if (finEl) item._finishId = finEl.value || '';
+  const parts = [];
+  card.querySelectorAll('.arm-part-row').forEach(tr => {
     const row = {};
-    tr.querySelectorAll('.arm-cell').forEach(input => {
-      const f = input.dataset.f;
-      const v = input.value.trim();
-      if (v === '') {
-        row[f] = (f === 'part_mark' || f === 'profile' || f === 'material') ? '' : null;
-      } else if (f === 'part_mark' || f === 'profile' || f === 'material') {
-        row[f] = v;
-      } else {
-        const n = Number(v);
-        row[f] = isNaN(n) ? null : n;
-      }
+    tr.querySelectorAll('.arm-cell').forEach(inp => {
+      const f = inp.dataset.f, v = inp.value.trim();
+      if (v === '') row[f] = (f === 'part_mark' || f === 'profile' || f === 'material') ? '' : null;
+      else if (f === 'part_mark' || f === 'profile' || f === 'material') row[f] = v;
+      else { const nn = Number(v); row[f] = isNaN(nn) ? null : nn; }
     });
-    out.push(row);
+    parts.push(row);
   });
-  return out;
+  if (parts.length) ocr.parts = parts;
 }
 
-function armAddRow() {
-  const parts = armCollectParts();
-  parts.push({ part_mark: '', quantity: 1, profile: '', length_mm: null, material: '', area_m2: null, weight_kg: null });
-  renderAssemblyReviewParts(parts);
+function _armSyncAll() {
+  for (let qi = 0; qi < _assemblyQueue.length; qi++) _armSyncCardToItem(qi);
 }
 
-function armRemoveRow(i) {
-  const parts = armCollectParts();
-  parts.splice(i, 1);
-  renderAssemblyReviewParts(parts);
+function armToggleCollapse(qi) {
+  const card = document.querySelector(`.arm-card[data-qi="${qi}"]`);
+  if (!card) return;
+  const item = _assemblyQueue[qi];
+  if (!item) return;
+  item._collapsed = !item._collapsed;
+  const body = card.querySelector('.arm-card-body');
+  const chev = card.querySelector('.arm-chev');
+  if (body) body.style.display = item._collapsed ? 'none' : 'block';
+  if (chev) chev.innerHTML = item._collapsed ? '&#9656;' : '&#9662;';
 }
 
-function armSkipCurrent() {
-  // Advance without saving. The PDF stays in SharePoint; user can clean up
-  // manually if they wish, or re-upload later.
-  _assemblyReviewIndex++;
-  if (_assemblyReviewIndex >= _assemblyQueue.length) {
-    closeAssemblyReviewModal();
-    toast('No more PDFs to review.', 'info');
+function armToggleReviewed(qi, checked) {
+  if (_assemblyQueue[qi]) _assemblyQueue[qi]._reviewed = checked;
+  _armUpdateBar();
+}
+
+function armSetFinish(qi, val) {
+  if (_assemblyQueue[qi]) _assemblyQueue[qi]._finishId = val || '';
+}
+
+function armRemoveCard(qi) {
+  _armSyncAll();
+  _assemblyQueue.splice(qi, 1);
+  if (!_assemblyQueue.length) { closeAssemblyReviewModal(); return; }
+  renderAssemblyBatch();
+}
+
+function armAddRow(qi) {
+  _armSyncCardToItem(qi);
+  const item = _assemblyQueue[qi];
+  if (!item) return;
+  item.ocr = item.ocr || {};
+  item.ocr.parts = item.ocr.parts || [];
+  item.ocr.parts.push({ part_mark: '', quantity: 1, profile: '', length_mm: null, material: '', area_m2: null, weight_kg: null });
+  const tb = document.getElementById(`armParts_${qi}`);
+  if (tb) tb.innerHTML = _armPartsRowsHtml(item.ocr.parts, qi);
+}
+
+function armRemoveRow(qi, i) {
+  _armSyncCardToItem(qi);
+  const item = _assemblyQueue[qi];
+  if (!item || !item.ocr) return;
+  (item.ocr.parts || []).splice(i, 1);
+  const tb = document.getElementById(`armParts_${qi}`);
+  if (tb) tb.innerHTML = _armPartsRowsHtml(item.ocr.parts || [], qi);
+}
+
+// "Accept all — don't check": tick every readable, complete card and collapse
+// them. Cards that failed OCR or are incomplete stay unticked and expanded.
+function armAcceptAll() {
+  _armSyncAll();
+  let n = 0;
+  for (const item of _assemblyQueue) {
+    if (_asmItemValid(item)) { item._reviewed = true; item._collapsed = true; n++; }
+    else { item._reviewed = false; item._collapsed = false; }
+  }
+  renderAssemblyBatch();
+  if (n < _assemblyQueue.length) {
+    toast(`Ticked ${n}. ${_assemblyQueue.length - n} still need attention (unreadable or incomplete).`, 'info');
+  }
+}
+
+// Save every ticked, valid card in one pass. Saved cards leave the queue;
+// unticked/incomplete ones stay so you can finish them.
+async function armSaveAll() {
+  if (!currentJob) { toast('No job selected.', 'error'); return; }
+  _armSyncAll();
+
+  const targets = [];
+  for (let qi = 0; qi < _assemblyQueue.length; qi++) {
+    const item = _assemblyQueue[qi];
+    if (item._reviewed && _asmItemValid(item)) targets.push(qi);
+  }
+  if (!targets.length) {
+    toast('Tick "looks good" on the drawings to save — or hit "Accept all".', 'error');
     return;
   }
-  renderAssemblyReview();
-}
-
-async function armSaveAndNext() {
-  const item = _assemblyQueue[_assemblyReviewIndex];
-  if (!item) { closeAssemblyReviewModal(); return; }
-
-  const mark = document.getElementById('armMark').value.trim();
-  const qty = parseInt(document.getElementById('armQty').value);
-  const finishVal = document.getElementById('armFinish').value;
-  const finishServiceId = finishVal ? parseInt(finishVal) : null;
-  const parts = armCollectParts().filter(p => p.part_mark || p.profile);
-
-  if (!mark) { toast('Assembly mark is required.', 'error'); return; }
-  if (!qty || qty < 1) { toast('Quantity must be at least 1.', 'error'); return; }
-  if (parts.length < 1) { toast('At least one part is required.', 'error'); return; }
-
-  // Roll up totals from the part rows so JobAssemblies has handy aggregates
-  const totalAreaM2 = parts.reduce((s, p) => s + ((Number(p.area_m2) || 0) * (Number(p.quantity) || 1)), 0);
-  const totalWeightKg = parts.reduce((s, p) => s + ((Number(p.weight_kg) || 0) * (Number(p.quantity) || 1)), 0);
 
   const saveBtn = document.getElementById('armSaveBtn');
   if (saveBtn) { saveBtn.disabled = true; saveBtn.style.opacity = '.6'; }
 
-  try {
-    await postAssemblyCreate(item, mark, qty, finishServiceId,
-      item.ocr?.finish_label_raw ?? null, totalAreaM2, totalWeightKg, parts);
-  } catch (err) {
-    if (err && err.body && err.body.error === 'duplicate_mark') {
-      const existing = (_assembliesByJob[parseInt(currentJob.id)] || [])
-        .find(a => (a.assembly_mark || '').toLowerCase() === mark.toLowerCase());
-      const wasFabricated = existing && existing.status === 'fabricated';
-      const msg = wasFabricated
-        ? `⚠ "${mark}" already exists AND has been marked as fabricated.\n\nReplacing will delete the old assembly and the BOM row derived from it. The BOM row may already be at a supplier or despatched — check first.\n\nContinue?`
-        : `"${mark}" already exists on this job.\n\nReplacing will delete the old assembly.\n\nContinue?`;
-      if (!window.confirm(msg)) {
-        if (saveBtn) { saveBtn.disabled = false; saveBtn.style.opacity = '1'; }
-        return;
+  const savedIdx = [];
+  let saved = 0;
+  for (const qi of targets) {
+    const item = _assemblyQueue[qi];
+    const ocr = item.ocr || {};
+    const mark = (ocr.assembly_mark || '').trim();
+    const qty = parseInt(ocr.quantity);
+    const finishServiceId = item._finishId ? parseInt(item._finishId) : null;
+    const parts = (ocr.parts || []).filter(p => p.part_mark || p.profile);
+    const totalAreaM2 = parts.reduce((s, p) => s + ((Number(p.area_m2) || 0) * (Number(p.quantity) || 1)), 0);
+    const totalWeightKg = parts.reduce((s, p) => s + ((Number(p.weight_kg) || 0) * (Number(p.quantity) || 1)), 0);
+
+    try {
+      await postAssemblyCreate(item, mark, qty, finishServiceId, ocr.finish_label_raw ?? null, totalAreaM2, totalWeightKg, parts);
+      saved++; savedIdx.push(qi);
+    } catch (err) {
+      if (err && err.body && err.body.error === 'duplicate_mark') {
+        const existing = (_assembliesByJob[parseInt(currentJob.id)] || [])
+          .find(a => (a.assembly_mark || '').toLowerCase() === mark.toLowerCase());
+        const wasFabricated = existing && existing.status === 'fabricated';
+        const msg = wasFabricated
+          ? `⚠ "${mark}" already exists AND has been marked as fabricated.\n\nReplacing deletes the old assembly and its BOM row (which may already be at a supplier or despatched). Continue?`
+          : `"${mark}" already exists on this job.\n\nReplacing will delete the old assembly. Continue?`;
+        if (window.confirm(msg)) {
+          try {
+            const force = wasFabricated ? '?force=1' : '';
+            if (existing) await api.delete(`/api/job-assemblies/${existing.id}${force}`);
+            await postAssemblyCreate(item, mark, qty, finishServiceId, ocr.finish_label_raw ?? null, totalAreaM2, totalWeightKg, parts);
+            saved++; savedIdx.push(qi);
+          } catch (replaceErr) {
+            toast(`${mark}: replace failed — ${replaceErr.message}`, 'error');
+          }
+        }
+      } else {
+        toast(`${mark}: save failed — ${err.message}`, 'error');
       }
-      try {
-        // Delete old (force=1 needed if it was fabricated)
-        const force = wasFabricated ? '?force=1' : '';
-        if (existing) await api.delete(`/api/job-assemblies/${existing.id}${force}`);
-        await postAssemblyCreate(item, mark, qty, finishServiceId,
-          item.ocr?.finish_label_raw ?? null, totalAreaM2, totalWeightKg, parts);
-      } catch (replaceErr) {
-        toast(`Replace failed: ${replaceErr.message}`, 'error');
-        if (saveBtn) { saveBtn.disabled = false; saveBtn.style.opacity = '1'; }
-        return;
-      }
-    } else {
-      toast(`Save failed: ${err.message}`, 'error');
-      if (saveBtn) { saveBtn.disabled = false; saveBtn.style.opacity = '1'; }
-      return;
     }
   }
 
   if (saveBtn) { saveBtn.disabled = false; saveBtn.style.opacity = '1'; }
 
-  // Refresh in-memory cache and re-render
+  // Drop saved cards (descending so indices stay valid).
+  savedIdx.sort((a, b) => b - a).forEach(qi => _assemblyQueue.splice(qi, 1));
+
   await loadJobAssemblies(parseInt(currentJob.id));
   renderAssembly();
 
-  _assemblyReviewIndex++;
-  if (_assemblyReviewIndex >= _assemblyQueue.length) {
+  if (!_assemblyQueue.length) {
     closeAssemblyReviewModal();
-    toast('All assemblies saved.', 'success');
-    return;
+    toast(`Saved ${saved} assembl${saved === 1 ? 'y' : 'ies'}.`, 'success');
+  } else {
+    toast(`Saved ${saved}. ${_assemblyQueue.length} still queued (unticked or incomplete).`, saved ? 'success' : 'info');
+    renderAssemblyBatch();
   }
-  renderAssemblyReview();
 }
 
 async function postAssemblyCreate(item, mark, qty, finishServiceId, finishLabelRaw, totalAreaM2, totalWeightKg, parts) {
