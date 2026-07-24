@@ -14447,6 +14447,37 @@ function openManualAssemblyModal() {
   openAssemblyReviewModal();
 }
 
+// Assembly drawings usually arrive as ONE multi-page PDF per paper size
+// (Tekla output — each PAGE is a separate assembly with its own titleblock
+// and material list). The whole bundle is too big to OCR in one call and
+// holds many assemblies, so split it into per-page PDFs; each page then
+// becomes its own review card. Single-page PDFs (or anything pdf-lib can't
+// parse) pass straight through unchanged.
+async function _splitPdfIntoPages(file) {
+  if (typeof PDFLib === 'undefined' || !PDFLib.PDFDocument) return [file];
+  let src;
+  try {
+    const buf = await file.arrayBuffer();
+    src = await PDFLib.PDFDocument.load(buf, { ignoreEncryption: true });
+  } catch (e) {
+    console.warn(`Couldn't parse ${file.name} for splitting — using whole file:`, e);
+    return [file];
+  }
+  const n = src.getPageCount();
+  if (n <= 1) return [file];
+  const stem = file.name.replace(/\.pdf$/i, '');
+  const out = [];
+  for (let p = 0; p < n; p++) {
+    const doc = await PDFLib.PDFDocument.create();
+    const [copied] = await doc.copyPages(src, [p]);
+    doc.addPage(copied);
+    const bytes = await doc.save();
+    const pageNo = String(p + 1).padStart(2, '0');
+    out.push(new File([bytes], `${stem}_p${pageNo}.pdf`, { type: 'application/pdf' }));
+  }
+  return out;
+}
+
 async function onAssemblyFilesPicked(fileList) {
   if (!fileList || !fileList.length) return;
   if (!currentJob || !currentJob.spFolderId) {
@@ -14482,10 +14513,26 @@ async function onAssemblyFilesPicked(fileList) {
     return;
   }
 
+  // Expand multi-page bundles into one PDF per page (= one assembly each).
+  banner.textContent = 'Preparing drawings…';
+  const pages = [];
+  for (const f of files) {
+    try {
+      const split = await _splitPdfIntoPages(f);
+      pages.push(...split);
+    } catch (e) {
+      console.warn(`Split failed on ${f.name}, using whole file:`, e);
+      pages.push(f);
+    }
+  }
+  if (pages.length > files.length) {
+    toast(`${files.length} PDF${files.length > 1 ? 's' : ''} → ${pages.length} drawings (one per page).`, 'info');
+  }
+
   const queue = [];
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i];
-    banner.textContent = `Uploading ${i + 1} / ${files.length} — ${file.name}`;
+  for (let i = 0; i < pages.length; i++) {
+    const file = pages[i];
+    banner.textContent = `Uploading ${i + 1} / ${pages.length} — ${file.name}`;
 
     // Step 1 — upload to SharePoint. If THIS fails there's no file in SP,
     // so skip the item entirely (nothing to recover).
@@ -14511,7 +14558,7 @@ async function onAssemblyFilesPicked(fileList) {
     // with no JobAssemblies row). Instead, queue it for manual entry with a
     // blank-but-editable OCR stub, carrying the real SharePoint reference so
     // the saved assembly still gets a working "Open PDF" link.
-    banner.textContent = `Parsing ${i + 1} / ${files.length} — ${file.name}`;
+    banner.textContent = `Parsing ${i + 1} / ${pages.length} — ${file.name}`;
     let ocr, ocrFailed = false;
     try {
       ocr = await ocrAssemblyPdf(file);
