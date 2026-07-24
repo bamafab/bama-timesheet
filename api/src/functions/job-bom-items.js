@@ -20,6 +20,33 @@ const { ok, created, badRequest, notFound, serverError } = require('../responses
 
 const ALLOWED_STATUS = ['pending', 'at_supplier', 'ready_for_despatch', 'despatched', 'on_site'];
 
+// A finish is "outsourced" only if at least one ACTIVE supplier actually
+// offers it (has a SupplierServices row for that service type). If nobody
+// offers it, the finish is done in-house (e.g. we paint here ourselves) —
+// so the item skips the supplier-DN flow entirely and lands straight in
+// 'ready_for_despatch', ready to ship to site. No finish at all is treated
+// the same way.
+//
+// This keeps the whole thing data-driven off the Suppliers tab: add a
+// galvaniser and galv items route to it; don't add a painter and paint
+// stays in-house. No separate in-house/outsourced flag to maintain.
+async function finishIsOutsourced(finishServiceId) {
+    if (!finishServiceId) return false;
+    const r = await query(
+        `SELECT TOP 1 1 AS x
+         FROM SupplierServices ss
+         JOIN Suppliers s ON s.id = ss.supplier_id
+         WHERE ss.service_type_id = @fid AND s.is_active = 1`,
+        { fid: finishServiceId }
+    );
+    return r.recordset.length > 0;
+}
+
+// Resolve the create/re-route status for a given finish.
+async function statusForFinish(finishServiceId) {
+    return (await finishIsOutsourced(finishServiceId)) ? 'pending' : 'ready_for_despatch';
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/job-bom-items?job_id=X
 // Returns BOM rows for a job. Joins finish and supplier names so the
@@ -90,7 +117,7 @@ app.http('job-bom-items-create', {
             const finishServiceId = body.finish_service_id
                 ? parseInt(body.finish_service_id)
                 : null;
-            const status = finishServiceId ? 'pending' : 'ready_for_despatch';
+            const status = await statusForFinish(finishServiceId);
             const createdBy = body.created_by || auth.email || auth.name || null;
 
             const res = await query(
@@ -158,7 +185,8 @@ app.http('job-bom-items-bulk', {
             const finishServiceId = body.finish_service_id
                 ? parseInt(body.finish_service_id)
                 : null;
-            const status = finishServiceId ? 'pending' : 'ready_for_despatch';
+            // All rows in a bulk call share one finish, so resolve once.
+            const status = await statusForFinish(finishServiceId);
             const createdBy = body.created_by || auth.email || auth.name || null;
 
             const db = await getPool();
@@ -247,8 +275,23 @@ app.http('job-bom-items-update', {
                 params.quantity = q;
             }
             if (body.finish_service_id !== undefined) {
+                const newFinishId = body.finish_service_id ? parseInt(body.finish_service_id) : null;
                 fields.push('finish_service_id = @finishServiceId');
-                params.finishServiceId = body.finish_service_id ? parseInt(body.finish_service_id) : null;
+                params.finishServiceId = newFinishId;
+
+                // Re-route the item when its finish changes — but ONLY while it
+                // hasn't yet gone to a supplier. A finish now offered by an active
+                // supplier ⇒ 'pending' (needs a DN); an in-house / unsupplied
+                // finish (or no finish) ⇒ 'ready_for_despatch'. Rows already at
+                // at_supplier / despatched / on_site are left untouched so we
+                // never regress a live DN.
+                const cur = await query('SELECT status FROM JobBomItems WHERE id = @id', { id });
+                if (cur.recordset.length === 0) return notFound('BOM item not found', request);
+                const curStatus = cur.recordset[0].status;
+                if (curStatus === 'pending' || curStatus === 'ready_for_despatch') {
+                    fields.push('status = @newStatus');
+                    params.newStatus = await statusForFinish(newFinishId);
+                }
             }
 
             if (fields.length === 0) return badRequest('No fields to update', request);

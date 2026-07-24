@@ -17,6 +17,22 @@ const { query, getPool, sql } = require('../db');
 const { requireAuth } = require('../auth');
 const { ok, created, badRequest, notFound, serverError } = require('../responses');
 
+// A finish is "outsourced" only if at least one ACTIVE supplier offers it
+// (has a SupplierServices row). If nobody offers it, it's done in-house and
+// the BOM row skips the supplier-DN flow. Mirrors the helper in
+// job-bom-items.js — kept local so each function file stays independent.
+async function finishIsOutsourced(finishServiceId) {
+    if (!finishServiceId) return false;
+    const r = await query(
+        `SELECT TOP 1 1 AS x
+         FROM SupplierServices ss
+         JOIN Suppliers s ON s.id = ss.supplier_id
+         WHERE ss.service_type_id = @fid AND s.is_active = 1`,
+        { fid: finishServiceId }
+    );
+    return r.recordset.length > 0;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/job-assemblies?job_id=X
 // Returns assemblies for the given job, each with their parts pre-joined.
@@ -445,7 +461,14 @@ app.http('job-assemblies-fabricate', {
                 }
             }
 
-            const bomStatus = assembly.finish_service_id ? 'pending' : 'ready_for_despatch';
+            // Route the auto-generated BOM row the same way manual rows are:
+            // it only needs a supplier DN if an active supplier actually offers
+            // this finish. Otherwise (in-house finish like paint, or no finish)
+            // it lands straight in 'ready_for_despatch'. Keeps fabricate from
+            // dumping phantom 'pending' rows for finishes we do in-house.
+            const bomStatus = await finishIsOutsourced(assembly.finish_service_id)
+                ? 'pending'
+                : 'ready_for_despatch';
 
             const db = await getPool();
             const transaction = new sql.Transaction(db);

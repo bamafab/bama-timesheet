@@ -12051,7 +12051,13 @@ function renderBomRow(it) {
   const sourceLabel = it.source === 'assembly'
     ? (it.source_assembly_mark ? `from ${escapeHtml(it.source_assembly_mark)}` : 'from assembly')
     : (it.file_name ? escapeHtml(it.file_name) : 'manual');
-  const finishBadge = finishBadgeFor(it);
+  // Finish is editable in place while the row hasn't yet gone to a supplier.
+  // Changing it re-routes the row (a supplied finish → DN queue; an in-house
+  // or no finish → ready for despatch) — handled server-side.
+  const finishEditable = isDraftsman
+    && currentJob && currentJob.status !== 'closed'
+    && (it.status === 'pending' || it.status === 'ready_for_despatch');
+  const finishBadge = finishEditable ? renderBomFinishSelect(it) : finishBadgeFor(it);
   const pdfLink = it.sharepoint_web_url
     ? `<a href="${escapeHtml(it.sharepoint_web_url)}" target="_blank" rel="noopener"
           style="color:var(--accent);font-size:13px;text-decoration:none;margin-left:6px"
@@ -12100,6 +12106,44 @@ function renderBomRow(it) {
       ${deleteBtn}
     </td>
   </tr>`;
+}
+
+// In-place finish picker for a BOM row. Options come from the same
+// _finishesCache the OCR review modal uses (active finishing services).
+// If the row's current finish isn't in that list (e.g. it was later
+// un-marked as a finish or deactivated), we still surface it as a
+// selected option so we never silently blank it.
+function renderBomFinishSelect(it) {
+  const finishes = _finishesCache || [];
+  const curId = it.finish_service_id != null ? Number(it.finish_service_id) : null;
+  const curInList = curId != null && finishes.some(f => Number(f.id) === curId);
+
+  let opts = `<option value="">— none / in-house —</option>`;
+  if (curId != null && !curInList) {
+    opts += `<option value="${curId}" selected>${escapeHtml(it.finish_name || 'current finish')}</option>`;
+  }
+  for (const f of finishes) {
+    const sel = curId === Number(f.id) ? 'selected' : '';
+    opts += `<option value="${f.id}" ${sel}>${escapeHtml(f.name)}</option>`;
+  }
+  return `<select onchange="bomChangeFinish(${it.id}, this.value)"
+            title="Change finish — re-routes the item (supplied finish → DN queue, in-house/none → ready for despatch)"
+            style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:3px 6px;font-size:11px;max-width:160px;cursor:pointer">
+            ${opts}
+          </select>`;
+}
+
+async function bomChangeFinish(id, val) {
+  try {
+    await api.put(`/api/job-bom-items/${id}`, {
+      finish_service_id: val ? parseInt(val) : null
+    });
+    const jobId = currentJob?.id ? parseInt(currentJob.id) : null;
+    if (jobId) await loadJobBomItems(jobId);
+    renderBOM();
+  } catch (e) {
+    toast('Failed to change finish: ' + e.message, 'error');
+  }
 }
 
 async function deleteBomItem(id) {
