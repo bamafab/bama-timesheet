@@ -10948,6 +10948,10 @@ let _finishesCache = null;
 //     Each: { file, sharepoint:{...}, ocr:{ items:[{description,quantity,...}] } }
 //   _bomManualReviewIndex: which queued PDF is currently in the review modal
 let _bomItemsByJob = {};
+// Ephemeral multi-select for the BOM table's bulk-action toolbar. Holds
+// selected row ids for the currently-open job; cleared on every (re)load
+// so it never leaks across jobs or survives a bulk action.
+let _bomSelected = new Set();
 let _bomManualQueue = [];
 let _bomManualReviewIndex = 0;
 
@@ -11896,6 +11900,7 @@ function renderAllElements() {
 
 async function loadJobBomItems(jobId) {
   if (!jobId) return [];
+  _bomSelected.clear();
   try {
     const rows = await api.get(`/api/job-bom-items?job_id=${encodeURIComponent(jobId)}`);
     _bomItemsByJob[jobId] = Array.isArray(rows) ? rows : [];
@@ -12012,11 +12017,34 @@ function renderBOM() {
     `;
   }
 
+  // Bulk-action toolbar (mirrors the QB takeoff bar) — hidden until a row
+  // is ticked. Wired to the bulk-* endpoints so N rows = one request.
+  const selCount = _bomSelected.size;
+  const finishOpts = (_finishesCache || [])
+    .map(f => `<option value="${f.id}">${escapeHtml(f.name)}</option>`).join('');
+  html += `
+    <div id="bomBulkBar" style="display:${selCount ? 'flex' : 'none'};align-items:center;flex-wrap:wrap;gap:8px;padding:8px 12px;background:rgba(255,107,0,.08);border:1px solid rgba(255,107,0,.25);border-radius:7px;margin-bottom:8px">
+      <span id="bomSelCount" style="font-size:12px;color:var(--accent);font-weight:600">${selCount} selected</span>
+      <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="bomSelectAll()">Select all</button>
+      <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="bomDeselectAll()">Deselect all</button>
+      <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="bomInvertSelection()">Invert</button>
+      <select id="bomBulkFinish" onchange="bomBulkSetFinish(this.value); this.value='__';"
+        style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer">
+        <option value="__">Set finish ▸</option>
+        <option value="">— none / in-house —</option>
+        ${finishOpts}
+      </select>
+      <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="bomBulkStatus('ready_for_despatch')">&#10003; Mark returned</button>
+      <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="bomBulkStatus('despatched')">&#128666; Mark despatched</button>
+      ${isDraftsman ? `<button class="btn btn-ghost" style="padding:4px 10px;font-size:11px;color:var(--red);border-color:var(--red);margin-left:auto" onclick="bomBulkDelete()">&#128465; Delete selected</button>` : ''}
+    </div>`;
+
   // Table view (commit 11.1 — replaces commit 9's tile-card view)
   html += `<div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px;background:var(--surface)">
     <table style="width:100%;border-collapse:collapse;font-size:13px">
       <thead>
         <tr style="background:var(--bg-darker);color:var(--subtle);text-transform:uppercase;font-size:11px;letter-spacing:.04em">
+          <th style="width:34px;text-align:center;padding:8px 8px;border-bottom:1px solid var(--border)"><input type="checkbox" id="bomHeadCb" onchange="bomToggleAllVisible(this.checked)" style="cursor:pointer;accent-color:var(--accent)"></th>
           <th style="text-align:left;padding:8px 12px;font-weight:600;border-bottom:1px solid var(--border)">Description</th>
           <th style="text-align:right;padding:8px 12px;font-weight:600;border-bottom:1px solid var(--border)">Qty</th>
           <th style="text-align:left;padding:8px 12px;font-weight:600;border-bottom:1px solid var(--border)">Finish</th>
@@ -12032,6 +12060,9 @@ function renderBOM() {
     // Section header row when the status group changes
     if (it.status !== prevStatus) {
       html += `<tr style="background:rgba(255,255,255,.02)">
+        <td style="padding:8px 8px;text-align:center;border-bottom:1px solid var(--border)">
+          <input type="checkbox" class="bom-group-cb" data-status="${it.status}" onchange="bomToggleGroup('${it.status}', this.checked)" style="cursor:pointer;accent-color:var(--accent)">
+        </td>
         <td colspan="6" style="padding:8px 12px;font-size:11px;color:var(--subtle);text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid var(--border)">
           ${BOM_STATUS_LABEL[it.status] || it.status}
         </td>
@@ -12092,7 +12123,11 @@ function renderBomRow(it) {
          onclick="deleteBomItem(${it.id})">&#128465;</button>`
     : '';
 
-  return `<tr style="border-bottom:1px solid var(--border)">
+  return `<tr style="border-bottom:1px solid var(--border)${_bomSelected.has(it.id) ? ';background:rgba(255,107,0,.06)' : ''}">
+    <td style="padding:10px 8px;text-align:center">
+      <input type="checkbox" class="bom-row-cb" data-id="${it.id}" data-status="${it.status}" ${_bomSelected.has(it.id) ? 'checked' : ''}
+        onchange="bomToggleRow(${it.id}, this.checked)" style="cursor:pointer;accent-color:var(--accent)">
+    </td>
     <td style="padding:10px 12px;color:var(--text);font-family:var(--font-mono);font-size:13px">${escapeHtml(it.description)}</td>
     <td style="padding:10px 12px;text-align:right;color:var(--text);font-family:var(--font-mono);font-size:13px">${Number(it.quantity)}</td>
     <td style="padding:10px 12px">${finishBadge}</td>
@@ -12144,6 +12179,105 @@ async function bomChangeFinish(id, val) {
   } catch (e) {
     toast('Failed to change finish: ' + e.message, 'error');
   }
+}
+
+// ── BOM bulk selection + actions (mirrors the QB takeoff bulk bar) ──────────
+function bomToggleRow(id, checked) {
+  if (checked) _bomSelected.add(id); else _bomSelected.delete(id);
+  const tr = document.querySelector(`.bom-row-cb[data-id="${id}"]`)?.closest('tr');
+  if (tr) tr.style.background = checked ? 'rgba(255,107,0,.06)' : '';
+  bomUpdateBulkBar();
+}
+function bomToggleAllVisible(checked) { checked ? bomSelectAll() : bomDeselectAll(); }
+function bomSelectAll() {
+  document.querySelectorAll('.bom-row-cb').forEach(cb => {
+    cb.checked = true; _bomSelected.add(parseInt(cb.dataset.id));
+    const tr = cb.closest('tr'); if (tr) tr.style.background = 'rgba(255,107,0,.06)';
+  });
+  bomUpdateBulkBar();
+}
+function bomDeselectAll() {
+  _bomSelected.clear();
+  document.querySelectorAll('.bom-row-cb').forEach(cb => {
+    cb.checked = false; const tr = cb.closest('tr'); if (tr) tr.style.background = '';
+  });
+  bomUpdateBulkBar();
+}
+function bomInvertSelection() {
+  document.querySelectorAll('.bom-row-cb').forEach(cb => {
+    const id = parseInt(cb.dataset.id);
+    const now = !_bomSelected.has(id);
+    cb.checked = now; if (now) _bomSelected.add(id); else _bomSelected.delete(id);
+    const tr = cb.closest('tr'); if (tr) tr.style.background = now ? 'rgba(255,107,0,.06)' : '';
+  });
+  bomUpdateBulkBar();
+}
+function bomToggleGroup(status, checked) {
+  document.querySelectorAll(`.bom-row-cb[data-status="${status}"]`).forEach(cb => {
+    const id = parseInt(cb.dataset.id);
+    cb.checked = checked; if (checked) _bomSelected.add(id); else _bomSelected.delete(id);
+    const tr = cb.closest('tr'); if (tr) tr.style.background = checked ? 'rgba(255,107,0,.06)' : '';
+  });
+  bomUpdateBulkBar();
+}
+function bomUpdateBulkBar() {
+  const bar = document.getElementById('bomBulkBar');
+  const cnt = document.getElementById('bomSelCount');
+  if (cnt) cnt.textContent = `${_bomSelected.size} selected`;
+  if (bar) bar.style.display = _bomSelected.size ? 'flex' : 'none';
+  // header + group checkbox states
+  const allCbs = Array.from(document.querySelectorAll('.bom-row-cb'));
+  const head = document.getElementById('bomHeadCb');
+  if (head) {
+    const n = allCbs.filter(cb => cb.checked).length;
+    head.checked = n > 0 && n === allCbs.length;
+    head.indeterminate = n > 0 && n < allCbs.length;
+  }
+  document.querySelectorAll('.bom-group-cb').forEach(gcb => {
+    const rows = allCbs.filter(cb => cb.dataset.status === gcb.dataset.status);
+    const n = rows.filter(cb => cb.checked).length;
+    gcb.checked = n > 0 && n === rows.length;
+    gcb.indeterminate = n > 0 && n < rows.length;
+  });
+}
+async function bomReloadAfterBulk() {
+  const jobId = currentJob?.id ? parseInt(currentJob.id) : null;
+  if (jobId) await loadJobBomItems(jobId); // clears _bomSelected
+  renderBOM();
+}
+async function bomBulkSetFinish(val) {
+  if (val === '__') return;                    // placeholder chosen — ignore
+  const ids = Array.from(_bomSelected);
+  if (!ids.length) return;
+  try {
+    await api.post('/api/job-bom-items/bulk-finish', {
+      item_ids: ids,
+      finish_service_id: val === '' ? null : parseInt(val)
+    });
+    await bomReloadAfterBulk();
+    toast('Finish updated on selected rows', 'success');
+  } catch (e) { toast('Bulk finish failed: ' + e.message, 'error'); }
+}
+async function bomBulkStatus(status) {
+  const ids = Array.from(_bomSelected);
+  if (!ids.length) return;
+  try {
+    const r = await api.post('/api/job-bom-items/bulk-status', { item_ids: ids, status });
+    await bomReloadAfterBulk();
+    const n = (r && r.updated != null) ? r.updated : ids.length;
+    toast(`${n} row${n === 1 ? '' : 's'} updated`, n ? 'success' : 'info');
+  } catch (e) { toast('Bulk status failed: ' + e.message, 'error'); }
+}
+async function bomBulkDelete() {
+  const ids = Array.from(_bomSelected);
+  if (!ids.length) return;
+  if (!confirm(`Delete ${ids.length} selected BOM item${ids.length === 1 ? '' : 's'}? This cannot be undone.`)) return;
+  try {
+    const r = await api.post('/api/job-bom-items/bulk-delete', { item_ids: ids });
+    await bomReloadAfterBulk();
+    const n = (r && r.deleted != null) ? r.deleted : ids.length;
+    toast(`${n} item${n === 1 ? '' : 's'} deleted`, 'success');
+  } catch (e) { toast('Bulk delete failed: ' + e.message, 'error'); }
 }
 
 async function deleteBomItem(id) {

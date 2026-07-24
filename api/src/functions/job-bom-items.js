@@ -682,6 +682,158 @@ app.http('job-bom-items-generate-sdn', {
     }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/job-bom-items/bulk-status — advance many rows in one call.
+// Body: { item_ids:[...], status, force? }.
+// Only rows in the correct SOURCE state are updated (others silently
+// skipped); returns { updated: n }. Limited to the toolbar-safe terminal
+// hops — at_supplier / on_site still route through generate-dn / -sdn
+// (they need a supplier or DN PDF), so they're intentionally not offered.
+// POST (not PUT) + literal route avoids colliding with job-bom-items/{id}.
+// ─────────────────────────────────────────────────────────────────────────────
+app.http('job-bom-items-bulk-status', {
+    methods: ['POST'],
+    authLevel: 'anonymous',
+    route: 'job-bom-items/bulk-status',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const body = await request.json();
+            const itemIds = Array.isArray(body.item_ids)
+                ? body.item_ids.map(x => parseInt(x)).filter(x => !isNaN(x))
+                : [];
+            if (itemIds.length === 0) return badRequest('item_ids must be a non-empty array', request);
+
+            const target = body.status;
+            const force = body.force === true || body.force === 1;
+
+            // Allowed bulk targets → required source state + timestamp column.
+            const RULES = {
+                ready_for_despatch: { from: 'at_supplier',       ts: 'returned_at' },
+                despatched:         { from: 'ready_for_despatch', ts: 'despatched_at' }
+            };
+            const rule = RULES[target];
+            if (!rule) {
+                return badRequest('Unsupported bulk status (use ready_for_despatch or despatched)', request);
+            }
+
+            const params = { target };
+            const ph = itemIds.map((id, i) => { params[`id${i}`] = id; return `@id${i}`; }).join(',');
+            let whereState = '';
+            if (!force) { whereState = ' AND status = @fromState'; params.fromState = rule.from; }
+
+            const res = await query(
+                `UPDATE JobBomItems
+                 SET status = @target, ${rule.ts} = SYSUTCDATETIME()
+                 OUTPUT INSERTED.id
+                 WHERE id IN (${ph})${whereState}`,
+                params
+            );
+            return ok({ updated: res.recordset.length }, request);
+        } catch (err) {
+            context.error('Error bulk-updating BOM status:', err);
+            return serverError('Failed to bulk-update status', request);
+        }
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/job-bom-items/bulk-finish — set one finish on many rows.
+// Body: { item_ids:[...], finish_service_id }. Re-routes each row
+// (supplied finish → pending, in-house/none → ready_for_despatch) but only
+// for rows not yet sent to a supplier. Rows already at_supplier+ keep their
+// status (finish still updated). Returns { updated, rerouted }.
+// ─────────────────────────────────────────────────────────────────────────────
+app.http('job-bom-items-bulk-finish', {
+    methods: ['POST'],
+    authLevel: 'anonymous',
+    route: 'job-bom-items/bulk-finish',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const body = await request.json();
+            const itemIds = Array.isArray(body.item_ids)
+                ? body.item_ids.map(x => parseInt(x)).filter(x => !isNaN(x))
+                : [];
+            if (itemIds.length === 0) return badRequest('item_ids must be a non-empty array', request);
+
+            const finishServiceId = body.finish_service_id ? parseInt(body.finish_service_id) : null;
+            const newStatus = await statusForFinish(finishServiceId);
+            const ph = itemIds.map((_, i) => `@id${i}`).join(',');
+
+            const db = await getPool();
+            const transaction = new sql.Transaction(db);
+            await transaction.begin();
+            try {
+                // 1. set finish on every selected row
+                const r1 = new sql.Request(transaction);
+                r1.input('finishServiceId', sql.Int, finishServiceId);
+                itemIds.forEach((id, i) => r1.input(`id${i}`, sql.Int, id));
+                const up1 = await r1.query(
+                    `UPDATE JobBomItems SET finish_service_id = @finishServiceId
+                     OUTPUT INSERTED.id WHERE id IN (${ph})`
+                );
+
+                // 2. re-route status ONLY for rows still pre-supplier
+                const r2 = new sql.Request(transaction);
+                r2.input('newStatus', sql.NVarChar(32), newStatus);
+                itemIds.forEach((id, i) => r2.input(`id${i}`, sql.Int, id));
+                const up2 = await r2.query(
+                    `UPDATE JobBomItems SET status = @newStatus
+                     OUTPUT INSERTED.id
+                     WHERE id IN (${ph}) AND status IN ('pending','ready_for_despatch')`
+                );
+
+                await transaction.commit();
+                return ok({ updated: up1.recordset.length, rerouted: up2.recordset.length }, request);
+            } catch (txErr) {
+                await transaction.rollback();
+                throw txErr;
+            }
+        } catch (err) {
+            context.error('Error bulk-setting finish:', err);
+            return serverError('Failed to bulk-set finish', request);
+        }
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/job-bom-items/bulk-delete — delete many rows in one call.
+// Body: { item_ids:[...] }. Returns { deleted: n }.
+// ─────────────────────────────────────────────────────────────────────────────
+app.http('job-bom-items-bulk-delete', {
+    methods: ['POST'],
+    authLevel: 'anonymous',
+    route: 'job-bom-items/bulk-delete',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const body = await request.json();
+            const itemIds = Array.isArray(body.item_ids)
+                ? body.item_ids.map(x => parseInt(x)).filter(x => !isNaN(x))
+                : [];
+            if (itemIds.length === 0) return badRequest('item_ids must be a non-empty array', request);
+
+            const params = {};
+            const ph = itemIds.map((id, i) => { params[`id${i}`] = id; return `@id${i}`; }).join(',');
+            const res = await query(
+                `DELETE FROM JobBomItems OUTPUT DELETED.id WHERE id IN (${ph})`,
+                params
+            );
+            return ok({ deleted: res.recordset.length }, request);
+        } catch (err) {
+            context.error('Error bulk-deleting BOM items:', err);
+            return serverError('Failed to bulk-delete BOM items', request);
+        }
+    }
+});
+
 app.http('job-bom-items-delete', {
     methods: ['DELETE'],
     authLevel: 'anonymous',
