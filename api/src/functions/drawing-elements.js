@@ -126,9 +126,8 @@ app.http('drawing-elements-revision-create', {
         let body;
         try { body = await request.json(); } catch { return badRequest('Invalid JSON', request); }
 
-        const { type, status, uploadedBy, files = [] } = body;
+        const { type, uploadedBy, files = [] } = body;
         if (!type || !['PO','CO'].includes(type)) return badRequest('type must be PO or CO', request);
-        if (!['sent','approved','rejected'].includes(status || 'sent')) return badRequest('Invalid status', request);
 
         try {
             // Get next revision number for this type
@@ -138,16 +137,15 @@ app.http('drawing-elements-revision-create', {
             );
             const num = (countRes.recordset[0].cnt || 0) + 1;
 
-            const effectiveStatus = type === 'CO' ? 'approved' : (status || 'sent');
+            // A fresh P (PO) revision is always "sent to engineer" — the review
+            // outcome (approved / minor / major) is set later via the status
+            // PATCH. A Construction (CO) upload is inherently the approved-for-
+            // build issue, so it lands as 'approved' and gets the next
+            // construction_number (per-job monotonic counter → first C is C01).
+            const effectiveStatus = type === 'CO' ? 'approved' : 'sent';
 
-            // Construction number is assigned when a revision is "approved-ish":
-            //   - any CO upload, OR
-            //   - a PO uploaded with status already 'approved'
-            // It's a per-job monotonic counter independent of the PO sequence,
-            // so the first approved revision is always C01 regardless of how
-            // many PO rounds preceded it.
             let conNum = null;
-            if (type === 'CO' || effectiveStatus === 'approved') {
+            if (type === 'CO') {
                 const maxRes = await query(
                     'SELECT ISNULL(MAX(construction_number), 0) AS mx FROM DrawingApprovalRevisions WHERE job_id = @jobId',
                     { jobId }
@@ -222,34 +220,20 @@ app.http('drawing-elements-revision-status', {
         try { body = await request.json(); } catch { return badRequest('Invalid JSON', request); }
 
         const { status } = body;
-        if (!['sent','approved','rejected'].includes(status)) return badRequest('Invalid status', request);
+        // P-revision review outcomes: sent → approved (A) | minor (B) | major (C).
+        // 'rejected' retained only so legacy rows remain patchable.
+        if (!['sent','approved','minor','major','rejected'].includes(status)) return badRequest('Invalid status', request);
 
         try {
-            // When flipping to 'approved' for the first time, assign a
-            // construction_number (per-job monotonic counter). Once assigned,
-            // it sticks even if the revision is later un-approved — so a
-            // re-approval keeps the same C number, and approving a different
-            // revision gets the next number up. Avoids any renumbering.
             const existing = await query(
-                'SELECT job_id, construction_number FROM DrawingApprovalRevisions WHERE id = @revId',
+                'SELECT job_id FROM DrawingApprovalRevisions WHERE id = @revId',
                 { revId }
             );
             if (!existing.recordset.length) return notFound('Revision not found', request);
-            const { job_id: jobId, construction_number: currentConNum } = existing.recordset[0];
 
-            let assignedConNum = currentConNum;
-            if (status === 'approved' && currentConNum === null) {
-                const maxRes = await query(
-                    'SELECT ISNULL(MAX(construction_number), 0) AS mx FROM DrawingApprovalRevisions WHERE job_id = @jobId',
-                    { jobId }
-                );
-                assignedConNum = (maxRes.recordset[0].mx || 0) + 1;
-                await query(
-                    'UPDATE DrawingApprovalRevisions SET construction_number = @conNum WHERE id = @revId',
-                    { conNum: assignedConNum, revId }
-                );
-            }
-
+            // Construction numbers are assigned only when a Construction (CO)
+            // revision is actually uploaded — never on P approval. So the status
+            // PATCH just records the review outcome.
             const res = await query(
                 `UPDATE DrawingApprovalRevisions SET status = @status, status_updated_at = SYSUTCDATETIME()
                  OUTPUT INSERTED.id, INSERTED.status, INSERTED.status_updated_at, INSERTED.construction_number

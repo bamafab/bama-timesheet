@@ -13292,14 +13292,26 @@ async function bmrSaveAll() {
 // it. Folder names in SharePoint mirror this (renamed on approve — see
 // updateApprovalStatus).
 function approvalRevLabel(type, number, status, constructionNumber) {
-  const approved = type === 'CO' || status === 'approved';
-  if (approved) {
-    // Fallback to revision number only if construction_number is somehow
-    // missing (legacy row that escaped backfill). Should be rare.
+  // Construction (CO) revisions show C## ; every P revision shows P##
+  // (zero-padded) regardless of its review outcome — an approved P is still a
+  // P, and the Construction drawing is a separate upload with its own C number.
+  if (type === 'CO') {
     const cnum = (constructionNumber != null) ? constructionNumber : number;
     return 'C' + String(cnum).padStart(2, '0');
   }
-  return 'PO' + number;
+  return 'P' + String(number).padStart(2, '0');
+}
+
+// Human label + colour for a revision's status.
+function approvalStatusMeta(rev) {
+  if (rev.type === 'CO') return { text: 'Construction Issued', color: 'var(--green)', bg: 'rgba(62,207,142,.15)', border: 'rgba(62,207,142,.45)' };
+  switch (rev.status) {
+    case 'approved': return { text: 'Approved', color: 'var(--green)', bg: 'rgba(62,207,142,.15)', border: 'rgba(62,207,142,.45)' };
+    case 'minor':    return { text: 'Minor comments', color: '#f5b544', bg: 'rgba(245,166,35,.15)', border: 'rgba(245,166,35,.45)' };
+    case 'major':
+    case 'rejected': return { text: 'Major comments', color: 'var(--red)', bg: 'rgba(255,68,68,.12)', border: 'rgba(255,68,68,.4)' };
+    default:         return { text: 'Sent to Engineer', color: '#60a5fa', bg: 'rgba(59,130,246,.15)', border: 'rgba(59,130,246,.4)' };
+  }
 }
 
 function renderApproval() {
@@ -13307,75 +13319,101 @@ function renderApproval() {
   if (!container) return;
   const approval = currentJob.approval || { revisions: [], notes: [] };
   const revisions = approval.revisions || [];
-  const status = document.getElementById('elementApprovalStatus');
+  const statusEl = document.getElementById('elementApprovalStatus');
+  const editable = isDraftsman && currentJob.status !== 'closed';
 
   const sortedDesc = [...revisions].reverse();
-  // The headline = most recent approved revision (a CO, or a PO marked approved).
-  const latestApproved = sortedDesc.find(r => r.type === 'CO' || r.status === 'approved');
-  const latestPO = sortedDesc.find(r => r.type === 'PO');
-  if (latestApproved) {
-    status.textContent = `${approvalRevLabel(latestApproved.type, latestApproved.number, latestApproved.status, latestApproved.constructionNumber)} Approved`;
-    status.style.cssText = 'color:var(--green);background:rgba(62,207,142,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600';
-  } else if (latestPO) {
-    if (latestPO.status === 'rejected') {
-      status.textContent = `PO${latestPO.number} Not Approved`;
-      status.style.cssText = 'color:var(--red);background:rgba(255,68,68,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600';
-    } else {
-      status.textContent = `PO${latestPO.number} Sent for Approval`;
-      status.style.cssText = 'color:#60a5fa;background:rgba(59,130,246,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600';
-    }
+  const latestP = sortedDesc.find(r => r.type === 'PO');   // most recent for-approval issue
+  const latestC = sortedDesc.find(r => r.type === 'CO');   // most recent construction issue
+  const hasConstruction = !!latestC;
+  const pLabel = latestP ? approvalRevLabel(latestP.type, latestP.number) : '';
+
+  // ── Headline pill on the element card ────────────────────────────────────
+  if (latestC) {
+    statusEl.textContent = `${approvalRevLabel(latestC.type, latestC.number, latestC.status, latestC.constructionNumber)} Construction Issued`;
+    statusEl.style.cssText = 'color:var(--green);background:rgba(62,207,142,.12);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600';
+  } else if (latestP) {
+    const m = approvalStatusMeta(latestP);
+    statusEl.textContent = `${pLabel} ${m.text}`;
+    statusEl.style.cssText = `color:${m.color};background:${m.bg};padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600`;
   } else {
-    status.textContent = 'No submissions';
-    status.style.cssText = 'color:var(--subtle);font-size:11px;font-weight:600';
+    statusEl.textContent = 'No submissions';
+    statusEl.style.cssText = 'color:var(--subtle);font-size:11px;font-weight:600';
   }
 
   let html = '';
 
-  // Upload buttons (draftsman only)
-  if (isDraftsman && currentJob.status !== 'closed') {
-    html += '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">';
-    html += `<button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="openUploadFileModal('approval','PO')">&#43; Upload for Approval (PO)</button>`;
-    // Only show CO upload if there's an approved PO
-    const hasApprovedPO = revisions.some(r => r.type === 'PO' && r.status === 'approved');
-    if (hasApprovedPO) {
-      html += `<button class="btn" style="padding:8px 16px;font-size:12px;background:rgba(62,207,142,.1);border:1px solid rgba(62,207,142,.3);color:var(--green)" onclick="openUploadFileModal('approval','CO')">&#43; Upload Approved (CO)</button>`;
+  // ── Draftsman controls ───────────────────────────────────────────────────
+  if (editable) {
+    const constructionBtn = `<button class="btn" style="padding:8px 16px;font-size:12px;background:rgba(62,207,142,.12);border:1px solid rgba(62,207,142,.35);color:var(--green)" onclick="openUploadFileModal('approval','CO')">&#43; Upload Construction Issue Drawing</button>`;
+    const newPBtn = (label) => `<button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="openUploadFileModal('approval','PO')">&#43; ${label}</button>`;
+    const canIssueC = latestP && (latestP.status === 'approved' || latestP.status === 'minor');
+    const canRaiseP = !latestP || ['minor', 'major', 'rejected'].includes(latestP.status);
+
+    html += '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">';
+    if (latestP && latestP.status === 'sent') {
+      html += `<span style="font-size:12px;color:var(--muted)">${pLabel} is with the engineer — set the outcome below once comments are back.</span>`;
+    } else {
+      if (canIssueC) html += constructionBtn;
+      if (canRaiseP) html += newPBtn(latestP ? 'Raise new P for re-approval' : 'Upload Drawing for Approval');
     }
     html += '</div>';
 
-    // Status toggles for latest PO revision (draftsman can change status)
-    if (latestPO && latestPO.type === 'PO') {
-      html += `<div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
-        <span style="font-size:12px;color:var(--muted);font-weight:500">${approvalRevLabel(latestPO.type, latestPO.number, latestPO.status, latestPO.constructionNumber)} Status:</span>
-        <label class="toggle-chip"><input type="radio" name="approvalStatusToggle" value="sent" ${latestPO.status==='sent'?'checked':''} style="display:none" onchange="updateApprovalStatus('${latestPO.id}','sent')"><span>&#128232; Sent</span></label>
-        <label class="toggle-chip"><input type="radio" name="approvalStatusToggle" value="approved" ${latestPO.status==='approved'?'checked':''} style="display:none" onchange="updateApprovalStatus('${latestPO.id}','approved')"><span>&#9989; Approved</span></label>
-        <label class="toggle-chip"><input type="radio" name="approvalStatusToggle" value="rejected" ${latestPO.status==='rejected'?'checked':''} style="display:none" onchange="updateApprovalStatus('${latestPO.id}','rejected')"><span>&#10060; Not Approved</span></label>
+    // Outcome setter / changer for the latest P. id passed UNQUOTED so the
+    // numeric revision id matches rev.id (the old quoted-string form silently
+    // failed the strict-equality lookup and nothing saved).
+    if (latestP && !hasConstruction) {
+      const sel = latestP.status;
+      const chip = (val, label) =>
+        `<label class="toggle-chip"><input type="radio" name="pOutcome" value="${val}" ${sel === val ? 'checked' : ''} style="display:none" onchange="updateApprovalStatus(${latestP.id},'${val}')"><span>${label}</span></label>`;
+      const prompt = sel === 'sent'
+        ? 'Comments back from the engineer? Set the outcome:'
+        : `${pLabel} outcome (change if needed):`;
+      html += `<div style="margin-bottom:16px">
+        <div style="font-size:12px;color:var(--muted);font-weight:500;margin-bottom:6px">${prompt}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          ${chip('approved', '&#9989; A — Approved')}
+          ${chip('minor', '&#128221; B — Minor comments')}
+          ${chip('major', '&#10060; C — Major comments')}
+        </div>
       </div>`;
+    }
+
+    // Standing notice / hint keyed to the outcome (clears once construction is issued)
+    if (latestP && !hasConstruction) {
+      if (latestP.status === 'approved') {
+        html += `<div style="margin-bottom:16px;padding:10px 14px;border-radius:6px;background:rgba(245,166,35,.1);border:1px solid rgba(245,166,35,.35);color:#f5b544;font-size:12.5px;line-height:1.5">
+          &#9888;&#65039; <strong>${pLabel} approved — no comments.</strong> Remember to issue the Construction drawing (C01) and upload it here.
+        </div>`;
+      } else if (latestP.status === 'minor') {
+        html += `<div style="margin-bottom:16px;padding:10px 14px;border-radius:6px;background:rgba(245,166,35,.08);border:1px solid rgba(245,166,35,.25);color:var(--muted);font-size:12.5px;line-height:1.5">
+          Minor comments — either incorporate them straight into the Construction drawing, or raise a new P for re-approval.
+        </div>`;
+      } else if (latestP.status === 'major' || latestP.status === 'rejected') {
+        html += `<div style="margin-bottom:16px;padding:10px 14px;border-radius:6px;background:rgba(255,68,68,.07);border:1px solid rgba(255,68,68,.22);color:var(--muted);font-size:12.5px;line-height:1.5">
+          Major comments — raise a new P revision and re-issue for approval.
+        </div>`;
+      }
     }
   }
 
-  // Render revisions (latest first). The "current" row is the headline approved
-  // revision (CO, or PO marked approved); it stays un-grayed for workshop staff.
-  const sortedRevisions = [...revisions].reverse();
-  const currentId = latestApproved?.id;
+  // ── Revision list (latest first) ─────────────────────────────────────────
+  // "Current" (un-grayed for workshop staff) = latest construction issue if any,
+  // else the latest approved P, else the latest P.
+  const currentId = (latestC && latestC.id)
+    || (sortedDesc.find(r => r.type === 'PO' && r.status === 'approved') || {}).id
+    || (latestP && latestP.id);
 
-  sortedRevisions.forEach(rev => {
+  sortedDesc.forEach(rev => {
     const isCurrent = (rev.id === currentId);
     const isGrayed = !isDraftsman && !isCurrent;
-    const isApproved = rev.type === 'CO' || rev.status === 'approved';
-    const badgeClass = isApproved ? 'approved' : (rev.status === 'rejected' ? 'rejected' : 'sent');
-    const labelHtml = isApproved
-      ? '<span style="color:var(--green);background:rgba(62,207,142,.15);border:1px solid rgba(62,207,142,.45);padding:2px 10px;border-radius:4px;font-size:11px;font-weight:600;letter-spacing:.3px">Approved</span>'
-      : rev.status === 'rejected'
-        ? '<span style="font-size:12px;color:var(--red)">Not Approved</span>'
-        : '<span style="font-size:12px;color:var(--muted)">Sent for Approval</span>';
-
+    const m = approvalStatusMeta(rev);
     html += `<div class="revision-group ${isCurrent ? 'current' : ''} ${isGrayed ? 'grayed' : ''}">
       <div class="revision-header">
-        <span class="revision-badge ${badgeClass}">${approvalRevLabel(rev.type, rev.number, rev.status, rev.constructionNumber)}</span>
-        ${labelHtml}
+        <span class="revision-badge" style="background:${m.bg};color:${m.color}">${approvalRevLabel(rev.type, rev.number, rev.status, rev.constructionNumber)}</span>
+        <span style="color:${m.color};background:${m.bg};border:1px solid ${m.border};padding:2px 10px;border-radius:4px;font-size:11px;font-weight:600;letter-spacing:.3px">${m.text}</span>
         <span style="font-size:11px;color:var(--subtle);margin-left:auto">${new Date(rev.uploadedAt).toLocaleDateString('en-GB')}</span>
       </div>`;
-
     if (rev.files?.length > 0) {
       html += '<div style="padding:8px 14px">';
       rev.files.forEach(f => {
@@ -13394,39 +13432,25 @@ function renderApproval() {
     html += '<div style="color:var(--subtle);font-size:13px;padding:12px 0">No approval submissions yet</div>';
   }
 
-  // Notes
   html += renderNotesSection(approval.notes, 'approval');
-
   container.innerHTML = html;
 }
-
 async function updateApprovalStatus(revisionId, newStatus) {
   if (!currentJob || !currentProject) return;
   const jobIdInt = parseInt(currentJob.id);
-  const rev = currentJob.approval?.revisions?.find(r => r.id === revisionId);
+  // Loose compare: the id arrives from an inline onclick and rev.id is numeric.
+  const rev = currentJob.approval?.revisions?.find(r => r.id == revisionId);   // eslint-disable-line eqeqeq
   if (!rev) return;
   try {
     setLoading(true);
-    // PATCH may assign a construction_number on first approval; capture it
-    // so the local rev (and the folder rename below) get the right C number.
-    const resp = await api.patch(`/api/drawing-elements/${jobIdInt}/approval-revision/${revisionId}/status`, { status: newStatus });
+    await api.patch(`/api/drawing-elements/${jobIdInt}/approval-revision/${revisionId}/status`, { status: newStatus });
     rev.status = newStatus;
     rev.statusUpdatedAt = new Date().toISOString();
-    if (resp && resp.constructionNumber != null) {
-      rev.constructionNumber = resp.constructionNumber;
-    }
-
-    // Mirror approval in SharePoint: an approved revision lives in a "C01" folder,
-    // a pending/rejected one in a "PO1" folder. Rename the revision folder so the
-    // file store matches the in-app label (PO1 → C01 on approval, and back).
-    const targetName = approvalRevLabel(rev.type, rev.number, newStatus, rev.constructionNumber);
-    try {
-      await renameApprovalRevisionFolder(rev, targetName);
-    } catch (e) {
-      console.warn('Approval folder rename skipped:', e.message);
-      toast(`Status saved, but the SharePoint folder couldn't be renamed (${e.message}).`, 'info');
-    }
-    toast(`Status updated to ${newStatus === 'sent' ? 'Sent for Approval' : newStatus === 'approved' ? 'Approved' : 'Not Approved'}`, 'success');
+    // No SharePoint folder rename here: a P revision keeps its P## folder
+    // whatever its outcome. The Construction (C##) folder is created only when
+    // an actual Construction drawing is uploaded.
+    const label = { sent: 'Sent to Engineer', approved: 'Approved (A)', minor: 'Minor comments (B)', major: 'Major comments (C)', rejected: 'Major comments (C)' }[newStatus] || newStatus;
+    toast(`Outcome set: ${label}`, 'success');
     renderApproval();
   } catch (e) { toast('Save failed: ' + e.message, 'error'); }
   finally { setLoading(false); }
@@ -13973,7 +13997,7 @@ function openUploadFileModal(element, subElement) {
   let ctx = `${currentJob.name}`;
   if (element === 'bom') { title = 'Upload BOM File'; }
   else if (element === 'approval') {
-    title = subElement === 'CO' ? 'Upload Approved Drawing (CO)' : 'Upload for Approval (PO)';
+    title = subElement === 'CO' ? 'Upload Construction Issue Drawing' : 'Upload Drawing for Approval';
   }
   else if (element === 'parts') {
     title = subElement === 'sections' ? 'Upload Sections File' : 'Upload Plates File';
@@ -13984,9 +14008,10 @@ function openUploadFileModal(element, subElement) {
   document.getElementById('uploadFileTitle').textContent = title;
   document.getElementById('uploadFileContext').textContent = ctx;
 
-  // Show/hide approval section
-  document.getElementById('uploadApprovalSection').style.display =
-    (element === 'approval') ? 'block' : 'none';
+  // The old in-modal approval-status picker is gone: a fresh P upload is always
+  // "sent to engineer" and a C upload is always the construction issue. The
+  // review outcome (A/B/C) is set later on the revision itself.
+  document.getElementById('uploadApprovalSection').style.display = 'none';
 
   modal.classList.add('active');
 }
@@ -14086,22 +14111,20 @@ async function confirmUploadFile() {
       targetFolderId = folder.id;
     } else if (element === 'approval') {
       const approvalFolder = await getOrCreateSubfolder(targetFolderId, ELEMENT_FOLDERS.approval, driveId);
-      // Folder name follows the effective approval state, not just the button:
-      //   - approved (CO upload OR pre-approved PO) → "C##" using the next
-      //     construction_number for this job (max + 1)
-      //   - pending/rejected PO → "PO#" using the next PO sequence number
-      // The construction_number is the per-job approved counter — independent
-      // of PO sequence — so the first approved revision is always C01.
+      // Folder name matches the in-app label:
+      //   - Construction upload (CO) → "C##" using the next construction_number
+      //     for this job (per-job counter, max + 1 → first is C01)
+      //   - For-approval upload (PO) → "P##" using the next P sequence number
+      // A P revision's folder never changes on approval — the C folder is only
+      // ever created by an actual Construction upload.
       const revisions = job.approval?.revisions || [];
-      const chipStatus = document.querySelector('input[name="approvalStatus"]:checked')?.value || 'sent';
-      const isApproved = subElement === 'CO' || chipStatus === 'approved';
       let folderName;
-      if (isApproved) {
+      if (subElement === 'CO') {
         const maxCon = revisions.reduce((m, r) => Math.max(m, r.constructionNumber || 0), 0);
         folderName = `C${String(maxCon + 1).padStart(2, '0')}`;
       } else {
         const num = revisions.filter(r => r.type === 'PO').length + 1;
-        folderName = `PO${num}`;
+        folderName = `P${String(num).padStart(2, '0')}`;
       }
       const revFolder = await createFolderInDrive(approvalFolder.id, folderName, driveId);
       targetFolderId = revFolder.id;
@@ -14159,10 +14182,10 @@ async function confirmUploadFile() {
     } else if (element === 'approval') {
       if (!job.approval) job.approval = { revisions: [], notes: [] };
       const type = subElement || 'PO';
-      const approvalStatus = document.querySelector('input[name="approvalStatus"]:checked')?.value || 'sent';
+      // Status is derived server-side: a fresh P lands as 'sent', a C as
+      // 'approved'. The client no longer supplies it.
       const saved = await api.post(`/api/drawing-elements/${jobIdInt}/approval-revision`, {
         type,
-        status: type === 'CO' ? 'approved' : approvalStatus,
         uploadedBy: _currentDraftsmanName || null,
         files: uploadedFiles.map(f => ({
           name: f.name, fileName: f.fileName,
