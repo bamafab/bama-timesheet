@@ -496,6 +496,39 @@ an `assert count==1`, Node unit tests for pure engine functions before UI work,
 one logical change per commit) and the mandatory `preflight.py` run, see the
 **Rules for Claude Code** section at the top of this file.
 
+### In-page PDF rendering (html2pdf / html2canvas)
+
+Applies to every flow that builds an HTML document string and rasterises it to
+a PDF in the browser: delivery notes (`buildDnHtmlV2` +
+`renderDocHtmlToPdfBlob`), the QB client quote (`renderQuotePdfToBase64`), and
+any future document renderer. This has produced a silent **blank white PDF**
+twice — once in QB, once in the DN flow. The failure modes:
+
+- **Scope the stylesheet to a root class — never rely on `body` selectors.**
+  The capture path injects the markup into a `<div>` on the live app page, so a
+  `body { color:#222 }` rule *structurally cannot match*. The content then
+  inherits `bama.css`'s `body { color: var(--text) }` (`#f0f0f0`) and paints
+  near-white text onto the white canvas: a page that looks blank but isn't
+  empty. Scope everything under a wrapper class (the DN uses `.dn-root`) and
+  wrap the body content in that element. Bare element selectors (`table`,
+  `th`, `td`) and a global `* { }` reset must be scoped too, otherwise they
+  leak out and restyle the surrounding app during capture.
+- **Never position the capture container off-screen.** `position:fixed;
+  left:-10000px` captures blank. html2canvas needs the element actually laid
+  out and *painted*: use `position:absolute; left:0; top:0; z-index:-9999`
+  with an explicit px width (A4 at 96dpi ≈ 794px), fully opaque — no
+  `opacity:0`, no `display:none`, no `mm` widths.
+- **Await image load before rasterising.** The BAMA logo is a data URI that
+  still needs a decode tick; capturing early drops it silently. Resolve on
+  `load`/`error` per `<img>` with a safety timeout.
+- **Log the blob size.** A healthy A4 document is tens of KB; under ~8KB means
+  a blank capture. Both renderers log size + the element's bounding rect so the
+  next regression is visible in the console instead of silent.
+- **The template preview does not exercise this path.**
+  `refreshTemplatePreview` uses `iframe.srcdoc`, where the markup is a real
+  document with a real `<body>` — so a document can preview perfectly and still
+  export blank. Test the actual generate flow, not the preview.
+
 ## Modal → Page mapping
 
 Every `id=…Modal` element in the HTML, by page. Handy when tracing an
