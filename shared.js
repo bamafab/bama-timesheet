@@ -13315,14 +13315,19 @@ function approvalStatusMeta(rev) {
   }
 }
 
-// Single source of truth for the label the NEXT upload will get, computed the
-// same way the server assigns it: MAX over all rows incl. soft-deleted, +1.
+// Single source of truth for the label the NEXT upload will get, matching the
+// server: reset to 01 when no live (non-deleted) revisions of that type remain
+// (history wiped); otherwise MAX over all rows incl. soft-deleted, +1.
 function nextApprovalLabel(job, subElement) {
   const revs = job?.approval?.revisions || [];
   if (subElement === 'CO') {
+    const liveC = revs.filter(r => r.type === 'CO' && !r.isDeleted).length;
+    if (liveC === 0) return 'C01';
     const maxCon = revs.reduce((m, r) => Math.max(m, r.constructionNumber || 0), 0);
     return 'C' + String(maxCon + 1).padStart(2, '0');
   }
+  const liveP = revs.filter(r => r.type === 'PO' && !r.isDeleted).length;
+  if (liveP === 0) return 'P01';
   const maxP = revs.reduce((m, r) => r.type === 'PO' ? Math.max(m, r.number || 0) : m, 0);
   return 'P' + String(maxP + 1).padStart(2, '0');
 }

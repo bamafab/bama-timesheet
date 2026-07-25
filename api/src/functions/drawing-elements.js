@@ -131,14 +131,19 @@ app.http('drawing-elements-revision-create', {
         if (!type || !['PO','CO'].includes(type)) return badRequest('type must be PO or CO', request);
 
         try {
-            // Next revision number = MAX over ALL rows of this type INCLUDING
-            // soft-deleted ones, +1. This means a retired number is never reused:
-            // delete a rejected P01 and the next upload is still P02.
+            // Next revision number:
+            //   • if NO live (non-deleted) revisions of this type remain, the
+            //     history has been wiped → start fresh at 1;
+            //   • otherwise MAX over ALL rows incl. soft-deleted, +1, so a
+            //     retired number is never reused while live history exists.
             const numRes = await query(
-                'SELECT ISNULL(MAX(revision_number), 0) AS mx FROM DrawingApprovalRevisions WHERE job_id = @jobId AND revision_type = @type',
+                `SELECT ISNULL(MAX(revision_number), 0) AS mx,
+                        SUM(CASE WHEN is_deleted = 0 THEN 1 ELSE 0 END) AS live
+                 FROM DrawingApprovalRevisions WHERE job_id = @jobId AND revision_type = @type`,
                 { jobId, type }
             );
-            const num = (numRes.recordset[0].mx || 0) + 1;
+            const liveCount = numRes.recordset[0].live || 0;
+            const num = liveCount === 0 ? 1 : (numRes.recordset[0].mx || 0) + 1;
 
             // Backstop against a concurrent double-submit landing the same number
             // on a live (non-deleted) row.
@@ -160,10 +165,13 @@ app.http('drawing-elements-revision-create', {
             let conNum = null;
             if (type === 'CO') {
                 const maxRes = await query(
-                    'SELECT ISNULL(MAX(construction_number), 0) AS mx FROM DrawingApprovalRevisions WHERE job_id = @jobId',
+                    `SELECT ISNULL(MAX(construction_number), 0) AS mx,
+                            SUM(CASE WHEN revision_type = 'CO' AND is_deleted = 0 THEN 1 ELSE 0 END) AS liveC
+                     FROM DrawingApprovalRevisions WHERE job_id = @jobId`,
                     { jobId }
                 );
-                conNum = (maxRes.recordset[0].mx || 0) + 1;
+                const liveC = maxRes.recordset[0].liveC || 0;
+                conNum = liveC === 0 ? 1 : (maxRes.recordset[0].mx || 0) + 1;
             }
 
             const revRes = await query(
