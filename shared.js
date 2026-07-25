@@ -13315,19 +13315,15 @@ function approvalStatusMeta(rev) {
   }
 }
 
-// Single source of truth for the label the NEXT upload will get, matching the
-// server: reset to 01 when no live (non-deleted) revisions of that type remain
-// (history wiped); otherwise MAX over all rows incl. soft-deleted, +1.
+// The label the NEXT upload will get = highest live revision number of that
+// type + 1 (matches the server). Deleted revisions don't count, so numbering
+// simply reflects what's actually in the approval list.
 function nextApprovalLabel(job, subElement) {
-  const revs = job?.approval?.revisions || [];
+  const revs = (job?.approval?.revisions || []).filter(r => !r.isDeleted);
   if (subElement === 'CO') {
-    const liveC = revs.filter(r => r.type === 'CO' && !r.isDeleted).length;
-    if (liveC === 0) return 'C01';
-    const maxCon = revs.reduce((m, r) => Math.max(m, r.constructionNumber || 0), 0);
+    const maxCon = revs.reduce((m, r) => r.type === 'CO' ? Math.max(m, r.constructionNumber || 0) : m, 0);
     return 'C' + String(maxCon + 1).padStart(2, '0');
   }
-  const liveP = revs.filter(r => r.type === 'PO' && !r.isDeleted).length;
-  if (liveP === 0) return 'P01';
   const maxP = revs.reduce((m, r) => r.type === 'PO' ? Math.max(m, r.number || 0) : m, 0);
   return 'P' + String(maxP + 1).padStart(2, '0');
 }
@@ -13479,46 +13475,34 @@ async function updateApprovalStatus(revisionId, newStatus) {
   finally { setLoading(false); }
 }
 
-// Delete an approval revision. Two outcomes, decided by its state:
-//   • a P still at 'sent' (never reviewed) is a mistaken upload → VOIDED, its
-//     number freed so the next upload reuses it;
-//   • a reviewed P or any Construction issue is real history → RETIRED, number
-//     stays burned. The server enforces this; we mirror it in the message/state.
+// Delete an approval revision. It's removed from the list and its number is
+// freed — deleting the top revision means the next upload reuses that number.
 async function confirmDeleteRevision(revId) {
   if (!currentJob) return;
   const rev = (currentJob.approval?.revisions || []).find(r => r.id == revId);   // eslint-disable-line eqeqeq
   if (!rev) return;
   const label = approvalRevLabel(rev.type, rev.number, rev.status, rev.constructionNumber);
-  const willVoid = (rev.type === 'PO' && rev.status === 'sent');
-  const msg = willVoid
-    ? `Delete ${label}? It hasn't been reviewed yet, so it's treated as a mistaken upload — ${label} will be freed and the next upload can reuse it.`
-    : `Delete ${label}? ${label} is part of the revision history and stays retired — the next upload won't reuse that number.`;
-  showConfirm('Delete revision', msg, async () => {
-    try {
-      setLoading(true);
-      for (const f of (rev.files || [])) {
-        if (f.fileId) {
-          try { await deleteFileFromDrive(f.fileId, f.driveId); }
-          catch (e) { console.warn('SharePoint delete skipped:', e.message); }
+  showConfirm('Delete revision',
+    `Delete ${label} and its file(s)? Its number is freed, so the next upload can reuse ${label}.`,
+    async () => {
+      try {
+        setLoading(true);
+        for (const f of (rev.files || [])) {
+          if (f.fileId) {
+            try { await deleteFileFromDrive(f.fileId, f.driveId); }
+            catch (e) { console.warn('SharePoint delete skipped:', e.message); }
+          }
         }
-      }
-      const jobIdInt = parseInt(currentJob.id);
-      const resp = await api.delete(`/api/drawing-elements/${jobIdInt}/approval-revision/${revId}`);
-      const arr = currentJob.approval.revisions;
-      if (resp?.mode === 'voided') {
-        // Remove entirely so numbering (MAX incl. deleted) rolls back.
+        const jobIdInt = parseInt(currentJob.id);
+        await api.delete(`/api/drawing-elements/${jobIdInt}/approval-revision/${revId}`);
+        const arr = currentJob.approval.revisions;
         const i = arr.indexOf(rev);
         if (i >= 0) arr.splice(i, 1);
-        toast(`${label} deleted — number freed for reuse`, 'success');
-      } else {
-        // Retired: keep it flagged so its number stays retired.
-        rev.isDeleted = true;
-        toast(`${label} deleted — number retired`, 'success');
-      }
-      renderApproval();
-    } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
-    finally { setLoading(false); }
-  });
+        toast(`${label} deleted — number freed`, 'success');
+        renderApproval();
+      } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
+      finally { setLoading(false); }
+    });
 }
 // id isn't persisted, so we derive it from the parent of one of the revision's
 // files, then PATCH the folder name. File item IDs are stable across a rename,

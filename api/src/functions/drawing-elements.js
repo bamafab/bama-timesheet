@@ -26,10 +26,10 @@ app.http('drawing-elements-get', {
 
         try {
             const [revRows, revFileRows, elemFileRows, noteRows, siteRow] = await Promise.all([
-                query('SELECT * FROM DrawingApprovalRevisions WHERE job_id = @jobId ORDER BY revision_type, revision_number', { jobId }),
+                query('SELECT * FROM DrawingApprovalRevisions WHERE job_id = @jobId AND is_deleted = 0 ORDER BY revision_type, revision_number', { jobId }),
                 query(`SELECT f.* FROM DrawingRevisionFiles f
                        JOIN DrawingApprovalRevisions r ON r.id = f.revision_id
-                       WHERE r.job_id = @jobId ORDER BY f.uploaded_at`, { jobId }),
+                       WHERE r.job_id = @jobId AND r.is_deleted = 0 ORDER BY f.uploaded_at`, { jobId }),
                 query('SELECT * FROM DrawingElementFiles WHERE job_id = @jobId ORDER BY uploaded_at', { jobId }),
                 query('SELECT * FROM DrawingElementNotes WHERE job_id = @jobId ORDER BY created_at', { jobId }),
                 query('SELECT * FROM DrawingJobSite WHERE job_id = @jobId', { jobId })
@@ -131,22 +131,16 @@ app.http('drawing-elements-revision-create', {
         if (!type || !['PO','CO'].includes(type)) return badRequest('type must be PO or CO', request);
 
         try {
-            // Next revision number:
-            //   • if NO live (non-deleted) revisions of this type remain, the
-            //     history has been wiped → start fresh at 1;
-            //   • otherwise MAX over ALL rows incl. soft-deleted, +1, so a
-            //     retired number is never reused while live history exists.
+            // Numbering reflects the LIVE revisions only: next number = highest
+            // non-deleted revision_number of this type + 1 (0 → 1 when none).
+            // Deleted rows are never counted, so deleting always frees a number.
             const numRes = await query(
-                `SELECT ISNULL(MAX(revision_number), 0) AS mx,
-                        SUM(CASE WHEN is_deleted = 0 THEN 1 ELSE 0 END) AS live
-                 FROM DrawingApprovalRevisions WHERE job_id = @jobId AND revision_type = @type`,
+                'SELECT ISNULL(MAX(revision_number), 0) AS mx FROM DrawingApprovalRevisions WHERE job_id = @jobId AND revision_type = @type AND is_deleted = 0',
                 { jobId, type }
             );
-            const liveCount = numRes.recordset[0].live || 0;
-            const num = liveCount === 0 ? 1 : (numRes.recordset[0].mx || 0) + 1;
+            const num = (numRes.recordset[0].mx || 0) + 1;
 
-            // Backstop against a concurrent double-submit landing the same number
-            // on a live (non-deleted) row.
+            // Backstop against a concurrent double-submit landing the same number.
             const dupRes = await query(
                 'SELECT TOP 1 id FROM DrawingApprovalRevisions WHERE job_id = @jobId AND revision_type = @type AND revision_number = @num AND is_deleted = 0',
                 { jobId, type, num }
@@ -158,20 +152,18 @@ app.http('drawing-elements-revision-create', {
             // A fresh P (PO) revision is always "sent to engineer" — the review
             // outcome (approved / minor / major) is set later via the status
             // PATCH. A Construction (CO) upload is inherently the approved-for-
-            // build issue, so it lands as 'approved' and gets the next
-            // construction_number (per-job monotonic counter → first C is C01).
+            // build issue, so it lands as 'approved' and gets the next live
+            // construction_number.
             const effectiveStatus = type === 'CO' ? 'approved' : 'sent';
 
             let conNum = null;
             if (type === 'CO') {
                 const maxRes = await query(
-                    `SELECT ISNULL(MAX(construction_number), 0) AS mx,
-                            SUM(CASE WHEN revision_type = 'CO' AND is_deleted = 0 THEN 1 ELSE 0 END) AS liveC
-                     FROM DrawingApprovalRevisions WHERE job_id = @jobId`,
+                    "SELECT ISNULL(MAX(construction_number), 0) AS mx FROM DrawingApprovalRevisions WHERE job_id = @jobId AND revision_type = 'CO' AND is_deleted = 0",
                     { jobId }
                 );
-                const liveC = maxRes.recordset[0].liveC || 0;
-                conNum = liveC === 0 ? 1 : (maxRes.recordset[0].mx || 0) + 1;
+                const liveC = maxRes.recordset[0].mx || 0;
+                conNum = liveC + 1;
             }
 
             const revRes = await query(
@@ -278,11 +270,8 @@ app.http('drawing-elements-revision-status', {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DELETE /api/drawing-elements/:jobId/approval-revision/:revId
-// Two outcomes, chosen automatically from the revision's state:
-//   • VOID  — a P still at 'sent' (never reviewed): a mistaken/withdrawn upload.
-//             Hard-deleted (files cascade) so its number is FREED for reuse.
-//   • RETIRE — a reviewed P (approved/minor/major) or any Construction issue:
-//             real revision history. Soft-deleted; its number stays retired.
+// Soft-delete a revision: it's hidden and no longer counts toward numbering, so
+// its number is freed (delete the top revision → the next upload reuses it).
 // ─────────────────────────────────────────────────────────────────────────────
 app.http('drawing-elements-revision-delete', {
     methods: ['DELETE'], authLevel: 'anonymous',
@@ -295,29 +284,13 @@ app.http('drawing-elements-revision-delete', {
         if (!revId) return badRequest('Invalid revId', request);
 
         try {
-            const existing = await query(
-                'SELECT revision_type, status FROM DrawingApprovalRevisions WHERE id = @revId',
-                { revId }
-            );
-            if (!existing.recordset.length) return notFound('Revision not found', request);
-            const { revision_type, status } = existing.recordset[0];
-
-            // "Never reviewed" P = a fresh upload awaiting the engineer's outcome.
-            const isMistake = (revision_type === 'PO' && status === 'sent');
-
-            if (isMistake) {
-                // Files cascade (FK_DRF_Revision ON DELETE CASCADE).
-                await query('DELETE FROM DrawingApprovalRevisions WHERE id = @revId', { revId });
-                return ok({ id: revId, mode: 'voided' }, request);
-            }
-
             const res = await query(
                 `UPDATE DrawingApprovalRevisions SET is_deleted = 1
                  OUTPUT INSERTED.id WHERE id = @revId`,
                 { revId }
             );
             if (!res.recordset.length) return notFound('Revision not found', request);
-            return ok({ id: res.recordset[0].id, mode: 'retired' }, request);
+            return ok({ id: res.recordset[0].id, deleted: true }, request);
         } catch (err) {
             context.error('revision-delete error:', err);
             return serverError('Failed to delete revision', request);
