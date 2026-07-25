@@ -14072,21 +14072,33 @@ function closeUploadFileModal() {
   _uploadContext = null;
 }
 
-function onUploadFilesSelected() {
-  const input = document.getElementById('uploadFileInput');
-  _uploadFiles = Array.from(input.files);
+// Add newly picked/dropped files to the pending list instead of replacing it,
+// so files can be added one at a time (drop one, then drop another). Dedupes
+// by name+size+lastModified. Shared by every upload context in Projects.
+function _appendUploadFiles(list) {
+  const incoming = Array.from(list || []);
+  if (!incoming.length) return;
+  const key = f => `${f.name}|${f.size}|${f.lastModified}`;
+  const seen = new Set(_uploadFiles.map(key));
+  for (const f of incoming) {
+    const k = key(f);
+    if (!seen.has(k)) { _uploadFiles.push(f); seen.add(k); }
+  }
   updateUploadFileListUI();
 }
 
-// Drag-and-drop onto the upload modal drop zone. Mirrors onUploadFilesSelected
-// but takes the dropped FileList directly (the file <input> is never populated
-// on a drop). Without the matching ondrop/ondragover preventDefault on the zone,
-// the browser navigates to the dropped file instead of uploading it.
+function onUploadFilesSelected() {
+  const input = document.getElementById('uploadFileInput');
+  _appendUploadFiles(input.files);
+  input.value = '';   // reset so re-picking the same file still fires onchange
+}
+
+// Drag-and-drop onto the upload modal drop zone. The file <input> is never
+// populated on a drop, so we take the dropped FileList directly. Without the
+// matching ondrop/ondragover preventDefault on the zone, the browser navigates
+// to the dropped file instead of uploading it.
 function onUploadFilesDropped(fileList) {
-  const files = Array.from(fileList || []);
-  if (!files.length) return;
-  _uploadFiles = files;
-  updateUploadFileListUI();
+  _appendUploadFiles(fileList);
 }
 
 function updateUploadFileListUI() {
