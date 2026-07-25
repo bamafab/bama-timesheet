@@ -270,8 +270,11 @@ app.http('drawing-elements-revision-status', {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DELETE /api/drawing-elements/:jobId/approval-revision/:revId
-// Soft-delete a revision: it disappears from the UI, but the row (and its
-// revision number) is retained so numbering never reuses it.
+// Two outcomes, chosen automatically from the revision's state:
+//   • VOID  — a P still at 'sent' (never reviewed): a mistaken/withdrawn upload.
+//             Hard-deleted (files cascade) so its number is FREED for reuse.
+//   • RETIRE — a reviewed P (approved/minor/major) or any Construction issue:
+//             real revision history. Soft-deleted; its number stays retired.
 // ─────────────────────────────────────────────────────────────────────────────
 app.http('drawing-elements-revision-delete', {
     methods: ['DELETE'], authLevel: 'anonymous',
@@ -284,13 +287,29 @@ app.http('drawing-elements-revision-delete', {
         if (!revId) return badRequest('Invalid revId', request);
 
         try {
+            const existing = await query(
+                'SELECT revision_type, status FROM DrawingApprovalRevisions WHERE id = @revId',
+                { revId }
+            );
+            if (!existing.recordset.length) return notFound('Revision not found', request);
+            const { revision_type, status } = existing.recordset[0];
+
+            // "Never reviewed" P = a fresh upload awaiting the engineer's outcome.
+            const isMistake = (revision_type === 'PO' && status === 'sent');
+
+            if (isMistake) {
+                // Files cascade (FK_DRF_Revision ON DELETE CASCADE).
+                await query('DELETE FROM DrawingApprovalRevisions WHERE id = @revId', { revId });
+                return ok({ id: revId, mode: 'voided' }, request);
+            }
+
             const res = await query(
                 `UPDATE DrawingApprovalRevisions SET is_deleted = 1
                  OUTPUT INSERTED.id WHERE id = @revId`,
                 { revId }
             );
             if (!res.recordset.length) return notFound('Revision not found', request);
-            return ok({ id: res.recordset[0].id, deleted: true }, request);
+            return ok({ id: res.recordset[0].id, mode: 'retired' }, request);
         } catch (err) {
             context.error('revision-delete error:', err);
             return serverError('Failed to delete revision', request);
