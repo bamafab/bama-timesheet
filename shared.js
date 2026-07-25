@@ -13314,6 +13314,18 @@ function approvalStatusMeta(rev) {
   }
 }
 
+// Single source of truth for the label the NEXT upload will get, computed the
+// same way the server assigns it: MAX over all rows incl. soft-deleted, +1.
+function nextApprovalLabel(job, subElement) {
+  const revs = job?.approval?.revisions || [];
+  if (subElement === 'CO') {
+    const maxCon = revs.reduce((m, r) => Math.max(m, r.constructionNumber || 0), 0);
+    return 'C' + String(maxCon + 1).padStart(2, '0');
+  }
+  const maxP = revs.reduce((m, r) => r.type === 'PO' ? Math.max(m, r.number || 0) : m, 0);
+  return 'P' + String(maxP + 1).padStart(2, '0');
+}
+
 function renderApproval() {
   const container = document.getElementById('approvalContent');
   if (!container) return;
@@ -14031,17 +14043,9 @@ function openUploadFileModal(element, subElement) {
   let ctx = `${currentJob.name}`;
   if (element === 'bom') { title = 'Upload BOM File'; }
   else if (element === 'approval') {
-    // Show the exact revision it will become, computed the same way the server
-    // assigns it (MAX incl. deleted, +1) so the reviewer sees P05 / C02 up front.
-    const revs = currentJob.approval?.revisions || [];
-    let lbl;
-    if (subElement === 'CO') {
-      const maxCon = revs.reduce((m, r) => Math.max(m, r.constructionNumber || 0), 0);
-      lbl = 'C' + String(maxCon + 1).padStart(2, '0');
-    } else {
-      const maxP = revs.reduce((m, r) => r.type === 'PO' ? Math.max(m, r.number || 0) : m, 0);
-      lbl = 'P' + String(maxP + 1).padStart(2, '0');
-    }
+    // Show the exact revision it will become (same rule the server uses) so the
+    // reviewer sees P05 / C02 up front.
+    const lbl = nextApprovalLabel(currentJob, subElement);
     title = (subElement === 'CO' ? 'Upload Construction Issue Drawing' : 'Upload Drawing for Approval') + ` \u2192 ${lbl}`;
   }
   else if (element === 'parts') {
@@ -14122,6 +14126,73 @@ function updateApprovalChips() {
   });
 }
 
+// ── Revision-match verification (approval uploads) ──────────────────────────
+// Two-engine rule: the model ONLY reads the drawing's title block; the compare
+// is plain JS. Normalise a marking to {letter,num} so "P2" == "P02", "C1"=="C01".
+function _normRev(s) {
+  if (!s) return null;
+  const m = String(s).toUpperCase().match(/\b([PC])\s*0*(\d{1,3})\b/);
+  return m ? { letter: m[1], num: parseInt(m[2], 10) } : null;
+}
+
+// Ask the model for the revision stamped in the drawing's title block.
+// Returns { rev, confident } or null if the call/parse fails.
+async function readDrawingRevision(file) {
+  try {
+    const b64 = (await _fileToDataUri(file)).split(',')[1];
+    const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
+    const block = isPdf
+      ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } }
+      : { type: 'image', source: { type: 'base64', media_type: file.type || 'image/png', data: b64 } };
+    const prompt = `You are reading a fabrication/engineering drawing. Find the DRAWING REVISION marking in the title block — usually the bottom-right "REV"/"REVISION" box, but it may sit elsewhere, and there is often a revision-history table (take the latest/highest one). Return the current revision code exactly as printed, e.g. "P1", "P02", "C01".
+Return ONLY JSON, no markdown, no commentary:
+{ "rev": "P02", "confident": true }
+If you cannot clearly find a revision marking, return { "rev": null, "confident": false }.`;
+    const result = await callClaude({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 300,
+      messages: [{ role: 'user', content: [block, { type: 'text', text: prompt }] }]
+    });
+    const text = (result.content?.find(b => b.type === 'text')?.text || '').trim();
+    const s = text.indexOf('{'), e = text.lastIndexOf('}');
+    if (s < 0 || e < s) return null;
+    const parsed = JSON.parse(text.slice(s, e + 1));
+    return { rev: parsed.rev || null, confident: !!parsed.confident };
+  } catch (e) {
+    console.warn('readDrawingRevision failed:', e.message);
+    return null;
+  }
+}
+
+// Soft gate run before an approval upload. Returns true to proceed, false to
+// abort. Warns + allows override on a confident mismatch; proceeds with a
+// notice when the revision can't be read.
+async function verifyRevisionBeforeUpload(file, expectedLabel) {
+  if (!file) return true;
+  let detected = null;
+  try { setLoading(true); detected = await readDrawingRevision(file); }
+  finally { setLoading(false); }
+
+  const en = _normRev(expectedLabel);
+  const dn = detected ? _normRev(detected.rev) : null;
+
+  if (!detected || !detected.confident || !dn) {
+    toast(`Couldn't verify the revision on this drawing — uploading as ${expectedLabel}.`, 'info');
+    return true;
+  }
+  if (en && dn.letter === en.letter && dn.num === en.num) {
+    toast(`Revision verified: drawing marked ${detected.rev} → ${expectedLabel}.`, 'success');
+    return true;
+  }
+  const ok = await showConfirmAsync(
+    'Revision mismatch',
+    `This drawing appears to be marked <strong>${detected.rev}</strong>, but you're about to upload it as <strong>${expectedLabel}</strong>.<br><br>Check you've got the right file going into the right slot. Upload anyway?`,
+    { okLabel: 'Upload anyway', cancelLabel: 'Cancel', danger: true }
+  );
+  if (ok) console.warn(`Revision override: drawing ${detected.rev} uploaded as ${expectedLabel}`);
+  return ok;
+}
+
 async function confirmUploadFile() {
   if (!_uploadFiles.length) { toast('Please select a file', 'error'); return; }
   if (!_uploadContext) return;
@@ -14137,6 +14208,13 @@ async function confirmUploadFile() {
   const projData = drawingsData.projects[projectId];
   const job = projData?.jobs?.find(j => j.id === jobId);
   if (!job) { toast('Job not found', 'error'); return; }
+
+  // Approval uploads: verify the drawing's stamped revision matches the slot
+  // BEFORE touching SharePoint (so a cancel aborts cleanly). Soft gate.
+  if (element === 'approval') {
+    const proceed = await verifyRevisionBeforeUpload(_uploadFiles[0], nextApprovalLabel(job, subElement));
+    if (!proceed) return;   // user cancelled on a mismatch
+  }
 
   document.getElementById('uploadFileProgress').style.display = 'block';
   document.getElementById('uploadFileBtn').disabled = true;
@@ -14156,22 +14234,10 @@ async function confirmUploadFile() {
       targetFolderId = folder.id;
     } else if (element === 'approval') {
       const approvalFolder = await getOrCreateSubfolder(targetFolderId, ELEMENT_FOLDERS.approval, driveId);
-      // Folder name matches the in-app label:
-      //   - Construction upload (CO) → "C##" using the next construction_number
-      //     for this job (per-job counter, max + 1 → first is C01)
-      //   - For-approval upload (PO) → "P##" using the next P sequence number
-      // A P revision's folder never changes on approval — the C folder is only
-      // ever created by an actual Construction upload.
-      const revisions = job.approval?.revisions || [];
-      let folderName;
-      if (subElement === 'CO') {
-        const maxCon = revisions.reduce((m, r) => Math.max(m, r.constructionNumber || 0), 0);
-        folderName = `C${String(maxCon + 1).padStart(2, '0')}`;
-      } else {
-        // MAX over ALL P revisions incl. soft-deleted → numbers are never reused.
-        const maxP = revisions.reduce((m, r) => r.type === 'PO' ? Math.max(m, r.number || 0) : m, 0);
-        folderName = `P${String(maxP + 1).padStart(2, '0')}`;
-      }
+      // Folder name matches the in-app label (P##/C##); numbering is MAX incl.
+      // soft-deleted so numbers are never reused. A P folder never renames on
+      // approval — the C folder is only created by a Construction upload.
+      const folderName = nextApprovalLabel(job, subElement);
       const revFolder = await createFolderInDrive(approvalFolder.id, folderName, driveId);
       targetFolderId = revFolder.id;
     } else if (element === 'parts') {
