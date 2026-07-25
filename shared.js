@@ -11128,6 +11128,7 @@ function _applyElementDataToJob(job, data) {
       constructionNumber: r.constructionNumber,
       status: r.status,
       statusUpdatedAt: r.statusUpdatedAt,
+      isDeleted: !!r.isDeleted,
       uploadedAt: r.uploadedAt,
       files: r.files || []
     })),
@@ -11637,7 +11638,7 @@ function getJobProgress(job) {
   }
 
   // Approval, Parts, Site — simple indicators, not measured progress
-  const revs = job.approval?.revisions || [];
+  const revs = (job.approval?.revisions || []).filter(r => !r.isDeleted);
   elements.approval = revs.some(r => r.type === 'CO') ? 'complete' : revs.length > 0 ? 'active' : 'empty';
 
   elements.parts = ((job.parts?.sections?.files?.length || 0) + (job.parts?.plates?.files?.length || 0)) > 0 ? 'complete' : 'empty';
@@ -15944,8 +15945,19 @@ function showConfirm(title, message, onConfirm) {
   if (msgEl) msgEl.textContent = message;
   if (btnEl) {
     const newBtn = btnEl.cloneNode(true);
+    // showConfirmAsync may have left the OK button relabelled ("Upload anyway")
+    // and restyled (btn-danger). Reset to the neutral default for a plain confirm.
+    newBtn.textContent = 'Confirm';
+    newBtn.className = 'btn btn-primary';
     newBtn.onclick = () => { closeModal(); onConfirm(); };
     btnEl.parentNode.replaceChild(newBtn, btnEl);
+  }
+  const cancelBtn = modal.querySelector('.modal-actions .btn-ghost');
+  if (cancelBtn) {
+    const newCancel = cancelBtn.cloneNode(true);
+    newCancel.textContent = 'Cancel';
+    newCancel.onclick = () => closeModal();
+    cancelBtn.parentNode.replaceChild(newCancel, cancelBtn);
   }
   modal.classList.add('active');
 }
