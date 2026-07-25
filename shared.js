@@ -12802,50 +12802,67 @@ async function confirmSiteDn() {
 // (description / quantity / finish_name) instead of the legacy
 // mark / coating / weightPerUnit fields.
 // Render a full styled HTML document (as produced by buildDnHtmlV2) to a PDF
-// Blob. Two things the old inline render got wrong — and which produced the
-// "blank white PDF":
-//   1. It stripped the ENTIRE <head> (regex removed everything up to <body>),
-//      taking all the <style> with it — html2canvas then captured unstyled,
-//      effectively empty markup.
-//   2. It ran html2canvas immediately, before the logo <img> (a data URI that
-//      still needs a decode tick) had painted.
-// This helper keeps the <style> block inline in the capture container and
-// awaits image load before rasterising. Both DN flows route through here.
+// Blob. Three things caused the blank white PDF, all fixed here:
+//   1. The stylesheet's 'body { color:#222 }' rule could never match, because
+//      the PDF path injects the markup into a <div> on the live app page. The
+//      text therefore inherited bama.css's body colour (#f0f0f0) and rendered
+//      white-on-white. Fixed by scoping the DN stylesheet to .dn-root.
+//   2. The container was positioned off-screen (left:-10000px), which
+//      html2canvas captures blank — the QB renderer hit this too.
+//   3. html2canvas ran before the logo data-URI had painted.
+// The template preview looked fine throughout because it uses iframe.srcdoc,
+// where the markup is a real document with a real <body>.
 async function renderDocHtmlToPdfBlob(fullHtml, filename) {
   if (typeof html2pdf === 'undefined') throw new Error('PDF library not loaded');
 
   const styleBlocks = (fullHtml.match(/<style[\s\S]*?<\/style>/gi) || []).join('');
   const bodyInner   = fullHtml.replace(/^[\s\S]*?<body[^>]*>|<\/body>[\s\S]*$/g, '');
 
-  const container = document.createElement('div');
-  container.style.cssText = 'position:fixed;left:-10000px;top:0;width:794px;background:#fff;';
-  container.innerHTML = styleBlocks + bodyInner;
-  document.body.appendChild(container);
+  const PAGE_W = 794; // A4 at 96dpi
+  // Positioning copied from the working QB renderer: html2canvas needs the
+  // element actually laid out and PAINTED. An off-screen 'position:fixed;
+  // left:-10000px' container captures blank — hence absolute at 0,0 sitting
+  // behind the page on a negative z-index.
+  const wrap = document.createElement('div');
+  wrap.style.cssText = `position:absolute;left:0;top:0;width:${PAGE_W}px;z-index:-9999;background:#fff`;
+  wrap.innerHTML = styleBlocks + bodyInner;
+  document.body.appendChild(wrap);
+
+  // The stylesheet is scoped to .dn-root, so capture that element.
+  const pageEl = wrap.querySelector('.dn-root') || wrap;
 
   try {
-    // Wait for every image (the logo) to finish loading/decoding, else
-    // html2canvas snapshots before the data-URI has painted → blank.
-    const imgs = Array.from(container.querySelectorAll('img'));
-    await Promise.all(imgs.map(img => {
-      if (img.complete && img.naturalWidth > 0) return Promise.resolve();
-      return new Promise(res => {
-        img.addEventListener('load',  res, { once: true });
-        img.addEventListener('error', res, { once: true });
-        setTimeout(res, 3000);
-      });
-    }));
+    // Wait for images (the logo) to finish loading, else html2canvas
+    // snapshots before the data-URI has painted.
+    await new Promise(resolve => {
+      const imgs = Array.from(wrap.querySelectorAll('img'));
+      let pending = imgs.filter(im => !im.complete).length;
+      if (pending === 0) { setTimeout(resolve, 80); return; }
+      const done = () => { if (--pending <= 0) resolve(); };
+      imgs.forEach(im => { if (!im.complete) { im.onload = done; im.onerror = done; } });
+      setTimeout(resolve, 2500);
+    });
     // Let layout settle for a frame.
     await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
 
-    return await html2pdf().set({
+    const blob = await html2pdf().set({
       margin: [10, 10, 10, 10],
       filename,
       image: { type: 'jpeg', quality: 0.95 },
-      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
+      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', windowWidth: PAGE_W },
       jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-    }).from(container).outputPdf('blob');
+    }).from(pageEl).outputPdf('blob');
+
+    // Diagnostic: a healthy DN is tens of KB. A few KB means a blank capture.
+    console.log('[DN PDF] blob size:', blob.size, 'bytes; rect:', pageEl.getBoundingClientRect());
+    if (blob.size < 8000) {
+      console.warn('[DN PDF] looks blank (<8KB). scrollHeight:', pageEl.scrollHeight,
+        'offsetHeight:', pageEl.offsetHeight, 'computed colour:',
+        getComputedStyle(pageEl).color);
+    }
+    return blob;
   } finally {
-    document.body.removeChild(container);
+    document.body.removeChild(wrap);
   }
 }
 
@@ -12874,33 +12891,43 @@ function buildDnHtmlV2(dn, proj, job) {
   let html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
 <title>${escapeHtml(dn.number)} - Delivery Note</title>
 <style>
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body { font-family: Arial, sans-serif; font-size: 12px; padding: 20px; color: #222; }
-  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 2px solid #222; gap: 20px; }
-  .company { font-size: 22px; font-weight: 700; color: ${accent}; letter-spacing: 1px; }
-  .company-sub { font-size: 9px; color: #666; margin-top: 4px; line-height: 1.4; white-space: pre-line; }
-  .header-logo { max-width: 110px; max-height: 60px; object-fit: contain; margin-right: 12px; }
-  .header-left { display: flex; align-items: flex-start; flex: 1; }
-  .header-right { text-align: right; }
-  .dn-title { font-size: 20px; font-weight: 700; font-style: italic; color: ${accent}; margin-bottom: 8px; }
-  .meta-grid { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 11px; text-align: left; }
-  .meta-label { font-weight: 600; }
-  table { width: 100%; border-collapse: collapse; margin: 16px 0; }
-  th { background: #f5f5f5; border: 1px solid #ccc; padding: 6px 8px; text-align: left; font-size: 11px; font-weight: 600; }
-  td { border: 1px solid #ccc; padding: 5px 8px; font-size: 11px; }
-  .sign-section { margin-top: 30px; display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
-  .sign-box { border: 1px solid #ccc; padding: 12px; min-height: 60px; }
-  .sign-label { font-weight: 600; font-size: 10px; margin-bottom: 20px; }
-  .terms { margin-top: 20px; font-size: 10px; color: #666; padding-top: 10px; border-top: 1px solid #eee; white-space: pre-line; }
-  .deliver-to { border: 1px solid #ccc; border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; background: #fafafa; max-width: 340px; }
-  .deliver-to-label { font-size: 9px; text-transform: uppercase; letter-spacing: .05em; color: #888; font-weight: 700; margin-bottom: 4px; }
-  .deliver-to-name { font-weight: 700; font-size: 12px; color: #222; }
-  .deliver-to-line { font-size: 11px; color: #444; line-height: 1.4; }
-  .deliver-to-contact { font-size: 11px; color: #444; margin-top: 4px; }
-  td.num, th.num { text-align: right; }
-  .total-row td { font-weight: 700; background: #f5f5f5; }
-  @media print { body { padding: 10px; } }
+  /* Every rule is scoped to .dn-root. Two reasons this matters:
+     (1) The PDF path injects this markup into the live app page. A bare
+         'body { color:#222 }' rule can never match a <div>, so the text used
+         to inherit bama.css's body colour (#f0f0f0) and render white-on-white
+         — that was the "blank white PDF".
+     (2) Bare element selectors (table/th/td) and a global '*' reset would
+         leak out and restyle the surrounding app during capture.
+     Scoped like this the same stylesheet works standalone (iframe preview)
+     and injected (PDF capture). */
+  .dn-root, .dn-root * { margin:0; padding:0; box-sizing:border-box; }
+  .dn-root { font-family: Arial, sans-serif; font-size: 12px; padding: 20px; color: #222; background: #fff; }
+  .dn-root .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 2px solid #222; gap: 20px; }
+  .dn-root .company { font-size: 22px; font-weight: 700; color: ${accent}; letter-spacing: 1px; }
+  .dn-root .company-sub { font-size: 9px; color: #666; margin-top: 4px; line-height: 1.4; white-space: pre-line; }
+  .dn-root .header-logo { max-width: 110px; max-height: 60px; object-fit: contain; margin-right: 12px; }
+  .dn-root .header-left { display: flex; align-items: flex-start; flex: 1; }
+  .dn-root .header-right { text-align: right; }
+  .dn-root .dn-title { font-size: 20px; font-weight: 700; font-style: italic; color: ${accent}; margin-bottom: 8px; }
+  .dn-root .meta-grid { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 11px; text-align: left; }
+  .dn-root .meta-label { font-weight: 600; }
+  .dn-root table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+  .dn-root th { background: #f5f5f5; border: 1px solid #ccc; padding: 6px 8px; text-align: left; font-size: 11px; font-weight: 600; color: #222; }
+  .dn-root td { border: 1px solid #ccc; padding: 5px 8px; font-size: 11px; color: #222; }
+  .dn-root .sign-section { margin-top: 30px; display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .dn-root .sign-box { border: 1px solid #ccc; padding: 12px; min-height: 60px; }
+  .dn-root .sign-label { font-weight: 600; font-size: 10px; margin-bottom: 20px; }
+  .dn-root .terms { margin-top: 20px; font-size: 10px; color: #666; padding-top: 10px; border-top: 1px solid #eee; white-space: pre-line; }
+  .dn-root .deliver-to { border: 1px solid #ccc; border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; background: #fafafa; max-width: 340px; }
+  .dn-root .deliver-to-label { font-size: 9px; text-transform: uppercase; letter-spacing: .05em; color: #888; font-weight: 700; margin-bottom: 4px; }
+  .dn-root .deliver-to-name { font-weight: 700; font-size: 12px; color: #222; }
+  .dn-root .deliver-to-line { font-size: 11px; color: #444; line-height: 1.4; }
+  .dn-root .deliver-to-contact { font-size: 11px; color: #444; margin-top: 4px; }
+  .dn-root td.num, .dn-root th.num { text-align: right; }
+  .dn-root .total-row td { font-weight: 700; background: #f5f5f5; }
+  @media print { .dn-root { padding: 10px; } }
 </style></head><body>
+<div class="dn-root">
 <div class="header">
   <div class="header-left">
     ${showLogo ? `<img src="${logo}" class="header-logo" alt="">` : ''}
@@ -12988,7 +13015,7 @@ ${deliverToHtml}
   if (t.termsText) {
     html += `<div class="terms">${escapeHtml(t.termsText)}</div>`;
   }
-  html += `</body></html>`;
+  html += `</div></body></html>`;
   return html;
 }
 
