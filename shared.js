@@ -13322,7 +13322,9 @@ function renderApproval() {
   const statusEl = document.getElementById('elementApprovalStatus');
   const editable = isDraftsman && currentJob.status !== 'closed';
 
-  const sortedDesc = [...revisions].reverse();
+  // Soft-deleted revisions stay in `revisions` (so numbering never reuses their
+  // numbers) but are hidden everywhere in the UI.
+  const sortedDesc = [...revisions].filter(r => !r.isDeleted).reverse();
   const latestP = sortedDesc.find(r => r.type === 'PO');   // most recent for-approval issue
   const latestC = sortedDesc.find(r => r.type === 'CO');   // most recent construction issue
   const hasConstruction = !!latestC;
@@ -13413,12 +13415,15 @@ function renderApproval() {
         <span class="revision-badge" style="background:${m.bg};color:${m.color}">${approvalRevLabel(rev.type, rev.number, rev.status, rev.constructionNumber)}</span>
         <span style="color:${m.color};background:${m.bg};border:1px solid ${m.border};padding:2px 10px;border-radius:4px;font-size:11px;font-weight:600;letter-spacing:.3px">${m.text}</span>
         <span style="font-size:11px;color:var(--subtle);margin-left:auto">${new Date(rev.uploadedAt).toLocaleDateString('en-GB')}</span>
+        ${editable ? `<button class="btn" title="Delete this revision" style="padding:3px 8px;font-size:11px;margin-left:10px;background:rgba(255,68,68,.1);border:1px solid rgba(255,68,68,.3);color:var(--red)" onclick="confirmDeleteRevision(${rev.id})">&#128465;</button>` : ''}
       </div>`;
     if (rev.files?.length > 0) {
       html += '<div style="padding:8px 14px">';
       rev.files.forEach(f => {
         if (isCurrent || isDraftsman) {
-          html += renderFileRow(f, 'approval', isDraftsman && currentJob.status !== 'closed');
+          // Per-file delete is disabled for approval — the revision is the unit,
+          // so use the revision-level delete above (keeps the number retired).
+          html += renderFileRow(f, 'approval', false);
         } else {
           html += `<div class="file-row grayed"><div class="file-row-icon">&#128196;</div><div class="file-row-name">${f.name || f.fileName}</div></div>`;
         }
@@ -13428,7 +13433,7 @@ function renderApproval() {
     html += '</div>';
   });
 
-  if (!revisions.length) {
+  if (!sortedDesc.length) {
     html += '<div style="color:var(--subtle);font-size:13px;padding:12px 0">No approval submissions yet</div>';
   }
 
@@ -13456,7 +13461,36 @@ async function updateApprovalStatus(revisionId, newStatus) {
   finally { setLoading(false); }
 }
 
-// Rename the SharePoint folder holding an approval revision's files. The folder
+// Soft-delete a whole approval revision (the unit for approval). It vanishes
+// from the status/list, but the row is retained server-side so its revision
+// number stays retired — the next upload never reuses it.
+async function confirmDeleteRevision(revId) {
+  if (!currentJob) return;
+  const rev = (currentJob.approval?.revisions || []).find(r => r.id == revId);   // eslint-disable-line eqeqeq
+  if (!rev) return;
+  const label = approvalRevLabel(rev.type, rev.number, rev.status, rev.constructionNumber);
+  showConfirm('Delete revision',
+    `Delete ${label} and its file(s)? This can't be undone, and ${label} will be retired — the next upload won't reuse that number.`,
+    async () => {
+      try {
+        setLoading(true);
+        // Remove the files from SharePoint first (best-effort).
+        for (const f of (rev.files || [])) {
+          if (f.fileId) {
+            try { await deleteFileFromDrive(f.fileId, f.driveId); }
+            catch (e) { console.warn('SharePoint delete skipped:', e.message); }
+          }
+        }
+        const jobIdInt = parseInt(currentJob.id);
+        await api.delete(`/api/drawing-elements/${jobIdInt}/approval-revision/${revId}`);
+        // Keep it in local state (flagged deleted) so numbering still climbs.
+        rev.isDeleted = true;
+        toast(`${label} deleted`, 'success');
+        renderApproval();
+      } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
+      finally { setLoading(false); }
+    });
+}
 // id isn't persisted, so we derive it from the parent of one of the revision's
 // files, then PATCH the folder name. File item IDs are stable across a rename,
 // so Print (which uses fileId) keeps working; View also fetches fresh by fileId
@@ -13997,7 +14031,18 @@ function openUploadFileModal(element, subElement) {
   let ctx = `${currentJob.name}`;
   if (element === 'bom') { title = 'Upload BOM File'; }
   else if (element === 'approval') {
-    title = subElement === 'CO' ? 'Upload Construction Issue Drawing' : 'Upload Drawing for Approval';
+    // Show the exact revision it will become, computed the same way the server
+    // assigns it (MAX incl. deleted, +1) so the reviewer sees P05 / C02 up front.
+    const revs = currentJob.approval?.revisions || [];
+    let lbl;
+    if (subElement === 'CO') {
+      const maxCon = revs.reduce((m, r) => Math.max(m, r.constructionNumber || 0), 0);
+      lbl = 'C' + String(maxCon + 1).padStart(2, '0');
+    } else {
+      const maxP = revs.reduce((m, r) => r.type === 'PO' ? Math.max(m, r.number || 0) : m, 0);
+      lbl = 'P' + String(maxP + 1).padStart(2, '0');
+    }
+    title = (subElement === 'CO' ? 'Upload Construction Issue Drawing' : 'Upload Drawing for Approval') + ` \u2192 ${lbl}`;
   }
   else if (element === 'parts') {
     title = subElement === 'sections' ? 'Upload Sections File' : 'Upload Plates File';
@@ -14123,8 +14168,9 @@ async function confirmUploadFile() {
         const maxCon = revisions.reduce((m, r) => Math.max(m, r.constructionNumber || 0), 0);
         folderName = `C${String(maxCon + 1).padStart(2, '0')}`;
       } else {
-        const num = revisions.filter(r => r.type === 'PO').length + 1;
-        folderName = `P${String(num).padStart(2, '0')}`;
+        // MAX over ALL P revisions incl. soft-deleted → numbers are never reused.
+        const maxP = revisions.reduce((m, r) => r.type === 'PO' ? Math.max(m, r.number || 0) : m, 0);
+        folderName = `P${String(maxP + 1).padStart(2, '0')}`;
       }
       const revFolder = await createFolderInDrive(approvalFolder.id, folderName, driveId);
       targetFolderId = revFolder.id;

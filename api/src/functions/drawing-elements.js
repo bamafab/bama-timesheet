@@ -49,6 +49,7 @@ app.http('drawing-elements-get', {
                 constructionNumber: r.construction_number,
                 status: r.status,
                 statusUpdatedAt: r.status_updated_at,
+                isDeleted: !!r.is_deleted,
                 uploadedAt: r.uploaded_at,
                 uploadedBy: r.uploaded_by,
                 files: (filesByRevision[r.id] || []).map(f => ({
@@ -130,12 +131,24 @@ app.http('drawing-elements-revision-create', {
         if (!type || !['PO','CO'].includes(type)) return badRequest('type must be PO or CO', request);
 
         try {
-            // Get next revision number for this type
-            const countRes = await query(
-                'SELECT COUNT(*) AS cnt FROM DrawingApprovalRevisions WHERE job_id = @jobId AND revision_type = @type',
+            // Next revision number = MAX over ALL rows of this type INCLUDING
+            // soft-deleted ones, +1. This means a retired number is never reused:
+            // delete a rejected P01 and the next upload is still P02.
+            const numRes = await query(
+                'SELECT ISNULL(MAX(revision_number), 0) AS mx FROM DrawingApprovalRevisions WHERE job_id = @jobId AND revision_type = @type',
                 { jobId, type }
             );
-            const num = (countRes.recordset[0].cnt || 0) + 1;
+            const num = (numRes.recordset[0].mx || 0) + 1;
+
+            // Backstop against a concurrent double-submit landing the same number
+            // on a live (non-deleted) row.
+            const dupRes = await query(
+                'SELECT TOP 1 id FROM DrawingApprovalRevisions WHERE job_id = @jobId AND revision_type = @type AND revision_number = @num AND is_deleted = 0',
+                { jobId, type, num }
+            );
+            if (dupRes.recordset.length) {
+                return badRequest(`Revision ${type === 'CO' ? 'C' : 'P'}${String(num).padStart(2,'0')} already exists — refresh and try again`, request);
+            }
 
             // A fresh P (PO) revision is always "sent to engineer" — the review
             // outcome (approved / minor / major) is set later via the status
@@ -251,6 +264,36 @@ app.http('drawing-elements-revision-status', {
         } catch (err) {
             context.error('revision-status error:', err);
             return serverError('Failed to update status', request);
+        }
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DELETE /api/drawing-elements/:jobId/approval-revision/:revId
+// Soft-delete a revision: it disappears from the UI, but the row (and its
+// revision number) is retained so numbering never reuses it.
+// ─────────────────────────────────────────────────────────────────────────────
+app.http('drawing-elements-revision-delete', {
+    methods: ['DELETE'], authLevel: 'anonymous',
+    route: 'drawing-elements/{jobId}/approval-revision/{revId}',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        const revId = parseInt(request.params.revId);
+        if (!revId) return badRequest('Invalid revId', request);
+
+        try {
+            const res = await query(
+                `UPDATE DrawingApprovalRevisions SET is_deleted = 1
+                 OUTPUT INSERTED.id WHERE id = @revId`,
+                { revId }
+            );
+            if (!res.recordset.length) return notFound('Revision not found', request);
+            return ok({ id: res.recordset[0].id, deleted: true }, request);
+        } catch (err) {
+            context.error('revision-delete error:', err);
+            return serverError('Failed to delete revision', request);
         }
     }
 });
