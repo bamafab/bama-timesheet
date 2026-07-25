@@ -69,11 +69,18 @@ app.http('job-bom-items-list', {
                 `SELECT b.*,
                         st.name AS finish_name,
                         s.supplier_name AS supplier_name,
-                        a.assembly_mark AS source_assembly_mark
+                        a.assembly_mark AS source_assembly_mark,
+                        a.total_weight_kg AS assembly_weight_kg,
+                        ap.max_length_mm  AS assembly_max_length_mm
                  FROM JobBomItems b
                  LEFT JOIN ServiceTypes  st ON st.id = b.finish_service_id
                  LEFT JOIN Suppliers     s  ON s.id = b.supplier_id
                  LEFT JOIN JobAssemblies a  ON a.id = b.source_assembly_id
+                 OUTER APPLY (
+                     SELECT MAX(p.length_mm) AS max_length_mm
+                     FROM JobAssemblyParts p
+                     WHERE p.assembly_id = a.id
+                 ) ap
                  WHERE b.job_id = @jobId
                  ORDER BY b.created_at ASC, b.id ASC`,
                 { jobId }

@@ -12897,6 +12897,8 @@ function buildDnHtmlV2(dn, proj, job) {
   .deliver-to-name { font-weight: 700; font-size: 12px; color: #222; }
   .deliver-to-line { font-size: 11px; color: #444; line-height: 1.4; }
   .deliver-to-contact { font-size: 11px; color: #444; margin-top: 4px; }
+  td.num, th.num { text-align: right; }
+  .total-row td { font-weight: 700; background: #f5f5f5; }
   @media print { body { padding: 10px; } }
 </style></head><body>
 <div class="header">
@@ -12922,21 +12924,52 @@ function buildDnHtmlV2(dn, proj, job) {
 </div>
 ${deliverToHtml}
 <table>
-<thead><tr><th>Description</th><th>Qty</th><th>Finish</th><th>Source</th></tr></thead>
+<thead><tr>
+  <th>Mark</th><th>Qty</th><th>Profile</th>
+  <th class="num">Length (mm)</th><th class="num">Unit Wt. (kg)</th><th class="num">Total Wt. (kg)</th>
+  <th>Finish</th>
+</tr></thead>
 <tbody>`;
 
+  // Length and weight come from the source assembly: total_weight_kg is the
+  // weight of ONE assembly (sum of its parts), and the length shown is the
+  // LONGEST part on that assembly — the figure that matters for transport
+  // and galvanising bath capacity. Manual BOM rows carry neither, so they
+  // print as '—' rather than a made-up number.
+  let totQty = 0, totWeight = 0, anyWeight = false;
+
   for (const it of (dn.items || [])) {
-    const src = it.source === 'assembly'
-      ? (it.source_assembly_mark ? `from ${it.source_assembly_mark}` : 'assembly')
-      : (it.file_name ? `manual (${it.file_name})` : 'manual');
+    const qty     = Number(it.quantity) || 0;
+    const unitWt  = it.assembly_weight_kg != null ? Number(it.assembly_weight_kg) : null;
+    const lengthM = it.assembly_max_length_mm != null ? Number(it.assembly_max_length_mm) : null;
+    const lineWt  = unitWt != null ? unitWt * qty : null;
+    const mark    = it.source === 'assembly'
+      ? (it.source_assembly_mark || 'assembly')
+      : '\u2014';
+
+    totQty += qty;
+    if (lineWt != null) { totWeight += lineWt; anyWeight = true; }
+
     html += `<tr>
-      <td style="font-weight:600">${escapeHtml(it.description)}</td>
-      <td>${Number(it.quantity)}</td>
+      <td style="font-weight:600">${escapeHtml(mark)}</td>
+      <td>${qty}</td>
+      <td>${escapeHtml(it.description)}</td>
+      <td class="num">${lengthM != null ? lengthM.toLocaleString('en-GB', { maximumFractionDigits: 1 }) : '\u2014'}</td>
+      <td class="num">${unitWt != null ? unitWt.toFixed(2) : '\u2014'}</td>
+      <td class="num">${lineWt != null ? lineWt.toFixed(2) : '\u2014'}</td>
       <td>${escapeHtml(it.finish_name || dn.finishName || '')}</td>
-      <td style="font-size:10px;color:#666">${escapeHtml(src)}</td>
     </tr>`;
   }
+
+  html += `<tr class="total-row">
+    <td>TOTAL</td><td>${totQty}</td><td></td><td class="num"></td><td class="num"></td>
+    <td class="num">${anyWeight ? totWeight.toFixed(2) : '\u2014'}</td><td></td>
+  </tr>`;
   html += `</tbody></table>`;
+
+  if (!anyWeight) {
+    html += `<div style="font-size:10px;color:#888;margin-top:-8px">Weights unavailable — no assembly data on these items.</div>`;
+  }
 
   if (t.showSignatureBlock !== false) {
     html += `<div class="sign-section">
@@ -16693,8 +16726,8 @@ function refreshTemplatePreview() {
       deliverTo: { name: 'Smith Galvanising Ltd', lines: ['Unit 4, Fen Road', 'Peterborough', 'PE1 5BQ'], contact: 'Dave Smith \u00b7 01733 000000' },
       finishName: 'Galvanising',
       items: [
-        { description: 'CHS42.4x3', quantity: 26, finish_name: 'Galvanising', source: 'assembly', source_assembly_mark: 'RL1' },
-        { description: 'PFC152x89', quantity: 8,  finish_name: 'Galvanising', source: 'assembly', source_assembly_mark: 'RL2' },
+        { description: 'CHSc48.3x2', quantity: 26, finish_name: 'Galvanising', source: 'assembly', source_assembly_mark: 'RL1', assembly_weight_kg: 11.54, assembly_max_length_mm: 4460.2 },
+        { description: 'PFC152x89', quantity: 8,  finish_name: 'Galvanising', source: 'assembly', source_assembly_mark: 'RL2', assembly_weight_kg: 47.2,  assembly_max_length_mm: 3080 },
         { description: 'M16 bolts', quantity: 100, finish_name: 'Galvanising', source: 'manual', file_name: 'UK Bolt Co - delivery slip.pdf' }
       ]
     };
