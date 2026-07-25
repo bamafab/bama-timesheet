@@ -500,9 +500,18 @@ async function loadProjects() {
       )
       .map(p => ({
         id:     p.project_number,
+        dbId:   p.id,
         name:   p.project_name,
         status: p.status,
-        client: p.company_name || ''
+        client: p.company_name || '',
+        // Delivery-address source for the DN "Deliver to" block.
+        site_same_as_client: p.site_same_as_client,
+        site_address_line1: p.site_address_line1, site_address_line2: p.site_address_line2,
+        site_city: p.site_city, site_county: p.site_county, site_postcode: p.site_postcode,
+        site_contact_name: p.site_contact_name, site_contact_phone: p.site_contact_phone,
+        client_address_line1: p.address_line1, client_address_line2: p.address_line2,
+        client_city: p.city, client_county: p.county, client_postcode: p.postcode,
+        client_contact_name: p.contact_name, client_contact_phone: p.contact_phone
       }))
       .sort((a, b) => String(a.id).localeCompare(String(b.id), 'en', { numeric: true, sensitivity: 'base' }));
     state.projects = list;
@@ -12398,12 +12407,18 @@ async function openGenerateDnModalSQL() {
   } else {
     sList.innerHTML = filteredSuppliers.map(s => {
       const addr = [s.address_line1, s.city].filter(Boolean).join(', ');
+      const addrLines = [
+        s.address_line1, s.address_line2,
+        [s.city, s.county].filter(Boolean).join(', '),
+        s.postcode
+      ].filter(Boolean);
       const svcNames = (s.services || []).map(svc => svc.service_name).filter(Boolean).join(', ');
       return `<label class="gdn-supplier-row" data-id="${s.id}"
                 style="display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid var(--border);
                        border-radius:8px;margin-bottom:6px;cursor:pointer;background:var(--surface);">
         <input type="radio" name="gdnSupplier" value="${s.id}"
                data-name="${escapeHtml(s.supplier_name)}"
+               data-addr="${escapeHtml(JSON.stringify(addrLines))}"
                data-services="${(s.services || []).map(svc => svc.service_type_id).join(',')}"
                style="width:16px;height:16px;accent-color:var(--accent)">
         <div style="flex:1">
@@ -12431,6 +12446,8 @@ async function openGenerateDnModalSQL() {
       _pendingDn.supplierId = sid;
       _pendingDn.supplierName = sname;
       _pendingDn.supplierServiceIds = new Set(services);
+      try { _pendingDn.deliverToLines = JSON.parse(r.dataset.addr || '[]'); }
+      catch { _pendingDn.deliverToLines = []; }
       renderGdnItemList();
     });
   });
@@ -12560,33 +12577,14 @@ async function confirmGenerateDnSQL() {
       number:          dnRef,
       createdAt:       new Date().toISOString(),
       destinationName: _pendingDn.supplierName,
+      deliverTo:       { name: _pendingDn.supplierName, lines: _pendingDn.deliverToLines || [], contact: '' },
       items:           allSelected,
       finishName:      [...new Set(allSelected.map(i => i.finish_name).filter(Boolean))].join(', ') || ''
     };
     const html = buildDnHtmlV2(dn, proj || {}, job || {});
 
-    // 3. Render HTML → PDF blob via html2pdf.
-    //    Use the SAME container CSS pattern as the working legacy DN code
-    //    (position:fixed; width:794px in px). The earlier version used
-    //    'position:absolute; width:210mm' which produced a blank PDF on
-    //    some browsers.
-    if (typeof html2pdf === 'undefined') throw new Error('PDF library not loaded');
-    const container = document.createElement('div');
-    container.style.cssText = 'position:fixed;left:-10000px;top:0;width:794px;background:#fff;';
-    container.innerHTML = html.replace(/^[\s\S]*?<body[^>]*>|<\/body>[\s\S]*$/g, '');
-    document.body.appendChild(container);
-    let pdfBlob;
-    try {
-      pdfBlob = await html2pdf().set({
-        margin: [10, 10, 10, 10],
-        filename: `${dnRef}.pdf`,
-        image: { type: 'jpeg', quality: 0.95 },
-        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-      }).from(container).outputPdf('blob');
-    } finally {
-      document.body.removeChild(container);
-    }
+    // 3. Render HTML → PDF blob (keeps CSS + waits for the logo image).
+    const pdfBlob = await renderDocHtmlToPdfBlob(html, `${dnRef}.pdf`);
 
     // 4. Upload to SharePoint: <ProjectFolder>/07 - Deliveries/<JobFolder>/<DN-ref>.pdf
     const projectFolder = await findProjectFolder(proj.id);
@@ -12738,33 +12736,33 @@ async function confirmSiteDn() {
     const siteName = (proj?.client && proj?.name)
       ? `${proj.client} — ${proj.name}`
       : (proj?.client || proj?.name || 'Site delivery');
+    // Delivery address: use the project's site address when it differs from
+    // the client; otherwise fall back to the client address.
+    const useSite = proj && proj.site_same_as_client === false &&
+      (proj.site_address_line1 || proj.site_postcode);
+    const a = useSite
+      ? { l1: proj.site_address_line1, l2: proj.site_address_line2, city: proj.site_city,
+          county: proj.site_county, pc: proj.site_postcode,
+          contact: proj.site_contact_name, phone: proj.site_contact_phone }
+      : { l1: proj?.client_address_line1, l2: proj?.client_address_line2, city: proj?.client_city,
+          county: proj?.client_county, pc: proj?.client_postcode,
+          contact: proj?.client_contact_name, phone: proj?.client_contact_phone };
+    const deliverToLines = [
+      a.l1, a.l2, [a.city, a.county].filter(Boolean).join(', '), a.pc
+    ].filter(Boolean);
+    const deliverToContact = [a.contact, a.phone].filter(Boolean).join(' \u00b7 ');
     const dn = {
       number:          sdnRef,
       createdAt:       new Date().toISOString(),
       destinationName: siteName,
+      deliverTo:       { name: proj?.client || proj?.name || 'Site', lines: deliverToLines, contact: deliverToContact },
       finishName:      'Site delivery',
       items
     };
     const html = buildDnHtmlV2(dn, proj || {}, job || {});
 
-    // 3. Render PDF (same hidden-container pattern as supplier DN)
-    if (typeof html2pdf === 'undefined') throw new Error('PDF library not loaded');
-    const container = document.createElement('div');
-    container.style.cssText = 'position:fixed;left:-10000px;top:0;width:794px;background:#fff;';
-    container.innerHTML = html.replace(/^[\s\S]*?<body[^>]*>|<\/body>[\s\S]*$/g, '');
-    document.body.appendChild(container);
-    let pdfBlob;
-    try {
-      pdfBlob = await html2pdf().set({
-        margin: [10, 10, 10, 10],
-        filename: `${sdnRef}.pdf`,
-        image: { type: 'jpeg', quality: 0.95 },
-        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-      }).from(container).outputPdf('blob');
-    } finally {
-      document.body.removeChild(container);
-    }
+    // 3. Render PDF (keeps CSS + waits for the logo image).
+    const pdfBlob = await renderDocHtmlToPdfBlob(html, `${sdnRef}.pdf`);
 
     // 4. Upload to SharePoint: same path as supplier DNs (per spec).
     const projectFolder = await findProjectFolder(proj.id);
@@ -12803,6 +12801,54 @@ async function confirmSiteDn() {
 // buildDeliveryNoteHTMLCore but reads from the SQL-shaped item list
 // (description / quantity / finish_name) instead of the legacy
 // mark / coating / weightPerUnit fields.
+// Render a full styled HTML document (as produced by buildDnHtmlV2) to a PDF
+// Blob. Two things the old inline render got wrong — and which produced the
+// "blank white PDF":
+//   1. It stripped the ENTIRE <head> (regex removed everything up to <body>),
+//      taking all the <style> with it — html2canvas then captured unstyled,
+//      effectively empty markup.
+//   2. It ran html2canvas immediately, before the logo <img> (a data URI that
+//      still needs a decode tick) had painted.
+// This helper keeps the <style> block inline in the capture container and
+// awaits image load before rasterising. Both DN flows route through here.
+async function renderDocHtmlToPdfBlob(fullHtml, filename) {
+  if (typeof html2pdf === 'undefined') throw new Error('PDF library not loaded');
+
+  const styleBlocks = (fullHtml.match(/<style[\s\S]*?<\/style>/gi) || []).join('');
+  const bodyInner   = fullHtml.replace(/^[\s\S]*?<body[^>]*>|<\/body>[\s\S]*$/g, '');
+
+  const container = document.createElement('div');
+  container.style.cssText = 'position:fixed;left:-10000px;top:0;width:794px;background:#fff;';
+  container.innerHTML = styleBlocks + bodyInner;
+  document.body.appendChild(container);
+
+  try {
+    // Wait for every image (the logo) to finish loading/decoding, else
+    // html2canvas snapshots before the data-URI has painted → blank.
+    const imgs = Array.from(container.querySelectorAll('img'));
+    await Promise.all(imgs.map(img => {
+      if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+      return new Promise(res => {
+        img.addEventListener('load',  res, { once: true });
+        img.addEventListener('error', res, { once: true });
+        setTimeout(res, 3000);
+      });
+    }));
+    // Let layout settle for a frame.
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    return await html2pdf().set({
+      margin: [10, 10, 10, 10],
+      filename,
+      image: { type: 'jpeg', quality: 0.95 },
+      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    }).from(container).outputPdf('blob');
+  } finally {
+    document.body.removeChild(container);
+  }
+}
+
 function buildDnHtmlV2(dn, proj, job) {
   const s = (typeof _pickTplSettings === 'function') ? _pickTplSettings() : null;
   const g = (s && s.global)         || (typeof TEMPLATE_DEFAULTS !== 'undefined' ? TEMPLATE_DEFAULTS.global       : { companyName: 'BAMA FABRICATION', address: '', phone: '', email: '', vatNumber: '' });
@@ -12812,6 +12858,18 @@ function buildDnHtmlV2(dn, proj, job) {
   const showCo   = t.showCompanyDetails !== false;
   const accent   = t.accentColor || '#ff6b00';
   const date     = new Date(dn.createdAt).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
+
+  // "Deliver to" panel — destination name + address lines + contact.
+  const dt = dn.deliverTo || {};
+  const dtLines = (dt.lines || []).filter(Boolean);
+  const deliverToHtml = (dt.name || dtLines.length)
+    ? `<div class="deliver-to">
+        <div class="deliver-to-label">Deliver to</div>
+        ${dt.name ? `<div class="deliver-to-name">${escapeHtml(dt.name)}</div>` : ''}
+        ${dtLines.map(l => `<div class="deliver-to-line">${escapeHtml(l)}</div>`).join('')}
+        ${dt.contact ? `<div class="deliver-to-contact">Contact: ${escapeHtml(dt.contact)}</div>` : ''}
+      </div>`
+    : '';
 
   let html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
 <title>${escapeHtml(dn.number)} - Delivery Note</title>
@@ -12834,6 +12892,11 @@ function buildDnHtmlV2(dn, proj, job) {
   .sign-box { border: 1px solid #ccc; padding: 12px; min-height: 60px; }
   .sign-label { font-weight: 600; font-size: 10px; margin-bottom: 20px; }
   .terms { margin-top: 20px; font-size: 10px; color: #666; padding-top: 10px; border-top: 1px solid #eee; white-space: pre-line; }
+  .deliver-to { border: 1px solid #ccc; border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; background: #fafafa; max-width: 340px; }
+  .deliver-to-label { font-size: 9px; text-transform: uppercase; letter-spacing: .05em; color: #888; font-weight: 700; margin-bottom: 4px; }
+  .deliver-to-name { font-weight: 700; font-size: 12px; color: #222; }
+  .deliver-to-line { font-size: 11px; color: #444; line-height: 1.4; }
+  .deliver-to-contact { font-size: 11px; color: #444; margin-top: 4px; }
   @media print { body { padding: 10px; } }
 </style></head><body>
 <div class="header">
@@ -12857,6 +12920,7 @@ function buildDnHtmlV2(dn, proj, job) {
     </div>
   </div>
 </div>
+${deliverToHtml}
 <table>
 <thead><tr><th>Description</th><th>Qty</th><th>Finish</th><th>Source</th></tr></thead>
 <tbody>`;
@@ -16626,6 +16690,7 @@ function refreshTemplatePreview() {
       number: 'DN-0001',
       createdAt: new Date().toISOString(),
       destinationName: 'Smith Galvanising Ltd',
+      deliverTo: { name: 'Smith Galvanising Ltd', lines: ['Unit 4, Fen Road', 'Peterborough', 'PE1 5BQ'], contact: 'Dave Smith \u00b7 01733 000000' },
       finishName: 'Galvanising',
       items: [
         { description: 'CHS42.4x3', quantity: 26, finish_name: 'Galvanising', source: 'assembly', source_assembly_mark: 'RL1' },

@@ -31,6 +31,7 @@ app.http('projects-list', {
             let sqlText = `
                 SELECT p.*,
                        c.company_name, c.contact_name, c.contact_email, c.contact_phone,
+                       c.address_line1, c.address_line2, c.city, c.county, c.postcode,
                        t.reference AS source_quote_reference,
                        prog.progress_pct
                 FROM Projects p
