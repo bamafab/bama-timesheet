@@ -14768,9 +14768,552 @@ RULES:
   if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
 }
 
-// Phase-3/6 stub — native jsPDF render + SharePoint save to RAMS/<job>/.
-function confirmRams() {
-  toast('RAMS render + save land in later phases \u2014 this is the phase-1 modal shell.', 'info');
+// ═══════════════════════════════════════════════════════════════════════════
+// RAMS phase 3 — native jsPDF renderer + curated hazard library
+// ───────────────────────────────────────────────────────────────────────────
+// Modelled 1:1 on drawDnPDF / drawSitePackPDF: everything is drawn natively
+// (doc.text / doc.rect / doc.addImage) so the live dark bama.css NEVER leaks
+// into the capture — no html2canvas, no blank/clipped output. Two-engine
+// principle: the L/S/R scores and control wording in RAMS_RISK_LIBRARY are a
+// CURATED library (seeded from BAMA's example RAMS). The AI never invents
+// scores or control text; at most (later phase) it selects which rows apply and
+// tailors the "when/where" note. Every value here is tunable.
+// SharePoint save + a 'rams' drawing-elements context land in phase 6; this
+// phase renders the PDF and opens it for review.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const _RAMS_R_OPS = 'Operatives';
+const _RAMS_R_OPS_OTH = 'Operatives, others on site';
+const _RAMS_R_ALL = 'Operatives, others on site, public';
+
+// Curated hazard library for structural-steel site installation.
+// ref, activity, hazard, who, iL/iS (initial L/S, R = L×S), controls[],
+// rL/rS (residual), whenWhere.
+const RAMS_RISK_LIBRARY = [
+  { ref: 'R01', activity: 'General site work / mobilisation', hazard: 'Slips, trips and falls on the level', who: _RAMS_R_OPS_OTH, iL: 3, iS: 3,
+    controls: ['Maintain good housekeeping; keep access routes and work areas clear.', 'Route and secure trailing leads and hoses off walkways.', 'Report and clear spillages and debris immediately.', 'Suitable footwear worn; adequate task lighting provided.'],
+    rL: 1, rS: 3, whenWhere: 'Throughout the works' },
+  { ref: 'R02', activity: 'Handling steel sections, fixings & equipment', hazard: 'Manual handling injury / musculoskeletal strain', who: _RAMS_R_OPS, iL: 3, iS: 3,
+    controls: ['Use mechanical lifting aids wherever practicable.', 'Team lifts for awkward or heavy loads; loads split where possible.', 'Manual-handling assessment carried out; good kinetic technique used.', 'Handling gloves worn.'],
+    rL: 2, rS: 2, whenWhere: 'Loading, offloading and positioning' },
+  { ref: 'R03', activity: 'Erection and fixing at height', hazard: 'Fall from height', who: _RAMS_R_OPS, iL: 4, iS: 5,
+    controls: ['MEWP, scaffold or edge protection used as the primary means of access.', 'Harness and lanyard clipped to a suitable anchor when in a MEWP or where edge protection is incomplete.', 'Access equipment inspected before use and within thorough-examination date.', 'No work at height in adverse weather; area below cordoned off.'],
+    rL: 2, rS: 5, whenWhere: 'All elevated works' },
+  { ref: 'R04', activity: 'Use of MEWP / cherry picker', hazard: 'Overturn, entrapment, ejection or collapse', who: _RAMS_R_OPS, iL: 3, iS: 5,
+    controls: ['IPAF-trained and certified operators only.', 'Daily pre-use checks; LOLER thorough examination in date.', 'Ground assessed for bearing capacity and level; outriggers deployed where fitted.', 'Harness worn; no overreaching; secondary guarding used where available; rescue plan in place.'],
+    rL: 1, rS: 5, whenWhere: 'During elevated access' },
+  { ref: 'R05', activity: 'Lifting operations (crane / telehandler)', hazard: 'Falling load, struck-by, load failure', who: _RAMS_R_OPS_OTH, iL: 3, iS: 5,
+    controls: ['Lift plan prepared and supervised by an appointed person.', 'Trained slinger / signaller and plant operator; SWL never exceeded.', 'Exclusion zone established; no persons beneath a suspended load.', 'Tag lines used to control loads; landing area prepared before lift.'],
+    rL: 1, rS: 5, whenWhere: 'During all mechanical lifts' },
+  { ref: 'R06', activity: 'Use of lifting accessories', hazard: 'Sling / shackle / chain failure', who: _RAMS_R_OPS, iL: 2, iS: 5,
+    controls: ['Colour-coded, in-date, LOLER-inspected accessories only.', 'Correct rating and sling angle selected for the load.', 'Pre-use visual check; damaged gear quarantined and removed.'],
+    rL: 1, rS: 5, whenWhere: 'During all mechanical lifts' },
+  { ref: 'R07', activity: 'Hot works — welding, grinding, cutting', hazard: 'Fire, burns, arc-eye, welding fume', who: _RAMS_R_OPS_OTH, iL: 3, iS: 4,
+    controls: ['Hot-works permit obtained where required by the site.', 'Combustibles removed or screened; fire extinguisher to hand.', 'Fire watch maintained and a 60-minute post-works check carried out.', 'Welding screens, local extraction / RPE for fume, and full welding PPE used by competent welders.'],
+    rL: 1, rS: 4, whenWhere: 'During on-site welding / cutting' },
+  { ref: 'R08', activity: 'Use of hand and power tools', hazard: 'Cuts, entanglement, HAVS, ejected particles', who: _RAMS_R_OPS, iL: 3, iS: 3,
+    controls: ['Correct tool for the task, inspected and PAT tested; guards fitted.', 'Trained operators only; HAVS trigger-time managed.', 'Eye and hearing protection worn; 110V or battery tools preferred.'],
+    rL: 1, rS: 3, whenWhere: 'During cutting / drilling / grinding' },
+  { ref: 'R09', activity: 'Temporary electrics on site', hazard: 'Electric shock or burns', who: _RAMS_R_OPS, iL: 2, iS: 4,
+    controls: ['110V CTE or battery tools used; equipment and leads PAT tested.', 'No damaged cables; RCD protection provided.', 'Leads routed off the ground; generators sited and earthed correctly.'],
+    rL: 1, rS: 4, whenWhere: 'Throughout the works' },
+  { ref: 'R10', activity: 'Working above others / open edges', hazard: 'Falling objects striking persons below', who: _RAMS_R_ALL, iL: 3, iS: 4,
+    controls: ['Exclusion zone / barriers beneath elevated works.', 'Tool tethers / lanyards used at height; no loose materials left at edges.', 'Toe-boards or netting provided where applicable; hard hats worn.'],
+    rL: 1, rS: 4, whenWhere: 'During work at height' },
+  { ref: 'R11', activity: 'Site traffic and plant movement', hazard: 'Collision or crush by vehicles / MHE', who: _RAMS_R_ALL, iL: 2, iS: 5,
+    controls: ['Segregate pedestrians from vehicles; follow the site traffic plan.', 'Banksman for reversing and blind manoeuvres.', 'Hi-vis worn; agreed routes and speed limits observed.'],
+    rL: 1, rS: 5, whenWhere: 'During deliveries and plant use' },
+  { ref: 'R12', activity: 'Handling fabricated steel', hazard: 'Lacerations from sharp edges and swarf', who: _RAMS_R_OPS, iL: 3, iS: 2,
+    controls: ['Cut-resistant gloves worn; edges deburred.', 'Swarf and offcuts cleared regularly.', 'Care taken handling long or awkward sections.'],
+    rL: 1, rS: 2, whenWhere: 'During handling and fixing' },
+  { ref: 'R13', activity: 'Grinding / cutting / impact', hazard: 'Noise-induced hearing damage', who: _RAMS_R_OPS, iL: 3, iS: 3,
+    controls: ['Hearing protection worn in designated noisy areas.', 'Exposure time reduced; low-noise methods used where practicable.'],
+    rL: 1, rS: 2, whenWhere: 'During noisy operations' },
+  { ref: 'R14', activity: 'Grinding dust, weld fume, coatings (COSHH)', hazard: 'Respiratory irritation / exposure to substances', who: _RAMS_R_OPS, iL: 3, iS: 3,
+    controls: ['COSHH assessments held for coatings and consumables; MSDS available.', 'RPE (FFP3 / half-mask) worn for dust and fume.', 'On-tool extraction used where practicable; work in ventilated areas.'],
+    rL: 1, rS: 3, whenWhere: 'During grinding / welding / coating' },
+  { ref: 'R15', activity: 'Adverse weather / environment', hazard: 'Wind affecting lifts and work at height, cold, poor visibility', who: _RAMS_R_OPS, iL: 3, iS: 4,
+    controls: ['Weather forecast monitored.', 'Lifting and work at height suspended in high winds or poor visibility per the lift plan.', 'Appropriate clothing worn; work reassessed after adverse weather.'],
+    rL: 2, rS: 3, whenWhere: 'Throughout outdoor works' },
+  { ref: 'R16', activity: 'Restricted access (lift shafts, plant rooms)', hazard: 'Entrapment, poor egress, working in tight spaces', who: _RAMS_R_OPS, iL: 2, iS: 4,
+    controls: ['Access and egress assessed before entry; adequate lighting provided.', 'Lone working avoided in restricted areas; clear escape route maintained.', 'Where a true confined space is identified, a separate permit and procedure apply.'],
+    rL: 1, rS: 4, whenWhere: 'When working in restricted areas' },
+  { ref: 'R17', activity: 'Working near services', hazard: 'Contact with overhead lines or buried / concealed services', who: _RAMS_R_OPS, iL: 2, iS: 5,
+    controls: ['Services identified from drawings and site information before work.', 'Safe clearances maintained from overhead lines; permits used near services.', 'Structure scanned before drilling or fixing.'],
+    rL: 1, rS: 5, whenWhere: 'When fixing / drilling near services' },
+  { ref: 'R18', activity: 'Site emergency / injury', hazard: 'Fire, injury or delayed emergency response', who: _RAMS_R_ALL, iL: 2, iS: 4,
+    controls: ['Site induction and emergency procedures followed; assembly point known.', 'Trained first-aider and kit on site.', 'Extinguishers provided for hot works; nearest A&E identified.'],
+    rL: 1, rS: 4, whenWhere: 'Throughout the works' }
+];
+
+// Deterministic standard boilerplate. Always included; tunable per-job later.
+const RAMS_STANDARD = {
+  plant: ['MEWP / cherry picker (as required for elevated access)', 'Telehandler or mobile crane (for mechanical lifting)', 'LOLER-inspected lifting accessories — slings, shackles, chains', '110V / battery power tools — drills, impact wrenches, grinders', 'Welding / cutting equipment (where site welding is required)', 'Hand tools, spanners, torque wrenches, spirit levels', 'Podium steps / mobile access tower (low-level work)'],
+  materials: ['Fabricated structural steelwork (as per the issued drawings)', 'Structural bolts, nuts and washers (grade as specified)', 'Anchors and fixings for connection to the substrate', 'Touch-up paint / galvanising repair (as required)'],
+  ppe: ['Hard hat', 'Safety boots (steel toe/midsole)', 'Hi-vis clothing', 'Safety glasses', 'Gloves (cut-resistant / handling)', 'Hearing protection (in noisy areas)', 'RPE (for dust / fume)', 'Full-body harness and lanyard (for MEWP / work at height)', 'Welding PPE (where hot works are carried out)'],
+  access: ['Access to and around the work area agreed with the principal contractor at induction.', 'MEWP, scaffold or mobile tower used for work at height as the primary access.', 'Exclusion zones set up beneath elevated works and around lifting operations.', 'Emergency escape routes kept clear at all times.'],
+  environment: ['Waste segregated and removed to the designated site waste points.', 'Offcuts and swarf collected and disposed of responsibly.', 'Fuels, oils and coatings stored and handled to prevent spillage; spill kit available.', 'Noise and dust minimised so far as reasonably practicable.'],
+  monitoring: ['This RAMS is briefed to all operatives before work starts and recorded in Appendix B.', 'Supervisor to monitor compliance throughout and stop work if conditions change.', 'RAMS reviewed if the scope, method, personnel or site conditions change materially.']
+};
+
+const _ramsRiskFill = r => (r <= 6 ? [212, 237, 218] : r <= 12 ? [255, 243, 205] : [248, 215, 218]);
+
+// Native RAMS renderer. Returns a Blob. `rams` is assembled from the editable
+// modal fields (+ personnel roster, site-plan image, and the risk library).
+function drawRamsPDF(jsPDF, rams, logoDataUri) {
+  const s = (typeof _pickTplSettings === 'function') ? _pickTplSettings() : null;
+  const g = (s && s.global) || (typeof TEMPLATE_DEFAULTS !== 'undefined' ? TEMPLATE_DEFAULTS.global
+    : { companyName: 'BAMA FABRICATION', address: '', phone: '', email: '', vatNumber: '' });
+  const accent = (typeof hexToRgb === 'function' && hexToRgb((s && s.deliveryNote && s.deliveryNote.accentColor) || '#ff6b00')) || [255, 107, 0];
+
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  try {
+    doc.setProperties({
+      title: `${rams.docNo || 'RAMS'}${rams.title ? ' — ' + rams.title : ''}`,
+      subject: 'Risk Assessment & Method Statement',
+      author: 'BAMA Fabrication', creator: 'BAMA Fabrication ERP'
+    });
+  } catch (e) { /* non-critical */ }
+
+  const pageW = 210, pageH = 297, marginL = 14, marginR = 14, marginB = 16;
+  const usableW = pageW - marginL - marginR;
+  const TEXT = [34, 34, 34], MUTED = [90, 90, 90], RULE = [204, 204, 204], HEADFILL = [242, 242, 242];
+  const setText = c => doc.setTextColor(c[0], c[1], c[2]);
+  const setFill = c => doc.setFillColor(c[0], c[1], c[2]);
+  const setDraw = c => doc.setDrawColor(c[0], c[1], c[2]);
+  let y = marginL;
+
+  const newPage = () => { doc.addPage(); y = marginL; };
+  const ensureSpace = h => { if (y + h > pageH - marginB) newPage(); };
+
+  const sectionHeading = (txt) => {
+    ensureSpace(12); y += 2;
+    setDraw(accent); doc.setLineWidth(0.8); doc.line(marginL, y, marginL + 14, y);
+    setText(accent); doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
+    doc.text(String(txt).toUpperCase(), marginL, y + 4.5);
+    y += 8;
+  };
+  const para = (txt, opts) => {
+    opts = opts || {};
+    const size = opts.size || 9.5, lh = opts.lh || 4.4;
+    setText(opts.color || TEXT); doc.setFont('helvetica', opts.bold ? 'bold' : (opts.italic ? 'italic' : 'normal'));
+    doc.setFontSize(size);
+    doc.splitTextToSize(String(txt), usableW).forEach(ln => { ensureSpace(lh + 1); doc.text(ln, marginL, y + 3); y += lh; });
+  };
+  const list = (items, numbered) => {
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); setText(TEXT);
+    const indent = numbered ? 7 : 5;
+    items.forEach((it, i) => {
+      const marker = numbered ? `${i + 1}.` : '\u2022';
+      const lines = doc.splitTextToSize(String(it), usableW - indent);
+      const h = lines.length * 4.4 + 1.5;
+      ensureSpace(h);
+      setText(MUTED); doc.text(marker, marginL, y + 3);
+      setText(TEXT); lines.forEach((ln, j) => doc.text(ln, marginL + indent, y + 3 + j * 4.4));
+      y += h;
+    });
+    y += 2;
+  };
+
+  // ═══ HEADER ═══
+  let leftY = y, logoDrawn = false;
+  if (logoDataUri) {
+    try {
+      const RENDER_W = 52;
+      const props = doc.getImageProperties(logoDataUri);
+      const ratio = (props && props.width && props.height) ? (props.width / props.height) : (52 / 24);
+      const renderH = RENDER_W / ratio;
+      doc.addImage(logoDataUri, props.fileType || 'PNG', marginL, y, RENDER_W, renderH, undefined, 'FAST');
+      leftY = y + renderH + 3; logoDrawn = true;
+    } catch (e) { logoDrawn = false; }
+  }
+  if (!logoDrawn) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(19); setText(accent);
+    doc.text(g.companyName || 'BAMA FABRICATION', marginL, y + 7); leftY = y + 13;
+  }
+  setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
+  const coLines = [];
+  if (g.address) String(g.address).split('\n').forEach(l => coLines.push(l));
+  if (g.phone) coLines.push('Tel: ' + g.phone);
+  if (g.email) coLines.push(g.email);
+  coLines.forEach(l => { doc.text(String(l), marginL, leftY + 2.5); leftY += 3.6; });
+
+  doc.setFont('helvetica', 'bolditalic'); doc.setFontSize(16); setText(accent);
+  doc.text('RAMS', pageW - marginR, y + 6, { align: 'right' });
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); setText(MUTED);
+  doc.text('Risk Assessment & Method Statement', pageW - marginR, y + 10.5, { align: 'right' });
+
+  let rightY = y + 16;
+  const metaRows = [
+    { label: 'Document No:', value: rams.docNo },
+    { label: 'Revision:', value: rams.rev },
+    { label: 'Date:', value: rams.dateStr },
+    { label: 'Prepared by:', value: rams.preparedBy }
+  ].filter(r => r.value != null && String(r.value).trim() !== '');
+  doc.setFontSize(8.5);
+  for (const r of metaRows) {
+    setText(TEXT); doc.setFont('helvetica', 'bold');
+    doc.text(r.label, pageW - marginR - 40, rightY, { align: 'right' });
+    doc.setFont('helvetica', 'normal');
+    const vLines = doc.splitTextToSize(String(r.value), 40);
+    doc.text(vLines[0] || '', pageW - marginR, rightY, { align: 'right' });
+    rightY += 4.2 * Math.max(1, vLines.length);
+  }
+  y = Math.max(leftY + 2.5, rightY) + 2;
+  setDraw(TEXT); doc.setLineWidth(0.5); doc.line(marginL, y, pageW - marginR, y);
+  y += 6;
+
+  // ═══ PROJECT DETAILS ═══
+  const detailRows = [
+    ['Contract / Project', rams.contract],
+    ['Works title', rams.title],
+    ['Client', rams.client],
+    ['Principal contractor', rams.principal],
+    ['Contract No', rams.contractNo],
+    ['Drawing reference', rams.drawingRef],
+    ['Site', rams.site && rams.site.name],
+    ['Site address', (rams.site && rams.site.lines || []).join(', ')],
+    ['Site contact', [rams.site && rams.site.contactName, rams.site && rams.site.contactPhone].filter(Boolean).join(' \u00b7 ')],
+    ['Working hours', rams.hours],
+    ['Nearest A&E', rams.ae]
+  ].filter(r => r[1] != null && String(r[1]).trim() !== '');
+  const labX = marginL, valX = marginL + 44;
+  doc.setFontSize(9);
+  for (const [lab, val] of detailRows) {
+    const vLines = doc.splitTextToSize(String(val), usableW - 44);
+    const h = Math.max(4.6, vLines.length * 4.4);
+    ensureSpace(h);
+    setText(MUTED); doc.setFont('helvetica', 'bold'); doc.text(lab, labX, y + 3);
+    setText(TEXT); doc.setFont('helvetica', 'normal');
+    vLines.forEach((ln, i) => doc.text(ln, valX, y + 3 + i * 4.4));
+    y += h;
+  }
+  y += 2;
+
+  // ═══ 1. SCOPE ═══
+  if ((rams.scopeLines || []).length) { sectionHeading('1. Scope of Works'); list(rams.scopeLines, true); }
+
+  // ═══ 2. PROGRAMME ═══
+  sectionHeading('2. Programme & Working Hours');
+  para(rams.hours
+    ? `Works will be carried out during the following hours: ${rams.hours}. Actual dates and durations to be confirmed with the principal contractor and coordinated at site induction.`
+    : 'Working hours and programme to be confirmed with the principal contractor at site induction.');
+
+  // ═══ 3. SEQUENCE ═══
+  if ((rams.tasks || []).length) {
+    sectionHeading('3. Sequence of Works');
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
+    rams.tasks.forEach((t, i) => {
+      const titleLines = doc.splitTextToSize(`${i + 1}. ${t.title}`, usableW - 2);
+      const detailLines = t.detail ? doc.splitTextToSize(t.detail, usableW - 7) : [];
+      const h = titleLines.length * 4.6 + detailLines.length * 4.4 + 2.5;
+      ensureSpace(h);
+      setText(TEXT); doc.setFont('helvetica', 'bold');
+      titleLines.forEach((ln, j) => doc.text(ln, marginL, y + 3 + j * 4.6));
+      const yy = y + 3 + titleLines.length * 4.6;
+      if (detailLines.length) {
+        setText([70, 70, 70]); doc.setFont('helvetica', 'normal');
+        detailLines.forEach((ln, j) => doc.text(ln, marginL + 7, yy + j * 4.4));
+      }
+      y += h;
+    });
+    y += 1;
+  }
+
+  // ═══ 4. KEY PERSONNEL ═══
+  sectionHeading('4. Key Personnel & Competency');
+  const people = rams.personnel || [];
+  if (people.length) {
+    const cols = [
+      { title: 'Name', w: 42 }, { title: 'Site role', w: 40 }, { title: 'Type', w: 24 },
+      { title: 'Company', w: 32 }, { title: 'Certifications', w: usableW - 42 - 40 - 24 - 32 }
+    ];
+    let cx = marginL; cols.forEach(c => { c.x = cx; cx += c.w; });
+    const cell = (c, txt, yy) => doc.text(String(txt == null ? '' : txt), c.x + 1.5, yy);
+    const drawHead = () => {
+      setFill(HEADFILL); doc.rect(marginL, y, usableW, 6.5, 'F');
+      setDraw(RULE); doc.setLineWidth(0.2); doc.rect(marginL, y, usableW, 6.5);
+      setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
+      cols.forEach(c => cell(c, c.title, y + 4.4));
+      y += 6.5;
+    };
+    ensureSpace(14); drawHead();
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+    for (const p of people) {
+      const wrap = (t, c) => doc.splitTextToSize(String(t || ''), c.w - 3);
+      const nameL = wrap(p.name, cols[0]);
+      const roleL = wrap(p.site_role || p.role || '\u2014', cols[1]);
+      const typeL = wrap(p.type === 'subcontractor' ? 'Subcontractor' : 'Staff', cols[2]);
+      const compL = wrap(p.type === 'subcontractor' ? (p.company || '\u2014') : '\u2014', cols[3]);
+      const certL = wrap((p.certs || []).join(', ') || '\u2014', cols[4]);
+      const n = Math.max(nameL.length, roleL.length, typeL.length, compL.length, certL.length, 1);
+      const rowH = n * 4 + 2;
+      if (y + rowH > pageH - marginB) { newPage(); drawHead(); doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); }
+      const b = y + 4;
+      setText(TEXT);
+      doc.setFont('helvetica', 'bold'); nameL.forEach((l, i) => cell(cols[0], l, b + i * 4)); doc.setFont('helvetica', 'normal');
+      roleL.forEach((l, i) => cell(cols[1], l, b + i * 4));
+      typeL.forEach((l, i) => cell(cols[2], l, b + i * 4));
+      compL.forEach((l, i) => cell(cols[3], l, b + i * 4));
+      certL.forEach((l, i) => cell(cols[4], l, b + i * 4));
+      setDraw(RULE); doc.setLineWidth(0.15); doc.line(marginL, y + rowH, pageW - marginR, y + rowH);
+      y += rowH;
+    }
+    y += 3;
+  } else {
+    para('Site personnel to be confirmed at induction. All operatives to hold valid CSCS (or equivalent) and task-specific competency cards.', { italic: true, color: MUTED, size: 9 });
+  }
+
+  // ═══ 5–10. STANDARD SECTIONS ═══
+  sectionHeading('5. Plant, Equipment & Materials');
+  para('Plant & equipment:', { bold: true, size: 9.5 }); list(RAMS_STANDARD.plant, false);
+  para('Materials:', { bold: true, size: 9.5 }); list(RAMS_STANDARD.materials, false);
+
+  sectionHeading('6. Personal Protective Equipment (PPE)');
+  para('The following PPE is mandatory / task-specific as noted. Minimum site PPE (hard hat, boots, hi-vis, glasses, gloves) worn at all times:', { size: 9 });
+  list(RAMS_STANDARD.ppe, false);
+
+  sectionHeading('7. Access & Egress'); list(RAMS_STANDARD.access, false);
+  sectionHeading('8. Environmental & Waste'); list(RAMS_STANDARD.environment, false);
+
+  sectionHeading('9. Emergency Arrangements');
+  list([
+    'On discovering an emergency, raise the alarm and follow the site emergency procedure.',
+    'Make the area safe if it is safe to do so; do not put yourself at risk.',
+    'Trained first-aider and first-aid kit available on site.',
+    rams.ae ? `Nearest A&E: ${rams.ae}.` : 'Nearest A&E to be confirmed at site induction.',
+    'Report all accidents, incidents and near-misses to the site manager and BAMA office.'
+  ], false);
+
+  sectionHeading('10. Monitoring & Review'); list(RAMS_STANDARD.monitoring, false);
+
+  if (rams.notes && String(rams.notes).trim()) { sectionHeading('11. Additional Notes'); para(rams.notes); }
+
+  // ═══ SITE PLAN ═══
+  if (rams.sitePlanDataUri) {
+    sectionHeading('Site Plan');
+    try {
+      const props = doc.getImageProperties(rams.sitePlanDataUri);
+      const maxW = usableW, maxH = 170;
+      let w = maxW, h = (props && props.width && props.height) ? maxW * (props.height / props.width) : maxW * 0.6;
+      if (h > maxH) { h = maxH; w = (props && props.width && props.height) ? maxH * (props.width / props.height) : maxH * 1.4; }
+      ensureSpace(h + 4);
+      const px = marginL + (usableW - w) / 2;
+      doc.addImage(rams.sitePlanDataUri, props.fileType || 'PNG', px, y, w, h, undefined, 'FAST');
+      setDraw(RULE); doc.setLineWidth(0.3); doc.rect(px, y, w, h);
+      y += h + 4;
+    } catch (e) { para('(Site plan image could not be embedded.)', { italic: true, color: MUTED, size: 8.5 }); }
+  }
+
+  // ═══ APPENDIX A — RISK ASSESSMENT ═══
+  newPage();
+  sectionHeading('Appendix A — Risk Assessment');
+  para('Risk rating R = Likelihood (L, 1\u20135) \u00d7 Severity (S, 1\u20135). "Initial" is the risk before controls; "Residual" is the risk with the controls below applied. Bands: 1\u20136 low, 7\u201312 medium, 13\u201325 high.', { size: 8, color: MUTED });
+  y += 1;
+
+  const risks = rams.risks && rams.risks.length ? rams.risks : RAMS_RISK_LIBRARY;
+  const rc = [
+    { key: 'ref', title: 'Ref', w: 9, align: 'left' },
+    { key: 'haz', title: 'Activity / Hazard', w: 40, align: 'left' },
+    { key: 'who', title: 'At risk', w: 22, align: 'left' },
+    { key: 'iL', title: 'L', w: 6, align: 'center' },
+    { key: 'iS', title: 'S', w: 6, align: 'center' },
+    { key: 'iR', title: 'R', w: 7, align: 'center' },
+    { key: 'ctrl', title: 'Control measures', w: 0, align: 'left' },
+    { key: 'rL', title: 'L', w: 6, align: 'center' },
+    { key: 'rS', title: 'S', w: 6, align: 'center' },
+    { key: 'rR', title: 'R', w: 7, align: 'center' }
+  ];
+  rc.find(c => c.key === 'ctrl').w = usableW - rc.reduce((a, c) => a + c.w, 0);
+  let rx = marginL; rc.forEach(c => { c.x = rx; rx += c.w; });
+  const rcell = (c, txt, yy) => {
+    const str = String(txt == null ? '' : txt);
+    if (c.align === 'center') doc.text(str, c.x + c.w / 2, yy, { align: 'center' });
+    else doc.text(str, c.x + 1.3, yy);
+  };
+  const drawRiskHead = () => {
+    setFill([232, 232, 232]);
+    const iL = rc.find(c => c.key === 'iL'), iR = rc.find(c => c.key === 'iR');
+    const rL = rc.find(c => c.key === 'rL'), rR = rc.find(c => c.key === 'rR');
+    doc.rect(iL.x, y, (iR.x + iR.w) - iL.x, 4.6, 'F');
+    doc.rect(rL.x, y, (rR.x + rR.w) - rL.x, 4.6, 'F');
+    setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5);
+    doc.text('INITIAL', (iL.x + iR.x + iR.w) / 2, y + 3.2, { align: 'center' });
+    doc.text('RESIDUAL', (rL.x + rR.x + rR.w) / 2, y + 3.2, { align: 'center' });
+    y += 4.6;
+    setFill(HEADFILL); doc.rect(marginL, y, usableW, 6, 'F');
+    setDraw(RULE); doc.setLineWidth(0.2); doc.rect(marginL, y, usableW, 6);
+    setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5);
+    rc.forEach(c => rcell(c, c.title, y + 4));
+    y += 6;
+  };
+  ensureSpace(20); drawRiskHead();
+
+  for (const r of risks) {
+    const iR = r.iL * r.iS, rR = r.rL * r.rS;
+    const hazL = doc.splitTextToSize(`${r.activity ? r.activity + ' \u2014 ' : ''}${r.hazard}`, rc[1].w - 2.5);
+    const whoL = doc.splitTextToSize(String(r.who || ''), rc[2].w - 2.5);
+    const ctrlCol = rc.find(c => c.key === 'ctrl');
+    let ctrlLines = [];
+    (r.controls || []).forEach(ci => { doc.splitTextToSize('\u2022 ' + ci, ctrlCol.w - 2.5).forEach(l => ctrlLines.push(l)); });
+    if (r.whenWhere) doc.splitTextToSize('When/where: ' + r.whenWhere, ctrlCol.w - 2.5).forEach(l => ctrlLines.push(l));
+    const n = Math.max(hazL.length, whoL.length, ctrlLines.length, 1);
+    const rowH = n * 3.4 + 2.5;
+    if (y + rowH > pageH - marginB) { newPage(); drawRiskHead(); }
+    setFill(_ramsRiskFill(iR)); doc.rect(rc[5].x, y, rc[5].w, rowH, 'F');
+    setFill(_ramsRiskFill(rR)); doc.rect(rc[9].x, y, rc[9].w, rowH, 'F');
+    const b = y + 3.6;
+    setText(TEXT); doc.setFont('helvetica', 'normal'); doc.setFontSize(7.2);
+    doc.setFont('helvetica', 'bold'); rcell(rc[0], r.ref, b); doc.setFont('helvetica', 'normal');
+    hazL.forEach((l, i) => rcell(rc[1], l, b + i * 3.4));
+    whoL.forEach((l, i) => rcell(rc[2], l, b + i * 3.4));
+    rcell(rc[3], r.iL, b); rcell(rc[4], r.iS, b);
+    doc.setFont('helvetica', 'bold'); rcell(rc[5], iR, b); doc.setFont('helvetica', 'normal');
+    ctrlLines.forEach((l, i) => rcell(ctrlCol, l, b + i * 3.4));
+    rcell(rc[7], r.rL, b); rcell(rc[8], r.rS, b);
+    doc.setFont('helvetica', 'bold'); rcell(rc[9], rR, b); doc.setFont('helvetica', 'normal');
+    setDraw(RULE); doc.setLineWidth(0.15);
+    doc.line(marginL, y + rowH, pageW - marginR, y + rowH);
+    [rc[1].x, rc[2].x, rc[3].x, rc[6].x, rc[7].x].forEach(vx => doc.line(vx, y, vx, y + rowH));
+    y += rowH;
+  }
+  y += 3;
+
+  // ═══ APPENDIX B — BRIEFING REGISTER ═══
+  ensureSpace(40);
+  sectionHeading('Appendix B — Briefing Register');
+  para('I confirm that I have read, or have had explained to me, this Risk Assessment & Method Statement and I understand its contents and will comply with it.', { size: 8.5, color: MUTED });
+  y += 1;
+  const bc = [
+    { title: 'Name', w: 55 }, { title: 'Company', w: 40 },
+    { title: 'Signature', w: usableW - 55 - 40 - 30 }, { title: 'Date', w: 30 }
+  ];
+  let bx = marginL; bc.forEach(c => { c.x = bx; bx += c.w; });
+  const drawRegHead = () => {
+    setFill(HEADFILL); doc.rect(marginL, y, usableW, 6.5, 'F');
+    setDraw(RULE); doc.setLineWidth(0.2); doc.rect(marginL, y, usableW, 6.5);
+    setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
+    bc.forEach(c => doc.text(c.title, c.x + 1.5, y + 4.3));
+    y += 6.5; doc.setFont('helvetica', 'normal');
+  };
+  drawRegHead();
+  const roster = rams.personnel || [];
+  const rowH2 = 8;
+  for (let i = 0; i < 12; i++) {
+    if (y + rowH2 > pageH - marginB) { newPage(); drawRegHead(); }
+    setDraw(RULE); doc.setLineWidth(0.15); doc.rect(marginL, y, usableW, rowH2);
+    bc.forEach(c => { if (c.x > marginL) doc.line(c.x, y, c.x, y + rowH2); });
+    const p = roster[i];
+    if (p) {
+      setText([70, 70, 70]); doc.setFontSize(8.5);
+      doc.text(String(p.name || ''), bc[0].x + 1.5, y + 5.2);
+      doc.text(String(p.type === 'subcontractor' ? (p.company || '') : 'BAMA Fabrication'), bc[1].x + 1.5, y + 5.2);
+    }
+    y += rowH2;
+  }
+
+  // ═══ FOOTER ═══
+  const pageCount = doc.internal.getNumberOfPages();
+  for (let p = 1; p <= pageCount; p++) {
+    doc.setPage(p);
+    setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
+    doc.text(`${rams.docNo || 'RAMS'}${rams.rev ? ' \u00b7 Rev ' + rams.rev : ''}`, marginL, pageH - 9);
+    doc.text(`Page ${p} of ${pageCount}`, pageW - marginR, pageH - 9, { align: 'right' });
+  }
+
+  return doc.output('blob');
+}
+
+async function renderRamsPdfBlob(rams) {
+  const JsPDFCtor = await resolveJsPDFCtor();
+  if (!JsPDFCtor) throw new Error('PDF library failed to load');
+  const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
+  const blob = drawRamsPDF(JsPDFCtor, rams, logo);
+  console.log('[RAMS PDF] blob size:', blob.size, 'bytes (native jsPDF)');
+  if (blob.size < 8000) console.warn('[RAMS PDF] blob suspiciously small (<8KB) — check capture');
+  return blob;
+}
+
+// Assemble the (editable) modal fields into a rams object, render natively, and
+// open the PDF for review. SharePoint save + a 'rams' drawing-elements context
+// land in phase 6 — this phase proves the document renders correctly.
+async function confirmRams() {
+  const btn = document.getElementById('ramsConfirmBtn');
+  if (btn) { btn.disabled = true; btn.style.opacity = '.5'; }
+  try {
+    await loadLogoDataUri();
+    const getV = id => (document.getElementById(id)?.value || '').trim();
+    const dateRaw = getV('ramsDate');
+    const dateStr = dateRaw
+      ? new Date(dateRaw + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+      : '';
+
+    // Sequence tasks: "Title: detail" per line (detail optional).
+    const tasks = getV('ramsTasksText').split('\n').map(l => l.trim()).filter(Boolean).map(line => {
+      const idx = line.indexOf(':');
+      return idx > 0
+        ? { title: line.slice(0, idx).trim(), detail: line.slice(idx + 1).trim() }
+        : { title: line, detail: '' };
+    });
+
+    // Personnel: prefer the structured roster selection; fall back to the
+    // freeform textarea if the roster API was unavailable.
+    if (typeof ramsSerializePersonnel === 'function') { try { ramsSerializePersonnel(); } catch (e) {} }
+    let personnel = (typeof _ramsSelectedPersonnel !== 'undefined' && Array.isArray(_ramsSelectedPersonnel))
+      ? _ramsSelectedPersonnel.slice() : [];
+    if (!personnel.length) {
+      personnel = getV('ramsPersonnel').split('\n').map(l => l.trim()).filter(Boolean).map(line => {
+        const parts = line.split('\u2014').map(p => p.trim());
+        return { name: parts[0] || line, site_role: parts[1] || '', type: 'staff', company: '', certs: parts[2] ? parts[2].split(',').map(c => c.trim()).filter(Boolean) : [] };
+      });
+    }
+
+    const rams = {
+      createdAt: new Date().toISOString(),
+      docNo: getV('ramsDocNo'),
+      contractNo: getV('ramsContractNo'),
+      contract: getV('ramsContract'),
+      title: getV('ramsTitle'),
+      client: getV('ramsClient'),
+      principal: getV('ramsPrincipal'),
+      preparedBy: getV('ramsPreparedBy'),
+      dateStr,
+      rev: getV('ramsRev'),
+      tier: getV('ramsTier') || 'complex',
+      drawingRef: getV('ramsDrawingRef'),
+      site: {
+        name: getV('ramsSiteName'),
+        lines: getV('ramsSiteAddr').split('\n').map(l => l.trim()).filter(Boolean),
+        contactName: getV('ramsSiteContact'),
+        contactPhone: getV('ramsSitePhone')
+      },
+      hours: getV('ramsHours'),
+      ae: getV('ramsAE'),
+      scopeLines: getV('ramsScopeText').split('\n').map(l => l.trim()).filter(Boolean),
+      tasks,
+      personnel,
+      risks: RAMS_RISK_LIBRARY,
+      sitePlanDataUri: (typeof _ramsSitePlanDataUri !== 'undefined' && _ramsSitePlanDataUri) || null,
+      notes: getV('ramsNotes')
+    };
+
+    if (!rams.scopeLines.length && !rams.tasks.length) {
+      toast('Add a scope of works or a sequence of works before generating.', 'error');
+      if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+      return;
+    }
+
+    const blob = await renderRamsPdfBlob(rams);
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+
+    toast('RAMS PDF generated \u2014 review it in the new tab. (SharePoint save arrives in a later phase.)', 'success');
+  } catch (e) {
+    toast('RAMS generation failed: ' + e.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+  }
 }
 
 // AI step — read the selected drawing(s) and draft the numbered Scope of Work.
