@@ -870,6 +870,33 @@ function renderKioskFabrication() {
   }
   chips.innerHTML = chipsHtml;
 
+  // Bulk-select toolbar (kiosk). Mirrors the projects.html one.
+  _bulkSurface = 'kiosk';
+  const filteredForBulk = (_kioskFabFilter === '__all__' ? _kioskFabData
+    : _kioskFabData.filter(a => a.project_number === _kioskFabFilter));
+  const nonTermKiosk = filteredForBulk.filter(a => !asmIsTerminal(a));
+  let bulkBar = '';
+  if (nonTermKiosk.length > 1) {
+    if (!_bulkSelectMode) {
+      bulkBar = `<div style="display:flex;justify-content:flex-end;margin:4px 0 8px">
+        <button class="btn btn-ghost" style="padding:5px 14px;font-size:12px" onclick="toggleBulkSelect()">&#9745; Select multiple</button>
+      </div>`;
+    } else {
+      const selCount = filteredForBulk.filter(a => _bulkSelected.has(a.id)).length;
+      const visibleIds = JSON.stringify(nonTermKiosk.map(a => a.id));
+      bulkBar = `<div style="position:sticky;top:0;z-index:6;background:var(--bg,#1a1a1a);border:1px solid var(--accent);border-radius:10px;padding:10px 14px;margin:4px 0 10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-weight:700;color:var(--accent)">${selCount} selected</span>
+        <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick='bulkSelectAllVisible(${visibleIds})'>Select all</button>
+        <span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn btn-primary" style="padding:5px 12px;font-size:11px${selCount ? '' : ';opacity:.4;pointer-events:none'}" onclick="openBulkStageModal('fab', _kioskFabData, 'kiosk')">&#128296; Fab</button>
+          <button class="btn btn-primary" style="padding:5px 12px;font-size:11px;background:rgba(234,179,8,.9);border-color:rgba(234,179,8,.9)${selCount ? '' : ';opacity:.4;pointer-events:none'}" onclick="openBulkStageModal('weld', _kioskFabData, 'kiosk')">&#128293; Weld</button>
+          <button class="btn btn-primary" style="padding:5px 12px;font-size:11px${selCount ? '' : ';opacity:.4;pointer-events:none'}" onclick="openBulkStageModal('complete', _kioskFabData, 'kiosk')">&#10003; Complete</button>
+          <button class="btn btn-ghost" style="padding:5px 12px;font-size:11px" onclick="toggleBulkSelect()">Cancel</button>
+        </span>
+      </div>`;
+    }
+  }
+
   // Filter + group rendered list by project+job
   const filtered = _kioskFabFilter === '__all__'
     ? _kioskFabData
@@ -888,7 +915,7 @@ function renderKioskFabrication() {
     groups.get(key).items.push(a);
   }
 
-  let html = '';
+  let html = bulkBar;
   for (const g of groups.values()) {
     html += `<div style="font-size:11px;color:var(--subtle);text-transform:uppercase;letter-spacing:.05em;margin:14px 0 6px">
       ${escapeHtml(g.project_number)}${g.project_name ? ` — ${escapeHtml(g.project_name)}` : ''}${g.company_name ? ` · ${escapeHtml(g.company_name)}` : ''} &middot; ${escapeHtml(g.job_name)}
@@ -974,15 +1001,26 @@ function renderKioskFabCard(a) {
     if (bom > 0)   chips += chip(`${bom} on BOM`, 'var(--green)', 'rgba(62,207,142,.12)');
   }
 
-  return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;${isFab ? 'opacity:.55;' : ''}">
+  // Bulk-select checkbox (kiosk). Non-terminal cards only.
+  const selectable = _bulkSelectMode && !isFab;
+  const picked = _bulkSelected.has(a.id);
+  const checkbox = selectable
+    ? `<span onclick="event.stopPropagation();toggleBulkPick(${a.id})" style="cursor:pointer;width:22px;height:22px;border-radius:5px;border:2px solid ${picked ? 'var(--accent)' : 'var(--border)'};background:${picked ? 'var(--accent)' : 'transparent'};display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:14px;flex:0 0 auto">${picked ? '&#10003;' : ''}</span>`
+    : '';
+  const cardClick = selectable ? `onclick="toggleBulkPick(${a.id})" style="cursor:pointer"` : '';
+  // In select mode, hide the per-card action buttons to avoid confusion.
+  const shownActions = _bulkSelectMode ? '' : actions;
+
+  return `<div ${cardClick} style="background:var(--surface);border:1px solid ${picked ? 'var(--accent)' : 'var(--border)'};border-radius:10px;padding:12px 14px;${isFab ? 'opacity:.55;' : ''}">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      ${checkbox}
       <span style="font-family:var(--font-mono);font-size:15px;font-weight:700;color:${isFab ? 'var(--text)' : 'var(--accent)'};min-width:50px">${escapeHtml(a.assembly_mark)}</span>
       <span style="font-size:13px;color:var(--text);min-width:60px">${Number(a.quantity)} off</span>
       ${finishBadge}
       <span style="display:flex;gap:6px;flex-wrap:wrap">${chips}</span>
-      ${actions}
+      ${shownActions}
     </div>
-    ${partsHtml}
+    ${_bulkSelectMode ? '' : partsHtml}
   </div>`;
 }
 
@@ -14086,6 +14124,32 @@ function renderAssembly() {
 
   let html = '';
 
+  // Bulk-select toolbar. Only offered when there's more than one assembly and
+  // the job isn't closed. In select mode, a floating action bar appears.
+  const nonTerminal = assemblies.filter(a => !asmIsTerminal(a));
+  if (currentJob && currentJob.status !== 'closed' && assemblies.length > 1) {
+    _bulkSurface = 'projects';
+    if (!_bulkSelectMode) {
+      html += `<div style="display:flex;justify-content:flex-end;margin-bottom:8px">
+        <button class="btn btn-ghost" style="padding:5px 14px;font-size:12px" onclick="toggleBulkSelect()">&#9745; Select multiple</button>
+      </div>`;
+    } else {
+      const selCount = assemblies.filter(a => _bulkSelected.has(a.id)).length;
+      const selPieces = assemblies.filter(a => _bulkSelected.has(a.id)).reduce((s, a) => s + asmToFab(a) + asmReadyToWeld(a), 0);
+      const visibleIds = JSON.stringify(nonTerminal.map(a => a.id));
+      html += `<div style="position:sticky;top:0;z-index:5;background:var(--bg,#1a1a1a);border:1px solid var(--accent);border-radius:10px;padding:10px 14px;margin-bottom:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-weight:700;color:var(--accent)">${selCount} selected</span>
+        <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick='bulkSelectAllVisible(${visibleIds})'>Select all</button>
+        <span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn btn-primary" style="padding:5px 12px;font-size:11px${selCount ? '' : ';opacity:.4;pointer-events:none'}" onclick="openBulkStageModal('fab', _assembliesByJob[${jobId}], 'projects')">&#128296; Fab</button>
+          <button class="btn btn-primary" style="padding:5px 12px;font-size:11px;background:rgba(234,179,8,.9);border-color:rgba(234,179,8,.9)${selCount ? '' : ';opacity:.4;pointer-events:none'}" onclick="openBulkStageModal('weld', _assembliesByJob[${jobId}], 'projects')">&#128293; Weld</button>
+          <button class="btn btn-primary" style="padding:5px 12px;font-size:11px${selCount ? '' : ';opacity:.4;pointer-events:none'}" onclick="openBulkStageModal('complete', _assembliesByJob[${jobId}], 'projects')">&#10003; Complete</button>
+          <button class="btn btn-ghost" style="padding:5px 12px;font-size:11px" onclick="toggleBulkSelect()">Cancel</button>
+        </span>
+      </div>`;
+    }
+  }
+
   // Drop zone (draftsman only, job not closed)
   if (isDraftsman && currentJob && currentJob.status !== 'closed') {
     html += `
@@ -14137,9 +14201,19 @@ function renderAssembly() {
       if (bom > 0)   progressChips += chip(`${bom} on BOM`, 'var(--green)', 'rgba(62,207,142,.12)');
     }
 
-    // Header line — always visible
-    html += `<div class="task-card ${isFabricated ? 'complete' : ''}" style="${isFabricated ? 'opacity:.65;' : ''}">
-      <div class="task-header" style="cursor:pointer" onclick="this.nextElementSibling.classList.toggle('collapsed')">
+    // Header line — always visible. In bulk-select mode the whole header
+    // toggles selection instead of expanding; terminal cards aren't selectable.
+    const selectable = _bulkSelectMode && !isFabricated;
+    const picked = _bulkSelected.has(a.id);
+    const headerClick = selectable
+      ? `toggleBulkPick(${a.id})`
+      : `this.nextElementSibling.classList.toggle('collapsed')`;
+    const checkbox = selectable
+      ? `<span style="width:20px;height:20px;border-radius:5px;border:2px solid ${picked ? 'var(--accent)' : 'var(--border)'};background:${picked ? 'var(--accent)' : 'transparent'};display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:13px;flex:0 0 auto">${picked ? '&#10003;' : ''}</span>`
+      : '';
+    html += `<div class="task-card ${isFabricated ? 'complete' : ''}" style="${isFabricated ? 'opacity:.65;' : ''}${picked ? 'outline:2px solid var(--accent);outline-offset:1px;' : ''}">
+      <div class="task-header" style="cursor:pointer" onclick="${headerClick}">
+        ${checkbox}
         <div style="font-family:var(--font-mono);font-size:15px;font-weight:700;color:${isFabricated ? 'var(--text)' : 'var(--accent)'};min-width:48px">${escapeHtml(a.assembly_mark)}</div>
         <div style="font-size:13px;color:var(--text);min-width:60px">${Number(a.quantity)} off</div>
         ${finishBadge}
@@ -14149,7 +14223,7 @@ function renderAssembly() {
           : `<span style="margin-left:auto"></span>`
         }
       </div>
-      <div class="task-body${isFabricated ? ' collapsed' : ''}">`;
+      <div class="task-body${isFabricated || _bulkSelectMode ? ' collapsed' : ''}">`;
 
     // Parts table
     if (a.parts && a.parts.length) {
@@ -15878,6 +15952,196 @@ async function openMarkFabricatedModal(assemblyId, opts) {
   return openStageActionModal('complete', assemblyId, opts);
 }
 function closeMarkFabricatedModal() { return closeStageActionModal(); }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BULK STAGE MARKING — tick many assemblies, mark fab/weld/complete in one go.
+//
+// Selection state is a Set of assembly ids, plus a flag for which surface
+// (projects vs kiosk) is in select mode so the two don't collide. The bulk
+// modal shows a per-assembly qty box pre-filled to that stage's remaining
+// (editable), skipping assemblies with nothing left for the chosen stage.
+// One optional operator + machine is applied to the whole batch. Confirm runs
+// the per-assembly calls sequentially with a progress toast.
+// ═══════════════════════════════════════════════════════════════════════════
+let _bulkSelectMode = false;         // projects.html Assembly section
+let _bulkSelected = new Set();       // assembly ids
+let _bulkStage = null;               // 'fab' | 'weld' | 'complete'
+let _bulkRows = [];                  // [{assembly, max, qty}]
+let _bulkSurface = 'projects';       // 'projects' | 'kiosk' — which refresh path
+
+// Remaining pieces available for a given stage on an assembly.
+function stageRemaining(a, stage) {
+  if (stage === 'fab')      return asmToFab(a);
+  if (stage === 'weld')     return asmReadyToWeld(a);
+  return asmToFab(a); // complete = raw remaining
+}
+
+// projects.html: toggle select mode on the Assembly section.
+function toggleBulkSelect() {
+  _bulkSelectMode = !_bulkSelectMode;
+  if (!_bulkSelectMode) _bulkSelected.clear();
+  renderAssembly();
+}
+
+function toggleBulkPick(id) {
+  id = parseInt(id);
+  if (_bulkSelected.has(id)) _bulkSelected.delete(id);
+  else _bulkSelected.add(id);
+  // Re-render just enough — cheap to re-render the whole section.
+  if (_bulkSurface === 'kiosk') renderKioskFabrication();
+  else renderAssembly();
+}
+
+function bulkSelectAllVisible(ids) {
+  const arr = (ids || []).map(Number);
+  const allPicked = arr.length && arr.every(i => _bulkSelected.has(i));
+  if (allPicked) arr.forEach(i => _bulkSelected.delete(i));
+  else arr.forEach(i => _bulkSelected.add(i));
+  if (_bulkSurface === 'kiosk') renderKioskFabrication();
+  else renderAssembly();
+}
+
+// Open the bulk modal for a stage. `pool` is the array of candidate assemblies
+// (projects: _assembliesByJob[job]; kiosk: _kioskFabData). surface controls
+// the refresh path after confirm.
+async function openBulkStageModal(stage, pool, surface) {
+  _bulkStage = stage;
+  _bulkSurface = surface || 'projects';
+  const selected = (pool || []).filter(a => _bulkSelected.has(a.id));
+  // Only keep assemblies with something to do for this stage.
+  _bulkRows = selected
+    .map(a => ({ assembly: a, max: stageRemaining(a, stage), qty: stageRemaining(a, stage) }))
+    .filter(r => r.max > 0);
+
+  if (_bulkRows.length === 0) {
+    toast(stage === 'weld'
+      ? 'None of the selected assemblies have fabricated pieces waiting to weld.'
+      : 'None of the selected assemblies have pieces left for that action.', 'info');
+    return;
+  }
+
+  const titleMap = { fab: 'Mark fabricated — bulk', weld: 'Mark welded — bulk', complete: 'Mark complete — bulk' };
+  const opLabelMap = { fab: 'FABRICATOR (optional)', weld: 'WELDER (optional)', complete: 'WELDER (optional)' };
+  document.getElementById('bsTitle').textContent = titleMap[stage];
+  document.getElementById('bsSubtitle').textContent =
+    `${_bulkRows.length} assembl${_bulkRows.length > 1 ? 'ies' : 'y'} · qty pre-filled to all remaining — edit any box to do a partial.`;
+  document.getElementById('bsOperatorLabel').textContent = opLabelMap[stage];
+
+  // Operator dropdown (optional in bulk regardless of surface)
+  const opSel = document.getElementById('bsOperator');
+  opSel.innerHTML = '<option value="">— none —</option>';
+  const staff = (state.timesheetData.employees || [])
+    .filter(e => (e.staffType || 'workshop') === 'workshop' && e.active !== false)
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+  for (const w of staff) opSel.innerHTML += `<option value="${w.id}" data-name="${escapeHtml(w.name)}">${escapeHtml(w.name)}</option>`;
+
+  // Machine dropdown — hidden for fab
+  const machWrap = document.getElementById('bsMachineWrap');
+  if (stage === 'fab') {
+    machWrap.style.display = 'none';
+  } else {
+    machWrap.style.display = '';
+    await loadWeldingMachinesIfNeeded();
+    const machSel = document.getElementById('bsMachine');
+    machSel.innerHTML = '<option value="">— none —</option>';
+    for (const m of (_weldingMachines || [])) {
+      if (m.is_active === false) continue;
+      machSel.innerHTML += `<option value="${m.id}">${escapeHtml(m.machine_name || ('Machine #' + m.id))}</option>`;
+    }
+  }
+
+  renderBulkRows();
+  document.getElementById('bulkStageModal').classList.add('active');
+}
+
+function renderBulkRows() {
+  const list = document.getElementById('bsList');
+  let html = '';
+  for (let i = 0; i < _bulkRows.length; i++) {
+    const r = _bulkRows[i];
+    const a = r.assembly;
+    html += `<div style="display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 12px">
+      <span style="font-family:var(--font-mono);font-weight:700;color:var(--accent);min-width:50px">${escapeHtml(a.assembly_mark)}</span>
+      <span style="font-size:12px;color:var(--muted);flex:1">${Number(a.quantity)} off · ${r.max} available</span>
+      <button class="btn btn-ghost" style="padding:4px 10px;font-size:15px;line-height:1" onclick="bulkRowStep(${i},-1)">&minus;</button>
+      <input type="number" class="field-input" min="1" max="${r.max}" value="${r.qty}"
+             style="text-align:center;font-weight:700;max-width:70px" oninput="bulkRowSet(${i},this.value)">
+      <button class="btn btn-ghost" style="padding:4px 10px;font-size:15px;line-height:1" onclick="bulkRowStep(${i},1)">&plus;</button>
+    </div>`;
+  }
+  list.innerHTML = html;
+  updateBulkTotals();
+}
+
+function bulkRowStep(i, d) {
+  const r = _bulkRows[i];
+  r.qty = Math.min(r.max, Math.max(1, (r.qty || 0) + d));
+  renderBulkRows();
+}
+function bulkRowSet(i, v) {
+  const r = _bulkRows[i];
+  let n = parseInt(v);
+  if (isNaN(n)) n = 1;
+  r.qty = Math.min(r.max, Math.max(1, n));
+  updateBulkTotals();
+}
+function updateBulkTotals() {
+  const pieces = _bulkRows.reduce((s, r) => s + (r.qty || 0), 0);
+  const verb = _bulkStage === 'fab' ? 'fabricate' : _bulkStage === 'weld' ? 'weld' : 'complete';
+  document.getElementById('bsTotals').textContent =
+    `Will ${verb} ${pieces} piece${pieces !== 1 ? 's' : ''} across ${_bulkRows.length} assembl${_bulkRows.length > 1 ? 'ies' : 'y'}.`;
+}
+function closeBulkStageModal() {
+  document.getElementById('bulkStageModal').classList.remove('active');
+  _bulkStage = null;
+  _bulkRows = [];
+}
+
+async function confirmBulkStage() {
+  const stage = _bulkStage;
+  if (!stage || !_bulkRows.length) return;
+  const rows = _bulkRows.slice();
+  const pieces = rows.reduce((s, r) => s + (r.qty || 0), 0);
+  const verb = stage === 'fab' ? 'fabricated' : stage === 'weld' ? 'welded' : 'complete';
+
+  // Confirmation guard (SPEC: "you selected 5 assemblies to mark complete…")
+  if (!confirm(`Mark ${rows.length} assembl${rows.length > 1 ? 'ies' : 'y'} (${pieces} piece${pieces !== 1 ? 's' : ''}) as ${verb}?`)) return;
+
+  const opSel = document.getElementById('bsOperator');
+  const opId = opSel.value ? parseInt(opSel.value) : null;
+  const opName = opSel.selectedOptions[0]?.dataset?.name || null;
+  const machSel = document.getElementById('bsMachine');
+  const machId = (stage !== 'fab' && machSel && machSel.value) ? parseInt(machSel.value) : null;
+
+  const btn = document.getElementById('bsConfirmBtn');
+  btn.disabled = true; btn.style.opacity = '.5';
+
+  let done = 0, failed = 0;
+  for (const r of rows) {
+    const id = r.assembly.id;
+    let path, body;
+    if (stage === 'fab') { path = `/api/job-assemblies/${id}/fab`; body = { qty: r.qty, operator_id: opId, operator_name: opName }; }
+    else if (stage === 'weld') { path = `/api/job-assemblies/${id}/weld`; body = { qty: r.qty, welder_id: opId, welder_name: opName, welding_machine_id: machId }; }
+    else { path = `/api/job-assemblies/${id}/complete`; body = { qty: r.qty, operator_id: opId, operator_name: opName, welding_machine_id: machId }; }
+    try { await api.put(path, body); done++; }
+    catch (e) { failed++; console.warn(`bulk ${stage} failed for ${r.assembly.assembly_mark}:`, e.message); }
+  }
+
+  closeBulkStageModal();
+  _bulkSelected.clear();
+  _bulkSelectMode = false;
+  toast(failed
+    ? `${done} done, ${failed} failed — reloading.`
+    : `${done} assembl${done > 1 ? 'ies' : 'y'} marked ${verb}.`, failed ? 'error' : 'success');
+
+  // Refresh the right surface
+  if (_bulkSurface === 'kiosk') {
+    await loadKioskFabrication();
+  } else if (currentJob?.id) {
+    await loadJobAssemblies(parseInt(currentJob.id));
+    renderAssembly();
+  }
+}
 
 // ═══════════════════════════════════════════
 // SITE INSTALLATION: CLOSE JOB

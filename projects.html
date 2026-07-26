@@ -419,6 +419,41 @@
 </div>
 
 <!-- ═══════════════════════════════════════
+     BULK STAGE MODAL — mark many assemblies at once (fab / weld / complete)
+     Per-assembly qty box pre-filled all-remaining (editable); one optional
+     operator + machine applied to the whole batch. Functions in shared.js.
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="bulkStageModal">
+  <div class="modal" style="max-width:560px;width:96vw">
+    <div class="modal-title" style="margin-bottom:4px" id="bsTitle">Mark complete — bulk</div>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:14px" id="bsSubtitle"></div>
+
+    <div id="bsList" style="max-height:44vh;overflow-y:auto;margin-bottom:16px;display:flex;flex-direction:column;gap:8px"></div>
+
+    <div style="display:flex;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+      <div style="flex:1;min-width:140px" id="bsOperatorWrap">
+        <div class="field-label" id="bsOperatorLabel">WELDER (optional)</div>
+        <select class="field-input" id="bsOperator"></select>
+      </div>
+      <div style="flex:1;min-width:140px" id="bsMachineWrap">
+        <div class="field-label">MACHINE (optional)</div>
+        <select class="field-input" id="bsMachine"></select>
+      </div>
+    </div>
+
+    <div style="color:var(--subtle);font-size:12px;margin:6px 0 16px" id="bsTotals"></div>
+
+    <button class="btn btn-primary btn-full" id="bsConfirmBtn"
+            onclick="confirmBulkStage()" style="padding:14px;font-size:15px">
+      Confirm
+    </button>
+    <button class="btn btn-ghost btn-full" onclick="closeBulkStageModal()" style="margin-top:10px;padding:12px">
+      Cancel
+    </button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
      BOM MANUAL REVIEW MODAL (commit 9 — SPEC §6)
      Loose items OCR'd from supplier slips/quotations
 ══════════════════════════════════════════ -->
@@ -519,6 +554,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
-<script src="shared.js?v=20260726a"></script>
+<script src="shared.js?v=20260726b"></script>
 </body>
 </html>
