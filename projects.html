@@ -703,6 +703,88 @@
   </div>
 </div>
 
+<!-- RAMS GENERATOR (Site Installation) — phase 1: modal shell only. -->
+<div class="modal-overlay" id="ramsModal">
+  <div class="modal" style="width:820px;max-width:97vw;max-height:92vh;overflow-y:auto">
+    <div class="modal-title" style="margin-bottom:4px">&#128203; Generate RAMS</div>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:18px">
+      Risk Assessment &amp; Method Statement. Prefilled from the job — edit anything before generating.
+      Saves to <b>RAMS / (job name)</b> in SharePoint. <i>Phase 1: modal shell — AI &amp; PDF land in later phases.</i>
+    </div>
+
+    <!-- HEADER -->
+    <div class="field-label">HEADER</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
+      <div><label style="font-size:11px;color:var(--muted)">Contract No</label><input id="ramsContractNo" type="text" class="field-input"></div>
+      <div><label style="font-size:11px;color:var(--muted)">BAMA Doc No</label><input id="ramsDocNo" type="text" class="field-input"></div>
+      <div style="grid-column:1 / -1"><label style="font-size:11px;color:var(--muted)">Contract / Project name</label><input id="ramsContract" type="text" class="field-input"></div>
+      <div style="grid-column:1 / -1"><label style="font-size:11px;color:var(--muted)">Title / Works description</label><input id="ramsTitle" type="text" class="field-input" placeholder="e.g. Wing B Lift Steelwork"></div>
+      <div><label style="font-size:11px;color:var(--muted)">Client</label><input id="ramsClient" type="text" class="field-input"></div>
+      <div><label style="font-size:11px;color:var(--muted)">Principal Contractor</label><input id="ramsPrincipal" type="text" class="field-input"></div>
+      <div><label style="font-size:11px;color:var(--muted)">Prepared / Reviewed / Approved by</label><input id="ramsPreparedBy" type="text" class="field-input"></div>
+      <div><label style="font-size:11px;color:var(--muted)">Issue Date</label><input id="ramsDate" type="date" class="field-input"></div>
+      <div><label style="font-size:11px;color:var(--muted)">Revision</label><input id="ramsRev" type="text" class="field-input"></div>
+      <div>
+        <label style="font-size:11px;color:var(--muted)">Tier / Depth</label>
+        <select id="ramsTier" class="field-input">
+          <option value="brief">Brief</option>
+          <option value="complex" selected>Complex</option>
+          <option value="tier1">Tier 1 subcontractor</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- SITE -->
+    <div class="field-label">SITE ADDRESS &amp; DETAILS</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
+      <div style="grid-column:1 / -1"><label style="font-size:11px;color:var(--muted)">Site name</label><input id="ramsSiteName" type="text" class="field-input"></div>
+      <div style="grid-column:1 / -1"><label style="font-size:11px;color:var(--muted)">Site address (one line per row)</label><textarea id="ramsSiteAddr" class="field-input" rows="3" style="resize:vertical"></textarea></div>
+      <div><label style="font-size:11px;color:var(--muted)">Site contact</label><input id="ramsSiteContact" type="text" class="field-input"></div>
+      <div><label style="font-size:11px;color:var(--muted)">Site phone</label><input id="ramsSitePhone" type="text" class="field-input"></div>
+      <div><label style="font-size:11px;color:var(--muted)">Working hours</label><input id="ramsHours" type="text" class="field-input"></div>
+      <div><label style="font-size:11px;color:var(--muted)">Nearest A&amp;E (optional)</label><input id="ramsAE" type="text" class="field-input" placeholder="confirmed at induction"></div>
+    </div>
+
+    <!-- SITE PLAN -->
+    <div class="field-label">SITE PLAN <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted);font-size:11px">— upload a plan/photo (drop-a-pin comes in a later phase)</span></div>
+    <div style="margin-bottom:16px">
+      <input id="ramsSitePlanInput" type="file" accept="image/*" onchange="ramsPreviewSitePlan(this)" style="font-size:12px;color:var(--muted)">
+      <img id="ramsSitePlanPreview" src="" alt="" style="display:none;max-width:100%;max-height:220px;margin-top:10px;border:1px solid var(--border);border-radius:8px">
+    </div>
+
+    <!-- DRAWINGS -->
+    <div class="field-label">DRAWINGS TO READ <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted);font-size:11px">— tick the drawing(s) the scope &amp; sequence should be read from</span></div>
+    <div id="ramsDrawingList" style="border:1px solid var(--border);border-radius:8px;background:var(--bg-darker);margin-bottom:8px;max-height:150px;overflow-y:auto"></div>
+    <div style="margin-bottom:16px"><label style="font-size:11px;color:var(--muted)">Drawing Ref</label><input id="ramsDrawingRef" type="text" class="field-input"></div>
+
+    <!-- SCOPE + SEQUENCE -->
+    <div class="field-label" style="display:flex;align-items:center;gap:10px">
+      SCOPE &amp; SEQUENCE OF WORKS
+      <button class="btn" id="ramsGenScopeBtn" onclick="ramsGenerateScope()" style="padding:5px 12px;font-size:11px;background:rgba(139,92,246,.14);border:1px solid rgba(139,92,246,.4);color:#a78bfa">&#10024; Generate from drawing</button>
+      <span id="ramsScopeStatus" style="font-weight:400;text-transform:none;letter-spacing:0;font-size:11px;color:var(--muted)"></span>
+    </div>
+    <label style="font-size:11px;color:var(--muted)">Scope of works (one point per line)</label>
+    <textarea id="ramsScopeText" class="field-input" rows="5" style="resize:vertical;font-size:13px;margin-bottom:12px" placeholder="One scope point per line."></textarea>
+    <label style="font-size:11px;color:var(--muted)">Sequence of works / tasks (one task per line — &quot;Task title: detail&quot;)</label>
+    <textarea id="ramsTasksText" class="field-input" rows="6" style="resize:vertical;font-size:13px;margin-bottom:16px" placeholder="Mobilisation &amp; site set-up: attend induction, stage tools, establish exclusion zones."></textarea>
+
+    <!-- PERSONNEL -->
+    <div class="field-label">KEY PERSONNEL <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted);font-size:11px">— Name &mdash; Role &mdash; Competency, one per line</span></div>
+    <textarea id="ramsPersonnel" class="field-input" rows="3" style="resize:vertical;font-size:13px;margin-bottom:16px"></textarea>
+
+    <!-- NOTES -->
+    <div class="field-label">NOTES <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted);font-size:11px">(optional)</span></div>
+    <textarea id="ramsNotes" class="field-input" rows="2" style="resize:vertical;margin-bottom:20px"></textarea>
+
+    <button class="btn btn-primary btn-full" id="ramsConfirmBtn" onclick="confirmRams()" style="padding:14px;font-size:15px">
+      Generate &amp; save RAMS PDF
+    </button>
+    <button class="btn btn-ghost btn-full" onclick="closeRamsModal()" style="margin-top:10px;padding:12px">
+      Cancel
+    </button>
+  </div>
+</div>
+
 
 <!-- ═══════════════════════════════════════
      CONFIRM MODAL
@@ -723,6 +805,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
-<script src="shared.js?v=20260726t"></script>
+<script src="shared.js?v=20260726u"></script>
 </body>
 </html>

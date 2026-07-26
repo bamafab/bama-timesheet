@@ -14254,6 +14254,126 @@ function closeSitePackModal() {
   document.getElementById('sitePackModal').classList.remove('active');
 }
 
+// ═══════════════════════════════════════════
+// RAMS GENERATOR (Site Installation)
+// Phase 1: modal shell + prefill + drawing picker. Mirrors the Site Pack flow
+// (openSitePackModal / confirmSitePack). Later phases: AI drawing-read (2),
+// native jsPDF render + risk library (3), tier wiring (4), site-plan pin (5),
+// SharePoint save to RAMS/<job>/ (6), DOCX (7).
+// ═══════════════════════════════════════════
+let _ramsSitePlanDataUri = null;   // set by ramsPreviewSitePlan(); used from phase 5 (click-to-pin site plan).
+
+function openRamsModal() {
+  const proj = currentProject, job = currentJob;
+  if (!job?.id) { toast('No job selected.', 'error'); return; }
+  const setV = (id, v) => { const el = document.getElementById(id); if (el) el.value = (v == null ? '' : v); };
+
+  // reset site-plan upload state
+  _ramsSitePlanDataUri = null;
+  const prev = document.getElementById('ramsSitePlanPreview');
+  if (prev) { prev.src = ''; prev.style.display = 'none'; }
+  const spInput = document.getElementById('ramsSitePlanInput');
+  if (spInput) spInput.value = '';
+
+  // — Header —
+  const contractNo = proj?.project_number || proj?.id || '';
+  setV('ramsContractNo', contractNo);
+  setV('ramsDocNo',      contractNo ? `${contractNo}-RAMS-01` : '');
+  setV('ramsContract',   proj?.project_name || proj?.name || '');
+  setV('ramsTitle',      job?.name || proj?.project_name || '');
+  setV('ramsClient',     proj?.client || '');
+  setV('ramsPrincipal',  proj?.client || '');           // default: same as client — editable
+  setV('ramsPreparedBy', _currentDraftsmanName || 'Mateusz Braczyk');
+  setV('ramsDate',       new Date().toISOString().slice(0, 10));
+  setV('ramsRev',        '00 \u2013 First Issue');
+  const tierSel = document.getElementById('ramsTier'); if (tierSel) tierSel.value = 'complex';
+  setV('ramsHours',      '07:30\u201317:00 Monday to Friday (or as directed at site induction)');
+  setV('ramsAE',         '');
+  setV('ramsScopeText',  '');
+  setV('ramsTasksText',  '');
+  setV('ramsNotes',      '');
+  const rStatus = document.getElementById('ramsScopeStatus'); if (rStatus) rStatus.textContent = '';
+
+  // — Personnel defaults (Name — Role — Competency, one per line; editable) —
+  setV('ramsPersonnel',
+    'Leszek Spychalski \u2014 Project Manager \u2014 CSCS, SMSTS\n' +
+    'Jason Lambie \u2014 Site Supervisor \u2014 CSCS, SSSTS\n' +
+    'Adrian Smith \u2014 Steel Erector / Installer \u2014 CSCS, CPCS');
+
+  // — Site address (mirror the Site Pack site-vs-client resolution) —
+  const useSite = proj && proj.site_same_as_client === false &&
+    (proj.site_address_line1 || proj.site_postcode);
+  const a = useSite
+    ? { l1: proj.site_address_line1, l2: proj.site_address_line2, city: proj.site_city,
+        county: proj.site_county, pc: proj.site_postcode,
+        contact: proj.site_contact_name, phone: proj.site_contact_phone }
+    : { l1: proj?.client_address_line1, l2: proj?.client_address_line2, city: proj?.client_city,
+        county: proj?.client_county, pc: proj?.client_postcode,
+        contact: proj?.client_contact_name, phone: proj?.client_contact_phone };
+  const addrLines = [a.l1, a.l2, [a.city, a.county].filter(Boolean).join(', '), a.pc].filter(Boolean);
+  setV('ramsSiteName',    proj?.name || proj?.project_name || '');
+  setV('ramsSiteAddr',    addrLines.join('\n'));
+  setV('ramsSiteContact', a.contact);
+  setV('ramsSitePhone',   a.phone);
+
+  // — Drawings picker (Site Installation files, minus our own generated output) —
+  const allSiteFiles = (job.site && job.site.files) || [];
+  const isGenerated = f => /^(site pack|rams)\b/i.test(String(f.name || f.fileName || ''));
+  const _seen = new Set();
+  const files = allSiteFiles.filter(f => {
+    if (isGenerated(f)) return false;
+    const key = f.fileId || (f.name || f.fileName);
+    if (_seen.has(key)) return false;
+    _seen.add(key); return true;
+  });
+  const drawWrap = document.getElementById('ramsDrawingList');
+  if (drawWrap) {
+    drawWrap.innerHTML = files.length
+      ? files.map(f => {
+          const nm = f.name || f.fileName || 'drawing';
+          return `<label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--border);cursor:pointer">
+            <input type="checkbox" class="rams-draw-check" checked
+                   data-fileid="${escapeHtml(f.fileId || '')}" data-driveid="${escapeHtml(f.driveId || '')}"
+                   data-fname="${escapeHtml(f.fileName || nm)}" style="width:14px;height:14px;accent-color:var(--accent)">
+            <span style="font-size:12px;color:var(--text)">${escapeHtml(nm)}</span>
+          </label>`;
+        }).join('')
+      : `<div style="color:var(--subtle);font-size:12px;padding:8px 0">No drawings in Site Installation yet \u2014 upload one first, or write the scope manually below.</div>`;
+  }
+  const refNames = [...new Set(files.map(f => f.name || f.fileName).filter(Boolean))];
+  setV('ramsDrawingRef', refNames.join(', '));
+
+  document.getElementById('ramsModal').classList.add('active');
+}
+
+function closeRamsModal() {
+  document.getElementById('ramsModal').classList.remove('active');
+}
+
+// Preview the uploaded site plan and stash it as a data URI for the phase-5
+// click-to-pin step. Phase 1 just previews the image.
+function ramsPreviewSitePlan(input) {
+  const file = input && input.files && input.files[0];
+  const prev = document.getElementById('ramsSitePlanPreview');
+  if (!file) { _ramsSitePlanDataUri = null; if (prev) { prev.src = ''; prev.style.display = 'none'; } return; }
+  const reader = new FileReader();
+  reader.onload = () => {
+    _ramsSitePlanDataUri = reader.result;
+    if (prev) { prev.src = reader.result; prev.style.display = 'block'; }
+  };
+  reader.readAsDataURL(file);
+}
+
+// Phase-2 stub — AI reads the ticked drawing(s) and drafts scope + sequence.
+function ramsGenerateScope() {
+  toast('AI drawing-read arrives in phase 2 \u2014 write the scope and sequence manually for now.', 'info');
+}
+
+// Phase-3/6 stub — native jsPDF render + SharePoint save to RAMS/<job>/.
+function confirmRams() {
+  toast('RAMS render + save land in later phases \u2014 this is the phase-1 modal shell.', 'info');
+}
+
 // AI step — read the selected drawing(s) and draft the numbered Scope of Work.
 // Two-engine: AI reads the drawing, never computes quantities. On any failure
 // it drops in a deterministic template so the user is never blocked.
@@ -15616,6 +15736,7 @@ function renderSite() {
     if (isDraftsman) {
       html += `<button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="openUploadFileModal('site')">&#43; Upload File</button>`;
       html += `<button class="btn" style="padding:8px 16px;font-size:12px;background:rgba(255,107,0,.1);border:1px solid rgba(255,107,0,.3);color:var(--accent)" onclick="openSitePackModal()">&#128203; Generate Site Pack</button>`;
+      html += `<button class="btn" style="padding:8px 16px;font-size:12px;background:rgba(139,92,246,.1);border:1px solid rgba(139,92,246,.3);color:#a78bfa" onclick="openRamsModal()">&#128203; Generate RAMS</button>`;
     }
     if (isDraftsman) {
       // Count items eligible for an SDN so the button can show a count
