@@ -11547,7 +11547,7 @@ async function openProjects() {
   loadDrawingsData().then(() => renderProjectTiles()).catch(() => {});
 }
 
-// Active project-grid filter chip. One of: live | new | attention | closed | all
+// Active project-grid filter chip. One of: live | new | closed | all | hidden
 let projectFilter = 'live';
 
 // Chip click handler (wired from projects.html #projFilterBar).
@@ -11557,19 +11557,6 @@ function setProjectFilter(f, btn) {
   const el = btn || document.querySelector(`#projFilterBar .proj-chip[data-filter="${f}"]`);
   if (el) el.classList.add('active');
   renderProjectTiles();
-}
-
-// A job counts as "touched" if draftsman work has started on it — any BOM,
-// approval revision, parts or site files present in the drawings data.
-// Grid-time signal only: the SQL-backed BOM/assembly caches (_bomItemsByJob /
-// _assembliesByJob) aren't loaded at tile-render time, so we read drawingsData.
-function jobTouched(job) {
-  if (!job) return false;
-  if (job.bom?.files?.length) return true;
-  if ((job.approval?.revisions || []).some(r => !r.isDeleted)) return true;
-  if (((job.parts?.sections?.files?.length || 0) + (job.parts?.plates?.files?.length || 0)) > 0) return true;
-  if (job.site?.files?.length) return true;
-  return false;
 }
 
 function renderProjectTiles() {
@@ -11596,21 +11583,18 @@ function renderProjectTiles() {
   }
 
   // Annotate a project list with job counts + derived category flags.
-  //   new       — no jobs created yet (freshly won, not started)
-  //   live      — at least one open job that has been touched (work in flight)
-  //   attention — at least one open job that is NOT touched (sitting untouched)
-  //   closed    — jobs exist and every one is closed
-  // Categories can overlap (a project may be both live and needs-attention if
-  // one open job is touched and another isn't) — filters are views, not buckets.
+  //   new    — no jobs created yet (freshly won, not started)
+  //   live   — at least one open job (active work)
+  //   closed — jobs exist and every one is closed
+  // Categories are mostly exclusive; filters are views over the visible set.
   const annotate = list => list.map(p => {
     const jobs = drawingsData.projects[p.id]?.jobs || [];
     const openJobs   = jobs.filter(j => j.status !== 'closed');
     const closedJobs = jobs.filter(j => j.status === 'closed');
     const cat = {
-      new:       jobs.length === 0,
-      live:      openJobs.some(j => jobTouched(j)),
-      attention: openJobs.some(j => !jobTouched(j)),
-      closed:    jobs.length > 0 && openJobs.length === 0,
+      new:    jobs.length === 0,
+      live:   openJobs.length > 0,
+      closed: jobs.length > 0 && openJobs.length === 0,
     };
     return { p, jobs, openCount: openJobs.length, closedCount: closedJobs.length, cat };
   });
@@ -11618,8 +11602,8 @@ function renderProjectTiles() {
   const annotatedVisible = annotate(visibleList);
 
   // Chip counts: categories over the visible (shop-floor) set; Hidden = hidden count.
-  const counts = { live:0, new:0, attention:0, closed:0, all: annotatedVisible.length, hidden: hiddenList.length };
-  annotatedVisible.forEach(a => ['live','new','attention','closed'].forEach(k => { if (a.cat[k]) counts[k]++; }));
+  const counts = { live:0, new:0, closed:0, all: annotatedVisible.length, hidden: hiddenList.length };
+  annotatedVisible.forEach(a => ['live','new','closed'].forEach(k => { if (a.cat[k]) counts[k]++; }));
   document.querySelectorAll('#projFilterBar .cnt').forEach(el => {
     const k = el.getAttribute('data-cnt');
     el.textContent = counts[k] != null ? counts[k] : '';
@@ -11638,7 +11622,7 @@ function renderProjectTiles() {
   }
 
   if (!shown.length) {
-    const labels = { live:'live', new:'new', attention:'that need attention', closed:'closed', hidden:'hidden' };
+    const labels = { live:'live', new:'new', closed:'closed', hidden:'hidden' };
     const hint = projectFilter === 'hidden' ? '' : ' — try <b>All</b>';
     grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1">No ${labels[projectFilter] || 'active'} projects${hint}</div>`;
     return;
@@ -11721,13 +11705,17 @@ function renderJobsList(projectId) {
   const container = document.getElementById('jobsList');
   if (!container) return;
   const projData = drawingsData.projects[projectId];
-  const jobs = projData?.jobs || [];
+  const allJobs = projData?.jobs || [];
+  // Kiosk / shop-floor (non-draftsman) only sees live (open) jobs — closed jobs
+  // are hidden. A logged-in draftsman still sees closed jobs for management.
+  const jobs = isDraftsman ? allJobs : allJobs.filter(j => j.status !== 'closed');
 
   if (!jobs.length) {
+    const closedOnly = !isDraftsman && allJobs.some(j => j.status === 'closed');
     container.innerHTML = `
       <div class="empty-state" style="padding:60px 24px">
         <div style="font-size:36px;margin-bottom:12px">&#128221;</div>
-        <div>No jobs created yet</div>
+        <div>${closedOnly ? 'No live jobs' : 'No jobs created yet'}</div>
         ${isDraftsman ? '<div style="margin-top:8px;font-size:12px;color:var(--subtle)">Use the + Add Job button above</div>' : ''}
       </div>
     `;
