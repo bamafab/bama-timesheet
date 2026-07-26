@@ -3705,6 +3705,44 @@ function toast(msg, type = 'info') {
 }
 
 // ═══════════════════════════════════════════
+// bamaConfirm — styled replacement for window.confirm().
+//   await bamaConfirm({ title, body, confirmText, cancelText, icon, tone })
+//   → resolves true (confirm) / false (cancel). tone: 'primary' | 'danger'.
+// Falls back to window.confirm if the modal markup isn't on the page.
+// ═══════════════════════════════════════════
+let _bamaConfirmResolver = null;
+function bamaConfirm(opts) {
+  opts = opts || {};
+  const modal = document.getElementById('bamaConfirmModal');
+  if (!modal) {
+    // Graceful fallback on pages without the modal markup.
+    return Promise.resolve(window.confirm(opts.body || opts.title || 'Are you sure?'));
+  }
+  document.getElementById('bcTitle').textContent = opts.title || 'Are you sure?';
+  document.getElementById('bcBody').innerHTML = opts.body || '';
+  document.getElementById('bcIcon').innerHTML = opts.icon || '&#10068;'; // ❔ default
+  const btn = document.getElementById('bcConfirmBtn');
+  btn.textContent = opts.confirmText || 'Confirm';
+  // Tone: danger → red button, else the standard primary.
+  if (opts.tone === 'danger') {
+    btn.style.background = 'var(--red, #e5484d)';
+    btn.style.borderColor = 'var(--red, #e5484d)';
+  } else {
+    btn.style.background = '';
+    btn.style.borderColor = '';
+  }
+  modal.classList.add('active');
+  return new Promise((resolve) => { _bamaConfirmResolver = resolve; });
+}
+function bamaConfirmResolve(val) {
+  const modal = document.getElementById('bamaConfirmModal');
+  if (modal) modal.classList.remove('active');
+  const r = _bamaConfirmResolver;
+  _bamaConfirmResolver = null;
+  if (r) r(val);
+}
+
+// ═══════════════════════════════════════════
 // HOLIDAY KIOSK (home screen)
 // ═══════════════════════════════════════════
 let _hkEmployee = null;
@@ -15607,13 +15645,20 @@ async function armSaveAll() {
       if (err && err.body && err.body.error === 'duplicate_mark') {
         const existing = (_assembliesByJob[parseInt(currentJob.id)] || [])
           .find(a => (a.assembly_mark || '').toLowerCase() === mark.toLowerCase());
-        const wasFabricated = existing && existing.status === 'fabricated';
-        const msg = wasFabricated
-          ? `⚠ "${mark}" already exists AND has been marked as fabricated.\n\nReplacing deletes the old assembly and its BOM row (which may already be at a supplier or despatched). Continue?`
-          : `"${mark}" already exists on this job.\n\nReplacing will delete the old assembly. Continue?`;
-        if (window.confirm(msg)) {
+        const onBom = existing && asmBomQty(existing) > 0;
+        const body = onBom
+          ? `<strong style="color:var(--text)">"${escapeHtml(mark)}"</strong> already exists and has pieces on the BOM (which may already be at a supplier or despatched).<br><br>Replacing deletes the old assembly and its BOM row. Continue?`
+          : `<strong style="color:var(--text)">"${escapeHtml(mark)}"</strong> already exists on this job.<br><br>Replacing will delete the old assembly. Continue?`;
+        const proceed = await bamaConfirm({
+          title: 'Assembly already exists',
+          body,
+          confirmText: 'Replace',
+          icon: onBom ? '&#9888;' : '&#10068;',
+          tone: onBom ? 'danger' : 'primary'
+        });
+        if (proceed) {
           try {
-            const force = wasFabricated ? '?force=1' : '';
+            const force = onBom ? '?force=1' : '';
             if (existing) await api.delete(`/api/job-assemblies/${existing.id}${force}`);
             await postAssemblyCreate(item, mark, qty, finishServiceId, ocr.finish_label_raw ?? null, totalAreaM2, totalWeightKg, parts);
             saved++; savedIdx.push(qi);
@@ -15667,7 +15712,14 @@ async function postAssemblyCreate(item, mark, qty, finishServiceId, finishLabelR
 
 async function deleteAssembly(id) {
   if (!id) return;
-  if (!window.confirm('Delete this assembly? The PDF stays in SharePoint.')) return;
+  const ok = await bamaConfirm({
+    title: 'Delete assembly?',
+    body: 'This removes the assembly and its parts. The PDF stays in SharePoint.',
+    confirmText: 'Delete',
+    icon: '&#128465;',
+    tone: 'danger'
+  });
+  if (!ok) return;
   try {
     await api.delete(`/api/job-assemblies/${id}`);
     await loadJobAssemblies(parseInt(currentJob.id));
@@ -16104,8 +16156,15 @@ async function confirmBulkStage() {
   const pieces = rows.reduce((s, r) => s + (r.qty || 0), 0);
   const verb = stage === 'fab' ? 'fabricated' : stage === 'weld' ? 'welded' : 'complete';
 
-  // Confirmation guard (SPEC: "you selected 5 assemblies to mark complete…")
-  if (!confirm(`Mark ${rows.length} assembl${rows.length > 1 ? 'ies' : 'y'} (${pieces} piece${pieces !== 1 ? 's' : ''}) as ${verb}?`)) return;
+  // Confirmation guard (styled) — "you selected N assemblies to mark …"
+  const iconMap = { fab: '&#128296;', weld: '&#128293;', complete: '&#10003;' };
+  const ok = await bamaConfirm({
+    title: `Mark ${verb} — ${rows.length} assembl${rows.length > 1 ? 'ies' : 'y'}`,
+    body: `You're about to mark <strong style="color:var(--text)">${pieces} piece${pieces !== 1 ? 's' : ''}</strong> as <strong style="color:var(--text)">${verb}</strong> across <strong style="color:var(--text)">${rows.length}</strong> assembl${rows.length > 1 ? 'ies' : 'y'}.<br><br>This can't be undone from here.`,
+    confirmText: `Yes, mark ${verb}`,
+    icon: iconMap[stage] || '&#10003;'
+  });
+  if (!ok) return;
 
   const opSel = document.getElementById('bsOperator');
   const opId = opSel.value ? parseInt(opSel.value) : null;

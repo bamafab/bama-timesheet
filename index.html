@@ -647,7 +647,24 @@
   </div>
 </div>
 
+<!-- ═══════════════════════════════════════
+     GENERIC CONFIRM DIALOG — styled replacement for window.confirm().
+     Driven by bamaConfirm(opts) in shared.js (returns a Promise<boolean>).
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="bamaConfirmModal">
+  <div class="modal" style="max-width:420px;width:92vw">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+      <span id="bcIcon" style="font-size:26px;line-height:1">&#9989;</span>
+      <div class="modal-title" style="margin:0" id="bcTitle">Are you sure?</div>
+    </div>
+    <div style="color:var(--muted);font-size:14px;line-height:1.5;margin-bottom:22px" id="bcBody"></div>
+    <button class="btn btn-primary btn-full" id="bcConfirmBtn" onclick="bamaConfirmResolve(true)" style="padding:13px;font-size:15px">Confirm</button>
+    <button class="btn btn-ghost btn-full" onclick="bamaConfirmResolve(false)" style="margin-top:10px;padding:12px">Cancel</button>
+  </div>
+</div>
 
-<script src="shared.js?v=20260726b"></script>
+
+
+<script src="shared.js?v=20260726c"></script>
 </body>
 </html>
