@@ -13822,79 +13822,77 @@ function drawSitePackPDF(jsPDF, pack, proj, job, logoDataUri) {
   if (g.email)  coLines.push(g.email);
   coLines.forEach(l => { doc.text(String(l), marginL, leftY); leftY += 3.8; });
 
-  // RIGHT: italic title + meta rows
+  // RIGHT: italic title
   doc.setFont('helvetica', 'bolditalic'); doc.setFontSize(20); setText(accent);
   doc.text('Site Pack', pageW - marginR, y + 8, { align: 'right' });
 
-  let rightY = y + 16;
-  const metaRows = [
-    { label: 'Project No:',  value: pack.projectNo || (proj && (proj.project_number || proj.id)) },
-    { label: 'Contract:',    value: pack.contract || (proj && (proj.project_name || proj.name)) },
-    { label: 'Client:',      value: pack.client || (proj && proj.client) },
-    { label: 'Drawing Ref:', value: pack.drawingRef },
-    { label: 'Finish:',      value: pack.finish },
-    { label: 'Grade:',       value: pack.grade },
-    { label: 'Prepared by:', value: pack.preparedBy },
-    { label: 'Date:',        value: fmtDate }
-  ].filter(r => r.label && r.value != null && String(r.value).trim() !== '');
+  // Details as a full-width info table (fills the page width; the site address
+  // sits INSIDE it, above the divider). Drawing refs move to a full-width band
+  // BELOW the divider so any number of them wrap horizontally instead of
+  // stacking in a narrow right-hand column.
+  const site = pack.site || {};
+  const siteAddrStr = [site.name, ...(site.lines || [])]
+    .map(l => (l == null ? '' : String(l).trim())).filter(Boolean).join(', ');
+  const contactStr = [site.contactName, site.contactPhone]
+    .map(l => (l == null ? '' : String(l).trim())).filter(Boolean).join(' \u00b7 ');
 
+  // Drop below the taller of the company block / the title.
+  y = Math.max(leftY, y + 12) + 3;
+
+  // 4-column grid: label | value | label | value, full page width.
+  const spLabelW = 26;
+  const spValW = (usableW - spLabelW * 2) / 2;
+  const colX = [marginL, marginL + spLabelW, marginL + spLabelW + spValW, marginL + spLabelW * 2 + spValW];
+  const drawCell = (x, w, text, isLabel, rowH) => {
+    if (isLabel && text) { setFill(HEADFILL); doc.rect(x, y, w, rowH, 'F'); }
+    setDraw(RULE); doc.setLineWidth(0.15); doc.rect(x, y, w, rowH);
+    setText(TEXT); doc.setFont('helvetica', isLabel ? 'bold' : 'normal');
+    doc.splitTextToSize(String(text == null ? '' : text), w - 3).forEach((ln, i) => doc.text(ln, x + 2, y + 4 + i * 3.9));
+  };
+  const pairRows = [
+    [['Project No', pack.projectNo || (proj && (proj.project_number || proj.id))], ['Client', pack.client || (proj && proj.client)]],
+    [['Contract', pack.contract || (proj && (proj.project_name || proj.name))],   ['Prepared by', pack.preparedBy]],
+    [['Finish', pack.finish], ['Grade', pack.grade]],
+    [['Date', fmtDate], ['Site Contact', contactStr]]
+  ];
   doc.setFontSize(8.5);
-  const metaValX = pageW - marginR;
-  const metaLabelX = pageW - marginR - 58;
-  const metaWrap = 55;
-  for (const r of metaRows) {
-    setText(TEXT); doc.setFont('helvetica', 'bold');
-    doc.text(r.label, metaLabelX, rightY, { align: 'right' });
-    setText(TEXT); doc.setFont('helvetica', 'normal');
-    const vLines = doc.splitTextToSize(String(r.value || ''), metaWrap);
-    vLines.forEach((vl, i) => doc.text(vl, metaValX, rightY + i * 3.8, { align: 'right' }));
-    rightY += 3.8 * Math.max(1, vLines.length) + 0.7;
+  for (const row of pairRows) {
+    const cellDefs = [
+      { x: colX[0], w: spLabelW, text: row[0][0], label: true },
+      { x: colX[1], w: spValW,   text: row[0][1], label: false },
+      { x: colX[2], w: spLabelW, text: row[1][0], label: true },
+      { x: colX[3], w: spValW,   text: row[1][1], label: false }
+    ];
+    let maxLines = 1;
+    cellDefs.forEach(c => { const n = doc.splitTextToSize(String(c.text == null ? '' : c.text), c.w - 3).length; if (n > maxLines) maxLines = n; });
+    const rowH = maxLines * 3.9 + 2.4;
+    cellDefs.forEach(c => drawCell(c.x, c.w, c.text, c.label, rowH));
+    y += rowH;
+  }
+  // Site Address — full-width value row (label + value spanning cols 2-4).
+  if (siteAddrStr) {
+    const valW2 = usableW - spLabelW;
+    const nLines = doc.splitTextToSize(siteAddrStr, valW2 - 3).length;
+    const rowH = nLines * 3.9 + 2.4;
+    drawCell(colX[0], spLabelW, 'Site Address', true, rowH);
+    drawCell(colX[1], valW2, siteAddrStr, false, rowH);
+    y += rowH;
   }
 
-  y = Math.max(leftY, rightY) + 2;
+  y += 4;
+  // ── Black divider ──────────────────
   setDraw(TEXT); doc.setLineWidth(0.5); doc.line(marginL, y, pageW - marginR, y);
-  y += 7;
+  y += 6;
 
-  // ── Site address / contact panel ──────────────────
-  const site = pack.site || {};
-  const siteLines = (site.lines || []).filter(l => l != null && String(l).trim() !== '');
-  const hasSite = (site.name && String(site.name).trim()) || siteLines.length ||
-                  (site.contactName && String(site.contactName).trim()) ||
-                  (site.contactPhone && String(site.contactPhone).trim());
-  if (hasSite) {
-    const boxX = marginL, boxW = 120, boxPad = 4;
-    const innerW = boxW - boxPad * 2;
-    const boxTop = y;
-    let ty = y + 5;
-    const drawWrapped = (text, lineH) => {
-      doc.splitTextToSize(String(text), innerW).forEach(w => { doc.text(w, boxX + boxPad, ty); ty += lineH; });
-    };
+  // ── Drawings band (below the line, full width) ──────────
+  if (pack.drawingRef && String(pack.drawingRef).trim()) {
     setText(MUTED); doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5);
-    doc.text('SITE ADDRESS', boxX + boxPad, ty); ty += 4.8;
-    if (site.name && String(site.name).trim()) {
-      setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
-      drawWrapped(site.name, 4.6);
-    }
-    if (siteLines.length) {
-      setText([68, 68, 68]); doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-      siteLines.forEach(l => drawWrapped(l, 4));
-    }
-    if ((site.contactName && String(site.contactName).trim()) || (site.contactPhone && String(site.contactPhone).trim())) {
-      ty += 1.5;
-      setText(MUTED); doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5);
-      doc.text('SITE CONTACT', boxX + boxPad, ty); ty += 4.2;
-      if (site.contactName && String(site.contactName).trim()) {
-        setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
-        drawWrapped(site.contactName, 4.2);
-      }
-      if (site.contactPhone && String(site.contactPhone).trim()) {
-        setText([68, 68, 68]); doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-        drawWrapped(site.contactPhone, 4);
-      }
-    }
-    setDraw(RULE); doc.setLineWidth(0.3);
-    doc.roundedRect(boxX, boxTop, boxW, (ty - boxTop) + 2, 1.5, 1.5);
-    y = ty + 8;
+    doc.text('DRAWINGS', marginL, y + 3);
+    setText(TEXT); doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+    const dLabelW = 22;
+    const dLines = doc.splitTextToSize(String(pack.drawingRef), usableW - dLabelW);
+    dLines.forEach((ln, i) => doc.text(ln, marginL + dLabelW, y + 3 + i * 4));
+    y += Math.max(4, dLines.length * 4) + 5;
   }
 
   // ── Scope of Work ──────────────────

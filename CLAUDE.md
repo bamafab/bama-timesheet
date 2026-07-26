@@ -610,6 +610,13 @@ Two-engine split, same principle as QB Quote Helper:
   statement lives in the RAMS); Extended is a fuller scope for jobs with no
   RAMS or a non-standard install.
 
+The header is a **full-width 4-column info table** (label|value|label|value,
+like the original hand-made site pack) with the site address folded in above
+the black divider; the drawing references sit in a **full-width DRAWINGS band
+below the divider** so any number of drawings wrap horizontally instead of
+stacking in a narrow column. The Drawing Ref default and drawing picker exclude
+previously-generated Site Packs and dedupe by fileId.
+
 PDF is **native jsPDF** (`drawSitePackPDF` / `renderSitePackPdfBlob`), a direct
 copy of the DN renderer (`drawDnPDF`) — no html2canvas. Same logo aspect-ratio
 handling, `splitTextToSize` wrapping, page-break with table-header redraw, and
