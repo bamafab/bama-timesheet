@@ -12916,31 +12916,38 @@ function drawDnPDF(jsPDF, dn, proj, job, logoDataUri) {
   }
   const hasDeliverTo = (dt.name && String(dt.name).trim()) || dtLines.length || dtContactName || dtContactPhone;
   if (hasDeliverTo) {
-    const boxX = marginL, boxW = 90;
+    const boxX = marginL, boxW = 110, boxPad = 4;
+    const innerW = boxW - boxPad * 2; // wrap width — keep text inside the frame
     const boxTop = y;
     let ty = y + 5;
+    // Helper: draw one logical line, wrapping to the box width, advancing ty.
+    const drawWrapped = (text, lineH) => {
+      doc.splitTextToSize(String(text), innerW).forEach(w => {
+        doc.text(w, boxX + boxPad, ty); ty += lineH;
+      });
+    };
     setText(MUTED); doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5);
-    doc.text('DELIVER TO', boxX + 4, ty); ty += 4.8;
+    doc.text('DELIVER TO', boxX + boxPad, ty); ty += 4.8;
     if (dt.name && String(dt.name).trim()) {
       setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
-      doc.text(String(dt.name), boxX + 4, ty); ty += 4.6;
+      drawWrapped(dt.name, 4.6);
     }
     if (dtLines.length) {
       setText([68, 68, 68]); doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-      dtLines.forEach(l => { doc.text(String(l), boxX + 4, ty); ty += 4; });
+      dtLines.forEach(l => drawWrapped(l, 4));
     }
     // Site contact — name in bold, phone on the line below.
     if (dtContactName || dtContactPhone) {
       ty += 1.5;
       setText(MUTED); doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5);
-      doc.text('SITE CONTACT', boxX + 4, ty); ty += 4.2;
+      doc.text('SITE CONTACT', boxX + boxPad, ty); ty += 4.2;
       if (dtContactName) {
         setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
-        doc.text(dtContactName, boxX + 4, ty); ty += 4.2;
+        drawWrapped(dtContactName, 4.2);
       }
       if (dtContactPhone) {
         setText([68, 68, 68]); doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-        doc.text(dtContactPhone, boxX + 4, ty); ty += 4;
+        drawWrapped(dtContactPhone, 4);
       }
     }
     setDraw(RULE); doc.setLineWidth(0.3);
