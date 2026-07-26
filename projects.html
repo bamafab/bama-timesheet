@@ -540,6 +540,32 @@
     <div class="field-label">ITEMS TO SEND TO SITE</div>
     <div id="sdnItemList" style="margin-bottom:20px"></div>
 
+    <div class="field-label">DELIVERY DETAILS
+      <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted);font-size:11px">— prefilled from the project, edit if anything's wrong before generating</span>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px">
+      <div style="grid-column:1 / -1">
+        <label style="font-size:11px;color:var(--muted)">Deliver to (name)</label>
+        <input id="sdnDeliverName" type="text" class="input" style="width:100%" placeholder="e.g. Client — Project">
+      </div>
+      <div style="grid-column:1 / -1">
+        <label style="font-size:11px;color:var(--muted)">Site address</label>
+        <textarea id="sdnDeliverAddr" class="input" rows="3" style="width:100%;resize:vertical" placeholder="One line per row"></textarea>
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--muted)">Site contact</label>
+        <input id="sdnContactName" type="text" class="input" style="width:100%" placeholder="Name">
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--muted)">Site phone</label>
+        <input id="sdnContactPhone" type="text" class="input" style="width:100%" placeholder="Phone">
+      </div>
+      <div style="grid-column:1 / -1">
+        <label style="font-size:11px;color:var(--muted)">Client PO number <span style="color:var(--muted)">(optional)</span></label>
+        <input id="sdnClientPo" type="text" class="input" style="width:100%" placeholder="Client's purchase order ref">
+      </div>
+    </div>
+
     <button class="btn btn-primary btn-full" id="sdnConfirmBtn"
             onclick="confirmSiteDn()"
             style="padding:14px;font-size:15px">
@@ -571,6 +597,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
-<script src="shared.js?v=20260726d"></script>
+<script src="shared.js?v=20260726e"></script>
 </body>
 </html>

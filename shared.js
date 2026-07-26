@@ -12783,6 +12783,29 @@ function openSiteDnModal() {
   const btn = document.getElementById('sdnConfirmBtn');
   btn.disabled = false; btn.style.opacity = '1'; btn.style.cursor = 'pointer';
 
+  // Prefill the editable delivery details from the project. Everything here is
+  // editable in the modal — if the project data is wrong or missing, the user
+  // fixes it here and still gets a correct DN without touching the database.
+  const proj = currentProject;
+  const useSite = proj && proj.site_same_as_client === false &&
+    (proj.site_address_line1 || proj.site_postcode);
+  const a = useSite
+    ? { l1: proj.site_address_line1, l2: proj.site_address_line2, city: proj.site_city,
+        county: proj.site_county, pc: proj.site_postcode,
+        contact: proj.site_contact_name, phone: proj.site_contact_phone }
+    : { l1: proj?.client_address_line1, l2: proj?.client_address_line2, city: proj?.client_city,
+        county: proj?.client_county, pc: proj?.client_postcode,
+        contact: proj?.client_contact_name, phone: proj?.client_contact_phone };
+  const addrLines = [a.l1, a.l2, [a.city, a.county].filter(Boolean).join(', '), a.pc].filter(Boolean);
+  const nameGuess = (proj?.client && proj?.name) ? `${proj.client} — ${proj.name}`
+                  : (proj?.client || proj?.name || '');
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+  setVal('sdnDeliverName',  nameGuess);
+  setVal('sdnDeliverAddr',  addrLines.join('\n'));
+  setVal('sdnContactName',  a.contact);
+  setVal('sdnContactPhone', a.phone);
+  setVal('sdnClientPo',     proj?.client_po_number);  // may not exist yet — harmless
+
   document.getElementById('siteDnModal').classList.add('active');
 }
 
@@ -12828,33 +12851,25 @@ async function confirmSiteDn() {
     });
     const sdnRef = allocRes.sdn_ref;
 
-    // 2. Build the SDN PDF using the same template as supplier DNs.
-    //    Destination is the project's client (with project address if
-    //    available — falls back to client name only).
+    // 2. Build the SDN PDF. Delivery details come from the (editable) modal
+    //    fields, not re-derived from the project — so any correction the user
+    //    made in the modal is what actually prints.
     await loadLogoDataUri();
-    const siteName = (proj?.client && proj?.name)
-      ? `${proj.client} — ${proj.name}`
-      : (proj?.client || proj?.name || 'Site delivery');
-    // Delivery address: use the project's site address when it differs from
-    // the client; otherwise fall back to the client address.
-    const useSite = proj && proj.site_same_as_client === false &&
-      (proj.site_address_line1 || proj.site_postcode);
-    const a = useSite
-      ? { l1: proj.site_address_line1, l2: proj.site_address_line2, city: proj.site_city,
-          county: proj.site_county, pc: proj.site_postcode,
-          contact: proj.site_contact_name, phone: proj.site_contact_phone }
-      : { l1: proj?.client_address_line1, l2: proj?.client_address_line2, city: proj?.client_city,
-          county: proj?.client_county, pc: proj?.client_postcode,
-          contact: proj?.client_contact_name, phone: proj?.client_contact_phone };
-    const deliverToLines = [
-      a.l1, a.l2, [a.city, a.county].filter(Boolean).join(', '), a.pc
-    ].filter(Boolean);
-    const deliverToContact = [a.contact, a.phone].filter(Boolean).join(' \u00b7 ');
+    const getVal = id => (document.getElementById(id)?.value || '').trim();
+    const deliverName    = getVal('sdnDeliverName');
+    const deliverToLines = getVal('sdnDeliverAddr').split('\n').map(l => l.trim()).filter(Boolean);
+    const contactName    = getVal('sdnContactName');
+    const contactPhone   = getVal('sdnContactPhone');
+    const clientPo       = getVal('sdnClientPo');
+    const deliverToContact = [contactName, contactPhone].filter(Boolean).join(' \u00b7 ');
+    const siteName = deliverName || (proj?.client || proj?.name || 'Site delivery');
     const dn = {
       number:          sdnRef,
       createdAt:       new Date().toISOString(),
+      docType:         'client',            // drives client-facing labels in drawDnPDF
+      clientPo:        clientPo || '',
       destinationName: siteName,
-      deliverTo:       { name: proj?.client || proj?.name || 'Site', lines: deliverToLines, contact: deliverToContact },
+      deliverTo:       { name: deliverName || 'Site', lines: deliverToLines, contact: deliverToContact },
       finishName:      'Site delivery',
       items
     };
@@ -12977,6 +12992,9 @@ function drawDnPDF(jsPDF, dn, proj, job, logoDataUri) {
   doc.text(t.title || 'Delivery Note', pageW - marginR, y + 8, { align: 'right' });
 
   let rightY = y + 16;
+  // Client-facing DNs (site delivery) relabel supplier-oriented fields and add
+  // the client's PO. Supplier DNs (galvanising / powder etc.) keep 'Supplier:'.
+  const isClient = dn.docType === 'client';
   // Only emit meta rows that carry a real value — no empty labels, no gaps.
   const metaRows = [
     { label: 'DN Number:',  value: dn.number },
@@ -12984,9 +13002,10 @@ function drawDnPDF(jsPDF, dn, proj, job, logoDataUri) {
     { label: 'Project:',    value: proj && proj.name },
     { label: 'Project No:', value: proj && proj.id },
     { label: 'Job:',        value: job && job.name },
-    { label: 'Supplier:',   value: dn.destinationName },
-    { label: 'For:',        value: dn.finishName }
-  ].filter(r => r.value != null && String(r.value).trim() !== '');
+    { label: isClient ? 'Client PO:' : null, value: isClient ? dn.clientPo : null },
+    { label: isClient ? 'Client:' : 'Supplier:', value: dn.destinationName },
+    { label: isClient ? null : 'For:', value: isClient ? null : dn.finishName }
+  ].filter(r => r.label && r.value != null && String(r.value).trim() !== '');
 
   doc.setFontSize(9);
   const metaValX = pageW - marginR;
@@ -13143,22 +13162,44 @@ function drawDnPDF(jsPDF, dn, proj, job, logoDataUri) {
 
   // ── Signatures ──────────────────
   if (t.showSignatureBlock !== false) {
-    if (y > pageH - marginB - 36) { doc.addPage(); y = marginL + 6; }
+    // Client DNs get a taller 'received' box with Name / Signature / Date plus
+    // a condition/damage-notes line — someone on site signs for the goods and
+    // records any damage on delivery. Same frame style as before.
+    const boxH = isClient ? 34 : 26;
+    if (y > pageH - marginB - (boxH + 10)) { doc.addPage(); y = marginL + 6; }
     y += 4;
-    const boxW = (usableW - 8) / 2, boxH = 26;
-    const boxes = [
-      { x: marginL,             label: 'Delivered By (BAMA):' },
-      { x: marginL + boxW + 8,  label: 'Received By (Supplier):' }
-    ];
-    boxes.forEach(b => {
-      setDraw(RULE); doc.setLineWidth(0.3); doc.rect(b.x, y, boxW, boxH);
-      setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
-      doc.text(b.label, b.x + 3, y + 6);
-      setDraw([150, 150, 150]); doc.setLineWidth(0.2);
-      doc.line(b.x + 3, y + 17, b.x + boxW - 3, y + 17);
+    const boxW = (usableW - 8) / 2;
+    const leftBox  = { x: marginL,            label: 'Delivered By (BAMA):' };
+    const rightBox = { x: marginL + boxW + 8, label: isClient ? 'Received By (Client):' : 'Received By (Supplier):' };
+
+    // Left box — unchanged: signature line + date.
+    setDraw(RULE); doc.setLineWidth(0.3); doc.rect(leftBox.x, y, boxW, boxH);
+    setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
+    doc.text(leftBox.label, leftBox.x + 3, y + 6);
+    setDraw([150, 150, 150]); doc.setLineWidth(0.2);
+    doc.line(leftBox.x + 3, y + 17, leftBox.x + boxW - 3, y + 17);
+    setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
+    doc.text('Date:', leftBox.x + 3, y + 22);
+
+    // Right box — client version adds Name + condition-on-delivery line.
+    setDraw(RULE); doc.setLineWidth(0.3); doc.rect(rightBox.x, y, boxW, boxH);
+    setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
+    doc.text(rightBox.label, rightBox.x + 3, y + 6);
+    setDraw([150, 150, 150]); doc.setLineWidth(0.2);
+    if (isClient) {
       setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
-      doc.text('Date:', b.x + 3, y + 22);
-    });
+      doc.text('Name:', rightBox.x + 3, y + 12);
+      doc.line(rightBox.x + 16, y + 12, rightBox.x + boxW - 3, y + 12);
+      doc.text('Signature:', rightBox.x + 3, y + 19);
+      doc.line(rightBox.x + 22, y + 19, rightBox.x + boxW - 3, y + 19);
+      doc.text('Date:', rightBox.x + 3, y + 26);
+      doc.line(rightBox.x + 16, y + 26, rightBox.x + boxW - 3, y + 26);
+      doc.text('Condition / damage on delivery:', rightBox.x + 3, y + 31.5);
+    } else {
+      doc.line(rightBox.x + 3, y + 17, rightBox.x + boxW - 3, y + 17);
+      setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
+      doc.text('Date:', rightBox.x + 3, y + 22);
+    }
     y += boxH + 6;
   }
 
