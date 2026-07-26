@@ -621,6 +621,10 @@
     <!-- SCOPE OF WORK -->
     <div class="field-label" style="display:flex;align-items:center;gap:10px">
       SCOPE OF WORK
+      <select id="spScopeDetail" class="field-input" style="width:auto;padding:4px 8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0">
+        <option value="brief" selected>Brief</option>
+        <option value="extended">Extended</option>
+      </select>
       <button class="btn" id="spGenScopeBtn" onclick="sitePackGenerateScope()" style="padding:5px 12px;font-size:11px;background:rgba(255,107,0,.12);border:1px solid rgba(255,107,0,.35);color:var(--accent)">&#10024; Generate from drawing</button>
       <span id="spScopeStatus" style="font-weight:400;text-transform:none;letter-spacing:0;font-size:11px;color:var(--muted)"></span>
     </div>
@@ -672,6 +676,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
-<script src="shared.js?v=20260726m"></script>
+<script src="shared.js?v=20260726n"></script>
 </body>
 </html>

@@ -604,7 +604,11 @@ Two-engine split, same principle as QB Quote Helper:
   recognition), and asks for numbered installation instructions. Reader-only
   prompt: it describes what/how to install, never invents quantities or
   dimensions. 429-retry + deterministic template fallback so the user is never
-  blocked. Everything is editable in the modal before generating.
+  blocked. Everything is editable in the modal before generating. A
+  **Brief / Extended** selector (`spScopeDetail`, default Brief) tunes the scope
+  length: Brief is lean install steps for erectors (the detailed method
+  statement lives in the RAMS); Extended is a fuller scope for jobs with no
+  RAMS or a non-standard install.
 
 PDF is **native jsPDF** (`drawSitePackPDF` / `renderSitePackPdfBlob`), a direct
 copy of the DN renderer (`drawDnPDF`) — no html2canvas. Same logo aspect-ratio
