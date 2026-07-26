@@ -14294,11 +14294,9 @@ function openRamsModal() {
   setV('ramsNotes',      '');
   const rStatus = document.getElementById('ramsScopeStatus'); if (rStatus) rStatus.textContent = '';
 
-  // — Personnel defaults (Name — Role — Competency, one per line; editable) —
-  setV('ramsPersonnel',
-    'Leszek Spychalski \u2014 Project Manager \u2014 CSCS, SMSTS\n' +
-    'Jason Lambie \u2014 Site Supervisor \u2014 CSCS, SSSTS\n' +
-    'Adrian Smith \u2014 Steel Erector / Installer \u2014 CSCS, CPCS');
+  // — Personnel (phase 2b roster picker; falls back to a freeform textarea if
+  //   the roster API is unavailable, preserving the old behaviour) —
+  ramsInitPersonnel();
 
   // — Site address (mirror the Site Pack site-vs-client resolution) —
   const useSite = proj && proj.site_same_as_client === false &&
@@ -14362,6 +14360,272 @@ function ramsPreviewSitePlan(input) {
     if (prev) { prev.src = reader.result; prev.style.display = 'block'; }
   };
   reader.readAsDataURL(file);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RAMS phase 2b — Site Personnel roster picker
+//
+// The freeform "Name — Role — Competency" textarea is replaced by a searchable
+// tile picker backed by the SitePersonnel roster (+ inline add-person). If the
+// roster API is unavailable (e.g. the migration hasn't been run yet) we quietly
+// fall back to the old freeform textarea so RAMS is never blocked.
+// ─────────────────────────────────────────────────────────────────────────────
+let _ramsRoster           = [];    // active personnel [{id,name,site_role,type,company,phone,certs:[]}]
+let _ramsCertTypes        = [];     // active cert types [{id,name}]
+let _ramsSelectedIds      = [];     // ordered selected personnel ids
+let _ramsSelectedPersonnel = [];    // structured selection consumed by the phase-3 renderer
+let _ramsRosterAvailable  = false;
+let _ramsResultsListenerBound = false;
+
+const _RAMS_FALLBACK_PERSONNEL =
+  'Leszek Spychalski \u2014 Project Manager \u2014 CSCS, SMSTS\n' +
+  'Jason Lambie \u2014 Site Supervisor \u2014 CSCS, SSSTS\n' +
+  'Adrian Smith \u2014 Steel Erector / Installer \u2014 CSCS, CPCS';
+
+function ramsInitPersonnel() {
+  _ramsSelectedIds = [];
+  _ramsSelectedPersonnel = [];
+  const search = document.getElementById('ramsPersonnelSearch'); if (search) search.value = '';
+  const form   = document.getElementById('ramsAddPersonForm');   if (form) form.style.display = 'none';
+  ramsHideResults();
+  // Default to showing the picker; the loader flips to the textarea on failure.
+  const picker = document.getElementById('ramsPersonnelPicker'); if (picker) picker.style.display = '';
+  const ta     = document.getElementById('ramsPersonnel');       if (ta) ta.style.display = 'none';
+  // Close the results dropdown when clicking outside the picker (bind once).
+  if (!_ramsResultsListenerBound) {
+    document.addEventListener('click', (e) => {
+      const wrap = document.getElementById('ramsPersonnelPicker');
+      if (wrap && !wrap.contains(e.target)) ramsHideResults();
+    });
+    _ramsResultsListenerBound = true;
+  }
+  ramsLoadRoster();
+}
+
+async function ramsLoadRoster() {
+  try {
+    const [roster, certTypes] = await Promise.all([
+      api.get('/api/site-personnel'),
+      api.get('/api/cert-types')
+    ]);
+    _ramsRoster    = Array.isArray(roster) ? roster : [];
+    _ramsCertTypes = Array.isArray(certTypes) ? certTypes : [];
+    _ramsRosterAvailable = true;
+
+    // Preselect the known site crew (matches the old textarea defaults).
+    const preferred = ['Leszek Spychalski', 'Jason Lambie', 'Adrian Smith'];
+    _ramsSelectedIds = _ramsRoster
+      .filter(p => preferred.includes(p.name))
+      .sort((a, b) => preferred.indexOf(a.name) - preferred.indexOf(b.name))
+      .map(p => p.id);
+
+    ramsPopulateEmployeeDropdown();
+    ramsRenderCertCheckboxes();
+    ramsRenderTiles();
+  } catch (e) {
+    // Roster unavailable — reveal the freeform textarea with the old defaults.
+    _ramsRosterAvailable = false;
+    const picker = document.getElementById('ramsPersonnelPicker'); if (picker) picker.style.display = 'none';
+    const ta = document.getElementById('ramsPersonnel');
+    if (ta) { ta.style.display = ''; if (!ta.value.trim()) ta.value = _RAMS_FALLBACK_PERSONNEL; }
+  }
+}
+
+function ramsHideResults() {
+  const res = document.getElementById('ramsPersonnelResults');
+  if (res) { res.style.display = 'none'; res.innerHTML = ''; }
+}
+
+function _ramsPersonById(id) { return _ramsRoster.find(p => p.id === id); }
+
+function _ramsCertNames(p) {
+  return (p.certs || []).map(c => c.cert_type).filter(Boolean);
+}
+
+function ramsRenderTiles() {
+  const wrap = document.getElementById('ramsPersonnelTiles');
+  if (!wrap) return;
+  if (!_ramsSelectedIds.length) {
+    wrap.innerHTML = '<span style="font-size:12px;color:var(--subtle)">No one added yet — search the roster or add a person.</span>';
+  } else {
+    wrap.innerHTML = _ramsSelectedIds.map(id => {
+      const p = _ramsPersonById(id);
+      if (!p) return '';
+      const certs = _ramsCertNames(p);
+      const sub = p.type === 'subcontractor' && p.company ? ` · ${escapeHtml(p.company)}` : '';
+      const role = p.site_role ? escapeHtml(p.site_role) : '<span style="color:var(--subtle)">no role set</span>';
+      return `<span style="display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--border);border-radius:20px;background:var(--bg-darker);font-size:12px">
+        <span><b>${escapeHtml(p.name)}</b> — ${role}${sub}${certs.length ? ` <span style="color:var(--muted)">(${escapeHtml(certs.join(', '))})</span>` : ''}</span>
+        <span onclick="ramsRemovePerson(${p.id})" title="Remove" style="cursor:pointer;color:var(--muted);font-weight:700">&times;</span>
+      </span>`;
+    }).join('');
+  }
+  ramsSerializePersonnel();
+}
+
+// Keep a structured selection for the phase-3 renderer AND a human-readable
+// summary in the (hidden) textarea so nothing downstream breaks today.
+function ramsSerializePersonnel() {
+  _ramsSelectedPersonnel = _ramsSelectedIds.map(id => {
+    const p = _ramsPersonById(id);
+    if (!p) return null;
+    return {
+      id: p.id, name: p.name, site_role: p.site_role || '',
+      type: p.type || 'staff', company: p.company || '', phone: p.phone || '',
+      certs: _ramsCertNames(p)
+    };
+  }).filter(Boolean);
+  const ta = document.getElementById('ramsPersonnel');
+  if (ta) {
+    ta.value = _ramsSelectedPersonnel.map(p => {
+      const bits = [p.name, p.site_role || '(role TBC)'];
+      const comp = p.type === 'subcontractor' && p.company ? `${p.company}` : '';
+      const certs = p.certs.length ? p.certs.join(', ') : '';
+      return [bits.join(' \u2014 '), comp, certs].filter(Boolean).join(' \u2014 ');
+    }).join('\n');
+  }
+}
+
+function ramsFilterRoster(term) {
+  const res = document.getElementById('ramsPersonnelResults');
+  if (!res) return;
+  const t = String(term || '').trim().toLowerCase();
+  const pool = _ramsRoster.filter(p => !_ramsSelectedIds.includes(p.id));
+  const matches = (t
+    ? pool.filter(p =>
+        (p.name || '').toLowerCase().includes(t) ||
+        (p.site_role || '').toLowerCase().includes(t) ||
+        (p.company || '').toLowerCase().includes(t))
+    : pool).slice(0, 30);
+  if (!matches.length) {
+    res.innerHTML = `<div style="padding:8px 10px;font-size:12px;color:var(--subtle)">${_ramsRoster.length ? 'No matches — try “Add person”.' : 'Roster is empty — add a person.'}</div>`;
+  } else {
+    res.innerHTML = matches.map(p => {
+      const certs = _ramsCertNames(p);
+      const badge = p.type === 'subcontractor'
+        ? `<span style="font-size:10px;color:#a78bfa;border:1px solid rgba(139,92,246,.4);border-radius:4px;padding:1px 5px;margin-left:6px">SUB${p.company ? ' · ' + escapeHtml(p.company) : ''}</span>`
+        : '';
+      return `<div onclick="ramsSelectPerson(${p.id})" style="padding:8px 10px;border-bottom:1px solid var(--border);cursor:pointer;font-size:12px">
+        <b>${escapeHtml(p.name)}</b>${badge}
+        <div style="color:var(--muted);font-size:11px">${escapeHtml(p.site_role || 'no role set')}${certs.length ? ' · ' + escapeHtml(certs.join(', ')) : ''}</div>
+      </div>`;
+    }).join('');
+  }
+  res.style.display = 'block';
+}
+
+function ramsSelectPerson(id) {
+  id = parseInt(id);
+  if (!_ramsSelectedIds.includes(id)) _ramsSelectedIds.push(id);
+  const search = document.getElementById('ramsPersonnelSearch'); if (search) search.value = '';
+  ramsHideResults();
+  ramsRenderTiles();
+}
+
+function ramsRemovePerson(id) {
+  id = parseInt(id);
+  _ramsSelectedIds = _ramsSelectedIds.filter(x => x !== id);
+  ramsRenderTiles();
+}
+
+// ── inline add-person form ─────────────────────────────────────────────────────
+function ramsToggleAddPerson() {
+  const form = document.getElementById('ramsAddPersonForm');
+  if (!form) return;
+  const opening = form.style.display === 'none';
+  form.style.display = opening ? 'block' : 'none';
+  if (opening) {
+    ['ramsNpName','ramsNpRole','ramsNpCompany','ramsNpPhone','ramsNpNewCertType'].forEach(id => {
+      const el = document.getElementById(id); if (el) el.value = '';
+    });
+    const typeSel = document.getElementById('ramsNpType'); if (typeSel) typeSel.value = 'staff';
+    const emp = document.getElementById('ramsNpEmployee'); if (emp) emp.value = '';
+    ramsToggleCompany();
+    ramsPopulateEmployeeDropdown();
+    ramsRenderCertCheckboxes();
+    const sts = document.getElementById('ramsNpStatus'); if (sts) sts.textContent = '';
+  }
+}
+
+function ramsToggleCompany() {
+  const type = document.getElementById('ramsNpType')?.value || 'staff';
+  const wrap = document.getElementById('ramsNpCompanyWrap');
+  if (wrap) wrap.style.display = type === 'subcontractor' ? '' : 'none';
+}
+
+function ramsPopulateEmployeeDropdown() {
+  const sel = document.getElementById('ramsNpEmployee');
+  if (!sel) return;
+  const emps = (state?.timesheetData?.employees || []).slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  sel.innerHTML = '<option value="">\u2014 choose an employee \u2014</option>' +
+    emps.map(e => `<option value="${e.id}">${escapeHtml(e.name)}</option>`).join('');
+}
+
+function ramsPullFromEmployee(empId) {
+  if (!empId) return;
+  const name = (typeof empNameById === 'function') ? empNameById(parseInt(empId)) : null;
+  const nameInput = document.getElementById('ramsNpName');
+  if (name && nameInput) nameInput.value = name;
+  const typeSel = document.getElementById('ramsNpType'); if (typeSel) { typeSel.value = 'staff'; ramsToggleCompany(); }
+}
+
+function ramsRenderCertCheckboxes() {
+  const wrap = document.getElementById('ramsNpCerts');
+  if (!wrap) return;
+  if (!_ramsCertTypes.length) {
+    wrap.innerHTML = '<span style="font-size:11px;color:var(--subtle)">No cert types yet — add one below.</span>';
+    return;
+  }
+  wrap.innerHTML = _ramsCertTypes.map(ct =>
+    `<label style="display:inline-flex;align-items:center;gap:5px;font-size:11px;border:1px solid var(--border);border-radius:6px;padding:3px 8px;cursor:pointer">
+      <input type="checkbox" class="rams-np-cert" value="${escapeHtml(ct.name)}" style="width:12px;height:12px;accent-color:var(--accent)">
+      ${escapeHtml(ct.name)}
+    </label>`).join('');
+}
+
+async function ramsAddCertType() {
+  const input = document.getElementById('ramsNpNewCertType');
+  const name = (input?.value || '').trim();
+  const sts = document.getElementById('ramsNpStatus');
+  if (!name) return;
+  try {
+    const ct = await api.post('/api/cert-types', { name });
+    if (!_ramsCertTypes.some(x => x.name === ct.name)) _ramsCertTypes.push(ct);
+    _ramsCertTypes.sort((a, b) => (a.sort_order || 99) - (b.sort_order || 99) || a.name.localeCompare(b.name));
+    if (input) input.value = '';
+    ramsRenderCertCheckboxes();
+    if (sts) { sts.style.color = 'var(--muted)'; sts.textContent = `Added cert type “${ct.name}”.`; }
+  } catch (e) {
+    if (sts) { sts.style.color = 'var(--red)'; sts.textContent = 'Could not add cert type: ' + e.message; }
+  }
+}
+
+async function ramsSubmitNewPerson() {
+  const sts = document.getElementById('ramsNpStatus');
+  const name = (document.getElementById('ramsNpName')?.value || '').trim();
+  if (!name) { if (sts) { sts.style.color = 'var(--red)'; sts.textContent = 'Name is required.'; } return; }
+  const type = document.getElementById('ramsNpType')?.value === 'subcontractor' ? 'subcontractor' : 'staff';
+  const empSel = document.getElementById('ramsNpEmployee');
+  const certs = [...document.querySelectorAll('.rams-np-cert:checked')].map(c => c.value);
+  const payload = {
+    name,
+    site_role: (document.getElementById('ramsNpRole')?.value || '').trim(),
+    type,
+    company:   type === 'subcontractor' ? (document.getElementById('ramsNpCompany')?.value || '').trim() : '',
+    phone:     (document.getElementById('ramsNpPhone')?.value || '').trim(),
+    employee_id: (type === 'staff' && empSel?.value) ? parseInt(empSel.value) : null,
+    certs
+  };
+  if (sts) { sts.style.color = 'var(--muted)'; sts.textContent = 'Saving…'; }
+  try {
+    const person = await api.post('/api/site-personnel', payload);
+    _ramsRoster.push(person);
+    _ramsRoster.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    ramsSelectPerson(person.id);
+    ramsToggleAddPerson();
+  } catch (e) {
+    if (sts) { sts.style.color = 'var(--red)'; sts.textContent = 'Could not save: ' + e.message; }
+  }
 }
 
 // Phase 2 — AI reads the ticked drawing(s) and drafts BOTH the Scope of Works

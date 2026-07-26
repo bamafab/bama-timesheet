@@ -768,9 +768,53 @@
     <label style="font-size:11px;color:var(--muted)">Sequence of works / tasks (one task per line — &quot;Task title: detail&quot;)</label>
     <textarea id="ramsTasksText" class="field-input" rows="6" style="resize:vertical;font-size:13px;margin-bottom:16px" placeholder="Mobilisation &amp; site set-up: attend induction, stage tools, establish exclusion zones."></textarea>
 
-    <!-- PERSONNEL -->
-    <div class="field-label">KEY PERSONNEL <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted);font-size:11px">— Name &mdash; Role &mdash; Competency, one per line</span></div>
-    <textarea id="ramsPersonnel" class="field-input" rows="3" style="resize:vertical;font-size:13px;margin-bottom:16px"></textarea>
+    <!-- PERSONNEL (phase 2b: roster picker) -->
+    <div class="field-label">KEY PERSONNEL <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted);font-size:11px">— pick from the site roster, or add a person</span></div>
+    <div id="ramsPersonnelPicker" style="margin-bottom:16px">
+      <!-- selected people, as removable tiles -->
+      <div id="ramsPersonnelTiles" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px"></div>
+      <!-- roster search + results -->
+      <div style="position:relative">
+        <input id="ramsPersonnelSearch" type="text" class="field-input" autocomplete="off"
+               placeholder="Search roster… (name / role / company)"
+               oninput="ramsFilterRoster(this.value)" onfocus="ramsFilterRoster(this.value)">
+        <div id="ramsPersonnelResults" style="display:none;position:absolute;z-index:30;left:0;right:0;max-height:220px;overflow-y:auto;background:var(--bg-darker);border:1px solid var(--border);border-radius:8px;margin-top:4px;box-shadow:0 8px 24px rgba(0,0,0,.35)"></div>
+      </div>
+      <button class="btn" onclick="ramsToggleAddPerson()" style="margin-top:8px;padding:5px 12px;font-size:11px">&#43; Add person</button>
+      <!-- inline add-person form -->
+      <div id="ramsAddPersonForm" style="display:none;border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:10px;background:var(--bg-darker)">
+        <div style="margin-bottom:10px">
+          <label style="font-size:11px;color:var(--muted)">Pull from Employees (optional)</label>
+          <select id="ramsNpEmployee" class="field-input" onchange="ramsPullFromEmployee(this.value)"><option value="">— choose an employee —</option></select>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+          <div><label style="font-size:11px;color:var(--muted)">Name</label><input id="ramsNpName" type="text" class="field-input"></div>
+          <div><label style="font-size:11px;color:var(--muted)">Site role</label><input id="ramsNpRole" type="text" class="field-input" placeholder="e.g. Steel Erector"></div>
+          <div>
+            <label style="font-size:11px;color:var(--muted)">Type</label>
+            <select id="ramsNpType" class="field-input" onchange="ramsToggleCompany()">
+              <option value="staff">Staff</option>
+              <option value="subcontractor">Subcontractor</option>
+            </select>
+          </div>
+          <div id="ramsNpCompanyWrap" style="display:none"><label style="font-size:11px;color:var(--muted)">Company</label><input id="ramsNpCompany" type="text" class="field-input"></div>
+          <div><label style="font-size:11px;color:var(--muted)">Phone (optional)</label><input id="ramsNpPhone" type="text" class="field-input"></div>
+        </div>
+        <label style="font-size:11px;color:var(--muted)">Certifications</label>
+        <div id="ramsNpCerts" style="display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 8px"></div>
+        <div style="display:flex;gap:6px;margin-bottom:12px">
+          <input id="ramsNpNewCertType" type="text" class="field-input" placeholder="New cert type…" style="flex:1;font-size:12px">
+          <button class="btn" onclick="ramsAddCertType()" style="padding:5px 12px;font-size:11px">Add type</button>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-primary" onclick="ramsSubmitNewPerson()" style="padding:8px 14px;font-size:12px">Save person</button>
+          <button class="btn btn-ghost" onclick="ramsToggleAddPerson()" style="padding:8px 14px;font-size:12px">Cancel</button>
+        </div>
+        <div id="ramsNpStatus" style="font-size:11px;color:var(--muted);margin-top:8px"></div>
+      </div>
+    </div>
+    <!-- freeform fallback (revealed only if the roster API is unavailable) -->
+    <textarea id="ramsPersonnel" class="field-input" rows="3" style="display:none;resize:vertical;font-size:13px;margin-bottom:16px" placeholder="Name — Role — Competency, one per line"></textarea>
 
     <!-- NOTES -->
     <div class="field-label">NOTES <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted);font-size:11px">(optional)</span></div>
@@ -805,6 +849,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
-<script src="shared.js?v=20260726v"></script>
+<script src="shared.js?v=20260726w"></script>
 </body>
 </html>
