@@ -11480,13 +11480,17 @@ async function getOrCreateSubfolder(parentItemId, folderName, driveId) {
   if (createRes.status === 201) return await createRes.json();
 
   if (createRes.status === 409) {
-    // Already exists — fetch directly by path (reliable; $filter on children is not)
-    const getRes = await fetch(
-      `https://graph.microsoft.com/v1.0/drives/${dId}/items/${parentItemId}:/${encodeURIComponent(folderName)}`,
-      { headers: { 'Authorization': `Bearer ${token}` } }
-    );
-    if (getRes.ok) return await getRes.json();
-    throw new Error(`Folder "${folderName}" exists (409) but could not be retrieved: ${getRes.status}`);
+    // Already exists — fetch directly by path. Graph is eventually consistent,
+    // so the path GET can transiently 404/5xx right after the folder appears;
+    // retry a few times before giving up (a single miss used to abort a whole
+    // multi-file batch).
+    const pathUrl = `https://graph.microsoft.com/v1.0/drives/${dId}/items/${parentItemId}:/${encodeURIComponent(folderName)}`;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const getRes = await fetch(pathUrl, { headers: { 'Authorization': `Bearer ${token}` } });
+      if (getRes.ok) return await getRes.json();
+      if (attempt < 3) { await new Promise(r => setTimeout(r, 400 * (attempt + 1))); continue; }
+      throw new Error(`Folder "${folderName}" exists (409) but could not be retrieved: ${getRes.status}`);
+    }
   }
 
   throw new Error(`Create folder "${folderName}" failed: ${createRes.status}`);
@@ -12778,16 +12782,30 @@ async function bomAdvance(id, newStatus) {
 
 function wireBomDropZone() {
   const dz = document.getElementById('bomDropZone');
-  if (!dz) return;
-  dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('drag-over'); });
-  dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
-  dz.addEventListener('drop', (e) => {
-    e.preventDefault();
-    dz.classList.remove('drag-over');
-    const files = Array.from(e.dataTransfer.files)
-      .filter(f => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
-    if (files.length) onBomManualFilesPicked(files);
-  });
+  if (dz) {
+    dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('drag-over'); });
+    dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+    dz.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dz.classList.remove('drag-over');
+      const files = Array.from(e.dataTransfer.files)
+        .filter(f => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
+      if (files.length) onBomManualFilesPicked(files);
+    });
+  }
+  // Fixings/bolt-list import zone — same drag-and-drop behaviour.
+  const fz = document.getElementById('fixDropZone');
+  if (fz) {
+    fz.addEventListener('dragover', (e) => { e.preventDefault(); fz.classList.add('drag-over'); });
+    fz.addEventListener('dragleave', () => fz.classList.remove('drag-over'));
+    fz.addEventListener('drop', (e) => {
+      e.preventDefault();
+      fz.classList.remove('drag-over');
+      const files = Array.from(e.dataTransfer.files)
+        .filter(f => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
+      if (files.length) onFixingFilesPicked(files);
+    });
+  }
 }
 
 
