@@ -12145,7 +12145,6 @@ function renderBOM() {
         ${finishOpts}
       </select>
       <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="bomBulkStatus('ready_for_despatch')">&#10003; Mark returned</button>
-      <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="bomBulkStatus('despatched')">&#128666; Mark despatched</button>
       ${isDraftsman ? `<button class="btn btn-ghost" style="padding:4px 10px;font-size:11px;color:var(--red);border-color:var(--red);margin-left:auto" onclick="bomBulkDelete()">&#128465; Delete selected</button>` : ''}
     </div>`;
 
@@ -12224,8 +12223,17 @@ function renderBomRow(it) {
     actionBtn = `<button class="btn btn-success" style="padding:5px 11px;font-size:11px;white-space:nowrap"
                    onclick="bomAdvance(${it.id}, 'ready_for_despatch')">&#10003; Mark returned</button>`;
   } else if (it.status === 'ready_for_despatch') {
-    actionBtn = `<button class="btn btn-primary" style="padding:5px 11px;font-size:11px;white-space:nowrap"
-                   onclick="bomAdvance(${it.id}, 'despatched')">&#128666; Despatched</button>`;
+    // No manual "Despatched" button — despatch/on-site is set automatically
+    // when the Site Delivery Note is generated (via the 🚚 button), so the
+    // DN and the status can never diverge.
+    actionBtn = `<span style="font-size:11px;color:var(--subtle);white-space:nowrap" title="Generate a Site Delivery Note to despatch">via Site DN &#128666;</span>`;
+  } else if (it.status === 'despatched' && isDraftsman) {
+    // Recovery path: an item that was pushed to 'despatched' before a DN was
+    // generated (e.g. the old manual button) is otherwise stuck out of the
+    // SDN queue. Let a draftsman send it back to ready_for_despatch.
+    actionBtn = `<button class="btn btn-ghost" style="padding:5px 11px;font-size:11px;white-space:nowrap;color:var(--subtle)"
+                   title="Return to the despatch queue so a Site DN can be generated"
+                   onclick="bomAdvance(${it.id}, 'ready_for_despatch')">&#8630; Undo despatch</button>`;
   }
 
   const deleteBtn = isDraftsman
