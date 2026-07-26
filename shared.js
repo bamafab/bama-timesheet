@@ -13796,31 +13796,36 @@ function drawSitePackPDF(jsPDF, pack, proj, job, logoDataUri) {
   const fmtDate = pack.dateStr || new Date(pack.createdAt || Date.now())
     .toLocaleDateString('en-GB', { day:'numeric', month:'long', year:'numeric' });
 
-  // ── Header: logo + company left, title + meta right ──────────
+  // ── Header: logo (left) + company details (to the RIGHT of the logo) +
+  //    title (far right). Address beside the logo condenses the whole band. ──
   let y = marginL;
-  let leftY = y;
-  let logoDrawn = false;
+  let logoW = 0, logoBottom = y;
   if (logoDataUri) {
     try {
-      const RENDER_W = 55; // mm — width fixed, height from intrinsic ratio
+      const RENDER_W = 48; // mm — slightly smaller so the address sits neatly beside it
       const props = doc.getImageProperties(logoDataUri);
       const ratio = (props && props.width && props.height) ? (props.width / props.height) : (55 / 24);
       const renderH = RENDER_W / ratio;
       doc.addImage(logoDataUri, props.fileType || 'PNG', marginL, y, RENDER_W, renderH, undefined, 'FAST');
-      leftY = y + renderH + 4;
-      logoDrawn = true;
-    } catch (e) { logoDrawn = false; }
+      logoW = RENDER_W; logoBottom = y + renderH;
+    } catch (e) { logoW = 0; }
   }
-  if (!logoDrawn) {
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(20); setText(accent);
-    doc.text(g.companyName || 'BAMA FABRICATION', marginL, y + 8); leftY = y + 14;
+  if (!logoW) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(18); setText(accent);
+    doc.text(g.companyName || 'BAMA FABRICATION', marginL, y + 7);
+    logoW = doc.getTextWidth(g.companyName || 'BAMA FABRICATION');
+    logoBottom = y + 10;
   }
-  setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+
+  // Company details — to the RIGHT of the logo.
+  const coX = marginL + logoW + 8;
+  let coY = y + 3.5;
+  setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
   const coLines = [];
   if (g.address) String(g.address).split('\n').forEach(l => coLines.push(l));
   if (g.phone)  coLines.push('Tel: ' + g.phone);
   if (g.email)  coLines.push(g.email);
-  coLines.forEach(l => { doc.text(String(l), marginL, leftY); leftY += 3.8; });
+  coLines.forEach(l => { doc.text(String(l), coX, coY); coY += 3.6; });
 
   // RIGHT: italic title
   doc.setFont('helvetica', 'bolditalic'); doc.setFontSize(20); setText(accent);
@@ -13836,8 +13841,8 @@ function drawSitePackPDF(jsPDF, pack, proj, job, logoDataUri) {
   const contactStr = [site.contactName, site.contactPhone]
     .map(l => (l == null ? '' : String(l).trim())).filter(Boolean).join(' \u00b7 ');
 
-  // Drop below the taller of the company block / the title.
-  y = Math.max(leftY, y + 12) + 3;
+  // Drop below the tallest of logo / company details / title.
+  y = Math.max(logoBottom, coY, y + 12) + 4;
 
   // 4-column grid: label | value | label | value, full page width.
   const spLabelW = 26;
