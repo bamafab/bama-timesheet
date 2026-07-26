@@ -12843,11 +12843,22 @@ function drawDnPDF(jsPDF, dn, proj, job, logoDataUri) {
   // ── Header: logo + company left, title + meta right ──────────
   let y = marginL;
   let leftY = y;
+  let logoDrawn = false;
   if (t.showLogo !== false && logoDataUri) {
-    try { doc.addImage(logoDataUri, 'PNG', marginL, y, 60, 26, undefined, 'FAST'); leftY = y + 30; }
-    catch (e) { leftY = y; }
+    try {
+      // Preserve the logo's real aspect ratio. jsPDF.getImageProperties reads
+      // the intrinsic pixel dimensions straight off the data URI (data URIs
+      // have no naturalWidth/naturalHeight), so height is derived, never fixed.
+      const RENDER_W = 55; // mm
+      const props = doc.getImageProperties(logoDataUri);
+      const ratio = (props && props.width && props.height) ? (props.width / props.height) : (55 / 24);
+      const renderH = RENDER_W / ratio;
+      doc.addImage(logoDataUri, props.fileType || 'PNG', marginL, y, RENDER_W, renderH, undefined, 'FAST');
+      leftY = y + renderH + 4;
+      logoDrawn = true;
+    } catch (e) { logoDrawn = false; }
   }
-  if (t.showLogo === false || !logoDataUri) {
+  if (!logoDrawn) {
     doc.setFont('helvetica', 'bold'); doc.setFontSize(20); setText(accent);
     doc.text(g.companyName || 'BAMA FABRICATION', marginL, y + 8); leftY = y + 14;
   }
@@ -12866,15 +12877,16 @@ function drawDnPDF(jsPDF, dn, proj, job, logoDataUri) {
   doc.text(t.title || 'Delivery Note', pageW - marginR, y + 8, { align: 'right' });
 
   let rightY = y + 16;
+  // Only emit meta rows that carry a real value — no empty labels, no gaps.
   const metaRows = [
-    { label: 'DN Number:', value: dn.number || '' },
-    { label: 'Date:',      value: fmtDate },
-    { label: 'Project:',   value: (proj && proj.name) || '' },
-    { label: 'Project No:', value: (proj && proj.id) || '' }
-  ];
-  if (job && job.name) metaRows.push({ label: 'Job:', value: job.name });
-  metaRows.push({ label: 'Supplier:', value: dn.destinationName || '' });
-  metaRows.push({ label: 'For:',      value: dn.finishName || '' });
+    { label: 'DN Number:',  value: dn.number },
+    { label: 'Date:',       value: fmtDate },
+    { label: 'Project:',    value: proj && proj.name },
+    { label: 'Project No:', value: proj && proj.id },
+    { label: 'Job:',        value: job && job.name },
+    { label: 'Supplier:',   value: dn.destinationName },
+    { label: 'For:',        value: dn.finishName }
+  ].filter(r => r.value != null && String(r.value).trim() !== '');
 
   doc.setFontSize(9);
   const metaValX = pageW - marginR;
@@ -12894,19 +12906,43 @@ function drawDnPDF(jsPDF, dn, proj, job, logoDataUri) {
 
   // ── Deliver-to panel ──────────────────
   const dt = dn.deliverTo || {};
-  const dtLines = (dt.lines || []).filter(Boolean);
-  if (dt.name || dtLines.length) {
+  const dtLines = (dt.lines || []).filter(l => l != null && String(l).trim() !== '');
+  // Split "Name · 01234 567890" back into a bold name + a phone line beneath.
+  let dtContactName = '', dtContactPhone = '';
+  if (dt.contact && String(dt.contact).trim()) {
+    const parts = String(dt.contact).split('\u00b7').map(p => p.trim()).filter(Boolean);
+    dtContactName  = parts[0] || '';
+    dtContactPhone = parts.slice(1).join(' \u00b7 ');
+  }
+  const hasDeliverTo = (dt.name && String(dt.name).trim()) || dtLines.length || dtContactName || dtContactPhone;
+  if (hasDeliverTo) {
     const boxX = marginL, boxW = 90;
     const boxTop = y;
     let ty = y + 5;
     setText(MUTED); doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5);
-    doc.text('DELIVER TO', boxX + 4, ty); ty += 4.5;
-    setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
-    if (dt.name) { doc.text(String(dt.name), boxX + 4, ty); ty += 4.5; }
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); setText([68, 68, 68]);
-    dtLines.forEach(l => { doc.text(String(l), boxX + 4, ty); ty += 4; });
-    if (dt.contact) { ty += 1; doc.text('Contact: ' + dt.contact, boxX + 4, ty); ty += 4; }
-    // frame
+    doc.text('DELIVER TO', boxX + 4, ty); ty += 4.8;
+    if (dt.name && String(dt.name).trim()) {
+      setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
+      doc.text(String(dt.name), boxX + 4, ty); ty += 4.6;
+    }
+    if (dtLines.length) {
+      setText([68, 68, 68]); doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+      dtLines.forEach(l => { doc.text(String(l), boxX + 4, ty); ty += 4; });
+    }
+    // Site contact — name in bold, phone on the line below.
+    if (dtContactName || dtContactPhone) {
+      ty += 1.5;
+      setText(MUTED); doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5);
+      doc.text('SITE CONTACT', boxX + 4, ty); ty += 4.2;
+      if (dtContactName) {
+        setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
+        doc.text(dtContactName, boxX + 4, ty); ty += 4.2;
+      }
+      if (dtContactPhone) {
+        setText([68, 68, 68]); doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+        doc.text(dtContactPhone, boxX + 4, ty); ty += 4;
+      }
+    }
     setDraw(RULE); doc.setLineWidth(0.3);
     doc.roundedRect(boxX, boxTop, boxW, (ty - boxTop) + 2, 1.5, 1.5);
     y = ty + 8;
@@ -12918,9 +12954,9 @@ function drawDnPDF(jsPDF, dn, proj, job, logoDataUri) {
     { key:'mark',   title:'Mark',           w: 20, align:'left'  },
     { key:'qty',    title:'Qty',            w: 12, align:'center'},
     { key:'profile',title:'Profile',        w: 40, align:'left'  },
-    { key:'length', title:'Length (mm)',    w: 24, align:'right' },
-    { key:'unit',   title:'Unit Wt. (kg)',  w: 24, align:'right' },
-    { key:'total',  title:'Total Wt. (kg)', w: 26, align:'right' },
+    { key:'length', title:'Length (mm)',  w: 24, align:'right' },
+    { key:'unit',   title:'Unit Wt. (kg)', w: 24, align:'right' },
+    { key:'total',  title:'Line Wt. (kg)', w: 26, align:'right' },
     { key:'finish', title:'Finish',         w: usableW - 20 - 12 - 40 - 24 - 24 - 26, align:'left' }
   ];
   let cx = marginL;
@@ -12967,8 +13003,8 @@ function drawDnPDF(jsPDF, dn, proj, job, logoDataUri) {
     cellText(cols[1], qty, baseY);
     profLines.forEach((l, i) => cellText(cols[2], l, baseY + i * 4.2));
     cellText(cols[3], lengthM != null ? lengthM.toLocaleString('en-GB', { maximumFractionDigits: 1 }) : '\u2014', baseY);
-    cellText(cols[4], unitWt != null ? unitWt.toFixed(2) : '\u2014', baseY);
-    cellText(cols[5], lineWt != null ? lineWt.toFixed(2) : '\u2014', baseY);
+    cellText(cols[4], unitWt != null ? String(Math.ceil(unitWt)) : '\u2014', baseY);
+    cellText(cols[5], lineWt != null ? String(Math.ceil(lineWt)) : '\u2014', baseY);
     finLines.forEach((l, i) => cellText(cols[6], l, baseY + i * 4.2));
 
     setDraw(RULE); doc.setLineWidth(0.15); doc.line(marginL, y + rowH, pageW - marginR, y + rowH);
@@ -12983,10 +13019,16 @@ function drawDnPDF(jsPDF, dn, proj, job, logoDataUri) {
   setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
   cellText(cols[0], 'TOTAL', y + 4.7);
   cellText(cols[1], totQty, y + 4.7);
-  cellText(cols[5], anyWeight ? totWeight.toFixed(2) : '\u2014', y + 4.7);
-  y += totH + 4;
+  cellText(cols[5], anyWeight ? String(Math.ceil(totWeight)) : '\u2014', y + 4.7);
+  y += totH + 5;
 
-  if (!anyWeight) {
+  // Total-weight summary line under the table (whole kg, rounded up).
+  if (anyWeight) {
+    setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
+    const summary = `Total Weight: ${Math.ceil(totWeight)} kg`;
+    doc.text(summary, pageW - marginR, y, { align: 'right' });
+    y += 7;
+  } else {
     setText(MUTED); doc.setFont('helvetica', 'italic'); doc.setFontSize(8);
     doc.text('Weights unavailable — no assembly data on these items.', marginL, y);
     y += 6;
@@ -13019,6 +13061,16 @@ function drawDnPDF(jsPDF, dn, proj, job, logoDataUri) {
     setDraw([238, 238, 238]); doc.setLineWidth(0.3); doc.line(marginL, y, pageW - marginR, y); y += 4;
     setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
     doc.splitTextToSize(String(t.termsText), usableW).forEach(l => { doc.text(l, marginL, y); y += 3.6; });
+  }
+
+  // ── Footer: "Page X of Y" bottom-right on every page ──────────
+  // Stamped last so the total page count is known and the footer sits on
+  // whatever pages the content ended up spanning.
+  const pageCount = doc.internal.getNumberOfPages();
+  for (let p = 1; p <= pageCount; p++) {
+    doc.setPage(p);
+    setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
+    doc.text(`Page ${p} of ${pageCount}`, pageW - marginR, pageH - 8, { align: 'right' });
   }
 
   return doc.output('blob');
