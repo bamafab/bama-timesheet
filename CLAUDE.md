@@ -679,9 +679,26 @@ button below). `drawRamsPDF` draws it as a **vector** marker (jsPDF helvetica
 has no emoji): red teardrop with the stem apex on the exact point + a WORK
 AREA label, flipped below the point when the pin is within 10% of the top edge.
 
-Remaining phase: DOCX export via docx.js (7 — the renderer consumes the same
-structured object, so a second deterministic renderer slots in without
-touching generation).
+**DOCX export (phase 7 — done):** the modal's **Output** select adds an
+editable Word twin (`PDF + Word (.docx)`) saved alongside the PDF in the same
+`00 - RAMS/<job>/` folder and registered as a second `fileContext:'rams'` row
+(name suffixed " (Word)"). Second deterministic renderer, same `rams` object:
+`drawRamsDOCX(docx, rams, assets)` is PURE/sync (Node-testable) and
+`renderRamsDocxBlob(rams)` is the async shell (library load, image dims,
+`Packer.toBlob`). Library is **docx.js v9 (dolanmiu/docx)** loaded on demand by
+`resolveDocxLib()` from **jsDelivr** (`docx@9.7.1/dist/index.umd.cjs`, global
+`window.docx`) — the lib is NOT on cdnjs (only docxtemplater is; don't confuse
+them). Gotchas baked in: (1) docx.js **swaps width/height itself** when
+`orientation: LANDSCAPE` — always pass PORTRAIT A4 dims for the Appendix A
+landscape section or it double-swaps back to portrait; (2) the CONTENTS page is
+a live Word `TOC` field + `features: { updateFields: true }`, so Word prompts
+"update fields" on open — that's expected, not a bug; (3) the site-plan WORK
+AREA pin is **composited into the image via canvas** (`_ramsCompositePin`)
+before embedding, since docx has no vector overlay; (4) image sizing uses
+`_dataUriDims()` (an `Image()` decode — data URIs have no naturalWidth, same
+lesson as jsPDF's `getImageProperties`), mm→px at 96dpi. Page numbers are real
+`PAGE`/`NUMPAGES` fields per section footer. A DOCX failure never sinks the
+flow — the PDF is already saved; the user just gets a warning toast.
 
 ## Modal → Page mapping
 

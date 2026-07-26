@@ -711,6 +711,7 @@
       Risk Assessment &amp; Method Statement. Prefilled from the job — edit anything before generating.
       Saves to <b>00 - RAMS / (job name)</b> in SharePoint. The <b>Tier</b> selector sets document depth
       (Brief = lean, Tier&nbsp;1 = full approval trail) and resets the standard-section ticks below.
+      <b>Output</b> can add an editable Word (.docx) twin alongside the PDF.
     </div>
 
     <!-- HEADER -->
@@ -858,8 +859,15 @@
     <div class="field-label">NOTES <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted);font-size:11px">(optional)</span></div>
     <textarea id="ramsNotes" class="field-input" rows="2" style="resize:vertical;margin-bottom:20px"></textarea>
 
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+      <label class="field-label" style="margin:0;white-space:nowrap" for="ramsFormat">OUTPUT</label>
+      <select id="ramsFormat" class="field-input" style="max-width:280px">
+        <option value="pdf" selected>PDF only</option>
+        <option value="pdf-docx">PDF + Word (.docx, editable)</option>
+      </select>
+    </div>
     <button class="btn btn-primary btn-full" id="ramsConfirmBtn" onclick="confirmRams()" style="padding:14px;font-size:15px">
-      Generate &amp; save RAMS PDF
+      Generate &amp; save RAMS
     </button>
     <button class="btn btn-ghost btn-full" onclick="closeRamsModal()" style="margin-top:10px;padding:12px">
       Cancel
@@ -887,6 +895,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
-<script src="shared.js?v=20260726ze"></script>
+<script src="shared.js?v=20260726zf"></script>
 </body>
 </html>

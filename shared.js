@@ -15775,6 +15775,566 @@ async function renderRamsPdfBlob(rams) {
   return blob;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// RAMS DOCX renderer (phase 7) — second deterministic renderer consuming the
+// SAME structured `rams` object as drawRamsPDF, so generation code never
+// changes. Built on docx.js (dolanmiu/docx v9, UMD from jsDelivr — the lib is
+// not hosted on cdnjs). Word output is editable: the principal contractor can
+// tweak wording without asking us to re-issue.
+//
+// Split mirrors the PDF path exactly:
+//   • renderRamsDocxBlob(rams)  — async shell: loads the library, resolves
+//     image dimensions (browser Image()), composites the site-plan pin onto
+//     the image via canvas (docx has no vector overlay), then packs.
+//   • drawRamsDOCX(docx, rams, assets) — PURE + synchronous: consumes
+//     pre-resolved image assets, returns a docx.Document. Node-testable.
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function resolveDocxLib() {
+  const pick = () => (typeof window.docx !== 'undefined' && typeof window.docx.Document === 'function') ? window.docx : null;
+  let lib = pick();
+  if (lib) return lib;
+  await new Promise((resolve, reject) => {
+    const existing = document.querySelector('script[data-docx-loaded]');
+    if (existing) {
+      let tries = 0;
+      const tick = () => { if (pick()) return resolve(); if (++tries > 60) return reject(new Error('docx.js load timed out')); setTimeout(tick, 100); };
+      return tick();
+    }
+    const sc = document.createElement('script');
+    sc.src = 'https://cdn.jsdelivr.net/npm/docx@9.7.1/dist/index.umd.cjs';
+    sc.dataset.docxLoaded = '1';
+    sc.onload = resolve;
+    sc.onerror = () => reject(new Error('Failed to load docx.js from CDN'));
+    document.head.appendChild(sc);
+  });
+  return pick();
+}
+
+// data:image/png;base64,xxxx → Uint8Array
+function _dataUriToU8(dataUri) {
+  const b64 = String(dataUri).split(',')[1] || '';
+  const bin = atob(b64);
+  const u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return u8;
+}
+function _dataUriImgType(dataUri) {
+  const m = String(dataUri).match(/^data:image\/(\w+)/);
+  const t = (m && m[1] || 'png').toLowerCase();
+  return t === 'jpeg' ? 'jpg' : (['png', 'jpg', 'gif', 'bmp'].includes(t) ? t : 'png');
+}
+// Natural pixel dimensions of a data-URI image (data URIs have no
+// naturalWidth until decoded — same lesson as jsPDF's getImageProperties).
+function _dataUriDims(dataUri) {
+  return new Promise(resolve => {
+    try {
+      const img = new Image();
+      img.onload = () => resolve({ w: img.naturalWidth || img.width, h: img.naturalHeight || img.height });
+      img.onerror = () => resolve(null);
+      img.src = dataUri;
+    } catch (e) { resolve(null); }
+  });
+}
+// Burn the WORK AREA pin into the site-plan image via canvas — docx can only
+// embed flat images, so the vector marker the PDF draws is composited here.
+async function _ramsCompositePin(dataUri, pin) {
+  if (!pin || !isFinite(pin.x) || !isFinite(pin.y)) return dataUri;
+  try {
+    const dims = await _dataUriDims(dataUri);
+    if (!dims || !dims.w || !dims.h) return dataUri;
+    const img = new Image();
+    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = dataUri; });
+    const cv = document.createElement('canvas');
+    cv.width = dims.w; cv.height = dims.h;
+    const ctx = cv.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const px = dims.w * pin.x / 100, py = dims.h * pin.y / 100;
+    const u = Math.max(dims.w, dims.h) / 210;          // ~1 "mm" at A4 scale
+    ctx.fillStyle = '#e5484d';
+    ctx.beginPath();                                    // teardrop stem, apex on the point
+    ctx.moveTo(px - 1.7 * u, py - 3.4 * u); ctx.lineTo(px + 1.7 * u, py - 3.4 * u); ctx.lineTo(px, py);
+    ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.arc(px, py - 4.6 * u, 2.5 * u, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(px, py - 4.6 * u, 1.0 * u, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#e5484d';
+    ctx.font = 'bold ' + Math.round(3.2 * u) + 'px Arial';
+    ctx.textAlign = 'center';
+    const labelAbove = pin.y > 10;
+    ctx.fillText('WORK AREA', Math.max(9 * u, Math.min(dims.w - 9 * u, px)), labelAbove ? py - 8.4 * u : py + 3.9 * u);
+    return cv.toDataURL('image/png');
+  } catch (e) { return dataUri; }
+}
+
+// Pure renderer. `assets` = { logo: {u8,type,w,h}|null, plan: {u8,type,w,h}|null }
+// with w/h already scaled to render size in PIXELS (96dpi).
+function drawRamsDOCX(docx, rams, assets) {
+  const tier = rams.tier || 'complex';
+  const s = (typeof _pickTplSettings === 'function') ? _pickTplSettings() : null;
+  const g = (s && s.global) || (typeof TEMPLATE_DEFAULTS !== 'undefined' ? TEMPLATE_DEFAULTS.global
+    : { companyName: 'BAMA FABRICATION', address: '', phone: '', email: '', vatNumber: '' });
+  const ACCENT = 'FF6B00', TEXT = '222222', MUTED = '5A5A5A', RULE = 'CCCCCC', HEADFILL = 'F2F2F2';
+  const riskHex = r => (r <= 6 ? 'D4EDDA' : r <= 12 ? 'FFF3CD' : 'F8D7DA');
+  const MM = 56.6929;                                   // mm → twips
+  const M = Math.round(14 * MM);                        // 14mm margins, same as the PDF
+  const A4W = 11906, A4H = 16838;
+  const PORTRAIT_USABLE = A4W - 2 * M, LANDSCAPE_USABLE = A4H - 2 * M;
+
+  const { Document, Paragraph, TextRun, ImageRun, Table, TableRow, TableCell, Header, Footer,
+          AlignmentType, WidthType, BorderStyle, HeadingLevel, PageOrientation, PageNumber,
+          TableOfContents, VerticalAlign, ShadingType } = docx;
+
+  const NOB = { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' };
+  const NOBORDERS = { top: NOB, bottom: NOB, left: NOB, right: NOB, insideHorizontal: NOB, insideVertical: NOB };
+  const thin = c => ({ style: BorderStyle.SINGLE, size: 4, color: c || RULE });
+  const GRID = { top: thin(), bottom: thin(), left: thin(), right: thin(), insideHorizontal: thin(), insideVertical: thin() };
+
+  const run = (t, o) => new TextRun(Object.assign({ text: String(t == null ? '' : t), font: 'Arial' }, o || {}));
+  const para = (t, o) => {
+    o = o || {};
+    return new Paragraph({
+      alignment: o.align, spacing: o.spacing || { after: 80 },
+      children: [run(t, { size: o.size || 19, bold: o.bold, italics: o.italic, color: o.color || TEXT })]
+    });
+  };
+  const bullets = items => (items || []).map(it => new Paragraph({
+    bullet: { level: 0 }, spacing: { after: 60 },
+    children: [run(it, { size: 19 })]
+  }));
+  const numbered = items => (items || []).map((it, i) => new Paragraph({
+    spacing: { after: 60 }, indent: { left: 360, hanging: 360 },
+    children: [run((i + 1) + '.\u2002', { size: 19, color: MUTED }), run(it, { size: 19 })]
+  }));
+
+  let secNum = 0;
+  const numHeading = t => { secNum++; return new Paragraph({ heading: HeadingLevel.HEADING_1, spacing: { before: 240, after: 100 }, children: [run(secNum + '. ' + t, { size: 22, bold: true, color: ACCENT })] }); };
+  const appHeading = t => new Paragraph({ heading: HeadingLevel.HEADING_1, spacing: { before: 120, after: 100 }, children: [run(t, { size: 22, bold: true, color: ACCENT })] });
+
+  const cellPara = (t, o) => new Paragraph({ spacing: { after: 20 }, alignment: o && o.align, children: [run(t, Object.assign({ size: 17 }, o || {}))] });
+  const cell = (children, o) => new TableCell(Object.assign({
+    children: Array.isArray(children) ? children : [children],
+    verticalAlign: VerticalAlign.CENTER,
+    margins: { top: 40, bottom: 40, left: 80, right: 80 }
+  }, o || {}));
+
+  // Two-column label/value table (borderless) — cover Details & project details.
+  const kvTable = (rows, labelMm, usableTw) => new Table({
+    width: { size: usableTw, type: WidthType.DXA },
+    columnWidths: [Math.round(labelMm * MM), usableTw - Math.round(labelMm * MM)],
+    borders: NOBORDERS,
+    rows: rows.map(([lab, val]) => new TableRow({
+      children: [
+        cell(cellPara(lab, { bold: true, color: MUTED, size: 18 })),
+        cell(cellPara(val, { size: 18 }))
+      ]
+    }))
+  });
+
+  // ── Running header / footer (defined per section; cover stays clean) ──
+  const runningHeader = () => new Header({
+    children: [new Paragraph({
+      spacing: { after: 60 },
+      border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: RULE, space: 2 } },
+      children: [run(`${g.companyName || 'BAMA Fabrication'} \u2014 ${rams.docNo || 'RAMS'}${rams.title ? ' \u00b7 ' + rams.title : ''}`, { size: 15, color: MUTED })]
+    })]
+  });
+  const runningFooter = () => new Footer({
+    children: [new Paragraph({
+      tabStops: [{ type: 'right', position: PORTRAIT_USABLE }],
+      children: [
+        run(`${rams.docNo || 'RAMS'}${rams.rev ? ' \u00b7 Rev ' + rams.rev : ''}`, { size: 15, color: MUTED }),
+        new TextRun({ text: '\tPage ', font: 'Arial', size: 15, color: MUTED }),
+        new TextRun({ children: [PageNumber.CURRENT], font: 'Arial', size: 15, color: MUTED }),
+        new TextRun({ text: ' of ', font: 'Arial', size: 15, color: MUTED }),
+        new TextRun({ children: [PageNumber.TOTAL_PAGES], font: 'Arial', size: 15, color: MUTED })
+      ]
+    })]
+  });
+  const emptyHF = { headers: { default: new Header({ children: [] }) }, footers: { default: new Footer({ children: [] }) } };
+
+  const pagePortrait = { size: { width: A4W, height: A4H, orientation: PageOrientation.PORTRAIT }, margin: { top: M, right: M, bottom: M, left: M } };
+  // NB: docx.js swaps width/height itself when orientation is LANDSCAPE —
+  // always pass PORTRAIT dims here or it double-swaps back to portrait.
+  const pageLandscape = { size: { width: A4W, height: A4H, orientation: PageOrientation.LANDSCAPE }, margin: { top: M, right: M, bottom: M, left: M } };
+
+  const sections = [];
+  const hasCover = tier !== 'brief';
+
+  // ═══ COVER (Complex & Tier 1) ═══
+  if (hasCover) {
+    const cov = [];
+    cov.push(new Paragraph({ spacing: { after: 200 }, children: [] }));
+    if (assets && assets.logo) {
+      cov.push(new Paragraph({
+        alignment: AlignmentType.CENTER, spacing: { after: 300 },
+        children: [new ImageRun({ type: assets.logo.type, data: assets.logo.u8, transformation: { width: assets.logo.w, height: assets.logo.h } })]
+      }));
+    } else {
+      cov.push(para(g.companyName || 'BAMA FABRICATION', { align: AlignmentType.CENTER, size: 48, bold: true, color: ACCENT, spacing: { after: 300 } }));
+    }
+    cov.push(para('RISK ASSESSMENT &', { align: AlignmentType.CENTER, size: 40, bold: true, spacing: { after: 40 } }));
+    cov.push(para('METHOD STATEMENT', { align: AlignmentType.CENTER, size: 40, bold: true, spacing: { after: 400 } }));
+
+    cov.push(new Paragraph({
+      spacing: { after: 140 },
+      border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: TEXT, space: 2 } },
+      children: [run('Details', { size: 22, bold: true })]
+    }));
+    const coverRows = [
+      ['Contract name', rams.contract], ['Contract No', rams.contractNo], ['Client', rams.client],
+      ['Principal contractor', rams.principal], ['Title', rams.title], ['Document No', rams.docNo],
+      ['Revision', rams.rev], ['Issue date', rams.dateStr]
+    ].filter(r => r[1] != null && String(r[1]).trim() !== '');
+    cov.push(kvTable(coverRows.map(([l, v]) => [l + ':', v]), 52, PORTRAIT_USABLE));
+    cov.push(new Paragraph({ spacing: { after: 200 }, children: [] }));
+    cov.push(new Paragraph({
+      spacing: { after: 200 },
+      border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: TEXT, space: 2 } },
+      children: [run('Authorisation', { size: 22, bold: true })]
+    }));
+    const signLine = (label, name) => new Paragraph({
+      spacing: { after: 360 },
+      children: [
+        run(`${label}: ${name || ''}`, { size: 21 }),
+        run('        Signature: ', { size: 21 }),
+        run('\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0', { size: 21, underline: {} })
+      ]
+    });
+    cov.push(signLine('Prepared by', rams.preparedBy));
+    cov.push(signLine('Approved by', rams.preparedBy));
+    sections.push(Object.assign({ properties: { page: pagePortrait }, children: cov }, emptyHF));
+
+    // ═══ CONTENTS — a live Word TOC field (updates on open via updateFields) ═══
+    sections.push({
+      properties: { page: pagePortrait },
+      headers: { default: runningHeader() }, footers: { default: runningFooter() },
+      children: [
+        new Paragraph({ spacing: { before: 200, after: 160 }, children: [run('CONTENTS', { size: 24, bold: true, color: ACCENT })] }),
+        new TableOfContents('Contents', { hyperlink: true, headingStyleRange: '1-1' })
+      ]
+    });
+  }
+
+  // ═══ MAIN BODY ═══
+  const body = [];
+  if (assets && assets.logoSmall) {
+    body.push(new Paragraph({ spacing: { after: 60 }, children: [new ImageRun({ type: assets.logoSmall.type, data: assets.logoSmall.u8, transformation: { width: assets.logoSmall.w, height: assets.logoSmall.h } })] }));
+  } else {
+    body.push(para(g.companyName || 'BAMA FABRICATION', { size: 34, bold: true, color: ACCENT, spacing: { after: 40 } }));
+  }
+  const coLines = [];
+  if (g.address) String(g.address).split('\n').forEach(l => coLines.push(l));
+  if (g.phone) coLines.push('Tel: ' + g.phone);
+  if (g.email) coLines.push(g.email);
+  coLines.forEach(l => body.push(para(l, { size: 16, color: MUTED, spacing: { after: 20 } })));
+  body.push(new Paragraph({
+    spacing: { before: 80, after: 60 },
+    children: [run('RAMS \u2014 Risk Assessment & Method Statement', { size: 26, bold: true, italics: true, color: ACCENT })]
+  }));
+  const metaRows = [
+    ['Document No', rams.docNo], ['Revision', rams.rev], ['Date', rams.dateStr], ['Prepared by', rams.preparedBy]
+  ].filter(r => r[1] != null && String(r[1]).trim() !== '');
+  if (metaRows.length) body.push(kvTable(metaRows.map(([l, v]) => [l + ':', v]), 34, Math.round(PORTRAIT_USABLE * 0.55)));
+  body.push(new Paragraph({
+    spacing: { after: 140 },
+    border: { bottom: { style: BorderStyle.SINGLE, size: 8, color: TEXT, space: 4 } },
+    children: []
+  }));
+
+  const detailRows = [
+    ['Contract / Project', rams.contract],
+    ['Works title', rams.title],
+    ['Client', rams.client],
+    ['Principal contractor', rams.principal],
+    ['Contract No', rams.contractNo],
+    ['Drawing reference', rams.drawingRef],
+    ['Site', rams.site && rams.site.name],
+    ['Site address', (rams.site && rams.site.lines || []).join(', ')],
+    ['Site contact', [rams.site && rams.site.contactName, rams.site && rams.site.contactPhone].filter(Boolean).join(' \u00b7 ')],
+    ['Working hours', rams.hours],
+    ['Nearest A&E', rams.ae]
+  ].filter(r => r[1] != null && String(r[1]).trim() !== '');
+  if (detailRows.length) body.push(kvTable(detailRows, 44, PORTRAIT_USABLE));
+
+  // ── Document Control (tier 1 only) ──
+  if (tier === 'tier1') {
+    body.push(numHeading('Document Control & Approval'));
+    body.push(para(`Revision ${rams.rev || '00'}${rams.dateStr ? ' \u2014 issued ' + rams.dateStr : ''}. This document will be reviewed and re-issued if the scope, site conditions or method of work change.`, { size: 18 }));
+    const dcW = [30, 55, 69, 28].map(mm => Math.round(mm * MM));
+    body.push(new Table({
+      width: { size: PORTRAIT_USABLE, type: WidthType.DXA }, columnWidths: dcW, borders: GRID,
+      rows: [
+        new TableRow({ tableHeader: true, children: ['Role', 'Name', 'Signature', 'Date'].map(t => cell(cellPara(t, { bold: true, size: 16 }), { shading: { type: ShadingType.CLEAR, fill: HEADFILL } })) }),
+        ...[['Prepared by', rams.preparedBy || ''], ['Reviewed by', ''], ['Approved by', '']].map(([role, name]) =>
+          new TableRow({ height: { value: 500, rule: 'atLeast' }, children: [cell(cellPara(role, { bold: true })), cell(cellPara(name)), cell(cellPara('')), cell(cellPara(''))] }))
+      ]
+    }));
+  }
+
+  // ── Scope ──
+  if ((rams.scopeLines || []).length) { body.push(numHeading('Scope of Works')); numbered(rams.scopeLines).forEach(p => body.push(p)); }
+
+  // ── Programme ──
+  body.push(numHeading('Programme & Working Hours'));
+  body.push(para(tier === 'brief'
+    ? (rams.hours
+        ? `Working hours: ${rams.hours}. Programme to be agreed with the principal contractor.`
+        : 'Programme and working hours to be agreed with the principal contractor.')
+    : (rams.hours
+        ? `Works will be carried out during the following hours: ${rams.hours}. Actual dates and durations to be confirmed with the principal contractor and coordinated at site induction.`
+        : 'Working hours and programme to be confirmed with the principal contractor at site induction.')));
+
+  // ── Inductions & briefings ──
+  const inductions = rams.inductions || RAMS_STANDARD.inductions;
+  const dab        = rams.dab        || RAMS_STANDARD.dab;
+  if (inductions.length || dab.length) {
+    body.push(numHeading('Inductions & Briefings'));
+    if (inductions.length) {
+      body.push(para('This RAMS and the associated task briefings will be reviewed, updated and re-issued if the methodology changes or additional tasks are introduced. Pre-requisites before works commence:', { size: 18 }));
+      bullets(inductions).forEach(p => body.push(p));
+    }
+    if (dab.length) {
+      body.push(para('Daily Activity Briefing', { bold: true }));
+      body.push(para('Before starting any works, all operatives will participate in a Daily Activity Briefing covering:', { size: 18 }));
+      bullets(dab).forEach(p => body.push(p));
+    }
+  }
+
+  // ── Sequence of works ──
+  if ((rams.tasks || []).length) {
+    body.push(numHeading('Sequence of Works'));
+    rams.tasks.forEach((t, i) => {
+      body.push(new Paragraph({ spacing: { before: 100, after: 40 }, children: [run(`${i + 1}. ${t.title}`, { size: 19, bold: true })] }));
+      if (t.detail) body.push(new Paragraph({ spacing: { after: 40 }, indent: { left: 400 }, children: [run(t.detail, { size: 19, color: '464646' })] }));
+      (Array.isArray(t.steps) ? t.steps : []).forEach((st, k) => {
+        body.push(new Paragraph({
+          spacing: { after: 40 }, indent: { left: 760, hanging: 280 },
+          children: [run(String.fromCharCode(97 + (k % 26)) + '.\u2002', { size: 19, color: MUTED }), run(st, { size: 19 })]
+        }));
+      });
+    });
+  }
+
+  // ── Key personnel ──
+  body.push(numHeading('Key Personnel & Competency'));
+  const people = rams.personnel || [];
+  if (people.length) {
+    const pcW = [42, 40, 24, 32, 44].map(mm => Math.round(mm * MM));
+    body.push(new Table({
+      width: { size: PORTRAIT_USABLE, type: WidthType.DXA }, columnWidths: pcW, borders: GRID,
+      rows: [
+        new TableRow({ tableHeader: true, children: ['Name', 'Site role', 'Type', 'Company', 'Certifications'].map(t => cell(cellPara(t, { bold: true, size: 16 }), { shading: { type: ShadingType.CLEAR, fill: HEADFILL } })) }),
+        ...people.map(p => new TableRow({
+          children: [
+            cell(cellPara(p.name, { bold: true })),
+            cell(cellPara(p.site_role || p.role || '\u2014')),
+            cell(cellPara(p.type === 'subcontractor' ? 'Subcontractor' : 'Staff')),
+            cell(cellPara(p.type === 'subcontractor' ? (p.company || '\u2014') : '\u2014')),
+            cell(cellPara((p.certs || []).join(', ') || '\u2014'))
+          ]
+        }))
+      ]
+    }));
+  } else {
+    body.push(para('Site personnel to be confirmed at induction. All operatives to hold valid CSCS (or equivalent) and task-specific competency cards.', { italic: true, color: MUTED, size: 18 }));
+  }
+
+  // ── Standard sections (ticked in the modal) ──
+  const plant       = rams.plant       || RAMS_STANDARD.plant;
+  const materials   = rams.materials   || RAMS_STANDARD.materials;
+  const ppe         = rams.ppe         || RAMS_STANDARD.ppe;
+  const access      = rams.access      || RAMS_STANDARD.access;
+  const environment = rams.environment || RAMS_STANDARD.environment;
+  const monitoring  = rams.monitoring  || RAMS_STANDARD.monitoring;
+
+  if (plant.length || materials.length) {
+    body.push(numHeading('Plant, Equipment & Materials'));
+    if (plant.length)     { body.push(para('Plant & equipment:', { bold: true })); bullets(plant).forEach(p => body.push(p)); }
+    if (materials.length) { body.push(para('Materials:', { bold: true })); bullets(materials).forEach(p => body.push(p)); }
+  }
+  if (ppe.length) {
+    body.push(numHeading('Personal Protective Equipment (PPE)'));
+    body.push(para('The following PPE is mandatory / task-specific as noted. Minimum site PPE (hard hat, boots, hi-vis, glasses, gloves) worn at all times:', { size: 18 }));
+    bullets(ppe).forEach(p => body.push(p));
+  }
+  if (access.length)      { body.push(numHeading('Access & Egress'));       bullets(access).forEach(p => body.push(p)); }
+  if (environment.length) { body.push(numHeading('Environmental & Waste')); bullets(environment).forEach(p => body.push(p)); }
+
+  body.push(numHeading('Emergency Arrangements'));
+  const emergencyLines = tier === 'brief'
+    ? [
+        'On discovering an emergency, raise the alarm and follow the site emergency procedure. Trained first-aider and first-aid kit available on site.',
+        rams.ae ? `Nearest A&E: ${rams.ae}.` : 'Nearest A&E to be confirmed at site induction.',
+        'Report all accidents, incidents and near-misses to the site manager and BAMA office.'
+      ]
+    : [
+        'On discovering an emergency, raise the alarm and follow the site emergency procedure.',
+        'Make the area safe if it is safe to do so; do not put yourself at risk.',
+        'Trained first-aider and first-aid kit available on site.',
+        rams.ae ? `Nearest A&E: ${rams.ae}.` : 'Nearest A&E to be confirmed at site induction.',
+        'Report all accidents, incidents and near-misses to the site manager and BAMA office.'
+      ];
+  if (tier === 'tier1') {
+    emergencyLines.push('All RIDDOR-reportable injuries, diseases and dangerous occurrences will be reported to the HSE in line with statutory requirements and notified to the principal contractor.');
+    emergencyLines.push('Emergency contact numbers and muster points to be obtained from the principal contractor at induction and held by the BAMA supervisor.');
+  }
+  bullets(emergencyLines).forEach(p => body.push(p));
+
+  if (monitoring.length) { body.push(numHeading('Monitoring & Review')); bullets(monitoring).forEach(p => body.push(p)); }
+  if (rams.notes && String(rams.notes).trim()) { body.push(numHeading('Additional Notes')); body.push(para(rams.notes)); }
+
+  // ── Site plan (pin already composited into the image by the async shell) ──
+  if (assets && assets.plan) {
+    body.push(numHeading('Site Plan'));
+    body.push(new Paragraph({
+      alignment: AlignmentType.CENTER, spacing: { after: 80 },
+      children: [new ImageRun({ type: assets.plan.type, data: assets.plan.u8, transformation: { width: assets.plan.w, height: assets.plan.h } })]
+    }));
+  }
+
+  sections.push({
+    properties: { page: pagePortrait },
+    headers: { default: runningHeader() }, footers: { default: runningFooter() },
+    children: body
+  });
+
+  // ═══ APPENDIX A — RISK ASSESSMENT (landscape) ═══
+  const appA = [];
+  appA.push(appHeading('Appendix A \u2014 Risk Assessment'));
+  appA.push(para('Risk rating R = Likelihood (L, 1\u20135) \u00d7 Severity (S, 1\u20135). "Initial" is the risk before controls; "Residual" is the risk with the controls below applied. Bands: 1\u20136 low, 7\u201312 medium, 13\u201325 high.', { size: 16, color: MUTED }));
+
+  if (tier !== 'brief') {
+    // 5×5 matrix legend as a shaded table (severity rows top-down 5→1).
+    const mW = Math.round(11 * MM);
+    const matrixRows = [];
+    for (let sv = 5; sv >= 1; sv--) {
+      matrixRows.push(new TableRow({
+        children: [
+          cell(cellPara(String(sv), { align: AlignmentType.CENTER, color: MUTED, size: 15 }), { borders: NOBORDERS }),
+          ...[1, 2, 3, 4, 5].map(lk => cell(cellPara(String(sv * lk), { align: AlignmentType.CENTER, size: 15 }), { shading: { type: ShadingType.CLEAR, fill: riskHex(sv * lk) } }))
+        ]
+      }));
+    }
+    matrixRows.push(new TableRow({
+      children: [cell(cellPara('S \u2191 / L \u2192', { align: AlignmentType.CENTER, color: MUTED, size: 13 }), { borders: NOBORDERS }),
+        ...[1, 2, 3, 4, 5].map(lk => cell(cellPara(String(lk), { align: AlignmentType.CENTER, color: MUTED, size: 15 }), { borders: NOBORDERS }))]
+    }));
+    appA.push(new Table({ width: { size: mW * 6, type: WidthType.DXA }, columnWidths: [mW, mW, mW, mW, mW, mW], borders: GRID, rows: matrixRows }));
+    appA.push(para('Likelihood: 1 = Very unlikely \u00b7 2 = Unlikely \u00b7 3 = Likely \u00b7 4 = Very likely \u00b7 5 = Almost certain', { size: 15, color: MUTED, spacing: { before: 80, after: 20 } }));
+    appA.push(para('Severity: 1 = No injury \u00b7 2 = Minor injury or illness \u00b7 3 = "7 day" injury or illness \u00b7 4 = Major injury or illness \u00b7 5 = Fatality, disabling injury, etc.', { size: 15, color: MUTED, spacing: { after: 20 } }));
+    appA.push(para('Bands: 1\u20136 acceptable \u00b7 7\u201312 further review \u00b7 13\u201325 unacceptable', { size: 15, color: MUTED, spacing: { after: 120 } }));
+  }
+
+  const risks = Array.isArray(rams.risks) ? rams.risks : RAMS_RISK_LIBRARY;
+  const raW = [10, 44, 24, 8, 8, 9, 121, 8, 8, 9].map(mm => Math.round(mm * MM)); // sums 249mm < 269 usable
+  raW[6] = LANDSCAPE_USABLE - raW.reduce((a, w, i) => i === 6 ? a : a + w, 0);
+  const raHead = ['Ref', 'Activity / Hazard', 'At risk', 'L', 'S', 'R', 'Control measures', 'L', 'S', 'R'];
+  const riskRows = [new TableRow({
+    tableHeader: true,
+    children: raHead.map((t, i) => cell(cellPara(t + (i === 3 ? ' (initial)' : i === 7 ? ' (residual)' : ''), { bold: true, size: 14, align: i >= 3 && i !== 6 ? AlignmentType.CENTER : undefined }), { shading: { type: ShadingType.CLEAR, fill: 'E8E8E8' } }))
+  })];
+  for (const r of risks) {
+    const iR = r.iL * r.iS, rR = r.rL * r.rS;
+    const ctrlParas = (r.controls || []).map(ci => new Paragraph({ bullet: { level: 0 }, spacing: { after: 20 }, children: [run(ci, { size: 15 })] }));
+    if (r.whenWhere) ctrlParas.push(new Paragraph({ spacing: { after: 20 }, children: [run('When/where: ', { size: 15, bold: true, color: MUTED }), run(r.whenWhere, { size: 15, color: MUTED })] }));
+    riskRows.push(new TableRow({
+      children: [
+        cell(cellPara(r.ref, { bold: true, size: 15 })),
+        cell(cellPara(`${r.activity ? r.activity + ' \u2014 ' : ''}${r.hazard}`, { size: 15 })),
+        cell(cellPara(r.who || '', { size: 15 })),
+        cell(cellPara(r.iL, { align: AlignmentType.CENTER, size: 15 })),
+        cell(cellPara(r.iS, { align: AlignmentType.CENTER, size: 15 })),
+        cell(cellPara(iR, { align: AlignmentType.CENTER, bold: true, size: 15 }), { shading: { type: ShadingType.CLEAR, fill: riskHex(iR) } }),
+        cell(ctrlParas.length ? ctrlParas : [cellPara('')]),
+        cell(cellPara(r.rL, { align: AlignmentType.CENTER, size: 15 })),
+        cell(cellPara(r.rS, { align: AlignmentType.CENTER, size: 15 })),
+        cell(cellPara(rR, { align: AlignmentType.CENTER, bold: true, size: 15 }), { shading: { type: ShadingType.CLEAR, fill: riskHex(rR) } })
+      ]
+    }));
+  }
+  appA.push(new Table({ width: { size: LANDSCAPE_USABLE, type: WidthType.DXA }, columnWidths: raW, borders: GRID, rows: riskRows }));
+
+  sections.push({
+    properties: { page: pageLandscape },
+    headers: { default: runningHeader() }, footers: { default: runningFooter() },
+    children: appA
+  });
+
+  // ═══ APPENDIX B — BRIEFING REGISTER (portrait) ═══
+  const appB = [];
+  appB.push(appHeading('Appendix B \u2014 Briefing Register'));
+  appB.push(para('I confirm that I have read, or have had explained to me, this Risk Assessment & Method Statement and I understand its contents and will comply with it.', { size: 17, color: MUTED }));
+  const bcW = [55, 40, 57, 30].map(mm => Math.round(mm * MM));
+  const roster = rams.personnel || [];
+  const regRowCount = Math.max(
+    ((RAMS_TIER_PRESETS[tier] || RAMS_TIER_PRESETS.complex).briefingRows) || 12,
+    roster.length);
+  const regRows = [new TableRow({
+    tableHeader: true,
+    children: ['Name', 'Company', 'Signature', 'Date'].map(t => cell(cellPara(t, { bold: true, size: 16 }), { shading: { type: ShadingType.CLEAR, fill: HEADFILL } }))
+  })];
+  for (let i = 0; i < regRowCount; i++) {
+    const p = roster[i];
+    regRows.push(new TableRow({
+      height: { value: 460, rule: 'atLeast' },
+      children: [
+        cell(cellPara(p ? (p.name || '') : '', { size: 17, color: '464646' })),
+        cell(cellPara(p ? (p.type === 'subcontractor' ? (p.company || '') : 'BAMA Fabrication') : '', { size: 17, color: '464646' })),
+        cell(cellPara('')), cell(cellPara(''))
+      ]
+    }));
+  }
+  appB.push(new Table({ width: { size: PORTRAIT_USABLE, type: WidthType.DXA }, columnWidths: bcW, borders: GRID, rows: regRows }));
+
+  sections.push({
+    properties: { page: pagePortrait },
+    headers: { default: runningHeader() }, footers: { default: runningFooter() },
+    children: appB
+  });
+
+  return new Document({
+    creator: 'BAMA Fabrication ERP',
+    title: `${rams.docNo || 'RAMS'}${rams.title ? ' \u2014 ' + rams.title : ''}`,
+    subject: 'Risk Assessment & Method Statement',
+    features: { updateFields: true },                   // Word refreshes the CONTENTS field on open
+    styles: { default: { document: { run: { font: 'Arial', size: 19, color: TEXT } } } },
+    sections
+  });
+}
+
+// Async shell: library + image assets (dims via Image(), pin via canvas), pack.
+async function renderRamsDocxBlob(rams) {
+  const docxLib = await resolveDocxLib();
+  if (!docxLib) throw new Error('DOCX library failed to load');
+
+  const MM2PX = 96 / 25.4;                              // 96dpi px per mm — matches the PDF's mm sizing
+  const prepImage = async (dataUri, maxWmm, maxHmm) => {
+    if (!dataUri) return null;
+    const dims = await _dataUriDims(dataUri);
+    const ratio = (dims && dims.w && dims.h) ? dims.w / dims.h : 1.6;
+    let wmm = maxWmm, hmm = wmm / ratio;
+    if (maxHmm && hmm > maxHmm) { hmm = maxHmm; wmm = hmm * ratio; }
+    return { u8: _dataUriToU8(dataUri), type: _dataUriImgType(dataUri), w: Math.round(wmm * MM2PX), h: Math.round(hmm * MM2PX) };
+  };
+
+  const logoUri = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
+  let planUri = rams.sitePlanDataUri || null;
+  if (planUri && rams.sitePlanPin) planUri = await _ramsCompositePin(planUri, rams.sitePlanPin);
+
+  const assets = {
+    logo:      logoUri ? await prepImage(logoUri, 72) : null,        // cover — 72mm wide, ratio preserved
+    logoSmall: logoUri ? await prepImage(logoUri, 52) : null,        // body header — 52mm
+    plan:      planUri ? await prepImage(planUri, 182, 170) : null   // usable width × 170mm cap, same as PDF
+  };
+
+  const doc = drawRamsDOCX(docxLib, rams, assets);
+  const blob = await docxLib.Packer.toBlob(doc);
+  console.log('[RAMS DOCX] blob size:', blob.size, 'bytes (docx.js)');
+  if (blob.size < 4000) console.warn('[RAMS DOCX] blob suspiciously small (<4KB) \u2014 check content');
+  return blob;
+}
+
 // Assemble the (editable) modal fields into a rams object, render natively with
 // jsPDF, upload to the PROJECT-level 00 - RAMS/<job>/ SharePoint folder, and
 // register it via POST /api/drawing-elements/{jobId}/file (fileContext 'rams').
@@ -15816,6 +16376,8 @@ async function confirmRams() {
         return { name: parts[0] || line, site_role: parts[1] || '', type: 'staff', company: '', certs: parts[2] ? parts[2].split(',').map(c => c.trim()).filter(Boolean) : [] };
       });
     }
+
+    const fmt = getV('ramsFormat') || 'pdf';   // 'pdf' | 'pdf-docx' (phase 7)
 
     const rams = {
       createdAt: new Date().toISOString(),
@@ -15892,6 +16454,28 @@ async function confirmRams() {
         uploadedBy: _currentDraftsmanName || null
       });
       job.rams.files.push({ ...saved });
+
+      // Phase 7 — editable Word twin. Same rams object, second deterministic
+      // renderer (docx.js). A DOCX failure never sinks the flow: the PDF is
+      // already saved, so warn and carry on.
+      if (fmt === 'pdf-docx') {
+        try {
+          const docxBlob = await renderRamsDocxBlob(rams);
+          const docxName = baseName + '.docx';
+          const ab2 = await docxBlob.arrayBuffer();
+          const up2 = await uploadFileToFolder(jobSub.id, docxName, ab2,
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document', driveId);
+          const saved2 = await api.post(`/api/drawing-elements/${jobIdInt}/file`, {
+            fileContext: 'rams', name: baseName + ' (Word)', fileName: docxName,
+            fileId: up2.id, driveId: up2.parentReference?.driveId || driveId,
+            webUrl: up2.webUrl, uploadedAt: new Date().toISOString(),
+            uploadedBy: _currentDraftsmanName || null
+          });
+          job.rams.files.push({ ...saved2 });
+        } catch (docxErr) {
+          toast('PDF saved, but the Word (.docx) version failed: ' + docxErr.message, 'error');
+        }
+      }
     } catch (saveErr) {
       // Never lose the document: open it for a manual save and say why.
       const url = URL.createObjectURL(blob);
@@ -15902,7 +16486,7 @@ async function confirmRams() {
     }
 
     closeRamsModal();
-    toast('RAMS generated & saved to 00 - RAMS.', 'success');
+    toast(fmt === 'pdf-docx' ? 'RAMS generated \u2014 PDF + Word saved to 00 - RAMS.' : 'RAMS generated & saved to 00 - RAMS.', 'success');
     renderSite();
     if (uploaded.webUrl) window.open(uploaded.webUrl, '_blank');
   } catch (e) {
