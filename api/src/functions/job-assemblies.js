@@ -509,6 +509,7 @@ app.http('job-assemblies-kiosk', {
                  LEFT JOIN Clients c ON c.id = p.client_id
                  LEFT JOIN ServiceTypes st ON st.id = a.finish_service_id
                  WHERE p.status = 'In Progress'
+                   AND ISNULL(j.is_complete, 0) = 0   -- closed jobs drop off the kiosk
                    AND (a.status IN ('pending', 'in_progress')
                         OR (a.status = 'fabricated'
                             AND a.fabricated_at > DATEADD(hour, -24, SYSUTCDATETIME())))
