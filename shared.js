@@ -15123,15 +15123,23 @@ function drawRamsPDF(jsPDF, rams, logoDataUri) {
     });
   } catch (e) { /* non-critical */ }
 
-  const pageW = 210, pageH = 297, marginL = 14, marginR = 14, marginB = 16;
-  const usableW = pageW - marginL - marginR;
+  const marginL = 14, marginR = 14, marginB = 16;
+  let pageW = 210, pageH = 297;                       // per-page — Appendix A flips to landscape
+  let usableW = pageW - marginL - marginR;
+  let orient = 'portrait';
+  const setOrient = o => {                            // takes effect from the NEXT newPage()
+    orient = o;
+    pageW = o === 'landscape' ? 297 : 210;
+    pageH = o === 'landscape' ? 210 : 297;
+    usableW = pageW - marginL - marginR;
+  };
   const TEXT = [34, 34, 34], MUTED = [90, 90, 90], RULE = [204, 204, 204], HEADFILL = [242, 242, 242];
   const setText = c => doc.setTextColor(c[0], c[1], c[2]);
   const setFill = c => doc.setFillColor(c[0], c[1], c[2]);
   const setDraw = c => doc.setDrawColor(c[0], c[1], c[2]);
   let y = marginL;
 
-  const newPage = () => { doc.addPage(); y = marginL; };
+  const newPage = () => { doc.addPage('a4', orient); y = marginL; };
   const ensureSpace = h => { if (y + h > pageH - marginB) newPage(); };
 
   const sectionHeading = (txt) => {
@@ -15166,10 +15174,10 @@ function drawRamsPDF(jsPDF, rams, logoDataUri) {
   // ═══ COVER PAGE (Complex & Tier 1) ═══
   // Classic BAMA method-statement front sheet: centred logo, document title,
   // ruled Details block and an Authorisation block with wet-signature space.
-  // Tier 1 additionally reserves page 2 for a CONTENTS page (filled in at the
+  // Complex & Tier 1 also reserve page 2 for a CONTENTS page (filled in at the
   // end, once every section's page number is known). Brief stays compact.
   const hasCover = tier !== 'brief';
-  const hasToc   = tier === 'tier1';
+  const hasToc   = tier !== 'brief';   // contents page for Complex AND Tier 1
   const toc = [];                     // { label, page } — collected as headings are drawn
   if (hasCover) {
     let cy = 30;
@@ -15548,6 +15556,7 @@ function drawRamsPDF(jsPDF, rams, logoDataUri) {
   }
 
   // ═══ APPENDIX A — RISK ASSESSMENT ═══
+  setOrient('landscape');                             // risk table gets the full A4 width
   newPage();
   sectionHeading('Appendix A — Risk Assessment');
   toc.push({ label: 'Appendix A — Risk Assessment', page: doc.internal.getNumberOfPages() });
@@ -15668,7 +15677,8 @@ function drawRamsPDF(jsPDF, rams, logoDataUri) {
   y += 3;
 
   // ═══ APPENDIX B — BRIEFING REGISTER ═══
-  ensureSpace(40);
+  setOrient('portrait');                              // signature register back to portrait
+  newPage();
   sectionHeading('Appendix B — Briefing Register');
   toc.push({ label: 'Appendix B — Briefing Register', page: doc.internal.getNumberOfPages() });
   para('I confirm that I have read, or have had explained to me, this Risk Assessment & Method Statement and I understand its contents and will comply with it.', { size: 8.5, color: MUTED });
@@ -15704,7 +15714,7 @@ function drawRamsPDF(jsPDF, rams, logoDataUri) {
     y += rowH2;
   }
 
-  // ═══ CONTENTS (Tier 1) — page 2, filled in on the second pass ═══
+  // ═══ CONTENTS (Complex & Tier 1) — page 2, filled in on the second pass ═══
   if (hasToc && toc.length) {
     doc.setPage(2);
     let ty = 26;
@@ -15740,15 +15750,16 @@ function drawRamsPDF(jsPDF, rams, logoDataUri) {
   const firstContentPage = 1 + (hasCover ? 1 : 0) + (hasToc ? 1 : 0);
   for (let p = 1; p <= pageCount; p++) {
     doc.setPage(p);
+    const pw = doc.internal.pageSize.getWidth(), ph = doc.internal.pageSize.getHeight();
     if (hasCover && p === 1) continue;               // clean cover — no header/footer
     if (p > firstContentPage) {                      // running header on continuation pages
       setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
       doc.text(`${g.companyName || 'BAMA Fabrication'} \u2014 ${rams.docNo || 'RAMS'}${rams.title ? ' \u00b7 ' + rams.title : ''}`, marginL, 8.5);
-      setDraw(RULE); doc.setLineWidth(0.2); doc.line(marginL, 10.3, pageW - marginR, 10.3);
+      setDraw(RULE); doc.setLineWidth(0.2); doc.line(marginL, 10.3, pw - marginR, 10.3);
     }
     setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
-    doc.text(`${rams.docNo || 'RAMS'}${rams.rev ? ' \u00b7 Rev ' + rams.rev : ''}`, marginL, pageH - 9);
-    doc.text(`Page ${p} of ${pageCount}`, pageW - marginR, pageH - 9, { align: 'right' });
+    doc.text(`${rams.docNo || 'RAMS'}${rams.rev ? ' \u00b7 Rev ' + rams.rev : ''}`, marginL, ph - 9);
+    doc.text(`Page ${p} of ${pageCount}`, pw - marginR, ph - 9, { align: 'right' });
   }
 
   return doc.output('blob');
