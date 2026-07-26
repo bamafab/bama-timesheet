@@ -192,7 +192,11 @@ app.http('projects-update', {
                            'site_same_as_client',
                            'site_address_line1', 'site_address_line2',
                            'site_city', 'site_county', 'site_postcode',
-                           'site_contact_name', 'site_contact_email', 'site_contact_phone'];
+                           'site_contact_name', 'site_contact_email', 'site_contact_phone',
+                           // Hide-from-workshop flag (2026-07 migration): keeps
+                           // other-company / not-our-scope projects out of the
+                           // shop-floor projects grid. Draftsman-toggled.
+                           'hidden_from_workshop'];
 
             for (const key of allowed) {
                 if (body[key] !== undefined) {

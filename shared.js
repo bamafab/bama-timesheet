@@ -504,6 +504,8 @@ async function loadProjects() {
         name:   p.project_name,
         status: p.status,
         client: p.company_name || '',
+        // Hide-from-workshop flag (undefined until the 2026-07 migration runs → falsy → shown).
+        hidden: !!p.hidden_from_workshop,
         // Delivery-address source for the DN "Deliver to" block.
         site_same_as_client: p.site_same_as_client,
         site_address_line1: p.site_address_line1, site_address_line2: p.site_address_line2,
@@ -11577,21 +11579,30 @@ function renderProjectTiles() {
   // On kiosk state.projects is already In Progress only; on projects page
   // state.projects also includes On Hold. We filter to In Progress only —
   // On Hold projects are reinstated via Project Tracker when work resumes.
-  const base = (state.projects || []).filter(p => p.status === 'In Progress');
+  const inProgress  = (state.projects || []).filter(p => p.status === 'In Progress');
+  const hiddenList  = inProgress.filter(p => p.hidden);      // other-company / not-our-scope
+  const visibleList = inProgress.filter(p => !p.hidden);     // shop-floor view
 
-  if (!base.length) {
+  // Reveal the Hidden chip only for a logged-in draftsman with hidden projects.
+  const hiddenChip = document.querySelector('#projFilterBar .proj-chip-hidden');
+  const canSeeHidden = isDraftsman && hiddenList.length > 0;
+  if (hiddenChip) hiddenChip.style.display = canSeeHidden ? 'inline-flex' : 'none';
+  // Hidden view no longer available (logged out, or last hidden project shown) → fall back.
+  if (projectFilter === 'hidden' && !canSeeHidden) { setProjectFilter('live'); return; }
+
+  if (!inProgress.length) {
     grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1">No active projects found</div>';
     return;
   }
 
-  // Annotate each project with job counts + derived category flags.
+  // Annotate a project list with job counts + derived category flags.
   //   new       — no jobs created yet (freshly won, not started)
   //   live      — at least one open job that has been touched (work in flight)
   //   attention — at least one open job that is NOT touched (sitting untouched)
   //   closed    — jobs exist and every one is closed
   // Categories can overlap (a project may be both live and needs-attention if
   // one open job is touched and another isn't) — filters are views, not buckets.
-  const annotated = base.map(p => {
+  const annotate = list => list.map(p => {
     const jobs = drawingsData.projects[p.id]?.jobs || [];
     const openJobs   = jobs.filter(j => j.status !== 'closed');
     const closedJobs = jobs.filter(j => j.status === 'closed');
@@ -11604,23 +11615,32 @@ function renderProjectTiles() {
     return { p, jobs, openCount: openJobs.length, closedCount: closedJobs.length, cat };
   });
 
-  // Update chip counts (over the full In-Progress base, before filtering).
-  const counts = { live:0, new:0, attention:0, closed:0, all: annotated.length };
-  annotated.forEach(a => ['live','new','attention','closed'].forEach(k => { if (a.cat[k]) counts[k]++; }));
+  const annotatedVisible = annotate(visibleList);
+
+  // Chip counts: categories over the visible (shop-floor) set; Hidden = hidden count.
+  const counts = { live:0, new:0, attention:0, closed:0, all: annotatedVisible.length, hidden: hiddenList.length };
+  annotatedVisible.forEach(a => ['live','new','attention','closed'].forEach(k => { if (a.cat[k]) counts[k]++; }));
   document.querySelectorAll('#projFilterBar .cnt').forEach(el => {
     const k = el.getAttribute('data-cnt');
     el.textContent = counts[k] != null ? counts[k] : '';
   });
 
-  // While the drawings data is still loading, categories aren't reliable yet
-  // (every project looks job-less) — show the full base so nothing appears
-  // to be missing. It re-renders correctly once loadDrawingsData resolves.
-  const applyFilter = _drawingsLoaded && projectFilter !== 'all';
-  const shown = applyFilter ? annotated.filter(a => a.cat[projectFilter]) : annotated;
+  const viewingHidden = projectFilter === 'hidden';
+  let shown;
+  if (viewingHidden) {
+    shown = annotate(hiddenList);
+  } else {
+    // While the drawings data is still loading, categories aren't reliable yet
+    // (every project looks job-less) — show the full visible set so nothing
+    // appears to be missing. It re-renders correctly once drawings resolve.
+    const applyFilter = _drawingsLoaded && projectFilter !== 'all';
+    shown = applyFilter ? annotatedVisible.filter(a => a.cat[projectFilter]) : annotatedVisible;
+  }
 
   if (!shown.length) {
-    const labels = { live:'live', new:'new', attention:'that need attention', closed:'closed' };
-    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1">No ${labels[projectFilter] || 'active'} projects — try <b>All</b></div>`;
+    const labels = { live:'live', new:'new', attention:'that need attention', closed:'closed', hidden:'hidden' };
+    const hint = projectFilter === 'hidden' ? '' : ' — try <b>All</b>';
+    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1">No ${labels[projectFilter] || 'active'} projects${hint}</div>`;
     return;
   }
 
@@ -11631,8 +11651,15 @@ function renderProjectTiles() {
   });
 
   grid.innerHTML = shown.map(({ p, jobs, openCount, closedCount }) => {
+    // Draftsman-only eye toggle. In the Hidden view it un-hides; elsewhere it hides.
+    const hideBtn = isDraftsman
+      ? `<button class="tile-hide-btn${viewingHidden ? ' on' : ''}"
+                 title="${viewingHidden ? 'Show on shop floor' : 'Hide from shop floor'}"
+                 onclick="event.stopPropagation();toggleProjectHidden('${p.id}', ${viewingHidden ? 'false' : 'true'})">&#128065;</button>`
+      : '';
     return `
-      <div class="project-tile" onclick="openProjectDetail('${p.id}')">
+      <div class="project-tile${viewingHidden ? ' tile-hidden' : ''}" onclick="openProjectDetail('${p.id}')">
+        ${hideBtn}
         <div class="project-tile-id">${p.id}</div>
         <div class="project-tile-name">${p.name}</div>
         <div class="project-tile-client">${p.client || ''}</div>
@@ -11648,6 +11675,26 @@ function renderProjectTiles() {
       </div>
     `;
   }).join('');
+}
+
+// Draftsman-only: hide a project from the shop-floor grid, or un-hide it.
+// Persists to Projects.hidden_from_workshop (2026-07 migration). Optimistic
+// update with rollback on failure.
+async function toggleProjectHidden(projectId, hide) {
+  if (!isDraftsman) return;
+  const proj = (state.projects || []).find(p => p.id === projectId);
+  if (!proj || !proj.dbId) { toast('Cannot resolve project', 'error'); return; }
+  const prev = proj.hidden;
+  proj.hidden = hide;                 // optimistic
+  renderProjectTiles();
+  try {
+    await api.put(`/api/projects/${proj.dbId}`, { hidden_from_workshop: hide });
+    toast(hide ? `"${proj.id}" hidden from shop floor` : `"${proj.id}" shown on shop floor`, 'success');
+  } catch (e) {
+    proj.hidden = prev;               // rollback
+    renderProjectTiles();
+    toast('Update failed: ' + (e.message || e), 'error');
+  }
 }
 
 // ═══════════════════════════════════════════
