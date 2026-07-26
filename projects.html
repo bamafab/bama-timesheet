@@ -6,6 +6,32 @@
 <title>BAMA Projects & Jobs</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="bama.css?v=20260616a">
+<style>
+  /* Project filter chips (scoped to this page — no shared cache-bust needed) */
+  .proj-filter-bar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    margin-bottom: 20px;
+  }
+  .proj-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--surface); border: 1px solid var(--border);
+    color: var(--muted); font-family: var(--font-sans, inherit);
+    font-size: 12px; font-weight: 600; letter-spacing: .3px;
+    padding: 7px 13px; border-radius: 8px; cursor: pointer;
+    transition: border-color .12s, color .12s, background .12s;
+    white-space: nowrap;
+  }
+  .proj-chip:hover { border-color: var(--accent); color: var(--text); }
+  .proj-chip.active {
+    background: rgba(255,107,0,.15); border-color: var(--accent); color: var(--accent);
+  }
+  .proj-chip .cnt {
+    font-family: var(--font-mono, monospace); font-size: 11px;
+    opacity: .8; font-weight: 700;
+  }
+  .proj-chip.active .cnt { opacity: 1; }
+  .proj-chip-hidden { margin-left: 4px; }
+</style>
 </head>
 <body>
 <div class="loading-bar" id="loadingBar" style="width:0"></div>
@@ -43,7 +69,14 @@
         <div class="panel-name">PROJECTS</div>
       </div>
     </div>
-    <div style="color:var(--muted);font-size:13px;margin-bottom:28px">Click a project to manage jobs</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:16px">Click a project to manage jobs</div>
+    <div class="proj-filter-bar" id="projFilterBar">
+      <button class="proj-chip active" data-filter="live"      onclick="setProjectFilter('live', this)">Live <span class="cnt" data-cnt="live"></span></button>
+      <button class="proj-chip"        data-filter="new"       onclick="setProjectFilter('new', this)">New <span class="cnt" data-cnt="new"></span></button>
+      <button class="proj-chip"        data-filter="attention" onclick="setProjectFilter('attention', this)">Needs attention <span class="cnt" data-cnt="attention"></span></button>
+      <button class="proj-chip"        data-filter="closed"    onclick="setProjectFilter('closed', this)">Closed <span class="cnt" data-cnt="closed"></span></button>
+      <button class="proj-chip"        data-filter="all"       onclick="setProjectFilter('all', this)">All <span class="cnt" data-cnt="all"></span></button>
+    </div>
     <div class="projects-grid" id="projectTilesGrid">
       <div class="empty-state"><div class="spinner"></div></div>
     </div>
@@ -676,6 +709,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
-<script src="shared.js?v=20260726q"></script>
+<script src="shared.js?v=20260726r"></script>
 </body>
 </html>

@@ -11084,6 +11084,7 @@ let _bmrMode = 'fabricated';
 let _blobLoadPromise = null;
 
 let _drawingsLoadPromise = null; // stored so openProjectDetail can await it
+let _drawingsLoaded = false;     // true once the SQL drawings load has resolved
 
 async function loadDrawingsData() {
   // SQL-only load — blob has been fully migrated to SQL.
@@ -11095,6 +11096,7 @@ async function loadDrawingsData() {
     }
   })();
   await _drawingsLoadPromise;
+  _drawingsLoaded = true;
 }
 
 // STEP 1 — pull the legacy SharePoint blob (slow, ~2 round-trips).
@@ -11543,45 +11545,92 @@ async function openProjects() {
   loadDrawingsData().then(() => renderProjectTiles()).catch(() => {});
 }
 
+// Active project-grid filter chip. One of: live | new | attention | closed | all
+let projectFilter = 'live';
+
+// Chip click handler (wired from projects.html #projFilterBar).
+function setProjectFilter(f, btn) {
+  projectFilter = f;
+  document.querySelectorAll('#projFilterBar .proj-chip').forEach(c => c.classList.remove('active'));
+  const el = btn || document.querySelector(`#projFilterBar .proj-chip[data-filter="${f}"]`);
+  if (el) el.classList.add('active');
+  renderProjectTiles();
+}
+
+// A job counts as "touched" if draftsman work has started on it — any BOM,
+// approval revision, parts or site files present in the drawings data.
+// Grid-time signal only: the SQL-backed BOM/assembly caches (_bomItemsByJob /
+// _assembliesByJob) aren't loaded at tile-render time, so we read drawingsData.
+function jobTouched(job) {
+  if (!job) return false;
+  if (job.bom?.files?.length) return true;
+  if ((job.approval?.revisions || []).some(r => !r.isDeleted)) return true;
+  if (((job.parts?.sections?.files?.length || 0) + (job.parts?.plates?.files?.length || 0)) > 0) return true;
+  if (job.site?.files?.length) return true;
+  return false;
+}
+
 function renderProjectTiles() {
   const grid = document.getElementById('projectTilesGrid');
   if (!grid) return;
 
   // On kiosk state.projects is already In Progress only; on projects page
-  // state.projects also includes On Hold. We now filter both pages to
-  // In Progress only — On Hold projects are reinstated via Project Tracker
-  // when work resumes. (Spec §2: SPEC-job-fabrication-rework.md.)
-  const projects = (state.projects || []).filter(p => p.status === 'In Progress');
+  // state.projects also includes On Hold. We filter to In Progress only —
+  // On Hold projects are reinstated via Project Tracker when work resumes.
+  const base = (state.projects || []).filter(p => p.status === 'In Progress');
 
-  if (!projects.length) {
-    grid.innerHTML = '<div class="empty-state">No active projects found</div>';
+  if (!base.length) {
+    grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1">No active projects found</div>';
     return;
   }
 
-  // Annotate each project with its job counts, then sort:
-  //   1. projects with open jobs first, by open-job count desc (busiest at top)
-  //   2. projects with only closed jobs
-  //   3. projects with no jobs at all
-  // Tie-breaker within each group: project ID asc (numeric-aware).
-  const annotated = projects.map(p => {
+  // Annotate each project with job counts + derived category flags.
+  //   new       — no jobs created yet (freshly won, not started)
+  //   live      — at least one open job that has been touched (work in flight)
+  //   attention — at least one open job that is NOT touched (sitting untouched)
+  //   closed    — jobs exist and every one is closed
+  // Categories can overlap (a project may be both live and needs-attention if
+  // one open job is touched and another isn't) — filters are views, not buckets.
+  const annotated = base.map(p => {
     const jobs = drawingsData.projects[p.id]?.jobs || [];
-    const openJobs = jobs.filter(j => j.status !== 'closed').length;
-    const closedJobs = jobs.filter(j => j.status === 'closed').length;
-    return { p, jobs, openJobs, closedJobs };
+    const openJobs   = jobs.filter(j => j.status !== 'closed');
+    const closedJobs = jobs.filter(j => j.status === 'closed');
+    const cat = {
+      new:       jobs.length === 0,
+      live:      openJobs.some(j => jobTouched(j)),
+      attention: openJobs.some(j => !jobTouched(j)),
+      closed:    jobs.length > 0 && openJobs.length === 0,
+    };
+    return { p, jobs, openCount: openJobs.length, closedCount: closedJobs.length, cat };
   });
 
-  annotated.sort((a, b) => {
-    // Group: 0 = has open, 1 = closed-only, 2 = no jobs
-    const grp = x => x.openJobs > 0 ? 0 : (x.jobs.length > 0 ? 1 : 2);
-    const ga = grp(a), gb = grp(b);
-    if (ga !== gb) return ga - gb;
-    // Within "has open jobs", busiest first
-    if (ga === 0 && a.openJobs !== b.openJobs) return b.openJobs - a.openJobs;
-    // Tie-breaker: project ID asc (numeric-aware)
+  // Update chip counts (over the full In-Progress base, before filtering).
+  const counts = { live:0, new:0, attention:0, closed:0, all: annotated.length };
+  annotated.forEach(a => ['live','new','attention','closed'].forEach(k => { if (a.cat[k]) counts[k]++; }));
+  document.querySelectorAll('#projFilterBar .cnt').forEach(el => {
+    const k = el.getAttribute('data-cnt');
+    el.textContent = counts[k] != null ? counts[k] : '';
+  });
+
+  // While the drawings data is still loading, categories aren't reliable yet
+  // (every project looks job-less) — show the full base so nothing appears
+  // to be missing. It re-renders correctly once loadDrawingsData resolves.
+  const applyFilter = _drawingsLoaded && projectFilter !== 'all';
+  const shown = applyFilter ? annotated.filter(a => a.cat[projectFilter]) : annotated;
+
+  if (!shown.length) {
+    const labels = { live:'live', new:'new', attention:'that need attention', closed:'closed' };
+    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1">No ${labels[projectFilter] || 'active'} projects — try <b>All</b></div>`;
+    return;
+  }
+
+  // Sort: busiest (most open jobs) first, then project ID asc (numeric-aware).
+  shown.sort((a, b) => {
+    if (a.openCount !== b.openCount) return b.openCount - a.openCount;
     return String(a.p.id).localeCompare(String(b.p.id), 'en', { numeric: true, sensitivity: 'base' });
   });
 
-  grid.innerHTML = annotated.map(({ p, jobs, openJobs, closedJobs }) => {
+  grid.innerHTML = shown.map(({ p, jobs, openCount, closedCount }) => {
     return `
       <div class="project-tile" onclick="openProjectDetail('${p.id}')">
         <div class="project-tile-id">${p.id}</div>
@@ -11589,10 +11638,10 @@ function renderProjectTiles() {
         <div class="project-tile-client">${p.client || ''}</div>
         ${jobs.length > 0 ? `
           <div style="margin-top:12px;font-size:11px;font-family:var(--font-mono);color:var(--muted)">
-            ${openJobs} open${closedJobs ? ` · ${closedJobs} closed` : ''}
+            ${openCount} open${closedCount ? ` · ${closedCount} closed` : ''}
           </div>
           <div style="margin-top:6px;height:3px;background:var(--border);border-radius:2px">
-            <div style="height:100%;background:var(--green);border-radius:2px;width:${jobs.length ? Math.round(closedJobs/jobs.length*100) : 0}%"></div>
+            <div style="height:100%;background:var(--green);border-radius:2px;width:${jobs.length ? Math.round(closedCount/jobs.length*100) : 0}%"></div>
           </div>
         ` : '<div style="margin-top:12px;font-size:11px;color:var(--subtle)">No jobs yet</div>'}
         ${jobs.length > 0 ? `<div class="project-tile-badge">${jobs.length} job${jobs.length>1?'s':''}</div>` : ''}
