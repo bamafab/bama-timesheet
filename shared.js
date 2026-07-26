@@ -11063,6 +11063,10 @@ let _bomItemsByJob = {};
 let _bomSelected = new Set();
 let _bomManualQueue = [];
 let _bomManualReviewIndex = 0;
+// 'fabricated' (default drop-zone) or 'fixing' (bolt/anchor list importer):
+// switches the review modal to a weight column + no finish, and routes the
+// bulk-save to item_type='fixing'.
+let _bmrMode = 'fabricated';
 
 // ── Load / Save drawings data ──
 // loadDrawingsData is the entry point used everywhere. After commit 13's
@@ -12236,6 +12240,17 @@ function renderFixingsSection(jobId, fixings) {
 
   // Add-row form (draftsman, job open)
   if (canEdit) {
+    html += `<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px">
+      <div class="upload-zone" id="fixDropZone" style="flex:1;min-width:240px;margin:0;padding:12px;cursor:pointer"
+           onclick="document.getElementById('fixManualFileInput').click()">
+        <span style="font-size:13px;color:var(--text)">&#128228; Import bolt / anchor list (PDF)</span>
+        <div style="color:var(--subtle);font-size:11px;margin-top:3px">
+          our lists or a supplier quotation &middot; reads qty, description &amp; weight &middot; review before saving
+        </div>
+      </div>
+      <input type="file" id="fixManualFileInput" accept=".pdf,.PDF" multiple
+             style="display:none" onchange="onFixingFilesPicked(this.files)">
+    </div>`;
     html += `<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin-bottom:10px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px">
       <div style="flex:1;min-width:200px">
         <label style="display:block;font-size:10px;color:var(--subtle);text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px">Description</label>
@@ -12394,6 +12409,127 @@ async function fixingEditField(id, field, value) {
     toast('Failed to update fixing: ' + e.message, 'error');
     if (jobId) renderBOM();
   }
+}
+
+// Fixings/anchor list importer: OCR one or more PDFs (our own bolt lists or a
+// supplier's fastener quotation) and route them through the shared review
+// modal in 'fixing' mode — weight column, no finish, saved as item_type=fixing.
+async function onFixingFilesPicked(fileList) {
+  if (!fileList || !fileList.length) return;
+  if (!currentJob || !currentJob.spFolderId) {
+    toast('Job folder not available — try reloading.', 'error');
+    return;
+  }
+  const files = Array.from(fileList).filter(f =>
+    f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
+  if (!files.length) { toast('Only PDFs accepted.', 'error'); return; }
+
+  const container = document.getElementById('bomContent');
+  const banner = document.createElement('div');
+  banner.id = 'fixUploadBanner';
+  banner.style.cssText = 'background:rgba(255,107,0,.08);border:1px solid rgba(255,107,0,.3);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:var(--text)';
+  banner.textContent = `Reading 0 / ${files.length}…`;
+  if (container) container.prepend(banner);
+
+  const driveId = currentJob.spDriveId || BAMA_DRIVE_ID;
+  let bomFolder;
+  try {
+    bomFolder = await getOrCreateSubfolder(currentJob.spFolderId, ELEMENT_FOLDERS.bom, driveId);
+  } catch (e) {
+    banner.remove();
+    toast(`Could not access BOM folder: ${e.message}`, 'error');
+    return;
+  }
+
+  const queue = [];
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    banner.textContent = `Uploading ${i + 1} / ${files.length} — ${file.name}`;
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const uploaded = await uploadFileToFolder(bomFolder.id, file.name, arrayBuffer, file.type, driveId);
+      banner.textContent = `Reading ${i + 1} / ${files.length} — ${file.name}`;
+      const ocr = await ocrFixingsPdf(file);
+      queue.push({
+        file,
+        sharepoint: {
+          fileId:   uploaded.id,
+          driveId:  uploaded.parentReference?.driveId || driveId,
+          webUrl:   uploaded.webUrl,
+          fileName: file.name
+        },
+        ocr
+      });
+    } catch (e) {
+      console.warn(`Failed on ${file.name}:`, e);
+      toast(`${file.name}: ${e.message}`, 'error');
+    }
+  }
+  banner.remove();
+  const input = document.getElementById('fixManualFileInput');
+  if (input) input.value = '';
+
+  if (!queue.length) { toast('No PDFs were parsed.', 'error'); return; }
+
+  _bmrMode = 'fixing';
+  const modal = document.getElementById('bomManualReviewModal');
+  if (modal && modal.classList.contains('active') && _bomManualQueue.length) {
+    _bomManualQueue.push(...queue);
+    toast(`Added ${queue.length} more — ${_bomManualQueue.length} now queued.`, 'info');
+  } else {
+    _bomManualQueue = queue;
+  }
+  openBomManualReviewModal();
+}
+
+// Claude document read on a fixing/fastener list. Handles BOTH our own bolt &
+// anchor lists (with a per-piece weight column) and suppliers' quotations
+// (price columns, 'per HUND' pricing units — which are NOT the quantity).
+// Returns { items: [{ description, quantity, unit_weight_kg? }] }.
+async function ocrFixingsPdf(file) {
+  const dataUri = await _fileToDataUri(file);
+  const b64 = dataUri.split(',')[1];
+
+  const prompt = `Extract the fixing / fastener line items from this document. It is EITHER our own bolt & anchor list OR a supplier's quotation for fasteners (bolts, nuts, washers, setscrews, studding, anchors, resin, screws).
+
+For each real line item in the main items table, return:
+- "description": the full item as written, combining size / length / grade / coating / type into ONE readable string. Examples: "M20 x 45 XOX 8.8 Bright Zinc", "M24 Hexagonal Nut GR8 Bright Zinc", "M16 x 200 HILTI HIT-V 5.8 Bright Zinc", "M12x160 J-Fix Studding Z&Y", "BAPP 410ml Polyester Resin", "M16 Form A Flat Washer Galv".
+- "quantity": the number of PIECES as a positive integer, taken from the Quantity column. CRITICAL: pricing units such as "HUND", "per hundred", "per 100", "BOX 50", "EACH" describe the PRICE basis — they are NOT the quantity. Always use the value in the Quantity column as the piece count (e.g. 344, 168, 156, 12).
+- "unit_weight_kg": the weight of ONE piece in kg, ONLY if the document has a per-piece "Weight each" / "Weight (kg)" column. This is the small per-piece figure, never the line total. Omit this key entirely for supplier quotations (they have no per-piece weight).
+
+Ignore anything that is not a real fastener line: header rows, group sub-totals, running totals, "Total", net/VAT/carriage/discount lines, payment terms, availability notes, boilerplate, and page footers.
+
+Return ONLY JSON, no markdown, no commentary:
+{ "items": [ { "description": "M20 x 45 XOX 8.8 Bright Zinc", "quantity": 64, "unit_weight_kg": 0.17 } ] }
+
+Omit unit_weight_kg where there is no per-piece weight column. Return an empty items array if nothing is recognisable.`;
+
+  const result = await callClaude({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 6000,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } },
+        { type: 'text', text: prompt }
+      ]
+    }]
+  });
+  const text = (result.content?.find(b => b.type === 'text')?.text || '').trim();
+  const s = text.indexOf('{'), e = text.lastIndexOf('}');
+  if (s < 0 || e < s) throw new Error('Reader returned no JSON');
+  const parsed = JSON.parse(text.slice(s, e + 1));
+  if (!parsed.items || !Array.isArray(parsed.items)) parsed.items = [];
+  parsed.items = parsed.items.map(r => {
+    const out = {
+      description: String(r.description || '').trim(),
+      quantity: parseInt(r.quantity) || 1
+    };
+    const w = r.unit_weight_kg;
+    if (w != null && w !== '' && !isNaN(Number(w))) out.unit_weight_kg = Number(w);
+    return out;
+  });
+  return parsed;
 }
 
 function renderBomRow(it) {
@@ -13816,6 +13952,7 @@ async function onBomManualFilesPicked(fileList) {
 
   if (!queue.length) { toast('No PDFs were parsed.', 'error'); return; }
 
+  _bmrMode = 'fabricated';
   const modal = document.getElementById('bomManualReviewModal');
   if (modal && modal.classList.contains('active') && _bomManualQueue.length) {
     _bomManualQueue.push(...queue);
@@ -13894,6 +14031,7 @@ function closeBomManualReviewModal() {
   if (modal) modal.classList.remove('active');
   _bomManualQueue = [];
   _bomManualReviewIndex = 0;
+  _bmrMode = 'fabricated';
 }
 
 // A PDF is saveable once it has at least one line with a description.
@@ -13903,19 +14041,30 @@ function _bomItemValid(item) {
 }
 
 function _bmrRowsHtml(rows, qi) {
+  const fixMode = _bmrMode === 'fixing';
   let html = '';
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i] || {};
-    const extras = r.extras || {};
-    const extrasStr = Object.keys(extras).length
-      ? Object.entries(extras).map(([k, v]) => `${k}: ${v}`).join(' · ')
-      : '';
-    html += `<tr class="bmr-row" data-i="${i}">
-      <td style="padding:4px 6px 4px 0"><input data-f="description" value="${escapeHtml(r.description || '')}" class="bmr-cell" style="width:100%"></td>
-      <td style="padding:4px"><input data-f="quantity" type="number" min="1" value="${r.quantity ?? 1}" class="bmr-cell" style="width:60px;text-align:right"></td>
-      <td style="padding:4px;color:var(--subtle);font-size:11px;font-family:var(--font-mono);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(extrasStr)}">${escapeHtml(extrasStr)}</td>
-      <td style="padding:4px 0 4px 4px;text-align:right"><button class="btn btn-ghost" style="padding:2px 8px;font-size:14px" onclick="bmrRemoveRow(${qi}, ${i})" title="Remove">&times;</button></td>
-    </tr>`;
+    if (fixMode) {
+      const w = (r.unit_weight_kg != null && r.unit_weight_kg !== '') ? r.unit_weight_kg : '';
+      html += `<tr class="bmr-row" data-i="${i}">
+        <td style="padding:4px 6px 4px 0"><input data-f="description" value="${escapeHtml(r.description || '')}" class="bmr-cell" style="width:100%"></td>
+        <td style="padding:4px"><input data-f="quantity" type="number" min="1" value="${r.quantity ?? 1}" class="bmr-cell" style="width:60px;text-align:right"></td>
+        <td style="padding:4px"><input data-f="unit_weight_kg" type="number" min="0" step="0.001" value="${w}" placeholder="—" class="bmr-cell" style="width:80px;text-align:right"></td>
+        <td style="padding:4px 0 4px 4px;text-align:right"><button class="btn btn-ghost" style="padding:2px 8px;font-size:14px" onclick="bmrRemoveRow(${qi}, ${i})" title="Remove">&times;</button></td>
+      </tr>`;
+    } else {
+      const extras = r.extras || {};
+      const extrasStr = Object.keys(extras).length
+        ? Object.entries(extras).map(([k, v]) => `${k}: ${v}`).join(' · ')
+        : '';
+      html += `<tr class="bmr-row" data-i="${i}">
+        <td style="padding:4px 6px 4px 0"><input data-f="description" value="${escapeHtml(r.description || '')}" class="bmr-cell" style="width:100%"></td>
+        <td style="padding:4px"><input data-f="quantity" type="number" min="1" value="${r.quantity ?? 1}" class="bmr-cell" style="width:60px;text-align:right"></td>
+        <td style="padding:4px;color:var(--subtle);font-size:11px;font-family:var(--font-mono);max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(extrasStr)}">${escapeHtml(extrasStr)}</td>
+        <td style="padding:4px 0 4px 4px;text-align:right"><button class="btn btn-ghost" style="padding:2px 8px;font-size:14px" onclick="bmrRemoveRow(${qi}, ${i})" title="Remove">&times;</button></td>
+      </tr>`;
+    }
   }
   return html;
 }
@@ -13928,6 +14077,7 @@ function renderBomManualBatch() {
   const counter = document.getElementById('bmrCounter');
   if (counter) counter.textContent = total ? `${total} PDF${total > 1 ? 's' : ''} queued` : '';
 
+  const fixMode = _bmrMode === 'fixing';
   const finishes = _finishesCache || [];
   const finishOptsFor = (selId) => {
     let o = '<option value="">(No finish — ready for despatch)</option>';
@@ -13963,11 +14113,15 @@ function renderBomManualBatch() {
         <button class="btn btn-ghost" style="padding:2px 8px;font-size:14px" onclick="event.stopPropagation();bmrRemoveCard(${qi})" title="Remove from queue">&times;</button>
       </div>
       <div class="bmr-card-body" style="padding:12px;display:${item._collapsed ? 'none' : 'block'}">
+        ${fixMode ? `
+        <div style="font-size:11px;color:var(--subtle);margin-bottom:10px">
+          Imported as <b style="color:#3ecf8e">fixings</b> — bolts/anchors arrive finished, so they land in <i>Ready for despatch</i>. Edit any line below.
+        </div>` : `
         <div style="margin-bottom:12px">
           <div class="field-label">FINISH (applies to all lines from this PDF)</div>
           <select class="field-input bmr-finish" onchange="bmrSetFinish(${qi}, this.value)">${finishOptsFor(item._finishId)}</select>
           <div style="font-size:11px;color:var(--subtle);margin-top:4px">No finish = lines land in <i>Ready for despatch</i>. Pick a finish to send them to a supplier first.</div>
-        </div>
+        </div>`}
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
           <div class="field-label" style="margin:0">LINES</div>
           <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="bmrAddRow(${qi})">&#43; Add row</button>
@@ -13977,7 +14131,9 @@ function renderBomManualBatch() {
             <thead><tr style="color:var(--subtle);text-align:left">
               <th style="font-weight:400;padding:4px 6px 4px 0">Description</th>
               <th style="font-weight:400;padding:4px 6px;text-align:right">Qty</th>
-              <th style="font-weight:400;padding:4px 6px">Extras (read-only — discarded on save)</th>
+              ${fixMode
+                ? '<th style="font-weight:400;padding:4px 6px;text-align:right">Wt each (kg)</th>'
+                : '<th style="font-weight:400;padding:4px 6px">Extras (read-only — discarded on save)</th>'}
               <th></th>
             </tr></thead>
             <tbody id="bmrRows_${qi}">${_bmrRowsHtml(rows, qi)}</tbody>
@@ -14003,6 +14159,7 @@ function _bmrSyncCardToItem(qi) {
   if (!card) return;
   const item = _bomManualQueue[qi];
   if (!item) return;
+  const fixMode = _bmrMode === 'fixing';
   const finEl = card.querySelector('.bmr-finish');
   if (finEl) item._finishId = finEl.value || '';
   const ocrItems = (item.ocr && item.ocr.items) || [];
@@ -14012,8 +14169,15 @@ function _bmrSyncCardToItem(qi) {
     const desc = tr.querySelector('input[data-f="description"]')?.value?.trim() || '';
     const qtyRaw = tr.querySelector('input[data-f="quantity"]')?.value;
     const qty = parseInt(qtyRaw);
-    const extras = ocrItems[i]?.extras || {};
-    out.push({ description: desc, quantity: qty || 1, extras });
+    const row = { description: desc, quantity: qty || 1 };
+    if (fixMode) {
+      const wRaw = tr.querySelector('input[data-f="unit_weight_kg"]')?.value;
+      const w = (wRaw == null || String(wRaw).trim() === '') ? null : Number(wRaw);
+      if (w != null && !isNaN(w)) row.unit_weight_kg = w;
+    } else {
+      row.extras = ocrItems[i]?.extras || {};
+    }
+    out.push(row);
   });
   item.ocr = item.ocr || {};
   item.ocr.items = out;
@@ -14109,15 +14273,19 @@ async function bmrSaveAll() {
     if (!rows.length) continue;
     const finishServiceId = item._finishId ? parseInt(item._finishId) : null;
     try {
-      await api.post('/api/job-bom-items/bulk', {
+      const payload = {
         job_id:              parseInt(currentJob.id),
         finish_service_id:   finishServiceId,
         sharepoint_file_id:  item.sharepoint.fileId,
         sharepoint_drive_id: item.sharepoint.driveId,
         sharepoint_web_url:  item.sharepoint.webUrl,
         file_name:           item.sharepoint.fileName,
-        items:               rows.map(r => ({ description: r.description, quantity: r.quantity }))
-      });
+        items:               rows.map(r => (_bmrMode === 'fixing'
+          ? { description: r.description, quantity: r.quantity, unit_weight_kg: (r.unit_weight_kg != null ? r.unit_weight_kg : null) }
+          : { description: r.description, quantity: r.quantity }))
+      };
+      if (_bmrMode === 'fixing') payload.item_type = 'fixing';
+      await api.post('/api/job-bom-items/bulk', payload);
       savedPdfs++; savedLines += rows.length; savedIdx.push(qi);
     } catch (e) {
       toast(`${item.sharepoint.fileName}: save failed — ${e.message}`, 'error');

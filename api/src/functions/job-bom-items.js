@@ -206,7 +206,12 @@ app.http('job-bom-items-bulk', {
             if (!Array.isArray(body.items) || body.items.length === 0) {
                 return badRequest('items must be a non-empty array', request);
             }
-            const finishServiceId = body.finish_service_id
+            // item_type: fixings/consumables arrive finished → no finish, straight
+            // to ready_for_despatch. Fabricated (default) keeps the finish flow.
+            const itemType = ['fixing', 'consumable'].includes(body.item_type)
+                ? body.item_type : 'fabricated';
+            const isLoose = itemType !== 'fabricated';
+            const finishServiceId = (!isLoose && body.finish_service_id)
                 ? parseInt(body.finish_service_id)
                 : null;
             // All rows in a bulk call share one finish, so resolve once.
@@ -227,10 +232,14 @@ app.http('job-bom-items-bulk', {
                     if (!quantity || quantity < 1) {
                         throw new Error(`Row ${i + 1}: quantity must be >= 1`);
                     }
+                    const unitWeightKg = (it.unit_weight_kg != null && it.unit_weight_kg !== '')
+                        ? Number(it.unit_weight_kg) : null;
                     const r = new sql.Request(transaction);
                     r.input('jobId',           sql.Int,           jobId);
                     r.input('description',     sql.NVarChar(256), description);
                     r.input('quantity',        sql.Int,           quantity);
+                    r.input('itemType',        sql.NVarChar(16),  itemType);
+                    r.input('unitWeightKg',    sql.Decimal(10,3), unitWeightKg);
                     r.input('finishServiceId', sql.Int,           finishServiceId);
                     r.input('status',          sql.NVarChar(32),  status);
                     r.input('spFileId',        sql.NVarChar(256), body.sharepoint_file_id  || null);
@@ -242,11 +251,13 @@ app.http('job-bom-items-bulk', {
                     const ins = await r.query(
                         `INSERT INTO JobBomItems
                             (job_id, source, source_assembly_id, description, quantity,
+                             item_type, unit_weight_kg,
                              finish_service_id, status, sharepoint_file_id, sharepoint_drive_id,
                              sharepoint_web_url, file_name, created_by)
                          OUTPUT INSERTED.*
                          VALUES
                             (@jobId, 'manual', NULL, @description, @quantity,
+                             @itemType, @unitWeightKg,
                              @finishServiceId, @status, @spFileId, @spDriveId,
                              @spWebUrl, @fileName, @createdBy)`
                     );
