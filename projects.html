@@ -820,6 +820,31 @@
     <div class="field-label">STANDARD SECTIONS <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted);font-size:11px">— untick anything not needed; add missing items per section. An untouched (empty) section is left out of the RAMS.</span></div>
     <div id="ramsStandardSections" style="margin-bottom:16px"></div>
 
+    <!-- RISK ASSESSMENT PICKER (phase 3c: tick / untick / add custom) -->
+    <div class="field-label">RISK ASSESSMENT (APPENDIX A) <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted);font-size:11px">— untick any hazard that doesn't apply; add a custom risk if something's missing. Scores &amp; controls come from the BAMA library.</span></div>
+    <div id="ramsRiskList" style="border:1px solid var(--border);border-radius:8px;background:var(--bg-darker);margin-bottom:8px;max-height:210px;overflow-y:auto"></div>
+    <button class="btn" onclick="ramsToggleAddRisk()" style="margin-bottom:8px;padding:5px 12px;font-size:11px">&#43; Add custom risk</button>
+    <div id="ramsAddRiskForm" style="display:none;border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:16px;background:var(--bg-darker)">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:10px">
+        <div style="grid-column:1 / -1"><label style="font-size:11px;color:var(--muted)">Activity / task</label><input id="ramsCrActivity" type="text" class="field-input" placeholder="e.g. Working over live plant"></div>
+        <div style="grid-column:1 / -1"><label style="font-size:11px;color:var(--muted)">Hazard *</label><input id="ramsCrHazard" type="text" class="field-input" placeholder="e.g. Contact with moving machinery"></div>
+        <div style="grid-column:1 / -1"><label style="font-size:11px;color:var(--muted)">Persons at risk</label><input id="ramsCrWho" type="text" class="field-input" value="Operatives"></div>
+        <div><label style="font-size:11px;color:var(--muted)">Initial L (1&ndash;5)</label><input id="ramsCrIL" type="number" min="1" max="5" class="field-input" value="3"></div>
+        <div><label style="font-size:11px;color:var(--muted)">Initial S (1&ndash;5)</label><input id="ramsCrIS" type="number" min="1" max="5" class="field-input" value="3"></div>
+        <div><label style="font-size:11px;color:var(--muted)">Residual L (1&ndash;5)</label><input id="ramsCrRL" type="number" min="1" max="5" class="field-input" value="1"></div>
+        <div><label style="font-size:11px;color:var(--muted)">Residual S (1&ndash;5)</label><input id="ramsCrRS" type="number" min="1" max="5" class="field-input" value="3"></div>
+      </div>
+      <label style="font-size:11px;color:var(--muted)">Control measures (one per line)</label>
+      <textarea id="ramsCrControls" class="field-input" rows="3" style="resize:vertical;font-size:12px;margin-bottom:10px" placeholder="One control measure per line"></textarea>
+      <label style="font-size:11px;color:var(--muted)">When / where</label>
+      <input id="ramsCrWhen" type="text" class="field-input" placeholder="e.g. During plant-room works" style="margin-bottom:10px">
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-primary" onclick="ramsSubmitCustomRisk()" style="padding:8px 14px;font-size:12px">Add risk</button>
+        <button class="btn btn-ghost" onclick="ramsToggleAddRisk()" style="padding:8px 14px;font-size:12px">Cancel</button>
+      </div>
+      <div id="ramsCrStatus" style="font-size:11px;color:var(--muted);margin-top:8px"></div>
+    </div>
+
     <!-- NOTES -->
     <div class="field-label">NOTES <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted);font-size:11px">(optional)</span></div>
     <textarea id="ramsNotes" class="field-input" rows="2" style="resize:vertical;margin-bottom:20px"></textarea>
@@ -853,6 +878,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
-<script src="shared.js?v=20260726y"></script>
+<script src="shared.js?v=20260726z"></script>
 </body>
 </html>

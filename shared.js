@@ -14301,6 +14301,9 @@ function openRamsModal() {
   // — Standard sections (phase 3b pick/add — reset to defaults each open) —
   ramsRenderStandardSections();
 
+  // — Risk assessment picker (phase 3c — reset to full library each open) —
+  ramsRenderRiskPicker();
+
   // — Site address (mirror the Site Pack site-vs-client resolution) —
   const useSite = proj && proj.site_same_as_client === false &&
     (proj.site_address_line1 || proj.site_postcode);
@@ -14922,6 +14925,80 @@ function ramsCollectSection(key) {
   return [...wrap.querySelectorAll('.rams-sec-check:checked')].map(c => c.value);
 }
 
+// ── Risk-row picker (phase 3c) ─────────────────────────────────────────────
+// The 18 library rows are shown as ticked checkboxes; the user unticks any that
+// don't apply and can add a fully-scored custom risk. State lives on the row
+// objects (_on) so a re-render (after adding) preserves every tick.
+let _ramsRiskRows = [];
+
+function ramsRenderRiskPicker() {
+  _ramsRiskRows = RAMS_RISK_LIBRARY.map(r => ({ ...r, controls: (r.controls || []).slice(), _on: true }));
+  const form = document.getElementById('ramsAddRiskForm'); if (form) form.style.display = 'none';
+  _ramsRenderRiskList();
+}
+
+function _ramsRenderRiskList() {
+  const wrap = document.getElementById('ramsRiskList');
+  if (!wrap) return;
+  wrap.innerHTML = _ramsRiskRows.map((r, i) => {
+    const iR = r.iL * r.iS;
+    const band = iR <= 6 ? '#3ecf8e' : iR <= 12 ? '#e0a800' : '#e5484d';
+    return `<label style="display:flex;align-items:flex-start;gap:8px;padding:6px 8px;border-bottom:1px solid var(--border);cursor:pointer">
+      <input type="checkbox" class="rams-risk-check" data-idx="${i}" ${r._on !== false ? 'checked' : ''}
+             onchange="ramsToggleRisk(${i}, this.checked)" style="width:14px;height:14px;margin-top:2px;accent-color:var(--accent)">
+      <span style="font-size:12px;color:var(--text);line-height:1.35">
+        <b>${escapeHtml(r.ref)}</b> \u00b7 ${escapeHtml(r.activity || '')} \u2014 ${escapeHtml(r.hazard || '')}
+        <span style="color:${band};font-weight:600">(R=${iR})</span>
+      </span>
+    </label>`;
+  }).join('');
+}
+
+function ramsToggleRisk(i, on) { if (_ramsRiskRows[i]) _ramsRiskRows[i]._on = !!on; }
+
+// Ticked rows only, stripped of the internal _on flag — this is what the
+// renderer consumes as Appendix A.
+function ramsCollectRisks() {
+  return _ramsRiskRows.filter(r => r._on !== false).map(r => { const { _on, ...rest } = r; return rest; });
+}
+
+function ramsToggleAddRisk() {
+  const form = document.getElementById('ramsAddRiskForm');
+  if (!form) return;
+  const show = form.style.display === 'none';
+  form.style.display = show ? '' : 'none';
+  if (show) {
+    ['ramsCrActivity', 'ramsCrHazard', 'ramsCrControls', 'ramsCrWhen'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    const who = document.getElementById('ramsCrWho'); if (who) who.value = 'Operatives';
+    [['ramsCrIL', '3'], ['ramsCrIS', '3'], ['ramsCrRL', '1'], ['ramsCrRS', '3']].forEach(([id, v]) => { const el = document.getElementById(id); if (el) el.value = v; });
+    const sts = document.getElementById('ramsCrStatus'); if (sts) sts.textContent = '';
+  }
+}
+
+function ramsSubmitCustomRisk() {
+  const g = id => (document.getElementById(id)?.value || '').trim();
+  const sts = document.getElementById('ramsCrStatus');
+  const hazard = g('ramsCrHazard');
+  if (!hazard) { if (sts) { sts.style.color = 'var(--red)'; sts.textContent = 'Hazard is required.'; } return; }
+  const clamp = v => Math.max(1, Math.min(5, parseInt(v) || 1));
+  const controls = g('ramsCrControls').split('\n').map(l => l.trim()).filter(Boolean);
+  const nCustom = _ramsRiskRows.filter(r => /^C\d+$/.test(r.ref)).length;
+  _ramsRiskRows.push({
+    ref: 'C' + String(nCustom + 1).padStart(2, '0'),
+    activity: g('ramsCrActivity'),
+    hazard,
+    who: g('ramsCrWho') || 'Operatives',
+    iL: clamp(g('ramsCrIL')), iS: clamp(g('ramsCrIS')),
+    controls: controls.length ? controls : ['Control measures to be confirmed on site.'],
+    rL: clamp(g('ramsCrRL')), rS: clamp(g('ramsCrRS')),
+    whenWhere: g('ramsCrWhen'),
+    _on: true
+  });
+  _ramsRenderRiskList();
+  ramsToggleAddRisk();
+  const wrap = document.getElementById('ramsRiskList'); if (wrap) wrap.scrollTop = wrap.scrollHeight;
+}
+
 // Native RAMS renderer. Returns a Blob. `rams` is assembled from the editable
 // modal fields (+ personnel roster, site-plan image, and the risk library).
 function drawRamsPDF(jsPDF, rams, logoDataUri) {
@@ -15195,7 +15272,7 @@ function drawRamsPDF(jsPDF, rams, logoDataUri) {
   para('Risk rating R = Likelihood (L, 1\u20135) \u00d7 Severity (S, 1\u20135). "Initial" is the risk before controls; "Residual" is the risk with the controls below applied. Bands: 1\u20136 low, 7\u201312 medium, 13\u201325 high.', { size: 8, color: MUTED });
   y += 1;
 
-  const risks = rams.risks && rams.risks.length ? rams.risks : RAMS_RISK_LIBRARY;
+  const risks = Array.isArray(rams.risks) ? rams.risks : RAMS_RISK_LIBRARY;
   const rc = [
     { key: 'ref', title: 'Ref', w: 9, align: 'left' },
     { key: 'haz', title: 'Activity / Hazard', w: 40, align: 'left' },
@@ -15383,7 +15460,7 @@ async function confirmRams() {
       access:      ramsCollectSection('access'),
       environment: ramsCollectSection('environment'),
       monitoring:  ramsCollectSection('monitoring'),
-      risks: RAMS_RISK_LIBRARY,
+      risks: ramsCollectRisks(),
       sitePlanDataUri: (typeof _ramsSitePlanDataUri !== 'undefined' && _ramsSitePlanDataUri) || null,
       notes: getV('ramsNotes')
     };
