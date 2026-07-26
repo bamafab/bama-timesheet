@@ -121,26 +121,43 @@ app.http('job-bom-items-create', {
             if (!description) return badRequest('description is required', request);
             if (!quantity || quantity < 1) return badRequest('quantity must be >= 1', request);
 
-            const finishServiceId = body.finish_service_id
+            // item_type: 'fabricated' (default) | 'fixing' | 'consumable'.
+            // Fixings/consumables (bolts, anchors, resin, etc.) arrive already
+            // finished — they carry no finish and go straight to the despatch
+            // queue, so their finish_service_id is forced null regardless of
+            // what's sent.
+            const itemType = ['fixing', 'consumable'].includes(body.item_type)
+                ? body.item_type
+                : 'fabricated';
+            const isLoose = itemType !== 'fabricated';
+
+            const finishServiceId = (!isLoose && body.finish_service_id)
                 ? parseInt(body.finish_service_id)
                 : null;
             const status = await statusForFinish(finishServiceId);
+            const unitWeightKg = (body.unit_weight_kg != null && body.unit_weight_kg !== '')
+                ? Number(body.unit_weight_kg)
+                : null;
             const createdBy = body.created_by || auth.email || auth.name || null;
 
             const res = await query(
                 `INSERT INTO JobBomItems
                     (job_id, source, source_assembly_id, description, quantity,
+                     item_type, unit_weight_kg,
                      finish_service_id, status, sharepoint_file_id, sharepoint_drive_id,
                      sharepoint_web_url, file_name, created_by)
                  OUTPUT INSERTED.*
                  VALUES
                     (@jobId, 'manual', NULL, @description, @quantity,
+                     @itemType, @unitWeightKg,
                      @finishServiceId, @status, @spFileId, @spDriveId,
                      @spWebUrl, @fileName, @createdBy)`,
                 {
                     jobId,
                     description,
                     quantity,
+                    itemType,
+                    unitWeightKg,
                     finishServiceId,
                     status,
                     spFileId:  body.sharepoint_file_id  || null,
@@ -280,6 +297,15 @@ app.http('job-bom-items-update', {
                 if (!q || q < 1) return badRequest('quantity must be >= 1', request);
                 fields.push('quantity = @quantity');
                 params.quantity = q;
+            }
+            if (body.unit_weight_kg !== undefined) {
+                const w = (body.unit_weight_kg === null || body.unit_weight_kg === '')
+                    ? null : Number(body.unit_weight_kg);
+                if (w !== null && (isNaN(w) || w < 0)) {
+                    return badRequest('unit_weight_kg must be a non-negative number', request);
+                }
+                fields.push('unit_weight_kg = @unitWeightKg');
+                params.unitWeightKg = w;
             }
             if (body.finish_service_id !== undefined) {
                 const newFinishId = body.finish_service_id ? parseInt(body.finish_service_id) : null;

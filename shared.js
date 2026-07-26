@@ -12058,17 +12058,23 @@ function renderBOM() {
   if (!container) return;
 
   const jobId = currentJob?.id ? parseInt(currentJob.id) : null;
-  const items = (jobId && _bomItemsByJob[jobId]) || [];
+  const allItems = (jobId && _bomItemsByJob[jobId]) || [];
+  // Fixings/consumables (bolts, anchors, resin) live in the same table but
+  // render in their own panel below — they skip the supplier/finish machinery.
+  const isFixing = i => i.item_type === 'fixing' || i.item_type === 'consumable';
+  const items       = allItems.filter(i => !isFixing(i));   // fabricated only
+  const fixingItems = allItems.filter(isFixing);
 
-  // Header status badge
+  // Header status badge — reflects the whole job (fabricated + fixings) so a
+  // fixings-only job never reads "Empty".
   const status = document.getElementById('elementBOMStatus');
   if (status) {
-    if (items.length === 0) {
+    if (allItems.length === 0) {
       status.textContent = 'Empty';
       status.style.cssText = 'color:var(--subtle);font-size:11px;font-weight:600';
     } else {
-      const done    = items.filter(i => i.status === 'despatched' || i.status === 'on_site').length;
-      const total   = items.length;
+      const done    = allItems.filter(i => i.status === 'despatched' || i.status === 'on_site').length;
+      const total   = allItems.length;
       const allDone = done === total;
       status.textContent = `${total} item${total > 1 ? 's' : ''} · ${done}/${total} delivered`;
       status.style.cssText = allDone
@@ -12097,7 +12103,8 @@ function renderBOM() {
   }
 
   if (items.length === 0) {
-    html += '<div style="color:var(--subtle);font-size:13px;padding:8px 0">No BOM items yet. Drop a supplier slip above, or mark an assembly fabricated to auto-generate a row.</div>';
+    html += '<div style="color:var(--subtle);font-size:13px;padding:8px 0">No fabricated BOM items yet. Drop a supplier slip above, or mark an assembly fabricated to auto-generate a row.</div>';
+    html += renderFixingsSection(jobId, fixingItems);
     container.innerHTML = html;
     wireBomDropZone();
     return;
@@ -12197,8 +12204,186 @@ function renderBOM() {
 
   html += `</tbody></table></div>`;
 
+  html += renderFixingsSection(jobId, fixingItems);
+
   container.innerHTML = html;
   wireBomDropZone();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fixings & loose items panel — bolts, anchors, resin, etc. These sit in
+// JobBomItems under item_type='fixing', but arrive already finished (SC/BZP/
+// galv), so they skip the finish/supplier flow and land at ready_for_despatch.
+// They ship to site on a Site DN under their own heading (Phase 2 adds
+// partial/overship qty). Phase 1: hand-entry + inline edit + delete.
+// ─────────────────────────────────────────────────────────────────────────────
+function renderFixingsSection(jobId, fixings) {
+  fixings = fixings || [];
+  const canEdit = isDraftsman && currentJob && currentJob.status !== 'closed';
+
+  const totalPieces = fixings.reduce((s, f) => s + (Number(f.quantity) || 0), 0);
+  const totalWeight = fixings.reduce(
+    (s, f) => s + (Number(f.unit_weight_kg) || 0) * (Number(f.quantity) || 0), 0);
+  const weightStr = totalWeight > 0 ? ` · ${totalWeight.toFixed(1)} kg` : '';
+
+  let html = `<div style="margin-top:22px">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+      <span style="font-size:13px;font-weight:600;color:var(--text)">&#128476;&#65039; Fixings &amp; loose items</span>
+      <span style="font-size:11px;color:var(--subtle)">
+        ${fixings.length} line${fixings.length === 1 ? '' : 's'} · ${totalPieces} pcs${weightStr}
+      </span>
+    </div>`;
+
+  // Add-row form (draftsman, job open)
+  if (canEdit) {
+    html += `<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin-bottom:10px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px">
+      <div style="flex:1;min-width:200px">
+        <label style="display:block;font-size:10px;color:var(--subtle);text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px">Description</label>
+        <input id="fixDesc" type="text" class="field-input" placeholder="e.g. M16 x 40 8.8 BZP setscrew"
+               style="width:100%" onkeydown="if(event.key==='Enter')addFixing()">
+      </div>
+      <div style="width:80px">
+        <label style="display:block;font-size:10px;color:var(--subtle);text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px">Qty</label>
+        <input id="fixQty" type="number" min="1" step="1" class="field-input" placeholder="0"
+               style="width:100%;text-align:right" onkeydown="if(event.key==='Enter')addFixing()">
+      </div>
+      <div style="width:100px">
+        <label style="display:block;font-size:10px;color:var(--subtle);text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px">Wt each (kg)</label>
+        <input id="fixWeight" type="number" min="0" step="0.001" class="field-input" placeholder="opt."
+               style="width:100%;text-align:right" onkeydown="if(event.key==='Enter')addFixing()">
+      </div>
+      <button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="addFixing()">&#43; Add</button>
+    </div>`;
+  }
+
+  if (fixings.length === 0) {
+    html += `<div style="color:var(--subtle);font-size:12px;padding:6px 0">No fixings yet.${canEdit ? ' Add bolts, anchors and consumables above.' : ''}</div>`;
+    return html + '</div>';
+  }
+
+  // Table
+  html += `<div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px;background:var(--surface)">
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead>
+        <tr style="background:var(--bg-darker);color:var(--subtle);text-transform:uppercase;font-size:11px;letter-spacing:.04em">
+          <th style="text-align:left;padding:8px 12px;font-weight:600;border-bottom:1px solid var(--border)">Description</th>
+          <th style="text-align:right;padding:8px 12px;font-weight:600;border-bottom:1px solid var(--border)">Qty</th>
+          <th style="text-align:right;padding:8px 12px;font-weight:600;border-bottom:1px solid var(--border)">Wt each</th>
+          <th style="text-align:right;padding:8px 12px;font-weight:600;border-bottom:1px solid var(--border)">Total wt</th>
+          <th style="text-align:left;padding:8px 12px;font-weight:600;border-bottom:1px solid var(--border)">Status</th>
+          ${canEdit ? '<th style="width:44px;border-bottom:1px solid var(--border)"></th>' : ''}
+        </tr>
+      </thead>
+      <tbody>`;
+
+  const statusStyles = {
+    pending:            'background:rgba(255,107,0,.15);color:var(--accent)',
+    at_supplier:        'background:rgba(99,102,241,.15);color:#a5b4fc',
+    ready_for_despatch: 'background:rgba(62,207,142,.15);color:#3ecf8e',
+    despatched:         'background:rgba(140,140,140,.15);color:var(--text)',
+    on_site:            'background:rgba(140,140,140,.15);color:var(--text)'
+  };
+
+  for (const f of fixings) {
+    const qty     = Number(f.quantity) || 0;
+    const wtEach  = f.unit_weight_kg != null ? Number(f.unit_weight_kg) : null;
+    const totWt   = wtEach != null ? (wtEach * qty) : null;
+    const pill    = `<span style="${statusStyles[f.status] || ''};padding:2px 9px;border-radius:6px;font-size:11px;font-weight:500;white-space:nowrap">${escapeHtml(BOM_STATUS_LABEL[f.status] || f.status)}</span>`;
+
+    if (canEdit) {
+      html += `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:6px 12px">
+          <input type="text" value="${escapeHtml(f.description)}"
+                 onchange="fixingEditField(${f.id}, 'description', this.value)"
+                 style="width:100%;background:transparent;border:1px solid transparent;color:var(--text);font-family:var(--font-mono);font-size:13px;padding:4px 6px;border-radius:5px"
+                 onfocus="this.style.borderColor='var(--border)';this.style.background='var(--bg-darker)'"
+                 onblur="this.style.borderColor='transparent';this.style.background='transparent'"></td>
+        <td style="padding:6px 12px;text-align:right">
+          <input type="number" min="1" step="1" value="${qty}"
+                 onchange="fixingEditField(${f.id}, 'quantity', this.value)"
+                 style="width:70px;background:var(--bg-darker);border:1px solid var(--border);color:var(--text);font-family:var(--font-mono);font-size:13px;padding:4px 6px;border-radius:5px;text-align:right"></td>
+        <td style="padding:6px 12px;text-align:right">
+          <input type="number" min="0" step="0.001" value="${wtEach != null ? wtEach : ''}" placeholder="—"
+                 onchange="fixingEditField(${f.id}, 'unit_weight_kg', this.value)"
+                 style="width:80px;background:var(--bg-darker);border:1px solid var(--border);color:var(--text);font-family:var(--font-mono);font-size:13px;padding:4px 6px;border-radius:5px;text-align:right"></td>
+        <td style="padding:6px 12px;text-align:right;color:var(--subtle);font-family:var(--font-mono);font-size:13px">${totWt != null ? totWt.toFixed(2) : '—'}</td>
+        <td style="padding:6px 12px">${pill}</td>
+        <td style="padding:6px 12px;text-align:center">
+          <button class="btn btn-ghost" title="Delete" style="padding:5px 9px;font-size:14px;color:var(--subtle)"
+                  onclick="deleteBomItem(${f.id})">&#128465;</button></td>
+      </tr>`;
+    } else {
+      html += `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:10px 12px;color:var(--text);font-family:var(--font-mono);font-size:13px">${escapeHtml(f.description)}</td>
+        <td style="padding:10px 12px;text-align:right;color:var(--text);font-family:var(--font-mono);font-size:13px">${qty}</td>
+        <td style="padding:10px 12px;text-align:right;color:var(--subtle);font-family:var(--font-mono);font-size:13px">${wtEach != null ? wtEach.toFixed(3) : '—'}</td>
+        <td style="padding:10px 12px;text-align:right;color:var(--subtle);font-family:var(--font-mono);font-size:13px">${totWt != null ? totWt.toFixed(2) : '—'}</td>
+        <td style="padding:10px 12px">${pill}</td>
+      </tr>`;
+    }
+  }
+
+  html += `</tbody></table></div></div>`;
+  return html;
+}
+
+async function addFixing() {
+  const jobId = currentJob?.id ? parseInt(currentJob.id) : null;
+  if (!jobId) { toast('No job selected.', 'error'); return; }
+
+  const descEl = document.getElementById('fixDesc');
+  const qtyEl  = document.getElementById('fixQty');
+  const wtEl   = document.getElementById('fixWeight');
+  const description = (descEl?.value || '').trim();
+  const quantity    = parseInt(qtyEl?.value);
+  const wtRaw       = (wtEl?.value || '').trim();
+
+  if (!description) { toast('Enter a description.', 'error'); descEl?.focus(); return; }
+  if (!quantity || quantity < 1) { toast('Enter a quantity of 1 or more.', 'error'); qtyEl?.focus(); return; }
+
+  try {
+    await api.post('/api/job-bom-items', {
+      job_id: jobId,
+      description,
+      quantity,
+      item_type: 'fixing',
+      unit_weight_kg: wtRaw === '' ? null : Number(wtRaw)
+    });
+    toast('Fixing added', 'success');
+    await loadJobBomItems(jobId);
+    renderBOM();
+    // Re-focus the description for fast repeat entry
+    document.getElementById('fixDesc')?.focus();
+  } catch (e) {
+    toast('Failed to add fixing: ' + e.message, 'error');
+  }
+}
+
+async function fixingEditField(id, field, value) {
+  const jobId = currentJob?.id ? parseInt(currentJob.id) : null;
+  const body = {};
+  if (field === 'quantity') {
+    const q = parseInt(value);
+    if (!q || q < 1) { toast('Quantity must be 1 or more.', 'error'); if (jobId) renderBOM(); return; }
+    body.quantity = q;
+  } else if (field === 'unit_weight_kg') {
+    const v = (value || '').trim();
+    body.unit_weight_kg = v === '' ? null : Number(v);
+  } else if (field === 'description') {
+    const d = (value || '').trim();
+    if (!d) { toast('Description cannot be empty.', 'error'); if (jobId) renderBOM(); return; }
+    body.description = d;
+  } else {
+    return;
+  }
+  try {
+    await api.put(`/api/job-bom-items/${id}`, body);
+    if (jobId) await loadJobBomItems(jobId);
+    renderBOM();
+  } catch (e) {
+    toast('Failed to update fixing: ' + e.message, 'error');
+    if (jobId) renderBOM();
+  }
 }
 
 function renderBomRow(it) {
