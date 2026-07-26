@@ -8,9 +8,14 @@
 //   POST   /api/job-assemblies            create assembly + parts (one txn)
 //   DELETE /api/job-assemblies/:id        delete (only if status='pending')
 //
-// Out of scope for this file (later commits):
-//   PUT    /api/job-assemblies/:id/fabricate   mark fabricated + BOM row (commit 8)
-//   GET    /api/job-assemblies/kiosk           kiosk Fabrication tile (commit 11)
+//   PUT    /api/job-assemblies/:id/fabricate   LEGACY all-in-one (kept as shim)
+//   GET    /api/job-assemblies/kiosk           kiosk Fabrication tile
+//
+// Staged / partial fabrication (fab → weld → complete, per-piece counts):
+//   PUT    /api/job-assemblies/:id/fab         mark N pieces fabbed
+//   PUT    /api/job-assemblies/:id/weld        mark N pieces welded (→ BOM)
+//   PUT    /api/job-assemblies/:id/complete    mark N pieces complete (→ BOM)
+//   See docs/SPEC-job-fabrication-rework.md + api/sql/add-staged-fabrication.sql
 
 const { app } = require('@azure/functions');
 const { query, getPool, sql } = require('../db');
@@ -31,6 +36,132 @@ async function finishIsOutsourced(finishServiceId) {
         { fid: finishServiceId }
     );
     return r.recordset.length > 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STAGED FABRICATION HELPERS (fab → weld → complete, partial quantities)
+// See docs/SPEC-job-fabrication-rework.md + the "Staged / Partial Fabrication"
+// migration (api/sql/add-staged-fabrication.sql).
+//
+// Piece accounting (all on JobAssemblies, kept in sync inside each txn):
+//   quantity       total pieces in the assembly
+//   qty_fabbed     pieces fabricated (fab→weld route)
+//   qty_welded     pieces welded     (0..qty_fabbed) — these hit BOM
+//   qty_completed  pieces completed DIRECTLY (Complete button) — these hit BOM
+//   Derived:
+//     to_fab        = quantity - qty_fabbed - qty_completed
+//     ready_to_weld = qty_fabbed - qty_welded
+//     bom_qty       = qty_welded + qty_completed
+//   The fab→weld pool and the direct-complete pool are DISJOINT: a raw piece
+//   goes down exactly one route, so the caps never let the two overlap.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Derive the status label from the counts. 'fabricated' is kept as the
+// terminal name (every piece on BOM) so existing reads — kiosk 24h window,
+// projects progress rollups, confirmCloseJob — keep working unchanged.
+function deriveStatus(quantity, qtyWelded, qtyCompleted, qtyFabbed) {
+    const bom = (qtyWelded || 0) + (qtyCompleted || 0);
+    if (bom >= quantity) return 'fabricated';
+    if (bom > 0 || (qtyFabbed || 0) > 0) return 'in_progress';
+    return 'pending';
+}
+
+// Smart BOM merge. Adds `delta` pieces to this assembly's OPEN BOM row —
+// "open" = no DN raised yet (status NOT IN at_supplier/despatched/on_site).
+// If an open row exists we top up its quantity so repeated completions read
+// as one line ("5no B2") instead of spawning 1no + 3no + 1no. If none exists
+// (first completion, or the previous row was frozen onto a DN), we insert a
+// fresh row — a genuinely separate delivery batch.
+//
+// Returns the BOM row id that received the pieces.
+async function applyBomDelta(transaction, assembly, heaviestProfile, delta, createdBy) {
+    // Find the open, mergeable BOM row for this assembly.
+    const findReq = new sql.Request(transaction);
+    findReq.input('aid', sql.Int, assembly.id);
+    const openRes = await findReq.query(
+        `SELECT TOP 1 id, quantity
+         FROM JobBomItems WITH (UPDLOCK, HOLDLOCK)
+         WHERE source_assembly_id = @aid
+           AND status IN ('pending', 'ready_for_despatch')
+         ORDER BY id ASC`
+    );
+
+    if (openRes.recordset.length > 0) {
+        const row = openRes.recordset[0];
+        const topReq = new sql.Request(transaction);
+        topReq.input('bid',   sql.Int, row.id);
+        topReq.input('delta', sql.Int, delta);
+        const upd = await topReq.query(
+            `UPDATE JobBomItems SET quantity = quantity + @delta
+             OUTPUT INSERTED.id AS id
+             WHERE id = @bid`
+        );
+        return upd.recordset[0].id;
+    }
+
+    // No open row — insert a fresh one. Route it the same way the legacy
+    // fabricate flow does: needs a supplier DN only if the finish is
+    // outsourced, else straight to ready_for_despatch.
+    const bomStatus = await finishIsOutsourced(assembly.finish_service_id)
+        ? 'pending'
+        : 'ready_for_despatch';
+
+    const insReq = new sql.Request(transaction);
+    insReq.input('jobId',           sql.Int,           assembly.job_id);
+    insReq.input('assemblyId',      sql.Int,           assembly.id);
+    insReq.input('description',     sql.NVarChar(256), heaviestProfile);
+    insReq.input('quantity',        sql.Int,           delta);
+    insReq.input('finishServiceId', sql.Int,           assembly.finish_service_id ?? null);
+    insReq.input('status',          sql.NVarChar(32),  bomStatus);
+    insReq.input('createdBy',       sql.NVarChar(256), createdBy);
+    const ins = await insReq.query(
+        `INSERT INTO JobBomItems
+            (job_id, source, source_assembly_id, description, quantity,
+             finish_service_id, status, created_by)
+         OUTPUT INSERTED.id AS id
+         VALUES
+            (@jobId, 'assembly', @assemblyId, @description, @quantity,
+             @finishServiceId, @status, @createdBy)`
+    );
+    return ins.recordset[0].id;
+}
+
+// Load an assembly + derive its heaviest part's profile (the BOM line name).
+// Returns { assembly, heaviestProfile } or null if not found / no parts.
+async function loadAssemblyForStage(id) {
+    const aRes = await query('SELECT * FROM JobAssemblies WHERE id = @id', { id });
+    if (aRes.recordset.length === 0) return null;
+    const assembly = aRes.recordset[0];
+    const pRes = await query(
+        'SELECT * FROM JobAssemblyParts WHERE assembly_id = @id ORDER BY sort_order ASC, id ASC',
+        { id }
+    );
+    const parts = pRes.recordset;
+    let heaviest = parts[0] || null;
+    for (const p of parts) {
+        if (heaviest && (Number(p.weight_kg) || 0) > (Number(heaviest.weight_kg) || 0)) heaviest = p;
+    }
+    assembly.parts = parts;
+    return { assembly, heaviestProfile: heaviest ? heaviest.profile : (assembly.assembly_mark || 'Assembly') };
+}
+
+// Record a stage action + return the fresh assembly row. Called inside a txn.
+async function recordAction(transaction, assemblyId, stage, qty, operatorId, operatorName, machineId, bomItemId, performedBy) {
+    const r = new sql.Request(transaction);
+    r.input('aid',    sql.Int,           assemblyId);
+    r.input('stage',  sql.NVarChar(16),  stage);
+    r.input('qty',    sql.Int,           qty);
+    r.input('opId',   sql.Int,           operatorId ?? null);
+    r.input('opName', sql.NVarChar(256), operatorName ?? null);
+    r.input('mach',   sql.Int,           machineId ?? null);
+    r.input('bom',    sql.Int,           bomItemId ?? null);
+    r.input('by',     sql.NVarChar(256), performedBy ?? null);
+    await r.query(
+        `INSERT INTO JobAssemblyActions
+            (assembly_id, stage, qty, operator_id, operator_name,
+             welding_machine_id, bom_item_id, performed_by)
+         VALUES (@aid, @stage, @qty, @opId, @opName, @mach, @bom, @by)`
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -344,7 +475,7 @@ app.http('job-assemblies-kiosk', {
                  LEFT JOIN Clients c ON c.id = p.client_id
                  LEFT JOIN ServiceTypes st ON st.id = a.finish_service_id
                  WHERE p.status = 'In Progress'
-                   AND (a.status = 'pending'
+                   AND (a.status IN ('pending', 'in_progress')
                         OR (a.status = 'fabricated'
                             AND a.fabricated_at > DATEADD(hour, -24, SYSUTCDATETIME())))
                  ORDER BY a.status DESC,
@@ -486,6 +617,8 @@ app.http('job-assemblies-fabricate', {
                 const uRes = await uReq.query(
                     `UPDATE JobAssemblies
                      SET status              = 'fabricated',
+                         qty_fabbed          = quantity,
+                         qty_welded          = quantity,
                          fabricated_at       = SYSUTCDATETIME(),
                          fabricated_by       = @fabricatedBy,
                          welder_id           = @welderId,
@@ -533,6 +666,257 @@ app.http('job-assemblies-fabricate', {
         } catch (err) {
             context.error('Error fabricating job assembly:', err);
             return serverError('Failed to mark fabricated: ' + err.message, request);
+        }
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PUT /api/job-assemblies/:id/fab   — mark N pieces FABRICATED
+// Body: { qty, operator_id?, operator_name?, performed_by? }
+//   Increments qty_fabbed. Cap = quantity - qty_fabbed - qty_completed
+//   (only raw, un-routed pieces can be fabbed). Does NOT touch BOM — fabbed
+//   pieces reach BOM later via the weld stage. Fabricator is optional in
+//   draftsman bulk-close; the action row records whoever is given.
+// ─────────────────────────────────────────────────────────────────────────────
+app.http('job-assemblies-fab', {
+    methods: ['PUT'],
+    authLevel: 'anonymous',
+    route: 'job-assemblies/{id}/fab',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+        try {
+            const id = parseInt(request.params.id);
+            if (!id || isNaN(id)) return badRequest('Invalid id', request);
+            const body = await request.json();
+            const qty = parseInt(body.qty);
+            if (!qty || isNaN(qty) || qty < 1) return badRequest('qty must be a positive integer', request);
+
+            const loaded = await loadAssemblyForStage(id);
+            if (!loaded) return notFound('Assembly not found', request);
+            const a = loaded.assembly;
+
+            const db = await getPool();
+            const transaction = new sql.Transaction(db);
+            await transaction.begin();
+            try {
+                // Re-read with lock to get authoritative counts.
+                const lockReq = new sql.Request(transaction);
+                lockReq.input('id', sql.Int, id);
+                const lr = await lockReq.query(
+                    'SELECT quantity, qty_fabbed, qty_welded, qty_completed FROM JobAssemblies WITH (UPDLOCK) WHERE id = @id'
+                );
+                const c = lr.recordset[0];
+                const maxFab = c.quantity - c.qty_fabbed - c.qty_completed;
+                if (qty > maxFab) {
+                    await transaction.rollback();
+                    return badRequest(`Only ${maxFab} piece(s) left to fabricate on ${a.assembly_mark}.`, request);
+                }
+
+                const newFabbed = c.qty_fabbed + qty;
+                const newStatus = deriveStatus(c.quantity, c.qty_welded, c.qty_completed, newFabbed);
+
+                const upReq = new sql.Request(transaction);
+                upReq.input('id', sql.Int, id);
+                upReq.input('nf', sql.Int, newFabbed);
+                upReq.input('st', sql.NVarChar(32), newStatus);
+                const up = await upReq.query(
+                    `UPDATE JobAssemblies SET qty_fabbed = @nf, status = @st
+                     OUTPUT INSERTED.* WHERE id = @id`
+                );
+
+                await recordAction(transaction, id, 'fab', qty,
+                    body.operator_id ? parseInt(body.operator_id) : null,
+                    (body.operator_name || '').trim() || null,
+                    null, null, (body.performed_by || auth.name || '').trim() || null);
+
+                await transaction.commit();
+                const updated = up.recordset[0];
+                updated.parts = a.parts;
+                return ok({ assembly: updated }, request);
+            } catch (txErr) {
+                await transaction.rollback();
+                throw txErr;
+            }
+        } catch (err) {
+            context.error('Error marking fabbed:', err);
+            return serverError('Failed to mark fabbed: ' + err.message, request);
+        }
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PUT /api/job-assemblies/:id/weld   — mark N pieces WELDED (→ BOM)
+// Body: { qty, welder_id?, welder_name?, welding_machine_id?, performed_by? }
+//   Increments qty_welded. Cap = qty_fabbed - qty_welded (can only weld what
+//   was fabbed). Welded pieces hit BOM via applyBomDelta (smart merge).
+//   Welder + machine expected in workshop/kiosk, optional in draftsman bulk.
+// ─────────────────────────────────────────────────────────────────────────────
+app.http('job-assemblies-weld', {
+    methods: ['PUT'],
+    authLevel: 'anonymous',
+    route: 'job-assemblies/{id}/weld',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+        try {
+            const id = parseInt(request.params.id);
+            if (!id || isNaN(id)) return badRequest('Invalid id', request);
+            const body = await request.json();
+            const qty = parseInt(body.qty);
+            if (!qty || isNaN(qty) || qty < 1) return badRequest('qty must be a positive integer', request);
+
+            const loaded = await loadAssemblyForStage(id);
+            if (!loaded) return notFound('Assembly not found', request);
+            const a = loaded.assembly;
+
+            const db = await getPool();
+            const transaction = new sql.Transaction(db);
+            await transaction.begin();
+            try {
+                const lockReq = new sql.Request(transaction);
+                lockReq.input('id', sql.Int, id);
+                const lr = await lockReq.query(
+                    'SELECT quantity, qty_fabbed, qty_welded, qty_completed FROM JobAssemblies WITH (UPDLOCK) WHERE id = @id'
+                );
+                const c = lr.recordset[0];
+                const maxWeld = c.qty_fabbed - c.qty_welded;
+                if (qty > maxWeld) {
+                    await transaction.rollback();
+                    return badRequest(`Only ${maxWeld} fabricated piece(s) ready to weld on ${a.assembly_mark}.`, request);
+                }
+
+                const performedBy = (body.performed_by || auth.name || '').trim() || null;
+                const bomId = await applyBomDelta(transaction, a, loaded.heaviestProfile, qty, performedBy);
+
+                const newWelded = c.qty_welded + qty;
+                const newStatus = deriveStatus(c.quantity, newWelded, c.qty_completed, c.qty_fabbed);
+
+                const upReq = new sql.Request(transaction);
+                upReq.input('id', sql.Int, id);
+                upReq.input('nw', sql.Int, newWelded);
+                upReq.input('st', sql.NVarChar(32), newStatus);
+                // On terminal, stamp the legacy fabricated_* fields so existing
+                // reads (card "Fabricated · name", kiosk 24h) keep working.
+                let extra = '';
+                if (newStatus === 'fabricated') {
+                    upReq.input('fb', sql.NVarChar(256), performedBy);
+                    upReq.input('wid', sql.Int, body.welder_id ? parseInt(body.welder_id) : null);
+                    upReq.input('mid', sql.Int, body.welding_machine_id ? parseInt(body.welding_machine_id) : null);
+                    extra = `, fabricated_at = SYSUTCDATETIME(), fabricated_by = @fb,
+                              welder_id = COALESCE(@wid, welder_id),
+                              welding_machine_id = COALESCE(@mid, welding_machine_id)`;
+                }
+                const up = await upReq.query(
+                    `UPDATE JobAssemblies SET qty_welded = @nw, status = @st${extra}
+                     OUTPUT INSERTED.* WHERE id = @id`
+                );
+
+                await recordAction(transaction, id, 'weld', qty,
+                    body.welder_id ? parseInt(body.welder_id) : null,
+                    (body.welder_name || '').trim() || null,
+                    body.welding_machine_id ? parseInt(body.welding_machine_id) : null,
+                    bomId, performedBy);
+
+                await transaction.commit();
+                const updated = up.recordset[0];
+                updated.parts = a.parts;
+                return ok({ assembly: updated, bom_item_id: bomId }, request);
+            } catch (txErr) {
+                await transaction.rollback();
+                throw txErr;
+            }
+        } catch (err) {
+            context.error('Error marking welded:', err);
+            return serverError('Failed to mark welded: ' + err.message, request);
+        }
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PUT /api/job-assemblies/:id/complete   — mark N pieces COMPLETE (→ BOM)
+// Body: { qty, operator_id?, operator_name?, welding_machine_id?, performed_by? }
+//   The direct-to-BOM path for pieces that don't go through the fab→weld
+//   tracking (e.g. no welding needed, or done in one hit). Increments
+//   qty_completed. Cap = quantity - qty_fabbed - qty_completed (raw pieces
+//   only — fabbed pieces finish via weld). Feeds BOM via applyBomDelta.
+//   Operator + machine optional (draftsman bulk-close).
+// ─────────────────────────────────────────────────────────────────────────────
+app.http('job-assemblies-complete', {
+    methods: ['PUT'],
+    authLevel: 'anonymous',
+    route: 'job-assemblies/{id}/complete',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+        try {
+            const id = parseInt(request.params.id);
+            if (!id || isNaN(id)) return badRequest('Invalid id', request);
+            const body = await request.json();
+            const qty = parseInt(body.qty);
+            if (!qty || isNaN(qty) || qty < 1) return badRequest('qty must be a positive integer', request);
+
+            const loaded = await loadAssemblyForStage(id);
+            if (!loaded) return notFound('Assembly not found', request);
+            const a = loaded.assembly;
+
+            const db = await getPool();
+            const transaction = new sql.Transaction(db);
+            await transaction.begin();
+            try {
+                const lockReq = new sql.Request(transaction);
+                lockReq.input('id', sql.Int, id);
+                const lr = await lockReq.query(
+                    'SELECT quantity, qty_fabbed, qty_welded, qty_completed FROM JobAssemblies WITH (UPDLOCK) WHERE id = @id'
+                );
+                const c = lr.recordset[0];
+                const maxComplete = c.quantity - c.qty_fabbed - c.qty_completed;
+                if (qty > maxComplete) {
+                    await transaction.rollback();
+                    return badRequest(`Only ${maxComplete} raw piece(s) left to complete on ${a.assembly_mark}. (Fabbed pieces finish via Weld.)`, request);
+                }
+
+                const performedBy = (body.performed_by || auth.name || '').trim() || null;
+                const bomId = await applyBomDelta(transaction, a, loaded.heaviestProfile, qty, performedBy);
+
+                const newCompleted = c.qty_completed + qty;
+                const newStatus = deriveStatus(c.quantity, c.qty_welded, newCompleted, c.qty_fabbed);
+
+                const upReq = new sql.Request(transaction);
+                upReq.input('id', sql.Int, id);
+                upReq.input('nc', sql.Int, newCompleted);
+                upReq.input('st', sql.NVarChar(32), newStatus);
+                let extra = '';
+                if (newStatus === 'fabricated') {
+                    upReq.input('fb', sql.NVarChar(256), performedBy);
+                    upReq.input('wid', sql.Int, body.operator_id ? parseInt(body.operator_id) : null);
+                    upReq.input('mid', sql.Int, body.welding_machine_id ? parseInt(body.welding_machine_id) : null);
+                    extra = `, fabricated_at = SYSUTCDATETIME(), fabricated_by = @fb,
+                              welder_id = COALESCE(@wid, welder_id),
+                              welding_machine_id = COALESCE(@mid, welding_machine_id)`;
+                }
+                const up = await upReq.query(
+                    `UPDATE JobAssemblies SET qty_completed = @nc, status = @st${extra}
+                     OUTPUT INSERTED.* WHERE id = @id`
+                );
+
+                await recordAction(transaction, id, 'complete', qty,
+                    body.operator_id ? parseInt(body.operator_id) : null,
+                    (body.operator_name || '').trim() || null,
+                    body.welding_machine_id ? parseInt(body.welding_machine_id) : null,
+                    bomId, performedBy);
+
+                await transaction.commit();
+                const updated = up.recordset[0];
+                updated.parts = a.parts;
+                return ok({ assembly: updated, bom_item_id: bomId }, request);
+            } catch (txErr) {
+                await transaction.rollback();
+                throw txErr;
+            }
+        } catch (err) {
+            context.error('Error marking complete:', err);
+            return serverError('Failed to mark complete: ' + err.message, request);
         }
     }
 });
