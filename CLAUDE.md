@@ -625,6 +625,49 @@ handling, `splitTextToSize` wrapping, page-break with table-header redraw, and
 `POST /api/drawing-elements/{jobId}/file` (`fileContext:'site'`), so it appears
 in the Site Installation file list like any uploaded file.
 
+## RAMS generator (Site Installation)
+
+Sibling of the Site Pack — Risk Assessment & Method Statement generator, built
+in phases. Button "📋 Generate RAMS" (purple) in `renderSite()`, modal
+`ramsModal` in `projects.html`, all logic in `shared.js` (`openRamsModal` /
+`ramsGenerateScope` / `drawRamsPDF` / `renderRamsPdfBlob` / `confirmRams`).
+
+Two-engine split, same principle as QB and the Site Pack:
+- **Deterministic:** header prefill from `currentProject`/`currentJob`, the
+  jsPDF renderer, and **all risk scoring** — `RAMS_RISK_LIBRARY` is a CURATED
+  hazard library (hazard, pre/post-control L×S×R, standard control wording)
+  seeded from BAMA's three example RAMS. The AI never invents scores or
+  control text.
+- **AI (`/api/claude-proxy`, `claude-sonnet-4-6`):** ONLY drafts the Scope of
+  Works + Sequence of Works from the ticked drawing(s) (reader, not
+  calculator; 429-retry + deterministic template fallback).
+
+Personnel come from the `SitePersonnel` roster (+ `SitePersonnelCerts` /
+`CertTypes`) via a searchable tile picker, with a freeform-textarea fallback if
+the roster API is unavailable. RAMS is money-free — no rates anywhere (tender ↔
+quote separation applies).
+
+PDF is **native jsPDF** (`drawRamsPDF` / `renderRamsPdfBlob`), copied from the
+DN/Site-Pack renderer — no html2canvas. Appendix A is the L×S×R risk table,
+Appendix B the briefing register.
+
+**Save (phase 6):** `confirmRams()` uploads the PDF to the **project-level**
+folder `<ProjectFolder>/00 - RAMS/<JobFolder>/` (decision B — NOT inside the
+job's own SharePoint folder; same `findProjectFolder()` lookup as the DN flow)
+and registers it via `POST /api/drawing-elements/{jobId}/file` with
+`fileContext:'rams'` — a dedicated context in `DrawingElementFiles`
+(allowed-list in `api/src/functions/drawing-elements.js`). The loader hydrates
+`job.rams.files` from `data.files['rams']`; they render as a "RAMS documents"
+list on Site Installation (`renderFileRow(f,'rams')`) and delete through the
+normal `confirmDeleteFile` path (SharePoint file + SQL row). If the SharePoint
+save fails, the PDF opens in a new tab so the document is never lost. The RAMS
+drawing picker excludes previously generated Site Pack / RAMS outputs.
+
+Remaining phases: site-plan click-to-pin (5 — the uploaded site plan already
+embeds in the PDF; the pin marker is pending) and DOCX export via docx.js (7 —
+the renderer consumes the same structured object, so a second deterministic
+renderer slots in without touching generation).
+
 ## Modal → Page mapping
 
 Every `id=…Modal` element in the HTML, by page. Handy when tracing an

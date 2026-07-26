@@ -11271,6 +11271,10 @@ function _applyElementDataToJob(job, data) {
     completedAt: data.site ? data.site.completedAt : null,
     completedBy: data.site ? data.site.completedBy : null
   };
+  // RAMS — generated RAMS PDFs (DrawingElementFiles context 'rams'). The PDFs
+  // live in the PROJECT-level 00 - RAMS/<job>/ SharePoint folder (decision B),
+  // but they're registered against the job so they list on Site Installation.
+  job.rams = { files: (data.files && data.files['rams']) || [] };
 }
 
 
@@ -14259,7 +14263,8 @@ function closeSitePackModal() {
 // Phase 1: modal shell + prefill + drawing picker. Mirrors the Site Pack flow
 // (openSitePackModal / confirmSitePack). Later phases: AI drawing-read (2),
 // native jsPDF render + risk library (3), tier wiring (4), site-plan pin (5),
-// SharePoint save to RAMS/<job>/ (6), DOCX (7).
+// SharePoint save to <Project>/00 - RAMS/<job>/ + 'rams' file context (6 — DONE),
+// DOCX (7).
 // ═══════════════════════════════════════════
 let _ramsSitePlanDataUri = null;   // set by ramsPreviewSitePlan(); used from phase 5 (click-to-pin site plan).
 
@@ -14784,7 +14789,7 @@ RULES:
 // CURATED library (seeded from BAMA's example RAMS). The AI never invents
 // scores or control text; at most (later phase) it selects which rows apply and
 // tailors the "when/where" note. Every value here is tunable.
-// SharePoint save + a 'rams' drawing-elements context land in phase 6; this
+// SharePoint save + the 'rams' drawing-elements context shipped in phase 6; this
 // phase renders the PDF and opens it for review.
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -15395,11 +15400,13 @@ async function renderRamsPdfBlob(rams) {
   return blob;
 }
 
-// Assemble the (editable) modal fields into a rams object, render natively, and
-// open the PDF for review. SharePoint save + a 'rams' drawing-elements context
-// land in phase 6 — this phase proves the document renders correctly.
+// Assemble the (editable) modal fields into a rams object, render natively with
+// jsPDF, upload to the PROJECT-level 00 - RAMS/<job>/ SharePoint folder, and
+// register it via POST /api/drawing-elements/{jobId}/file (fileContext 'rams').
 async function confirmRams() {
+  const proj = currentProject, job = currentJob;
   const btn = document.getElementById('ramsConfirmBtn');
+  if (!job?.id) { toast('No job selected \u2014 cannot save.', 'error'); return; }
   if (btn) { btn.disabled = true; btn.style.opacity = '.5'; }
   try {
     await loadLogoDataUri();
@@ -15472,11 +15479,48 @@ async function confirmRams() {
     }
 
     const blob = await renderRamsPdfBlob(rams);
-    const url = URL.createObjectURL(blob);
-    window.open(url, '_blank');
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
 
-    toast('RAMS PDF generated \u2014 review it in the new tab. (SharePoint save arrives in a later phase.)', 'success');
+    // Save to SharePoint: <ProjectFolder>/00 - RAMS/<JobFolder>/<file>.pdf
+    // (decision B — the PROJECT-level RAMS folder, not inside the job folder;
+    // same project-folder lookup as the DN flow). Registered against the job
+    // via DrawingElementFiles context 'rams' so it lists on Site Installation.
+    const stamp = new Date().toISOString().slice(0, 10);
+    const baseName = (rams.docNo || `RAMS - ${proj?.id || 'project'} - ${stamp}`).replace(/[\/\\:*?"<>|]/g, '-');
+    const fileName = baseName + '.pdf';
+
+    let uploaded;
+    try {
+      const projectFolder = await findProjectFolder(proj.id);
+      if (!projectFolder) throw new Error('project folder not found on SharePoint');
+      const driveId = projectFolder.parentReference?.driveId || BAMA_DRIVE_ID;
+      const ramsRoot = await getOrCreateSubfolder(projectFolder.id, '00 - RAMS', driveId);
+      const jobFolderName = (job.folderName || job.name || 'Unassigned');
+      const jobSub = await getOrCreateSubfolder(ramsRoot.id, jobFolderName, driveId);
+      const arrayBuffer = await blob.arrayBuffer();
+      uploaded = await uploadFileToFolder(jobSub.id, fileName, arrayBuffer, 'application/pdf', driveId);
+
+      const jobIdInt = parseInt(job.id);
+      if (!job.rams) job.rams = { files: [] };
+      const saved = await api.post(`/api/drawing-elements/${jobIdInt}/file`, {
+        fileContext: 'rams', name: baseName, fileName,
+        fileId: uploaded.id, driveId: uploaded.parentReference?.driveId || driveId,
+        webUrl: uploaded.webUrl, uploadedAt: new Date().toISOString(),
+        uploadedBy: _currentDraftsmanName || null
+      });
+      job.rams.files.push({ ...saved });
+    } catch (saveErr) {
+      // Never lose the document: open it for a manual save and say why.
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      toast('RAMS generated but SharePoint save failed (' + saveErr.message + ') \u2014 PDF opened in a new tab, save it manually.', 'error');
+      return;
+    }
+
+    closeRamsModal();
+    toast('RAMS generated & saved to 00 - RAMS.', 'success');
+    renderSite();
+    if (uploaded.webUrl) window.open(uploaded.webUrl, '_blank');
   } catch (e) {
     toast('RAMS generation failed: ' + e.message, 'error');
   } finally {
@@ -16870,6 +16914,14 @@ function renderSite() {
     html += '<div style="color:var(--subtle);font-size:13px;padding:12px 0">No site installation files yet</div>';
   }
 
+  // Generated RAMS documents — context 'rams'. PDFs live in the project-level
+  // 00 - RAMS/<job>/ folder; delete removes both the SharePoint file and the row.
+  const ramsFiles = (currentJob.rams && currentJob.rams.files) || [];
+  if (ramsFiles.length > 0) {
+    html += `<div style="margin-top:14px;margin-bottom:4px;color:var(--subtle);font-size:10px;text-transform:uppercase;letter-spacing:.05em;font-weight:700">RAMS documents</div>`;
+    html += ramsFiles.map(f => renderFileRow(f, 'rams')).join('');
+  }
+
   // Notes
   html += renderNotesSection(site.notes || [], 'site');
 
@@ -17408,7 +17460,7 @@ function confirmDeleteFile(context, fileId) {
       }
       // Delete from SQL
       const jobIdInt = parseInt(currentJob.id);
-      if (context === 'parts-sections' || context === 'parts-plates' || context === 'site') {
+      if (context === 'parts-sections' || context === 'parts-plates' || context === 'site' || context === 'rams') {
         await api.delete(`/api/drawing-elements/${jobIdInt}/file/${fileId}`);
       } else if (context === 'approval') {
         await api.delete(`/api/drawing-elements/${jobIdInt}/revision-file/${fileId}`);
@@ -17429,6 +17481,7 @@ function getFilesArray(context) {
   if (context === 'parts-sections') return currentJob.parts?.sections?.files;
   if (context === 'parts-plates') return currentJob.parts?.plates?.files;
   if (context === 'site') return currentJob.site?.files;
+  if (context === 'rams') return currentJob.rams?.files;
   if (context.startsWith('assembly-')) {
     const taskId = context.replace('assembly-', '');
     const task = currentJob.assembly?.tasks?.find(t => t.id === taskId);

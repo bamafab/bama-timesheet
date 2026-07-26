@@ -317,8 +317,8 @@ app.http('drawing-elements-file-add', {
         try { body = await request.json(); } catch { return badRequest('Invalid JSON', request); }
 
         const { fileContext, name, fileName, fileId, driveId, webUrl, uploadedAt, uploadedBy } = body;
-        if (!fileContext || !['parts-sections','parts-plates','site'].includes(fileContext))
-            return badRequest('context must be parts-sections, parts-plates, or site', request);
+        if (!fileContext || !['parts-sections','parts-plates','site','rams'].includes(fileContext))
+            return badRequest('context must be parts-sections, parts-plates, site, or rams', request);
 
         try {
             const res = await query(
