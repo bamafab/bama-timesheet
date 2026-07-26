@@ -588,27 +588,33 @@ app.http('job-bom-items-generate-dn', {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /api/job-bom-items/generate-sdn
-// Site Delivery Note allocator. Mirrors generate-dn but:
-//   - No supplier required (the destination is the client / installation site)
-//   - Items must be in 'ready_for_despatch' status (not pending — pending
-//     means still at supplier, can't ship to site)
-//   - Items flip to 'on_site' (a new terminal status alongside 'despatched')
+// Site Delivery Note allocator with PARTIAL + OVERSHIP support (Phase 2).
+//   - No supplier required (destination is the client / installation site)
+//   - Ships a per-line quantity (not the whole line), so 100 of a 250 line
+//     can go on one note and the rest later.
+//   - Each ship writes a JobBomDespatches ledger row (per SDN, per line) and
+//     bumps JobBomItems.despatched_qty. A line flips to 'on_site' once it's
+//     fully delivered (despatched_qty >= quantity); until then it stays
+//     ready_for_despatch and keeps appearing in the SDN queue.
+//   - Fixings/consumables may OVERSHIP (send more than outstanding, or ship
+//     again after they're complete — erectors lose bolts). Fabricated marks
+//     are capped at outstanding.
 //   - Uses Settings.sdn_next_seq → SDN-0001, SDN-0002, …
 //
 // Body:
 //   {
-//     item_ids:           [42, 43, ...]      -- must all be ready_for_despatch
-//                                               and share one job_id
-//     sharepoint_file_id: "..." | null,      -- the SDN PDF uploaded by frontend
-//     sharepoint_drive_id: "..." | null,
-//     sharepoint_web_url:  "https://...",
-//     file_name:          "SDN-0001.pdf"
+//     lines: [ { item_id: 42, qty: 100 }, ... ]   -- share one job_id
+//     // (legacy: item_ids:[...] ships each line's full outstanding)
+//     sharepoint_file_id / _drive_id / _web_url / file_name  -- optional; the
+//        PDF is uploaded after allocation, so these are normally backfilled
+//        via /generate-sdn/files once the upload returns a webUrl.
 //   }
 //
-// Returns: { sdn_ref: 'SDN-0001', items: [...] }
+// Returns: { sdn_ref, lines: [{ item_id, qty, quantity, despatched_qty,
+//                               outstanding, status, item_type }] }
 //
-// Same single-transaction pattern as generate-dn: UPDLOCK+HOLDLOCK on the
-// Settings row prevents concurrent allocators colliding on the number.
+// Single transaction with UPDLOCK+HOLDLOCK on the Settings row so concurrent
+// allocators can't collide on the number.
 // ─────────────────────────────────────────────────────────────────────────────
 app.http('job-bom-items-generate-sdn', {
     methods: ['POST'],
@@ -620,10 +626,30 @@ app.http('job-bom-items-generate-sdn', {
 
         try {
             const body = await request.json();
-            const itemIds = Array.isArray(body.item_ids)
-                ? body.item_ids.map(x => parseInt(x)).filter(x => !isNaN(x))
-                : [];
-            if (itemIds.length === 0) return badRequest('item_ids must be a non-empty array', request);
+
+            // Accept the new {lines:[{item_id,qty}]} shape; fall back to the
+            // legacy {item_ids:[...]} (ship full outstanding on each).
+            let lines = [];
+            if (Array.isArray(body.lines)) {
+                lines = body.lines
+                    .map(l => ({ item_id: parseInt(l.item_id), qty: parseInt(l.qty) }))
+                    .filter(l => !isNaN(l.item_id) && !isNaN(l.qty));
+            } else if (Array.isArray(body.item_ids)) {
+                lines = body.item_ids
+                    .map(x => ({ item_id: parseInt(x), qty: null }))
+                    .filter(l => !isNaN(l.item_id));
+            }
+            if (lines.length === 0) return badRequest('lines must be a non-empty array of {item_id, qty}', request);
+
+            // Collapse duplicate item_ids (defensive) — sum their qty
+            const byId = new Map();
+            for (const l of lines) {
+                const prev = byId.get(l.item_id);
+                if (prev) prev.qty = (prev.qty == null || l.qty == null) ? (prev.qty ?? l.qty) : prev.qty + l.qty;
+                else byId.set(l.item_id, { ...l });
+            }
+            lines = Array.from(byId.values());
+            const itemIds = lines.map(l => l.item_id);
 
             // Pre-flight validation outside the txn for fast-fail
             const idParams = {};
@@ -634,7 +660,7 @@ app.http('job-bom-items-generate-sdn', {
             }).join(',');
 
             const checkRes = await query(
-                `SELECT id, job_id, status
+                `SELECT id, job_id, status, quantity, despatched_qty, item_type
                  FROM JobBomItems
                  WHERE id IN (${idPlaceholders})`,
                 idParams
@@ -646,14 +672,46 @@ app.http('job-bom-items-generate-sdn', {
             if (jobIds.size > 1) {
                 return badRequest('All items on an SDN must belong to the same job', request);
             }
-            const notReady = checkRes.recordset.filter(r => r.status !== 'ready_for_despatch');
-            if (notReady.length) {
-                return badRequest(
-                    `Items ${notReady.map(r => r.id).join(',')} are not ready_for_despatch (only items returned from a supplier or never needing one can ship to site).`,
-                    request
-                );
+
+            const rowById = new Map(checkRes.recordset.map(r => [r.id, r]));
+            const isLoose = t => t === 'fixing' || t === 'consumable';
+
+            // Validate each line, resolving qty and status eligibility.
+            for (const l of lines) {
+                const row = rowById.get(l.item_id);
+                const outstanding = Math.max(0, (row.quantity || 0) - (row.despatched_qty || 0));
+
+                // Legacy/no-qty → default to full outstanding
+                if (l.qty == null) l.qty = outstanding > 0 ? outstanding : 0;
+
+                if (!Number.isInteger(l.qty) || l.qty < 1) {
+                    return badRequest(`Item ${l.item_id}: qty must be >= 1`, request);
+                }
+
+                if (isLoose(row.item_type)) {
+                    // Fixings ship from ready_for_despatch OR on_site (overship /
+                    // top-up after complete). No upper cap.
+                    if (row.status !== 'ready_for_despatch' && row.status !== 'on_site') {
+                        return badRequest(
+                            `Fixing ${l.item_id} is '${row.status}' — must be ready for despatch (or already on site) to ship.`,
+                            request);
+                    }
+                } else {
+                    // Fabricated marks: ready_for_despatch only, capped at outstanding.
+                    if (row.status !== 'ready_for_despatch') {
+                        return badRequest(
+                            `Item ${l.item_id} is not ready_for_despatch (only items back from a supplier, or never needing one, can ship to site).`,
+                            request);
+                    }
+                    if (l.qty > outstanding) {
+                        return badRequest(
+                            `Item ${l.item_id}: qty ${l.qty} exceeds outstanding ${outstanding}. Fabricated marks can't be overshipped.`,
+                            request);
+                    }
+                }
             }
 
+            const createdBy = auth.email || auth.name || null;
             const db = await getPool();
             const transaction = new sql.Transaction(db);
             await transaction.begin();
@@ -677,33 +735,80 @@ app.http('job-bom-items-generate-sdn', {
                      WHERE [key] = 'sdn_next_seq'`
                 );
 
-                // 2. Flip selected items to on_site. WHERE re-checks status to
-                //    defend against concurrent status changes.
                 const fileName = body.file_name || `${sdnRef}.pdf`;
-                const upReq = new sql.Request(transaction);
-                upReq.input('spFileId',   sql.NVarChar(256),  body.sharepoint_file_id  || null);
-                upReq.input('spDriveId',  sql.NVarChar(256),  body.sharepoint_drive_id || null);
-                upReq.input('spWebUrl',   sql.NVarChar(1024), body.sharepoint_web_url  || null);
-                upReq.input('fileName',   sql.NVarChar(256),  fileName);
-                itemIds.forEach((id, i) => upReq.input(`id${i}`, sql.Int, id));
+                const resultLines = [];
 
-                const upRes = await upReq.query(
-                    `UPDATE JobBomItems
-                     SET status              = 'on_site',
-                         despatched_at       = SYSUTCDATETIME(),
-                         sharepoint_file_id  = @spFileId,
-                         sharepoint_drive_id = @spDriveId,
-                         sharepoint_web_url  = @spWebUrl,
-                         file_name           = @fileName
-                     OUTPUT INSERTED.*
-                     WHERE id IN (${idPlaceholders}) AND status = 'ready_for_despatch'`
-                );
-                if (upRes.recordset.length !== itemIds.length) {
-                    throw new Error('One or more items changed status concurrently — please refresh.');
+                // 2. Per line: write ledger row, bump despatched_qty, set status.
+                for (const l of lines) {
+                    const row = rowById.get(l.item_id);
+
+                    // Ledger row — the reprintable per-SDN record
+                    const ledReq = new sql.Request(transaction);
+                    ledReq.input('itemId',    sql.Int,            l.item_id);
+                    ledReq.input('sdnRef',     sql.NVarChar(32),  sdnRef);
+                    ledReq.input('qty',        sql.Int,           l.qty);
+                    ledReq.input('spFileId',   sql.NVarChar(256), body.sharepoint_file_id  || null);
+                    ledReq.input('spDriveId',  sql.NVarChar(256), body.sharepoint_drive_id || null);
+                    ledReq.input('spWebUrl',   sql.NVarChar(1024),body.sharepoint_web_url  || null);
+                    ledReq.input('fileName',   sql.NVarChar(256), fileName);
+                    ledReq.input('createdBy',  sql.NVarChar(256), createdBy);
+                    await ledReq.query(
+                        `INSERT INTO JobBomDespatches
+                            (bom_item_id, sdn_ref, qty, sharepoint_file_id,
+                             sharepoint_drive_id, sharepoint_web_url, file_name, created_by)
+                         VALUES
+                            (@itemId, @sdnRef, @qty, @spFileId, @spDriveId, @spWebUrl, @fileName, @createdBy)`
+                    );
+
+                    // Bump the row: despatched_qty += qty, flip to on_site when
+                    // fully delivered, stamp latest SDN refs for the "open PDF"
+                    // link. re-check status guards concurrent changes.
+                    const newDespatched = (row.despatched_qty || 0) + l.qty;
+                    const nowComplete = newDespatched >= (row.quantity || 0);
+                    const allowedStatuses = isLoose(row.item_type)
+                        ? `('ready_for_despatch','on_site')`
+                        : `('ready_for_despatch')`;
+
+                    const upReq = new sql.Request(transaction);
+                    upReq.input('itemId',    sql.Int,            l.item_id);
+                    upReq.input('addQty',     sql.Int,           l.qty);
+                    upReq.input('spFileId',   sql.NVarChar(256), body.sharepoint_file_id  || null);
+                    upReq.input('spDriveId',  sql.NVarChar(256), body.sharepoint_drive_id || null);
+                    upReq.input('spWebUrl',   sql.NVarChar(1024),body.sharepoint_web_url  || null);
+                    upReq.input('fileName',   sql.NVarChar(256), fileName);
+                    const upRes = await upReq.query(
+                        `UPDATE JobBomItems
+                         SET despatched_qty      = despatched_qty + @addQty,
+                             status              = CASE WHEN despatched_qty + @addQty >= quantity
+                                                        THEN 'on_site' ELSE status END,
+                             despatched_at       = CASE WHEN despatched_qty + @addQty >= quantity
+                                                        THEN SYSUTCDATETIME() ELSE despatched_at END,
+                             sharepoint_file_id  = @spFileId,
+                             sharepoint_drive_id = @spDriveId,
+                             sharepoint_web_url  = @spWebUrl,
+                             file_name           = @fileName
+                         OUTPUT INSERTED.id, INSERTED.quantity, INSERTED.despatched_qty,
+                                INSERTED.status, INSERTED.item_type
+                         WHERE id = @itemId AND status IN ${allowedStatuses}`
+                    );
+                    if (upRes.recordset.length !== 1) {
+                        throw new Error(`Item ${l.item_id} changed status concurrently — please refresh.`);
+                    }
+                    const u = upRes.recordset[0];
+                    resultLines.push({
+                        item_id:        u.id,
+                        qty:            l.qty,
+                        quantity:       u.quantity,
+                        despatched_qty: u.despatched_qty,
+                        outstanding:    Math.max(0, u.quantity - u.despatched_qty),
+                        status:         u.status,
+                        item_type:      u.item_type,
+                        complete:       nowComplete
+                    });
                 }
 
                 await transaction.commit();
-                return ok({ sdn_ref: sdnRef, items: upRes.recordset }, request);
+                return ok({ sdn_ref: sdnRef, lines: resultLines }, request);
             } catch (txErr) {
                 await transaction.rollback();
                 throw txErr;
@@ -711,6 +816,64 @@ app.http('job-bom-items-generate-sdn', {
         } catch (err) {
             context.error('Error generating SDN:', err);
             return serverError('Failed to generate SDN: ' + err.message, request);
+        }
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/job-bom-items/generate-sdn/files
+// Backfill the SharePoint refs onto an SDN's ledger rows (and the latest-SDN
+// pointer on the item rows) AFTER the PDF has been uploaded. generate-sdn
+// allocates the ref (needed for the filename printed on the PDF) before the
+// upload exists, so the webUrl is written here in a second, cheap call.
+// Body: { sdn_ref, sharepoint_file_id?, sharepoint_drive_id?, sharepoint_web_url?, file_name? }
+// ─────────────────────────────────────────────────────────────────────────────
+app.http('job-bom-items-generate-sdn-files', {
+    methods: ['POST'],
+    authLevel: 'anonymous',
+    route: 'job-bom-items/generate-sdn/files',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+        try {
+            const body = await request.json();
+            const sdnRef = (body.sdn_ref || '').trim();
+            if (!sdnRef) return badRequest('sdn_ref is required', request);
+
+            const params = {
+                sdnRef,
+                spFileId:  body.sharepoint_file_id  || null,
+                spDriveId: body.sharepoint_drive_id || null,
+                spWebUrl:  body.sharepoint_web_url  || null,
+                fileName:  body.file_name           || null
+            };
+
+            // Ledger rows for this SDN
+            await query(
+                `UPDATE JobBomDespatches
+                 SET sharepoint_file_id  = @spFileId,
+                     sharepoint_drive_id = @spDriveId,
+                     sharepoint_web_url  = @spWebUrl,
+                     file_name           = COALESCE(@fileName, file_name)
+                 WHERE sdn_ref = @sdnRef`,
+                params
+            );
+            // Item rows whose latest note is this SDN
+            await query(
+                `UPDATE b
+                 SET b.sharepoint_file_id  = @spFileId,
+                     b.sharepoint_drive_id = @spDriveId,
+                     b.sharepoint_web_url  = @spWebUrl,
+                     b.file_name           = COALESCE(@fileName, b.file_name)
+                 FROM JobBomItems b
+                 WHERE b.id IN (SELECT bom_item_id FROM JobBomDespatches WHERE sdn_ref = @sdnRef)
+                   AND b.file_name = @fileName`,
+                params
+            );
+            return ok({ sdn_ref: sdnRef, updated: true }, request);
+        } catch (err) {
+            context.error('Error backfilling SDN files:', err);
+            return serverError('Failed to save SDN file refs: ' + err.message, request);
         }
     }
 });

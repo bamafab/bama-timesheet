@@ -12268,6 +12268,7 @@ function renderFixingsSection(jobId, fixings) {
         <tr style="background:var(--bg-darker);color:var(--subtle);text-transform:uppercase;font-size:11px;letter-spacing:.04em">
           <th style="text-align:left;padding:8px 12px;font-weight:600;border-bottom:1px solid var(--border)">Description</th>
           <th style="text-align:right;padding:8px 12px;font-weight:600;border-bottom:1px solid var(--border)">Qty</th>
+          <th style="text-align:right;padding:8px 12px;font-weight:600;border-bottom:1px solid var(--border)">Sent</th>
           <th style="text-align:right;padding:8px 12px;font-weight:600;border-bottom:1px solid var(--border)">Wt each</th>
           <th style="text-align:right;padding:8px 12px;font-weight:600;border-bottom:1px solid var(--border)">Total wt</th>
           <th style="text-align:left;padding:8px 12px;font-weight:600;border-bottom:1px solid var(--border)">Status</th>
@@ -12286,9 +12287,16 @@ function renderFixingsSection(jobId, fixings) {
 
   for (const f of fixings) {
     const qty     = Number(f.quantity) || 0;
+    const sent    = Number(f.despatched_qty) || 0;
     const wtEach  = f.unit_weight_kg != null ? Number(f.unit_weight_kg) : null;
     const totWt   = wtEach != null ? (wtEach * qty) : null;
     const pill    = `<span style="${statusStyles[f.status] || ''};padding:2px 9px;border-radius:6px;font-size:11px;font-weight:500;white-space:nowrap">${escapeHtml(BOM_STATUS_LABEL[f.status] || f.status)}</span>`;
+    // Sent badge — grey none, amber partial, green complete, blue overship.
+    const sentColor = sent === 0 ? 'var(--subtle)'
+                    : sent < qty ? 'var(--accent)'
+                    : sent === qty ? '#3ecf8e' : '#a5b4fc';
+    const sentTxt = sent > qty ? `${sent} (+${sent - qty})` : `${sent}`;
+    const sentCell = `<span style="color:${sentColor};font-family:var(--font-mono);font-size:13px">${sentTxt}</span>`;
 
     if (canEdit) {
       html += `<tr style="border-bottom:1px solid var(--border)">
@@ -12302,6 +12310,7 @@ function renderFixingsSection(jobId, fixings) {
           <input type="number" min="1" step="1" value="${qty}"
                  onchange="fixingEditField(${f.id}, 'quantity', this.value)"
                  style="width:70px;background:var(--bg-darker);border:1px solid var(--border);color:var(--text);font-family:var(--font-mono);font-size:13px;padding:4px 6px;border-radius:5px;text-align:right"></td>
+        <td style="padding:6px 12px;text-align:right">${sentCell}</td>
         <td style="padding:6px 12px;text-align:right">
           <input type="number" min="0" step="0.001" value="${wtEach != null ? wtEach : ''}" placeholder="—"
                  onchange="fixingEditField(${f.id}, 'unit_weight_kg', this.value)"
@@ -12316,6 +12325,7 @@ function renderFixingsSection(jobId, fixings) {
       html += `<tr style="border-bottom:1px solid var(--border)">
         <td style="padding:10px 12px;color:var(--text);font-family:var(--font-mono);font-size:13px">${escapeHtml(f.description)}</td>
         <td style="padding:10px 12px;text-align:right;color:var(--text);font-family:var(--font-mono);font-size:13px">${qty}</td>
+        <td style="padding:10px 12px;text-align:right">${sentCell}</td>
         <td style="padding:10px 12px;text-align:right;color:var(--subtle);font-family:var(--font-mono);font-size:13px">${wtEach != null ? wtEach.toFixed(3) : '—'}</td>
         <td style="padding:10px 12px;text-align:right;color:var(--subtle);font-family:var(--font-mono);font-size:13px">${totWt != null ? totWt.toFixed(2) : '—'}</td>
         <td style="padding:10px 12px">${pill}</td>
@@ -12955,46 +12965,69 @@ function openSiteDnModal() {
   const jobId = currentJob?.id ? parseInt(currentJob.id) : null;
   if (!jobId) { toast('No job selected.', 'error'); return; }
 
-  const eligible = (_bomItemsByJob[jobId] || []).filter(i => i.status === 'ready_for_despatch');
+  const all = _bomItemsByJob[jobId] || [];
+  const isLoose = i => i.item_type === 'fixing' || i.item_type === 'consumable';
+  const outstandingOf = i => Math.max(0, (Number(i.quantity) || 0) - (Number(i.despatched_qty) || 0));
+
+  // Fabricated marks: shippable while ready_for_despatch with qty still out.
+  // Fixings/consumables: shippable while ready_for_despatch OR already on_site
+  // (overship / send replacements — erectors lose bolts).
+  const fabItems = all.filter(i => !isLoose(i) && i.status === 'ready_for_despatch' && outstandingOf(i) > 0);
+  const fixItems = all.filter(i =>  isLoose(i) && (i.status === 'ready_for_despatch' || i.status === 'on_site'));
+  const eligible = [...fabItems, ...fixItems];
+
   if (!eligible.length) {
-    toast('Nothing to ship to site. Items must be ready for despatch first.', 'error');
+    toast('Nothing to ship to site. Fabricated items must be ready for despatch first.', 'error');
     return;
   }
 
   _pendingSdn = { items: eligible };
 
-  // Header counts
   document.getElementById('sdnItemCount').textContent = eligible.length;
-  const sumQty = eligible.reduce((s, i) => s + (Number(i.quantity) || 0), 0);
-  document.getElementById('sdnItemQtySum').textContent = sumQty;
 
-  // Items list — all ticked by default (typical case: ship everything ready)
+  // Row template — checkbox, description, outstanding, editable "this delivery" qty.
+  const rowHtml = (it) => {
+    const out = outstandingOf(it);
+    const loose = isLoose(it);
+    // Default qty this delivery = outstanding; complete fixings default blank + unticked.
+    const defQty = out > 0 ? out : '';
+    const ticked = out > 0;
+    const maxAttr = loose ? '' : `max="${out}"`;   // fabricated capped; fixings uncapped
+    const outLabel = out > 0
+      ? `<span style="font-size:11px;color:var(--subtle)">out: <b style="color:var(--text)">${out}</b></span>`
+      : `<span style="font-size:11px;color:#3ecf8e">complete${loose ? ' · can top up' : ''}</span>`;
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border)">
+      <input type="checkbox" class="sdn-item-check" data-id="${it.id}" data-loose="${loose ? 1 : 0}" data-out="${out}" ${ticked ? 'checked' : ''}
+             onchange="sdnUpdateSelCount()" style="width:14px;height:14px;accent-color:var(--accent)">
+      <span style="font-family:var(--font-mono);font-size:12px;color:var(--text);flex:1">${escapeHtml(it.description)}</span>
+      ${outLabel}
+      <input type="number" min="1" ${maxAttr} step="1" value="${defQty}" placeholder="qty"
+             class="sdn-qty" id="sdnQty_${it.id}" data-id="${it.id}"
+             oninput="sdnUpdateSelCount()"
+             style="width:64px;text-align:right;background:var(--bg-darker);border:1px solid var(--border);color:var(--text);font-family:var(--font-mono);font-size:12px;padding:4px 6px;border-radius:5px">
+    </div>`;
+  };
+
   const list = document.getElementById('sdnItemList');
-  list.innerHTML = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+  let html = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
     <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
       <input type="checkbox" id="sdnSelectAll" checked onchange="sdnToggleAll(this.checked)" style="width:14px;height:14px;accent-color:var(--accent)">
       <span style="font-size:11px;color:var(--subtle);text-transform:uppercase;letter-spacing:.04em">Select all</span>
     </label>
-    <span style="margin-left:auto;font-size:11px;color:var(--subtle)" id="sdnSelCount">${eligible.length} selected</span>
+    <span style="margin-left:auto;font-size:11px;color:var(--subtle)" id="sdnSelCount"></span>
   </div>`;
 
-  list.innerHTML += '<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;max-height:320px;overflow-y:auto">' +
-    eligible.map(it => `<label style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);cursor:pointer">
-      <input type="checkbox" class="sdn-item-check" data-id="${it.id}" checked
-             onchange="sdnUpdateSelCount()"
-             style="width:14px;height:14px;accent-color:var(--accent)">
-      <span style="font-family:var(--font-mono);font-size:12px;color:var(--text);flex:1">${escapeHtml(it.description)}</span>
-      <span style="font-size:12px;color:var(--text);min-width:50px;text-align:right">${Number(it.quantity)}</span>
-      <span style="min-width:120px">${finishBadgeFor(it)}</span>
-      <span style="font-size:11px;color:var(--subtle)">${it.source === 'assembly'
-        ? (it.source_assembly_mark ? `from ${escapeHtml(it.source_assembly_mark)}` : 'assembly')
-        : 'manual'}</span>
-    </label>`).join('') +
-  '</div>';
+  const groupHead = (label) => `<div style="padding:6px 12px;font-size:10px;color:var(--subtle);text-transform:uppercase;letter-spacing:.05em;background:rgba(255,255,255,.03);border-bottom:1px solid var(--border)">${label}</div>`;
 
-  // Enable confirm button (everything's ticked by default)
-  const btn = document.getElementById('sdnConfirmBtn');
-  btn.disabled = false; btn.style.opacity = '1'; btn.style.cursor = 'pointer';
+  html += '<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;max-height:340px;overflow-y:auto">';
+  if (fabItems.length) {
+    html += groupHead('Fabricated items') + fabItems.map(rowHtml).join('');
+  }
+  if (fixItems.length) {
+    html += groupHead('🔩 Fixings &amp; loose items') + fixItems.map(rowHtml).join('');
+  }
+  html += '</div>';
+  list.innerHTML = html;
 
   // Prefill the editable delivery details from the project. Everything here is
   // editable in the modal — if the project data is wrong or missing, the user
@@ -13019,23 +13052,45 @@ function openSiteDnModal() {
   setVal('sdnContactPhone', a.phone);
   setVal('sdnClientPo',     proj?.client_po_number);  // may not exist yet — harmless
 
+  sdnUpdateSelCount();
   document.getElementById('siteDnModal').classList.add('active');
 }
 
+// Read the ship-qty a row is set to (its number input), or 0 if blank/invalid.
+function sdnRowQty(id) {
+  const el = document.getElementById(`sdnQty_${id}`);
+  const v = parseInt(el?.value);
+  return (!v || v < 1) ? 0 : v;
+}
+
 function sdnToggleAll(on) {
-  document.querySelectorAll('.sdn-item-check').forEach(c => c.checked = on);
+  document.querySelectorAll('.sdn-item-check').forEach(c => {
+    c.checked = on;
+    // Ticking a blank (complete) row seeds qty 1 so it's shippable; unticking leaves it.
+    if (on) {
+      const q = document.getElementById(`sdnQty_${c.dataset.id}`);
+      if (q && (!q.value || parseInt(q.value) < 1)) q.value = 1;
+    }
+  });
   sdnUpdateSelCount();
 }
 
 function sdnUpdateSelCount() {
-  const checked = document.querySelectorAll('.sdn-item-check:checked').length;
+  let checked = 0, qtySum = 0;
+  document.querySelectorAll('.sdn-item-check:checked').forEach(c => {
+    checked++;
+    qtySum += sdnRowQty(c.dataset.id);
+  });
   const el = document.getElementById('sdnSelCount');
-  if (el) el.textContent = `${checked} selected`;
+  if (el) el.textContent = `${checked} line${checked === 1 ? '' : 's'} · ${qtySum} pcs this delivery`;
+  const sumEl = document.getElementById('sdnItemQtySum');
+  if (sumEl) sumEl.textContent = qtySum;
   const btn = document.getElementById('sdnConfirmBtn');
   if (btn) {
-    btn.disabled = checked === 0;
-    btn.style.opacity = checked === 0 ? '.4' : '1';
-    btn.style.cursor  = checked === 0 ? 'not-allowed' : 'pointer';
+    const ok = checked > 0 && qtySum > 0;
+    btn.disabled = !ok;
+    btn.style.opacity = ok ? '1' : '.4';
+    btn.style.cursor  = ok ? 'pointer' : 'not-allowed';
   }
 }
 
@@ -13046,10 +13101,29 @@ function closeSiteDnModal() {
 
 async function confirmSiteDn() {
   if (!_pendingSdn) return;
-  const selectedIds = Array.from(document.querySelectorAll('.sdn-item-check:checked'))
-    .map(c => parseInt(c.dataset.id));
-  if (!selectedIds.length) { toast('Tick at least one item.', 'error'); return; }
-  const items = _pendingSdn.items.filter(i => selectedIds.includes(i.id));
+  // Collect ticked rows + their per-line "this delivery" qty.
+  const checks = Array.from(document.querySelectorAll('.sdn-item-check:checked'));
+  const lines = [];
+  for (const c of checks) {
+    const id = parseInt(c.dataset.id);
+    const qty = sdnRowQty(id);
+    const loose = c.dataset.loose === '1';
+    const out = parseInt(c.dataset.out) || 0;
+    if (qty < 1) { toast('Enter a delivery qty of 1 or more on every ticked line.', 'error'); return; }
+    if (!loose && qty > out) {
+      toast(`A fabricated line is set to ship ${qty} but only ${out} outstanding — can't overship fabricated marks.`, 'error');
+      return;
+    }
+    lines.push({ item_id: id, qty });
+  }
+  if (!lines.length) { toast('Tick at least one item.', 'error'); return; }
+
+  // Item objects for the PDF, tagged with the qty shipped on THIS note.
+  const qtyById = new Map(lines.map(l => [l.item_id, l.qty]));
+  const items = _pendingSdn.items
+    .filter(i => qtyById.has(i.id))
+    .map(i => ({ ...i, _shipQty: qtyById.get(i.id) }));
+  const totalPcs = lines.reduce((s, l) => s + l.qty, 0);
 
   const btn = document.getElementById('sdnConfirmBtn');
   btn.disabled = true; btn.style.opacity = '.5';
@@ -13058,10 +13132,8 @@ async function confirmSiteDn() {
   const job  = currentJob;
 
   try {
-    // 1. Allocate SDN ref + flip selected items to on_site
-    const allocRes = await api.post('/api/job-bom-items/generate-sdn', {
-      item_ids: selectedIds
-    });
+    // 1. Allocate SDN ref + write despatch ledger + bump despatched_qty
+    const allocRes = await api.post('/api/job-bom-items/generate-sdn', { lines });
     const sdnRef = allocRes.sdn_ref;
 
     // 2. Build the SDN PDF. Delivery details come from the (editable) modal
@@ -13107,8 +13179,20 @@ async function confirmSiteDn() {
     if (!upRes.ok) throw new Error(`SDN upload failed: ${upRes.status}`);
     const uploaded = await upRes.json();
 
+    // 5. Backfill the SharePoint refs onto the ledger + item rows so the
+    //    "open PDF" link resolves and any SDN is reprintable from data.
+    try {
+      await api.post('/api/job-bom-items/generate-sdn/files', {
+        sdn_ref:             sdnRef,
+        sharepoint_file_id:  uploaded.id || null,
+        sharepoint_drive_id: driveId || null,
+        sharepoint_web_url:  uploaded.webUrl || null,
+        file_name:           sdnFileName
+      });
+    } catch (e) { console.warn('SDN file backfill failed (non-fatal):', e.message); }
+
     closeSiteDnModal();
-    toast(`${sdnRef} generated — ${items.length} item${items.length>1?'s':''} now on site.`, 'success');
+    toast(`${sdnRef} generated — ${totalPcs} pc${totalPcs > 1 ? 's' : ''} across ${lines.length} line${lines.length > 1 ? 's' : ''} sent to site.`, 'success');
     if (currentJob?.id) await loadJobBomItems(parseInt(currentJob.id));
     renderBOM();
     renderSite();
@@ -13287,89 +13371,136 @@ function drawDnPDF(jsPDF, dn, proj, job, logoDataUri) {
     y = ty + 8;
   }
 
-  // ── Items table ──────────────────
-  // Mark | Qty | Profile | Length (mm) | Unit Wt | Total Wt | Finish
-  const cols = [
-    { key:'mark',   title:'Mark',           w: 20, align:'left'  },
-    { key:'qty',    title:'Qty',            w: 12, align:'center'},
-    { key:'profile',title:'Profile',        w: 40, align:'left'  },
-    { key:'length', title:'Length (mm)',  w: 24, align:'right' },
-    { key:'unit',   title:'Unit Wt. (kg)', w: 24, align:'right' },
-    { key:'total',  title:'Line Wt. (kg)', w: 26, align:'right' },
-    { key:'finish', title:'Finish',         w: usableW - 20 - 12 - 40 - 24 - 24 - 26, align:'left' }
-  ];
-  let cx = marginL;
-  cols.forEach(c => { c.x = cx; cx += c.w; });
+  // ── Items tables ──────────────────
+  // Fabricated marks print Mark/Profile/Length/Weight from their assembly.
+  // Fixings/loose items (bolts, anchors) print under their own heading with a
+  // simple Description/Qty/Wt table. Qty shown is the amount on THIS note
+  // (_shipQty) — which may be a partial of the full ordered line.
+  const isLoose  = it => it.item_type === 'fixing' || it.item_type === 'consumable';
+  const shipQtyOf = it => (it._shipQty != null ? Number(it._shipQty) : (Number(it.quantity) || 0));
+  const fabRows = (dn.items || []).filter(it => !isLoose(it));
+  const fixRows = (dn.items || []).filter(isLoose);
 
-  const cellText = (c, txt, ypos) => {
+  let grandWeight = 0, grandAnyWeight = false;
+
+  const cellTextIn = (c, txt, ypos) => {
     const str = String(txt == null ? '' : txt);
     if (c.align === 'right')  doc.text(str, c.x + c.w - 2, ypos, { align: 'right' });
     else if (c.align === 'center') doc.text(str, c.x + c.w / 2, ypos, { align: 'center' });
     else doc.text(str, c.x + 2, ypos);
   };
-
-  const drawHeader = () => {
+  const layoutCols = (cols) => { let cx = marginL; cols.forEach(c => { c.x = cx; cx += c.w; }); return cols; };
+  const drawColsHeader = (cols) => {
     setFill(HEADFILL); doc.rect(marginL, y, usableW, 7, 'F');
     setDraw(RULE); doc.setLineWidth(0.2); doc.rect(marginL, y, usableW, 7);
     setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
-    cols.forEach(c => cellText(c, c.title, y + 4.7));
+    cols.forEach(c => cellTextIn(c, c.title, y + 4.7));
     y += 7;
   };
-  drawHeader();
 
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-  let totQty = 0, totWeight = 0, anyWeight = false;
-
-  for (const it of (dn.items || [])) {
-    const qty     = Number(it.quantity) || 0;
-    const unitWt  = it.assembly_weight_kg != null ? Number(it.assembly_weight_kg) : null;
-    const lengthM = it.assembly_max_length_mm != null ? Number(it.assembly_max_length_mm) : null;
-    const lineWt  = unitWt != null ? unitWt * qty : null;
-    const mark    = it.source === 'assembly' ? (it.source_assembly_mark || 'assembly') : '\u2014';
-    totQty += qty;
-    if (lineWt != null) { totWeight += lineWt; anyWeight = true; }
-
-    const profLines = doc.splitTextToSize(String(it.description || ''), cols[2].w - 3);
-    const finLines  = doc.splitTextToSize(String(it.finish_name || dn.finishName || ''), cols[6].w - 3);
-    const nLines = Math.max(1, profLines.length, finLines.length);
-    const rowH = nLines * 4.2 + 2;
-
-    if (y + rowH > pageH - marginB - 30) { doc.addPage(); y = marginL + 4; drawHeader(); doc.setFont('helvetica', 'normal'); doc.setFontSize(9); }
-
-    const baseY = y + 4.5;
-    setText(TEXT);
-    doc.setFont('helvetica', 'bold'); cellText(cols[0], mark, baseY); doc.setFont('helvetica', 'normal');
-    cellText(cols[1], qty, baseY);
-    profLines.forEach((l, i) => cellText(cols[2], l, baseY + i * 4.2));
-    cellText(cols[3], lengthM != null ? lengthM.toLocaleString('en-GB', { maximumFractionDigits: 1 }) : '\u2014', baseY);
-    cellText(cols[4], unitWt != null ? String(Math.ceil(unitWt)) : '\u2014', baseY);
-    cellText(cols[5], lineWt != null ? String(Math.ceil(lineWt)) : '\u2014', baseY);
-    finLines.forEach((l, i) => cellText(cols[6], l, baseY + i * 4.2));
-
-    setDraw(RULE); doc.setLineWidth(0.15); doc.line(marginL, y + rowH, pageW - marginR, y + rowH);
-    y += rowH;
+  // — Fabricated items —
+  if (fabRows.length) {
+    const cols = layoutCols([
+      { key:'mark',   title:'Mark',          w: 20, align:'left'  },
+      { key:'qty',    title:'Qty',           w: 12, align:'center'},
+      { key:'profile',title:'Profile',       w: 40, align:'left'  },
+      { key:'length', title:'Length (mm)',   w: 24, align:'right' },
+      { key:'unit',   title:'Unit Wt. (kg)', w: 24, align:'right' },
+      { key:'total',  title:'Line Wt. (kg)', w: 26, align:'right' },
+      { key:'finish', title:'Finish',        w: usableW - 20 - 12 - 40 - 24 - 24 - 26, align:'left' }
+    ]);
+    drawColsHeader(cols);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+    let tQty = 0, tWt = 0, anyWt = false;
+    for (const it of fabRows) {
+      const qty     = shipQtyOf(it);
+      const unitWt  = it.assembly_weight_kg != null ? Number(it.assembly_weight_kg) : null;
+      const lengthM = it.assembly_max_length_mm != null ? Number(it.assembly_max_length_mm) : null;
+      const lineWt  = unitWt != null ? unitWt * qty : null;
+      const mark    = it.source === 'assembly' ? (it.source_assembly_mark || 'assembly') : '\u2014';
+      tQty += qty;
+      if (lineWt != null) { tWt += lineWt; anyWt = true; }
+      const profLines = doc.splitTextToSize(String(it.description || ''), cols[2].w - 3);
+      const finLines  = doc.splitTextToSize(String(it.finish_name || dn.finishName || ''), cols[6].w - 3);
+      const nLines = Math.max(1, profLines.length, finLines.length);
+      const rowH = nLines * 4.2 + 2;
+      if (y + rowH > pageH - marginB - 30) { doc.addPage(); y = marginL + 4; drawColsHeader(cols); doc.setFont('helvetica','normal'); doc.setFontSize(9); }
+      const baseY = y + 4.5;
+      setText(TEXT);
+      doc.setFont('helvetica', 'bold'); cellTextIn(cols[0], mark, baseY); doc.setFont('helvetica', 'normal');
+      cellTextIn(cols[1], qty, baseY);
+      profLines.forEach((l, i) => cellTextIn(cols[2], l, baseY + i * 4.2));
+      cellTextIn(cols[3], lengthM != null ? lengthM.toLocaleString('en-GB', { maximumFractionDigits: 1 }) : '\u2014', baseY);
+      cellTextIn(cols[4], unitWt != null ? String(Math.ceil(unitWt)) : '\u2014', baseY);
+      cellTextIn(cols[5], lineWt != null ? String(Math.ceil(lineWt)) : '\u2014', baseY);
+      finLines.forEach((l, i) => cellTextIn(cols[6], l, baseY + i * 4.2));
+      setDraw(RULE); doc.setLineWidth(0.15); doc.line(marginL, y + rowH, pageW - marginR, y + rowH);
+      y += rowH;
+    }
+    const totH = 7;
+    if (y + totH > pageH - marginB - 20) { doc.addPage(); y = marginL + 4; }
+    setFill(HEADFILL); doc.rect(marginL, y, usableW, totH, 'F');
+    setDraw(RULE); doc.setLineWidth(0.2); doc.rect(marginL, y, usableW, totH);
+    setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+    cellTextIn(cols[0], fixRows.length ? 'SUBTOTAL' : 'TOTAL', y + 4.7);
+    cellTextIn(cols[1], tQty, y + 4.7);
+    cellTextIn(cols[5], anyWt ? String(Math.ceil(tWt)) : '\u2014', y + 4.7);
+    y += totH + 5;
+    if (anyWt) { grandWeight += tWt; grandAnyWeight = true; }
   }
 
-  // TOTAL row
-  const totH = 7;
-  if (y + totH > pageH - marginB - 20) { doc.addPage(); y = marginL + 4; }
-  setFill(HEADFILL); doc.rect(marginL, y, usableW, totH, 'F');
-  setDraw(RULE); doc.setLineWidth(0.2); doc.rect(marginL, y, usableW, totH);
-  setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
-  cellText(cols[0], 'TOTAL', y + 4.7);
-  cellText(cols[1], totQty, y + 4.7);
-  cellText(cols[5], anyWeight ? String(Math.ceil(totWeight)) : '\u2014', y + 4.7);
-  y += totH + 5;
+  // — Fixings / loose items —
+  if (fixRows.length) {
+    if (y > pageH - marginB - 44) { doc.addPage(); y = marginL + 6; }
+    setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
+    doc.text('FIXINGS & LOOSE ITEMS', marginL, y + 1); y += 5;
+    const cols = layoutCols([
+      { key:'desc', title:'Description',   w: usableW - 18 - 30 - 34, align:'left'  },
+      { key:'qty',  title:'Qty',           w: 18, align:'center' },
+      { key:'wte',  title:'Wt each (kg)',  w: 30, align:'right' },
+      { key:'line', title:'Line Wt. (kg)', w: 34, align:'right' }
+    ]);
+    drawColsHeader(cols);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+    let tQty = 0, tWt = 0, anyWt = false;
+    for (const it of fixRows) {
+      const qty    = shipQtyOf(it);
+      const wtEach = it.unit_weight_kg != null ? Number(it.unit_weight_kg) : null;
+      const lineWt = wtEach != null ? wtEach * qty : null;
+      tQty += qty;
+      if (lineWt != null) { tWt += lineWt; anyWt = true; }
+      const descLines = doc.splitTextToSize(String(it.description || ''), cols[0].w - 3);
+      const rowH = Math.max(1, descLines.length) * 4.2 + 2;
+      if (y + rowH > pageH - marginB - 30) { doc.addPage(); y = marginL + 4; drawColsHeader(cols); doc.setFont('helvetica','normal'); doc.setFontSize(9); }
+      const baseY = y + 4.5;
+      setText(TEXT);
+      descLines.forEach((l, i) => cellTextIn(cols[0], l, baseY + i * 4.2));
+      cellTextIn(cols[1], qty, baseY);
+      cellTextIn(cols[2], wtEach != null ? wtEach.toFixed(3) : '\u2014', baseY);
+      cellTextIn(cols[3], lineWt != null ? lineWt.toFixed(2) : '\u2014', baseY);
+      setDraw(RULE); doc.setLineWidth(0.15); doc.line(marginL, y + rowH, pageW - marginR, y + rowH);
+      y += rowH;
+    }
+    const totH = 7;
+    if (y + totH > pageH - marginB - 20) { doc.addPage(); y = marginL + 4; }
+    setFill(HEADFILL); doc.rect(marginL, y, usableW, totH, 'F');
+    setDraw(RULE); doc.setLineWidth(0.2); doc.rect(marginL, y, usableW, totH);
+    setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+    cellTextIn(cols[0], 'FIXINGS TOTAL', y + 4.7);
+    cellTextIn(cols[1], tQty, y + 4.7);
+    cellTextIn(cols[3], anyWt ? tWt.toFixed(2) : '\u2014', y + 4.7);
+    y += totH + 5;
+    if (anyWt) { grandWeight += tWt; grandAnyWeight = true; }
+  }
 
-  // Total-weight summary line under the table (whole kg, rounded up).
-  if (anyWeight) {
+  // Grand total-weight summary (both sections)
+  if (grandAnyWeight) {
     setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
-    const summary = `Total Weight: ${Math.ceil(totWeight)} kg`;
-    doc.text(summary, pageW - marginR, y, { align: 'right' });
+    doc.text(`Total Weight: ${Math.ceil(grandWeight)} kg`, pageW - marginR, y, { align: 'right' });
     y += 7;
   } else {
     setText(MUTED); doc.setFont('helvetica', 'italic'); doc.setFontSize(8);
-    doc.text('Weights unavailable — no assembly data on these items.', marginL, y);
+    doc.text('Weights unavailable for these items.', marginL, y);
     y += 6;
   }
 
