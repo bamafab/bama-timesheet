@@ -11570,6 +11570,14 @@ function renderProjectTiles() {
   const hiddenList  = inProgress.filter(p => p.hidden);      // other-company / not-our-scope
   const visibleList = inProgress.filter(p => !p.hidden);     // shop-floor view
 
+  // Kiosk / shop-floor (non-draftsman) is locked to Live only — no filter bar,
+  // no way to reach closed or not-yet-started projects. The full chip set
+  // returns once a draftsman logs in. Job lists already hide closed jobs for
+  // non-draftsman, so nothing closed is ever reachable on the kiosk.
+  const filterBar = document.getElementById('projFilterBar');
+  if (filterBar) filterBar.style.display = isDraftsman ? 'flex' : 'none';
+  if (!isDraftsman) projectFilter = 'live';
+
   // Reveal the Hidden chip only for a logged-in draftsman with hidden projects.
   const hiddenChip = document.querySelector('#projFilterBar .proj-chip-hidden');
   const canSeeHidden = isDraftsman && hiddenList.length > 0;
@@ -17833,6 +17841,8 @@ function logoutDraftsman() {
     renderAllElements();
   } else if (currentProject) {
     renderJobsList(currentProject.id);
+  } else {
+    renderProjectTiles();
   }
 }
 
