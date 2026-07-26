@@ -12130,8 +12130,22 @@ function renderBOM() {
   // Bulk-action toolbar (mirrors the QB takeoff bar) — hidden until a row
   // is ticked. Wired to the bulk-* endpoints so N rows = one request.
   const selCount = _bomSelected.size;
+  const atSupplierCount = items.filter(i => i.status === 'at_supplier').length;
   const finishOpts = (_finishesCache || [])
     .map(f => `<option value="${f.id}">${escapeHtml(f.name)}</option>`).join('');
+
+  // One-click shortcut to select everything currently out at a supplier, so a
+  // whole batch coming back can be marked returned without ticking each row.
+  // Sits above the bulk bar (which only shows once something's selected).
+  if (atSupplierCount > 0 && isDraftsman) {
+    html += `
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <span style="font-size:11px;color:var(--subtle)">${atSupplierCount} item${atSupplierCount>1?'s':''} out at a supplier</span>
+        <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px"
+                onclick="bomSelectByStatus('at_supplier')">&#10003; Select all returned</button>
+      </div>`;
+  }
+
   html += `
     <div id="bomBulkBar" style="display:${selCount ? 'flex' : 'none'};align-items:center;flex-wrap:wrap;gap:8px;padding:8px 12px;background:rgba(255,107,0,.08);border:1px solid rgba(255,107,0,.25);border-radius:7px;margin-bottom:8px">
       <span id="bomSelCount" style="font-size:12px;color:var(--accent);font-weight:600">${selCount} selected</span>
@@ -12337,6 +12351,12 @@ function bomToggleGroup(status, checked) {
     const tr = cb.closest('tr'); if (tr) tr.style.background = checked ? 'rgba(255,107,0,.06)' : '';
   });
   bomUpdateBulkBar();
+}
+// Fresh selection of every row in one status (used by "Select all returned"):
+// clears whatever was ticked, then selects just that status group.
+function bomSelectByStatus(status) {
+  bomDeselectAll();
+  bomToggleGroup(status, true);
 }
 function bomUpdateBulkBar() {
   const bar = document.getElementById('bomBulkBar');
