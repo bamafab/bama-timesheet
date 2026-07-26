@@ -416,6 +416,14 @@ mark-fabricated step). Migration: `api/sql/add-staged-fabrication.sql`.
   (`openBulkStageModal`) ticks many assemblies → per-assembly qty boxes + one
   optional operator/machine → sequential calls with a confirm-total popup.
   Both surfaces share the `_bulk*` state in shared.js.
+- **Rollback (draftsman only).** `PUT /:id/rollback {stage, qty}` undoes N
+  pieces of a stage: un-fab (`qty_fabbed -= N`, cap = fabbed-not-welded),
+  un-weld / un-complete (decrement + `removeBomDelta` from the open BOM row,
+  cap = min(stage count, open-BOM qty)). Only pieces on an OPEN (no-DN) BOM
+  row can be pulled back — anything on a raised DN is frozen and the server
+  returns a clear error. Logged to `JobAssemblyActions` with performed_by
+  suffixed '(rollback)'. UI: `openRollbackModal` (reuses the stage modal, no
+  operator/machine, red confirm) + an "Undo" row on the assembly card.
 
 ## Key conventions
 

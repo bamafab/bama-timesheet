@@ -126,6 +126,40 @@ async function applyBomDelta(transaction, assembly, heaviestProfile, delta, crea
     return ins.recordset[0].id;
 }
 
+// Mirror of applyBomDelta for rollback. Removes up to `delta` pieces from the
+// assembly's OPEN BOM row(s) — never touches a row frozen onto a raised DN
+// (at_supplier/despatched/on_site). Returns the number of pieces actually
+// removed (may be < delta if not enough open BOM qty exists). If a row hits
+// zero it's deleted. Multiple open rows are drained newest-first.
+async function removeBomDelta(transaction, assemblyId, delta) {
+    let remaining = delta;
+    const findReq = new sql.Request(transaction);
+    findReq.input('aid', sql.Int, assemblyId);
+    const openRes = await findReq.query(
+        `SELECT id, quantity
+         FROM JobBomItems WITH (UPDLOCK, HOLDLOCK)
+         WHERE source_assembly_id = @aid
+           AND status IN ('pending', 'ready_for_despatch')
+         ORDER BY id DESC`
+    );
+    for (const row of openRes.recordset) {
+        if (remaining <= 0) break;
+        const take = Math.min(remaining, row.quantity);
+        if (take >= row.quantity) {
+            const delReq = new sql.Request(transaction);
+            delReq.input('bid', sql.Int, row.id);
+            await delReq.query('DELETE FROM JobBomItems WHERE id = @bid');
+        } else {
+            const updReq = new sql.Request(transaction);
+            updReq.input('bid', sql.Int, row.id);
+            updReq.input('take', sql.Int, take);
+            await updReq.query('UPDATE JobBomItems SET quantity = quantity - @take WHERE id = @bid');
+        }
+        remaining -= take;
+    }
+    return delta - remaining; // pieces actually removed
+}
+
 // Load an assembly + derive its heaviest part's profile (the BOM line name).
 // Returns { assembly, heaviestProfile } or null if not found / no parts.
 async function loadAssemblyForStage(id) {
@@ -917,6 +951,117 @@ app.http('job-assemblies-complete', {
         } catch (err) {
             context.error('Error marking complete:', err);
             return serverError('Failed to mark complete: ' + err.message, request);
+        }
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PUT /api/job-assemblies/:id/rollback   — undo N pieces of a stage (draftsman)
+// Body: { stage, qty, performed_by? }   stage: 'fab' | 'weld' | 'complete'
+//
+// Mirror of the fab/weld/complete endpoints. Sends pieces back a step:
+//   fab      → qty_fabbed -= N       cap = qty_fabbed - qty_welded
+//              (can't un-fab welded pieces; un-weld those first). No BOM.
+//   weld     → qty_welded -= N       cap = min(qty_welded, open BOM qty)
+//              removes N from the open BOM row (never a DN'd row).
+//   complete → qty_completed -= N    cap = min(qty_completed, open BOM qty)
+//              removes N from the open BOM row.
+// Only pieces still on an OPEN (no-DN) BOM row can be pulled back — anything
+// already on a raised DN is frozen and excluded by the cap. Logged to
+// JobAssemblyActions with the same stage name and performed_by suffixed
+// '(rollback)' so the audit trail stays honest without needing a new
+// stage value (the CHECK constraint only allows fab/weld/complete).
+// ─────────────────────────────────────────────────────────────────────────────
+app.http('job-assemblies-rollback', {
+    methods: ['PUT'],
+    authLevel: 'anonymous',
+    route: 'job-assemblies/{id}/rollback',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+        try {
+            const id = parseInt(request.params.id);
+            if (!id || isNaN(id)) return badRequest('Invalid id', request);
+            const body = await request.json();
+            const stage = (body.stage || '').trim();
+            const qty = parseInt(body.qty);
+            if (!['fab', 'weld', 'complete'].includes(stage)) return badRequest("stage must be 'fab', 'weld' or 'complete'", request);
+            if (!qty || isNaN(qty) || qty < 1) return badRequest('qty must be a positive integer', request);
+
+            const loaded = await loadAssemblyForStage(id);
+            if (!loaded) return notFound('Assembly not found', request);
+            const a = loaded.assembly;
+
+            const db = await getPool();
+            const transaction = new sql.Transaction(db);
+            await transaction.begin();
+            try {
+                const lockReq = new sql.Request(transaction);
+                lockReq.input('id', sql.Int, id);
+                const lr = await lockReq.query(
+                    'SELECT quantity, qty_fabbed, qty_welded, qty_completed FROM JobAssemblies WITH (UPDLOCK) WHERE id = @id'
+                );
+                const c = lr.recordset[0];
+
+                let newFabbed = c.qty_fabbed, newWelded = c.qty_welded, newCompleted = c.qty_completed;
+
+                if (stage === 'fab') {
+                    const cap = c.qty_fabbed - c.qty_welded;
+                    if (qty > cap) { await transaction.rollback(); return badRequest(`Can only un-fab ${cap} piece(s) on ${a.assembly_mark} (welded pieces must be un-welded first).`, request); }
+                    newFabbed = c.qty_fabbed - qty;
+                } else if (stage === 'weld') {
+                    // Compute open BOM qty inside the txn via the same predicate.
+                    const obReq = new sql.Request(transaction);
+                    obReq.input('aid', sql.Int, id);
+                    const ob = await obReq.query(`SELECT ISNULL(SUM(quantity),0) AS q FROM JobBomItems WITH (UPDLOCK) WHERE source_assembly_id=@aid AND status IN ('pending','ready_for_despatch')`);
+                    const openQ = Number(ob.recordset[0].q) || 0;
+                    const cap = Math.min(c.qty_welded, openQ);
+                    if (qty > cap) { await transaction.rollback(); return badRequest(`Can only un-weld ${cap} piece(s) on ${a.assembly_mark} (the rest are already on a delivery note).`, request); }
+                    const removed = await removeBomDelta(transaction, id, qty);
+                    newWelded = c.qty_welded - removed;
+                } else { // complete
+                    const obReq = new sql.Request(transaction);
+                    obReq.input('aid', sql.Int, id);
+                    const ob = await obReq.query(`SELECT ISNULL(SUM(quantity),0) AS q FROM JobBomItems WITH (UPDLOCK) WHERE source_assembly_id=@aid AND status IN ('pending','ready_for_despatch')`);
+                    const openQ = Number(ob.recordset[0].q) || 0;
+                    const cap = Math.min(c.qty_completed, openQ);
+                    if (qty > cap) { await transaction.rollback(); return badRequest(`Can only un-complete ${cap} piece(s) on ${a.assembly_mark} (the rest are already on a delivery note).`, request); }
+                    const removed = await removeBomDelta(transaction, id, qty);
+                    newCompleted = c.qty_completed - removed;
+                }
+
+                const newStatus = deriveStatus(c.quantity, newWelded, newCompleted, newFabbed);
+                const performedBy = ((body.performed_by || auth.name || '').trim() + ' (rollback)').trim();
+
+                const upReq = new sql.Request(transaction);
+                upReq.input('id', sql.Int, id);
+                upReq.input('nf', sql.Int, newFabbed);
+                upReq.input('nw', sql.Int, newWelded);
+                upReq.input('nc', sql.Int, newCompleted);
+                upReq.input('st', sql.NVarChar(32), newStatus);
+                // Clear the legacy terminal stamps if we've dropped below terminal.
+                const clearStamp = newStatus !== 'fabricated'
+                    ? ', fabricated_at = NULL, fabricated_by = NULL'
+                    : '';
+                const up = await upReq.query(
+                    `UPDATE JobAssemblies
+                     SET qty_fabbed=@nf, qty_welded=@nw, qty_completed=@nc, status=@st${clearStamp}
+                     OUTPUT INSERTED.* WHERE id=@id`
+                );
+
+                await recordAction(transaction, id, stage, qty, null, null, null, null, performedBy);
+
+                await transaction.commit();
+                const updated = up.recordset[0];
+                updated.parts = a.parts;
+                return ok({ assembly: updated }, request);
+            } catch (txErr) {
+                await transaction.rollback();
+                throw txErr;
+            }
+        } catch (err) {
+            context.error('Error rolling back stage:', err);
+            return serverError('Failed to roll back: ' + err.message, request);
         }
     }
 });

@@ -14322,6 +14322,23 @@ function renderAssembly() {
     }
     html += '</div>';
 
+    // Undo row — draftsman only. Sends pieces back a stage. Un-fab needs
+    // fabbed-not-welded pieces; un-weld/un-complete need welded/completed
+    // pieces (server blocks any already on a raised DN).
+    if (isDraftsman && currentJob.status !== 'closed') {
+      const canUnfab = (Number(a.qty_fabbed||0) - Number(a.qty_welded||0)) > 0;
+      const canUnweld = Number(a.qty_welded||0) > 0;
+      const canUncomplete = Number(a.qty_completed||0) > 0;
+      if (canUnfab || canUnweld || canUncomplete) {
+        html += '<div style="display:flex;gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap;border-top:1px dashed var(--border);padding-top:8px">';
+        html += '<span style="color:var(--subtle);font-size:10px;text-transform:uppercase;letter-spacing:.05em;margin-right:2px">Undo</span>';
+        if (canUnfab)      html += `<button class="btn btn-ghost" style="padding:4px 10px;font-size:10px" onclick="event.stopPropagation();openRollbackModal('fab',${a.id})">&#8630; Un-fab</button>`;
+        if (canUnweld)     html += `<button class="btn btn-ghost" style="padding:4px 10px;font-size:10px" onclick="event.stopPropagation();openRollbackModal('weld',${a.id})">&#8630; Un-weld</button>`;
+        if (canUncomplete) html += `<button class="btn btn-ghost" style="padding:4px 10px;font-size:10px" onclick="event.stopPropagation();openRollbackModal('complete',${a.id})">&#8630; Un-complete</button>`;
+        html += '</div>';
+      }
+    }
+
     html += '</div></div>';
   }
 
@@ -15812,6 +15829,7 @@ let _saStage = null;
 let _saAssembly = null;
 let _saMax = 0;
 let _saOnSuccess = null;
+let _saRollback = false;   // true when the modal is undoing a stage
 
 // Piece-count helpers (mirror the backend derivation).
 function asmToFab(a)       { return Math.max(0, Number(a.quantity) - Number(a.qty_fabbed||0) - Number(a.qty_completed||0)); }
@@ -15829,6 +15847,72 @@ function asmProgressLine(a) {
   if (rtw > 0)   parts.push(`${rtw} ready to weld`);
   if (bom > 0)   parts.push(`${bom} on BOM`);
   return parts.join(' · ');
+}
+
+// Open the modal in ROLLBACK mode — undo N pieces of a stage (draftsman).
+// Caps mirror the backend: un-fab ≤ fabbed-not-welded; un-weld/un-complete ≤
+// pieces still on an open (no-DN) BOM row.
+async function openRollbackModal(stage, assemblyId, opts) {
+  if (!assemblyId || !stage) return;
+  opts = opts || {};
+  let assembly = opts.assembly;
+  if (!assembly) {
+    const jobId = currentJob?.id ? parseInt(currentJob.id) : null;
+    assembly = (_assembliesByJob[jobId] || []).find(a => a.id === assemblyId);
+  }
+  if (!assembly) { toast('Assembly not found — please reload.', 'error'); return; }
+
+  // Cap per stage. For weld/complete the true cap also depends on how many
+  // pieces are still on an open BOM row; the client can't see BOM rows here,
+  // so we cap by the count and let the server enforce the DN guard (it returns
+  // a clear message if some are already on a DN).
+  let max;
+  if (stage === 'fab')       max = Math.max(0, Number(assembly.qty_fabbed||0) - Number(assembly.qty_welded||0));
+  else if (stage === 'weld') max = Number(assembly.qty_welded||0);
+  else                       max = Number(assembly.qty_completed||0);
+  if (max <= 0) {
+    toast(stage === 'fab'
+      ? 'Nothing to un-fab (welded pieces must be un-welded first).'
+      : `No ${stage === 'weld' ? 'welded' : 'completed'} pieces to undo.`, 'info');
+    return;
+  }
+
+  _saStage = stage;
+  _saAssembly = assembly;
+  _saMax = max;
+  _saRollback = true;
+  _saOnSuccess = typeof opts.onSuccess === 'function' ? opts.onSuccess : null;
+
+  const titleMap = { fab: 'Undo — send back to raw', weld: 'Undo weld — back to “ready to weld”', complete: 'Undo complete — back to raw' };
+  document.getElementById('saTitle').textContent = titleMap[stage];
+  document.getElementById('saMark').textContent = assembly.assembly_mark;
+  document.getElementById('saProgress').textContent = asmProgressLine(assembly);
+
+  const finishEl = document.getElementById('saFinish');
+  if (assembly.finish_name) { finishEl.textContent = assembly.finish_name; finishEl.style.display = ''; }
+  else { finishEl.style.display = 'none'; }
+
+  // Qty stepper — default all
+  const qtyEl = document.getElementById('saQty');
+  qtyEl.max = max;
+  qtyEl.value = max;
+  document.getElementById('saMaxHint').textContent = `of ${max}`;
+  document.getElementById('saQtyLabel').textContent =
+    stage === 'fab' ? 'HOW MANY TO UN-FAB?' : stage === 'weld' ? 'HOW MANY TO UN-WELD?' : 'HOW MANY TO UN-COMPLETE?';
+
+  // Rollback doesn't capture operator/machine — hide both.
+  document.getElementById('saOperatorWrap').style.display = 'none';
+  document.getElementById('saMachineWrap').style.display = 'none';
+
+  // Danger-styled confirm button.
+  const btn = document.getElementById('saConfirmBtn');
+  btn.textContent = 'Roll back';
+  btn.style.background = 'var(--red, #ff4444)';
+  btn.style.borderColor = 'var(--red, #ff4444)';
+
+  saClampQty();
+  updateStageConfirmState();
+  document.getElementById('stageActionModal').classList.add('active');
 }
 
 async function openStageActionModal(stage, assemblyId, opts) {
@@ -15854,6 +15938,7 @@ async function openStageActionModal(stage, assemblyId, opts) {
   _saStage = stage;
   _saAssembly = assembly;
   _saMax = max;
+  _saRollback = false;
   _saOnSuccess = typeof opts.onSuccess === 'function' ? opts.onSuccess : null;
 
   const titleMap = { fab: 'Mark fabricated', weld: 'Mark welded', complete: 'Mark complete' };
@@ -15865,6 +15950,14 @@ async function openStageActionModal(stage, assemblyId, opts) {
   const finishEl = document.getElementById('saFinish');
   if (assembly.finish_name) { finishEl.textContent = assembly.finish_name; finishEl.style.display = ''; }
   else { finishEl.style.display = 'none'; }
+
+  // Restore normal (non-rollback) button + operator visibility in case a
+  // rollback modal was the previous occupant of this shared DOM.
+  const confBtn = document.getElementById('saConfirmBtn');
+  confBtn.textContent = 'Confirm';
+  confBtn.style.background = '';
+  confBtn.style.borderColor = '';
+  document.getElementById('saOperatorWrap').style.display = '';
 
   // Qty stepper — default all-remaining
   const qtyEl = document.getElementById('saQty');
@@ -15938,7 +16031,7 @@ function updateStageConfirmState() {
   // In workshop/kiosk mode, weld & complete require operator + machine.
   // In draftsman mode everything but qty is optional.
   let ready = qty >= 1 && qty <= _saMax;
-  if (ready && !isDraftsman && (_saStage === 'weld' || _saStage === 'complete')) {
+  if (ready && !_saRollback && !isDraftsman && (_saStage === 'weld' || _saStage === 'complete')) {
     const op = document.getElementById('saOperator').value;
     const mc = document.getElementById('saMachine').value;
     ready = !!op && !!mc;
@@ -15949,7 +16042,7 @@ function updateStageConfirmState() {
 }
 function closeStageActionModal() {
   document.getElementById('stageActionModal').classList.remove('active');
-  _saStage = null; _saAssembly = null; _saMax = 0; _saOnSuccess = null;
+  _saStage = null; _saAssembly = null; _saMax = 0; _saOnSuccess = null; _saRollback = false;
 }
 
 async function confirmStageAction() {
@@ -15967,6 +16060,25 @@ async function confirmStageAction() {
   const btn = document.getElementById('saConfirmBtn');
   btn.disabled = true; btn.style.opacity = '.5';
   const cb = _saOnSuccess;
+
+  // Rollback path — undo N pieces of the stage.
+  if (_saRollback) {
+    try {
+      await api.put(`/api/job-assemblies/${assembly.id}/rollback`, { stage, qty });
+      closeStageActionModal();
+      const verb = stage === 'fab' ? 'un-fabbed' : stage === 'weld' ? 'un-welded' : 'un-completed';
+      toast(`${qty} piece${qty > 1 ? 's' : ''} ${verb}.`, 'success');
+      if (cb) { try { await cb(); } catch (e) { console.warn('post-rollback callback failed:', e); } }
+      if (currentJob?.id) {
+        await loadJobAssemblies(parseInt(currentJob.id));
+        renderAssembly();
+      }
+    } catch (e) {
+      toast(`Failed: ${e.body?.message || e.message}`, 'error');
+      btn.disabled = false; btn.style.opacity = '1';
+    }
+    return;
+  }
 
   // Build the body per stage
   let body, path;
