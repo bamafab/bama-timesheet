@@ -14067,8 +14067,8 @@ function _bmrRowsHtml(rows, qi) {
       const w = (r.unit_weight_kg != null && r.unit_weight_kg !== '') ? r.unit_weight_kg : '';
       html += `<tr class="bmr-row" data-i="${i}">
         <td style="padding:4px 6px 4px 0"><input data-f="description" value="${escapeHtml(r.description || '')}" class="bmr-cell" style="width:100%"></td>
-        <td style="padding:4px"><input data-f="quantity" type="number" min="1" value="${r.quantity ?? 1}" class="bmr-cell" style="width:60px;text-align:right"></td>
-        <td style="padding:4px"><input data-f="unit_weight_kg" type="number" min="0" step="0.001" value="${w}" placeholder="—" class="bmr-cell" style="width:80px;text-align:right"></td>
+        <td style="padding:4px"><input data-f="quantity" type="number" min="1" value="${r.quantity ?? 1}" class="bmr-cell" style="width:100%;text-align:right"></td>
+        <td style="padding:4px"><input data-f="unit_weight_kg" type="number" min="0" step="0.001" value="${w}" placeholder="—" class="bmr-cell" style="width:100%;text-align:right"></td>
         <td style="padding:4px 0 4px 4px;text-align:right"><button class="btn btn-ghost" style="padding:2px 8px;font-size:14px" onclick="bmrRemoveRow(${qi}, ${i})" title="Remove">&times;</button></td>
       </tr>`;
     } else {
@@ -14145,14 +14145,14 @@ function renderBomManualBatch() {
           <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="bmrAddRow(${qi})">&#43; Add row</button>
         </div>
         <div style="background:var(--bg-darker);border:1px solid var(--border);border-radius:8px;padding:8px;overflow:auto;max-height:34vh">
-          <table style="width:100%;font-size:12px;border-collapse:collapse;min-width:520px">
+          <table style="width:100%;font-size:12px;border-collapse:collapse;min-width:520px;${fixMode ? 'table-layout:fixed' : ''}">
             <thead><tr style="color:var(--subtle);text-align:left">
               <th style="font-weight:400;padding:4px 6px 4px 0">Description</th>
-              <th style="font-weight:400;padding:4px 6px;text-align:right">Qty</th>
+              <th style="font-weight:400;padding:4px 6px;text-align:right;${fixMode ? 'width:72px' : ''}">Qty</th>
               ${fixMode
-                ? '<th style="font-weight:400;padding:4px 6px;text-align:right">Wt each (kg)</th>'
+                ? '<th style="font-weight:400;padding:4px 6px;text-align:right;width:104px">Wt each (kg)</th>'
                 : '<th style="font-weight:400;padding:4px 6px">Extras (read-only — discarded on save)</th>'}
-              <th></th>
+              <th style="${fixMode ? 'width:34px' : ''}"></th>
             </tr></thead>
             <tbody id="bmrRows_${qi}">${_bmrRowsHtml(rows, qi)}</tbody>
           </table>
