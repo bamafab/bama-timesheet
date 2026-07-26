@@ -1,107 +1,126 @@
--- ============================================================================
--- RAMS phase 2b — Site Personnel roster tables + seeds
--- Run in Azure SQL Query Editor. All objects are NEW tables, so NO Function App
--- restart is required (restart is only needed after ALTER TABLE ADD COLUMN).
--- Idempotent: safe to re-run — CREATEs are guarded and seeds use NOT EXISTS.
--- Matches api/src/functions/site-personnel.js exactly.
--- ============================================================================
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Site Personnel roster  —  RAMS module phase 2b   (safe re-run version)
+--
+-- This is the exact script that was RUN against the database (2026-07-26).
+-- Three NEW tables (no ALTER on anything existing → NO Function App restart):
+--   1. CertTypes           — editable lookup of certification types
+--   2. SitePersonnel       — reusable roster: staff AND subcontractors, money-free
+--   3. SitePersonnelCerts  — normalised certs per person, expiry first-class
+--                            (this becomes the training-matrix source later)
+--
+-- Run via Azure SQL Query Editor on office WiFi (home IP is blocked).
+-- Every statement is guarded so the whole script is safe to run more than once.
+-- Matches api/src/functions/site-personnel.js.
+-- ─────────────────────────────────────────────────────────────────────────────
 
--- 1. CertTypes — editable cert-type lookup (CSCS, SMSTS, …) ------------------
-IF OBJECT_ID('dbo.CertTypes', 'U') IS NULL
+-- ─── 1. CertTypes (editable lookup) ──────────────────────────────────────────
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'CertTypes')
 BEGIN
-    CREATE TABLE dbo.CertTypes (
+    CREATE TABLE CertTypes (
         id          INT IDENTITY(1,1) PRIMARY KEY,
         name        NVARCHAR(100) NOT NULL,
-        active      BIT           NOT NULL CONSTRAINT DF_CertTypes_active     DEFAULT (1),
-        sort_order  INT           NOT NULL CONSTRAINT DF_CertTypes_sort       DEFAULT (99),
-        created_at  DATETIME2     NOT NULL CONSTRAINT DF_CertTypes_created    DEFAULT (GETUTCDATE())
+        active      BIT           NOT NULL DEFAULT 1,
+        sort_order  INT           NOT NULL DEFAULT 99,
+        created_at  DATETIME2     NOT NULL DEFAULT GETUTCDATE()
     );
-    CREATE UNIQUE INDEX UX_CertTypes_name ON dbo.CertTypes(name);
+    CREATE UNIQUE INDEX UX_CertTypes_Name ON CertTypes (name);
 END
 GO
 
--- 2. SitePersonnel — reusable roster (staff + subcontractors, money-free) -----
-IF OBJECT_ID('dbo.SitePersonnel', 'U') IS NULL
+-- ─── 2. SitePersonnel (roster: staff + subcontractors, NO day-rate) ──────────
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'SitePersonnel')
 BEGIN
-    CREATE TABLE dbo.SitePersonnel (
+    CREATE TABLE SitePersonnel (
         id          INT IDENTITY(1,1) PRIMARY KEY,
         name        NVARCHAR(200) NOT NULL,
-        site_role   NVARCHAR(150) NULL,
-        type        NVARCHAR(20)  NOT NULL CONSTRAINT DF_SitePersonnel_type    DEFAULT ('staff'),  -- 'staff' | 'subcontractor'
-        company     NVARCHAR(200) NULL,
-        phone       NVARCHAR(50)  NULL,
-        employee_id INT           NULL,   -- optional link to dbo.Employees
-        active      BIT           NOT NULL CONSTRAINT DF_SitePersonnel_active  DEFAULT (1),
-        created_at  DATETIME2     NOT NULL CONSTRAINT DF_SitePersonnel_created DEFAULT (GETUTCDATE()),
-        updated_at  DATETIME2     NOT NULL CONSTRAINT DF_SitePersonnel_updated DEFAULT (GETUTCDATE())
+        site_role   NVARCHAR(200) NOT NULL DEFAULT '',
+        type        NVARCHAR(20)  NOT NULL DEFAULT 'staff',   -- 'staff' | 'subcontractor'
+        company     NVARCHAR(200) NOT NULL DEFAULT '',        -- for subcontractors
+        phone       NVARCHAR(100) NOT NULL DEFAULT '',
+        employee_id INT           NULL REFERENCES Employees(id), -- set when pulled from Employees
+        active      BIT           NOT NULL DEFAULT 1,
+        created_at  DATETIME2     NOT NULL DEFAULT GETUTCDATE(),
+        updated_at  DATETIME2     NOT NULL DEFAULT GETUTCDATE()
     );
+    CREATE INDEX IX_SitePersonnel_Active ON SitePersonnel (active, name);
 END
 GO
 
--- 3. SitePersonnelCerts — normalised certs (expiry first-class → training matrix later)
-IF OBJECT_ID('dbo.SitePersonnelCerts', 'U') IS NULL
+-- ─── 3. SitePersonnelCerts (normalised — expiry is first-class) ──────────────
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'SitePersonnelCerts')
 BEGIN
-    CREATE TABLE dbo.SitePersonnelCerts (
+    CREATE TABLE SitePersonnelCerts (
         id           INT IDENTITY(1,1) PRIMARY KEY,
-        personnel_id INT           NOT NULL,
-        cert_type    NVARCHAR(100) NOT NULL,
-        cert_number  NVARCHAR(100) NULL,
+        personnel_id INT           NOT NULL REFERENCES SitePersonnel(id) ON DELETE CASCADE,
+        cert_type    NVARCHAR(100) NOT NULL,   -- matches a CertTypes.name
+        cert_number  NVARCHAR(100) NOT NULL DEFAULT '',
         issue_date   DATE          NULL,
-        expiry_date  DATE          NULL,
-        created_at   DATETIME2     NOT NULL CONSTRAINT DF_SPC_created DEFAULT (GETUTCDATE()),
-        CONSTRAINT FK_SPC_personnel FOREIGN KEY (personnel_id) REFERENCES dbo.SitePersonnel(id)
+        expiry_date  DATE          NULL,       -- surfaced by the future training-matrix
+        created_at   DATETIME2     NOT NULL DEFAULT GETUTCDATE()
     );
-    CREATE INDEX IX_SPC_personnel ON dbo.SitePersonnelCerts(personnel_id);
+    CREATE INDEX IX_SitePersonnelCerts_Personnel ON SitePersonnelCerts (personnel_id);
+    CREATE INDEX IX_SitePersonnelCerts_Expiry    ON SitePersonnelCerts (expiry_date);
 END
 GO
 
--- ── SEED: starter cert types ────────────────────────────────────────────────
-INSERT INTO dbo.CertTypes (name, sort_order)
+-- ─── SEED: starter cert types ────────────────────────────────────────────────
+INSERT INTO CertTypes (name, sort_order)
 SELECT v.name, v.so
 FROM (VALUES
-    ('CSCS', 1), ('CPCS', 2), ('SMSTS', 3), ('SSSTS', 4), ('PASMA', 5), ('IPAF', 6),
-    ('First Aid', 7), ('Coded Welder', 8), ('Slinger/Signaller', 9),
-    ('Abrasive Wheels', 10), ('SPA', 11), ('EUSR', 12)
-) AS v(name, so)
-WHERE NOT EXISTS (SELECT 1 FROM dbo.CertTypes c WHERE c.name = v.name);
+    ('CSCS', 1), ('CPCS', 2), ('SMSTS', 3), ('SSSTS', 4),
+    ('PASMA', 5), ('IPAF', 6), ('First Aid', 7), ('Coded Welder', 8),
+    ('Slinger/Signaller', 9), ('Abrasive Wheels', 10), ('SPA', 11), ('EUSR', 12)
+) v(name, so)
+WHERE NOT EXISTS (SELECT 1 FROM CertTypes ct WHERE ct.name = v.name);
 GO
 
--- ── SEED: all active employees as pickable 'staff' rows (role/certs blank) ───
-INSERT INTO dbo.SitePersonnel (name, type, employee_id)
+-- ─── SEED: all active Employees as 'staff' rows (role/certs blank) ───────────
+INSERT INTO SitePersonnel (name, type, employee_id)
 SELECT e.name, 'staff', e.id
-FROM dbo.Employees e
+FROM Employees e
 WHERE e.is_active = 1
-  AND NOT EXISTS (SELECT 1 FROM dbo.SitePersonnel sp WHERE sp.employee_id = e.id);
+  AND NOT EXISTS (SELECT 1 FROM SitePersonnel sp WHERE sp.employee_id = e.id);
 GO
 
--- ── SEED: known site-crew roles (no-op if a name doesn't match Employees.name)
-UPDATE dbo.SitePersonnel SET site_role = 'Project Manager', updated_at = GETUTCDATE() WHERE name = 'Leszek Spychalski';
-UPDATE dbo.SitePersonnel SET site_role = 'Site Supervisor', updated_at = GETUTCDATE() WHERE name = 'Jason Lambie';
-UPDATE dbo.SitePersonnel SET site_role = 'Steel Erector',   updated_at = GETUTCDATE() WHERE name = 'Adrian Smith';
+-- ─── SEED: guarantee the known site crew exist (in case not in Employees) ────
+INSERT INTO SitePersonnel (name, type, site_role)
+SELECT v.name, 'staff', v.role
+FROM (VALUES
+    ('Leszek Spychalski', 'Project Manager'),
+    ('Jason Lambie',      'Site Supervisor'),
+    ('Adrian Smith',      'Steel Erector / Installer')
+) v(name, role)
+WHERE NOT EXISTS (SELECT 1 FROM SitePersonnel sp WHERE sp.name = v.name);
 GO
 
--- ── SEED: known site-crew certs (idempotent) ────────────────────────────────
-;WITH crew AS (
-    SELECT id, name FROM dbo.SitePersonnel
-    WHERE name IN ('Leszek Spychalski', 'Jason Lambie', 'Adrian Smith')
-)
-INSERT INTO dbo.SitePersonnelCerts (personnel_id, cert_type)
-SELECT c.id, v.cert
-FROM crew c
-CROSS APPLY (VALUES
-    ('Leszek Spychalski', 'CSCS'), ('Leszek Spychalski', 'SMSTS'),
-    ('Jason Lambie',      'CSCS'), ('Jason Lambie',      'SSSTS'),
-    ('Adrian Smith',      'CSCS'), ('Adrian Smith',      'CPCS')
-) AS v(who, cert)
-WHERE v.who = c.name
-  AND NOT EXISTS (
-      SELECT 1 FROM dbo.SitePersonnelCerts x
-      WHERE x.personnel_id = c.id AND x.cert_type = v.cert
-  );
+-- ─── SEED: set known crew roles (only if still blank) ────────────────────────
+UPDATE SitePersonnel SET site_role = 'Project Manager'
+    WHERE name = 'Leszek Spychalski' AND (site_role IS NULL OR site_role = '');
+UPDATE SitePersonnel SET site_role = 'Site Supervisor'
+    WHERE name = 'Jason Lambie'      AND (site_role IS NULL OR site_role = '');
+UPDATE SitePersonnel SET site_role = 'Steel Erector / Installer'
+    WHERE name = 'Adrian Smith'      AND (site_role IS NULL OR site_role = '');
 GO
 
--- ── VERIFY ──────────────────────────────────────────────────────────────────
-SELECT 'CertTypes' AS tbl, COUNT(*) AS rows FROM dbo.CertTypes
-UNION ALL SELECT 'SitePersonnel',      COUNT(*) FROM dbo.SitePersonnel
-UNION ALL SELECT 'SitePersonnelCerts', COUNT(*) FROM dbo.SitePersonnelCerts;
+-- ─── SEED: known crew certs (Leszek CSCS/SMSTS, Jason CSCS/SSSTS, Adrian CSCS/CPCS)
+INSERT INTO SitePersonnelCerts (personnel_id, cert_type)
+SELECT sp.id, v.cert_type
+FROM SitePersonnel sp
+CROSS APPLY (VALUES ('CSCS'), ('SMSTS')) v(cert_type)
+WHERE sp.name = 'Leszek Spychalski'
+  AND NOT EXISTS (SELECT 1 FROM SitePersonnelCerts c WHERE c.personnel_id = sp.id AND c.cert_type = v.cert_type);
+
+INSERT INTO SitePersonnelCerts (personnel_id, cert_type)
+SELECT sp.id, v.cert_type
+FROM SitePersonnel sp
+CROSS APPLY (VALUES ('CSCS'), ('SSSTS')) v(cert_type)
+WHERE sp.name = 'Jason Lambie'
+  AND NOT EXISTS (SELECT 1 FROM SitePersonnelCerts c WHERE c.personnel_id = sp.id AND c.cert_type = v.cert_type);
+
+INSERT INTO SitePersonnelCerts (personnel_id, cert_type)
+SELECT sp.id, v.cert_type
+FROM SitePersonnel sp
+CROSS APPLY (VALUES ('CSCS'), ('CPCS')) v(cert_type)
+WHERE sp.name = 'Adrian Smith'
+  AND NOT EXISTS (SELECT 1 FROM SitePersonnelCerts c WHERE c.personnel_id = sp.id AND c.cert_type = v.cert_type);
 GO
