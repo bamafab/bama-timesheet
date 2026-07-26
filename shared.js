@@ -14298,6 +14298,9 @@ function openRamsModal() {
   //   the roster API is unavailable, preserving the old behaviour) —
   ramsInitPersonnel();
 
+  // — Standard sections (phase 3b pick/add — reset to defaults each open) —
+  ramsRenderStandardSections();
+
   // — Site address (mirror the Site Pack site-vs-client resolution) —
   const useSite = proj && proj.site_same_as_client === false &&
     (proj.site_address_line1 || proj.site_postcode);
@@ -14858,6 +14861,67 @@ const RAMS_STANDARD = {
 
 const _ramsRiskFill = r => (r <= 6 ? [212, 237, 218] : r <= 12 ? [255, 243, 205] : [248, 215, 218]);
 
+// ── Standard-section picker (phase 3b) ─────────────────────────────────────
+// The six deterministic sections are rendered as checkbox groups in the modal
+// (all ticked by default). The user unticks anything not needed and can add
+// missing items. confirmRams reads the ticked items per section; drawRamsPDF
+// draws only what it receives (an empty section is dropped and the remaining
+// sections renumber automatically).
+const RAMS_SECTION_DEFS = [
+  { key: 'plant',       label: 'Plant & Equipment' },
+  { key: 'materials',   label: 'Materials' },
+  { key: 'ppe',         label: 'PPE' },
+  { key: 'access',      label: 'Access & Egress' },
+  { key: 'environment', label: 'Environmental & Waste' },
+  { key: 'monitoring',  label: 'Monitoring & Review' }
+];
+
+function _ramsSecRow(item) {
+  const v = escapeHtml(item);
+  return `<label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+    <input type="checkbox" class="rams-sec-check" checked value="${v}" style="width:13px;height:13px;margin-top:2px;accent-color:var(--accent)">
+    <span style="font-size:12px;color:var(--text);line-height:1.35">${v}</span>
+  </label>`;
+}
+
+// Rebuild the six checkbox groups from RAMS_STANDARD (all ticked). Called each
+// time the modal opens so it always resets to the defaults.
+function ramsRenderStandardSections() {
+  const wrap = document.getElementById('ramsStandardSections');
+  if (!wrap) return;
+  wrap.innerHTML = RAMS_SECTION_DEFS.map(def => {
+    const items = (RAMS_STANDARD[def.key] || []).map(_ramsSecRow).join('');
+    return `<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px;background:var(--bg-darker)">
+      <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:8px">${escapeHtml(def.label)}</div>
+      <div class="rams-sec-items" data-key="${def.key}" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px">${items}</div>
+      <div style="display:flex;gap:6px">
+        <input class="field-input" id="ramsAdd_${def.key}" placeholder="Add item\u2026" style="flex:1;font-size:12px"
+               onkeydown="if(event.key==='Enter'){event.preventDefault();ramsAddSectionItem('${def.key}');}">
+        <button class="btn" onclick="ramsAddSectionItem('${def.key}')" style="padding:5px 12px;font-size:11px">&#43; Add</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// Append a user-typed item to a section as a new ticked checkbox.
+function ramsAddSectionItem(key) {
+  const input = document.getElementById('ramsAdd_' + key);
+  const val = (input?.value || '').trim();
+  if (!val) return;
+  const items = document.querySelector(`.rams-sec-items[data-key="${key}"]`);
+  if (!items) return;
+  items.insertAdjacentHTML('beforeend', _ramsSecRow(val));
+  input.value = '';
+  input.focus();
+}
+
+// Return the ticked items (in DOM order) for one section.
+function ramsCollectSection(key) {
+  const wrap = document.querySelector(`.rams-sec-items[data-key="${key}"]`);
+  if (!wrap) return (RAMS_STANDARD[key] || []).slice();   // modal never opened — safe default
+  return [...wrap.querySelectorAll('.rams-sec-check:checked')].map(c => c.value);
+}
+
 // Native RAMS renderer. Returns a Blob. `rams` is assembled from the editable
 // modal fields (+ personnel roster, site-plan image, and the risk library).
 function drawRamsPDF(jsPDF, rams, logoDataUri) {
@@ -14990,18 +15054,23 @@ function drawRamsPDF(jsPDF, rams, logoDataUri) {
   }
   y += 2;
 
-  // ═══ 1. SCOPE ═══
-  if ((rams.scopeLines || []).length) { sectionHeading('1. Scope of Works'); list(rams.scopeLines, true); }
+  // Running section number — sections drop out when empty (unticked), so the
+  // numbering is computed rather than hard-coded to keep it sequential.
+  let secNum = 0;
+  const numHeading = t => { secNum++; sectionHeading(secNum + '. ' + t); };
 
-  // ═══ 2. PROGRAMME ═══
-  sectionHeading('2. Programme & Working Hours');
+  // ═══ SCOPE ═══
+  if ((rams.scopeLines || []).length) { numHeading('Scope of Works'); list(rams.scopeLines, true); }
+
+  // ═══ PROGRAMME ═══
+  numHeading('Programme & Working Hours');
   para(rams.hours
     ? `Works will be carried out during the following hours: ${rams.hours}. Actual dates and durations to be confirmed with the principal contractor and coordinated at site induction.`
     : 'Working hours and programme to be confirmed with the principal contractor at site induction.');
 
-  // ═══ 3. SEQUENCE ═══
+  // ═══ SEQUENCE ═══
   if ((rams.tasks || []).length) {
-    sectionHeading('3. Sequence of Works');
+    numHeading('Sequence of Works');
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
     rams.tasks.forEach((t, i) => {
       const titleLines = doc.splitTextToSize(`${i + 1}. ${t.title}`, usableW - 2);
@@ -15020,8 +15089,8 @@ function drawRamsPDF(jsPDF, rams, logoDataUri) {
     y += 1;
   }
 
-  // ═══ 4. KEY PERSONNEL ═══
-  sectionHeading('4. Key Personnel & Competency');
+  // ═══ KEY PERSONNEL ═══
+  numHeading('Key Personnel & Competency');
   const people = rams.personnel || [];
   if (people.length) {
     const cols = [
@@ -15064,19 +15133,34 @@ function drawRamsPDF(jsPDF, rams, logoDataUri) {
     para('Site personnel to be confirmed at induction. All operatives to hold valid CSCS (or equivalent) and task-specific competency cards.', { italic: true, color: MUTED, size: 9 });
   }
 
-  // ═══ 5–10. STANDARD SECTIONS ═══
-  sectionHeading('5. Plant, Equipment & Materials');
-  para('Plant & equipment:', { bold: true, size: 9.5 }); list(RAMS_STANDARD.plant, false);
-  para('Materials:', { bold: true, size: 9.5 }); list(RAMS_STANDARD.materials, false);
+  // ═══ STANDARD SECTIONS (only what was ticked in the modal) ═══
+  // Each array is user-picked in the modal; an empty array means the user
+  // unticked everything, so the section is dropped. `undefined` (modal never
+  // opened) falls back to the full standard list.
+  const plant       = rams.plant       || RAMS_STANDARD.plant;
+  const materials   = rams.materials   || RAMS_STANDARD.materials;
+  const ppe         = rams.ppe         || RAMS_STANDARD.ppe;
+  const access      = rams.access      || RAMS_STANDARD.access;
+  const environment = rams.environment || RAMS_STANDARD.environment;
+  const monitoring  = rams.monitoring  || RAMS_STANDARD.monitoring;
 
-  sectionHeading('6. Personal Protective Equipment (PPE)');
-  para('The following PPE is mandatory / task-specific as noted. Minimum site PPE (hard hat, boots, hi-vis, glasses, gloves) worn at all times:', { size: 9 });
-  list(RAMS_STANDARD.ppe, false);
+  if (plant.length || materials.length) {
+    numHeading('Plant, Equipment & Materials');
+    if (plant.length)     { para('Plant & equipment:', { bold: true, size: 9.5 }); list(plant, false); }
+    if (materials.length) { para('Materials:', { bold: true, size: 9.5 }); list(materials, false); }
+  }
 
-  sectionHeading('7. Access & Egress'); list(RAMS_STANDARD.access, false);
-  sectionHeading('8. Environmental & Waste'); list(RAMS_STANDARD.environment, false);
+  if (ppe.length) {
+    numHeading('Personal Protective Equipment (PPE)');
+    para('The following PPE is mandatory / task-specific as noted. Minimum site PPE (hard hat, boots, hi-vis, glasses, gloves) worn at all times:', { size: 9 });
+    list(ppe, false);
+  }
 
-  sectionHeading('9. Emergency Arrangements');
+  if (access.length)      { numHeading('Access & Egress'); list(access, false); }
+  if (environment.length) { numHeading('Environmental & Waste'); list(environment, false); }
+
+  // Emergency arrangements are always included (dynamic — uses the A&E field).
+  numHeading('Emergency Arrangements');
   list([
     'On discovering an emergency, raise the alarm and follow the site emergency procedure.',
     'Make the area safe if it is safe to do so; do not put yourself at risk.',
@@ -15085,9 +15169,9 @@ function drawRamsPDF(jsPDF, rams, logoDataUri) {
     'Report all accidents, incidents and near-misses to the site manager and BAMA office.'
   ], false);
 
-  sectionHeading('10. Monitoring & Review'); list(RAMS_STANDARD.monitoring, false);
+  if (monitoring.length) { numHeading('Monitoring & Review'); list(monitoring, false); }
 
-  if (rams.notes && String(rams.notes).trim()) { sectionHeading('11. Additional Notes'); para(rams.notes); }
+  if (rams.notes && String(rams.notes).trim()) { numHeading('Additional Notes'); para(rams.notes); }
 
   // ═══ SITE PLAN ═══
   if (rams.sitePlanDataUri) {
@@ -15292,6 +15376,13 @@ async function confirmRams() {
       scopeLines: getV('ramsScopeText').split('\n').map(l => l.trim()).filter(Boolean),
       tasks,
       personnel,
+      // Standard sections — only the ticked items (empty array = section dropped).
+      plant:       ramsCollectSection('plant'),
+      materials:   ramsCollectSection('materials'),
+      ppe:         ramsCollectSection('ppe'),
+      access:      ramsCollectSection('access'),
+      environment: ramsCollectSection('environment'),
+      monitoring:  ramsCollectSection('monitoring'),
       risks: RAMS_RISK_LIBRARY,
       sitePlanDataUri: (typeof _ramsSitePlanDataUri !== 'undefined' && _ramsSitePlanDataUri) || null,
       notes: getV('ramsNotes')
