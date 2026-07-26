@@ -856,9 +856,9 @@ function renderKioskFabrication() {
   }
   tile.style.display = '';
 
-  const pendingCount = _kioskFabData.filter(a => a.status === 'pending').length;
-  const fabCount = _kioskFabData.filter(a => a.status === 'fabricated').length;
-  countEl.textContent = `${pendingCount} pending${fabCount ? ` · ${fabCount} fabricated (24h)` : ''}`;
+  const pendingCount = _kioskFabData.filter(a => !asmIsTerminal(a)).length;
+  const fabCount = _kioskFabData.filter(a => asmIsTerminal(a)).length;
+  countEl.textContent = `${pendingCount} pending${fabCount ? ` · ${fabCount} complete (24h)` : ''}`;
 
   // Project filter chips — one per project that has any rows
   const projects = [...new Map(_kioskFabData.map(a => [a.project_number, a.project_name || a.project_number])).entries()];
@@ -903,7 +903,8 @@ function renderKioskFabrication() {
 }
 
 function renderKioskFabCard(a) {
-  const isFab = a.status === 'fabricated';
+  const isFab = asmIsTerminal(a);
+  const toFab = asmToFab(a), rtw = asmReadyToWeld(a), bom = asmBomQty(a);
   const finishBadge = a.finish_name
     ? `<span style="background:rgba(99,102,241,.18);color:#a5b4fc;padding:2px 9px;border-radius:6px;font-size:11px">${escapeHtml(a.finish_name)}</span>`
     : a.finish_label_raw
@@ -951,16 +952,34 @@ function renderKioskFabCard(a) {
     partsHtml += '</tbody></table>';
   }
 
-  // Action row — Open PDF + Mark fabricated (or just the Fabricated tag)
-  const actions = isFab
-    ? `<span style="margin-left:auto;color:var(--green);font-size:11px">&#10003; Fabricated ${a.fabricated_at ? new Date(a.fabricated_at).toLocaleString('en-GB', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : ''}${a.fabricated_by ? ' · ' + escapeHtml(a.fabricated_by) : ''}</span>${pdfLink ? '<span>' + pdfLink + '</span>' : ''}`
-    : `<span style="margin-left:auto;display:flex;gap:8px;align-items:center">${pdfLink}<button class="btn btn-primary" style="padding:6px 14px;font-size:12px" onclick="kioskMarkFabricated(${a.id})">&#10003; Mark fabricated</button></span>`;
+  // Action row — staged buttons (Fab / Weld / Complete) or the complete tag.
+  // Kiosk = workshop mode: weld/complete capture welder + machine.
+  let actions;
+  if (isFab) {
+    actions = `<span style="margin-left:auto;color:var(--green);font-size:11px">&#10003; Complete ${a.fabricated_at ? new Date(a.fabricated_at).toLocaleString('en-GB', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : ''}${a.fabricated_by ? ' · ' + escapeHtml(a.fabricated_by) : ''}</span>${pdfLink ? '<span>' + pdfLink + '</span>' : ''}`;
+  } else {
+    let btns = '';
+    if (toFab > 0) btns += `<button class="btn btn-primary" style="padding:6px 14px;font-size:12px" onclick="kioskStageAction('fab',${a.id})">&#128296; Fabbed${toFab < Number(a.quantity) ? ` (${toFab})` : ''}</button>`;
+    if (rtw > 0)   btns += `<button class="btn btn-primary" style="padding:6px 14px;font-size:12px;background:rgba(234,179,8,.9);border-color:rgba(234,179,8,.9)" onclick="kioskStageAction('weld',${a.id})">&#128293; Welded (${rtw})</button>`;
+    if (toFab > 0) btns += `<button class="btn btn-ghost" style="padding:6px 14px;font-size:12px" onclick="kioskStageAction('complete',${a.id})">&#10003; Complete${toFab < Number(a.quantity) ? ` (${toFab})` : ''}</button>`;
+    actions = `<span style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">${pdfLink}${btns}</span>`;
+  }
+
+  // Progress chips (kiosk header)
+  let chips = '';
+  if (!isFab) {
+    const chip = (txt, col, bg) => `<span style="background:${bg};color:${col};padding:2px 8px;border-radius:6px;font-size:11px;font-family:var(--font-mono)">${txt}</span>`;
+    if (toFab > 0) chips += chip(`${toFab} to fab`, '#fca5a5', 'rgba(239,68,68,.14)');
+    if (rtw > 0)   chips += chip(`${rtw} to weld`, '#fcd34d', 'rgba(234,179,8,.14)');
+    if (bom > 0)   chips += chip(`${bom} on BOM`, 'var(--green)', 'rgba(62,207,142,.12)');
+  }
 
   return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px;${isFab ? 'opacity:.55;' : ''}">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <span style="font-family:var(--font-mono);font-size:15px;font-weight:700;color:${isFab ? 'var(--text)' : 'var(--accent)'};min-width:50px">${escapeHtml(a.assembly_mark)}</span>
       <span style="font-size:13px;color:var(--text);min-width:60px">${Number(a.quantity)} off</span>
       ${finishBadge}
+      <span style="display:flex;gap:6px;flex-wrap:wrap">${chips}</span>
       ${actions}
     </div>
     ${partsHtml}
@@ -972,13 +991,18 @@ function setKioskFabFilter(num) {
   renderKioskFabrication();
 }
 
-function kioskMarkFabricated(id) {
+function kioskStageAction(stage, id) {
   const assembly = _kioskFabData.find(a => a.id === id);
   if (!assembly) { toast('Assembly not found.', 'error'); return; }
-  openMarkFabricatedModal(id, {
+  openStageActionModal(stage, id, {
     assembly,
     onSuccess: async () => { await loadKioskFabrication(); }
   });
+}
+
+// Back-compat: old kiosk entry point → complete stage.
+function kioskMarkFabricated(id) {
+  return kioskStageAction('complete', id);
 }
 
 // ── Workshop Kiosk Notifications ──
@@ -14048,10 +14072,10 @@ function renderAssembly() {
   // Update header status badge
   const status = document.getElementById('elementAssemblyStatus');
   if (status) {
-    const fabricated = assemblies.filter(a => a.status === 'fabricated').length;
+    const terminal = assemblies.filter(a => asmIsTerminal(a)).length;
     if (assemblies.length > 0) {
-      status.textContent = `${fabricated}/${assemblies.length} fabricated`;
-      status.style.cssText = fabricated === assemblies.length
+      status.textContent = `${terminal}/${assemblies.length} complete`;
+      status.style.cssText = terminal === assemblies.length
         ? 'color:var(--green);background:rgba(62,207,142,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600'
         : 'color:var(--accent);background:rgba(255,107,0,.1);padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600';
     } else {
@@ -14083,9 +14107,10 @@ function renderAssembly() {
     `;
   }
 
-  // Sort: pending first (most-recent on top), then fabricated (most-recent on top)
+  // Sort: unfinished first (most-recent on top), then terminal (most-recent on top)
   const sorted = assemblies.slice().sort((a, b) => {
-    if (a.status !== b.status) return a.status === 'pending' ? -1 : 1;
+    const at = asmIsTerminal(a), bt = asmIsTerminal(b);
+    if (at !== bt) return at ? 1 : -1;
     return String(b.created_at).localeCompare(String(a.created_at));
   });
 
@@ -14094,7 +14119,8 @@ function renderAssembly() {
   }
 
   for (const a of sorted) {
-    const isFabricated = a.status === 'fabricated';
+    const isFabricated = asmIsTerminal(a);
+    const toFab = asmToFab(a), rtw = asmReadyToWeld(a), bom = asmBomQty(a);
     const finishBadge = a.finish_name
       ? `<span style="background:rgba(99,102,241,.18);color:#a5b4fc;padding:2px 9px;border-radius:6px;font-size:11px">${escapeHtml(a.finish_name)}</span>`
       : a.finish_label_raw
@@ -14102,14 +14128,24 @@ function renderAssembly() {
         : `<span style="color:var(--subtle);font-size:11px">No finish</span>`;
     const heaviestIdx = heaviestPartIndex(a.parts || []);
 
+    // Progress chips shown on the header when work is partway through.
+    let progressChips = '';
+    if (!isFabricated) {
+      const chip = (txt, col, bg) => `<span style="background:${bg};color:${col};padding:2px 8px;border-radius:6px;font-size:11px;font-family:var(--font-mono)">${txt}</span>`;
+      if (toFab > 0) progressChips += chip(`${toFab} to fab`, '#fca5a5', 'rgba(239,68,68,.14)');
+      if (rtw > 0)   progressChips += chip(`${rtw} to weld`, '#fcd34d', 'rgba(234,179,8,.14)');
+      if (bom > 0)   progressChips += chip(`${bom} on BOM`, 'var(--green)', 'rgba(62,207,142,.12)');
+    }
+
     // Header line — always visible
     html += `<div class="task-card ${isFabricated ? 'complete' : ''}" style="${isFabricated ? 'opacity:.65;' : ''}">
       <div class="task-header" style="cursor:pointer" onclick="this.nextElementSibling.classList.toggle('collapsed')">
         <div style="font-family:var(--font-mono);font-size:15px;font-weight:700;color:${isFabricated ? 'var(--text)' : 'var(--accent)'};min-width:48px">${escapeHtml(a.assembly_mark)}</div>
         <div style="font-size:13px;color:var(--text);min-width:60px">${Number(a.quantity)} off</div>
         ${finishBadge}
+        <span style="display:flex;gap:6px;flex-wrap:wrap">${progressChips}</span>
         ${isFabricated
-          ? `<span style="margin-left:auto;color:var(--green);font-size:11px">&#10003; Fabricated ${a.fabricated_at ? new Date(a.fabricated_at).toLocaleString('en-GB', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : ''}${a.fabricated_by ? ' · ' + escapeHtml(a.fabricated_by) : ''}</span>`
+          ? `<span style="margin-left:auto;color:var(--green);font-size:11px">&#10003; Complete ${a.fabricated_at ? new Date(a.fabricated_at).toLocaleString('en-GB', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : ''}${a.fabricated_by ? ' · ' + escapeHtml(a.fabricated_by) : ''}</span>`
           : `<span style="margin-left:auto"></span>`
         }
       </div>
@@ -14156,7 +14192,18 @@ function renderAssembly() {
       html += `<button class="btn btn-ghost" style="padding:6px 12px;font-size:11px" onclick="event.stopPropagation();triggerAttachPdf(${a.id})">&#128206; Attach PDF</button>`;
     }
     if (!isFabricated && currentJob.status !== 'closed') {
-      html += `<button class="btn btn-primary" style="padding:6px 14px;font-size:11px" onclick="event.stopPropagation();openMarkFabricatedModal(${a.id})">&#10003; Mark fabricated</button>`;
+      // Fab & Complete offered while raw pieces remain; Weld while fabbed
+      // pieces are waiting. Each opens the qty-picker modal (defaults to all
+      // remaining for that stage).
+      if (toFab > 0) {
+        html += `<button class="btn btn-primary" style="padding:6px 14px;font-size:11px" onclick="event.stopPropagation();openStageActionModal('fab',${a.id})">&#128296; Mark fabbed${toFab < Number(a.quantity) ? ` (${toFab})` : ''}</button>`;
+      }
+      if (rtw > 0) {
+        html += `<button class="btn btn-primary" style="padding:6px 14px;font-size:11px;background:rgba(234,179,8,.9);border-color:rgba(234,179,8,.9)" onclick="event.stopPropagation();openStageActionModal('weld',${a.id})">&#128293; Mark welded (${rtw})</button>`;
+      }
+      if (toFab > 0) {
+        html += `<button class="btn btn-ghost" style="padding:6px 14px;font-size:11px" onclick="event.stopPropagation();openStageActionModal('complete',${a.id})" title="Complete pieces directly (skips the weld step)">&#10003; Complete${toFab < Number(a.quantity) ? ` (${toFab})` : ''}</button>`;
+      }
       if (isDraftsman) {
         html += `<button class="btn btn-ghost" title="Delete assembly" style="padding:6px 10px;font-size:11px;margin-left:auto" onclick="event.stopPropagation();deleteAssembly(${a.id})">&#128465;</button>`;
       }
@@ -15613,12 +15660,6 @@ async function attachPdfToAssembly(assemblyId, file) {
   }
 }
 
-// Pending fabricate state. _postFabricateCallback lets callers (e.g. the
-// kiosk Fabrication tile) plug in their own refresh path after a successful
-// fabricate, since they don't have currentJob / _assembliesByJob context.
-let _pendingFabricateAssemblyId = null;
-let _postFabricateCallback = null;
-
 async function loadWeldingMachinesIfNeeded() {
   if (_weldingMachines && _weldingMachines.length) return;
   try {
@@ -15629,13 +15670,43 @@ async function loadWeldingMachinesIfNeeded() {
   }
 }
 
-// openMarkFabricatedModal(assemblyId, opts?)
-//   opts.assembly  — pre-loaded assembly object (used by the kiosk where
-//                    _assembliesByJob isn't populated for that job)
-//   opts.onSuccess — callback after successful fabricate (used to refresh
-//                    custom caches like the kiosk list)
-async function openMarkFabricatedModal(assemblyId, opts) {
-  if (!assemblyId) return;
+// ═══════════════════════════════════════════════════════════════════════════
+// STAGE ACTION MODAL — staged partial fabrication (fab / weld / complete)
+//
+// One modal drives all three stages. openStageActionModal(stage, assemblyId,
+// opts?) sets it up; the title, operator label, machine visibility and qty cap
+// adapt to the stage. Draftsman mode makes operator + machine optional.
+//
+//   stage: 'fab' | 'weld' | 'complete'
+//   opts.assembly   — pre-loaded assembly (kiosk, where _assembliesByJob is
+//                     not populated for that job)
+//   opts.onSuccess  — async callback after success (kiosk list refresh)
+// ═══════════════════════════════════════════════════════════════════════════
+let _saStage = null;
+let _saAssembly = null;
+let _saMax = 0;
+let _saOnSuccess = null;
+
+// Piece-count helpers (mirror the backend derivation).
+function asmToFab(a)       { return Math.max(0, Number(a.quantity) - Number(a.qty_fabbed||0) - Number(a.qty_completed||0)); }
+function asmReadyToWeld(a) { return Math.max(0, Number(a.qty_fabbed||0) - Number(a.qty_welded||0)); }
+function asmBomQty(a)      { return Number(a.qty_welded||0) + Number(a.qty_completed||0); }
+function asmIsTerminal(a)  { return asmBomQty(a) >= Number(a.quantity); }
+
+// Human progress line, e.g. "2 to fab · 3 ready to weld · 4 on BOM"
+function asmProgressLine(a) {
+  const q = Number(a.quantity);
+  const parts = [];
+  const toFab = asmToFab(a), rtw = asmReadyToWeld(a), bom = asmBomQty(a);
+  parts.push(`${q} off`);
+  if (toFab > 0) parts.push(`${toFab} to fab`);
+  if (rtw > 0)   parts.push(`${rtw} ready to weld`);
+  if (bom > 0)   parts.push(`${bom} on BOM`);
+  return parts.join(' · ');
+}
+
+async function openStageActionModal(stage, assemblyId, opts) {
+  if (!assemblyId || !stage) return;
   opts = opts || {};
   let assembly = opts.assembly;
   if (!assembly) {
@@ -15643,120 +15714,170 @@ async function openMarkFabricatedModal(assemblyId, opts) {
     assembly = (_assembliesByJob[jobId] || []).find(a => a.id === assemblyId);
   }
   if (!assembly) { toast('Assembly not found — please reload.', 'error'); return; }
-  if (assembly.status === 'fabricated') { toast('Already marked as fabricated.', 'info'); return; }
 
-  _pendingFabricateAssemblyId = assemblyId;
-  _postFabricateCallback = typeof opts.onSuccess === 'function' ? opts.onSuccess : null;
-
-  // Header context
-  document.getElementById('mfMark').textContent = assembly.assembly_mark;
-  document.getElementById('mfQty').textContent  = `${Number(assembly.quantity)} off`;
-  const finishEl = document.getElementById('mfFinish');
-  if (assembly.finish_name) {
-    finishEl.textContent = assembly.finish_name;
-    finishEl.style.display = '';
-  } else {
-    finishEl.style.display = 'none';
+  // Cap per stage
+  let max;
+  if (stage === 'fab')      max = asmToFab(assembly);
+  else if (stage === 'weld') max = asmReadyToWeld(assembly);
+  else                       max = asmToFab(assembly); // complete = raw remaining
+  if (max <= 0) {
+    toast(stage === 'weld' ? 'Nothing fabricated is waiting to be welded.' : 'No pieces left for that action.', 'info');
+    return;
   }
 
-  // Populate welder dropdown — staff_type='workshop', active only
-  const welderSel = document.getElementById('mfWelder');
-  welderSel.innerHTML = '<option value="">Select welder…</option>';
-  const welders = (state.timesheetData.employees || [])
+  _saStage = stage;
+  _saAssembly = assembly;
+  _saMax = max;
+  _saOnSuccess = typeof opts.onSuccess === 'function' ? opts.onSuccess : null;
+
+  const titleMap = { fab: 'Mark fabricated', weld: 'Mark welded', complete: 'Mark complete' };
+  const opLabelMap = { fab: 'FABRICATOR', weld: 'WELDER', complete: 'WELDER' };
+  document.getElementById('saTitle').textContent = titleMap[stage];
+  document.getElementById('saMark').textContent = assembly.assembly_mark;
+  document.getElementById('saProgress').textContent = asmProgressLine(assembly);
+
+  const finishEl = document.getElementById('saFinish');
+  if (assembly.finish_name) { finishEl.textContent = assembly.finish_name; finishEl.style.display = ''; }
+  else { finishEl.style.display = 'none'; }
+
+  // Qty stepper — default all-remaining
+  const qtyEl = document.getElementById('saQty');
+  qtyEl.max = max;
+  qtyEl.value = max;
+  document.getElementById('saMaxHint').textContent = `of ${max}`;
+  document.getElementById('saQtyLabel').textContent =
+    stage === 'fab' ? 'HOW MANY TO FABRICATE?' : stage === 'weld' ? 'HOW MANY TO WELD?' : 'HOW MANY TO COMPLETE?';
+
+  // Operator dropdown. Fab → fabricators; weld/complete → welders. Both live in
+  // Employees with staff_type='workshop', so we list all active workshop staff
+  // for every stage (the shop knows who fabs vs welds; no separate flag yet).
+  const opWrap = document.getElementById('saOperatorWrap');
+  const opLabel = document.getElementById('saOperatorLabel');
+  const opSel = document.getElementById('saOperator');
+  opLabel.textContent = opLabelMap[stage] + (isDraftsman ? ' (optional)' : '');
+  opSel.innerHTML = `<option value="">${isDraftsman ? '— none —' : 'Select…'}</option>`;
+  const staff = (state.timesheetData.employees || [])
     .filter(e => (e.staffType || 'workshop') === 'workshop' && e.active !== false)
     .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
-  for (const w of welders) {
-    welderSel.innerHTML += `<option value="${w.id}" data-name="${escapeHtml(w.name)}">${escapeHtml(w.name)}</option>`;
+  for (const w of staff) {
+    opSel.innerHTML += `<option value="${w.id}" data-name="${escapeHtml(w.name)}">${escapeHtml(w.name)}</option>`;
   }
 
-  // Populate welding-machine dropdown — all active machines (per Q1 answer)
-  await loadWeldingMachinesIfNeeded();
-  const machineSel = document.getElementById('mfMachine');
-  machineSel.innerHTML = '<option value="">Select machine…</option>';
-  for (const m of (_weldingMachines || [])) {
-    if (m.is_active === false) continue;
-    machineSel.innerHTML += `<option value="${m.id}">${escapeHtml(m.machine_name || `Machine #${m.id}`)}</option>`;
+  // Machine dropdown — hidden for fab, shown for weld/complete
+  const machWrap = document.getElementById('saMachineWrap');
+  if (stage === 'fab') {
+    machWrap.style.display = 'none';
+  } else {
+    machWrap.style.display = '';
+    await loadWeldingMachinesIfNeeded();
+    const machSel = document.getElementById('saMachine');
+    machSel.querySelector && (machSel.innerHTML = `<option value="">${isDraftsman ? '— none —' : 'Select…'}</option>`);
+    for (const m of (_weldingMachines || [])) {
+      if (m.is_active === false) continue;
+      machSel.innerHTML += `<option value="${m.id}">${escapeHtml(m.machine_name || ('Machine #' + m.id))}</option>`;
+    }
+    document.querySelector('#saMachineWrap .field-label').textContent = 'WELDING MACHINE' + (isDraftsman ? ' (optional)' : '');
   }
 
-  // Reset state
-  welderSel.value = '';
-  machineSel.value = '';
-  const btn = document.getElementById('mfConfirmBtn');
-  btn.disabled = true; btn.style.opacity = '.4'; btn.style.cursor = 'not-allowed';
+  saClampQty();
+  updateStageConfirmState();
+  opSel.onchange = updateStageConfirmState;
+  const machSel2 = document.getElementById('saMachine');
+  if (machSel2) machSel2.onchange = updateStageConfirmState;
 
-  welderSel.onchange = checkMarkFabricatedReady;
-  machineSel.onchange = checkMarkFabricatedReady;
-
-  document.getElementById('markFabricatedModal').classList.add('active');
+  document.getElementById('stageActionModal').classList.add('active');
 }
 
-function checkMarkFabricatedReady() {
-  const w = document.getElementById('mfWelder').value;
-  const m = document.getElementById('mfMachine').value;
-  const ready = !!w && !!m;
-  const btn = document.getElementById('mfConfirmBtn');
+function saStep(delta) {
+  const el = document.getElementById('saQty');
+  el.value = (parseInt(el.value) || 0) + delta;
+  saClampQty();
+}
+function saAllRemaining() {
+  document.getElementById('saQty').value = _saMax;
+  saClampQty();
+}
+function saClampQty() {
+  const el = document.getElementById('saQty');
+  let v = parseInt(el.value);
+  if (isNaN(v)) v = 1;
+  if (v < 1) v = 1;
+  if (v > _saMax) v = _saMax;
+  el.value = v;
+  updateStageConfirmState();
+}
+function updateStageConfirmState() {
+  const btn = document.getElementById('saConfirmBtn');
+  const qty = parseInt(document.getElementById('saQty').value) || 0;
+  // In workshop/kiosk mode, weld & complete require operator + machine.
+  // In draftsman mode everything but qty is optional.
+  let ready = qty >= 1 && qty <= _saMax;
+  if (ready && !isDraftsman && (_saStage === 'weld' || _saStage === 'complete')) {
+    const op = document.getElementById('saOperator').value;
+    const mc = document.getElementById('saMachine').value;
+    ready = !!op && !!mc;
+  }
   btn.disabled = !ready;
   btn.style.opacity = ready ? '1' : '.4';
-  btn.style.cursor  = ready ? 'pointer' : 'not-allowed';
+  btn.style.cursor = ready ? 'pointer' : 'not-allowed';
+}
+function closeStageActionModal() {
+  document.getElementById('stageActionModal').classList.remove('active');
+  _saStage = null; _saAssembly = null; _saMax = 0; _saOnSuccess = null;
 }
 
-function closeMarkFabricatedModal() {
-  document.getElementById('markFabricatedModal').classList.remove('active');
-  _pendingFabricateAssemblyId = null;
-  _postFabricateCallback = null;
-}
+async function confirmStageAction() {
+  const stage = _saStage, assembly = _saAssembly;
+  if (!stage || !assembly) return;
+  const qty = parseInt(document.getElementById('saQty').value) || 0;
+  if (qty < 1 || qty > _saMax) return;
 
-async function confirmMarkFabricated() {
-  const id = _pendingFabricateAssemblyId;
-  if (!id) return;
-  const welderSel  = document.getElementById('mfWelder');
-  const machineSel = document.getElementById('mfMachine');
-  const welderId   = parseInt(welderSel.value);
-  const machineId  = parseInt(machineSel.value);
-  const welderName = welderSel.selectedOptions[0]?.dataset?.name
-                  || welderSel.selectedOptions[0]?.textContent
-                  || '';
-  if (!welderId || !machineId || !welderName) return;
+  const opSel = document.getElementById('saOperator');
+  const opId = opSel.value ? parseInt(opSel.value) : null;
+  const opName = opSel.selectedOptions[0]?.dataset?.name || null;
+  const machSel = document.getElementById('saMachine');
+  const machId = (stage !== 'fab' && machSel && machSel.value) ? parseInt(machSel.value) : null;
 
-  const btn = document.getElementById('mfConfirmBtn');
+  const btn = document.getElementById('saConfirmBtn');
   btn.disabled = true; btn.style.opacity = '.5';
+  const cb = _saOnSuccess;
 
-  // Capture the callback before close() clears it
-  const cb = _postFabricateCallback;
+  // Build the body per stage
+  let body, path;
+  if (stage === 'fab') {
+    path = `/api/job-assemblies/${assembly.id}/fab`;
+    body = { qty, operator_id: opId, operator_name: opName };
+  } else if (stage === 'weld') {
+    path = `/api/job-assemblies/${assembly.id}/weld`;
+    body = { qty, welder_id: opId, welder_name: opName, welding_machine_id: machId };
+  } else {
+    path = `/api/job-assemblies/${assembly.id}/complete`;
+    body = { qty, operator_id: opId, operator_name: opName, welding_machine_id: machId };
+  }
 
   try {
-    await api.put(`/api/job-assemblies/${id}/fabricate`, {
-      welder_id: welderId,
-      welding_machine_id: machineId,
-      fabricated_by: welderName
-    });
-    closeMarkFabricatedModal();
-    toast('Marked as fabricated.', 'success');
-
-    // Refresh path 1: caller-supplied (kiosk uses this)
-    if (cb) {
-      try { await cb(); } catch (e) { console.warn('post-fabricate callback failed:', e); }
-    }
-    // Refresh path 2: projects.html context (currentJob set)
+    await api.put(path, body);
+    closeStageActionModal();
+    const verb = stage === 'fab' ? 'fabricated' : stage === 'weld' ? 'welded' : 'complete';
+    toast(`${qty} piece${qty > 1 ? 's' : ''} marked ${verb}.`, 'success');
+    if (cb) { try { await cb(); } catch (e) { console.warn('post-stage callback failed:', e); } }
     if (currentJob?.id) {
       await loadJobAssemblies(parseInt(currentJob.id));
       renderAssembly();
     }
   } catch (e) {
-    if (e?.body?.error === 'already_fabricated') {
-      toast('Already fabricated — refreshing.', 'info');
-      closeMarkFabricatedModal();
-      if (cb) { try { await cb(); } catch (_) {} }
-      if (currentJob?.id) {
-        await loadJobAssemblies(parseInt(currentJob.id));
-        renderAssembly();
-      }
-    } else {
-      toast(`Failed: ${e.message}`, 'error');
-      btn.disabled = false; btn.style.opacity = '1';
-    }
+    toast(`Failed: ${e.message}`, 'error');
+    btn.disabled = false; btn.style.opacity = '1';
   }
 }
+
+// Back-compat shims for any caller still using the old names (kiosk was
+// updated to openStageActionModal; these forward "mark fabricated" to the
+// weld stage — welding is the terminal step in the fab→weld path).
+async function openMarkFabricatedModal(assemblyId, opts) {
+  return openStageActionModal('complete', assemblyId, opts);
+}
+function closeMarkFabricatedModal() { return closeStageActionModal(); }
 
 // ═══════════════════════════════════════════
 // SITE INSTALLATION: CLOSE JOB

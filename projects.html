@@ -368,34 +368,51 @@
 </div>
 
 <!-- ═══════════════════════════════════════
-     MARK FABRICATED MODAL (commit 8)
-     See SPEC-job-fabrication-rework.md §5
+     STAGE ACTION MODAL — fab / weld / complete (staged partial fabrication)
+     Title, operator label, machine visibility and qty cap adapt to the stage.
+     See docs/SPEC-job-fabrication-rework.md + api/sql/add-staged-fabrication.sql
 ══════════════════════════════════════════ -->
-<div class="modal-overlay" id="markFabricatedModal">
+<div class="modal-overlay" id="stageActionModal">
   <div class="modal" style="max-width:460px;width:95vw">
-    <div class="modal-title" style="margin-bottom:6px">Mark fabricated</div>
-    <div style="display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px;margin-bottom:20px">
-      <span style="font-family:var(--font-mono);font-weight:700;color:var(--accent);font-size:16px" id="mfMark"></span>
-      <span id="mfQty"></span>
-      <span id="mfFinish" style="background:rgba(99,102,241,.18);color:#a5b4fc;padding:2px 9px;border-radius:6px;font-size:11px;display:none"></span>
+    <div class="modal-title" style="margin-bottom:6px" id="saTitle">Mark fabricated</div>
+    <div style="display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px;margin-bottom:16px;flex-wrap:wrap">
+      <span style="font-family:var(--font-mono);font-weight:700;color:var(--accent);font-size:16px" id="saMark"></span>
+      <span id="saProgress"></span>
+      <span id="saFinish" style="background:rgba(99,102,241,.18);color:#a5b4fc;padding:2px 9px;border-radius:6px;font-size:11px;display:none"></span>
     </div>
 
-    <div style="margin-bottom:14px">
-      <div class="field-label">WELDER</div>
-      <select class="field-input" id="mfWelder"></select>
+    <!-- Quantity stepper -->
+    <div style="margin-bottom:16px">
+      <div class="field-label" id="saQtyLabel">HOW MANY?</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <button class="btn btn-ghost" style="padding:8px 16px;font-size:18px;line-height:1" onclick="saStep(-1)">&minus;</button>
+        <input type="number" class="field-input" id="saQty" min="1" step="1"
+               style="text-align:center;font-size:18px;font-weight:700;max-width:90px"
+               oninput="saClampQty()">
+        <button class="btn btn-ghost" style="padding:8px 16px;font-size:18px;line-height:1" onclick="saStep(1)">&plus;</button>
+        <span style="color:var(--subtle);font-size:12px" id="saMaxHint"></span>
+        <button class="btn btn-ghost" style="padding:6px 12px;font-size:11px;margin-left:auto" onclick="saAllRemaining()">All remaining</button>
+      </div>
     </div>
 
-    <div style="margin-bottom:20px">
+    <!-- Operator (Fabricator / Welder — label swaps per stage) -->
+    <div style="margin-bottom:14px" id="saOperatorWrap">
+      <div class="field-label" id="saOperatorLabel">WELDER</div>
+      <select class="field-input" id="saOperator"></select>
+    </div>
+
+    <!-- Welding machine — hidden for the fab stage -->
+    <div style="margin-bottom:20px" id="saMachineWrap">
       <div class="field-label">WELDING MACHINE</div>
-      <select class="field-input" id="mfMachine"></select>
+      <select class="field-input" id="saMachine"></select>
     </div>
 
-    <button class="btn btn-primary btn-full" id="mfConfirmBtn"
-            onclick="confirmMarkFabricated()"
-            style="padding:14px;font-size:15px;opacity:.4;cursor:not-allowed" disabled>
-      Confirm &amp; mark fabricated
+    <button class="btn btn-primary btn-full" id="saConfirmBtn"
+            onclick="confirmStageAction()"
+            style="padding:14px;font-size:15px">
+      Confirm
     </button>
-    <button class="btn btn-ghost btn-full" onclick="closeMarkFabricatedModal()" style="margin-top:10px;padding:12px">
+    <button class="btn btn-ghost btn-full" onclick="closeStageActionModal()" style="margin-top:10px;padding:12px">
       Cancel
     </button>
   </div>
@@ -502,6 +519,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
-<script src="shared.js?v=20260725m"></script>
+<script src="shared.js?v=20260726a"></script>
 </body>
 </html>
