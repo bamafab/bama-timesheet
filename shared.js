@@ -13838,16 +13838,17 @@ function drawSitePackPDF(jsPDF, pack, proj, job, logoDataUri) {
     { label: 'Date:',        value: fmtDate }
   ].filter(r => r.label && r.value != null && String(r.value).trim() !== '');
 
-  doc.setFontSize(9);
+  doc.setFontSize(8.5);
   const metaValX = pageW - marginR;
-  const metaLabelX = pageW - marginR - 48;
+  const metaLabelX = pageW - marginR - 58;
+  const metaWrap = 55;
   for (const r of metaRows) {
     setText(TEXT); doc.setFont('helvetica', 'bold');
     doc.text(r.label, metaLabelX, rightY, { align: 'right' });
     setText(TEXT); doc.setFont('helvetica', 'normal');
-    const vLines = doc.splitTextToSize(String(r.value || ''), 46);
-    vLines.forEach((vl, i) => doc.text(vl, metaValX, rightY + i * 4.2, { align: 'right' }));
-    rightY += 4.4 * Math.max(1, vLines.length);
+    const vLines = doc.splitTextToSize(String(r.value || ''), metaWrap);
+    vLines.forEach((vl, i) => doc.text(vl, metaValX, rightY + i * 3.8, { align: 'right' }));
+    rightY += 3.8 * Math.max(1, vLines.length) + 0.7;
   }
 
   y = Math.max(leftY, rightY) + 2;
@@ -14099,7 +14100,18 @@ function openSitePackModal() {
   setV('spSitePhone',   a.phone);
 
   // — Drawings picker (from the Site Installation files on this job) —
-  const files = (job.site && job.site.files) || [];
+  // These are drawings to READ. Exclude our own previously-generated Site Packs
+  // (don't reference/read our own output) and dedupe by fileId — approval
+  // drawings can land in the folder more than once.
+  const allSiteFiles = (job.site && job.site.files) || [];
+  const isGenPack = f => /^site pack\b/i.test(String(f.name || f.fileName || ''));
+  const _seenDraw = new Set();
+  const files = allSiteFiles.filter(f => {
+    if (isGenPack(f)) return false;
+    const key = f.fileId || (f.name || f.fileName);
+    if (_seenDraw.has(key)) return false;
+    _seenDraw.add(key); return true;
+  });
   const drawWrap = document.getElementById('spDrawingList');
   if (drawWrap) {
     if (files.length) {
@@ -14116,8 +14128,9 @@ function openSitePackModal() {
       drawWrap.innerHTML = `<div style="color:var(--subtle);font-size:12px;padding:8px 0">No drawings uploaded to Site Installation yet — upload one first, or type the scope manually below.</div>`;
     }
   }
-  // Drawing Ref default = the site files' display names, joined.
-  setV('spDrawingRef', files.map(f => f.name || f.fileName).filter(Boolean).join(', '));
+  // Drawing Ref default = unique clean drawing names (packs/dupes already gone).
+  const refNames = [...new Set(files.map(f => f.name || f.fileName).filter(Boolean))];
+  setV('spDrawingRef', refNames.join(', '));
 
   // — Fixings (BOM loose items: item_type fixing/consumable) —
   const body = document.getElementById('spFixingsBody');
