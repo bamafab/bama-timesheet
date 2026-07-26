@@ -14930,6 +14930,28 @@ function ramsCollectSection(key) {
   return [...wrap.querySelectorAll('.rams-sec-check:checked')].map(c => c.value);
 }
 
+// ── Tier presets (phase 4) ─────────────────────────────────────────────────
+// The Brief / Complex / Tier-1 selector drives document depth deterministically:
+// which standard-section groups are ticked by default, how condensed the fixed
+// text is, and how many Appendix-B briefing rows are printed. Changing the tier
+// RE-APPLIES the group defaults (individual ticks inside a group are reset) —
+// the user can still re-tick anything afterwards.
+const RAMS_TIER_PRESETS = {
+  brief:   { sections: { plant: true, materials: true, ppe: true, access: true, environment: false, monitoring: false }, briefingRows: 8 },
+  complex: { sections: { plant: true, materials: true, ppe: true, access: true, environment: true,  monitoring: true  }, briefingRows: 12 },
+  tier1:   { sections: { plant: true, materials: true, ppe: true, access: true, environment: true,  monitoring: true  }, briefingRows: 16 }
+};
+
+function ramsApplyTierPreset() {
+  const tier = document.getElementById('ramsTier')?.value || 'complex';
+  const preset = RAMS_TIER_PRESETS[tier] || RAMS_TIER_PRESETS.complex;
+  RAMS_SECTION_DEFS.forEach(def => {
+    const on = preset.sections[def.key] !== false;
+    document.querySelectorAll(`.rams-sec-items[data-key="${def.key}"] .rams-sec-check`)
+      .forEach(c => { c.checked = on; });
+  });
+}
+
 // ── Risk-row picker (phase 3c) ─────────────────────────────────────────────
 // The 18 library rows are shown as ticked checkboxes; the user unticks any that
 // don't apply and can add a fully-scored custom risk. State lives on the row
@@ -15007,6 +15029,7 @@ function ramsSubmitCustomRisk() {
 // Native RAMS renderer. Returns a Blob. `rams` is assembled from the editable
 // modal fields (+ personnel roster, site-plan image, and the risk library).
 function drawRamsPDF(jsPDF, rams, logoDataUri) {
+  const tier = rams.tier || 'complex';   // brief | complex | tier1 — drives document depth (phase 4)
   const s = (typeof _pickTplSettings === 'function') ? _pickTplSettings() : null;
   const g = (s && s.global) || (typeof TEMPLATE_DEFAULTS !== 'undefined' ? TEMPLATE_DEFAULTS.global
     : { companyName: 'BAMA FABRICATION', address: '', phone: '', email: '', vatNumber: '' });
@@ -15141,14 +15164,54 @@ function drawRamsPDF(jsPDF, rams, logoDataUri) {
   let secNum = 0;
   const numHeading = t => { secNum++; sectionHeading(secNum + '. ' + t); };
 
+  // ═══ DOCUMENT CONTROL (tier 1 only) ═══
+  // Tier-1 principal contractors expect a formal approval trail: a revision
+  // line plus a Prepared / Reviewed / Approved sign-off table with wet-signature
+  // space. Brief/Complex keep the compact header meta only.
+  if (tier === 'tier1') {
+    numHeading('Document Control & Approval');
+    para(`Revision ${rams.rev || '00'}${rams.dateStr ? ' \u2014 issued ' + rams.dateStr : ''}. This document will be reviewed and re-issued if the scope, site conditions or method of work change.`, { size: 9 });
+    y += 1;
+    const dcCols = [
+      { title: 'Role', w: 30 }, { title: 'Name', w: 55 },
+      { title: 'Signature', w: usableW - 30 - 55 - 28 }, { title: 'Date', w: 28 }
+    ];
+    let dcx = marginL; dcCols.forEach(c => { c.x = dcx; dcx += c.w; });
+    ensureSpace(6.5 + 3 * 9 + 3);
+    setFill(HEADFILL); doc.rect(marginL, y, usableW, 6.5, 'F');
+    setDraw(RULE); doc.setLineWidth(0.2); doc.rect(marginL, y, usableW, 6.5);
+    setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
+    dcCols.forEach(c => doc.text(c.title, c.x + 1.5, y + 4.3));
+    y += 6.5;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+    const dcRows = [
+      ['Prepared by', rams.preparedBy || ''],
+      ['Reviewed by', ''],
+      ['Approved by', '']
+    ];
+    for (const [role, name] of dcRows) {
+      const rh = 9;
+      setDraw(RULE); doc.setLineWidth(0.15); doc.rect(marginL, y, usableW, rh);
+      dcCols.forEach(c => { if (c.x > marginL) doc.line(c.x, y, c.x, y + rh); });
+      setText(TEXT); doc.setFont('helvetica', 'bold'); doc.text(role, dcCols[0].x + 1.5, y + 5.6);
+      doc.setFont('helvetica', 'normal'); doc.text(String(name), dcCols[1].x + 1.5, y + 5.6);
+      y += rh;
+    }
+    y += 3;
+  }
+
   // ═══ SCOPE ═══
   if ((rams.scopeLines || []).length) { numHeading('Scope of Works'); list(rams.scopeLines, true); }
 
   // ═══ PROGRAMME ═══
   numHeading('Programme & Working Hours');
-  para(rams.hours
-    ? `Works will be carried out during the following hours: ${rams.hours}. Actual dates and durations to be confirmed with the principal contractor and coordinated at site induction.`
-    : 'Working hours and programme to be confirmed with the principal contractor at site induction.');
+  para(tier === 'brief'
+    ? (rams.hours
+        ? `Working hours: ${rams.hours}. Programme to be agreed with the principal contractor.`
+        : 'Programme and working hours to be agreed with the principal contractor.')
+    : (rams.hours
+        ? `Works will be carried out during the following hours: ${rams.hours}. Actual dates and durations to be confirmed with the principal contractor and coordinated at site induction.`
+        : 'Working hours and programme to be confirmed with the principal contractor at site induction.'));
 
   // ═══ SEQUENCE ═══
   if ((rams.tasks || []).length) {
@@ -15243,13 +15306,24 @@ function drawRamsPDF(jsPDF, rams, logoDataUri) {
 
   // Emergency arrangements are always included (dynamic — uses the A&E field).
   numHeading('Emergency Arrangements');
-  list([
-    'On discovering an emergency, raise the alarm and follow the site emergency procedure.',
-    'Make the area safe if it is safe to do so; do not put yourself at risk.',
-    'Trained first-aider and first-aid kit available on site.',
-    rams.ae ? `Nearest A&E: ${rams.ae}.` : 'Nearest A&E to be confirmed at site induction.',
-    'Report all accidents, incidents and near-misses to the site manager and BAMA office.'
-  ], false);
+  const emergencyLines = tier === 'brief'
+    ? [
+        'On discovering an emergency, raise the alarm and follow the site emergency procedure. Trained first-aider and first-aid kit available on site.',
+        rams.ae ? `Nearest A&E: ${rams.ae}.` : 'Nearest A&E to be confirmed at site induction.',
+        'Report all accidents, incidents and near-misses to the site manager and BAMA office.'
+      ]
+    : [
+        'On discovering an emergency, raise the alarm and follow the site emergency procedure.',
+        'Make the area safe if it is safe to do so; do not put yourself at risk.',
+        'Trained first-aider and first-aid kit available on site.',
+        rams.ae ? `Nearest A&E: ${rams.ae}.` : 'Nearest A&E to be confirmed at site induction.',
+        'Report all accidents, incidents and near-misses to the site manager and BAMA office.'
+      ];
+  if (tier === 'tier1') {
+    emergencyLines.push('All RIDDOR-reportable injuries, diseases and dangerous occurrences will be reported to the HSE in line with statutory requirements and notified to the principal contractor.');
+    emergencyLines.push('Emergency contact numbers and muster points to be obtained from the principal contractor at induction and held by the BAMA supervisor.');
+  }
+  list(emergencyLines, false);
 
   if (monitoring.length) { numHeading('Monitoring & Review'); list(monitoring, false); }
 
@@ -15365,7 +15439,10 @@ function drawRamsPDF(jsPDF, rams, logoDataUri) {
   drawRegHead();
   const roster = rams.personnel || [];
   const rowH2 = 8;
-  for (let i = 0; i < 12; i++) {
+  const regRowCount = Math.max(
+    ((RAMS_TIER_PRESETS[tier] || RAMS_TIER_PRESETS.complex).briefingRows) || 12,
+    roster.length);
+  for (let i = 0; i < regRowCount; i++) {
     if (y + rowH2 > pageH - marginB) { newPage(); drawRegHead(); }
     setDraw(RULE); doc.setLineWidth(0.15); doc.rect(marginL, y, usableW, rowH2);
     bc.forEach(c => { if (c.x > marginL) doc.line(c.x, y, c.x, y + rowH2); });

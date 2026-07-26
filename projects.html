@@ -709,7 +709,8 @@
     <div class="modal-title" style="margin-bottom:4px">&#128203; Generate RAMS</div>
     <div style="color:var(--muted);font-size:12px;margin-bottom:18px">
       Risk Assessment &amp; Method Statement. Prefilled from the job — edit anything before generating.
-      Saves to <b>RAMS / (job name)</b> in SharePoint. <i>Phase 1: modal shell — AI &amp; PDF land in later phases.</i>
+      Saves to <b>00 - RAMS / (job name)</b> in SharePoint. The <b>Tier</b> selector sets document depth
+      (Brief = lean, Tier&nbsp;1 = full approval trail) and resets the standard-section ticks below.
     </div>
 
     <!-- HEADER -->
@@ -726,7 +727,7 @@
       <div><label style="font-size:11px;color:var(--muted)">Revision</label><input id="ramsRev" type="text" class="field-input"></div>
       <div>
         <label style="font-size:11px;color:var(--muted)">Tier / Depth</label>
-        <select id="ramsTier" class="field-input">
+        <select id="ramsTier" class="field-input" onchange="ramsApplyTierPreset()">
           <option value="brief">Brief</option>
           <option value="complex" selected>Complex</option>
           <option value="tier1">Tier 1 subcontractor</option>
@@ -878,6 +879,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
-<script src="shared.js?v=20260726za"></script>
+<script src="shared.js?v=20260726zb"></script>
 </body>
 </html>
