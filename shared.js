@@ -14364,9 +14364,144 @@ function ramsPreviewSitePlan(input) {
   reader.readAsDataURL(file);
 }
 
-// Phase-2 stub — AI reads the ticked drawing(s) and drafts scope + sequence.
-function ramsGenerateScope() {
-  toast('AI drawing-read arrives in phase 2 \u2014 write the scope and sequence manually for now.', 'info');
+// Phase 2 — AI reads the ticked drawing(s) and drafts BOTH the Scope of Works
+// and the Sequence of Works (tasks) into their textareas.
+// Two-engine principle (same as QB / Site Pack): the AI READS the drawing and
+// describes what/how — it NEVER computes quantities, dimensions or weights. On
+// any failure a deterministic template is dropped in so the user is never
+// blocked. Mirrors sitePackGenerateScope (429 retry + fallback).
+async function ramsGenerateScope() {
+  const checks  = [...document.querySelectorAll('.rams-draw-check:checked')];
+  const btn     = document.getElementById('ramsGenScopeBtn');
+  const sts     = document.getElementById('ramsScopeStatus');
+  const scopeTa = document.getElementById('ramsScopeText');
+  const tasksTa = document.getElementById('ramsTasksText');
+  if (!scopeTa || !tasksTa) return;
+
+  const contract  = (document.getElementById('ramsContract')?.value   || '').trim();
+  const title     = (document.getElementById('ramsTitle')?.value      || '').trim();
+  const client    = (document.getElementById('ramsClient')?.value     || '').trim();
+  const principal = (document.getElementById('ramsPrincipal')?.value  || '').trim();
+  const drawRef   = (document.getElementById('ramsDrawingRef')?.value || '').trim();
+  const tier      = (document.getElementById('ramsTier')?.value       || 'complex');
+
+  if (!checks.length) {
+    if (sts) { sts.style.color = 'var(--red)'; sts.textContent = 'Tick at least one drawing to read (or write the scope & sequence manually).'; }
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.style.opacity = '.5'; }
+  if (sts) { sts.style.color = 'var(--muted)'; sts.textContent = 'Reading drawing\u2026'; }
+
+  // Build the drawing content blocks (reuse the site-pack fetch/media helpers —
+  // the .rams-draw-check checkboxes carry the same data-fileid/driveid/fname).
+  const blocks = [];
+  try {
+    for (const c of checks) {
+      const b64 = await _sitePackFetchBase64(c.dataset.fileid, c.dataset.driveid);
+      const mt  = _sitePackMediaType(c.dataset.fname);
+      blocks.push(mt.isImage
+        ? { type: 'image',    source: { type: 'base64', media_type: mt.media, data: b64 } }
+        : { type: 'document', source: { type: 'base64', media_type: mt.media, data: b64 }, title: c.dataset.fname });
+    }
+  } catch (e) {
+    if (sts) { sts.style.color = 'var(--red)'; sts.textContent = 'Could not load drawing: ' + e.message; }
+    if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+    return;
+  }
+
+  // Tier nudges how much sequencing detail we ask for. The full tier -> document
+  // depth wiring lives in the PDF renderer (phase 4); here it only sets the
+  // rough number of scope points / sequence tasks.
+  const tierRule = tier === 'brief'
+    ? 'Keep it lean: 3-5 scope points and 4-6 sequence tasks covering the essential install stages only.'
+    : tier === 'tier1'
+      ? 'Be thorough for a Tier-1 principal contractor: 5-8 scope points and 7-10 sequence tasks, each task a distinct, auditable stage of the works.'
+      : 'Standard depth: 4-7 scope points and 6-8 sequence tasks covering mobilisation through to completion and demobilisation.';
+
+  const systemPrompt = `You are a site-installation planner for BAMA Fabrication, a structural steel fabricator in Peterborough, drafting the works description for a RAMS (Risk Assessment & Method Statement). Read the supplied drawing(s) and produce (1) a SCOPE OF WORKS and (2) a SEQUENCE OF WORKS for the installation crew.\n\nYou are a READER, not a calculator: describe WHAT is to be installed and HOW it is fixed and sequenced, based on what the drawing shows. Do NOT invent or calculate quantities, dimensions, member counts or weights that are not shown on the drawing. If something is not shown, describe it generically rather than guessing a number.`;
+
+  const userPrompt = `Contract / project: ${contract || '(unspecified)'}
+Works title: ${title || '(unspecified)'}
+Client: ${client || '(unspecified)'}    Principal contractor: ${principal || '(unspecified)'}
+Drawing reference: ${drawRef || '(see attached)'}
+
+Read the attached drawing(s) and draft the works description for the RAMS.
+${tierRule}
+
+Return ONLY a JSON object, no preamble and no Markdown fences, in exactly this shape:
+{
+  "scope": ["short scope point", "..."],
+  "tasks": ["Task title: what happens in this stage", "..."]
+}
+
+RULES:
+- "scope" = plain WHAT-is-being-installed points (one clause each, NO leading numbers — the renderer numbers them). Reference the drawing where relevant.
+- "tasks" = the ordered SEQUENCE OF WORKS. Each entry is "Title: detail" — a short stage title, a colon, then one concise sentence of what is done in that stage. Start with mobilisation / site set-up and end with demobilisation / handover, with the real install stages (setting out, lifting & positioning, fixing, bolting-up, checking) in between.
+- Strictly UK English, concise, imperative in the task detail ("Install\u2026", "Set out\u2026", "Lift and position\u2026").
+- Do NOT invent quantities or dimensions not shown on the drawing.
+- Output valid JSON only.`;
+
+  try {
+    const requestBody = {
+      model: 'claude-sonnet-4-6', max_tokens: 2000, system: systemPrompt,
+      messages: [{ role: 'user', content: [ ...blocks, { type: 'text', text: userPrompt } ] }]
+    };
+    const doFetch = () => fetch(API_BASE + '/api/claude-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${sessionStorage.getItem('bama_token')}` },
+      body: JSON.stringify(requestBody)
+    });
+    let response = await doFetch();
+    let data = await response.json();
+    if (response.status === 429) {
+      if (sts) sts.textContent = 'Rate limit \u2014 waiting 30s before retry\u2026';
+      await new Promise(r => setTimeout(r, 30000));
+      response = await doFetch(); data = await response.json();
+      if (response.status === 429) throw new Error('still rate limited \u2014 wait a minute and retry');
+    }
+    if (data.error) throw new Error(data.error.message);
+    const rawText = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+    if (!rawText) throw new Error('empty response');
+
+    // Strip any ```json fences, then parse. Fall back to first {...} block.
+    const jsonStr = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
+    let parsed;
+    try { parsed = JSON.parse(jsonStr); }
+    catch (_) {
+      const m = jsonStr.match(/\{[\s\S]*\}/);
+      if (!m) throw new Error('could not parse AI response');
+      parsed = JSON.parse(m[0]);
+    }
+    const scopeArr = Array.isArray(parsed.scope) ? parsed.scope.map(s => String(s).trim()).filter(Boolean) : [];
+    const tasksArr = Array.isArray(parsed.tasks) ? parsed.tasks.map(s => String(s).trim()).filter(Boolean) : [];
+    if (!scopeArr.length && !tasksArr.length) throw new Error('no scope or tasks returned');
+
+    if (scopeArr.length) scopeTa.value = scopeArr.join('\n');
+    if (tasksArr.length) tasksTa.value = tasksArr.join('\n');
+    if (sts) { sts.style.color = '#3ecf8e'; sts.textContent = 'Scope & sequence drafted from the drawing \u2014 edit as needed.'; }
+  } catch (e) {
+    // Deterministic fallback so the user is never blocked. Only fill empty
+    // fields so we don't clobber anything the user already typed.
+    if (!scopeTa.value.trim()) {
+      scopeTa.value = [
+        `Install ${title || contract || 'the fabricated steelwork'} as per drawing ${drawRef || '(see RAMS)'}.`,
+        'Fix all items to the structure / substrate as detailed on the drawing.',
+        'Provide all connections, splices and bolted joints as shown.'
+      ].join('\n');
+    }
+    if (!tasksTa.value.trim()) {
+      tasksTa.value = [
+        'Mobilisation & site set-up: attend induction, stage tools and materials, establish exclusion zones.',
+        'Setting out: check reference lines and levels against the drawing before lifting.',
+        'Lift & position: lift members into place using suitable lifting equipment and secure temporarily.',
+        'Fixing & bolting-up: make all permanent connections and fully tighten bolted joints.',
+        'Checking: verify line, level and plumb and carry out a final visual inspection.',
+        'Demobilisation & handover: clear the work area, remove all waste and hand back to site.'
+      ].join('\n');
+    }
+    if (sts) { sts.style.color = 'var(--muted)'; sts.textContent = 'AI unavailable \u2014 inserted a standard template (' + e.message + '). Edit as needed.'; }
+  }
+  if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
 }
 
 // Phase-3/6 stub — native jsPDF render + SharePoint save to RAMS/<job>/.
