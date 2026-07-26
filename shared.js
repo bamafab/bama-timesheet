@@ -12581,10 +12581,9 @@ async function confirmGenerateDnSQL() {
       items:           allSelected,
       finishName:      [...new Set(allSelected.map(i => i.finish_name).filter(Boolean))].join(', ') || ''
     };
-    const html = buildDnHtmlV2(dn, proj || {}, job || {});
-
-    // 3. Render HTML → PDF blob (keeps CSS + waits for the logo image).
-    const pdfBlob = await renderDocHtmlToPdfBlob(html, `${dnRef}.pdf`);
+    // 3. Render PDF blob natively with jsPDF (no html2canvas — the page's CSS
+    //    is irrelevant, so no white-on-white / clipping).
+    const pdfBlob = await renderDnPdfBlob(dn, proj || {}, job || {}, `${dnRef}.pdf`);
 
     // 4. Upload to SharePoint: <ProjectFolder>/07 - Deliveries/<JobFolder>/<DN-ref>.pdf
     const projectFolder = await findProjectFolder(proj.id);
@@ -12759,10 +12758,8 @@ async function confirmSiteDn() {
       finishName:      'Site delivery',
       items
     };
-    const html = buildDnHtmlV2(dn, proj || {}, job || {});
-
-    // 3. Render PDF (keeps CSS + waits for the logo image).
-    const pdfBlob = await renderDocHtmlToPdfBlob(html, `${sdnRef}.pdf`);
+    // 3. Render PDF natively with jsPDF (no html2canvas).
+    const pdfBlob = await renderDnPdfBlob(dn, proj || {}, job || {}, `${sdnRef}.pdf`);
 
     // 4. Upload to SharePoint: same path as supplier DNs (per spec).
     const projectFolder = await findProjectFolder(proj.id);
@@ -12798,72 +12795,266 @@ async function confirmSiteDn() {
 }
 
 
-// buildDeliveryNoteHTMLCore but reads from the SQL-shaped item list
-// (description / quantity / finish_name) instead of the legacy
-// mark / coating / weightPerUnit fields.
-// Render a full styled HTML document (as produced by buildDnHtmlV2) to a PDF
-// Blob. Three things caused the blank white PDF, all fixed here:
-//   1. The stylesheet's 'body { color:#222 }' rule could never match, because
-//      the PDF path injects the markup into a <div> on the live app page. The
-//      text therefore inherited bama.css's body colour (#f0f0f0) and rendered
-//      white-on-white. Fixed by scoping the DN stylesheet to .dn-root.
-//   2. The container was positioned off-screen (left:-10000px), which
-//      html2canvas captures blank — the QB renderer hit this too.
-//   3. html2canvas ran before the logo data-URI had painted.
-// The template preview looked fine throughout because it uses iframe.srcdoc,
-// where the markup is a real document with a real <body>.
-async function renderDocHtmlToPdfBlob(fullHtml, filename) {
-  if (typeof html2pdf === 'undefined') throw new Error('PDF library not loaded');
+// ── Delivery Note PDF — native jsPDF, no html2canvas ─────────────────────
+// The html2canvas approach was abandoned after repeated blank/clipped output:
+// it captures the element AS LAID OUT on the live app page, so bama.css's dark
+// theme and layout bleed in (white-on-white text, left column clipped). The
+// Babcock quote PDF already solved this by drawing natively with jsPDF
+// (doc.text / doc.addImage) — the page's CSS is then completely irrelevant.
+// This mirrors that renderer. buildDnHtmlV2() is kept only for the template
+// preview (iframe.srcdoc); the actual PDF is drawn here from the same data.
+async function renderDnPdfBlob(dn, proj, job, filename) {
+  // Reuse the Babcock jsPDF resolver + logo cache (loadLogoDataUri already ran
+  // in the caller). renderBabcockQuotePDF resolves the constructor for us.
+  const JsPDFCtor = await resolveJsPDFCtor();
+  if (!JsPDFCtor) throw new Error('PDF library failed to load');
+  const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
+  const blob = drawDnPDF(JsPDFCtor, dn, proj, job, logo);
+  console.log('[DN PDF] blob size:', blob.size, 'bytes (native jsPDF)');
+  return blob;
+}
 
-  const styleBlocks = (fullHtml.match(/<style[\s\S]*?<\/style>/gi) || []).join('');
-  const bodyInner   = fullHtml.replace(/^[\s\S]*?<body[^>]*>|<\/body>[\s\S]*$/g, '');
+// Native jsPDF delivery-note renderer. Returns a Blob. Modelled on
+// drawBabcockQuotePDF — same margins, colour approach and page-break logic.
+function drawDnPDF(jsPDF, dn, proj, job, logoDataUri) {
+  const s = (typeof _pickTplSettings === 'function') ? _pickTplSettings() : null;
+  const g = (s && s.global)       || (typeof TEMPLATE_DEFAULTS !== 'undefined' ? TEMPLATE_DEFAULTS.global       : { companyName:'BAMA FABRICATION', address:'', phone:'', email:'', vatNumber:'' });
+  const t = (s && s.deliveryNote) || (typeof TEMPLATE_DEFAULTS !== 'undefined' ? TEMPLATE_DEFAULTS.deliveryNote : { title:'Delivery Note', accentColor:'#ff6b00', showLogo:true, showCompanyDetails:true, showSignatureBlock:true, termsText:'' });
+  const accent = hexToRgb(t.accentColor || '#ff6b00') || [255, 107, 0];
 
-  const PAGE_W = 794; // A4 at 96dpi
-  // Positioning copied from the working QB renderer: html2canvas needs the
-  // element actually laid out and PAINTED. An off-screen 'position:fixed;
-  // left:-10000px' container captures blank — hence absolute at 0,0 sitting
-  // behind the page on a negative z-index.
-  const wrap = document.createElement('div');
-  wrap.style.cssText = `position:absolute;left:0;top:0;width:${PAGE_W}px;z-index:-9999;background:#fff`;
-  wrap.innerHTML = styleBlocks + bodyInner;
-  document.body.appendChild(wrap);
-
-  // The stylesheet is scoped to .dn-root, so capture that element.
-  const pageEl = wrap.querySelector('.dn-root') || wrap;
-
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
   try {
-    // Wait for images (the logo) to finish loading, else html2canvas
-    // snapshots before the data-URI has painted.
-    await new Promise(resolve => {
-      const imgs = Array.from(wrap.querySelectorAll('img'));
-      let pending = imgs.filter(im => !im.complete).length;
-      if (pending === 0) { setTimeout(resolve, 80); return; }
-      const done = () => { if (--pending <= 0) resolve(); };
-      imgs.forEach(im => { if (!im.complete) { im.onload = done; im.onerror = done; } });
-      setTimeout(resolve, 2500);
+    doc.setProperties({
+      title: `${dn.number || 'Delivery Note'}`,
+      subject: `Delivery Note${proj && proj.name ? ' — ' + proj.name : ''}`,
+      author: 'BAMA Fabrication', creator: 'BAMA Fabrication ERP'
     });
-    // Let layout settle for a frame.
-    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  } catch (e) { /* non-critical */ }
 
-    const blob = await html2pdf().set({
-      margin: [10, 10, 10, 10],
-      filename,
-      image: { type: 'jpeg', quality: 0.95 },
-      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', windowWidth: PAGE_W },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-    }).from(pageEl).outputPdf('blob');
+  const pageW = 210, pageH = 297, marginL = 14, marginR = 14, marginB = 14;
+  const usableW = pageW - marginL - marginR;
+  const TEXT = [34, 34, 34], MUTED = [90, 90, 90], RULE = [204, 204, 204], HEADFILL = [245, 245, 245];
+  const setText = c => doc.setTextColor(c[0], c[1], c[2]);
+  const setFill = c => doc.setFillColor(c[0], c[1], c[2]);
+  const setDraw = c => doc.setDrawColor(c[0], c[1], c[2]);
 
-    // Diagnostic: a healthy DN is tens of KB. A few KB means a blank capture.
-    console.log('[DN PDF] blob size:', blob.size, 'bytes; rect:', pageEl.getBoundingClientRect());
-    if (blob.size < 8000) {
-      console.warn('[DN PDF] looks blank (<8KB). scrollHeight:', pageEl.scrollHeight,
-        'offsetHeight:', pageEl.offsetHeight, 'computed colour:',
-        getComputedStyle(pageEl).color);
-    }
-    return blob;
-  } finally {
-    document.body.removeChild(wrap);
+  const fmtDate = new Date(dn.createdAt).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
+
+  // ── Header: logo + company left, title + meta right ──────────
+  let y = marginL;
+  let leftY = y;
+  if (t.showLogo !== false && logoDataUri) {
+    try { doc.addImage(logoDataUri, 'PNG', marginL, y, 60, 26, undefined, 'FAST'); leftY = y + 30; }
+    catch (e) { leftY = y; }
   }
+  if (t.showLogo === false || !logoDataUri) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(20); setText(accent);
+    doc.text(g.companyName || 'BAMA FABRICATION', marginL, y + 8); leftY = y + 14;
+  }
+  if (t.showCompanyDetails !== false) {
+    setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+    const coLines = [];
+    if (g.address) String(g.address).split('\n').forEach(l => coLines.push(l));
+    if (g.phone)  coLines.push('Tel: ' + g.phone);
+    if (g.email)  coLines.push(g.email);
+    if (g.vatNumber) coLines.push('VAT: ' + g.vatNumber);
+    coLines.forEach(l => { doc.text(String(l), marginL, leftY); leftY += 3.8; });
+  }
+
+  // RIGHT: italic title + meta rows
+  doc.setFont('helvetica', 'bolditalic'); doc.setFontSize(20); setText(accent);
+  doc.text(t.title || 'Delivery Note', pageW - marginR, y + 8, { align: 'right' });
+
+  let rightY = y + 16;
+  const metaRows = [
+    { label: 'DN Number:', value: dn.number || '' },
+    { label: 'Date:',      value: fmtDate },
+    { label: 'Project:',   value: (proj && proj.name) || '' },
+    { label: 'Project No:', value: (proj && proj.id) || '' }
+  ];
+  if (job && job.name) metaRows.push({ label: 'Job:', value: job.name });
+  metaRows.push({ label: 'Supplier:', value: dn.destinationName || '' });
+  metaRows.push({ label: 'For:',      value: dn.finishName || '' });
+
+  doc.setFontSize(9);
+  const metaValX = pageW - marginR;
+  const metaLabelX = pageW - marginR - 42;
+  for (const r of metaRows) {
+    setText(TEXT); doc.setFont('helvetica', 'bold');
+    doc.text(r.label, metaLabelX, rightY, { align: 'right' });
+    setText(TEXT); doc.setFont('helvetica', 'normal');
+    const vLines = doc.splitTextToSize(String(r.value || ''), 40);
+    doc.text(vLines[0] || '', metaValX, rightY, { align: 'right' });
+    rightY += 4.4 * Math.max(1, vLines.length);
+  }
+
+  y = Math.max(leftY, rightY) + 2;
+  setDraw(TEXT); doc.setLineWidth(0.5); doc.line(marginL, y, pageW - marginR, y);
+  y += 7;
+
+  // ── Deliver-to panel ──────────────────
+  const dt = dn.deliverTo || {};
+  const dtLines = (dt.lines || []).filter(Boolean);
+  if (dt.name || dtLines.length) {
+    const boxX = marginL, boxW = 90;
+    const boxTop = y;
+    let ty = y + 5;
+    setText(MUTED); doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5);
+    doc.text('DELIVER TO', boxX + 4, ty); ty += 4.5;
+    setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
+    if (dt.name) { doc.text(String(dt.name), boxX + 4, ty); ty += 4.5; }
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); setText([68, 68, 68]);
+    dtLines.forEach(l => { doc.text(String(l), boxX + 4, ty); ty += 4; });
+    if (dt.contact) { ty += 1; doc.text('Contact: ' + dt.contact, boxX + 4, ty); ty += 4; }
+    // frame
+    setDraw(RULE); doc.setLineWidth(0.3);
+    doc.roundedRect(boxX, boxTop, boxW, (ty - boxTop) + 2, 1.5, 1.5);
+    y = ty + 8;
+  }
+
+  // ── Items table ──────────────────
+  // Mark | Qty | Profile | Length (mm) | Unit Wt | Total Wt | Finish
+  const cols = [
+    { key:'mark',   title:'Mark',           w: 20, align:'left'  },
+    { key:'qty',    title:'Qty',            w: 12, align:'center'},
+    { key:'profile',title:'Profile',        w: 40, align:'left'  },
+    { key:'length', title:'Length (mm)',    w: 24, align:'right' },
+    { key:'unit',   title:'Unit Wt. (kg)',  w: 24, align:'right' },
+    { key:'total',  title:'Total Wt. (kg)', w: 26, align:'right' },
+    { key:'finish', title:'Finish',         w: usableW - 20 - 12 - 40 - 24 - 24 - 26, align:'left' }
+  ];
+  let cx = marginL;
+  cols.forEach(c => { c.x = cx; cx += c.w; });
+
+  const cellText = (c, txt, ypos) => {
+    const str = String(txt == null ? '' : txt);
+    if (c.align === 'right')  doc.text(str, c.x + c.w - 2, ypos, { align: 'right' });
+    else if (c.align === 'center') doc.text(str, c.x + c.w / 2, ypos, { align: 'center' });
+    else doc.text(str, c.x + 2, ypos);
+  };
+
+  const drawHeader = () => {
+    setFill(HEADFILL); doc.rect(marginL, y, usableW, 7, 'F');
+    setDraw(RULE); doc.setLineWidth(0.2); doc.rect(marginL, y, usableW, 7);
+    setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
+    cols.forEach(c => cellText(c, c.title, y + 4.7));
+    y += 7;
+  };
+  drawHeader();
+
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+  let totQty = 0, totWeight = 0, anyWeight = false;
+
+  for (const it of (dn.items || [])) {
+    const qty     = Number(it.quantity) || 0;
+    const unitWt  = it.assembly_weight_kg != null ? Number(it.assembly_weight_kg) : null;
+    const lengthM = it.assembly_max_length_mm != null ? Number(it.assembly_max_length_mm) : null;
+    const lineWt  = unitWt != null ? unitWt * qty : null;
+    const mark    = it.source === 'assembly' ? (it.source_assembly_mark || 'assembly') : '\u2014';
+    totQty += qty;
+    if (lineWt != null) { totWeight += lineWt; anyWeight = true; }
+
+    const profLines = doc.splitTextToSize(String(it.description || ''), cols[2].w - 3);
+    const finLines  = doc.splitTextToSize(String(it.finish_name || dn.finishName || ''), cols[6].w - 3);
+    const nLines = Math.max(1, profLines.length, finLines.length);
+    const rowH = nLines * 4.2 + 2;
+
+    if (y + rowH > pageH - marginB - 30) { doc.addPage(); y = marginL + 4; drawHeader(); doc.setFont('helvetica', 'normal'); doc.setFontSize(9); }
+
+    const baseY = y + 4.5;
+    setText(TEXT);
+    doc.setFont('helvetica', 'bold'); cellText(cols[0], mark, baseY); doc.setFont('helvetica', 'normal');
+    cellText(cols[1], qty, baseY);
+    profLines.forEach((l, i) => cellText(cols[2], l, baseY + i * 4.2));
+    cellText(cols[3], lengthM != null ? lengthM.toLocaleString('en-GB', { maximumFractionDigits: 1 }) : '\u2014', baseY);
+    cellText(cols[4], unitWt != null ? unitWt.toFixed(2) : '\u2014', baseY);
+    cellText(cols[5], lineWt != null ? lineWt.toFixed(2) : '\u2014', baseY);
+    finLines.forEach((l, i) => cellText(cols[6], l, baseY + i * 4.2));
+
+    setDraw(RULE); doc.setLineWidth(0.15); doc.line(marginL, y + rowH, pageW - marginR, y + rowH);
+    y += rowH;
+  }
+
+  // TOTAL row
+  const totH = 7;
+  if (y + totH > pageH - marginB - 20) { doc.addPage(); y = marginL + 4; }
+  setFill(HEADFILL); doc.rect(marginL, y, usableW, totH, 'F');
+  setDraw(RULE); doc.setLineWidth(0.2); doc.rect(marginL, y, usableW, totH);
+  setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+  cellText(cols[0], 'TOTAL', y + 4.7);
+  cellText(cols[1], totQty, y + 4.7);
+  cellText(cols[5], anyWeight ? totWeight.toFixed(2) : '\u2014', y + 4.7);
+  y += totH + 4;
+
+  if (!anyWeight) {
+    setText(MUTED); doc.setFont('helvetica', 'italic'); doc.setFontSize(8);
+    doc.text('Weights unavailable — no assembly data on these items.', marginL, y);
+    y += 6;
+  }
+
+  // ── Signatures ──────────────────
+  if (t.showSignatureBlock !== false) {
+    if (y > pageH - marginB - 36) { doc.addPage(); y = marginL + 6; }
+    y += 4;
+    const boxW = (usableW - 8) / 2, boxH = 26;
+    const boxes = [
+      { x: marginL,             label: 'Delivered By (BAMA):' },
+      { x: marginL + boxW + 8,  label: 'Received By (Supplier):' }
+    ];
+    boxes.forEach(b => {
+      setDraw(RULE); doc.setLineWidth(0.3); doc.rect(b.x, y, boxW, boxH);
+      setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
+      doc.text(b.label, b.x + 3, y + 6);
+      setDraw([150, 150, 150]); doc.setLineWidth(0.2);
+      doc.line(b.x + 3, y + 17, b.x + boxW - 3, y + 17);
+      setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
+      doc.text('Date:', b.x + 3, y + 22);
+    });
+    y += boxH + 6;
+  }
+
+  // ── Terms ──────────────────
+  if (t.termsText) {
+    if (y > pageH - marginB - 16) { doc.addPage(); y = marginL + 6; }
+    setDraw([238, 238, 238]); doc.setLineWidth(0.3); doc.line(marginL, y, pageW - marginR, y); y += 4;
+    setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
+    doc.splitTextToSize(String(t.termsText), usableW).forEach(l => { doc.text(l, marginL, y); y += 3.6; });
+  }
+
+  return doc.output('blob');
+}
+
+// Small helpers shared by the native DN renderer.
+function hexToRgb(hex) {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(String(hex || ''));
+  return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : null;
+}
+// Resolve the jsPDF constructor the same way renderBabcockQuotePDF does,
+// including the last-resort CDN load.
+async function resolveJsPDFCtor() {
+  const pick = () => {
+    if (typeof window.jspdf !== 'undefined' && typeof window.jspdf.jsPDF === 'function') return window.jspdf.jsPDF;
+    if (typeof window.jsPDF === 'function') return window.jsPDF;
+    if (typeof window.html2pdf !== 'undefined' && typeof window.html2pdf.jsPDF === 'function') return window.html2pdf.jsPDF;
+    return null;
+  };
+  let ctor = pick();
+  if (ctor) return ctor;
+  await new Promise((resolve, reject) => {
+    const existing = document.querySelector('script[data-jspdf-loaded]');
+    if (existing) {
+      let tries = 0;
+      const tick = () => { if (pick()) return resolve(); if (++tries > 50) return reject(new Error('jsPDF load timed out')); setTimeout(tick, 100); };
+      return tick();
+    }
+    const sc = document.createElement('script');
+    sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+    sc.dataset.jspdfLoaded = '1';
+    sc.onload = resolve;
+    sc.onerror = () => reject(new Error('Failed to load jsPDF from CDN'));
+    document.head.appendChild(sc);
+  });
+  return pick();
 }
 
 function buildDnHtmlV2(dn, proj, job) {
