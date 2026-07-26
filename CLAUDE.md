@@ -370,6 +370,53 @@ in sync — same bucket math both sides.
   in SQL (`DrawingJobs` table) — the Graph-side JSON tracks richer structure
   (approval revisions, tasks, files, notes) that hasn't been migrated yet.
 
+### Staged / partial fabrication (fab → weld → complete)
+
+Supersedes the old binary "Mark fabricated" flow (SPEC-job-fabrication-rework
+§5 describes that original design; the staged model below replaces §5's
+mark-fabricated step). Migration: `api/sql/add-staged-fabrication.sql`.
+
+- **An assembly of Q pieces tracks three running counts** on `JobAssemblies`:
+  `qty_fabbed`, `qty_welded`, `qty_completed`. Derived (never stored):
+  `to_fab = quantity - qty_fabbed - qty_completed`,
+  `ready_to_weld = qty_fabbed - qty_welded`,
+  `bom_qty = qty_welded + qty_completed`. The fab→weld pool and the
+  direct-complete pool are **disjoint** — a raw piece goes down exactly one
+  route, and the endpoint caps enforce it. Don't add a path that lets a fabbed
+  piece also be "completed" directly (double-counts onto BOM).
+- **Two routes to BOM.** Fab→Weld (welding a piece pushes it to BOM), or
+  Complete (direct, skips welding — for items that need no weld). Both feed
+  BOM via `applyBomDelta`.
+- **`status` is derived, not set by hand.** `deriveStatus()` (in
+  `job-assemblies.js`, mirrored client-side as `asmIsTerminal` etc.):
+  `pending` (nothing done) → `in_progress` (some done) → `fabricated`
+  (every piece on BOM). `'fabricated'` is kept as the terminal name so
+  existing reads — kiosk 24h window, project progress rollups,
+  `confirmCloseJob` — keep working. On reaching terminal the legacy
+  `fabricated_at/by/welder_id/welding_machine_id` fields are stamped too.
+- **Smart BOM merge (`applyBomDelta`).** Completing/welding more pieces of an
+  assembly TOPS UP its existing OPEN BOM row instead of spawning duplicate
+  lines. "Open" = `status IN ('pending','ready_for_despatch')` — i.e. no DN
+  raised yet. Once a DN freezes the row (`at_supplier`/`despatched`/`on_site`),
+  new pieces start a fresh line — a genuinely separate delivery batch. This is
+  the "don't show 1no B2, 3no B2, 1no B2" requirement.
+- **Full action history.** `JobAssemblyActions` logs every fab/weld/complete
+  press (stage, qty, operator, machine, bom_item_id, when, who). The counts on
+  `JobAssemblies` are the fast-read cache; this table is the audit source of
+  truth ("3 fabbed by Ann, 2 by Bob").
+- **Endpoints** (`api/src/functions/job-assemblies.js`):
+  `PUT /:id/fab | /:id/weld | /:id/complete`, each in one txn. Body carries
+  `qty` + operator/machine. Operator+machine are **required** in workshop/kiosk
+  for weld & complete, **optional** in draftsman mode and in all bulk actions.
+  Legacy `PUT /:id/fabricate` kept as a shim (marks all pieces welded).
+- **UI.** Cards (projects.html `renderAssembly`, kiosk
+  `renderKioskFabCard`) show progress chips (N to fab / N to weld / N on BOM)
+  and offer only the applicable buttons. One stage modal (`openStageActionModal`)
+  with a qty stepper defaulting to all-remaining. **Bulk select**
+  (`openBulkStageModal`) ticks many assemblies → per-assembly qty boxes + one
+  optional operator/machine → sequential calls with a confirm-total popup.
+  Both surfaces share the `_bulk*` state in shared.js.
+
 ## Key conventions
 
 - **One shared.js, page-aware.** The module detects the page it's on via
