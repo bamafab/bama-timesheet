@@ -14266,17 +14266,21 @@ function closeSitePackModal() {
 // SharePoint save to <Project>/00 - RAMS/<job>/ + 'rams' file context (6 — DONE),
 // DOCX (7).
 // ═══════════════════════════════════════════
-let _ramsSitePlanDataUri = null;   // set by ramsPreviewSitePlan(); used from phase 5 (click-to-pin site plan).
+let _ramsSitePlanDataUri = null;   // set by ramsPreviewSitePlan(); embedded in the PDF site-plan section.
+let _ramsSitePlanPin = null;       // {x,y} in % of the image (phase 5 click-to-pin); drawn as a work-area marker in the PDF.
 
 function openRamsModal() {
   const proj = currentProject, job = currentJob;
   if (!job?.id) { toast('No job selected.', 'error'); return; }
   const setV = (id, v) => { const el = document.getElementById(id); if (el) el.value = (v == null ? '' : v); };
 
-  // reset site-plan upload state
+  // reset site-plan upload state (image + work-area pin)
   _ramsSitePlanDataUri = null;
+  _ramsSitePlanPin = null;
   const prev = document.getElementById('ramsSitePlanPreview');
-  if (prev) { prev.src = ''; prev.style.display = 'none'; }
+  if (prev) prev.src = '';
+  const spWrap = document.getElementById('ramsSitePlanWrap'); if (spWrap) spWrap.style.display = 'none';
+  const spRow  = document.getElementById('ramsSitePlanPinRow'); if (spRow) spRow.style.display = 'none';
   const spInput = document.getElementById('ramsSitePlanInput');
   if (spInput) spInput.value = '';
 
@@ -14359,18 +14363,58 @@ function closeRamsModal() {
   document.getElementById('ramsModal').classList.remove('active');
 }
 
-// Preview the uploaded site plan and stash it as a data URI for the phase-5
-// click-to-pin step. Phase 1 just previews the image.
+// Preview the uploaded site plan and stash it as a data URI. Phase 5: the
+// preview is clickable — the user drops a work-area pin, stored as {x,y} in %
+// of the image so it lands in the same spot regardless of render size.
 function ramsPreviewSitePlan(input) {
   const file = input && input.files && input.files[0];
+  const wrap = document.getElementById('ramsSitePlanWrap');
   const prev = document.getElementById('ramsSitePlanPreview');
-  if (!file) { _ramsSitePlanDataUri = null; if (prev) { prev.src = ''; prev.style.display = 'none'; } return; }
+  const row  = document.getElementById('ramsSitePlanPinRow');
+  _ramsSitePlanPin = null; _ramsPositionSitePlanPin();
+  if (!file) {
+    _ramsSitePlanDataUri = null;
+    if (prev) prev.src = '';
+    if (wrap) wrap.style.display = 'none';
+    if (row)  row.style.display  = 'none';
+    return;
+  }
   const reader = new FileReader();
   reader.onload = () => {
     _ramsSitePlanDataUri = reader.result;
-    if (prev) { prev.src = reader.result; prev.style.display = 'block'; }
+    if (prev) prev.src = reader.result;
+    if (wrap) wrap.style.display = 'block';
+    if (row)  row.style.display  = 'flex';
   };
   reader.readAsDataURL(file);
+}
+
+// Click on the preview → store the pin as % coordinates and place the marker.
+function ramsSitePlanClick(ev) {
+  const img = ev.target;
+  const r = img.getBoundingClientRect();
+  if (!r.width || !r.height) return;
+  const x = ((ev.clientX - r.left) / r.width)  * 100;
+  const y = ((ev.clientY - r.top)  / r.height) * 100;
+  _ramsSitePlanPin = { x: Math.max(0, Math.min(100, x)), y: Math.max(0, Math.min(100, y)) };
+  _ramsPositionSitePlanPin();
+}
+
+function ramsClearSitePlanPin() { _ramsSitePlanPin = null; _ramsPositionSitePlanPin(); }
+
+function _ramsPositionSitePlanPin() {
+  const mark = document.getElementById('ramsSitePlanPinMark');
+  const sts  = document.getElementById('ramsSitePlanPinStatus');
+  if (!mark) return;
+  if (!_ramsSitePlanPin) {
+    mark.style.display = 'none';
+    if (sts) sts.textContent = 'Click the plan to mark the work area.';
+    return;
+  }
+  mark.style.display = 'block';
+  mark.style.left = _ramsSitePlanPin.x + '%';
+  mark.style.top  = _ramsSitePlanPin.y + '%';
+  if (sts) sts.textContent = `Work-area pin set (${_ramsSitePlanPin.x.toFixed(0)}%, ${_ramsSitePlanPin.y.toFixed(0)}% of the plan).`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -15341,6 +15385,25 @@ function drawRamsPDF(jsPDF, rams, logoDataUri) {
       const px = marginL + (usableW - w) / 2;
       doc.addImage(rams.sitePlanDataUri, props.fileType || 'PNG', px, y, w, h, undefined, 'FAST');
       setDraw(RULE); doc.setLineWidth(0.3); doc.rect(px, y, w, h);
+      // Work-area pin (phase 5): {x,y} stored as % of the image in the modal,
+      // drawn here as a vector marker (jsPDF helvetica has no emoji) — stem
+      // apex on the exact clicked point, red head above, WORK AREA label.
+      if (rams.sitePlanPin && isFinite(rams.sitePlanPin.x) && isFinite(rams.sitePlanPin.y)) {
+        const pinX = px + w * rams.sitePlanPin.x / 100;
+        const pinY = y  + h * rams.sitePlanPin.y / 100;
+        const PIN = [229, 72, 77];
+        doc.setFillColor(PIN[0], PIN[1], PIN[2]);
+        doc.triangle(pinX - 1.7, pinY - 3.4, pinX + 1.7, pinY - 3.4, pinX, pinY, 'F');
+        doc.circle(pinX, pinY - 4.6, 2.5, 'F');
+        doc.setFillColor(255, 255, 255);
+        doc.circle(pinX, pinY - 4.6, 1.0, 'F');
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5);
+        doc.setTextColor(PIN[0], PIN[1], PIN[2]);
+        const labelAbove = rams.sitePlanPin.y > 10;   // near the top edge → label under the point instead
+        doc.text('WORK AREA', Math.max(px + 9, Math.min(px + w - 9, pinX)),
+                 labelAbove ? pinY - 8.4 : pinY + 3.6, { align: 'center' });
+        setText(TEXT);
+      }
       y += h + 4;
     } catch (e) { para('(Site plan image could not be embedded.)', { italic: true, color: MUTED, size: 8.5 }); }
   }
@@ -15546,6 +15609,7 @@ async function confirmRams() {
       monitoring:  ramsCollectSection('monitoring'),
       risks: ramsCollectRisks(),
       sitePlanDataUri: (typeof _ramsSitePlanDataUri !== 'undefined' && _ramsSitePlanDataUri) || null,
+      sitePlanPin: (typeof _ramsSitePlanPin !== 'undefined' && _ramsSitePlanPin) || null,
       notes: getV('ramsNotes')
     };
 

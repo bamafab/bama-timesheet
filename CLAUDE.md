@@ -663,10 +663,25 @@ normal `confirmDeleteFile` path (SharePoint file + SQL row). If the SharePoint
 save fails, the PDF opens in a new tab so the document is never lost. The RAMS
 drawing picker excludes previously generated Site Pack / RAMS outputs.
 
-Remaining phases: site-plan click-to-pin (5 — the uploaded site plan already
-embeds in the PDF; the pin marker is pending) and DOCX export via docx.js (7 —
-the renderer consumes the same structured object, so a second deterministic
-renderer slots in without touching generation).
+**Tier wiring (phase 4):** the Brief / Complex / Tier-1 selector drives
+document depth deterministically via `RAMS_TIER_PRESETS`: which standard
+sections are ticked by default (Brief drops Environmental & Monitoring;
+changing tier RE-APPLIES the group ticks), condensed vs full Programme and
+Emergency text (Tier 1 adds RIDDOR + muster-point lines), a Tier-1-only
+"Document Control & Approval" sign-off table (Prepared / Reviewed / Approved
+with signature space) rendered as section 1, and the Appendix B briefing rows
+(8 / 12 / 16, or the roster size if larger).
+
+**Site-plan pin (phase 5):** the uploaded plan preview is clickable — the pin
+is stored as `{x,y}` in **% of the image** (`_ramsSitePlanPin`) so it lands in
+the same spot at any render size, shown as a 📍 marker in the modal (Clear-pin
+button below). `drawRamsPDF` draws it as a **vector** marker (jsPDF helvetica
+has no emoji): red teardrop with the stem apex on the exact point + a WORK
+AREA label, flipped below the point when the pin is within 10% of the top edge.
+
+Remaining phase: DOCX export via docx.js (7 — the renderer consumes the same
+structured object, so a second deterministic renderer slots in without
+touching generation).
 
 ## Modal → Page mapping
 
