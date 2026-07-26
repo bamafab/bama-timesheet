@@ -14732,10 +14732,10 @@ async function ramsGenerateScope() {
   // depth wiring lives in the PDF renderer (phase 4); here it only sets the
   // rough number of scope points / sequence tasks.
   const tierRule = tier === 'brief'
-    ? 'Keep it lean: 3-5 scope points and 4-6 sequence tasks covering the essential install stages only.'
+    ? 'Keep it lean: 3-5 scope points and 4-6 sequence tasks. Each task needs only its one-sentence intro \u2014 leave every "steps" array empty.'
     : tier === 'tier1'
-      ? 'Be thorough for a Tier-1 principal contractor: 5-8 scope points and 7-10 sequence tasks, each task a distinct, auditable stage of the works.'
-      : 'Standard depth: 4-7 scope points and 6-8 sequence tasks covering mobilisation through to completion and demobilisation.';
+      ? 'Be thorough for a Tier-1 principal contractor: 5-8 scope points and 7-10 sequence tasks. Every task MUST carry 4-7 "steps" \u2014 concrete, auditable actions (preparation, positioning, fixing, alignment checks, safety/QA) exactly like a full professional method statement.'
+      : 'Standard depth: 4-7 scope points and 6-8 sequence tasks covering mobilisation through to completion. Every task MUST carry 3-5 "steps" \u2014 the concrete actions carried out in that stage.';
 
   const systemPrompt = `You are a site-installation planner for BAMA Fabrication, a structural steel fabricator in Peterborough, drafting the works description for a RAMS (Risk Assessment & Method Statement). Read the supplied drawing(s) and produce (1) a SCOPE OF WORKS and (2) a SEQUENCE OF WORKS for the installation crew.\n\nYou are a READER, not a calculator: describe WHAT is to be installed and HOW it is fixed and sequenced, based on what the drawing shows. Do NOT invent or calculate quantities, dimensions, member counts or weights that are not shown on the drawing. If something is not shown, describe it generically rather than guessing a number.`;
 
@@ -14750,19 +14750,19 @@ ${tierRule}
 Return ONLY a JSON object, no preamble and no Markdown fences, in exactly this shape:
 {
   "scope": ["short scope point", "..."],
-  "tasks": ["Task title: what happens in this stage", "..."]
+  "tasks": [{ "title": "Stage title", "intro": "one concise sentence summarising the stage", "steps": ["concrete action carried out in this stage", "..."] }]
 }
 
 RULES:
 - "scope" = plain WHAT-is-being-installed points (one clause each, NO leading numbers — the renderer numbers them). Reference the drawing where relevant.
-- "tasks" = the ordered SEQUENCE OF WORKS. Each entry is "Title: detail" — a short stage title, a colon, then one concise sentence of what is done in that stage. Start with mobilisation / site set-up and end with demobilisation / handover, with the real install stages (setting out, lifting & positioning, fixing, bolting-up, checking) in between.
+- "tasks" = the ordered SEQUENCE OF WORKS. "title" is a short stage title, "intro" one summary sentence, "steps" the ordered concrete actions within that stage (the renderer letters them a. b. c.). Start with mobilisation / site set-up and end with demobilisation / handover, with the real install stages (setting out, lifting & positioning, fixing, bolting-up, checking) in between.
 - Strictly UK English, concise, imperative in the task detail ("Install\u2026", "Set out\u2026", "Lift and position\u2026").
 - Do NOT invent quantities or dimensions not shown on the drawing.
 - Output valid JSON only.`;
 
   try {
     const requestBody = {
-      model: 'claude-sonnet-4-6', max_tokens: 2000, system: systemPrompt,
+      model: 'claude-sonnet-4-6', max_tokens: 4000, system: systemPrompt,
       messages: [{ role: 'user', content: [ ...blocks, { type: 'text', text: userPrompt } ] }]
     };
     const doFetch = () => fetch(API_BASE + '/api/claude-proxy', {
@@ -14792,11 +14792,21 @@ RULES:
       parsed = JSON.parse(m[0]);
     }
     const scopeArr = Array.isArray(parsed.scope) ? parsed.scope.map(s => String(s).trim()).filter(Boolean) : [];
-    const tasksArr = Array.isArray(parsed.tasks) ? parsed.tasks.map(s => String(s).trim()).filter(Boolean) : [];
+    // Tasks may be strings (legacy "Title: detail") or {title, intro, steps[]}.
+    // Textarea format: title line ("Title: intro"), then one "- step" line per
+    // sub-step, blank line between tasks \u2014 fully hand-editable.
+    const fmtTask = t => {
+      if (t == null) return '';
+      if (typeof t === 'string') return t.trim();
+      const head = [String(t.title || '').trim(), String(t.intro || t.detail || '').trim()].filter(Boolean).join(': ');
+      const steps = Array.isArray(t.steps) ? t.steps.map(s => String(s).trim()).filter(Boolean).map(s => '- ' + s) : [];
+      return [head, ...steps].filter(Boolean).join('\n');
+    };
+    const tasksArr = Array.isArray(parsed.tasks) ? parsed.tasks.map(fmtTask).filter(Boolean) : [];
     if (!scopeArr.length && !tasksArr.length) throw new Error('no scope or tasks returned');
 
     if (scopeArr.length) scopeTa.value = scopeArr.join('\n');
-    if (tasksArr.length) tasksTa.value = tasksArr.join('\n');
+    if (tasksArr.length) tasksTa.value = tasksArr.join('\n\n');
     if (sts) { sts.style.color = '#3ecf8e'; sts.textContent = 'Scope & sequence drafted from the drawing \u2014 edit as needed.'; }
   } catch (e) {
     // Deterministic fallback so the user is never blocked. Only fill empty
@@ -14810,12 +14820,33 @@ RULES:
     }
     if (!tasksTa.value.trim()) {
       tasksTa.value = [
-        'Mobilisation & site set-up: attend induction, stage tools and materials, establish exclusion zones.',
-        'Setting out: check reference lines and levels against the drawing before lifting.',
-        'Lift & position: lift members into place using suitable lifting equipment and secure temporarily.',
-        'Fixing & bolting-up: make all permanent connections and fully tighten bolted joints.',
-        'Checking: verify line, level and plumb and carry out a final visual inspection.',
-        'Demobilisation & handover: clear the work area, remove all waste and hand back to site.'
+        'Mobilisation & site set-up: attend induction, stage materials and establish the work area.',
+        '- Attend the site-specific induction and agree access, welfare and storage with the principal contractor.',
+        '- Deliver and stage all fabricated items, fixings and equipment in the designated area.',
+        '- Erect barriers and signage to segregate the installation zone.',
+        '',
+        'Setting out: verify dimensions and mark fixing positions before any work starts.',
+        '- Check reference lines and levels on site against the issued drawing.',
+        '- Mark all fixing / baseplate positions and confirm squareness and centres.',
+        '- Scan the structure for concealed services before drilling.',
+        '',
+        'Lift & position: lift members into place using suitable lifting equipment.',
+        '- Plan each lift and prepare the landing area before lifting.',
+        '- Lift members into position using approved equipment and secure temporarily.',
+        '- Maintain exclusion zones \u2014 no personnel beneath suspended loads.',
+        '',
+        'Fixing & bolting-up: make all permanent connections.',
+        '- Install all bolts / anchors as detailed on the drawing.',
+        '- Tighten fixings incrementally and in a balanced pattern.',
+        '- Torque all bolts to the specified values and record as required.',
+        '',
+        'Checking: verify the completed installation.',
+        '- Check line, level, plumb and diagonals across the complete assembly.',
+        '- Verify all connections are complete and the finish is free from damage.',
+        '',
+        'Demobilisation & handover: clear the work area and hand back to site.',
+        '- Remove all tools, temporary works and waste from the work area.',
+        '- Present the completed works to the principal contractor for inspection and sign-off.'
       ].join('\n');
     }
     if (sts) { sts.style.color = 'var(--muted)'; sts.textContent = 'AI unavailable \u2014 inserted a standard template (' + e.message + '). Edit as needed.'; }
@@ -14903,6 +14934,8 @@ const RAMS_RISK_LIBRARY = [
 
 // Deterministic standard boilerplate. Always included; tunable per-job later.
 const RAMS_STANDARD = {
+  inductions: ['Site induction \u2014 all personnel attend the site-specific induction before commencing any activities.', 'Certification \u2014 all operatives hold valid CSCS, CPCS or equivalent cards, presented at induction.', 'Lift plans \u2014 where required for the movement of materials, prepared and signed off by a competent person before execution.', 'Mandatory PPE \u2014 the specified PPE is worn at all times on site, as detailed in the risk assessment.', 'Task briefing \u2014 a detailed task briefing is given before each task; attendance and understanding recorded on a signed register.', 'Supervision \u2014 work parties supervised by a competent individual to ensure adherence to this method statement.'],
+  dab: ['Mandatory use of PPE.', 'Safe handling and operation of power tools.', 'COSHH assessments and associated risks.', 'Manual handling best practices.', 'Lifting operations and material movement plans.', 'Site traffic and walkway routes.', 'Allocated tasks for the day and break times.', 'HAV (Hand-Arm Vibration) monitoring and recording.', 'Pre-use inspections of plant, access equipment and lifting equipment.'],
   plant: ['MEWP / cherry picker (as required for elevated access)', 'Telehandler or mobile crane (for mechanical lifting)', 'LOLER-inspected lifting accessories — slings, shackles, chains', '110V / battery power tools — drills, impact wrenches, grinders', 'Welding / cutting equipment (where site welding is required)', 'Hand tools, spanners, torque wrenches, spirit levels', 'Podium steps / mobile access tower (low-level work)'],
   materials: ['Fabricated structural steelwork (as per the issued drawings)', 'Structural bolts, nuts and washers (grade as specified)', 'Anchors and fixings for connection to the substrate', 'Touch-up paint / galvanising repair (as required)'],
   ppe: ['Hard hat', 'Safety boots (steel toe/midsole)', 'Hi-vis clothing', 'Safety glasses', 'Gloves (cut-resistant / handling)', 'Hearing protection (in noisy areas)', 'RPE (for dust / fume)', 'Full-body harness and lanyard (for MEWP / work at height)', 'Welding PPE (where hot works are carried out)'],
@@ -14920,6 +14953,8 @@ const _ramsRiskFill = r => (r <= 6 ? [212, 237, 218] : r <= 12 ? [255, 243, 205]
 // draws only what it receives (an empty section is dropped and the remaining
 // sections renumber automatically).
 const RAMS_SECTION_DEFS = [
+  { key: 'inductions',  label: 'Inductions & Briefings \u2014 pre-requisites' },
+  { key: 'dab',         label: 'Daily Activity Briefing topics' },
   { key: 'plant',       label: 'Plant & Equipment' },
   { key: 'materials',   label: 'Materials' },
   { key: 'ppe',         label: 'PPE' },
@@ -14981,9 +15016,9 @@ function ramsCollectSection(key) {
 // RE-APPLIES the group defaults (individual ticks inside a group are reset) —
 // the user can still re-tick anything afterwards.
 const RAMS_TIER_PRESETS = {
-  brief:   { sections: { plant: true, materials: true, ppe: true, access: true, environment: false, monitoring: false }, briefingRows: 8 },
-  complex: { sections: { plant: true, materials: true, ppe: true, access: true, environment: true,  monitoring: true  }, briefingRows: 12 },
-  tier1:   { sections: { plant: true, materials: true, ppe: true, access: true, environment: true,  monitoring: true  }, briefingRows: 16 }
+  brief:   { sections: { inductions: false, dab: false, plant: true, materials: true, ppe: true, access: true, environment: false, monitoring: false }, briefingRows: 8 },
+  complex: { sections: { inductions: true,  dab: true,  plant: true, materials: true, ppe: true, access: true, environment: true,  monitoring: true  }, briefingRows: 12 },
+  tier1:   { sections: { inductions: true,  dab: true,  plant: true, materials: true, ppe: true, access: true, environment: true,  monitoring: true  }, briefingRows: 16 }
 };
 
 function ramsApplyTierPreset() {
@@ -15128,6 +15163,75 @@ function drawRamsPDF(jsPDF, rams, logoDataUri) {
     y += 2;
   };
 
+  // ═══ COVER PAGE (Complex & Tier 1) ═══
+  // Classic BAMA method-statement front sheet: centred logo, document title,
+  // ruled Details block and an Authorisation block with wet-signature space.
+  // Tier 1 additionally reserves page 2 for a CONTENTS page (filled in at the
+  // end, once every section's page number is known). Brief stays compact.
+  const hasCover = tier !== 'brief';
+  const hasToc   = tier === 'tier1';
+  const toc = [];                     // { label, page } — collected as headings are drawn
+  if (hasCover) {
+    let cy = 30;
+    if (logoDataUri) {
+      try {
+        const props = doc.getImageProperties(logoDataUri);
+        const LW = 72;
+        const LH = (props && props.width && props.height) ? LW * props.height / props.width : 32;
+        doc.addImage(logoDataUri, (props && props.fileType) || 'PNG', (pageW - LW) / 2, cy, LW, LH, undefined, 'FAST');
+        cy += LH + 12;
+      } catch (e) { cy += 8; }
+    } else {
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(24); setText(accent);
+      doc.text(g.companyName || 'BAMA FABRICATION', pageW / 2, cy + 10, { align: 'center' });
+      cy += 24;
+    }
+    setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(20);
+    doc.text('RISK ASSESSMENT &', pageW / 2, cy + 6, { align: 'center' });
+    doc.text('METHOD STATEMENT', pageW / 2, cy + 15, { align: 'center' });
+    cy += 34;
+
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(11); setText(TEXT);
+    doc.text('Details', marginL + 6, cy);
+    setDraw(TEXT); doc.setLineWidth(0.4); doc.line(marginL + 6, cy + 1.8, pageW - marginR - 6, cy + 1.8);
+    cy += 9;
+    const coverRow = (label, value) => {
+      if (value == null || String(value).trim() === '') return;
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5); setText(TEXT);
+      doc.text(label + ':', marginL + 6, cy);
+      doc.setFont('helvetica', 'normal');
+      doc.splitTextToSize(String(value), usableW - 64).forEach((ln, i) => doc.text(ln, marginL + 58, cy + i * 5));
+      cy += 8;
+    };
+    coverRow('Contract name', rams.contract);
+    coverRow('Contract No', rams.contractNo);
+    coverRow('Client', rams.client);
+    coverRow('Principal contractor', rams.principal);
+    coverRow('Title', rams.title);
+    coverRow('Document No', rams.docNo);
+    coverRow('Revision', rams.rev);
+    coverRow('Issue date', rams.dateStr);
+    cy += 12;
+
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
+    doc.text('Authorisation', marginL + 6, cy);
+    setDraw(TEXT); doc.setLineWidth(0.4); doc.line(marginL + 6, cy + 1.8, pageW - marginR - 6, cy + 1.8);
+    cy += 13;
+    const signRow = (label, name) => {
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5); setText(TEXT);
+      doc.text(`${label}: ${name || ''}`, marginL + 6, cy);
+      doc.text('Signature:', pageW / 2 + 16, cy);
+      setDraw(MUTED); doc.setLineWidth(0.3);
+      doc.line(pageW / 2 + 37, cy + 1.2, pageW - marginR - 6, cy + 1.2);
+      setDraw(RULE); doc.setLineWidth(0.2); doc.line(marginL + 6, cy + 10, pageW - marginR - 6, cy + 10);
+      cy += 20;
+    };
+    signRow('Prepared by', rams.preparedBy);
+    signRow('Approved by', rams.preparedBy);
+    newPage();
+    if (hasToc) newPage();            // reserve page 2 for CONTENTS
+  }
+
   // ═══ HEADER ═══
   let leftY = y, logoDrawn = false;
   if (logoDataUri) {
@@ -15206,7 +15310,12 @@ function drawRamsPDF(jsPDF, rams, logoDataUri) {
   // Running section number — sections drop out when empty (unticked), so the
   // numbering is computed rather than hard-coded to keep it sequential.
   let secNum = 0;
-  const numHeading = t => { secNum++; sectionHeading(secNum + '. ' + t); };
+  const numHeading = t => {
+    secNum++;
+    const label = secNum + '. ' + t;
+    sectionHeading(label);
+    toc.push({ label, page: doc.internal.getNumberOfPages() });
+  };
 
   // ═══ DOCUMENT CONTROL (tier 1 only) ═══
   // Tier-1 principal contractors expect a formal approval trail: a revision
@@ -15257,15 +15366,34 @@ function drawRamsPDF(jsPDF, rams, logoDataUri) {
         ? `Works will be carried out during the following hours: ${rams.hours}. Actual dates and durations to be confirmed with the principal contractor and coordinated at site induction.`
         : 'Working hours and programme to be confirmed with the principal contractor at site induction.'));
 
+  // ═══ INDUCTIONS & BRIEFINGS (Complex & Tier 1 by default) ═══
+  const inductions = rams.inductions || RAMS_STANDARD.inductions;
+  const dab        = rams.dab        || RAMS_STANDARD.dab;
+  if (inductions.length || dab.length) {
+    numHeading('Inductions & Briefings');
+    if (inductions.length) {
+      para('This RAMS and the associated task briefings will be reviewed, updated and re-issued if the methodology changes or additional tasks are introduced. Pre-requisites before works commence:', { size: 9 });
+      y += 1;
+      list(inductions, false);
+    }
+    if (dab.length) {
+      para('Daily Activity Briefing', { bold: true });
+      para('Before starting any works, all operatives will participate in a Daily Activity Briefing covering:', { size: 9 });
+      y += 1;
+      list(dab, false);
+    }
+  }
+
   // ═══ SEQUENCE ═══
   if ((rams.tasks || []).length) {
     numHeading('Sequence of Works');
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
     rams.tasks.forEach((t, i) => {
-      const titleLines = doc.splitTextToSize(`${i + 1}. ${t.title}`, usableW - 2);
+      const steps = Array.isArray(t.steps) ? t.steps : [];
+      doc.setFontSize(9.5);
+      const titleLines  = doc.splitTextToSize(`${i + 1}. ${t.title}`, usableW - 2);
       const detailLines = t.detail ? doc.splitTextToSize(t.detail, usableW - 7) : [];
-      const h = titleLines.length * 4.6 + detailLines.length * 4.4 + 2.5;
-      ensureSpace(h);
+      const headH = titleLines.length * 4.6 + detailLines.length * 4.4 + 1.5;
+      ensureSpace(headH + (steps.length ? 6 : 0));   // never orphan a title at a page break
       setText(TEXT); doc.setFont('helvetica', 'bold');
       titleLines.forEach((ln, j) => doc.text(ln, marginL, y + 3 + j * 4.6));
       const yy = y + 3 + titleLines.length * 4.6;
@@ -15273,7 +15401,18 @@ function drawRamsPDF(jsPDF, rams, logoDataUri) {
         setText([70, 70, 70]); doc.setFont('helvetica', 'normal');
         detailLines.forEach((ln, j) => doc.text(ln, marginL + 7, yy + j * 4.4));
       }
-      y += h;
+      y += headH;
+      // Sub-steps — lettered a. b. c. like the classic method-statement tasks.
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
+      steps.forEach((st, k) => {
+        const lines = doc.splitTextToSize(String(st), usableW - 14);
+        const h = lines.length * 4.4 + 1.2;
+        ensureSpace(h);
+        setText(MUTED); doc.text(String.fromCharCode(97 + (k % 26)) + '.', marginL + 7, y + 3);
+        setText(TEXT); lines.forEach((ln, j) => doc.text(ln, marginL + 12, y + 3 + j * 4.4));
+        y += h;
+      });
+      y += 2.5;
     });
     y += 1;
   }
@@ -15375,7 +15514,7 @@ function drawRamsPDF(jsPDF, rams, logoDataUri) {
 
   // ═══ SITE PLAN ═══
   if (rams.sitePlanDataUri) {
-    sectionHeading('Site Plan');
+    numHeading('Site Plan');
     try {
       const props = doc.getImageProperties(rams.sitePlanDataUri);
       const maxW = usableW, maxH = 170;
@@ -15411,8 +15550,54 @@ function drawRamsPDF(jsPDF, rams, logoDataUri) {
   // ═══ APPENDIX A — RISK ASSESSMENT ═══
   newPage();
   sectionHeading('Appendix A — Risk Assessment');
+  toc.push({ label: 'Appendix A — Risk Assessment', page: doc.internal.getNumberOfPages() });
   para('Risk rating R = Likelihood (L, 1\u20135) \u00d7 Severity (S, 1\u20135). "Initial" is the risk before controls; "Residual" is the risk with the controls below applied. Bands: 1\u20136 low, 7\u201312 medium, 13\u201325 high.', { size: 8, color: MUTED });
   y += 1;
+
+  // 5×5 risk-matrix legend (Complex & Tier 1) — the classic Appendix A key.
+  if (tier !== 'brief') {
+    const cell = 8.2, gx = marginL + 16;
+    ensureSpace(cell * 5 + 26);
+    const gy = y + 3;
+    doc.setFontSize(6.8);
+    for (let sv = 5; sv >= 1; sv--) {
+      for (let lk = 1; lk <= 5; lk++) {
+        const r = sv * lk;
+        const cx = gx + (lk - 1) * cell, cyy = gy + (5 - sv) * cell;
+        setFill(_ramsRiskFill(r)); setDraw(RULE); doc.setLineWidth(0.15);
+        doc.rect(cx, cyy, cell, cell, 'FD');
+        setText(TEXT); doc.setFont('helvetica', 'normal');
+        doc.text(String(r), cx + cell / 2, cyy + cell / 2 + 1.1, { align: 'center' });
+      }
+      setText(MUTED);
+      doc.text(String(sv), gx - 3.2, gy + (5 - sv) * cell + cell / 2 + 1.1, { align: 'center' });
+    }
+    setText(MUTED);
+    for (let lk = 1; lk <= 5; lk++) doc.text(String(lk), gx + (lk - 1) * cell + cell / 2, gy + 5 * cell + 3.6, { align: 'center' });
+    doc.setFont('helvetica', 'bold');
+    doc.text('Likelihood', gx + cell * 2.5, gy + 5 * cell + 7.6, { align: 'center' });
+    doc.text('Severity', gx - 8.5, gy + cell * 2.5 + 6, { angle: 90 });
+    const keyX = gx + cell * 5 + 12;
+    setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(7.2);
+    doc.text('Likelihood', keyX, gy + 2.6);
+    doc.text('Severity', keyX + 46, gy + 2.6);
+    doc.setFont('helvetica', 'normal'); setText(MUTED); doc.setFontSize(6.8);
+    ['1 = Very unlikely', '2 = Unlikely', '3 = Likely', '4 = Very likely', '5 = Almost certain']
+      .forEach((t, i) => doc.text(t, keyX, gy + 7 + i * 3.9));
+    ['1 = No injury', '2 = Minor injury or illness', '3 = "7 day" injury or illness', '4 = Major injury or illness', '5 = Fatality, disabling injury, etc.']
+      .forEach((t, i) => doc.text(t, keyX + 46, gy + 7 + i * 3.9));
+    doc.setFont('helvetica', 'bold');
+    doc.text('Risk = Likelihood \u00d7 Severity', keyX, gy + 7 + 5 * 3.9 + 2.5);
+    const chipY = gy + 5 * cell + 13;
+    const chip = (x, fill, label) => {
+      setFill(fill); setDraw(RULE); doc.rect(x, chipY - 2.8, 9, 3.6, 'FD');
+      setText(MUTED); doc.setFont('helvetica', 'normal'); doc.text(label, x + 11, chipY);
+    };
+    chip(marginL, [212, 237, 218], 'Acceptable (1\u20136)');
+    chip(marginL + 55, [255, 243, 205], 'Further review (7\u201312)');
+    chip(marginL + 118, [248, 215, 218], 'Unacceptable (13\u201325)');
+    y = chipY + 6;
+  }
 
   const risks = Array.isArray(rams.risks) ? rams.risks : RAMS_RISK_LIBRARY;
   const rc = [
@@ -15485,6 +15670,7 @@ function drawRamsPDF(jsPDF, rams, logoDataUri) {
   // ═══ APPENDIX B — BRIEFING REGISTER ═══
   ensureSpace(40);
   sectionHeading('Appendix B — Briefing Register');
+  toc.push({ label: 'Appendix B — Briefing Register', page: doc.internal.getNumberOfPages() });
   para('I confirm that I have read, or have had explained to me, this Risk Assessment & Method Statement and I understand its contents and will comply with it.', { size: 8.5, color: MUTED });
   y += 1;
   const bc = [
@@ -15518,10 +15704,48 @@ function drawRamsPDF(jsPDF, rams, logoDataUri) {
     y += rowH2;
   }
 
-  // ═══ FOOTER ═══
+  // ═══ CONTENTS (Tier 1) — page 2, filled in on the second pass ═══
+  if (hasToc && toc.length) {
+    doc.setPage(2);
+    let ty = 26;
+    setDraw(accent); doc.setLineWidth(0.8); doc.line(marginL, ty, marginL + 14, ty);
+    setText(accent); doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
+    doc.text('CONTENTS', marginL, ty + 5);
+    ty += 17;
+    let appHdrDone = false;
+    for (const t of toc) {
+      const isApp = /^Appendix/i.test(t.label);
+      if (isApp && !appHdrDone) {
+        ty += 4;
+        setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
+        doc.text('APPENDICES', marginL, ty); ty += 8.5;
+        appHdrDone = true;
+      }
+      setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
+      const lbl = doc.splitTextToSize(t.label, usableW - 26)[0];
+      doc.text(lbl, marginL + 2, ty);
+      if (typeof doc.setLineDashPattern === 'function') {
+        setDraw(RULE); doc.setLineWidth(0.2); doc.setLineDashPattern([0.5, 1.4], 0);
+        doc.line(marginL + 2 + doc.getTextWidth(lbl) + 3, ty - 0.9, pageW - marginR - 10, ty - 0.9);
+        doc.setLineDashPattern([], 0);
+      }
+      setText(MUTED); doc.setFont('helvetica', 'normal');
+      doc.text(String(t.page), pageW - marginR, ty, { align: 'right' });
+      ty += 7.5;
+    }
+  }
+
+  // ═══ FOOTER + running header (second pass) ═══
   const pageCount = doc.internal.getNumberOfPages();
+  const firstContentPage = 1 + (hasCover ? 1 : 0) + (hasToc ? 1 : 0);
   for (let p = 1; p <= pageCount; p++) {
     doc.setPage(p);
+    if (hasCover && p === 1) continue;               // clean cover — no header/footer
+    if (p > firstContentPage) {                      // running header on continuation pages
+      setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
+      doc.text(`${g.companyName || 'BAMA Fabrication'} \u2014 ${rams.docNo || 'RAMS'}${rams.title ? ' \u00b7 ' + rams.title : ''}`, marginL, 8.5);
+      setDraw(RULE); doc.setLineWidth(0.2); doc.line(marginL, 10.3, pageW - marginR, 10.3);
+    }
     setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
     doc.text(`${rams.docNo || 'RAMS'}${rams.rev ? ' \u00b7 Rev ' + rams.rev : ''}`, marginL, pageH - 9);
     doc.text(`Page ${p} of ${pageCount}`, pageW - marginR, pageH - 9, { align: 'right' });
@@ -15556,12 +15780,18 @@ async function confirmRams() {
       ? new Date(dateRaw + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
       : '';
 
-    // Sequence tasks: "Title: detail" per line (detail optional).
-    const tasks = getV('ramsTasksText').split('\n').map(l => l.trim()).filter(Boolean).map(line => {
+    // Sequence tasks: a title line ("Title: intro"), then optional "- step"
+    // lines that belong to it. Blank lines just separate tasks.
+    const tasks = [];
+    getV('ramsTasksText').split('\n').forEach(raw => {
+      const line = raw.trim();
+      if (!line) return;
+      const m = line.match(/^[-\u2022*]\s*(.+)$/);
+      if (m && tasks.length) { tasks[tasks.length - 1].steps.push(m[1].trim()); return; }
       const idx = line.indexOf(':');
-      return idx > 0
-        ? { title: line.slice(0, idx).trim(), detail: line.slice(idx + 1).trim() }
-        : { title: line, detail: '' };
+      tasks.push(idx > 0
+        ? { title: line.slice(0, idx).trim(), detail: line.slice(idx + 1).trim(), steps: [] }
+        : { title: line, detail: '', steps: [] });
     });
 
     // Personnel: prefer the structured roster selection; fall back to the
@@ -15601,6 +15831,8 @@ async function confirmRams() {
       tasks,
       personnel,
       // Standard sections — only the ticked items (empty array = section dropped).
+      inductions:  ramsCollectSection('inductions'),
+      dab:         ramsCollectSection('dab'),
       plant:       ramsCollectSection('plant'),
       materials:   ramsCollectSection('materials'),
       ppe:         ramsCollectSection('ppe'),
