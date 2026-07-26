@@ -579,6 +579,81 @@
 
 
 <!-- ═══════════════════════════════════════
+     SITE PACK MODAL
+     Site installation pack generator. Header + fixings are deterministic
+     (pulled from the project + job BOM); the Scope of Work is drafted by AI
+     reading the drawing(s) already uploaded to Site Installation. Everything
+     is editable before the native-jsPDF PDF is drawn (drawSitePackPDF).
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="sitePackModal">
+  <div class="modal" style="width:760px;max-width:97vw;max-height:92vh;overflow-y:auto">
+    <div class="modal-title" style="margin-bottom:4px">&#128203; Generate Site Pack</div>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:18px">
+      Everything below is prefilled from the job — edit anything before generating. The PDF saves straight into Site Installation.
+    </div>
+
+    <!-- HEADER -->
+    <div class="field-label">HEADER</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
+      <div><label style="font-size:11px;color:var(--muted)">Project No</label><input id="spProjectNo" type="text" class="field-input"></div>
+      <div><label style="font-size:11px;color:var(--muted)">Prepared by</label><input id="spPreparedBy" type="text" class="field-input"></div>
+      <div style="grid-column:1 / -1"><label style="font-size:11px;color:var(--muted)">Contract / Project</label><input id="spContract" type="text" class="field-input"></div>
+      <div><label style="font-size:11px;color:var(--muted)">Client</label><input id="spClient" type="text" class="field-input"></div>
+      <div><label style="font-size:11px;color:var(--muted)">Date</label><input id="spDate" type="date" class="field-input"></div>
+      <div><label style="font-size:11px;color:var(--muted)">Finish</label><input id="spFinish" type="text" class="field-input" placeholder="e.g. PPC RAL 9005"></div>
+      <div><label style="font-size:11px;color:var(--muted)">Grade</label><input id="spGrade" type="text" class="field-input"></div>
+      <div style="grid-column:1 / -1"><label style="font-size:11px;color:var(--muted)">Drawing Ref</label><input id="spDrawingRef" type="text" class="field-input"></div>
+    </div>
+
+    <!-- SITE ADDRESS -->
+    <div class="field-label">SITE ADDRESS &amp; CONTACT</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
+      <div style="grid-column:1 / -1"><label style="font-size:11px;color:var(--muted)">Site name</label><input id="spSiteName" type="text" class="field-input"></div>
+      <div style="grid-column:1 / -1"><label style="font-size:11px;color:var(--muted)">Site address (one line per row)</label><textarea id="spSiteAddr" class="field-input" rows="3" style="resize:vertical"></textarea></div>
+      <div><label style="font-size:11px;color:var(--muted)">Site contact</label><input id="spSiteContact" type="text" class="field-input"></div>
+      <div><label style="font-size:11px;color:var(--muted)">Site phone</label><input id="spSitePhone" type="text" class="field-input"></div>
+    </div>
+
+    <!-- DRAWINGS -->
+    <div class="field-label">DRAWINGS TO READ <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted);font-size:11px">— tick the drawing(s) the scope should be read from</span></div>
+    <div id="spDrawingList" style="border:1px solid var(--border);border-radius:8px;background:var(--bg-darker);margin-bottom:16px;max-height:150px;overflow-y:auto"></div>
+
+    <!-- SCOPE OF WORK -->
+    <div class="field-label" style="display:flex;align-items:center;gap:10px">
+      SCOPE OF WORK
+      <button class="btn" id="spGenScopeBtn" onclick="sitePackGenerateScope()" style="padding:5px 12px;font-size:11px;background:rgba(255,107,0,.12);border:1px solid rgba(255,107,0,.35);color:var(--accent)">&#10024; Generate from drawing</button>
+      <span id="spScopeStatus" style="font-weight:400;text-transform:none;letter-spacing:0;font-size:11px;color:var(--muted)"></span>
+    </div>
+    <textarea id="spScopeText" class="field-input" rows="6" style="resize:vertical;font-size:13px;margin-bottom:16px" placeholder="One instruction per line — numbering is added automatically on the PDF. Use 'Generate from drawing', or type manually."></textarea>
+
+    <!-- FASTENERS / ITEMS -->
+    <div class="field-label" style="display:flex;align-items:center;gap:10px">
+      FASTENERS &amp; ITEMS TO TAKE TO SITE
+      <button class="btn" onclick="sitePackAddFixingRow()" style="padding:5px 12px;font-size:11px">&#43; Add item</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:4px;padding:0 2px">
+      <span style="width:70px;font-size:10px;color:var(--subtle);text-transform:uppercase;letter-spacing:.04em">Qty</span>
+      <span style="flex:1;font-size:10px;color:var(--subtle);text-transform:uppercase;letter-spacing:.04em">Description</span>
+      <span style="width:150px;font-size:10px;color:var(--subtle);text-transform:uppercase;letter-spacing:.04em">Grade / Coating</span>
+      <span style="width:38px"></span>
+    </div>
+    <div id="spFixingsBody" style="margin-bottom:16px"></div>
+
+    <!-- NOTES -->
+    <div class="field-label">NOTES <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted);font-size:11px">(optional)</span></div>
+    <textarea id="spNotes" class="field-input" rows="2" style="resize:vertical;margin-bottom:20px"></textarea>
+
+    <button class="btn btn-primary btn-full" id="spConfirmBtn" onclick="confirmSitePack()" style="padding:14px;font-size:15px">
+      Generate &amp; save Site Pack PDF
+    </button>
+    <button class="btn btn-ghost btn-full" onclick="closeSitePackModal()" style="margin-top:10px;padding:12px">
+      Cancel
+    </button>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════
      CONFIRM MODAL
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="confirmModal">
@@ -597,6 +672,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
-<script src="shared.js?v=20260726l"></script>
+<script src="shared.js?v=20260726m"></script>
 </body>
 </html>

@@ -584,6 +584,36 @@ twice — once in QB, once in the DN flow. The failure modes:
   document with a real `<body>` — so a document can preview perfectly and still
   export blank. Test the actual generate flow, not the preview.
 
+### Site Pack generator (projects.html — Site Installation)
+
+Generates a site-installation pack PDF for the crew, replacing the by-hand
+version. Lives on the Site Installation element (`renderSite()`), button
+"📋 Generate Site Pack" next to Upload File (draftsman, open job). All code is
+in `shared.js`; the modal (`sitePackModal`) is in `projects.html`.
+
+Two-engine split, same principle as QB Quote Helper:
+- **Deterministic (no AI):** header (from `currentProject` — project_number,
+  project_name, client, site_* address/contact), Prepared by (draftsman),
+  Grade default, and the **Fasteners table** — pulled straight from the job
+  BOM loose items (`_bomItemsByJob[jobId]` where `item_type` is `fixing` or
+  `consumable`). AI never counts fixings; the BOM is authoritative.
+- **AI (`/api/claude-proxy`, `claude-sonnet-4-6`):** ONLY the Scope of Work.
+  `sitePackGenerateScope()` fetches the ticked drawing(s) from the job's Site
+  Installation files (Graph `/drives/{driveId}/items/{fileId}/content` →
+  base64), attaches them as image/document blocks (same shape as QB staircase
+  recognition), and asks for numbered installation instructions. Reader-only
+  prompt: it describes what/how to install, never invents quantities or
+  dimensions. 429-retry + deterministic template fallback so the user is never
+  blocked. Everything is editable in the modal before generating.
+
+PDF is **native jsPDF** (`drawSitePackPDF` / `renderSitePackPdfBlob`), a direct
+copy of the DN renderer (`drawDnPDF`) — no html2canvas. Same logo aspect-ratio
+handling, `splitTextToSize` wrapping, page-break with table-header redraw, and
+"Page X of Y" footer. On generate, `confirmSitePack()` saves the PDF into the
+`05 - Site Installation` SharePoint subfolder and records it via
+`POST /api/drawing-elements/{jobId}/file` (`fileContext:'site'`), so it appears
+in the Site Installation file list like any uploaded file.
+
 ## Modal → Page mapping
 
 Every `id=…Modal` element in the HTML, by page. Handy when tracing an
@@ -627,6 +657,8 @@ the markup it mutates.
 - `uploadBomModal` — upload a bill-of-materials
 - `addBomItemModal` — manual BOM line entry
 - `generateDnModal` — generate delivery note
+- `siteDnModal` — site delivery note (ship BOM items to site)
+- `sitePackModal` — generate site installation pack (header + AI scope + BOM fixings → native-jsPDF PDF)
 - `confirmModal` — generic confirm dialog
 
 hub.html and steel-database.html have no modals.

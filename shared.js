@@ -13755,6 +13755,547 @@ async function resolveJsPDFCtor() {
   return pick();
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SITE PACK — native jsPDF renderer + generation flow
+// ───────────────────────────────────────────────────────────────────────────
+// Mirrors the delivery-note approach exactly (drawDnPDF): everything is drawn
+// natively with jsPDF (doc.text / doc.addImage / doc.rect) so the live page's
+// dark bama.css is completely irrelevant — no html2canvas, no blank/clipped
+// captures. Two-engine split, same as QB:
+//   • DETERMINISTIC (no AI): header, site address, and the fixings table —
+//     the fixings come straight from the job BOM (item_type fixing/consumable).
+//   • AI (claude-proxy, reads the drawing): ONLY the Scope of Work prose.
+// Everything is editable in the modal before the PDF is drawn.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Native Site Pack renderer. Returns a Blob. `pack` is assembled from the
+// (editable) modal fields; proj/job give fallback context for the meta rows.
+function drawSitePackPDF(jsPDF, pack, proj, job, logoDataUri) {
+  const s = (typeof _pickTplSettings === 'function') ? _pickTplSettings() : null;
+  const g = (s && s.global) || (typeof TEMPLATE_DEFAULTS !== 'undefined' ? TEMPLATE_DEFAULTS.global
+            : { companyName:'BAMA FABRICATION', address:'', phone:'', email:'', vatNumber:'' });
+  const accent = (typeof hexToRgb === 'function' && hexToRgb('#ff6b00')) || [255, 107, 0];
+
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  try {
+    doc.setProperties({
+      title: `Site Pack${pack.contract ? ' — ' + pack.contract : ''}`,
+      subject: `Site Installation Pack${proj && proj.name ? ' — ' + proj.name : ''}`,
+      author: 'BAMA Fabrication', creator: 'BAMA Fabrication ERP'
+    });
+  } catch (e) { /* non-critical */ }
+
+  const pageW = 210, pageH = 297, marginL = 14, marginR = 14, marginB = 14;
+  const usableW = pageW - marginL - marginR;
+  const TEXT = [34, 34, 34], MUTED = [90, 90, 90], RULE = [204, 204, 204], HEADFILL = [245, 245, 245];
+  const setText = c => doc.setTextColor(c[0], c[1], c[2]);
+  const setFill = c => doc.setFillColor(c[0], c[1], c[2]);
+  const setDraw = c => doc.setDrawColor(c[0], c[1], c[2]);
+
+  const fmtDate = pack.dateStr || new Date(pack.createdAt || Date.now())
+    .toLocaleDateString('en-GB', { day:'numeric', month:'long', year:'numeric' });
+
+  // ── Header: logo + company left, title + meta right ──────────
+  let y = marginL;
+  let leftY = y;
+  let logoDrawn = false;
+  if (logoDataUri) {
+    try {
+      const RENDER_W = 55; // mm — width fixed, height from intrinsic ratio
+      const props = doc.getImageProperties(logoDataUri);
+      const ratio = (props && props.width && props.height) ? (props.width / props.height) : (55 / 24);
+      const renderH = RENDER_W / ratio;
+      doc.addImage(logoDataUri, props.fileType || 'PNG', marginL, y, RENDER_W, renderH, undefined, 'FAST');
+      leftY = y + renderH + 4;
+      logoDrawn = true;
+    } catch (e) { logoDrawn = false; }
+  }
+  if (!logoDrawn) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(20); setText(accent);
+    doc.text(g.companyName || 'BAMA FABRICATION', marginL, y + 8); leftY = y + 14;
+  }
+  setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+  const coLines = [];
+  if (g.address) String(g.address).split('\n').forEach(l => coLines.push(l));
+  if (g.phone)  coLines.push('Tel: ' + g.phone);
+  if (g.email)  coLines.push(g.email);
+  coLines.forEach(l => { doc.text(String(l), marginL, leftY); leftY += 3.8; });
+
+  // RIGHT: italic title + meta rows
+  doc.setFont('helvetica', 'bolditalic'); doc.setFontSize(20); setText(accent);
+  doc.text('Site Pack', pageW - marginR, y + 8, { align: 'right' });
+
+  let rightY = y + 16;
+  const metaRows = [
+    { label: 'Project No:',  value: pack.projectNo || (proj && (proj.project_number || proj.id)) },
+    { label: 'Contract:',    value: pack.contract || (proj && (proj.project_name || proj.name)) },
+    { label: 'Client:',      value: pack.client || (proj && proj.client) },
+    { label: 'Drawing Ref:', value: pack.drawingRef },
+    { label: 'Finish:',      value: pack.finish },
+    { label: 'Grade:',       value: pack.grade },
+    { label: 'Prepared by:', value: pack.preparedBy },
+    { label: 'Date:',        value: fmtDate }
+  ].filter(r => r.label && r.value != null && String(r.value).trim() !== '');
+
+  doc.setFontSize(9);
+  const metaValX = pageW - marginR;
+  const metaLabelX = pageW - marginR - 48;
+  for (const r of metaRows) {
+    setText(TEXT); doc.setFont('helvetica', 'bold');
+    doc.text(r.label, metaLabelX, rightY, { align: 'right' });
+    setText(TEXT); doc.setFont('helvetica', 'normal');
+    const vLines = doc.splitTextToSize(String(r.value || ''), 46);
+    vLines.forEach((vl, i) => doc.text(vl, metaValX, rightY + i * 4.2, { align: 'right' }));
+    rightY += 4.4 * Math.max(1, vLines.length);
+  }
+
+  y = Math.max(leftY, rightY) + 2;
+  setDraw(TEXT); doc.setLineWidth(0.5); doc.line(marginL, y, pageW - marginR, y);
+  y += 7;
+
+  // ── Site address / contact panel ──────────────────
+  const site = pack.site || {};
+  const siteLines = (site.lines || []).filter(l => l != null && String(l).trim() !== '');
+  const hasSite = (site.name && String(site.name).trim()) || siteLines.length ||
+                  (site.contactName && String(site.contactName).trim()) ||
+                  (site.contactPhone && String(site.contactPhone).trim());
+  if (hasSite) {
+    const boxX = marginL, boxW = 120, boxPad = 4;
+    const innerW = boxW - boxPad * 2;
+    const boxTop = y;
+    let ty = y + 5;
+    const drawWrapped = (text, lineH) => {
+      doc.splitTextToSize(String(text), innerW).forEach(w => { doc.text(w, boxX + boxPad, ty); ty += lineH; });
+    };
+    setText(MUTED); doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5);
+    doc.text('SITE ADDRESS', boxX + boxPad, ty); ty += 4.8;
+    if (site.name && String(site.name).trim()) {
+      setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
+      drawWrapped(site.name, 4.6);
+    }
+    if (siteLines.length) {
+      setText([68, 68, 68]); doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+      siteLines.forEach(l => drawWrapped(l, 4));
+    }
+    if ((site.contactName && String(site.contactName).trim()) || (site.contactPhone && String(site.contactPhone).trim())) {
+      ty += 1.5;
+      setText(MUTED); doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5);
+      doc.text('SITE CONTACT', boxX + boxPad, ty); ty += 4.2;
+      if (site.contactName && String(site.contactName).trim()) {
+        setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
+        drawWrapped(site.contactName, 4.2);
+      }
+      if (site.contactPhone && String(site.contactPhone).trim()) {
+        setText([68, 68, 68]); doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+        drawWrapped(site.contactPhone, 4);
+      }
+    }
+    setDraw(RULE); doc.setLineWidth(0.3);
+    doc.roundedRect(boxX, boxTop, boxW, (ty - boxTop) + 2, 1.5, 1.5);
+    y = ty + 8;
+  }
+
+  // ── Scope of Work ──────────────────
+  const scope = (pack.scopeLines || []).map(l => String(l == null ? '' : l).trim()).filter(Boolean);
+  if (scope.length) {
+    if (y > pageH - marginB - 24) { doc.addPage(); y = marginL + 6; }
+    setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
+    doc.text('SCOPE OF WORK', marginL, y); y += 2;
+    setDraw(accent); doc.setLineWidth(0.5); doc.line(marginL, y, pageW - marginR, y); y += 6;
+
+    const numX = marginL, txtX = marginL + 8, txtW = usableW - 8;
+    doc.setFontSize(9.5);
+    scope.forEach((line, idx) => {
+      // Strip any leading "1." / "1)" the AI or user may have typed — we number.
+      const clean = line.replace(/^\s*\d+[.)]\s*/, '');
+      const wrapped = doc.splitTextToSize(clean, txtW);
+      const rowH = wrapped.length * 4.6 + 2.5;
+      if (y + rowH > pageH - marginB - 10) { doc.addPage(); y = marginL + 6; }
+      setText(accent); doc.setFont('helvetica', 'bold');
+      doc.text(String(idx + 1) + '.', numX, y + 3.5);
+      setText(TEXT); doc.setFont('helvetica', 'normal');
+      wrapped.forEach((w, i) => doc.text(w, txtX, y + 3.5 + i * 4.6));
+      y += rowH;
+    });
+    y += 4;
+  }
+
+  // ── Fasteners & Items to Take to Site ──────────────────
+  const fixings = (pack.fixings || []).filter(f => (f.description && String(f.description).trim()) || f.qty);
+  if (fixings.length) {
+    if (y > pageH - marginB - 30) { doc.addPage(); y = marginL + 6; }
+    setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
+    doc.text('FASTENERS & ITEMS TO TAKE TO SITE', marginL, y); y += 2;
+    setDraw(accent); doc.setLineWidth(0.5); doc.line(marginL, y, pageW - marginR, y); y += 5;
+
+    const cols = [
+      { key:'qty',  title:'Qty',            w: 18, align:'left'  },
+      { key:'desc', title:'Description',    w: usableW - 18 - 46, align:'left' },
+      { key:'coat', title:'Grade / Coating',w: 46, align:'left' }
+    ];
+    let cx = marginL; cols.forEach(c => { c.x = cx; cx += c.w; });
+    const cellIn = (c, txt, ypos) => {
+      const str = String(txt == null ? '' : txt);
+      if (c.align === 'right') doc.text(str, c.x + c.w - 2, ypos, { align:'right' });
+      else if (c.align === 'center') doc.text(str, c.x + c.w / 2, ypos, { align:'center' });
+      else doc.text(str, c.x + 2, ypos);
+    };
+    const drawHead = () => {
+      setFill(HEADFILL); doc.rect(marginL, y, usableW, 7, 'F');
+      setDraw(RULE); doc.setLineWidth(0.2); doc.rect(marginL, y, usableW, 7);
+      setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
+      cols.forEach(c => cellIn(c, c.title, y + 4.7));
+      y += 7;
+    };
+    drawHead();
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+    let tQty = 0;
+    for (const f of fixings) {
+      const q = Number(f.qty) || 0; tQty += q;
+      const descLines = doc.splitTextToSize(String(f.description || ''), cols[1].w - 3);
+      const coatLines = doc.splitTextToSize(String(f.coating || ''), cols[2].w - 3);
+      const nLines = Math.max(1, descLines.length, coatLines.length);
+      const rowH = nLines * 4.2 + 2;
+      if (y + rowH > pageH - marginB - 16) { doc.addPage(); y = marginL + 4; drawHead(); doc.setFont('helvetica','normal'); doc.setFontSize(9); }
+      const baseY = y + 4.5;
+      setText(TEXT);
+      cellIn(cols[0], q || '', baseY);
+      descLines.forEach((l, i) => cellIn(cols[1], l, baseY + i * 4.2));
+      coatLines.forEach((l, i) => cellIn(cols[2], l, baseY + i * 4.2));
+      setDraw(RULE); doc.setLineWidth(0.15); doc.line(marginL, y + rowH, pageW - marginR, y + rowH);
+      y += rowH;
+    }
+    const totH = 7;
+    if (y + totH > pageH - marginB - 10) { doc.addPage(); y = marginL + 4; }
+    setFill(HEADFILL); doc.rect(marginL, y, usableW, totH, 'F');
+    setDraw(RULE); doc.setLineWidth(0.2); doc.rect(marginL, y, usableW, totH);
+    setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+    cellIn(cols[0], tQty, y + 4.7);
+    cellIn(cols[1], 'TOTAL ITEMS', y + 4.7);
+    y += totH + 5;
+  }
+
+  // ── Notes (optional free text) ──────────────────
+  if (pack.notes && String(pack.notes).trim()) {
+    if (y > pageH - marginB - 16) { doc.addPage(); y = marginL + 6; }
+    setText(MUTED); doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
+    doc.text('NOTES', marginL, y); y += 4;
+    setText([68,68,68]); doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+    doc.splitTextToSize(String(pack.notes), usableW).forEach(l => { doc.text(l, marginL, y); y += 4; });
+  }
+
+  // ── Footer: "Page X of Y" on every page ──────────
+  const pageCount = doc.internal.getNumberOfPages();
+  for (let p = 1; p <= pageCount; p++) {
+    doc.setPage(p);
+    setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
+    doc.text(`Page ${p} of ${pageCount}`, pageW - marginR, pageH - 8, { align: 'right' });
+    doc.text('BAMA Fabrication Ltd — Site Installation Pack', marginL, pageH - 8);
+  }
+
+  return doc.output('blob');
+}
+
+// Blob wrapper — resolves the jsPDF ctor + logo cache exactly like the DN flow.
+async function renderSitePackPdfBlob(pack, proj, job) {
+  const JsPDFCtor = await resolveJsPDFCtor();
+  if (!JsPDFCtor) throw new Error('PDF library failed to load');
+  const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
+  const blob = drawSitePackPDF(JsPDFCtor, pack, proj, job, logo);
+  console.log('[Site Pack PDF] blob size:', blob.size, 'bytes (native jsPDF)');
+  return blob;
+}
+
+// Map a filename to a Claude content-block media type. PDFs go as documents,
+// raster images as images; unknown extensions default to PDF (the common case).
+function _sitePackMediaType(name) {
+  const ext = ((String(name || '').match(/\.([a-z0-9]+)$/i) || [])[1] || '').toLowerCase();
+  if (ext === 'png')  return { media: 'image/png',  isImage: true };
+  if (ext === 'jpg' || ext === 'jpeg') return { media: 'image/jpeg', isImage: true };
+  if (ext === 'webp') return { media: 'image/webp', isImage: true };
+  if (ext === 'gif')  return { media: 'image/gif',  isImage: true };
+  return { media: 'application/pdf', isImage: false };
+}
+
+// Pull a SharePoint drive item down as raw base64 (no data-URI prefix) so it
+// can be attached to a claude-proxy call. Same Graph path the logo loader uses.
+async function _sitePackFetchBase64(fileId, driveId) {
+  const token = await getToken();
+  const res = await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${driveId || BAMA_DRIVE_ID}/items/${fileId}/content`,
+    { headers: { 'Authorization': `Bearer ${token}` } }
+  );
+  if (!res.ok) throw new Error('drawing fetch failed (' + res.status + ')');
+  const blob = await res.blob();
+  const dataUri = await new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(new Error('file read failed'));
+    r.readAsDataURL(blob);
+  });
+  return String(dataUri).split(',')[1] || '';
+}
+
+// Read the current fixings-table rows out of the modal.
+function _sitePackCollectFixings() {
+  return [...document.querySelectorAll('#spFixingsBody .sp-fix-row')].map(r => ({
+    qty:         (r.querySelector('.sp-fix-qty')?.value  || '').trim(),
+    description: (r.querySelector('.sp-fix-desc')?.value || '').trim(),
+    coating:     (r.querySelector('.sp-fix-coat')?.value || '').trim()
+  })).filter(f => f.description || f.qty);
+}
+
+// Append one editable fixings row (blank if no args).
+function sitePackAddFixingRow(qty, desc, coat) {
+  const body = document.getElementById('spFixingsBody');
+  if (!body) return;
+  const div = document.createElement('div');
+  div.className = 'sp-fix-row';
+  div.style.cssText = 'display:flex;gap:8px;margin-bottom:6px';
+  div.innerHTML =
+    `<input class="sp-fix-qty field-input" type="number" min="0" step="1" value="${qty != null ? escapeHtml(String(qty)) : ''}" placeholder="Qty" style="width:70px;text-align:right">` +
+    `<input class="sp-fix-desc field-input" type="text" value="${desc != null ? escapeHtml(desc) : ''}" placeholder="Description" style="flex:1">` +
+    `<input class="sp-fix-coat field-input" type="text" value="${coat != null ? escapeHtml(coat) : ''}" placeholder="Grade / Coating" style="width:150px">` +
+    `<button class="btn" onclick="this.closest('.sp-fix-row').remove()" style="padding:4px 10px;background:rgba(255,68,68,.1);border:1px solid rgba(255,68,68,.3);color:var(--red)">&#128465;</button>`;
+  body.appendChild(div);
+}
+
+// Open the Site Pack modal, prefilling everything the job already holds.
+// Header + site address + fixings are deterministic; the Scope textarea is
+// left for the "Generate from drawing" AI step (or manual typing).
+function openSitePackModal() {
+  const proj = currentProject, job = currentJob;
+  if (!job?.id) { toast('No job selected.', 'error'); return; }
+  const jobId = parseInt(job.id);
+
+  const setV = (id, v) => { const el = document.getElementById(id); if (el) el.value = (v == null ? '' : v); };
+
+  // — Header —
+  setV('spProjectNo',  proj?.project_number || proj?.id || '');
+  setV('spContract',   proj?.project_name || proj?.name || '');
+  setV('spClient',     proj?.client || '');
+  setV('spPreparedBy', _currentDraftsmanName || '');
+  setV('spDate',       new Date().toISOString().slice(0, 10));
+  setV('spGrade',      'Sections S355 / Plates & fittings S275');   // BAMA default — editable
+  setV('spScopeText',  '');
+  setV('spNotes',      '');
+  const spStatus = document.getElementById('spScopeStatus'); if (spStatus) spStatus.textContent = '';
+
+  // — Site address (mirror the SDN site-vs-client resolution) —
+  const useSite = proj && proj.site_same_as_client === false &&
+    (proj.site_address_line1 || proj.site_postcode);
+  const a = useSite
+    ? { l1: proj.site_address_line1, l2: proj.site_address_line2, city: proj.site_city,
+        county: proj.site_county, pc: proj.site_postcode,
+        contact: proj.site_contact_name, phone: proj.site_contact_phone }
+    : { l1: proj?.client_address_line1, l2: proj?.client_address_line2, city: proj?.client_city,
+        county: proj?.client_county, pc: proj?.client_postcode,
+        contact: proj?.client_contact_name, phone: proj?.client_contact_phone };
+  const addrLines = [a.l1, a.l2, [a.city, a.county].filter(Boolean).join(', '), a.pc].filter(Boolean);
+  setV('spSiteName',   proj?.name || proj?.project_name || '');
+  setV('spSiteAddr',   addrLines.join('\n'));
+  setV('spSiteContact', a.contact);
+  setV('spSitePhone',   a.phone);
+
+  // — Drawings picker (from the Site Installation files on this job) —
+  const files = (job.site && job.site.files) || [];
+  const drawWrap = document.getElementById('spDrawingList');
+  if (drawWrap) {
+    if (files.length) {
+      drawWrap.innerHTML = files.map(f => {
+        const nm = f.name || f.fileName || 'drawing';
+        return `<label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--border);cursor:pointer">
+          <input type="checkbox" class="sp-draw-check" checked
+                 data-fileid="${escapeHtml(f.fileId || '')}" data-driveid="${escapeHtml(f.driveId || '')}"
+                 data-fname="${escapeHtml(f.fileName || nm)}" style="width:14px;height:14px;accent-color:var(--accent)">
+          <span style="font-size:12px;color:var(--text)">${escapeHtml(nm)}</span>
+        </label>`;
+      }).join('');
+    } else {
+      drawWrap.innerHTML = `<div style="color:var(--subtle);font-size:12px;padding:8px 0">No drawings uploaded to Site Installation yet — upload one first, or type the scope manually below.</div>`;
+    }
+  }
+  // Drawing Ref default = the site files' display names, joined.
+  setV('spDrawingRef', files.map(f => f.name || f.fileName).filter(Boolean).join(', '));
+
+  // — Fixings (BOM loose items: item_type fixing/consumable) —
+  const body = document.getElementById('spFixingsBody');
+  if (body) {
+    body.innerHTML = '';
+    const bom = _bomItemsByJob[jobId] || [];
+    const loose = bom.filter(i => i.item_type === 'fixing' || i.item_type === 'consumable');
+    if (loose.length) {
+      loose.forEach(i => sitePackAddFixingRow(Number(i.quantity) || '', i.description || '', i.finish_name || ''));
+    } else {
+      sitePackAddFixingRow('', '', '');   // one blank starter row
+    }
+    // Finish default = most common finish among fabricated BOM items.
+    const fabFin = bom.filter(i => !(i.item_type === 'fixing' || i.item_type === 'consumable') && i.finish_name)
+                      .map(i => i.finish_name);
+    const finCount = {};
+    fabFin.forEach(f => { finCount[f] = (finCount[f] || 0) + 1; });
+    const topFin = Object.keys(finCount).sort((x, y) => finCount[y] - finCount[x])[0] || '';
+    setV('spFinish', topFin);
+  }
+
+  document.getElementById('sitePackModal').classList.add('active');
+}
+
+function closeSitePackModal() {
+  document.getElementById('sitePackModal').classList.remove('active');
+}
+
+// AI step — read the selected drawing(s) and draft the numbered Scope of Work.
+// Two-engine: AI reads the drawing, never computes quantities. On any failure
+// it drops in a deterministic template so the user is never blocked.
+async function sitePackGenerateScope() {
+  const checks = [...document.querySelectorAll('.sp-draw-check:checked')];
+  const btn = document.getElementById('spGenScopeBtn');
+  const sts = document.getElementById('spScopeStatus');
+  const ta  = document.getElementById('spScopeText');
+  if (!ta) return;
+
+  const contract = (document.getElementById('spContract')?.value    || '').trim();
+  const finish   = (document.getElementById('spFinish')?.value      || '').trim();
+  const grade    = (document.getElementById('spGrade')?.value       || '').trim();
+  const drawRef  = (document.getElementById('spDrawingRef')?.value  || '').trim();
+  const fixText  = _sitePackCollectFixings().map(f => `${f.qty} x ${f.description} (${f.coating})`).join('\n') || '(none listed)';
+
+  if (!checks.length) {
+    if (sts) { sts.style.color = 'var(--red)'; sts.textContent = 'Tick at least one drawing to read (or type the scope manually).'; }
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.style.opacity = '.5'; }
+  if (sts) { sts.style.color = 'var(--muted)'; sts.textContent = 'Reading drawing…'; }
+
+  // Build the drawing content blocks.
+  const blocks = [];
+  try {
+    for (const c of checks) {
+      const b64 = await _sitePackFetchBase64(c.dataset.fileid, c.dataset.driveid);
+      const mt = _sitePackMediaType(c.dataset.fname);
+      blocks.push(mt.isImage
+        ? { type: 'image',    source: { type: 'base64', media_type: mt.media, data: b64 } }
+        : { type: 'document', source: { type: 'base64', media_type: mt.media, data: b64 }, title: c.dataset.fname });
+    }
+  } catch (e) {
+    if (sts) { sts.style.color = 'var(--red)'; sts.textContent = 'Could not load drawing: ' + e.message; }
+    if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+    return;
+  }
+
+  const systemPrompt = `You are a site-installation planner for BAMA Fabrication, a structural steel fabricator in Peterborough. Read the supplied drawing(s) and write a clear, numbered SCOPE OF WORK for the installation crew on site.\n\nYou are a READER, not a calculator: describe WHAT is to be installed and HOW it is fixed, based on what the drawing shows. Do NOT invent or calculate quantities, dimensions, or member counts that are not shown — the fixings list supplied by the user is authoritative for quantities.`;
+
+  const userPrompt = `Project / contract: ${contract || '(unspecified)'}\nFinish: ${finish || '(unspecified)'}    Grade: ${grade || '(unspecified)'}\nDrawing reference: ${drawRef || '(see attached)'}\n\nItems being taken to site (from the job BOM — authoritative for quantities):\n${fixText}\n\nWrite the SCOPE OF WORK as numbered installation instructions for the crew.\nRULES:\n- Output ONLY numbered lines ("1.", "2.", ...), one instruction each. No heading, no preamble, no sign-off.\n- Say WHAT to install and HOW to fix it, referencing the drawing by its reference where relevant.\n- Use the fixings above to describe the fixing method (plugs + screws, bolts, splice locks, etc.).\n- Call out any splice / joint / lock / setting-out requirements the drawing shows.\n- Do NOT restate the fixings table as a list, and do NOT invent quantities or dimensions not shown.\n- Strictly UK English, concise, imperative ("Install...", "Fix...", "Provide...").`;
+
+  try {
+    const requestBody = {
+      model: 'claude-sonnet-4-6', max_tokens: 1200, system: systemPrompt,
+      messages: [{ role: 'user', content: [ ...blocks, { type: 'text', text: userPrompt } ] }]
+    };
+    const doFetch = () => fetch(API_BASE + '/api/claude-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${sessionStorage.getItem('bama_token')}` },
+      body: JSON.stringify(requestBody)
+    });
+    let response = await doFetch();
+    let data = await response.json();
+    if (response.status === 429) {
+      if (sts) sts.textContent = 'Rate limit — waiting 30s before retry…';
+      await new Promise(r => setTimeout(r, 30000));
+      response = await doFetch(); data = await response.json();
+      if (response.status === 429) throw new Error('still rate limited — wait a minute and retry');
+    }
+    if (data.error) throw new Error(data.error.message);
+    const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+    if (!text) throw new Error('empty response');
+    ta.value = text;
+    if (sts) { sts.style.color = '#3ecf8e'; sts.textContent = 'Scope drafted from the drawing — edit as needed.'; }
+  } catch (e) {
+    ta.value = `1. Install ${contract || 'the fabricated items'} as per drawing ${drawRef || '(see site pack)'}. Fix all items to the substrate using the supplied fixings listed below.\n2. Provide splice locks / connections at all joints as shown on the drawing.\n3. Ensure all bolted connections are fully tightened with nut and washer where applicable.`;
+    if (sts) { sts.style.color = 'var(--muted)'; sts.textContent = 'AI unavailable — inserted a standard template (' + e.message + '). Edit as needed.'; }
+  }
+  if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+}
+
+// Build the PDF from the (editable) modal fields, save it into the Site
+// Installation SharePoint folder, and record it as a site file so it appears
+// in the file list. Mirrors the SDN save flow.
+async function confirmSitePack() {
+  const proj = currentProject, job = currentJob;
+  const btn = document.getElementById('spConfirmBtn');
+  if (!job?.spFolderId) { toast('Job has no SharePoint folder — cannot save.', 'error'); return; }
+  if (btn) { btn.disabled = true; btn.style.opacity = '.5'; }
+
+  try {
+    await loadLogoDataUri();
+    const getV = id => (document.getElementById(id)?.value || '').trim();
+    const dateRaw = getV('spDate');
+    const dateStr = dateRaw
+      ? new Date(dateRaw + 'T12:00:00').toLocaleDateString('en-GB', { day:'numeric', month:'long', year:'numeric' })
+      : '';
+
+    const pack = {
+      createdAt:  new Date().toISOString(),
+      dateStr,
+      projectNo:  getV('spProjectNo'),
+      contract:   getV('spContract'),
+      client:     getV('spClient'),
+      drawingRef: getV('spDrawingRef'),
+      finish:     getV('spFinish'),
+      grade:      getV('spGrade'),
+      preparedBy: getV('spPreparedBy'),
+      site: {
+        name:         getV('spSiteName'),
+        lines:        getV('spSiteAddr').split('\n').map(l => l.trim()).filter(Boolean),
+        contactName:  getV('spSiteContact'),
+        contactPhone: getV('spSitePhone')
+      },
+      scopeLines: getV('spScopeText').split('\n').map(l => l.trim()).filter(Boolean),
+      fixings:    _sitePackCollectFixings(),
+      notes:      getV('spNotes')
+    };
+
+    if (!pack.scopeLines.length && !pack.fixings.length) {
+      toast('Add a scope of work or at least one item before generating.', 'error');
+      if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+      return;
+    }
+
+    const blob = await renderSitePackPdfBlob(pack, proj || {}, job || {});
+
+    const stamp = new Date().toISOString().slice(0, 10);
+    const baseName = `Site Pack - ${(pack.projectNo || proj?.id || 'project')} - ${stamp}`.replace(/[\/\\:*?"<>|]/g, '-');
+    const fileName = baseName + '.pdf';
+
+    const driveId = job.spDriveId || BAMA_DRIVE_ID;
+    const siteFolder = await getOrCreateSubfolder(job.spFolderId, ELEMENT_FOLDERS.site, driveId);
+    const arrayBuffer = await blob.arrayBuffer();
+    const uploaded = await uploadFileToFolder(siteFolder.id, fileName, arrayBuffer, 'application/pdf', driveId);
+
+    const jobIdInt = parseInt(job.id);
+    if (!job.site) job.site = { files: [], notes: [] };
+    const saved = await api.post(`/api/drawing-elements/${jobIdInt}/file`, {
+      fileContext: 'site', name: baseName, fileName,
+      fileId: uploaded.id, driveId: uploaded.parentReference?.driveId || driveId,
+      webUrl: uploaded.webUrl, uploadedAt: new Date().toISOString(),
+      uploadedBy: _currentDraftsmanName || null
+    });
+    job.site.files.push({ ...saved });
+
+    closeSitePackModal();
+    toast('Site Pack generated & saved to Site Installation.', 'success');
+    renderSite();
+    if (uploaded.webUrl) window.open(uploaded.webUrl, '_blank');
+
+  } catch (e) {
+    toast('Site Pack failed: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+  }
+}
+
+
 function buildDnHtmlV2(dn, proj, job) {
   const s = (typeof _pickTplSettings === 'function') ? _pickTplSettings() : null;
   const g = (s && s.global)         || (typeof TEMPLATE_DEFAULTS !== 'undefined' ? TEMPLATE_DEFAULTS.global       : { companyName: 'BAMA FABRICATION', address: '', phone: '', email: '', vatNumber: '' });
@@ -14958,6 +15499,7 @@ function renderSite() {
     html += '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">';
     if (isDraftsman) {
       html += `<button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="openUploadFileModal('site')">&#43; Upload File</button>`;
+      html += `<button class="btn" style="padding:8px 16px;font-size:12px;background:rgba(255,107,0,.1);border:1px solid rgba(255,107,0,.3);color:var(--accent)" onclick="openSitePackModal()">&#128203; Generate Site Pack</button>`;
     }
     if (isDraftsman) {
       // Count items eligible for an SDN so the button can show a count
