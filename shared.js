@@ -38079,6 +38079,17 @@ function _invImportMatchClient(name) {
   return best;
 }
 
+// Normalise refs like "INV0012 rev02", "inv 12", "Invoice #: INV0028" → INV0012 / INV0028.
+// Falls back to scanning the filename if the parsed ref is unusable.
+function _invImportNormaliseRef(raw, fileName) {
+  const scan = (s) => {
+    const m = String(s || '').toUpperCase().match(/(INV|PRO|CN)\s*[-_#:]*\s*0*(\d{1,6})/);
+    if (!m) return null;
+    return m[1] + String(parseInt(m[2], 10)).padStart(4, '0');
+  };
+  return scan(raw) || scan(fileName) || String(raw || '').toUpperCase().trim();
+}
+
 function _invImportExistingRefs() {
   const set = new Set((_invInvoiceList || []).map(i => String(i.ref || '').toUpperCase()));
   return set;
@@ -38099,6 +38110,7 @@ async function invImportFilesPicked(files) {
     prog.textContent = `⏳ Reading ${file.name} (${i + 1}/${list.length})…`;
     try {
       const parsed = await _invImportParsePdf(file);
+      parsed.ref = _invImportNormaliseRef(parsed.ref, file.name);
       const client = _invImportMatchClient(parsed.customer);
       const treatment = parsed.reverse_charge ? 'reverse_charge'
                       : (Number(parsed.vat || 0) > 0 ? 'standard' : 'zero');
@@ -38155,7 +38167,7 @@ async function _invImportParsePdf(file) {
   });
 
   const call = async () => {
-    const response = await fetch('/api/claude-proxy', {
+    const response = await fetch(API_BASE + '/api/claude-proxy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${await getToken()}` },
       body: JSON.stringify({
@@ -38169,19 +38181,25 @@ async function _invImportParsePdf(file) {
 
 Return ONLY a JSON object, no markdown, no explanation:
 {
-  "ref": "invoice reference e.g. INV0123 (or CN/PRO prefix if a credit note / pro forma)",
+  "ref": "invoice reference, normalised — e.g. 'Invoice #: INV0012 rev02' -> 'INV0012' (strip rev/revision suffixes and spaces; keep CN/PRO prefix if a credit note / pro forma)",
   "invoice_date": "YYYY-MM-DD or null",
   "due_date": "YYYY-MM-DD or null",
-  "customer": "the BILL TO / customer company name (NOT BAMA Fabrication)",
+  "customer": "the BILL TO / customer company name only, first line of the Bill To block (NOT Bama Fabrication — that is the sender)",
   "description": "one short line summarising the works/project billed, max 120 chars, or null",
-  "net": number or null,
-  "vat": number or null (the VAT actually charged; 0 if reverse charge or none),
-  "retention": number or null (retention deducted, as a positive number),
+  "net": number or null (the SUBTOTAL before VAT),
+  "vat": number or null (VAT actually charged and ADDED to the total; 0 if reverse charge or none),
+  "retention": number or null (retention deducted, as a positive number; 0 if none),
   "gross": number or null (the TOTAL DUE / amount payable),
-  "reverse_charge": true/false (true if domestic reverse charge / customer-to-account-for-VAT wording appears)
+  "reverse_charge": true/false
 }
 
-All amounts as plain numbers. Dates as YYYY-MM-DD.` }
+Rules:
+- Dates may appear as DD/MM/YYYY or DD.MM.YYYY — always UK day-first; convert to YYYY-MM-DD.
+- If the due date is text like "On receipt" or "As Soon as Possible", return the invoice_date as due_date.
+- Amounts may use comma decimals and space thousands (e.g. "£3 100,00" = 3100.00, "20.443.27" = 20443.27). Return plain numbers.
+- reverse_charge is true if wording like "REVERSE CHARGE SUPPLY", "customer to pay VAT to HMRC", "customer to account for VAT", or "VAT Act 1994 Section 55A" appears. In that case vat = 0 (the ~20% figure shown is informational, not charged).
+- If a "VAT 20%" line is added into the TOTAL DUE, reverse_charge is false and vat is that amount.
+- Ignore "ALREADY PAID" lines for amounts — net is the stated SUBTOTAL, gross is the stated TOTAL DUE.` }
           ]
         }]
       })
