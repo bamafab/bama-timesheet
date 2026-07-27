@@ -13373,6 +13373,11 @@ function openJobSheetModal() {
   // (fire-and-forget — free typing works regardless).
   _jsLoadClientContacts();
 
+  // Quotation figures, per-job tonnage and the VO/revision ledger
+  // (fire-and-forget — each renders its section when it lands).
+  _jsLoadExtras();
+  _jsLoadRevisions();
+
   const editable = isDraftsman;
   document.querySelectorAll('#jobSheetModal .js-field').forEach(el => { el.disabled = !editable; });
   const saveBtn = document.getElementById('jsSaveBtn');
@@ -13403,6 +13408,18 @@ function jobSheetPrefill(mode) {
                    county: proj.client_county, pc: proj.client_postcode,
                    contact: proj.client_contact_name, phone: proj.client_contact_phone,
                    email: proj.client_contact_email };
+  // 'quote' mode drops the QB quotation's single-line site address into
+  // line 1 — the quotation usually has the site address tucked away, so
+  // this surfaces it with one click. Other fields keep their values.
+  if (mode === 'quote') {
+    const qa = String(_jsExtras?.quote?.site_address || _jsExtras?.quote?.json_site_address || '').trim();
+    if (!qa) { toast('No site address on the quotation.', 'error'); return; }
+    const parts = qa.split(',').map(s => s.trim()).filter(Boolean);
+    _jsSetVal('jsAddr1',    parts[0] || qa);
+    _jsSetVal('jsAddr2',    parts.length > 2 ? parts.slice(1, -1).join(', ') : (parts[1] || ''));
+    _jsSetVal('jsPostcode', parts.length > 1 ? parts[parts.length - 1] : '');
+    return;
+  }
   let a;
   if (mode === 'site')        a = site;
   else if (mode === 'client') a = client;
@@ -13495,6 +13512,233 @@ async function _jsSyncContactsToClientDb(body) {
   if (added) _jsPopulateContactSelects();
 }
 
+// ── Quotation figures + per-job tonnage (read-only, from QB & assemblies) ──
+let _jsExtras = null;             // { quote, jobs } for the current project
+let _jsExtrasProjId = null;
+
+async function _jsLoadExtras() {
+  const pid = currentProject?.dbId ? parseInt(currentProject.dbId) : null;
+  if (!pid) { _jsExtras = null; _jsRenderExtras(); return; }
+  if (_jsExtrasProjId !== pid) {
+    _jsExtras = null; _jsExtrasProjId = pid;
+    try { _jsExtras = await api.get(`/api/project-sheet/${pid}/extras`); }
+    catch (e) { _jsExtras = null; }
+  }
+  _jsRenderExtras();
+}
+
+const _jsNum = v => { const n = parseFloat(v); return isFinite(n) ? n : 0; };
+const _jsFmtT = kg => (kg >= 1000 ? (kg / 1000).toFixed(2) + ' t' : Math.round(kg) + ' kg');
+
+function _jsRenderExtras() {
+  const q = _jsExtras?.quote || null;
+  const qEl = document.getElementById('jsQuoteStrip');
+  if (qEl) {
+    if (q) {
+      const chips = [
+        { l: 'Quote', v: `${q.reference}${q.revision ? ' rev ' + q.revision : ''}` },
+        { l: 'Fab hours', v: _jsNum(q.fab_hours) ? _jsNum(q.fab_hours) + ' hrs' : null },
+        { l: 'Design hours', v: _jsNum(q.design_hours) ? _jsNum(q.design_hours) + ' hrs' : null },
+        { l: 'Site crew', v: _jsNum(q.inst_operatives)
+            ? `${_jsNum(q.inst_operatives)} operative${_jsNum(q.inst_operatives) !== 1 ? 's' : ''}${_jsNum(q.inst_days) ? ' \u00d7 ' + _jsNum(q.inst_days) + ' day' + (_jsNum(q.inst_days) !== 1 ? 's' : '') : ''}` : null },
+        { l: 'Quoted tonnage', v: _jsNum(q.total_kg) ? _jsFmtT(_jsNum(q.total_kg)) : null }
+      ].filter(c => c.v);
+      qEl.innerHTML = chips.map(c =>
+        `<div style="background:var(--bg-darker);border:1px solid var(--border);border-radius:8px;padding:8px 12px">
+           <div style="font-size:9px;color:var(--subtle);text-transform:uppercase;letter-spacing:.05em">${c.l}</div>
+           <div style="font-size:13px;color:var(--text);font-weight:600;margin-top:2px">${escapeHtml(String(c.v))}</div>
+         </div>`).join('');
+    } else {
+      qEl.innerHTML = `<div style="color:var(--subtle);font-size:12px">No QB quotation linked to this project.</div>`;
+    }
+  }
+  const quoteBtn = document.getElementById('jsQuoteAddrBtn');
+  if (quoteBtn) quoteBtn.style.display =
+    (q && String(q.site_address || q.json_site_address || '').trim()) ? '' : 'none';
+  const seedBtn = document.getElementById('jsSeedBaseBtn');
+  if (seedBtn) seedBtn.style.display =
+    (q && isDraftsman && !(_jsRevisions || []).some(r => /^base/i.test(r.label))) ? '' : 'none';
+
+  // Per-job fabrication stats (members + tonnage)
+  const jEl = document.getElementById('jsJobStats');
+  if (jEl) {
+    const jobs = _jsExtras?.jobs || [];
+    if (!jobs.length) {
+      jEl.innerHTML = `<div style="color:var(--subtle);font-size:12px">No jobs yet.</div>`;
+    } else {
+      let members = 0, kg = 0;
+      const rows = jobs.map(j => {
+        members += _jsNum(j.members); kg += _jsNum(j.weight_kg);
+        return `<tr>
+          <td style="padding:5px 8px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text)">${escapeHtml(j.job_name || ('Job ' + j.job_id))}</td>
+          <td style="padding:5px 8px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text);text-align:right">${_jsNum(j.assembly_marks)}</td>
+          <td style="padding:5px 8px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text);text-align:right">${_jsNum(j.members)}</td>
+          <td style="padding:5px 8px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text);text-align:right;font-family:var(--font-mono)">${_jsFmtT(_jsNum(j.weight_kg))}</td>
+        </tr>`;
+      }).join('');
+      jEl.innerHTML = `<table style="width:100%;border-collapse:collapse">
+        <thead><tr>
+          <th style="padding:5px 8px;text-align:left;font-size:10px;color:var(--subtle);text-transform:uppercase;letter-spacing:.04em">Job</th>
+          <th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--subtle);text-transform:uppercase;letter-spacing:.04em">Marks</th>
+          <th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--subtle);text-transform:uppercase;letter-spacing:.04em">Members</th>
+          <th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--subtle);text-transform:uppercase;letter-spacing:.04em">Weight</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr>
+          <td style="padding:6px 8px;font-size:12px;font-weight:700;color:var(--text)">Total</td><td></td>
+          <td style="padding:6px 8px;font-size:12px;font-weight:700;color:var(--text);text-align:right">${members}</td>
+          <td style="padding:6px 8px;font-size:12px;font-weight:700;color:var(--accent);text-align:right;font-family:var(--font-mono)">${_jsFmtT(kg)}</td>
+        </tr></tfoot>
+      </table>`;
+    }
+  }
+
+  // Populate the revision "job" dropdown from the same stats list
+  const jobSel = document.getElementById('jsRevJob');
+  if (jobSel) {
+    const jobs = _jsExtras?.jobs || [];
+    jobSel.innerHTML = `<option value="">Whole project</option>` +
+      jobs.map(j => `<option value="${j.job_id}">${escapeHtml(j.job_name || ('Job ' + j.job_id))}</option>`).join('');
+  }
+}
+
+// ── Revision / VO ledger — what hours were put to which job ──
+let _jsRevisions = null;
+let _jsRevisionsProjId = null;
+
+async function _jsLoadRevisions(force) {
+  const pid = currentProject?.dbId ? parseInt(currentProject.dbId) : null;
+  if (!pid) { _jsRevisions = []; _jsRenderRevisions(); return; }
+  if (force || _jsRevisionsProjId !== pid) {
+    _jsRevisions = []; _jsRevisionsProjId = pid;
+    try {
+      const rows = await api.get(`/api/project-sheet/${pid}/revisions`);
+      _jsRevisions = Array.isArray(rows) ? rows : [];
+    } catch (e) { _jsRevisions = []; }
+  }
+  _jsRenderRevisions();
+}
+
+function _jsRenderRevisions() {
+  const el = document.getElementById('jsRevList');
+  if (!el) return;
+  const revs = _jsRevisions || [];
+  if (!revs.length) {
+    el.innerHTML = `<div style="color:var(--subtle);font-size:12px;padding:6px 0">No revisions yet \u2014 add the base quote hours, then a row per VO.</div>`;
+  } else {
+    let tf = 0, td = 0;
+    const rows = revs.map(r => {
+      tf += _jsNum(r.fab_hours); td += _jsNum(r.design_hours);
+      const site = _jsNum(r.site_operatives)
+        ? `${_jsNum(r.site_operatives)}\u00d7${_jsNum(r.site_days) || '?'}d` : '\u2014';
+      const del = isDraftsman
+        ? `<button class="btn" onclick="jsDeleteRevision(${r.id})" title="Delete"
+              style="padding:2px 8px;font-size:11px;background:rgba(255,68,68,.1);border:1px solid rgba(255,68,68,.3);color:var(--red)">&#128465;</button>`
+        : '';
+      return `<tr>
+        <td style="padding:5px 8px;border-bottom:1px solid var(--border);font-size:12px;font-weight:600;color:var(--accent)">${escapeHtml(r.label)}</td>
+        <td style="padding:5px 8px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text)">${escapeHtml(r.job_name || (r.job_id ? 'Job ' + r.job_id : 'Whole project'))}</td>
+        <td style="padding:5px 8px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)">${escapeHtml(r.description || '')}</td>
+        <td style="padding:5px 8px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text);text-align:right">${_jsNum(r.fab_hours) || '\u2014'}</td>
+        <td style="padding:5px 8px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text);text-align:right">${_jsNum(r.design_hours) || '\u2014'}</td>
+        <td style="padding:5px 8px;border-bottom:1px solid var(--border);font-size:12px;color:var(--text);text-align:right">${site}</td>
+        <td style="padding:5px 8px;border-bottom:1px solid var(--border);text-align:right">${del}</td>
+      </tr>`;
+    }).join('');
+    el.innerHTML = `<table style="width:100%;border-collapse:collapse">
+      <thead><tr>
+        <th style="padding:5px 8px;text-align:left;font-size:10px;color:var(--subtle);text-transform:uppercase;letter-spacing:.04em">Rev</th>
+        <th style="padding:5px 8px;text-align:left;font-size:10px;color:var(--subtle);text-transform:uppercase;letter-spacing:.04em">Job</th>
+        <th style="padding:5px 8px;text-align:left;font-size:10px;color:var(--subtle);text-transform:uppercase;letter-spacing:.04em">Description</th>
+        <th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--subtle);text-transform:uppercase;letter-spacing:.04em">Fab hrs</th>
+        <th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--subtle);text-transform:uppercase;letter-spacing:.04em">Design hrs</th>
+        <th style="padding:5px 8px;text-align:right;font-size:10px;color:var(--subtle);text-transform:uppercase;letter-spacing:.04em">Site</th>
+        <th></th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot><tr>
+        <td style="padding:6px 8px;font-size:12px;font-weight:700;color:var(--text)" colspan="3">Total</td>
+        <td style="padding:6px 8px;font-size:12px;font-weight:700;color:var(--accent);text-align:right">${tf || '\u2014'}</td>
+        <td style="padding:6px 8px;font-size:12px;font-weight:700;color:var(--accent);text-align:right">${td || '\u2014'}</td>
+        <td></td><td></td>
+      </tr></tfoot>
+    </table>`;
+  }
+  // Suggest the next label: 'Base quote' first, then VO1, VO2, ...
+  const labelEl = document.getElementById('jsRevLabel');
+  if (labelEl && !labelEl.value) {
+    labelEl.placeholder = revs.length === 0 ? 'Base quote'
+      : `VO${revs.filter(r => !/^base/i.test(r.label)).length + 1}`;
+  }
+  // Add-row + seed visibility follows draftsman mode
+  const addRow = document.getElementById('jsRevAddRow');
+  if (addRow) addRow.style.display = isDraftsman ? '' : 'none';
+}
+
+// Prefill the add-row from the QB quotation (base quote seeding).
+function jsSeedBaseFromQuote() {
+  const q = _jsExtras?.quote;
+  if (!q) return;
+  _jsSetVal('jsRevLabel', 'Base quote');
+  _jsSetVal('jsRevDesc',  `As quoted ${q.reference}${q.revision ? ' rev ' + q.revision : ''}`);
+  _jsSetVal('jsRevFab',   _jsNum(q.fab_hours) || '');
+  _jsSetVal('jsRevDesign', _jsNum(q.design_hours) || '');
+  _jsSetVal('jsRevOps',   _jsNum(q.inst_operatives) || '');
+  _jsSetVal('jsRevDays',  _jsNum(q.inst_days) || '');
+}
+
+async function jsAddRevision() {
+  if (!currentProject?.dbId) return;
+  const v = id => (document.getElementById(id)?.value || '').trim();
+  const label = v('jsRevLabel') || document.getElementById('jsRevLabel')?.placeholder || '';
+  if (!label) { toast('Give the revision a label (e.g. VO1).', 'error'); return; }
+  const btn = document.getElementById('jsRevAddBtn');
+  try {
+    if (btn) btn.disabled = true;
+    const row = await api.post(`/api/project-sheet/${parseInt(currentProject.dbId)}/revisions`, {
+      label,
+      job_id:          v('jsRevJob') || null,
+      description:     v('jsRevDesc') || null,
+      fab_hours:       v('jsRevFab') || null,
+      design_hours:    v('jsRevDesign') || null,
+      site_operatives: v('jsRevOps') || null,
+      site_days:       v('jsRevDays') || null,
+      created_by:      _currentDraftsmanName || null
+    });
+    if (row) {
+      ['jsRevLabel', 'jsRevDesc', 'jsRevFab', 'jsRevDesign', 'jsRevOps', 'jsRevDays']
+        .forEach(id => _jsSetVal(id, ''));
+      await _jsLoadRevisions(true);
+      _jsRenderExtras();   // seed-button visibility may change
+      toast(`${row.label} added.`, 'success');
+    }
+  } catch (e) {
+    toast('Failed to add revision: ' + (e.message || e), 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function jsDeleteRevision(id) {
+  const rev = (_jsRevisions || []).find(r => r.id === id);
+  const okGo = (typeof bamaConfirm === 'function')
+    ? await bamaConfirm({
+        title: 'Delete revision',
+        body: `Delete ${rev ? rev.label : 'this revision'} from the ledger?`,
+        confirmText: 'Delete', tone: 'danger'
+      })
+    : confirm('Delete this revision?');
+  if (!okGo) return;
+  try {
+    await api.delete(`/api/project-sheet-revisions/${id}`);
+    await _jsLoadRevisions(true);
+    _jsRenderExtras();
+    toast('Revision deleted.', 'success');
+  } catch (e) {
+    toast('Failed to delete revision: ' + (e.message || e), 'error');
+  }
+}
+
 function closeJobSheetModal() {
   document.getElementById('jobSheetModal').classList.remove('active');
 }
@@ -13524,7 +13768,10 @@ async function generateJobSheetPdf() {
         { role: 'Site Manager',    name: v('jsSmName'),  phone: v('jsSmPhone'),  email: v('jsSmEmail')  }
       ].filter(c => c.name || c.phone || c.email),
       clientPo: v('jsPo'),
-      notes:    v('jsNotes')
+      notes:    v('jsNotes'),
+      quote:     _jsExtras?.quote || null,
+      jobStats:  _jsExtras?.jobs  || [],
+      revisions: _jsRevisions     || []
     };
     const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
     const blob = drawJobSheetPDF(JsPDFCtor, sheet, currentProject, logo);
@@ -13613,13 +13860,53 @@ function drawJobSheetPDF(jsPDF, sheet, proj, logoDataUri) {
   doc.line(marginL, y, pageW - marginR, y);
   y += 8;
 
+  const pageBreakIfNeeded = (needed) => {
+    if (y + needed > pageH - marginB - 8) { doc.addPage(); y = marginL + 6; }
+  };
   const sectionHead = (label) => {
+    pageBreakIfNeeded(24);
     setFill(HEADFILL); setDraw(RULE); doc.setLineWidth(0.2);
     doc.rect(marginL, y - 4.5, usableW, 7, 'FD');
     setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
     doc.text(label.toUpperCase(), marginL + 2.5, y);
     y += 7;
   };
+  // Generic table: cols = [{label,x,w,align?}], rows = array of cell arrays,
+  // foot = optional cell array rendered bold. Handles wrap + page breaks.
+  const drawTable = (cols, rows, foot) => {
+    const header = () => {
+      setText(MUTED); doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
+      cols.forEach(c => doc.text(c.label, c.align === 'right' ? c.x + c.w : c.x, y + 1, c.align === 'right' ? { align: 'right' } : undefined));
+      y += 3;
+      setDraw(RULE); doc.setLineWidth(0.2);
+      doc.line(marginL, y, pageW - marginR, y);
+      y += 5;
+    };
+    header();
+    setText(TEXT); doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
+    for (const cells of rows) {
+      let rowH = 5;
+      const wrapped = cells.map((v, i) => {
+        const w = doc.splitTextToSize(String(v == null ? '' : v), cols[i].w);
+        rowH = Math.max(rowH, w.length * 4.4 + 1);
+        return w;
+      });
+      if (y + rowH > pageH - marginB - 8) { doc.addPage(); y = marginL + 6; header(); setText(TEXT); doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); }
+      wrapped.forEach((w, i) => doc.text(w, cols[i].align === 'right' ? cols[i].x + cols[i].w : cols[i].x, y + 1, cols[i].align === 'right' ? { align: 'right' } : undefined));
+      y += rowH + 1.5;
+      setDraw([235, 235, 235]);
+      doc.line(marginL, y - 1, pageW - marginR, y - 1);
+    }
+    if (foot) {
+      pageBreakIfNeeded(8);
+      doc.setFont('helvetica', 'bold');
+      foot.forEach((v, i) => { if (v != null && String(v) !== '') doc.text(String(v), cols[i].align === 'right' ? cols[i].x + cols[i].w : cols[i].x, y + 1, cols[i].align === 'right' ? { align: 'right' } : undefined); });
+      y += 6;
+      doc.setFont('helvetica', 'normal');
+    }
+  };
+  const numOr = (v, suffix) => { const n = parseFloat(v); return isFinite(n) && n > 0 ? n + (suffix || '') : '\u2014'; };
+  const fmtT = kg => (kg >= 1000 ? (kg / 1000).toFixed(2) + ' t' : Math.round(kg) + ' kg');
 
   // ── Site address ──
   sectionHead('Site address');
@@ -13664,6 +13951,67 @@ function drawJobSheetPDF(jsPDF, sheet, proj, logoDataUri) {
     doc.line(marginL, y - 1, pageW - marginR, y - 1);
   }
   y += 6;
+
+  // ── Quoted figures (from the QB quotation, if linked) ──
+  if (sheet.quote) {
+    const q = sheet.quote;
+    sectionHead(`Quoted \u2014 ${q.reference}${q.revision ? ' rev ' + q.revision : ''}`);
+    const ops = parseFloat(q.inst_operatives), days = parseFloat(q.inst_days);
+    const crew = (isFinite(ops) && ops > 0)
+      ? `${ops} operative${ops !== 1 ? 's' : ''}${(isFinite(days) && days > 0) ? ' \u00d7 ' + days + ' day' + (days !== 1 ? 's' : '') : ''}`
+      : '\u2014';
+    const qkg = parseFloat(q.total_kg);
+    drawTable([
+      { label: 'Fab hours',      x: marginL + 2.5, w: 40, align: 'right' },
+      { label: 'Design hours',   x: marginL + 48,  w: 40, align: 'right' },
+      { label: 'Site crew',      x: marginL + 94,  w: 50 },
+      { label: 'Quoted tonnage', x: marginL + 148, w: usableW - 148 - 2, align: 'right' }
+    ], [[ numOr(q.fab_hours, ' hrs'), numOr(q.design_hours, ' hrs'), crew,
+         (isFinite(qkg) && qkg > 0) ? fmtT(qkg) : '\u2014' ]]);
+    y += 4;
+  }
+
+  // ── Hours & variations ledger (base quote + VOs, per job) ──
+  if (sheet.revisions && sheet.revisions.length) {
+    sectionHead('Hours & variations');
+    let tf = 0, td = 0;
+    const rows = sheet.revisions.map(r => {
+      const f = parseFloat(r.fab_hours) || 0, d = parseFloat(r.design_hours) || 0;
+      tf += f; td += d;
+      const ops = parseFloat(r.site_operatives), sd = parseFloat(r.site_days);
+      const site = (isFinite(ops) && ops > 0) ? `${ops}\u00d7${(isFinite(sd) && sd > 0) ? sd + 'd' : '?'}` : '\u2014';
+      return [ r.label, r.job_name || (r.job_id ? 'Job ' + r.job_id : 'Whole project'),
+               r.description || '', f || '\u2014', d || '\u2014', site ];
+    });
+    drawTable([
+      { label: 'Rev',        x: marginL + 2.5, w: 22 },
+      { label: 'Job',        x: marginL + 28,  w: 36 },
+      { label: 'Description',x: marginL + 67,  w: 62 },
+      { label: 'Fab hrs',    x: marginL + 132, w: 16, align: 'right' },
+      { label: 'Design hrs', x: marginL + 152, w: 16, align: 'right' },
+      { label: 'Site',       x: marginL + 172, w: usableW - 172 - 2, align: 'right' }
+    ], rows, [ 'Total', '', '', tf || '\u2014', td || '\u2014', '' ]);
+    y += 4;
+  }
+
+  // ── Fabrication summary — members & tonnage per job ──
+  if (sheet.jobStats && sheet.jobStats.length) {
+    sectionHead('Fabrication summary');
+    let members = 0, kg = 0;
+    const rows = sheet.jobStats.map(j => {
+      const m = parseFloat(j.members) || 0, w = parseFloat(j.weight_kg) || 0;
+      members += m; kg += w;
+      return [ j.job_name || ('Job ' + j.job_id),
+               parseFloat(j.assembly_marks) || 0, m || '\u2014', w > 0 ? fmtT(w) : '\u2014' ];
+    });
+    drawTable([
+      { label: 'Job',     x: marginL + 2.5, w: 86 },
+      { label: 'Marks',   x: marginL + 94,  w: 24, align: 'right' },
+      { label: 'Members', x: marginL + 124, w: 26, align: 'right' },
+      { label: 'Weight',  x: marginL + 156, w: usableW - 156 - 2, align: 'right' }
+    ], rows, [ 'Total', '', members || '\u2014', fmtT(kg) ]);
+    y += 4;
+  }
 
   // ── Notes (only if present) ──
   if (sheet.notes) {

@@ -109,6 +109,20 @@ management, and a standalone UK steel section reference.
   jsPDF Job Sheet (`drawJobSheetPDF` in `shared.js`, drawDnPDF
   conventions) from the CURRENT modal fields and opens it in a new tab
   (no SharePoint upload yet).
+  The sheet also shows (read-only): quoted figures pulled from the linked
+  won QB quote (`GET /api/project-sheet/{id}/extras` — fab/design hours,
+  site crew, tonnage via JSON_VALUE on quote_data; link resolved through
+  QuoteBuilderQuotes.project_id OR ProjectQuotes), and a per-job
+  fabrication summary (members + tonnage = SUM(quantity*total_weight_kg)
+  from JobAssemblies). A "Hours & variations" ledger
+  (`ProjectSheetRevisions`: base quote + VOs, each optionally pinned to a
+  job, job_id ON DELETE SET NULL) records what hours were allocated to
+  which job; CRUD via GET/POST
+  `/api/project-sheet/{id}/revisions` + DELETE
+  `/api/project-sheet-revisions/{id}`. "Fill base from quote" seeds the
+  add-row from the quotation. The Job Sheet buttons live in the
+  draftsman bars (next to Add Job on the project screen, and on the job
+  screen bar) — NOT in the page headers.
   API: `GET/PUT /api/project-sheet/{projectId}` (flat route, upsert).
   Migration: `api/sql/add-project-sheets.sql` (new table — no Function App
   restart; also drops the short-lived per-job JobSheets / v1

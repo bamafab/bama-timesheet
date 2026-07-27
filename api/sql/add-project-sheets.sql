@@ -66,3 +66,39 @@ ELSE
 SELECT COUNT(*) AS column_count
 FROM sys.columns
 WHERE object_id = OBJECT_ID('ProjectSheets');
+
+-- ═══════════════════════════════════════════════════════════════
+-- ProjectSheetRevisions — quoted-hours ledger (base quote + VOs)
+--
+-- One row per allocation of hours: the base quote and every
+-- Variation Order, each optionally pinned to a specific job so
+-- anyone can see what hours were put to which job under the
+-- project. job_id is SET NULL on job delete so history survives.
+-- ═══════════════════════════════════════════════════════════════
+IF NOT EXISTS (SELECT 1 FROM sys.tables WHERE name = 'ProjectSheetRevisions')
+BEGIN
+    CREATE TABLE ProjectSheetRevisions (
+        id              INT IDENTITY(1,1) PRIMARY KEY,
+        project_id      INT            NOT NULL
+                        REFERENCES Projects(id) ON DELETE CASCADE,
+        job_id          INT            NULL
+                        REFERENCES DrawingJobs(id) ON DELETE SET NULL,
+        label           NVARCHAR(64)   NOT NULL,      -- 'Base quote', 'VO1', ...
+        description     NVARCHAR(1000) NULL,
+        fab_hours       DECIMAL(10,2)  NULL,
+        design_hours    DECIMAL(10,2)  NULL,
+        site_operatives DECIMAL(6,2)   NULL,
+        site_days       DECIMAL(8,2)   NULL,
+        created_at      DATETIME2      NOT NULL DEFAULT GETUTCDATE(),
+        created_by      NVARCHAR(256)  NULL
+    );
+    CREATE INDEX IX_ProjectSheetRevisions_project ON ProjectSheetRevisions(project_id);
+    PRINT 'ProjectSheetRevisions table created.';
+END
+ELSE
+    PRINT 'ProjectSheetRevisions already exists - nothing to do.';
+
+-- Verification (expect 1 row)
+SELECT COUNT(*) AS revision_column_count
+FROM sys.columns
+WHERE object_id = OBJECT_ID('ProjectSheetRevisions');

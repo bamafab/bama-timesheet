@@ -120,3 +120,177 @@ app.http('project-sheet-upsert', {
         }
     }
 });
+
+// ═══════════════════════════════════════════════════════════════
+// Extras: won QB quote summary + per-job fabrication stats.
+// GET /api/project-sheet/:projectId/extras
+// Returns { quote: {...}|null, jobs: [...] }. Both halves degrade
+// independently — a missing QuoteBuilderQuotes/ProjectQuotes table
+// (older env) just yields quote: null.
+// ═══════════════════════════════════════════════════════════════
+app.http('project-sheet-extras', {
+    methods: ['GET'],
+    authLevel: 'anonymous',
+    route: 'project-sheet/{projectId}/extras',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+
+        try {
+            const projectId = parseInt(request.params.projectId);
+            if (!projectId) return badRequest('Invalid project id', request);
+
+            // ── Quote summary (hours live in the quote_data JSON blob) ──
+            let quote = null;
+            const quoteSelect = `
+                SELECT TOP 1 q.id, q.reference, q.revision, q.status,
+                       q.total_kg, q.site_address,
+                       JSON_VALUE(q.quote_data, '$.fabHours')       AS fab_hours,
+                       JSON_VALUE(q.quote_data, '$.designHours')    AS design_hours,
+                       JSON_VALUE(q.quote_data, '$.instDays')       AS inst_days,
+                       JSON_VALUE(q.quote_data, '$.instOperatives') AS inst_operatives,
+                       JSON_VALUE(q.quote_data, '$.siteAddress')    AS json_site_address
+                FROM QuoteBuilderQuotes q`;
+            try {
+                // Preferred: direct link OR ProjectQuotes join, primary first
+                const res = await query(quoteSelect + `
+                    LEFT JOIN ProjectQuotes pq
+                           ON pq.qb_quote_id = q.id AND pq.project_id = @projectId
+                    WHERE q.project_id = @projectId OR pq.project_id = @projectId
+                    ORDER BY CASE WHEN pq.is_primary = 1 THEN 0 ELSE 1 END,
+                             q.updated_at DESC`, { projectId });
+                quote = res.recordset[0] || null;
+            } catch (e1) {
+                // ProjectQuotes may not exist in this environment — direct link only
+                try {
+                    const res = await query(quoteSelect + `
+                        WHERE q.project_id = @projectId
+                        ORDER BY q.updated_at DESC`, { projectId });
+                    quote = res.recordset[0] || null;
+                } catch (e2) {
+                    context.warn('Quote summary unavailable:', e2.message);
+                }
+            }
+
+            // ── Per-job stats: members + tonnage from JobAssemblies ──
+            // total_weight_kg is the weight of ONE assembly, so tonnage
+            // = SUM(quantity * total_weight_kg). DrawingJobs links to
+            // Projects by project_number (string), not FK.
+            let jobs = [];
+            try {
+                const res = await query(`
+                    SELECT j.id AS job_id, j.job_name,
+                           COUNT(a.id)                                        AS assembly_marks,
+                           COALESCE(SUM(a.quantity), 0)                       AS members,
+                           COALESCE(SUM(a.quantity * a.total_weight_kg), 0)   AS weight_kg
+                    FROM DrawingJobs j
+                    LEFT JOIN JobAssemblies a ON a.job_id = j.id
+                    WHERE j.project_number = (SELECT project_number FROM Projects WHERE id = @projectId)
+                    GROUP BY j.id, j.job_name
+                    ORDER BY j.id`, { projectId });
+                jobs = res.recordset;
+            } catch (e) {
+                context.warn('Job stats unavailable:', e.message);
+            }
+
+            return ok({ quote, jobs }, request);
+        } catch (err) {
+            context.error('Error fetching project sheet extras:', err);
+            return serverError('Failed to fetch project sheet extras', request);
+        }
+    }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// Revisions ledger — base quote + Variation Orders, per job.
+// ═══════════════════════════════════════════════════════════════
+
+// GET /api/project-sheet/:projectId/revisions
+app.http('project-sheet-revisions-list', {
+    methods: ['GET'],
+    authLevel: 'anonymous',
+    route: 'project-sheet/{projectId}/revisions',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+        try {
+            const projectId = parseInt(request.params.projectId);
+            if (!projectId) return badRequest('Invalid project id', request);
+            const res = await query(`
+                SELECT r.*, j.job_name
+                FROM ProjectSheetRevisions r
+                LEFT JOIN DrawingJobs j ON j.id = r.job_id
+                WHERE r.project_id = @projectId
+                ORDER BY r.created_at ASC, r.id ASC`, { projectId });
+            return ok(res.recordset, request);
+        } catch (err) {
+            context.error('Error fetching revisions:', err);
+            return serverError('Failed to fetch revisions', request);
+        }
+    }
+});
+
+// POST /api/project-sheet/:projectId/revisions
+app.http('project-sheet-revisions-add', {
+    methods: ['POST'],
+    authLevel: 'anonymous',
+    route: 'project-sheet/{projectId}/revisions',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+        try {
+            const projectId = parseInt(request.params.projectId);
+            if (!projectId) return badRequest('Invalid project id', request);
+            const body = await request.json();
+            const label = String(body.label || '').trim();
+            if (!label) return badRequest('Label is required', request);
+
+            const num = v => (v === undefined || v === null || String(v).trim() === '')
+                ? null : parseFloat(v);
+
+            const res = await query(`
+                INSERT INTO ProjectSheetRevisions
+                    (project_id, job_id, label, description,
+                     fab_hours, design_hours, site_operatives, site_days, created_by)
+                OUTPUT INSERTED.*
+                VALUES (@projectId, @jobId, @label, @description,
+                        @fabHours, @designHours, @siteOperatives, @siteDays, @createdBy)`, {
+                projectId,
+                jobId:          body.job_id ? parseInt(body.job_id) : null,
+                label,
+                description:    String(body.description || '').trim() || null,
+                fabHours:       num(body.fab_hours),
+                designHours:    num(body.design_hours),
+                siteOperatives: num(body.site_operatives),
+                siteDays:       num(body.site_days),
+                createdBy:      body.created_by || auth.email || null
+            });
+            return ok(res.recordset[0], request);
+        } catch (err) {
+            context.error('Error adding revision:', err);
+            return serverError('Failed to add revision', request);
+        }
+    }
+});
+
+// DELETE /api/project-sheet-revisions/:id  (flat route — no collision)
+app.http('project-sheet-revisions-delete', {
+    methods: ['DELETE'],
+    authLevel: 'anonymous',
+    route: 'project-sheet-revisions/{id}',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+        try {
+            const id = parseInt(request.params.id);
+            if (!id) return badRequest('Invalid revision id', request);
+            const res = await query(
+                'DELETE FROM ProjectSheetRevisions OUTPUT DELETED.* WHERE id = @id', { id });
+            if (res.recordset.length === 0) return badRequest('Revision not found', request);
+            return ok(res.recordset[0], request);
+        } catch (err) {
+            context.error('Error deleting revision:', err);
+            return serverError('Failed to delete revision', request);
+        }
+    }
+});

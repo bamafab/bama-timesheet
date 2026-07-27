@@ -108,10 +108,6 @@
         <div class="proj-detail-title" id="projDetailTitle"></div>
         <div class="proj-detail-meta" id="projDetailMeta"></div>
       </div>
-      <button class="btn" onclick="openJobSheetModal()"
-              style="padding:8px 16px;font-size:12px;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);color:#60a5fa">
-        &#128203; Job Sheet
-      </button>
     </div>
 
     <!-- Draftsman toolbar -->
@@ -123,6 +119,9 @@
       <div style="display:flex;gap:10px">
         <button class="btn btn-primary" style="padding:8px 16px;font-size:12px" onclick="openCreateJobModal()">
           &#43; Add Job
+        </button>
+        <button class="btn" style="padding:8px 16px;font-size:12px;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);color:#60a5fa" onclick="openJobSheetModal()">
+          &#128203; Job Sheet
         </button>
         <button class="btn btn-ghost" style="padding:8px 14px;font-size:12px" onclick="logoutDraftsman()">Exit</button>
       </div>
@@ -145,10 +144,6 @@
         <div class="proj-detail-title" id="jobDetailTitle"></div>
         <div class="proj-detail-meta" id="jobDetailMeta"></div>
       </div>
-      <button class="btn" onclick="openJobSheetModal()"
-              style="padding:8px 16px;font-size:12px;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);color:#60a5fa">
-        &#128203; Job Sheet
-      </button>
       <div id="jobStatusBadge" style="font-size:12px;font-weight:600;padding:6px 14px;border-radius:8px"></div>
     </div>
 
@@ -159,6 +154,9 @@
         <span style="font-size:13px;font-weight:600;color:var(--accent)">Draftsman Mode</span>
       </div>
       <div style="display:flex;gap:10px">
+        <button class="btn" style="padding:8px 16px;font-size:12px;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);color:#60a5fa" onclick="openJobSheetModal()">
+          &#128203; Job Sheet
+        </button>
         <button class="btn btn-ghost" style="padding:8px 14px;font-size:12px" onclick="logoutDraftsman()">Exit</button>
       </div>
     </div>
@@ -602,7 +600,11 @@
     <div id="jsPrefillRow" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
       <button class="btn btn-ghost js-field" style="padding:6px 12px;font-size:11px" onclick="jobSheetPrefill('site')">Use project site address</button>
       <button class="btn btn-ghost js-field" style="padding:6px 12px;font-size:11px" onclick="jobSheetPrefill('client')">Use client address</button>
+      <button class="btn btn-ghost js-field" id="jsQuoteAddrBtn" style="padding:6px 12px;font-size:11px;display:none" onclick="jobSheetPrefill('quote')">Use quotation address</button>
     </div>
+
+    <div class="field-label">QUOTATION <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted);font-size:11px">— from QB, read-only</span></div>
+    <div id="jsQuoteStrip" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px"></div>
 
     <div class="field-label">SITE / DELIVERY DETAILS</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px">
@@ -692,6 +694,29 @@
         <textarea id="jsNotes" class="field-input js-field" rows="3" style="resize:vertical"></textarea>
       </div>
     </div>
+
+    <div class="field-label" style="margin-top:8px">HOURS &amp; VARIATIONS
+      <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted);font-size:11px">— base quote + VOs, per job</span>
+      <button class="btn btn-ghost" id="jsSeedBaseBtn" style="padding:3px 10px;font-size:10px;margin-left:8px;display:none" onclick="jsSeedBaseFromQuote()">Fill base from quote</button>
+    </div>
+    <div id="jsRevList" style="margin-bottom:8px"></div>
+    <div id="jsRevAddRow" style="display:grid;grid-template-columns:90px 1fr;gap:8px;margin-bottom:16px;padding:10px;background:var(--bg-darker);border:1px solid var(--border);border-radius:8px">
+      <input id="jsRevLabel" type="text" class="field-input" placeholder="VO1" title="Revision label">
+      <select id="jsRevJob" class="field-input" title="Which job the hours belong to"></select>
+      <input id="jsRevDesc" type="text" class="field-input" placeholder="Description (e.g. extra balustrade run to stair 2)" style="grid-column:1 / -1">
+      <div style="grid-column:1 / -1;display:grid;grid-template-columns:1fr 1fr 1fr 1fr auto;gap:8px">
+        <input id="jsRevFab" type="number" min="0" step="0.5" class="field-input" placeholder="Fab hrs">
+        <input id="jsRevDesign" type="number" min="0" step="0.5" class="field-input" placeholder="Design hrs">
+        <input id="jsRevOps" type="number" min="0" step="1" class="field-input" placeholder="Site ops">
+        <input id="jsRevDays" type="number" min="0" step="0.5" class="field-input" placeholder="Site days">
+        <button class="btn btn-primary" id="jsRevAddBtn" onclick="jsAddRevision()" style="padding:8px 16px;font-size:12px">Add</button>
+      </div>
+    </div>
+
+    <div class="field-label">FABRICATION SUMMARY
+      <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted);font-size:11px">— members &amp; tonnage per job, from assemblies</span>
+    </div>
+    <div id="jsJobStats" style="margin-bottom:18px"></div>
 
     <button class="btn btn-primary btn-full" id="jsSaveBtn" onclick="saveJobSheet()" style="padding:14px;font-size:15px">
       Save Job Sheet
@@ -1024,6 +1049,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
-<script src="shared.js?v=20260727e"></script>
+<script src="shared.js?v=20260727f"></script>
 </body>
 </html>
