@@ -28207,6 +28207,11 @@ async function openBabcockEmailModal(opts) {
   const fromText = me
     ? `${me.name || 'BAMA Fabrication'} <${me.email || ''}>`
     : 'BAMA Fabrication (sending from your account)';
+  // The email goes out via Graph /me/sendMail — i.e. from whichever
+  // Microsoft account this browser session is signed in as, which may not
+  // be the person who PIN'd into the ERP. Make the mismatch loud.
+  const _mismatch = !!(me && me.name && typeof currentManagerUser === 'string' && currentManagerUser
+    && me.name.toLowerCase() !== currentManagerUser.toLowerCase());
 
   // Stash everything we'll need on Send
   _bemailContext = {
@@ -28229,7 +28234,22 @@ async function openBabcockEmailModal(opts) {
 
   // Populate the modal
   document.getElementById('bemailTitle').textContent  = opts.title || 'New Email';
-  document.getElementById('bemailFrom').textContent   = fromText;
+  const fromEl = document.getElementById('bemailFrom');
+  fromEl.textContent = fromText;
+  fromEl.style.color = _mismatch ? '#ffa500' : 'var(--text)';
+  fromEl.title = _mismatch
+    ? `This browser is signed into Microsoft as ${me.name} — the email will be sent from their mailbox, not ${currentManagerUser}'s.`
+    : '';
+  let warnEl = document.getElementById('bemailFromWarn');
+  if (!warnEl) {
+    warnEl = document.createElement('div');
+    warnEl.id = 'bemailFromWarn';
+    warnEl.style.cssText = 'font-size:11px;color:#ffa500;margin-top:2px';
+    fromEl.parentNode.appendChild(warnEl);
+  }
+  warnEl.textContent = _mismatch
+    ? `⚠ Sends from ${me.name}'s mailbox (this browser's Microsoft login) — sign in with your own account to send as yourself.`
+    : '';
   document.getElementById('bemailTo').value           = opts.to || '';
   document.getElementById('bemailCc').value           = opts.cc || '';
   document.getElementById('bemailSubject').value      = resolvedSubject;
@@ -35966,6 +35986,16 @@ function renderInvSalesTable() {
   }).join('');
 }
 
+let _invSupplierSearchTerm = '';
+
+function _invSupplierFiltered() {
+  const term = (_invSupplierSearchTerm || '').toLowerCase().trim();
+  if (!term) return _invSupplierPoList;
+  return _invSupplierPoList.filter(po =>
+    `${po.supplier_name || ''} ${po.reference || ''} ${po.supplier_invoice_ref || ''} ${po.job_number || ''} ${po.cost_centre || ''} ${po.paid_at ? 'paid' : 'unpaid'}`
+      .toLowerCase().includes(term));
+}
+
 function renderInvSupplierTable() {
   const tbody = document.getElementById('invSupplierTbody');
   if (!tbody) return;
@@ -35984,7 +36014,20 @@ function renderInvSupplierTable() {
     </td></tr>`;
     return;
   }
-  tbody.innerHTML = _invSupplierPoList.map(po => `
+  const list = _invSupplierFiltered();
+  const countEl = document.getElementById('invSupplierSearchCount');
+  if (countEl) countEl.textContent = (_invSupplierSearchTerm || '').trim() ? `${list.length} of ${_invSupplierPoList.length}` : '';
+  const selAll = document.getElementById('invRemitSelAll');
+  if (selAll) {
+    const unpaidVisible = list.filter(po => !po.paid_at);
+    selAll.checked = unpaidVisible.length > 0 && unpaidVisible.every(po => _invRemitSelected.has(po.id));
+    selAll.disabled = unpaidVisible.length === 0;
+  }
+  if (!list.length) {
+    tbody.innerHTML = `<tr><td colspan="9" style="padding:30px;text-align:center;color:var(--muted)">No supplier invoices match "${escapeHtml(_invSupplierSearchTerm.trim())}"</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = list.map(po => `
     <tr>
       <td style="text-align:center">${po.paid_at ? '' :
         `<input type="checkbox" ${_invRemitSelected.has(po.id) ? 'checked' : ''}
@@ -36011,6 +36054,16 @@ function invRemitToggle(poId, checked) {
   if (checked) _invRemitSelected.add(poId);
   else _invRemitSelected.delete(poId);
   _invRemitUpdateBtn();
+}
+
+// Header checkbox: (de)select every UNPAID row in the current filtered view.
+function invRemitToggleAll(checked) {
+  const unpaidVisible = _invSupplierFiltered().filter(po => !po.paid_at);
+  for (const po of unpaidVisible) {
+    if (checked) _invRemitSelected.add(po.id);
+    else _invRemitSelected.delete(po.id);
+  }
+  renderInvSupplierTable();
 }
 
 function _invRemitUpdateBtn() {
@@ -36197,7 +36250,7 @@ Payment details:
 // ── Remittance advice PDF (native jsPDF — drawDnPDF conventions) ──────────
 async function renderBamaRemittancePDF(d) {
   const JsPDFCtor = await _resolveJsPDF();
-  const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
+  const logo = (await loadLogoDataUri().catch(() => '')) || '';
   return drawBamaRemittancePDF(JsPDFCtor, d, logo);
 }
 

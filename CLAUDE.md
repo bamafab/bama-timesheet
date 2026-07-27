@@ -1029,7 +1029,16 @@ none of this is built yet.
   detail modal + PDF show "Retention release for INVxxxx". Edit-draft
   path preserves the flag via `_invEditing`. Migration:
   `api/sql/add-remittance-retention.sql` (ADD COLUMN → Function App
-  restart).
+  restart). Follow-up (same day): remittance PDF logo fix
+  (`renderBamaRemittancePDF` now awaits `loadLogoDataUri()` — reading the
+  bare cache rendered the text-fallback header), supplier-invoices search
+  bar (`invSupplierSearch`, filters supplier/PO/inv#/project/paid) with a
+  header select-all checkbox that ticks every UNPAID row in the filtered
+  view, and an amber From-mismatch warning in the shared email composer
+  when the browser's Microsoft login ≠ the PIN'd ERP user (emails go via
+  Graph /me/sendMail = the signed-in mailbox; sending as a shared
+  accounts@ mailbox would need Mail.Send.Shared + mailbox permissions —
+  parked, needs Daniel).
 - **Invoice Tracker** — standalone `invoice-tracker.html` page with four
   tabs (AFPs · Sales Invoices · Supplier Invoices · Receipts). Gated by
   the `invoicing` permission. Backed by `Applications`,
