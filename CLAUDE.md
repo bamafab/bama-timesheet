@@ -899,8 +899,20 @@ none of this is built yet.
   footer (Company No. 14680571), accounts@bamafabrication.co.uk, NEW bank
   details (Sort 30-99-50, Acct 26816462), statutory DRC wording (VAT Act
   1994 s55A), "Re: AFP / Payment Certificate" reference line.
-  **Next: Phase 3 — historical invoice bulk import (OCR ~300 old PDFs to
-  backfill INV0001–INV0257).**
+- **Invoicing Phase 3 (historical import, 2026-07-27)** — "📥 Import Old
+  Invoices" button on the tracker header → `invImportModal`: multi-PDF
+  picker, sequential Claude vision OCR per file (429 retry once after 30s)
+  extracting ref/date/customer/net/VAT/retention/gross/reverse-charge flag,
+  editable review grid with fuzzy client auto-match (Ltd/Limited-insensitive),
+  duplicate-ref flagging (against `_invInvoiceList` + within batch), per-row
+  VAT mode + Paid/Issued status (default Paid → total_outstanding 0).
+  Commit: original PDFs uploaded to `01 - Accounts/03 - Sales Invoices/
+  YYYY/MM/` (non-fatal per file), then `POST /api/invoices-import` (flat
+  route, max 100/batch, server-side ref dedupe, CN/PRO prefix → kind,
+  single summary line per invoice). Refs preserved so `nextInvoiceRef`'s
+  MAX-scan lands correctly after backfill. NOTE: seed INV0257 + broken
+  INV0258 hard-deleted via one-off SQL (children first, AFP reset to
+  Certified) — real ones re-enter via import.
 - **Invoice Tracker** — standalone `invoice-tracker.html` page with four
   tabs (AFPs · Sales Invoices · Supplier Invoices · Receipts). Gated by
   the `invoicing` permission. Backed by `Applications`,

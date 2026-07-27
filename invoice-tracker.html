@@ -142,6 +142,7 @@
       <div style="display:flex;gap:10px;align-items:center">
         <button class="btn btn-ghost" id="invNewAfpBtn" onclick="openNewAfpModal()"
                 style="border-color:var(--accent);color:var(--accent)">+ New AFP</button>
+        <button class="btn btn-ghost" id="invImportBtn" onclick="openInvImportModal()">📥 Import Old Invoices</button>
         <button class="btn btn-primary" id="invNewInvoiceBtn" onclick="openNewInvoiceModal()">+ New Invoice</button>
         <a href="hub.html" style="text-decoration:none"><button class="btn btn-ghost">Exit</button></a>
       </div>
@@ -406,6 +407,45 @@
 <!-- ═══════════════════════════════════════
      INVOICE DETAIL MODAL
 ══════════════════════════════════════════ -->
+<!-- ═══════════════════════════════════════
+     HISTORICAL INVOICE IMPORT MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="invImportModal">
+  <div class="modal" style="max-width:1180px;width:97vw;max-height:94vh;overflow-y:auto">
+    <div class="modal-title">📥 Import Historical Invoices</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">
+      Drop old sales invoice PDFs below. Each file is read by AI and pre-filled — review, correct
+      anything wrong, then commit. Original invoice references are preserved; duplicates are skipped.
+      Original PDFs are saved to SharePoint and linked to each imported invoice.
+    </div>
+
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+      <input type="file" id="invImportFiles" accept="application/pdf,.pdf" multiple
+             style="display:none" onchange="invImportFilesPicked(this.files)">
+      <button class="btn btn-primary" id="invImportPickBtn"
+              onclick="document.getElementById('invImportFiles').click()">+ Add PDFs</button>
+      <div id="invImportProgress" style="font-size:12px;color:var(--muted)"></div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:110px 105px 1fr 95px 85px 85px 95px 130px 90px 30px;
+                gap:6px;font-size:10px;color:var(--subtle);text-transform:uppercase;letter-spacing:.5px;
+                padding:0 4px;margin-bottom:4px">
+      <div>Ref</div><div>Date</div><div>Customer</div><div>Net £</div><div>VAT £</div>
+      <div>Retn £</div><div>Gross £</div><div>VAT Mode</div><div>Status</div><div></div>
+    </div>
+    <div id="invImportRows" style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px"></div>
+
+    <div id="invImportSummary" style="font-size:12px;margin-bottom:10px"></div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeInvImportModal()">Close</button>
+      <button class="btn btn-primary" id="invImportCommitBtn" onclick="commitInvImport()" disabled>
+        Commit Import
+      </button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="invDetailModal">
   <div class="modal" style="max-width:900px;width:96vw;max-height:92vh;overflow-y:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -982,6 +1022,6 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260727m"></script>
+<script src="shared.js?v=20260727n"></script>
 </body>
 </html>

@@ -38045,6 +38045,303 @@ async function editInvoiceFromDetail() {
   document.getElementById('invNewModal').classList.add('active');
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+// HISTORICAL INVOICE IMPORT — bulk OCR + backfill (Phase 3)
+// ═════════════════════════════════════════════════════════════════════════
+let _invImportRows = [];      // [{file, fileName, ref, invoice_date, due_date, customer, client_id, net, vat, retention, gross, treatment, status, dup, committed}]
+let _invImportBusy = false;
+
+function openInvImportModal() {
+  _invImportRows = [];
+  _invImportBusy = false;
+  document.getElementById('invImportProgress').textContent = '';
+  document.getElementById('invImportSummary').innerHTML = '';
+  document.getElementById('invImportCommitBtn').disabled = true;
+  renderInvImportRows();
+  document.getElementById('invImportModal').classList.add('active');
+}
+function closeInvImportModal() {
+  if (_invImportBusy) { toast('Import in progress — please wait', 'error'); return; }
+  document.getElementById('invImportModal').classList.remove('active');
+}
+
+// ── Fuzzy client match against the clients cache ──────────────────────────
+function _invImportMatchClient(name) {
+  if (!name) return null;
+  const n = String(name).toLowerCase().replace(/\b(ltd|limited|plc|llp)\b/g, '').replace(/[^a-z0-9 ]/g, '').trim();
+  if (!n) return null;
+  let best = null;
+  for (const c of _invClientsCache) {
+    const cn = String(c.company_name || '').toLowerCase().replace(/\b(ltd|limited|plc|llp)\b/g, '').replace(/[^a-z0-9 ]/g, '').trim();
+    if (!cn) continue;
+    if (cn === n || cn.includes(n) || n.includes(cn)) { best = c; break; }
+  }
+  return best;
+}
+
+function _invImportExistingRefs() {
+  const set = new Set((_invInvoiceList || []).map(i => String(i.ref || '').toUpperCase()));
+  return set;
+}
+
+// ── File pick → sequential OCR ────────────────────────────────────────────
+async function invImportFilesPicked(files) {
+  const list = Array.from(files || []);
+  document.getElementById('invImportFiles').value = '';
+  if (!list.length) return;
+  _invImportBusy = true;
+  const prog = document.getElementById('invImportProgress');
+  const pickBtn = document.getElementById('invImportPickBtn');
+  if (pickBtn) pickBtn.disabled = true;
+
+  for (let i = 0; i < list.length; i++) {
+    const file = list[i];
+    prog.textContent = `⏳ Reading ${file.name} (${i + 1}/${list.length})…`;
+    try {
+      const parsed = await _invImportParsePdf(file);
+      const client = _invImportMatchClient(parsed.customer);
+      const treatment = parsed.reverse_charge ? 'reverse_charge'
+                      : (Number(parsed.vat || 0) > 0 ? 'standard' : 'zero');
+      _invImportRows.push({
+        file, fileName: file.name,
+        ref: String(parsed.ref || '').toUpperCase(),
+        invoice_date: parsed.invoice_date || '',
+        due_date: parsed.due_date || '',
+        customer: client ? client.company_name : (parsed.customer || ''),
+        client_id: client ? client.id : null,
+        line_description: parsed.description || null,
+        net: Number(parsed.net || 0),
+        vat: Number(parsed.vat || 0),
+        retention: Number(parsed.retention || 0),
+        gross: Number(parsed.gross || 0),
+        treatment, status: 'Paid',
+        dup: false, committed: false, error: null
+      });
+    } catch (err) {
+      _invImportRows.push({
+        file, fileName: file.name, ref: '', invoice_date: '', due_date: '',
+        customer: '', client_id: null, line_description: null,
+        net: 0, vat: 0, retention: 0, gross: 0,
+        treatment: 'reverse_charge', status: 'Paid',
+        dup: false, committed: false, error: 'Read failed: ' + err.message
+      });
+    }
+    _invImportFlagDups();
+    renderInvImportRows();
+  }
+  prog.textContent = `✓ ${list.length} file(s) read — review and commit`;
+  _invImportBusy = false;
+  if (pickBtn) pickBtn.disabled = false;
+  document.getElementById('invImportCommitBtn').disabled = _invImportRows.length === 0;
+}
+
+function _invImportFlagDups() {
+  const existing = _invImportExistingRefs();
+  const seen = new Set();
+  for (const r of _invImportRows) {
+    const ref = String(r.ref || '').toUpperCase();
+    r.dup = !!ref && (existing.has(ref) || seen.has(ref));
+    if (ref) seen.add(ref);
+  }
+}
+
+// ── Claude OCR for one invoice PDF (429 retry once after 30s) ─────────────
+async function _invImportParsePdf(file) {
+  const base64 = await new Promise((res, rej) => {
+    const reader = new FileReader();
+    reader.onload = () => res(reader.result.split(',')[1]);
+    reader.onerror = () => rej(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
+
+  const call = async () => {
+    const response = await fetch('/api/claude-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${await getToken()}` },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1500,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
+            { type: 'text', text: `This is a historical BAMA Fabrication sales invoice. Extract its details.
+
+Return ONLY a JSON object, no markdown, no explanation:
+{
+  "ref": "invoice reference e.g. INV0123 (or CN/PRO prefix if a credit note / pro forma)",
+  "invoice_date": "YYYY-MM-DD or null",
+  "due_date": "YYYY-MM-DD or null",
+  "customer": "the BILL TO / customer company name (NOT BAMA Fabrication)",
+  "description": "one short line summarising the works/project billed, max 120 chars, or null",
+  "net": number or null,
+  "vat": number or null (the VAT actually charged; 0 if reverse charge or none),
+  "retention": number or null (retention deducted, as a positive number),
+  "gross": number or null (the TOTAL DUE / amount payable),
+  "reverse_charge": true/false (true if domestic reverse charge / customer-to-account-for-VAT wording appears)
+}
+
+All amounts as plain numbers. Dates as YYYY-MM-DD.` }
+          ]
+        }]
+      })
+    });
+    return response;
+  };
+
+  let response = await call();
+  if (response.status === 429) {
+    document.getElementById('invImportProgress').textContent = '⏳ Rate limited — waiting 30s…';
+    await new Promise(r => setTimeout(r, 30000));
+    response = await call();
+  }
+  if (!response.ok) throw new Error(`AI error ${response.status}`);
+  const data = await response.json();
+  const text = (data.content || []).map(c => c.text || '').join('').trim();
+  const clean = text.replace(/^```json\s*/, '').replace(/\s*```$/, '').trim();
+  try { return JSON.parse(clean); }
+  catch { throw new Error('AI returned invalid JSON'); }
+}
+
+// ── Review grid ───────────────────────────────────────────────────────────
+function renderInvImportRows() {
+  const el = document.getElementById('invImportRows');
+  if (!el) return;
+  if (!_invImportRows.length) {
+    el.innerHTML = '<div style="padding:14px;color:var(--muted);font-size:13px">No files added yet.</div>';
+    return;
+  }
+  el.innerHTML = _invImportRows.map((r, i) => {
+    const border = r.committed ? 'var(--green)' : (r.dup || r.error ? 'var(--red)' : 'var(--border)');
+    const dis = r.committed ? 'disabled' : '';
+    return `
+    <div style="border:1px solid ${border};border-radius:6px;padding:6px;opacity:${r.committed ? '.55' : '1'}">
+      <div style="display:grid;grid-template-columns:110px 105px 1fr 95px 85px 85px 95px 130px 90px 30px;gap:6px;align-items:center">
+        <input type="text" class="field-input" style="font-family:var(--font-mono);font-size:12px" ${dis}
+               value="${escapeHtml(r.ref)}" oninput="_invImportRows[${i}].ref = this.value.toUpperCase(); _invImportFlagDups(); _invImportRefreshMeta(${i})">
+        <input type="date" class="field-input" style="font-size:12px" ${dis}
+               value="${escapeHtml(r.invoice_date)}" oninput="_invImportRows[${i}].invoice_date = this.value">
+        <input type="text" class="field-input" style="font-size:12px" ${dis}
+               value="${escapeHtml(r.customer)}"
+               oninput="_invImportRows[${i}].customer = this.value; _invImportRows[${i}].client_id = (_invImportMatchClient(this.value) || {}).id || null; _invImportRefreshMeta(${i})">
+        <input type="number" step="0.01" class="field-input" style="font-size:12px" ${dis}
+               value="${r.net}" oninput="_invImportRows[${i}].net = parseFloat(this.value) || 0">
+        <input type="number" step="0.01" class="field-input" style="font-size:12px" ${dis}
+               value="${r.vat}" oninput="_invImportRows[${i}].vat = parseFloat(this.value) || 0">
+        <input type="number" step="0.01" class="field-input" style="font-size:12px" ${dis}
+               value="${r.retention}" oninput="_invImportRows[${i}].retention = parseFloat(this.value) || 0">
+        <input type="number" step="0.01" class="field-input" style="font-size:12px" ${dis}
+               value="${r.gross}" oninput="_invImportRows[${i}].gross = parseFloat(this.value) || 0">
+        <select class="field-input" style="font-size:12px" ${dis}
+                onchange="_invImportRows[${i}].treatment = this.value">
+          <option value="reverse_charge" ${r.treatment === 'reverse_charge' ? 'selected' : ''}>Reverse charge</option>
+          <option value="standard" ${r.treatment === 'standard' ? 'selected' : ''}>Standard VAT</option>
+          <option value="zero" ${r.treatment === 'zero' ? 'selected' : ''}>Zero / none</option>
+        </select>
+        <select class="field-input" style="font-size:12px" ${dis}
+                onchange="_invImportRows[${i}].status = this.value">
+          <option value="Paid" ${r.status === 'Paid' ? 'selected' : ''}>Paid</option>
+          <option value="Issued" ${r.status === 'Issued' ? 'selected' : ''}>Issued</option>
+        </select>
+        <button class="btn btn-ghost" style="padding:2px 6px;font-size:12px;color:var(--red)" ${dis}
+                onclick="_invImportRows.splice(${i},1); _invImportFlagDups(); renderInvImportRows()">×</button>
+      </div>
+      <div id="invImportMeta${i}" style="font-size:11px;color:var(--muted);margin-top:3px;padding-left:2px">
+        ${_invImportMetaText(r)}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function _invImportMetaText(r) {
+  const bits = [`📄 ${escapeHtml(r.fileName)}`];
+  if (r.committed) bits.push('<span style="color:var(--green)">✓ imported</span>');
+  else if (r.error) bits.push(`<span style="color:var(--red)">${escapeHtml(r.error)}</span>`);
+  else if (r.dup) bits.push('<span style="color:var(--red)">⚠ ref already exists — will be skipped</span>');
+  if (r.client_id) bits.push('<span style="color:var(--green)">✓ matched to Clients</span>');
+  else if (r.customer) bits.push('free-text customer');
+  return bits.join(' · ');
+}
+function _invImportRefreshMeta(i) {
+  const el = document.getElementById('invImportMeta' + i);
+  if (el && _invImportRows[i]) el.innerHTML = _invImportMetaText(_invImportRows[i]);
+}
+
+// ── Commit: upload each original PDF, then bulk insert ────────────────────
+async function commitInvImport() {
+  const rows = _invImportRows.filter(r => !r.committed && !r.dup && r.ref && r.invoice_date);
+  if (!rows.length) { toast('Nothing valid to import', 'error'); return; }
+  const btn = document.getElementById('invImportCommitBtn');
+  const prog = document.getElementById('invImportProgress');
+  _invImportBusy = true;
+  btn.disabled = true; btn.textContent = 'Importing…';
+  try {
+    // 1. Upload the original PDFs to SharePoint (sequential, non-fatal per file)
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      prog.textContent = `⏳ Uploading ${r.fileName} (${i + 1}/${rows.length})…`;
+      try {
+        const folder = await _findOrCreateInvoiceFolder(r.invoice_date);
+        const fileName = sanitizeSpFilename(`${r.ref}.pdf`);
+        const item = await uploadFileToFolder(folder.id, fileName, r.file, 'application/pdf');
+        r.sharepoint_pdf_id = item.id;
+        r.sharepoint_pdf_url = item.webUrl;
+      } catch (e) {
+        console.warn('Import PDF upload failed for', r.ref, e);
+        r.sharepoint_pdf_id = null;
+        r.sharepoint_pdf_url = null;
+      }
+    }
+
+    // 2. Bulk insert
+    prog.textContent = '⏳ Saving to database…';
+    const payload = {
+      invoices: rows.map(r => ({
+        ref: r.ref,
+        invoice_date: r.invoice_date,
+        due_date: r.due_date || null,
+        client_id: r.client_id,
+        customer_text: r.client_id ? null : (r.customer || null),
+        vat_applies: r.treatment === 'standard' ? 1 : 0,
+        cis_reverse_charge: r.treatment === 'reverse_charge' ? 1 : 0,
+        net_amount: r.net,
+        vat_amount: r.treatment === 'standard' ? r.vat : 0,
+        reverse_charge_amount: r.treatment === 'reverse_charge' ? (r.vat || +(((r.net - r.retention) * 0.2)).toFixed(2)) : 0,
+        retention_amount: r.retention || null,
+        gross_amount: r.gross,
+        status: r.status,
+        line_description: r.line_description,
+        sharepoint_pdf_id: r.sharepoint_pdf_id,
+        sharepoint_pdf_url: r.sharepoint_pdf_url
+      }))
+    };
+    const result = await api.post('/api/invoices-import', payload);
+
+    const insertedRefs = new Set((result.inserted || []).map(x => x.ref));
+    for (const r of _invImportRows) {
+      if (insertedRefs.has(r.ref)) r.committed = true;
+    }
+    _invImportFlagDups();
+    renderInvImportRows();
+
+    const skippedHtml = (result.skipped || []).length
+      ? `<div style="color:var(--red);margin-top:4px">Skipped: ${result.skipped.map(s => `${escapeHtml(s.ref)} (${escapeHtml(s.reason)})`).join(', ')}</div>`
+      : '';
+    document.getElementById('invImportSummary').innerHTML =
+      `<span style="color:var(--green);font-weight:600">✓ Imported ${(result.inserted || []).length} invoice(s)</span>${skippedHtml}`;
+    prog.textContent = '';
+    toast(`Imported ${(result.inserted || []).length} invoice(s) ✓`, 'success');
+    await loadInvoicingData();
+    if (typeof renderInvSalesTable === 'function') renderInvSalesTable();
+  } catch (err) {
+    console.error('Invoice import failed', err);
+    toast('Import failed: ' + err.message, 'error');
+  } finally {
+    _invImportBusy = false;
+    btn.disabled = false; btn.textContent = 'Commit Import';
+  }
+}
+
 // ── Issue from detail (Draft → Issued, generates PDF, uploads to SharePoint) ──
 async function issueInvoiceFromDetail() {
   if (!_invDetailCurrent) return;

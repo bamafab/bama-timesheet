@@ -974,6 +974,114 @@ app.http('invoices-detail', {
     }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/invoices-import — bulk import of HISTORICAL invoices.
+// Flat route (avoids {id} collision). Preserves the original refs from the
+// old PDFs; skips any ref that already exists. Imported rows land as
+// Issued or Paid (Paid → total_outstanding 0). Used to backfill the
+// INV0001–INV025x gap from the pre-ERP era.
+// ─────────────────────────────────────────────────────────────────────────────
+app.http('invoices-import', {
+    methods: ['POST'],
+    authLevel: 'anonymous',
+    route: 'invoices-import',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+        try {
+            const body = await request.json();
+            const rows = Array.isArray(body.invoices) ? body.invoices : [];
+            if (!rows.length) return badRequest('No invoices supplied', request);
+            if (rows.length > 100) return badRequest('Max 100 invoices per batch', request);
+
+            const createdBy = auth.email || auth.name || null;
+            const inserted = [], skipped = [];
+
+            for (const r of rows) {
+                const ref = String(r.ref || '').trim().toUpperCase();
+                if (!ref || !r.invoice_date) {
+                    skipped.push({ ref: ref || '(blank)', reason: 'Missing ref or invoice_date' });
+                    continue;
+                }
+                const dup = await query('SELECT id FROM Invoices WHERE ref = @ref', { ref });
+                if (dup.recordset.length) {
+                    skipped.push({ ref, reason: 'Ref already exists' });
+                    continue;
+                }
+
+                const status = r.status === 'Issued' ? 'Issued' : 'Paid';
+                const gross = Number(r.gross_amount || 0);
+                const kind = ref.startsWith('CN') ? 'credit_note'
+                           : ref.startsWith('PRO') ? 'pro_forma' : 'invoice';
+
+                const insertRes = await query(
+                    `INSERT INTO Invoices (
+                        ref, kind, project_id, client_id, customer_text,
+                        invoice_date, due_date, issued_at,
+                        vat_applies, cis_reverse_charge,
+                        net_amount, vat_amount, reverse_charge_amount,
+                        retention_amount, gross_amount, total_outstanding,
+                        status, sharepoint_pdf_id, sharepoint_pdf_url,
+                        notes, created_by
+                    )
+                    OUTPUT INSERTED.id, INSERTED.ref
+                    VALUES (
+                        @ref, @kind, @projectId, @clientId, @customerText,
+                        @invoiceDate, @dueDate, @invoiceDate,
+                        @vatApplies, @cisReverseCharge,
+                        @netAmount, @vatAmount, @reverseChargeAmount,
+                        @retentionAmount, @grossAmount, @totalOutstanding,
+                        @status, @spId, @spUrl,
+                        @notes, @createdBy
+                    )`,
+                    {
+                        ref, kind,
+                        projectId:           r.project_id ?? null,
+                        clientId:            r.client_id ?? null,
+                        customerText:        r.customer_text ?? null,
+                        invoiceDate:         r.invoice_date,
+                        dueDate:             r.due_date ?? null,
+                        vatApplies:          r.vat_applies ? 1 : 0,
+                        cisReverseCharge:    r.cis_reverse_charge ? 1 : 0,
+                        netAmount:           Number(r.net_amount || 0),
+                        vatAmount:           Number(r.vat_amount || 0),
+                        reverseChargeAmount: Number(r.reverse_charge_amount || 0),
+                        retentionAmount:     r.retention_amount != null ? Number(r.retention_amount) : null,
+                        grossAmount:         gross,
+                        totalOutstanding:    status === 'Paid' ? 0 : gross,
+                        status,
+                        spId:                r.sharepoint_pdf_id ?? null,
+                        spUrl:               r.sharepoint_pdf_url ?? null,
+                        notes:               r.notes ?? 'Imported from historical invoice PDF',
+                        createdBy
+                    }
+                );
+                const newId = insertRes.recordset[0].id;
+
+                // Optional single summary line so the detail view isn't empty
+                if (Number(r.net_amount || 0) !== 0) {
+                    await query(
+                        `INSERT INTO InvoiceLineItems (invoice_id, line_no, description, quantity, unit_price, line_total)
+                         VALUES (@invoiceId, 1, @description, 1, @amount, @amount)`,
+                        {
+                            invoiceId: newId,
+                            description: r.line_description || 'Historical invoice (imported)',
+                            amount: Number(r.net_amount || 0)
+                        }
+                    );
+                }
+
+                inserted.push({ id: newId, ref });
+            }
+
+            return ok({ inserted, skipped }, request);
+        } catch (err) {
+            context.error('Error importing invoices:', err);
+            return serverError('Failed to import invoices: ' + err.message, request);
+        }
+    }
+});
+
 app.http('invoices-create', {
     methods: ['POST'],
     authLevel: 'anonymous',
