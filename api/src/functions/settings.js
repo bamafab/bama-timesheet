@@ -34,7 +34,10 @@ app.http('settings-get', {
                 return ok(row, request);
             }
 
-            const result = await query('SELECT * FROM Settings ORDER BY [key]');
+            // company_logo is a large base64 data URI — excluded from the bulk
+            // load so it doesn't bloat every page's settings fetch. Read it
+            // lazily via GET /api/settings/company_logo when generating PDFs.
+            const result = await query("SELECT * FROM Settings WHERE [key] <> 'company_logo' ORDER BY [key]");
             const settings = {};
             for (const row of result.recordset) {
                 try {

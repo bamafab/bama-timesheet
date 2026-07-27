@@ -7245,7 +7245,7 @@ async function exportHolidayReportPDF() {
     return { name: emp.name, entitlement, carryover, totalAllowed, taken, pending, balance };
   });
 
-  const logoSrc = _logoDataUri || '';
+  const logoSrc = _logoDataUriCache || '';
   const now = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
 
   const tableRows = rows.map(r => {
@@ -20711,6 +20711,24 @@ function getEmailPreviewTokens(templateKey) {
 // Required because print windows can't share auth tokens; data URI embeds directly.
 async function loadLogoDataUri(force) {
   if (_logoDataUriCache && !force) return _logoDataUriCache;
+
+  // ── 1. SQL Settings first (key 'company_logo', a data URI string). ──
+  // The SharePoint copy lives under 01 - Accounts, which most users (e.g.
+  // Leszek) cannot read with their own Graph token — their fetch 403s and
+  // every PDF silently fell back to the text-only header. The SQL copy is
+  // readable by ANY authenticated ERP user, so it is the primary source.
+  if (!force) {
+    try {
+      const row = await api.get('/api/settings/company_logo');
+      const uri = row && typeof row.value === 'string' ? row.value : '';
+      if (uri.startsWith('data:image/')) {
+        _logoDataUriCache = uri;
+        return _logoDataUriCache;
+      }
+    } catch (e) { /* fall through to Graph */ }
+  }
+
+  // ── 2. Legacy Graph fetch (user token — needs SharePoint read access). ──
   const itemId = tplGet('global', 'logoItemId');
   if (!itemId) return '';
   try {
@@ -20727,6 +20745,12 @@ async function loadLogoDataUri(force) {
       reader.onerror = () => resolve('');
       reader.readAsDataURL(blob);
     });
+    // Backfill SQL so users WITHOUT SharePoint access get the logo next time.
+    // Fire-and-forget — a failure here must never block PDF generation.
+    if (_logoDataUriCache && _logoDataUriCache.startsWith('data:image/')) {
+      api.put('/api/settings', { company_logo: _logoDataUriCache })
+        .catch(e => console.warn('Logo SQL backfill failed:', e.message));
+    }
     return _logoDataUriCache;
   } catch (e) {
     console.warn('Logo load error:', e.message);
@@ -21282,6 +21306,11 @@ async function uploadLogoToSharePoint() {
 
     _logoDataUriCache = null;
     await loadLogoDataUri(true);
+    // Persist the freshly fetched data URI to SQL so every user (regardless
+    // of SharePoint folder permissions) can load the logo for PDFs.
+    if (_logoDataUriCache && _logoDataUriCache.startsWith('data:image/')) {
+      await api.put('/api/settings', { company_logo: _logoDataUriCache });
+    }
 
     toast('Logo uploaded', 'success');
     closeLogoUploadModal();
@@ -21302,7 +21331,7 @@ async function removeLogo() {
     const mergedSettings = (state.timesheetData.settings && state.timesheetData.settings.templates) || {};
     const newSettings = Object.assign({}, mergedSettings);
     newSettings.global = Object.assign({}, newSettings.global || {}, { logoItemId: '', logoUrl: '' });
-    await api.put('/api/settings', { templates: newSettings });
+    await api.put('/api/settings', { templates: newSettings, company_logo: '' });
     state.timesheetData.settings.templates = newSettings;
     if (tplDraft.global) { tplDraft.global.logoItemId = ''; tplDraft.global.logoUrl = ''; }
     _logoDataUriCache = null;
