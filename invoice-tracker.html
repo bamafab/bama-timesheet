@@ -197,6 +197,21 @@
 
     <!-- ═══ Pane: Sales Invoices ═══ -->
     <div id="invPane-sales">
+      <!-- Aged debt -->
+      <div class="card" style="padding:14px 16px;margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer"
+             onclick="toggleInvAgedDebt()">
+          <div style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);font-weight:600">
+            💷 Aged Debt — outstanding by customer
+          </div>
+          <div id="invAgedChevron" style="color:var(--muted);font-size:12px">▼</div>
+        </div>
+        <div id="invAgedTiles"
+             style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:12px">
+        </div>
+        <div id="invAgedBody" style="margin-top:12px"></div>
+      </div>
+
       <div class="card" style="padding:0;overflow:hidden">
         <div style="overflow-x:auto">
           <table class="babcock-tracker-table">
@@ -1022,6 +1037,6 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260727o"></script>
+<script src="shared.js?v=20260727p"></script>
 </body>
 </html>

@@ -35644,7 +35644,137 @@ async function generateInvoiceFromAfpCard(id) {
   await generateInvoiceFromAfp();
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// AGED DEBT — outstanding sales invoices bucketed by days overdue
+// ═══════════════════════════════════════════════════════════════════════════
+let _invAgedCollapsed = false;
+let _invAgedExpanded = new Set();   // customer keys with expanded invoice rows
+
+function toggleInvAgedDebt() {
+  _invAgedCollapsed = !_invAgedCollapsed;
+  const body = document.getElementById('invAgedBody');
+  const tiles = document.getElementById('invAgedTiles');
+  const chev = document.getElementById('invAgedChevron');
+  if (body)  body.style.display  = _invAgedCollapsed ? 'none' : '';
+  if (tiles) tiles.style.display = _invAgedCollapsed ? 'none' : '';
+  if (chev)  chev.textContent    = _invAgedCollapsed ? '▶' : '▼';
+}
+
+const _INV_AGED_BUCKETS = [
+  { key: 'current', label: 'Not yet due', color: 'var(--green)' },
+  { key: 'b30',     label: '1–30 days',   color: '#60a5fa' },
+  { key: 'b60',     label: '31–60 days',  color: '#ffa500' },
+  { key: 'b90',     label: '61–90 days',  color: '#ff7043' },
+  { key: 'b90p',    label: '90+ days',    color: 'var(--red)' }
+];
+
+function _invAgedBucketOf(inv, todayMs) {
+  const dueStr = _invToDateStr(inv.due_date) || _invToDateStr(inv.invoice_date);
+  if (!dueStr) return 'current';
+  const days = Math.floor((todayMs - new Date(dueStr + 'T00:00:00').getTime()) / 86400000);
+  if (days <= 0)  return 'current';
+  if (days <= 30) return 'b30';
+  if (days <= 60) return 'b60';
+  if (days <= 90) return 'b90';
+  return 'b90p';
+}
+
+function _invAgedData() {
+  const todayMs = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00').getTime();
+  const open = (_invInvoiceList || []).filter(i =>
+    i.kind === 'invoice' &&
+    (i.status === 'Issued' || i.status === 'Partially Paid') &&
+    Number(i.total_outstanding || 0) > 0.005
+  );
+  const byCustomer = new Map();
+  const totals = { current: 0, b30: 0, b60: 0, b90: 0, b90p: 0, all: 0 };
+  for (const inv of open) {
+    const key = inv.client_company_name || inv.customer_text || '— Unassigned —';
+    const bucket = _invAgedBucketOf(inv, todayMs);
+    const amt = Number(inv.total_outstanding || 0);
+    if (!byCustomer.has(key)) {
+      byCustomer.set(key, { customer: key, current: 0, b30: 0, b60: 0, b90: 0, b90p: 0, all: 0, invoices: [] });
+    }
+    const row = byCustomer.get(key);
+    row[bucket] += amt; row.all += amt;
+    row.invoices.push({ ...inv, _bucket: bucket, _outstanding: amt });
+    totals[bucket] += amt; totals.all += amt;
+  }
+  const rows = Array.from(byCustomer.values()).sort((a, b) => b.all - a.all);
+  for (const r of rows) {
+    r.invoices.sort((a, b) => String(a.due_date || a.invoice_date || '').localeCompare(String(b.due_date || b.invoice_date || '')));
+  }
+  return { rows, totals };
+}
+
+function renderInvAgedDebt() {
+  const tilesEl = document.getElementById('invAgedTiles');
+  const bodyEl = document.getElementById('invAgedBody');
+  if (!tilesEl || !bodyEl) return;
+
+  const { rows, totals } = _invAgedData();
+  const fmt = v => '£' + Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  tilesEl.innerHTML = _INV_AGED_BUCKETS.map(b => `
+    <div style="background:var(--bg-darker);border:1px solid var(--border);border-radius:8px;padding:10px 12px">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)">${b.label}</div>
+      <div style="font-size:17px;font-weight:700;margin-top:2px;color:${totals[b.key] > 0 ? b.color : 'var(--muted)'}">${fmt(totals[b.key])}</div>
+    </div>`).join('') + `
+    <div style="background:var(--bg-darker);border:1px solid var(--accent);border-radius:8px;padding:10px 12px">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)">Total outstanding</div>
+      <div style="font-size:17px;font-weight:700;margin-top:2px;color:var(--accent)">${fmt(totals.all)}</div>
+    </div>`;
+
+  if (!rows.length) {
+    bodyEl.innerHTML = '<div style="font-size:12px;color:var(--muted)">Nothing outstanding — all issued invoices are paid. 🎉</div>';
+    return;
+  }
+
+  const th = (t, right) => `<th style="padding:6px 8px;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;text-align:${right ? 'right' : 'left'};border-bottom:1px solid var(--border)">${t}</th>`;
+  const td = (t, right, color, bold) => `<td style="padding:6px 8px;text-align:${right ? 'right' : 'left'};${color ? `color:${color};` : ''}${bold ? 'font-weight:600;' : ''}border-bottom:1px solid var(--border)">${t}</td>`;
+
+  bodyEl.innerHTML = `
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr>
+        ${th('Customer')}${_INV_AGED_BUCKETS.map(b => th(b.label, true)).join('')}${th('Total', true)}
+      </tr></thead>
+      <tbody>
+        ${rows.map(r => {
+          const key = encodeURIComponent(r.customer);
+          const expanded = _invAgedExpanded.has(r.customer);
+          const main = `
+            <tr style="cursor:pointer" onclick="invAgedToggleCustomer('${key}')"
+                onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
+              ${td(`${expanded ? '▾' : '▸'} ${escapeHtml(r.customer)}`, false, null, true)}
+              ${_INV_AGED_BUCKETS.map(b => td(r[b.key] > 0 ? fmt(r[b.key]) : '—', true, r[b.key] > 0 ? b.color : 'var(--subtle)')).join('')}
+              ${td(fmt(r.all), true, null, true)}
+            </tr>`;
+          const detail = expanded ? r.invoices.map(inv => {
+            const bucket = _INV_AGED_BUCKETS.find(b => b.key === inv._bucket);
+            return `
+            <tr style="cursor:pointer;background:var(--bg-darker)" onclick="openInvoiceDetail(${inv.id})">
+              ${td(`<span style="font-family:var(--font-mono);margin-left:18px">${escapeHtml(inv.ref)}</span>
+                    <span style="color:var(--muted);font-size:11px;margin-left:8px">due ${inv.due_date ? new Date(inv.due_date).toLocaleDateString('en-GB') : new Date(inv.invoice_date).toLocaleDateString('en-GB')}</span>
+                    ${inv.status === 'Partially Paid' ? '<span style="color:#60a5fa;font-size:11px;margin-left:8px">part-paid</span>' : ''}`)}
+              ${_INV_AGED_BUCKETS.map(b => td(b.key === inv._bucket ? fmt(inv._outstanding) : '', true, bucket ? bucket.color : null)).join('')}
+              ${td(fmt(inv._outstanding), true)}
+            </tr>`;
+          }).join('') : '';
+          return main + detail;
+        }).join('')}
+      </tbody>
+    </table>`;
+}
+
+function invAgedToggleCustomer(encodedKey) {
+  const key = decodeURIComponent(encodedKey);
+  if (_invAgedExpanded.has(key)) _invAgedExpanded.delete(key);
+  else _invAgedExpanded.add(key);
+  renderInvAgedDebt();
+}
+
 function renderInvSalesTable() {
+  renderInvAgedDebt();
   const tbody = document.getElementById('invSalesTbody');
   if (!tbody) return;
   if (!_invInvoiceList.length) {

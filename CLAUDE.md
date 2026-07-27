@@ -913,6 +913,15 @@ none of this is built yet.
   MAX-scan lands correctly after backfill. NOTE: seed INV0257 + broken
   INV0258 hard-deleted via one-off SQL (children first, AFP reset to
   Certified) — real ones re-enter via import.
+- **Invoicing Phase 4a (aged debt, 2026-07-27)** — collapsible "Aged Debt"
+  card at the top of the Sales Invoices tab: bucket tiles (Not yet due /
+  1–30 / 31–60 / 61–90 / 90+ days past due + Total outstanding) and a
+  per-customer aged table with expandable invoice rows (click customer →
+  its open invoices; click invoice → detail modal). Computed client-side
+  from `_invInvoiceList` (kind=invoice, status Issued/Partially Paid,
+  total_outstanding>0; bucket by days past due_date, falls back to
+  invoice_date). `renderInvAgedDebt()` hooked into `renderInvSalesTable()`.
+  Remaining Phase 4: Natasza issue→email last mile, credit notes UI.
 - **Invoice Tracker** — standalone `invoice-tracker.html` page with four
   tabs (AFPs · Sales Invoices · Supplier Invoices · Receipts). Gated by
   the `invoicing` permission. Backed by `Applications`,
