@@ -814,6 +814,7 @@ function renderHome() {
 
 let _kioskFabData = [];
 let _kioskFabFilter = '__all__';
+let _kioskFabOpenGroups = new Set(); // group keys (project|job) expanded by the user
 let _kioskFabTimer = null;
 
 async function loadKioskFabrication() {
@@ -917,16 +918,49 @@ function renderKioskFabrication() {
     groups.get(key).items.push(a);
   }
 
+  // ── Collapsible job tiles ──
+  // With several live jobs the flat list was unreadable on the shop floor —
+  // each project+job group is now a tappable tile, COLLAPSED by default, with
+  // summary counts on the header. Lads tap the job they're on, then mark
+  // fab/weld/complete inside. Open state persists across the 60s poll
+  // re-render via _kioskFabOpenGroups. Exceptions that force-expand:
+  //   · exactly one group visible (no ambiguity — save the tap)
+  //   · bulk-select mode (checkboxes must be visible to pick)
   let html = bulkBar;
-  for (const g of groups.values()) {
-    html += `<div style="font-size:11px;color:var(--subtle);text-transform:uppercase;letter-spacing:.05em;margin:14px 0 6px">
-      ${escapeHtml(g.project_number)}${g.project_name ? ` — ${escapeHtml(g.project_name)}` : ''}${g.company_name ? ` · ${escapeHtml(g.company_name)}` : ''} &middot; ${escapeHtml(g.job_name)}
+  const groupArr = [...groups.entries()];
+  const forceOpen = _bulkSelectMode || groupArr.length === 1;
+  for (const [key, g] of groupArr) {
+    const isOpen = forceOpen || _kioskFabOpenGroups.has(key);
+    const pending = g.items.filter(a => !asmIsTerminal(a));
+    const done    = g.items.length - pending.length;
+    let sumFab = 0, sumWeld = 0;
+    for (const a of pending) { sumFab += asmToFab(a); sumWeld += asmReadyToWeld(a); }
+
+    const chip = (txt, col, bg) => `<span style="background:${bg};color:${col};padding:3px 10px;border-radius:6px;font-size:12px;font-family:var(--font-mono);white-space:nowrap">${txt}</span>`;
+    let sumChips = '';
+    if (sumFab > 0)  sumChips += chip(`${sumFab} to fab`, '#fca5a5', 'rgba(239,68,68,.14)');
+    if (sumWeld > 0) sumChips += chip(`${sumWeld} to weld`, '#fcd34d', 'rgba(234,179,8,.14)');
+    if (done > 0)    sumChips += chip(`${done} complete`, 'var(--green)', 'rgba(62,207,142,.12)');
+    if (!sumChips)   sumChips = chip('nothing pending', 'var(--subtle)', 'rgba(255,255,255,.05)');
+
+    const marks = pending.slice(0, 8).map(a => escapeHtml(a.assembly_mark)).join(' · ')
+      + (pending.length > 8 ? ` · +${pending.length - 8} more` : '');
+
+    // Header tile — big touch target. Chevron rotates when open.
+    html += `<div style="background:var(--surface);border:1px solid ${isOpen ? 'var(--accent)' : 'var(--border)'};border-radius:12px;margin:12px 0 0;overflow:hidden">
+      <div onclick="toggleKioskFabGroup('${escapeHtml(key)}')" style="cursor:pointer;padding:14px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;-webkit-tap-highlight-color:transparent">
+        <span style="font-size:18px;color:var(--accent);flex:0 0 auto;transform:rotate(${isOpen ? 90 : 0}deg);transition:transform .15s">&#9656;</span>
+        <div style="flex:1;min-width:200px">
+          <div style="font-size:16px;font-weight:700;color:var(--text)">${escapeHtml(g.job_name)}</div>
+          <div style="font-size:11px;color:var(--subtle);text-transform:uppercase;letter-spacing:.05em;margin-top:2px">
+            ${escapeHtml(g.project_number)}${g.project_name ? ` — ${escapeHtml(g.project_name)}` : ''}${g.company_name ? ` · ${escapeHtml(g.company_name)}` : ''}
+          </div>
+          ${!isOpen && marks ? `<div style="font-size:11px;color:var(--subtle);font-family:var(--font-mono);margin-top:4px">${marks}</div>` : ''}
+        </div>
+        <span style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">${sumChips}</span>
+      </div>
+      ${isOpen ? `<div style="display:flex;flex-direction:column;gap:8px;padding:0 12px 12px">${g.items.map(a => renderKioskFabCard(a)).join('')}</div>` : ''}
     </div>`;
-    html += '<div style="display:flex;flex-direction:column;gap:8px">';
-    for (const a of g.items) {
-      html += renderKioskFabCard(a);
-    }
-    html += '</div>';
   }
   list.innerHTML = html;
 }
@@ -1028,6 +1062,13 @@ function renderKioskFabCard(a) {
 
 function setKioskFabFilter(num) {
   _kioskFabFilter = num;
+  renderKioskFabrication();
+}
+
+// Expand/collapse one kiosk job tile. Open keys survive re-renders (poll).
+function toggleKioskFabGroup(key) {
+  if (_kioskFabOpenGroups.has(key)) _kioskFabOpenGroups.delete(key);
+  else _kioskFabOpenGroups.add(key);
   renderKioskFabrication();
 }
 
