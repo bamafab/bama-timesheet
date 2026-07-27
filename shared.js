@@ -21571,6 +21571,13 @@ const TEMPLATE_DEFAULTS = {
           'Payment details are shown on the invoice. Please use {{invoice_ref}} as the payment reference.\n\n' +
           'If you have any questions, please don\u2019t hesitate to get in touch.'
   },
+  emailInvoiceChase: {
+    subject: 'Payment reminder — Invoice {{invoice_ref}}{{project_suffix}}',
+    body: 'Dear {{contact_name}},\n\n' +
+          'This is a friendly reminder that our invoice {{invoice_ref}}{{project_line}} for {{outstanding_total}} {{overdue_phrase}}.\n\n' +
+          'A copy of the invoice is attached for your reference. Please use {{invoice_ref}} as the payment reference.\n\n' +
+          'If payment has already been made, please disregard this email. If there is any issue holding up payment, please let us know.'
+  },
   emailSignature: {
     // HTML content — appended to every Babcock workflow email after the
     // body. Logos can be embedded as <img src="data:..."> when ready.
@@ -28203,7 +28210,11 @@ async function openBabcockEmailModal(opts) {
   // AI drafting bar (tone select + redraft) — injected once, shown only
   // when the caller supplies an aiDraft context. Mirrors the QB flow.
   _ensureBemailToneBar(!!opts.aiDraft);
-  if (opts.aiDraft) draftBabcockEmailBody();
+  if (opts.aiDraft) {
+    const toneSel = document.getElementById('bemailTone');
+    if (toneSel) toneSel.value = opts.aiDraft.defaultTone || 'warm';
+    draftBabcockEmailBody();
+  }
 
   // Signature preview (collapsed by default — toggle expands)
   const sigPreview = document.getElementById('bemailSigPreview');
@@ -35854,7 +35865,9 @@ function renderInvAgedDebt() {
             <tr style="cursor:pointer;background:var(--bg-darker)" onclick="openInvoiceDetail(${inv.id})">
               ${td(`<span style="font-family:var(--font-mono);margin-left:18px">${escapeHtml(inv.ref)}</span>
                     <span style="color:var(--muted);font-size:11px;margin-left:8px">due ${inv.due_date ? new Date(inv.due_date).toLocaleDateString('en-GB') : new Date(inv.invoice_date).toLocaleDateString('en-GB')}</span>
-                    ${inv.status === 'Partially Paid' ? '<span style="color:#60a5fa;font-size:11px;margin-left:8px">part-paid</span>' : ''}`)}
+                    ${inv.status === 'Partially Paid' ? '<span style="color:#60a5fa;font-size:11px;margin-left:8px">part-paid</span>' : ''}
+                    <button class="btn btn-ghost" style="padding:1px 8px;font-size:11px;margin-left:10px"
+                            onclick="event.stopPropagation(); chaseInvoiceById(${inv.id})">📨 Chase</button>`)}
               ${_INV_AGED_BUCKETS.map(b => td(b.key === inv._bucket ? fmt(inv._outstanding) : '', true, bucket ? bucket.color : null)).join('')}
               ${td(fmt(inv._outstanding), true)}
             </tr>`;
@@ -38247,6 +38260,9 @@ async function openInvoiceDetail(id) {
     const emailBtn = document.getElementById('invDetailEmailBtn');
     if (emailBtn) emailBtn.style.display =
       (inv.status === 'Issued' || inv.status === 'Partially Paid' || inv.status === 'Paid') ? '' : 'none';
+    const chaseBtn = document.getElementById('invDetailChaseBtn');
+    if (chaseBtn) chaseBtn.style.display =
+      ((inv.status === 'Issued' || inv.status === 'Partially Paid') && Number(inv.total_outstanding || 0) > 0.005 && inv.kind === 'invoice') ? '' : 'none';
     payBtn.style.display   = (inv.status === 'Issued' || inv.status === 'Partially Paid') ? '' : 'none';
     voidBtn.style.display  = (inv.status !== 'Void' && inv.status !== 'Cancelled') ? '' : 'none';
 
@@ -38742,7 +38758,25 @@ async function emailInvoiceFromDetail() {
   await _openInvoiceEmailComposer(_invDetailCurrent);
 }
 
-async function _openInvoiceEmailComposer(inv) {
+async function chaseInvoiceFromDetail() {
+  if (!_invDetailCurrent) return;
+  await _openInvoiceEmailComposer(_invDetailCurrent, { chase: true });
+}
+
+// One click from the aged debt table — fetches full detail, opens the chaser
+async function chaseInvoiceById(id) {
+  try {
+    setLoading(true);
+    const inv = await api.get(`/api/invoices/${id}`);
+    await _openInvoiceEmailComposer(inv, { chase: true });
+  } catch (err) {
+    toast('Could not open chaser: ' + (err.message || 'unknown'), 'error');
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function _openInvoiceEmailComposer(inv, mode) {
   try {
     setLoading(true);
     await loadLogoDataUri();
@@ -38772,9 +38806,20 @@ async function _openInvoiceEmailComposer(inv) {
       ? `This invoice is subject to the CIS domestic reverse charge \u2014 please account to HMRC for the VAT of \u00a3${fmt2(inv.reverse_charge_amount)} shown.\n\n`
       : '';
 
+    // Chase context: outstanding + days overdue
+    const isChase = !!(mode && mode.chase);
+    const outstanding = Number(inv.total_outstanding || inv.gross_amount || 0);
+    let daysOverdue = 0;
+    if (inv.due_date) {
+      daysOverdue = Math.floor((Date.now() - new Date(_invToDateStr(inv.due_date) + 'T00:00:00').getTime()) / 86400000);
+    }
+    const overduePhrase = daysOverdue > 0
+      ? `is now ${daysOverdue} day${daysOverdue === 1 ? '' : 's'} overdue (due ${dueUk})`
+      : `was due ${dueUk} and remains outstanding`;
+
     await openBabcockEmailModal({
-      templateKey: 'emailInvoiceIssue',
-      title: `Email Invoice ${inv.ref}`,
+      templateKey: isChase ? 'emailInvoiceChase' : 'emailInvoiceIssue',
+      title: isChase ? `Chase Payment — ${inv.ref}` : `Email Invoice ${inv.ref}`,
       to,
       tokens: {
         invoice_ref: inv.ref || '',
@@ -38783,6 +38828,8 @@ async function _openInvoiceEmailComposer(inv) {
         project_suffix: projectLabel ? ` \u2014 ${projectLabel}` : '',
         project_line: projectLabel ? ` for ${projectLabel}` : '',
         gross_total: `\u00a3${fmt2(inv.gross_amount)}`,
+        outstanding_total: `\u00a3${fmt2(outstanding)}`,
+        overdue_phrase: overduePhrase,
         due_date: dueUk,
         vat_note: vatNote
       },
@@ -38792,7 +38839,20 @@ async function _openInvoiceEmailComposer(inv) {
         contentBase64
       },
       aiDraft: {
-        context: `Write a covering email from BAMA Fabrication Ltd, a structural steel fabrication company in Peterborough, to a client. The ${inv.kind === 'credit_note' ? 'credit note' : inv.kind === 'pro_forma' ? 'pro forma invoice' : 'invoice'} PDF is attached to the email.
+        defaultTone: isChase ? (daysOverdue > 30 ? 'firm' : 'warm') : 'warm',
+        context: isChase
+          ? `Write a payment chase-up email from BAMA Fabrication Ltd, a structural steel fabrication company in Peterborough, to a client about an unpaid invoice. A copy of the invoice PDF is attached.
+
+Invoice details:
+- Reference: ${inv.ref}
+- Client contact: ${contactName}${customer ? ' at ' + customer : ''}
+${projectLabel ? '- Project: ' + projectLabel : ''}
+- Outstanding amount: \u00a3${fmt2(outstanding)}${outstanding < Number(inv.gross_amount || 0) ? ' (partially paid, original \u00a3' + fmt2(inv.gross_amount) + ')' : ''}
+- ${daysOverdue > 0 ? 'Now ' + daysOverdue + ' days overdue \u2014 due date was ' + dueUk : 'Due date: ' + dueUk}
+- Ask them to use ${inv.ref} as the payment reference.
+- Acknowledge payment may have crossed in the post \u2014 ask them to disregard if already settled.
+- Invite them to flag any query holding up payment.${daysOverdue > 45 ? '\n- This is significantly overdue: be firmer, request payment or a payment date by return, while remaining professional.' : ''}`
+          : `Write a covering email from BAMA Fabrication Ltd, a structural steel fabrication company in Peterborough, to a client. The ${inv.kind === 'credit_note' ? 'credit note' : inv.kind === 'pro_forma' ? 'pro forma invoice' : 'invoice'} PDF is attached to the email.
 
 Document details:
 - Reference: ${inv.ref}

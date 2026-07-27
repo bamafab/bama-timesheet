@@ -958,6 +958,17 @@ none of this is built yet.
   parent invoice for CNs). Any other caller (tenders/babcock) can adopt
   by passing aiDraft. Historical import OCR prompt now credit-note and
   pro-forma aware (CN/PRO refs, positive amounts even if bracketed).
+- **Invoicing Phase 4e (one-click payment chaser, 2026-07-27)** — chase
+  mode on the invoice composer: `_openInvoiceEmailComposer(inv, {chase:
+  true})` uses new template `emailInvoiceChase` (tokens outstanding_total,
+  overdue_phrase) with AI context including outstanding vs original,
+  days overdue, and an escalation instruction when >45 days; default
+  tone auto-selects firm when >30 days overdue, warm otherwise.
+  Entry points: "📨 Chase Payment" on the detail modal (Issued/Partially
+  Paid invoices with outstanding>0) and a one-click 📨 Chase button on
+  every expanded aged-debt invoice row (`chaseInvoiceById` fetches
+  detail + opens composer; event.stopPropagation so the row click still
+  opens detail). PDF copy attached in both paths.
   Invoicing module COMPLETE except parked items
   (remittance OCR, retention release invoicing).
 - **Invoice Tracker** — standalone `invoice-tracker.html` page with four
