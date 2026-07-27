@@ -11745,6 +11745,7 @@ async function openProjectDetail(projectId) {
   if (!proj) return;
   currentProject = proj;
   currentJob = null;
+  loadJobSheet(proj.dbId);   // fire-and-forget — cached per project
 
   document.getElementById('projDetailTitle').textContent = `${proj.id} — ${proj.name}`;
   document.getElementById('projDetailMeta').textContent = proj.client ? `Client: ${proj.client}` : '';
@@ -12116,7 +12117,7 @@ function openJobDetail(projectId, jobId) {
     loadJobBomItems(jobIdInt),
     loadFinishes(),
     loadJobElementData(jobIdInt),
-    loadJobSheet(jobIdInt)
+    loadJobSheet(proj.dbId)
   ]).then(() => renderAllElements()).catch(() => renderAllElements());
 }
 
@@ -13252,26 +13253,36 @@ async function confirmGenerateDnSQL() {
 //   - Uses Settings.sdn_next_seq → SDN-0001, SDN-0002, …
 //   - Terminal status is 'on_site' (not 'despatched').
 // ═══════════════════════════════════════════
-// JOB SHEET — per-job site/delivery details
+// JOB SHEET — per-PROJECT site/delivery details
 // ═══════════════════════════════════════════
 //
-// One JobSheets row per DrawingJobs row. The Job Sheet is the DEFAULT
-// prefill source for the site-facing documents (Site DN, Site Pack,
-// RAMS) — see _jobSheetResolved(). When no job sheet has been saved
-// yet, those documents fall back to the project's site address (if
-// set) and then the client address, exactly as before.
+// One ProjectSheets row per Projects row (keyed by Projects.id, i.e.
+// proj.dbId — NOT the project_number string). Two different site
+// addresses within one project is rare, so the sheet lives at project
+// level and every job under the project shares it. The UI keeps
+// calling it "Job Sheet".
+//
+// It is the DEFAULT prefill source for the site-facing documents
+// (Site DN, Site Pack, RAMS) — see _jobSheetResolved(). When no
+// sheet has been saved yet, those documents fall back to the
+// project's site address (if set) and then the client address,
+// exactly as before.
 //
 // Supplier DNs (galv / powder coat) are deliberately NOT wired to
 // this — they keep using the supplier's own address.
 
 let _currentJobSheet = null;
+let _currentJobSheetProjId = null;   // Projects.id the cached sheet belongs to
 
-async function loadJobSheet(jobId) {
+async function loadJobSheet(projectDbId) {
+  const id = parseInt(projectDbId);
+  if (!id) { _currentJobSheet = null; _currentJobSheetProjId = null; return null; }
+  if (_currentJobSheetProjId === id) return _currentJobSheet;  // already cached
   _currentJobSheet = null;
-  if (!jobId) return null;
+  _currentJobSheetProjId = id;
   try {
-    const row = await api.get(`/api/job-sheet/${parseInt(jobId)}`);
-    _currentJobSheet = (row && row.job_id) ? row : null;
+    const row = await api.get(`/api/project-sheet/${id}`);
+    _currentJobSheet = (row && row.project_id) ? row : null;
   } catch (e) {
     _currentJobSheet = null;  // degrade gracefully — prefill falls back to project
   }
@@ -13324,10 +13335,10 @@ function _jsSetVal(id, v) {
 }
 
 function openJobSheetModal() {
-  if (!currentJob?.id) { toast('No job selected.', 'error'); return; }
+  if (!currentProject?.dbId) { toast('No project selected.', 'error'); return; }
   const js = _currentJobSheet || {};
 
-  if (js.job_id) {
+  if (js.project_id) {
     _jsSetVal('jsSiteName',     js.site_name);
     _jsSetVal('jsAddr1',        js.address_line1);
     _jsSetVal('jsAddr2',        js.address_line2);
@@ -13343,7 +13354,7 @@ function openJobSheetModal() {
     jobSheetPrefill('auto');   // seed a fresh sheet from the project
   }
 
-  const editable = isDraftsman && currentJob.status !== 'closed';
+  const editable = isDraftsman;
   document.querySelectorAll('#jobSheetModal .js-field').forEach(el => { el.disabled = !editable; });
   const saveBtn = document.getElementById('jsSaveBtn');
   if (saveBtn) saveBtn.style.display = editable ? '' : 'none';
@@ -13352,9 +13363,9 @@ function openJobSheetModal() {
 
   const hint = document.getElementById('jsSourceHint');
   if (hint) {
-    hint.textContent = js.job_id
+    hint.textContent = js.project_id
       ? `Saved${js.updated_at ? ' ' + new Date(js.updated_at).toLocaleDateString('en-GB') : ''}${js.updated_by ? ' by ' + js.updated_by : ''} — SDN / Site Pack / RAMS prefill from this sheet.`
-      : 'Not saved yet — prefilled from the project. Save to make this the default source for SDN / Site Pack / RAMS.';
+      : 'Not saved yet — prefilled from the project. Save to make this the default source for SDN / Site Pack / RAMS on every job in this project.';
   }
   document.getElementById('jobSheetModal').classList.add('active');
 }
@@ -13396,7 +13407,7 @@ function closeJobSheetModal() {
 }
 
 async function saveJobSheet() {
-  if (!currentJob?.id) return;
+  if (!currentProject?.dbId) return;
   const val = id => (document.getElementById(id)?.value || '').trim() || null;
   const body = {
     site_name:        val('jsSiteName'),
@@ -13415,8 +13426,9 @@ async function saveJobSheet() {
   const btn = document.getElementById('jsSaveBtn');
   try {
     if (btn) { btn.disabled = true; btn.textContent = 'Saving\u2026'; }
-    const saved = await api.put(`/api/job-sheet/${parseInt(currentJob.id)}`, body);
-    _currentJobSheet = (saved && saved.job_id) ? saved : null;
+    const saved = await api.put(`/api/project-sheet/${parseInt(currentProject.dbId)}`, body);
+    _currentJobSheet = (saved && saved.project_id) ? saved : null;
+    _currentJobSheetProjId = parseInt(currentProject.dbId);
     toast('Job sheet saved \u2014 SDN / Site Pack / RAMS will prefill from it.', 'success');
     closeJobSheetModal();
   } catch (e) {

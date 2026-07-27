@@ -108,6 +108,10 @@
         <div class="proj-detail-title" id="projDetailTitle"></div>
         <div class="proj-detail-meta" id="projDetailMeta"></div>
       </div>
+      <button class="btn" onclick="openJobSheetModal()"
+              style="padding:8px 16px;font-size:12px;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);color:#60a5fa">
+        &#128203; Job Sheet
+      </button>
     </div>
 
     <!-- Draftsman toolbar -->
@@ -583,8 +587,9 @@
 ══════════════════════════════════════════ -->
 <!-- ═══════════════════════════════════════
      JOB SHEET MODAL
-     Per-job site/delivery details (JobSheets table). Once saved, this
-     is the DEFAULT prefill source for Site DN / Site Pack / RAMS.
+     Per-PROJECT site/delivery details (ProjectSheets table) — one
+     sheet shared by every job in the project. Once saved, this is
+     the DEFAULT prefill source for Site DN / Site Pack / RAMS.
      When empty, those documents fall back to the project's site
      address, then the client address — exactly as before. Supplier
      DNs (galv / powder) are NOT wired to this.
@@ -974,6 +979,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
-<script src="shared.js?v=20260727c"></script>
+<script src="shared.js?v=20260727d"></script>
 </body>
 </html>
