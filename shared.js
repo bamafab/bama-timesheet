@@ -3783,13 +3783,31 @@ function toast(msg, type = 'info') {
 // Falls back to window.confirm if the modal markup isn't on the page.
 // ═══════════════════════════════════════════
 let _bamaConfirmResolver = null;
+// Lazily inject the styled confirm modal on pages that don't carry the
+// markup — NO page should ever fall back to the browser-native
+// window.confirm() (BAMA UI rule: all pop-ups use the styled dialogs).
+function _ensureBamaConfirmModal() {
+  if (document.getElementById('bamaConfirmModal')) return;
+  const wrap = document.createElement('div');
+  wrap.innerHTML = `
+<div class="modal-overlay" id="bamaConfirmModal" style="z-index:9999">
+  <div class="modal" style="max-width:420px;width:92vw">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+      <span id="bcIcon" style="font-size:26px;line-height:1">&#9989;</span>
+      <div class="modal-title" style="margin:0" id="bcTitle">Are you sure?</div>
+    </div>
+    <div style="color:var(--muted);font-size:14px;line-height:1.5;margin-bottom:22px" id="bcBody"></div>
+    <button class="btn btn-primary btn-full" id="bcConfirmBtn" onclick="bamaConfirmResolve(true)" style="padding:13px;font-size:15px">Confirm</button>
+    <button class="btn btn-ghost btn-full" onclick="bamaConfirmResolve(false)" style="margin-top:10px;padding:12px">Cancel</button>
+  </div>
+</div>`;
+  while (wrap.firstElementChild) document.body.appendChild(wrap.firstElementChild);
+}
+
 function bamaConfirm(opts) {
   opts = opts || {};
+  _ensureBamaConfirmModal();
   const modal = document.getElementById('bamaConfirmModal');
-  if (!modal) {
-    // Graceful fallback on pages without the modal markup.
-    return Promise.resolve(window.confirm(opts.body || opts.title || 'Are you sure?'));
-  }
   document.getElementById('bcTitle').textContent = opts.title || 'Are you sure?';
   document.getElementById('bcBody').innerHTML = opts.body || '';
   document.getElementById('bcIcon').innerHTML = opts.icon || '&#10068;'; // ❔ default
