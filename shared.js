@@ -21563,6 +21563,14 @@ const TEMPLATE_DEFAULTS = {
           'If you have any questions or require any amendments, please do not hesitate to contact us.\n\n' +
           'We look forward to hearing from you.'
   },
+  emailInvoiceIssue: {
+    subject: 'BAMA Fabrication Invoice {{invoice_ref}}{{project_suffix}}',
+    body: 'Dear {{contact_name}},\n\n' +
+          'Please find attached our invoice {{invoice_ref}}{{project_line}} for {{gross_total}}, due {{due_date}}.\n\n' +
+          '{{vat_note}}' +
+          'Payment details are shown on the invoice. Please use {{invoice_ref}} as the payment reference.\n\n' +
+          'If you have any questions, please don\u2019t hesitate to get in touch.'
+  },
   emailSignature: {
     // HTML content — appended to every Babcock workflow email after the
     // body. Logos can be embedded as <img src="data:..."> when ready.
@@ -38067,6 +38075,9 @@ async function openInvoiceDetail(id) {
     issueBtn.style.display = (inv.status === 'Draft')     ? '' : 'none';
     const editBtn = document.getElementById('invDetailEditBtn');
     if (editBtn) editBtn.style.display = (inv.status === 'Draft') ? '' : 'none';
+    const emailBtn = document.getElementById('invDetailEmailBtn');
+    if (emailBtn) emailBtn.style.display =
+      (inv.status === 'Issued' || inv.status === 'Partially Paid' || inv.status === 'Paid') ? '' : 'none';
     payBtn.style.display   = (inv.status === 'Issued' || inv.status === 'Partially Paid') ? '' : 'none';
     voidBtn.style.display  = (inv.status !== 'Void' && inv.status !== 'Cancelled') ? '' : 'none';
 
@@ -38512,12 +38523,79 @@ async function issueInvoiceFromDetail() {
     closeInvDetail();
     await loadInvoicingData();
     switchInvTab('sales');
+    // Last mile: offer the email straight away with the PDF attached
+    const issued = _invInvoiceList.find(x => x.id === inv.id);
+    await _openInvoiceEmailComposer(issued ? await api.get(`/api/invoices/${inv.id}`) : inv);
   } catch (err) {
     console.error('Issue failed', err);
     toast('Issue failed: ' + (err.message || 'unknown'), 'error');
   } finally {
     setLoading(false);
     if (btn) { btn.disabled = false; btn.textContent = 'Issue + PDF'; }
+  }
+}
+
+// ── Email the invoice PDF to the client (Graph sendMail via composer) ─────
+async function emailInvoiceFromDetail() {
+  if (!_invDetailCurrent) return;
+  await _openInvoiceEmailComposer(_invDetailCurrent);
+}
+
+async function _openInvoiceEmailComposer(inv) {
+  try {
+    setLoading(true);
+    await loadLogoDataUri();
+
+    // Regenerate the PDF for attachment (deterministic renderer)
+    const pdfData = await _buildInvoicePdfData(inv);
+    const pdfBlob = await renderBamaInvoicePDF(pdfData);
+    const contentBase64 = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(String(r.result).split(',')[1]);
+      r.onerror = () => rej(new Error('Failed to encode PDF'));
+      r.readAsDataURL(pdfBlob);
+    });
+
+    // Recipient: client's contact email from the clients cache
+    const client = inv.client_id
+      ? (_invClientsCache || []).find(c => c.id === inv.client_id)
+      : null;
+    const to = (client && client.contact_email) || '';
+    const contactName = (client && client.contact_name) || 'Sir/Madam';
+    const customer = inv.client_company_name || (client && client.company_name) || inv.customer_text || '';
+
+    const fmt2 = v => Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const dueUk = inv.due_date ? new Date(inv.due_date).toLocaleDateString('en-GB') : 'on receipt';
+    const projectLabel = inv.project_number ? `${inv.project_number} — ${inv.project_name || ''}`.trim() : '';
+    const vatNote = inv.cis_reverse_charge
+      ? `This invoice is subject to the CIS domestic reverse charge \u2014 please account to HMRC for the VAT of \u00a3${fmt2(inv.reverse_charge_amount)} shown.\n\n`
+      : '';
+
+    await openBabcockEmailModal({
+      templateKey: 'emailInvoiceIssue',
+      title: `Email Invoice ${inv.ref}`,
+      to,
+      tokens: {
+        invoice_ref: inv.ref || '',
+        contact_name: contactName,
+        customer_name: customer,
+        project_suffix: projectLabel ? ` \u2014 ${projectLabel}` : '',
+        project_line: projectLabel ? ` for ${projectLabel}` : '',
+        gross_total: `\u00a3${fmt2(inv.gross_amount)}`,
+        due_date: dueUk,
+        vat_note: vatNote
+      },
+      attachment: {
+        name: `${inv.ref}.pdf`,
+        contentType: 'application/pdf',
+        contentBase64
+      }
+    });
+  } catch (err) {
+    console.error('Invoice email composer failed', err);
+    toast('Could not open email composer: ' + (err.message || 'unknown'), 'error');
+  } finally {
+    setLoading(false);
   }
 }
 

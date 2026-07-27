@@ -921,7 +921,19 @@ none of this is built yet.
   from `_invInvoiceList` (kind=invoice, status Issued/Partially Paid,
   total_outstanding>0; bucket by days past due_date, falls back to
   invoice_date). `renderInvAgedDebt()` hooked into `renderInvSalesTable()`.
-  Remaining Phase 4: Natasza issue→email last mile, credit notes UI.
+- **Invoicing Phase 4b (issue→email last mile, 2026-07-27)** — reuses the
+  generic Babcock email composer (modal markup copied into
+  `invoice-tracker.html`; opener/sender in shared.js are page-agnostic).
+  New default template `emailInvoiceIssue` (tokens: invoice_ref,
+  contact_name, project_suffix/project_line, gross_total, due_date,
+  vat_note — vat_note auto-includes CIS reverse-charge paragraph when
+  applicable). `_openInvoiceEmailComposer(inv)`: regenerates the invoice
+  PDF via `renderBamaInvoicePDF`, attaches as base64, prefills To: from
+  the client's contact_email (clients cache). Auto-opens right after
+  Issue + PDF succeeds (the last mile); also available anytime via
+  "📧 Email Invoice" button on the detail modal for Issued/Partially
+  Paid/Paid. Sent via Graph /me/sendMail from the signed-in user.
+  Remaining Phase 4: credit notes UI polish.
 - **Invoice Tracker** — standalone `invoice-tracker.html` page with four
   tabs (AFPs · Sales Invoices · Supplier Invoices · Receipts). Gated by
   the `invoicing` permission. Backed by `Applications`,
