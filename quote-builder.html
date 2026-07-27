@@ -16209,8 +16209,28 @@ async function loadBamaLogoDataUri(force) {
   }
 }
 
-function buildQuoteEmailSignature(q, logoDataUri) {
-  const name = escHtml((q && q.preparedBy) || sessionStorage.getItem('bama_qb_user') || 'BAMA Fabrication');
+// Resolve the sender's display name from the logged-in Microsoft account
+// (Graph /me). Cached per session. Falls back to preparedBy / QB user.
+let _qbSenderNameCache = null;
+async function qbFetchSenderName(q) {
+  if (_qbSenderNameCache) return _qbSenderNameCache;
+  try {
+    const token = sessionStorage.getItem('bama_token');
+    if (token) {
+      const res = await fetch('https://graph.microsoft.com/v1.0/me?$select=displayName', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const me = await res.json();
+        if (me.displayName) { _qbSenderNameCache = me.displayName; return me.displayName; }
+      }
+    }
+  } catch (e) { /* fall through */ }
+  return (q && q.preparedBy) || sessionStorage.getItem('bama_qb_user') || 'BAMA Fabrication';
+}
+
+function buildQuoteEmailSignature(q, logoDataUri, senderName) {
+  const name = escHtml(senderName || (q && q.preparedBy) || sessionStorage.getItem('bama_qb_user') || 'BAMA Fabrication');
   const email = 'info@bamafabrication.co.uk';
   // logoDataUri is fetched from SharePoint (or local upload) before sending so
   // it embeds directly in Outlook without the external-image block. Falls back
@@ -16266,6 +16286,9 @@ async function sendQuoteEmail() {
   let logoDataUri = '';
   try { logoDataUri = await loadBamaLogoDataUri(); } catch(e) { /* non-fatal */ }
 
+  // Resolve the signature name from the logged-in Microsoft account
+  const senderName = await qbFetchSenderName(q);
+
   // Generate the client-facing quote PDF and attach it to the email
   let pdfBase64 = '';
   try {
@@ -16299,7 +16322,7 @@ async function sendQuoteEmail() {
         content: `
           <div style="max-width:600px;font-family:Arial,sans-serif">
             ${htmlBody}
-            ${buildQuoteEmailSignature(q, logoDataUri)}
+            ${buildQuoteEmailSignature(q, logoDataUri, senderName)}
           </div>`
       },
       toRecipients,

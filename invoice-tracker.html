@@ -212,6 +212,13 @@
         <div id="invAgedBody" style="margin-top:12px"></div>
       </div>
 
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">
+        <input type="text" class="field-input" id="invSalesSearch"
+               placeholder="🔍 Search ref, customer, project, status…"
+               style="max-width:420px"
+               oninput="_invSalesSearchTerm = this.value; renderInvSalesTable()">
+        <div id="invSalesSearchCount" style="font-size:12px;color:var(--muted)"></div>
+      </div>
       <div class="card" style="padding:0;overflow:hidden">
         <div style="overflow-x:auto">
           <table class="babcock-tracker-table">
@@ -1144,6 +1151,6 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260727v"></script>
+<script src="shared.js?v=20260727w"></script>
 </body>
 </html>

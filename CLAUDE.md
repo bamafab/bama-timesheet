@@ -976,6 +976,18 @@ none of this is built yet.
   invoices WITH payments are corrected by deleting the payment row,
   which recomputes automatically). Sets status=Issued, total_outstanding
   =gross. bamaConfirm gate before action.
+- **Invoicing polish (2026-07-27)** — (1) Sales Invoices search bar
+  (`invSalesSearch`, filters ref/customer/project/status client-side,
+  match count shown). (2) Sender-aware signature: emailSignature default
+  now uses {{sender_name}} + new token {{sender_sig_role}} ("Role — BAMA
+  Fabrication" or just company); buildBabcockEmailTokens falls back to
+  "Accounts Team" when no user resolved. NOTE: a customised signature
+  saved via the Templates page OVERRIDES this default — edit there too
+  if one exists. (3) QB email signature now resolves the sender name
+  from Graph /me (`qbFetchSenderName`, cached, falls back to preparedBy)
+  — QB deliberately has NO shared.js dependency so it was aligned in
+  place rather than ported to the Babcock engine; full port parked.
+  QB Help updated per definition-of-done.
   Invoicing module COMPLETE except parked items
   (remittance OCR, retention release invoicing).
 - **Invoice Tracker** — standalone `invoice-tracker.html` page with four

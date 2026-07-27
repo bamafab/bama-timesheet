@@ -21584,8 +21584,8 @@ const TEMPLATE_DEFAULTS = {
     // Default below mirrors the standard Natasza Laucis signature.
     html:
       '<p style="margin:18px 0 4px 0">Kind regards</p>' +
-      '<p style="margin:0;font-weight:bold;font-size:14px">Natasza Laucis</p>' +
-      '<p style="margin:0 0 12px 0;color:#D0021B;font-size:12px">Office Coordinator — BAMA Fabrication</p>' +
+      '<p style="margin:0;font-weight:bold;font-size:14px">{{sender_name}}</p>' +
+      '<p style="margin:0 0 12px 0;color:#D0021B;font-size:12px">{{sender_sig_role}}</p>' +
       '<table style="border-collapse:collapse;font-size:12px;color:#333"><tr>' +
       '<td style="padding-right:14px;vertical-align:top">' +
       '{{logo_img}}' +
@@ -28119,12 +28119,14 @@ async function buildBabcockEmailTokens(callerTokens) {
   // Pull role from the BAMA Employees row matching currentManagerUser.
   // Falls back to the Microsoft display name if we don't have an
   // Employees row — useful in dev / first-run scenarios.
-  let senderName = currentManagerUser || (me && me.name) || '';
+  let senderName = currentManagerUser || (me && me.name) || 'Accounts Team';
   let senderRole = '';
   if (currentManagerUser && state.timesheetData && state.timesheetData.employees) {
     const emp = state.timesheetData.employees.find(e => e.name === currentManagerUser);
     if (emp && emp.erpRole) senderRole = emp.erpRole;
   }
+  // Signature role line: "Role — BAMA Fabrication" or just the company
+  const senderSigRole = senderRole ? `${senderRole} \u2014 BAMA Fabrication` : 'BAMA Fabrication';
   // Today's date in UK format ("07 May 2026") — matches the rest of the app.
   const todayLong = new Date().toLocaleDateString('en-GB', {
     day: '2-digit', month: 'long', year: 'numeric'
@@ -28138,6 +28140,7 @@ async function buildBabcockEmailTokens(callerTokens) {
     : `<span style="display:inline-block;background:#D0021B;color:#fff;padding:6px 14px;font-weight:bold;letter-spacing:1px;border-radius:3px">BAMA</span>`;
   return Object.assign({}, callerTokens || {}, {
     sender_name:  senderName,
+    sender_sig_role: senderSigRole,
     sender_role:  senderRole,
     sender_email: (me && me.email) || '',
     date_today:   todayLong,
@@ -35885,6 +35888,8 @@ function invAgedToggleCustomer(encodedKey) {
   renderInvAgedDebt();
 }
 
+let _invSalesSearchTerm = '';
+
 function renderInvSalesTable() {
   renderInvAgedDebt();
   const tbody = document.getElementById('invSalesTbody');
@@ -35897,7 +35902,21 @@ function renderInvSalesTable() {
     </td></tr>`;
     return;
   }
-  tbody.innerHTML = _invInvoiceList.map(i => {
+  // Search filter: ref, customer, project number/name, status
+  const term = (_invSalesSearchTerm || '').toLowerCase().trim();
+  const list = term
+    ? _invInvoiceList.filter(i =>
+        `${i.ref} ${i.client_company_name || ''} ${i.customer_text || ''} ${i.project_number || ''} ${i.project_name || ''} ${i.status || ''}`
+          .toLowerCase().includes(term))
+    : _invInvoiceList;
+  const countEl = document.getElementById('invSalesSearchCount');
+  if (countEl) countEl.textContent = term ? `${list.length} of ${_invInvoiceList.length}` : '';
+  if (term && !list.length) {
+    tbody.innerHTML = `<tr><td colspan="9" style="padding:30px;text-align:center;color:var(--muted)">No invoices match "${escapeHtml(term)}"</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = list.map(i => {
     const customer = i.client_company_name || i.customer_text || '—';
     const project  = i.project_number ? `${i.project_number}` : '';
     const kindBadge = i.kind === 'pro_forma' ? `<span style="display:inline-block;padding:1px 6px;border-radius:8px;font-size:10px;background:rgba(255,165,0,.15);color:#ffa500;margin-right:4px">PRO</span> `
