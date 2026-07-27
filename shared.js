@@ -39425,7 +39425,7 @@ function drawBamaAfpPDF(jsPDF, d, logoDataUri) {
     doc.setPage(p);
     setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
     doc.text(`${d.ref || 'AFP'} · Page ${p} of ${pageCount}`, pageW - marginR, pageH - 6, { align: 'right' });
-    doc.text('BAMA Fabrication Ltd · 11 Enterprise Way, Yaxley, Peterborough PE7 3WY · info@bamafabrication.co.uk', marginL, pageH - 6);
+    doc.text('BAMA Fabrication Ltd · Company No. 14680571 · VAT Reg No. 435 0591 07 · accounts@bamafabrication.co.uk', marginL, pageH - 6);
   }
 
   const blob = doc.output('blob');
