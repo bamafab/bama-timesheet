@@ -13274,20 +13274,31 @@ async function confirmGenerateDnSQL() {
 
 let _currentJobSheet = null;
 let _currentJobSheetProjId = null;   // Projects.id the cached sheet belongs to
+let _jobSheetLoadPromise = null;     // in-flight fetch — awaited, never raced
 
 async function loadJobSheet(projectDbId) {
   const id = parseInt(projectDbId);
-  if (!id) { _currentJobSheet = null; _currentJobSheetProjId = null; return null; }
-  if (_currentJobSheetProjId === id) return _currentJobSheet;  // already cached
+  if (!id) {
+    _currentJobSheet = null; _currentJobSheetProjId = null; _jobSheetLoadPromise = null;
+    return null;
+  }
+  // Same project: return the in-flight promise (or the settled cache) so a
+  // fast click on "Job Sheet" right after opening the project still gets
+  // the SAVED sheet, never a race-empty one.
+  if (_currentJobSheetProjId === id && _jobSheetLoadPromise) return _jobSheetLoadPromise;
   _currentJobSheet = null;
   _currentJobSheetProjId = id;
-  try {
-    const row = await api.get(`/api/project-sheet/${id}`);
-    _currentJobSheet = (row && row.project_id) ? row : null;
-  } catch (e) {
-    _currentJobSheet = null;  // degrade gracefully — prefill falls back to project
-  }
-  return _currentJobSheet;
+  _jobSheetLoadPromise = (async () => {
+    try {
+      const row = await api.get(`/api/project-sheet/${id}`);
+      if (_currentJobSheetProjId !== id) return null;   // switched project mid-fetch
+      _currentJobSheet = (row && row.project_id) ? row : null;
+    } catch (e) {
+      _currentJobSheet = null;  // degrade gracefully — prefill falls back
+    }
+    return _currentJobSheet;
+  })();
+  return _jobSheetLoadPromise;
 }
 
 // Resolve the default site/delivery details for site-facing documents.
@@ -13343,11 +13354,60 @@ function _jsSetVal(id, v) {
   if (el) el.value = (v == null ? '' : v);
 }
 
-function openJobSheetModal() {
-  if (!currentProject?.dbId) { toast('No project selected.', 'error'); return; }
-  const js = _currentJobSheet || {};
+// Every field id in the modal — cleared wholesale on open so nothing from
+// a previously viewed project can bleed through.
+const _JS_ALL_FIELD_IDS = [
+  'jsSiteName', 'jsAddr1', 'jsAddr2', 'jsCity', 'jsCounty', 'jsPostcode',
+  'jsComName', 'jsComPhone', 'jsComEmail',
+  'jsPmName', 'jsPmPhone', 'jsPmEmail',
+  'jsSmName', 'jsSmPhone', 'jsSmEmail',
+  'jsPo', 'jsNotes',
+  'jsRevLabel', 'jsRevDesc', 'jsRevFab', 'jsRevDesign', 'jsRevOps', 'jsRevDays'
+];
 
-  if (js.project_id) {
+function _jsResetModal() {
+  _JS_ALL_FIELD_IDS.forEach(id => _jsSetVal(id, ''));
+  const lbl = document.getElementById('jsRevLabel');
+  if (lbl) lbl.placeholder = 'Base quote';
+  ['jsComSelect', 'jsPmSelect', 'jsSmSelect'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = '<option value="">\u2014 loading client contacts\u2026 \u2014</option>';
+  });
+  const loading = `<div style="color:var(--subtle);font-size:12px">Loading\u2026</div>`;
+  ['jsQuoteStrip', 'jsRevList', 'jsJobStats'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = loading;
+  });
+  const qBtn = document.getElementById('jsQuoteAddrBtn'); if (qBtn) qBtn.style.display = 'none';
+  const sBtn = document.getElementById('jsSeedBaseBtn');  if (sBtn) sBtn.style.display = 'none';
+}
+
+async function openJobSheetModal() {
+  if (!currentProject?.dbId) { toast('No project selected.', 'error'); return; }
+  const projId = parseInt(currentProject.dbId);
+
+  // Wipe the modal FIRST — the DOM persists between projects, so anything
+  // not overwritten below would otherwise leak from the last project viewed.
+  _jsResetModal();
+
+  const editable = isDraftsman;
+  document.querySelectorAll('#jobSheetModal .js-field').forEach(el => { el.disabled = !editable; });
+  const saveBtn = document.getElementById('jsSaveBtn');
+  if (saveBtn) saveBtn.style.display = editable ? '' : 'none';
+  const prefillRow = document.getElementById('jsPrefillRow');
+  if (prefillRow) prefillRow.style.display = editable ? 'flex' : 'none';
+
+  document.getElementById('jobSheetModal').classList.add('active');
+
+  // Kick everything for THIS project in parallel. loadJobSheet is awaited
+  // (it decides saved-vs-prefill); the extras also gate the auto prefill
+  // because the QB quotation is an address source.
+  const contactsP = _jsLoadClientContacts();     // dropdowns per this project's CLIENT
+  const revsP     = _jsLoadRevisions();
+  const [sheet]   = await Promise.all([loadJobSheet(projId), _jsLoadExtras()]);
+  const js = (sheet && sheet.project_id === projId) ? sheet : null;
+
+  if (js) {
     _jsSetVal('jsSiteName',   js.site_name);
     _jsSetVal('jsAddr1',      js.address_line1);
     _jsSetVal('jsAddr2',      js.address_line2);
@@ -13366,32 +13426,16 @@ function openJobSheetModal() {
     _jsSetVal('jsPo',         js.client_po_number);
     _jsSetVal('jsNotes',      js.notes);
   } else {
-    jobSheetPrefill('auto');   // seed a fresh sheet from the project
+    jobSheetPrefill('auto');   // seed a fresh sheet (site \u2192 quotation \u2192 client)
   }
-
-  // Populate the three role dropdowns from the client database
-  // (fire-and-forget — free typing works regardless).
-  _jsLoadClientContacts();
-
-  // Quotation figures, per-job tonnage and the VO/revision ledger
-  // (fire-and-forget — each renders its section when it lands).
-  _jsLoadExtras();
-  _jsLoadRevisions();
-
-  const editable = isDraftsman;
-  document.querySelectorAll('#jobSheetModal .js-field').forEach(el => { el.disabled = !editable; });
-  const saveBtn = document.getElementById('jsSaveBtn');
-  if (saveBtn) saveBtn.style.display = editable ? '' : 'none';
-  const prefillRow = document.getElementById('jsPrefillRow');
-  if (prefillRow) prefillRow.style.display = editable ? 'flex' : 'none';
 
   const hint = document.getElementById('jsSourceHint');
   if (hint) {
-    hint.textContent = js.project_id
-      ? `Saved${js.updated_at ? ' ' + new Date(js.updated_at).toLocaleDateString('en-GB') : ''}${js.updated_by ? ' by ' + js.updated_by : ''} — SDN / Site Pack / RAMS prefill from this sheet.`
-      : 'Not saved yet — prefilled from the project. Save to make this the default source for SDN / Site Pack / RAMS on every job in this project.';
+    hint.textContent = js
+      ? `Saved${js.updated_at ? ' ' + new Date(js.updated_at).toLocaleDateString('en-GB') : ''}${js.updated_by ? ' by ' + js.updated_by : ''} \u2014 SDN / Site Pack / RAMS prefill from this sheet.`
+      : 'Not saved yet \u2014 prefilled automatically. Save to make this the default source for SDN / Site Pack / RAMS on every job in this project.';
   }
-  document.getElementById('jobSheetModal').classList.add('active');
+  await Promise.allSettled([contactsP, revsP]);
 }
 
 // mode: 'auto' (project site if set, else client) | 'site' | 'client'.
@@ -13420,6 +13464,26 @@ function jobSheetPrefill(mode) {
     _jsSetVal('jsPostcode', parts.length > 1 ? parts[parts.length - 1] : '');
     return;
   }
+  // Auto priority: project site address \u2192 QB quotation site address \u2192
+  // client head office (last resort, and never written back to the client).
+  const quoteAddr = String(_jsExtras?.quote?.site_address || _jsExtras?.quote?.json_site_address || '').trim();
+  if (mode === 'auto' &&
+      !(proj.site_same_as_client === false && (proj.site_address_line1 || proj.site_postcode)) &&
+      quoteAddr) {
+    _jsSetVal('jsSiteName', proj.name || proj.project_name || '');
+    const parts = quoteAddr.split(',').map(s => s.trim()).filter(Boolean);
+    _jsSetVal('jsAddr1',    parts[0] || quoteAddr);
+    _jsSetVal('jsAddr2',    parts.length > 2 ? parts.slice(1, -1).join(', ') : (parts[1] || ''));
+    _jsSetVal('jsPostcode', parts.length > 1 ? parts[parts.length - 1] : '');
+    _jsSetVal('jsCity', ''); _jsSetVal('jsCounty', '');
+    // Contacts: seed the Site Manager from the project's site contact if
+    // one exists; otherwise leave the roles for the dropdowns.
+    _jsSetVal('jsSmName',  proj.site_contact_name || '');
+    _jsSetVal('jsSmPhone', proj.site_contact_phone || '');
+    _jsSetVal('jsSmEmail', proj.site_contact_email || '');
+    _jsSetVal('jsPo',      proj.client_po_number || '');
+    return;
+  }
   let a;
   if (mode === 'site')        a = site;
   else if (mode === 'client') a = client;
@@ -13446,7 +13510,10 @@ let _jsClientContactsClientId = null;
 
 async function _jsLoadClientContacts() {
   const clientId = currentProject?.clientId ? parseInt(currentProject.clientId) : null;
-  if (!clientId) { _jsClientContacts = []; _jsPopulateContactSelects(); return; }
+  if (!clientId) {
+    _jsClientContacts = []; _jsClientContactsClientId = null;
+    _jsPopulateContactSelects(); return;
+  }
   if (_jsClientContactsClientId !== clientId) {
     _jsClientContacts = [];
     _jsClientContactsClientId = clientId;
@@ -13454,6 +13521,9 @@ async function _jsLoadClientContacts() {
       const rows = await api.get(`/api/client-contacts?client_id=${clientId}`);
       _jsClientContacts = Array.isArray(rows) ? rows : [];
     } catch (e) { _jsClientContacts = []; }
+    // Someone may have switched project while we were fetching — only
+    // render if this response still belongs to the current client.
+    if (_jsClientContactsClientId !== clientId) return;
   }
   _jsPopulateContactSelects();
 }
@@ -13777,7 +13847,39 @@ async function generateJobSheetPdf() {
     const blob = drawJobSheetPDF(JsPDFCtor, sheet, currentProject, logo);
     console.log('[Job Sheet PDF] blob size:', blob.size, 'bytes (native jsPDF)');
     if (blob.size < 8 * 1024) console.warn('[Job Sheet PDF] blob under 8KB \u2014 possible blank render');
-    window.open(URL.createObjectURL(blob), '_blank');
+
+    // Save into the project folder on SharePoint (root of the project
+    // folder — the sheet is project-level, not job-level). Regenerating
+    // overwrites the same file, so the folder always holds the latest.
+    let opened = false;
+    try {
+      const projectFolder = await findProjectFolder(currentProject.id);
+      if (projectFolder) {
+        const driveId = projectFolder.parentReference?.driveId || BAMA_DRIVE_ID;
+        const fileName = `Job Sheet - ${currentProject.id}.pdf`;
+        const token = await getToken();
+        const upUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${projectFolder.id}:/${encodeURIComponent(fileName)}:/content`;
+        const upRes = await fetch(upUrl, {
+          method: 'PUT',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/pdf' },
+          body: blob
+        });
+        if (upRes.ok) {
+          const uploaded = await upRes.json();
+          toast(`Job Sheet saved to the project folder as ${fileName}.`, 'success');
+          if (uploaded.webUrl) { window.open(uploaded.webUrl, '_blank'); opened = true; }
+        } else {
+          console.warn('[Job Sheet PDF] SharePoint upload failed:', upRes.status);
+        }
+      }
+    } catch (e) {
+      console.warn('[Job Sheet PDF] SharePoint upload failed (non-fatal):', e.message);
+    }
+    if (!opened) {
+      // Upload unavailable — still hand the PDF to the user in a new tab.
+      window.open(URL.createObjectURL(blob), '_blank');
+      toast('Could not reach SharePoint \u2014 PDF opened in a new tab instead.', 'error');
+    }
   } catch (e) {
     toast('Job Sheet PDF failed: ' + (e.message || e), 'error');
   } finally {
@@ -13802,12 +13904,13 @@ function drawJobSheetPDF(jsPDF, sheet, proj, logoDataUri) {
 
   const pageW = 210, pageH = 297, marginL = 14, marginR = 14, marginB = 16;
   const usableW = pageW - marginL - marginR;
-  const TEXT = [34, 34, 34], MUTED = [90, 90, 90], RULE = [204, 204, 204], HEADFILL = [245, 245, 245];
+  const TEXT = [30, 30, 30], MUTED = [100, 100, 100], RULE = [205, 205, 205],
+        DARKRULE = [120, 120, 120], HEADFILL = [242, 242, 242], ZEBRA = [249, 249, 249];
   const setText = c => doc.setTextColor(c[0], c[1], c[2]);
   const setFill = c => doc.setFillColor(c[0], c[1], c[2]);
   const setDraw = c => doc.setDrawColor(c[0], c[1], c[2]);
 
-  // ── Letterhead: logo + company left, title + meta right ──
+  // ── Letterhead ──
   let y = marginL;
   let leftY = y;
   let logoDrawn = false;
@@ -13856,53 +13959,75 @@ function drawJobSheetPDF(jsPDF, sheet, proj, logoDataUri) {
   }
 
   y = Math.max(leftY, rightY) + 6;
-  setDraw(accent); doc.setLineWidth(0.8);
+  setDraw(accent); doc.setLineWidth(1.0);
   doc.line(marginL, y, pageW - marginR, y);
-  y += 8;
+  y += 9;
 
+  // ── Layout helpers ──
   const pageBreakIfNeeded = (needed) => {
     if (y + needed > pageH - marginB - 8) { doc.addPage(); y = marginL + 6; }
   };
+  // Section header: accent bar + tinted band, generous whitespace above.
   const sectionHead = (label) => {
-    pageBreakIfNeeded(24);
-    setFill(HEADFILL); setDraw(RULE); doc.setLineWidth(0.2);
-    doc.rect(marginL, y - 4.5, usableW, 7, 'FD');
-    setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
-    doc.text(label.toUpperCase(), marginL + 2.5, y);
-    y += 7;
+    pageBreakIfNeeded(26);
+    setFill(accent);
+    doc.rect(marginL, y - 4.8, 1.8, 7.6, 'F');
+    setFill(HEADFILL);
+    doc.rect(marginL + 1.8, y - 4.8, usableW - 1.8, 7.6, 'F');
+    setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
+    doc.text(label.toUpperCase(), marginL + 5, y);
+    y += 9;
   };
-  // Generic table: cols = [{label,x,w,align?}], rows = array of cell arrays,
-  // foot = optional cell array rendered bold. Handles wrap + page breaks.
+  const cellX = (c) => c.align === 'right' ? c.x + c.w : c.x;
+  const cellOpt = (c) => c.align === 'right' ? { align: 'right' } : undefined;
+  // Table: filled header band, zebra rows, ruled totals. Page-break aware.
   const drawTable = (cols, rows, foot) => {
     const header = () => {
-      setText(MUTED); doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
-      cols.forEach(c => doc.text(c.label, c.align === 'right' ? c.x + c.w : c.x, y + 1, c.align === 'right' ? { align: 'right' } : undefined));
-      y += 3;
-      setDraw(RULE); doc.setLineWidth(0.2);
+      setFill(HEADFILL);
+      doc.rect(marginL, y - 3.6, usableW, 6, 'F');
+      setText(MUTED); doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
+      cols.forEach(c => doc.text(c.label.toUpperCase(), cellX(c), y, cellOpt(c)));
+      y += 3.4;
+      setDraw(DARKRULE); doc.setLineWidth(0.35);
       doc.line(marginL, y, pageW - marginR, y);
-      y += 5;
+      y += 4.6;
     };
     header();
-    setText(TEXT); doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
-    for (const cells of rows) {
+    doc.setFontSize(9.5);
+    rows.forEach((cells, idx) => {
+      setText(TEXT); doc.setFont('helvetica', 'normal');
       let rowH = 5;
       const wrapped = cells.map((v, i) => {
         const w = doc.splitTextToSize(String(v == null ? '' : v), cols[i].w);
         rowH = Math.max(rowH, w.length * 4.4 + 1);
         return w;
       });
-      if (y + rowH > pageH - marginB - 8) { doc.addPage(); y = marginL + 6; header(); setText(TEXT); doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); }
-      wrapped.forEach((w, i) => doc.text(w, cols[i].align === 'right' ? cols[i].x + cols[i].w : cols[i].x, y + 1, cols[i].align === 'right' ? { align: 'right' } : undefined));
-      y += rowH + 1.5;
-      setDraw([235, 235, 235]);
-      doc.line(marginL, y - 1, pageW - marginR, y - 1);
-    }
+      if (y + rowH > pageH - marginB - 8) {
+        doc.addPage(); y = marginL + 6; header();
+        setText(TEXT); doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
+      }
+      if (idx % 2 === 1) {  // zebra shading on alternate rows
+        setFill(ZEBRA);
+        doc.rect(marginL, y - 3.4, usableW, rowH + 1.2, 'F');
+        setText(TEXT);
+      }
+      wrapped.forEach((w, i) => doc.text(w, cellX(cols[i]), y + 1, cellOpt(cols[i])));
+      y += rowH + 1.8;
+      setDraw(RULE); doc.setLineWidth(0.15);
+      doc.line(marginL, y - 1.2, pageW - marginR, y - 1.2);
+    });
     if (foot) {
-      pageBreakIfNeeded(8);
-      doc.setFont('helvetica', 'bold');
-      foot.forEach((v, i) => { if (v != null && String(v) !== '') doc.text(String(v), cols[i].align === 'right' ? cols[i].x + cols[i].w : cols[i].x, y + 1, cols[i].align === 'right' ? { align: 'right' } : undefined); });
-      y += 6;
-      doc.setFont('helvetica', 'normal');
+      pageBreakIfNeeded(9);
+      setDraw(DARKRULE); doc.setLineWidth(0.45);
+      doc.line(marginL, y - 1.2, pageW - marginR, y - 1.2);
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
+      foot.forEach((v, i) => {
+        if (v == null || String(v) === '') return;
+        setText(i === 0 ? TEXT : accent);
+        doc.text(String(v), cellX(cols[i]), y + 2, cellOpt(cols[i]));
+      });
+      y += 7.5;
+      doc.setFont('helvetica', 'normal'); setText(TEXT);
     }
   };
   const numOr = (v, suffix) => { const n = parseFloat(v); return isFinite(n) && n > 0 ? n + (suffix || '') : '\u2014'; };
@@ -13910,47 +14035,31 @@ function drawJobSheetPDF(jsPDF, sheet, proj, logoDataUri) {
 
   // ── Site address ──
   sectionHead('Site address');
-  setText(TEXT); doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
-  const addrOut = [];
-  if (sheet.site_name) addrOut.push(sheet.site_name);
-  sheet.addrLines.forEach(l => addrOut.push(l));
-  if (addrOut.length === 0) addrOut.push('\u2014');
-  for (const line of addrOut) {
-    const wrapped = doc.splitTextToSize(String(line), usableW - 5);
-    wrapped.forEach(w => { doc.text(w, marginL + 2.5, y + 1); y += 5; });
+  if (sheet.site_name) {
+    setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
+    const nm = doc.splitTextToSize(sheet.site_name, usableW - 8);
+    nm.forEach(w => { doc.text(w, marginL + 5, y + 1); y += 5.4; });
+    doc.setFont('helvetica', 'normal');
   }
-  y += 6;
+  doc.setFontSize(10); setText(TEXT);
+  const addrLines = (sheet.addrLines && sheet.addrLines.length) ? sheet.addrLines : ['\u2014'];
+  for (const line of addrLines) {
+    const wrapped = doc.splitTextToSize(String(line), usableW - 8);
+    wrapped.forEach(w => { doc.text(w, marginL + 5, y + 1); y += 5; });
+  }
+  y += 7;
 
-  // ── Contacts table ──
+  // ── Contacts ──
   sectionHead('Contacts');
-  const cols = [
-    { label: 'Role',  x: marginL + 2.5,  w: 36 },
-    { label: 'Name',  x: marginL + 42,   w: 48 },
-    { label: 'Phone', x: marginL + 93,   w: 34 },
-    { label: 'Email', x: marginL + 130,  w: usableW - 130 - 2 }
-  ];
-  setText(MUTED); doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
-  cols.forEach(c => doc.text(c.label, c.x, y + 1));
-  y += 3;
-  setDraw(RULE); doc.setLineWidth(0.2);
-  doc.line(marginL, y, pageW - marginR, y);
+  const contacts = (sheet.contacts && sheet.contacts.length)
+    ? sheet.contacts : [{ role: '\u2014', name: '', phone: '', email: '' }];
+  drawTable([
+    { label: 'Role',  x: marginL + 5,   w: 30 },
+    { label: 'Name',  x: marginL + 38,  w: 42 },
+    { label: 'Phone', x: marginL + 84,  w: 28 },
+    { label: 'Email', x: marginL + 116, w: usableW - 116 - 3 }
+  ], contacts.map(c => [c.role, c.name, c.phone, c.email]));
   y += 5;
-  setText(TEXT); doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
-  const contacts = sheet.contacts.length ? sheet.contacts : [{ role: '\u2014', name: '', phone: '', email: '' }];
-  for (const c of contacts) {
-    const cells = [c.role, c.name, c.phone, c.email];
-    let rowH = 5;
-    const wrappedCells = cells.map((v, i) => {
-      const w = doc.splitTextToSize(String(v || ''), cols[i].w);
-      rowH = Math.max(rowH, w.length * 4.4 + 1);
-      return w;
-    });
-    wrappedCells.forEach((w, i) => doc.text(w, cols[i].x, y + 1));
-    y += rowH + 1.5;
-    setDraw([235, 235, 235]);
-    doc.line(marginL, y - 1, pageW - marginR, y - 1);
-  }
-  y += 6;
 
   // ── Quoted figures (from the QB quotation, if linked) ──
   if (sheet.quote) {
@@ -13958,17 +14067,29 @@ function drawJobSheetPDF(jsPDF, sheet, proj, logoDataUri) {
     sectionHead(`Quoted \u2014 ${q.reference}${q.revision ? ' rev ' + q.revision : ''}`);
     const ops = parseFloat(q.inst_operatives), days = parseFloat(q.inst_days);
     const crew = (isFinite(ops) && ops > 0)
-      ? `${ops} operative${ops !== 1 ? 's' : ''}${(isFinite(days) && days > 0) ? ' \u00d7 ' + days + ' day' + (days !== 1 ? 's' : '') : ''}`
+      ? `${ops} op${ops !== 1 ? 's' : ''}${(isFinite(days) && days > 0) ? ' \u00d7 ' + days + ' day' + (days !== 1 ? 's' : '') : ''}`
       : '\u2014';
     const qkg = parseFloat(q.total_kg);
-    drawTable([
-      { label: 'Fab hours',      x: marginL + 2.5, w: 40, align: 'right' },
-      { label: 'Design hours',   x: marginL + 48,  w: 40, align: 'right' },
-      { label: 'Site crew',      x: marginL + 94,  w: 50 },
-      { label: 'Quoted tonnage', x: marginL + 148, w: usableW - 148 - 2, align: 'right' }
-    ], [[ numOr(q.fab_hours, ' hrs'), numOr(q.design_hours, ' hrs'), crew,
-         (isFinite(qkg) && qkg > 0) ? fmtT(qkg) : '\u2014' ]]);
-    y += 4;
+    // Four stat cells across the width — label above, bold value below.
+    const stats = [
+      { l: 'FAB HOURS',      v: numOr(q.fab_hours, ' hrs') },
+      { l: 'DESIGN HOURS',   v: numOr(q.design_hours, ' hrs') },
+      { l: 'SITE CREW',      v: crew },
+      { l: 'QUOTED TONNAGE', v: (isFinite(qkg) && qkg > 0) ? fmtT(qkg) : '\u2014' }
+    ];
+    pageBreakIfNeeded(20);
+    const cellW = (usableW - 3 * 4) / 4;
+    stats.forEach((st, i) => {
+      const x = marginL + i * (cellW + 4);
+      setFill([252, 250, 248]); setDraw(RULE); doc.setLineWidth(0.2);
+      doc.roundedRect(x, y - 3, cellW, 15, 1.2, 1.2, 'FD');
+      setText(MUTED); doc.setFont('helvetica', 'bold'); doc.setFontSize(7);
+      doc.text(st.l, x + 3, y + 1.5);
+      setText(TEXT); doc.setFontSize(11.5);
+      doc.text(String(st.v), x + 3, y + 8.5);
+    });
+    y += 20;
+    doc.setFont('helvetica', 'normal'); setText(TEXT);
   }
 
   // ── Hours & variations ledger (base quote + VOs, per job) ──
@@ -13984,14 +14105,14 @@ function drawJobSheetPDF(jsPDF, sheet, proj, logoDataUri) {
                r.description || '', f || '\u2014', d || '\u2014', site ];
     });
     drawTable([
-      { label: 'Rev',        x: marginL + 2.5, w: 22 },
-      { label: 'Job',        x: marginL + 28,  w: 36 },
-      { label: 'Description',x: marginL + 67,  w: 62 },
-      { label: 'Fab hrs',    x: marginL + 132, w: 16, align: 'right' },
-      { label: 'Design hrs', x: marginL + 152, w: 16, align: 'right' },
-      { label: 'Site',       x: marginL + 172, w: usableW - 172 - 2, align: 'right' }
+      { label: 'Rev',        x: marginL + 5,   w: 20 },
+      { label: 'Job',        x: marginL + 28,  w: 32 },
+      { label: 'Description',x: marginL + 63,  w: 58 },
+      { label: 'Fab hrs',    x: marginL + 124, w: 18, align: 'right' },
+      { label: 'Design hrs', x: marginL + 146, w: 18, align: 'right' },
+      { label: 'Site',       x: marginL + 168, w: usableW - 168 - 3, align: 'right' }
     ], rows, [ 'Total', '', '', tf || '\u2014', td || '\u2014', '' ]);
-    y += 4;
+    y += 5;
   }
 
   // ── Fabrication summary — members & tonnage per job ──
@@ -14005,31 +14126,38 @@ function drawJobSheetPDF(jsPDF, sheet, proj, logoDataUri) {
                parseFloat(j.assembly_marks) || 0, m || '\u2014', w > 0 ? fmtT(w) : '\u2014' ];
     });
     drawTable([
-      { label: 'Job',     x: marginL + 2.5, w: 86 },
+      { label: 'Job',     x: marginL + 5,   w: 84 },
       { label: 'Marks',   x: marginL + 94,  w: 24, align: 'right' },
       { label: 'Members', x: marginL + 124, w: 26, align: 'right' },
-      { label: 'Weight',  x: marginL + 156, w: usableW - 156 - 2, align: 'right' }
+      { label: 'Weight',  x: marginL + 156, w: usableW - 156 - 3, align: 'right' }
     ], rows, [ 'Total', '', members || '\u2014', fmtT(kg) ]);
-    y += 4;
+    y += 5;
   }
 
-  // ── Notes (only if present) ──
+  // ── Notes (light bordered box) ──
   if (sheet.notes) {
     sectionHead('Notes');
-    setText(TEXT); doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
-    const wrapped = doc.splitTextToSize(sheet.notes, usableW - 5);
-    for (const w of wrapped) {
-      if (y > pageH - marginB - 10) { doc.addPage(); y = marginL + 6; }
-      doc.text(w, marginL + 2.5, y + 1); y += 4.6;
-    }
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); setText(TEXT);
+    const wrapped = doc.splitTextToSize(sheet.notes, usableW - 12);
+    const boxH = wrapped.length * 4.6 + 7;
+    pageBreakIfNeeded(boxH + 4);
+    setFill([252, 252, 250]); setDraw(RULE); doc.setLineWidth(0.2);
+    doc.roundedRect(marginL, y - 3, usableW, boxH, 1.2, 1.2, 'FD');
+    let ny = y + 1.5;
+    for (const w of wrapped) { doc.text(w, marginL + 5, ny); ny += 4.6; }
+    y += boxH + 4;
   }
 
-  // ── Footer: Page X of Y on every page ──
+  // ── Footer: rule + Page X of Y on every page ──
   const total = doc.getNumberOfPages();
   for (let p = 1; p <= total; p++) {
     doc.setPage(p);
+    setDraw(RULE); doc.setLineWidth(0.2);
+    doc.line(marginL, pageH - 11, pageW - marginR, pageH - 11);
     setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
     doc.text(`Page ${p} of ${total}`, pageW / 2, pageH - 7, { align: 'center' });
+    doc.text(`${proj?.id || ''}${proj?.name ? ' \u2014 ' + proj.name : ''}`, marginL, pageH - 7);
+    doc.text('Job Sheet', pageW - marginR, pageH - 7, { align: 'right' });
   }
 
   return doc.output('blob');

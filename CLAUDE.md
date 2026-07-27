@@ -107,8 +107,16 @@ management, and a standalone UK steel section reference.
   record, so QB quotations and anything else prefilling from Clients
   keeps showing the head-office address. "Generate PDF" renders a native
   jsPDF Job Sheet (`drawJobSheetPDF` in `shared.js`, drawDnPDF
-  conventions) from the CURRENT modal fields and opens it in a new tab
-  (no SharePoint upload yet).
+  conventions: accent section bars, zebra tables, stat cells, footer
+  rule) from the CURRENT modal fields, uploads it to the PROJECT FOLDER
+  ROOT on SharePoint as `Job Sheet - <projno>.pdf` (overwrites on
+  regenerate) and opens the SharePoint copy; falls back to a blob tab
+  if SharePoint is unreachable. The modal is wiped via `_jsResetModal()`
+  on every open (the DOM persists between projects — without the wipe,
+  contacts leak between projects), `loadJobSheet` promise-caches the
+  in-flight fetch (fast-click race), and the auto address prefill order
+  is: saved sheet → project site → QB quotation site address → client
+  head office.
   The sheet also shows (read-only): quoted figures pulled from the linked
   won QB quote (`GET /api/project-sheet/{id}/extras` — fab/design hours,
   site crew, tonnage via JSON_VALUE on quote_data; link resolved through
