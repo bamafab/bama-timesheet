@@ -501,6 +501,7 @@ async function loadProjects() {
       .map(p => ({
         id:     p.project_number,
         dbId:   p.id,
+        clientId: p.client_id,
         name:   p.project_name,
         status: p.status,
         client: p.company_name || '',
@@ -13294,16 +13295,24 @@ async function loadJobSheet(projectDbId) {
 // Returns { source, siteName, lines[], contact, phone, email, po }.
 function _jobSheetResolved(proj) {
   const js = _currentJobSheet;
-  const jsHasData = js && (js.address_line1 || js.postcode || js.contact_name || js.site_name);
+  const jsHasData = js && (js.address_line1 || js.postcode || js.site_name ||
+                           js.site_manager_name || js.pm_name || js.commercial_name);
   if (jsHasData) {
+    // Site documents want the person actually on site: Site Manager first,
+    // then Project Manager, then Commercial as a last resort.
+    const c = (js.site_manager_name || js.site_manager_phone)
+      ? { n: js.site_manager_name, p: js.site_manager_phone, e: js.site_manager_email }
+      : (js.pm_name || js.pm_phone)
+        ? { n: js.pm_name, p: js.pm_phone, e: js.pm_email }
+        : { n: js.commercial_name, p: js.commercial_phone, e: js.commercial_email };
     return {
       source:   'jobsheet',
       siteName: js.site_name || proj?.name || proj?.project_name || '',
       lines: [js.address_line1, js.address_line2,
               [js.city, js.county].filter(Boolean).join(', '), js.postcode].filter(Boolean),
-      contact: js.contact_name  || '',
-      phone:   js.contact_phone || '',
-      email:   js.contact_email || '',
+      contact: c.n || '',
+      phone:   c.p || '',
+      email:   c.e || '',
       po:      js.client_po_number || proj?.client_po_number || ''
     };
   }
@@ -13339,20 +13348,30 @@ function openJobSheetModal() {
   const js = _currentJobSheet || {};
 
   if (js.project_id) {
-    _jsSetVal('jsSiteName',     js.site_name);
-    _jsSetVal('jsAddr1',        js.address_line1);
-    _jsSetVal('jsAddr2',        js.address_line2);
-    _jsSetVal('jsCity',         js.city);
-    _jsSetVal('jsCounty',       js.county);
-    _jsSetVal('jsPostcode',     js.postcode);
-    _jsSetVal('jsContactName',  js.contact_name);
-    _jsSetVal('jsContactPhone', js.contact_phone);
-    _jsSetVal('jsContactEmail', js.contact_email);
-    _jsSetVal('jsPo',           js.client_po_number);
-    _jsSetVal('jsNotes',        js.notes);
+    _jsSetVal('jsSiteName',   js.site_name);
+    _jsSetVal('jsAddr1',      js.address_line1);
+    _jsSetVal('jsAddr2',      js.address_line2);
+    _jsSetVal('jsCity',       js.city);
+    _jsSetVal('jsCounty',     js.county);
+    _jsSetVal('jsPostcode',   js.postcode);
+    _jsSetVal('jsComName',    js.commercial_name);
+    _jsSetVal('jsComPhone',   js.commercial_phone);
+    _jsSetVal('jsComEmail',   js.commercial_email);
+    _jsSetVal('jsPmName',     js.pm_name);
+    _jsSetVal('jsPmPhone',    js.pm_phone);
+    _jsSetVal('jsPmEmail',    js.pm_email);
+    _jsSetVal('jsSmName',     js.site_manager_name);
+    _jsSetVal('jsSmPhone',    js.site_manager_phone);
+    _jsSetVal('jsSmEmail',    js.site_manager_email);
+    _jsSetVal('jsPo',         js.client_po_number);
+    _jsSetVal('jsNotes',      js.notes);
   } else {
     jobSheetPrefill('auto');   // seed a fresh sheet from the project
   }
+
+  // Populate the three role dropdowns from the client database
+  // (fire-and-forget — free typing works regardless).
+  _jsLoadClientContacts();
 
   const editable = isDraftsman;
   document.querySelectorAll('#jobSheetModal .js-field').forEach(el => { el.disabled = !editable; });
@@ -13390,42 +13409,314 @@ function jobSheetPrefill(mode) {
   else a = (proj.site_same_as_client === false && (proj.site_address_line1 || proj.site_postcode))
     ? site : client;
 
-  _jsSetVal('jsSiteName',     proj.name || proj.project_name || '');
-  _jsSetVal('jsAddr1',        a.l1);
-  _jsSetVal('jsAddr2',        a.l2);
-  _jsSetVal('jsCity',         a.city);
-  _jsSetVal('jsCounty',       a.county);
-  _jsSetVal('jsPostcode',     a.pc);
-  _jsSetVal('jsContactName',  a.contact);
-  _jsSetVal('jsContactPhone', a.phone);
-  _jsSetVal('jsContactEmail', a.email);
-  _jsSetVal('jsPo',           proj.client_po_number || '');
+  _jsSetVal('jsSiteName', proj.name || proj.project_name || '');
+  _jsSetVal('jsAddr1',    a.l1);
+  _jsSetVal('jsAddr2',    a.l2);
+  _jsSetVal('jsCity',     a.city);
+  _jsSetVal('jsCounty',   a.county);
+  _jsSetVal('jsPostcode', a.pc);
+  // Seed the Site Manager from the resolved contact; Commercial / PM are
+  // picked from the client-contact dropdowns (or typed) by the user.
+  _jsSetVal('jsSmName',   a.contact);
+  _jsSetVal('jsSmPhone',  a.phone);
+  _jsSetVal('jsSmEmail',  a.email);
+  _jsSetVal('jsPo',       proj.client_po_number || '');
+}
+
+// ── Client-contact dropdowns (same source as QB: ClientContacts) ──
+let _jsClientContacts = [];        // contacts of the current project's client
+let _jsClientContactsClientId = null;
+
+async function _jsLoadClientContacts() {
+  const clientId = currentProject?.clientId ? parseInt(currentProject.clientId) : null;
+  if (!clientId) { _jsClientContacts = []; _jsPopulateContactSelects(); return; }
+  if (_jsClientContactsClientId !== clientId) {
+    _jsClientContacts = [];
+    _jsClientContactsClientId = clientId;
+    try {
+      const rows = await api.get(`/api/client-contacts?client_id=${clientId}`);
+      _jsClientContacts = Array.isArray(rows) ? rows : [];
+    } catch (e) { _jsClientContacts = []; }
+  }
+  _jsPopulateContactSelects();
+}
+
+function _jsPopulateContactSelects() {
+  const opts = ['<option value="">\u2014 pick from client database \u2014</option>']
+    .concat(_jsClientContacts.map((c, i) => {
+      const label = [c.contact_name, c.role].filter(Boolean).join(' \u00b7 ');
+      return `<option value="${i}">${escapeHtml(label || '(unnamed)')}</option>`;
+    })).join('');
+  ['jsComSelect', 'jsPmSelect', 'jsSmSelect'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) { el.innerHTML = opts; el.value = ''; }
+  });
+}
+
+// onchange handler for the three dropdowns — fills the editable fields.
+// role suffix: 'Com' | 'Pm' | 'Sm'
+function jsContactPick(role) {
+  const sel = document.getElementById(`js${role}Select`);
+  const c = _jsClientContacts[parseInt(sel?.value)];
+  if (!c) return;
+  _jsSetVal(`js${role}Name`,  c.contact_name);
+  _jsSetVal(`js${role}Phone`, c.contact_phone);
+  _jsSetVal(`js${role}Email`, c.contact_email);
+}
+
+// Save any newly typed contact into the client database so it appears in
+// every contact dropdown (Job Sheet, QB, tenders) from now on. Matching is
+// by name, case-insensitive; existing contacts are never modified.
+async function _jsSyncContactsToClientDb(body) {
+  const clientId = currentProject?.clientId ? parseInt(currentProject.clientId) : null;
+  if (!clientId) return;
+  const roles = [
+    { name: body.commercial_name,   phone: body.commercial_phone,   email: body.commercial_email,   role: 'Commercial' },
+    { name: body.pm_name,           phone: body.pm_phone,           email: body.pm_email,           role: 'Project Manager' },
+    { name: body.site_manager_name, phone: body.site_manager_phone, email: body.site_manager_email, role: 'Site Manager' }
+  ];
+  const existing = new Set(_jsClientContacts.map(c => String(c.contact_name || '').trim().toLowerCase()).filter(Boolean));
+  let added = false;
+  for (const r of roles) {
+    const nm = String(r.name || '').trim();
+    if (!nm || existing.has(nm.toLowerCase())) continue;
+    existing.add(nm.toLowerCase());
+    try {
+      const row = await api.post('/api/client-contacts', {
+        client_id:     clientId,
+        contact_name:  nm,
+        contact_phone: r.phone || '',
+        contact_email: r.email || '',
+        role:          r.role
+      });
+      if (row) { _jsClientContacts.push(row); added = true; }
+    } catch (e) { console.warn('Client-contact sync failed (non-fatal):', e.message); }
+  }
+  if (added) _jsPopulateContactSelects();
 }
 
 function closeJobSheetModal() {
   document.getElementById('jobSheetModal').classList.remove('active');
 }
 
+// ── Job Sheet PDF — native jsPDF, no html2canvas (per CLAUDE.md) ──
+// Reads the CURRENT modal fields (so unsaved edits print too) and opens
+// the PDF in a new tab. Follows drawDnPDF conventions: letterhead with
+// real logo proportions, null-field filtering, splitTextToSize wrapping,
+// "Page X of Y" footer, blob-size diagnostic.
+async function generateJobSheetPdf() {
+  if (!currentProject) return;
+  const btn = document.getElementById('jsPdfBtn');
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Generating\u2026'; }
+    await loadLogoDataUri();
+    const JsPDFCtor = await resolveJsPDFCtor();
+    if (!JsPDFCtor) throw new Error('PDF library failed to load');
+    const v = id => (document.getElementById(id)?.value || '').trim();
+    const sheet = {
+      site_name: v('jsSiteName'),
+      addrLines: [v('jsAddr1'), v('jsAddr2'),
+                  [v('jsCity'), v('jsCounty')].filter(Boolean).join(', '),
+                  v('jsPostcode')].filter(Boolean),
+      contacts: [
+        { role: 'Commercial',      name: v('jsComName'), phone: v('jsComPhone'), email: v('jsComEmail') },
+        { role: 'Project Manager', name: v('jsPmName'),  phone: v('jsPmPhone'),  email: v('jsPmEmail')  },
+        { role: 'Site Manager',    name: v('jsSmName'),  phone: v('jsSmPhone'),  email: v('jsSmEmail')  }
+      ].filter(c => c.name || c.phone || c.email),
+      clientPo: v('jsPo'),
+      notes:    v('jsNotes')
+    };
+    const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
+    const blob = drawJobSheetPDF(JsPDFCtor, sheet, currentProject, logo);
+    console.log('[Job Sheet PDF] blob size:', blob.size, 'bytes (native jsPDF)');
+    if (blob.size < 8 * 1024) console.warn('[Job Sheet PDF] blob under 8KB \u2014 possible blank render');
+    window.open(URL.createObjectURL(blob), '_blank');
+  } catch (e) {
+    toast('Job Sheet PDF failed: ' + (e.message || e), 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '\uD83D\uDDA8 Generate PDF'; }
+  }
+}
+
+function drawJobSheetPDF(jsPDF, sheet, proj, logoDataUri) {
+  const s = (typeof _pickTplSettings === 'function') ? _pickTplSettings() : null;
+  const g = (s && s.global) || (typeof TEMPLATE_DEFAULTS !== 'undefined' ? TEMPLATE_DEFAULTS.global
+    : { companyName: 'BAMA FABRICATION', address: '', phone: '', email: '', vatNumber: '' });
+  const accent = (typeof hexToRgb === 'function' && hexToRgb('#ff6b00')) || [255, 107, 0];
+
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  try {
+    doc.setProperties({
+      title: `Job Sheet \u2014 ${proj?.id || ''}`,
+      subject: `Job Sheet${proj?.name ? ' \u2014 ' + proj.name : ''}`,
+      author: 'BAMA Fabrication', creator: 'BAMA Fabrication ERP'
+    });
+  } catch (e) { /* non-critical */ }
+
+  const pageW = 210, pageH = 297, marginL = 14, marginR = 14, marginB = 16;
+  const usableW = pageW - marginL - marginR;
+  const TEXT = [34, 34, 34], MUTED = [90, 90, 90], RULE = [204, 204, 204], HEADFILL = [245, 245, 245];
+  const setText = c => doc.setTextColor(c[0], c[1], c[2]);
+  const setFill = c => doc.setFillColor(c[0], c[1], c[2]);
+  const setDraw = c => doc.setDrawColor(c[0], c[1], c[2]);
+
+  // ── Letterhead: logo + company left, title + meta right ──
+  let y = marginL;
+  let leftY = y;
+  let logoDrawn = false;
+  if (logoDataUri) {
+    try {
+      const RENDER_W = 55;
+      const props = doc.getImageProperties(logoDataUri);
+      const ratio = (props && props.width && props.height) ? (props.width / props.height) : (55 / 24);
+      doc.addImage(logoDataUri, props.fileType || 'PNG', marginL, y, RENDER_W, RENDER_W / ratio, undefined, 'FAST');
+      leftY = y + RENDER_W / ratio + 4;
+      logoDrawn = true;
+    } catch (e) { logoDrawn = false; }
+  }
+  if (!logoDrawn) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(20); setText(accent);
+    doc.text(g.companyName || 'BAMA FABRICATION', marginL, y + 8); leftY = y + 14;
+  }
+  setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+  const coLines = [];
+  if (g.address) String(g.address).split('\n').forEach(l => coLines.push(l));
+  if (g.phone) coLines.push('Tel: ' + g.phone);
+  if (g.email) coLines.push(g.email);
+  if (g.vatNumber) coLines.push('VAT: ' + g.vatNumber);
+  coLines.forEach(l => { doc.text(String(l), marginL, leftY); leftY += 3.8; });
+
+  doc.setFont('helvetica', 'bolditalic'); doc.setFontSize(20); setText(accent);
+  doc.text('Job Sheet', pageW - marginR, y + 8, { align: 'right' });
+
+  let rightY = y + 16;
+  const fmtDate = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  const metaRows = [
+    { label: 'Project No:', value: proj?.id },
+    { label: 'Project:',    value: proj?.name },
+    { label: 'Client:',     value: proj?.client },
+    { label: 'Client PO:',  value: sheet.clientPo },
+    { label: 'Date:',       value: fmtDate }
+  ].filter(r => r.value != null && String(r.value).trim() !== '');
+  doc.setFontSize(9);
+  for (const r of metaRows) {
+    setText(TEXT); doc.setFont('helvetica', 'bold');
+    doc.text(r.label, pageW - marginR - 42, rightY, { align: 'right' });
+    doc.setFont('helvetica', 'normal');
+    const vLines = doc.splitTextToSize(String(r.value || ''), 40);
+    doc.text(vLines[0] || '', pageW - marginR, rightY, { align: 'right' });
+    rightY += 4.4 * Math.max(1, vLines.length);
+  }
+
+  y = Math.max(leftY, rightY) + 6;
+  setDraw(accent); doc.setLineWidth(0.8);
+  doc.line(marginL, y, pageW - marginR, y);
+  y += 8;
+
+  const sectionHead = (label) => {
+    setFill(HEADFILL); setDraw(RULE); doc.setLineWidth(0.2);
+    doc.rect(marginL, y - 4.5, usableW, 7, 'FD');
+    setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
+    doc.text(label.toUpperCase(), marginL + 2.5, y);
+    y += 7;
+  };
+
+  // ── Site address ──
+  sectionHead('Site address');
+  setText(TEXT); doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+  const addrOut = [];
+  if (sheet.site_name) addrOut.push(sheet.site_name);
+  sheet.addrLines.forEach(l => addrOut.push(l));
+  if (addrOut.length === 0) addrOut.push('\u2014');
+  for (const line of addrOut) {
+    const wrapped = doc.splitTextToSize(String(line), usableW - 5);
+    wrapped.forEach(w => { doc.text(w, marginL + 2.5, y + 1); y += 5; });
+  }
+  y += 6;
+
+  // ── Contacts table ──
+  sectionHead('Contacts');
+  const cols = [
+    { label: 'Role',  x: marginL + 2.5,  w: 36 },
+    { label: 'Name',  x: marginL + 42,   w: 48 },
+    { label: 'Phone', x: marginL + 93,   w: 34 },
+    { label: 'Email', x: marginL + 130,  w: usableW - 130 - 2 }
+  ];
+  setText(MUTED); doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
+  cols.forEach(c => doc.text(c.label, c.x, y + 1));
+  y += 3;
+  setDraw(RULE); doc.setLineWidth(0.2);
+  doc.line(marginL, y, pageW - marginR, y);
+  y += 5;
+  setText(TEXT); doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
+  const contacts = sheet.contacts.length ? sheet.contacts : [{ role: '\u2014', name: '', phone: '', email: '' }];
+  for (const c of contacts) {
+    const cells = [c.role, c.name, c.phone, c.email];
+    let rowH = 5;
+    const wrappedCells = cells.map((v, i) => {
+      const w = doc.splitTextToSize(String(v || ''), cols[i].w);
+      rowH = Math.max(rowH, w.length * 4.4 + 1);
+      return w;
+    });
+    wrappedCells.forEach((w, i) => doc.text(w, cols[i].x, y + 1));
+    y += rowH + 1.5;
+    setDraw([235, 235, 235]);
+    doc.line(marginL, y - 1, pageW - marginR, y - 1);
+  }
+  y += 6;
+
+  // ── Notes (only if present) ──
+  if (sheet.notes) {
+    sectionHead('Notes');
+    setText(TEXT); doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
+    const wrapped = doc.splitTextToSize(sheet.notes, usableW - 5);
+    for (const w of wrapped) {
+      if (y > pageH - marginB - 10) { doc.addPage(); y = marginL + 6; }
+      doc.text(w, marginL + 2.5, y + 1); y += 4.6;
+    }
+  }
+
+  // ── Footer: Page X of Y on every page ──
+  const total = doc.getNumberOfPages();
+  for (let p = 1; p <= total; p++) {
+    doc.setPage(p);
+    setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
+    doc.text(`Page ${p} of ${total}`, pageW / 2, pageH - 7, { align: 'center' });
+  }
+
+  return doc.output('blob');
+}
+
 async function saveJobSheet() {
   if (!currentProject?.dbId) return;
   const val = id => (document.getElementById(id)?.value || '').trim() || null;
   const body = {
-    site_name:        val('jsSiteName'),
-    address_line1:    val('jsAddr1'),
-    address_line2:    val('jsAddr2'),
-    city:             val('jsCity'),
-    county:           val('jsCounty'),
-    postcode:         val('jsPostcode'),
-    contact_name:     val('jsContactName'),
-    contact_phone:    val('jsContactPhone'),
-    contact_email:    val('jsContactEmail'),
-    client_po_number: val('jsPo'),
-    notes:            val('jsNotes'),
-    updated_by:       _currentDraftsmanName || null
+    site_name:          val('jsSiteName'),
+    address_line1:      val('jsAddr1'),
+    address_line2:      val('jsAddr2'),
+    city:               val('jsCity'),
+    county:             val('jsCounty'),
+    postcode:           val('jsPostcode'),
+    commercial_name:    val('jsComName'),
+    commercial_phone:   val('jsComPhone'),
+    commercial_email:   val('jsComEmail'),
+    pm_name:            val('jsPmName'),
+    pm_phone:           val('jsPmPhone'),
+    pm_email:           val('jsPmEmail'),
+    site_manager_name:  val('jsSmName'),
+    site_manager_phone: val('jsSmPhone'),
+    site_manager_email: val('jsSmEmail'),
+    client_po_number:   val('jsPo'),
+    notes:              val('jsNotes'),
+    updated_by:         _currentDraftsmanName || null
   };
   const btn = document.getElementById('jsSaveBtn');
   try {
     if (btn) { btn.disabled = true; btn.textContent = 'Saving\u2026'; }
+    // Any typed name not already in the client database is saved to
+    // ClientContacts (with its role) so it shows in every dropdown from
+    // now on — QB included. Non-fatal if it fails.
+    await _jsSyncContactsToClientDb(body);
     const saved = await api.put(`/api/project-sheet/${parseInt(currentProject.dbId)}`, body);
     _currentJobSheet = (saved && saved.project_id) ? saved : null;
     _currentJobSheetProjId = parseInt(currentProject.dbId);

@@ -99,9 +99,20 @@ management, and a standalone UK steel section reference.
   project site address → client address. Everything remains editable in
   each document modal. **Supplier DNs (galv / powder coat) are deliberately
   NOT wired to the Job Sheet** — they keep the supplier's own address.
+  The sheet carries three role contacts (Commercial / Project Manager /
+  Site Manager, each name+phone+email) picked from ClientContacts
+  dropdowns (same source as QB) or typed free — newly typed names are
+  auto-saved to ClientContacts with their role (non-fatal on failure).
+  The site address lives ONLY in ProjectSheets, never on the client
+  record, so QB quotations and anything else prefilling from Clients
+  keeps showing the head-office address. "Generate PDF" renders a native
+  jsPDF Job Sheet (`drawJobSheetPDF` in `shared.js`, drawDnPDF
+  conventions) from the CURRENT modal fields and opens it in a new tab
+  (no SharePoint upload yet).
   API: `GET/PUT /api/project-sheet/{projectId}` (flat route, upsert).
   Migration: `api/sql/add-project-sheets.sql` (new table — no Function App
-  restart; also drops the short-lived per-job JobSheets if present).
+  restart; also drops the short-lived per-job JobSheets / v1
+  ProjectSheets shapes if present).
 
 ## Architecture at a glance
 

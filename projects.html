@@ -634,18 +634,59 @@
         <label style="font-size:11px;color:var(--muted)">Client PO number</label>
         <input id="jsPo" type="text" class="field-input js-field" placeholder="Client's purchase order ref">
       </div>
-      <div>
-        <label style="font-size:11px;color:var(--muted)">Site contact</label>
-        <input id="jsContactName" type="text" class="field-input js-field" placeholder="Name">
+      <div></div>
+
+      <div style="grid-column:1 / -1;margin-top:6px" class="field-label">COMMERCIAL</div>
+      <div style="grid-column:1 / -1">
+        <select id="jsComSelect" class="field-input js-field" onchange="jsContactPick('Com')"></select>
       </div>
       <div>
-        <label style="font-size:11px;color:var(--muted)">Site phone</label>
-        <input id="jsContactPhone" type="text" class="field-input js-field" placeholder="Phone">
+        <label style="font-size:11px;color:var(--muted)">Name</label>
+        <input id="jsComName" type="text" class="field-input js-field">
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--muted)">Phone</label>
+        <input id="jsComPhone" type="text" class="field-input js-field">
       </div>
       <div style="grid-column:1 / -1">
-        <label style="font-size:11px;color:var(--muted)">Site contact email</label>
-        <input id="jsContactEmail" type="text" class="field-input js-field" placeholder="Email">
+        <label style="font-size:11px;color:var(--muted)">Email</label>
+        <input id="jsComEmail" type="text" class="field-input js-field">
       </div>
+
+      <div style="grid-column:1 / -1;margin-top:6px" class="field-label">PROJECT MANAGER</div>
+      <div style="grid-column:1 / -1">
+        <select id="jsPmSelect" class="field-input js-field" onchange="jsContactPick('Pm')"></select>
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--muted)">Name</label>
+        <input id="jsPmName" type="text" class="field-input js-field">
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--muted)">Phone</label>
+        <input id="jsPmPhone" type="text" class="field-input js-field">
+      </div>
+      <div style="grid-column:1 / -1">
+        <label style="font-size:11px;color:var(--muted)">Email</label>
+        <input id="jsPmEmail" type="text" class="field-input js-field">
+      </div>
+
+      <div style="grid-column:1 / -1;margin-top:6px" class="field-label">SITE MANAGER</div>
+      <div style="grid-column:1 / -1">
+        <select id="jsSmSelect" class="field-input js-field" onchange="jsContactPick('Sm')"></select>
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--muted)">Name</label>
+        <input id="jsSmName" type="text" class="field-input js-field">
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--muted)">Phone</label>
+        <input id="jsSmPhone" type="text" class="field-input js-field">
+      </div>
+      <div style="grid-column:1 / -1">
+        <label style="font-size:11px;color:var(--muted)">Email</label>
+        <input id="jsSmEmail" type="text" class="field-input js-field">
+      </div>
+
       <div style="grid-column:1 / -1">
         <label style="font-size:11px;color:var(--muted)">Notes <span style="color:var(--muted)">(access restrictions, delivery instructions, etc.)</span></label>
         <textarea id="jsNotes" class="field-input js-field" rows="3" style="resize:vertical"></textarea>
@@ -654,6 +695,10 @@
 
     <button class="btn btn-primary btn-full" id="jsSaveBtn" onclick="saveJobSheet()" style="padding:14px;font-size:15px">
       Save Job Sheet
+    </button>
+    <button class="btn btn-full" id="jsPdfBtn" onclick="generateJobSheetPdf()"
+            style="margin-top:10px;padding:12px;background:rgba(255,107,0,.1);border:1px solid rgba(255,107,0,.3);color:var(--accent)">
+      &#128424; Generate PDF
     </button>
     <button class="btn btn-ghost btn-full" onclick="closeJobSheetModal()" style="margin-top:10px;padding:12px">
       Close
@@ -979,6 +1024,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
-<script src="shared.js?v=20260727d"></script>
+<script src="shared.js?v=20260727e"></script>
 </body>
 </html>

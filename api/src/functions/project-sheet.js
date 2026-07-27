@@ -21,7 +21,10 @@ const { ok, badRequest, serverError, preflight } = require('../responses');
 
 const FIELDS = [
     'site_name', 'address_line1', 'address_line2', 'city', 'county',
-    'postcode', 'contact_name', 'contact_phone', 'contact_email',
+    'postcode',
+    'commercial_name', 'commercial_phone', 'commercial_email',
+    'pm_name', 'pm_phone', 'pm_email',
+    'site_manager_name', 'site_manager_phone', 'site_manager_email',
     'client_po_number', 'notes'
 ];
 
