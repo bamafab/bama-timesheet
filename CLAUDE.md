@@ -933,7 +933,21 @@ none of this is built yet.
   Issue + PDF succeeds (the last mile); also available anytime via
   "📧 Email Invoice" button on the detail modal for Issued/Partially
   Paid/Paid. Sent via Graph /me/sendMail from the signed-in user.
-  Remaining Phase 4: credit notes UI polish.
+- **Invoicing Phase 4c (credit notes, 2026-07-27)** — "Credit Against
+  Invoice" picker in the invoice modal (shown only for kind=credit_note;
+  searches Issued/Partially Paid/Paid invoices; prefills customer +
+  project from the parent). `parent_invoice_id` persisted on create AND
+  update (added to invoices-update). On issue, `_invAllocateCreditNote()`
+  posts a "Credit Note" payment of the CN gross against the parent via
+  the existing payments endpoint — parent's outstanding + status
+  auto-update (aged debt reflects it immediately; CNs themselves are
+  excluded from aged debt by the kind filter). Detail modal shows
+  "Credits INVxxxx"; parent's payments table shows the CN row. PDF gets
+  a "Credit against Invoice INVxxxx" line (parent ref joined in
+  invoices-detail as parent_invoice_ref). saveAndIssueInvoice also gained
+  the email-composer last mile + CN allocation. Standalone CNs (no
+  parent) still allowed. Invoicing module COMPLETE except parked items
+  (remittance OCR, retention release invoicing).
 - **Invoice Tracker** — standalone `invoice-tracker.html` page with four
   tabs (AFPs · Sales Invoices · Supplier Invoices · Receipts). Gated by
   the `invoicing` permission. Backed by `Applications`,

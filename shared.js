@@ -37319,6 +37319,8 @@ async function openNewInvoiceModal() {
   document.getElementById('invNewProjectSelected').textContent = '';
   document.getElementById('invNewProjectDropdown').innerHTML = '';
   _invPaymentTermsDays = 30;
+  clearInvParent();
+  document.getElementById('invNewParentWrap').style.display = 'none';
   document.getElementById('invNewModalTitle').textContent = '🧾 New Invoice';
   document.getElementById('invNewVatTreatment').value = 'reverse_charge';
   document.getElementById('invNewVatHint').textContent = '';
@@ -37347,12 +37349,76 @@ function closeInvNewModal() {
 }
 
 // When the kind toggle changes, re-fetch the next ref for that kind
+let _invSelectedParent = null;   // parent invoice a credit note is raised against
+
 async function onInvKindChange() {
   const kind = document.getElementById('invNewKind').value;
+  const parentWrap = document.getElementById('invNewParentWrap');
+  if (parentWrap) parentWrap.style.display = (kind === 'credit_note') ? '' : 'none';
+  if (kind !== 'credit_note') clearInvParent();
   try {
     const r = await api.get(`/api/invoices-next-ref?kind=${encodeURIComponent(kind)}`);
     document.getElementById('invNewRef').value = r?.ref || '????';
   } catch (e) { /* show placeholder */ }
+}
+
+// ── Parent-invoice autocomplete (credit notes) ────────────────────────────
+function filterInvParents(q) {
+  const dropdown = document.getElementById('invNewParentDropdown');
+  if (!dropdown) return;
+  const lower = (q || '').toLowerCase().trim();
+  if (!lower) { dropdown.innerHTML = ''; return; }
+  const matches = (_invInvoiceList || [])
+    .filter(i => i.kind === 'invoice' && ['Issued', 'Partially Paid', 'Paid'].includes(i.status))
+    .filter(i => (`${i.ref} ${i.client_company_name || i.customer_text || ''}`).toLowerCase().includes(lower))
+    .slice(0, 8);
+  dropdown.innerHTML = `<div style="position:absolute;top:0;left:0;right:0;background:var(--surface);
+       border:1px solid var(--border);border-radius:6px;max-height:240px;overflow:auto;z-index:30">
+    ${matches.map(i => `
+      <div style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)"
+           onmousedown="selectInvParent(${i.id})"
+           onmouseover="this.style.background='var(--surface2)'"
+           onmouseout="this.style.background=''">
+        <span style="font-family:var(--font-mono);font-weight:600">${escapeHtml(i.ref)}</span>
+        — ${escapeHtml(i.client_company_name || i.customer_text || '')}
+        <span style="color:var(--muted);font-size:11px">· £${Number(i.gross_amount || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })} · ${escapeHtml(i.status)}</span>
+      </div>`).join('')}
+    ${matches.length === 0 ? '<div style="padding:8px 12px;color:var(--subtle);font-size:12px">No matching issued invoices</div>' : ''}
+    <div style="padding:8px 12px;cursor:pointer;font-size:13px;color:var(--muted);font-style:italic"
+         onmousedown="clearInvParent()"
+         onmouseover="this.style.background='var(--surface2)'"
+         onmouseout="this.style.background=''">
+      Clear (standalone credit note)
+    </div>
+  </div>`;
+}
+function selectInvParent(id) {
+  const i = (_invInvoiceList || []).find(x => x.id === id);
+  if (!i) return;
+  _invSelectedParent = i;
+  document.getElementById('invNewParentSearch').value = `${i.ref} — ${i.client_company_name || i.customer_text || ''}`;
+  document.getElementById('invNewParentSelected').textContent =
+    `✓ Will be allocated against ${i.ref} on issue (reduces its outstanding balance)`;
+  document.getElementById('invNewParentDropdown').innerHTML = '';
+  // Prefill customer + project from the parent for consistency
+  if (i.client_id && !_invSelectedClient) selectInvCustomer(i.client_id);
+  else if (!_invSelectedClient && (i.customer_text || i.client_company_name)) {
+    document.getElementById('invNewCustomerSearch').value = i.client_company_name || i.customer_text;
+    document.getElementById('invNewCustomerSelected').textContent = `✓ "${i.client_company_name || i.customer_text}" (from ${i.ref})`;
+  }
+  if (i.project_id && !_invSelectedProject) {
+    const p = (_invProjectsCache || []).find(x => x.id === i.project_id);
+    if (p) selectInvProject(p.id);
+  }
+}
+function clearInvParent() {
+  _invSelectedParent = null;
+  const s = document.getElementById('invNewParentSearch');
+  if (s) s.value = '';
+  const sel = document.getElementById('invNewParentSelected');
+  if (sel) sel.textContent = '';
+  const dd = document.getElementById('invNewParentDropdown');
+  if (dd) dd.innerHTML = '';
 }
 
 // ── Customer + Project autocomplete (Tenders-style) ──
@@ -37590,10 +37656,13 @@ async function saveAndIssueInvoice() {
       sharepoint_pdf_url: driveItem.webUrl
     });
 
-    toast(`Invoice ${saved.ref} issued and uploaded to SharePoint ✓`, 'success');
+    toast(`${saved.kind === 'credit_note' ? 'Credit note' : 'Invoice'} ${saved.ref} issued and uploaded to SharePoint ✓`, 'success');
+    await _invAllocateCreditNote(saved);
     closeInvNewModal();
     await loadInvoicingData();
     switchInvTab('sales');
+    // Last mile: open the email composer with the PDF attached
+    await _openInvoiceEmailComposer(await api.get(`/api/invoices/${saved.id}`));
   } catch (err) {
     console.error('Issue invoice failed', err);
     toast('Issue failed: ' + (err.message || 'unknown'), 'error');
@@ -37654,6 +37723,7 @@ function _buildInvoicePayload() {
     client_id: _invSelectedClient ? _invSelectedClient.id : null,
     customer_text: _invSelectedClient ? null : document.getElementById('invNewCustomerSearch').value.trim(),
     project_id: _invSelectedProject ? _invSelectedProject.id : null,
+    parent_invoice_id: (kind === 'credit_note' && _invSelectedParent) ? _invSelectedParent.id : null,
     vat_applies: vatApplies ? 1 : 0,
     cis_reverse_charge: cisReverse ? 1 : 0,
     net_amount: +net.toFixed(2),
@@ -37673,7 +37743,7 @@ function _buildInvoicePayload() {
 async function _buildInvoicePdfData(inv) {
   // Re-fetch if the saved object lacks line items or AFP join metadata
   let lines = inv.line_items;
-  if (!Array.isArray(lines) || (inv.source_afp_id && !inv.afp_ref)) {
+  if (!Array.isArray(lines) || (inv.source_afp_id && !inv.afp_ref) || (inv.parent_invoice_id && !inv.parent_invoice_ref)) {
     const detail = await api.get(`/api/invoices/${inv.id}`);
     lines = detail.line_items || [];
     inv = { ...detail, ...{} };
@@ -37704,6 +37774,7 @@ async function _buildInvoicePdfData(inv) {
     afpRef: inv.afp_ref || null,
     certRef: inv.afp_certificate_ref || null,
     certDate: inv.afp_certificate_date || null,
+    parentRef: inv.parent_invoice_ref || null,
     notes: inv.notes || '',
     lineItems: lines.map((l, i) => ({
       itemNum: i + 1,
@@ -37880,6 +37951,11 @@ function drawBamaInvoicePDF(jsPDF, d, logoDataUri) {
     doc.text(`Project: ${d.project}`, marginL + 4, leftY); leftY += 4;
     setText(TEXT); doc.setFontSize(10);
   }
+  if (d.parentRef) {
+    setText(MUTED); doc.setFontSize(9);
+    doc.text(`Credit against Invoice ${d.parentRef}`, marginL + 4, leftY); leftY += 4;
+    setText(TEXT); doc.setFontSize(10);
+  }
   if (d.afpRef) {
     setText(MUTED); doc.setFontSize(9);
     let reLine = `Re: Application for Payment ${d.afpRef}`;
@@ -38047,7 +38123,9 @@ async function openInvoiceDetail(id) {
     document.getElementById('invDetailCustomer').textContent =
       inv.client_company_name || inv.customer_text || '—';
     document.getElementById('invDetailProject').textContent =
-      inv.project_number ? `${inv.project_number} — ${inv.project_name || ''}` : '—';
+      (inv.kind === 'credit_note' && inv.parent_invoice_ref)
+        ? `Credits ${inv.parent_invoice_ref}${inv.project_number ? ` · ${inv.project_number}` : ''}`
+        : (inv.project_number ? `${inv.project_number} — ${inv.project_name || ''}` : '—');
     document.getElementById('invDetailDate').textContent =
       inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString('en-GB') : '—';
     document.getElementById('invDetailDue').textContent =
@@ -38144,6 +38222,15 @@ async function editInvoiceFromDetail() {
   document.getElementById('invNewProjectSelected').textContent =
     inv.project_number ? `✓ ${inv.project_number}` : '';
   document.getElementById('invNewProjectDropdown').innerHTML = '';
+
+  // Credit note parent
+  const parentWrap = document.getElementById('invNewParentWrap');
+  if (parentWrap) parentWrap.style.display = (inv.kind === 'credit_note') ? '' : 'none';
+  clearInvParent();
+  if (inv.kind === 'credit_note' && inv.parent_invoice_id) {
+    const parent = (_invInvoiceList || []).find(x => x.id === inv.parent_invoice_id);
+    if (parent) selectInvParent(parent.id);
+  }
 
   // VAT treatment from stored flags
   document.getElementById('invNewVatTreatment').value =
@@ -38519,7 +38606,8 @@ async function issueInvoiceFromDetail() {
       sharepoint_pdf_id: driveItem.id,
       sharepoint_pdf_url: driveItem.webUrl
     });
-    toast(`Invoice ${inv.ref} issued ✓`, 'success');
+    toast(`${inv.kind === 'credit_note' ? 'Credit note' : 'Invoice'} ${inv.ref} issued ✓`, 'success');
+    await _invAllocateCreditNote(inv);
     closeInvDetail();
     await loadInvoicingData();
     switchInvTab('sales');
@@ -38532,6 +38620,26 @@ async function issueInvoiceFromDetail() {
   } finally {
     setLoading(false);
     if (btn) { btn.disabled = false; btn.textContent = 'Issue + PDF'; }
+  }
+}
+
+// ── Credit note allocation: post a "payment" on the parent invoice ────────
+// Allocating CN gross against the parent reduces its outstanding via the
+// existing payments machinery (status auto-updates to Partially Paid/Paid).
+async function _invAllocateCreditNote(cn) {
+  if (!cn || cn.kind !== 'credit_note' || !cn.parent_invoice_id) return;
+  try {
+    await api.post(`/api/invoices/${cn.parent_invoice_id}/payments`, {
+      payment_date: new Date().toISOString().slice(0, 10),
+      amount: Number(cn.gross_amount || 0),
+      method: 'Credit Note',
+      reference: cn.ref,
+      notes: `Credit note ${cn.ref} allocated`
+    });
+    toast(`${cn.ref} allocated against parent invoice ✓`, 'success');
+  } catch (err) {
+    console.error('Credit note allocation failed', err);
+    toast(`${cn.ref} issued, but allocation to the parent invoice failed — record it manually via + Record Payment`, 'error');
   }
 }
 

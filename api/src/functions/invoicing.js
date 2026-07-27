@@ -945,11 +945,13 @@ app.http('invoices-detail', {
                         c.payment_terms_days AS client_payment_terms,
                         a.ref AS afp_ref,
                         a.certificate_ref AS afp_certificate_ref,
-                        a.certificate_date AS afp_certificate_date
+                        a.certificate_date AS afp_certificate_date,
+                        pi.ref AS parent_invoice_ref
                  FROM Invoices i
                  LEFT JOIN Projects p ON i.project_id = p.id
                  LEFT JOIN Clients c  ON i.client_id  = c.id
                  LEFT JOIN Applications a ON i.source_afp_id = a.id
+                 LEFT JOIN Invoices pi ON i.parent_invoice_id = pi.id
                  WHERE i.id = @id`,
                 { id }
             );
@@ -1193,6 +1195,7 @@ app.http('invoices-update', {
 
             await query(
                 `UPDATE Invoices SET
+                    parent_invoice_id   = @parentInvoiceId,
                     project_id          = @projectId,
                     client_id           = @clientId,
                     customer_text       = @customerText,
@@ -1213,6 +1216,7 @@ app.http('invoices-update', {
                  WHERE id = @id`,
                 {
                     id,
+                    parentInvoiceId:     body.parent_invoice_id ?? null,
                     projectId:           body.project_id ?? null,
                     clientId:            body.client_id ?? null,
                     customerText:        body.customer_text ?? null,

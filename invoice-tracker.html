@@ -324,6 +324,17 @@
       </div>
     </div>
 
+    <!-- Credit note: parent invoice -->
+    <div id="invNewParentWrap" style="display:none;margin-bottom:12px">
+      <label class="field-label">Credit Against Invoice (optional)</label>
+      <input type="text" class="field-input" id="invNewParentSearch"
+             placeholder="Type invoice ref or customer…"
+             oninput="filterInvParents(this.value)"
+             onfocus="filterInvParents(this.value)">
+      <div id="invNewParentDropdown" style="position:relative"></div>
+      <div id="invNewParentSelected" style="font-size:11px;color:var(--muted);margin-top:4px;min-height:14px"></div>
+    </div>
+
     <!-- Line items -->
     <div style="margin-bottom:12px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -1131,6 +1142,6 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260727q"></script>
+<script src="shared.js?v=20260727r"></script>
 </body>
 </html>
