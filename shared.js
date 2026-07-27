@@ -35787,7 +35787,7 @@ function toggleInvAgedDebt() {
   const tiles = document.getElementById('invAgedTiles');
   const chev = document.getElementById('invAgedChevron');
   if (body)  body.style.display  = _invAgedCollapsed ? 'none' : '';
-  if (tiles) tiles.style.display = _invAgedCollapsed ? 'none' : '';
+  if (tiles) tiles.style.display = _invAgedCollapsed ? 'none' : 'grid';
   if (chev)  chev.textContent    = _invAgedCollapsed ? '▶' : '▼';
 }
 
