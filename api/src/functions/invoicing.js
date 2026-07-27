@@ -668,9 +668,12 @@ app.http('applications-generate-invoice', {
             const createdBy = auth.email || auth.name || null;
 
             const appRes = await query(
-                `SELECT a.*, p.client_id AS project_client_id
+                `SELECT a.*, p.client_id AS project_client_id,
+                        c.vat_treatment AS client_vat_treatment,
+                        c.payment_terms_days AS client_payment_terms
                  FROM Applications a
                  LEFT JOIN Projects p ON a.project_id = p.id
+                 LEFT JOIN Clients c  ON p.client_id  = c.id
                  WHERE a.id = @id`,
                 { id }
             );
@@ -683,24 +686,50 @@ app.http('applications-generate-invoice', {
                 return badRequest(`AFP already invoiced (invoice id ${app2.invoice_id})`, request);
             }
 
-            const linesRes = await query(
-                `SELECT * FROM ApplicationLineItems WHERE application_id = @id ORDER BY line_no`,
-                { id }
-            );
-            const afpLines = linesRes.recordset;
-
             // Allocate invoice ref
             const invRef = await nextInvoiceRef('invoice');
 
             // Use certified net if present, otherwise applied net (defensive)
             const netAmount = app2.certified_value_net != null ? Number(app2.certified_value_net)
                             : (app2.applied_value_net != null ? Number(app2.applied_value_net) : 0);
-            const vatAmount = app2.certified_vat != null ? Number(app2.certified_vat)
-                            : (app2.applied_vat != null ? Number(app2.applied_vat) : 0);
             const retention = app2.certified_retention != null ? Number(app2.certified_retention)
                             : (app2.applied_retention != null ? Number(app2.applied_retention) : 0);
-            const grossAmount = app2.certified_gross != null ? Number(app2.certified_gross)
-                              : (app2.applied_gross != null ? Number(app2.applied_gross) : 0);
+
+            // VAT position comes from the CLIENT's vat_treatment setting —
+            // never from the AFP figures (certs frequently show £0 VAT under
+            // reverse charge, which previously produced broken VAT documents).
+            //   standard       → 20% VAT added on (net − retention)
+            //   reverse_charge → no VAT billed; reverse-charge amount shown
+            //                    for information (customer accounts to HMRC)
+            //   zero           → no VAT at all
+            const treatment = ['standard', 'reverse_charge', 'zero'].includes(app2.client_vat_treatment)
+                            ? app2.client_vat_treatment : 'reverse_charge';
+            const vatBase = +(netAmount - retention).toFixed(2);
+            const vatAmount     = treatment === 'standard'       ? +(vatBase * 0.20).toFixed(2) : 0;
+            const reverseCharge = treatment === 'reverse_charge' ? +(vatBase * 0.20).toFixed(2) : 0;
+            const grossAmount   = +(netAmount - retention + vatAmount).toFixed(2);
+
+            // Due date = invoice date + client payment terms (default 30 days)
+            const termsDays = Number(app2.client_payment_terms) > 0 ? Number(app2.client_payment_terms) : 30;
+            const invDate = new Date();
+            const invoiceDateStr = invDate.toISOString().slice(0, 10);
+            const dueDate = new Date(invDate);
+            dueDate.setDate(dueDate.getDate() + termsDays);
+            const dueDateStr = dueDate.toISOString().slice(0, 10);
+
+            // Single summary line item — "as per AFP / payment certificate",
+            // fully editable while the invoice is still Draft.
+            const fmtUk = (s) => {
+                const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+                return m ? `${m[3]}/${m[2]}/${m[1]}` : '';
+            };
+            let summaryDesc = `Works executed as per Application for Payment ${app2.ref}`;
+            if (app2.certificate_ref) {
+                summaryDesc += ` / Payment Certificate ${app2.certificate_ref}`;
+                const certDateUk = fmtUk(app2.certificate_date instanceof Date
+                    ? app2.certificate_date.toISOString() : app2.certificate_date);
+                if (certDateUk) summaryDesc += ` dated ${certDateUk}`;
+            }
 
             // Create the Draft Invoice
             const insertRes = await query(
@@ -716,46 +745,38 @@ app.http('applications-generate-invoice', {
                 OUTPUT INSERTED.*
                 VALUES (
                     @ref, 'invoice', @sourceAfpId, @projectId, @clientId, NULL,
-                    @invoiceDate, NULL,
-                    @vatApplies, 0,
-                    @netAmount, @vatAmount, 0,
+                    @invoiceDate, @dueDate,
+                    @vatApplies, @cisReverseCharge,
+                    @netAmount, @vatAmount, @reverseChargeAmount,
                     NULL, @retention, NULL,
                     @grossAmount, @grossAmount,
-                    'Draft', @notes, @createdBy
+                    'Draft', NULL, @createdBy
                 )`,
                 {
-                    ref:         invRef,
-                    sourceAfpId: id,
-                    projectId:   app2.project_id,
-                    clientId:    app2.project_client_id,
-                    invoiceDate: new Date().toISOString().slice(0, 10),
-                    vatApplies:  vatAmount > 0 ? 1 : 0,
+                    ref:                 invRef,
+                    sourceAfpId:         id,
+                    projectId:           app2.project_id,
+                    clientId:            app2.project_client_id,
+                    invoiceDate:         invoiceDateStr,
+                    dueDate:             dueDateStr,
+                    vatApplies:          treatment === 'standard' ? 1 : 0,
+                    cisReverseCharge:    treatment === 'reverse_charge' ? 1 : 0,
                     netAmount,
                     vatAmount,
+                    reverseChargeAmount: reverseCharge,
                     retention,
                     grossAmount,
-                    notes:       `Generated from AFP ${app2.ref}`,
                     createdBy
                 }
             );
             const newInv = insertRes.recordset[0];
 
-            // Copy line items from AFP — use certified_this_app_value if set, else this_app_value
-            for (let i = 0; i < afpLines.length; i++) {
-                const l = afpLines[i];
-                const amount = l.certified_this_app_value != null ? Number(l.certified_this_app_value) : Number(l.this_app_value || 0);
-                if (amount === 0) continue; // skip zero-value lines (nothing claimed)
-                await query(
-                    `INSERT INTO InvoiceLineItems (invoice_id, line_no, description, quantity, unit_price, line_total)
-                     VALUES (@invoiceId, @lineNo, @description, 1, @amount, @amount)`,
-                    {
-                        invoiceId:   newInv.id,
-                        lineNo:      i + 1,
-                        description: l.description,
-                        amount
-                    }
-                );
-            }
+            // Single summary line at the full applied/certified net value
+            await query(
+                `INSERT INTO InvoiceLineItems (invoice_id, line_no, description, quantity, unit_price, line_total)
+                 VALUES (@invoiceId, 1, @description, 1, @amount, @amount)`,
+                { invoiceId: newInv.id, description: summaryDesc, amount: netAmount }
+            );
 
             // Update AFP: invoice_id + status=Invoiced
             await query(
@@ -919,10 +940,16 @@ app.http('invoices-detail', {
             const invRes = await query(
                 `SELECT i.*,
                         p.project_number, p.project_name,
-                        c.company_name AS client_company_name
+                        c.company_name AS client_company_name,
+                        c.vat_treatment AS client_vat_treatment,
+                        c.payment_terms_days AS client_payment_terms,
+                        a.ref AS afp_ref,
+                        a.certificate_ref AS afp_certificate_ref,
+                        a.certificate_date AS afp_certificate_date
                  FROM Invoices i
                  LEFT JOIN Projects p ON i.project_id = p.id
                  LEFT JOIN Clients c  ON i.client_id  = c.id
+                 LEFT JOIN Applications a ON i.source_afp_id = a.id
                  WHERE i.id = @id`,
                 { id }
             );

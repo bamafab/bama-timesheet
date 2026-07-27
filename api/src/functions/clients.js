@@ -73,22 +73,25 @@ app.http('clients-create', {
         try {
             const body = await request.json();
             const { company_name, address_line1, address_line2, city, county, postcode,
-                    contact_name, contact_email, contact_phone, notes } = body;
+                    contact_name, contact_email, contact_phone, notes,
+                    vat_treatment, payment_terms_days } = body;
 
             if (!company_name) return badRequest('company_name is required', request);
 
             const result = await query(
                 `INSERT INTO Clients (company_name, address_line1, address_line2, city, county, postcode,
-                    contact_name, contact_email, contact_phone, notes)
+                    contact_name, contact_email, contact_phone, notes, vat_treatment, payment_terms_days)
                  OUTPUT INSERTED.*
                  VALUES (@company_name, @address_line1, @address_line2, @city, @county, @postcode,
-                    @contact_name, @contact_email, @contact_phone, @notes)`,
+                    @contact_name, @contact_email, @contact_phone, @notes, @vat_treatment, @payment_terms_days)`,
                 {
                     company_name, address_line1: address_line1 || null,
                     address_line2: address_line2 || null, city: city || null,
                     county: county || null, postcode: postcode || null,
                     contact_name: contact_name || null, contact_email: contact_email || null,
-                    contact_phone: contact_phone || null, notes: notes || null
+                    contact_phone: contact_phone || null, notes: notes || null,
+                    vat_treatment: ['standard','reverse_charge','zero'].includes(vat_treatment) ? vat_treatment : 'reverse_charge',
+                    payment_terms_days: Number.isFinite(Number(payment_terms_days)) && Number(payment_terms_days) > 0 ? Number(payment_terms_days) : 30
                 }
             );
 
@@ -120,7 +123,8 @@ app.http('clients-update', {
             const params = { id };
 
             const allowed = ['company_name', 'address_line1', 'address_line2', 'city', 'county',
-                           'postcode', 'contact_name', 'contact_email', 'contact_phone', 'notes', 'is_active'];
+                           'postcode', 'contact_name', 'contact_email', 'contact_phone', 'notes', 'is_active',
+                           'vat_treatment', 'payment_terms_days'];
 
             for (const key of allowed) {
                 if (body[key] !== undefined) {

@@ -880,6 +880,27 @@ none of this is built yet.
   **Still to do (Phase 2+)**: Running Cost source (POs / supplier
   invoices — schema landed, needs aggregation tile), and optional
   `viewProjectFinancials` permission split.
+- **Invoicing Phase 1 (client VAT treatment + AFP invoice fix, 2026-07-27)** —
+  `Clients.vat_treatment` ('reverse_charge' default | 'standard' | 'zero') +
+  `Clients.payment_terms_days` (default 30) via `api/sql/add-client-vat-terms.sql`
+  (ADD COLUMN → Function App restart). Fields editable in Add/Edit Client
+  modals. `applications-generate-invoice` rewritten: VAT position now comes
+  from the client's vat_treatment (never from cert figures — certs show £0
+  VAT under reverse charge); single editable summary line "Works executed as
+  per Application for Payment AFPxx / Payment Certificate <ref> dated <date>"
+  instead of the raw AFP line dump; `due_date` = invoice_date + client terms.
+  Invoice modal: VAT/CIS checkboxes replaced by a 3-way VAT Treatment select;
+  selecting a client auto-applies its treatment + terms (hint line shown,
+  still overridable). Draft invoices now editable via ✏️ Edit in the detail
+  modal (reuses New Invoice modal, `_invEditing`, wholesale line replace).
+  `invoices-detail` joins Applications for `afp_ref` / `afp_certificate_ref`
+  / `afp_certificate_date` (drives the PDF "Re:" line). PDF corrections in
+  `drawBamaInvoicePDF`: VAT Reg 435 0591 07 in From block, registration
+  footer (Company No. 14680571), accounts@bamafabrication.co.uk, NEW bank
+  details (Sort 30-99-50, Acct 26816462), statutory DRC wording (VAT Act
+  1994 s55A), "Re: AFP / Payment Certificate" reference line.
+  **Next: Phase 3 — historical invoice bulk import (OCR ~300 old PDFs to
+  backfill INV0001–INV0257).**
 - **Invoice Tracker** — standalone `invoice-tracker.html` page with four
   tabs (AFPs · Sales Invoices · Supplier Invoices · Receipts). Gated by
   the `invoicing` permission. Backed by `Applications`,

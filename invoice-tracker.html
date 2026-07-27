@@ -258,7 +258,7 @@
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="invNewModal">
   <div class="modal" style="max-width:880px;width:96vw;max-height:92vh;overflow-y:auto">
-    <div class="modal-title">🧾 New Invoice</div>
+    <div class="modal-title" id="invNewModalTitle">🧾 New Invoice</div>
 
     <!-- Kind + Ref + Dates -->
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-bottom:12px">
@@ -278,7 +278,7 @@
       <div>
         <label class="field-label">Invoice Date</label>
         <input type="date" class="field-input" id="invNewDate"
-               onchange="document.getElementById('invNewDueDate').value = (function(d){if(!d) return ''; const x = new Date(d); x.setDate(x.getDate()+30); return x.toISOString().slice(0,10);})(this.value)">
+               onchange="_invApplyDueDate(this.value)">
       </div>
       <div>
         <label class="field-label">Due Date</label>
@@ -327,19 +327,14 @@
     <!-- VAT + CIS + Retention -->
     <div class="card" style="padding:12px;margin-bottom:12px;background:var(--bg-darker)">
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;align-items:end">
-        <div>
-          <label class="field-label">VAT</label>
-          <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding-top:4px">
-            <input type="checkbox" id="invNewVatYes" checked onchange="recalcInvoiceTotals()">
-            Apply standard 20% VAT
-          </label>
-        </div>
-        <div>
-          <label class="field-label">CIS</label>
-          <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding-top:4px">
-            <input type="checkbox" id="invNewCisReverse" onchange="recalcInvoiceTotals()">
-            Reverse charge applies
-          </label>
+        <div style="grid-column:span 2">
+          <label class="field-label">VAT Treatment</label>
+          <select class="field-input" id="invNewVatTreatment" onchange="recalcInvoiceTotals()">
+            <option value="reverse_charge">Domestic reverse charge (CIS) — no VAT billed</option>
+            <option value="standard">Standard VAT — 20% added</option>
+            <option value="zero">Zero / no VAT</option>
+          </select>
+          <div id="invNewVatHint" style="font-size:11px;color:var(--muted);margin-top:4px;min-height:14px"></div>
         </div>
         <div>
           <label class="field-label">Retention</label>
@@ -509,6 +504,7 @@
     <div class="modal-actions" style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
       <button class="btn btn-ghost" onclick="closeInvDetail()">Close</button>
       <button class="btn btn-ghost" onclick="downloadInvoicePdf()">📄 Download PDF</button>
+      <button class="btn btn-ghost" id="invDetailEditBtn" style="display:none" onclick="editInvoiceFromDetail()">✏️ Edit</button>
       <button class="btn btn-ghost" id="invDetailVoidBtn"
               style="border-color:var(--red);color:var(--red)"
               onclick="voidInvoice()">Void</button>
@@ -986,6 +982,6 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260727l"></script>
+<script src="shared.js?v=20260727m"></script>
 </body>
 </html>

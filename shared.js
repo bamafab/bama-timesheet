@@ -3435,6 +3435,20 @@ function _ensureClientModals() {
           <div><div class="field-label">CONTACT EMAIL</div><input type="email" class="field-input" id="ncContactEmail"></div>
           <div><div class="field-label">CONTACT PHONE</div><input type="text" class="field-input" id="ncContactPhone"></div>
         </div>
+        <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:12px">
+          <div>
+            <div class="field-label">VAT TREATMENT (INVOICING)</div>
+            <select class="field-input" id="ncVatTreatment">
+              <option value="reverse_charge">Domestic reverse charge (CIS)</option>
+              <option value="standard">Standard VAT (20%)</option>
+              <option value="zero">Zero / no VAT</option>
+            </select>
+          </div>
+          <div>
+            <div class="field-label">PAYMENT TERMS (DAYS)</div>
+            <input type="number" min="1" step="1" class="field-input" id="ncPaymentTerms" value="30">
+          </div>
+        </div>
         <div class="modal-actions">
           <button class="btn btn-ghost" onclick="closeNewClientModal()">Cancel</button>
           <button class="btn btn-primary" onclick="submitNewClient()">Save Client</button>
@@ -3462,6 +3476,20 @@ function _ensureClientModals() {
           <div><div class="field-label">CONTACT NAME</div><input type="text" class="field-input" id="ecContactName"></div>
           <div><div class="field-label">CONTACT EMAIL</div><input type="email" class="field-input" id="ecContactEmail"></div>
           <div><div class="field-label">CONTACT PHONE</div><input type="text" class="field-input" id="ecContactPhone"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:12px">
+          <div>
+            <div class="field-label">VAT TREATMENT (INVOICING)</div>
+            <select class="field-input" id="ecVatTreatment">
+              <option value="reverse_charge">Domestic reverse charge (CIS)</option>
+              <option value="standard">Standard VAT (20%)</option>
+              <option value="zero">Zero / no VAT</option>
+            </select>
+          </div>
+          <div>
+            <div class="field-label">PAYMENT TERMS (DAYS)</div>
+            <input type="number" min="1" step="1" class="field-input" id="ecPaymentTerms" value="30">
+          </div>
         </div>
         <div class="modal-actions">
           <button class="btn btn-ghost" onclick="closeEditClientModal()">Cancel</button>
@@ -24368,7 +24396,9 @@ async function submitNewClient() {
       postcode: document.getElementById('ncPostcode').value.trim() || null,
       contact_name: document.getElementById('ncContactName').value.trim() || null,
       contact_email: document.getElementById('ncContactEmail').value.trim() || null,
-      contact_phone: document.getElementById('ncContactPhone').value.trim() || null
+      contact_phone: document.getElementById('ncContactPhone').value.trim() || null,
+      vat_treatment: document.getElementById('ncVatTreatment') ? document.getElementById('ncVatTreatment').value : 'reverse_charge',
+      payment_terms_days: document.getElementById('ncPaymentTerms') ? (parseInt(document.getElementById('ncPaymentTerms').value) || 30) : 30
     });
 
     clientsData.push(client);
@@ -24395,6 +24425,10 @@ function openEditClientModal(id) {
   document.getElementById('ecContactName').value = client.contact_name || '';
   document.getElementById('ecContactEmail').value = client.contact_email || '';
   document.getElementById('ecContactPhone').value = client.contact_phone || '';
+  if (document.getElementById('ecVatTreatment'))
+    document.getElementById('ecVatTreatment').value = client.vat_treatment || 'reverse_charge';
+  if (document.getElementById('ecPaymentTerms'))
+    document.getElementById('ecPaymentTerms').value = client.payment_terms_days || 30;
   document.getElementById('editClientModal').classList.add('active');
 }
 
@@ -24417,7 +24451,9 @@ async function submitEditClient() {
       postcode: document.getElementById('ecPostcode').value.trim() || null,
       contact_name: document.getElementById('ecContactName').value.trim() || null,
       contact_email: document.getElementById('ecContactEmail').value.trim() || null,
-      contact_phone: document.getElementById('ecContactPhone').value.trim() || null
+      contact_phone: document.getElementById('ecContactPhone').value.trim() || null,
+      vat_treatment: document.getElementById('ecVatTreatment') ? document.getElementById('ecVatTreatment').value : undefined,
+      payment_terms_days: document.getElementById('ecPaymentTerms') ? (parseInt(document.getElementById('ecPaymentTerms').value) || 30) : undefined
     });
 
     const idx = clientsData.findIndex(c => String(c.id) === String(id));
@@ -37102,13 +37138,27 @@ function _invToDateStr(d) {
   const m = String(d).match(/^(\d{4})-(\d{2})-(\d{2})/);
   return m ? `${m[1]}-${m[2]}-${m[3]}` : '';
 }
-function _invDueDefault(invDate) {
-  // Default due: invoice date + 30 days
+let _invPaymentTermsDays = 30;   // active client payment terms for due-date auto-fill
+
+function _invDueDefault(invDate, termsDays) {
+  // Default due: invoice date + payment terms (client-specific, default 30)
   if (!invDate) return '';
   const d = new Date(invDate);
   if (isNaN(d.getTime())) return '';
-  d.setDate(d.getDate() + 30);
+  d.setDate(d.getDate() + (Number(termsDays) > 0 ? Number(termsDays) : _invPaymentTermsDays));
   return d.toISOString().slice(0, 10);
+}
+
+// Called by the invoice-date input's onchange — respects client payment terms
+function _invApplyDueDate(dateStr) {
+  const el = document.getElementById('invNewDueDate');
+  if (el) el.value = _invDueDefault(dateStr);
+}
+
+// Map DB flags -> treatment select value
+function _invTreatmentFromFlags(vatApplies, cisReverse) {
+  if (cisReverse) return 'reverse_charge';
+  return vatApplies ? 'standard' : 'zero';
 }
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -37130,8 +37180,10 @@ async function openNewInvoiceModal() {
   document.getElementById('invNewProjectSearch').value = '';
   document.getElementById('invNewProjectSelected').textContent = '';
   document.getElementById('invNewProjectDropdown').innerHTML = '';
-  document.getElementById('invNewVatYes').checked = true;
-  document.getElementById('invNewCisReverse').checked = false;
+  _invPaymentTermsDays = 30;
+  document.getElementById('invNewModalTitle').textContent = '🧾 New Invoice';
+  document.getElementById('invNewVatTreatment').value = 'reverse_charge';
+  document.getElementById('invNewVatHint').textContent = '';
   document.getElementById('invNewRetentionMode').value = 'none';
   document.getElementById('invNewRetentionPct').value = '';
   document.getElementById('invNewRetentionAmt').value = '';
@@ -37198,6 +37250,16 @@ function selectInvCustomer(id) {
   document.getElementById('invNewCustomerSearch').value = c.company_name || '';
   document.getElementById('invNewCustomerSelected').textContent = `✓ ${c.company_name} (from Clients)`;
   document.getElementById('invNewCustomerDropdown').innerHTML = '';
+
+  // Apply the client's invoicing defaults (still overridable per invoice)
+  const treatment = ['standard','reverse_charge','zero'].includes(c.vat_treatment) ? c.vat_treatment : 'reverse_charge';
+  const treatEl = document.getElementById('invNewVatTreatment');
+  if (treatEl) treatEl.value = treatment;
+  _invPaymentTermsDays = Number(c.payment_terms_days) > 0 ? Number(c.payment_terms_days) : 30;
+  _invApplyDueDate(document.getElementById('invNewDate').value);
+  const hint = document.getElementById('invNewVatHint');
+  if (hint) hint.textContent = `Client default: ${treatment === 'standard' ? 'Standard VAT' : treatment === 'zero' ? 'Zero / no VAT' : 'Domestic reverse charge'} · ${_invPaymentTermsDays}-day terms`;
+  recalcInvoiceTotals();
 }
 function useInvCustomerFreeText() {
   const q = document.getElementById('invNewCustomerSearch').value;
@@ -37296,8 +37358,9 @@ function _invToggleRetentionFields() {
 // ── Totals recalc ──
 function recalcInvoiceTotals() {
   const net = _invLineRows.reduce((s, l) => s + (Number(l.quantity || 0) * Number(l.unit_price || 0)), 0);
-  const vatApplies = document.getElementById('invNewVatYes').checked;
-  const cisReverse = document.getElementById('invNewCisReverse').checked;
+  const treatment = document.getElementById('invNewVatTreatment').value;
+  const vatApplies = treatment === 'standard';
+  const cisReverse = treatment === 'reverse_charge';
 
   let retention = 0;
   const mode = document.getElementById('invNewRetentionMode').value;
@@ -37414,8 +37477,9 @@ function _buildInvoicePayload() {
     toast('Please add at least one line item', 'error'); return null;
   }
 
-  const vatApplies = document.getElementById('invNewVatYes').checked;
-  const cisReverse = document.getElementById('invNewCisReverse').checked;
+  const treatment = document.getElementById('invNewVatTreatment').value;
+  const vatApplies = treatment === 'standard';
+  const cisReverse = treatment === 'reverse_charge';
   const mode = document.getElementById('invNewRetentionMode').value;
 
   const cleanLines = _invLineRows
@@ -37469,11 +37533,12 @@ function _buildInvoicePayload() {
 
 // ── Build the data structure the PDF renderer expects ─────────────────────
 async function _buildInvoicePdfData(inv) {
-  // Re-fetch line items if the saved object doesn't include them
+  // Re-fetch if the saved object lacks line items or AFP join metadata
   let lines = inv.line_items;
-  if (!Array.isArray(lines)) {
+  if (!Array.isArray(lines) || (inv.source_afp_id && !inv.afp_ref)) {
     const detail = await api.get(`/api/invoices/${inv.id}`);
     lines = detail.line_items || [];
+    inv = { ...detail, ...{} };
   }
   const customer = inv.client_company_name
     || (_invSelectedClient && _invSelectedClient.company_name)
@@ -37498,6 +37563,9 @@ async function _buildInvoicePdfData(inv) {
     vat: Number(inv.vat_amount || 0),
     reverseCharge: Number(inv.reverse_charge_amount || 0),
     gross: Number(inv.gross_amount || 0),
+    afpRef: inv.afp_ref || null,
+    certRef: inv.afp_certificate_ref || null,
+    certDate: inv.afp_certificate_date || null,
     notes: inv.notes || '',
     lineItems: lines.map((l, i) => ({
       itemNum: i + 1,
@@ -37655,7 +37723,8 @@ function drawBamaInvoicePDF(jsPDF, d, logoDataUri) {
   doc.text('From', marginL, leftY); leftY += 4.5;
   setText(TEXT); doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
   ['BAMA Fabrication Ltd', '11 Enterprise Way, Enterprise Park, Yaxley,',
-   'PE7 3WY, Peterborough', '01733 855212', 'info@bamafabrication.co.uk']
+   'PE7 3WY, Peterborough', '01733 855212', 'accounts@bamafabrication.co.uk',
+   'VAT Reg No: 435 0591 07']
     .forEach(line => { doc.text(line, marginL + 4, leftY); leftY += 4; });
   leftY += 4;
 
@@ -37671,6 +37740,17 @@ function drawBamaInvoicePDF(jsPDF, d, logoDataUri) {
     leftY += 1;
     setText(MUTED); doc.setFontSize(9);
     doc.text(`Project: ${d.project}`, marginL + 4, leftY); leftY += 4;
+    setText(TEXT); doc.setFontSize(10);
+  }
+  if (d.afpRef) {
+    setText(MUTED); doc.setFontSize(9);
+    let reLine = `Re: Application for Payment ${d.afpRef}`;
+    if (d.certRef) {
+      reLine += ` · Payment Certificate ${d.certRef}`;
+      if (d.certDate) reLine += ` dated ${fmtDate(d.certDate)}`;
+    }
+    const reWrapped = doc.splitTextToSize(reLine, leftColW - 4);
+    reWrapped.forEach(line => { doc.text(line, marginL + 4, leftY); leftY += 4; });
     setText(TEXT); doc.setFontSize(10);
   }
   leftY += 3;
@@ -37777,8 +37857,11 @@ function drawBamaInvoicePDF(jsPDF, d, logoDataUri) {
   if (d.vatApplies && !d.cisReverse) drawTotal('VAT (20%)', d.vat);
   if (d.cisReverse) {
     setText(MUTED); doc.setFont('helvetica', 'italic'); doc.setFontSize(9);
-    doc.text(`Reverse charge applies — customer to account for £${fmtNum(d.reverseCharge)} VAT to HMRC`,
-             labelX, y);
+    doc.text('Domestic reverse charge: VAT Act 1994 Section 55A applies.', labelX, y);
+    y += 4;
+    doc.text(`Customer to account to HMRC for the reverse charge output tax`, labelX, y);
+    y += 4;
+    doc.text(`of £${fmtNum(d.reverseCharge)} (VAT at 20%) on the above amount.`, labelX, y);
     y += lineH;
   }
 
@@ -37797,13 +37880,18 @@ function drawBamaInvoicePDF(jsPDF, d, logoDataUri) {
   setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
   doc.text('Payment Details', marginL, y); y += 4.5;
   setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
-  ['Account name: BAMA Fabrication Ltd',
-   'Sort code: 09-01-29',
-   'Account number: 32519918',
+  ['Account name: Bama Fabrication Ltd',
+   'Sort code: 30-99-50',
+   'Account number: 26816462',
    'Reference: ' + (d.ref || ''),
    '',
-   'If you have any questions about this invoice please contact: info@bamafabrication.co.uk'
+   'If you have any questions about this invoice please contact: accounts@bamafabrication.co.uk'
   ].forEach(line => { doc.text(line, marginL, y); y += 4; });
+
+  // Registration footer — bottom of the last page
+  setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
+  doc.text('BAMA Fabrication Ltd · Registered in England & Wales, Company No. 14680571 · VAT Registration No. 435 0591 07',
+           pageW / 2, pageH - 8, { align: 'center' });
 
   return doc.output('blob');
 }
@@ -37847,6 +37935,8 @@ async function openInvoiceDetail(id) {
     const payBtn = document.getElementById('invDetailPayBtn');
     const voidBtn = document.getElementById('invDetailVoidBtn');
     issueBtn.style.display = (inv.status === 'Draft')     ? '' : 'none';
+    const editBtn = document.getElementById('invDetailEditBtn');
+    if (editBtn) editBtn.style.display = (inv.status === 'Draft') ? '' : 'none';
     payBtn.style.display   = (inv.status === 'Issued' || inv.status === 'Partially Paid') ? '' : 'none';
     voidBtn.style.display  = (inv.status !== 'Void' && inv.status !== 'Cancelled') ? '' : 'none';
 
@@ -37882,6 +37972,77 @@ async function openInvoiceDetail(id) {
 function closeInvDetail() {
   document.getElementById('invDetailModal').classList.remove('active');
   _invDetailCurrent = null;
+}
+
+// ── Edit a Draft invoice: reuse the New Invoice modal prefilled ──────────
+async function editInvoiceFromDetail() {
+  if (!_invDetailCurrent) return;
+  const inv = _invDetailCurrent;
+  if (inv.status !== 'Draft') { toast('Only Draft invoices can be edited', 'error'); return; }
+
+  _invEditing = inv;
+  _invSelectedClient = inv.client_id ? (_invClientsCache.find(c => c.id === inv.client_id) || null) : null;
+  _invSelectedProject = inv.project_id ? (_invProjectsCache.find(p => p.id === inv.project_id) || null) : null;
+  _invPaymentTermsDays = Number(inv.client_payment_terms) > 0 ? Number(inv.client_payment_terms) : 30;
+
+  document.getElementById('invNewModalTitle').textContent = `✏️ Edit ${inv.ref}`;
+  document.getElementById('invNewKind').value = inv.kind || 'invoice';
+  document.getElementById('invNewRef').value = inv.ref || '';
+  document.getElementById('invNewDate').value = _invToDateStr(inv.invoice_date);
+  document.getElementById('invNewDueDate').value = _invToDateStr(inv.due_date);
+
+  // Customer + project
+  document.getElementById('invNewCustomerSearch').value =
+    inv.client_company_name || inv.customer_text || '';
+  document.getElementById('invNewCustomerSelected').textContent =
+    _invSelectedClient ? `✓ ${_invSelectedClient.company_name} (from Clients)`
+                       : (inv.customer_text ? `✓ "${inv.customer_text}" (free-text)` : '');
+  document.getElementById('invNewCustomerDropdown').innerHTML = '';
+  document.getElementById('invNewProjectSearch').value =
+    inv.project_number ? `${inv.project_number} — ${inv.project_name || ''}` : '';
+  document.getElementById('invNewProjectSelected').textContent =
+    inv.project_number ? `✓ ${inv.project_number}` : '';
+  document.getElementById('invNewProjectDropdown').innerHTML = '';
+
+  // VAT treatment from stored flags
+  document.getElementById('invNewVatTreatment').value =
+    _invTreatmentFromFlags(!!inv.vat_applies, !!inv.cis_reverse_charge);
+  document.getElementById('invNewVatHint').textContent =
+    inv.source_afp_id && inv.afp_ref ? `Generated from ${inv.afp_ref} — line + VAT fully editable while Draft` : '';
+
+  // Retention
+  const retAmt = Number(inv.retention_amount || 0);
+  const retPct = inv.retention_pct != null ? Number(inv.retention_pct) : null;
+  const modeEl = document.getElementById('invNewRetentionMode');
+  if (retPct != null && retPct > 0) {
+    modeEl.value = 'pct';
+    document.getElementById('invNewRetentionPct').value = retPct;
+  } else if (retAmt > 0) {
+    modeEl.value = 'amt';
+    document.getElementById('invNewRetentionAmt').value = retAmt;
+  } else {
+    modeEl.value = 'none';
+    document.getElementById('invNewRetentionPct').value = '';
+    document.getElementById('invNewRetentionAmt').value = '';
+  }
+  document.getElementById('invNewRetentionDue').value = _invToDateStr(inv.retention_due_date);
+  _invToggleRetentionFields();
+
+  document.getElementById('invNewNotes').value = inv.notes || '';
+
+  // Line items
+  _invLineRows = (inv.line_items || []).map(l => ({
+    description: l.description || '',
+    quantity: Number(l.quantity || 1),
+    unit: l.unit || '',
+    unit_price: Number(l.unit_price || 0)
+  }));
+  if (_invLineRows.length === 0) _invLineRows = [{ description: '', quantity: 1, unit: '', unit_price: 0 }];
+  renderInvLineRows();
+  recalcInvoiceTotals();
+
+  closeInvDetail();
+  document.getElementById('invNewModal').classList.add('active');
 }
 
 // ── Issue from detail (Draft → Issued, generates PDF, uploads to SharePoint) ──
