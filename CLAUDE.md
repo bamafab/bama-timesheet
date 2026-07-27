@@ -946,7 +946,19 @@ none of this is built yet.
   a "Credit against Invoice INVxxxx" line (parent ref joined in
   invoices-detail as parent_invoice_ref). saveAndIssueInvoice also gained
   the email-composer last mile + CN allocation. Standalone CNs (no
-  parent) still allowed. Invoicing module COMPLETE except parked items
+  parent) still allowed.
+- **Invoicing Phase 4d (AI email drafting + CN import, 2026-07-27)** —
+  generic composer gained QB-style AI drafting: `openBabcockEmailModal`
+  accepts optional `aiDraft:{context}`; when supplied, a tone bar
+  (Warm/Brief/Firm + ↻ Redraft, `_ensureBemailToneBar` injected above
+  bemailBody at runtime so no per-page markup edits) appears and
+  `draftBabcockEmailBody()` drafts via claude-proxy (429 retry 30s,
+  falls back to the resolved template body). Invoice/CN composer passes
+  full context (ref, contact, project, amount, due date, RC note,
+  parent invoice for CNs). Any other caller (tenders/babcock) can adopt
+  by passing aiDraft. Historical import OCR prompt now credit-note and
+  pro-forma aware (CN/PRO refs, positive amounts even if bracketed).
+  Invoicing module COMPLETE except parked items
   (remittance OCR, retention release invoicing).
 - **Invoice Tracker** — standalone `invoice-tracker.html` page with four
   tabs (AFPs · Sales Invoices · Supplier Invoices · Receipts). Gated by

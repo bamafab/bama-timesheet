@@ -28189,6 +28189,9 @@ async function openBabcockEmailModal(opts) {
     sentResult: null
   };
 
+  _bemailContext.aiDraft = opts.aiDraft || null;
+  _bemailContext.fallbackBody = resolvedBody;
+
   // Populate the modal
   document.getElementById('bemailTitle').textContent  = opts.title || 'New Email';
   document.getElementById('bemailFrom').textContent   = fromText;
@@ -28196,6 +28199,11 @@ async function openBabcockEmailModal(opts) {
   document.getElementById('bemailCc').value           = opts.cc || '';
   document.getElementById('bemailSubject').value      = resolvedSubject;
   document.getElementById('bemailBody').value         = resolvedBody;
+
+  // AI drafting bar (tone select + redraft) — injected once, shown only
+  // when the caller supplies an aiDraft context. Mirrors the QB flow.
+  _ensureBemailToneBar(!!opts.aiDraft);
+  if (opts.aiDraft) draftBabcockEmailBody();
 
   // Signature preview (collapsed by default — toggle expands)
   const sigPreview = document.getElementById('bemailSigPreview');
@@ -28429,6 +28437,89 @@ function toggleBabcockEmailSignature() {
 // Send via Graph /me/sendMail. Body is plain-text from the textarea —
 // converted to HTML (newlines → <br>, escaped) and concatenated with
 // the signature HTML. Attachment is included as base64 if present.
+// ── AI drafting for the generic composer (QB-style: warm/brief/firm) ──────
+function _ensureBemailToneBar(show) {
+  let bar = document.getElementById('bemailToneBar');
+  const bodyEl = document.getElementById('bemailBody');
+  if (!bar && bodyEl) {
+    bar = document.createElement('div');
+    bar.id = 'bemailToneBar';
+    bar.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:6px';
+    bar.innerHTML = `
+      <span style="font-size:11px;color:var(--muted)">AI draft:</span>
+      <select id="bemailTone" onchange="draftBabcockEmailBody()"
+              style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:12px">
+        <option value="warm">Warm</option>
+        <option value="brief">Brief</option>
+        <option value="firm">Firm</option>
+      </select>
+      <button type="button" class="btn btn-ghost" id="bemailRedraftBtn"
+              style="padding:4px 10px;font-size:12px" onclick="draftBabcockEmailBody()">↻ Redraft</button>
+      <span id="bemailDraftStatus" style="font-size:11px;color:var(--muted)"></span>`;
+    bodyEl.parentNode.insertBefore(bar, bodyEl);
+  }
+  if (bar) bar.style.display = show ? 'flex' : 'none';
+}
+
+async function draftBabcockEmailBody() {
+  if (!_bemailContext || !_bemailContext.aiDraft) return;
+  const bodyEl = document.getElementById('bemailBody');
+  const btn = document.getElementById('bemailRedraftBtn');
+  const sts = document.getElementById('bemailDraftStatus');
+  if (!bodyEl) return;
+
+  const tone = document.getElementById('bemailTone')?.value || 'warm';
+  const toneGuide = {
+    warm:  'Warm and friendly, relationship-first. Light and unhurried.',
+    brief: 'Very short and to the point — three or four sentences maximum, no filler.',
+    firm:  'Polite but direct — convey quiet professionalism, without being pushy.'
+  }[tone];
+
+  bodyEl.value = 'Drafting…';
+  if (btn) btn.disabled = true;
+  if (sts) sts.textContent = '';
+
+  const prompt = `${_bemailContext.aiDraft.context}
+
+Tone: ${toneGuide}
+
+RULES:
+- Write ONLY the email body. No subject line, no "Subject:", no preamble.
+- Open with an appropriate greeting using the contact's first name if available, otherwise "Dear Sir/Madam".
+- Do NOT write any sign-off, "Kind regards", name, company name, or signature block at the end — a signature is added automatically. End with the last sentence of the message.
+- Strictly UK English. Natural, professional, no marketing fluff, no exclamation marks.`;
+
+  try {
+    const requestBody = {
+      model: 'claude-sonnet-4-6',
+      max_tokens: 800,
+      messages: [{ role: 'user', content: prompt }]
+    };
+    const doFetch = () => fetch(API_BASE + '/api/claude-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${sessionStorage.getItem('bama_token')}` },
+      body: JSON.stringify(requestBody)
+    });
+    let response = await doFetch();
+    let data = await response.json();
+    if (response.status === 429) {
+      if (sts) sts.textContent = 'Rate limit — waiting 30s…';
+      await new Promise(r => setTimeout(r, 30000));
+      response = await doFetch();
+      data = await response.json();
+    }
+    if (data.error) throw new Error(data.error.message);
+    const text = (data.content || []).filter(x => x.type === 'text').map(x => x.text).join('\n').trim();
+    bodyEl.value = text || _bemailContext.fallbackBody;
+    if (sts) sts.textContent = '';
+  } catch (e) {
+    bodyEl.value = _bemailContext.fallbackBody;
+    if (sts) sts.textContent = 'AI draft unavailable — using standard template';
+    console.warn('AI email draft failed:', e);
+  }
+  if (btn) btn.disabled = false;
+}
+
 async function sendBabcockEmail() {
   if (!_bemailContext) return;
 
@@ -38405,7 +38496,7 @@ async function _invImportParsePdf(file) {
           role: 'user',
           content: [
             { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
-            { type: 'text', text: `This is a historical BAMA Fabrication sales invoice. Extract its details.
+            { type: 'text', text: `This is a historical BAMA Fabrication sales document — an invoice, credit note, or pro forma. Extract its details.
 
 Return ONLY a JSON object, no markdown, no explanation:
 {
@@ -38427,7 +38518,9 @@ Rules:
 - Amounts may use comma decimals and space thousands (e.g. "£3 100,00" = 3100.00, "20.443.27" = 20443.27). Return plain numbers.
 - reverse_charge is true if wording like "REVERSE CHARGE SUPPLY", "customer to pay VAT to HMRC", "customer to account for VAT", or "VAT Act 1994 Section 55A" appears. In that case vat = 0 (the ~20% figure shown is informational, not charged).
 - If a "VAT 20%" line is added into the TOTAL DUE, reverse_charge is false and vat is that amount.
-- Ignore "ALREADY PAID" lines for amounts — net is the stated SUBTOTAL, gross is the stated TOTAL DUE.` }
+- Ignore "ALREADY PAID" lines for amounts — net is the stated SUBTOTAL, gross is the stated TOTAL DUE.
+- If the document is a CREDIT NOTE, the ref starts CN (e.g. CN0003). Return all amounts as POSITIVE numbers even if shown negative or in brackets.
+- If it is a PRO FORMA, keep the PRO prefix on the ref.` }
           ]
         }]
       })
@@ -38697,6 +38790,18 @@ async function _openInvoiceEmailComposer(inv) {
         name: `${inv.ref}.pdf`,
         contentType: 'application/pdf',
         contentBase64
+      },
+      aiDraft: {
+        context: `Write a covering email from BAMA Fabrication Ltd, a structural steel fabrication company in Peterborough, to a client. The ${inv.kind === 'credit_note' ? 'credit note' : inv.kind === 'pro_forma' ? 'pro forma invoice' : 'invoice'} PDF is attached to the email.
+
+Document details:
+- Reference: ${inv.ref}
+- Client contact: ${contactName}${customer ? ' at ' + customer : ''}
+${projectLabel ? '- Project: ' + projectLabel : ''}
+${inv.kind === 'credit_note' && inv.parent_invoice_ref ? '- This credit note is issued against invoice ' + inv.parent_invoice_ref : ''}
+- Amount: \u00a3${fmt2(inv.gross_amount)}${inv.kind === 'credit_note' ? ' credited' : ', due ' + dueUk}
+${inv.cis_reverse_charge ? '- CIS domestic reverse charge applies: the customer must account to HMRC for VAT of \u00a3' + fmt2(inv.reverse_charge_amount) + ' — mention this briefly.' : ''}
+${inv.kind !== 'credit_note' ? '- Ask them to use ' + inv.ref + ' as the payment reference.' : ''}`
       }
     });
   } catch (err) {
