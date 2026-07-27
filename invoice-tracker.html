@@ -659,7 +659,7 @@
 
     <!-- Project + Ref + Final flag -->
     <div class="card" style="padding:10px 12px;margin-bottom:12px;background:var(--bg-darker)">
-      <div style="display:grid;grid-template-columns:1fr 120px 200px;gap:12px;align-items:end">
+      <div style="display:grid;grid-template-columns:1fr 110px 170px 165px;gap:12px;align-items:end">
         <div>
           <label class="field-label">Project</label>
           <div id="afpNewProjectLabel" style="font-weight:600;padding:6px 0">—</div>
@@ -668,6 +668,11 @@
           <label class="field-label">AFP Ref</label>
           <input type="text" class="field-input" id="afpNewRef" readonly
                  style="background:var(--bg-darker);font-family:var(--font-mono)">
+        </div>
+        <div>
+          <label class="field-label">Contract / WO No</label>
+          <input type="text" class="field-input" id="afpNewContractNo"
+                 placeholder="e.g. S-CM0665/0028" style="font-family:var(--font-mono)">
         </div>
         <div>
           <label class="field-label">&nbsp;</label>
@@ -698,46 +703,55 @@
       ⚠ Previous % columns are 0 — no Certified prior AFP exists yet for this project.
     </div>
 
-    <!-- Line items -->
+    <!-- Schedule of Values — grouped: A. Measured Works / B. Variations / C. Materials -->
     <div style="margin-bottom:12px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
         <label class="field-label" style="margin:0">Schedule of Values</label>
-        <button type="button" class="btn btn-ghost" style="padding:4px 10px;font-size:11px"
-                onclick="_afpAddLineRow()">+ Add Line</button>
+        <div style="display:grid;grid-template-columns:92px 48px 92px 62px 92px 26px;gap:6px;
+                    font-size:9px;color:var(--subtle);text-transform:uppercase;letter-spacing:.5px;text-align:center">
+          <div>Value £</div><div>Prev</div><div>Cumulative %</div><div></div><div>This App £</div><div></div>
+        </div>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 110px 70px 70px 100px 30px;gap:6px;
-                  font-size:10px;color:var(--subtle);text-transform:uppercase;letter-spacing:.5px;
-                  padding:0 4px;margin-bottom:4px">
-        <div>Description</div><div>Contract £</div><div>Prev %</div><div>This %</div>
-        <div style="text-align:right">This App £</div><div></div>
-      </div>
-      <div id="afpNewLineItems" style="display:flex;flex-direction:column;gap:6px"></div>
+      <div id="afpNewLineItems"></div>
     </div>
 
-    <!-- VAT + Retention -->
+    <!-- Previous certificate + Retention + VAT -->
     <div class="card" style="padding:12px;margin-bottom:12px;background:var(--bg-darker)">
-      <div style="display:grid;grid-template-columns:1fr 1fr 2fr;gap:12px;align-items:end">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;align-items:end">
         <div>
-          <label class="field-label">VAT</label>
-          <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding-top:4px">
-            <input type="checkbox" id="afpNewVatApplies" checked onchange="recalcAfpTotals()">
-            Apply 20% VAT
-          </label>
+          <label class="field-label">Less Previous Contractor Certificate £</label>
+          <input type="number" step="0.01" class="field-input" id="afpNewPrevCert"
+                 placeholder="0.00" oninput="recalcAfpTotals()">
+          <div style="font-size:10px;color:var(--subtle);margin-top:2px">Auto-filled from prior certified AFPs — edit if their certificate differs.</div>
         </div>
         <div>
           <label class="field-label">Retention %</label>
           <input type="number" step="0.01" class="field-input" id="afpNewRetentionPct"
                  placeholder="e.g. 5" oninput="recalcAfpTotals()">
         </div>
-        <div></div>
+        <div>
+          <label class="field-label">VAT</label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding-top:4px">
+            <input type="checkbox" id="afpNewVatApplies" onchange="recalcAfpTotals()">
+            Apply 20% VAT (rare — VAT is normally invoice-stage)
+          </label>
+        </div>
       </div>
     </div>
 
-    <!-- Totals -->
+    <!-- Totals — mirrors the application summary maths -->
     <div class="card" style="padding:12px;margin-bottom:12px">
-      <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:8px;font-size:13px">
+      <div style="display:grid;grid-template-columns:repeat(6, 1fr);gap:8px;font-size:13px">
         <div>
-          <div style="font-size:10px;color:var(--muted);text-transform:uppercase">Net This App</div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase">Value of Application (Cum)</div>
+          <div id="afpTotalCum" style="font-weight:600">£0.00</div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase">Less Prev Certificate</div>
+          <div id="afpTotalPrevCert" style="font-weight:600">£0.00</div>
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase">Gross Valuation (This App)</div>
           <div id="afpTotalNet" style="font-weight:600">£0.00</div>
         </div>
         <div>
@@ -749,7 +763,7 @@
           <div id="afpTotalVat" style="font-weight:600">£0.00</div>
         </div>
         <div>
-          <div style="font-size:10px;color:var(--muted);text-transform:uppercase">Gross Total</div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase">Amount Due</div>
           <div id="afpTotalGross" style="font-weight:700;font-size:16px;color:var(--accent)">£0.00</div>
         </div>
       </div>
@@ -806,6 +820,8 @@
       </div>
     </div>
 
+    <div id="afpDetailV2Strip" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:14px;font-size:13px"></div>
+
     <!-- Line items table -->
     <div style="margin-bottom:14px">
       <div style="font-size:11px;color:var(--muted);text-transform:uppercase;margin-bottom:4px">Schedule of Values</div>
@@ -814,11 +830,12 @@
           <thead>
             <tr style="border-bottom:1px solid var(--border)">
               <th style="text-align:left;padding:6px 8px;font-size:11px;color:var(--muted)">Description</th>
-              <th style="text-align:right;padding:6px 8px;font-size:11px;color:var(--muted)">Contract £</th>
+              <th style="text-align:right;padding:6px 8px;font-size:11px;color:var(--muted)">Value £</th>
               <th style="text-align:center;padding:6px 8px;font-size:11px;color:var(--muted)">Prev %</th>
-              <th style="text-align:center;padding:6px 8px;font-size:11px;color:var(--muted)">This %</th>
+              <th style="text-align:center;padding:6px 8px;font-size:11px;color:var(--muted)">Cum %</th>
               <th style="text-align:right;padding:6px 8px;font-size:11px;color:var(--muted)">This App £</th>
               <th style="text-align:right;padding:6px 8px;font-size:11px;color:var(--muted)">Cum £</th>
+              <th style="text-align:right;padding:6px 8px;font-size:11px;color:var(--muted)">Paid £</th>
               <th style="text-align:right;padding:6px 8px;font-size:11px;color:var(--muted)">Cert £</th>
             </tr>
           </thead>
@@ -951,6 +968,6 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="shared.js?v=20260727h"></script>
+<script src="shared.js?v=20260727i"></script>
 </body>
 </html>

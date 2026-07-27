@@ -35578,11 +35578,27 @@ function _renderAfpCard(a) {
           <div style="font-weight:600">${a.certified_gross != null ? '£' + Number(a.certified_gross).toLocaleString('en-GB', { minimumFractionDigits: 2 }) : '—'}</div>
         </div>
         <div style="text-align:right">
-          ${invStatusBadge(a.status)}
+          ${a.status === 'Certified'
+            ? `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:rgba(62,207,142,.2);color:var(--green)">✓ READY TO INVOICE</span>
+               <div><button class="btn btn-primary" style="padding:3px 10px;font-size:11px;margin-top:5px"
+                       onclick="event.stopPropagation(); generateInvoiceFromAfpCard(${a.id})">Generate Invoice</button></div>`
+            : `${invStatusBadge(a.status)}`}
           ${a.invoice_ref ? `<div style="font-size:10px;color:var(--subtle);margin-top:3px">→ ${escapeHtml(a.invoice_ref)}</div>` : ''}
         </div>
       </div>
     </div>`;
+}
+
+// One-click invoice straight from the AFP card (the Natasza flow) — loads the
+// AFP into _afpDetailCurrent and reuses the confirmed generate flow.
+async function generateInvoiceFromAfpCard(id) {
+  try {
+    _afpDetailCurrent = await api.get(`/api/applications/${id}`);
+  } catch (err) {
+    toast('Failed to load AFP: ' + (err.message || 'unknown'), 'error');
+    return;
+  }
+  await generateInvoiceFromAfp();
 }
 
 function renderInvSalesTable() {
@@ -35719,8 +35735,12 @@ async function openNewAfpModal(projectId) {
   document.getElementById('afpNewPeriodEnd').value   = monthEnd;
   document.getElementById('afpNewIsFinal').checked = false;
   document.getElementById('afpNewRetentionPct').value = '5';
-  document.getElementById('afpNewVatApplies').checked = true;
+  // Applications for payment are not VAT documents — VAT is applied at the
+  // invoice stage. Default OFF (toggle stays available for odd contracts).
+  document.getElementById('afpNewVatApplies').checked = false;
   document.getElementById('afpNewNotes').value = '';
+  document.getElementById('afpNewContractNo').value = '';
+  document.getElementById('afpNewPrevCert').value = '0';
 
   // Allocate the next AFP ref for this project
   try {
@@ -35741,13 +35761,40 @@ function closeAfpNewModal() {
   document.getElementById('afpNewModal').classList.remove('active');
 }
 
+// ── AFP v2: grouped SOV (Measured Works / Variations / Materials) ──────────
+// Row model (flat array, grouped by section+item_no for display):
+//   { section, item_no, item_description, item_quote_ref, item_wo_no,
+//     source_quote_line_item_id, description, contract_value,
+//     previous_pct_complete  (cumulative % at last CERTIFIED AFP),
+//     this_app_pct_complete  (cumulative % NOW — the sheet's "% Complete"),
+//     gross_amount_paid      (cumulative £ certified/paid to date) }
+// This-app £ per line = contract × (cum − prev)%. Summary maths mirrors the
+// company's Excel: Value of Application (cumulative) − Less Previous
+// Contractor Certificate = GROSS Valuation this period − retention = due.
+const _AFP_SECTIONS = ['measured', 'variation', 'materials'];
+const _AFP_SECTION_LABELS = {
+  measured: 'A. Measured Works',
+  variation: 'B. Variations',
+  materials: 'C. Materials On / Off Site'
+};
+
+function _afpRenumberLines() {
+  const order = { measured: 0, variation: 1, materials: 2 };
+  _afpLineRows.sort((a, b) => {
+    const so = (order[a.section] ?? 0) - (order[b.section] ?? 0);
+    if (so !== 0) return so;
+    return Number(a.item_no || 0) - Number(b.item_no || 0);
+  });
+  _afpLineRows.forEach((l, i) => { l.line_no = i + 1; });
+}
+
 async function _afpPopulateSov(projectId) {
   // All non-cancelled AFPs in this project, most-recent first
   const projectAfps = _invAfpList
     .filter(a => a.project_id === projectId && a.status !== 'Cancelled')
     .sort((a, b) => b.application_no - a.application_no);
 
-  // Find the most-recent CERTIFIED (or Invoiced) AFP for previous_pct carry-forward
+  // Most-recent CERTIFIED (or Invoiced) AFP → prev % + paid carry-forward
   const lastCertified = projectAfps.find(a => a.status === 'Certified' || a.status === 'Invoiced');
   let lastCertifiedLines = [];
   if (lastCertified) {
@@ -35756,63 +35803,129 @@ async function _afpPopulateSov(projectId) {
       lastCertifiedLines = detail.line_items || [];
     } catch (e) { /* fall through with empty */ }
   }
-
-  const findPrevPct = (sourceQliId, description) => {
+  const findCertLine = (sourceQliId, description) => {
     let match = null;
-    if (sourceQliId) {
-      match = lastCertifiedLines.find(l => l.source_quote_line_item_id === sourceQliId);
-    }
-    if (!match) {
-      match = lastCertifiedLines.find(l => (l.description || '').trim() === (description || '').trim());
-    }
-    return match ? Number(match.this_app_pct_complete || 0) : 0;
+    if (sourceQliId) match = lastCertifiedLines.find(l => l.source_quote_line_item_id === sourceQliId);
+    if (!match) match = lastCertifiedLines.find(l => (l.description || '').trim() === (description || '').trim());
+    return match || null;
   };
 
-  if (projectAfps.length === 0) {
-    // AFP01 — pull from all quote line items for the project
-    try {
-      const projectQuotes = await api.get(`/api/project-quotes?project_id=${projectId}`);
-      const tenderIds = (projectQuotes || []).map(pq => pq.tender_id);
-      let allLines = [];
-      for (const tid of tenderIds) {
-        const items = await api.get(`/api/quote-line-items?tender_id=${tid}`).catch(() => []);
-        allLines = allLines.concat(items);
-      }
-      _afpLineRows = allLines.map((l, i) => ({
-        line_no: i + 1,
+  // Project quotes: primary → Measured Works, additional → Variations
+  let projectQuotes = [];
+  try { projectQuotes = await api.get(`/api/project-quotes?project_id=${projectId}`) || []; }
+  catch (e) { console.warn('Could not load project quotes:', e); }
+
+  const contractNoNow = () => document.getElementById('afpNewContractNo')?.value || '';
+
+  const linesFromQuote = async (pq, section, itemNo) => {
+    let qlis = [];
+    if (pq.tender_id) {
+      qlis = await api.get(`/api/quote-line-items?tender_id=${pq.tender_id}`).catch(() => []) || [];
+    }
+    return (qlis || [])
+      .filter(l => (Number(l.quantity || 0) * Number(l.unit_price || 0)) !== 0)
+      .map(l => ({
+        section, item_no: itemNo,
+        item_description: pq.quote_project_name || pq.reference || '',
+        item_quote_ref: pq.reference || '',
+        item_wo_no: contractNoNow(),
         source_quote_line_item_id: l.id,
-        description: l.description || l.category || `Line ${i + 1}`,
-        contract_value: Number(l.quantity || 0) * Number(l.unit_price || 0),
+        description: l.description || l.category || '',
+        contract_value: +(Number(l.quantity || 0) * Number(l.unit_price || 0)).toFixed(2),
         previous_pct_complete: 0,
-        this_app_pct_complete: 0
+        this_app_pct_complete: 0,
+        gross_amount_paid: 0
       }));
-    } catch (e) {
-      console.warn('Could not pull quote lines:', e);
-      _afpLineRows = [];
+  };
+
+  _afpLineRows = [];
+
+  if (projectAfps.length === 0) {
+    // ── AFP01 — build from project quotes
+    let mItem = 0, vItem = 0;
+    for (const pq of projectQuotes) {
+      const section = pq.is_primary ? 'measured' : 'variation';
+      const itemNo = pq.is_primary ? ++mItem : ++vItem;
+      const lines = await linesFromQuote(pq, section, itemNo);
+      _afpLineRows = _afpLineRows.concat(lines);
+    }
+    if (!_afpLineRows.length) {
+      // No quote lines available — start with one empty measured item
+      _afpLineRows.push({
+        section: 'measured', item_no: 1, item_description: '', item_quote_ref: '',
+        item_wo_no: contractNoNow(), source_quote_line_item_id: null, description: '',
+        contract_value: 0, previous_pct_complete: 0, this_app_pct_complete: 0, gross_amount_paid: 0
+      });
     }
   } else {
-    // AFP02+ — pull from most recent AFP's lines, fill prev % from last CERTIFIED
+    // ── AFP02+ — copy most-recent AFP's SOV, carry prev % / paid from last
+    //    CERTIFIED, then auto-pull newly attached quotes as fresh Variations.
     const prevAfp = projectAfps[0];
     try {
       const detail = await api.get(`/api/applications/${prevAfp.id}`);
-      _afpLineRows = (detail.line_items || []).map((l, i) => ({
-        line_no: i + 1,
-        source_quote_line_item_id: l.source_quote_line_item_id,
-        description: l.description,
-        contract_value: Number(l.contract_value || 0),
-        previous_pct_complete: findPrevPct(l.source_quote_line_item_id, l.description),
-        this_app_pct_complete: 0
-      }));
-    } catch (e) {
-      _afpLineRows = [];
+      _afpLineRows = (detail.line_items || []).map(l => {
+        const cert = findCertLine(l.source_quote_line_item_id, l.description);
+        return {
+          section: l.section || 'measured',
+          item_no: l.item_no != null ? Number(l.item_no) : 1,
+          item_description: l.item_description || '',
+          item_quote_ref: l.item_quote_ref || '',
+          item_wo_no: l.item_wo_no || '',
+          source_quote_line_item_id: l.source_quote_line_item_id,
+          description: l.description,
+          contract_value: Number(l.contract_value || 0),
+          previous_pct_complete: cert ? Number(cert.this_app_pct_complete || 0) : Number(l.previous_pct_complete || 0),
+          this_app_pct_complete: Number(l.this_app_pct_complete || 0),
+          gross_amount_paid: cert ? Number(cert.gross_amount_paid || 0) : Number(l.gross_amount_paid || 0)
+        };
+      });
+    } catch (e) { _afpLineRows = []; }
+
+    // VO auto-pull: any project quote whose reference isn't in the SOV yet
+    const knownRefs = new Set(_afpLineRows.map(l => (l.item_quote_ref || '').trim()).filter(Boolean));
+    let vItem = _afpLineRows.filter(l => l.section === 'variation')
+      .reduce((m, l) => Math.max(m, Number(l.item_no || 0)), 0);
+    const pulled = [];
+    for (const pq of projectQuotes) {
+      const ref = String(pq.reference || '').trim();
+      if (!ref || knownRefs.has(ref)) continue;
+      const lines = await linesFromQuote(pq, 'variation', ++vItem);
+      if (lines.length) { _afpLineRows = _afpLineRows.concat(lines); pulled.push(ref); }
+      else vItem--;
     }
+    if (pulled.length) toast(`Pulled in new quote${pulled.length > 1 ? 's' : ''} as Variation: ${pulled.join(', ')}`, 'success');
   }
+
+  _afpRenumberLines();
 
   // Banner: "no certified prior AFP" warning
   const banner = document.getElementById('afpNewPrevPctBanner');
-  if (banner) {
-    banner.style.display = (projectAfps.length > 0 && !lastCertified) ? '' : 'none';
+  if (banner) banner.style.display = (projectAfps.length > 0 && !lastCertified) ? '' : 'none';
+
+  // "Less Previous Contractor Certificate" auto-suggest — Σ certified net of
+  // all prior certified/invoiced AFPs (editable; matches the Excel's E28)
+  if (!_afpEditing) {
+    const prevCertSum = projectAfps
+      .filter(a => a.status === 'Certified' || a.status === 'Invoiced')
+      .reduce((s, a) => s + Number(a.certified_value_net || 0), 0);
+    const prevCertEl = document.getElementById('afpNewPrevCert');
+    if (prevCertEl) prevCertEl.value = prevCertSum ? prevCertSum.toFixed(2) : '0';
+
+    // Contract No + retention % carried from the most recent AFP (per-project sticky)
+    if (projectAfps.length) {
+      const last = projectAfps[0];
+      if (last.contract_no) {
+        const cEl = document.getElementById('afpNewContractNo');
+        if (cEl && !cEl.value) cEl.value = last.contract_no;
+      }
+      if (last.retention_pct != null) {
+        document.getElementById('afpNewRetentionPct').value = Number(last.retention_pct);
+      }
+      const wo = document.getElementById('afpNewContractNo')?.value || '';
+      if (wo) _afpLineRows.forEach(l => { if (!l.item_wo_no) l.item_wo_no = wo; });
+    }
   }
+
   renderAfpLineRows();
 }
 
@@ -35824,84 +35937,211 @@ function toggleAfpFinal() {
   }
 }
 
-function _afpAddLineRow() {
+// ── Item / line management ─────────────────────────────────────────────────
+function _afpAddItem(section) {
+  const nextItem = _afpLineRows.filter(l => l.section === section)
+    .reduce((m, l) => Math.max(m, Number(l.item_no || 0)), 0) + 1;
   _afpLineRows.push({
-    line_no: _afpLineRows.length + 1,
-    source_quote_line_item_id: null,
-    description: '',
-    contract_value: 0,
-    previous_pct_complete: 0,
-    this_app_pct_complete: 0
+    section, item_no: nextItem, item_description: '', item_quote_ref: '',
+    item_wo_no: document.getElementById('afpNewContractNo')?.value || '',
+    source_quote_line_item_id: null, description: '',
+    contract_value: 0, previous_pct_complete: 0, this_app_pct_complete: 0, gross_amount_paid: 0
   });
+  _afpRenumberLines();
   renderAfpLineRows();
 }
 
-function removeAfpLineRow(idx) {
-  _afpLineRows.splice(idx, 1);
-  _afpLineRows.forEach((l, i) => { l.line_no = i + 1; });
+function _afpAddLineToItem(section, itemNo) {
+  const sibling = _afpLineRows.find(l => l.section === section && Number(l.item_no || 0) === Number(itemNo || 0));
+  _afpLineRows.push({
+    section,
+    item_no: itemNo != null ? Number(itemNo) : (section === 'materials' ? 1 : 1),
+    item_description: sibling ? sibling.item_description : '',
+    item_quote_ref: sibling ? sibling.item_quote_ref : '',
+    item_wo_no: sibling ? sibling.item_wo_no : (document.getElementById('afpNewContractNo')?.value || ''),
+    source_quote_line_item_id: null, description: '',
+    contract_value: 0, previous_pct_complete: 0, this_app_pct_complete: 0, gross_amount_paid: 0
+  });
+  _afpRenumberLines();
   renderAfpLineRows();
   recalcAfpTotals();
 }
 
+function removeAfpItem(section, itemNo) {
+  _afpLineRows = _afpLineRows.filter(l => !(l.section === section && Number(l.item_no || 0) === Number(itemNo || 0)));
+  // Re-sequence item numbers within the section so display stays 1, 2, 3…
+  const items = [...new Set(_afpLineRows.filter(l => l.section === section).map(l => Number(l.item_no || 0)))].sort((a, b) => a - b);
+  const remap = new Map(items.map((n, i) => [n, i + 1]));
+  _afpLineRows.forEach(l => { if (l.section === section) l.item_no = remap.get(Number(l.item_no || 0)) || 1; });
+  _afpRenumberLines();
+  renderAfpLineRows();
+  recalcAfpTotals();
+}
+
+function removeAfpLineRow(idx) {
+  const row = _afpLineRows[idx];
+  _afpLineRows.splice(idx, 1);
+  if (row) {
+    const left = _afpLineRows.some(l => l.section === row.section && Number(l.item_no || 0) === Number(row.item_no || 0));
+    if (!left && row.section !== 'materials') { removeAfpItem(row.section, row.item_no); return; }
+  }
+  _afpRenumberLines();
+  renderAfpLineRows();
+  recalcAfpTotals();
+}
+
+function _afpUpdateItemMeta(section, itemNo, field, value) {
+  _afpLineRows.forEach(l => {
+    if (l.section === section && Number(l.item_no || 0) === Number(itemNo || 0)) l[field] = value;
+  });
+}
+
+// ── Grouped SOV rendering ──────────────────────────────────────────────────
 function renderAfpLineRows() {
   const el = document.getElementById('afpNewLineItems');
   if (!el) return;
-  el.innerHTML = _afpLineRows.map((l, i) => {
-    const thisAppValue = Number(l.contract_value || 0) * (Number(l.this_app_pct_complete || 0) - Number(l.previous_pct_complete || 0)) / 100;
-    return `
-      <div style="display:grid;grid-template-columns:1fr 110px 70px 70px 100px 30px;gap:6px;align-items:center">
-        <input type="text" class="field-input" placeholder="Description"
-               value="${escapeHtml(l.description || '')}"
-               oninput="_afpLineRows[${i}].description = this.value">
-        <input type="number" step="0.01" class="field-input" placeholder="Contract £"
-               value="${l.contract_value || 0}"
-               oninput="_afpLineRows[${i}].contract_value = parseFloat(this.value) || 0; updateAfpLineRowCalc(${i})">
-        <input type="number" step="0.01" class="field-input" placeholder="Prev %" readonly tabindex="-1"
-               style="background:var(--bg-darker);text-align:center"
-               value="${Number(l.previous_pct_complete || 0).toFixed(1)}">
-        <input type="number" step="0.01" class="field-input" placeholder="This %"
-               value="${l.this_app_pct_complete || 0}"
-               oninput="_afpLineRows[${i}].this_app_pct_complete = parseFloat(this.value) || 0; updateAfpLineRowCalc(${i})">
-        <input type="text" class="field-input" readonly tabindex="-1"
-               style="background:var(--bg-darker);text-align:right"
-               value="£${Number(thisAppValue).toLocaleString('en-GB', { minimumFractionDigits: 2 })}">
-        <button type="button" class="btn btn-ghost"
-                style="padding:4px 8px;color:var(--red);border-color:var(--red)"
-                onclick="removeAfpLineRow(${i})">×</button>
+
+  let html = '';
+  for (const section of _AFP_SECTIONS) {
+    const rows = _afpLineRows.map((l, idx) => ({ l, idx })).filter(r => r.l.section === section);
+    if (!rows.length && section === 'measured') continue;
+    if (!rows.length && section !== 'measured') {
+      // still render the section bar with its add button so it's discoverable
+      html += `
+        <div style="display:flex;justify-content:space-between;align-items:center;background:var(--surface2);
+                    padding:5px 10px;border-radius:6px;margin-top:8px">
+          <span style="font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--muted)">
+            ${_AFP_SECTION_LABELS[section]}</span>
+          <button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:10px"
+                  onclick="${section === 'materials' ? "_afpAddLineToItem('materials', 1)" : "_afpAddItem('variation')"}">+ Add</button>
+        </div>`;
+      continue;
+    }
+    html += `
+      <div style="display:flex;justify-content:space-between;align-items:center;background:var(--surface2);
+                  padding:5px 10px;border-radius:6px;margin-top:8px">
+        <span style="font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase">
+          ${_AFP_SECTION_LABELS[section]}</span>
+        <button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:10px"
+                onclick="${section === 'materials' ? "_afpAddLineToItem('materials', 1)" : `_afpAddItem('${section}')`}">+ Add ${section === 'materials' ? 'Line' : 'Item'}</button>
       </div>`;
-  }).join('');
+
+    if (section === 'materials') {
+      html += rows.map(({ l, idx }) => _afpLineRowHtml(l, idx)).join('');
+      continue;
+    }
+
+    // group by item_no
+    const itemNos = [...new Set(rows.map(r => Number(r.l.item_no || 0)))].sort((a, b) => a - b);
+    for (const itemNo of itemNos) {
+      const itemRows = rows.filter(r => Number(r.l.item_no || 0) === itemNo);
+      const meta = itemRows[0].l;
+      html += `
+        <div style="display:grid;grid-template-columns:34px 1fr 105px 125px 26px 26px;gap:6px;align-items:center;
+                    margin-top:6px;padding:4px 4px 4px 0;border-left:3px solid var(--accent);background:rgba(255,255,255,.02);border-radius:4px">
+          <div style="text-align:center;font-family:var(--font-mono);font-weight:700;color:var(--accent)">${itemNo}</div>
+          <input type="text" class="field-input" placeholder="Item description (scope)" style="font-weight:600"
+                 value="${escapeHtml(meta.item_description || '')}"
+                 oninput="_afpUpdateItemMeta('${section}', ${itemNo}, 'item_description', this.value)">
+          <input type="text" class="field-input" placeholder="Quote No" style="font-family:var(--font-mono);font-size:12px"
+                 value="${escapeHtml(meta.item_quote_ref || '')}"
+                 oninput="_afpUpdateItemMeta('${section}', ${itemNo}, 'item_quote_ref', this.value)">
+          <input type="text" class="field-input" placeholder="WO / Contract No" style="font-family:var(--font-mono);font-size:12px"
+                 value="${escapeHtml(meta.item_wo_no || '')}"
+                 oninput="_afpUpdateItemMeta('${section}', ${itemNo}, 'item_wo_no', this.value)">
+          <button type="button" class="btn btn-ghost" title="Add line to this item"
+                  style="padding:2px 6px;font-size:12px" onclick="_afpAddLineToItem('${section}', ${itemNo})">＋</button>
+          <button type="button" class="btn btn-ghost" title="Remove whole item"
+                  style="padding:2px 6px;font-size:12px;color:var(--red);border-color:var(--red)"
+                  onclick="removeAfpItem('${section}', ${itemNo})">✕</button>
+        </div>`;
+      html += itemRows.map(({ l, idx }) => _afpLineRowHtml(l, idx)).join('');
+    }
+  }
+  el.innerHTML = html || '<div style="color:var(--muted);font-size:12px;padding:8px">No lines — use + Add buttons above.</div>';
+  recalcAfpTotals();
 }
 
-// Targeted update for a single AFP row's calculated £ value — avoids
-// re-rendering the whole list (which kills focus mid-type).
-function updateAfpLineRowCalc(i) {
-  const l = _afpLineRows[i];
+function _afpLineRowHtml(l, idx) {
+  const cv = Number(l.contract_value || 0);
+  const prev = Number(l.previous_pct_complete || 0);
+  const cum = Number(l.this_app_pct_complete || 0);
+  const thisApp = cv * (cum - prev) / 100;
+  return `
+    <div data-afp-idx="${idx}"
+         style="display:grid;grid-template-columns:1fr 92px 48px 92px 62px 92px 26px;gap:6px;align-items:center;margin-top:4px;padding-left:37px">
+      <input type="text" class="field-input" placeholder="Description" style="font-size:12px;padding:5px 8px"
+             value="${escapeHtml(l.description || '')}"
+             oninput="_afpLineRows[${idx}].description = this.value">
+      <input type="number" step="0.01" class="field-input" placeholder="Value £" style="font-size:12px;padding:5px 8px;text-align:right"
+             value="${cv || ''}"
+             oninput="_afpLineRows[${idx}].contract_value = parseFloat(this.value) || 0; updateAfpLineRowCalc(${idx})">
+      <div class="afp-prev" title="Cumulative % at last certified AFP"
+           style="font-size:11px;text-align:center;color:var(--muted)">${prev.toFixed(0)}%</div>
+      <input type="range" min="0" max="100" step="5" value="${cum}"
+             style="width:100%;accent-color:var(--accent)"
+             oninput="syncAfpPct(${idx}, this.value, true)">
+      <input type="number" step="0.5" min="0" max="100" class="field-input afp-cum"
+             style="font-size:12px;padding:5px 6px;text-align:center" value="${cum}"
+             oninput="syncAfpPct(${idx}, this.value, false)">
+      <div class="afp-thisapp" title="This application £ (cum − prev)"
+           style="font-size:12px;text-align:right;font-family:var(--font-mono)">£${Number(thisApp).toLocaleString('en-GB', { minimumFractionDigits: 2 })}</div>
+      <button type="button" class="btn btn-ghost" style="padding:2px 6px;font-size:12px;color:var(--red);border-color:var(--red)"
+              onclick="removeAfpLineRow(${idx})">×</button>
+    </div>`;
+}
+
+// Slider ↔ number sync + targeted recalc (no full re-render, keeps focus)
+function syncAfpPct(idx, val, fromSlider) {
+  const l = _afpLineRows[idx];
   if (!l) return;
-  const thisAppValue = Number(l.contract_value || 0) * (Number(l.this_app_pct_complete || 0) - Number(l.previous_pct_complete || 0)) / 100;
-  const rows = document.querySelectorAll('#afpNewLineItems > div');
-  if (rows[i]) {
-    // inputs: [0] description, [1] contract_value, [2] prev% (readonly), [3] this%, [4] £ value (readonly)
-    const valueInput = rows[i].querySelectorAll('input')[4];
-    if (valueInput) valueInput.value = '£' + Number(thisAppValue).toLocaleString('en-GB', { minimumFractionDigits: 2 });
+  l.this_app_pct_complete = Math.min(100, Math.max(0, parseFloat(val) || 0));
+  const row = document.querySelector(`#afpNewLineItems [data-afp-idx="${idx}"]`);
+  if (row) {
+    const slider = row.querySelector('input[type="range"]');
+    const num = row.querySelector('.afp-cum');
+    if (fromSlider && num) num.value = l.this_app_pct_complete;
+    if (!fromSlider && slider) slider.value = l.this_app_pct_complete;
+  }
+  updateAfpLineRowCalc(idx);
+}
+
+function updateAfpLineRowCalc(idx) {
+  const l = _afpLineRows[idx];
+  if (!l) return;
+  const thisApp = Number(l.contract_value || 0) * (Number(l.this_app_pct_complete || 0) - Number(l.previous_pct_complete || 0)) / 100;
+  const row = document.querySelector(`#afpNewLineItems [data-afp-idx="${idx}"]`);
+  if (row) {
+    const cell = row.querySelector('.afp-thisapp');
+    if (cell) cell.textContent = '£' + Number(thisApp).toLocaleString('en-GB', { minimumFractionDigits: 2 });
   }
   recalcAfpTotals();
 }
 
-function recalcAfpTotals() {
-  const net = _afpLineRows.reduce((s, l) => {
-    return s + Number(l.contract_value || 0) * (Number(l.this_app_pct_complete || 0) - Number(l.previous_pct_complete || 0)) / 100;
-  }, 0);
-  const retentionPct = Number(document.getElementById('afpNewRetentionPct').value || 0);
-  const retention = +(net * retentionPct / 100).toFixed(2);
-  const vatBase = net - retention;
-  const vatApplies = document.getElementById('afpNewVatApplies').checked;
-  const vat = vatApplies ? +(vatBase * 0.20).toFixed(2) : 0;
-  const gross = +(net - retention + vat).toFixed(2);
+// ── Summary maths (mirrors the company Excel) ──────────────────────────────
+function _afpComputeTotals() {
+  const cumTotal = _afpLineRows.reduce((s, l) =>
+    s + Number(l.contract_value || 0) * Number(l.this_app_pct_complete || 0) / 100, 0);
+  const prevCert = Number(document.getElementById('afpNewPrevCert')?.value || 0);
+  const grossVal = cumTotal - prevCert;                       // this application
+  const retentionPct = Number(document.getElementById('afpNewRetentionPct')?.value || 0);
+  const retention = +(grossVal * retentionPct / 100).toFixed(2);
+  const vatApplies = document.getElementById('afpNewVatApplies')?.checked;
+  const vat = vatApplies ? +((grossVal - retention) * 0.20).toFixed(2) : 0;
+  const due = +(grossVal - retention + vat).toFixed(2);
+  return { cumTotal: +cumTotal.toFixed(2), prevCert, grossVal: +grossVal.toFixed(2), retentionPct, retention, vat, due };
+}
 
-  document.getElementById('afpTotalNet').textContent       = '£' + Number(net).toLocaleString('en-GB', { minimumFractionDigits: 2 });
-  document.getElementById('afpTotalRetention').textContent = '£' + Number(retention).toLocaleString('en-GB', { minimumFractionDigits: 2 });
-  document.getElementById('afpTotalVat').textContent       = '£' + Number(vat).toLocaleString('en-GB', { minimumFractionDigits: 2 });
-  document.getElementById('afpTotalGross').textContent     = '£' + Number(gross).toLocaleString('en-GB', { minimumFractionDigits: 2 });
+function recalcAfpTotals() {
+  const t = _afpComputeTotals();
+  const fmt = v => '£' + Number(v).toLocaleString('en-GB', { minimumFractionDigits: 2 });
+  const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+  set('afpTotalCum', fmt(t.cumTotal));
+  set('afpTotalPrevCert', fmt(t.prevCert));
+  set('afpTotalNet', fmt(t.grossVal));
+  set('afpTotalRetention', fmt(t.retention));
+  set('afpTotalVat', fmt(t.vat));
+  set('afpTotalGross', fmt(t.due));
 }
 
 function _afpFormatPeriodLabel(start, end) {
@@ -35912,38 +36152,36 @@ function _afpFormatPeriodLabel(start, end) {
 }
 
 function _buildAfpPayload() {
-  if (_afpLineRows.length === 0 || _afpLineRows.every(l => !l.description.trim())) {
+  if (_afpLineRows.length === 0 || _afpLineRows.every(l => !(l.description || '').trim())) {
     toast('Please add at least one line item', 'error'); return null;
   }
   if (!document.getElementById('afpNewPeriodStart').value || !document.getElementById('afpNewPeriodEnd').value) {
     toast('Period start and end dates required', 'error'); return null;
   }
+  const t = _afpComputeTotals();
   const cleanLines = _afpLineRows
     .filter(l => l.description && l.description.trim())
     .map((l, i) => {
       const cv = Number(l.contract_value || 0);
-      const thisPct = Number(l.this_app_pct_complete || 0);
+      const cumPct = Number(l.this_app_pct_complete || 0);
       const prevPct = Number(l.previous_pct_complete || 0);
-      const thisVal = +(cv * (thisPct - prevPct) / 100).toFixed(2);
-      const cumVal  = +(cv * thisPct / 100).toFixed(2);
       return {
         line_no: i + 1,
+        section: l.section || 'measured',
+        item_no: l.item_no != null ? Number(l.item_no) : null,
+        item_description: (l.item_description || '').trim() || null,
+        item_quote_ref: (l.item_quote_ref || '').trim() || null,
+        item_wo_no: (l.item_wo_no || '').trim() || null,
         source_quote_line_item_id: l.source_quote_line_item_id || null,
         description: l.description.trim(),
         contract_value: cv,
         previous_pct_complete: prevPct,
-        this_app_pct_complete: thisPct,
-        this_app_value: thisVal,
-        cumulative_value: cumVal
+        this_app_pct_complete: cumPct,
+        this_app_value: +(cv * (cumPct - prevPct) / 100).toFixed(2),
+        cumulative_value: +(cv * cumPct / 100).toFixed(2),
+        gross_amount_paid: l.gross_amount_paid != null ? Number(l.gross_amount_paid) : null
       };
     });
-  const net = cleanLines.reduce((s, l) => s + l.this_app_value, 0);
-  const retentionPct = Number(document.getElementById('afpNewRetentionPct').value || 0);
-  const retention = +(net * retentionPct / 100).toFixed(2);
-  const vatBase = net - retention;
-  const vatApplies = document.getElementById('afpNewVatApplies').checked;
-  const vat = vatApplies ? +(vatBase * 0.20).toFixed(2) : 0;
-  const gross = +(net - retention + vat).toFixed(2);
 
   return {
     project_id:        _afpModalProjectId,
@@ -35954,10 +36192,14 @@ function _buildAfpPayload() {
                           document.getElementById('afpNewPeriodEnd').value
                        ),
     is_final:          document.getElementById('afpNewIsFinal').checked ? 1 : 0,
-    applied_value_net: +net.toFixed(2),
-    applied_vat:       vat,
-    applied_retention: retention,
-    applied_gross:     gross,
+    applied_value_net: t.grossVal,
+    applied_vat:       t.vat,
+    applied_retention: t.retention,
+    applied_gross:     t.due,
+    cumulative_value_net:        t.cumTotal,
+    previous_certificate_value:  t.prevCert,
+    retention_pct:               t.retentionPct,
+    contract_no:       (document.getElementById('afpNewContractNo')?.value || '').trim() || null,
     notes:             document.getElementById('afpNewNotes').value || null,
     line_items:        cleanLines
   };
@@ -36033,6 +36275,47 @@ async function saveAndSubmitAfp() {
 // ═════════════════════════════════════════════════════════════════════════
 // AFP DETAIL MODAL
 // ═════════════════════════════════════════════════════════════════════════
+function _afpDetailLinesHtml(lines) {
+  const fmt = v => '£' + Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 });
+  const td = 'padding:6px 8px;border-bottom:1px solid var(--border)';
+  const sections = ['measured', 'variation', 'materials'];
+  let html = '';
+  for (const section of sections) {
+    const rows = lines.filter(l => (l.section || 'measured') === section);
+    if (!rows.length) continue;
+    html += `<tr><td colspan="8" style="padding:6px 8px;background:var(--surface2);font-size:11px;
+             font-weight:700;text-transform:uppercase;letter-spacing:.5px">${_AFP_SECTION_LABELS[section] || section}</td></tr>`;
+    const itemNos = [...new Set(rows.map(l => Number(l.item_no || 0)))].sort((a, b) => a - b);
+    for (const itemNo of itemNos) {
+      const itemRows = rows.filter(l => Number(l.item_no || 0) === itemNo);
+      const meta = itemRows[0];
+      if (section !== 'materials' && (meta.item_description || meta.item_quote_ref)) {
+        html += `<tr><td colspan="8" style="padding:6px 8px;border-bottom:1px solid var(--border);
+                 background:rgba(255,255,255,.02)">
+          <span style="font-family:var(--font-mono);font-weight:700;color:var(--accent)">${itemNo}</span>
+          <span style="font-weight:600;margin-left:8px">${escapeHtml(meta.item_description || '')}</span>
+          <span style="float:right;font-family:var(--font-mono);font-size:11px;color:var(--muted)">
+            ${escapeHtml(meta.item_quote_ref || '')}${meta.item_wo_no ? ' · ' + escapeHtml(meta.item_wo_no) : ''}</span>
+        </td></tr>`;
+      }
+      html += itemRows.map(l => {
+        const paid = l.gross_amount_paid != null ? Number(l.gross_amount_paid) : null;
+        return `<tr>
+          <td style="${td};padding-left:24px">${escapeHtml(l.description || '')}</td>
+          <td style="${td};text-align:right">${fmt(l.contract_value)}</td>
+          <td style="${td};text-align:center;color:var(--muted)">${Number(l.previous_pct_complete || 0).toFixed(0)}%</td>
+          <td style="${td};text-align:center;font-weight:600">${Number(l.this_app_pct_complete || 0).toFixed(0)}%</td>
+          <td style="${td};text-align:right">${fmt(l.this_app_value)}</td>
+          <td style="${td};text-align:right">${fmt(l.cumulative_value)}</td>
+          <td style="${td};text-align:right;color:var(--muted)">${paid != null ? fmt(paid) : '—'}</td>
+          <td style="${td};text-align:right">${l.certified_this_app_value != null ? fmt(l.certified_this_app_value) : '—'}</td>
+        </tr>`;
+      }).join('');
+    }
+  }
+  return html;
+}
+
 async function openAfpDetail(id) {
   try {
     const afp = await api.get(`/api/applications/${id}`);
@@ -36045,6 +36328,19 @@ async function openAfpDetail(id) {
     document.getElementById('afpDetailPeriod').textContent =
       _afpFormatPeriodLabel(afp.period_start, afp.period_end) || afp.period_label || '—';
     document.getElementById('afpDetailFinal').textContent = afp.is_final ? 'YES (Final Application)' : 'No';
+
+    // v2 summary strip: cumulative application / less prev cert / contract no
+    const v2Strip = document.getElementById('afpDetailV2Strip');
+    if (v2Strip) {
+      const fmtV = v => '£' + Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 });
+      v2Strip.innerHTML = `
+        <div><div style="color:var(--muted);font-size:11px;text-transform:uppercase">Value of Application (Cum)</div>
+             <div style="font-weight:600">${afp.cumulative_value_net != null ? fmtV(afp.cumulative_value_net) : '—'}</div></div>
+        <div><div style="color:var(--muted);font-size:11px;text-transform:uppercase">Less Previous Certificate</div>
+             <div style="font-weight:600">${afp.previous_certificate_value != null ? fmtV(afp.previous_certificate_value) : '—'}</div></div>
+        <div><div style="color:var(--muted);font-size:11px;text-transform:uppercase">Contract No</div>
+             <div style="font-family:var(--font-mono)">${escapeHtml(afp.contract_no || '—')}</div></div>`;
+    }
 
     // Applied totals
     document.getElementById('afpDetailAppliedNet').textContent      = '£' + Number(afp.applied_value_net || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 });
@@ -36059,17 +36355,10 @@ async function openAfpDetail(id) {
     document.getElementById('afpDetailCertifiedVat').textContent    = isCert ? '£' + Number(afp.certified_vat || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 }) : '—';
     document.getElementById('afpDetailCertifiedGross').textContent  = isCert ? '£' + Number(afp.certified_gross || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 }) : '—';
 
-    // Line items table
-    document.getElementById('afpDetailLines').innerHTML = (afp.line_items || []).map(l => `
-      <tr>
-        <td style="padding:6px 8px;border-bottom:1px solid var(--border)">${escapeHtml(l.description || '')}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right">£${Number(l.contract_value || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:center">${Number(l.previous_pct_complete || 0).toFixed(1)}%</td>
-        <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:center">${Number(l.this_app_pct_complete || 0).toFixed(1)}%</td>
-        <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right">£${Number(l.this_app_value || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right">£${Number(l.cumulative_value || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right">${l.certified_this_app_value != null ? '£' + Number(l.certified_this_app_value).toLocaleString('en-GB', { minimumFractionDigits: 2 }) : '—'}</td>
-      </tr>`).join('') || '<tr><td colspan="7" style="padding:10px;color:var(--muted)">No line items</td></tr>';
+    // Line items table — grouped by section → item
+    document.getElementById('afpDetailLines').innerHTML =
+      _afpDetailLinesHtml(afp.line_items || []) ||
+      '<tr><td colspan="8" style="padding:10px;color:var(--muted)">No line items</td></tr>';
 
     // PDF + Cert links
     const pdfBtn  = document.getElementById('afpDetailPdfBtn');
@@ -36138,14 +36427,26 @@ async function editAfpFromDetail() {
       : '5';
   document.getElementById('afpNewVatApplies').checked = Number(afp.applied_vat || 0) > 0;
   document.getElementById('afpNewNotes').value = afp.notes || '';
+  document.getElementById('afpNewContractNo').value = afp.contract_no || '';
+  document.getElementById('afpNewPrevCert').value =
+    afp.previous_certificate_value != null ? Number(afp.previous_certificate_value) : '0';
+  if (afp.retention_pct != null) {
+    document.getElementById('afpNewRetentionPct').value = Number(afp.retention_pct);
+  }
 
   _afpLineRows = (afp.line_items || []).map(l => ({
     line_no: l.line_no,
+    section: l.section || 'measured',
+    item_no: l.item_no != null ? Number(l.item_no) : 1,
+    item_description: l.item_description || '',
+    item_quote_ref: l.item_quote_ref || '',
+    item_wo_no: l.item_wo_no || '',
     source_quote_line_item_id: l.source_quote_line_item_id,
     description: l.description,
     contract_value: Number(l.contract_value || 0),
     previous_pct_complete: Number(l.previous_pct_complete || 0),
-    this_app_pct_complete: Number(l.this_app_pct_complete || 0)
+    this_app_pct_complete: Number(l.this_app_pct_complete || 0),
+    gross_amount_paid: l.gross_amount_paid != null ? Number(l.gross_amount_paid) : 0
   }));
   renderAfpLineRows();
   recalcAfpTotals();
@@ -36253,7 +36554,7 @@ function renderAfpCertLineFields() {
   if (!wrap || !_afpDetailCurrent) return;
   wrap.innerHTML = (_afpDetailCurrent.line_items || []).map((l, i) => `
     <div style="display:grid;grid-template-columns:1fr 100px 100px;gap:6px;align-items:center;font-size:12px">
-      <div style="overflow:hidden;text-overflow:ellipsis">${escapeHtml(l.description || '')}</div>
+      <div style="overflow:hidden;text-overflow:ellipsis">${l.item_quote_ref ? `<span style="font-family:var(--font-mono);color:var(--muted);font-size:11px">${escapeHtml(l.item_quote_ref)}</span> · ` : ''}${escapeHtml(l.description || '')}</div>
       <div style="text-align:right;color:var(--muted)">Applied £${Number(l.this_app_value || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}</div>
       <input type="number" step="0.01" class="field-input" placeholder="Cert £"
              data-line-id="${l.id}" data-line-idx="${i}"
@@ -37511,33 +37812,79 @@ async function saveSupplierInvoice() {
 // ═════════════════════════════════════════════════════════════════════════
 
 function _buildAfpPdfData(afp) {
+  const lines = afp.line_items || [];
+  const bySection = (s) => lines.filter(l => (l.section || 'measured') === s);
+
+  const groupItems = (sectionLines) => {
+    const itemNos = [...new Set(sectionLines.map(l => Number(l.item_no || 0)))].sort((a, b) => a - b);
+    return itemNos.map(n => {
+      const itemLines = sectionLines.filter(l => Number(l.item_no || 0) === n);
+      const meta = itemLines[0] || {};
+      return {
+        itemNo: n,
+        itemDescription: meta.item_description || '',
+        quoteRef: meta.item_quote_ref || '',
+        woNo: meta.item_wo_no || '',
+        lines: itemLines.map(l => {
+          const cv = Number(l.contract_value || 0);
+          const cumPct = Number(l.this_app_pct_complete || 0);
+          const cumVal = l.cumulative_value != null ? Number(l.cumulative_value) : cv * cumPct / 100;
+          const paid = l.gross_amount_paid != null ? Number(l.gross_amount_paid) : 0;
+          return {
+            description: l.description || '',
+            contractValue: cv,
+            cumPct,
+            cumValue: cumVal,
+            paid,
+            outstanding: cumVal - paid
+          };
+        })
+      };
+    });
+  };
+
+  const sections = {
+    measured: groupItems(bySection('measured')),
+    variation: groupItems(bySection('variation')),
+    materials: groupItems(bySection('materials'))
+  };
+  const sumSection = (items) => items.reduce((acc, it) => {
+    it.lines.forEach(l => {
+      acc.value += l.contractValue; acc.cum += l.cumValue;
+      acc.paid += l.paid; acc.outstanding += l.outstanding;
+    });
+    return acc;
+  }, { value: 0, cum: 0, paid: 0, outstanding: 0 });
+  const sectionTotals = {
+    measured: sumSection(sections.measured),
+    variation: sumSection(sections.variation),
+    materials: sumSection(sections.materials)
+  };
+
+  const cumTotal = afp.cumulative_value_net != null
+    ? Number(afp.cumulative_value_net)
+    : sectionTotals.measured.cum + sectionTotals.variation.cum + sectionTotals.materials.cum;
+  const prevCert = afp.previous_certificate_value != null ? Number(afp.previous_certificate_value) : 0;
+  const grossVal = Number(afp.applied_value_net != null ? afp.applied_value_net : (cumTotal - prevCert));
+
   return {
     ref:           afp.ref,
+    valuationNo:   afp.application_no,
     submittedDate: afp.submitted_at,
     periodStart:   afp.period_start,
     periodEnd:     afp.period_end,
     isFinal:       !!afp.is_final,
-    project:       `${afp.project_number || ''} — ${afp.project_name || ''}`,
+    projectTitle:  `${afp.project_number || ''} — ${afp.project_name || ''}`.replace(/^ — /, ''),
     client:        afp.client_company_name || '',
-    net:           Number(afp.applied_value_net || 0),
-    vat:           Number(afp.applied_vat || 0),
-    retention:     Number(afp.applied_retention || 0),
-    gross:         Number(afp.applied_gross || 0),
+    contractNo:    afp.contract_no || '',
     notes:         afp.notes || '',
-    lineItems:     (afp.line_items || []).map((l, i) => {
-      const cv = Number(l.contract_value || 0);
-      const prevPct = Number(l.previous_pct_complete || 0);
-      const thisPct = Number(l.this_app_pct_complete || 0);
-      return {
-        itemNum: i + 1,
-        description: l.description,
-        contractValue: cv,
-        prevCumValue: cv * prevPct / 100,
-        thisAppValue: Number(l.this_app_value || 0),
-        cumulativeValue: Number(l.cumulative_value || 0),
-        pctToDate: thisPct
-      };
-    })
+    retentionPct:  afp.retention_pct != null ? Number(afp.retention_pct) : null,
+    prevCert, cumTotal, grossVal,
+    retention:     Number(afp.applied_retention || 0),
+    vat:           Number(afp.applied_vat || 0),
+    due:           Number(afp.applied_gross || 0),
+    predictedFinal: sectionTotals.measured.value + sectionTotals.variation.value,
+    sections, sectionTotals
   };
 }
 
@@ -37547,225 +37894,292 @@ async function renderBamaAfpPDF(d) {
   return drawBamaAfpPDF(JsPDFCtor, d, logo);
 }
 
+// AFP PDF v2 — landscape A4 mirroring the company's Excel application:
+// Page 1 summary (A/B/C/D + Value of Application → Amount Due), then grouped
+// SOV pages per section (items with quote refs, sub-lines with cumulative %,
+// paid-to-date and outstanding columns).
 function drawBamaAfpPDF(jsPDF, d, logoDataUri) {
   const fmtNum = v => Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtMoney = v => Number(v || 0) === 0 ? '-' : fmtNum(v);
   const fmtDate = s => {
     if (!s) return '';
     const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})/);
     return m ? `${m[3]}/${m[2]}/${m[1]}` : s;
   };
 
-  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' });
   try {
     doc.setProperties({
       title:   `BAMA Application for Payment ${d.ref || ''}`.trim(),
-      subject: `Application for Payment for ${d.project || ''}`,
+      subject: `Application for Payment for ${d.projectTitle || ''}`,
       author:  'BAMA Fabrication',
       creator: 'BAMA Fabrication ERP'
     });
   } catch (e) { /* */ }
 
-  const pageW = 210, pageH = 297;
-  const marginL = 14, marginR = 14, marginB = 14;
+  const pageW = 297, pageH = 210;
+  const marginL = 14, marginR = 14, marginT = 12, marginB = 14;
   const usableW = pageW - marginL - marginR;
 
   const RED = [208, 2, 27], NAVY = [31, 53, 82];
   const TEXT = [34, 34, 34], MUTED = [85, 85, 85];
   const RULE = [212, 212, 212], HEADRULE = [68, 68, 68];
+  const ITEMFILL = [238, 242, 247];
 
   const setText = (rgb) => doc.setTextColor(rgb[0], rgb[1], rgb[2]);
   const setFill = (rgb) => doc.setFillColor(rgb[0], rgb[1], rgb[2]);
   const setDraw = (rgb) => doc.setDrawColor(rgb[0], rgb[1], rgb[2]);
 
-  // ── Header: logo left, title right ──
-  let y = marginL;
-  if (logoDataUri) {
-    try { doc.addImage(logoDataUri, 'PNG', marginL, y, 75, 32, undefined, 'FAST'); }
-    catch (e) {
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(22); setText(RED);
-      doc.text('BAMA FABRICATION', marginL, y + 12);
+  // ── Shared page header (logo right, project title left) ──
+  const drawPageHeader = () => {
+    if (logoDataUri) {
+      try {
+        const props = doc.getImageProperties(logoDataUri);
+        const logoW = 46, logoH = logoW * props.height / props.width;
+        doc.addImage(logoDataUri, 'PNG', pageW - marginR - logoW, marginT - 3, logoW, logoH, undefined, 'FAST');
+      } catch (e) {
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(15); setText(RED);
+        doc.text('BAMA FABRICATION', pageW - marginR, marginT + 4, { align: 'right' });
+      }
+    } else {
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(15); setText(RED);
+      doc.text('BAMA FABRICATION', pageW - marginR, marginT + 4, { align: 'right' });
     }
-  } else {
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(22); setText(RED);
-    doc.text('BAMA FABRICATION', marginL, y + 12);
-  }
+    setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
+    doc.text(String(d.projectTitle || ''), marginL, marginT + 4);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); setText(MUTED);
+    doc.text(`Valuation No ${d.valuationNo || ''}:  Works carried out up to ${fmtDate(d.periodEnd)}`, marginL, marginT + 10);
+    return marginT + 17;
+  };
 
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(22); setText([43, 43, 43]);
-  doc.text('Application for Payment', pageW - marginR, y + 14, { align: 'right' });
+  // ════ PAGE 1 — SUMMARY ════
+  let y = drawPageHeader();
 
-  // FINAL banner under title
-  if (d.isFinal) {
-    setFill(RED);
-    doc.rect(pageW - marginR - 60, y + 18, 60, 6, 'F');
-    setText([255, 255, 255]);
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
-    doc.text('FINAL APPLICATION', pageW - marginR - 30, y + 22.2, { align: 'center' });
-  }
-
-  y = marginL + 42;
-
-  // ── Two-column header (left = from + to; right = meta) ──
-  const leftColW = usableW * 0.6;
-  const rightColX = marginL + leftColW + 4;
-  const rightColW = usableW - leftColW - 4;
-  let leftY = y, rightY = y;
-
-  // LEFT: From
-  setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
-  doc.text('From', marginL, leftY); leftY += 4.5;
-  setText(TEXT); doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
-  ['BAMA Fabrication Ltd', '11 Enterprise Way, Enterprise Park, Yaxley,',
-   'PE7 3WY, Peterborough', '01733 855212', 'info@bamafabrication.co.uk']
-    .forEach(line => { doc.text(line, marginL + 4, leftY); leftY += 4; });
-  leftY += 4;
-
-  // LEFT: To
-  setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
-  doc.text('To', marginL, leftY); leftY += 4.5;
-  setText(TEXT); doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
-  if (d.client) {
-    const wrapped = doc.splitTextToSize(String(d.client), leftColW - 4);
-    wrapped.forEach(line => { doc.text(line, marginL + 4, leftY); leftY += 4; });
-  }
-  if (d.project) {
-    leftY += 1;
-    setText(MUTED); doc.setFontSize(9);
-    doc.text(`Project: ${d.project}`, marginL + 4, leftY); leftY += 4;
-    setText(TEXT); doc.setFontSize(10);
-  }
-  leftY += 3;
-
-  // RIGHT: Meta table
-  const dateStr = d.submittedDate ? fmtDate(d.submittedDate) : 'Draft';
-  const periodStr = (d.periodStart && d.periodEnd)
-    ? `${fmtDate(d.periodStart)} – ${fmtDate(d.periodEnd)}`
-    : '—';
-  const metaRows = [
-    { label: 'Date',         value: dateStr },
-    { label: 'AFP #',        value: d.ref || '' },
-    { label: 'Period',       value: periodStr, gapAfter: true }
-  ];
-  doc.setFontSize(10);
-  const labelColX = rightColX, labelColW = rightColW * 0.45, valueColX = rightColX + labelColW + 2;
-  for (const row of metaRows) {
-    setText(TEXT); doc.setFont('helvetica', 'bold');
-    doc.text(row.label, labelColX + labelColW, rightY, { align: 'right' });
+  // Meta block
+  doc.setFontSize(9); setText(MUTED);
+  const meta = [];
+  if (d.client)     meta.push(['Client:', d.client]);
+  if (d.contractNo) meta.push(['Contract No:', d.contractNo]);
+  meta.push(['Date:', d.submittedDate ? fmtDate(d.submittedDate) : 'Draft']);
+  meta.push(['AFP Ref:', d.ref || '']);
+  for (const [label, value] of meta) {
+    setText(MUTED); doc.setFont('helvetica', 'bold');
+    doc.text(label, marginL, y);
     setText(TEXT); doc.setFont('helvetica', 'normal');
-    // wrap long values (period range)
-    const wrapped = doc.splitTextToSize(String(row.value || ''), rightColW - labelColW - 4);
-    wrapped.forEach((line, idx) => {
-      doc.text(line, valueColX, rightY + idx * 4);
-    });
-    rightY += Math.max(4.5, wrapped.length * 4) + (row.gapAfter ? 3 : 0);
+    doc.text(String(value), marginL + 26, y);
+    y += 4.6;
   }
-
-  y = Math.max(leftY, rightY) + 4;
-
-  // ── Notes (optional) ──
-  if (d.notes && String(d.notes).trim()) {
-    setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
-    doc.text('Notes', marginL, y); y += 4.5;
-    setText(TEXT); doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
-    const wrapped = doc.splitTextToSize(String(d.notes).trim(), usableW - 4);
-    wrapped.forEach(line => {
-      if (y > pageH - marginB - 20) { doc.addPage(); y = marginL; }
-      doc.text(line, marginL + 4, y); y += 4.2;
-    });
-    y += 4;
-  }
-
-  // ── SOV table: # | Description | Contract £ | Prev Cum £ | This App £ | Cum to Date £ | % To Date ──
-  const colItem = { x: marginL,  w: 8,  align: 'center' };
-  const colPct  = { w: 18, align: 'center' };
-  const colCum  = { w: 26, align: 'right' };
-  const colThis = { w: 26, align: 'right' };
-  const colPrev = { w: 26, align: 'right' };
-  const colCv   = { w: 26, align: 'right' };
-  const colDesc = { w: usableW - colItem.w - colCv.w - colPrev.w - colThis.w - colCum.w - colPct.w, align: 'left' };
-  colDesc.x = colItem.x + colItem.w;
-  colCv.x   = colDesc.x + colDesc.w;
-  colPrev.x = colCv.x   + colCv.w;
-  colThis.x = colPrev.x + colPrev.w;
-  colCum.x  = colThis.x + colThis.w;
-  colPct.x  = colCum.x  + colCum.w;
-
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(9); setText(TEXT);
-  doc.text('#',           colItem.x + colItem.w / 2, y, { align: 'center' });
-  doc.text('Description', colDesc.x + 1,             y);
-  doc.text('Contract £',  colCv.x   + colCv.w   - 1, y, { align: 'right' });
-  doc.text('Prev Cum £',  colPrev.x + colPrev.w - 1, y, { align: 'right' });
-  doc.text('This App £',  colThis.x + colThis.w - 1, y, { align: 'right' });
-  doc.text('Cum £',       colCum.x  + colCum.w  - 1, y, { align: 'right' });
-  doc.text('% Date',      colPct.x  + colPct.w / 2,  y, { align: 'center' });
-  y += 1.5;
-  setDraw(HEADRULE); doc.setLineWidth(0.4);
-  doc.line(marginL, y, pageW - marginR, y);
-  y += 3;
-
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
-  setDraw(RULE); doc.setLineWidth(0.15);
-  for (let i = 0; i < (d.lineItems || []).length; i++) {
-    const l = d.lineItems[i];
-    const desc = String(l.description || '');
-    const descLines = doc.splitTextToSize(desc, colDesc.w - 2);
-    const rowH = Math.max(5, descLines.length * 3.8 + 1);
-    if (y + rowH > pageH - marginB - 50) { doc.addPage(); y = marginL + 6; }
-
-    setText(MUTED);
-    doc.text(String(l.itemNum), colItem.x + colItem.w / 2, y + 3.3, { align: 'center' });
-
-    setText(TEXT);
-    let descY = y + 3.3;
-    for (const line of descLines) { doc.text(line, colDesc.x + 1, descY); descY += 3.8; }
-
-    doc.text(fmtNum(l.contractValue),   colCv.x   + colCv.w   - 1, y + 3.3, { align: 'right' });
-    doc.text(fmtNum(l.prevCumValue),    colPrev.x + colPrev.w - 1, y + 3.3, { align: 'right' });
-    doc.text(fmtNum(l.thisAppValue),    colThis.x + colThis.w - 1, y + 3.3, { align: 'right' });
-    doc.text(fmtNum(l.cumulativeValue), colCum.x  + colCum.w  - 1, y + 3.3, { align: 'right' });
-    doc.text(Number(l.pctToDate || 0).toFixed(1) + '%', colPct.x + colPct.w / 2, y + 3.3, { align: 'center' });
-
-    setDraw(RULE); doc.setLineWidth(0.15);
-    doc.line(marginL, y + rowH, pageW - marginR, y + rowH);
-    y += rowH;
-  }
-
   y += 6;
 
-  // ── Totals block ──
-  if (y > pageH - marginB - 60) { doc.addPage(); y = marginL + 6; }
-  const tlX = pageW - marginR - 80;
-  const labelX = tlX, amtX = pageW - marginR;
-  const lineH = 6;
-  const drawTotal = (label, value, bold) => {
-    setText(TEXT);
-    doc.setFont('helvetica', bold ? 'bold' : 'normal');
-    doc.setFontSize(bold ? 11 : 10);
-    doc.text(label, labelX, y);
-    doc.text('£' + fmtNum(value), amtX, y, { align: 'right' });
-    y += lineH;
-  };
-  drawTotal('Subtotal (Net)', d.net);
-  if (Number(d.retention) > 0) drawTotal('Less Retention', -d.retention);
-  if (Number(d.vat) > 0) drawTotal('VAT (20%)', d.vat);
-
-  // TOTAL APPLIED pill
-  y += 2;
-  setFill(NAVY);
-  doc.rect(tlX, y - 2, 80, 9, 'F');
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(12); setText([255, 255, 255]);
-  doc.text('TOTAL APPLIED', tlX + 3, y + 4);
-  doc.setFontSize(13);
-  doc.text('£' + fmtNum(d.gross), amtX - 2, y + 4, { align: 'right' });
+  // Title
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(16); setText(TEXT);
+  doc.text('Application for Payment', pageW / 2, y, { align: 'center' });
+  if (d.isFinal) {
+    y += 7;
+    setFill(RED);
+    doc.rect(pageW / 2 - 32, y - 4.5, 64, 6.5, 'F');
+    setText([255, 255, 255]); doc.setFontSize(10);
+    doc.text('FINAL APPLICATION', pageW / 2, y, { align: 'center' });
+  }
   y += 14;
 
-  // ── Footer: signature areas + contact ──
-  if (y > pageH - marginB - 30) { doc.addPage(); y = marginL + 6; }
-  setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
-  doc.text('This application is submitted for payment in accordance with the contract terms.', marginL, y);
-  y += 5;
-  doc.text('Any queries: info@bamafabrication.co.uk', marginL, y);
+  // Summary block — mirrors the Excel exactly
+  const sumLabelX = pageW / 2 - 75, sumAmtX = pageW / 2 + 75;
+  const sumRow = (letter, label, value, opts = {}) => {
+    setText(opts.muted ? MUTED : TEXT);
+    doc.setFont('helvetica', opts.bold ? 'bold' : 'normal');
+    doc.setFontSize(opts.big ? 12 : 10.5);
+    if (letter) { doc.setFont('helvetica', 'bold'); doc.text(letter, sumLabelX - 10, y); doc.setFont('helvetica', opts.bold ? 'bold' : 'normal'); }
+    doc.text(label, sumLabelX, y);
+    doc.text('£', sumAmtX - 30, y);
+    doc.text(fmtMoney(value), sumAmtX, y, { align: 'right' });
+    if (opts.underline) {
+      setDraw(HEADRULE); doc.setLineWidth(0.3);
+      doc.line(sumAmtX - 34, y + 1.2, sumAmtX + 1, y + 1.2);
+    }
+    y += opts.gap != null ? opts.gap : 7;
+  };
 
-  return doc.output('blob');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(10); setText(MUTED);
+  doc.text('CONTRACT SUM — SUMMARY', sumLabelX - 10, y); y += 8;
+
+  sumRow('A.', 'Measured Works',    d.sectionTotals.measured.cum);
+  sumRow('B.', 'Variations',        d.sectionTotals.variation.cum);
+  sumRow('C.', 'Materials on site', d.sectionTotals.materials.cum);
+  sumRow('D.', 'Predicted Final Account', d.predictedFinal, { bold: true, underline: true, gap: 10 });
+  sumRow(null, 'Value of Application', d.cumTotal);
+  sumRow(null, 'Less Previous Contractor Certificate', d.prevCert, { gap: 10 });
+  sumRow(null, 'GROSS Valuation', d.grossVal, { bold: true });
+  sumRow(null, `(Less Retention${d.retentionPct != null ? ' @ ' + Number(d.retentionPct) + '%' : ''})`, d.retention, { muted: true });
+  if (Number(d.vat) > 0) sumRow(null, 'VAT (20%)', d.vat);
+  y += 2;
+
+  // Amount due — navy pill
+  setFill(NAVY);
+  doc.rect(sumLabelX - 12, y - 5.5, (sumAmtX + 4) - (sumLabelX - 12), 9.5, 'F');
+  setText([255, 255, 255]); doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
+  doc.text('AMOUNT DUE', sumLabelX - 8, y + 0.5);
+  doc.setFontSize(13);
+  doc.text('£' + fmtNum(d.due), sumAmtX, y + 0.5, { align: 'right' });
+  y += 14;
+
+  // Notes
+  if (d.notes && String(d.notes).trim()) {
+    setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
+    doc.text('Notes', marginL, y); y += 4.5;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); setText(MUTED);
+    const wrapped = doc.splitTextToSize(String(d.notes).trim(), usableW - 8);
+    wrapped.forEach(line => {
+      if (y > pageH - marginB - 8) return;
+      doc.text(line, marginL + 4, y); y += 4;
+    });
+  }
+
+  // ════ SECTION PAGES ════
+  // Columns: Item | Description | Quote No | Unit | Value £ | % | Total £ | Paid £ | Outstanding £
+  const col = {};
+  col.item  = { x: marginL, w: 9,  align: 'center' };
+  col.desc  = { w: 118, align: 'left' };
+  col.quote = { w: 22,  align: 'left' };
+  col.unit  = { w: 10,  align: 'center' };
+  col.value = { w: 24,  align: 'right' };
+  col.pct   = { w: 12,  align: 'center' };
+  col.total = { w: 24,  align: 'right' };
+  col.paid  = { w: 24,  align: 'right' };
+  col.out   = { w: 24,  align: 'right' };
+  col.desc.x  = col.item.x  + col.item.w;
+  col.quote.x = col.desc.x  + col.desc.w;
+  col.unit.x  = col.quote.x + col.quote.w;
+  col.value.x = col.unit.x  + col.unit.w;
+  col.pct.x   = col.value.x + col.value.w;
+  col.total.x = col.pct.x   + col.pct.w;
+  col.paid.x  = col.total.x + col.total.w;
+  col.out.x   = col.paid.x  + col.paid.w;
+  const tableRightX = col.out.x + col.out.w;
+
+  const drawTableHead = () => {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8); setText(TEXT);
+    doc.text('Item',        col.item.x + col.item.w / 2,  y, { align: 'center' });
+    doc.text('Description', col.desc.x + 1,               y);
+    doc.text('Quote No',    col.quote.x + 1,              y);
+    doc.text('Unit',        col.unit.x + col.unit.w / 2,  y, { align: 'center' });
+    doc.text('Value £',     col.value.x + col.value.w - 1, y, { align: 'right' });
+    doc.text('% Comp',      col.pct.x + col.pct.w / 2,    y, { align: 'center' });
+    doc.text('Total £',     col.total.x + col.total.w - 1, y, { align: 'right' });
+    doc.text('Paid £',      col.paid.x + col.paid.w - 1,  y, { align: 'right' });
+    doc.text('Outstanding', col.out.x + col.out.w - 1,    y, { align: 'right' });
+    y += 1.5;
+    setDraw(HEADRULE); doc.setLineWidth(0.4);
+    doc.line(marginL, y, tableRightX, y);
+    y += 3.5;
+  };
+
+  const newSectionPage = (sectionTitle) => {
+    doc.addPage();
+    y = drawPageHeader();
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(11); setText(NAVY);
+    doc.text(sectionTitle, marginL, y);
+    y += 6;
+    drawTableHead();
+  };
+
+  const ensureRoom = (rowH, sectionTitle) => {
+    if (y + rowH > pageH - marginB - 6) {
+      doc.addPage();
+      y = drawPageHeader();
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(9); setText(MUTED);
+      doc.text(sectionTitle + ' (continued)', marginL, y);
+      y += 5;
+      drawTableHead();
+    }
+  };
+
+  const sectionDefs = [
+    { key: 'measured',  title: 'A.  Measured Works Complete To Date', totalLabel: 'TOTAL Measured Works To Date of Application' },
+    { key: 'variation', title: 'B.  Variations / Additions / Extras', totalLabel: 'Total Variations / Additions / Extras' },
+    { key: 'materials', title: 'C.  Materials Off Site / Delivered To Site', totalLabel: 'Total Materials' }
+  ];
+
+  for (const def of sectionDefs) {
+    const items = d.sections[def.key] || [];
+    if (!items.length) continue;
+    newSectionPage(def.title);
+
+    for (const item of items) {
+      // Item header row
+      const metaText = String(item.itemDescription || '');
+      const metaLines = doc.splitTextToSize(metaText, col.desc.w - 4);
+      const headH = Math.max(6, metaLines.length * 3.6 + 2.5);
+      ensureRoom(headH + 5, def.title);
+
+      setFill(ITEMFILL);
+      doc.rect(marginL, y - 1, tableRightX - marginL, headH, 'F');
+      setText(NAVY); doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
+      doc.text(String(item.itemNo || ''), col.item.x + col.item.w / 2, y + 2.6, { align: 'center' });
+      let metaY = y + 2.6;
+      for (const line of metaLines) { doc.text(line, col.desc.x + 1, metaY); metaY += 3.6; }
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); setText(MUTED);
+      doc.text(String(item.quoteRef || ''), col.quote.x + 1, y + 2.6);
+      if (item.woNo) doc.text(String(item.woNo), col.unit.x + 1, y + 2.6);
+      y += headH + 1;
+
+      // Sub-lines
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
+      for (const l of item.lines) {
+        const descLines = doc.splitTextToSize(String(l.description || ''), col.desc.w - 6);
+        const rowH = Math.max(4.6, descLines.length * 3.5 + 1.1);
+        ensureRoom(rowH, def.title);
+
+        setText(TEXT);
+        let dY = y + 3;
+        for (const line of descLines) { doc.text(line, col.desc.x + 4, dY); dY += 3.5; }
+        doc.text('sum', col.unit.x + col.unit.w / 2, y + 3, { align: 'center' });
+        doc.text(fmtNum(l.contractValue), col.value.x + col.value.w - 1, y + 3, { align: 'right' });
+        doc.text(Number(l.cumPct || 0).toFixed(0) + '%', col.pct.x + col.pct.w / 2, y + 3, { align: 'center' });
+        doc.text(fmtMoney(l.cumValue), col.total.x + col.total.w - 1, y + 3, { align: 'right' });
+        doc.text(fmtMoney(l.paid), col.paid.x + col.paid.w - 1, y + 3, { align: 'right' });
+        setText(Math.abs(l.outstanding) >= 0.01 ? RED : MUTED);
+        doc.text(fmtMoney(l.outstanding), col.out.x + col.out.w - 1, y + 3, { align: 'right' });
+        setText(TEXT);
+
+        setDraw(RULE); doc.setLineWidth(0.12);
+        doc.line(marginL, y + rowH, tableRightX, y + rowH);
+        y += rowH;
+      }
+      y += 2;
+    }
+
+    // Section total row
+    const t = d.sectionTotals[def.key];
+    ensureRoom(9, def.title);
+    setDraw(HEADRULE); doc.setLineWidth(0.4);
+    doc.line(marginL, y, tableRightX, y);
+    y += 4;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); setText(TEXT);
+    doc.text(def.totalLabel, col.desc.x + 1, y);
+    doc.text(fmtNum(t.value), col.value.x + col.value.w - 1, y, { align: 'right' });
+    const avgPct = t.value ? (t.cum / t.value * 100) : 0;
+    doc.text(avgPct.toFixed(0) + '%', col.pct.x + col.pct.w / 2, y, { align: 'center' });
+    doc.text(fmtNum(t.cum), col.total.x + col.total.w - 1, y, { align: 'right' });
+    doc.text(fmtNum(t.paid), col.paid.x + col.paid.w - 1, y, { align: 'right' });
+    setText(Math.abs(t.outstanding) >= 0.01 ? RED : TEXT);
+    doc.text(fmtNum(t.outstanding), col.out.x + col.out.w - 1, y, { align: 'right' });
+    setText(TEXT);
+    y += 6;
+  }
+
+  // ── Page X of Y footer on every page ──
+  const pageCount = doc.getNumberOfPages();
+  for (let p = 1; p <= pageCount; p++) {
+    doc.setPage(p);
+    setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
+    doc.text(`${d.ref || 'AFP'} · Page ${p} of ${pageCount}`, pageW - marginR, pageH - 6, { align: 'right' });
+    doc.text('BAMA Fabrication Ltd · 11 Enterprise Way, Yaxley, Peterborough PE7 3WY · info@bamafabrication.co.uk', marginL, pageH - 6);
+  }
+
+  const blob = doc.output('blob');
+  console.log(`[AFP PDF] ${d.ref}: ${pageCount} pages, ${(blob.size / 1024).toFixed(1)} KB`);
+  return blob;
 }
 
 

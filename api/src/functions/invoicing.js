@@ -265,6 +265,7 @@ app.http('applications-create', {
                     project_id, application_no, ref, period_label, period_start, period_end,
                     status, is_final,
                     applied_value_net, applied_vat, applied_retention, applied_gross,
+                    previous_certificate_value, retention_pct, contract_no, cumulative_value_net,
                     notes, created_by
                 )
                 OUTPUT INSERTED.*
@@ -272,6 +273,7 @@ app.http('applications-create', {
                     @projectId, @applicationNo, @ref, @periodLabel, @periodStart, @periodEnd,
                     'Draft', @isFinal,
                     @appliedValueNet, @appliedVat, @appliedRetention, @appliedGross,
+                    @prevCertValue, @retentionPct, @contractNo, @cumulativeValueNet,
                     @notes, @createdBy
                 )`,
                 {
@@ -286,6 +288,10 @@ app.http('applications-create', {
                     appliedVat:       Number(body.applied_vat || 0),
                     appliedRetention: Number(body.applied_retention || 0),
                     appliedGross:     Number(body.applied_gross || 0),
+                    prevCertValue:    body.previous_certificate_value != null ? Number(body.previous_certificate_value) : null,
+                    retentionPct:     body.retention_pct != null ? Number(body.retention_pct) : null,
+                    contractNo:       body.contract_no ?? null,
+                    cumulativeValueNet: body.cumulative_value_net != null ? Number(body.cumulative_value_net) : null,
                     notes:            body.notes ?? null,
                     createdBy
                 }
@@ -299,12 +305,16 @@ app.http('applications-create', {
                         `INSERT INTO ApplicationLineItems (
                             application_id, line_no, source_quote_line_item_id, description,
                             contract_value, previous_pct_complete, this_app_pct_complete,
-                            this_app_value, cumulative_value
+                            this_app_value, cumulative_value,
+                            section, item_no, item_description, item_quote_ref, item_wo_no,
+                            gross_amount_paid
                         )
                         VALUES (
                             @applicationId, @lineNo, @sourceQliId, @description,
                             @contractValue, @previousPct, @thisAppPct,
-                            @thisAppValue, @cumulativeValue
+                            @thisAppValue, @cumulativeValue,
+                            @section, @itemNo, @itemDescription, @itemQuoteRef, @itemWoNo,
+                            @grossAmountPaid
                         )`,
                         {
                             applicationId: newApp.id,
@@ -315,7 +325,13 @@ app.http('applications-create', {
                             previousPct:   Number(l.previous_pct_complete || 0),
                             thisAppPct:    Number(l.this_app_pct_complete || 0),
                             thisAppValue:  Number(l.this_app_value || 0),
-                            cumulativeValue: Number(l.cumulative_value || 0)
+                            cumulativeValue: Number(l.cumulative_value || 0),
+                            section:       l.section || 'measured',
+                            itemNo:        l.item_no != null ? Number(l.item_no) : null,
+                            itemDescription: l.item_description ?? null,
+                            itemQuoteRef:  l.item_quote_ref ?? null,
+                            itemWoNo:      l.item_wo_no ?? null,
+                            grossAmountPaid: l.gross_amount_paid != null ? Number(l.gross_amount_paid) : null
                         }
                     );
                 }
@@ -357,6 +373,10 @@ app.http('applications-update', {
                     applied_vat       = @appliedVat,
                     applied_retention = @appliedRetention,
                     applied_gross     = @appliedGross,
+                    previous_certificate_value = @prevCertValue,
+                    retention_pct     = @retentionPct,
+                    contract_no       = @contractNo,
+                    cumulative_value_net = @cumulativeValueNet,
                     notes             = @notes,
                     updated_at        = GETUTCDATE()
                  WHERE id = @id`,
@@ -370,6 +390,10 @@ app.http('applications-update', {
                     appliedVat:       Number(body.applied_vat || 0),
                     appliedRetention: Number(body.applied_retention || 0),
                     appliedGross:     Number(body.applied_gross || 0),
+                    prevCertValue:    body.previous_certificate_value != null ? Number(body.previous_certificate_value) : null,
+                    retentionPct:     body.retention_pct != null ? Number(body.retention_pct) : null,
+                    contractNo:       body.contract_no ?? null,
+                    cumulativeValueNet: body.cumulative_value_net != null ? Number(body.cumulative_value_net) : null,
                     notes:            body.notes ?? null
                 }
             );
@@ -382,12 +406,16 @@ app.http('applications-update', {
                         `INSERT INTO ApplicationLineItems (
                             application_id, line_no, source_quote_line_item_id, description,
                             contract_value, previous_pct_complete, this_app_pct_complete,
-                            this_app_value, cumulative_value
+                            this_app_value, cumulative_value,
+                            section, item_no, item_description, item_quote_ref, item_wo_no,
+                            gross_amount_paid
                         )
                         VALUES (
                             @applicationId, @lineNo, @sourceQliId, @description,
                             @contractValue, @previousPct, @thisAppPct,
-                            @thisAppValue, @cumulativeValue
+                            @thisAppValue, @cumulativeValue,
+                            @section, @itemNo, @itemDescription, @itemQuoteRef, @itemWoNo,
+                            @grossAmountPaid
                         )`,
                         {
                             applicationId: id,
@@ -398,7 +426,13 @@ app.http('applications-update', {
                             previousPct:   Number(l.previous_pct_complete || 0),
                             thisAppPct:    Number(l.this_app_pct_complete || 0),
                             thisAppValue:  Number(l.this_app_value || 0),
-                            cumulativeValue: Number(l.cumulative_value || 0)
+                            cumulativeValue: Number(l.cumulative_value || 0),
+                            section:       l.section || 'measured',
+                            itemNo:        l.item_no != null ? Number(l.item_no) : null,
+                            itemDescription: l.item_description ?? null,
+                            itemQuoteRef:  l.item_quote_ref ?? null,
+                            itemWoNo:      l.item_wo_no ?? null,
+                            grossAmountPaid: l.gross_amount_paid != null ? Number(l.gross_amount_paid) : null
                         }
                     );
                 }
@@ -530,6 +564,8 @@ app.http('applications-certificate-confirm', {
             if (!existing.recordset[0].certificate_attachment_id) {
                 return badRequest('No certificate uploaded — upload the cert PDF first', request);
             }
+            const wasAlreadyCertified = existing.recordset[0].status === 'Certified'
+                                     || existing.recordset[0].status === 'Invoiced';
 
             await query(
                 `UPDATE Applications SET
@@ -554,15 +590,24 @@ app.http('applications-certificate-confirm', {
                 }
             );
 
-            // Per-line certified values (optional)
+            // Per-line certified values (optional).
+            // gross_amount_paid = cumulative paid to date on the line. At AFP
+            // creation it holds the carried-forward previous paid; certifying
+            // adds this cert's per-line value on top. On RE-confirm we first
+            // strip the old certified value so the delta is replaced, not
+            // double-added.
             if (Array.isArray(body.line_items)) {
                 for (const l of body.line_items) {
                     if (l.id && l.certified_this_app_value != null) {
                         await query(
                             `UPDATE ApplicationLineItems
-                             SET certified_this_app_value = @val
+                             SET gross_amount_paid = ISNULL(gross_amount_paid, 0)
+                                                   - CASE WHEN @wasCert = 1 THEN ISNULL(certified_this_app_value, 0) ELSE 0 END
+                                                   + @val,
+                                 certified_this_app_value = @val
                              WHERE id = @lid AND application_id = @aid`,
-                            { val: Number(l.certified_this_app_value), lid: l.id, aid: id }
+                            { val: Number(l.certified_this_app_value), lid: l.id, aid: id,
+                              wasCert: wasAlreadyCertified ? 1 : 0 }
                         );
                     }
                 }

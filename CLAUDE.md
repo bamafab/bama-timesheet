@@ -1077,3 +1077,14 @@ none of this is built yet.
 Both workflows trigger on push to `main`:
 - **Frontend** → `Azure/static-web-apps-deploy@v1`, uploads `/` as-is.
 - **API** → zips `api/`, deploys to Function App `bama-erp-api` via OIDC.
+
+## AFP v2 (Applications for Payment) — invoice-tracker.html
+- **Cumulative model** (mirrors client Excel): per line the user sets **cumulative %** (`this_app_pct_complete` stores CUMULATIVE %, not per-period). `this_app_value` = contract × (cum − prev)%. Summary: Value of Application (cumulative) − Less Previous Contractor Certificate (editable, auto = Σ certified net of prior AFPs) = GROSS Valuation this period − retention = Amount Due. This automatically re-claims payless shortfalls.
+- **Grouped SOV**: `ApplicationLineItems.section` ('measured'|'variation'|'materials') + `item_no`/`item_description`/`item_quote_ref`/`item_wo_no`. Item = a BAMA quote; sub-lines = cost breakdown from QuoteLineItems.
+- **VO auto-pull**: AFP02+ copies prior AFP's SOV wholesale, then appends any ProjectQuotes quote whose reference isn't in the SOV yet as a new Variation item (toast shown). Primary quote(s) → Measured Works on AFP01.
+- **Per-line paid ledger**: `gross_amount_paid` = cumulative certified £ on the line. Carried forward at AFP creation from last certified AFP; cert-confirm PUT adds `certified_this_app_value` on top (re-confirm strips old value first — no double-add).
+- **Retention + Contract No** live on Applications (`retention_pct`, `contract_no`), carried forward from the most recent AFP = per-project sticky.
+- **VAT default OFF** — AFPs are not VAT documents; VAT applies at invoice stage.
+- **PDF**: `drawRamsPDF`-style native jsPDF renderer `drawBamaAfpPDF` — **landscape A4**, page 1 summary block, then grouped section pages (item header rows with light fill + quote/WO refs, red outstanding values, section totals, header repeat on page-break, Page X of Y footer).
+- **Natasza one-click**: Certified AFP cards show "✓ READY TO INVOICE" + Generate Invoice button directly on the card (`generateInvoiceFromAfpCard`).
+- Migration: `api/sql/add-afp-v2.sql` (ADD COLUMN → Function App restart required).
