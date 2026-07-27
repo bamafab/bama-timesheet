@@ -35690,6 +35690,7 @@ let _afpLineRows = [];             // working SOV rows in the modal
 let _afpDetailCurrent = null;      // currently-open AFP in the detail modal
 let _afpCertFile = null;           // raw File for the cert upload
 let _afpCertParsed = null;         // OCR result staged
+let _afpImportMeta = null;         // { application_no } when SOV came from an AFP import
 
 // ── Project picker (opens when user clicks + New AFP without selecting one) ──
 function openAfpProjectPicker() {
@@ -35720,6 +35721,7 @@ async function openNewAfpModal(projectId) {
   _afpEditing = null;
   _afpModalProjectId = projectId;
   _afpLineRows = [];
+  _afpImportMeta = null;
 
   const project = (_invProjectsCache || []).find(p => p.id === projectId);
   if (!project) { toast('Project not found', 'error'); return; }
@@ -36216,7 +36218,8 @@ function parseAfpWorkbook(wb) {
   const cell = (r, c) => (rows[r] && rows[r][c] != null) ? rows[r][c] : null;
   const str = v => v == null ? '' : String(v).trim();
 
-  const out = { contract_no: null, previous_certificate_value: null, retention_pct: null, items: [] };
+  const out = { contract_no: null, previous_certificate_value: null, retention_pct: null,
+                valuation_no: null, period_end: null, items: [] };
 
   let section = null;      // 'measured' | 'variation' | 'materials'
   let currentItem = null;
@@ -36226,6 +36229,15 @@ function parseAfpWorkbook(wb) {
     const a = str(cell(r, 0)), b = cell(r, 1), c = str(cell(r, 2));
 
     // Header landmarks
+    const valMatch = a.match(/^valuation no\s*(\d+)/i);
+    if (valMatch) {
+      out.valuation_no = Number(valMatch[1]);
+      const dm = c.match(/up to\s+(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)\s+(\d{4})/i);
+      if (dm) {
+        const dt = new Date(`${dm[1]} ${dm[2]} ${dm[3]}`);
+        if (!isNaN(dt)) out.period_end = dt.toISOString().slice(0, 10);
+      }
+    }
     if (/^contract no:?$/i.test(a) && c) out.contract_no = c;
     if (/less previous contractor certificate/i.test(c)) {
       const v = Number(cell(r, 4));
@@ -36293,6 +36305,8 @@ async function parseAfpWithAI({ kind, file, text }) {
   const prompt = `Extract the full schedule of values from this UK construction Application for Payment. Return ONLY JSON, no markdown:
 {
   "contract_no": "client contract/WO no e.g. S-CM0665/0028 or null",
+  "valuation_no": 6,
+  "period_end": "YYYY-MM-DD (the 'works carried out up to' date, null if absent)",
   "previous_certificate_value": 0,
   "retention_pct": 5,
   "items": [
@@ -36371,16 +36385,32 @@ function _applyImportedAfp(parsed) {
   if (parsed.contract_no) document.getElementById('afpNewContractNo').value = parsed.contract_no;
   if (parsed.retention_pct != null) document.getElementById('afpNewRetentionPct').value = Number(parsed.retention_pct);
 
-  // Prev certificate for the NEW application = the imported AFP's cumulative
-  // Value of Application (assumes it was certified in full — edit against the
-  // latest payment notice if they certified less).
-  const cumTotal = rows.reduce((s, l) => s + l.contract_value * l.this_app_pct_complete / 100, 0);
-  document.getElementById('afpNewPrevCert').value = cumTotal.toFixed(2);
+  // The import RECREATES the document itself (e.g. AFP06) — its own number,
+  // period and "Less Previous Certificate". The next AFP raised afterwards
+  // continues the sequence automatically (server allocates MAX+1).
+  document.getElementById('afpNewPrevCert').value =
+    parsed.previous_certificate_value != null ? Number(parsed.previous_certificate_value).toFixed(2) : '0';
+
+  _afpImportMeta = null;
+  if (parsed.valuation_no != null && Number(parsed.valuation_no) > 0 && !_afpEditing) {
+    _afpImportMeta = { application_no: Math.floor(Number(parsed.valuation_no)) };
+    const refStr = 'AFP' + String(_afpImportMeta.application_no).padStart(2, '0');
+    document.getElementById('afpNewRef').value = refStr;
+  }
+  if (parsed.period_end) {
+    document.getElementById('afpNewPeriodEnd').value = parsed.period_end;
+    const pe = new Date(parsed.period_end);
+    if (!isNaN(pe)) {
+      const ps = new Date(pe.getFullYear(), pe.getMonth(), 1);
+      document.getElementById('afpNewPeriodStart').value =
+        `${ps.getFullYear()}-${String(ps.getMonth() + 1).padStart(2, '0')}-01`;
+    }
+  }
 
   renderAfpLineRows();
   recalcAfpTotals();
   const nItems = counters.measured + counters.variation + counters.materials;
-  toast(`Imported ${nItems} items / ${rows.length} lines ✓ — prev certificate set to £${cumTotal.toLocaleString('en-GB', { minimumFractionDigits: 2 })} (the imported AFP's cumulative). Check it against the latest payment notice.`, 'success');
+  toast(`Imported ${_afpImportMeta ? 'AFP ' + _afpImportMeta.application_no + ' — ' : ''}${nItems} items / ${rows.length} lines ✓. This recreates the imported application; the next AFP will number itself automatically.`, 'success');
 }
 
 function _afpFormatPeriodLabel(start, end) {
@@ -36424,6 +36454,7 @@ function _buildAfpPayload() {
 
   return {
     project_id:        _afpModalProjectId,
+    application_no:    (!_afpEditing && _afpImportMeta) ? _afpImportMeta.application_no : undefined,
     period_start:      document.getElementById('afpNewPeriodStart').value,
     period_end:        document.getElementById('afpNewPeriodEnd').value,
     period_label:      _afpFormatPeriodLabel(
@@ -36651,6 +36682,7 @@ async function editAfpFromDetail() {
   closeAfpDetail();
   _afpEditing = afp;
   _afpModalProjectId = afp.project_id;
+  _afpImportMeta = null;
   const project = (_invProjectsCache || []).find(p => p.id === afp.project_id);
   if (project) {
     document.getElementById('afpNewProjectLabel').textContent =

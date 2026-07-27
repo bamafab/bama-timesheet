@@ -257,7 +257,23 @@ app.http('applications-create', {
             const body = await request.json();
             if (!body.project_id) return badRequest('project_id required', request);
 
-            const { application_no, ref } = await nextAfpRef(body.project_id);
+            // Explicit AFP number (mid-project onboarding via AFP import) —
+            // create as that exact valuation number; nextAfpRef (MAX+1) then
+            // continues the sequence naturally afterwards.
+            let application_no, ref;
+            if (body.application_no != null && Number(body.application_no) > 0) {
+                application_no = Math.floor(Number(body.application_no));
+                const dup = await query(
+                    'SELECT id FROM Applications WHERE project_id = @pid AND application_no = @n',
+                    { pid: body.project_id, n: application_no }
+                );
+                if (dup.recordset.length) {
+                    return badRequest(`AFP number ${application_no} already exists for this project`, request);
+                }
+                ref = formatAfpRef(application_no);
+            } else {
+                ({ application_no, ref } = await nextAfpRef(body.project_id));
+            }
             const createdBy = auth.email || auth.name || null;
 
             const insertRes = await query(
