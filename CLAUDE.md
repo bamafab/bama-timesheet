@@ -1008,8 +1008,28 @@ none of this is built yet.
   — QB deliberately has NO shared.js dependency so it was aligned in
   place rather than ported to the Babcock engine; full port parked.
   QB Help updated per definition-of-done.
-  Invoicing module COMPLETE except parked items
-  (remittance OCR, retention release invoicing).
+  Invoicing module COMPLETE except parked item (remittance OCR — incoming).
+- **Invoicing: Pay & Remit + retention release (2026-07-27)** — Supplier
+  Invoices tab: checkbox per unpaid row → "💸 Pay & Remit" (single supplier
+  per run) → modal (date/method/reference) → marks each PO paid
+  (`paid_at/paid_by/paid_ref` — new `PurchaseOrders.paid_ref` column),
+  renders native-jsPDF remittance advice (`drawBamaRemittancePDF` /
+  `renderBamaRemittancePDF`, drawDnPDF conventions, header repeat on
+  page-break), uploads to `01 - Accounts/06 - Remittances/YYYY/MM/`
+  (non-fatal — blob tab fallback), then opens the email composer
+  (template `emailRemittance`, AI-draft context, PDF attached) to the
+  supplier's email. Sales tab: collapsible "🔒 Retention Held" card
+  (invoices with `retention_amount>0`, Issued/Partially Paid/Paid, no
+  active release child) with overdue-red due dates and a one-click
+  "Raise Release Invoice" → creates a Draft invoice flagged
+  `Invoices.is_retention_release=1` + `parent_invoice_id`, net =
+  retention, VAT per client vat_treatment, due = today + client terms,
+  single "Release of retention held under invoice X" line, then opens
+  the detail modal for review/issue. RET badge in the sales list;
+  detail modal + PDF show "Retention release for INVxxxx". Edit-draft
+  path preserves the flag via `_invEditing`. Migration:
+  `api/sql/add-remittance-retention.sql` (ADD COLUMN → Function App
+  restart).
 - **Invoice Tracker** — standalone `invoice-tracker.html` page with four
   tabs (AFPs · Sales Invoices · Supplier Invoices · Receipts). Gated by
   the `invoicing` permission. Backed by `Applications`,

@@ -1104,7 +1104,7 @@ app.http('invoices-create', {
 
             const insertRes = await query(
                 `INSERT INTO Invoices (
-                    ref, kind, source_afp_id, parent_invoice_id, project_id, client_id, customer_text,
+                    ref, kind, source_afp_id, parent_invoice_id, is_retention_release, project_id, client_id, customer_text,
                     invoice_date, due_date,
                     vat_applies, cis_reverse_charge,
                     net_amount, vat_amount, reverse_charge_amount,
@@ -1114,7 +1114,7 @@ app.http('invoices-create', {
                 )
                 OUTPUT INSERTED.*
                 VALUES (
-                    @ref, @kind, @sourceAfpId, @parentInvoiceId, @projectId, @clientId, @customerText,
+                    @ref, @kind, @sourceAfpId, @parentInvoiceId, @isRetentionRelease, @projectId, @clientId, @customerText,
                     @invoiceDate, @dueDate,
                     @vatApplies, @cisReverseCharge,
                     @netAmount, @vatAmount, @reverseChargeAmount,
@@ -1127,6 +1127,7 @@ app.http('invoices-create', {
                     kind,
                     sourceAfpId:         body.source_afp_id ?? null,
                     parentInvoiceId:     body.parent_invoice_id ?? null,
+                    isRetentionRelease:  body.is_retention_release ? 1 : 0,
                     projectId:           body.project_id ?? null,
                     clientId:            body.client_id ?? null,
                     customerText:        body.customer_text ?? null,
@@ -1196,6 +1197,7 @@ app.http('invoices-update', {
             await query(
                 `UPDATE Invoices SET
                     parent_invoice_id   = @parentInvoiceId,
+                    is_retention_release = @isRetentionRelease,
                     project_id          = @projectId,
                     client_id           = @clientId,
                     customer_text       = @customerText,
@@ -1217,6 +1219,7 @@ app.http('invoices-update', {
                 {
                     id,
                     parentInvoiceId:     body.parent_invoice_id ?? null,
+                    isRetentionRelease:  body.is_retention_release ? 1 : 0,
                     projectId:           body.project_id ?? null,
                     clientId:            body.client_id ?? null,
                     customerText:        body.customer_text ?? null,

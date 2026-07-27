@@ -212,6 +212,18 @@
         <div id="invAgedBody" style="margin-top:12px"></div>
       </div>
 
+      <!-- Retention held -->
+      <div class="card" style="padding:14px 16px;margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer"
+             onclick="toggleInvRetention()">
+          <div style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);font-weight:600">
+            🔒 Retention Held — <span id="invRetHeadline">£0.00</span>
+          </div>
+          <div id="invRetChevron" style="color:var(--muted);font-size:12px">▶</div>
+        </div>
+        <div id="invRetBody" style="margin-top:12px;display:none"></div>
+      </div>
+
       <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">
         <input type="text" class="field-input" id="invSalesSearch"
                placeholder="🔍 Search ref, customer, project, status…"
@@ -245,7 +257,9 @@
 
     <!-- ═══ Pane: Supplier Invoices ═══ -->
     <div id="invPane-supplier" style="display:none">
-      <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <button class="btn btn-primary" id="invPayRemitBtn" disabled
+                onclick="openPayRemitModal()">💸 Pay &amp; Remit (<span id="invPayRemitCount">0</span>)</button>
         <button class="btn btn-ghost" onclick="openAttachSupplierInvoiceModal()"
                 style="border-color:var(--accent);color:var(--accent)">+ Attach Supplier Invoice to PO</button>
       </div>
@@ -254,6 +268,7 @@
           <table class="babcock-tracker-table">
             <thead>
               <tr>
+                <th style="width:34px"></th>
                 <th style="min-width:110px">PO Ref</th>
                 <th style="min-width:130px">Supplier Inv #</th>
                 <th style="min-width:180px">Supplier</th>
@@ -265,7 +280,7 @@
               </tr>
             </thead>
             <tbody id="invSupplierTbody">
-              <tr><td colspan="8" class="empty-state" style="padding:30px"><div class="spinner"></div></td></tr>
+              <tr><td colspan="9" class="empty-state" style="padding:30px"><div class="spinner"></div></td></tr>
             </tbody>
           </table>
         </div>
@@ -273,6 +288,55 @@
     </div>
 
 
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     PAY & REMIT MODAL (supplier invoices)
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="invRemitModal">
+  <div class="modal" style="max-width:640px;width:94vw;max-height:90vh;overflow-y:auto">
+    <div class="modal-title">💸 Pay &amp; Remit</div>
+    <div id="invRemitSupplierLabel" style="font-size:13px;color:var(--muted);margin-bottom:12px"></div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <label class="field-label">Payment Date</label>
+        <input type="date" class="field-input" id="invRemitDate">
+      </div>
+      <div>
+        <label class="field-label">Payment Method</label>
+        <select class="field-input" id="invRemitMethod">
+          <option value="BACS">BACS</option>
+          <option value="CHAPS">CHAPS</option>
+          <option value="Card">Card</option>
+          <option value="Cheque">Cheque</option>
+          <option value="Other">Other</option>
+        </select>
+      </div>
+      <div>
+        <label class="field-label">Payment Reference</label>
+        <input type="text" class="field-input" id="invRemitRef" placeholder="e.g. BACS run 27/07">
+      </div>
+    </div>
+
+    <div id="invRemitList" style="margin-bottom:12px"></div>
+
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:var(--bg-darker);border:1px solid var(--border);border-radius:8px;margin-bottom:14px">
+      <div style="font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)">Total payment</div>
+      <div id="invRemitTotal" style="font-size:18px;font-weight:700">£0.00</div>
+    </div>
+
+    <div style="font-size:12px;color:var(--muted);margin-bottom:14px">
+      Confirming marks the selected supplier invoices as <b>paid</b>, generates a remittance advice PDF
+      (saved to SharePoint <span style="font-family:var(--font-mono);font-size:11px">01&nbsp;-&nbsp;Accounts/06&nbsp;-&nbsp;Remittances</span>)
+      and opens an email to the supplier with the remittance attached.
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closePayRemitModal()">Cancel</button>
+      <button class="btn btn-primary" id="invRemitConfirmBtn" onclick="confirmPayRemit()">✓ Confirm Payment &amp; Remit</button>
+    </div>
   </div>
 </div>
 
@@ -1151,6 +1215,6 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260727y"></script>
+<script src="shared.js?v=20260727z"></script>
 </body>
 </html>

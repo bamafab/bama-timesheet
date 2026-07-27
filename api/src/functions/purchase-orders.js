@@ -227,7 +227,7 @@ app.http('purchase-orders-list', {
                         po.delivery_charge, po.collection_charge,
                         po.approved_at, po.approved_by, po.sent_at, po.sent_by,
                         po.delivery_received_at, po.invoice_received_at,
-                        po.invoice_value, po.invoice_ref, po.paid_at,
+                        po.invoice_value, po.invoice_ref, po.paid_at, po.paid_by, po.paid_ref,
                         po.cancelled_at, po.sharepoint_pdf_url, po.sharepoint_dn_url,
                         po.supplier_invoice_received_at, po.supplier_invoice_ref,
                         po.supplier_invoice_date, po.supplier_invoice_net,
@@ -418,7 +418,7 @@ app.http('purchase-orders-update', {
                 'description', 'cost_centre', 'status', 'job_number',
                 'delivery_address', 'approved_by', 'sent_by',
                 'delivery_received_by', 'invoice_received_by',
-                'invoice_ref', 'paid_by', 'cancelled_by', 'cancelled_reason',
+                'invoice_ref', 'paid_by', 'paid_ref', 'cancelled_by', 'cancelled_reason',
                 'sharepoint_folder_id', 'sharepoint_pdf_id', 'sharepoint_pdf_url',
                 'sharepoint_dn_id', 'sharepoint_dn_url'
             ];

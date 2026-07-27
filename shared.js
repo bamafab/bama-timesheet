@@ -21596,6 +21596,13 @@ const TEMPLATE_DEFAULTS = {
           'A copy of the invoice is attached for your reference. Please use {{invoice_ref}} as the payment reference.\n\n' +
           'If payment has already been made, please disregard this email. If there is any issue holding up payment, please let us know.'
   },
+  emailRemittance: {
+    subject: 'Remittance Advice — BAMA Fabrication — {{payment_date}}',
+    body: 'Dear {{contact_name}},\n\n' +
+          'Please find attached our remittance advice for a payment of {{payment_total}} made by {{payment_method}} on {{payment_date}}{{payment_ref_line}}.\n\n' +
+          'The payment covers the following invoice(s):\n{{invoice_list}}\n\n' +
+          'Please allocate accordingly. If you have any questions, please don\u2019t hesitate to get in touch.'
+  },
   emailSignature: {
     // HTML content — appended to every Babcock workflow email after the
     // body. Logos can be embedded as <img src="data:..."> when ready.
@@ -35910,6 +35917,7 @@ let _invSalesSearchTerm = '';
 
 function renderInvSalesTable() {
   renderInvAgedDebt();
+  renderInvRetention();
   const tbody = document.getElementById('invSalesTbody');
   if (!tbody) return;
   if (!_invInvoiceList.length) {
@@ -35939,6 +35947,7 @@ function renderInvSalesTable() {
     const project  = i.project_number ? `${i.project_number}` : '';
     const kindBadge = i.kind === 'pro_forma' ? `<span style="display:inline-block;padding:1px 6px;border-radius:8px;font-size:10px;background:rgba(255,165,0,.15);color:#ffa500;margin-right:4px">PRO</span> `
                    : i.kind === 'credit_note' ? `<span style="display:inline-block;padding:1px 6px;border-radius:8px;font-size:10px;background:rgba(208,2,27,.15);color:var(--red);margin-right:4px">CN</span> `
+                   : i.is_retention_release ? `<span style="display:inline-block;padding:1px 6px;border-radius:8px;font-size:10px;background:rgba(59,130,246,.15);color:#60a5fa;margin-right:4px" title="Retention release">RET</span> `
                    : '';
     return `
       <tr style="cursor:pointer" onclick="openInvoiceDetail(${i.id})"
@@ -35960,8 +35969,14 @@ function renderInvSalesTable() {
 function renderInvSupplierTable() {
   const tbody = document.getElementById('invSupplierTbody');
   if (!tbody) return;
+  // Drop selections for POs that are now paid / gone
+  for (const id of Array.from(_invRemitSelected)) {
+    const po = _invSupplierPoList.find(p => p.id === id);
+    if (!po || po.paid_at) _invRemitSelected.delete(id);
+  }
+  _invRemitUpdateBtn();
   if (!_invSupplierPoList.length) {
-    tbody.innerHTML = `<tr><td colspan="8" class="empty-state" style="padding:40px;text-align:center;color:var(--muted)">
+    tbody.innerHTML = `<tr><td colspan="9" class="empty-state" style="padding:40px;text-align:center;color:var(--muted)">
       <div style="font-size:32px;margin-bottom:8px">📥</div>
       <div style="font-weight:600;margin-bottom:4px">No supplier invoices yet</div>
       <div style="font-size:12px;margin-bottom:14px">Click below to attach a supplier invoice to an existing PO.</div>
@@ -35971,6 +35986,9 @@ function renderInvSupplierTable() {
   }
   tbody.innerHTML = _invSupplierPoList.map(po => `
     <tr>
+      <td style="text-align:center">${po.paid_at ? '' :
+        `<input type="checkbox" ${_invRemitSelected.has(po.id) ? 'checked' : ''}
+                onchange="invRemitToggle(${po.id}, this.checked)" title="Select for payment">`}</td>
       <td style="font-family:var(--font-mono);font-weight:600">${escapeHtml(po.reference || '')}</td>
       <td>${escapeHtml(po.supplier_invoice_ref || '')}</td>
       <td>${escapeHtml(po.supplier_name || '')}</td>
@@ -35978,8 +35996,495 @@ function renderInvSupplierTable() {
       <td>${po.supplier_invoice_date ? new Date(po.supplier_invoice_date).toLocaleDateString('en-GB') : ''}</td>
       <td style="text-align:right">£${Number(po.supplier_invoice_gross || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}</td>
       <td>${invStatusBadge(po.reconciliation_status || 'unmatched')}</td>
-      <td>${po.paid_at ? '✓ Paid' : ''}</td>
+      <td>${po.paid_at ? `<span style="color:var(--green);font-weight:600" title="${escapeHtml(po.paid_ref || '')}">✓ Paid</span>
+        <div style="font-size:10px;color:var(--muted)">${new Date(po.paid_at).toLocaleDateString('en-GB')}</div>` : ''}</td>
     </tr>`).join('');
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// PAY & REMIT — mark supplier invoices paid + remittance advice PDF + email
+// ═════════════════════════════════════════════════════════════════════════
+let _invRemitSelected = new Set();   // PO ids ticked for payment
+let _invSuppliersCache = null;       // /api/suppliers (lazy)
+
+function invRemitToggle(poId, checked) {
+  if (checked) _invRemitSelected.add(poId);
+  else _invRemitSelected.delete(poId);
+  _invRemitUpdateBtn();
+}
+
+function _invRemitUpdateBtn() {
+  const btn = document.getElementById('invPayRemitBtn');
+  const cnt = document.getElementById('invPayRemitCount');
+  if (cnt) cnt.textContent = String(_invRemitSelected.size);
+  if (btn) btn.disabled = _invRemitSelected.size === 0;
+}
+
+function _invRemitSelection() {
+  return _invSupplierPoList.filter(po => _invRemitSelected.has(po.id));
+}
+
+async function _invGetSupplier(supplierId) {
+  if (!_invSuppliersCache) {
+    try { _invSuppliersCache = await api.get('/api/suppliers'); }
+    catch (e) { _invSuppliersCache = []; }
+  }
+  return (_invSuppliersCache || []).find(s => s.id === supplierId) || null;
+}
+
+function openPayRemitModal() {
+  const sel = _invRemitSelection();
+  if (!sel.length) { toast('Tick at least one unpaid supplier invoice first', 'error'); return; }
+  const supplierIds = [...new Set(sel.map(po => po.supplier_id))];
+  if (supplierIds.length > 1) {
+    toast('One remittance covers one supplier — please select invoices from a single supplier', 'error');
+    return;
+  }
+  document.getElementById('invRemitSupplierLabel').textContent =
+    `${sel.length} invoice${sel.length === 1 ? '' : 's'} from ${sel[0].supplier_name || 'supplier'}`;
+  document.getElementById('invRemitDate').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('invRemitMethod').value = 'BACS';
+  document.getElementById('invRemitRef').value = '';
+
+  const fmt2 = v => Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const total = sel.reduce((s, po) => s + Number(po.supplier_invoice_gross || 0), 0);
+  document.getElementById('invRemitList').innerHTML = `
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr>
+        <th style="text-align:left;padding:5px 8px;font-size:10px;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--border)">PO Ref</th>
+        <th style="text-align:left;padding:5px 8px;font-size:10px;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--border)">Invoice #</th>
+        <th style="text-align:left;padding:5px 8px;font-size:10px;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--border)">Inv Date</th>
+        <th style="text-align:right;padding:5px 8px;font-size:10px;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--border)">Gross (£)</th>
+      </tr></thead>
+      <tbody>${sel.map(po => `
+        <tr>
+          <td style="padding:5px 8px;font-family:var(--font-mono);border-bottom:1px solid var(--border)">${escapeHtml(po.reference || '')}</td>
+          <td style="padding:5px 8px;border-bottom:1px solid var(--border)">${escapeHtml(po.supplier_invoice_ref || '—')}</td>
+          <td style="padding:5px 8px;border-bottom:1px solid var(--border)">${po.supplier_invoice_date ? new Date(po.supplier_invoice_date).toLocaleDateString('en-GB') : ''}</td>
+          <td style="padding:5px 8px;text-align:right;border-bottom:1px solid var(--border)">£${fmt2(po.supplier_invoice_gross)}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+  document.getElementById('invRemitTotal').textContent = '£' + fmt2(total);
+  document.getElementById('invRemitModal').classList.add('active');
+}
+
+function closePayRemitModal() {
+  document.getElementById('invRemitModal').classList.remove('active');
+}
+
+async function _findOrCreateRemittanceFolder(payDate) {
+  // 01 - Accounts/06 - Remittances/{YYYY}/{MM}/
+  const base = await _findOrCreateAccountsSubfolder('06 - Remittances');
+  return await _appendYearMonthFolders(base, payDate);
+}
+
+async function confirmPayRemit() {
+  const sel = _invRemitSelection();
+  if (!sel.length) { closePayRemitModal(); return; }
+  const payDate = document.getElementById('invRemitDate').value;
+  if (!payDate) { toast('Please pick a payment date', 'error'); return; }
+  const method = document.getElementById('invRemitMethod').value || 'BACS';
+  const payRef = document.getElementById('invRemitRef').value.trim();
+  const btn = document.getElementById('invRemitConfirmBtn');
+
+  btn.disabled = true;
+  setLoading(true);
+  try {
+    const supplier = await _invGetSupplier(sel[0].supplier_id);
+    const supplierName = (supplier && supplier.supplier_name) || sel[0].supplier_name || 'Supplier';
+    const total = +sel.reduce((s, po) => s + Number(po.supplier_invoice_gross || 0), 0).toFixed(2);
+
+    // 1. Render the remittance PDF (deterministic, native jsPDF)
+    const pdfData = {
+      supplierName,
+      supplierAddress: supplier ? [
+        supplier.address_line1, supplier.address_line2,
+        [supplier.city, supplier.county].filter(Boolean).join(', '),
+        supplier.postcode
+      ].filter(Boolean) : [],
+      contactName: (supplier && supplier.contact_name) || '',
+      payDate, method, payRef,
+      rows: sel.map(po => ({
+        poRef: po.reference || '',
+        invRef: po.supplier_invoice_ref || '—',
+        invDate: po.supplier_invoice_date || null,
+        gross: Number(po.supplier_invoice_gross || 0)
+      })),
+      total
+    };
+    const pdfBlob = await renderBamaRemittancePDF(pdfData);
+
+    // 2. Mark each PO paid (paid_at / paid_by / paid_ref)
+    const me = await getCurrentMicrosoftUser().catch(() => null);
+    const paidBy = (me && (me.name || me.email)) || 'unknown';
+    const paidRef = [method, payRef].filter(Boolean).join(' · ');
+    for (const po of sel) {
+      await api.put(`/api/purchase-orders/${po.id}`, {
+        paid_at: payDate + 'T12:00:00',
+        paid_by: paidBy,
+        paid_ref: paidRef
+      });
+    }
+
+    // 3. Upload the remittance to SharePoint (non-fatal — fall back to a tab)
+    let spOk = false;
+    const fileName = sanitizeSpFilename(`Remittance - ${supplierName} - ${payDate}.pdf`);
+    try {
+      const folder = await _findOrCreateRemittanceFolder(payDate);
+      await uploadFileToFolder(folder.id, fileName, pdfBlob, 'application/pdf');
+      spOk = true;
+    } catch (e) {
+      console.warn('Remittance SharePoint upload failed:', e);
+      try { window.open(URL.createObjectURL(pdfBlob), '_blank'); } catch (e2) { /* */ }
+    }
+
+    _invRemitSelected.clear();
+    closePayRemitModal();
+    toast(`${sel.length} invoice${sel.length === 1 ? '' : 's'} marked paid ✓${spOk ? '' : ' (remittance opened in a tab — SharePoint save failed)'}`,
+          spOk ? 'success' : 'error');
+
+    // 4. Email the remittance to the supplier (last mile)
+    const contentBase64 = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(String(r.result).split(',')[1]);
+      r.onerror = () => rej(new Error('Failed to encode PDF'));
+      r.readAsDataURL(pdfBlob);
+    });
+    const fmt2 = v => Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const payDateUk = new Date(payDate + 'T00:00:00').toLocaleDateString('en-GB');
+    const invoiceList = sel.map(po =>
+      `  \u2022 ${po.supplier_invoice_ref || po.reference}${po.supplier_invoice_ref ? ' (our PO ' + po.reference + ')' : ''} \u2014 \u00a3${fmt2(po.supplier_invoice_gross)}`
+    ).join('\n');
+
+    await openBabcockEmailModal({
+      templateKey: 'emailRemittance',
+      title: `Remittance Advice — ${supplierName}`,
+      to: (supplier && supplier.email) || '',
+      tokens: {
+        supplier_name: supplierName,
+        contact_name: (supplier && supplier.contact_name) || 'Sir/Madam',
+        payment_total: `\u00a3${fmt2(total)}`,
+        payment_date: payDateUk,
+        payment_method: method,
+        payment_ref_line: payRef ? ` (reference ${payRef})` : '',
+        invoice_list: invoiceList
+      },
+      attachment: { name: fileName, contentType: 'application/pdf', contentBase64 },
+      aiDraft: {
+        defaultTone: 'brief',
+        context: `Write a short remittance advice email from BAMA Fabrication Ltd (structural steel fabricator, Peterborough) to a supplier. The remittance advice PDF is attached.
+
+Payment details:
+- Supplier: ${supplierName}${pdfData.contactName ? ' (contact: ' + pdfData.contactName + ')' : ''}
+- Amount paid: \u00a3${fmt2(total)} by ${method} on ${payDateUk}${payRef ? '\n- Payment reference: ' + payRef : ''}
+- Invoices covered:\n${invoiceList}
+- Ask them to allocate the payment against the invoices listed.`
+      }
+    });
+
+    await loadInvoicingData();
+    renderInvSupplierTable();
+  } catch (err) {
+    console.error('Pay & remit failed', err);
+    toast('Pay & remit failed: ' + (err.message || 'unknown error'), 'error');
+  } finally {
+    btn.disabled = false;
+    setLoading(false);
+  }
+}
+
+// ── Remittance advice PDF (native jsPDF — drawDnPDF conventions) ──────────
+async function renderBamaRemittancePDF(d) {
+  const JsPDFCtor = await _resolveJsPDF();
+  const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
+  return drawBamaRemittancePDF(JsPDFCtor, d, logo);
+}
+
+function drawBamaRemittancePDF(jsPDF, d, logoDataUri) {
+  const fmtNum = v => Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmtDate = s => {
+    if (!s) return '';
+    const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return m ? `${m[3]}/${m[2]}/${m[1]}` : s;
+  };
+
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  try {
+    doc.setProperties({
+      title: `BAMA Remittance Advice — ${d.supplierName || ''}`.trim(),
+      author: 'BAMA Fabrication', creator: 'BAMA Fabrication ERP'
+    });
+  } catch (e) { /* */ }
+
+  const pageW = 210, pageH = 297;
+  const marginL = 14, marginR = 14;
+  const usableW = pageW - marginL - marginR;
+  const RED = [208, 2, 27], NAVY = [31, 53, 82];
+  const TEXT = [34, 34, 34], MUTED = [85, 85, 85], RULE = [212, 212, 212];
+  const setText = rgb => doc.setTextColor(rgb[0], rgb[1], rgb[2]);
+  const setFill = rgb => doc.setFillColor(rgb[0], rgb[1], rgb[2]);
+  const setDraw = rgb => doc.setDrawColor(rgb[0], rgb[1], rgb[2]);
+
+  // Header: logo left, title right
+  let y = marginL;
+  if (logoDataUri) {
+    try { doc.addImage(logoDataUri, 'PNG', marginL, y, 75, 32, undefined, 'FAST'); }
+    catch (e) {
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(22); setText(RED);
+      doc.text('BAMA FABRICATION', marginL, y + 12);
+    }
+  } else {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(22); setText(RED);
+    doc.text('BAMA FABRICATION', marginL, y + 12);
+  }
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(24); setText([43, 43, 43]);
+  doc.text('Remittance Advice', pageW - marginR, y + 14, { align: 'right' });
+
+  y = marginL + 42;
+
+  // Two columns: From + To (left) | payment meta (right)
+  const leftColW = usableW * 0.58;
+  const rightColX = marginL + leftColW + 6;
+  let leftY = y, rightY = y;
+
+  setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
+  doc.text('From', marginL, leftY); leftY += 4.5;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+  ['BAMA Fabrication Ltd', '11 Enterprise Way, Enterprise Park, Yaxley,',
+   'PE7 3WY, Peterborough', '01733 855212', 'accounts@bamafabrication.co.uk']
+    .forEach(line => { doc.text(line, marginL + 4, leftY); leftY += 4; });
+  leftY += 4;
+
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
+  doc.text('To', marginL, leftY); leftY += 4.5;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+  const toLines = [d.supplierName, ...(d.supplierAddress || [])].filter(Boolean);
+  toLines.forEach(line => {
+    doc.splitTextToSize(String(line), leftColW - 4).forEach(w => { doc.text(w, marginL + 4, leftY); leftY += 4; });
+  });
+
+  // Right: payment meta box
+  const metaRows = [
+    ['Payment date', fmtDate(d.payDate)],
+    ['Method', d.method || ''],
+    ['Reference', d.payRef || '—'],
+    ['Total paid', '£' + fmtNum(d.total)]
+  ];
+  setDraw(RULE);
+  metaRows.forEach(([k, v], i) => {
+    setText(MUTED); doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
+    doc.text(k.toUpperCase(), rightColX, rightY);
+    setText(i === metaRows.length - 1 ? RED : TEXT);
+    doc.setFont('helvetica', i === metaRows.length - 1 ? 'bold' : 'normal'); doc.setFontSize(10);
+    doc.text(String(v), pageW - marginR, rightY, { align: 'right' });
+    rightY += 3;
+    doc.line(rightColX, rightY, pageW - marginR, rightY);
+    rightY += 5.5;
+  });
+
+  y = Math.max(leftY, rightY) + 8;
+
+  // Invoice table
+  const cols = [
+    { label: 'Our PO Ref', w: 34, align: 'left' },
+    { label: 'Your Invoice #', w: 56, align: 'left' },
+    { label: 'Invoice Date', w: 34, align: 'left' },
+    { label: 'Amount Paid (£)', w: usableW - 34 - 56 - 34, align: 'right' }
+  ];
+  const drawTableHead = () => {
+    setFill(NAVY);
+    doc.rect(marginL, y, usableW, 8, 'F');
+    setText([255, 255, 255]); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+    let x = marginL;
+    cols.forEach(c => {
+      doc.text(c.label, c.align === 'right' ? x + c.w - 3 : x + 3, y + 5.4, { align: c.align });
+      x += c.w;
+    });
+    y += 8;
+  };
+  drawTableHead();
+
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
+  (d.rows || []).forEach((r, i) => {
+    if (y > pageH - 40) { doc.addPage(); y = marginL; drawTableHead(); doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); }
+    if (i % 2 === 1) { setFill([245, 245, 245]); doc.rect(marginL, y, usableW, 7, 'F'); }
+    setText(TEXT);
+    let x = marginL;
+    const vals = [r.poRef, r.invRef, fmtDate(r.invDate), fmtNum(r.gross)];
+    cols.forEach((c, ci) => {
+      doc.text(String(vals[ci] || ''), c.align === 'right' ? x + c.w - 3 : x + 3, y + 4.9, { align: c.align });
+      x += c.w;
+    });
+    y += 7;
+  });
+  setDraw([68, 68, 68]); doc.line(marginL, y, pageW - marginR, y);
+  y += 6;
+
+  // Total pill
+  const pillW = 74, pillH = 11;
+  setFill(NAVY); doc.roundedRect(pageW - marginR - pillW, y, pillW, pillH, 2, 2, 'F');
+  setText([255, 255, 255]); doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
+  doc.text('TOTAL PAID', pageW - marginR - pillW + 4, y + 7.2);
+  doc.setFontSize(12);
+  doc.text('£' + fmtNum(d.total), pageW - marginR - 4, y + 7.4, { align: 'right' });
+  y += pillH + 10;
+
+  // Note
+  setText(TEXT); doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
+  doc.splitTextToSize(
+    `Payment of £${fmtNum(d.total)} has been made by ${d.method || 'bank transfer'} to your account` +
+    (d.payRef ? ` under reference ${d.payRef}` : '') +
+    '. Please allocate against the invoices listed above. Any queries: accounts@bamafabrication.co.uk.',
+    usableW
+  ).forEach(line => { doc.text(line, marginL, y); y += 4.5; });
+
+  // Registration footer
+  setText(MUTED); doc.setFontSize(8);
+  doc.text('BAMA Fabrication Ltd · Registered in England & Wales, Company No. 14680571 · VAT Registration No. 435 0591 07',
+           pageW / 2, pageH - 8, { align: 'center' });
+
+  const blob = doc.output('blob');
+  console.log('Remittance PDF blob size:', blob.size, blob.size < 8192 ? '⚠ suspiciously small' : 'ok');
+  return blob;
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// RETENTION HELD — sales-side card + one-click release invoice
+// ═════════════════════════════════════════════════════════════════════════
+let _invRetentionOpen = false;
+
+function toggleInvRetention() {
+  _invRetentionOpen = !_invRetentionOpen;
+  const body = document.getElementById('invRetBody');
+  const chev = document.getElementById('invRetChevron');
+  if (body) body.style.display = _invRetentionOpen ? '' : 'none';
+  if (chev) chev.textContent = _invRetentionOpen ? '▼' : '▶';
+}
+
+function _invRetentionHeld() {
+  // Invoices with retention held that have no active release invoice yet
+  return (_invInvoiceList || []).filter(i =>
+    i.kind === 'invoice' &&
+    !i.is_retention_release &&
+    ['Issued', 'Partially Paid', 'Paid'].includes(i.status) &&
+    Number(i.retention_amount || 0) > 0.005 &&
+    !(_invInvoiceList || []).some(r =>
+      r.is_retention_release && r.parent_invoice_id === i.id &&
+      !['Void', 'Cancelled'].includes(r.status))
+  );
+}
+
+function renderInvRetention() {
+  const body = document.getElementById('invRetBody');
+  const headline = document.getElementById('invRetHeadline');
+  if (!body || !headline) return;
+
+  const rows = _invRetentionHeld();
+  const fmt2 = v => Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const total = rows.reduce((s, i) => s + Number(i.retention_amount || 0), 0);
+  headline.textContent = `£${fmt2(total)} across ${rows.length} invoice${rows.length === 1 ? '' : 's'}`;
+
+  if (!rows.length) {
+    body.innerHTML = '<div style="font-size:12px;color:var(--muted)">No retention currently held awaiting release.</div>';
+    return;
+  }
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const th = t => `<th style="padding:6px 8px;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;text-align:left;border-bottom:1px solid var(--border)">${t}</th>`;
+  body.innerHTML = `
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr>${th('Invoice')}${th('Customer')}${th('Project')}${th('Retention (£)')}${th('Release Due')}${th('')}</tr></thead>
+      <tbody>${rows.map(i => {
+        const dueStr = _invToDateStr(i.retention_due_date);
+        const overdue = dueStr && dueStr <= todayStr;
+        return `
+        <tr style="cursor:pointer" onclick="openInvoiceDetail(${i.id})"
+            onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
+          <td style="padding:6px 8px;font-family:var(--font-mono);font-weight:600;border-bottom:1px solid var(--border)">${escapeHtml(i.ref)}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border)">${escapeHtml(i.client_company_name || i.customer_text || '—')}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border)">${escapeHtml(i.project_number || '')}</td>
+          <td style="padding:6px 8px;font-weight:600;border-bottom:1px solid var(--border)">£${fmt2(i.retention_amount)}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border);${overdue ? 'color:var(--red);font-weight:600' : ''}">${dueStr ? new Date(dueStr + 'T00:00:00').toLocaleDateString('en-GB') + (overdue ? ' — due now' : '') : '—'}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right">
+            <button class="btn btn-primary" style="padding:3px 10px;font-size:11px"
+                    onclick="event.stopPropagation(); raiseRetentionRelease(${i.id})">🔓 Raise Release Invoice</button>
+          </td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>`;
+}
+
+async function raiseRetentionRelease(invoiceId) {
+  const src = (_invInvoiceList || []).find(i => i.id === invoiceId);
+  if (!src) return;
+  const fmt2 = v => Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const proceed = await bamaConfirm({
+    title: 'Raise retention release invoice',
+    body: `Create a Draft invoice for £${fmt2(src.retention_amount)} to release the retention held under ${src.ref}? You can review and edit it before issuing.`,
+    icon: '🔓',
+    confirmText: 'Create Draft'
+  });
+  if (!proceed) return;
+
+  setLoading(true);
+  try {
+    // Full detail carries client VAT treatment + payment terms
+    const detail = await api.get(`/api/invoices/${invoiceId}`);
+    const net = +(Number(detail.retention_amount || 0)).toFixed(2);
+    if (!(net > 0)) { toast('No retention amount on this invoice', 'error'); return; }
+
+    const treatment = detail.client_id
+      ? (['standard', 'reverse_charge', 'zero'].includes(detail.client_vat_treatment) ? detail.client_vat_treatment : 'reverse_charge')
+      : 'standard';
+    const vatApplies = treatment === 'standard';
+    const cisReverse = treatment === 'reverse_charge';
+    const vat = vatApplies ? +(net * 0.20).toFixed(2) : 0;
+    const reverseCharge = cisReverse ? +(net * 0.20).toFixed(2) : 0;
+    const gross = +(net + vat).toFixed(2);
+
+    const today = new Date();
+    const invoiceDate = today.toISOString().slice(0, 10);
+    const terms = Number(detail.client_payment_terms || 30);
+    const due = new Date(today.getTime() + terms * 86400000).toISOString().slice(0, 10);
+
+    const projectLabel = detail.project_number
+      ? ` — ${detail.project_number}${detail.project_name ? ' ' + detail.project_name : ''}` : '';
+    const description = `Release of retention held under invoice ${detail.ref}${projectLabel}`;
+
+    const createdInv = await api.post('/api/invoices', {
+      kind: 'invoice',
+      is_retention_release: 1,
+      parent_invoice_id: detail.id,
+      invoice_date: invoiceDate,
+      due_date: due,
+      client_id: detail.client_id || null,
+      customer_text: detail.client_id ? null : (detail.customer_text || null),
+      project_id: detail.project_id || null,
+      vat_applies: vatApplies ? 1 : 0,
+      cis_reverse_charge: cisReverse ? 1 : 0,
+      net_amount: net,
+      vat_amount: vat,
+      reverse_charge_amount: reverseCharge,
+      retention_pct: null,
+      retention_amount: 0,
+      retention_due_date: null,
+      gross_amount: gross,
+      total_outstanding: gross,
+      notes: null,
+      line_items: [{ line_no: 1, description, quantity: 1, unit: null, unit_price: net, line_total: net }]
+    });
+
+    toast(`Retention release ${createdInv.ref} created as Draft ✓`, 'success');
+    await loadInvoicingData();
+    renderInvSalesTable();
+    openInvoiceDetail(createdInv.id);
+  } catch (err) {
+    console.error('Raise retention release failed', err);
+    toast('Failed to raise release invoice: ' + (err.message || 'unknown error'), 'error');
+  } finally {
+    setLoading(false);
+  }
 }
 
 function invStatusBadge(status) {
@@ -37864,7 +38369,9 @@ function _buildInvoicePayload() {
     client_id: _invSelectedClient ? _invSelectedClient.id : null,
     customer_text: _invSelectedClient ? null : document.getElementById('invNewCustomerSearch').value.trim(),
     project_id: _invSelectedProject ? _invSelectedProject.id : null,
-    parent_invoice_id: (kind === 'credit_note' && _invSelectedParent) ? _invSelectedParent.id : null,
+    parent_invoice_id: (kind === 'credit_note' && _invSelectedParent) ? _invSelectedParent.id
+                     : (_invEditing && _invEditing.is_retention_release ? (_invEditing.parent_invoice_id || null) : null),
+    is_retention_release: (_invEditing && _invEditing.is_retention_release) ? 1 : 0,
     vat_applies: vatApplies ? 1 : 0,
     cis_reverse_charge: cisReverse ? 1 : 0,
     net_amount: +net.toFixed(2),
@@ -37916,6 +38423,7 @@ async function _buildInvoicePdfData(inv) {
     certRef: inv.afp_certificate_ref || null,
     certDate: inv.afp_certificate_date || null,
     parentRef: inv.parent_invoice_ref || null,
+    isRetentionRelease: !!inv.is_retention_release,
     notes: inv.notes || '',
     lineItems: lines.map((l, i) => ({
       itemNum: i + 1,
@@ -38094,7 +38602,9 @@ function drawBamaInvoicePDF(jsPDF, d, logoDataUri) {
   }
   if (d.parentRef) {
     setText(MUTED); doc.setFontSize(9);
-    doc.text(`Credit against Invoice ${d.parentRef}`, marginL + 4, leftY); leftY += 4;
+    doc.text(d.isRetentionRelease
+      ? `Release of retention held under Invoice ${d.parentRef}`
+      : `Credit against Invoice ${d.parentRef}`, marginL + 4, leftY); leftY += 4;
     setText(TEXT); doc.setFontSize(10);
   }
   if (d.afpRef) {
@@ -38266,6 +38776,8 @@ async function openInvoiceDetail(id) {
     document.getElementById('invDetailProject').textContent =
       (inv.kind === 'credit_note' && inv.parent_invoice_ref)
         ? `Credits ${inv.parent_invoice_ref}${inv.project_number ? ` · ${inv.project_number}` : ''}`
+        : (inv.is_retention_release && inv.parent_invoice_ref)
+        ? `Retention release for ${inv.parent_invoice_ref}${inv.project_number ? ` · ${inv.project_number}` : ''}`
         : (inv.project_number ? `${inv.project_number} — ${inv.project_name || ''}` : '—');
     document.getElementById('invDetailDate').textContent =
       inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString('en-GB') : '—';
