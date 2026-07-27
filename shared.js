@@ -35822,7 +35822,7 @@ async function _afpPopulateSov(projectId) {
     if (pq.tender_id) {
       qlis = await api.get(`/api/quote-line-items?tender_id=${pq.tender_id}`).catch(() => []) || [];
     }
-    return (qlis || [])
+    const mapped = (qlis || [])
       .filter(l => (Number(l.quantity || 0) * Number(l.unit_price || 0)) !== 0)
       .map(l => ({
         section, item_no: itemNo,
@@ -35836,6 +35836,24 @@ async function _afpPopulateSov(projectId) {
         this_app_pct_complete: 0,
         gross_amount_paid: 0
       }));
+    // Fallback: quote has no usable line items (e.g. attached QB quote or a
+    // tender without a breakdown) — emit one line carrying the quote value so
+    // the item still appears in the SOV.
+    if (!mapped.length && Number(pq.quote_value || 0) !== 0) {
+      mapped.push({
+        section, item_no: itemNo,
+        item_description: pq.quote_project_name || pq.reference || '',
+        item_quote_ref: pq.reference || '',
+        item_wo_no: contractNoNow(),
+        source_quote_line_item_id: null,
+        description: 'Contract works (as quoted)',
+        contract_value: +Number(pq.quote_value || 0).toFixed(2),
+        previous_pct_complete: 0,
+        this_app_pct_complete: 0,
+        gross_amount_paid: 0
+      });
+    }
+    return mapped;
   };
 
   _afpLineRows = [];
@@ -36142,6 +36160,227 @@ function recalcAfpTotals() {
   set('afpTotalRetention', fmt(t.retention));
   set('afpTotalVat', fmt(t.vat));
   set('afpTotalGross', fmt(t.due));
+}
+
+// ═══ AFP IMPORT — onboard a mid-project job from its latest AFP file ═══════
+// Two-engine rule: the strict SheetJS parser (or Claude for PDFs / drifted
+// layouts) only READS the document; all cumulative maths stays in JS.
+// Flow: pick .xlsx/.pdf → parse → populate SOV + header fields → user reviews
+// in the modal → Save Draft / Submit as usual.
+
+async function importAfpFromFile(file) {
+  if (!file) return;
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  if (!['xlsx', 'xls', 'pdf'].includes(ext)) {
+    toast('Please upload an .xlsx, .xls or .pdf AFP', 'error');
+    return;
+  }
+  try {
+    setLoading(true);
+    let parsed = null;
+    if (ext === 'pdf') {
+      toast('Reading AFP PDF with AI…', 'info');
+      parsed = await parseAfpWithAI({ kind: 'pdf', file });
+    } else {
+      if (typeof XLSX === 'undefined') throw new Error('XLSX library not loaded on this page');
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array' });
+      try {
+        parsed = parseAfpWorkbook(wb);
+        if (!parsed.items.length) throw new Error('no items found');
+      } catch (strictErr) {
+        console.warn('Strict AFP parse failed, falling back to AI:', strictErr.message);
+        toast('Standard parse failed — reading with AI…', 'info');
+        const csv = wb.SheetNames.map(n => XLSX.utils.sheet_to_csv(wb.Sheets[n])).join('\n\n');
+        parsed = await parseAfpWithAI({ kind: 'csv', text: csv });
+      }
+    }
+    _applyImportedAfp(parsed);
+  } catch (err) {
+    console.error('AFP import failed', err);
+    toast('Import failed: ' + (err.message || 'unknown'), 'error');
+  } finally {
+    setLoading(false);
+    const inp = document.getElementById('afpImportFile');
+    if (inp) inp.value = '';
+  }
+}
+
+// Deterministic parser for BAMA's own AFP workbook layout.
+// Landmarks: 'Contract No:' row, 'Less Previous Contractor certificate' row,
+// '(Less Retention @ X%)' row, section heads A./B./C., 'Item No.' table
+// headers, item rows (numeric col B), sub-lines (text col C + numeric col I).
+function parseAfpWorkbook(wb) {
+  const ws = wb.Sheets['Application'] || wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+  const cell = (r, c) => (rows[r] && rows[r][c] != null) ? rows[r][c] : null;
+  const str = v => v == null ? '' : String(v).trim();
+
+  const out = { contract_no: null, previous_certificate_value: null, retention_pct: null, items: [] };
+
+  let section = null;      // 'measured' | 'variation' | 'materials'
+  let currentItem = null;
+  const itemCounters = { measured: 0, variation: 0, materials: 0 };
+
+  for (let r = 0; r < rows.length; r++) {
+    const a = str(cell(r, 0)), b = cell(r, 1), c = str(cell(r, 2));
+
+    // Header landmarks
+    if (/^contract no:?$/i.test(a) && c) out.contract_no = c;
+    if (/less previous contractor certificate/i.test(c)) {
+      const v = Number(cell(r, 4));
+      if (!isNaN(v)) out.previous_certificate_value = v;
+    }
+    const retMatch = c.match(/less retention @\s*([\d.]+)\s*%/i);
+    if (retMatch) out.retention_pct = Number(retMatch[1]);
+
+    // Section switches — the table headings (summary rows A./B./C. also match
+    // on text, so require the *long* headings used above the tables)
+    if (/measured works complete/i.test(c)) { section = 'measured'; currentItem = null; continue; }
+    if (section && /^variations$/i.test(c) && a === 'B.') { section = 'variation'; currentItem = null; continue; }
+    if (/materials off site/i.test(c)) { section = 'materials'; currentItem = null; continue; }
+    if (!section) continue;
+
+    // Section total rows end the current item
+    if (/^total /i.test(c) || /^total\b/i.test(c) && /variations|measured|materials/i.test(c)) { currentItem = null; continue; }
+
+    const bNum = (typeof b === 'number') ? b : (b != null && String(b).trim() !== '' && !isNaN(Number(b)) ? Number(b) : null);
+    const iVal = Number(cell(r, 8));   // col I — Gross Application Value
+    const jPct = cell(r, 9);           // col J — % Complete (fraction)
+    const lPaid = Number(cell(r, 11)); // col L — Gross Amount Paid
+
+    // Item start: numeric col B + descriptive col C
+    if (bNum != null && c) {
+      itemCounters[section]++;
+      currentItem = {
+        section,
+        item_no: itemCounters[section],
+        description: c,
+        quote_ref: str(cell(r, 3)),
+        wo_no: str(cell(r, 4)),
+        lines: []
+      };
+      out.items.push(currentItem);
+      // Single-line item (value on the item row itself, e.g. "Additional day of drilling")
+      if (!isNaN(iVal) && iVal !== 0) {
+        currentItem.lines.push({
+          description: c,
+          value: iVal,
+          pct_complete: jPct != null ? Number(jPct) * 100 : 0,
+          gross_amount_paid: !isNaN(lPaid) ? lPaid : 0
+        });
+      }
+      continue;
+    }
+
+    // Sub-line: col C text + col I numeric, inside an item
+    if (currentItem && c && !isNaN(iVal) && cell(r, 8) != null) {
+      currentItem.lines.push({
+        description: c,
+        value: iVal,
+        pct_complete: jPct != null ? Number(jPct) * 100 : 0,
+        gross_amount_paid: !isNaN(lPaid) ? lPaid : 0
+      });
+    }
+  }
+
+  out.items = out.items.filter(it => it.lines.length);
+  return out;
+}
+
+// AI fallback / PDF path — Claude reads and extracts, JS does all maths.
+async function parseAfpWithAI({ kind, file, text }) {
+  const prompt = `Extract the full schedule of values from this UK construction Application for Payment. Return ONLY JSON, no markdown:
+{
+  "contract_no": "client contract/WO no e.g. S-CM0665/0028 or null",
+  "previous_certificate_value": 0,
+  "retention_pct": 5,
+  "items": [
+    {
+      "section": "measured|variation|materials",
+      "item_no": 1,
+      "description": "the item heading / scope text",
+      "quote_ref": "BAMA quote no e.g. Q250911 or empty",
+      "wo_no": "works order no or empty",
+      "lines": [
+        { "description": "Prelims", "value": 672.00, "pct_complete": 85, "gross_amount_paid": 504.00 }
+      ]
+    }
+  ]
+}
+Rules:
+- section: Measured Works table → "measured"; Variations table → "variation"; Materials → "materials".
+- value = the line's Gross Application Value £ (the contract value, NOT the completed total).
+- pct_complete = the % Complete column as 0–100.
+- gross_amount_paid = the Gross Amount Paid column (0 if blank).
+- Include every item and every sub-line, including 0% ones. Numbers without currency symbols or thousands separators.`;
+
+  const content = [];
+  if (kind === 'pdf') {
+    const dataUri = await _fileToDataUri(file);
+    content.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: dataUri.split(',')[1] } });
+    content.push({ type: 'text', text: prompt });
+  } else {
+    content.push({ type: 'text', text: prompt + '\n\nSpreadsheet contents as CSV:\n' + text });
+  }
+
+  const result = await callClaude({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 8000,
+    messages: [{ role: 'user', content }]
+  });
+  const raw = (result.content?.find(bl => bl.type === 'text')?.text || '').trim();
+  const js = raw.indexOf('{'), je = raw.lastIndexOf('}');
+  if (js < 0 || je < 0) throw new Error('AI returned no JSON');
+  const parsed = JSON.parse(raw.slice(js, je + 1));
+  parsed.items = (parsed.items || []).filter(it => (it.lines || []).length);
+  return parsed;
+}
+
+// Map an imported AFP into the working SOV. The imported document is the
+// LATEST application, so its cumulative % becomes the new AFP's starting
+// point (prev = cum = imported %), and its Paid column carries forward.
+function _applyImportedAfp(parsed) {
+  const woDefault = parsed.contract_no || document.getElementById('afpNewContractNo')?.value || '';
+  const counters = { measured: 0, variation: 0, materials: 0 };
+  const rows = [];
+  for (const item of (parsed.items || [])) {
+    const section = ['measured', 'variation', 'materials'].includes(item.section) ? item.section : 'measured';
+    const itemNo = ++counters[section];
+    for (const l of (item.lines || [])) {
+      const pct = Math.min(100, Math.max(0, Number(l.pct_complete || 0)));
+      rows.push({
+        section, item_no: itemNo,
+        item_description: item.description || '',
+        item_quote_ref: item.quote_ref || '',
+        item_wo_no: item.wo_no || woDefault,
+        source_quote_line_item_id: null,
+        description: l.description || '',
+        contract_value: +Number(l.value || 0).toFixed(2),
+        previous_pct_complete: pct,
+        this_app_pct_complete: pct,
+        gross_amount_paid: +Number(l.gross_amount_paid || 0).toFixed(2)
+      });
+    }
+  }
+  if (!rows.length) { toast('Nothing usable found in that file', 'error'); return; }
+
+  _afpLineRows = rows;
+  _afpRenumberLines();
+
+  if (parsed.contract_no) document.getElementById('afpNewContractNo').value = parsed.contract_no;
+  if (parsed.retention_pct != null) document.getElementById('afpNewRetentionPct').value = Number(parsed.retention_pct);
+
+  // Prev certificate for the NEW application = the imported AFP's cumulative
+  // Value of Application (assumes it was certified in full — edit against the
+  // latest payment notice if they certified less).
+  const cumTotal = rows.reduce((s, l) => s + l.contract_value * l.this_app_pct_complete / 100, 0);
+  document.getElementById('afpNewPrevCert').value = cumTotal.toFixed(2);
+
+  renderAfpLineRows();
+  recalcAfpTotals();
+  const nItems = counters.measured + counters.variation + counters.materials;
+  toast(`Imported ${nItems} items / ${rows.length} lines ✓ — prev certificate set to £${cumTotal.toLocaleString('en-GB', { minimumFractionDigits: 2 })} (the imported AFP's cumulative). Check it against the latest payment notice.`, 'success');
 }
 
 function _afpFormatPeriodLabel(start, end) {
@@ -37812,7 +38051,8 @@ async function saveSupplierInvoice() {
 // ═════════════════════════════════════════════════════════════════════════
 
 function _buildAfpPdfData(afp) {
-  const lines = afp.line_items || [];
+  // Zero-value lines stay editable in the modal but are omitted from the PDF
+  const lines = (afp.line_items || []).filter(l => Number(l.contract_value || 0) !== 0);
   const bySection = (s) => lines.filter(l => (l.section || 'measured') === s);
 
   const groupItems = (sectionLines) => {

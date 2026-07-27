@@ -706,7 +706,14 @@
     <!-- Schedule of Values — grouped: A. Measured Works / B. Variations / C. Materials -->
     <div style="margin-bottom:12px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px">
-        <label class="field-label" style="margin:0">Schedule of Values</label>
+        <div style="display:flex;align-items:center;gap:10px">
+          <label class="field-label" style="margin:0">Schedule of Values</label>
+          <button type="button" class="btn btn-ghost" style="padding:3px 10px;font-size:11px"
+                  title="Onboard a mid-project job: reads your latest submitted AFP (.xlsx or .pdf) and fills the schedule, cumulative % and paid-to-date"
+                  onclick="document.getElementById('afpImportFile').click()">📥 Import latest AFP</button>
+          <input type="file" id="afpImportFile" accept=".xlsx,.xls,.pdf" style="display:none"
+                 onchange="importAfpFromFile(this.files[0])">
+        </div>
         <div style="display:grid;grid-template-columns:92px 48px 92px 62px 92px 26px;gap:6px;
                     font-size:9px;color:var(--subtle);text-transform:uppercase;letter-spacing:.5px;text-align:center">
           <div>Value £</div><div>Prev</div><div>Cumulative %</div><div></div><div>This App £</div><div></div>
@@ -968,6 +975,7 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="shared.js?v=20260727i"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="shared.js?v=20260727j"></script>
 </body>
 </html>
