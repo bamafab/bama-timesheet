@@ -141,6 +141,10 @@
         <div class="proj-detail-title" id="jobDetailTitle"></div>
         <div class="proj-detail-meta" id="jobDetailMeta"></div>
       </div>
+      <button class="btn" onclick="openJobSheetModal()"
+              style="padding:8px 16px;font-size:12px;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);color:#60a5fa">
+        &#128203; Job Sheet
+      </button>
       <div id="jobStatusBadge" style="font-size:12px;font-weight:600;padding:6px 14px;border-radius:8px"></div>
     </div>
 
@@ -577,6 +581,81 @@
      Ships ready_for_despatch BOM items to the client/site
      and flips them to status='on_site'.
 ══════════════════════════════════════════ -->
+<!-- ═══════════════════════════════════════
+     JOB SHEET MODAL
+     Per-job site/delivery details (JobSheets table). Once saved, this
+     is the DEFAULT prefill source for Site DN / Site Pack / RAMS.
+     When empty, those documents fall back to the project's site
+     address, then the client address — exactly as before. Supplier
+     DNs (galv / powder) are NOT wired to this.
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="jobSheetModal">
+  <div class="modal" style="width:640px;max-width:96vw;max-height:92vh;overflow-y:auto">
+    <div class="modal-title" style="margin-bottom:6px">&#128203; Job Sheet</div>
+    <div style="color:var(--muted);font-size:12px;margin-bottom:14px" id="jsSourceHint"></div>
+
+    <div id="jsPrefillRow" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+      <button class="btn btn-ghost js-field" style="padding:6px 12px;font-size:11px" onclick="jobSheetPrefill('site')">Use project site address</button>
+      <button class="btn btn-ghost js-field" style="padding:6px 12px;font-size:11px" onclick="jobSheetPrefill('client')">Use client address</button>
+    </div>
+
+    <div class="field-label">SITE / DELIVERY DETAILS</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px">
+      <div style="grid-column:1 / -1">
+        <label style="font-size:11px;color:var(--muted)">Site name</label>
+        <input id="jsSiteName" type="text" class="field-input js-field" placeholder="e.g. Unit 4, Riverside Development">
+      </div>
+      <div style="grid-column:1 / -1">
+        <label style="font-size:11px;color:var(--muted)">Address line 1</label>
+        <input id="jsAddr1" type="text" class="field-input js-field">
+      </div>
+      <div style="grid-column:1 / -1">
+        <label style="font-size:11px;color:var(--muted)">Address line 2</label>
+        <input id="jsAddr2" type="text" class="field-input js-field">
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--muted)">City / Town</label>
+        <input id="jsCity" type="text" class="field-input js-field">
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--muted)">County</label>
+        <input id="jsCounty" type="text" class="field-input js-field">
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--muted)">Postcode</label>
+        <input id="jsPostcode" type="text" class="field-input js-field">
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--muted)">Client PO number</label>
+        <input id="jsPo" type="text" class="field-input js-field" placeholder="Client's purchase order ref">
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--muted)">Site contact</label>
+        <input id="jsContactName" type="text" class="field-input js-field" placeholder="Name">
+      </div>
+      <div>
+        <label style="font-size:11px;color:var(--muted)">Site phone</label>
+        <input id="jsContactPhone" type="text" class="field-input js-field" placeholder="Phone">
+      </div>
+      <div style="grid-column:1 / -1">
+        <label style="font-size:11px;color:var(--muted)">Site contact email</label>
+        <input id="jsContactEmail" type="text" class="field-input js-field" placeholder="Email">
+      </div>
+      <div style="grid-column:1 / -1">
+        <label style="font-size:11px;color:var(--muted)">Notes <span style="color:var(--muted)">(access restrictions, delivery instructions, etc.)</span></label>
+        <textarea id="jsNotes" class="field-input js-field" rows="3" style="resize:vertical"></textarea>
+      </div>
+    </div>
+
+    <button class="btn btn-primary btn-full" id="jsSaveBtn" onclick="saveJobSheet()" style="padding:14px;font-size:15px">
+      Save Job Sheet
+    </button>
+    <button class="btn btn-ghost btn-full" onclick="closeJobSheetModal()" style="margin-top:10px;padding:12px">
+      Close
+    </button>
+  </div>
+</div>
+
 <div class="modal-overlay" id="siteDnModal">
   <div class="modal" style="width:640px;max-width:96vw">
     <div class="modal-title" style="margin-bottom:6px">Site Delivery Note</div>
@@ -588,7 +667,7 @@
     <div id="sdnItemList" style="margin-bottom:20px"></div>
 
     <div class="field-label">DELIVERY DETAILS
-      <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted);font-size:11px">— prefilled from the project, edit if anything's wrong before generating</span>
+      <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted);font-size:11px">— prefilled from the Job Sheet (or the project when no sheet is saved), edit if anything's wrong before generating</span>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px">
       <div style="grid-column:1 / -1">
@@ -895,6 +974,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
-<script src="shared.js?v=20260727b"></script>
+<script src="shared.js?v=20260727c"></script>
 </body>
 </html>

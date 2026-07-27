@@ -12115,7 +12115,8 @@ function openJobDetail(projectId, jobId) {
     loadJobAssemblies(jobIdInt),
     loadJobBomItems(jobIdInt),
     loadFinishes(),
-    loadJobElementData(jobIdInt)
+    loadJobElementData(jobIdInt),
+    loadJobSheet(jobIdInt)
   ]).then(() => renderAllElements()).catch(() => renderAllElements());
 }
 
@@ -13250,6 +13251,181 @@ async function confirmGenerateDnSQL() {
 //     ready can ride along.
 //   - Uses Settings.sdn_next_seq → SDN-0001, SDN-0002, …
 //   - Terminal status is 'on_site' (not 'despatched').
+// ═══════════════════════════════════════════
+// JOB SHEET — per-job site/delivery details
+// ═══════════════════════════════════════════
+//
+// One JobSheets row per DrawingJobs row. The Job Sheet is the DEFAULT
+// prefill source for the site-facing documents (Site DN, Site Pack,
+// RAMS) — see _jobSheetResolved(). When no job sheet has been saved
+// yet, those documents fall back to the project's site address (if
+// set) and then the client address, exactly as before.
+//
+// Supplier DNs (galv / powder coat) are deliberately NOT wired to
+// this — they keep using the supplier's own address.
+
+let _currentJobSheet = null;
+
+async function loadJobSheet(jobId) {
+  _currentJobSheet = null;
+  if (!jobId) return null;
+  try {
+    const row = await api.get(`/api/job-sheet/${parseInt(jobId)}`);
+    _currentJobSheet = (row && row.job_id) ? row : null;
+  } catch (e) {
+    _currentJobSheet = null;  // degrade gracefully — prefill falls back to project
+  }
+  return _currentJobSheet;
+}
+
+// Resolve the default site/delivery details for site-facing documents.
+// Priority: 1) saved Job Sheet  2) project site address  3) client address.
+// Returns { source, siteName, lines[], contact, phone, email, po }.
+function _jobSheetResolved(proj) {
+  const js = _currentJobSheet;
+  const jsHasData = js && (js.address_line1 || js.postcode || js.contact_name || js.site_name);
+  if (jsHasData) {
+    return {
+      source:   'jobsheet',
+      siteName: js.site_name || proj?.name || proj?.project_name || '',
+      lines: [js.address_line1, js.address_line2,
+              [js.city, js.county].filter(Boolean).join(', '), js.postcode].filter(Boolean),
+      contact: js.contact_name  || '',
+      phone:   js.contact_phone || '',
+      email:   js.contact_email || '',
+      po:      js.client_po_number || proj?.client_po_number || ''
+    };
+  }
+  const useSite = proj && proj.site_same_as_client === false &&
+    (proj.site_address_line1 || proj.site_postcode);
+  const a = useSite
+    ? { l1: proj.site_address_line1, l2: proj.site_address_line2, city: proj.site_city,
+        county: proj.site_county, pc: proj.site_postcode,
+        contact: proj.site_contact_name, phone: proj.site_contact_phone,
+        email: proj.site_contact_email }
+    : { l1: proj?.client_address_line1, l2: proj?.client_address_line2, city: proj?.client_city,
+        county: proj?.client_county, pc: proj?.client_postcode,
+        contact: proj?.client_contact_name, phone: proj?.client_contact_phone,
+        email: proj?.client_contact_email };
+  return {
+    source:   useSite ? 'project-site' : 'client',
+    siteName: proj?.name || proj?.project_name || '',
+    lines: [a.l1, a.l2, [a.city, a.county].filter(Boolean).join(', '), a.pc].filter(Boolean),
+    contact: a.contact || '',
+    phone:   a.phone   || '',
+    email:   a.email   || '',
+    po:      proj?.client_po_number || ''
+  };
+}
+
+function _jsSetVal(id, v) {
+  const el = document.getElementById(id);
+  if (el) el.value = (v == null ? '' : v);
+}
+
+function openJobSheetModal() {
+  if (!currentJob?.id) { toast('No job selected.', 'error'); return; }
+  const js = _currentJobSheet || {};
+
+  if (js.job_id) {
+    _jsSetVal('jsSiteName',     js.site_name);
+    _jsSetVal('jsAddr1',        js.address_line1);
+    _jsSetVal('jsAddr2',        js.address_line2);
+    _jsSetVal('jsCity',         js.city);
+    _jsSetVal('jsCounty',       js.county);
+    _jsSetVal('jsPostcode',     js.postcode);
+    _jsSetVal('jsContactName',  js.contact_name);
+    _jsSetVal('jsContactPhone', js.contact_phone);
+    _jsSetVal('jsContactEmail', js.contact_email);
+    _jsSetVal('jsPo',           js.client_po_number);
+    _jsSetVal('jsNotes',        js.notes);
+  } else {
+    jobSheetPrefill('auto');   // seed a fresh sheet from the project
+  }
+
+  const editable = isDraftsman && currentJob.status !== 'closed';
+  document.querySelectorAll('#jobSheetModal .js-field').forEach(el => { el.disabled = !editable; });
+  const saveBtn = document.getElementById('jsSaveBtn');
+  if (saveBtn) saveBtn.style.display = editable ? '' : 'none';
+  const prefillRow = document.getElementById('jsPrefillRow');
+  if (prefillRow) prefillRow.style.display = editable ? 'flex' : 'none';
+
+  const hint = document.getElementById('jsSourceHint');
+  if (hint) {
+    hint.textContent = js.job_id
+      ? `Saved${js.updated_at ? ' ' + new Date(js.updated_at).toLocaleDateString('en-GB') : ''}${js.updated_by ? ' by ' + js.updated_by : ''} — SDN / Site Pack / RAMS prefill from this sheet.`
+      : 'Not saved yet — prefilled from the project. Save to make this the default source for SDN / Site Pack / RAMS.';
+  }
+  document.getElementById('jobSheetModal').classList.add('active');
+}
+
+// mode: 'auto' (project site if set, else client) | 'site' | 'client'.
+// The two explicit modes back the "Use project site" / "Use client
+// address" buttons in the modal, so switching source is one click —
+// everything stays editable afterwards.
+function jobSheetPrefill(mode) {
+  const proj = currentProject || {};
+  const site = { l1: proj.site_address_line1, l2: proj.site_address_line2, city: proj.site_city,
+                 county: proj.site_county, pc: proj.site_postcode,
+                 contact: proj.site_contact_name, phone: proj.site_contact_phone,
+                 email: proj.site_contact_email };
+  const client = { l1: proj.client_address_line1, l2: proj.client_address_line2, city: proj.client_city,
+                   county: proj.client_county, pc: proj.client_postcode,
+                   contact: proj.client_contact_name, phone: proj.client_contact_phone,
+                   email: proj.client_contact_email };
+  let a;
+  if (mode === 'site')        a = site;
+  else if (mode === 'client') a = client;
+  else a = (proj.site_same_as_client === false && (proj.site_address_line1 || proj.site_postcode))
+    ? site : client;
+
+  _jsSetVal('jsSiteName',     proj.name || proj.project_name || '');
+  _jsSetVal('jsAddr1',        a.l1);
+  _jsSetVal('jsAddr2',        a.l2);
+  _jsSetVal('jsCity',         a.city);
+  _jsSetVal('jsCounty',       a.county);
+  _jsSetVal('jsPostcode',     a.pc);
+  _jsSetVal('jsContactName',  a.contact);
+  _jsSetVal('jsContactPhone', a.phone);
+  _jsSetVal('jsContactEmail', a.email);
+  _jsSetVal('jsPo',           proj.client_po_number || '');
+}
+
+function closeJobSheetModal() {
+  document.getElementById('jobSheetModal').classList.remove('active');
+}
+
+async function saveJobSheet() {
+  if (!currentJob?.id) return;
+  const val = id => (document.getElementById(id)?.value || '').trim() || null;
+  const body = {
+    site_name:        val('jsSiteName'),
+    address_line1:    val('jsAddr1'),
+    address_line2:    val('jsAddr2'),
+    city:             val('jsCity'),
+    county:           val('jsCounty'),
+    postcode:         val('jsPostcode'),
+    contact_name:     val('jsContactName'),
+    contact_phone:    val('jsContactPhone'),
+    contact_email:    val('jsContactEmail'),
+    client_po_number: val('jsPo'),
+    notes:            val('jsNotes'),
+    updated_by:       _currentDraftsmanName || null
+  };
+  const btn = document.getElementById('jsSaveBtn');
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving\u2026'; }
+    const saved = await api.put(`/api/job-sheet/${parseInt(currentJob.id)}`, body);
+    _currentJobSheet = (saved && saved.job_id) ? saved : null;
+    toast('Job sheet saved \u2014 SDN / Site Pack / RAMS will prefill from it.', 'success');
+    closeJobSheetModal();
+  } catch (e) {
+    toast('Failed to save job sheet: ' + (e.message || e), 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Save Job Sheet'; }
+  }
+}
+
 let _pendingSdn = null;
 
 function openSiteDnModal() {
@@ -13324,24 +13500,18 @@ function openSiteDnModal() {
   // editable in the modal — if the project data is wrong or missing, the user
   // fixes it here and still gets a correct DN without touching the database.
   const proj = currentProject;
-  const useSite = proj && proj.site_same_as_client === false &&
-    (proj.site_address_line1 || proj.site_postcode);
-  const a = useSite
-    ? { l1: proj.site_address_line1, l2: proj.site_address_line2, city: proj.site_city,
-        county: proj.site_county, pc: proj.site_postcode,
-        contact: proj.site_contact_name, phone: proj.site_contact_phone }
-    : { l1: proj?.client_address_line1, l2: proj?.client_address_line2, city: proj?.client_city,
-        county: proj?.client_county, pc: proj?.client_postcode,
-        contact: proj?.client_contact_name, phone: proj?.client_contact_phone };
-  const addrLines = [a.l1, a.l2, [a.city, a.county].filter(Boolean).join(', '), a.pc].filter(Boolean);
-  const nameGuess = (proj?.client && proj?.name) ? `${proj.client} — ${proj.name}`
-                  : (proj?.client || proj?.name || '');
+  // Job Sheet is the default source (falls back to project site / client
+  // details when no job sheet is saved yet) — see _jobSheetResolved().
+  const r = _jobSheetResolved(proj);
+  const nameGuess = (proj?.client && (r.siteName || proj?.name))
+    ? `${proj.client} — ${r.siteName || proj.name}`
+    : (proj?.client || r.siteName || proj?.name || '');
   const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
   setVal('sdnDeliverName',  nameGuess);
-  setVal('sdnDeliverAddr',  addrLines.join('\n'));
-  setVal('sdnContactName',  a.contact);
-  setVal('sdnContactPhone', a.phone);
-  setVal('sdnClientPo',     proj?.client_po_number);  // may not exist yet — harmless
+  setVal('sdnDeliverAddr',  r.lines.join('\n'));
+  setVal('sdnContactName',  r.contact);
+  setVal('sdnContactPhone', r.phone);
+  setVal('sdnClientPo',     r.po);
 
   sdnUpdateSelCount();
   document.getElementById('siteDnModal').classList.add('active');
@@ -14223,21 +14393,12 @@ function openSitePackModal() {
   setV('spNotes',      '');
   const spStatus = document.getElementById('spScopeStatus'); if (spStatus) spStatus.textContent = '';
 
-  // — Site address (mirror the SDN site-vs-client resolution) —
-  const useSite = proj && proj.site_same_as_client === false &&
-    (proj.site_address_line1 || proj.site_postcode);
-  const a = useSite
-    ? { l1: proj.site_address_line1, l2: proj.site_address_line2, city: proj.site_city,
-        county: proj.site_county, pc: proj.site_postcode,
-        contact: proj.site_contact_name, phone: proj.site_contact_phone }
-    : { l1: proj?.client_address_line1, l2: proj?.client_address_line2, city: proj?.client_city,
-        county: proj?.client_county, pc: proj?.client_postcode,
-        contact: proj?.client_contact_name, phone: proj?.client_contact_phone };
-  const addrLines = [a.l1, a.l2, [a.city, a.county].filter(Boolean).join(', '), a.pc].filter(Boolean);
-  setV('spSiteName',   proj?.name || proj?.project_name || '');
-  setV('spSiteAddr',   addrLines.join('\n'));
-  setV('spSiteContact', a.contact);
-  setV('spSitePhone',   a.phone);
+  // — Site address (Job Sheet first; falls back to project site / client) —
+  const r = _jobSheetResolved(proj);
+  setV('spSiteName',   r.siteName);
+  setV('spSiteAddr',   r.lines.join('\n'));
+  setV('spSiteContact', r.contact);
+  setV('spSitePhone',   r.phone);
 
   // — Drawings picker (from the Site Installation files on this job) —
   // These are drawings to READ. Exclude our own previously-generated Site Packs
@@ -14354,21 +14515,12 @@ function openRamsModal() {
   // — Risk assessment picker (phase 3c — reset to full library each open) —
   ramsRenderRiskPicker();
 
-  // — Site address (mirror the Site Pack site-vs-client resolution) —
-  const useSite = proj && proj.site_same_as_client === false &&
-    (proj.site_address_line1 || proj.site_postcode);
-  const a = useSite
-    ? { l1: proj.site_address_line1, l2: proj.site_address_line2, city: proj.site_city,
-        county: proj.site_county, pc: proj.site_postcode,
-        contact: proj.site_contact_name, phone: proj.site_contact_phone }
-    : { l1: proj?.client_address_line1, l2: proj?.client_address_line2, city: proj?.client_city,
-        county: proj?.client_county, pc: proj?.client_postcode,
-        contact: proj?.client_contact_name, phone: proj?.client_contact_phone };
-  const addrLines = [a.l1, a.l2, [a.city, a.county].filter(Boolean).join(', '), a.pc].filter(Boolean);
-  setV('ramsSiteName',    proj?.name || proj?.project_name || '');
-  setV('ramsSiteAddr',    addrLines.join('\n'));
-  setV('ramsSiteContact', a.contact);
-  setV('ramsSitePhone',   a.phone);
+  // — Site address (Job Sheet first; falls back to project site / client) —
+  const r = _jobSheetResolved(proj);
+  setV('ramsSiteName',    r.siteName);
+  setV('ramsSiteAddr',    r.lines.join('\n'));
+  setV('ramsSiteContact', r.contact);
+  setV('ramsSitePhone',   r.phone);
 
   // — Drawings picker (Site Installation files, minus our own generated output) —
   const allSiteFiles = (job.site && job.site.files) || [];

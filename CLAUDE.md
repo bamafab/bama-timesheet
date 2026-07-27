@@ -88,6 +88,18 @@ management, and a standalone UK steel section reference.
   null `cost_centre`. Failing to null `cost_centre` will violate the
   check constraint and the UPDATE will fail mid-transaction.
 
+- **Job Sheet is the default prefill source for site-facing documents.**
+  Each DrawingJobs row can have one `JobSheets` row (site address, site
+  contact, client PO, notes) edited via the Job Sheet modal in
+  `projects.html` (button in the job detail header; draftsman-editable,
+  read-only otherwise). SDN, Site Pack, and RAMS prefill through
+  `_jobSheetResolved(proj)` in `shared.js`: saved Job Sheet → project
+  site address → client address. Everything remains editable in each
+  document modal. **Supplier DNs (galv / powder coat) are deliberately
+  NOT wired to the Job Sheet** — they keep the supplier's own address.
+  API: `GET/PUT /api/job-sheet/{jobId}` (flat route, upsert). Migration:
+  `api/sql/add-job-sheets.sql` (new table — no Function App restart).
+
 ## Architecture at a glance
 
 Two independently deployed pieces:
