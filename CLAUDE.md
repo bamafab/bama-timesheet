@@ -969,6 +969,13 @@ none of this is built yet.
   every expanded aged-debt invoice row (`chaseInvoiceById` fetches
   detail + opens composer; event.stopPropagation so the row click still
   opens detail). PDF copy attached in both paths.
+- **Invoicing: reopen wrongly-Paid invoices (2026-07-27)** — "↩ Reopen"
+  button on the detail modal, visible only for Paid invoices with ZERO
+  payment rows (i.e. imported historicals). `POST /api/invoices/{id}/
+  reopen` (guarded server-side: must be Paid, must have no payments —
+  invoices WITH payments are corrected by deleting the payment row,
+  which recomputes automatically). Sets status=Issued, total_outstanding
+  =gross. bamaConfirm gate before action.
   Invoicing module COMPLETE except parked items
   (remittance OCR, retention release invoicing).
 - **Invoice Tracker** — standalone `invoice-tracker.html` page with four

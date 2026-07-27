@@ -38263,6 +38263,9 @@ async function openInvoiceDetail(id) {
     const chaseBtn = document.getElementById('invDetailChaseBtn');
     if (chaseBtn) chaseBtn.style.display =
       ((inv.status === 'Issued' || inv.status === 'Partially Paid') && Number(inv.total_outstanding || 0) > 0.005 && inv.kind === 'invoice') ? '' : 'none';
+    const reopenBtn = document.getElementById('invDetailReopenBtn');
+    if (reopenBtn) reopenBtn.style.display =
+      (inv.status === 'Paid' && (inv.payments || []).length === 0) ? '' : 'none';
     payBtn.style.display   = (inv.status === 'Issued' || inv.status === 'Partially Paid') ? '' : 'none';
     voidBtn.style.display  = (inv.status !== 'Void' && inv.status !== 'Cancelled') ? '' : 'none';
 
@@ -38756,6 +38759,30 @@ async function _invAllocateCreditNote(cn) {
 async function emailInvoiceFromDetail() {
   if (!_invDetailCurrent) return;
   await _openInvoiceEmailComposer(_invDetailCurrent);
+}
+
+// ── Reopen a wrongly-Paid invoice (imported ones, no payment rows) ────────
+async function reopenInvoiceFromDetail() {
+  if (!_invDetailCurrent) return;
+  const inv = _invDetailCurrent;
+  const sure = await bamaConfirm({
+    title: `Reopen ${inv.ref}?`,
+    body: `This will set it back to <b>Issued</b> with the full £${_invFmt2(inv.gross_amount)} outstanding. It will reappear in Aged Debt.`,
+    confirmText: 'Reopen'
+  });
+  if (!sure) return;
+  try {
+    setLoading(true);
+    await api.post(`/api/invoices/${inv.id}/reopen`, {});
+    toast(`${inv.ref} reopened — back to Issued ✓`, 'success');
+    closeInvDetail();
+    await loadInvoicingData();
+    switchInvTab('sales');
+  } catch (err) {
+    toast('Reopen failed: ' + (err.message || 'unknown'), 'error');
+  } finally {
+    setLoading(false);
+  }
 }
 
 async function chaseInvoiceFromDetail() {

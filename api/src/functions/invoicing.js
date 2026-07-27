@@ -1265,6 +1265,46 @@ app.http('invoices-update', {
     }
 });
 
+// POST /api/invoices/{id}/reopen — flip a Paid invoice back to Issued.
+// Guarded: only allowed when NO payments are recorded (i.e. imported
+// historicals wrongly marked Paid). Invoices with payment rows must be
+// corrected by deleting the payment (which recomputes automatically).
+app.http('invoices-reopen', {
+    methods: ['POST'],
+    authLevel: 'anonymous',
+    route: 'invoices/{id}/reopen',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+        try {
+            const id = parseInt(request.params.id);
+            const invRes = await query('SELECT status, gross_amount FROM Invoices WHERE id = @id', { id });
+            if (!invRes.recordset.length) return notFound('Invoice not found', request);
+            const inv = invRes.recordset[0];
+            if (inv.status !== 'Paid') {
+                return badRequest(`Only Paid invoices can be reopened (current: ${inv.status})`, request);
+            }
+            const pays = await query('SELECT COUNT(*) AS n FROM InvoicePayments WHERE invoice_id = @id', { id });
+            if (Number(pays.recordset[0].n) > 0) {
+                return badRequest('This invoice has recorded payments — delete the payment row(s) instead; status recomputes automatically', request);
+            }
+            const upd = await query(
+                `UPDATE Invoices SET
+                    status = 'Issued',
+                    total_outstanding = gross_amount,
+                    updated_at = GETUTCDATE()
+                 OUTPUT INSERTED.*
+                 WHERE id = @id`,
+                { id }
+            );
+            return ok(upd.recordset[0], request);
+        } catch (err) {
+            context.error('Error reopening invoice:', err);
+            return serverError('Failed to reopen invoice: ' + err.message, request);
+        }
+    }
+});
+
 app.http('invoices-issue', {
     methods: ['POST'],
     authLevel: 'anonymous',
