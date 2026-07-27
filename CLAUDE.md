@@ -549,6 +549,14 @@ tuned live, so they are deliberately NOT duplicated here.
   `rowWeight()` in the totals engine already honour this: a fixed-price row is a
   valid zero-weight row, NOT a "missing kg/m" error. Don't reintroduce a
   missing-weight warning for them.
+- **Pop-up / dialog rule (2026-07-27).** NEVER use browser-native dialogs
+  (`window.confirm`, `window.alert`, `window.prompt`) in any new or modified
+  code. Always the styled dialogs: `bamaConfirm({title, body, icon,
+  confirmText, tone:'danger'})` for confirmations — now self-injecting via
+  `_ensureBamaConfirmModal()`, so it works on every page with no markup
+  needed — and `toast(msg, 'success'|'error')` for notifications. ~27
+  legacy native calls remain in shared.js + 3 in quote-builder.html;
+  replace them opportunistically whenever touching nearby code.
 - **Two-engine principle.** Geometry/weight/labour is pure deterministic JS
   (BS-aware, density 7850). The AI (drawing recognition) only READS — it never
   does arithmetic, and returns null rather than guessing.
