@@ -35576,6 +35576,13 @@ function _renderAfpCard(a) {
         <div style="text-align:right">
           <div style="font-size:11px;color:var(--muted);text-transform:uppercase">Certified</div>
           <div style="font-weight:600">${a.certified_gross != null ? '£' + Number(a.certified_gross).toLocaleString('en-GB', { minimumFractionDigits: 2 }) : '—'}</div>
+          ${(() => {
+            if (a.certified_value_net == null || (a.status !== 'Certified' && a.status !== 'Invoiced')) return '';
+            const diff = Number(a.applied_value_net || 0) - Number(a.certified_value_net || 0);
+            return diff > 0.01
+              ? `<div style="display:inline-block;margin-top:3px;padding:1px 7px;border-radius:9px;font-size:10px;font-weight:700;background:rgba(208,2,27,.15);color:var(--red)">▼ PAYLESS £${diff.toLocaleString('en-GB', { minimumFractionDigits: 2 })}</div>`
+              : '';
+          })()}
         </div>
         <div style="text-align:right">
           ${a.status === 'Certified'
@@ -36820,18 +36827,69 @@ function closeCertUploadModal() {
   document.getElementById('afpCertModal').classList.remove('active');
 }
 
+// Tolerant JSON extraction for AI responses: strips markdown fences and, if
+// the payload was truncated mid-array (max_tokens), cuts back to the last
+// complete object and balances the brackets.
+function _extractJsonLoose(raw) {
+  let t = String(raw || '').trim().replace(/```json|```/g, '');
+  const s = t.indexOf('{');
+  if (s < 0) throw new Error('no JSON in AI response');
+  t = t.slice(s);
+  const e = t.lastIndexOf('}');
+  if (e >= 0) {
+    try { return JSON.parse(t.slice(0, e + 1)); } catch (_) { /* salvage below */ }
+  }
+  let cut = t.lastIndexOf('},');
+  if (cut < 0) cut = t.lastIndexOf('}');
+  if (cut < 0) throw new Error('unparseable AI JSON');
+  let frag = t.slice(0, cut + 1);
+  const opens = [];
+  for (const ch of frag) {
+    if (ch === '{' || ch === '[') opens.push(ch);
+    else if (ch === '}' && opens[opens.length - 1] === '{') opens.pop();
+    else if (ch === ']' && opens[opens.length - 1] === '[') opens.pop();
+  }
+  while (opens.length) frag += (opens.pop() === '[' ? ']' : '}');
+  const parsed = JSON.parse(frag);
+  parsed._truncated = true;
+  return parsed;
+}
+
 function renderAfpCertLineFields() {
   const wrap = document.getElementById('afpCertLineFields');
   if (!wrap || !_afpDetailCurrent) return;
-  wrap.innerHTML = (_afpDetailCurrent.line_items || []).map((l, i) => `
-    <div style="display:grid;grid-template-columns:1fr 100px 100px;gap:6px;align-items:center;font-size:12px">
-      <div style="overflow:hidden;text-overflow:ellipsis">${l.item_quote_ref ? `<span style="font-family:var(--font-mono);color:var(--muted);font-size:11px">${escapeHtml(l.item_quote_ref)}</span> · ` : ''}${escapeHtml(l.description || '')}</div>
-      <div style="text-align:right;color:var(--muted)">Applied £${Number(l.this_app_value || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}</div>
-      <input type="number" step="0.01" class="field-input" placeholder="Cert £"
-             data-line-id="${l.id}" data-line-idx="${i}"
-             style="font-size:12px;padding:4px 6px">
-    </div>
-  `).join('');
+  const fmt = v => Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 });
+  wrap.innerHTML = (_afpDetailCurrent.line_items || []).map((l, i) => {
+    const appliedCum = l.cumulative_value != null
+      ? Number(l.cumulative_value)
+      : Number(l.contract_value || 0) * Number(l.this_app_pct_complete || 0) / 100;
+    const prevPaid = Number(l.gross_amount_paid || 0);
+    return `
+    <div style="display:grid;grid-template-columns:1fr 92px 92px 100px;gap:6px;align-items:center;font-size:12px">
+      <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+           title="${escapeHtml(l.description || '')}">${l.item_quote_ref ? `<span style="font-family:var(--font-mono);color:var(--muted);font-size:11px">${escapeHtml(l.item_quote_ref)}</span> · ` : ''}${escapeHtml(l.description || '')}</div>
+      <div style="text-align:right;color:var(--muted)" title="Our applied cumulative">£${fmt(appliedCum)}</div>
+      <div style="text-align:right;color:var(--subtle)" title="Previously paid">£${fmt(prevPaid)}</div>
+      <input type="number" step="0.01" class="field-input" placeholder="Cert cum £"
+             data-line-id="${l.id}" data-line-idx="${i}" data-applied-cum="${appliedCum.toFixed(2)}"
+             style="font-size:12px;padding:4px 6px;text-align:right">
+    </div>`;
+  }).join('');
+}
+
+// Manual fallback / fast path: no OCR needed — copy our applied figures as the
+// certified figures (they certified in full). Everything stays editable after.
+function certifyAfpInFull() {
+  if (!_afpDetailCurrent) return;
+  const afp = _afpDetailCurrent;
+  document.getElementById('afpCertNetVal').value = Number(afp.applied_value_net || 0).toFixed(2);
+  document.getElementById('afpCertRet').value    = Number(afp.applied_retention || 0).toFixed(2);
+  document.getElementById('afpCertVat').value    = Number(afp.applied_vat || 0).toFixed(2);
+  document.getElementById('afpCertGross').value  = Number(afp.applied_gross || 0).toFixed(2);
+  document.querySelectorAll('#afpCertLineFields input').forEach(inp => {
+    inp.value = inp.dataset.appliedCum || '';
+  });
+  toast('Copied applied figures — adjust any line they paid less on', 'info');
 }
 
 async function onCertFilePicked(file) {
@@ -36840,17 +36898,22 @@ async function onCertFilePicked(file) {
   const statusEl = document.getElementById('afpCertOcrStatus');
   statusEl.style.display = '';
   statusEl.style.background = 'var(--bg-darker)';
-  statusEl.innerHTML = '<div class="spinner" style="display:inline-block;width:14px;height:14px;vertical-align:middle"></div> Parsing certificate with AI…';
+  statusEl.innerHTML = '<div class="spinner" style="display:inline-block;width:14px;height:14px;vertical-align:middle"></div> Parsing payment notice with AI…';
 
   try {
     const dataUri = await _fileToDataUri(file);
     const isImg = file.type.startsWith('image/');
     const linesDesc = (_afpDetailCurrent.line_items || [])
-      .map((l, i) => `  ${i + 1}. ${l.description} (applied £${Number(l.this_app_value || 0).toFixed(2)})`)
+      .map((l, i) => {
+        const appliedCum = l.cumulative_value != null
+          ? Number(l.cumulative_value)
+          : Number(l.contract_value || 0) * Number(l.this_app_pct_complete || 0) / 100;
+        return `  ${i + 1}. ${l.item_quote_ref ? l.item_quote_ref + ' · ' : ''}${l.description} (applied cum £${appliedCum.toFixed(2)}, prev paid £${Number(l.gross_amount_paid || 0).toFixed(2)})`;
+      })
       .join('\n');
     const result = await callClaude({
       model: 'claude-sonnet-4-6',
-      max_tokens: 1500,
+      max_tokens: 8000,
       messages: [{
         role: 'user',
         content: [
@@ -36859,31 +36922,34 @@ async function onCertFilePicked(file) {
             : { type: 'document', source: { type: 'base64', media_type: file.type, data: dataUri.split(',')[1] } },
           {
             type: 'text',
-            text: `Extract from this UK construction payment certificate. Return ONLY JSON:
+            text: `Extract from this UK construction payment / payless notice or certificate. Return ONLY compact JSON, no markdown:
 {
-  "certificate_ref": "their cert reference, e.g. PCERT-001",
-  "certificate_date": "YYYY-MM-DD",
+  "certificate_ref": "their reference (contract/cert no) or null",
+  "certificate_date": "YYYY-MM-DD or null",
   "certified_value_net": 0,
   "certified_retention": 0,
   "certified_vat": 0,
   "certified_gross": 0,
   "line_items": [
-    { "line_index": 1, "certified_value": 0 }
+    { "line_index": 1, "certified_cumulative_value": 0 }
   ]
 }
-The line_items array should match this AFP's applied lines by description / order:
-${linesDesc}
+Header rules:
+- certified_value_net = the THIS-PERIOD certified net before retention. If the notice shows a "This Payment" column, use its pre-retention subtotal. If it only shows cumulative figures, use: cumulative gross valuation minus previously paid (pre-retention).
+- certified_retention = this-period retention deduction; certified_gross = the payment due this period. certified_vat = 0 unless VAT is explicitly shown.
+Line rules:
+- certified_cumulative_value = the client's certified CUMULATIVE value-to-date for the line (in RG Carter style notices this is the "Current Value" under the Certification columns).
+- Match against our application lines below by description and order. Only include lines you can match confidently; skip headers/subtotals.
+- Keep each line_items entry on one line, no extra whitespace.
 
-For each AFP line you can match, return {line_index: <1-based>, certified_value: <£>}.
-If the certificate doesn't break down by line, return an empty line_items array.
-If any header field is unclear, set it to null.`
+Our application lines:
+${linesDesc}`
           }
         ]
       }]
     });
     const text = (result.content?.find(b => b.type === 'text')?.text || '').trim();
-    const jsonStart = text.indexOf('{'), jsonEnd = text.lastIndexOf('}');
-    const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
+    const parsed = _extractJsonLoose(text);
     _afpCertParsed = parsed;
 
     if (parsed.certificate_ref)         document.getElementById('afpCertRef').value    = parsed.certificate_ref;
@@ -36893,18 +36959,32 @@ If any header field is unclear, set it to null.`
     if (parsed.certified_retention != null) document.getElementById('afpCertRet').value    = parsed.certified_retention;
     if (parsed.certified_gross     != null) document.getElementById('afpCertGross').value  = parsed.certified_gross;
 
+    let matched = 0;
     if (Array.isArray(parsed.line_items)) {
       parsed.line_items.forEach(item => {
         const inp = document.querySelector(`#afpCertLineFields input[data-line-idx="${item.line_index - 1}"]`);
-        if (inp && item.certified_value != null) inp.value = item.certified_value;
+        if (inp && item.certified_cumulative_value != null) { inp.value = item.certified_cumulative_value; matched++; }
       });
     }
-    statusEl.style.background = 'rgba(62,207,142,.1)';
-    statusEl.innerHTML = '✓ Parsed — please review headers + per-line, then click "Upload & Confirm"';
+    // Flag payless lines: certified cum < applied cum
+    let payless = 0;
+    document.querySelectorAll('#afpCertLineFields input').forEach(inp => {
+      const cert = parseFloat(inp.value), applied = parseFloat(inp.dataset.appliedCum);
+      if (!isNaN(cert) && !isNaN(applied) && applied - cert > 0.01) {
+        inp.style.borderColor = 'var(--red)'; inp.style.color = 'var(--red)';
+        payless++;
+      } else {
+        inp.style.borderColor = ''; inp.style.color = '';
+      }
+    });
+    statusEl.style.background = payless ? 'rgba(208,2,27,.1)' : 'rgba(62,207,142,.1)';
+    statusEl.innerHTML = payless
+      ? `⚠ Parsed — matched ${matched} lines, <b style="color:var(--red)">${payless} line${payless > 1 ? 's' : ''} certified BELOW applied</b> (highlighted red). Review, then "Upload & Confirm".${parsed._truncated ? ' <i>(response was truncated — double-check the last lines)</i>' : ''}`
+      : `✓ Parsed — matched ${matched} lines, no payless detected. Review, then "Upload & Confirm".${parsed._truncated ? ' <i>(response was truncated — double-check the last lines)</i>' : ''}`;
   } catch (err) {
     console.error('Cert OCR failed', err);
-    statusEl.style.background = 'rgba(208,2,27,.1)';
-    statusEl.innerHTML = `⚠ Could not parse — please fill manually. (${escapeHtml(err.message || 'unknown')})`;
+    statusEl.style.background = 'rgba(255,165,0,.1)';
+    statusEl.innerHTML = `⚠ Could not parse automatically — fill the figures manually below, or click <b>✓ Certify in full</b> and adjust. (${escapeHtml(err.message || 'unknown')})`;
   }
 }
 
@@ -36938,7 +37018,9 @@ async function uploadCertAndContinue() {
       const lineId = parseInt(inp.dataset.lineId);
       const val = parseFloat(inp.value);
       if (lineId && !isNaN(val)) {
-        lineItems.push({ id: lineId, certified_this_app_value: val });
+        // Cumulative certified — the server derives this-period from it and
+        // sets the line's paid-to-date directly.
+        lineItems.push({ id: lineId, certified_cumulative_value: val });
       }
     });
 

@@ -614,7 +614,22 @@ app.http('applications-certificate-confirm', {
             // double-added.
             if (Array.isArray(body.line_items)) {
                 for (const l of body.line_items) {
-                    if (l.id && l.certified_this_app_value != null) {
+                    if (l.id && l.certified_cumulative_value != null) {
+                        // Cumulative certified-to-date for the line: paid-to-date
+                        // becomes exactly that figure; this-period certified =
+                        // cumulative − the carried base (paid before this cert).
+                        // Re-confirm safe: base excludes the previous confirm.
+                        await query(
+                            `UPDATE ApplicationLineItems
+                             SET certified_this_app_value = @cum
+                                   - (ISNULL(gross_amount_paid, 0)
+                                      - CASE WHEN @wasCert = 1 THEN ISNULL(certified_this_app_value, 0) ELSE 0 END),
+                                 gross_amount_paid = @cum
+                             WHERE id = @lid AND application_id = @aid`,
+                            { cum: Number(l.certified_cumulative_value), lid: l.id, aid: id,
+                              wasCert: wasAlreadyCertified ? 1 : 0 }
+                        );
+                    } else if (l.id && l.certified_this_app_value != null) {
                         await query(
                             `UPDATE ApplicationLineItems
                              SET gross_amount_paid = ISNULL(gross_amount_paid, 0)
