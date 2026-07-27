@@ -969,6 +969,18 @@ none of this is built yet.
   every expanded aged-debt invoice row (`chaseInvoiceById` fetches
   detail + opens composer; event.stopPropagation so the row click still
   opens detail). PDF copy attached in both paths.
+- **Invoicing polish (2026-07-27)** — (1) Sales Invoices search bar
+  (`invSalesSearch`, filters ref/customer/project/status client-side,
+  match count shown). (2) Sender-aware signature: emailSignature default
+  now uses {{sender_name}} + new token {{sender_sig_role}} ("Role — BAMA
+  Fabrication" or just company); buildBabcockEmailTokens falls back to
+  "Accounts Team" when no user resolved. NOTE: a customised signature
+  saved via the Templates page OVERRIDES this default — edit there too
+  if one exists. (3) QB email signature now resolves the sender name
+  from Graph /me (`qbFetchSenderName`, cached, falls back to preparedBy)
+  — QB deliberately has NO shared.js dependency so it was aligned in
+  place rather than ported to the Babcock engine; full port parked.
+  QB Help updated per definition-of-done.
 - **Invoicing: reopen wrongly-Paid invoices (2026-07-27)** — "↩ Reopen"
   button on the detail modal, visible only for Paid invoices with ZERO
   payment rows (i.e. imported historicals). `POST /api/invoices/{id}/
