@@ -171,6 +171,34 @@ app.http('project-sheet-extras', {
                     context.warn('Quote summary unavailable:', e2.message);
                 }
             }
+            if (quote) quote.source = 'qb';
+
+            // Fallback: no QB quote linked — pull what the Project Tracker
+            // holds (source Tender reference + carried-over quote value).
+            // Older projects (pre-QB) live entirely on this path.
+            if (!quote) {
+                try {
+                    const res = await query(`
+                        SELECT p.project_number, p.quote_value AS project_quote_value,
+                               t.reference AS tender_reference, t.quote_value AS tender_quote_value
+                        FROM Projects p
+                        LEFT JOIN Tenders t ON t.id = p.source_quote_id
+                        WHERE p.id = @projectId`, { projectId });
+                    const row = res.recordset[0];
+                    if (row) {
+                        const value = row.tender_quote_value ?? row.project_quote_value ?? null;
+                        // project_number mirrors the source quote ref (C260502 ⇄ Q260502)
+                        const ref = row.tender_reference ||
+                            (String(row.project_number || '').replace(/^C/i, 'Q') || null);
+                        if (value != null || row.tender_reference) {
+                            quote = { source: 'tracker', reference: ref, revision: '',
+                                      quote_value: value };
+                        }
+                    }
+                } catch (e) {
+                    context.warn('Tracker quote fallback unavailable:', e.message);
+                }
+            }
 
             // ── Per-job stats: members + tonnage from JobAssemblies ──
             // total_weight_kg is the weight of ONE assembly, so tonnage

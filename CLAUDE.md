@@ -108,7 +108,8 @@ management, and a standalone UK steel section reference.
   keeps showing the head-office address. "Generate PDF" renders a native
   jsPDF Job Sheet (`drawJobSheetPDF` in `shared.js`, drawDnPDF
   conventions: accent section bars, zebra tables, stat cells, footer
-  rule) from the CURRENT modal fields, uploads it to the PROJECT FOLDER
+  rule; letterhead has company details to the RIGHT of the logo,
+  Site Pack style) from the CURRENT modal fields, uploads it to the PROJECT FOLDER
   ROOT on SharePoint as `Job Sheet - <projno>.pdf` (overwrites on
   regenerate) and opens the SharePoint copy; falls back to a blob tab
   if SharePoint is unreachable. The modal is wiped via `_jsResetModal()`
@@ -120,7 +121,11 @@ management, and a standalone UK steel section reference.
   The sheet also shows (read-only): quoted figures pulled from the linked
   won QB quote (`GET /api/project-sheet/{id}/extras` — fab/design hours,
   site crew, tonnage via JSON_VALUE on quote_data; link resolved through
-  QuoteBuilderQuotes.project_id OR ProjectQuotes), and a per-job
+  QuoteBuilderQuotes.project_id OR ProjectQuotes; when no QB quote is
+  linked, falls back to the Project Tracker — source Tender reference +
+  quote_value, marked source:'tracker', shown as a Quote value stat; the
+  PDF's Quoted stat cells render only the figures the quote actually
+  carries), and a per-job
   fabrication summary (members + tonnage = SUM(quantity*total_weight_kg)
   from JobAssemblies). A "Hours & variations" ledger
   (`ProjectSheetRevisions`: base quote + VOs, each optionally pinned to a

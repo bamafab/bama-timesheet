@@ -13606,12 +13606,15 @@ function _jsRenderExtras() {
   if (qEl) {
     if (q) {
       const chips = [
-        { l: 'Quote', v: `${q.reference}${q.revision ? ' rev ' + q.revision : ''}` },
+        { l: q.source === 'tracker' ? 'Quote (Project Tracker)' : 'Quote',
+          v: `${q.reference || '\u2014'}${q.revision ? ' rev ' + q.revision : ''}` },
         { l: 'Fab hours', v: _jsNum(q.fab_hours) ? _jsNum(q.fab_hours) + ' hrs' : null },
         { l: 'Design hours', v: _jsNum(q.design_hours) ? _jsNum(q.design_hours) + ' hrs' : null },
         { l: 'Site crew', v: _jsNum(q.inst_operatives)
             ? `${_jsNum(q.inst_operatives)} operative${_jsNum(q.inst_operatives) !== 1 ? 's' : ''}${_jsNum(q.inst_days) ? ' \u00d7 ' + _jsNum(q.inst_days) + ' day' + (_jsNum(q.inst_days) !== 1 ? 's' : '') : ''}` : null },
-        { l: 'Quoted tonnage', v: _jsNum(q.total_kg) ? _jsFmtT(_jsNum(q.total_kg)) : null }
+        { l: 'Quoted tonnage', v: _jsNum(q.total_kg) ? _jsFmtT(_jsNum(q.total_kg)) : null },
+        { l: 'Quote value', v: (q.quote_value != null && _jsNum(q.quote_value))
+            ? '\u00a3' + Number(q.quote_value).toLocaleString('en-GB', { maximumFractionDigits: 0 }) : null }
       ].filter(c => c.v);
       qEl.innerHTML = chips.map(c =>
         `<div style="background:var(--bg-darker);border:1px solid var(--border);border-radius:8px;padding:8px 12px">
@@ -13910,31 +13913,36 @@ function drawJobSheetPDF(jsPDF, sheet, proj, logoDataUri) {
   const setFill = c => doc.setFillColor(c[0], c[1], c[2]);
   const setDraw = c => doc.setDrawColor(c[0], c[1], c[2]);
 
-  // ── Letterhead ──
+  // ── Letterhead: logo (left) + company details to the RIGHT of the logo
+  //    (mirrors the Site Pack band) + title/meta far right. ──
   let y = marginL;
-  let leftY = y;
-  let logoDrawn = false;
+  let logoW = 0, logoBottom = y;
   if (logoDataUri) {
     try {
-      const RENDER_W = 55;
+      const RENDER_W = 45;
       const props = doc.getImageProperties(logoDataUri);
       const ratio = (props && props.width && props.height) ? (props.width / props.height) : (55 / 24);
       doc.addImage(logoDataUri, props.fileType || 'PNG', marginL, y, RENDER_W, RENDER_W / ratio, undefined, 'FAST');
-      leftY = y + RENDER_W / ratio + 4;
-      logoDrawn = true;
-    } catch (e) { logoDrawn = false; }
+      logoW = RENDER_W; logoBottom = y + RENDER_W / ratio;
+    } catch (e) { logoW = 0; }
   }
-  if (!logoDrawn) {
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(20); setText(accent);
-    doc.text(g.companyName || 'BAMA FABRICATION', marginL, y + 8); leftY = y + 14;
+  if (!logoW) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(18); setText(accent);
+    doc.text(g.companyName || 'BAMA FABRICATION', marginL, y + 8);
+    logoW = doc.getTextWidth(g.companyName || 'BAMA FABRICATION');
+    logoBottom = y + 10;
   }
-  setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+  // Company details beside the logo — condenses the whole band.
+  const coX = marginL + logoW + 8;
+  let coY = y + 3;
+  setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
   const coLines = [];
   if (g.address) String(g.address).split('\n').forEach(l => coLines.push(l));
   if (g.phone) coLines.push('Tel: ' + g.phone);
   if (g.email) coLines.push(g.email);
   if (g.vatNumber) coLines.push('VAT: ' + g.vatNumber);
-  coLines.forEach(l => { doc.text(String(l), marginL, leftY); leftY += 3.8; });
+  coLines.forEach(l => { doc.text(String(l), coX, coY); coY += 3.6; });
+  const leftY = Math.max(logoBottom, coY - 3.6) + 4;
 
   doc.setFont('helvetica', 'bolditalic'); doc.setFontSize(20); setText(accent);
   doc.text('Job Sheet', pageW - marginR, y + 8, { align: 'right' });
@@ -14031,6 +14039,7 @@ function drawJobSheetPDF(jsPDF, sheet, proj, logoDataUri) {
     }
   };
   const numOr = (v, suffix) => { const n = parseFloat(v); return isFinite(n) && n > 0 ? n + (suffix || '') : '\u2014'; };
+  const _hasNum = v => { const n = parseFloat(v); return isFinite(n) && n > 0; };
   const fmtT = kg => (kg >= 1000 ? (kg / 1000).toFixed(2) + ' t' : Math.round(kg) + ' kg');
 
   // ── Site address ──
@@ -14070,17 +14079,28 @@ function drawJobSheetPDF(jsPDF, sheet, proj, logoDataUri) {
       ? `${ops} op${ops !== 1 ? 's' : ''}${(isFinite(days) && days > 0) ? ' \u00d7 ' + days + ' day' + (days !== 1 ? 's' : '') : ''}`
       : '\u2014';
     const qkg = parseFloat(q.total_kg);
-    // Four stat cells across the width — label above, bold value below.
+    const qval = parseFloat(q.quote_value);
+    // Stat cells across the width — label above, bold value below. Only
+    // figures the quote actually carries are rendered (a Project Tracker
+    // quote has ref + value but no hours; a QB quote has hours + tonnage).
     const stats = [
-      { l: 'FAB HOURS',      v: numOr(q.fab_hours, ' hrs') },
-      { l: 'DESIGN HOURS',   v: numOr(q.design_hours, ' hrs') },
-      { l: 'SITE CREW',      v: crew },
-      { l: 'QUOTED TONNAGE', v: (isFinite(qkg) && qkg > 0) ? fmtT(qkg) : '\u2014' }
-    ];
+      { l: 'FAB HOURS',      v: numOr(q.fab_hours, ' hrs'), has: _hasNum(q.fab_hours) },
+      { l: 'DESIGN HOURS',   v: numOr(q.design_hours, ' hrs'), has: _hasNum(q.design_hours) },
+      { l: 'SITE CREW',      v: crew, has: crew !== '\u2014' },
+      { l: 'QUOTED TONNAGE', v: (isFinite(qkg) && qkg > 0) ? fmtT(qkg) : '\u2014', has: isFinite(qkg) && qkg > 0 },
+      { l: 'QUOTE VALUE',    v: (isFinite(qval) && qval > 0)
+          ? '\u00a3' + qval.toLocaleString('en-GB', { maximumFractionDigits: 0 }) : '\u2014',
+        has: isFinite(qval) && qval > 0 }
+    ].filter(st => st.has);
+    // A QB quote may legitimately have a zero here or there — never render
+    // an empty band, and cap at 4 cells per row for readable widths.
+    if (!stats.length) stats.push({ l: 'QUOTE', v: q.reference || '\u2014' });
     pageBreakIfNeeded(20);
-    const cellW = (usableW - 3 * 4) / 4;
+    const perRow = Math.min(stats.length, 4);
+    const cellW = (usableW - (perRow - 1) * 4) / perRow;
     stats.forEach((st, i) => {
-      const x = marginL + i * (cellW + 4);
+      const x = marginL + (i % perRow) * (cellW + 4);
+      if (i > 0 && i % perRow === 0) y += 19;
       setFill([252, 250, 248]); setDraw(RULE); doc.setLineWidth(0.2);
       doc.roundedRect(x, y - 3, cellW, 15, 1.2, 1.2, 'FD');
       setText(MUTED); doc.setFont('helvetica', 'bold'); doc.setFontSize(7);
