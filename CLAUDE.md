@@ -313,8 +313,24 @@ Core tables:
   updated_at)` + `WeldingMachineWelders(machine_id, employee_id)` join
 - `ServiceTypes(id, name, is_active)` (UNIQUE on name)
 - `Suppliers(id, supplier_name, address_line1/2, city, county, postcode, telephone,
-  email, contact_name, notes, is_active, updated_at)` +
+  email, contact_name, notes, is_active, updated_at, payment_term_type,
+  payment_term_days, payment_dd, is_subcontractor, utr_number, cis_rate,
+  bank_sort_code, bank_account_no)` +
   `SupplierServices(supplier_id, service_type_id)` join
+- `SupplierInvoices` — AP ledger (2026-07-28): many invoices per PO, standalone
+  (no PO), optional `babcock_quote_id`. `invoice_type` supplier|subcontractor;
+  CIS fields `labour_gross/cis_rate/cis_deduction` with `gross` = amount payable.
+  `due_date` computed server-side from supplier terms (NULL for DD) unless the
+  client sends an explicit override. Server keeps legacy PO aggregate columns
+  in sync via `recomputePoReconciliation` (sum within £1 = matched, over =
+  discrepancy, under = unmatched/partial). API: `supplier-invoices.js`
+  (CRUD + `supplier-invoices-match` with over-match `needs_confirm` handshake +
+  `supplier-payment-runs`). UI: invoice-tracker Supplier Invoices tab (chips,
+  aged creditors, Match-to-PO, Add/Amend modal with drop-to-parse + CIS toggle +
+  quick-create subcontractor, BACS run w/ CSV + per-supplier remittances).
+- `SupplierPaymentRuns(id, run_ref, run_date, method, period_from/to,
+  invoice_count, total_gross, notes, created_by)` — BACS runs; creating one
+  marks its invoices paid
 - `Clients(id, company_name, address_line1/2, city, county, postcode,
   contact_name, contact_email, contact_phone, notes, is_active, created_at,
   updated_at)` — UNIQUE on company_name

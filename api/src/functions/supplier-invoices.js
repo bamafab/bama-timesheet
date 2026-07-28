@@ -189,17 +189,25 @@ app.http('supplier-invoices-create', {
                     return badRequest('PO belongs to a different supplier', request);
             }
 
-            const { due_date, is_dd } = computeDueDate(supplier, body.invoice_date || null);
+            const computed = computeDueDate(supplier, body.invoice_date || null);
+            // Manual due-date override wins (e.g. subcontractor "pay me on the 5th")
+            const due_date = body.due_date !== undefined && body.due_date !== null && body.due_date !== ''
+                ? String(body.due_date).slice(0, 10) : computed.due_date;
+            const is_dd = computed.is_dd;
             const createdBy = auth.email || auth.name || null;
+
+            const invoiceType = body.invoice_type === 'subcontractor' ? 'subcontractor' : 'supplier';
 
             const ins = await query(
                 `INSERT INTO SupplierInvoices
                     (supplier_id, po_id, babcock_quote_id, invoice_ref, invoice_date,
                      net, vat, gross, due_date, is_dd,
+                     invoice_type, labour_gross, cis_rate, cis_deduction,
                      sharepoint_file_id, sharepoint_file_url, filename, notes, source, created_by)
                  OUTPUT INSERTED.id
                  VALUES (@supplierId, @poId, @babcockId, @ref, @invDate,
                          @net, @vat, @gross, @dueDate, @isDd,
+                         @invoiceType, @labourGross, @cisRate, @cisDeduction,
                          @spId, @spUrl, @filename, @notes, @source, @createdBy)`,
                 {
                     supplierId, poId,
@@ -211,6 +219,10 @@ app.http('supplier-invoices-create', {
                     gross,
                     dueDate:  due_date,
                     isDd:     is_dd,
+                    invoiceType,
+                    labourGross:  body.labour_gross != null ? Number(body.labour_gross) : null,
+                    cisRate:      body.cis_rate != null && body.cis_rate !== '' ? Number(body.cis_rate) : null,
+                    cisDeduction: body.cis_deduction != null ? Number(body.cis_deduction) : null,
                     spId:     body.sharepoint_file_id || null,
                     spUrl:    body.sharepoint_file_url || null,
                     filename: body.filename || null,
@@ -265,9 +277,15 @@ app.http('supplier-invoices-update', {
                                'sharepoint_file_id', 'sharepoint_file_url', 'filename']) {
                 if (body[col] !== undefined) set(col, col.replace(/_/g, ''), body[col] || null);
             }
-            for (const col of ['net', 'vat', 'gross']) {
-                if (body[col] !== undefined) set(col, col, body[col] != null ? Number(body[col]) : null);
+            for (const col of ['net', 'vat', 'gross', 'labour_gross', 'cis_rate', 'cis_deduction']) {
+                if (body[col] !== undefined) set(col, col.replace(/_/g, ''), body[col] != null && body[col] !== '' ? Number(body[col]) : null);
             }
+            if (body.invoice_type !== undefined)
+                set('invoice_type', 'invtype', body.invoice_type === 'subcontractor' ? 'subcontractor' : 'supplier');
+            if (body.supplier_id !== undefined && parseInt(body.supplier_id))
+                set('supplier_id', 'newsupid', parseInt(body.supplier_id));
+            if (body.po_id !== undefined)
+                set('po_id', 'newpoid', body.po_id ? parseInt(body.po_id) : null);
             if (body.invoice_date !== undefined) set('invoice_date', 'invdate', body.invoice_date || null);
             if (body.paid_at !== undefined) set('paid_at', 'paidat', body.paid_at || null);
             if (body.payment_run_id !== undefined) set('payment_run_id', 'runid', body.payment_run_id || null);
@@ -286,10 +304,10 @@ app.http('supplier-invoices-update', {
             fields.push('updated_at = GETUTCDATE()');
             await query(`UPDATE SupplierInvoices SET ${fields.join(', ')} WHERE id = @id`, params);
 
-            if (inv.po_id && (body.gross !== undefined || body.net !== undefined || body.vat !== undefined
-                              || body.invoice_date !== undefined || body.invoice_ref !== undefined)) {
-                await recomputePoReconciliation(inv.po_id);
-            }
+            const affectedPos = new Set();
+            if (inv.po_id) affectedPos.add(inv.po_id);
+            if (body.po_id !== undefined && body.po_id) affectedPos.add(parseInt(body.po_id));
+            for (const pid of affectedPos) await recomputePoReconciliation(pid);
 
             const r = await query(LIST_SELECT + ' AND si.id = @id', { id });
             return ok(r.recordset[0], request);

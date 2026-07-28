@@ -36305,7 +36305,7 @@ function renderInvSupplierTable() {
                 onchange="invRemitToggle(${inv.id}, this.checked)" title="Select">`}</td>
       <td>${poCell}</td>
       <td>${escapeHtml(inv.invoice_ref || '')}${fileLink}</td>
-      <td>${escapeHtml(inv.supplier_name || '')}</td>
+      <td>${escapeHtml(inv.supplier_name || '')}${inv.invoice_type === 'subcontractor' ? ' <span style="display:inline-block;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600;background:rgba(147,112,219,.18);color:#b596e8" title="Subcontractor — CIS deduction £' + Number(inv.cis_deduction || 0).toFixed(2) + '">CIS</span>' : ''}</td>
       <td>${escapeHtml(inv.job_number || inv.cost_centre || '')}${inv.babcock_quote_ref ? ` <span style="font-size:10px;color:var(--muted);font-family:var(--font-mono)">${escapeHtml(inv.babcock_quote_ref)}</span>` : ''}</td>
       <td>${_invSupFmtDate(inv.invoice_date)}</td>
       <td>${dueCell}</td>
@@ -36313,8 +36313,10 @@ function renderInvSupplierTable() {
       <td>${inv.po_id ? invStatusBadge(_invPoRecon(inv)) : ''}</td>
       <td>${inv.paid_at ? `<span style="color:var(--green);font-weight:600" title="${escapeHtml(inv.paid_ref || '')}">✓ Paid</span>
         <div style="font-size:10px;color:var(--muted)">${_invSupFmtDate(inv.paid_at)}${inv.run_ref ? ' · ' + escapeHtml(inv.run_ref) : ''}</div>` : ''}</td>
-      <td style="text-align:center">${inv.paid_at ? '' :
-        `<button class="btn btn-ghost" style="padding:2px 7px;font-size:11px;color:var(--red)"
+      <td style="text-align:center;white-space:nowrap">${inv.paid_at ? '' :
+        `<button class="btn btn-ghost" style="padding:2px 6px;font-size:11px"
+                 title="Amend invoice" onclick="openSupAddInvoiceModal(${inv.id})">✏️</button>
+         <button class="btn btn-ghost" style="padding:2px 6px;font-size:11px;color:var(--red)"
                  title="Delete invoice" onclick="deleteSupInvoice(${inv.id})">🗑</button>`}</td>
     </tr>`;
   }).join('');
@@ -36529,27 +36531,139 @@ async function confirmSupMatch() {
 // ADD SUPPLIER INVOICE MANUALLY — no PO required, optional file + links
 // ═════════════════════════════════════════════════════════════════════════
 let _supAddFile = null;
+let _supAddType = 'supplier';     // 'supplier' | 'subcontractor'
+let _supAddEditingId = null;      // SupplierInvoices id when amending (null = new)
 
-async function openSupAddInvoiceModal() {
+async function openSupAddInvoiceModal(editInvoiceId) {
   _supAddFile = null;
+  _supAddEditingId = editInvoiceId || null;
+  const editing = _supAddEditingId ? _invSupInvoices.find(i => i.id === _supAddEditingId) : null;
+
   const supSel = document.getElementById('supAddSupplier');
-  supSel.innerHTML = '<option value="">Loading suppliers…</option>';
-  ['supAddRef','supAddNet','supAddVat','supAddGross','supAddNotes'].forEach(id => {
+  supSel.innerHTML = '<option value="">Loading…</option>';
+  ['supAddRef','supAddNet','supAddVat','supAddGross','supAddNotes',
+   'supAddLabour','supAddCisDeduction','supAddPayable','supAddDueOverride'].forEach(id => {
     const el = document.getElementById(id); if (el) el.value = '';
   });
-  document.getElementById('supAddDate').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('supAddDate').value = editing && editing.invoice_date
+    ? String(editing.invoice_date).slice(0, 10) : new Date().toISOString().slice(0, 10);
   document.getElementById('supAddPo').innerHTML = '<option value="">— No PO —</option>';
-  document.getElementById('supAddFileLabel').textContent = 'No file yet';
+  document.getElementById('supAddFileLabel').textContent = editing ? (editing.filename || 'Keeping existing file') : 'No file yet';
   document.getElementById('supAddDueHint').textContent = '';
+  const titleEl = document.getElementById('invSupAddTitle');
+  if (titleEl) titleEl.textContent = editing ? '✏️ Amend Invoice' : '➕ Add Invoice';
+  const saveBtn = document.getElementById('supAddSaveBtn');
+  if (saveBtn) saveBtn.textContent = editing ? 'Save Changes' : 'Save Invoice';
+  document.getElementById('supAddNewSubForm').style.display = 'none';
+
+  supAddSetType(editing ? (editing.invoice_type === 'subcontractor' ? 'subcontractor' : 'supplier') : 'supplier');
   document.getElementById('invSupAddModal').classList.add('active');
 
-  const suppliers = await _invGetSuppliersList();
-  supSel.innerHTML = '<option value="">Select supplier…</option>' + suppliers
-    .slice().sort((a, b) => String(a.supplier_name).localeCompare(String(b.supplier_name)))
-    .map(s => `<option value="${s.id}">${escapeHtml(s.supplier_name)}</option>`).join('');
+  await _supAddFillSupplierOptions();
 
   const bqSel = document.getElementById('supAddBabcock');
-  if (bqSel) { bqSel.innerHTML = '<option value="">— No Babcock quote —</option>'; _invLoadBabcockOptions(bqSel, null); }
+  if (bqSel) { bqSel.innerHTML = '<option value="">— No Babcock quote —</option>'; _invLoadBabcockOptions(bqSel, editing ? editing.babcock_quote_id : null); }
+
+  // Prefill when amending
+  if (editing) {
+    document.getElementById('supAddSupplier').value = String(editing.supplier_id);
+    await onSupAddSupplierPicked();
+    _supAddUpdateDueHint();
+    if (editing.po_id) document.getElementById('supAddPo').value = String(editing.po_id);
+    document.getElementById('supAddRef').value = editing.invoice_ref || '';
+    if (editing.invoice_type === 'subcontractor') {
+      document.getElementById('supAddLabour').value = editing.labour_gross != null ? Number(editing.labour_gross).toFixed(2) : '';
+      const rateSel = document.getElementById('supAddCisRate');
+      if (rateSel && editing.cis_rate != null) rateSel.value = String(Number(editing.cis_rate));
+      document.getElementById('supAddCisDeduction').value = editing.cis_deduction != null ? Number(editing.cis_deduction).toFixed(2) : '';
+      document.getElementById('supAddPayable').value = Number(editing.gross || 0).toFixed(2);
+    } else {
+      document.getElementById('supAddNet').value   = editing.net  != null ? Number(editing.net).toFixed(2)  : '';
+      document.getElementById('supAddVat').value   = editing.vat  != null ? Number(editing.vat).toFixed(2)  : '';
+      document.getElementById('supAddGross').value = Number(editing.gross || 0).toFixed(2);
+    }
+    if (editing.due_date) document.getElementById('supAddDueOverride').value = String(editing.due_date).slice(0, 10);
+    document.getElementById('supAddNotes').value = editing.notes || '';
+  }
+}
+
+async function _supAddFillSupplierOptions() {
+  const supSel = document.getElementById('supAddSupplier');
+  const suppliers = await _invGetSuppliersList();
+  const wantSub = _supAddType === 'subcontractor';
+  const pool = suppliers.filter(s => wantSub ? s.is_subcontractor : !s.is_subcontractor);
+  const keep = supSel.value;
+  supSel.innerHTML = `<option value="">${wantSub ? 'Select subcontractor…' : 'Select supplier…'}</option>` + pool
+    .slice().sort((a, b) => String(a.supplier_name).localeCompare(String(b.supplier_name)))
+    .map(s => `<option value="${s.id}">${escapeHtml(s.supplier_name)}</option>`).join('');
+  if (keep && pool.some(s => String(s.id) === keep)) supSel.value = keep;
+}
+
+// Type toggle — swaps the amounts row between VAT maths and CIS maths
+function supAddSetType(type) {
+  _supAddType = type === 'subcontractor' ? 'subcontractor' : 'supplier';
+  const isSub = _supAddType === 'subcontractor';
+  document.getElementById('supAddTypeSupplier').classList.toggle('active', !isSub);
+  document.getElementById('supAddTypeSub').classList.toggle('active', isSub);
+  document.getElementById('supAddVatRow').style.display = isSub ? 'none' : 'grid';
+  document.getElementById('supAddCisRow').style.display = isSub ? 'grid' : 'none';
+  document.getElementById('supAddNewSubBtn').style.display = isSub ? '' : 'none';
+  document.getElementById('supAddSupplierLabel').textContent = isSub ? 'Subcontractor *' : 'Supplier *';
+  _supAddFillSupplierOptions();
+}
+
+// CIS maths (deterministic): deduction = labour × rate, payable = labour − deduction
+function onSupAddCis() {
+  const labour = parseFloat(document.getElementById('supAddLabour').value) || 0;
+  const rate = parseFloat(document.getElementById('supAddCisRate').value) || 0;
+  const ded = +(labour * rate / 100).toFixed(2);
+  document.getElementById('supAddCisDeduction').value = labour ? ded.toFixed(2) : '';
+  document.getElementById('supAddPayable').value = labour ? (labour - ded).toFixed(2) : '';
+}
+
+// ── Quick-create subcontractor inline ────────────────────────────────────────
+function supAddToggleNewSub(show) {
+  const form = document.getElementById('supAddNewSubForm');
+  form.style.display = show ? '' : 'none';
+  if (show) {
+    ['nsubName','nsubUtr','nsubSort','nsubAccount','nsubEmail'].forEach(id => {
+      const el = document.getElementById(id); if (el) el.value = '';
+    });
+    document.getElementById('nsubCisRate').value = '20';
+    document.getElementById('nsubName').focus();
+  }
+}
+
+async function supAddCreateSubcontractor() {
+  const name = document.getElementById('nsubName').value.trim();
+  if (!name) { toast('Name is required', 'error'); return; }
+  setLoading(true);
+  try {
+    const created = await api.post('/api/suppliers', {
+      supplier_name: name,
+      is_subcontractor: true,
+      utr_number: document.getElementById('nsubUtr').value.trim() || null,
+      cis_rate: parseFloat(document.getElementById('nsubCisRate').value),
+      bank_sort_code: document.getElementById('nsubSort').value.trim() || null,
+      bank_account_no: document.getElementById('nsubAccount').value.trim() || null,
+      email: document.getElementById('nsubEmail').value.trim() || null,
+      notes: 'Subcontractor (CIS)'
+    });
+    _invSuppliersCache = null; // refresh cache
+    if (Array.isArray(_suppliers)) _suppliers.push(created);
+    await _supAddFillSupplierOptions();
+    document.getElementById('supAddSupplier').value = String(created.id);
+    // Default the CIS rate on the invoice from the new record
+    if (created.cis_rate != null) {
+      document.getElementById('supAddCisRate').value = String(Number(created.cis_rate));
+      onSupAddCis();
+    }
+    supAddToggleNewSub(false);
+    _supAddUpdateDueHint();
+    toast(`Subcontractor ${name} added ✓`, 'success');
+  } catch (e) {
+    toast('Failed to add subcontractor: ' + (e.message || 'unknown error'), 'error');
+  } finally { setLoading(false); }
 }
 
 async function _invGetSuppliersList() {
@@ -36643,18 +36757,26 @@ async function _supAddHandleFile(file) {
             : { type: 'document', source: { type: 'base64', media_type: file.type, data: dataUri.split(',')[1] } },
           {
             type: 'text',
-            text: `Extract from this UK supplier invoice. Return ONLY JSON, no markdown:
+            text: `Extract from this UK invoice sent to BAMA Fabrication. It is either a SUPPLIER invoice (VAT invoice from a company) or a SUBCONTRACTOR invoice (an individual/small firm charging for labour, often with a CIS deduction like "Less 20%", a UTR number, and bank details). Return ONLY JSON, no markdown:
 {
-  "supplier_name": "the company that ISSUED the invoice (not BAMA Fabrication — BAMA is the customer)",
-  "invoice_ref": "supplier's invoice number",
+  "invoice_type": "supplier" or "subcontractor",
+  "supplier_name": "the person or company that ISSUED the invoice (not BAMA Fabrication — BAMA is the customer)",
+  "invoice_ref": "invoice number if shown",
   "invoice_date": "YYYY-MM-DD",
   "net_amount": 0,
   "vat_amount": 0,
   "gross_amount": 0,
+  "labour_subtotal": "subcontractor only: the subtotal BEFORE the CIS deduction",
+  "cis_rate": "subcontractor only: the deduction percentage as a number, e.g. 20",
+  "cis_deduction": "subcontractor only: the deducted amount",
+  "amount_payable": "subcontractor only: the final amount due after deduction",
+  "utr_number": "subcontractor only: UTR if shown",
+  "bank_sort_code": "subcontractor only: sort code if shown",
+  "bank_account_no": "subcontractor only: account number if shown",
   "po_reference": "BAMA's PO reference if shown — looks like P260501 (P + 6 digits)"
 }
-Set any field to null if not clearly shown. The PO reference is usually printed under "Your Order", "Order Ref", "Customer Order", "PO Number" or similar.
-IMPORTANT: Use the final printed net total and gross total from the invoice — not a goods-only subtotal.`
+Classify as subcontractor when the invoice is for labour/days/hours from an individual, mentions CIS, a percentage deduction, or a UTR number. Set any field to null if not clearly shown.
+IMPORTANT: Use the final printed totals from the invoice — not a goods-only subtotal.`
           }
         ]
       }]
@@ -36669,29 +36791,71 @@ IMPORTANT: Use the final printed net total and gross total from the invoice — 
   }
 
   // Fill the form (deterministic)
+  const parsedIsSub = parsed.invoice_type === 'subcontractor';
+  if (parsedIsSub !== (_supAddType === 'subcontractor')) supAddSetType(parsedIsSub ? 'subcontractor' : 'supplier');
   if (parsed.invoice_ref)  document.getElementById('supAddRef').value  = parsed.invoice_ref;
   if (parsed.invoice_date) document.getElementById('supAddDate').value = String(parsed.invoice_date).slice(0, 10);
-  if (parsed.net_amount   != null) document.getElementById('supAddNet').value   = Number(parsed.net_amount).toFixed(2);
-  if (parsed.vat_amount   != null) document.getElementById('supAddVat').value   = Number(parsed.vat_amount).toFixed(2);
-  if (parsed.gross_amount != null) document.getElementById('supAddGross').value = Number(parsed.gross_amount).toFixed(2);
-  else if (parsed.net_amount != null || parsed.vat_amount != null)
-    document.getElementById('supAddGross').value =
-      (Number(parsed.net_amount || 0) + Number(parsed.vat_amount || 0)).toFixed(2);
+  if (parsedIsSub) {
+    if (parsed.labour_subtotal != null) document.getElementById('supAddLabour').value = Number(parsed.labour_subtotal).toFixed(2);
+    if (parsed.cis_rate != null) {
+      const rateSel = document.getElementById('supAddCisRate');
+      const r = String(Number(parsed.cis_rate));
+      if ([...rateSel.options].some(o => o.value === r)) rateSel.value = r;
+    }
+    onSupAddCis(); // deterministic: deduction + payable from labour × rate
+    // If the invoice printed different figures to our calculation, trust the invoice but flag it
+    if (parsed.amount_payable != null) {
+      const calc = parseFloat(document.getElementById('supAddPayable').value) || 0;
+      const printed = Number(parsed.amount_payable);
+      if (Math.abs(calc - printed) > 0.02) {
+        document.getElementById('supAddPayable').value = printed.toFixed(2);
+        if (parsed.cis_deduction != null)
+          document.getElementById('supAddCisDeduction').value = Number(parsed.cis_deduction).toFixed(2);
+        toast(`Heads up: invoice shows £${printed.toFixed(2)} payable but labour × rate gives £${calc.toFixed(2)} — check it`, 'warning');
+      }
+    }
+  } else {
+    if (parsed.net_amount   != null) document.getElementById('supAddNet').value   = Number(parsed.net_amount).toFixed(2);
+    if (parsed.vat_amount   != null) document.getElementById('supAddVat').value   = Number(parsed.vat_amount).toFixed(2);
+    if (parsed.gross_amount != null) document.getElementById('supAddGross').value = Number(parsed.gross_amount).toFixed(2);
+    else if (parsed.net_amount != null || parsed.vat_amount != null)
+      document.getElementById('supAddGross').value =
+        (Number(parsed.net_amount || 0) + Number(parsed.vat_amount || 0)).toFixed(2);
+  }
 
-  // Auto-pick the supplier by name (exact → contains, normalised)
+  // Auto-pick the supplier/subcontractor by name (exact → contains, normalised)
   let matchedSupplier = null;
   if (parsed.supplier_name) {
     const suppliers = await _invGetSuppliersList();
     const norm = v => String(v || '').toLowerCase().replace(/\b(ltd|limited|plc|llp|co|company|uk)\b/g, '').replace(/[^a-z0-9]/g, '');
     const target = norm(parsed.supplier_name);
-    matchedSupplier =
-      suppliers.find(x => norm(x.supplier_name) === target) ||
-      suppliers.find(x => target && (norm(x.supplier_name).includes(target) || target.includes(norm(x.supplier_name)))) ||
+    // Prefer entries matching the parsed type, but fall back across the whole list
+    const pool = suppliers.filter(s => parsedIsSub ? s.is_subcontractor : !s.is_subcontractor);
+    const findIn = list =>
+      list.find(x => norm(x.supplier_name) === target) ||
+      list.find(x => target && (norm(x.supplier_name).includes(target) || target.includes(norm(x.supplier_name)))) ||
       null;
+    matchedSupplier = findIn(pool) || findIn(suppliers);
     if (matchedSupplier) {
+      // If the match sits in the other pool, flip the toggle so it's selectable
+      if (!!matchedSupplier.is_subcontractor !== (_supAddType === 'subcontractor'))
+        supAddSetType(matchedSupplier.is_subcontractor ? 'subcontractor' : 'supplier');
+      await _supAddFillSupplierOptions();
       document.getElementById('supAddSupplier').value = String(matchedSupplier.id);
       await onSupAddSupplierPicked();
       _supAddUpdateDueHint();
+    } else if (parsedIsSub) {
+      // Unknown subcontractor — open the quick-create form pre-filled from the invoice
+      supAddToggleNewSub(true);
+      document.getElementById('nsubName').value = parsed.supplier_name || '';
+      if (parsed.utr_number)      document.getElementById('nsubUtr').value = parsed.utr_number;
+      if (parsed.cis_rate != null) {
+        const r = String(Number(parsed.cis_rate));
+        if ([...document.getElementById('nsubCisRate').options].some(o => o.value === r))
+          document.getElementById('nsubCisRate').value = r;
+      }
+      if (parsed.bank_sort_code)  document.getElementById('nsubSort').value = parsed.bank_sort_code;
+      if (parsed.bank_account_no) document.getElementById('nsubAccount').value = parsed.bank_account_no;
     }
   }
 
@@ -36707,19 +36871,38 @@ IMPORTANT: Use the final printed net total and gross total from the invoice — 
   }
 
   const bits = [];
-  bits.push(matchedSupplier ? `supplier: ${matchedSupplier.supplier_name}` :
-            (parsed.supplier_name ? `supplier "${parsed.supplier_name}" not found — pick manually` : ''));
+  const who = parsedIsSub ? 'subcontractor' : 'supplier';
+  bits.push(matchedSupplier ? `${who}: ${matchedSupplier.supplier_name}` :
+            (parsed.supplier_name ? (parsedIsSub
+              ? `new subcontractor "${parsed.supplier_name}" — details pre-filled below, hit Save Subcontractor`
+              : `supplier "${parsed.supplier_name}" not found — pick manually`) : ''));
   if (parsed.po_reference) bits.push(poMatched ? `PO ${parsed.po_reference} matched` : `PO ${parsed.po_reference} not found`);
   label.innerHTML = `${escapeHtml(file.name)} · ${(file.size / 1024).toFixed(0)} KB — <span style="color:var(--green);font-weight:600">parsed ✓</span>${bits.filter(Boolean).length ? ' <span style="color:var(--muted)">(' + escapeHtml(bits.filter(Boolean).join(', ')) + ')</span>' : ''}`;
 }
 
 async function saveSupAddInvoice() {
   const supplierId = parseInt(document.getElementById('supAddSupplier').value);
-  if (!supplierId) { toast('Pick a supplier', 'error'); return; }
-  const gross = parseFloat(document.getElementById('supAddGross').value);
-  if (!gross) { toast('Gross amount is required', 'error'); return; }
+  if (!supplierId) { toast(_supAddType === 'subcontractor' ? 'Pick a subcontractor' : 'Pick a supplier', 'error'); return; }
+
+  const isSub = _supAddType === 'subcontractor';
+  let net = null, vat = null, gross = null, labour = null, cisRate = null, cisDed = null;
+  if (isSub) {
+    labour  = parseFloat(document.getElementById('supAddLabour').value) || null;
+    cisRate = parseFloat(document.getElementById('supAddCisRate').value);
+    cisDed  = parseFloat(document.getElementById('supAddCisDeduction').value) || 0;
+    gross   = parseFloat(document.getElementById('supAddPayable').value);
+    if (!gross && labour) gross = +(labour - cisDed).toFixed(2);
+    if (!gross) { toast('Amount payable is required — enter the labour subtotal', 'error'); return; }
+    net = labour; // for reporting: pre-deduction value
+  } else {
+    net   = parseFloat(document.getElementById('supAddNet').value) || null;
+    vat   = parseFloat(document.getElementById('supAddVat').value) || null;
+    gross = parseFloat(document.getElementById('supAddGross').value);
+    if (!gross) { toast('Gross amount is required', 'error'); return; }
+  }
   const date = document.getElementById('supAddDate').value || null;
   const ref  = document.getElementById('supAddRef').value.trim();
+  const dueOverride = document.getElementById('supAddDueOverride').value || null;
 
   setLoading(true);
   try {
@@ -36736,23 +36919,31 @@ async function saveSupAddInvoice() {
       spId = driveItem.id; spUrl = driveItem.webUrl;
     }
 
-    await api.post('/api/supplier-invoices', {
+    const payload = {
       supplier_id: supplierId,
       po_id: document.getElementById('supAddPo').value || null,
       babcock_quote_id: document.getElementById('supAddBabcock')?.value || null,
+      invoice_type: _supAddType,
       invoice_ref: ref || null,
       invoice_date: date,
-      net: parseFloat(document.getElementById('supAddNet').value) || null,
-      vat: parseFloat(document.getElementById('supAddVat').value) || null,
-      gross,
-      sharepoint_file_id: spId,
-      sharepoint_file_url: spUrl,
-      filename: fileName,
-      notes: document.getElementById('supAddNotes').value.trim() || null,
-      source: 'manual'
-    });
+      net, vat, gross,
+      labour_gross: labour,
+      cis_rate: isSub && Number.isFinite(cisRate) ? cisRate : null,
+      cis_deduction: isSub ? cisDed : null,
+      notes: document.getElementById('supAddNotes').value.trim() || null
+    };
+    if (dueOverride) payload.due_date = dueOverride;
+    if (spId) { payload.sharepoint_file_id = spId; payload.sharepoint_file_url = spUrl; payload.filename = fileName; }
 
-    toast('Supplier invoice added ✓', 'success');
+    if (_supAddEditingId) {
+      await api.put(`/api/supplier-invoices/${_supAddEditingId}`, payload);
+      toast('Invoice updated ✓', 'success');
+    } else {
+      payload.source = 'manual';
+      await api.post('/api/supplier-invoices', payload);
+      toast(isSub ? 'Subcontractor invoice added ✓' : 'Supplier invoice added ✓', 'success');
+    }
+
     closeSupAddInvoiceModal();
     await loadInvoicingData();
     renderInvSupplierTable();

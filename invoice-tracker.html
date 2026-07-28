@@ -369,14 +369,22 @@
      ADD SUPPLIER INVOICE MANUALLY MODAL
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="invSupAddModal">
-  <div class="modal" style="max-width:620px;width:94vw;max-height:90vh;overflow-y:auto">
-    <div class="modal-title">➕ Add Supplier Invoice</div>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:14px">
-      For purchases without a PO — or link one if it exists. Due date comes from the supplier's payment terms.
+  <div class="modal" style="max-width:640px;width:94vw;max-height:90vh;overflow-y:auto">
+    <div class="modal-title" id="invSupAddTitle">➕ Add Invoice</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">
+      Drop the invoice below and it fills itself — or type it in. Due date comes from payment terms unless you override it.
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:14px">
+      <button class="inv-sup-chip active" id="supAddTypeSupplier" onclick="supAddSetType('supplier')">🏭 Supplier</button>
+      <button class="inv-sup-chip" id="supAddTypeSub" onclick="supAddSetType('subcontractor')">👷 Subcontractor (CIS)</button>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
       <div>
-        <label class="field-label">Supplier *</label>
+        <div style="display:flex;justify-content:space-between;align-items:baseline">
+          <label class="field-label" id="supAddSupplierLabel">Supplier *</label>
+          <button class="btn btn-ghost" id="supAddNewSubBtn" style="display:none;padding:1px 8px;font-size:10px"
+                  onclick="supAddToggleNewSub(true)">+ New subcontractor</button>
+        </div>
         <select class="field-input" id="supAddSupplier"
                 onchange="onSupAddSupplierPicked(); _supAddUpdateDueHint()"></select>
       </div>
@@ -393,6 +401,19 @@
         <input type="date" class="field-input" id="supAddDate">
       </div>
       <div>
+        <label class="field-label">Babcock Quote (optional)</label>
+        <select class="field-input" id="supAddBabcock"></select>
+      </div>
+      <div>
+        <label class="field-label">Due Date Override (optional)</label>
+        <input type="date" class="field-input" id="supAddDueOverride"
+               title="Leave blank to use the payment terms — set a date when a payment day was agreed">
+      </div>
+    </div>
+
+    <!-- Supplier maths: net + VAT = gross -->
+    <div id="supAddVatRow" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
         <label class="field-label">Net (£)</label>
         <input type="number" step="0.01" class="field-input" id="supAddNet" oninput="onSupAddNetVat()">
       </div>
@@ -404,9 +425,70 @@
         <label class="field-label">Gross (£) *</label>
         <input type="number" step="0.01" class="field-input" id="supAddGross">
       </div>
+    </div>
+
+    <!-- CIS maths: labour − deduction = payable -->
+    <div id="supAddCisRow" style="display:none;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-bottom:12px">
       <div>
-        <label class="field-label">Babcock Quote (optional)</label>
-        <select class="field-input" id="supAddBabcock"></select>
+        <label class="field-label">Labour Subtotal (£)</label>
+        <input type="number" step="0.01" class="field-input" id="supAddLabour" oninput="onSupAddCis()">
+      </div>
+      <div>
+        <label class="field-label">CIS Rate</label>
+        <select class="field-input" id="supAddCisRate" onchange="onSupAddCis()">
+          <option value="20" selected>20% — standard</option>
+          <option value="30">30% — unverified</option>
+          <option value="0">0% — gross status</option>
+        </select>
+      </div>
+      <div>
+        <label class="field-label">CIS Deduction (£)</label>
+        <input type="number" step="0.01" class="field-input" id="supAddCisDeduction">
+      </div>
+      <div>
+        <label class="field-label">Payable (£) *</label>
+        <input type="number" step="0.01" class="field-input" id="supAddPayable" style="font-weight:700">
+      </div>
+    </div>
+
+    <!-- Quick-create subcontractor -->
+    <div id="supAddNewSubForm" class="card" style="display:none;padding:12px;margin-bottom:12px;border:1px solid var(--accent)">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--accent);font-weight:600;margin-bottom:10px">
+        New Subcontractor
+      </div>
+      <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:10px;margin-bottom:10px">
+        <div>
+          <label class="field-label">Name *</label>
+          <input type="text" class="field-input" id="nsubName" placeholder="e.g. Adrian Smith">
+        </div>
+        <div>
+          <label class="field-label">UTR</label>
+          <input type="text" class="field-input" id="nsubUtr">
+        </div>
+        <div>
+          <label class="field-label">CIS Rate</label>
+          <select class="field-input" id="nsubCisRate">
+            <option value="20" selected>20%</option>
+            <option value="30">30%</option>
+            <option value="0">0%</option>
+          </select>
+        </div>
+        <div>
+          <label class="field-label">Sort Code</label>
+          <input type="text" class="field-input" id="nsubSort" placeholder="00-00-00">
+        </div>
+        <div>
+          <label class="field-label">Account No</label>
+          <input type="text" class="field-input" id="nsubAccount">
+        </div>
+        <div>
+          <label class="field-label">Email</label>
+          <input type="email" class="field-input" id="nsubEmail">
+        </div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px">
+        <button class="btn btn-ghost" style="font-size:12px" onclick="supAddToggleNewSub(false)">Cancel</button>
+        <button class="btn btn-primary" style="font-size:12px" onclick="supAddCreateSubcontractor()">Save Subcontractor</button>
       </div>
     </div>
     <div id="supAddDueHint" style="font-size:11px;color:var(--subtle);margin-bottom:12px"></div>
@@ -429,7 +511,7 @@
     </div>
     <div style="display:flex;justify-content:flex-end;gap:10px">
       <button class="btn btn-ghost" onclick="closeSupAddInvoiceModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="saveSupAddInvoice()">Save Invoice</button>
+      <button class="btn btn-primary" id="supAddSaveBtn" onclick="saveSupAddInvoice()">Save Invoice</button>
     </div>
   </div>
 </div>
@@ -1418,6 +1500,6 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260728j"></script>
+<script src="shared.js?v=20260728k"></script>
 </body>
 </html>
