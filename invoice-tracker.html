@@ -415,12 +415,16 @@
       <input type="text" class="field-input" id="supAddNotes" placeholder="Optional">
     </div>
     <div style="margin-bottom:16px">
-      <label class="field-label">Invoice File</label>
+      <label class="field-label">Invoice File — drop it here and everything above fills itself</label>
       <input type="file" id="supAddFileInput" accept=".pdf,.png,.jpg,.jpeg" style="display:none"
              onchange="onSupAddFilePicked(this)">
-      <div style="display:flex;align-items:center;gap:10px">
-        <button class="btn btn-ghost" onclick="document.getElementById('supAddFileInput').click()">📎 Choose file</button>
-        <span id="supAddFileLabel" style="font-size:12px;color:var(--muted)">No file attached (optional)</span>
+      <div id="supAddDropzone"
+           style="border:2px dashed var(--border);border-radius:8px;padding:18px;text-align:center;cursor:pointer;transition:border-color .15s"
+           onclick="document.getElementById('supAddFileInput').click()"
+           ondragover="supAddDragOver(event)" ondragleave="supAddDragLeave(event)" ondrop="supAddDrop(event)">
+        <div style="font-size:22px;margin-bottom:4px">📥</div>
+        <div style="font-size:12px;color:var(--muted)">Drop the invoice PDF here (or click to browse) — Claude reads the supplier, amounts, dates and PO ref for you</div>
+        <div id="supAddFileLabel" style="font-size:12px;color:var(--muted);margin-top:6px">No file yet</div>
       </div>
     </div>
     <div style="display:flex;justify-content:flex-end;gap:10px">

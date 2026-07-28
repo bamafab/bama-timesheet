@@ -36539,7 +36539,7 @@ async function openSupAddInvoiceModal() {
   });
   document.getElementById('supAddDate').value = new Date().toISOString().slice(0, 10);
   document.getElementById('supAddPo').innerHTML = '<option value="">— No PO —</option>';
-  document.getElementById('supAddFileLabel').textContent = 'No file attached (optional)';
+  document.getElementById('supAddFileLabel').textContent = 'No file yet';
   document.getElementById('supAddDueHint').textContent = '';
   document.getElementById('invSupAddModal').classList.add('active');
 
@@ -36602,9 +36602,115 @@ function onSupAddNetVat() {
 }
 
 function onSupAddFilePicked(input) {
-  _supAddFile = input.files && input.files[0] ? input.files[0] : null;
-  document.getElementById('supAddFileLabel').textContent =
-    _supAddFile ? `${_supAddFile.name} · ${(_supAddFile.size / 1024).toFixed(0)} KB` : 'No file attached (optional)';
+  const file = input.files && input.files[0] ? input.files[0] : null;
+  if (file) _supAddHandleFile(file);
+}
+
+// Drag & drop onto the modal dropzone
+function supAddDragOver(ev) {
+  ev.preventDefault();
+  ev.currentTarget.style.borderColor = 'var(--accent)';
+}
+function supAddDragLeave(ev) {
+  ev.currentTarget.style.borderColor = 'var(--border)';
+}
+function supAddDrop(ev) {
+  ev.preventDefault();
+  ev.currentTarget.style.borderColor = 'var(--border)';
+  const file = ev.dataTransfer.files && ev.dataTransfer.files[0];
+  if (file) _supAddHandleFile(file);
+}
+
+// Take the file → Claude reads it → prefill every field (AI reads only;
+// all arithmetic and matching stays deterministic JS)
+async function _supAddHandleFile(file) {
+  _supAddFile = file;
+  const label = document.getElementById('supAddFileLabel');
+  label.innerHTML = `<span class="spinner" style="width:12px;height:12px;display:inline-block;vertical-align:middle"></span> Reading ${escapeHtml(file.name)}…`;
+
+  let parsed = null;
+  try {
+    const dataUri = await _fileToDataUri(file);
+    const isImg = file.type.startsWith('image/');
+    const result = await callClaude({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 800,
+      messages: [{
+        role: 'user',
+        content: [
+          isImg
+            ? { type: 'image',    source: { type: 'base64', media_type: file.type, data: dataUri.split(',')[1] } }
+            : { type: 'document', source: { type: 'base64', media_type: file.type, data: dataUri.split(',')[1] } },
+          {
+            type: 'text',
+            text: `Extract from this UK supplier invoice. Return ONLY JSON, no markdown:
+{
+  "supplier_name": "the company that ISSUED the invoice (not BAMA Fabrication — BAMA is the customer)",
+  "invoice_ref": "supplier's invoice number",
+  "invoice_date": "YYYY-MM-DD",
+  "net_amount": 0,
+  "vat_amount": 0,
+  "gross_amount": 0,
+  "po_reference": "BAMA's PO reference if shown — looks like P260501 (P + 6 digits)"
+}
+Set any field to null if not clearly shown. The PO reference is usually printed under "Your Order", "Order Ref", "Customer Order", "PO Number" or similar.
+IMPORTANT: Use the final printed net total and gross total from the invoice — not a goods-only subtotal.`
+          }
+        ]
+      }]
+    });
+    const text = (result.content?.find(b => b.type === 'text')?.text || '').trim();
+    const s = text.indexOf('{'), e = text.lastIndexOf('}');
+    parsed = JSON.parse(text.slice(s, e + 1));
+  } catch (err) {
+    console.error('Add-invoice parse failed', err);
+    label.textContent = `${file.name} · ${(file.size / 1024).toFixed(0)} KB — couldn't read it, fill in manually`;
+    return;
+  }
+
+  // Fill the form (deterministic)
+  if (parsed.invoice_ref)  document.getElementById('supAddRef').value  = parsed.invoice_ref;
+  if (parsed.invoice_date) document.getElementById('supAddDate').value = String(parsed.invoice_date).slice(0, 10);
+  if (parsed.net_amount   != null) document.getElementById('supAddNet').value   = Number(parsed.net_amount).toFixed(2);
+  if (parsed.vat_amount   != null) document.getElementById('supAddVat').value   = Number(parsed.vat_amount).toFixed(2);
+  if (parsed.gross_amount != null) document.getElementById('supAddGross').value = Number(parsed.gross_amount).toFixed(2);
+  else if (parsed.net_amount != null || parsed.vat_amount != null)
+    document.getElementById('supAddGross').value =
+      (Number(parsed.net_amount || 0) + Number(parsed.vat_amount || 0)).toFixed(2);
+
+  // Auto-pick the supplier by name (exact → contains, normalised)
+  let matchedSupplier = null;
+  if (parsed.supplier_name) {
+    const suppliers = await _invGetSuppliersList();
+    const norm = v => String(v || '').toLowerCase().replace(/\b(ltd|limited|plc|llp|co|company|uk)\b/g, '').replace(/[^a-z0-9]/g, '');
+    const target = norm(parsed.supplier_name);
+    matchedSupplier =
+      suppliers.find(x => norm(x.supplier_name) === target) ||
+      suppliers.find(x => target && (norm(x.supplier_name).includes(target) || target.includes(norm(x.supplier_name)))) ||
+      null;
+    if (matchedSupplier) {
+      document.getElementById('supAddSupplier').value = String(matchedSupplier.id);
+      await onSupAddSupplierPicked();
+      _supAddUpdateDueHint();
+    }
+  }
+
+  // Auto-pick the PO when the invoice quotes our reference
+  let poMatched = false;
+  if (parsed.po_reference && matchedSupplier) {
+    const want = String(parsed.po_reference).replace(/\s+/g, '').toUpperCase();
+    const poSel = document.getElementById('supAddPo');
+    for (const opt of poSel.options) {
+      const refPart = (opt.textContent.split('—')[0] || '').replace(/\s+/g, '').toUpperCase();
+      if (opt.value && refPart === want) { poSel.value = opt.value; poMatched = true; break; }
+    }
+  }
+
+  const bits = [];
+  bits.push(matchedSupplier ? `supplier: ${matchedSupplier.supplier_name}` :
+            (parsed.supplier_name ? `supplier "${parsed.supplier_name}" not found — pick manually` : ''));
+  if (parsed.po_reference) bits.push(poMatched ? `PO ${parsed.po_reference} matched` : `PO ${parsed.po_reference} not found`);
+  label.innerHTML = `${escapeHtml(file.name)} · ${(file.size / 1024).toFixed(0)} KB — <span style="color:var(--green);font-weight:600">parsed ✓</span>${bits.filter(Boolean).length ? ' <span style="color:var(--muted)">(' + escapeHtml(bits.filter(Boolean).join(', ')) + ')</span>' : ''}`;
 }
 
 async function saveSupAddInvoice() {
