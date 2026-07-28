@@ -455,6 +455,9 @@ didn't). Now, QB-style:
   /api/suppliers, pushes `_poSuppliersCache`, auto-selects.
 - Last-chance duplicate guard: exact normalised name match pops
   bamaConfirm "Use existing / Create new anyway".
+- Form includes full address (line1/2, city, county, postcode) — sent to
+  POST /api/suppliers; warning toast if saved address-less (POs print the
+  supplier address).
 
 ### --bg-darker CSS variable fix (2026-07-28)
 

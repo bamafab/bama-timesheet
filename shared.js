@@ -34289,7 +34289,7 @@ function showPoNewSupplier() {
 function cancelPoNewSupplier() {
   const form = document.getElementById('poNewSupplierForm');
   if (form) form.style.display = 'none';
-  ['poNsName','poNsContact','poNsPhone','poNsEmail'].forEach(id => {
+  ['poNsName','poNsContact','poNsPhone','poNsEmail','poNsAddr1','poNsAddr2','poNsCity','poNsCounty','poNsPostcode'].forEach(id => {
     const el = document.getElementById(id); if (el) el.value = '';
   });
 }
@@ -34317,17 +34317,26 @@ async function savePoNewSupplier() {
   const btn = document.getElementById('poNsSaveBtn');
   btn.disabled = true;
   try {
+    const val = id => (document.getElementById(id)?.value || '').trim() || null;
     const created = await api.post('/api/suppliers', {
       supplier_name: name,
-      contact_name: (document.getElementById('poNsContact').value || '').trim() || null,
-      telephone:    (document.getElementById('poNsPhone').value || '').trim() || null,
-      email:        (document.getElementById('poNsEmail').value || '').trim() || null
+      contact_name:  val('poNsContact'),
+      telephone:     val('poNsPhone'),
+      email:         val('poNsEmail'),
+      address_line1: val('poNsAddr1'),
+      address_line2: val('poNsAddr2'),
+      city:          val('poNsCity'),
+      county:        val('poNsCounty'),
+      postcode:      val('poNsPostcode')
     });
+    if (!created?.address_line1 && !created?.postcode) {
+      toast('⚠ Supplier saved with no address — the PO will print without one.', 'warning');
+    }
     if (!created || !created.id) throw new Error('No supplier returned');
     _poSuppliersCache.push(created);
     cancelPoNewSupplier();
     selectPoSupplier(created.id);
-    toast(`Supplier "${created.supplier_name}" saved — add address/details later in Suppliers if needed.`, 'success');
+    toast(`Supplier "${created.supplier_name}" saved.`, 'success');
   } catch (e) {
     toast('Could not save supplier: ' + e.message, 'error');
   } finally {
