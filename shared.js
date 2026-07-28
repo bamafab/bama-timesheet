@@ -36034,30 +36034,12 @@ function _renderAfpCard(a) {
         </div>
         <div style="text-align:right">
           ${a.status === 'Certified'
-            ? `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:rgba(62,207,142,.2);color:var(--green)">✓ READY TO INVOICE</span>
-               <div style="display:flex;gap:4px;justify-content:flex-end;margin-top:5px">
-                 <button class="btn btn-ghost" style="padding:3px 8px;font-size:11px" title="Match an existing invoice to this AFP instead of creating a new one"
-                       onclick="event.stopPropagation(); linkInvoiceToAfp(${a.id})">Link existing</button>
-                 <button class="btn btn-primary" style="padding:3px 10px;font-size:11px"
-                       onclick="event.stopPropagation(); generateInvoiceFromAfpCard(${a.id})">Generate Invoice</button>
-               </div>`
+            ? `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:rgba(62,207,142,.2);color:var(--green)">✓ READY TO INVOICE</span>`
             : `${invStatusBadge(a.status)}`}
           ${a.invoice_ref ? `<div style="font-size:10px;color:var(--subtle);margin-top:3px">→ ${escapeHtml(a.invoice_ref)}</div>` : ''}
         </div>
       </div>
     </div>`;
-}
-
-// One-click invoice straight from the AFP card (the Natasza flow) — loads the
-// AFP into _afpDetailCurrent and reuses the confirmed generate flow.
-async function generateInvoiceFromAfpCard(id) {
-  try {
-    _afpDetailCurrent = await api.get(`/api/applications/${id}`);
-  } catch (err) {
-    toast('Failed to load AFP: ' + (err.message || 'unknown'), 'error');
-    return;
-  }
-  await generateInvoiceFromAfp();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
