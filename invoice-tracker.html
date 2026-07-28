@@ -1093,6 +1093,10 @@
       <button class="btn btn-ghost" id="invDetailEmailBtn" style="display:none" onclick="emailInvoiceFromDetail()">📧 Email Invoice</button>
       <button class="btn btn-ghost" id="invDetailChaseBtn" style="display:none;border-color:#ffa500;color:#ffa500" onclick="chaseInvoiceFromDetail()">📨 Chase Payment</button>
       <button class="btn btn-ghost" id="invDetailReopenBtn" style="display:none" onclick="reopenInvoiceFromDetail()">↩ Reopen</button>
+      <button class="btn btn-ghost" id="invDetailDeleteBtn"
+              style="display:none;border-color:var(--red);color:var(--red)"
+              title="Permanently delete — Draft/Void invoices only"
+              onclick="deleteInvoiceFromDetail()">🗑 Delete</button>
       <button class="btn btn-ghost" id="invDetailVoidBtn"
               style="border-color:var(--red);color:var(--red)"
               onclick="voidInvoice()">Void</button>
@@ -1573,6 +1577,6 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260728s"></script>
+<script src="shared.js?v=20260728t"></script>
 </body>
 </html>

@@ -40858,6 +40858,8 @@ async function openInvoiceDetail(id) {
     // Buttons
     const issueBtn = document.getElementById('invDetailIssueBtn');
     const payBtn = document.getElementById('invDetailPayBtn');
+    const delBtn = document.getElementById('invDetailDeleteBtn');
+    if (delBtn) delBtn.style.display = (inv.status === 'Draft' || inv.status === 'Void') ? '' : 'none';
     const voidBtn = document.getElementById('invDetailVoidBtn');
     issueBtn.style.display = (inv.status === 'Draft')     ? '' : 'none';
     const editBtn = document.getElementById('invDetailEditBtn');
@@ -41801,6 +41803,29 @@ async function deleteInvPayment(pid) {
 }
 
 // ── Void ──
+// Hard delete — Draft (or already-Void) invoices only, for test/mistake
+// cleanup. Issued invoices must be voided instead (audit trail). Any AFP
+// matched to it is unlinked server-side and returns to Certified.
+async function deleteInvoiceFromDetail() {
+  if (!_invDetailCurrent) return;
+  const inv = _invDetailCurrent;
+  const confirmed = await showConfirmAsync(
+    'Delete invoice?',
+    `<p>This permanently deletes <b>${escapeHtml(inv.ref)}</b> and its line items — no trace stays in the ledger. Any AFP matched to it goes back to Certified.</p>
+     <p style="color:var(--red);font-weight:600">This cannot be undone.</p>`,
+    { okLabel: 'Delete permanently', cancelLabel: 'Keep' }
+  );
+  if (!confirmed) return;
+  try {
+    await api.delete(`/api/invoices/${inv.id}`);
+    toast(`Invoice ${inv.ref} deleted`, 'success');
+    closeInvDetail();
+    await loadInvoicingData();
+  } catch (err) {
+    toast('Delete failed: ' + (err.message || 'unknown'), 'error');
+  }
+}
+
 async function voidInvoice() {
   if (!_invDetailCurrent) return;
   const confirmed = await showConfirmAsync(

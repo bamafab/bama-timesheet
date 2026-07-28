@@ -1521,6 +1521,43 @@ app.http('invoices-payment-delete', {
     }
 });
 
+// Hard delete — TEST/Draft invoices only. Issued invoices must be voided
+// (audit trail). Cascades line items + unlinks any AFP pointing at it.
+app.http('invoices-delete', {
+    methods: ['DELETE'],
+    authLevel: 'anonymous',
+    route: 'invoices/{id}',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+        try {
+            const id = parseInt(request.params.id);
+            const res = await query('SELECT * FROM Invoices WHERE id = @id', { id });
+            if (!res.recordset.length) return notFound('Invoice not found', request);
+            const inv = res.recordset[0];
+            if (inv.status !== 'Draft' && inv.status !== 'Void') {
+                return badRequest(`Only Draft or Void invoices can be deleted — ${inv.status} invoices must be voided first (audit trail)`, request);
+            }
+            const pay = await query('SELECT COUNT(*) AS n FROM InvoicePayments WHERE invoice_id = @id', { id });
+            if (pay.recordset[0].n > 0) {
+                return badRequest('Invoice has recorded payments — remove them first', request);
+            }
+            // Unlink any AFP matched to this invoice (status returns to Certified)
+            await query(
+                `UPDATE Applications SET invoice_id = NULL,
+                    status = CASE WHEN status = 'Invoiced' THEN 'Certified' ELSE status END,
+                    updated_at = GETUTCDATE()
+                 WHERE invoice_id = @id`, { id });
+            await query('DELETE FROM InvoiceLineItems WHERE invoice_id = @id', { id });
+            await query('DELETE FROM Invoices WHERE id = @id', { id });
+            return ok({ id, deleted: true }, request);
+        } catch (err) {
+            context.error('Error deleting invoice:', err);
+            return serverError('Failed to delete invoice: ' + err.message, request);
+        }
+    }
+});
+
 app.http('invoices-void', {
     methods: ['POST'],
     authLevel: 'anonymous',
