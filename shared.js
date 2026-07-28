@@ -36326,7 +36326,9 @@ function renderInvSupplierTable() {
       <td>${inv.po_id ? invStatusBadge(_invPoRecon(inv)) : ''}</td>
       <td>${inv.paid_at ? `<span style="color:var(--green);font-weight:600" title="${escapeHtml(inv.paid_ref || '')}">✓ Paid</span>
         <div style="font-size:10px;color:var(--muted)">${_invSupFmtDate(inv.paid_at)}${inv.run_ref ? ' · ' + escapeHtml(inv.run_ref) : ''}</div>` : ''}</td>
-      <td style="text-align:center;white-space:nowrap">${inv.paid_at ? '' :
+      <td style="text-align:center;white-space:nowrap">${inv.paid_at ?
+        `<button class="btn btn-ghost" style="padding:2px 6px;font-size:11px" title="Undo payment — mark unpaid"
+                 onclick="undoSupInvoicePaid(${inv.id})">↩</button>` :
         `<button class="btn btn-ghost" style="padding:2px 6px;font-size:11px"
                  title="Amend invoice" onclick="openSupAddInvoiceModal(${inv.id})">✏️</button>
          <button class="btn btn-ghost" style="padding:2px 6px;font-size:11px;color:var(--red)"
@@ -36345,6 +36347,28 @@ function _invPoRecon(inv) {
   if (Math.abs(sum - poTotal) <= 1.00) return 'matched';
   if (sum > poTotal + 1.00) return 'discrepancy';
   return 'unmatched';
+}
+
+async function undoSupInvoicePaid(id) {
+  const inv = _invSupInvoices.find(i => i.id === id);
+  if (!inv) return;
+  const okGo = await bamaConfirm({
+    title: 'Undo payment?',
+    message: `Mark ${inv.invoice_ref || '#' + id} (£${Number(inv.gross || 0).toFixed(2)}) from ${inv.supplier_name || 'supplier'} as UNPAID again?\n\nCurrently: paid ${inv.paid_at ? new Date(inv.paid_at).toLocaleDateString('en-GB') : ''}${inv.paid_ref ? ' · ' + inv.paid_ref : ''}${inv.run_ref ? ' · run ' + inv.run_ref : ''}. It will go back into aged creditors, statement checks and BACS runs.`,
+    confirmText: 'Mark Unpaid'
+  });
+  if (!okGo) return;
+  setLoading(true);
+  try {
+    await api.put(`/api/supplier-invoices/${id}`, {
+      paid_at: null, paid_by: null, paid_ref: null, payment_run_id: null
+    });
+    toast('Payment undone — invoice is unpaid again ✓', 'success');
+    await loadInvoicingData();
+    renderInvSupplierTable();
+  } catch (e) {
+    toast('Undo failed: ' + (e.message || 'unknown error'), 'error');
+  } finally { setLoading(false); }
 }
 
 async function deleteSupInvoice(id) {
