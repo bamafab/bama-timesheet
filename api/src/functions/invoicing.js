@@ -479,22 +479,21 @@ app.http('applications-submit', {
             if (existing.recordset[0].status !== 'Draft') {
                 return badRequest(`Cannot submit AFP — current status is ${existing.recordset[0].status}`, request);
             }
-            if (!body.sharepoint_pdf_id || !body.sharepoint_pdf_url) {
-                return badRequest('sharepoint_pdf_id and sharepoint_pdf_url required (client must upload PDF first)', request);
-            }
-
+            // PDF refs are optional — submits still work when the project has
+            // no SharePoint folder (client falls back to opening the PDF in a
+            // tab); refs can be backfilled by re-submitting later.
             await query(
                 `UPDATE Applications SET
                     status              = 'Submitted',
                     submitted_at        = GETUTCDATE(),
-                    sharepoint_pdf_id   = @pdfId,
-                    sharepoint_pdf_url  = @pdfUrl,
+                    sharepoint_pdf_id   = COALESCE(@pdfId, sharepoint_pdf_id),
+                    sharepoint_pdf_url  = COALESCE(@pdfUrl, sharepoint_pdf_url),
                     updated_at          = GETUTCDATE()
                  WHERE id = @id`,
                 {
                     id,
-                    pdfId:  body.sharepoint_pdf_id,
-                    pdfUrl: body.sharepoint_pdf_url
+                    pdfId:  body.sharepoint_pdf_id || null,
+                    pdfUrl: body.sharepoint_pdf_url || null
                 }
             );
             const refetched = await query('SELECT * FROM Applications WHERE id = @id', { id });

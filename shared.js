@@ -38184,6 +38184,8 @@ async function saveAfpDraft() {
       saved = await api.put(`/api/applications/${_afpEditing.id}`, payload);
     } else {
       saved = await api.post('/api/applications', payload);
+      _afpEditing = saved;
+      _afpImportMeta = null;
     }
     toast(`AFP ${saved.ref} saved as Draft ✓`, 'success');
     closeAfpNewModal();
@@ -38210,23 +38212,44 @@ async function saveAndSubmitAfp() {
       saved = await api.put(`/api/applications/${_afpEditing.id}`, payload);
     } else {
       saved = await api.post('/api/applications', payload);
+      // Creation succeeded — from here on the AFP EXISTS. Switch the modal to
+      // edit mode immediately so any failure below (PDF/SharePoint) leaves a
+      // retry that UPDATEs instead of re-creating ("AFP number already exists").
+      _afpEditing = saved;
+      _afpImportMeta = null;
     }
     const full = await api.get(`/api/applications/${saved.id}`);
     await loadLogoDataUri();
     const pdfData = _buildAfpPdfData(full);
     const pdfBlob = await renderBamaAfpPDF(pdfData);
+
+    // SharePoint upload — best effort. Each project gets its own
+    // "08 - Application for payment" folder under its OWN project folder; if
+    // the project has no folder set (or Graph fails), fall back to opening
+    // the PDF in a tab and still submit.
+    let driveItem = null;
     const project = (_invProjectsCache || []).find(p => p.id === saved.project_id);
-    if (!project || !project.sharepoint_folder_id) {
-      throw new Error('Project has no SharePoint folder set — set it in Projects tracker first.');
+    if (project && project.sharepoint_folder_id) {
+      try {
+        const afpFolder = await getOrCreateSubfolder(project.sharepoint_folder_id, '08 - Application for payment', BAMA_DRIVE_ID);
+        const fileName = sanitizeSpFilename(`${saved.ref}.pdf`);
+        driveItem = await uploadFileToFolder(afpFolder.id, fileName, pdfBlob, 'application/pdf');
+      } catch (spErr) {
+        console.warn('AFP SharePoint upload failed, falling back to tab:', spErr);
+      }
     }
-    const afpFolder = await getOrCreateSubfolder(project.sharepoint_folder_id, '08 - Application for payment', BAMA_DRIVE_ID);
-    const fileName = sanitizeSpFilename(`${saved.ref}.pdf`);
-    const driveItem = await uploadFileToFolder(afpFolder.id, fileName, pdfBlob, 'application/pdf');
-    await api.post(`/api/applications/${saved.id}/submit`, {
+    if (!driveItem) {
+      try { window.open(URL.createObjectURL(pdfBlob), '_blank'); } catch (e) { /* popup blocked */ }
+    }
+    await api.post(`/api/applications/${saved.id}/submit`, driveItem ? {
       sharepoint_pdf_id:  driveItem.id,
       sharepoint_pdf_url: driveItem.webUrl
-    });
-    toast(`AFP ${saved.ref} submitted ✓`, 'success');
+    } : {});
+    if (driveItem) {
+      toast(`AFP ${saved.ref} submitted ✓`, 'success');
+    } else {
+      toast(`AFP ${saved.ref} submitted ✓ — no SharePoint folder on this project, PDF opened in a new tab (save it manually or set the folder in Projects tracker and re-submit)`, 'warning');
+    }
     closeAfpNewModal();
     await loadInvoicingData();
     _afpSelectedProjectId = saved.project_id;
@@ -38432,18 +38455,27 @@ async function submitAfpFromDetail() {
     await loadLogoDataUri();
     const pdfData = _buildAfpPdfData(afp);
     const pdfBlob = await renderBamaAfpPDF(pdfData);
+    let driveItem = null;
     const project = (_invProjectsCache || []).find(p => p.id === afp.project_id);
-    if (!project || !project.sharepoint_folder_id) {
-      throw new Error('Project has no SharePoint folder set');
+    if (project && project.sharepoint_folder_id) {
+      try {
+        const afpFolder = await getOrCreateSubfolder(project.sharepoint_folder_id, '08 - Application for payment', BAMA_DRIVE_ID);
+        const fileName = sanitizeSpFilename(`${afp.ref}.pdf`);
+        driveItem = await uploadFileToFolder(afpFolder.id, fileName, pdfBlob, 'application/pdf');
+      } catch (spErr) {
+        console.warn('AFP SharePoint upload failed, falling back to tab:', spErr);
+      }
     }
-    const afpFolder = await getOrCreateSubfolder(project.sharepoint_folder_id, '08 - Application for payment', BAMA_DRIVE_ID);
-    const fileName = sanitizeSpFilename(`${afp.ref}.pdf`);
-    const driveItem = await uploadFileToFolder(afpFolder.id, fileName, pdfBlob, 'application/pdf');
-    await api.post(`/api/applications/${afp.id}/submit`, {
+    if (!driveItem) {
+      try { window.open(URL.createObjectURL(pdfBlob), '_blank'); } catch (e) { /* popup blocked */ }
+    }
+    await api.post(`/api/applications/${afp.id}/submit`, driveItem ? {
       sharepoint_pdf_id:  driveItem.id,
       sharepoint_pdf_url: driveItem.webUrl
-    });
-    toast(`AFP ${afp.ref} submitted ✓`, 'success');
+    } : {});
+    toast(driveItem
+      ? `AFP ${afp.ref} submitted ✓`
+      : `AFP ${afp.ref} submitted ✓ — no SharePoint folder on this project, PDF opened in a new tab`, driveItem ? 'success' : 'warning');
     closeAfpDetail();
     await loadInvoicingData();
     renderInvAfpsTable();
