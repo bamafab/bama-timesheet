@@ -34232,22 +34232,107 @@ function selectPoProject(projectId) {
 function filterPoSuppliers(q) {
   const dd = document.getElementById('poNewSupplierDropdown');
   if (!q || q.length < 1) { dd.innerHTML = ''; return; }
-  const qLo = q.toLowerCase();
+  // Ltd/Limited-insensitive normalised matching (same principle as the
+  // Clients matcher) — "outside structure" finds "Outside Structure
+  // Solutions Ltd", punctuation and suffixes ignored.
+  const norm = s => String(s || '').toLowerCase()
+    .replace(/\b(ltd|limited|plc|llp|uk)\b/g, '').replace(/[^a-z0-9 ]/g, '')
+    .replace(/\s+/g, ' ').trim();
+  const qN = norm(q);
   const matches = _poSuppliersCache
-    .filter(s => `${s.supplier_name || ''} ${s.contact_name || ''}`.toLowerCase().includes(qLo))
-    .slice(0, 20);
-  if (matches.length === 0) {
-    dd.innerHTML = '<div style="padding:8px;color:var(--subtle);font-size:12px">No suppliers match</div>';
-    return;
-  }
-  dd.innerHTML = matches.map(s => `
+    .filter(s => {
+      const hay = norm(`${s.supplier_name || ''} ${s.contact_name || ''}`);
+      const sN  = norm(s.supplier_name);
+      return hay.includes(qN) || (!!sN && qN.includes(sN));
+    })
+    .slice(0, 12);
+
+  const rows = matches.map(s => `
     <div style="padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--border);background:var(--bg-darker)"
-         onmouseover="this.style.background='var(--bg-darker-2,#22252b)'"
+         onmouseover="this.style.background='var(--surface)'"
          onmouseout="this.style.background='var(--bg-darker)'"
-         onclick="selectPoSupplier(${s.id})">
+         onmousedown="event.preventDefault(); selectPoSupplier(${s.id})">
       <div style="font-weight:600">${escapeHtml(s.supplier_name || '')}</div>
       <div style="font-size:12px;color:var(--muted)">${escapeHtml((s.address_line1 || '') + (s.city ? ' · ' + s.city : ''))}</div>
-    </div>`).join('');
+    </div>`);
+
+  // Always offer creating what was typed — no more dead-end "No suppliers match".
+  rows.push(`
+    <div style="padding:8px 10px;cursor:pointer;background:var(--bg-darker);color:var(--accent);font-weight:600"
+         onmouseover="this.style.background='var(--surface)'"
+         onmouseout="this.style.background='var(--bg-darker)'"
+         onmousedown="event.preventDefault(); showPoNewSupplier()">
+      ＋ Add "${escapeHtml(q)}" as a new supplier
+    </div>`);
+
+  dd.innerHTML = `<div style="position:absolute;top:0;left:0;right:0;z-index:30;border:1px solid var(--border);
+       border-radius:8px;overflow:hidden;max-height:260px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.35)">
+    ${matches.length === 0 ? '<div style="padding:8px 10px;color:var(--subtle);font-size:12px;background:var(--bg-darker)">No supplier with a similar name — add it below</div>' : ''}
+    ${rows.join('')}
+  </div>`;
+}
+
+// ── Inline new-supplier flow inside the New PO modal ──────────────────────
+function showPoNewSupplier() {
+  const q = (document.getElementById('poNewSupplierSearch').value || '').trim();
+  document.getElementById('poNewSupplierDropdown').innerHTML = '';
+  _poNewState.supplierId = null;
+  document.getElementById('poNewSupplierSelected').textContent = '';
+  const form = document.getElementById('poNewSupplierForm');
+  if (!form) { toast('Add-supplier form not available on this page.', 'error'); return; }
+  form.style.display = 'block';
+  const nameEl = document.getElementById('poNsName');
+  if (q) nameEl.value = q;
+  nameEl.focus();
+}
+
+function cancelPoNewSupplier() {
+  const form = document.getElementById('poNewSupplierForm');
+  if (form) form.style.display = 'none';
+  ['poNsName','poNsContact','poNsPhone','poNsEmail'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+}
+
+async function savePoNewSupplier() {
+  const name = (document.getElementById('poNsName').value || '').trim();
+  if (!name) { toast('Supplier name is required.', 'error'); return; }
+  // Guard against near-duplicates one last time (exact normalised match)
+  const norm = s => String(s || '').toLowerCase()
+    .replace(/\b(ltd|limited|plc|llp|uk)\b/g, '').replace(/[^a-z0-9 ]/g, '')
+    .replace(/\s+/g, ' ').trim();
+  const dup = (_poSuppliersCache || []).find(s => norm(s.supplier_name) === norm(name));
+  if (dup) {
+    const useExisting = await bamaConfirm({
+      title: 'Similar supplier exists',
+      body: `<strong style="color:var(--text)">"${escapeHtml(dup.supplier_name)}"</strong> is already in the database.<br><br>Use the existing supplier instead of creating a duplicate?`,
+      confirmText: 'Use existing', cancelText: 'Create new anyway', icon: '🔍', tone: 'primary'
+    });
+    if (useExisting) {
+      cancelPoNewSupplier();
+      selectPoSupplier(dup.id);
+      return;
+    }
+  }
+  const btn = document.getElementById('poNsSaveBtn');
+  btn.disabled = true;
+  try {
+    const created = await api.post('/api/suppliers', {
+      supplier_name: name,
+      contact_name: (document.getElementById('poNsContact').value || '').trim() || null,
+      telephone:    (document.getElementById('poNsPhone').value || '').trim() || null,
+      email:        (document.getElementById('poNsEmail').value || '').trim() || null
+    });
+    if (!created || !created.id) throw new Error('No supplier returned');
+    _poSuppliersCache.push(created);
+    cancelPoNewSupplier();
+    selectPoSupplier(created.id);
+    toast(`Supplier "${created.supplier_name}" saved — add address/details later in Suppliers if needed.`, 'success');
+  } catch (e) {
+    toast('Could not save supplier: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 function selectPoSupplier(supplierId) {

@@ -442,6 +442,20 @@ PER assembly — multi-variant sheets ("Column 1-C & 2-C, QUANTITY 1 OF EACH",
 thermal-break plate arrays) yield several cards sharing one SharePoint file.
 max_tokens 3000.
 
+### New PO modal: add-supplier flow (2026-07-28)
+
+The main New PO supplier picker (`filterPoSuppliers`) previously dead-
+ended at "No suppliers match" — a PO couldn't be raised for an unknown
+supplier (the Instant PO flow already had add-supplier; the main modal
+didn't). Now, QB-style:
+- Ltd/Limited/PLC/punctuation-insensitive matching ("did you mean" list)
+- Dropdown ALWAYS ends with `＋ Add "<typed>" as a new supplier` →
+  inline form in po-tracker.html (`poNewSupplierForm`: name required,
+  contact/phone/email optional) → `savePoNewSupplier()` POSTs
+  /api/suppliers, pushes `_poSuppliersCache`, auto-selects.
+- Last-chance duplicate guard: exact normalised name match pops
+  bamaConfirm "Use existing / Create new anyway".
+
 ### --bg-darker CSS variable fix (2026-07-28)
 
 `var(--bg-darker)` was used ~50× (shared.js, projects, invoice tracker…)
