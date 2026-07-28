@@ -40462,8 +40462,47 @@ async function _buildInvoicePdfData(inv) {
     [_cli.city, _cli.county].filter(Boolean).join(', '),
     _cli.postcode
   ].map(x => String(x || '').trim()).filter(Boolean) : [];
-  const billToBlock = [customer, ..._addrLines].join('\n');
-  if (_addrLines.length === 0 && typeof toast === 'function') {
+  let billToBlock = [customer, ..._addrLines].join('\n');
+  // No address on the client record — offer to capture it right here (saves
+  // to Clients so every future document has it). Skippable.
+  if (_addrLines.length === 0 && inv.client_id && typeof showConfirmAsync === 'function') {
+    const wants = await showConfirmAsync(
+      'Add customer address?',
+      `<p><b>${escapeHtml(customer)}</b> has no address on record — many clients reject invoices without one.</p>
+       <input type="text" id="cliFixL1" class="field-input" placeholder="Address line 1" style="width:100%;margin-bottom:6px">
+       <input type="text" id="cliFixL2" class="field-input" placeholder="Address line 2 (optional)" style="width:100%;margin-bottom:6px">
+       <div style="display:grid;grid-template-columns:1fr 1fr 120px;gap:6px">
+         <input type="text" id="cliFixCity" class="field-input" placeholder="City">
+         <input type="text" id="cliFixCounty" class="field-input" placeholder="County (optional)">
+         <input type="text" id="cliFixPc" class="field-input" placeholder="Postcode">
+       </div>`,
+      { okLabel: 'Save & use', cancelLabel: 'Skip for now' }
+    );
+    if (wants) {
+      const upd = {
+        address_line1: (document.getElementById('cliFixL1')?.value || '').trim() || null,
+        address_line2: (document.getElementById('cliFixL2')?.value || '').trim() || null,
+        city:          (document.getElementById('cliFixCity')?.value || '').trim() || null,
+        county:        (document.getElementById('cliFixCounty')?.value || '').trim() || null,
+        postcode:      (document.getElementById('cliFixPc')?.value || '').trim() || null
+      };
+      if (upd.address_line1 || upd.postcode) {
+        try {
+          const savedCli = await api.put(`/api/clients/${inv.client_id}`, upd);
+          const cache = (typeof _invClientsCache !== 'undefined' ? _invClientsCache : []) || [];
+          const idx = cache.findIndex(c => c.id === inv.client_id);
+          if (idx >= 0) cache[idx] = { ...cache[idx], ...savedCli };
+          const newLines = [savedCli.address_line1, savedCli.address_line2,
+            [savedCli.city, savedCli.county].filter(Boolean).join(', '), savedCli.postcode]
+            .map(x => String(x || '').trim()).filter(Boolean);
+          billToBlock = [customer, ...newLines].join('\n');
+          toast('Client address saved ✓', 'success');
+        } catch (e) {
+          toast('Could not save address: ' + (e.message || 'unknown'), 'error');
+        }
+      }
+    }
+  } else if (_addrLines.length === 0 && typeof toast === 'function') {
     toast('⚠ No customer address on this invoice — many clients reject invoices without one. Add it to the client record.', 'warning');
   }
   const projectLabel = _invSelectedProject
