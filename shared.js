@@ -19807,6 +19807,7 @@ async function onAssemblyFilesPicked(fileList) {
         ocr.parts = [{ part_mark: '', quantity: 1, profile: '', length_mm: null,
                        material: 'S355JR', area_m2: null, weight_kg: null }];
       }
+      _armFillWeightsFromSteelDb(ocr);   // steel-DB weights for anything the drawing didn't state
       queue.push({ file, sharepoint, ocr, ocrFailed });
     }
   }
@@ -19956,6 +19957,65 @@ function _asmResolveFinishId(item) {
   return matched;
 }
 
+// ── Steel-DB auto-weight (same principle as QB take-off) ─────────────────
+// lookupKgM/findSteelProfile come from steel-data.js (loaded per page).
+// Deterministic: weight PER PIECE = kg/m × length_m. The save-time total
+// already multiplies by part quantity — do NOT multiply here.
+function _armAutoWeightPart(p) {
+  if (typeof lookupKgM !== 'function') return null;
+  const kgm = lookupKgM(p.profile || '');
+  const lenM = (Number(p.length_mm) || 0) / 1000;
+  if (!kgm || kgm <= 0 || lenM <= 0) return null;
+  return Number((kgm * lenM).toFixed(2));
+}
+
+// Fill any MISSING part weights from the steel DB (never overwrites an
+// OCR'd or typed value). Called right after OCR before queueing.
+function _armFillWeightsFromSteelDb(ocr) {
+  if (!ocr || !Array.isArray(ocr.parts)) return;
+  for (const p of ocr.parts) {
+    if (p && (p.weight_kg === null || p.weight_kg === undefined || p.weight_kg === '')) {
+      const w = _armAutoWeightPart(p);
+      if (w !== null) { p.weight_kg = w; p._auto_weight = true; }
+    }
+  }
+}
+
+// Live recompute while editing a part row in the review card. Only touches
+// the weight cell if it is empty or was auto-filled (data-auto flag) — a
+// hand-typed weight is never overwritten.
+function armPartCellInput(inp) {
+  const tr = inp.closest('tr');
+  if (!tr) return;
+  const get = f => tr.querySelector(`.arm-cell[data-f="${f}"]`);
+  const profEl = get('profile'), lenEl = get('length_mm'), wEl = get('weight_kg');
+  if (!profEl || !wEl) return;
+
+  // kg/m tooltip on the profile cell
+  if (typeof findSteelProfile === 'function') {
+    const m = findSteelProfile(profEl.value || '');
+    profEl.title = (m && m.kgm)
+      ? `${m.canonical} — ${m.kgm} kg/m${m.confidence === 'fuzzy' ? ' (nearest match)' : ''}`
+      : (profEl.value ? 'Not in steel database' : '');
+  }
+
+  const manual = wEl.value !== '' && wEl.dataset.auto !== '1';
+  if (manual) return;
+  const w = _armAutoWeightPart({
+    profile: profEl.value,
+    length_mm: lenEl ? lenEl.value : null
+  });
+  if (w !== null) {
+    wEl.value = w;
+    wEl.dataset.auto = '1';
+    wEl.style.color = 'var(--green)';
+  } else if (wEl.dataset.auto === '1') {
+    wEl.value = '';
+    wEl.dataset.auto = '';
+    wEl.style.color = '';
+  }
+}
+
 function _armPartsRowsHtml(parts, qi) {
   const heavyIdx = heaviestPartIndex(parts);
   let rows = '';
@@ -19967,11 +20027,11 @@ function _armPartsRowsHtml(parts, qi) {
     rows += `<tr class="arm-part-row" style="${trStyle}" data-i="${i}">
       <td style="padding:3px 4px 3px 0"><input data-f="part_mark" value="${escapeHtml(p.part_mark || '')}" style="width:48px;${accent}" class="arm-cell"/></td>
       <td style="padding:3px 4px"><input data-f="quantity" type="number" value="${p.quantity ?? ''}" style="width:42px" class="arm-cell"/></td>
-      <td style="padding:3px 4px"><input data-f="profile" value="${escapeHtml(p.profile || '')}" style="width:88px;${accent}" class="arm-cell"/></td>
-      <td style="padding:3px 4px"><input data-f="length_mm" type="number" step="0.1" value="${p.length_mm ?? ''}" style="width:66px" class="arm-cell"/></td>
+      <td style="padding:3px 4px"><input data-f="profile" value="${escapeHtml(p.profile || '')}" style="width:88px;${accent}" class="arm-cell" oninput="armPartCellInput(this)"/></td>
+      <td style="padding:3px 4px"><input data-f="length_mm" type="number" step="0.1" value="${p.length_mm ?? ''}" style="width:66px" class="arm-cell" oninput="armPartCellInput(this)"/></td>
       <td style="padding:3px 4px"><input data-f="material" value="${escapeHtml(p.material || '')}" style="width:60px" class="arm-cell"/></td>
       <td style="padding:3px 4px"><input data-f="area_m2" type="number" step="0.001" value="${p.area_m2 ?? ''}" style="width:54px;text-align:right" class="arm-cell"/></td>
-      <td style="padding:3px 4px"><input data-f="weight_kg" type="number" step="0.001" value="${p.weight_kg ?? ''}" style="width:60px;text-align:right;${accent}" class="arm-cell"/></td>
+      <td style="padding:3px 4px"><input data-f="weight_kg" type="number" step="0.001" value="${p.weight_kg ?? ''}" ${p._auto_weight ? 'data-auto="1"' : ''} style="width:60px;text-align:right;${p._auto_weight ? 'color:var(--green)' : accent}" class="arm-cell" oninput="this.dataset.auto=''; this.style.color=''"/></td>
       <td style="padding:3px 0 3px 4px"><button class="btn btn-ghost" style="padding:2px 6px;font-size:12px" onclick="armRemoveRow(${qi}, ${i})" title="Remove">&times;</button></td>
     </tr>`;
   }

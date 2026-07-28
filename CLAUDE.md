@@ -442,6 +442,25 @@ PER assembly — multi-variant sheets ("Column 1-C & 2-C, QUANTITY 1 OF EACH",
 thermal-break plate arrays) yield several cards sharing one SharePoint file.
 max_tokens 3000.
 
+### Assembly review steel-DB auto-weight (2026-07-28)
+
+`steel-data.js` (repo root, NEW) — shared copy of QB's steel engine
+(`STEEL_KGM` full UK sections, `findSteelProfile` fuzzy matcher,
+`lookupKgM`), extracted programmatically from quote-builder.html. QB keeps
+its own inline copy (no-external-JS rule) — when adding sections, update
+BOTH or regenerate this file from QB. Loaded by projects.html BEFORE
+shared.js; all shared.js callers guard `typeof lookupKgM === 'function'`.
+
+Assembly review cards now auto-resolve weights like a QB take-off:
+- `_armFillWeightsFromSteelDb(ocr)` after OCR — fills only NULL part
+  weights (kg/m × length_m, PER PIECE — save-time total already × qty);
+  flagged `_auto_weight`, rendered green with `data-auto="1"`.
+- `armPartCellInput` live on profile/length inputs — recomputes auto
+  weights, kg/m tooltip on the profile cell ("SHS 180x180x10 — 52.8 kg/m"
+  / "Not in steel database"). Typing in the weight cell clears the auto
+  flag — hand-typed weights are never overwritten.
+- Plates (PLT20 etc.) have no kg/m — stay null/manual by design.
+
 ### Staged / partial fabrication (fab → weld → complete)
 
 Supersedes the old binary "Mark fabricated" flow (SPEC-job-fabrication-rework
