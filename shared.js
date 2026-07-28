@@ -8311,7 +8311,7 @@ async function saveSupplierTerms() {
 // panel. Drop or pick a PDF/image → Claude vision OCR extracts the supplier's
 // PO reference + monetary totals → auto-match against this supplier's POs
 // (any status, no invoice attached yet) → user reviews → save uploads to
-// SharePoint and PUTs /api/purchase-orders/{id}/supplier-invoice.
+// SharePoint and POSTs /api/supplier-invoices (ledger row linked to the PO).
 // ─────────────────────────────────────────────────────────────────────────────
 
 let _supDzState  = 'idle';    // 'idle' | 'parsing' | 'review' | 'saving'
@@ -8602,16 +8602,18 @@ async function saveSupplierDropzone() {
     );
 
     // 2. Persist on the PO (server reconciles vs total_value within £1)
-    await api.put(`/api/purchase-orders/${poId}/supplier-invoice`, {
-      supplier_invoice_ref:    ref || null,
-      supplier_invoice_date:   date || null,
-      supplier_invoice_net:    net || null,
-      supplier_invoice_vat:    vat || null,
-      supplier_invoice_gross:  gross,
-      sharepoint_id:           driveItem.id,
-      sharepoint_url:          driveItem.webUrl,
-      filename:                fileName,
-      reconciliation_notes:    notes || null
+    await api.post('/api/supplier-invoices', {
+      supplier_id:         po.supplier_id || _supplierDetailId,
+      po_id:               poId,
+      invoice_ref:         ref || null,
+      invoice_date:        date || null,
+      net:                 net || null,
+      vat:                 vat || null,
+      gross:               gross,
+      sharepoint_file_id:  driveItem.id,
+      sharepoint_file_url: driveItem.webUrl,
+      filename:            fileName,
+      notes:               notes || null
     });
 
     toast(`Invoice attached to ${po.reference} ✓`, 'success');
@@ -35631,6 +35633,7 @@ let _invCurrentTab = 'sales';           // 'afps' | 'sales' | 'supplier'
 let _invAfpList = [];
 let _invInvoiceList = [];
 let _invSupplierPoList = [];            // POs with received supplier invoices
+let _invSupInvoices = [];               // SupplierInvoices ledger rows (new AP model)
 let _invProjectsCache = [];
 let _invClientsCache = [];
 
@@ -35753,16 +35756,19 @@ async function loadInvoicingSupportData() {
 // ── Load the four streams ─────────────────────────────────────────────────
 async function loadInvoicingData() {
   try {
-    const [afps, invoices, pos] = await Promise.all([
+    const [afps, invoices, pos, supInvs] = await Promise.all([
       api.get('/api/applications').catch(() => []),
       api.get('/api/invoices').catch(() => []),
       api.get('/api/purchase-orders').catch(() => []),
+      api.get('/api/supplier-invoices').catch(() => []),
     ]);
     _invAfpList     = Array.isArray(afps)     ? afps     : [];
     _invInvoiceList = Array.isArray(invoices) ? invoices : [];
-    // Supplier invoices = POs that have received a supplier invoice
+    // Legacy view: POs that have received a supplier invoice (aggregates)
     _invSupplierPoList = (Array.isArray(pos) ? pos : [])
       .filter(po => po.supplier_invoice_received_at);
+    // New AP model: SupplierInvoices ledger rows
+    _invSupInvoices = Array.isArray(supInvs) ? supInvs : [];
   } catch (e) {
     console.warn('Invoice tracker data load failed:', e);
   }
@@ -35786,9 +35792,9 @@ function renderInvKpis() {
 
   const awaitingCert = _invAfpList.filter(a => a.status === 'Submitted').length;
 
-  const supplierUnpaid = _invSupplierPoList
-    .filter(po => !po.paid_at)
-    .reduce((s, po) => s + Number(po.supplier_invoice_gross || po.total_value || 0), 0);
+  const supplierUnpaid = _invSupInvoices
+    .filter(inv => !inv.paid_at)
+    .reduce((s, inv) => s + Number(inv.gross || 0), 0);
 
   const tile = (label, value, hint) => `
     <div class="card" style="padding:14px 16px">
@@ -36209,81 +36215,670 @@ function renderInvSalesTable() {
 }
 
 let _invSupplierSearchTerm = '';
+let _invSupChip = 'all';   // all | unmatched | unpaid | overdue | paid | dd
+
+function _invSupIsOverdue(inv) {
+  if (inv.paid_at || !inv.due_date) return false;
+  return String(inv.due_date).slice(0, 10) < new Date().toISOString().slice(0, 10);
+}
+
+function invSupSetChip(chip) {
+  _invSupChip = chip;
+  ['all','unmatched','unpaid','overdue','paid','dd'].forEach(c => {
+    const el = document.getElementById('invSupChip-' + c);
+    if (el) el.classList.toggle('active', c === chip);
+  });
+  renderInvSupplierTable();
+}
 
 function _invSupplierFiltered() {
+  let list = _invSupInvoices;
+  if (_invSupChip === 'unmatched') list = list.filter(i => !i.po_id);
+  else if (_invSupChip === 'unpaid')  list = list.filter(i => !i.paid_at);
+  else if (_invSupChip === 'overdue') list = list.filter(i => _invSupIsOverdue(i));
+  else if (_invSupChip === 'paid')    list = list.filter(i => i.paid_at);
+  else if (_invSupChip === 'dd')      list = list.filter(i => i.is_dd);
   const term = (_invSupplierSearchTerm || '').toLowerCase().trim();
-  if (!term) return _invSupplierPoList;
-  return _invSupplierPoList.filter(po =>
-    `${po.supplier_name || ''} ${po.reference || ''} ${po.supplier_invoice_ref || ''} ${po.job_number || ''} ${po.cost_centre || ''} ${po.paid_at ? 'paid' : 'unpaid'}`
+  if (!term) return list;
+  return list.filter(inv =>
+    `${inv.supplier_name || ''} ${inv.po_reference || ''} ${inv.invoice_ref || ''} ${inv.job_number || ''} ${inv.cost_centre || ''} ${inv.babcock_quote_ref || ''} ${inv.paid_at ? 'paid' : 'unpaid'}`
       .toLowerCase().includes(term));
+}
+
+function _invSupFmtDate(s) {
+  if (!s) return '';
+  const d = new Date(s);
+  return isNaN(d) ? '' : d.toLocaleDateString('en-GB');
 }
 
 function renderInvSupplierTable() {
   const tbody = document.getElementById('invSupplierTbody');
   if (!tbody) return;
-  // Drop selections for POs that are now paid / gone
+  // Drop selections for invoices that are now paid / gone
   for (const id of Array.from(_invRemitSelected)) {
-    const po = _invSupplierPoList.find(p => p.id === id);
-    if (!po || po.paid_at) _invRemitSelected.delete(id);
+    const inv = _invSupInvoices.find(i => i.id === id);
+    if (!inv || inv.paid_at) _invRemitSelected.delete(id);
   }
   _invRemitUpdateBtn();
-  if (!_invSupplierPoList.length) {
-    tbody.innerHTML = `<tr><td colspan="9" class="empty-state" style="padding:40px;text-align:center;color:var(--muted)">
+  renderInvAgedCreditors();
+
+  if (!_invSupInvoices.length) {
+    tbody.innerHTML = `<tr><td colspan="11" class="empty-state" style="padding:40px;text-align:center;color:var(--muted)">
       <div style="font-size:32px;margin-bottom:8px">📥</div>
       <div style="font-weight:600;margin-bottom:4px">No supplier invoices yet</div>
-      <div style="font-size:12px;margin-bottom:14px">Click below to attach a supplier invoice to an existing PO.</div>
-      <button class="btn btn-primary" onclick="openAttachSupplierInvoiceModal()">+ Attach Supplier Invoice</button>
+      <div style="font-size:12px;margin-bottom:14px">Attach one to a PO, or add one manually.</div>
+      <button class="btn btn-primary" onclick="openSupAddInvoiceModal()">+ Add Supplier Invoice</button>
     </td></tr>`;
     return;
   }
   const list = _invSupplierFiltered();
   const countEl = document.getElementById('invSupplierSearchCount');
-  if (countEl) countEl.textContent = (_invSupplierSearchTerm || '').trim() ? `${list.length} of ${_invSupplierPoList.length}` : '';
+  if (countEl) countEl.textContent =
+    ((_invSupplierSearchTerm || '').trim() || _invSupChip !== 'all') ? `${list.length} of ${_invSupInvoices.length}` : '';
   const selAll = document.getElementById('invRemitSelAll');
   if (selAll) {
-    const unpaidVisible = list.filter(po => !po.paid_at);
-    selAll.checked = unpaidVisible.length > 0 && unpaidVisible.every(po => _invRemitSelected.has(po.id));
+    const unpaidVisible = list.filter(i => !i.paid_at);
+    selAll.checked = unpaidVisible.length > 0 && unpaidVisible.every(i => _invRemitSelected.has(i.id));
     selAll.disabled = unpaidVisible.length === 0;
   }
   if (!list.length) {
-    tbody.innerHTML = `<tr><td colspan="9" style="padding:30px;text-align:center;color:var(--muted)">No supplier invoices match "${escapeHtml(_invSupplierSearchTerm.trim())}"</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="11" style="padding:30px;text-align:center;color:var(--muted)">No supplier invoices match the current filter</td></tr>`;
     return;
   }
-  tbody.innerHTML = list.map(po => `
+  const fmt2 = v => Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 });
+  tbody.innerHTML = list.map(inv => {
+    const overdue = _invSupIsOverdue(inv);
+    const poCell = inv.po_id
+      ? `<span style="font-family:var(--font-mono);font-weight:600">${escapeHtml(inv.po_reference || ('#' + inv.po_id))}</span>`
+      : `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:rgba(255,165,0,.15);color:#ffa500">no PO</span>`;
+    const dueCell = inv.is_dd
+      ? `<span style="font-size:11px;color:var(--muted)">DD</span>`
+      : (inv.due_date
+          ? `<span style="${overdue ? 'color:var(--red);font-weight:600' : ''}">${_invSupFmtDate(inv.due_date)}</span>`
+          : '<span style="color:var(--muted)">—</span>');
+    const fileLink = inv.sharepoint_file_url
+      ? ` <a href="${escapeHtml(inv.sharepoint_file_url)}" target="_blank" title="Open invoice file" style="text-decoration:none">📎</a>` : '';
+    return `
     <tr>
-      <td style="text-align:center">${po.paid_at ? '' :
-        `<input type="checkbox" ${_invRemitSelected.has(po.id) ? 'checked' : ''}
-                onchange="invRemitToggle(${po.id}, this.checked)" title="Select for payment">`}</td>
-      <td style="font-family:var(--font-mono);font-weight:600">${escapeHtml(po.reference || '')}</td>
-      <td>${escapeHtml(po.supplier_invoice_ref || '')}</td>
-      <td>${escapeHtml(po.supplier_name || '')}</td>
-      <td>${escapeHtml(po.job_number || po.cost_centre || '')}</td>
-      <td>${po.supplier_invoice_date ? new Date(po.supplier_invoice_date).toLocaleDateString('en-GB') : ''}</td>
-      <td style="text-align:right">£${Number(po.supplier_invoice_gross || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}</td>
-      <td>${invStatusBadge(po.reconciliation_status || 'unmatched')}</td>
-      <td>${po.paid_at ? `<span style="color:var(--green);font-weight:600" title="${escapeHtml(po.paid_ref || '')}">✓ Paid</span>
-        <div style="font-size:10px;color:var(--muted)">${new Date(po.paid_at).toLocaleDateString('en-GB')}</div>` : ''}</td>
-    </tr>`).join('');
+      <td style="text-align:center">${inv.paid_at ? '' :
+        `<input type="checkbox" ${_invRemitSelected.has(inv.id) ? 'checked' : ''}
+                onchange="invRemitToggle(${inv.id}, this.checked)" title="Select">`}</td>
+      <td>${poCell}</td>
+      <td>${escapeHtml(inv.invoice_ref || '')}${fileLink}</td>
+      <td>${escapeHtml(inv.supplier_name || '')}</td>
+      <td>${escapeHtml(inv.job_number || inv.cost_centre || '')}${inv.babcock_quote_ref ? ` <span style="font-size:10px;color:var(--muted);font-family:var(--font-mono)">${escapeHtml(inv.babcock_quote_ref)}</span>` : ''}</td>
+      <td>${_invSupFmtDate(inv.invoice_date)}</td>
+      <td>${dueCell}</td>
+      <td style="text-align:right">£${fmt2(inv.gross)}</td>
+      <td>${inv.po_id ? invStatusBadge(_invPoRecon(inv)) : ''}</td>
+      <td>${inv.paid_at ? `<span style="color:var(--green);font-weight:600" title="${escapeHtml(inv.paid_ref || '')}">✓ Paid</span>
+        <div style="font-size:10px;color:var(--muted)">${_invSupFmtDate(inv.paid_at)}${inv.run_ref ? ' · ' + escapeHtml(inv.run_ref) : ''}</div>` : ''}</td>
+      <td style="text-align:center">${inv.paid_at ? '' :
+        `<button class="btn btn-ghost" style="padding:2px 7px;font-size:11px;color:var(--red)"
+                 title="Delete invoice" onclick="deleteSupInvoice(${inv.id})">🗑</button>`}</td>
+    </tr>`;
+  }).join('');
+}
+
+// PO-level reconciliation shown per row (all rows of the same PO share it)
+function _invPoRecon(inv) {
+  if (!inv.po_id) return 'unmatched';
+  const poTotal = Number(inv.po_total_value || 0);
+  if (!poTotal) return 'unmatched';
+  const sum = _invSupInvoices.filter(i => i.po_id === inv.po_id)
+                             .reduce((s, i) => s + Number(i.gross || 0), 0);
+  if (Math.abs(sum - poTotal) <= 1.00) return 'matched';
+  if (sum > poTotal + 1.00) return 'discrepancy';
+  return 'unmatched';
+}
+
+async function deleteSupInvoice(id) {
+  const inv = _invSupInvoices.find(i => i.id === id);
+  if (!inv) return;
+  const okGo = await bamaConfirm({
+    title: 'Delete supplier invoice?',
+    message: `Delete invoice ${inv.invoice_ref || '#' + id} (£${Number(inv.gross || 0).toFixed(2)}) from ${inv.supplier_name || 'supplier'}? The PO reconciliation will be recalculated.`,
+    confirmText: 'Delete', danger: true
+  });
+  if (!okGo) return;
+  setLoading(true);
+  try {
+    await api.delete(`/api/supplier-invoices/${id}`);
+    toast('Invoice deleted', 'success');
+    await loadInvoicingData();
+    renderInvSupplierTable();
+  } catch (e) {
+    toast('Delete failed: ' + (e.message || 'unknown error'), 'error');
+  } finally { setLoading(false); }
+}
+
+// ── Aged creditors — outstanding by supplier, bucketed by due date ─────────
+let _invAgedCredOpen = false;
+function toggleInvAgedCreditors() {
+  _invAgedCredOpen = !_invAgedCredOpen;
+  const body = document.getElementById('invAgedCredBody');
+  const chev = document.getElementById('invAgedCredChevron');
+  if (body) body.style.display = _invAgedCredOpen ? '' : 'none';
+  if (chev) chev.textContent = _invAgedCredOpen ? '▼' : '▶';
+}
+
+function renderInvAgedCreditors() {
+  const tiles = document.getElementById('invAgedCredTiles');
+  const body  = document.getElementById('invAgedCredBody');
+  if (!tiles) return;
+  const today = new Date().toISOString().slice(0, 10);
+  const unpaid = _invSupInvoices.filter(i => !i.paid_at);
+
+  const bucketOf = inv => {
+    if (inv.is_dd) return 'dd';
+    if (!inv.due_date) return 'current';
+    const due = String(inv.due_date).slice(0, 10);
+    if (due >= today) return 'current';
+    const days = Math.floor((new Date(today) - new Date(due)) / 86400000);
+    if (days <= 30) return 'd30';
+    if (days <= 60) return 'd60';
+    return 'd90';
+  };
+  const sums = { current: 0, d30: 0, d60: 0, d90: 0, dd: 0 };
+  for (const inv of unpaid) sums[bucketOf(inv)] += Number(inv.gross || 0);
+  const total = Object.values(sums).reduce((a, b) => a + b, 0);
+
+  const fmt = v => '£' + Number(v).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const tile = (label, v, col) => `
+    <div class="card" style="padding:10px 12px">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--muted)">${label}</div>
+      <div style="font-size:16px;font-weight:700;margin-top:2px;color:${col || 'inherit'}">${fmt(v)}</div>
+    </div>`;
+  tiles.innerHTML =
+    tile('Total Unpaid', total) +
+    tile('Not Yet Due', sums.current) +
+    tile('Overdue 1–30d', sums.d30, sums.d30 ? '#ffa500' : null) +
+    tile('Overdue 31–60d', sums.d60, sums.d60 ? '#ffa500' : null) +
+    tile('Overdue 60d+', sums.d90, sums.d90 ? 'var(--red)' : null) +
+    tile('Direct Debit', sums.dd);
+
+  if (!body || !_invAgedCredOpen) return;
+  // By-supplier table
+  const bySup = {};
+  for (const inv of unpaid) {
+    const k = inv.supplier_name || '—';
+    bySup[k] = bySup[k] || { current: 0, d30: 0, d60: 0, d90: 0, dd: 0, total: 0 };
+    bySup[k][bucketOf(inv)] += Number(inv.gross || 0);
+    bySup[k].total += Number(inv.gross || 0);
+  }
+  const rows = Object.entries(bySup).sort((a, b) => b[1].total - a[1].total);
+  body.innerHTML = `
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr>
+        ${['Supplier','Not Due','1–30d','31–60d','60d+','DD','Total'].map((h, i) => `
+          <th style="text-align:${i ? 'right' : 'left'};padding:5px 8px;font-size:10px;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--border)">${h}</th>`).join('')}
+      </tr></thead>
+      <tbody>${rows.map(([name, s]) => `
+        <tr>
+          <td style="padding:5px 8px;border-bottom:1px solid var(--border)">${escapeHtml(name)}</td>
+          <td style="padding:5px 8px;text-align:right;border-bottom:1px solid var(--border)">${s.current ? fmt(s.current) : ''}</td>
+          <td style="padding:5px 8px;text-align:right;border-bottom:1px solid var(--border);color:${s.d30 ? '#ffa500' : 'inherit'}">${s.d30 ? fmt(s.d30) : ''}</td>
+          <td style="padding:5px 8px;text-align:right;border-bottom:1px solid var(--border);color:${s.d60 ? '#ffa500' : 'inherit'}">${s.d60 ? fmt(s.d60) : ''}</td>
+          <td style="padding:5px 8px;text-align:right;border-bottom:1px solid var(--border);color:${s.d90 ? 'var(--red)' : 'inherit'}">${s.d90 ? fmt(s.d90) : ''}</td>
+          <td style="padding:5px 8px;text-align:right;border-bottom:1px solid var(--border)">${s.dd ? fmt(s.dd) : ''}</td>
+          <td style="padding:5px 8px;text-align:right;border-bottom:1px solid var(--border);font-weight:700">${fmt(s.total)}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// MATCH TO PO — tick invoices, link them to a PO, over-match guard
+// ═════════════════════════════════════════════════════════════════════════
+async function openSupMatchModal() {
+  const sel = _invRemitSelection();
+  if (!sel.length) { toast('Tick at least one invoice first', 'error'); return; }
+  const supplierIds = [...new Set(sel.map(i => i.supplier_id))];
+  if (supplierIds.length > 1) {
+    toast('Matching works one supplier at a time — select invoices from a single supplier', 'error');
+    return;
+  }
+  const supplierId = supplierIds[0];
+  const fmt2 = v => Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const total = sel.reduce((s, i) => s + Number(i.gross || 0), 0);
+
+  document.getElementById('invSupMatchLabel').textContent =
+    `${sel.length} invoice${sel.length === 1 ? '' : 's'} from ${sel[0].supplier_name || 'supplier'} — £${fmt2(total)}`;
+
+  // PO dropdown: this supplier's POs, with total + already-matched sum
+  const poSel = document.getElementById('invSupMatchPo');
+  poSel.innerHTML = '<option value="">Loading POs…</option>';
+  document.getElementById('invSupMatchModal').classList.add('active');
+  try {
+    const pos = await api.get(`/api/purchase-orders?supplier_id=${supplierId}`);
+    const active = (pos || []).filter(po => po.status !== 'Cancelled');
+    const matchedByPo = {};
+    for (const inv of _invSupInvoices) {
+      if (inv.po_id) matchedByPo[inv.po_id] = (matchedByPo[inv.po_id] || 0) + Number(inv.gross || 0);
+    }
+    poSel.innerHTML = '<option value="">— Unmatch (no PO) —</option>' + active.map(po => {
+      const m = matchedByPo[po.id] || 0;
+      return `<option value="${po.id}">${escapeHtml(po.reference || ('#' + po.id))} — £${fmt2(po.total_value)}${m ? ` (matched £${fmt2(m)})` : ''}${po.job_number ? ' · ' + escapeHtml(po.job_number) : ''}</option>`;
+    }).join('');
+  } catch (e) {
+    poSel.innerHTML = '<option value="">Failed to load POs</option>';
+  }
+
+  // Babcock quote dropdown (optional link)
+  const bqSel = document.getElementById('invSupMatchBabcock');
+  if (bqSel) {
+    bqSel.innerHTML = '<option value="">— No Babcock quote —</option>';
+    _invLoadBabcockOptions(bqSel, sel.find(i => i.babcock_quote_id)?.babcock_quote_id || null);
+  }
+}
+
+async function _invLoadBabcockOptions(selectEl, preselectId) {
+  try {
+    const quotes = await api.get('/api/babcock-quotes');
+    const list = (Array.isArray(quotes) ? quotes : (quotes.rows || quotes.quotes || []))
+      .slice()
+      .sort((a, b) => String(b.quote_ref || '').localeCompare(String(a.quote_ref || '')));
+    selectEl.innerHTML = '<option value="">— No Babcock quote —</option>' + list.map(q =>
+      `<option value="${q.id}" ${preselectId === q.id ? 'selected' : ''}>${escapeHtml(q.quote_ref || ('#' + q.id))}${q.description ? ' — ' + escapeHtml(String(q.description).slice(0, 50)) : ''}</option>`
+    ).join('');
+  } catch (e) { /* leave the no-quote option */ }
+}
+
+function closeSupMatchModal() {
+  document.getElementById('invSupMatchModal').classList.remove('active');
+}
+
+async function confirmSupMatch() {
+  const sel = _invRemitSelection();
+  if (!sel.length) { closeSupMatchModal(); return; }
+  const poId = document.getElementById('invSupMatchPo').value || null;
+  const bqEl = document.getElementById('invSupMatchBabcock');
+  const babcockId = bqEl && bqEl.value ? parseInt(bqEl.value) : null;
+  const ids = sel.map(i => i.id);
+  const fmt2 = v => Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  setLoading(true);
+  try {
+    let res = await api.post('/api/supplier-invoices-match', {
+      invoice_ids: ids, po_id: poId ? parseInt(poId) : null, babcock_quote_id: babcockId
+    });
+    if (res && res.needs_confirm) {
+      setLoading(false);
+      const goAnyway = await bamaConfirm({
+        title: 'Are you sure? Maybe one invoice too many?',
+        message: `PO ${res.po_reference} totals £${fmt2(res.po_total)}, but the ${res.invoice_count} matched invoice${res.invoice_count === 1 ? '' : 's'} would total £${fmt2(res.matched_total)} — that's £${fmt2(res.over_by)} over the order value.\n\nMatch anyway?`,
+        confirmText: 'Match anyway', danger: true
+      });
+      if (!goAnyway) return;
+      setLoading(true);
+      res = await api.post('/api/supplier-invoices-match', {
+        invoice_ids: ids, po_id: parseInt(poId), babcock_quote_id: babcockId, force: true
+      });
+    }
+    toast(poId ? `${ids.length} invoice${ids.length === 1 ? '' : 's'} matched ✓` : 'Invoices unmatched from PO', 'success');
+    _invRemitSelected.clear();
+    closeSupMatchModal();
+    await loadInvoicingData();
+    renderInvSupplierTable();
+  } catch (e) {
+    toast('Match failed: ' + (e.message || 'unknown error'), 'error');
+  } finally { setLoading(false); }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// ADD SUPPLIER INVOICE MANUALLY — no PO required, optional file + links
+// ═════════════════════════════════════════════════════════════════════════
+let _supAddFile = null;
+
+async function openSupAddInvoiceModal() {
+  _supAddFile = null;
+  const supSel = document.getElementById('supAddSupplier');
+  supSel.innerHTML = '<option value="">Loading suppliers…</option>';
+  ['supAddRef','supAddNet','supAddVat','supAddGross','supAddNotes'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  document.getElementById('supAddDate').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('supAddPo').innerHTML = '<option value="">— No PO —</option>';
+  document.getElementById('supAddFileLabel').textContent = 'No file attached (optional)';
+  document.getElementById('supAddDueHint').textContent = '';
+  document.getElementById('invSupAddModal').classList.add('active');
+
+  const suppliers = await _invGetSuppliersList();
+  supSel.innerHTML = '<option value="">Select supplier…</option>' + suppliers
+    .slice().sort((a, b) => String(a.supplier_name).localeCompare(String(b.supplier_name)))
+    .map(s => `<option value="${s.id}">${escapeHtml(s.supplier_name)}</option>`).join('');
+
+  const bqSel = document.getElementById('supAddBabcock');
+  if (bqSel) { bqSel.innerHTML = '<option value="">— No Babcock quote —</option>'; _invLoadBabcockOptions(bqSel, null); }
+}
+
+async function _invGetSuppliersList() {
+  if (!_invSuppliersCache) {
+    try { _invSuppliersCache = await api.get('/api/suppliers'); }
+    catch (e) { _invSuppliersCache = []; }
+  }
+  return _invSuppliersCache || [];
+}
+
+function closeSupAddInvoiceModal() {
+  document.getElementById('invSupAddModal').classList.remove('active');
+}
+
+async function onSupAddSupplierPicked() {
+  const supplierId = parseInt(document.getElementById('supAddSupplier').value);
+  const poSel = document.getElementById('supAddPo');
+  poSel.innerHTML = '<option value="">— No PO —</option>';
+  _supAddUpdateDueHint();
+  if (!supplierId) return;
+  try {
+    const pos = await api.get(`/api/purchase-orders?supplier_id=${supplierId}`);
+    const fmt2 = v => Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    poSel.innerHTML = '<option value="">— No PO —</option>' + (pos || [])
+      .filter(po => po.status !== 'Cancelled')
+      .map(po => `<option value="${po.id}">${escapeHtml(po.reference || ('#' + po.id))} — £${fmt2(po.total_value)}${po.job_number ? ' · ' + escapeHtml(po.job_number) : ''}</option>`)
+      .join('');
+  } catch (e) { /* keep no-PO */ }
+}
+
+async function _supAddUpdateDueHint() {
+  const hint = document.getElementById('supAddDueHint');
+  if (!hint) return;
+  const supplierId = parseInt(document.getElementById('supAddSupplier').value);
+  if (!supplierId) { hint.textContent = ''; return; }
+  const suppliers = await _invGetSuppliersList();
+  const s = suppliers.find(x => x.id === supplierId);
+  const terms = typeof _fmtPaymentTerms === 'function' ? _fmtPaymentTerms(s) : null;
+  hint.textContent = terms ? `Terms: ${terms} — due date will be set automatically` :
+    (s && s.payment_dd ? 'Direct debit — no due date' : 'No payment terms set for this supplier — due date will be blank');
+}
+
+function onSupAddNetVat() {
+  const net = parseFloat(document.getElementById('supAddNet').value) || 0;
+  const vatEl = document.getElementById('supAddVat');
+  const grossEl = document.getElementById('supAddGross');
+  if (net && vatEl.value === '') vatEl.value = (net * 0.2).toFixed(2);
+  const vat = parseFloat(vatEl.value) || 0;
+  if (net || vat) grossEl.value = (net + vat).toFixed(2);
+}
+
+function onSupAddFilePicked(input) {
+  _supAddFile = input.files && input.files[0] ? input.files[0] : null;
+  document.getElementById('supAddFileLabel').textContent =
+    _supAddFile ? `${_supAddFile.name} · ${(_supAddFile.size / 1024).toFixed(0)} KB` : 'No file attached (optional)';
+}
+
+async function saveSupAddInvoice() {
+  const supplierId = parseInt(document.getElementById('supAddSupplier').value);
+  if (!supplierId) { toast('Pick a supplier', 'error'); return; }
+  const gross = parseFloat(document.getElementById('supAddGross').value);
+  if (!gross) { toast('Gross amount is required', 'error'); return; }
+  const date = document.getElementById('supAddDate').value || null;
+  const ref  = document.getElementById('supAddRef').value.trim();
+
+  setLoading(true);
+  try {
+    // Optional file → SharePoint (same folder scheme as parsed invoices)
+    let spId = null, spUrl = null, fileName = null;
+    if (_supAddFile) {
+      const suppliers = await _invGetSuppliersList();
+      const s = suppliers.find(x => x.id === supplierId);
+      const folder = await _findOrCreateSupplierInvoiceFolder(date || new Date().toISOString().slice(0, 10));
+      const stamp = ((s && s.supplier_name) || 'supplier').replace(/\s+/g, '_').slice(0, 30);
+      const ext = (_supAddFile.name.split('.').pop() || 'pdf').toLowerCase();
+      fileName = sanitizeSpFilename(`${date || 'undated'}_${stamp}_${ref || 'no-ref'}.${ext}`);
+      const driveItem = await uploadFileToFolder(folder.id, fileName, _supAddFile, _supAddFile.type || 'application/octet-stream');
+      spId = driveItem.id; spUrl = driveItem.webUrl;
+    }
+
+    await api.post('/api/supplier-invoices', {
+      supplier_id: supplierId,
+      po_id: document.getElementById('supAddPo').value || null,
+      babcock_quote_id: document.getElementById('supAddBabcock')?.value || null,
+      invoice_ref: ref || null,
+      invoice_date: date,
+      net: parseFloat(document.getElementById('supAddNet').value) || null,
+      vat: parseFloat(document.getElementById('supAddVat').value) || null,
+      gross,
+      sharepoint_file_id: spId,
+      sharepoint_file_url: spUrl,
+      filename: fileName,
+      notes: document.getElementById('supAddNotes').value.trim() || null,
+      source: 'manual'
+    });
+
+    toast('Supplier invoice added ✓', 'success');
+    closeSupAddInvoiceModal();
+    await loadInvoicingData();
+    renderInvSupplierTable();
+  } catch (e) {
+    toast('Save failed: ' + (e.message || 'unknown error'), 'error');
+  } finally { setLoading(false); }
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// BACS RUN — pick a due-date window, tick invoices, one run marks them paid,
+// CSV for the bank + per-supplier remittance PDFs to SharePoint
+// ═════════════════════════════════════════════════════════════════════════
+let _bacsSelected = new Set();
+let _bacsCandidates = [];
+
+function openBacsRunModal() {
+  const today = new Date();
+  const to = new Date(today); to.setDate(to.getDate() + 7);
+  document.getElementById('bacsRunDate').value = today.toISOString().slice(0, 10);
+  document.getElementById('bacsFrom').value = '';
+  document.getElementById('bacsTo').value = to.toISOString().slice(0, 10);
+  document.getElementById('bacsRunRef').value = 'BACS-' + today.toISOString().slice(0, 10).replace(/-/g, '');
+  document.getElementById('bacsIncludeDd').checked = false;
+  document.getElementById('bacsIncludeNoDue').checked = true;
+  _bacsSelected = new Set();
+  _bacsRefreshCandidates();
+  document.getElementById('invBacsRunModal').classList.add('active');
+}
+
+function closeBacsRunModal() {
+  document.getElementById('invBacsRunModal').classList.remove('active');
+}
+
+function _bacsRefreshCandidates() {
+  const from = document.getElementById('bacsFrom').value || null;
+  const to   = document.getElementById('bacsTo').value || null;
+  const inclDd    = document.getElementById('bacsIncludeDd').checked;
+  const inclNoDue = document.getElementById('bacsIncludeNoDue').checked;
+
+  _bacsCandidates = _invSupInvoices.filter(inv => {
+    if (inv.paid_at) return false;
+    if (inv.is_dd && !inclDd) return false;
+    const due = inv.due_date ? String(inv.due_date).slice(0, 10) : null;
+    if (!due) return inclNoDue;
+    if (from && due < from) return false;
+    if (to && due > to) return false;
+    return true;
+  }).sort((a, b) => String(a.supplier_name || '').localeCompare(String(b.supplier_name || ''))
+                 || String(a.due_date || '').localeCompare(String(b.due_date || '')));
+
+  // Default: everything in the window selected
+  _bacsSelected = new Set(_bacsCandidates.map(i => i.id));
+  _bacsRenderList();
+}
+
+function bacsToggle(id, checked) {
+  if (checked) _bacsSelected.add(id); else _bacsSelected.delete(id);
+  _bacsRenderTotals();
+}
+
+function bacsToggleAll(checked) {
+  _bacsSelected = checked ? new Set(_bacsCandidates.map(i => i.id)) : new Set();
+  _bacsRenderList();
+}
+
+function _bacsRenderList() {
+  const box = document.getElementById('bacsList');
+  if (!box) return;
+  const fmt2 = v => Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (!_bacsCandidates.length) {
+    box.innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted);font-size:12px">No unpaid invoices due in this window</div>';
+    _bacsRenderTotals();
+    return;
+  }
+  box.innerHTML = `
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr>
+        <th style="width:30px;text-align:center;padding:5px 6px;border-bottom:1px solid var(--border)">
+          <input type="checkbox" checked onchange="bacsToggleAll(this.checked)"></th>
+        ${['Supplier','Invoice #','PO','Due','Gross (£)'].map((h, i) => `
+          <th style="text-align:${i === 4 ? 'right' : 'left'};padding:5px 6px;font-size:10px;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--border)">${h}</th>`).join('')}
+      </tr></thead>
+      <tbody>${_bacsCandidates.map(inv => `
+        <tr>
+          <td style="text-align:center;padding:4px 6px;border-bottom:1px solid var(--border)">
+            <input type="checkbox" ${_bacsSelected.has(inv.id) ? 'checked' : ''} onchange="bacsToggle(${inv.id}, this.checked)"></td>
+          <td style="padding:4px 6px;border-bottom:1px solid var(--border)">${escapeHtml(inv.supplier_name || '')}${inv.is_dd ? ' <span style="font-size:10px;color:var(--muted)">DD</span>' : ''}</td>
+          <td style="padding:4px 6px;border-bottom:1px solid var(--border)">${escapeHtml(inv.invoice_ref || '—')}</td>
+          <td style="padding:4px 6px;border-bottom:1px solid var(--border);font-family:var(--font-mono)">${escapeHtml(inv.po_reference || '')}</td>
+          <td style="padding:4px 6px;border-bottom:1px solid var(--border);${_invSupIsOverdue(inv) ? 'color:var(--red);font-weight:600' : ''}">${_invSupFmtDate(inv.due_date) || '—'}</td>
+          <td style="padding:4px 6px;text-align:right;border-bottom:1px solid var(--border)">£${fmt2(inv.gross)}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+  _bacsRenderTotals();
+}
+
+function _bacsRenderTotals() {
+  const sel = _bacsCandidates.filter(i => _bacsSelected.has(i.id));
+  const total = sel.reduce((s, i) => s + Number(i.gross || 0), 0);
+  const suppliers = new Set(sel.map(i => i.supplier_id)).size;
+  document.getElementById('bacsTotals').textContent =
+    `${sel.length} invoice${sel.length === 1 ? '' : 's'} · ${suppliers} supplier${suppliers === 1 ? '' : 's'} · £${total.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const btn = document.getElementById('bacsConfirmBtn');
+  if (btn) btn.disabled = sel.length === 0;
+}
+
+function _bacsDownloadCsv(run, invoices) {
+  const esc = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+  const rows = [['Supplier', 'Invoice Ref', 'PO Ref', 'Invoice Date', 'Due Date', 'Gross'].map(esc).join(',')];
+  const bySup = {};
+  for (const inv of invoices) {
+    rows.push([inv.supplier_name, inv.invoice_ref || '', inv.po_reference || '',
+               String(inv.invoice_date || '').slice(0, 10), String(inv.due_date || '').slice(0, 10),
+               Number(inv.gross || 0).toFixed(2)].map(esc).join(','));
+    bySup[inv.supplier_name] = (bySup[inv.supplier_name] || 0) + Number(inv.gross || 0);
+  }
+  rows.push('');
+  rows.push([esc('PAYMENT PER SUPPLIER'), '', '', '', '', ''].join(','));
+  for (const [name, amt] of Object.entries(bySup).sort((a, b) => a[0].localeCompare(b[0])))
+    rows.push([esc(name), '', '', '', '', amt.toFixed(2)].join(','));
+  rows.push(['', '', '', '', esc('TOTAL'), Number(run.total_gross || 0).toFixed(2)].join(','));
+  const blob = new Blob(['\ufeff' + rows.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${run.run_ref || 'payment-run'}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+async function confirmBacsRun() {
+  const sel = _bacsCandidates.filter(i => _bacsSelected.has(i.id));
+  if (!sel.length) return;
+  const runDate = document.getElementById('bacsRunDate').value;
+  if (!runDate) { toast('Pick a payment date', 'error'); return; }
+  const fmt2 = v => Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const total = sel.reduce((s, i) => s + Number(i.gross || 0), 0);
+  const suppliers = new Set(sel.map(i => i.supplier_id)).size;
+
+  const okGo = await bamaConfirm({
+    title: 'Confirm BACS run',
+    message: `Mark ${sel.length} invoice${sel.length === 1 ? '' : 's'} across ${suppliers} supplier${suppliers === 1 ? '' : 's'} as paid — total £${fmt2(total)}?\n\nA CSV summary will download and a remittance PDF will be saved to SharePoint for each supplier.`,
+    confirmText: 'Run it'
+  });
+  if (!okGo) return;
+
+  const btn = document.getElementById('bacsConfirmBtn');
+  btn.disabled = true;
+  setLoading(true);
+  try {
+    const res = await api.post('/api/supplier-payment-runs', {
+      run_date: runDate,
+      method: 'BACS',
+      run_ref: document.getElementById('bacsRunRef').value.trim() || null,
+      period_from: document.getElementById('bacsFrom').value || null,
+      period_to: document.getElementById('bacsTo').value || null,
+      invoice_ids: sel.map(i => i.id)
+    });
+    const run = res.run || {};
+    const invoices = res.invoices || sel;
+
+    _bacsDownloadCsv(run, invoices);
+
+    // Per-supplier remittance PDFs → SharePoint (non-fatal)
+    let remitOk = 0, remitFail = 0;
+    const bySupplier = {};
+    for (const inv of invoices) (bySupplier[inv.supplier_id] = bySupplier[inv.supplier_id] || []).push(inv);
+    for (const [supplierId, invs] of Object.entries(bySupplier)) {
+      try {
+        const supplier = await _invGetSupplier(parseInt(supplierId));
+        const supplierName = (supplier && supplier.supplier_name) || invs[0].supplier_name || 'Supplier';
+        const pdfBlob = await renderBamaRemittancePDF({
+          supplierName,
+          supplierAddress: supplier ? [
+            supplier.address_line1, supplier.address_line2,
+            [supplier.city, supplier.county].filter(Boolean).join(', '),
+            supplier.postcode
+          ].filter(Boolean) : [],
+          contactName: (supplier && supplier.contact_name) || '',
+          payDate: runDate, method: 'BACS', payRef: run.run_ref || '',
+          rows: invs.map(inv => ({
+            poRef: inv.po_reference || '',
+            invRef: inv.invoice_ref || '—',
+            invDate: inv.invoice_date || null,
+            gross: Number(inv.gross || 0)
+          })),
+          total: +invs.reduce((s, i) => s + Number(i.gross || 0), 0).toFixed(2)
+        });
+        const folder = await _findOrCreateRemittanceFolder(runDate);
+        const fileName = sanitizeSpFilename(`Remittance - ${supplierName} - ${runDate}.pdf`);
+        await uploadFileToFolder(folder.id, fileName, pdfBlob, 'application/pdf');
+        remitOk++;
+      } catch (e) {
+        console.warn('BACS remittance failed for supplier', supplierId, e);
+        remitFail++;
+      }
+    }
+
+    closeBacsRunModal();
+    toast(`BACS run ${run.run_ref || ''} complete ✓ — ${invoices.length} invoices paid` +
+          (remitFail ? ` (${remitFail} remittance PDF${remitFail === 1 ? '' : 's'} failed to save)` : ''),
+          remitFail ? 'error' : 'success');
+    _invRemitSelected.clear();
+    await loadInvoicingData();
+    renderInvSupplierTable();
+  } catch (e) {
+    toast('BACS run failed: ' + (e.message || 'unknown error'), 'error');
+  } finally {
+    btn.disabled = false;
+    setLoading(false);
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════
 // PAY & REMIT — mark supplier invoices paid + remittance advice PDF + email
+// (single-supplier flow; selection is SupplierInvoices ledger rows)
 // ═════════════════════════════════════════════════════════════════════════
-let _invRemitSelected = new Set();   // PO ids ticked for payment
+let _invRemitSelected = new Set();   // SupplierInvoices ids ticked
 let _invSuppliersCache = null;       // /api/suppliers (lazy)
 
-function invRemitToggle(poId, checked) {
-  if (checked) _invRemitSelected.add(poId);
-  else _invRemitSelected.delete(poId);
+function invRemitToggle(invId, checked) {
+  if (checked) _invRemitSelected.add(invId);
+  else _invRemitSelected.delete(invId);
   _invRemitUpdateBtn();
 }
 
 // Header checkbox: (de)select every UNPAID row in the current filtered view.
 function invRemitToggleAll(checked) {
-  const unpaidVisible = _invSupplierFiltered().filter(po => !po.paid_at);
-  for (const po of unpaidVisible) {
-    if (checked) _invRemitSelected.add(po.id);
-    else _invRemitSelected.delete(po.id);
+  const unpaidVisible = _invSupplierFiltered().filter(i => !i.paid_at);
+  for (const inv of unpaidVisible) {
+    if (checked) _invRemitSelected.add(inv.id);
+    else _invRemitSelected.delete(inv.id);
   }
   renderInvSupplierTable();
 }
@@ -36293,10 +36888,14 @@ function _invRemitUpdateBtn() {
   const cnt = document.getElementById('invPayRemitCount');
   if (cnt) cnt.textContent = String(_invRemitSelected.size);
   if (btn) btn.disabled = _invRemitSelected.size === 0;
+  const mBtn = document.getElementById('invSupMatchBtn');
+  const mCnt = document.getElementById('invSupMatchCount');
+  if (mCnt) mCnt.textContent = String(_invRemitSelected.size);
+  if (mBtn) mBtn.disabled = _invRemitSelected.size === 0;
 }
 
 function _invRemitSelection() {
-  return _invSupplierPoList.filter(po => _invRemitSelected.has(po.id));
+  return _invSupInvoices.filter(i => _invRemitSelected.has(i.id));
 }
 
 async function _invGetSupplier(supplierId) {
@@ -36310,7 +36909,7 @@ async function _invGetSupplier(supplierId) {
 function openPayRemitModal() {
   const sel = _invRemitSelection();
   if (!sel.length) { toast('Tick at least one unpaid supplier invoice first', 'error'); return; }
-  const supplierIds = [...new Set(sel.map(po => po.supplier_id))];
+  const supplierIds = [...new Set(sel.map(inv => inv.supplier_id))];
   if (supplierIds.length > 1) {
     toast('One remittance covers one supplier — please select invoices from a single supplier', 'error');
     return;
@@ -36322,7 +36921,7 @@ function openPayRemitModal() {
   document.getElementById('invRemitRef').value = '';
 
   const fmt2 = v => Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const total = sel.reduce((s, po) => s + Number(po.supplier_invoice_gross || 0), 0);
+  const total = sel.reduce((s, inv) => s + Number(inv.gross || 0), 0);
   document.getElementById('invRemitList').innerHTML = `
     <table style="width:100%;border-collapse:collapse;font-size:13px">
       <thead><tr>
@@ -36331,12 +36930,12 @@ function openPayRemitModal() {
         <th style="text-align:left;padding:5px 8px;font-size:10px;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--border)">Inv Date</th>
         <th style="text-align:right;padding:5px 8px;font-size:10px;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--border)">Gross (£)</th>
       </tr></thead>
-      <tbody>${sel.map(po => `
+      <tbody>${sel.map(inv => `
         <tr>
-          <td style="padding:5px 8px;font-family:var(--font-mono);border-bottom:1px solid var(--border)">${escapeHtml(po.reference || '')}</td>
-          <td style="padding:5px 8px;border-bottom:1px solid var(--border)">${escapeHtml(po.supplier_invoice_ref || '—')}</td>
-          <td style="padding:5px 8px;border-bottom:1px solid var(--border)">${po.supplier_invoice_date ? new Date(po.supplier_invoice_date).toLocaleDateString('en-GB') : ''}</td>
-          <td style="padding:5px 8px;text-align:right;border-bottom:1px solid var(--border)">£${fmt2(po.supplier_invoice_gross)}</td>
+          <td style="padding:5px 8px;font-family:var(--font-mono);border-bottom:1px solid var(--border)">${escapeHtml(inv.po_reference || '—')}</td>
+          <td style="padding:5px 8px;border-bottom:1px solid var(--border)">${escapeHtml(inv.invoice_ref || '—')}</td>
+          <td style="padding:5px 8px;border-bottom:1px solid var(--border)">${_invSupFmtDate(inv.invoice_date)}</td>
+          <td style="padding:5px 8px;text-align:right;border-bottom:1px solid var(--border)">£${fmt2(inv.gross)}</td>
         </tr>`).join('')}
       </tbody>
     </table>`;
@@ -36368,7 +36967,7 @@ async function confirmPayRemit() {
   try {
     const supplier = await _invGetSupplier(sel[0].supplier_id);
     const supplierName = (supplier && supplier.supplier_name) || sel[0].supplier_name || 'Supplier';
-    const total = +sel.reduce((s, po) => s + Number(po.supplier_invoice_gross || 0), 0).toFixed(2);
+    const total = +sel.reduce((s, inv) => s + Number(inv.gross || 0), 0).toFixed(2);
 
     // 1. Render the remittance PDF (deterministic, native jsPDF)
     const pdfData = {
@@ -36380,27 +36979,24 @@ async function confirmPayRemit() {
       ].filter(Boolean) : [],
       contactName: (supplier && supplier.contact_name) || '',
       payDate, method, payRef,
-      rows: sel.map(po => ({
-        poRef: po.reference || '',
-        invRef: po.supplier_invoice_ref || '—',
-        invDate: po.supplier_invoice_date || null,
-        gross: Number(po.supplier_invoice_gross || 0)
+      rows: sel.map(inv => ({
+        poRef: inv.po_reference || '',
+        invRef: inv.invoice_ref || '—',
+        invDate: inv.invoice_date || null,
+        gross: Number(inv.gross || 0)
       })),
       total
     };
     const pdfBlob = await renderBamaRemittancePDF(pdfData);
 
-    // 2. Mark each PO paid (paid_at / paid_by / paid_ref)
-    const me = await getCurrentMicrosoftUser().catch(() => null);
-    const paidBy = (me && (me.name || me.email)) || 'unknown';
-    const paidRef = [method, payRef].filter(Boolean).join(' · ');
-    for (const po of sel) {
-      await api.put(`/api/purchase-orders/${po.id}`, {
-        paid_at: payDate + 'T12:00:00',
-        paid_by: paidBy,
-        paid_ref: paidRef
-      });
-    }
+    // 2. Create a payment run for these invoices — marks each paid
+    const runRes = await api.post('/api/supplier-payment-runs', {
+      run_date: payDate,
+      method,
+      run_ref: payRef || null,
+      invoice_ids: sel.map(inv => inv.id),
+      notes: `Pay & Remit — ${supplierName}`
+    });
 
     // 3. Upload the remittance to SharePoint (non-fatal — fall back to a tab)
     let spOk = false;
@@ -36428,8 +37024,8 @@ async function confirmPayRemit() {
     });
     const fmt2 = v => Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const payDateUk = new Date(payDate + 'T00:00:00').toLocaleDateString('en-GB');
-    const invoiceList = sel.map(po =>
-      `  \u2022 ${po.supplier_invoice_ref || po.reference}${po.supplier_invoice_ref ? ' (our PO ' + po.reference + ')' : ''} \u2014 \u00a3${fmt2(po.supplier_invoice_gross)}`
+    const invoiceList = sel.map(inv =>
+      `  \u2022 ${inv.invoice_ref || inv.po_reference || ('#' + inv.id)}${inv.invoice_ref && inv.po_reference ? ' (our PO ' + inv.po_reference + ')' : ''} \u2014 \u00a3${fmt2(inv.gross)}`
     ).join('\n');
 
     await openBabcockEmailModal({
@@ -40182,16 +40778,18 @@ async function saveSupplierInvoice() {
     const driveItem = await uploadFileToFolder(folder.id, fileName, _invSupInvFile, _invSupInvFile.type || 'application/octet-stream');
 
     // 2. Attach to PO via the new endpoint
-    await api.put(`/api/purchase-orders/${poId}/supplier-invoice`, {
-      supplier_invoice_ref:           ref || null,
-      supplier_invoice_date:          date || null,
-      supplier_invoice_net:           net || null,
-      supplier_invoice_vat:           vat || null,
-      supplier_invoice_gross:         gross,
-      sharepoint_id:                  driveItem.id,
-      sharepoint_url:                 driveItem.webUrl,
-      filename:                       fileName,
-      reconciliation_notes:           document.getElementById('invSupInvNotes').value || null
+    await api.post('/api/supplier-invoices', {
+      supplier_id:         _invSupInvPo && _invSupInvPo.supplier_id,
+      po_id:               poId,
+      invoice_ref:         ref || null,
+      invoice_date:        date || null,
+      net:                 net || null,
+      vat:                 vat || null,
+      gross:               gross,
+      sharepoint_file_id:  driveItem.id,
+      sharepoint_file_url: driveItem.webUrl,
+      filename:            fileName,
+      notes:               document.getElementById('invSupInvNotes').value || null
     });
 
     toast(`Supplier invoice attached to PO ${(_invSupInvPo && _invSupInvPo.reference) || poId} ✓`, 'success');
@@ -42612,15 +43210,17 @@ async function _gInvSave() {
     const fileName  = sanitizeSpFilename(`${date}_${stamp}_${ref || 'no-ref'}.${ext}`);
     const driveItem = await uploadFileToFolder(folder.id, fileName, _gInvFile, _gInvFile.type || 'application/octet-stream');
 
-    await api.put(`/api/purchase-orders/${poId}/supplier-invoice`, {
-      supplier_invoice_ref:   ref || null,
-      supplier_invoice_date:  date || null,
-      supplier_invoice_net:   net || null,
-      supplier_invoice_vat:   vat || null,
-      supplier_invoice_gross: gross,
-      sharepoint_id:          driveItem.id,
-      sharepoint_url:         driveItem.webUrl,
-      filename:               fileName,
+    await api.post('/api/supplier-invoices', {
+      supplier_id:         supplierId,
+      po_id:               poId,
+      invoice_ref:         ref || null,
+      invoice_date:        date || null,
+      net:                 net || null,
+      vat:                 vat || null,
+      gross:               gross,
+      sharepoint_file_id:  driveItem.id,
+      sharepoint_file_url: driveItem.webUrl,
+      filename:            fileName,
     });
 
     toast(`Invoice attached to ${po.reference} ✓`, 'success');

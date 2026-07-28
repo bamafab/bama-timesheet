@@ -40,6 +40,13 @@
     color: #fff;
   }
   .inv-tab-btn .inv-tab-icon { font-size: 15px; }
+  .inv-sup-chip {
+    padding: 4px 12px; border: 1px solid var(--border); border-radius: 14px;
+    background: transparent; color: var(--muted); font-size: 11px; font-weight: 600;
+    cursor: pointer; transition: all .15s;
+  }
+  .inv-sup-chip:hover { border-color: var(--accent); color: var(--text); }
+  .inv-sup-chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
   .inv-tab-btn .inv-tab-count {
     background: rgba(255,255,255,.18);
     color: inherit;
@@ -265,10 +272,40 @@
                  oninput="_invSupplierSearchTerm = this.value; renderInvSupplierTable()">
           <div id="invSupplierSearchCount" style="font-size:12px;color:var(--muted);white-space:nowrap"></div>
         </div>
+        <button class="btn btn-ghost" id="invSupMatchBtn" disabled
+                onclick="openSupMatchModal()"
+                style="border-color:var(--accent);color:var(--accent)">🔗 Match to PO (<span id="invSupMatchCount">0</span>)</button>
         <button class="btn btn-primary" id="invPayRemitBtn" disabled
                 onclick="openPayRemitModal()">💸 Pay &amp; Remit (<span id="invPayRemitCount">0</span>)</button>
+        <button class="btn btn-primary" onclick="openBacsRunModal()"
+                style="background:var(--green);border-color:var(--green)">🏦 BACS Run</button>
+        <button class="btn btn-ghost" onclick="openSupAddInvoiceModal()">+ Add Invoice</button>
         <button class="btn btn-ghost" onclick="openAttachSupplierInvoiceModal()"
-                style="border-color:var(--accent);color:var(--accent)">+ Attach Supplier Invoice to PO</button>
+                style="border-color:var(--accent);color:var(--accent)">📎 Attach to PO</button>
+      </div>
+
+      <!-- Aged creditors -->
+      <div class="card" style="padding:14px 16px;margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;cursor:pointer"
+             onclick="toggleInvAgedCreditors()">
+          <div style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);font-weight:600">
+            🏗 Aged Creditors — what we owe suppliers
+          </div>
+          <div id="invAgedCredChevron" style="color:var(--muted);font-size:12px">▶</div>
+        </div>
+        <div id="invAgedCredTiles"
+             style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-top:12px"></div>
+        <div id="invAgedCredBody" style="margin-top:12px;display:none"></div>
+      </div>
+
+      <!-- Filter chips -->
+      <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
+        <button class="inv-sup-chip active" id="invSupChip-all" onclick="invSupSetChip('all')">All</button>
+        <button class="inv-sup-chip" id="invSupChip-unmatched" onclick="invSupSetChip('unmatched')">No PO</button>
+        <button class="inv-sup-chip" id="invSupChip-unpaid" onclick="invSupSetChip('unpaid')">Unpaid</button>
+        <button class="inv-sup-chip" id="invSupChip-overdue" onclick="invSupSetChip('overdue')">Overdue</button>
+        <button class="inv-sup-chip" id="invSupChip-paid" onclick="invSupSetChip('paid')">Paid</button>
+        <button class="inv-sup-chip" id="invSupChip-dd" onclick="invSupSetChip('dd')">DD</button>
       </div>
       <div class="card" style="padding:0;overflow:hidden">
         <div style="overflow-x:auto">
@@ -283,13 +320,15 @@
                 <th style="min-width:180px">Supplier</th>
                 <th style="min-width:130px">Project / CC</th>
                 <th style="min-width:100px">Inv Date</th>
+                <th style="min-width:100px">Due</th>
                 <th style="min-width:120px;text-align:right">Gross (£)</th>
                 <th style="min-width:130px">Reconciliation</th>
-                <th style="min-width:80px">Paid</th>
+                <th style="min-width:90px">Paid</th>
+                <th style="width:40px"></th>
               </tr>
             </thead>
             <tbody id="invSupplierTbody">
-              <tr><td colspan="9" class="empty-state" style="padding:30px"><div class="spinner"></div></td></tr>
+              <tr><td colspan="11" class="empty-state" style="padding:30px"><div class="spinner"></div></td></tr>
             </tbody>
           </table>
         </div>
@@ -297,6 +336,147 @@
     </div>
 
 
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     MATCH INVOICES TO PO MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="invSupMatchModal">
+  <div class="modal" style="max-width:560px;width:94vw">
+    <div class="modal-title">🔗 Match Invoices to PO</div>
+    <div id="invSupMatchLabel" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
+    <div style="margin-bottom:12px">
+      <label class="field-label">Purchase Order</label>
+      <select class="field-input" id="invSupMatchPo"></select>
+      <div style="font-size:11px;color:var(--subtle);margin-top:4px">
+        Pick "Unmatch" to detach the ticked invoices from their current PO.
+        If the combined invoices exceed the order value you'll be asked to confirm.
+      </div>
+    </div>
+    <div style="margin-bottom:16px">
+      <label class="field-label">Babcock Quote (optional)</label>
+      <select class="field-input" id="invSupMatchBabcock"></select>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px">
+      <button class="btn btn-ghost" onclick="closeSupMatchModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmSupMatch()">Match</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     ADD SUPPLIER INVOICE MANUALLY MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="invSupAddModal">
+  <div class="modal" style="max-width:620px;width:94vw;max-height:90vh;overflow-y:auto">
+    <div class="modal-title">➕ Add Supplier Invoice</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:14px">
+      For purchases without a PO — or link one if it exists. Due date comes from the supplier's payment terms.
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <label class="field-label">Supplier *</label>
+        <select class="field-input" id="supAddSupplier"
+                onchange="onSupAddSupplierPicked(); _supAddUpdateDueHint()"></select>
+      </div>
+      <div>
+        <label class="field-label">PO (optional)</label>
+        <select class="field-input" id="supAddPo"></select>
+      </div>
+      <div>
+        <label class="field-label">Invoice #</label>
+        <input type="text" class="field-input" id="supAddRef" placeholder="e.g. INV-10442">
+      </div>
+      <div>
+        <label class="field-label">Invoice Date</label>
+        <input type="date" class="field-input" id="supAddDate">
+      </div>
+      <div>
+        <label class="field-label">Net (£)</label>
+        <input type="number" step="0.01" class="field-input" id="supAddNet" oninput="onSupAddNetVat()">
+      </div>
+      <div>
+        <label class="field-label">VAT (£)</label>
+        <input type="number" step="0.01" class="field-input" id="supAddVat" oninput="onSupAddNetVat()">
+      </div>
+      <div>
+        <label class="field-label">Gross (£) *</label>
+        <input type="number" step="0.01" class="field-input" id="supAddGross">
+      </div>
+      <div>
+        <label class="field-label">Babcock Quote (optional)</label>
+        <select class="field-input" id="supAddBabcock"></select>
+      </div>
+    </div>
+    <div id="supAddDueHint" style="font-size:11px;color:var(--subtle);margin-bottom:12px"></div>
+    <div style="margin-bottom:12px">
+      <label class="field-label">Notes</label>
+      <input type="text" class="field-input" id="supAddNotes" placeholder="Optional">
+    </div>
+    <div style="margin-bottom:16px">
+      <label class="field-label">Invoice File</label>
+      <input type="file" id="supAddFileInput" accept=".pdf,.png,.jpg,.jpeg" style="display:none"
+             onchange="onSupAddFilePicked(this)">
+      <div style="display:flex;align-items:center;gap:10px">
+        <button class="btn btn-ghost" onclick="document.getElementById('supAddFileInput').click()">📎 Choose file</button>
+        <span id="supAddFileLabel" style="font-size:12px;color:var(--muted)">No file attached (optional)</span>
+      </div>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px">
+      <button class="btn btn-ghost" onclick="closeSupAddInvoiceModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveSupAddInvoice()">Save Invoice</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     BACS PAYMENT RUN MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="invBacsRunModal">
+  <div class="modal" style="max-width:760px;width:96vw;max-height:92vh;overflow-y:auto">
+    <div class="modal-title">🏦 BACS Payment Run</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:14px">
+      Pick a due-date window — every unpaid invoice due in it is pre-ticked.
+      Direct-debit invoices are excluded unless you include them.
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:10px">
+      <div>
+        <label class="field-label">Payment Date</label>
+        <input type="date" class="field-input" id="bacsRunDate">
+      </div>
+      <div>
+        <label class="field-label">Due From</label>
+        <input type="date" class="field-input" id="bacsFrom" onchange="_bacsRefreshCandidates()">
+      </div>
+      <div>
+        <label class="field-label">Due To</label>
+        <input type="date" class="field-input" id="bacsTo" onchange="_bacsRefreshCandidates()">
+      </div>
+      <div>
+        <label class="field-label">Run Ref</label>
+        <input type="text" class="field-input" id="bacsRunRef">
+      </div>
+    </div>
+    <div style="display:flex;gap:18px;margin-bottom:10px">
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)">
+        <input type="checkbox" id="bacsIncludeDd" onchange="_bacsRefreshCandidates()"> Include direct-debit invoices
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)">
+        <input type="checkbox" id="bacsIncludeNoDue" checked onchange="_bacsRefreshCandidates()"> Include invoices with no due date
+      </label>
+    </div>
+    <div class="card" style="padding:0;overflow:hidden;margin-bottom:12px">
+      <div id="bacsList" style="max-height:44vh;overflow-y:auto"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+      <div id="bacsTotals" style="font-size:13px;font-weight:700"></div>
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-ghost" onclick="closeBacsRunModal()">Cancel</button>
+        <button class="btn btn-primary" id="bacsConfirmBtn" disabled onclick="confirmBacsRun()"
+                style="background:var(--green);border-color:var(--green)">Run BACS &amp; Mark Paid</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1234,6 +1414,6 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260728h"></script>
+<script src="shared.js?v=20260728i"></script>
 </body>
 </html>
