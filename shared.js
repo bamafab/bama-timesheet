@@ -40686,8 +40686,7 @@ function drawBamaInvoicePDF(jsPDF, d, logoDataUri) {
   doc.text('From', marginL, leftY); leftY += 4.5;
   setText(TEXT); doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
   ['BAMA Fabrication Ltd', '11 Enterprise Way, Enterprise Park, Yaxley,',
-   'PE7 3WY, Peterborough', '01733 855212', 'accounts@bamafabrication.co.uk',
-   'VAT Reg No: 435 0591 07']
+   'PE7 3WY, Peterborough', '01733 855212', 'accounts@bamafabrication.co.uk']
     .forEach(line => { doc.text(line, marginL + 4, leftY); leftY += 4; });
   leftY += 4;
 
