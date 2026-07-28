@@ -8301,7 +8301,20 @@ async function saveSupplierTerms() {
     closeSupplierTermsModal();
     const supplier = (_suppliers || []).find(s => s.id === supplierId);
     if (supplier) _renderSupplierDetailHeader(supplier);
-    toast('Payment terms saved', 'success');
+
+    // Re-derive due dates on every UNPAID invoice for this supplier so aged
+    // creditors / statement check / BACS windows reflect the new terms.
+    let recomputed = 0;
+    try {
+      const res = await api.post('/api/supplier-invoices-recompute-due', { supplier_id: supplierId });
+      recomputed = (res && res.updated) || 0;
+      if (typeof _invSupInvoices !== 'undefined' && _invSupInvoices.length && typeof loadInvoicingData === 'function'
+          && document.getElementById('invSupplierTbody')) {
+        await loadInvoicingData();
+        renderInvSupplierTable();
+      }
+    } catch (e) { console.warn('Due-date recompute failed:', e); }
+    toast(`Payment terms saved${recomputed ? ` — due dates updated on ${recomputed} unpaid invoice${recomputed === 1 ? '' : 's'}` : ''}`, 'success');
   } catch (e) {
     toast('Failed to save payment terms', 'error');
   }

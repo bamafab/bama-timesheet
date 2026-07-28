@@ -530,3 +530,47 @@ app.http('supplier-payment-runs-options', {
     route: 'supplier-payment-runs',
     handler: async (request) => preflight(request)
 });
+
+// ── POST /api/supplier-invoices-recompute-due — re-derive due dates after a
+// terms change. Body: { supplier_id }. Touches unpaid, non-deleted invoices.
+app.http('supplier-invoices-recompute-due', {
+    methods: ['POST'],
+    authLevel: 'anonymous',
+    route: 'supplier-invoices-recompute-due',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+        try {
+            const body = await request.json();
+            const supplierId = parseInt(body.supplier_id);
+            if (!supplierId) return badRequest('supplier_id is required', request);
+            const supplier = await getSupplier(supplierId);
+            if (!supplier) return notFound('Supplier not found', request);
+
+            const invs = await query(
+                `SELECT id, invoice_date FROM SupplierInvoices
+                  WHERE supplier_id = @sid AND is_deleted = 0 AND paid_at IS NULL`,
+                { sid: supplierId });
+
+            let updated = 0;
+            for (const inv of invs.recordset) {
+                const dateStr = inv.invoice_date ? new Date(inv.invoice_date).toISOString().slice(0, 10) : null;
+                const { due_date, is_dd } = computeDueDate(supplier, dateStr);
+                await query(
+                    `UPDATE SupplierInvoices SET due_date = @due, is_dd = @dd, updated_at = GETUTCDATE() WHERE id = @id`,
+                    { id: inv.id, due: due_date, dd: is_dd });
+                updated++;
+            }
+            return ok({ updated }, request);
+        } catch (err) {
+            context.error('recompute-due failed:', err);
+            return serverError('Failed to recompute due dates: ' + err.message, request);
+        }
+    }
+});
+app.http('supplier-invoices-recompute-due-options', {
+    methods: ['OPTIONS'],
+    authLevel: 'anonymous',
+    route: 'supplier-invoices-recompute-due',
+    handler: async (request) => preflight(request)
+});
