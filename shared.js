@@ -36354,8 +36354,10 @@ async function deleteSupInvoice(id) {
   } finally { setLoading(false); }
 }
 
-// ── Aged creditors — outstanding by supplier, bucketed by due date ─────────
-let _invAgedCredOpen = false;
+// ── Aged creditors — mirrors the sales Aged Debt view (who we owe most) ────
+let _invAgedCredOpen = true;
+let _invApAgedExpanded = new Set();
+
 function toggleInvAgedCreditors() {
   _invAgedCredOpen = !_invAgedCredOpen;
   const body = document.getElementById('invAgedCredBody');
@@ -36364,69 +36366,327 @@ function toggleInvAgedCreditors() {
   if (chev) chev.textContent = _invAgedCredOpen ? '▼' : '▶';
 }
 
-function renderInvAgedCreditors() {
-  const tiles = document.getElementById('invAgedCredTiles');
-  const body  = document.getElementById('invAgedCredBody');
-  if (!tiles) return;
-  const today = new Date().toISOString().slice(0, 10);
-  const unpaid = _invSupInvoices.filter(i => !i.paid_at);
+function _invApAgedBucketOf(inv, todayMs) {
+  const dueStr = inv.due_date ? String(inv.due_date).slice(0, 10)
+               : (inv.invoice_date ? String(inv.invoice_date).slice(0, 10) : null);
+  if (!dueStr) return 'current';
+  const dueMs = new Date(dueStr + 'T00:00:00').getTime();
+  const days = Math.floor((todayMs - dueMs) / 86400000);
+  if (days <= 0) return 'current';
+  if (days <= 30) return 'b30';
+  if (days <= 60) return 'b60';
+  if (days <= 90) return 'b90';
+  return 'b90p';
+}
 
-  const bucketOf = inv => {
-    if (inv.is_dd) return 'dd';
-    if (!inv.due_date) return 'current';
-    const due = String(inv.due_date).slice(0, 10);
-    if (due >= today) return 'current';
-    const days = Math.floor((new Date(today) - new Date(due)) / 86400000);
-    if (days <= 30) return 'd30';
-    if (days <= 60) return 'd60';
-    return 'd90';
-  };
-  const sums = { current: 0, d30: 0, d60: 0, d90: 0, dd: 0 };
-  for (const inv of unpaid) sums[bucketOf(inv)] += Number(inv.gross || 0);
-  const total = Object.values(sums).reduce((a, b) => a + b, 0);
-
-  const fmt = v => '£' + Number(v).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const tile = (label, v, col) => `
-    <div class="card" style="padding:10px 12px">
-      <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--muted)">${label}</div>
-      <div style="font-size:16px;font-weight:700;margin-top:2px;color:${col || 'inherit'}">${fmt(v)}</div>
-    </div>`;
-  tiles.innerHTML =
-    tile('Total Unpaid', total) +
-    tile('Not Yet Due', sums.current) +
-    tile('Overdue 1–30d', sums.d30, sums.d30 ? '#ffa500' : null) +
-    tile('Overdue 31–60d', sums.d60, sums.d60 ? '#ffa500' : null) +
-    tile('Overdue 60d+', sums.d90, sums.d90 ? 'var(--red)' : null) +
-    tile('Direct Debit', sums.dd);
-
-  if (!body || !_invAgedCredOpen) return;
-  // By-supplier table
-  const bySup = {};
-  for (const inv of unpaid) {
-    const k = inv.supplier_name || '—';
-    bySup[k] = bySup[k] || { current: 0, d30: 0, d60: 0, d90: 0, dd: 0, total: 0 };
-    bySup[k][bucketOf(inv)] += Number(inv.gross || 0);
-    bySup[k].total += Number(inv.gross || 0);
+function _invApAgedData() {
+  const todayMs = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00').getTime();
+  const open = (_invSupInvoices || []).filter(i => !i.paid_at && Number(i.gross || 0) > 0.005);
+  const bySupplier = new Map();
+  const totals = { current: 0, b30: 0, b60: 0, b90: 0, b90p: 0, all: 0 };
+  for (const inv of open) {
+    const key = inv.supplier_name || '— Unknown —';
+    const bucket = inv.is_dd ? 'current' : _invApAgedBucketOf(inv, todayMs);
+    const amt = Number(inv.gross || 0);
+    if (!bySupplier.has(key)) {
+      bySupplier.set(key, { supplier: key, current: 0, b30: 0, b60: 0, b90: 0, b90p: 0, all: 0, invoices: [] });
+    }
+    const row = bySupplier.get(key);
+    row[bucket] += amt; row.all += amt;
+    row.invoices.push({ ...inv, _bucket: bucket, _outstanding: amt });
+    totals[bucket] += amt; totals.all += amt;
   }
-  const rows = Object.entries(bySup).sort((a, b) => b[1].total - a[1].total);
-  body.innerHTML = `
-    <table style="width:100%;border-collapse:collapse;font-size:12px">
+  const rows = Array.from(bySupplier.values()).sort((a, b) => b.all - a.all);
+  for (const r of rows) {
+    r.invoices.sort((a, b) => String(a.due_date || a.invoice_date || '').localeCompare(String(b.due_date || b.invoice_date || '')));
+  }
+  return { rows, totals };
+}
+
+function renderInvAgedCreditors() {
+  const tilesEl = document.getElementById('invAgedCredTiles');
+  const bodyEl = document.getElementById('invAgedCredBody');
+  if (!tilesEl || !bodyEl) return;
+
+  const { rows, totals } = _invApAgedData();
+  const fmt = v => '£' + Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  tilesEl.innerHTML = _INV_AGED_BUCKETS.map(b => `
+    <div style="background:var(--bg-darker);border:1px solid var(--border);border-radius:8px;padding:10px 12px">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)">${b.label}</div>
+      <div style="font-size:17px;font-weight:700;margin-top:2px;color:${totals[b.key] > 0 ? b.color : 'var(--muted)'}">${fmt(totals[b.key])}</div>
+    </div>`).join('') + `
+    <div style="background:var(--bg-darker);border:1px solid var(--accent);border-radius:8px;padding:10px 12px">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)">Total we owe</div>
+      <div style="font-size:17px;font-weight:700;margin-top:2px;color:var(--accent)">${fmt(totals.all)}</div>
+    </div>`;
+
+  if (!rows.length) {
+    bodyEl.innerHTML = '<div style="font-size:12px;color:var(--muted)">Nothing outstanding — every supplier invoice is paid. 🎉</div>';
+    return;
+  }
+
+  const th = (t, right) => `<th style="padding:6px 8px;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;text-align:${right ? 'right' : 'left'};border-bottom:1px solid var(--border)">${t}</th>`;
+  const td = (t, right, color, bold) => `<td style="padding:6px 8px;text-align:${right ? 'right' : 'left'};${color ? `color:${color};` : ''}${bold ? 'font-weight:600;' : ''}border-bottom:1px solid var(--border)">${t}</td>`;
+
+  bodyEl.innerHTML = `
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
       <thead><tr>
-        ${['Supplier','Not Due','1–30d','31–60d','60d+','DD','Total'].map((h, i) => `
-          <th style="text-align:${i ? 'right' : 'left'};padding:5px 8px;font-size:10px;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--border)">${h}</th>`).join('')}
+        ${th('Supplier')}${_INV_AGED_BUCKETS.map(b => th(b.label, true)).join('')}${th('Total', true)}
       </tr></thead>
-      <tbody>${rows.map(([name, s]) => `
-        <tr>
-          <td style="padding:5px 8px;border-bottom:1px solid var(--border)">${escapeHtml(name)}</td>
-          <td style="padding:5px 8px;text-align:right;border-bottom:1px solid var(--border)">${s.current ? fmt(s.current) : ''}</td>
-          <td style="padding:5px 8px;text-align:right;border-bottom:1px solid var(--border);color:${s.d30 ? '#ffa500' : 'inherit'}">${s.d30 ? fmt(s.d30) : ''}</td>
-          <td style="padding:5px 8px;text-align:right;border-bottom:1px solid var(--border);color:${s.d60 ? '#ffa500' : 'inherit'}">${s.d60 ? fmt(s.d60) : ''}</td>
-          <td style="padding:5px 8px;text-align:right;border-bottom:1px solid var(--border);color:${s.d90 ? 'var(--red)' : 'inherit'}">${s.d90 ? fmt(s.d90) : ''}</td>
-          <td style="padding:5px 8px;text-align:right;border-bottom:1px solid var(--border)">${s.dd ? fmt(s.dd) : ''}</td>
-          <td style="padding:5px 8px;text-align:right;border-bottom:1px solid var(--border);font-weight:700">${fmt(s.total)}</td>
-        </tr>`).join('')}
+      <tbody>
+        ${rows.map(r => {
+          const key = encodeURIComponent(r.supplier);
+          const expanded = _invApAgedExpanded.has(r.supplier);
+          const main = `
+            <tr style="cursor:pointer" onclick="invApAgedToggleSupplier('${key}')"
+                onmouseover="this.style.background='var(--surface2)'" onmouseout="this.style.background=''">
+              ${td(`${expanded ? '▾' : '▸'} ${escapeHtml(r.supplier)}`, false, null, true)}
+              ${_INV_AGED_BUCKETS.map(b => td(r[b.key] > 0 ? fmt(r[b.key]) : '—', true, r[b.key] > 0 ? b.color : 'var(--subtle)')).join('')}
+              ${td(fmt(r.all), true, null, true)}
+            </tr>`;
+          const detail = expanded ? r.invoices.map(inv => {
+            const bucket = _INV_AGED_BUCKETS.find(b => b.key === inv._bucket);
+            return `
+            <tr style="cursor:pointer;background:var(--bg-darker)" onclick="openSupAddInvoiceModal(${inv.id})">
+              ${td(`<span style="font-family:var(--font-mono);margin-left:18px">${escapeHtml(inv.invoice_ref || inv.po_reference || ('#' + inv.id))}</span>
+                    <span style="color:var(--muted);font-size:11px;margin-left:8px">due ${inv.due_date ? new Date(inv.due_date).toLocaleDateString('en-GB') : (inv.is_dd ? 'DD' : '—')}</span>
+                    ${inv.invoice_type === 'subcontractor' ? '<span style="color:#b596e8;font-size:11px;margin-left:8px">CIS</span>' : ''}`)}
+              ${_INV_AGED_BUCKETS.map(b => td(b.key === inv._bucket ? fmt(inv._outstanding) : '', true, bucket ? bucket.color : null)).join('')}
+              ${td(fmt(inv._outstanding), true)}
+            </tr>`;
+          }).join('') : '';
+          return main + detail;
+        }).join('')}
       </tbody>
     </table>`;
+}
+
+function invApAgedToggleSupplier(encodedKey) {
+  const key = decodeURIComponent(encodedKey);
+  if (_invApAgedExpanded.has(key)) _invApAgedExpanded.delete(key);
+  else _invApAgedExpanded.add(key);
+  renderInvAgedCreditors();
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// STATEMENT CHECK — reconcile a supplier statement against the ERP ledger
+// Claude reads the statement lines; ALL matching/totals are deterministic JS.
+// ═════════════════════════════════════════════════════════════════════════
+let _stmtFile = null;
+let _stmtParsed = null;
+
+async function openStatementCheckModal() {
+  _stmtFile = null; _stmtParsed = null;
+  const supSel = document.getElementById('stmtSupplier');
+  supSel.innerHTML = '<option value="">Loading…</option>';
+  document.getElementById('stmtDate').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('stmtFileLabel').textContent = 'No statement yet';
+  document.getElementById('stmtResults').innerHTML =
+    '<div style="padding:24px;text-align:center;color:var(--muted);font-size:12px">Pick the supplier and drop their statement — every line gets checked against the ERP.</div>';
+  document.getElementById('invStmtModal').classList.add('active');
+  const suppliers = await _invGetSuppliersList();
+  supSel.innerHTML = '<option value="">Select supplier…</option>' + suppliers
+    .slice().sort((a, b) => String(a.supplier_name).localeCompare(String(b.supplier_name)))
+    .map(s => `<option value="${s.id}">${escapeHtml(s.supplier_name)}</option>`).join('');
+}
+
+function closeStatementCheckModal() {
+  document.getElementById('invStmtModal').classList.remove('active');
+}
+
+function stmtDragOver(ev) { ev.preventDefault(); ev.currentTarget.style.borderColor = 'var(--accent)'; }
+function stmtDragLeave(ev) { ev.currentTarget.style.borderColor = 'var(--border)'; }
+function stmtDrop(ev) {
+  ev.preventDefault();
+  ev.currentTarget.style.borderColor = 'var(--border)';
+  const file = ev.dataTransfer.files && ev.dataTransfer.files[0];
+  if (file) _stmtHandleFile(file);
+}
+function onStmtFilePicked(input) {
+  const file = input.files && input.files[0] ? input.files[0] : null;
+  if (file) _stmtHandleFile(file);
+}
+
+async function _stmtHandleFile(file) {
+  if (!document.getElementById('stmtSupplier').value) {
+    toast('Pick the supplier first', 'error'); return;
+  }
+  _stmtFile = file;
+  const label = document.getElementById('stmtFileLabel');
+  label.innerHTML = `<span class="spinner" style="width:12px;height:12px;display:inline-block;vertical-align:middle"></span> Reading ${escapeHtml(file.name)}…`;
+  try {
+    const dataUri = await _fileToDataUri(file);
+    const isImg = file.type.startsWith('image/');
+    const result = await callClaude({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 3000,
+      messages: [{
+        role: 'user',
+        content: [
+          isImg
+            ? { type: 'image',    source: { type: 'base64', media_type: file.type, data: dataUri.split(',')[1] } }
+            : { type: 'document', source: { type: 'base64', media_type: file.type, data: dataUri.split(',')[1] } },
+          {
+            type: 'text',
+            text: `This is a UK supplier statement of account sent to BAMA Fabrication. Extract EVERY line item. Return ONLY JSON, no markdown:
+{
+  "statement_date": "YYYY-MM-DD or null",
+  "lines": [
+    { "invoice_ref": "the invoice/document number", "invoice_date": "YYYY-MM-DD or null",
+      "amount": 0, "type": "invoice" or "credit" or "payment" }
+  ],
+  "total_outstanding": "the statement's balance/total due, or null"
+}
+Rules: amounts as positive numbers; mark credit notes as type "credit" and payments/receipts as type "payment"; everything else is "invoice". Include lines even if partially unreadable — set unknown fields to null.`
+          }
+        ]
+      }]
+    });
+    const text = (result.content?.find(b => b.type === 'text')?.text || '').trim();
+    const s = text.indexOf('{'), e = text.lastIndexOf('}');
+    _stmtParsed = JSON.parse(text.slice(s, e + 1));
+    label.innerHTML = `${escapeHtml(file.name)} — <span style="color:var(--green);font-weight:600">read ✓</span> (${(_stmtParsed.lines || []).length} lines)`;
+    if (_stmtParsed.statement_date) document.getElementById('stmtDate').value = String(_stmtParsed.statement_date).slice(0, 10);
+    _stmtReconcile();
+  } catch (err) {
+    console.error('Statement parse failed', err);
+    label.textContent = `${file.name} — couldn't read it`;
+    toast('Could not read the statement: ' + (err.message || 'unknown error'), 'error');
+  }
+}
+
+function _stmtNormRef(r) {
+  return String(r || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^0+/, '');
+}
+
+// Deterministic reconciliation — no AI involved past this point
+function _stmtReconcile() {
+  const supplierId = parseInt(document.getElementById('stmtSupplier').value);
+  const box = document.getElementById('stmtResults');
+  if (!supplierId || !_stmtParsed) return;
+
+  const ours = _invSupInvoices.filter(i => i.supplier_id === supplierId);
+  const oursByRef = new Map();
+  for (const inv of ours) {
+    const k = _stmtNormRef(inv.invoice_ref);
+    if (k) oursByRef.set(k, inv);
+  }
+
+  const fmt = v => '£' + Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const lines = (_stmtParsed.lines || []).filter(l => l.type !== 'payment');
+  const usedOurIds = new Set();
+  const results = [];
+
+  for (const line of lines) {
+    const amt = Number(line.amount || 0) * (line.type === 'credit' ? -1 : 1);
+    let match = oursByRef.get(_stmtNormRef(line.invoice_ref)) || null;
+    if (!match && line.invoice_date) {
+      // Fallback: same gross within 2p and invoice date within 5 days
+      const lMs = new Date(String(line.invoice_date).slice(0, 10) + 'T00:00:00').getTime();
+      match = ours.find(inv => !usedOurIds.has(inv.id)
+        && Math.abs(Number(inv.gross || 0) - Math.abs(amt)) <= 0.02
+        && inv.invoice_date
+        && Math.abs(new Date(String(inv.invoice_date).slice(0, 10) + 'T00:00:00').getTime() - lMs) <= 5 * 86400000) || null;
+    }
+    if (match) usedOurIds.add(match.id);
+
+    let status, color, note = '';
+    if (!match) {
+      status = 'NOT IN ERP'; color = 'var(--red)';
+      note = 'Missing — chase the supplier for a copy or add it';
+    } else if (Math.abs(Number(match.gross || 0) - Math.abs(amt)) > 0.02) {
+      status = 'AMOUNT DIFFERS'; color = '#ffa500';
+      note = `ERP has ${fmt(match.gross)}`;
+    } else if (match.paid_at) {
+      status = 'PAID BY US'; color = '#60a5fa';
+      note = `Paid ${new Date(match.paid_at).toLocaleDateString('en-GB')}${match.paid_ref ? ' · ' + match.paid_ref : ''} — tell them to allocate it`;
+    } else {
+      status = 'MATCHED'; color = 'var(--green)';
+      note = match.due_date ? `Due ${new Date(match.due_date).toLocaleDateString('en-GB')}` : '';
+    }
+    results.push({ line, amt, match, status, color, note });
+  }
+
+  // Our unpaid invoices for this supplier that the statement doesn't show
+  const notOnStatement = ours.filter(inv => !inv.paid_at && !usedOurIds.has(inv.id));
+
+  const stmtTotal = results.reduce((s, r) => s + (r.match && r.match.paid_at ? 0 : r.amt), 0);
+  const ourOutstanding = ours.filter(i => !i.paid_at).reduce((s, i) => s + Number(i.gross || 0), 0);
+  const claimed = _stmtParsed.total_outstanding != null ? Number(_stmtParsed.total_outstanding) : null;
+
+  const counts = {
+    matched: results.filter(r => r.status === 'MATCHED').length,
+    missing: results.filter(r => r.status === 'NOT IN ERP').length,
+    differs: results.filter(r => r.status === 'AMOUNT DIFFERS').length,
+    paid:    results.filter(r => r.status === 'PAID BY US').length
+  };
+
+  const tile = (label, value, col) => `
+    <div style="background:var(--bg-darker);border:1px solid var(--border);border-radius:8px;padding:8px 10px">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)">${label}</div>
+      <div style="font-size:15px;font-weight:700;margin-top:2px;color:${col || 'inherit'}">${value}</div>
+    </div>`;
+
+  const badge = (t, c) => `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:${c}22;color:${c}">${t}</span>`;
+  const th = t => `<th style="padding:5px 8px;font-size:10px;color:var(--muted);text-transform:uppercase;text-align:left;border-bottom:1px solid var(--border)">${t}</th>`;
+  const td = (t, right) => `<td style="padding:5px 8px;border-bottom:1px solid var(--border);${right ? 'text-align:right' : ''}">${t}</td>`;
+
+  box.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:12px">
+      ${tile('Matched', counts.matched, 'var(--green)')}
+      ${tile('Paid by us', counts.paid, '#60a5fa')}
+      ${tile('Amount differs', counts.differs, counts.differs ? '#ffa500' : null)}
+      ${tile('Not in ERP', counts.missing, counts.missing ? 'var(--red)' : null)}
+      ${tile('Statement says due', claimed != null ? fmt(claimed) : '—')}
+      ${tile('We agree owing', fmt(stmtTotal), Math.abs((claimed ?? stmtTotal) - stmtTotal) > 0.02 ? '#ffa500' : 'var(--green)')}
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:14px">
+      <thead><tr>${th('Statement line')}${th('Date')}${th('Amount')}${th('Status')}${th('Note')}${th('')}</tr></thead>
+      <tbody>${results.map(r => `
+        <tr>
+          ${td(`<span style="font-family:var(--font-mono)">${escapeHtml(r.line.invoice_ref || '—')}</span>${r.line.type === 'credit' ? ' ' + badge('CREDIT', '#b596e8') : ''}`)}
+          ${td(r.line.invoice_date ? new Date(String(r.line.invoice_date).slice(0,10) + 'T00:00:00').toLocaleDateString('en-GB') : '—')}
+          ${td(fmt(r.amt), true)}
+          ${td(badge(r.status, r.color))}
+          ${td(`<span style="font-size:11px;color:var(--muted)">${escapeHtml(r.note)}</span>`)}
+          ${td(r.status === 'NOT IN ERP' && r.line.type !== 'credit'
+              ? `<button class="btn btn-ghost" style="padding:1px 8px;font-size:10px" onclick="stmtAddMissing(${results.indexOf(r)})">+ Add</button>` : '')}
+        </tr>`).join('')}
+      </tbody>
+    </table>
+    ${notOnStatement.length ? `
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);font-weight:600;margin-bottom:6px">
+        In our ERP but NOT on their statement (${notOnStatement.length})
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <tbody>${notOnStatement.map(inv => `
+          <tr>
+            ${td(`<span style="font-family:var(--font-mono)">${escapeHtml(inv.invoice_ref || ('#' + inv.id))}</span>`)}
+            ${td(inv.invoice_date ? new Date(inv.invoice_date).toLocaleDateString('en-GB') : '—')}
+            ${td(fmt(inv.gross), true)}
+            ${td(`<span style="font-size:11px;color:var(--muted)">unpaid in ERP — maybe newer than the statement, or a duplicate entry</span>`)}
+          </tr>`).join('')}
+        </tbody>
+      </table>` : ''}`;
+}
+
+// "+ Add" on a missing statement line → Add Invoice modal pre-filled
+let _stmtLastResults = null;
+function stmtAddMissing(idx) {
+  const supplierId = document.getElementById('stmtSupplier').value;
+  const line = (_stmtParsed.lines || []).filter(l => l.type !== 'payment')[idx];
+  if (!line) return;
+  closeStatementCheckModal();
+  openSupAddInvoiceModal().then(async () => {
+    document.getElementById('supAddSupplier').value = supplierId;
+    await onSupAddSupplierPicked();
+    _supAddUpdateDueHint();
+    if (line.invoice_ref)  document.getElementById('supAddRef').value = line.invoice_ref;
+    if (line.invoice_date) document.getElementById('supAddDate').value = String(line.invoice_date).slice(0, 10);
+    if (line.amount != null) document.getElementById('supAddGross').value = Number(line.amount).toFixed(2);
+    toast('Pre-filled from the statement — check it and save', 'success');
+  });
 }
 
 // ═════════════════════════════════════════════════════════════════════════

@@ -280,6 +280,8 @@
         <button class="btn btn-primary" onclick="openBacsRunModal()"
                 style="background:var(--green);border-color:var(--green)">🏦 BACS Run</button>
         <button class="btn btn-ghost" onclick="openSupAddInvoiceModal()">+ Add Invoice</button>
+        <button class="btn btn-ghost" onclick="openStatementCheckModal()"
+                style="border-color:#b596e8;color:#b596e8">📋 Statement Check</button>
         <button class="btn btn-ghost" onclick="openAttachSupplierInvoiceModal()"
                 style="border-color:var(--accent);color:var(--accent)">📎 Attach to PO</button>
       </div>
@@ -291,11 +293,11 @@
           <div style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);font-weight:600">
             🏗 Aged Creditors — what we owe suppliers
           </div>
-          <div id="invAgedCredChevron" style="color:var(--muted);font-size:12px">▶</div>
+          <div id="invAgedCredChevron" style="color:var(--muted);font-size:12px">▼</div>
         </div>
         <div id="invAgedCredTiles"
              style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-top:12px"></div>
-        <div id="invAgedCredBody" style="margin-top:12px;display:none"></div>
+        <div id="invAgedCredBody" style="margin-top:12px"></div>
       </div>
 
       <!-- Filter chips -->
@@ -562,6 +564,41 @@
         <button class="btn btn-primary" id="bacsConfirmBtn" disabled onclick="confirmBacsRun()"
                 style="background:var(--green);border-color:var(--green)">Run BACS &amp; Mark Paid</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     SUPPLIER STATEMENT CHECK MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="invStmtModal">
+  <div class="modal" style="max-width:860px;width:96vw;max-height:92vh;overflow-y:auto">
+    <div class="modal-title">📋 Supplier Statement Check</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:14px">
+      Drop the supplier's statement — every line gets checked against our ledger:
+      matched, already paid by us, wrong amount, or missing from the ERP.
+    </div>
+    <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:12px">
+      <div>
+        <label class="field-label">Supplier *</label>
+        <select class="field-input" id="stmtSupplier" onchange="if(_stmtParsed) _stmtReconcile()"></select>
+      </div>
+      <div>
+        <label class="field-label">Statement Date</label>
+        <input type="date" class="field-input" id="stmtDate">
+      </div>
+    </div>
+    <input type="file" id="stmtFileInput" accept=".pdf,.png,.jpg,.jpeg" style="display:none"
+           onchange="onStmtFilePicked(this)">
+    <div style="border:2px dashed var(--border);border-radius:8px;padding:14px;text-align:center;cursor:pointer;margin-bottom:14px;transition:border-color .15s"
+         onclick="document.getElementById('stmtFileInput').click()"
+         ondragover="stmtDragOver(event)" ondragleave="stmtDragLeave(event)" ondrop="stmtDrop(event)">
+      <div style="font-size:12px;color:var(--muted)">📥 Drop the statement PDF here (or click to browse)</div>
+      <div id="stmtFileLabel" style="font-size:12px;color:var(--muted);margin-top:4px">No statement yet</div>
+    </div>
+    <div id="stmtResults"></div>
+    <div style="display:flex;justify-content:flex-end;margin-top:14px">
+      <button class="btn btn-ghost" onclick="closeStatementCheckModal()">Close</button>
     </div>
   </div>
 </div>
@@ -1500,6 +1537,6 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260728l"></script>
+<script src="shared.js?v=20260728m"></script>
 </body>
 </html>
