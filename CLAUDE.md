@@ -442,6 +442,14 @@ PER assembly — multi-variant sheets ("Column 1-C & 2-C, QUANTITY 1 OF EACH",
 thermal-break plate arrays) yield several cards sharing one SharePoint file.
 max_tokens 3000.
 
+### --bg-darker CSS variable fix (2026-07-28)
+
+`var(--bg-darker)` was used ~50× (shared.js, projects, invoice tracker…)
+but NEVER DEFINED in bama.css :root → resolved transparent. Visible
+symptom: RAMS personnel roster dropdown rendered see-through over the
+sections text. Now defined `--bg-darker: #0a0a0a` in :root. bama.css
+cache-bust bumped (bama.css?v=20260728a — CSS has its own version param).
+
 ### DN/AFP PDF long-text overflow + AFP folder fix (2026-07-28)
 
 - **DN (`drawDnPDF`)**: Mark cell now wrapped via splitTextToSize measured
