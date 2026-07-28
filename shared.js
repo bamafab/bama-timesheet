@@ -39163,6 +39163,175 @@ Rules:
   catch { throw new Error('AI returned invalid JSON'); }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// FILL INVOICE FROM CLIENT PURCHASE ORDER (AI extraction → deterministic fill)
+// Two-engine rule: Claude reads the PO and returns structured fields ONLY.
+// All totals are recomputed by recalcInvoiceTotals(); nothing AI-computed is
+// trusted for arithmetic — the PO's stated net is used purely as a sanity
+// cross-check shown in the hint line.
+// ═══════════════════════════════════════════════════════════════════════════
+async function parseInvoicePO(input) {
+  const file = input && input.files && input.files[0];
+  if (input) input.value = '';               // allow re-picking the same file
+  if (!file) return;
+  const hint = document.getElementById('invPoParseHint');
+  const btn  = document.getElementById('invPoParseBtn');
+  if (btn) btn.disabled = true;
+  if (hint) { hint.style.color = 'var(--muted)'; hint.textContent = '⏳ Reading PO…'; }
+
+  try {
+    const parsed = await _invParsePOFile(file);
+    _invApplyParsedPO(parsed);
+    if (hint) {
+      // Deterministic sanity check: our recomputed net vs the PO's stated net
+      const ourNet = _invLineRows.reduce((s, l) => s + (Number(l.quantity || 0) * Number(l.unit_price || 0)), 0);
+      const poNet  = Number(parsed.net_total);
+      if (isFinite(poNet) && poNet > 0 && Math.abs(ourNet - poNet) > 0.011) {
+        hint.style.color = 'var(--red)';
+        hint.textContent = `⚠ Lines total £${_invFmt2(ourNet)} but PO states £${_invFmt2(poNet)} — check lines`;
+      } else {
+        hint.style.color = 'var(--green)';
+        hint.textContent = `✓ Filled from PO ${parsed.po_number || ''}`.trim();
+      }
+    }
+  } catch (err) {
+    console.error('PO parse failed:', err);
+    if (hint) { hint.style.color = 'var(--red)'; hint.textContent = '✗ ' + err.message; }
+    toast('Could not read that PO: ' + err.message, 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// Claude vision call — accepts PDF or image POs. 429 retry once after 30s.
+async function _invParsePOFile(file) {
+  const base64 = await new Promise((res, rej) => {
+    const reader = new FileReader();
+    reader.onload = () => res(reader.result.split(',')[1]);
+    reader.onerror = () => rej(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
+  const isPdf = /pdf$/i.test(file.type) || /\.pdf$/i.test(file.name);
+  const mediaBlock = isPdf
+    ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } }
+    : { type: 'image',    source: { type: 'base64', media_type: file.type || 'image/png', data: base64 } };
+
+  const prompt = `This is a PURCHASE ORDER sent TO BAMA Fabrication Ltd by one of its customers. BAMA will now raise a sales invoice against it. Extract the details BAMA needs.
+
+Return ONLY a JSON object, no markdown, no explanation:
+{
+  "customer": "the company that ISSUED this PO (the letterhead / 'from' company — NOT Bama, Bama is the recipient shown in the deliver-to / supplier block)",
+  "po_number": "the purchase order number, e.g. '772', 'PO-4451'",
+  "po_date": "YYYY-MM-DD or null",
+  "your_order_no": "the 'Your Order No' / supplier reference field if present, else null",
+  "lines": [ { "description": "line description", "quantity": number, "unit": "unit text like 'ea'/'m'/'hrs' or empty string", "unit_price": number } ],
+  "net_total": number or null (the stated total NET / subtotal before VAT),
+  "vat_amount": number or null (VAT amount stated on the PO, 0 if none shown),
+  "carriage": number or null (delivery/carriage charge, 0 if none)
+}
+
+Rules:
+- Dates may be DD/MM/YYYY or DD.MM.YYYY — always UK day-first; convert to YYYY-MM-DD.
+- Amounts may use comma decimals / space thousands; return plain numbers.
+- SKIP zero-value message/comment lines (e.g. product code M1 "Message Line" at 0.00) — but if such a line carries descriptive text and a priced line has a vague description like "Miscellaneous", merge that text into the priced line's description instead.
+- Pricing units like "per hundred" / "HUND": convert so quantity × unit_price = the stated line net.
+- If carriage is charged, include it as its own line { "description": "Carriage / delivery", ... } as well as in "carriage".
+- Copy descriptions as written (trim codes/noise); do NOT invent content.`;
+
+  const _tok = await getToken();
+  const call = () => fetch(API_BASE + '/api/claude-proxy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${_tok}` },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 2000,
+      messages: [{ role: 'user', content: [ mediaBlock, { type: 'text', text: prompt } ] }]
+    })
+  });
+
+  let response = await call();
+  if (response.status === 429) {
+    const hint = document.getElementById('invPoParseHint');
+    if (hint) hint.textContent = '⏳ Rate limited — waiting 30s…';
+    await new Promise(r => setTimeout(r, 30000));
+    response = await call();
+  }
+  if (!response.ok) throw new Error(`AI error ${response.status}`);
+  const data = await response.json();
+  const text = (data.content || []).map(c => c.text || '').join('').trim();
+  const clean = text.replace(/^```json\s*/, '').replace(/\s*```$/, '').trim();
+  let parsed;
+  try { parsed = JSON.parse(clean); }
+  catch { throw new Error('AI returned invalid JSON'); }
+  if (!parsed || !Array.isArray(parsed.lines) || parsed.lines.length === 0) {
+    throw new Error('No line items found on that document');
+  }
+  return parsed;
+}
+
+// Deterministic application of the parsed PO onto the open invoice modal.
+function _invApplyParsedPO(parsed) {
+  // ── Customer: fuzzy match to Clients (applies its VAT treatment + terms);
+  //    otherwise fall back to free-text so nothing blocks the user.
+  const name = String(parsed.customer || '').trim();
+  if (name) {
+    const client = _invImportMatchClient(name);
+    if (client) {
+      selectInvCustomer(client.id);
+    } else {
+      document.getElementById('invNewCustomerSearch').value = name;
+      _invSelectedClient = null;
+      document.getElementById('invNewCustomerSelected').textContent = `✓ "${name}" (from PO — no Clients match)`;
+      document.getElementById('invNewCustomerDropdown').innerHTML = '';
+      // No client defaults available — use the PO's own VAT signal
+      const treatEl = document.getElementById('invNewVatTreatment');
+      if (treatEl && Number(parsed.vat_amount) > 0) treatEl.value = 'standard';
+    }
+    // Conflict hint: client says reverse charge but the PO adds VAT (or vice versa)
+    if (_invSelectedClient) {
+      const t = document.getElementById('invNewVatTreatment').value;
+      const poHasVat = Number(parsed.vat_amount) > 0;
+      const vh = document.getElementById('invNewVatHint');
+      if (vh && poHasVat && t === 'reverse_charge') {
+        vh.textContent += ' · ⚠ PO shows VAT added but client default is reverse charge — check treatment';
+      } else if (vh && !poHasVat && t === 'standard') {
+        vh.textContent += ' · ⚠ PO shows no VAT but client default is Standard — check treatment';
+      }
+    }
+  }
+
+  // ── Line items: wholesale replace with the PO's lines
+  const lines = (parsed.lines || [])
+    .map(l => ({
+      description: String(l.description || '').trim(),
+      quantity:    Number(l.quantity) > 0 ? Number(l.quantity) : 1,
+      unit:        String(l.unit || '').trim(),
+      unit_price:  Number(l.unit_price) || 0
+    }))
+    .filter(l => l.description || l.unit_price);
+  if (lines.length) {
+    _invLineRows = lines;
+    renderInvLineRows();
+  }
+
+  // ── Notes: reference the PO so it prints on the invoice PDF
+  const poBits = [];
+  if (parsed.po_number) poBits.push(`Purchase Order No. ${parsed.po_number}`);
+  if (parsed.po_date) {
+    const d = new Date(parsed.po_date + 'T00:00:00');
+    if (!isNaN(d)) poBits.push(`dated ${d.toLocaleDateString('en-GB')}`);
+  }
+  if (poBits.length) {
+    const notesEl = document.getElementById('invNewNotes');
+    const poLine = `As per your ${poBits.join(' ')}`;
+    if (notesEl && !String(notesEl.value).includes(poLine)) {
+      notesEl.value = (notesEl.value ? notesEl.value.trim() + '\n' : '') + poLine;
+    }
+  }
+
+  recalcInvoiceTotals();
+}
+
 // ── Review grid ───────────────────────────────────────────────────────────
 function renderInvImportRows() {
   const el = document.getElementById('invImportRows');

@@ -354,7 +354,17 @@
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="invNewModal">
   <div class="modal" style="max-width:880px;width:96vw;max-height:92vh;overflow-y:auto">
-    <div class="modal-title" id="invNewModalTitle">🧾 New Invoice</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+      <div class="modal-title" id="invNewModalTitle" style="margin:0">🧾 New Invoice</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span id="invPoParseHint" style="font-size:11px;color:var(--muted)"></span>
+        <button type="button" class="btn btn-ghost" id="invPoParseBtn"
+                style="padding:5px 12px;font-size:12px"
+                onclick="document.getElementById('invPoFileInput').click()">📄 Fill from PO</button>
+        <input type="file" id="invPoFileInput" accept="application/pdf,image/png,image/jpeg,image/webp"
+               style="display:none" onchange="parseInvoicePO(this)">
+      </div>
+    </div>
 
     <!-- Kind + Ref + Dates -->
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin-bottom:12px">
@@ -1224,6 +1234,6 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260727za"></script>
+<script src="shared.js?v=20260728a"></script>
 </body>
 </html>

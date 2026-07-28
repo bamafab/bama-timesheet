@@ -907,6 +907,19 @@ none of this is built yet.
   footer (Company No. 14680571), accounts@bamafabrication.co.uk, NEW bank
   details (Sort 30-99-50, Acct 26816462), statutory DRC wording (VAT Act
   1994 s55A), "Re: AFP / Payment Certificate" reference line.
+- **Invoicing: Fill from PO (2026-07-28)** — "📄 Fill from PO" button in the
+  New/Edit Invoice modal (`invPoParseBtn` + hidden `invPoFileInput`, accepts
+  PDF or image). `parseInvoicePO()` → `_invParsePOFile()` (Claude vision via
+  claude-proxy, 429 retry 30s, extracts customer/po_number/po_date/lines/
+  net_total/vat_amount/carriage; skips zero-value "Message Line" rows,
+  merges their text into vague priced lines; handles per-hundred pricing)
+  → `_invApplyParsedPO()` (deterministic): customer fuzzy-matched via
+  `_invImportMatchClient` → `selectInvCustomer` (client VAT/terms win) else
+  free-text + PO VAT signal sets treatment; lines wholesale-replace
+  `_invLineRows`; "As per your Purchase Order No. X dated Y" appended to
+  Notes (prints on PDF). Two-engine: totals always recomputed by
+  `recalcInvoiceTotals()`; hint cross-checks lines total vs PO stated net
+  (red warning if >1p off) and flags client-default vs PO VAT conflicts.
 - **Invoicing Phase 3 (historical import, 2026-07-27)** — "📥 Import Old
   Invoices" button on the tracker header → `invImportModal`: multi-PDF
   picker, sequential Claude vision OCR per file (429 retry once after 30s)
