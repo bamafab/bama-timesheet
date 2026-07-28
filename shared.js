@@ -8216,6 +8216,8 @@ function closeSupplierDetail() {
 // ── Supplier Payment Terms Modal ──────────────────────────────────────────────
 
 function _fmtPaymentTerms(supplier) {
+  if (supplier && supplier.payment_on_account)
+    return 'Paid on account' + (supplier.via_amazon ? ' · Amazon' : '');
   if (!supplier || !supplier.payment_term_type || supplier.payment_term_days == null) return null;
   const days = supplier.payment_term_days;
   const labels = {
@@ -8246,6 +8248,10 @@ function openSupplierTermsModal() {
 
   const ddEl = document.getElementById('termDdCheckbox');
   if (ddEl) ddEl.checked = !!supplier.payment_dd;
+  const oaEl = document.getElementById('termOnAccCheckbox');
+  if (oaEl) oaEl.checked = !!supplier.payment_on_account;
+  const azEl = document.getElementById('termAmazonCheckbox');
+  if (azEl) azEl.checked = !!supplier.via_amazon;
 
   _highlightSelectedTermOption();
 
@@ -8276,26 +8282,33 @@ async function saveSupplierTerms() {
   if (!supplierId) return;
 
   const selected = document.querySelector('input[name="termType"]:checked');
-  if (!selected) { toast('Please select a payment term type', 'warning'); return; }
+  const onAccount = document.getElementById('termOnAccCheckbox')?.checked || false;
+  const viaAmazon = document.getElementById('termAmazonCheckbox')?.checked || false;
+  // On-account (and pure DD) suppliers don't need a due-date rule
+  if (!selected && !onAccount) { toast('Please select a payment term type (or tick Paid on Account)', 'warning'); return; }
 
   const days = parseInt(document.getElementById('termDaysInput').value);
-  if (isNaN(days) || days < 0) { toast('Please enter a valid number of days', 'warning'); return; }
+  if (selected && (isNaN(days) || days < 0)) { toast('Please enter a valid number of days', 'warning'); return; }
 
   try {
     const dd = document.getElementById('termDdCheckbox')?.checked || false;
 
     const updated = await api.put(`/api/suppliers/${supplierId}`, {
-      payment_term_type: selected.value,
-      payment_term_days: days,
+      payment_term_type: selected ? selected.value : null,
+      payment_term_days: selected ? days : null,
       payment_dd: dd,
+      payment_on_account: onAccount,
+      via_amazon: viaAmazon,
     });
 
     // Patch local cache
     const idx = (_suppliers || []).findIndex(s => s.id === supplierId);
     if (idx !== -1) {
-      _suppliers[idx].payment_term_type = selected.value;
-      _suppliers[idx].payment_term_days = days;
+      _suppliers[idx].payment_term_type = selected ? selected.value : null;
+      _suppliers[idx].payment_term_days = selected ? days : null;
       _suppliers[idx].payment_dd = dd;
+      _suppliers[idx].payment_on_account = onAccount;
+      _suppliers[idx].via_amazon = viaAmazon;
     }
 
     closeSupplierTermsModal();
@@ -36835,7 +36848,8 @@ async function _bimpParseOne(i) {
   "utr_number": "subcontractor: UTR if shown",
   "bank_sort_code": "subcontractor: sort code if shown",
   "bank_account_no": "subcontractor: account number if shown",
-  "po_reference": "BAMA's PO reference if shown — looks like P260501 (P + 6 digits)"
+  "po_reference": "BAMA's PO reference if shown — looks like P260501 (P + 6 digits)",
+  "sold_via": "amazon" if this is an Amazon / Amazon Business marketplace invoice (Amazon branding, amazon.co.uk order number, "Sold by ..." seller line) — otherwise null. supplier_name must be the ACTUAL SELLER, not Amazon.
 }
 Classify as subcontractor when it's labour/days/hours from an individual, mentions CIS, a % deduction, or a UTR. Null anything not clearly shown. Use the final printed totals.`
           }
@@ -36892,15 +36906,27 @@ async function _bimpApplyParsed(i, p) {
     it.supplierId = String(matched.id);
     if (matched.is_subcontractor && it.type !== 'subcontractor') it.type = 'subcontractor';
   } else if (p.supplier_name) {
-    // Will be created on save — badge it clearly
+    // Will be created on save — badge it clearly. Amazon marketplace sellers
+    // get flagged via_amazon + paid-on-account (paid at purchase).
+    const viaAmazon = p.sold_via === 'amazon';
     it.newSupplier = {
       supplier_name: p.supplier_name,
       is_subcontractor: it.type === 'subcontractor',
       utr_number: p.utr_number || null,
       cis_rate: it.type === 'subcontractor' ? it.cisRate : null,
       bank_sort_code: p.bank_sort_code || null,
-      bank_account_no: p.bank_account_no || null
+      bank_account_no: p.bank_account_no || null,
+      via_amazon: viaAmazon,
+      payment_on_account: viaAmazon
     };
+  }
+  it.viaAmazon = p.sold_via === 'amazon';
+  // Existing supplier already flagged on-account? The server will mark it paid.
+  if (it.supplierId) {
+    const s = (_invSuppliersCache || []).find(x => String(x.id) === String(it.supplierId));
+    it.willBePaid = !!(s && s.payment_on_account);
+  } else {
+    it.willBePaid = !!(it.newSupplier && it.newSupplier.payment_on_account);
   }
 
   // PO match by our reference
@@ -37011,6 +37037,8 @@ function _bimpRenderCard(i) {
         <span style="font-size:11px;color:var(--muted);font-family:var(--font-mono)">${escapeHtml(it.file.name)}</span>
         <span style="display:inline-block;padding:1px 8px;border-radius:8px;font-size:10px;font-weight:700;background:${isSub ? 'rgba(147,112,219,.18)' : 'rgba(59,130,246,.15)'};color:${isSub ? '#b596e8' : '#60a5fa'}">${isSub ? '👷 SUBCONTRACTOR (CIS)' : '🏭 SUPPLIER'}</span>
         ${it.newSupplier ? `<span style="display:inline-block;padding:1px 8px;border-radius:8px;font-size:10px;font-weight:700;background:rgba(62,207,142,.15);color:var(--green)">NEW ${isSub ? 'SUBBIE' : 'SUPPLIER'} — will be created${it.newSupplier.utr_number ? ' · UTR ' + escapeHtml(it.newSupplier.utr_number) : ''}</span>` : ''}
+        ${it.viaAmazon ? '<span style="display:inline-block;padding:1px 8px;border-radius:8px;font-size:10px;font-weight:700;background:rgba(255,153,0,.18);color:#ff9900">🛒 via AMAZON</span>' : ''}
+        ${it.willBePaid ? '<span style="display:inline-block;padding:1px 8px;border-radius:8px;font-size:10px;font-weight:700;background:rgba(62,207,142,.15);color:var(--green)">will land as PAID (on account)</span>' : ''}
         ${it.cisWarn ? '<span style="font-size:10px;color:#ffa500">⚠ printed payable ≠ labour × rate — using the invoice figure</span>' : ''}
         <button class="btn btn-ghost" style="margin-left:auto;padding:1px 8px;font-size:11px;color:var(--red)"
                 onclick="_bimpItems.splice(${i},1);_bimpRenderList()">✕</button>
@@ -37057,6 +37085,8 @@ function bimpSupplierPicked(i, val) {
   it.newSupplier = null;
   it.supplierId = val;
   it.poId = '';
+  const s = (_invSuppliersCache || []).find(x => String(x.id) === String(val));
+  it.willBePaid = !!(s && s.payment_on_account);
   _bimpCheckDup(i);
   _bimpRenderCard(i);
   _bimpUpdateFooter();
@@ -37540,7 +37570,8 @@ async function _supAddHandleFile(file) {
   "utr_number": "subcontractor only: UTR if shown",
   "bank_sort_code": "subcontractor only: sort code if shown",
   "bank_account_no": "subcontractor only: account number if shown",
-  "po_reference": "BAMA's PO reference if shown — looks like P260501 (P + 6 digits)"
+  "po_reference": "BAMA's PO reference if shown — looks like P260501 (P + 6 digits)",
+  "sold_via": "amazon" if this is an Amazon marketplace invoice (Amazon branding, amazon.co.uk order number, "Sold by ..." line) — otherwise null. supplier_name must be the ACTUAL SELLER, not Amazon.
 }
 Classify as subcontractor when the invoice is for labour/days/hours from an individual, mentions CIS, a percentage deduction, or a UTR number. Set any field to null if not clearly shown.
 IMPORTANT: Use the final printed totals from the invoice — not a goods-only subtotal.`
@@ -37644,6 +37675,7 @@ IMPORTANT: Use the final printed totals from the invoice — not a goods-only su
               ? `new subcontractor "${parsed.supplier_name}" — details pre-filled below, hit Save Subcontractor`
               : `supplier "${parsed.supplier_name}" not found — pick manually`) : ''));
   if (parsed.po_reference) bits.push(poMatched ? `PO ${parsed.po_reference} matched` : `PO ${parsed.po_reference} not found`);
+  if (parsed.sold_via === 'amazon') bits.push('Amazon marketplace — if the seller has "Paid on account" terms it will land as PAID');
   label.innerHTML = `${escapeHtml(file.name)} · ${(file.size / 1024).toFixed(0)} KB — <span style="color:var(--green);font-weight:600">parsed ✓</span>${bits.filter(Boolean).length ? ' <span style="color:var(--muted)">(' + escapeHtml(bits.filter(Boolean).join(', ')) + ')</span>' : ''}`;
 }
 

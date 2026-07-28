@@ -189,6 +189,7 @@ app.http('supplier-invoices-create', {
                     return badRequest('PO belongs to a different supplier', request);
             }
 
+            const onAccount = !!supplier.payment_on_account;
             const computed = computeDueDate(supplier, body.invoice_date || null);
             // Manual due-date override wins (e.g. subcontractor "pay me on the 5th")
             const due_date = body.due_date !== undefined && body.due_date !== null && body.due_date !== ''
@@ -203,11 +204,13 @@ app.http('supplier-invoices-create', {
                     (supplier_id, po_id, babcock_quote_id, invoice_ref, invoice_date,
                      net, vat, gross, due_date, is_dd,
                      invoice_type, labour_gross, cis_rate, cis_deduction,
+                     paid_at, paid_by, paid_ref,
                      sharepoint_file_id, sharepoint_file_url, filename, notes, source, created_by)
                  OUTPUT INSERTED.id
                  VALUES (@supplierId, @poId, @babcockId, @ref, @invDate,
                          @net, @vat, @gross, @dueDate, @isDd,
                          @invoiceType, @labourGross, @cisRate, @cisDeduction,
+                         @paidAt, @paidBy, @paidRef,
                          @spId, @spUrl, @filename, @notes, @source, @createdBy)`,
                 {
                     supplierId, poId,
@@ -217,8 +220,11 @@ app.http('supplier-invoices-create', {
                     net:      body.net != null ? Number(body.net) : null,
                     vat:      body.vat != null ? Number(body.vat) : null,
                     gross,
-                    dueDate:  due_date,
+                    dueDate:  onAccount ? null : due_date,
                     isDd:     is_dd,
+                    paidAt:   onAccount ? ((body.invoice_date || new Date().toISOString().slice(0, 10)) + 'T12:00:00') : null,
+                    paidBy:   onAccount ? 'auto (on account)' : null,
+                    paidRef:  onAccount ? 'On account' : null,
                     invoiceType,
                     labourGross:  body.labour_gross != null ? Number(body.labour_gross) : null,
                     cisRate:      body.cis_rate != null && body.cis_rate !== '' ? Number(body.cis_rate) : null,

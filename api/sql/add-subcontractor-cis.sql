@@ -30,3 +30,9 @@ IF COL_LENGTH('SupplierInvoices', 'cis_deduction') IS NULL
 SELECT 'Suppliers' AS t, COL_LENGTH('Suppliers','is_subcontractor') AS is_sub, COL_LENGTH('Suppliers','utr_number') AS utr
 UNION ALL
 SELECT 'SupplierInvoices', COL_LENGTH('SupplierInvoices','invoice_type'), COL_LENGTH('SupplierInvoices','cis_deduction');
+
+-- ── Paid on account + Amazon marketplace flags (2026-07-28, same restart) ───
+IF COL_LENGTH('Suppliers', 'payment_on_account') IS NULL
+    ALTER TABLE Suppliers ADD payment_on_account BIT NOT NULL DEFAULT 0;
+IF COL_LENGTH('Suppliers', 'via_amazon') IS NULL
+    ALTER TABLE Suppliers ADD via_amazon BIT NOT NULL DEFAULT 0;

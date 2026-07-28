@@ -1109,11 +1109,27 @@
         style="width:100px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);font-size:14px;font-family:var(--font-mono)">
     </div>
 
-    <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:24px;padding:10px 14px;border:1px solid var(--border);border-radius:8px" id="termDdOption">
+    <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:12px;padding:10px 14px;border:1px solid var(--border);border-radius:8px" id="termDdOption">
       <input type="checkbox" id="termDdCheckbox" style="accent-color:var(--accent);width:16px;height:16px;flex-shrink:0">
       <div>
         <div style="font-size:13px;font-weight:600">Direct Debit</div>
         <div style="font-size:11px;color:var(--muted);margin-top:2px">Payment collected automatically — no manual action needed</div>
+      </div>
+    </label>
+
+    <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:12px;padding:10px 14px;border:1px solid var(--border);border-radius:8px" id="termOnAccOption">
+      <input type="checkbox" id="termOnAccCheckbox" style="accent-color:var(--accent);width:16px;height:16px;flex-shrink:0">
+      <div>
+        <div style="font-size:13px;font-weight:600">Paid on Account</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">Paid at the point of purchase (card / marketplace account) — invoices land as PAID automatically</div>
+      </div>
+    </label>
+
+    <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:24px;padding:10px 14px;border:1px solid var(--border);border-radius:8px" id="termAmazonOption">
+      <input type="checkbox" id="termAmazonCheckbox" style="accent-color:var(--accent);width:16px;height:16px;flex-shrink:0">
+      <div>
+        <div style="font-size:13px;font-weight:600">Amazon Marketplace Seller</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">We buy from them via Amazon — badge shown on their invoices</div>
       </div>
     </label>
 
@@ -1147,6 +1163,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260728q"></script>
+<script src="shared.js?v=20260728r"></script>
 </body>
 </html>

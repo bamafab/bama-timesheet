@@ -383,10 +383,12 @@ app.http('suppliers-create', {
 
             const result = await query(
                 `INSERT INTO Suppliers (supplier_name, address_line1, address_line2, city, county, postcode, telephone, email, contact_name, notes, parse_source_text,
-                                        is_subcontractor, utr_number, cis_rate, bank_sort_code, bank_account_no)
+                                        is_subcontractor, utr_number, cis_rate, bank_sort_code, bank_account_no,
+                                        payment_on_account, via_amazon)
                  OUTPUT INSERTED.*
                  VALUES (@supplierName, @addressLine1, @addressLine2, @city, @county, @postcode, @telephone, @email, @contactName, @notes, @parseSourceText,
-                         @isSubcontractor, @utrNumber, @cisRate, @bankSortCode, @bankAccountNo)`,
+                         @isSubcontractor, @utrNumber, @cisRate, @bankSortCode, @bankAccountNo,
+                         @paymentOnAccount, @viaAmazon)`,
                 {
                     supplierName: supplier_name,
                     addressLine1: address_line1 || null,
@@ -403,7 +405,9 @@ app.http('suppliers-create', {
                     utrNumber: body.utr_number || null,
                     cisRate: body.cis_rate != null && body.cis_rate !== '' ? Number(body.cis_rate) : null,
                     bankSortCode: body.bank_sort_code || null,
-                    bankAccountNo: body.bank_account_no || null
+                    bankAccountNo: body.bank_account_no || null,
+                    paymentOnAccount: body.payment_on_account ? 1 : 0,
+                    viaAmazon: body.via_amazon ? 1 : 0
                 }
             );
 
@@ -462,6 +466,8 @@ app.http('suppliers-update', {
             if (body.cis_rate !== undefined) { fields.push('cis_rate = @cisRate'); params.cisRate = body.cis_rate != null && body.cis_rate !== '' ? Number(body.cis_rate) : null; }
             if (body.bank_sort_code !== undefined) { fields.push('bank_sort_code = @bankSortCode'); params.bankSortCode = body.bank_sort_code || null; }
             if (body.bank_account_no !== undefined) { fields.push('bank_account_no = @bankAccountNo'); params.bankAccountNo = body.bank_account_no || null; }
+            if (body.payment_on_account !== undefined) { fields.push('payment_on_account = @paymentOnAccount'); params.paymentOnAccount = body.payment_on_account ? 1 : 0; }
+            if (body.via_amazon !== undefined) { fields.push('via_amazon = @viaAmazon'); params.viaAmazon = body.via_amazon ? 1 : 0; }
 
             if (fields.length > 0) {
                 fields.push('updated_at = GETUTCDATE()');
