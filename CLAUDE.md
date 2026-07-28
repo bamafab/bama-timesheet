@@ -423,6 +423,25 @@ in sync — same bucket math both sides.
   in SQL (`DrawingJobs` table) — the Graph-side JSON tracks richer structure
   (approval revisions, tasks, files, notes) that hasn't been migrated yet.
 
+### Assembly OCR — dual drawing formats (2026-07-28)
+
+`ocrAssemblyPdf` (shared.js) auto-detects the drawing layout:
+- **Layout 1 (Tekla)** — top-right summary table with part rows + totals;
+  bottom-centre "N No. Mkd X (finish)" text. Original behaviour.
+- **Layout 2 (sketch/SolidWorks, e.g. The Stonemasonry Company)** — no parts
+  table; title block bottom-right ("Sketch Contents" = assembly name,
+  "Quantity required" + "QUANTITY N" box = qty, QUANTITY box wins), parts
+  derived from section/plate callouts (SHS/RHS/RSA + Overall Height as
+  length; "20mm Plate" → PLT20), material from "All plates S355" notes,
+  finish from "-Paint Red Oxide" notes. Area/weight null — NEVER estimated
+  (two-engine rule; AI copies printed values only).
+Envelope return: `{assemblies:[...]}` (legacy single object normalised into
+it) or `{skip:true, reason}` for GA/overview sheets. `onAssemblyFilesPicked`
+skips GA sheets (file stays in SharePoint, toast) and queues one review card
+PER assembly — multi-variant sheets ("Column 1-C & 2-C, QUANTITY 1 OF EACH",
+thermal-break plate arrays) yield several cards sharing one SharePoint file.
+max_tokens 3000.
+
 ### Staged / partial fabrication (fab → weld → complete)
 
 Supersedes the old binary "Mark fabricated" flow (SPEC-job-fabrication-rework

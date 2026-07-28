@@ -19776,22 +19776,39 @@ async function onAssemblyFilesPicked(fileList) {
     // blank-but-editable OCR stub, carrying the real SharePoint reference so
     // the saved assembly still gets a working "Open PDF" link.
     banner.textContent = `Parsing ${i + 1} / ${pages.length} — ${file.name}`;
-    let ocr, ocrFailed = false;
+    let envelope, ocrFailed = false;
     try {
-      ocr = await ocrAssemblyPdf(file);
+      envelope = await ocrAssemblyPdf(file);
     } catch (e) {
       console.warn(`OCR failed on ${file.name} (file is in SharePoint, queued for manual entry):`, e);
       toast(`${file.name}: couldn't auto-read the drawing — enter the details manually.`, 'warn');
       ocrFailed = true;
-      ocr = {
+      envelope = { assemblies: [{
         assembly_mark: '', quantity: null, finish_label_raw: null,
         total_area_m2: null, total_weight_kg: null,
         parts: [{ part_mark: '', quantity: 1, profile: '', length_mm: null,
                   material: 'S355JR', area_m2: null, weight_kg: null }]
-      };
+      }] };
     }
 
-    queue.push({ file, sharepoint, ocr, ocrFailed });
+    // GA / overview sheets are uploaded to SharePoint (useful reference) but
+    // are NOT fabricatable assemblies — skip them in the review queue.
+    if (envelope.skip) {
+      toast(`${file.name}: skipped (${envelope.reason}) — file kept in SharePoint.`, 'info');
+      continue;
+    }
+
+    // One sheet can hold several assemblies (e.g. "Column 1-C & 2-C, qty 1
+    // of each") — queue one review card per assembly, all pointing at the
+    // same SharePoint file.
+    for (const ocr of envelope.assemblies) {
+      if (!ocr) continue;
+      if (!Array.isArray(ocr.parts) || !ocr.parts.length) {
+        ocr.parts = [{ part_mark: '', quantity: 1, profile: '', length_mm: null,
+                       material: 'S355JR', area_m2: null, weight_kg: null }];
+      }
+      queue.push({ file, sharepoint, ocr, ocrFailed });
+    }
   }
 
   banner.remove();
@@ -19826,43 +19843,47 @@ async function ocrAssemblyPdf(file) {
   const dataUri = await _fileToDataUri(file);
   const b64 = dataUri.split(',')[1];
 
-  const prompt = `Extract data from this UK steel-fabrication assembly drawing.
+  const prompt = `Extract data from this UK steel-fabrication assembly drawing. Drawings arrive in TWO different layouts — detect which one this is and read accordingly.
 
-The drawing has a SUMMARY TABLE in the top-right corner with columns:
+LAYOUT 1 — Tekla assembly drawing: a SUMMARY TABLE in the top-right corner with columns
   Mark | Quantity | Profile | Length | Material | Area (m²) | Weight (kg)
+The FIRST row is the assembly itself (e.g. RL1 | 26 | "Values for ONE assembly"). Subsequent rows are the parts making up ONE assembly. The LAST row is "Totals for ONE assembly" (area + weight). Near the bottom centre there may be finish text like "26 No. Mkd RL1 (Galvanised)" — the parenthesised text is the finish.
 
-The FIRST row of that table is the assembly itself, e.g.:
-  RL1 | 26 | "Values for ONE assembly"
-("Values for ONE assembly" appears as a merged label across the remaining columns on the assembly row.)
+LAYOUT 2 — sketch/SolidWorks-style sheet (title block bottom-right with fields like "Sketch Contents", "Quantity required", "Dwg No", "Sheet", "Project"): there is NO parts table. Instead:
+- assembly name = the "Sketch Contents" field (e.g. "Basement Column 1-A"). Prefer a short mark if the sheet gives one (e.g. "B-Column-1-A"), else use the sketch contents text.
+- quantity = the "Quantity required" title-block field and/or a "QUANTITY N" box near the notes. If they disagree, use the QUANTITY box.
+- parts = derive from the section/plate CALLOUTS on the views, e.g. "SHS 180 x 180 x 10" with the "Overall Height" dimension as its length; "20mm Plate"/"15mm Capped End" as plate parts (profile "PLT20", "PLT15"; length null unless dimensioned). One entry per distinct callout, quantity 1 each unless clearly repeated (e.g. top plate + base plate = two plate entries).
+- material = from notes like "All plates S355" (use "S355" for plates; main section material null unless stated).
+- finish_label_raw = from notes like "-Paint Red Oxide" → "Red Oxide Paint" ("Galvanised" if stated, etc.); null if no finish note.
+- area/weight are NOT shown on this layout — return null, never estimate them.
 
-Subsequent rows are the parts that make up ONE assembly, e.g.:
-  F20 | 1 | PLT10x60 | 150.0 | S275JR | 0.02 | 0.69
-  F1  | 1 | CHS42.4x3 | 1747.6 | S355   | 0.23 | 5.78
+SPECIAL CASES:
+- If the sheet is a GENERAL ARRANGEMENT / overview / isometric key (title like "General Arrangement", multiple assemblies labelled with leader lines, no single QUANTITY), it is NOT a fabricatable assembly: return {"skip": true, "reason": "general arrangement"}.
+- If ONE sheet covers MULTIPLE variants (e.g. "Column 1-C & 2-C", "QUANTITY 1 (OF EACH)", different overall heights listed like "B1C = 2530 / B2C = 2830"), return one assembly PER VARIANT, each with its own mark, quantity and part lengths.
+- A sheet like "Thermal Break Plate" with several plates each with its own QUANTITY box: return one assembly per plate variant (mark from its caption, e.g. "Thermal Break — Column 1A"), parts = the plate itself.
 
-The LAST row is a TOTALS row labelled "Totals for ONE assembly" with totals for area and weight.
-
-Separately, near the BOTTOM CENTRE of the drawing there is finish text of the form:
-  "26 No. Mkd RL1 (Galvanised)"
-The text in parentheses is the finish — extract it as written. If there's no parenthesised text, finish is null.
-
-Return ONLY JSON, no markdown, no commentary:
+Return ONLY JSON, no markdown, no commentary. ALWAYS use this envelope shape (a single-assembly sheet is just an array of one):
 {
-  "assembly_mark": "RL1",
-  "quantity": 26,
-  "finish_label_raw": "Galvanised" | null,
-  "total_area_m2": 0.25 | null,
-  "total_weight_kg": 6.47 | null,
-  "parts": [
-    { "part_mark": "F20", "quantity": 1, "profile": "PLT10x60", "length_mm": 150.0, "material": "S275JR", "area_m2": 0.02, "weight_kg": 0.69 },
-    { "part_mark": "F1",  "quantity": 1, "profile": "CHS42.4x3", "length_mm": 1747.6, "material": "S355", "area_m2": 0.23, "weight_kg": 5.78 }
+  "assemblies": [
+    {
+      "assembly_mark": "RL1",
+      "quantity": 26,
+      "finish_label_raw": "Galvanised" | null,
+      "total_area_m2": 0.25 | null,
+      "total_weight_kg": 6.47 | null,
+      "parts": [
+        { "part_mark": "F20", "quantity": 1, "profile": "PLT10x60", "length_mm": 150.0, "material": "S275JR", "area_m2": 0.02, "weight_kg": 0.69 }
+      ]
+    }
   ]
 }
+or {"skip": true, "reason": "..."}
 
-Set any field you cannot determine to null. Use null (not 0) for missing numerics.`;
+Set any field you cannot determine to null. Use null (not 0) for missing numerics. Copy dimensions as printed — do NOT calculate or invent any number.`;
 
   const result = await callClaude({
     model: 'claude-sonnet-4-6',
-    max_tokens: 2000,
+    max_tokens: 3000,
     messages: [{
       role: 'user',
       content: [
@@ -19874,7 +19895,11 @@ Set any field you cannot determine to null. Use null (not 0) for missing numeric
   const text = (result.content?.find(b => b.type === 'text')?.text || '').trim();
   const jsonStart = text.indexOf('{'), jsonEnd = text.lastIndexOf('}');
   if (jsonStart < 0 || jsonEnd < jsonStart) throw new Error('OCR returned no JSON');
-  return JSON.parse(text.slice(jsonStart, jsonEnd + 1));
+  const parsed = JSON.parse(text.slice(jsonStart, jsonEnd + 1));
+  // Normalise: {skip}, {assemblies:[...]}, or legacy single object → envelope
+  if (parsed && parsed.skip) return { skip: true, reason: parsed.reason || 'not an assembly sheet' };
+  if (parsed && Array.isArray(parsed.assemblies)) return { assemblies: parsed.assemblies.filter(a => a) };
+  return { assemblies: [parsed] };
 }
 
 // ── Review modal ──
