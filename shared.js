@@ -14707,13 +14707,13 @@ function drawDnPDF(jsPDF, dn, proj, job, logoDataUri) {
   // — Fabricated items —
   if (fabRows.length) {
     const cols = layoutCols([
-      { key:'mark',   title:'Mark',          w: 20, align:'left'  },
-      { key:'qty',    title:'Qty',           w: 12, align:'center'},
-      { key:'profile',title:'Profile',       w: 40, align:'left'  },
-      { key:'length', title:'Length (mm)',   w: 24, align:'right' },
-      { key:'unit',   title:'Unit Wt. (kg)', w: 24, align:'right' },
-      { key:'total',  title:'Line Wt. (kg)', w: 26, align:'right' },
-      { key:'finish', title:'Finish',        w: usableW - 20 - 12 - 40 - 24 - 24 - 26, align:'left' }
+      { key:'mark',   title:'Mark',          w: 42, align:'left'  },
+      { key:'qty',    title:'Qty',           w: 10, align:'center'},
+      { key:'profile',title:'Profile',       w: 34, align:'left'  },
+      { key:'length', title:'Length (mm)',   w: 22, align:'right' },
+      { key:'unit',   title:'Unit Wt. (kg)', w: 22, align:'right' },
+      { key:'total',  title:'Line Wt. (kg)', w: 24, align:'right' },
+      { key:'finish', title:'Finish',        w: usableW - 42 - 10 - 34 - 22 - 22 - 24, align:'left' }
     ]);
     drawColsHeader(cols);
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
@@ -14726,14 +14726,21 @@ function drawDnPDF(jsPDF, dn, proj, job, logoDataUri) {
       const mark    = it.source === 'assembly' ? (it.source_assembly_mark || 'assembly') : '\u2014';
       tQty += qty;
       if (lineWt != null) { tWt += lineWt; anyWt = true; }
+      // Mark prints BOLD — measure it in bold too, or long sketch-style names
+      // ("Basement Column 1-B & 2-B") overflow into the Qty/Profile columns.
+      doc.setFont('helvetica', 'bold');
+      const markLines = doc.splitTextToSize(String(mark), cols[0].w - 3);
+      doc.setFont('helvetica', 'normal');
       const profLines = doc.splitTextToSize(String(it.description || ''), cols[2].w - 3);
       const finLines  = doc.splitTextToSize(String(it.finish_name || dn.finishName || ''), cols[6].w - 3);
-      const nLines = Math.max(1, profLines.length, finLines.length);
+      const nLines = Math.max(1, markLines.length, profLines.length, finLines.length);
       const rowH = nLines * 4.2 + 2;
       if (y + rowH > pageH - marginB - 30) { doc.addPage(); y = marginL + 4; drawColsHeader(cols); doc.setFont('helvetica','normal'); doc.setFontSize(9); }
       const baseY = y + 4.5;
       setText(TEXT);
-      doc.setFont('helvetica', 'bold'); cellTextIn(cols[0], mark, baseY); doc.setFont('helvetica', 'normal');
+      doc.setFont('helvetica', 'bold');
+      markLines.forEach((l, i) => cellTextIn(cols[0], l, baseY + i * 4.2));
+      doc.setFont('helvetica', 'normal');
       cellTextIn(cols[1], qty, baseY);
       profLines.forEach((l, i) => cellTextIn(cols[2], l, baseY + i * 4.2));
       cellTextIn(cols[3], lengthM != null ? lengthM.toLocaleString('en-GB', { maximumFractionDigits: 1 }) : '\u2014', baseY);
@@ -37522,7 +37529,7 @@ async function saveAndSubmitAfp() {
     if (!project || !project.sharepoint_folder_id) {
       throw new Error('Project has no SharePoint folder set — set it in Projects tracker first.');
     }
-    const afpFolder = await getOrCreateSubfolder(project.sharepoint_folder_id, 'Application for Payment', BAMA_DRIVE_ID);
+    const afpFolder = await getOrCreateSubfolder(project.sharepoint_folder_id, '08 - Application for payment', BAMA_DRIVE_ID);
     const fileName = sanitizeSpFilename(`${saved.ref}.pdf`);
     const driveItem = await uploadFileToFolder(afpFolder.id, fileName, pdfBlob, 'application/pdf');
     await api.post(`/api/applications/${saved.id}/submit`, {
@@ -37739,7 +37746,7 @@ async function submitAfpFromDetail() {
     if (!project || !project.sharepoint_folder_id) {
       throw new Error('Project has no SharePoint folder set');
     }
-    const afpFolder = await getOrCreateSubfolder(project.sharepoint_folder_id, 'Application for Payment', BAMA_DRIVE_ID);
+    const afpFolder = await getOrCreateSubfolder(project.sharepoint_folder_id, '08 - Application for payment', BAMA_DRIVE_ID);
     const fileName = sanitizeSpFilename(`${afp.ref}.pdf`);
     const driveItem = await uploadFileToFolder(afpFolder.id, fileName, pdfBlob, 'application/pdf');
     await api.post(`/api/applications/${afp.id}/submit`, {
@@ -37995,7 +38002,7 @@ async function uploadCertAndContinue() {
     if (!project || !project.sharepoint_folder_id) {
       throw new Error('Project has no SharePoint folder set');
     }
-    const afpFolder = await getOrCreateSubfolder(project.sharepoint_folder_id, 'Application for Payment', BAMA_DRIVE_ID);
+    const afpFolder = await getOrCreateSubfolder(project.sharepoint_folder_id, '08 - Application for payment', BAMA_DRIVE_ID);
     const ext = (_afpCertFile.name.split('.').pop() || 'pdf').toLowerCase();
     const fileName = sanitizeSpFilename(`${afp.ref}-Certificate.${ext}`);
     const driveItem = await uploadFileToFolder(afpFolder.id, fileName, _afpCertFile, _afpCertFile.type || 'application/octet-stream');
@@ -40411,6 +40418,10 @@ function drawBamaAfpPDF(jsPDF, d, logoDataUri) {
     for (const item of items) {
       // Item header row
       const metaText = String(item.itemDescription || '');
+      // Measure with the font it PRINTS in (bold 8.5) — splitting while a
+      // smaller/normal font is active under-measures and the printed bold
+      // text overflows into the Quote No column.
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
       const metaLines = doc.splitTextToSize(metaText, col.desc.w - 4);
       const headH = Math.max(6, metaLines.length * 3.6 + 2.5);
       ensureRoom(headH + 5, def.title);

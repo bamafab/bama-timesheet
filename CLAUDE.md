@@ -442,6 +442,20 @@ PER assembly — multi-variant sheets ("Column 1-C & 2-C, QUANTITY 1 OF EACH",
 thermal-break plate arrays) yield several cards sharing one SharePoint file.
 max_tokens 3000.
 
+### DN/AFP PDF long-text overflow + AFP folder fix (2026-07-28)
+
+- **DN (`drawDnPDF`)**: Mark cell now wrapped via splitTextToSize measured
+  in BOLD (it prints bold — measuring in the active normal font under-
+  measures). Mark col widened 20→42mm (sketch-style names), Profile 40→34,
+  minor trims elsewhere; markLines included in row-height calc.
+- **AFP (`drawAfpPDF` section pages)**: item description was split while
+  the PREVIOUS row's normal 7.5pt font was active but printed bold 8.5 —
+  overflowed into Quote No. Font now set to bold 8.5 BEFORE
+  splitTextToSize. RULE: always set the print font before measuring.
+- **AFP SharePoint path**: 3 call sites used 'Application for Payment'
+  (created a duplicate folder) — corrected to the standard
+  '08 - Application for payment' from the project folder list.
+
 ### Assembly save 500/409 fix (2026-07-28)
 
 Root cause of mass 500s on sketch-style batches: `job-assemblies-create`
