@@ -635,9 +635,9 @@ app.http('applications-certificate-confirm', {
 
             const existing = await query('SELECT status, certificate_attachment_id FROM Applications WHERE id = @id', { id });
             if (!existing.recordset.length) return notFound('Application not found', request);
-            if (!existing.recordset[0].certificate_attachment_id) {
-                return badRequest('No certificate uploaded — upload the cert PDF first', request);
-            }
+            // Certificate file is OPTIONAL — clients don't always send a formal
+            // cert, and test AFPs need certifying to preview invoices. Figures
+            // can be entered manually; the file can be attached later.
             const wasAlreadyCertified = existing.recordset[0].status === 'Certified'
                                      || existing.recordset[0].status === 'Invoiced';
 

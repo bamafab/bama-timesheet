@@ -39704,6 +39704,8 @@ function certifyAfpInFull() {
 async function onCertFilePicked(file) {
   if (!file || !_afpDetailCurrent) return;
   _afpCertFile = file;
+  const dropLabel = document.getElementById('afpCertDropLabel');
+  if (dropLabel) dropLabel.innerHTML = `📎 <b>${escapeHtml(file.name)}</b> <span style="font-size:11px;color:var(--subtle)">(drop or click to replace)</span>`;
   const statusEl = document.getElementById('afpCertOcrStatus');
   statusEl.style.display = '';
   statusEl.style.background = 'var(--bg-darker)';
@@ -39799,27 +39801,35 @@ ${linesDesc}`
 
 async function uploadCertAndContinue() {
   if (!_afpDetailCurrent) return;
-  if (!_afpCertFile) { toast('Please upload the certificate file first', 'error'); return; }
   const afp = _afpDetailCurrent;
   const btn = document.getElementById('afpCertUploadContinueBtn');
   try {
     if (btn) { btn.disabled = true; btn.textContent = 'Uploading…'; }
     setLoading(true);
 
-    const project = (_invProjectsCache || []).find(p => p.id === afp.project_id);
-    if (!project || !project.sharepoint_folder_id) {
-      throw new Error('Project has no SharePoint folder set');
+    // Certificate file is OPTIONAL — you can certify on manually-entered
+    // figures (client sent no formal cert, or test AFPs for invoice preview).
+    if (_afpCertFile) {
+      const project = (_invProjectsCache || []).find(p => p.id === afp.project_id);
+      if (project && project.sharepoint_folder_id) {
+        try {
+          const afpFolder = await getOrCreateSubfolder(project.sharepoint_folder_id, '08 - Application for payment', BAMA_DRIVE_ID);
+          const ext = (_afpCertFile.name.split('.').pop() || 'pdf').toLowerCase();
+          const fileName = sanitizeSpFilename(`${afp.ref}-Certificate.${ext}`);
+          const driveItem = await uploadFileToFolder(afpFolder.id, fileName, _afpCertFile, _afpCertFile.type || 'application/octet-stream');
+          await api.post(`/api/applications/${afp.id}/certificate`, {
+            sharepoint_id:  driveItem.id,
+            sharepoint_url: driveItem.webUrl,
+            filename:       fileName
+          });
+        } catch (spErr) {
+          console.warn('Cert SharePoint upload failed — certifying without the file:', spErr);
+          toast('Certificate file could not be saved to SharePoint — certifying on the entered figures anyway', 'warning');
+        }
+      } else {
+        toast('Project has no SharePoint folder — certifying on the entered figures without saving the file', 'warning');
+      }
     }
-    const afpFolder = await getOrCreateSubfolder(project.sharepoint_folder_id, '08 - Application for payment', BAMA_DRIVE_ID);
-    const ext = (_afpCertFile.name.split('.').pop() || 'pdf').toLowerCase();
-    const fileName = sanitizeSpFilename(`${afp.ref}-Certificate.${ext}`);
-    const driveItem = await uploadFileToFolder(afpFolder.id, fileName, _afpCertFile, _afpCertFile.type || 'application/octet-stream');
-
-    await api.post(`/api/applications/${afp.id}/certificate`, {
-      sharepoint_id:  driveItem.id,
-      sharepoint_url: driveItem.webUrl,
-      filename:       fileName
-    });
 
     const perLineFields = document.querySelectorAll('#afpCertLineFields input');
     const lineItems = [];
