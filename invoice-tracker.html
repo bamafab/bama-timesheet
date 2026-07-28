@@ -282,6 +282,8 @@
         <button class="btn btn-ghost" onclick="openSupAddInvoiceModal()">+ Add Invoice</button>
         <button class="btn btn-ghost" onclick="openStatementCheckModal()"
                 style="border-color:#b596e8;color:#b596e8">📋 Statement Check</button>
+        <button class="btn btn-ghost" onclick="openBulkImportModal()"
+                style="border-color:var(--green);color:var(--green)">📦 Import Invoices</button>
         <button class="btn btn-ghost" onclick="openAttachSupplierInvoiceModal()"
                 style="border-color:var(--accent);color:var(--accent)">📎 Attach to PO</button>
       </div>
@@ -563,6 +565,37 @@
         <button class="btn btn-ghost" onclick="closeBacsRunModal()">Cancel</button>
         <button class="btn btn-primary" id="bacsConfirmBtn" disabled onclick="confirmBacsRun()"
                 style="background:var(--green);border-color:var(--green)">Run BACS &amp; Mark Paid</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     BULK IMPORT INVOICES MODAL
+══════════════════════════════════════════ -->
+<div class="modal-overlay" id="invBulkImpModal">
+  <div class="modal" style="max-width:980px;width:97vw;max-height:94vh;overflow-y:auto">
+    <div class="modal-title">📦 Import Invoices</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">
+      Drop a pile of old invoices — supplier and subcontractor mixed is fine. Each one gets read,
+      the supplier found (or created), amounts and CIS worked out, POs matched. You just check the cards and hit Save.
+      Duplicates get flagged with an "add anyway" tick.
+    </div>
+    <input type="file" id="bimpFileInput" accept=".pdf,.png,.jpg,.jpeg" multiple style="display:none"
+           onchange="onBimpFilesPicked(this)">
+    <div style="border:2px dashed var(--border);border-radius:8px;padding:16px;text-align:center;cursor:pointer;margin-bottom:12px;transition:border-color .15s"
+         onclick="document.getElementById('bimpFileInput').click()"
+         ondragover="bimpDragOver(event)" ondragleave="bimpDragLeave(event)" ondrop="bimpDrop(event)">
+      <div style="font-size:22px;margin-bottom:2px">📥</div>
+      <div style="font-size:12px;color:var(--muted)">Drop invoice PDFs here (or click) — as many as you like, they queue up</div>
+    </div>
+    <div id="bimpList" style="max-height:56vh;overflow-y:auto"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:12px">
+      <div id="bimpFooterInfo" style="font-size:13px;font-weight:700"></div>
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-ghost" onclick="closeBulkImportModal()">Close</button>
+        <button class="btn btn-primary" id="bimpSaveBtn" disabled onclick="bimpSaveAll()"
+                style="background:var(--green);border-color:var(--green)">Save All ✓</button>
       </div>
     </div>
   </div>
@@ -1537,6 +1570,6 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260728m"></script>
+<script src="shared.js?v=20260728n"></script>
 </body>
 </html>

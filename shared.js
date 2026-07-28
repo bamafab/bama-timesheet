@@ -36690,6 +36690,414 @@ function stmtAddMissing(idx) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
+// BULK IMPORT — drop a pile of invoice PDFs, Claude reads each one, we
+// review the cards and save the lot. Duplicates flagged with "add anyway".
+// AI reads only; supplier matching, dup detection and totals = deterministic.
+// ═════════════════════════════════════════════════════════════════════════
+let _bimpItems = [];       // per-file card state
+let _bimpPos = [];         // all POs, filtered client-side per supplier
+let _bimpBusy = false;
+
+async function openBulkImportModal() {
+  _bimpItems = [];
+  _bimpBusy = false;
+  document.getElementById('bimpList').innerHTML =
+    '<div style="padding:30px;text-align:center;color:var(--muted);font-size:12px">Drop a pile of invoice PDFs above — supplier and subcontractor invoices can be mixed.</div>';
+  _bimpUpdateFooter();
+  document.getElementById('invBulkImpModal').classList.add('active');
+  // Warm the caches
+  _invGetSuppliersList();
+  api.get('/api/purchase-orders').then(pos => { _bimpPos = Array.isArray(pos) ? pos : []; }).catch(() => { _bimpPos = []; });
+}
+
+function closeBulkImportModal() {
+  if (_bimpBusy) { toast('Import in progress — wait for it to finish', 'warning'); return; }
+  document.getElementById('invBulkImpModal').classList.remove('active');
+}
+
+function bimpDragOver(ev) { ev.preventDefault(); ev.currentTarget.style.borderColor = 'var(--accent)'; }
+function bimpDragLeave(ev) { ev.currentTarget.style.borderColor = 'var(--border)'; }
+function bimpDrop(ev) {
+  ev.preventDefault();
+  ev.currentTarget.style.borderColor = 'var(--border)';
+  if (ev.dataTransfer.files?.length) _bimpAddFiles(ev.dataTransfer.files);
+}
+function onBimpFilesPicked(input) {
+  if (input.files?.length) _bimpAddFiles(input.files);
+  input.value = '';
+}
+
+async function _bimpAddFiles(fileList) {
+  const startIdx = _bimpItems.length;
+  for (const file of Array.from(fileList)) {
+    _bimpItems.push({ file, status: 'queued', include: true, type: 'supplier',
+                      supplierId: '', newSupplier: null, ref: '', date: '', net: '', vat: '',
+                      gross: '', labour: '', cisRate: 20, cisDed: '', payable: '', poId: '', dup: null });
+  }
+  _bimpRenderList();
+  // Parse sequentially — claude-proxy has its own retry/backoff
+  for (let i = startIdx; i < _bimpItems.length; i++) await _bimpParseOne(i);
+}
+
+async function _bimpParseOne(i) {
+  const it = _bimpItems[i];
+  it.status = 'parsing'; _bimpRenderCard(i);
+  try {
+    const dataUri = await _fileToDataUri(it.file);
+    const isImg = it.file.type.startsWith('image/');
+    const result = await callClaude({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 800,
+      messages: [{
+        role: 'user',
+        content: [
+          isImg
+            ? { type: 'image',    source: { type: 'base64', media_type: it.file.type, data: dataUri.split(',')[1] } }
+            : { type: 'document', source: { type: 'base64', media_type: it.file.type, data: dataUri.split(',')[1] } },
+          {
+            type: 'text',
+            text: `Extract from this UK invoice sent to BAMA Fabrication. It is either a SUPPLIER invoice (VAT invoice from a company) or a SUBCONTRACTOR invoice (individual/small firm charging for labour, often with a CIS deduction like "Less 20%", a UTR number, bank details). Return ONLY JSON, no markdown:
+{
+  "invoice_type": "supplier" or "subcontractor",
+  "supplier_name": "the person or company that ISSUED the invoice (not BAMA Fabrication)",
+  "invoice_ref": "invoice number if shown",
+  "invoice_date": "YYYY-MM-DD",
+  "net_amount": 0, "vat_amount": 0, "gross_amount": 0,
+  "labour_subtotal": "subcontractor: subtotal BEFORE CIS deduction",
+  "cis_rate": "subcontractor: deduction % as a number",
+  "cis_deduction": "subcontractor: deducted amount",
+  "amount_payable": "subcontractor: final amount due",
+  "utr_number": "subcontractor: UTR if shown",
+  "bank_sort_code": "subcontractor: sort code if shown",
+  "bank_account_no": "subcontractor: account number if shown",
+  "po_reference": "BAMA's PO reference if shown — looks like P260501 (P + 6 digits)"
+}
+Classify as subcontractor when it's labour/days/hours from an individual, mentions CIS, a % deduction, or a UTR. Null anything not clearly shown. Use the final printed totals.`
+          }
+        ]
+      }]
+    });
+    const text = (result.content?.find(b => b.type === 'text')?.text || '').trim();
+    const p = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1));
+    await _bimpApplyParsed(i, p);
+    it.status = 'ready';
+  } catch (err) {
+    console.error('Bulk parse failed for', it.file.name, err);
+    it.status = 'error';
+    it.error = err.message || 'Could not read the file';
+  }
+  _bimpRenderCard(i);
+  _bimpUpdateFooter();
+}
+
+async function _bimpApplyParsed(i, p) {
+  const it = _bimpItems[i];
+  it.parsed = p;
+  it.type = p.invoice_type === 'subcontractor' ? 'subcontractor' : 'supplier';
+  it.ref  = p.invoice_ref || '';
+  it.date = p.invoice_date ? String(p.invoice_date).slice(0, 10) : '';
+  if (it.type === 'subcontractor') {
+    it.labour  = p.labour_subtotal != null ? Number(p.labour_subtotal).toFixed(2) : '';
+    it.cisRate = p.cis_rate != null && [0, 20, 30].includes(Number(p.cis_rate)) ? Number(p.cis_rate) : 20;
+    _bimpCalcCis(it);
+    // Trust the printed payable when it disagrees with the maths
+    if (p.amount_payable != null && Math.abs(Number(p.amount_payable) - (parseFloat(it.payable) || 0)) > 0.02) {
+      it.payable = Number(p.amount_payable).toFixed(2);
+      if (p.cis_deduction != null) it.cisDed = Number(p.cis_deduction).toFixed(2);
+      it.cisWarn = true;
+    }
+  } else {
+    it.net   = p.net_amount   != null ? Number(p.net_amount).toFixed(2)   : '';
+    it.vat   = p.vat_amount   != null ? Number(p.vat_amount).toFixed(2)   : '';
+    it.gross = p.gross_amount != null ? Number(p.gross_amount).toFixed(2)
+             : (p.net_amount != null || p.vat_amount != null
+                ? (Number(p.net_amount || 0) + Number(p.vat_amount || 0)).toFixed(2) : '');
+  }
+
+  // Supplier match (same normalisation as the single-add flow)
+  const suppliers = await _invGetSuppliersList();
+  const norm = v => String(v || '').toLowerCase().replace(/\b(ltd|limited|plc|llp|co|company|uk)\b/g, '').replace(/[^a-z0-9]/g, '');
+  const target = norm(p.supplier_name);
+  const pool = suppliers.filter(s => it.type === 'subcontractor' ? s.is_subcontractor : !s.is_subcontractor);
+  const findIn = list =>
+    list.find(x => norm(x.supplier_name) === target) ||
+    list.find(x => target && (norm(x.supplier_name).includes(target) || target.includes(norm(x.supplier_name)))) || null;
+  const matched = target ? (findIn(pool) || findIn(suppliers)) : null;
+  if (matched) {
+    it.supplierId = String(matched.id);
+    if (matched.is_subcontractor && it.type !== 'subcontractor') it.type = 'subcontractor';
+  } else if (p.supplier_name) {
+    // Will be created on save — badge it clearly
+    it.newSupplier = {
+      supplier_name: p.supplier_name,
+      is_subcontractor: it.type === 'subcontractor',
+      utr_number: p.utr_number || null,
+      cis_rate: it.type === 'subcontractor' ? it.cisRate : null,
+      bank_sort_code: p.bank_sort_code || null,
+      bank_account_no: p.bank_account_no || null
+    };
+  }
+
+  // PO match by our reference
+  if (p.po_reference && it.supplierId) {
+    const want = String(p.po_reference).replace(/\s+/g, '').toUpperCase();
+    const hit = _bimpPos.find(po => String(po.supplier_id) === it.supplierId
+      && (po.reference || '').replace(/\s+/g, '').toUpperCase() === want);
+    if (hit) it.poId = String(hit.id);
+  }
+
+  _bimpCheckDup(i);
+}
+
+function _bimpCalcCis(it) {
+  const labour = parseFloat(it.labour) || 0;
+  const ded = +(labour * (Number(it.cisRate) || 0) / 100).toFixed(2);
+  it.cisDed = labour ? ded.toFixed(2) : '';
+  it.payable = labour ? (labour - ded).toFixed(2) : '';
+}
+
+// Duplicate check: same supplier + same normalised ref in the ERP, or an
+// identical ref+amount earlier in this batch. Flag, don't block.
+function _bimpCheckDup(i) {
+  const it = _bimpItems[i];
+  it.dup = null;
+  const nr = _stmtNormRef(it.ref);
+  if (!nr) return;
+  const amt = parseFloat(it.type === 'subcontractor' ? it.payable : it.gross) || 0;
+  const inErp = _invSupInvoices.find(inv =>
+    String(inv.supplier_id) === String(it.supplierId) && _stmtNormRef(inv.invoice_ref) === nr);
+  if (inErp) {
+    it.dup = { where: 'ERP', detail: `${inErp.invoice_ref} · £${Number(inErp.gross || 0).toFixed(2)} · ${inErp.invoice_date ? new Date(inErp.invoice_date).toLocaleDateString('en-GB') : '?'}${inErp.paid_at ? ' · PAID' : ''}`,
+               sameAmount: Math.abs(Number(inErp.gross || 0) - amt) <= 0.02 };
+    it.include = false; // default OFF for duplicates — tick to add anyway
+    return;
+  }
+  const inBatch = _bimpItems.find((o, j) => j !== i && o.status !== 'error'
+    && _stmtNormRef(o.ref) === nr
+    && (String(o.supplierId) === String(it.supplierId) || (o.newSupplier && it.newSupplier
+        && o.newSupplier.supplier_name === it.newSupplier.supplier_name)));
+  if (inBatch) it.dup = { where: 'batch', detail: inBatch.file.name, sameAmount: true };
+}
+
+// ── Card rendering ──────────────────────────────────────────────────────────
+function _bimpRenderList() {
+  const box = document.getElementById('bimpList');
+  if (!_bimpItems.length) return;
+  box.innerHTML = _bimpItems.map((_, i) => `<div id="bimpCard-${i}"></div>`).join('');
+  _bimpItems.forEach((_, i) => _bimpRenderCard(i));
+  _bimpUpdateFooter();
+}
+
+function _bimpRenderCard(i) {
+  const host = document.getElementById(`bimpCard-${i}`);
+  if (!host) return;
+  const it = _bimpItems[i];
+  const fmtIn = (id, label, val, oninput, width) => `
+    <div style="${width ? `width:${width}px` : 'flex:1'}">
+      <div style="font-size:9px;text-transform:uppercase;color:var(--muted)">${label}</div>
+      <input class="field-input" style="font-size:12px;padding:4px 8px" value="${escapeHtml(String(val ?? ''))}" ${oninput}>
+    </div>`;
+
+  if (it.status === 'queued' || it.status === 'parsing') {
+    host.innerHTML = `<div class="card" style="padding:10px 14px;margin-bottom:8px;display:flex;align-items:center;gap:10px">
+      <span class="spinner" style="width:14px;height:14px"></span>
+      <span style="font-size:12px">${it.status === 'parsing' ? 'Reading' : 'Queued'} — ${escapeHtml(it.file.name)}</span></div>`;
+    return;
+  }
+  if (it.status === 'error') {
+    host.innerHTML = `<div class="card" style="padding:10px 14px;margin-bottom:8px;border-color:var(--red)">
+      <div style="font-size:12px;color:var(--red)">✗ ${escapeHtml(it.file.name)} — ${escapeHtml(it.error || 'failed')}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:2px">Add it via + Add Invoice instead.</div></div>`;
+    return;
+  }
+  if (it.status === 'saved') {
+    host.innerHTML = `<div class="card" style="padding:10px 14px;margin-bottom:8px;border-color:var(--green)">
+      <span style="font-size:12px;color:var(--green)">✓ Saved — ${escapeHtml(it.file.name)}</span></div>`;
+    return;
+  }
+
+  const isSub = it.type === 'subcontractor';
+  const suppliers = _invSuppliersCache || [];
+  const pool = suppliers.filter(s => isSub ? s.is_subcontractor : !s.is_subcontractor)
+    .slice().sort((a, b) => String(a.supplier_name).localeCompare(String(b.supplier_name)));
+  const supOptions = `<option value="">${it.newSupplier ? '' : 'Pick…'}</option>` +
+    (it.newSupplier ? `<option value="__new__" selected>➕ NEW: ${escapeHtml(it.newSupplier.supplier_name)}</option>` : '') +
+    pool.map(s => `<option value="${s.id}" ${String(s.id) === String(it.supplierId) ? 'selected' : ''}>${escapeHtml(s.supplier_name)}</option>`).join('');
+
+  const supPos = _bimpPos.filter(po => String(po.supplier_id) === String(it.supplierId) && po.status !== 'Cancelled');
+  const poOptions = '<option value="">— No PO —</option>' + supPos.map(po =>
+    `<option value="${po.id}" ${String(po.id) === String(it.poId) ? 'selected' : ''}>${escapeHtml(po.reference || ('#' + po.id))} — £${Number(po.total_value || 0).toFixed(2)}</option>`).join('');
+
+  const dupBanner = it.dup ? `
+    <div style="display:flex;align-items:center;gap:10px;background:rgba(255,165,0,.12);border:1px solid #ffa500;border-radius:6px;padding:6px 10px;margin-top:8px">
+      <span style="font-size:11px;color:#ffa500;font-weight:600">⚠ ${it.dup.where === 'ERP'
+        ? `Already in ERP: ${escapeHtml(it.dup.detail)}${it.dup.sameAmount ? '' : ' (different amount)'}`
+        : `Same invoice # as ${escapeHtml(it.dup.detail)} in this batch`}</span>
+      <label style="display:flex;align-items:center;gap:5px;font-size:11px;margin-left:auto;white-space:nowrap;cursor:pointer">
+        <input type="checkbox" ${it.include ? 'checked' : ''} onchange="_bimpItems[${i}].include=this.checked;_bimpUpdateFooter()">
+        add anyway (same # different period happens)
+      </label>
+    </div>` : '';
+
+  host.innerHTML = `
+    <div class="card" style="padding:12px 14px;margin-bottom:8px;${!it.include && it.dup ? 'opacity:.65;' : ''}border-left:3px solid ${isSub ? '#b596e8' : 'var(--accent)'}">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        ${it.dup ? '' : `<input type="checkbox" ${it.include ? 'checked' : ''} onchange="_bimpItems[${i}].include=this.checked;_bimpUpdateFooter()" title="Include in save">`}
+        <span style="font-size:11px;color:var(--muted);font-family:var(--font-mono)">${escapeHtml(it.file.name)}</span>
+        <span style="display:inline-block;padding:1px 8px;border-radius:8px;font-size:10px;font-weight:700;background:${isSub ? 'rgba(147,112,219,.18)' : 'rgba(59,130,246,.15)'};color:${isSub ? '#b596e8' : '#60a5fa'}">${isSub ? '👷 SUBCONTRACTOR (CIS)' : '🏭 SUPPLIER'}</span>
+        ${it.newSupplier ? `<span style="display:inline-block;padding:1px 8px;border-radius:8px;font-size:10px;font-weight:700;background:rgba(62,207,142,.15);color:var(--green)">NEW ${isSub ? 'SUBBIE' : 'SUPPLIER'} — will be created${it.newSupplier.utr_number ? ' · UTR ' + escapeHtml(it.newSupplier.utr_number) : ''}</span>` : ''}
+        ${it.cisWarn ? '<span style="font-size:10px;color:#ffa500">⚠ printed payable ≠ labour × rate — using the invoice figure</span>' : ''}
+        <button class="btn btn-ghost" style="margin-left:auto;padding:1px 8px;font-size:11px;color:var(--red)"
+                onclick="_bimpItems.splice(${i},1);_bimpRenderList()">✕</button>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+        <div style="flex:2;min-width:170px">
+          <div style="font-size:9px;text-transform:uppercase;color:var(--muted)">${isSub ? 'Subcontractor' : 'Supplier'}</div>
+          <select class="field-input" style="font-size:12px;padding:4px 8px" onchange="bimpSupplierPicked(${i}, this.value)">${supOptions}</select>
+        </div>
+        ${fmtIn('ref', 'Invoice #', it.ref, `oninput="_bimpItems[${i}].ref=this.value;_bimpCheckDup(${i});_bimpRenderCard(${i});_bimpUpdateFooter()"`, 120)}
+        <div style="width:130px">
+          <div style="font-size:9px;text-transform:uppercase;color:var(--muted)">Date</div>
+          <input type="date" class="field-input" style="font-size:12px;padding:4px 8px" value="${escapeHtml(it.date)}"
+                 onchange="_bimpItems[${i}].date=this.value">
+        </div>
+        ${isSub ? `
+          ${fmtIn('labour', 'Labour £', it.labour, `oninput="_bimpItems[${i}].labour=this.value;_bimpCalcCis(_bimpItems[${i}]);_bimpRenderCard(${i})"`, 95)}
+          <div style="width:90px">
+            <div style="font-size:9px;text-transform:uppercase;color:var(--muted)">CIS rate</div>
+            <select class="field-input" style="font-size:12px;padding:4px 8px"
+                    onchange="_bimpItems[${i}].cisRate=this.value;_bimpCalcCis(_bimpItems[${i}]);_bimpRenderCard(${i})">
+              ${[20, 30, 0].map(r => `<option value="${r}" ${Number(it.cisRate) === r ? 'selected' : ''}>${r}%</option>`).join('')}
+            </select>
+          </div>
+          ${fmtIn('cisDed', 'Deduction £', it.cisDed, `oninput="_bimpItems[${i}].cisDed=this.value"`, 95)}
+          ${fmtIn('payable', 'Payable £', it.payable, `oninput="_bimpItems[${i}].payable=this.value"`, 95)}
+        ` : `
+          ${fmtIn('net', 'Net £', it.net, `oninput="_bimpItems[${i}].net=this.value"`, 90)}
+          ${fmtIn('vat', 'VAT £', it.vat, `oninput="_bimpItems[${i}].vat=this.value"`, 90)}
+          ${fmtIn('gross', 'Gross £', it.gross, `oninput="_bimpItems[${i}].gross=this.value;_bimpCheckDup(${i});_bimpUpdateFooter()"`, 95)}
+          <div style="flex:1.5;min-width:150px">
+            <div style="font-size:9px;text-transform:uppercase;color:var(--muted)">PO</div>
+            <select class="field-input" style="font-size:12px;padding:4px 8px" onchange="_bimpItems[${i}].poId=this.value">${poOptions}</select>
+          </div>
+        `}
+      </div>
+      ${dupBanner}
+    </div>`;
+}
+
+function bimpSupplierPicked(i, val) {
+  const it = _bimpItems[i];
+  if (val === '__new__') return; // keep the pending new-supplier entry
+  it.newSupplier = null;
+  it.supplierId = val;
+  it.poId = '';
+  _bimpCheckDup(i);
+  _bimpRenderCard(i);
+  _bimpUpdateFooter();
+}
+
+function _bimpUpdateFooter() {
+  const ready = _bimpItems.filter(it => it.status === 'ready' && it.include);
+  const total = ready.reduce((s, it) => s + (parseFloat(it.type === 'subcontractor' ? it.payable : it.gross) || 0), 0);
+  const el = document.getElementById('bimpFooterInfo');
+  if (el) el.textContent = ready.length
+    ? `${ready.length} invoice${ready.length === 1 ? '' : 's'} ready · £${total.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : '';
+  const btn = document.getElementById('bimpSaveBtn');
+  if (btn) btn.disabled = _bimpBusy || ready.length === 0;
+}
+
+// ── Save the batch ──────────────────────────────────────────────────────────
+async function bimpSaveAll() {
+  const items = _bimpItems.filter(it => it.status === 'ready' && it.include);
+  if (!items.length) return;
+
+  // Validation pass first — nothing saves until every ticked card is sound
+  for (const it of items) {
+    const amt = parseFloat(it.type === 'subcontractor' ? it.payable : it.gross);
+    if (!it.supplierId && !it.newSupplier) { toast(`${it.file.name}: pick the ${it.type === 'subcontractor' ? 'subcontractor' : 'supplier'}`, 'error'); return; }
+    if (!amt) { toast(`${it.file.name}: amount missing`, 'error'); return; }
+  }
+
+  _bimpBusy = true;
+  _bimpUpdateFooter();
+  setLoading(true);
+  let okCount = 0, failCount = 0;
+  const createdByName = new Map(); // avoid creating the same new supplier twice
+
+  for (const it of items) {
+    const i = _bimpItems.indexOf(it);
+    try {
+      // 1. Create the new supplier/subcontractor once per name
+      let supplierId = it.supplierId ? parseInt(it.supplierId) : null;
+      if (!supplierId && it.newSupplier) {
+        const keyName = it.newSupplier.supplier_name;
+        if (createdByName.has(keyName)) supplierId = createdByName.get(keyName);
+        else {
+          const created = await api.post('/api/suppliers', {
+            ...it.newSupplier,
+            notes: it.newSupplier.is_subcontractor ? 'Subcontractor (CIS) — created by bulk import' : 'Created by bulk import'
+          });
+          supplierId = created.id;
+          createdByName.set(keyName, supplierId);
+          _invSuppliersCache = null;
+          if (Array.isArray(_suppliers)) _suppliers.push(created);
+        }
+      }
+
+      // 2. File → SharePoint
+      const suppliers = await _invGetSuppliersList();
+      const sName = (suppliers.find(x => x.id === supplierId) || {}).supplier_name || 'supplier';
+      const folder = await _findOrCreateSupplierInvoiceFolder(it.date || new Date().toISOString().slice(0, 10));
+      const stamp = sName.replace(/\s+/g, '_').slice(0, 30);
+      const ext = (it.file.name.split('.').pop() || 'pdf').toLowerCase();
+      const fileName = sanitizeSpFilename(`${it.date || 'undated'}_${stamp}_${it.ref || 'no-ref'}.${ext}`);
+      const driveItem = await uploadFileToFolder(folder.id, fileName, it.file, it.file.type || 'application/octet-stream');
+
+      // 3. Ledger row
+      const isSub = it.type === 'subcontractor';
+      await api.post('/api/supplier-invoices', {
+        supplier_id: supplierId,
+        po_id: !isSub && it.poId ? parseInt(it.poId) : null,
+        invoice_type: it.type,
+        invoice_ref: it.ref || null,
+        invoice_date: it.date || null,
+        net: isSub ? (parseFloat(it.labour) || null) : (parseFloat(it.net) || null),
+        vat: isSub ? null : (parseFloat(it.vat) || null),
+        gross: parseFloat(isSub ? it.payable : it.gross),
+        labour_gross: isSub ? (parseFloat(it.labour) || null) : null,
+        cis_rate: isSub ? Number(it.cisRate) : null,
+        cis_deduction: isSub ? (parseFloat(it.cisDed) || 0) : null,
+        sharepoint_file_id: driveItem.id,
+        sharepoint_file_url: driveItem.webUrl,
+        filename: fileName,
+        source: 'manual',
+        notes: 'Bulk import'
+      });
+
+      it.status = 'saved';
+      okCount++;
+    } catch (err) {
+      console.error('Bulk save failed for', it.file.name, err);
+      it.status = 'error';
+      it.error = 'Save failed: ' + (err.message || 'unknown');
+      failCount++;
+    }
+    _bimpRenderCard(i);
+  }
+
+  _bimpBusy = false;
+  setLoading(false);
+  toast(`Imported ${okCount} invoice${okCount === 1 ? '' : 's'}${failCount ? ` — ${failCount} failed (see the cards)` : ' ✓'}`,
+        failCount ? 'error' : 'success');
+  await loadInvoicingData();
+  renderInvSupplierTable();
+  _bimpUpdateFooter();
+  if (!failCount && !_bimpItems.some(it => it.status === 'ready')) closeBulkImportModal();
+}
+
+// ═════════════════════════════════════════════════════════════════════════
 // MATCH TO PO — tick invoices, link them to a PO, over-match guard
 // ═════════════════════════════════════════════════════════════════════════
 async function openSupMatchModal() {
