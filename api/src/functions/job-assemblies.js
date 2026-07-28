@@ -342,9 +342,12 @@ app.http('job-assemblies-create', {
                 const insertedParts = [];
                 for (let i = 0; i < body.parts.length; i++) {
                     const p = body.parts[i];
-                    if (!p.part_mark || !p.profile) {
-                        throw new Error(`Part ${i + 1}: part_mark and profile are required`);
+                    if (!p.profile) {
+                        throw new Error(`Part ${i + 1}: profile is required`);
                     }
+                    // Sketch-style drawings (no Tekla part marks) send parts with
+                    // profile only — default the mark rather than rejecting.
+                    if (!p.part_mark) p.part_mark = `P${i + 1}`;
                     const pReq = new sql.Request(transaction);
                     pReq.input('assemblyId', sql.Int,           assembly.id);
                     pReq.input('partMark',   sql.NVarChar(64),  p.part_mark);

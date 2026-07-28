@@ -19695,6 +19695,29 @@ async function _splitPdfIntoPages(file) {
   return out;
 }
 
+// Make an assembly mark unique against BOTH the current queue and the job's
+// existing assemblies (case-insensitive). "X" → "X (2)" → "X (3)"…
+function _armDedupeMark(mark, pendingQueue) {
+  const base = String(mark || '').trim();
+  if (!base) return base;
+  const taken = new Set();
+  for (const it of [...(_assemblyQueue || []), ...(pendingQueue || [])]) {
+    const m = it && it.ocr && it.ocr.assembly_mark;
+    if (m) taken.add(String(m).toLowerCase());
+  }
+  const existing = (typeof currentJob !== 'undefined' && currentJob)
+    ? (_assembliesByJob[parseInt(currentJob.id)] || []) : [];
+  for (const a of existing) {
+    if (a && a.assembly_mark) taken.add(String(a.assembly_mark).toLowerCase());
+  }
+  if (!taken.has(base.toLowerCase())) return base;
+  for (let n = 2; n < 100; n++) {
+    const candidate = `${base} (${n})`;
+    if (!taken.has(candidate.toLowerCase())) return candidate;
+  }
+  return base;
+}
+
 async function onAssemblyFilesPicked(fileList) {
   if (!fileList || !fileList.length) return;
   if (!currentJob || !currentJob.spFolderId) {
@@ -19807,6 +19830,18 @@ async function onAssemblyFilesPicked(fileList) {
         ocr.parts = [{ part_mark: '', quantity: 1, profile: '', length_mm: null,
                        material: 'S355JR', area_m2: null, weight_kg: null }];
       }
+      // Sketch drawings carry no part marks — default them so the save
+      // endpoint (part_mark NOT NULL) never rejects the card.
+      ocr.parts.forEach((p, i) => {
+        if (p && !p.part_mark && (p.profile || '').trim()) {
+          const pref = (String(p.profile).match(/^[A-Za-z]+/) || [''])[0].toUpperCase();
+          p.part_mark = pref && pref !== 'PLT' ? pref : `P${i + 1}`;
+        }
+      });
+      // Duplicate assembly marks (same title on two sheets, or a mark that
+      // already exists on the job) → suffix (2), (3)… so the UNIQUE
+      // (job_id, mark) constraint doesn't 409 half way through a batch.
+      ocr.assembly_mark = _armDedupeMark(ocr.assembly_mark, queue);
       _armFillWeightsFromSteelDb(ocr);   // steel-DB weights for anything the drawing didn't state
       queue.push({ file, sharepoint, ocr, ocrFailed });
     }
@@ -19854,6 +19889,7 @@ LAYOUT 2 — sketch/SolidWorks-style sheet (title block bottom-right with fields
 - assembly name = the "Sketch Contents" field (e.g. "Basement Column 1-A"). Prefer a short mark if the sheet gives one (e.g. "B-Column-1-A"), else use the sketch contents text.
 - quantity = the "Quantity required" title-block field and/or a "QUANTITY N" box near the notes. If they disagree, use the QUANTITY box.
 - parts = derive from the section/plate CALLOUTS on the views, e.g. "SHS 180 x 180 x 10" with the "Overall Height" dimension as its length; "20mm Plate"/"15mm Capped End" as plate parts (profile "PLT20", "PLT15"; length null unless dimensioned). One entry per distinct callout, quantity 1 each unless clearly repeated (e.g. top plate + base plate = two plate entries).
+- part_mark = a SHORT descriptive mark since these sheets have no Tekla marks: "SHS" / "RHS" for the main member, "TOP PLT" / "BASE PLT" / "CAP PLT" / "GUSSET" for plates. Never leave part_mark null.
 - material = from notes like "All plates S355" (use "S355" for plates; main section material null unless stated).
 - finish_label_raw = from notes like "-Paint Red Oxide" → "Red Oxide Paint" ("Galvanised" if stated, etc.); null if no finish note.
 - area/weight are NOT shown on this layout — return null, never estimate them.

@@ -442,6 +442,23 @@ PER assembly — multi-variant sheets ("Column 1-C & 2-C, QUANTITY 1 OF EACH",
 thermal-break plate arrays) yield several cards sharing one SharePoint file.
 max_tokens 3000.
 
+### Assembly save 500/409 fix (2026-07-28)
+
+Root cause of mass 500s on sketch-style batches: `job-assemblies-create`
+threw when a part had no `part_mark` — sketch drawings have none. Fixes:
+- **Server** — only `profile` required; missing `part_mark` defaults to
+  `P{n}` (Function App redeploy, no migration).
+- **Client** (`onAssemblyFilesPicked`) — parts get descriptive default
+  marks from the profile prefix (SHS/RHS/RSA…, else P{n}) before queueing.
+- **409 cause**: two sheets can share a title ("Top Column RSA Bracket"
+  ×2) hitting UQ(job_id, mark). `_armDedupeMark(mark, pendingQueue)`
+  suffixes " (2)", " (3)"… checking the open batch, the in-flight upload
+  queue AND the job's existing assemblies (case-insensitive).
+- OCR prompt now asks for short descriptive part marks on layout 2
+  (SHS / TOP PLT / BASE PLT / GUSSET).
+Note: N cards from one merged PDF is BY DESIGN — every sheet (and every
+variant on a multi-variant sheet) is its own assembly.
+
 ### Assembly review steel-DB auto-weight (2026-07-28)
 
 `steel-data.js` (repo root, NEW) — shared copy of QB's steel engine
