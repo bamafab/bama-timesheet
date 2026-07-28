@@ -36534,6 +36534,7 @@ async function _stmtHandleFile(file) {
   "statement_date": "YYYY-MM-DD or null",
   "lines": [
     { "invoice_ref": "the invoice/document number", "invoice_date": "YYYY-MM-DD or null",
+      "due_date": "YYYY-MM-DD or null — the statement's Due Date column if present",
       "amount": 0, "type": "invoice" or "credit" or "payment" }
   ],
   "total_outstanding": "the statement's balance/total due, or null"
@@ -36615,6 +36616,23 @@ function _stmtReconcile() {
   const ourOutstanding = ours.filter(i => !i.paid_at).reduce((s, i) => s + Number(i.gross || 0), 0);
   const claimed = _stmtParsed.total_outstanding != null ? Number(_stmtParsed.total_outstanding) : null;
 
+  // Due-date buckets — supplier terms matter (60d EOM ≠ payable today).
+  // Our ledger due_date wins; statement's own due-date column is the fallback.
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const eomStr = new Date(Date.UTC(now.getFullYear(), now.getMonth() + 1, 0, 12)).toISOString().slice(0, 10);
+  const dueBuckets = { overdue: 0, thisMonth: 0, later: 0, noDue: 0 };
+  for (const r of results) {
+    if (r.match && r.match.paid_at) continue;           // paid — not owed
+    const due = (r.match && r.match.due_date) ? String(r.match.due_date).slice(0, 10)
+              : (r.line.due_date ? String(r.line.due_date).slice(0, 10) : null);
+    if (!due)                dueBuckets.noDue     += r.amt;
+    else if (due < todayStr) dueBuckets.overdue   += r.amt;
+    else if (due <= eomStr)  dueBuckets.thisMonth += r.amt;
+    else                     dueBuckets.later     += r.amt;
+  }
+  const eomUk = new Date(eomStr + 'T00:00:00').toLocaleDateString('en-GB');
+
   const counts = {
     matched: results.filter(r => r.status === 'MATCHED').length,
     missing: results.filter(r => r.status === 'NOT IN ERP').length,
@@ -36640,6 +36658,16 @@ function _stmtReconcile() {
       ${tile('Not in ERP', counts.missing, counts.missing ? 'var(--red)' : null)}
       ${tile('Statement says due', claimed != null ? fmt(claimed) : '—')}
       ${tile('We agree owing', fmt(stmtTotal), Math.abs((claimed ?? stmtTotal) - stmtTotal) > 0.02 ? '#ffa500' : 'var(--green)')}
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:12px">
+      ${tile('Overdue — pay now', fmt(dueBuckets.overdue), dueBuckets.overdue > 0.005 ? 'var(--red)' : null)}
+      ${tile('Due by ' + eomUk, fmt(dueBuckets.thisMonth), dueBuckets.thisMonth > 0.005 ? '#ffa500' : null)}
+      ${tile('Not yet due (terms)', fmt(dueBuckets.later), 'var(--green)')}
+      ${dueBuckets.noDue > 0.005 ? tile('No due date', fmt(dueBuckets.noDue)) : ''}
+    </div>
+    <div style="font-size:11px;color:var(--subtle);margin-bottom:12px">
+      Buckets use OUR computed due dates from the supplier's payment terms (statement's due-date column as fallback for lines not in the ERP).
+      "PAID BY US" lines are excluded from every owed figure — that flag comes from the ERP's own payment record (Pay &amp; Remit / BACS run), not from the bank.
     </div>
     <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:14px">
       <thead><tr>${th('Statement line')}${th('Date')}${th('Amount')}${th('Status')}${th('Note')}${th('')}</tr></thead>
