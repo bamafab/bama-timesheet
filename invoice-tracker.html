@@ -354,8 +354,8 @@
         If the combined invoices exceed the order value you'll be asked to confirm.
       </div>
     </div>
-    <div style="margin-bottom:16px">
-      <label class="field-label">Babcock Quote (optional)</label>
+    <div style="margin-bottom:16px" id="invSupMatchBabcockWrap">
+      <label class="field-label">Babcock Quote (BAMA SW only)</label>
       <select class="field-input" id="invSupMatchBabcock"></select>
     </div>
     <div style="display:flex;justify-content:flex-end;gap:10px">
@@ -400,8 +400,8 @@
         <label class="field-label">Invoice Date</label>
         <input type="date" class="field-input" id="supAddDate">
       </div>
-      <div>
-        <label class="field-label">Babcock Quote (optional)</label>
+      <div id="supAddBabcockWrap" style="display:none">
+        <label class="field-label">Babcock Quote (BAMA SW only)</label>
         <select class="field-input" id="supAddBabcock"></select>
       </div>
       <div>
@@ -1500,6 +1500,6 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260728k"></script>
+<script src="shared.js?v=20260728l"></script>
 </body>
 </html>

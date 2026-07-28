@@ -36466,19 +36466,36 @@ async function openSupMatchModal() {
     poSel.innerHTML = '<option value="">Failed to load POs</option>';
   }
 
-  // Babcock quote dropdown (optional link)
+  // Babcock quote dropdown — only for BAMA South West invoices
   const bqSel = document.getElementById('invSupMatchBabcock');
-  if (bqSel) {
+  const bqWrap = document.getElementById('invSupMatchBabcockWrap');
+  const isSw = _invIsBamaSw(sel[0].supplier_name);
+  if (bqWrap) bqWrap.style.display = isSw ? '' : 'none';
+  if (bqSel && isSw) {
     bqSel.innerHTML = '<option value="">— No Babcock quote —</option>';
     _invLoadBabcockOptions(bqSel, sel.find(i => i.babcock_quote_id)?.babcock_quote_id || null);
+  } else if (bqSel) {
+    bqSel.innerHTML = '<option value="">— No Babcock quote —</option>';
   }
+}
+
+// Babcock quotes only ever come through BAMA South West — the picker is
+// gated to that supplier and hides quotes already matched to an invoice.
+function _invIsBamaSw(supplierName) {
+  const n = String(supplierName || '').toLowerCase().replace(/[^a-z]/g, '');
+  return n.includes('bamasouthwest') || n === 'bamasw' || n.includes('bamaswltd');
 }
 
 async function _invLoadBabcockOptions(selectEl, preselectId) {
   try {
     const quotes = await api.get('/api/babcock-quotes');
+    // Quote ids already matched to a (non-deleted) supplier invoice — taken.
+    // The one preselected on the invoice being edited stays available.
+    const used = new Set(
+      _invSupInvoices.filter(i => i.babcock_quote_id && i.babcock_quote_id !== preselectId)
+                     .map(i => i.babcock_quote_id));
     const list = (Array.isArray(quotes) ? quotes : (quotes.rows || quotes.quotes || []))
-      .slice()
+      .filter(q => !used.has(q.id))
       .sort((a, b) => String(b.quote_ref || '').localeCompare(String(a.quote_ref || '')));
     selectEl.innerHTML = '<option value="">— No Babcock quote —</option>' + list.map(q =>
       `<option value="${q.id}" ${preselectId === q.id ? 'selected' : ''}>${escapeHtml(q.quote_ref || ('#' + q.id))}${q.description ? ' — ' + escapeHtml(String(q.description).slice(0, 50)) : ''}</option>`
@@ -36494,8 +36511,10 @@ async function confirmSupMatch() {
   const sel = _invRemitSelection();
   if (!sel.length) { closeSupMatchModal(); return; }
   const poId = document.getElementById('invSupMatchPo').value || null;
+  const bqWrapEl = document.getElementById('invSupMatchBabcockWrap');
   const bqEl = document.getElementById('invSupMatchBabcock');
-  const babcockId = bqEl && bqEl.value ? parseInt(bqEl.value) : null;
+  const bqVisible = bqWrapEl && bqWrapEl.style.display !== 'none';
+  const babcockId = bqVisible && bqEl && bqEl.value ? parseInt(bqEl.value) : (bqVisible ? null : undefined);
   const ids = sel.map(i => i.id);
   const fmt2 = v => Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -36531,6 +36550,7 @@ async function confirmSupMatch() {
 // ADD SUPPLIER INVOICE MANUALLY — no PO required, optional file + links
 // ═════════════════════════════════════════════════════════════════════════
 let _supAddFile = null;
+let _supAddBabcockPreselect = null;
 let _supAddType = 'supplier';     // 'supplier' | 'subcontractor'
 let _supAddEditingId = null;      // SupplierInvoices id when amending (null = new)
 
@@ -36561,8 +36581,9 @@ async function openSupAddInvoiceModal(editInvoiceId) {
 
   await _supAddFillSupplierOptions();
 
-  const bqSel = document.getElementById('supAddBabcock');
-  if (bqSel) { bqSel.innerHTML = '<option value="">— No Babcock quote —</option>'; _invLoadBabcockOptions(bqSel, editing ? editing.babcock_quote_id : null); }
+  _supAddBabcockPreselect = editing ? editing.babcock_quote_id : null;
+  const bqWrap0 = document.getElementById('supAddBabcockWrap');
+  if (bqWrap0) bqWrap0.style.display = 'none'; // shown only when a BAMA SW supplier is picked
 
   // Prefill when amending
   if (editing) {
@@ -36683,6 +36704,19 @@ async function onSupAddSupplierPicked() {
   const poSel = document.getElementById('supAddPo');
   poSel.innerHTML = '<option value="">— No PO —</option>';
   _supAddUpdateDueHint();
+
+  // Babcock picker only for BAMA South West
+  const bqWrap = document.getElementById('supAddBabcockWrap');
+  const bqSel  = document.getElementById('supAddBabcock');
+  const suppliersAll = await _invGetSuppliersList();
+  const picked = suppliersAll.find(x => x.id === supplierId);
+  const isSw = picked && _invIsBamaSw(picked.supplier_name);
+  if (bqWrap) bqWrap.style.display = isSw ? '' : 'none';
+  if (bqSel) {
+    bqSel.innerHTML = '<option value="">— No Babcock quote —</option>';
+    if (isSw) _invLoadBabcockOptions(bqSel, _supAddBabcockPreselect);
+  }
+
   if (!supplierId) return;
   try {
     const pos = await api.get(`/api/purchase-orders?supplier_id=${supplierId}`);
@@ -36922,7 +36956,8 @@ async function saveSupAddInvoice() {
     const payload = {
       supplier_id: supplierId,
       po_id: document.getElementById('supAddPo').value || null,
-      babcock_quote_id: document.getElementById('supAddBabcock')?.value || null,
+      babcock_quote_id: (document.getElementById('supAddBabcockWrap')?.style.display !== 'none'
+                          && document.getElementById('supAddBabcock')?.value) || null,
       invoice_type: _supAddType,
       invoice_ref: ref || null,
       invoice_date: date,
