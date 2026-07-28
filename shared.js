@@ -38453,6 +38453,24 @@ async function _buildInvoicePdfData(inv) {
     || (_invSelectedClient && _invSelectedClient.company_name)
     || inv.customer_text
     || '—';
+  // Full Bill To block: name + address. Address comes from (in order) the
+  // detail-join columns, the in-page selected client, or the clients cache.
+  const _cli = (inv.client_address_line1 !== undefined) ? {
+        address_line1: inv.client_address_line1, address_line2: inv.client_address_line2,
+        city: inv.client_city, county: inv.client_county, postcode: inv.client_postcode
+      }
+    : (_invSelectedClient && _invSelectedClient.company_name === customer) ? _invSelectedClient
+    : (inv.client_id ? ((typeof _invClientsCache !== 'undefined' ? _invClientsCache : []) || []).find(c => c.id === inv.client_id) : null);
+  const _addrLines = _cli ? [
+    _cli.address_line1,
+    _cli.address_line2,
+    [_cli.city, _cli.county].filter(Boolean).join(', '),
+    _cli.postcode
+  ].map(x => String(x || '').trim()).filter(Boolean) : [];
+  const billToBlock = [customer, ..._addrLines].join('\n');
+  if (_addrLines.length === 0 && typeof toast === 'function') {
+    toast('⚠ No customer address on this invoice — many clients reject invoices without one. Add it to the client record.', 'warning');
+  }
   const projectLabel = _invSelectedProject
     ? `${_invSelectedProject.project_number || ''} — ${_invSelectedProject.project_name || ''}`
     : (inv.project_number ? `${inv.project_number} — ${inv.project_name || ''}` : '');
@@ -38462,7 +38480,7 @@ async function _buildInvoicePdfData(inv) {
     ref: inv.ref,
     invoiceDate: inv.invoice_date,
     dueDate: inv.due_date,
-    billTo: customer,
+    billTo: billToBlock,
     project: projectLabel,
     vatApplies: !!inv.vat_applies,
     cisReverse: !!inv.cis_reverse_charge,
@@ -38587,7 +38605,7 @@ function drawBamaInvoicePDF(jsPDF, d, logoDataUri) {
   try {
     doc.setProperties({
       title: `BAMA ${title} ${d.ref || ''}`.trim(),
-      subject: `${title} for ${d.billTo || ''}`,
+      subject: `${title} for ${String(d.billTo || '').split('\n')[0]}`,
       author: 'BAMA Fabrication',
       creator: 'BAMA Fabrication ERP'
     });
@@ -39181,7 +39199,7 @@ async function parseInvoicePO(input) {
 
   try {
     const parsed = await _invParsePOFile(file);
-    _invApplyParsedPO(parsed);
+    await _invApplyParsedPO(parsed);
     if (hint) {
       // Deterministic sanity check: our recomputed net vs the PO's stated net
       const ourNet = _invLineRows.reduce((s, l) => s + (Number(l.quantity || 0) * Number(l.unit_price || 0)), 0);
@@ -39225,6 +39243,13 @@ Return ONLY a JSON object, no markdown, no explanation:
   "po_date": "YYYY-MM-DD or null",
   "your_order_no": "the 'Your Order No' / supplier reference field if present, else null",
   "lines": [ { "description": "line description", "quantity": number, "unit": "unit text like 'ea'/'m'/'hrs' or empty string", "unit_price": number } ],
+  "address_line1": "first line of the ISSUER's own address (street), or null",
+  "address_line2": "second street line or building/works name, or null",
+  "city": "issuer's town/city or null",
+  "county": "issuer's county or null",
+  "postcode": "issuer's postcode or null",
+  "contact_email": "issuer's email on the PO or null",
+  "contact_phone": "issuer's phone on the PO or null",
   "net_total": number or null (the stated total NET / subtotal before VAT),
   "vat_amount": number or null (VAT amount stated on the PO, 0 if none shown),
   "carriage": number or null (delivery/carriage charge, 0 if none)
@@ -39236,6 +39261,7 @@ Rules:
 - SKIP zero-value message/comment lines (e.g. product code M1 "Message Line" at 0.00) — but if such a line carries descriptive text and a priced line has a vague description like "Miscellaneous", merge that text into the priced line's description instead.
 - Pricing units like "per hundred" / "HUND": convert so quantity × unit_price = the stated line net.
 - If carriage is charged, include it as its own line { "description": "Carriage / delivery", ... } as well as in "carriage".
+- The address/contact fields are the ISSUER'S OWN details (letterhead / header block) — NOT the deliver-to / supplier block, which is Bama's address. Never return a Bama/Yaxley/Enterprise Way address.
 - Copy descriptions as written (trim codes/noise); do NOT invent content.`;
 
   const _tok = await getToken();
@@ -39270,20 +39296,67 @@ Rules:
 }
 
 // Deterministic application of the parsed PO onto the open invoice modal.
-function _invApplyParsedPO(parsed) {
+// Also keeps the Clients register in sync: unknown customers are SAVED as
+// new clients (name + address + contact from the PO), and known clients
+// with a missing address get it backfilled — so the next invoice to that
+// customer prints a full Bill To without touching the PO again.
+async function _invApplyParsedPO(parsed) {
+  const _poAddr = {
+    address_line1: String(parsed.address_line1 || '').trim() || null,
+    address_line2: String(parsed.address_line2 || '').trim() || null,
+    city:          String(parsed.city || '').trim() || null,
+    county:        String(parsed.county || '').trim() || null,
+    postcode:      String(parsed.postcode || '').trim() || null
+  };
+  const _poHasAddr = !!(_poAddr.address_line1 || _poAddr.postcode);
+
   // ── Customer: fuzzy match to Clients (applies its VAT treatment + terms);
-  //    otherwise fall back to free-text so nothing blocks the user.
+  //    unknown customer → CREATE it so details are reused next time.
   const name = String(parsed.customer || '').trim();
   if (name) {
-    const client = _invImportMatchClient(name);
-    if (client) {
+    let client = _invImportMatchClient(name);
+    if (client && _poHasAddr && !client.address_line1 && !client.postcode) {
+      // Known client with no saved address → backfill from the PO
+      try {
+        const upd = await api.put(`/api/clients/${client.id}`, {
+          ..._poAddr,
+          contact_email: client.contact_email || String(parsed.contact_email || '').trim() || undefined,
+          contact_phone: client.contact_phone || String(parsed.contact_phone || '').trim() || undefined
+        });
+        Object.assign(client, upd || _poAddr);
+        toast(`Client "${client.company_name}" had no address — backfilled from the PO`, 'success');
+      } catch (e) { console.warn('Client address backfill failed:', e); }
+    }
+    if (!client) {
+      // Brand-new customer → save to Clients so it's there for next time
+      try {
+        client = await api.post('/api/clients', {
+          company_name: name,
+          ..._poAddr,
+          contact_email: String(parsed.contact_email || '').trim() || null,
+          contact_phone: String(parsed.contact_phone || '').trim() || null,
+          vat_treatment: Number(parsed.vat_amount) > 0 ? 'standard' : 'reverse_charge',
+          payment_terms_days: 30
+        });
+        if (client && client.id) {
+          _invClientsCache.push(client);
+          toast(`New client "${name}" saved to Clients${_poHasAddr ? ' with address' : ''} — review VAT treatment & terms there`, 'success');
+        }
+      } catch (e) {
+        console.warn('Client auto-create failed:', e);
+        client = null;
+      }
+    }
+    if (client && client.id) {
       selectInvCustomer(client.id);
+      if (!client.address_line1 && !client.postcode) {
+        toast('⚠ No address found on the PO or client record — add one before issuing (clients often reject invoices without it)', 'warning');
+      }
     } else {
       document.getElementById('invNewCustomerSearch').value = name;
       _invSelectedClient = null;
-      document.getElementById('invNewCustomerSelected').textContent = `✓ "${name}" (from PO — no Clients match)`;
+      document.getElementById('invNewCustomerSelected').textContent = `✓ "${name}" (from PO — could not save to Clients)`;
       document.getElementById('invNewCustomerDropdown').innerHTML = '';
-      // No client defaults available — use the PO's own VAT signal
       const treatEl = document.getElementById('invNewVatTreatment');
       if (treatEl && Number(parsed.vat_amount) > 0) treatEl.value = 'standard';
     }

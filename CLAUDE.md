@@ -907,6 +907,19 @@ none of this is built yet.
   footer (Company No. 14680571), accounts@bamafabrication.co.uk, NEW bank
   details (Sort 30-99-50, Acct 26816462), statutory DRC wording (VAT Act
   1994 s55A), "Re: AFP / Payment Certificate" reference line.
+- **Invoicing: PO→client sync + Bill To address (2026-07-28)** — PO prompt
+  also extracts the ISSUER's address (line1/2, city, county, postcode) +
+  contact email/phone (never the Bama deliver-to block). `_invApplyParsedPO`
+  is now async: unknown customer → auto-created via `POST /api/clients`
+  (VAT treatment from PO VAT signal, 30-day terms, toast to review) and
+  pushed into `_invClientsCache`; known client with no address → backfilled
+  via `PUT /api/clients/{id}` (contact fields only if empty). Warning toast
+  if neither PO nor client has an address. `invoices-detail` now joins
+  `client_address_line1/2/city/county/postcode`; `_buildInvoicePdfData`
+  builds a multi-line Bill To (detail-join → _invSelectedClient →
+  clients-cache fallback) and toasts a warning when the PDF is generated
+  with no address (clients reject address-less invoices). Email subject
+  uses first Bill To line only.
 - **Invoicing: Fill from PO (2026-07-28)** — "📄 Fill from PO" button in the
   New/Edit Invoice modal (`invPoParseBtn` + hidden `invPoFileInput`, accepts
   PDF or image). `parseInvoicePO()` → `_invParsePOFile()` (Claude vision via
