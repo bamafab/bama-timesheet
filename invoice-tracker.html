@@ -1497,6 +1497,9 @@
       <button class="btn btn-ghost" id="afpDetailEditBtn" onclick="editAfpFromDetail()">Edit</button>
       <button class="btn btn-ghost" id="afpDetailCertUploadBtn" onclick="openCertUploadModal()">+ Upload Certificate</button>
       <button class="btn btn-primary" id="afpDetailSubmitBtn" onclick="submitAfpFromDetail()">Submit + PDF</button>
+      <button class="btn btn-ghost" id="afpDetailUncertifyBtn" style="display:none"
+              title="Revert to Submitted — clears certified figures so you can re-certify"
+              onclick="uncertifyAfp()">↩ Un-certify</button>
       <button class="btn btn-ghost" id="afpDetailLinkInvBtn" style="display:none"
               title="Match an existing invoice to this AFP instead of creating a new one"
               onclick="linkInvoiceToAfp(_afpDetailCurrent && _afpDetailCurrent.id)">Link Existing Invoice</button>
@@ -1588,6 +1591,6 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260728w"></script>
+<script src="shared.js?v=20260728x"></script>
 </body>
 </html>

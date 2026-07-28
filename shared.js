@@ -39459,6 +39459,8 @@ async function openAfpDetail(id) {
     submitBtn.style.display     = (afp.status === 'Draft') ? '' : 'none';
     certUploadBtn.style.display = (afp.status === 'Submitted') ? '' : 'none';
     genInvBtn.style.display     = (afp.status === 'Certified') ? '' : 'none';
+    const uncertBtn = document.getElementById('afpDetailUncertifyBtn');
+    if (uncertBtn) uncertBtn.style.display = (afp.status === 'Certified') ? '' : 'none';
     const linkInvBtn = document.getElementById('afpDetailLinkInvBtn');
     if (linkInvBtn) linkInvBtn.style.display =
       ((afp.status === 'Certified' || afp.status === 'Submitted') && !afp.invoice_id) ? '' : 'none';
@@ -39864,6 +39866,28 @@ async function uploadCertAndContinue() {
   } finally {
     setLoading(false);
     if (btn) { btn.disabled = false; btn.textContent = 'Upload & Confirm'; }
+  }
+}
+
+// Revert a Certified AFP back to Submitted — clears cert figures and unwinds
+// per-line paid so it can be re-certified cleanly.
+async function uncertifyAfp() {
+  if (!_afpDetailCurrent) return;
+  const afp = _afpDetailCurrent;
+  const confirmed = await showConfirmAsync(
+    'Un-certify AFP?',
+    `<p>This reverts <b>${escapeHtml(afp.ref)}</b> to <b>Submitted</b> — certified figures are cleared and per-line paid returns to its pre-certificate state. The certificate file (if uploaded) stays attached.</p>`,
+    { okLabel: 'Un-certify', cancelLabel: 'Keep' }
+  );
+  if (!confirmed) return;
+  try {
+    await api.post(`/api/applications/${afp.id}/uncertify`, {});
+    toast(`${afp.ref} reverted to Submitted ✓`, 'success');
+    closeAfpDetail();
+    await loadInvoicingData();
+    renderInvAfpsTable();
+  } catch (err) {
+    toast('Un-certify failed: ' + (err.message || 'unknown'), 'error');
   }
 }
 

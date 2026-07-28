@@ -505,6 +505,52 @@ app.http('applications-submit', {
     }
 });
 
+// Un-certify — revert a Certified AFP back to Submitted (wrong cert entered,
+// or test AFPs). Clears the certified header figures and unwinds the per-line
+// paid accumulation (gross_amount_paid returns to its carried base). Invoiced
+// AFPs must have their invoice unlinked/deleted first.
+app.http('applications-uncertify', {
+    methods: ['POST'],
+    authLevel: 'anonymous',
+    route: 'applications/{id}/uncertify',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+        try {
+            const id = parseInt(request.params.id);
+            const res = await query('SELECT status FROM Applications WHERE id = @id', { id });
+            if (!res.recordset.length) return notFound('Application not found', request);
+            const status = res.recordset[0].status;
+            if (status === 'Invoiced') {
+                return badRequest('AFP is Invoiced — unlink or delete the invoice first, then un-certify', request);
+            }
+            if (status !== 'Certified') {
+                return badRequest(`Only Certified AFPs can be un-certified — current status is ${status}`, request);
+            }
+            // Unwind per-line: paid returns to its pre-cert base
+            await query(
+                `UPDATE ApplicationLineItems
+                 SET gross_amount_paid = ISNULL(gross_amount_paid, 0) - ISNULL(certified_this_app_value, 0),
+                     certified_this_app_value = NULL
+                 WHERE application_id = @id`, { id });
+            await query(
+                `UPDATE Applications SET
+                    status = 'Submitted',
+                    certified_value_net = NULL, certified_vat = NULL,
+                    certified_retention = NULL, certified_gross = NULL,
+                    certificate_ref = NULL, certificate_date = NULL,
+                    certified_at = NULL,
+                    updated_at = GETUTCDATE()
+                 WHERE id = @id`, { id });
+            const refetched = await query('SELECT * FROM Applications WHERE id = @id', { id });
+            return ok(refetched.recordset[0], request);
+        } catch (err) {
+            context.error('Error un-certifying AFP:', err);
+            return serverError('Failed to un-certify: ' + err.message, request);
+        }
+    }
+});
+
 // Match an EXISTING invoice to an AFP (instead of generating a new one) —
 // e.g. legacy invoices raised before the AFP was onboarded. Pass
 // { invoice_id: null } to unlink (status returns to Certified).
