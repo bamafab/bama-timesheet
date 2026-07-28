@@ -505,6 +505,65 @@ app.http('applications-submit', {
     }
 });
 
+// Match an EXISTING invoice to an AFP (instead of generating a new one) —
+// e.g. legacy invoices raised before the AFP was onboarded. Pass
+// { invoice_id: null } to unlink (status returns to Certified).
+app.http('applications-link-invoice', {
+    methods: ['POST'],
+    authLevel: 'anonymous',
+    route: 'applications/{id}/link-invoice',
+    handler: async (request, context) => {
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
+        try {
+            const id = parseInt(request.params.id);
+            const body = await request.json().catch(() => ({}));
+
+            const afpRes = await query('SELECT * FROM Applications WHERE id = @id', { id });
+            if (!afpRes.recordset.length) return notFound('Application not found', request);
+            const afp = afpRes.recordset[0];
+            if (afp.status === 'Draft' || afp.status === 'Cancelled') {
+                return badRequest(`Cannot link an invoice to a ${afp.status} AFP`, request);
+            }
+
+            if (body.invoice_id == null) {
+                await query(
+                    `UPDATE Applications SET invoice_id = NULL,
+                        status = CASE WHEN status = 'Invoiced' THEN 'Certified' ELSE status END,
+                        updated_at = GETUTCDATE()
+                     WHERE id = @id`, { id });
+            } else {
+                const invId = parseInt(body.invoice_id);
+                const invRes = await query('SELECT * FROM Invoices WHERE id = @invId', { invId });
+                if (!invRes.recordset.length) return notFound('Invoice not found', request);
+                const inv = invRes.recordset[0];
+                if (inv.status === 'Void' || inv.status === 'Cancelled') {
+                    return badRequest(`Cannot link a ${inv.status} invoice`, request);
+                }
+                if (inv.project_id != null && inv.project_id !== afp.project_id) {
+                    return badRequest('Invoice belongs to a different project', request);
+                }
+                // Backfill the invoice's project when it was created without one
+                if (inv.project_id == null) {
+                    await query('UPDATE Invoices SET project_id = @pid, updated_at = GETUTCDATE() WHERE id = @invId',
+                        { pid: afp.project_id, invId });
+                }
+                await query(
+                    `UPDATE Applications SET invoice_id = @invId, status = 'Invoiced', updated_at = GETUTCDATE()
+                     WHERE id = @id`, { id, invId });
+            }
+            const refetched = await query(
+                `SELECT a.*, inv.ref AS invoice_ref
+                 FROM Applications a LEFT JOIN Invoices inv ON a.invoice_id = inv.id
+                 WHERE a.id = @id`, { id });
+            return ok(refetched.recordset[0], request);
+        } catch (err) {
+            context.error('Error linking invoice to AFP:', err);
+            return serverError('Failed to link invoice: ' + err.message, request);
+        }
+    }
+});
+
 // Upload certificate metadata — file uploaded by client to SharePoint first.
 // Stores attachment row + parsed OCR figures (not yet confirmed).
 app.http('applications-certificate-upload', {

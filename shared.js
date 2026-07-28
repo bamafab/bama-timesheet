@@ -36035,8 +36035,12 @@ function _renderAfpCard(a) {
         <div style="text-align:right">
           ${a.status === 'Certified'
             ? `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700;background:rgba(62,207,142,.2);color:var(--green)">✓ READY TO INVOICE</span>
-               <div><button class="btn btn-primary" style="padding:3px 10px;font-size:11px;margin-top:5px"
-                       onclick="event.stopPropagation(); generateInvoiceFromAfpCard(${a.id})">Generate Invoice</button></div>`
+               <div style="display:flex;gap:4px;justify-content:flex-end;margin-top:5px">
+                 <button class="btn btn-ghost" style="padding:3px 8px;font-size:11px" title="Match an existing invoice to this AFP instead of creating a new one"
+                       onclick="event.stopPropagation(); linkInvoiceToAfp(${a.id})">Link existing</button>
+                 <button class="btn btn-primary" style="padding:3px 10px;font-size:11px"
+                       onclick="event.stopPropagation(); generateInvoiceFromAfpCard(${a.id})">Generate Invoice</button>
+               </div>`
             : `${invStatusBadge(a.status)}`}
           ${a.invoice_ref ? `<div style="font-size:10px;color:var(--subtle);margin-top:3px">→ ${escapeHtml(a.invoice_ref)}</div>` : ''}
         </div>
@@ -39473,6 +39477,9 @@ async function openAfpDetail(id) {
     submitBtn.style.display     = (afp.status === 'Draft') ? '' : 'none';
     certUploadBtn.style.display = (afp.status === 'Submitted') ? '' : 'none';
     genInvBtn.style.display     = (afp.status === 'Certified') ? '' : 'none';
+    const linkInvBtn = document.getElementById('afpDetailLinkInvBtn');
+    if (linkInvBtn) linkInvBtn.style.display =
+      ((afp.status === 'Certified' || afp.status === 'Submitted') && !afp.invoice_id) ? '' : 'none';
     cancelBtn.style.display     = (afp.status !== 'Cancelled' && afp.status !== 'Invoiced') ? '' : 'none';
 
     // Linked invoice ref
@@ -39865,6 +39872,55 @@ async function uploadCertAndContinue() {
   } finally {
     setLoading(false);
     if (btn) { btn.disabled = false; btn.textContent = 'Upload & Confirm'; }
+  }
+}
+
+// Match an EXISTING invoice to this AFP (legacy invoices raised before the
+// AFP was onboarded) instead of generating a duplicate.
+async function linkInvoiceToAfp(afpId) {
+  let afp = _afpDetailCurrent && _afpDetailCurrent.id === afpId ? _afpDetailCurrent : null;
+  if (!afp) {
+    try { afp = await api.get(`/api/applications/${afpId}`); }
+    catch (e) { toast('Failed to load AFP', 'error'); return; }
+  }
+
+  // Candidates: same-project (or project-less) invoices, not void, and not
+  // already matched to another AFP.
+  const linkedInvIds = new Set((_invAfpList || [])
+    .filter(a => a.invoice_id != null && a.id !== afp.id)
+    .map(a => a.invoice_id));
+  const candidates = (_invInvoiceList || []).filter(inv =>
+    inv.status !== 'Void' && inv.status !== 'Cancelled' &&
+    (inv.project_id == null || inv.project_id === afp.project_id) &&
+    !linkedInvIds.has(inv.id) && (inv.kind || 'invoice') === 'invoice');
+
+  if (!candidates.length) {
+    toast('No unmatched invoices found for this project — use Generate Invoice instead', 'info');
+    return;
+  }
+
+  const fmt = v => '£' + Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 });
+  const options = candidates.map(inv =>
+    `<option value="${inv.id}">${escapeHtml(inv.ref)} — ${fmt(inv.gross_total != null ? inv.gross_total : inv.net_total)} (${escapeHtml(inv.status || '')}${inv.invoice_date ? ', ' + String(inv.invoice_date).slice(0, 10) : ''})</option>`
+  ).join('');
+  const confirmed = await showConfirmAsync(
+    `Match invoice to ${escapeHtml(afp.ref)}`,
+    `<p>Pick the existing invoice that covers this application. The AFP will be marked <b>Invoiced</b> and linked — no new invoice is created.</p>
+     <select id="afpLinkInvSelect" class="field-input" style="width:100%">${options}</select>`,
+    { okLabel: 'Match', cancelLabel: 'Cancel' }
+  );
+  if (!confirmed) return;
+  const sel = document.getElementById('afpLinkInvSelect');
+  const invoiceId = sel ? parseInt(sel.value) : null;
+  if (!invoiceId) return;
+  try {
+    const updated = await api.post(`/api/applications/${afp.id}/link-invoice`, { invoice_id: invoiceId });
+    toast(`${afp.ref} matched to invoice ${updated.invoice_ref} ✓`, 'success');
+    if (_afpDetailCurrent && _afpDetailCurrent.id === afp.id) closeAfpDetail();
+    await loadInvoicingData();
+    renderInvAfpsTable();
+  } catch (err) {
+    toast('Match failed: ' + (err.message || 'unknown'), 'error');
   }
 }
 

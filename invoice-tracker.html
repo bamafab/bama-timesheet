@@ -1493,6 +1493,9 @@
       <button class="btn btn-ghost" id="afpDetailEditBtn" onclick="editAfpFromDetail()">Edit</button>
       <button class="btn btn-ghost" id="afpDetailCertUploadBtn" onclick="openCertUploadModal()">+ Upload Certificate</button>
       <button class="btn btn-primary" id="afpDetailSubmitBtn" onclick="submitAfpFromDetail()">Submit + PDF</button>
+      <button class="btn btn-ghost" id="afpDetailLinkInvBtn" style="display:none"
+              title="Match an existing invoice to this AFP instead of creating a new one"
+              onclick="linkInvoiceToAfp(_afpDetailCurrent && _afpDetailCurrent.id)">Link Existing Invoice</button>
       <button class="btn btn-primary" id="afpDetailGenInvBtn" onclick="generateInvoiceFromAfp()">Generate Invoice</button>
     </div>
   </div>
