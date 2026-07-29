@@ -917,7 +917,25 @@ lesson as jsPDF's `getImageProperties`), mm→px at 96dpi. Page numbers are real
 `PAGE`/`NUMPAGES` fields per section footer. A DOCX failure never sinks the
 flow — the PDF is already saved; the user just gets a warning toast.
 
-## Company Document Library (D1 — ED "Docs" tab)
+## Company Document Library (D1 v2 — Office › Company Docs)
+
+**v2 (2026-07-29, after Mateusz feedback):** the register moved from ED to
+**office.html** (sidebar entry "📁 Company Docs", tab `tab-docs`, module lives
+in shared.js — `renderDocsTab()` injects the whole UI, modal self-injects).
+ED keeps only the expiry **alert strip** (click → `office.html?tab=docs`).
+New: **drag & drop multi-file import with AI parsing** — each PDF/image goes
+through claude-proxy (reader-only prompt, nulls when not printed, never
+guesses dates) and comes back as an editable review card (title, category,
+ref, issuer, issue/expiry) → eyeball-check → 💾 saves file to SharePoint +
+register row. Save-all button when several parsed. Non-parseable types
+(.doc etc.) get a blank card for manual fill; upload still works. Categories
+extended: insurance, policy, accreditation, **coshh** (SDS → H&S/03 - COSHH),
+**ra_ssow** (→ H&S/05 - Risk Assessments & SSoW, created on first use), hs
+(general → H&S root), other. PARKED (Mateusz, for later): policy/RA template
+studio — produce, tweak and sign policies & risk assessments from templates
+(likely a new modal family like the RAMS generator).
+
+## (v1 spec below — folder mapping & API details still accurate)
 
 Register of company-level documents (insurances, policies, accreditations,
 H&S) with first-class expiry reminders. Lives entirely on `dashboard.html`

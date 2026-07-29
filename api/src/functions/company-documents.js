@@ -24,7 +24,7 @@ const { query } = require('../db');
 const { logChange } = require('../changelog');
 const { ok, created, badRequest, notFound, serverError, preflight } = require('../responses');
 
-const CATEGORIES = ['insurance', 'policy', 'accreditation', 'hs', 'other'];
+const CATEGORIES = ['insurance', 'policy', 'accreditation', 'coshh', 'ra_ssow', 'hs', 'other'];
 
 const SELECT_COLS = `id, category, title, doc_ref, issuer,
     CONVERT(varchar(10), issue_date, 23)  AS issue_date,

@@ -719,13 +719,12 @@
     <button class="dash-tab active" id="tabQuotes" onclick="switchDashTab('quotes')">📊 Quotes</button>
     <button class="dash-tab" id="tabTenders" onclick="switchDashTab('tenders')">📋 Tender Register</button>
     <button class="dash-tab" id="tabOverview" onclick="switchDashTab('overview')">📑 Overview</button>
-    <button class="dash-tab" id="tabDocs" onclick="switchDashTab('docs')">📁 Docs<span id="docTabBadge" style="display:none;margin-left:6px;background:var(--red);color:#fff;border-radius:9px;padding:1px 6px;font-size:10.5px;font-weight:700;vertical-align:1px"></span></button>
     <button class="dash-tab" id="tabHealth" onclick="switchDashTab('health')">🩺 Health</button>
   </div>
 </div>
 
 <!-- Expiry alert strip (D1) — populated by loadDocAlerts(), visible on every tab -->
-<div id="docAlertStrip" onclick="switchDashTab('docs')" style="display:none;cursor:pointer;background:#3b1a1a;border-bottom:1px solid var(--red);padding:7px 20px;font-size:12.5px;color:#f0b4b4"></div>
+<div id="docAlertStrip" onclick="location.href='office.html?tab=docs'" style="display:none;cursor:pointer;background:#3b1a1a;border-bottom:1px solid var(--red);padding:7px 20px;font-size:12.5px;color:#f0b4b4"></div>
 
 <!-- Main layout -->
 <div id="dashQuotesView" style="display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden">
@@ -3257,16 +3256,13 @@ function switchDashTab(tab) {
   document.getElementById('tabTenders').classList.toggle('active', tab === 'tenders');
   document.getElementById('tabOverview').classList.toggle('active', tab === 'overview');
   document.getElementById('tabHealth').classList.toggle('active', tab === 'health');
-  document.getElementById('tabDocs').classList.toggle('active', tab === 'docs');
   document.getElementById('dashQuotesView').style.display   = tab === 'quotes'   ? '' : 'none';
   document.getElementById('dashTendersView').style.display  = tab === 'tenders'  ? '' : 'none';
   document.getElementById('dashOverviewView').style.display = tab === 'overview' ? '' : 'none';
   document.getElementById('dashHealthView').style.display   = tab === 'health'   ? '' : 'none';
-  document.getElementById('dashDocsView').style.display     = tab === 'docs'     ? '' : 'none';
   if (tab === 'tenders' && !_trTenders.length) loadTenderRegister();
   if (tab === 'overview') loadOverview();
   if (tab === 'health' && !_healthData) { runHealthCheck(); loadChangeLog(); }
-  if (tab === 'docs' && !_docRows) loadCompanyDocs();
 }
 
 // ── API fetch helper ──────────────────────────────────────────
@@ -4150,110 +4146,6 @@ async function trResendNotify(tenderId) {
 </div>
 </div>
 
-<!-- ═══════════════════ COMPANY DOCUMENTS VIEW (D1) ═══════════════════ -->
-<div id="dashDocsView" style="display:none;flex:1;min-height:0;overflow-y:auto;padding:20px">
-<div style="max-width:1300px;margin:0 auto">
-  <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px;flex-wrap:wrap">
-    <h2 style="margin:0;font-size:18px">📁 Company Documents</h2>
-    <button class="btn btn-primary btn-sm" onclick="openDocModal()">＋ Add document</button>
-    <button class="btn btn-ghost btn-sm" onclick="exportDocsCsv()">⬇ CSV</button>
-    <button class="btn btn-ghost btn-sm" onclick="loadCompanyDocs()">↻ Refresh</button>
-    <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:5px;margin-left:auto;cursor:pointer">
-      <input type="checkbox" id="docShowArchived" onchange="loadCompanyDocs()"> Show archived
-    </label>
-  </div>
-  <p style="font-size:12px;color:var(--muted);margin:0 0 12px;line-height:1.6">
-    Insurances, policies, accreditations and H&amp;S documents — files are stored in SharePoint under
-    <strong>BAMA / 01 - Company Management</strong>. Set an expiry date and the register warns
-    everywhere on this dashboard when a renewal is due (default 60 days ahead).
-    <strong>Renew</strong> uploads the new certificate and archives the old one (reversible);
-    Delete is a soft-delete.
-  </p>
-  <div id="docFilterChips" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px"></div>
-  <div id="docSummary" style="display:none;margin-bottom:12px"></div>
-  <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:auto;max-height:calc(100vh - 280px)">
-    <table style="width:100%;border-collapse:collapse;font-size:12.5px;min-width:900px">
-      <thead>
-        <tr id="docTableHead" style="position:sticky;top:0;background:var(--card);z-index:2">
-          <th style="text-align:left;padding:8px 10px;border-bottom:1px solid var(--border)">Category</th>
-          <th style="text-align:left;padding:8px 10px;border-bottom:1px solid var(--border)">Document</th>
-          <th style="text-align:left;padding:8px 10px;border-bottom:1px solid var(--border)">Ref</th>
-          <th style="text-align:left;padding:8px 10px;border-bottom:1px solid var(--border)">Issuer</th>
-          <th style="text-align:left;padding:8px 10px;border-bottom:1px solid var(--border)">Issued</th>
-          <th style="text-align:left;padding:8px 10px;border-bottom:1px solid var(--border)">Expires</th>
-          <th style="text-align:left;padding:8px 10px;border-bottom:1px solid var(--border)">Status</th>
-          <th style="text-align:right;padding:8px 10px;border-bottom:1px solid var(--border)">Actions</th>
-        </tr>
-      </thead>
-      <tbody id="docTableBody">
-        <tr><td colspan="8" style="text-align:center;padding:50px;color:var(--muted)">Loading…</td></tr>
-      </tbody>
-    </table>
-  </div>
-</div>
-</div>
-
-<!-- ═══ Add / Edit / Renew document modal (D1) ═══ -->
-<div id="docModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:1000;align-items:center;justify-content:center;padding:20px">
-  <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:520px;max-height:92vh;display:flex;flex-direction:column;overflow:hidden">
-    <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
-      <h3 id="docModalTitle" style="margin:0;font-size:16px">Add document</h3>
-      <button class="btn btn-ghost btn-sm" onclick="closeDocModal()">✕</button>
-    </div>
-    <div style="padding:18px 20px;overflow-y:auto">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div style="grid-column:1/3">
-          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Title *</label>
-          <input id="docFTitle" type="text" placeholder="e.g. Employers' Liability Insurance" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);box-sizing:border-box">
-        </div>
-        <div>
-          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Category</label>
-          <select id="docFCategory" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text)">
-            <option value="insurance">Insurance</option>
-            <option value="policy">Policy / Procedure</option>
-            <option value="accreditation">Accreditation / Certification</option>
-            <option value="hs">Health &amp; Safety</option>
-            <option value="other">Other</option>
-          </select>
-        </div>
-        <div>
-          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Ref / Policy no.</label>
-          <input id="docFRef" type="text" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);box-sizing:border-box">
-        </div>
-        <div style="grid-column:1/3">
-          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Issuer</label>
-          <input id="docFIssuer" type="text" placeholder="Insurer / issuing body" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);box-sizing:border-box">
-        </div>
-        <div>
-          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Issue date</label>
-          <input id="docFIssue" type="date" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);box-sizing:border-box">
-        </div>
-        <div>
-          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Expiry date <span style="color:var(--muted)">(blank = never)</span></label>
-          <input id="docFExpiry" type="date" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);box-sizing:border-box">
-        </div>
-        <div>
-          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Remind (days before)</label>
-          <input id="docFReminder" type="number" min="0" value="60" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);box-sizing:border-box">
-        </div>
-        <div>
-          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">File <span id="docFFileHint" style="color:var(--muted)"></span></label>
-          <input id="docFFile" type="file" style="width:100%;font-size:12px;color:var(--text)">
-        </div>
-        <div style="grid-column:1/3">
-          <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px">Notes</label>
-          <textarea id="docFNotes" rows="2" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);resize:vertical;box-sizing:border-box"></textarea>
-        </div>
-      </div>
-      <div id="docFStatus" style="font-size:12px;color:var(--muted);margin-top:10px;min-height:16px"></div>
-    </div>
-    <div style="padding:12px 20px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end">
-      <button class="btn btn-ghost btn-sm" onclick="closeDocModal()">Cancel</button>
-      <button class="btn btn-primary btn-sm" id="docFSaveBtn" onclick="saveDocModal()">Save</button>
-    </div>
-  </div>
-</div>
-
 <!-- Loss reason modal -->
 <div id="lossModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center">
   <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:28px;width:380px;max-width:95vw">
@@ -4828,320 +4720,29 @@ function copyHealthReport() {
 </script>
 
 <script>
-// ═══════════════ COMPANY DOCUMENT LIBRARY (D1, 2026-07-29) ═══════════════
-// Register lives in SQL (CompanyDocuments via /api/company-documents);
-// files upload straight to SharePoint BAMA / 01 - Company Management
-// with the user's delegated Graph token. Expiry reminders surface as the
-// red strip under the tab bar + a count badge on the Docs tab.
-
+// ═══ Company Docs expiry alert strip (register lives in office.html › Company Docs) ═══
 // Health-tab scripts call toast() which was never defined — route to showToast.
 window.toast = window.toast || showToast;
-
-// SP_TAX subset (source of truth: SP_TAX const in shared.js — dashboard is standalone)
-const DOC_SP = {
-  companyMgmt: '012IX7LSIATGLNRCQ7F5HYWZK5GWFHD4N6',   // 01 - Company Management
-  insurances:  '012IX7LSORMMH6FFLDE5CLEDLLKFCLL62A'    // └ 01 - Insurances
-};
-// Year folder convention (D0): prefix = year − 2022, zero-padded ("04 - 2026")
-function docYearName(y) { return String(y - 2022).padStart(2, '0') + ' - ' + y; }
-
-const DOC_CATS = {
-  insurance:     { label: 'Insurance',      color: '#3b82f6' },
-  policy:        { label: 'Policy',         color: '#a855f7' },
-  accreditation: { label: 'Accreditation',  color: '#22c55e' },
-  hs:            { label: 'H&S',            color: '#f97316' },
-  other:         { label: 'Other',          color: '#94a3b8' }
-};
-
-let _docRows = null;          // last loaded register
-let _docFilter = 'all';      // category chip
-let _docEditing = null;      // doc being edited
-let _docRenewing = null;     // doc being renewed (archive on save)
-
-// ── Graph helpers (local copies of shared.js getOrCreateSubfolder pattern) ──
-async function docGetOrCreateFolder(parentId, name) {
-  const token = getToken(); if (!token) { login(); throw new Error('Not signed in'); }
-  const createRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/items/${parentId}/children`, {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' })
-  });
-  if (createRes.status === 201) return await createRes.json();
-  if (createRes.status === 409) {
-    const pathUrl = `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/items/${parentId}:/${encodeURIComponent(name)}`;
-    for (let a = 0; a < 4; a++) {
-      const r = await fetch(pathUrl, { headers: { 'Authorization': `Bearer ${token}` } });
-      if (r.ok) return await r.json();
-      if (a < 3) await new Promise(res => setTimeout(res, 400 * (a + 1)));
-    }
-    throw new Error(`Folder "${name}" exists but could not be retrieved`);
-  }
-  throw new Error(`Create folder "${name}" failed: ${createRes.status}`);
-}
-
-async function docUploadFile(parentId, fileName, file) {
-  const token = getToken(); if (!token) { login(); throw new Error('Not signed in'); }
-  const safe = fileName.replace(/[~"#%&*:<>?{|}/\\]/g, '_');
-  const res = await fetch(
-    `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/items/${parentId}:/${encodeURIComponent(safe)}:/content`,
-    { method: 'PUT', headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': file.type || 'application/octet-stream' }, body: await file.arrayBuffer() }
-  );
-  if (!res.ok) {
-    let d = ''; try { const e = await res.json(); d = e?.error?.message || ''; } catch(_) {}
-    throw new Error(`Upload failed: ${res.status}${d ? ' — ' + d : ''}`);
-  }
-  return await res.json();
-}
-
-// Category → SharePoint destination folder
-async function docTargetFolder(category, issueDate) {
-  switch (category) {
-    case 'insurance': {
-      const y = issueDate ? new Date(issueDate).getFullYear() : new Date().getFullYear();
-      return await docGetOrCreateFolder(DOC_SP.insurances, docYearName(y));
-    }
-    case 'policy':        return await docGetOrCreateFolder(DOC_SP.companyMgmt, '02 - Policies & Procedures');
-    case 'accreditation': return await docGetOrCreateFolder(DOC_SP.companyMgmt, '03 - Accreditations & Certifications');
-    case 'hs':            return await docGetOrCreateFolder(DOC_SP.companyMgmt, '04 - H&S');
-    default:              return { id: DOC_SP.companyMgmt };
-  }
-}
-
-// ── Load + render ────────────────────────────────────────────────────────────
-async function loadCompanyDocs() {
-  const body = document.getElementById('docTableBody');
-  body.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:50px;color:var(--muted)"><div class="ai-spinner" style="margin:0 auto"></div></td></tr>';
-  try {
-    const showAll = document.getElementById('docShowArchived').checked;
-    _docRows = await trFetch('/api/company-documents' + (showAll ? '?all=true' : ''));
-    renderDocChips();
-    renderDocTable();
-  } catch (e) {
-    body.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--red)">Failed to load: ${escHtml(e.message)}<br><span style="color:var(--muted);font-size:11.5px">If this is a fresh deploy, run api/sql/create-company-documents.sql first.</span></td></tr>`;
-  }
-}
-
-function docExpiryInfo(d) {
-  if (!d.expiry_date) return { cls: 'none', badge: '<span style="color:var(--muted)">—</span>', sort: 9e9 };
-  const days = Math.floor((new Date(d.expiry_date + 'T00:00:00') - new Date(new Date().toISOString().slice(0,10) + 'T00:00:00')) / 86400000);
-  if (days < 0)  return { cls: 'expired', days, badge: `<span style="background:#3b1a1a;color:#ff6b6b;border:1px solid #ff6b6b;border-radius:5px;padding:2px 7px;font-size:11px;font-weight:700">EXPIRED ${-days}d ago</span>`, sort: days };
-  if (days <= (d.reminder_days ?? 60)) return { cls: 'soon', days, badge: `<span style="background:#3b2f0f;color:#eab308;border:1px solid #eab308;border-radius:5px;padding:2px 7px;font-size:11px;font-weight:700">${days} days left</span>`, sort: days };
-  return { cls: 'ok', days, badge: `<span style="color:#3ecf8e;font-size:11.5px">✓ ${days}d</span>`, sort: days };
-}
-
-function renderDocChips() {
-  const rows = _docRows || [];
-  const counts = { all: rows.length };
-  rows.forEach(r => counts[r.category] = (counts[r.category] || 0) + 1);
-  const chip = (key, label, color) => {
-    const active = _docFilter === key;
-    return `<button onclick="_docFilter='${key}';renderDocChips();renderDocTable()" style="cursor:pointer;border-radius:14px;padding:4px 12px;font-size:12px;border:1px solid ${active ? color : 'var(--border)'};background:${active ? color + '22' : 'var(--surface)'};color:${active ? color : 'var(--muted)'};font-weight:${active ? 700 : 400}">${label} <span style="opacity:.7">${counts[key] || 0}</span></button>`;
-  };
-  document.getElementById('docFilterChips').innerHTML =
-    chip('all', 'All', '#e05e00') +
-    Object.entries(DOC_CATS).map(([k, c]) => chip(k, c.label, c.color)).join('');
-}
-
-function renderDocTable() {
-  const body = document.getElementById('docTableBody');
-  let rows = (_docRows || []).filter(r => _docFilter === 'all' || r.category === _docFilter);
-  rows = rows.slice().sort((a, b) => docExpiryInfo(a).sort - docExpiryInfo(b).sort || a.title.localeCompare(b.title));
-  if (!rows.length) {
-    body.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:50px;color:var(--muted)">No documents yet — press <strong>＋ Add document</strong> to start the register.</td></tr>';
-    document.getElementById('docSummary').style.display = 'none';
-    updateDocAlertUi([]);
-    return;
-  }
-  body.innerHTML = rows.map((d, i) => {
-    const cat = DOC_CATS[d.category] || DOC_CATS.other;
-    const exp = docExpiryInfo(d);
-    const zebra = i % 2 ? 'background:rgba(255,255,255,0.018);' : '';
-    const arch = d.is_archived ? 'opacity:.45;' : '';
-    const titleCell = d.web_url
-      ? `<a href="${escHtml(d.web_url)}" target="_blank" style="color:var(--text);text-decoration:underline dotted">${escHtml(d.title)}</a>`
-      : escHtml(d.title);
-    return `<tr style="${zebra}${arch}" title="${escHtml(d.notes || '')}">
-      <td style="padding:7px 10px;border-bottom:1px solid var(--border)"><span style="background:${cat.color}22;color:${cat.color};border:1px solid ${cat.color}55;border-radius:5px;padding:2px 8px;font-size:11px;font-weight:600">${cat.label}</span>${d.is_archived ? ' <span style="font-size:10px;color:var(--muted)">ARCHIVED</span>' : ''}</td>
-      <td style="padding:7px 10px;border-bottom:1px solid var(--border);font-weight:600">${titleCell}${d.file_name ? ` <span style="color:var(--muted);font-weight:400;font-size:11px">📄</span>` : ''}</td>
-      <td style="padding:7px 10px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11.5px">${escHtml(d.doc_ref || '—')}</td>
-      <td style="padding:7px 10px;border-bottom:1px solid var(--border)">${escHtml(d.issuer || '—')}</td>
-      <td style="padding:7px 10px;border-bottom:1px solid var(--border);font-size:11.5px">${d.issue_date || '—'}</td>
-      <td style="padding:7px 10px;border-bottom:1px solid var(--border);font-size:11.5px">${d.expiry_date || '—'}</td>
-      <td style="padding:7px 10px;border-bottom:1px solid var(--border)">${exp.badge}</td>
-      <td style="padding:7px 10px;border-bottom:1px solid var(--border);text-align:right;white-space:nowrap">
-        ${d.is_archived
-          ? `<button class="btn btn-ghost btn-sm" onclick="unarchiveDoc(${d.id})" title="Restore">↩</button>`
-          : `<button class="btn btn-ghost btn-sm" onclick="renewDoc(${d.id})" title="Renew — upload new version, archive this one">🔁</button>
-             <button class="btn btn-ghost btn-sm" onclick="editDoc(${d.id})" title="Edit">✏️</button>
-             <button class="btn btn-ghost btn-sm" onclick="archiveDoc(${d.id})" title="Archive">🗄</button>`}
-        <button class="btn btn-ghost btn-sm" onclick="deleteDoc(${d.id})" title="Delete (soft)" style="color:var(--red)">🗑</button>
-      </td>
-    </tr>`;
-  }).join('');
-
-  // Summary cards: expired / expiring / ok (active docs only)
-  const active = (_docRows || []).filter(r => !r.is_archived);
-  const expired = active.filter(d => docExpiryInfo(d).cls === 'expired');
-  const soon    = active.filter(d => docExpiryInfo(d).cls === 'soon');
-  const sum = document.getElementById('docSummary');
-  sum.style.display = '';
-  sum.innerHTML = `<div style="display:flex;gap:12px;flex-wrap:wrap">
-    <div style="background:var(--surface);border:1px solid ${expired.length ? '#ff6b6b' : 'var(--border)'};border-radius:8px;padding:10px 16px;min-width:120px"><div style="font-size:11px;color:var(--muted)">Expired</div><div style="font-size:20px;font-weight:700;color:${expired.length ? '#ff6b6b' : 'var(--text)'}">${expired.length}</div></div>
-    <div style="background:var(--surface);border:1px solid ${soon.length ? '#eab308' : 'var(--border)'};border-radius:8px;padding:10px 16px;min-width:120px"><div style="font-size:11px;color:var(--muted)">Expiring soon</div><div style="font-size:20px;font-weight:700;color:${soon.length ? '#eab308' : 'var(--text)'}">${soon.length}</div></div>
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 16px;min-width:120px"><div style="font-size:11px;color:var(--muted)">In date / no expiry</div><div style="font-size:20px;font-weight:700;color:#3ecf8e">${active.length - expired.length - soon.length}</div></div>
-  </div>`;
-  updateDocAlertUi([...expired, ...soon]);
-}
-
-// ── Alert strip + tab badge (visible on every tab) ───────────────────────────
-function updateDocAlertUi(alertDocs) {
-  const strip = document.getElementById('docAlertStrip');
-  const badge = document.getElementById('docTabBadge');
-  const expired = alertDocs.filter(d => docExpiryInfo(d).cls === 'expired');
-  const soon    = alertDocs.filter(d => docExpiryInfo(d).cls === 'soon');
-  if (!alertDocs.length) { strip.style.display = 'none'; badge.style.display = 'none'; return; }
-  badge.style.display = ''; badge.textContent = alertDocs.length;
-  const bits = [];
-  if (expired.length) bits.push(`<strong style="color:#ff6b6b">${expired.length} expired</strong> (${expired.slice(0,3).map(d => escHtml(d.title)).join(', ')}${expired.length > 3 ? '…' : ''})`);
-  if (soon.length)    bits.push(`<strong style="color:#eab308">${soon.length} expiring soon</strong> (${soon.slice(0,3).map(d => escHtml(d.title)).join(', ')}${soon.length > 3 ? '…' : ''})`);
-  strip.style.display = '';
-  strip.innerHTML = `⚠ Company documents: ${bits.join(' · ')} — <span style="text-decoration:underline">open register</span>`;
-}
 
 async function loadDocAlerts() {
   try {
     const rows = await trFetch('/api/company-documents/expiring');
-    updateDocAlertUi(rows || []);
+    const strip = document.getElementById('docAlertStrip');
+    if (!rows || !rows.length) { strip.style.display = 'none'; return; }
+    const expired = rows.filter(d => (d.days_left ?? 0) < 0);
+    const soon    = rows.filter(d => (d.days_left ?? 0) >= 0);
+    const bits = [];
+    if (expired.length) bits.push(`<strong style="color:#ff6b6b">${expired.length} expired</strong> (${expired.slice(0,3).map(d => escHtml(d.title)).join(', ')}${expired.length > 3 ? '…' : ''})`);
+    if (soon.length)    bits.push(`<strong style="color:#eab308">${soon.length} expiring soon</strong> (${soon.slice(0,3).map(d => escHtml(d.title)).join(', ')}${soon.length > 3 ? '…' : ''})`);
+    strip.style.display = '';
+    strip.innerHTML = `⚠ Company documents: ${bits.join(' · ')} — <span style="text-decoration:underline">open register (Office › Company Docs)</span>`;
   } catch (e) { console.warn('Doc alerts unavailable:', e.message); }
 }
-
-// ── Modal (add / edit / renew) ───────────────────────────────────────────────
-function openDocModal(doc, opts = {}) {
-  _docEditing = opts.renew ? null : (doc || null);
-  _docRenewing = opts.renew ? doc : null;
-  document.getElementById('docModalTitle').textContent =
-    opts.renew ? `Renew — ${doc.title}` : doc ? 'Edit document' : 'Add document';
-  document.getElementById('docFTitle').value    = doc ? doc.title : '';
-  document.getElementById('docFCategory').value = doc ? doc.category : 'insurance';
-  document.getElementById('docFRef').value      = doc ? (doc.doc_ref || '') : '';
-  document.getElementById('docFIssuer').value   = doc ? (doc.issuer || '') : '';
-  document.getElementById('docFIssue').value    = (!opts.renew && doc) ? (doc.issue_date || '') : '';
-  document.getElementById('docFExpiry').value   = (!opts.renew && doc) ? (doc.expiry_date || '') : '';
-  document.getElementById('docFReminder').value = doc ? (doc.reminder_days ?? 60) : 60;
-  document.getElementById('docFNotes').value    = doc ? (doc.notes || '') : '';
-  document.getElementById('docFFile').value     = '';
-  document.getElementById('docFFileHint').textContent =
-    (_docEditing && _docEditing.file_name) ? `(current: ${_docEditing.file_name} — pick a file to replace)` : '';
-  document.getElementById('docFStatus').textContent = '';
-  document.getElementById('docModal').style.display = 'flex';
-}
-function closeDocModal() { document.getElementById('docModal').style.display = 'none'; _docEditing = null; _docRenewing = null; }
-
-function editDoc(id)  { const d = (_docRows || []).find(r => r.id === id); if (d) openDocModal(d); }
-function renewDoc(id) { const d = (_docRows || []).find(r => r.id === id); if (d) openDocModal(d, { renew: true }); }
-
-async function saveDocModal() {
-  const title = document.getElementById('docFTitle').value.trim();
-  if (!title) { document.getElementById('docFStatus').textContent = 'Title is required.'; return; }
-  const btn = document.getElementById('docFSaveBtn');
-  const status = document.getElementById('docFStatus');
-  btn.disabled = true; btn.textContent = 'Saving…';
-  const payload = {
-    category:      document.getElementById('docFCategory').value,
-    title,
-    doc_ref:       document.getElementById('docFRef').value.trim() || null,
-    issuer:        document.getElementById('docFIssuer').value.trim() || null,
-    issue_date:    document.getElementById('docFIssue').value || null,
-    expiry_date:   document.getElementById('docFExpiry').value || null,
-    reminder_days: parseInt(document.getElementById('docFReminder').value) || 60,
-    notes:         document.getElementById('docFNotes').value.trim() || null
-  };
-  try {
-    // 1) Upload file to SharePoint (if one was picked)
-    const file = document.getElementById('docFFile').files[0];
-    if (file) {
-      status.textContent = 'Uploading to SharePoint…';
-      const folder = await docTargetFolder(payload.category, payload.issue_date);
-      const up = await docUploadFile(folder.id, file.name, file);
-      payload.file_name = file.name;
-      payload.sharepoint_file_id = up.id;
-      payload.drive_id = BAMA_DRIVE_ID;
-      payload.web_url = up.webUrl || null;
-    }
-    // 2) Save register row
-    status.textContent = 'Saving register…';
-    if (_docEditing) {
-      await trFetch(`/api/company-documents/${_docEditing.id}`, { method: 'PUT', body: JSON.stringify(payload) });
-      showToast('Document updated', 'success');
-    } else {
-      const res = await trFetch('/api/company-documents', { method: 'POST', body: JSON.stringify(payload) });
-      // 3) Renew: archive the old version, linked to its replacement
-      if (_docRenewing) {
-        await trFetch(`/api/company-documents/${_docRenewing.id}`, {
-          method: 'PUT', body: JSON.stringify({ is_archived: 1, superseded_by: res.id })
-        });
-        showToast('Renewed — previous version archived', 'success');
-      } else {
-        showToast('Document added', 'success');
-      }
-    }
-    closeDocModal();
-    await loadCompanyDocs();
-  } catch (e) {
-    status.textContent = 'Failed: ' + e.message;
-    showToast('Save failed: ' + e.message, 'error');
-  } finally {
-    btn.disabled = false; btn.textContent = 'Save';
-  }
-}
-
-// ── Row actions ──────────────────────────────────────────────────────────────
-async function archiveDoc(id) {
-  const d = (_docRows || []).find(r => r.id === id); if (!d) return;
-  if (!await bamaConfirm(`Archive "${d.title}"? It keeps its file and can be restored from "Show archived".`, 'Archive Document')) return;
-  try { await trFetch(`/api/company-documents/${id}`, { method: 'PUT', body: JSON.stringify({ is_archived: 1 }) });
-        showToast('Archived', 'success'); await loadCompanyDocs(); }
-  catch (e) { showToast('Archive failed: ' + e.message, 'error'); }
-}
-async function unarchiveDoc(id) {
-  try { await trFetch(`/api/company-documents/${id}`, { method: 'PUT', body: JSON.stringify({ is_archived: 0 }) });
-        showToast('Restored', 'success'); await loadCompanyDocs(); }
-  catch (e) { showToast('Restore failed: ' + e.message, 'error'); }
-}
-async function deleteDoc(id) {
-  const d = (_docRows || []).find(r => r.id === id); if (!d) return;
-  if (!await bamaConfirm(`Delete "${d.title}" from the register? The SharePoint file stays put; the row is recoverable in SQL (soft delete, audited).`, 'Delete Document')) return;
-  try { await trFetch(`/api/company-documents/${id}`, { method: 'DELETE' });
-        showToast('Deleted', 'success'); await loadCompanyDocs(); }
-  catch (e) { showToast('Delete failed: ' + e.message, 'error'); }
-}
-
-// ── CSV export (robustness rule: every register has an export path) ─────────
-function exportDocsCsv() {
-  const rows = _docRows || [];
-  if (!rows.length) { showToast('Nothing to export', 'error'); return; }
-  const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const csv = ['Category,Title,Ref,Issuer,Issue date,Expiry date,Days left,Reminder days,Archived,File,Notes']
-    .concat(rows.map(d => {
-      const exp = docExpiryInfo(d);
-      return [DOC_CATS[d.category]?.label || d.category, d.title, d.doc_ref, d.issuer, d.issue_date, d.expiry_date,
-              d.expiry_date ? exp.days : '', d.reminder_days, d.is_archived ? 'yes' : '', d.file_name, d.notes].map(esc).join(',');
-    })).join('\n');
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-  a.download = `company-documents-${new Date().toISOString().slice(0,10)}.csv`;
-  a.click(); URL.revokeObjectURL(a.href);
-  showToast('CSV downloaded', 'success');
-}
-
-// Load the alert strip as soon as the dashboard becomes visible.
 (function hookDocAlerts() {
   const orig = window.showDashMain;
   if (typeof orig === 'function') {
     window.showDashMain = function () { orig.apply(this, arguments); loadDocAlerts(); };
-  } else {
-    setTimeout(loadDocAlerts, 1500);
-  }
+  } else { setTimeout(loadDocAlerts, 1500); }
 })();
 </script>
 </body>
