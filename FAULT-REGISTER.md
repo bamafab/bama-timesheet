@@ -159,7 +159,7 @@ enforced by the health check.
 
 ---
 
-## F10 · LOW — No regression harness on the pricing engine
+## F10 · LOW — No regression harness on the pricing engine ✅ FIXED B5 2026-07-29 (tests/golden-quotes.js — 10 fixtures, 478 pinned values, self-healing extraction from the live page; negative-tested; CLAUDE.md gate rule)
 
 `computeQuoteTotals` (and `computeAreaBreakdown`) have no golden tests; every
 refactor risks silent drift in quoted prices. **Proposed fix:** commit ~10

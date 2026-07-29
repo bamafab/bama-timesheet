@@ -6,6 +6,13 @@ management, and a standalone UK steel section reference.
 
 ## Rules for Claude Code
 
+- **Golden tests gate the pricing engine (Fault Register F10).** Run
+  `node tests/golden-quotes.js` before ANY push touching computeQuoteTotals,
+  computeAreaBreakdown, or their helper closure in quote-builder.html. Red =
+  quoted prices moved: fix the regression, or consciously re-baseline with
+  `--update` and justify it in the commit message. The harness extracts the
+  engine from the live page at runtime (self-healing helper resolution), so
+  it always tests what ships.
 - **Robustness definition of done (system-wide).** Anything shipped that
   produces findings, numbers or documents must include its export/copy path,
   its Help/troubleshooting note, and a way back (undo/revert or soft-delete)
