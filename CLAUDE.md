@@ -917,6 +917,42 @@ lesson as jsPDF's `getImageProperties`), mm→px at 96dpi. Page numbers are real
 `PAGE`/`NUMPAGES` fields per section footer. A DOCX failure never sinks the
 flow — the PDF is already saved; the user just gets a warning toast.
 
+## Company Document Library (D1 — ED "Docs" tab)
+
+Register of company-level documents (insurances, policies, accreditations,
+H&S) with first-class expiry reminders. Lives entirely on `dashboard.html`
+(new 📁 Docs tab) + `api/src/functions/company-documents.js` +
+`CompanyDocuments` table (`api/sql/create-company-documents.sql`).
+
+- **Storage split:** SQL holds metadata + reminder logic only. Files upload
+  from the browser straight to SharePoint via the user's delegated Graph
+  token — the API never touches Graph. Destination folders (00 - BAMA /
+  01 - Company Management): insurance → `01 - Insurances/<NN - year>` (year
+  of issue date, `spYearName` convention year−2022); policy →
+  `02 - Policies & Procedures`; accreditation →
+  `03 - Accreditations & Certifications`; hs → `04 - H&S`; other → Company
+  Management root. Dashboard is standalone (no shared.js) so it carries a
+  local `DOC_SP` ID subset + local Graph helpers — **SP_TAX in shared.js
+  remains the source of truth**; if taxonomy IDs ever change, update both.
+- **Expiry logic:** per-doc `reminder_days` (default 60). `GET
+  /api/company-documents/expiring` returns expired + inside-window docs and
+  powers the always-visible red strip under the ED tab bar plus a count
+  badge on the Docs tab (`loadDocAlerts()`, hooked onto `showDashMain`).
+  `expiry_date NULL` = never expires, never alerts.
+- **Renew flow:** creates a NEW row (fresh dates + file), then archives the
+  old row with `superseded_by` pointing at the replacement. Archive is
+  reversible ("Show archived" → ↩ restore). Delete is soft
+  (`is_deleted = 1`); the SharePoint file is always left in place.
+- **ChangeLog:** archive / unarchive / soft-delete are audited via
+  `logChange('company_document', …)` (F6 convention).
+- **Routes:** GET `company-documents` (`?all=true` incl. archived), GET
+  `company-documents/expiring`, POST, PUT `/{id}` (partial update), DELETE
+  `/{id}`. `expiring` is GET-only so it can't collide with the `{id}` PUT/
+  DELETE routes.
+- Export path: ⬇ CSV button on the tab (robustness rule). The `toast()` →
+  `showToast` alias for the Health tab lives at the top of the D1 script
+  block.
+
 ## Modal → Page mapping
 
 Every `id=…Modal` element in the HTML, by page. Handy when tracing an
@@ -936,6 +972,12 @@ the markup it mutates.
 **manager.html**
 - `requestAccessModal` — "I don't have permission — ask admin" form
 - `confirmModal` — generic confirm dialog
+
+**dashboard.html (ED)**
+- `docModal` — Company Document Library add / edit / renew (D1)
+- `lossModal` — mark quote as Lost with reason/competitor
+- `chaseModal` — AI-drafted chase-up email for a sent quote
+- `bamaConfirmModal` — generic confirm dialog (local copy)
 
 **office.html**
 - `requestAccessModal` — same as manager
