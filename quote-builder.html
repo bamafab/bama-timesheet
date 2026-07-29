@@ -6806,7 +6806,8 @@ async function saveAll() {
       cost_installation:  totals.installation ?? null,
       cost_fabrication:   totals.fabrication  ?? null,
       cost_design:        totals.design       ?? null,
-      cost_painting:      (totals.painting || 0) + (totals.galvanising || 0) || null,
+      cost_painting:      totals.painting     ?? null,
+      cost_galvanising:   totals.galvanising  ?? null,
       cost_survey:        totals.survey       ?? null,
       cost_delivery:      totals.delivery     ?? null,
       cost_prelims:       totals.prelims      ?? null,
@@ -18106,12 +18107,13 @@ function onCompanyInput(val) {
     const clientQuotes = quotes.filter(q => (q.company||'').toLowerCase() === c.company.toLowerCase());
     const won   = clientQuotes.filter(q => q.status === 'won');
     const total = won.reduce((s,q) => s + (q._computed?.total || 0), 0);
-    const winRate = clientQuotes.length > 0 ? Math.round(won.length/clientQuotes.length*100) : null;
+    const wr = qbWinRate(clientQuotes);   // F3: won ÷ decided, one definition everywhere
+    const winRate = wr.rate;
     const statsHtml = clientQuotes.length > 0
       ? `<div style="display:flex;gap:10px;margin-top:4px;font-size:10px">
           <span style="color:var(--muted)">${clientQuotes.length} quote${clientQuotes.length>1?'s':''}</span>
           ${won.length > 0 ? `<span style="color:var(--green)">${won.length} won</span>` : ''}
-          ${winRate !== null ? `<span style="color:var(--muted)">${winRate}% win rate</span>` : ''}
+          ${winRate !== null ? `<span style="color:var(--muted)" title="won ÷ decided (won + lost)">${winRate}% win rate (${wr.decided} decided)</span>` : ''}
           ${total > 0 ? `<span style="color:var(--accent)">£${total.toLocaleString('en-GB',{maximumFractionDigits:0})} won</span>` : ''}
         </div>` : '';
     return `<div onmousedown="fillClientFields('${escClientStr(c.company)}')"
@@ -18180,7 +18182,8 @@ function renderClientHistory(company) {
   const lost  = clientQuotes.filter(q => q.status==='lost');
   const sent  = clientQuotes.filter(q => q.status==='sent');
   const totalWon = won.reduce((s,q) => s+(q._computed?.total||0),0);
-  const winRate  = clientQuotes.length > 0 ? Math.round(won.length/clientQuotes.length*100) : 0;
+  const _wr = qbWinRate(clientQuotes);   // F3: won ÷ decided, one definition everywhere
+  const winRate  = _wr.rate ?? 0;
 
   const statBox = (val, label, col) =>
     `<div style="text-align:center;padding:10px 16px;background:var(--surface);border-radius:6px;border:1px solid var(--border)">
@@ -18305,6 +18308,21 @@ document.addEventListener('click', e => {
 // client quote, cost breakdown, and handover pack.
 // Produces identical three-section layout in every document.
 // ══════════════════════════════════════════════════════════════
+// WIN RATE — SINGLE DEFINITION (Fault Register F3).
+// Win rate = won ÷ decided (won + lost). Undecided quotes (draft/sent) are a
+// pipeline, not a loss — they don't belong in the denominator. Every screen
+// that shows a win rate MUST use this helper; secondary context ("n of m
+// decided") comes from the returned counts.
+function qbWinRate(quoteList) {
+  const won  = (quoteList || []).filter(q => q.status === 'won');
+  const lost = (quoteList || []).filter(q => q.status === 'lost');
+  const decided = won.length + lost.length;
+  return {
+    rate: decided > 0 ? Math.round(won.length / decided * 100) : null,
+    won: won.length, lost: lost.length, decided
+  };
+}
+
 // ESTIMATED LABOUR HOURS BY PROJECT-LINE CATEGORY (Fault Register F1).
 // Sent with mark-won so the project's line items carry the REAL hour
 // estimates, read by Project Tracker's "Hours Scheduled". Deterministic —
@@ -19800,8 +19818,7 @@ function renderPipeline() {
   const draft = qs.filter(q => q.status === 'draft');
   const sentVal = sent.reduce((s,q)  => s + (q._computed?.total || 0), 0);
   const wonVal  = won.reduce((s,q)   => s + (q._computed?.total || 0), 0);
-  const winRate = (won.length + lost.length) > 0
-    ? Math.round(won.length / (won.length + lost.length) * 100) : 0;
+  const winRate = qbWinRate([...won.map(()=>({status:'won'})), ...lost.map(()=>({status:'lost'}))]).rate ?? 0;   // F3 single definition
 
   document.getElementById('pipelineStats').innerHTML = [
     { label: 'In Progress',  val: draft.length + ' drafts',   sub: 'being built',                   color: 'var(--muted)' },

@@ -336,7 +336,7 @@ app.http('qb-quotes-update', {
                 'loss_reason', 'loss_competitor', 'loss_comment',
                 'total_ex_vat', 'total_kg', 'margin_pct',
                 'cost_material', 'cost_installation', 'cost_fabrication',
-                'cost_design', 'cost_painting', 'cost_survey', 'cost_delivery', 'cost_prelims',
+                'cost_design', 'cost_painting', 'cost_galvanising', 'cost_survey', 'cost_delivery', 'cost_prelims',
                 'sharepoint_folder_id', 'sharepoint_tender_folder_id',
                 'quote_data'
             ];
@@ -363,10 +363,25 @@ app.http('qb-quotes-update', {
                 } catch (e) { /* non-fatal */ }
             }
 
-            const result = await query(
-                `UPDATE QuoteBuilderQuotes SET ${fields.join(', ')} OUTPUT INSERTED.* WHERE id = @id`,
-                params
-            );
+            let result;
+            try {
+                result = await query(
+                    `UPDATE QuoteBuilderQuotes SET ${fields.join(', ')} OUTPUT INSERTED.* WHERE id = @id`,
+                    params
+                );
+            } catch (e) {
+                // Pre-migration resilience (F5): the frontend may deploy before
+                // the cost_galvanising ALTER TABLE runs — never fail the whole
+                // save over the new column; retry without it once.
+                if (/cost_galvanising/i.test(e.message) && fields.some(f => f.startsWith('cost_galvanising'))) {
+                    context.warn('cost_galvanising missing — retrying save without it (run the migration + restart)');
+                    const f2 = fields.filter(f => !f.startsWith('cost_galvanising'));
+                    result = await query(
+                        `UPDATE QuoteBuilderQuotes SET ${f2.join(', ')} OUTPUT INSERTED.* WHERE id = @id`,
+                        params
+                    );
+                } else throw e;
+            }
             if (!result.recordset.length) return notFound(request);
             if (oldStatus && oldStatus.status !== body.status) {
                 await logChange('qb_quote', id, oldStatus.reference, 'status_change',
@@ -506,9 +521,11 @@ app.http('qb-quotes-mark-won', {
             ];
 
             // Map each line category to the QB cost column it should carry.
-            // QB writes these on every save (computeQuoteTotals). 'painting'
-            // already includes galvanising in QB, so galvanising stays 0 to
-            // avoid double-counting. approval_fab_pack carries cost_design.
+            // QB writes these on every save (computeQuoteTotals). Painting and
+            // galvanising are saved SEPARATELY since B4 (F5 split); quotes not
+            // yet re-saved carry the combined figure in cost_painting and NULL
+            // galvanising — arithmetic is unchanged either way.
+            // approval_fab_pack carries cost_design.
             const CATEGORY_COST = {
                 prelims:          'cost_prelims',
                 approval_fab_pack:'cost_design',
@@ -516,7 +533,7 @@ app.http('qb-quotes-mark-won', {
                 material:         'cost_material',
                 fabrication:      'cost_fabrication',
                 painting:         'cost_painting',
-                galvanising:      null,
+                galvanising:      'cost_galvanising',   // F5 split (was folded into painting)
                 installation:    'cost_installation',
                 delivery:         'cost_delivery'
             };

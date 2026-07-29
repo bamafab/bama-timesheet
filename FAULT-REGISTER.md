@@ -57,7 +57,7 @@ blob and column disagree on any mirrored field.
 
 ---
 
-## F3 · HIGH — "Win rate" means three different things on different screens
+## F3 · HIGH — "Win rate" means three different things on different screens ✅ FIXED B4 2026-07-29 (qbWinRate() helper — won ÷ decided — used by client card, pipeline stats and analytics; ED already used the same definition)
 
 **Symptom:** the win rate on the QB client card, the QB pipeline stats, the QB
 analytics view and the ED overview do not agree — "fake numbers" by
@@ -93,7 +93,7 @@ explicitly; health check surfaces number-holding ghost rows.
 
 ---
 
-## F5 · MEDIUM — "Galvanising £0" on every seeded project line
+## F5 · MEDIUM — "Galvanising £0" on every seeded project line ✅ FIXED B4 2026-07-29 (cost_galvanising column; QB saves the two separately; mark-won maps the real figure; older quotes split automatically on next open+save)
 
 **Symptom:** project line items always show Galvanising at £0 and Painting
 inflated, which reads as missing data.
