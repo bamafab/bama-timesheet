@@ -6749,6 +6749,30 @@ function hasLocalBackup(id) {
 // in-flight save will re-run when it finishes — no silent dropped saves.
 let _sqlSaving  = false;
 let _savePending = false;
+
+// ── Contested-column dirty tracking (Fault Register F2/F9) ──────────────────
+// These quote fields are also written by OTHER surfaces (ED Overview inline
+// edits, the log-chase endpoint, mark-won). If QB re-sends them on every save
+// from a stale in-memory copy, it silently clobbers those external edits.
+// Fix: snapshot their values when the quote is loaded/saved, and only include
+// a contested field in the PUT payload when THIS session actually changed it.
+// (The PUT handler only updates keys present in the body.)
+const _qbColSnapshots = {};
+const QB_CONTESTED = [
+  ['revision','revision'], ['status','status'], ['date','date_created'],
+  ['dateSent','date_sent'], ['decisionDue','decision_due'],
+  ['chasingDate','chasing_date'], ['validUntil','valid_until'],
+  ['company','company'], ['contact','contact'], ['email','email'],
+  ['phone','phone'], ['siteAddress','site_address'], ['preparedBy','prepared_by'],
+  ['lossReason','loss_reason'], ['lossCompetitor','loss_competitor'],
+  ['lossComment','loss_comment']
+];
+function _qbSnapshotCols(q) {
+  if (!q || q.id == null) return;
+  const snap = {};
+  QB_CONTESTED.forEach(([f]) => { snap[f] = q[f] ?? ''; });
+  _qbColSnapshots[q.id] = snap;
+}
 async function saveAll() {
   const q = getQuote();
   if (!q) return;
@@ -6790,7 +6814,17 @@ async function saveAll() {
       sharepoint_tender_folder_id: q.sharepointTenderFolderId || null,
       quote_data: JSON.stringify(q)
     };
+    // Contested-column filter (F2/F9): drop fields this session didn't change,
+    // so a stale QB copy can never overwrite an ED/chase-flow edit. No snapshot
+    // (fresh create / legacy session) => send everything, then snapshot.
+    const snap = _qbColSnapshots[q.id];
+    if (snap) {
+      QB_CONTESTED.forEach(([f, col]) => {
+        if ((q[f] ?? '') === snap[f] && (col in payload)) delete payload[col];
+      });
+    }
     const updated = await qbFetch('PUT', `/api/qb-quotes/${q.id}`, payload);
+    _qbSnapshotCols(q);   // saved state is the new baseline
     // Sync updated_at back
     const local = quotes.find(x => x.id == q.id);
     if (local) { local.updated_at = updated.updated_at; local.total_ex_vat = updated.total_ex_vat; }
@@ -7522,6 +7556,17 @@ async function selectQuote(id) {
         date:         blob.date || row.date_created,
         dateSent:     row.date_sent   || blob.dateSent || '',
         decisionDue:  row.decision_due || blob.decisionDue || '',
+        // Column-owned fields (Fault Register F2/F9): these are edited by
+        // ED Overview inline edits and the log-chase endpoint, which write
+        // SQL columns only — the column is the source of truth, the blob may
+        // be stale. chased_at / chase_count exist ONLY as columns.
+        chasingDate:  row.chasing_date || '',
+        chasedAt:     row.chased_at    || null,
+        chaseCount:   row.chase_count  || 0,
+        preparedBy:   row.prepared_by  || blob.preparedBy || '',
+        lossReason:   row.loss_reason     ?? blob.lossReason     ?? '',
+        lossCompetitor: row.loss_competitor ?? blob.lossCompetitor ?? '',
+        lossComment:  row.loss_comment    ?? blob.lossComment    ?? '',
         sharepointFolderId:       row.sharepoint_folder_id        || null,
         sharepointTenderFolderId: row.sharepoint_tender_folder_id || null,
         project_id:   row.project_id  || null,
@@ -7531,6 +7576,7 @@ async function selectQuote(id) {
       if (!Array.isArray(existing.takeoff))  existing.takeoff  = [];
       if (!Array.isArray(existing.areas))    existing.areas    = [];
       if (!Array.isArray(existing.subareas)) existing.subareas = [];
+      _qbSnapshotCols(existing);   // baseline for contested-column dirty tracking (F2/F9)
     } catch(e) {
       toast('Could not load quote data: ' + e.message, 'error');
       return;

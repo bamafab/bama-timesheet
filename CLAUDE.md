@@ -10,6 +10,18 @@ management, and a standalone UK steel section reference.
   produces findings, numbers or documents must include its export/copy path,
   its Help/troubleshooting note, and a way back (undo/revert or soft-delete)
   in the SAME commit — not as a follow-up. Established Phase B, 2026-07-29.
+- **QB quote field ownership (Fault Register F2/F9).** QuoteBuilderQuotes
+  fields fall into three classes. (1) *QB-owned*: quote_data blob, cost_*,
+  total_ex_vat/total_kg/margin_pct, sharepoint ids — always sent by saveAll.
+  (2) *Contested* (also written by ED Overview inline edits, the loss modal,
+  and /log-chase): revision, status, date_created, date_sent, decision_due,
+  chasing_date, valid_until, company, contact, email, phone, site_address,
+  prepared_by, loss_*. QB only sends a contested field when the session
+  actually changed it (QB_CONTESTED + _qbColSnapshots dirty filter in
+  quote-builder.html), and selectQuote takes column values over the blob on
+  load. (3) *Column-only*: chased_at, chase_count — never in the blob,
+  passthrough read-only. Any NEW endpoint that writes a QB column must add the
+  field to QB_CONTESTED and the selectQuote merge, or QB will clobber it.
 - **QuoteLineItems.labour_hours owns estimated hours** (Fault Register F1).
   `quantity` means qty×price for contract value ONLY — never store hours in
   it. mark-won transfers QB's hour estimates (fabrication = fabHours;

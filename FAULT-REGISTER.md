@@ -36,7 +36,7 @@ untouched. Schema change → migration SQL pasted in chat + Function App restart
 
 ---
 
-## F2 · HIGH — Stale-blob clobber: column edits silently reverted by QB saves
+## F2 · HIGH — Stale-blob clobber: column edits silently reverted by QB saves ✅ FIXED B2 2026-07-29 (contested-column dirty filter + column-wins load merge; ownership table in CLAUDE.md)
 
 **Symptom:** a chase date rolled forward by the "log chase" flow (or any field
 edited by a column-only endpoint) reverts to its old value after the quote is
@@ -148,7 +148,7 @@ system-wide.
 
 ---
 
-## F9 · LOW — Blob/column mirror audit (remainder of the F2 family)
+## F9 · LOW — Blob/column mirror audit (remainder of the F2 family) ✅ FIXED B2 2026-07-29 (ownership table documented in CLAUDE.md; enforced by dirty filter + health check C1)
 
 `saveAll()` mirrors ~20 fields from the blob into columns on every save.
 The date bug and F2 are two instances of the same class. Remaining fields to
