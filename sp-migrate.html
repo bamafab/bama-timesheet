@@ -38,6 +38,20 @@
     <div id="migInvList" style="margin-top:10px"></div>
   </div>
 
+  <!-- BORROW A TREE (optional) -->
+  <div class="mig-card">
+    <div class="mig-step"><span class="mig-num">★</span> Borrow a tree — copy another site's structure (e.g. BAMA Southwest)</div>
+    <div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">Read-only. Searches SharePoint sites you can access, scans the chosen library's folder tree, and loads it into the box below as the starting template — edit it there before creating.</div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <input id="bwSearch" class="mig-input" placeholder="site name, e.g. southwest" style="width:200px">
+      <button class="btn btn-ghost btn-sm" onclick="bwFindSites()">🔍 Find sites</button>
+      <select id="bwSite" class="mig-input" style="min-width:220px;display:none" onchange="bwListDrives()"></select>
+      <select id="bwDrive" class="mig-input" style="min-width:180px;display:none"></select>
+      <button class="btn btn-primary btn-sm" id="bwScanBtn" onclick="bwScan()" style="display:none">📖 Scan tree</button>
+    </div>
+    <div id="bwResult" style="margin-top:10px"></div>
+  </div>
+
   <!-- STEP 2: CANONICAL TREE -->
   <div class="mig-card">
     <div class="mig-step"><span class="mig-num">2</span> Canonical tree — edit to taste, then create</div>
@@ -46,16 +60,36 @@
       <input id="migParent" class="mig-input" value="BAMA" style="width:220px;margin-left:6px" placeholder="blank = drive root">
       <span style="color:var(--subtle)">— greenfield pattern: whole tree lives under this, old SharePoint untouched</span>
     </label>
-    <textarea id="migTree" class="mig-input" rows="14" style="width:100%;font-family:var(--font-mono);font-size:12px">01 Company
+    <textarea id="migTree" class="mig-input" rows="26" style="width:100%;font-family:var(--font-mono);font-size:12px">01 Company Management
   10 Insurances
-  20 Policies
-  30 Certifications
-  40 RAMS Library
-  50 QMS
-02 Employees
-03 Suppliers
-04 Sales
-05 Projects</textarea>
+    2026
+  20 Policies & Procedures
+  30 Accreditations & Certifications
+  40 H&S
+    10 Audits & Inspections
+    20 Toolbox Talks
+    30 COSHH
+    40 Accident & Incident Reports
+02 Quality (QMS)
+  10 Quality Manual & Procedures
+  20 Forms & Check Sheets (masters)
+  30 Weld Procedures (WPS-PQR)
+  40 Welder Qualifications
+  50 Calibration Records
+  60 RAMS Library (generic)
+03 Employees
+04 Suppliers & Subcontractors
+05 Sales & Estimating
+  2026
+06 Projects
+  2026
+07 Accounts
+  10 Sales Invoices
+    2026
+  20 Purchase Invoices
+    2026
+  30 Statements & Remittances
+    2026</textarea>
     <div style="margin-top:8px">
       <button class="btn btn-primary btn-sm" onclick="migCreateTree()">📁 Create tree (idempotent)</button>
       <span id="migTreeStatus" style="font-size:11.5px;color:var(--muted);margin-left:8px"></span>
@@ -104,6 +138,65 @@ async function g(path, opts = {}) {
 }
 const log = m => { const el = document.getElementById('migLog'); el.textContent += '\n' + m; el.scrollTop = el.scrollHeight; };
 
+// ── Borrow a tree: scan another site's library (read-only) ──────────────────
+async function bwFindSites() {
+  const q = document.getElementById('bwSearch').value.trim();
+  if (!q) { toast('Type part of the site name', 'error'); return; }
+  try {
+    const res = await g(`/sites?search=${encodeURIComponent(q)}`);
+    const sites = (await res.json()).value || [];
+    const sel = document.getElementById('bwSite');
+    if (!sites.length) { toast('No sites found you can access with that name', 'error'); return; }
+    sel.innerHTML = sites.map(s => `<option value="${s.id}">${escapeHtml(s.displayName || s.name)}</option>`).join('');
+    sel.style.display = '';
+    bwListDrives();
+  } catch (e) { toast('Site search failed: ' + e.message, 'error'); }
+}
+
+async function bwListDrives() {
+  const siteId = document.getElementById('bwSite').value;
+  try {
+    const res = await g(`/sites/${siteId}/drives`);
+    const drives = (await res.json()).value || [];
+    const sel = document.getElementById('bwDrive');
+    sel.innerHTML = drives.map(d => `<option value="${d.id}">${escapeHtml(d.name)}</option>`).join('');
+    sel.style.display = '';
+    document.getElementById('bwScanBtn').style.display = '';
+  } catch (e) { toast('Drive list failed: ' + e.message, 'error'); }
+}
+
+async function bwScan() {
+  const driveId = document.getElementById('bwDrive').value;
+  const out = document.getElementById('bwResult');
+  out.innerHTML = '<div style="padding:12px;color:var(--muted);font-size:12px">Scanning (3 levels, folders only)…</div>';
+  const lines = [];
+  async function walk(itemPath, depth) {
+    if (depth > 2) return;
+    let url = `/drives/${driveId}${itemPath}/children?$top=200&$select=id,name,folder`;
+    let items = [];
+    while (url) {
+      const res = await g(url.replace(G, ''));
+      const j = await res.json();
+      items = items.concat(j.value || []);
+      url = j['@odata.nextLink'] ? j['@odata.nextLink'].replace(G, '') : null;
+    }
+    for (const it of items.filter(i => i.folder).sort((a, b) => a.name.localeCompare(b.name))) {
+      lines.push('  '.repeat(depth) + it.name);
+      await walk(`/items/${it.id}`, depth + 1);
+    }
+  }
+  try {
+    await walk('/root', 0);
+    if (!lines.length) { out.innerHTML = '<div style="padding:12px;color:var(--muted);font-size:12px">No folders found in that library.</div>'; return; }
+    out.innerHTML = `<pre class="mig-log" style="max-height:300px">${escapeHtml(lines.join('\n'))}</pre>
+      <div style="margin-top:8px;display:flex;gap:8px">
+        <button class="btn btn-primary btn-sm" onclick="document.getElementById('migTree').value=document.getElementById('bwRaw').value;toast('Loaded into the tree box — edit before creating','success')">→ Use as template</button>
+        <button class="btn btn-ghost btn-sm" onclick="navigator.clipboard.writeText(document.getElementById('bwRaw').value);toast('Copied','success')">📋 Copy</button>
+      </div>
+      <textarea id="bwRaw" style="display:none">${escapeHtml(lines.join('\n'))}</textarea>`;
+  } catch (e) { out.innerHTML = `<div style="padding:12px;color:var(--red);font-size:12px">Scan failed: ${escapeHtml(e.message)}</div>`; }
+}
+
 // ── Step 1: inventory ────────────────────────────────────────────────────────
 async function migInventory() {
   const st = document.getElementById('migInvStatus'); st.textContent = 'Scanning…';
@@ -127,13 +220,18 @@ async function migInventory() {
 
 // ── Step 2: canonical tree ───────────────────────────────────────────────────
 function migParseTree() {
+  // Arbitrary depth via 2-space indentation. Returns [{name, children:[...recursive]}].
   const lines = document.getElementById('migTree').value.split('\n').filter(l => l.trim());
-  const tree = [];   // [{name, children: [name]}]
+  const root = { children: [] };
+  const stack = [{ node: root, depth: -1 }];
   for (const l of lines) {
-    if (/^\s/.test(l)) { if (tree.length) tree[tree.length - 1].children.push(l.trim()); }
-    else tree.push({ name: l.trim(), children: [] });
+    const depth = Math.floor((l.match(/^ */)[0].length) / 2);
+    const node = { name: l.trim(), children: [] };
+    while (stack.length && stack[stack.length - 1].depth >= depth) stack.pop();
+    (stack[stack.length - 1]?.node || root).children.push(node);
+    stack.push({ node, depth });
   }
-  return tree;
+  return root.children;
 }
 
 async function migEnsureFolder(parentId, name) {
@@ -158,16 +256,17 @@ async function migCreateTree() {
       log(`✓ ${wrapper}  [${rootId}]`);
     }
     _canon = {};
-    for (const node of migParseTree()) {
-      const id = await migEnsureFolder(rootId, node.name);
-      _canon[node.name] = { id, children: {} };
-      log(`✓ ${node.name}  [${id}]`);
-      for (const child of node.children) {
-        const cid = await migEnsureFolder(id, child);
-        _canon[node.name].children[child] = cid;
-        log(`  ✓ ${node.name} / ${child}  [${cid}]`);
+    async function createRec(parentId, node, path, depth) {
+      const id = await migEnsureFolder(parentId, node.name);
+      log(`${'  '.repeat(depth)}✓ ${path}${node.name}  [${id}]`);
+      if (depth === 0) _canon[node.name] = { id, children: {} };
+      else if (depth === 1) {
+        const top = path.split(' / ')[0];
+        if (_canon[top]) _canon[top].children[node.name] = id;
       }
+      for (const child of node.children) await createRec(id, child, path + node.name + ' / ', depth + 1);
     }
+    for (const node of migParseTree()) await createRec(rootId, node, '', 0);
     st.textContent = 'Tree ready.';
     log('\n── Folder IDs above are what the ERP gets repointed to (05 Projects especially) — copy the log or leave this tab open. ──');
     migRenderMapping();
