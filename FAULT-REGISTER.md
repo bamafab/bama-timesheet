@@ -102,9 +102,10 @@ inflated, which reads as missing data.
 galvanising, so mark-won maps galvanising to null to avoid double-counting.
 Correct arithmetic, misleading presentation.
 
-**Proposed fix:** either split the two costs in QB's saved columns (clean) or
-label the seeded line "Galvanising (included in Painting)" (cheap). Decision
-needed.
+**Decision (Mateusz, 2026-07-29): SPLIT.** QB will save `cost_galvanising`
+separately (new column), saveAll sends painting and galvanising individually,
+and mark-won maps galvanising -> cost_galvanising. Lands in Phase B4 with a
+migration.
 
 ---
 
@@ -168,7 +169,10 @@ referenced in CLAUDE.md.
 
 ---
 
-## Deliverable of Phase B0 — the Health Check report
+## Deliverable of Phase B0 — the Health Check report ✅ SHIPPED 2026-07-29
+
+`GET /api/health-check?year=YYYY` (api/src/functions/health-check.js) +
+🩺 Health tab in dashboard.html. Checks C1–C10 below map to the fault entries.
 
 A read-only API endpoint + Reports Hub page that scans live data for: blob vs
 column disagreements per quote (F2/F9); refs held by deleted/NULL-status/ghost
