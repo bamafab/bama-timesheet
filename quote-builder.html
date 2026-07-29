@@ -9,6 +9,7 @@
 <title>BAMA Quote Builder</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.8.0/mammoth.browser.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -7098,7 +7099,11 @@ function setStatus(val) {
 // already set (user may have chosen a tighter chase). Fully editable in QB.
 function autoSetChasingDate(q) {
   if (!q || q.chasingDate) return;
-  const d = new Date(); d.setMonth(d.getMonth() + 1);
+  // Base the chase on the recorded send date (equals today when the quote is
+  // being sent right now — dateSent is set moments before this runs).
+  const d = q.dateSent ? new Date(String(q.dateSent).split('T')[0] + 'T12:00:00') : new Date();
+  if (isNaN(d.getTime())) return;
+  d.setMonth(d.getMonth() + 1);
   q.chasingDate = d.toISOString().slice(0,10);
   const el = document.getElementById('hChasingDate');
   if (el) el.value = q.chasingDate;
@@ -7612,6 +7617,17 @@ function loadQuoteEditor() {
   const toDateInput = v => v ? String(v).split('T')[0] : '';
   document.getElementById('hRef').value        = q.ref;
   document.getElementById('hRevision').value   = q.revision;
+  // Default missing dates: quote date -> today, valid until -> date + 14 days.
+  // Covers quotes created outside newQuote() (tender imports, legacy rows) so
+  // the user never has to fill these in by hand before sending. Both editable.
+  let _datesDefaulted = false;
+  if (!q.date) { q.date = new Date().toISOString().slice(0,10); _datesDefaulted = true; }
+  if (!q.validUntil) {
+    const base = new Date(toDateInput(q.date) + 'T12:00:00');
+    q.validUntil = new Date(base.getTime() + 14*86400000).toISOString().slice(0,10);
+    _datesDefaulted = true;
+  }
+  if (_datesDefaulted) setTimeout(() => saveAll(), 0);
   document.getElementById('hDate').value       = toDateInput(q.date);
   document.getElementById('hValidUntil').value = toDateInput(q.validUntil);
   const dsEl = document.getElementById('hDateSent'); if (dsEl) dsEl.value = toDateInput(q.dateSent);
@@ -19050,71 +19066,495 @@ function openPdfWindow(html) {
 // the covering message and attaches the quote PDF (rendered by
 // renderQuotePdfToBase64) when sent — see sendQuoteEmail(). No shared.js dependency.
 
-// Render the client-facing quote to a base64 PDF string using html2pdf.js.
-// Reuses generateQuotePDF('quote', true) so the attached PDF is byte-for-byte
-// the same document as the Print/Save PDF window — single source of truth.
-async function renderQuotePdfToBase64(q) {
-  const fullHtml = generateQuotePDF('quote', true);
-  if (!fullHtml) throw new Error('Could not build quote document');
-
-  // Extract stylesheet + body so we can render the styled content in a real,
-  // painted in-document container. html2canvas needs the element actually laid
-  // out and visible (not opacity:0 / display:none / off-screen with mm widths,
-  // all of which produced a blank capture). A4 at 96dpi ≈ 794px wide.
-  const styleMatch = fullHtml.match(/<style[^>]*>([\s\S]*?)<\/style>/i);
-  const styleCss   = styleMatch ? styleMatch[1] : '';
-  const bodyMatch  = fullHtml.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-  let bodyContent  = bodyMatch ? bodyMatch[1] : fullHtml;
-  bodyContent = bodyContent.replace(/<div class="no-print"[\s\S]*?<\/button>\s*<\/div>\s*/i, '');
-
-  const PAGE_W = 794;
-  // Wrapper sits behind the page (low z-index) and far down, but is fully
-  // painted (no opacity:0), which is what html2canvas requires.
-  const wrap = document.createElement('div');
-  wrap.style.cssText = `position:absolute;left:0;top:0;width:${PAGE_W}px;z-index:-9999;background:#fff`;
-  wrap.innerHTML = `<style>${styleCss} .page{max-width:none !important;margin:0 !important;width:${PAGE_W}px !important;box-sizing:border-box;}</style>${bodyContent}`;
-  document.body.appendChild(wrap);
-
-  const pageEl = wrap.querySelector('.page') || wrap;
-
-  // Wait for images (logo) inside the wrapper to load before capture
-  await new Promise(resolve => {
-    const imgs = Array.from(wrap.querySelectorAll('img'));
-    let pending = imgs.filter(im => !im.complete).length;
-    if (pending === 0) { setTimeout(resolve, 80); return; }
-    const done = () => { if (--pending <= 0) resolve(); };
-    imgs.forEach(im => { if (!im.complete) { im.onload = done; im.onerror = done; } });
-    setTimeout(resolve, 2500); // safety timeout
+// ── Native jsPDF client quote renderer ─────────────────────────────────────
+// Replaces the old html2pdf/html2canvas capture (which produced blank pages —
+// see CLAUDE.md PDF rule). Draws the client-facing quotation natively with
+// doc.text/doc.rect/doc.addImage, mirroring drawBamaInvoicePDF/drawBabcockQuotePDF.
+// Sections: letterhead, meta, client blocks, scope, line items, totals,
+// steel section schedule (area-grouped), per-area price table, T&Cs.
+async function qbResolveJsPDF() {
+  const pick = () => (window.jspdf && typeof window.jspdf.jsPDF === 'function') ? window.jspdf.jsPDF
+                   : (typeof window.jsPDF === 'function' ? window.jsPDF : null);
+  let ctor = pick();
+  if (ctor) return ctor;
+  await new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('jsPDF failed to load'));
+    document.head.appendChild(s);
   });
+  ctor = pick();
+  if (!ctor) throw new Error('jsPDF unavailable after load');
+  return ctor;
+}
 
+function drawClientQuotePDF(JsPDFCtor, q, logoDataUri) {
+  const doc = new JsPDFCtor({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  const revStr = q.revision ? ' ' + q.revision : '';
   try {
-    const blob = await html2pdf().set({
-      margin: [12, 14, 12, 14],
-      filename: `${q.ref||'Quote'} - ${q.company||'Client'}.pdf`,
-      image: { type: 'jpeg', quality: 0.95 },
-      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', windowWidth: PAGE_W },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-      pagebreak: { mode: ['css', 'legacy'] }
-    }).from(pageEl).outputPdf('blob');
+    doc.setProperties({
+      title: `Quotation ${q.ref || ''}${revStr}`.trim(),
+      subject: `Quotation for ${q.company || 'client'}`,
+      author: 'BAMA Fabrication', creator: 'BAMA Fabrication ERP'
+    });
+  } catch (e) { /* */ }
 
-    // Diagnostic: a healthy A4 quote PDF is tens of KB. A few KB means a blank
-    // capture — log the measured layout so we can see what html2canvas saw.
-    console.log('[QB PDF] rendered blob size:', blob.size, 'bytes; .page rect:',
-      pageEl.getBoundingClientRect());
-    if (blob.size < 8000) {
-      console.warn('[QB PDF] PDF looks blank (size < 8KB). pageEl scrollHeight:',
-        pageEl.scrollHeight, 'offsetHeight:', pageEl.offsetHeight);
+  const pageW = 210, pageH = 297, mL = 14, mR = 14, mT = 14, mB = 18;
+  const usableW = pageW - mL - mR;
+  const RED  = [208, 2, 27],  NAVY = [26, 26, 46], TEXT = [34, 34, 34];
+  const MUTED = [100, 100, 100], SUBTLE = [150, 150, 150];
+  const RULE = [213, 216, 222], BANDBG = [243, 244, 246], AREABG = [238, 240, 243];
+  let y = mT;
+  const setT = c => doc.setTextColor(c[0], c[1], c[2]);
+  const setF = c => doc.setFillColor(c[0], c[1], c[2]);
+  const setD = c => doc.setDrawColor(c[0], c[1], c[2]);
+  const money = v => '\u00A3' + Math.round(Number(v) || 0).toLocaleString('en-GB');
+  const ensure = h => { if (y + h > pageH - mB) { doc.addPage(); y = mT; return true; } return false; };
+
+  const computed = q._computed || (function () {
+    try { return computeQuoteTotals(q, rates); } catch (e) { return {}; }
+  })();
+
+  // ── Letterhead ─────────────────────────────────────────────
+  let logoBottom = y;
+  if (logoDataUri) {
+    try {
+      const props = doc.getImageProperties(logoDataUri);   // mandatory: real ratio
+      let h = 18, w = h * props.width / props.height;
+      if (w > 68) { w = 68; h = w * props.height / props.width; }
+      doc.addImage(logoDataUri, props.fileType || 'PNG', mL, y, w, h, undefined, 'FAST');
+      logoBottom = y + h;
+    } catch (e) { logoDataUri = ''; }
+  }
+  if (!logoDataUri) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(20); setT(RED);
+    doc.text('BAMA', mL, y + 9);
+    logoBottom = y + 11;
+  }
+  setT(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
+  let ay = logoBottom + 4;
+  ['11 Enterprise Way, Enterprise Park', 'Yaxley, PE7 3WY, Peterborough',
+   '01733 855212 \u00B7 info@bamafabrication.co.uk'].forEach(l => { doc.text(l, mL, ay); ay += 3.6; });
+
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(26); setT([43, 43, 43]);
+  doc.text('Quotation', pageW - mR, y + 10, { align: 'right' });
+  let my = y + 18;
+  doc.setFontSize(9);
+  [['Date', fmtDateLong(q.date)],
+   ['Quotation #', `${q.ref || ''}${revStr}`],
+   ['Prepared by', q.preparedBy || '\u2014'],
+   ['Valid until', fmtDateLong(q.validUntil) || '14 days from date of issue']
+  ].forEach(([label, val]) => {
+    setT(TEXT); doc.setFont('helvetica', 'bold');
+    doc.text(label + ':', pageW - mR - 52, my, { align: 'right' });
+    doc.setFont('helvetica', 'normal');
+    doc.text(String(val || '\u2014'), pageW - mR - 49, my);
+    my += 4.6;
+  });
+  y = Math.max(ay, my) + 5;
+
+  setD(RULE); doc.setLineWidth(0.4); doc.line(mL, y, pageW - mR, y); y += 6;
+
+  // ── Client info blocks ─────────────────────────────────────
+  const colW = (usableW - 6) / 2;
+  const block = (x, label, lines) => {
+    setT(SUBTLE); doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5);
+    doc.text(label.toUpperCase(), x, y);
+    let by = y + 4.5;
+    lines.forEach(([txt, bold, colour]) => {
+      if (!txt) return;
+      setT(colour || TEXT); doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(9.5);
+      doc.splitTextToSize(String(txt), colW).forEach(l => { doc.text(l, x, by); by += 4.2; });
+    });
+    return by;
+  };
+  const leftLines = [];
+  if (q.contact) leftLines.push([q.contact]);
+  leftLines.push([q.company || '\u2014', true]);
+  if (q.email) leftLines.push([q.email, false, MUTED]);
+  if (q.phone) leftLines.push([q.phone, false, MUTED]);
+  const b1 = block(mL, 'Quotation for', leftLines);
+  const addrLines = q.clientAddress
+    ? String(q.clientAddress).split('\n').filter(Boolean).map(l => [l])
+    : [[q.company || '\u2014', false, MUTED]];
+  const b2 = block(mL + colW + 6, 'Client address', addrLines);
+  y = Math.max(b1, b2) + 4;
+
+  // ── Scope / comments ───────────────────────────────────────
+  const scope = (q.qScope || q.comments || '').trim();
+  if (scope) {
+    const wrapped = doc.splitTextToSize(scope, usableW - 8);
+    const blockH = wrapped.length * 4 + 10;
+    ensure(Math.min(blockH, 60));
+    setT(SUBTLE); doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5);
+    doc.text('COMMENTS OR SPECIAL INSTRUCTIONS', mL, y); y += 4.5;
+    setT(TEXT); doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+    wrapped.forEach(l => { if (ensure(5)) { /* continue on new page */ } doc.text(l, mL, y); y += 4; });
+    y += 4;
+  }
+
+  // ── Line items ─────────────────────────────────────────────
+  const cQty = 18, cUnit = 28, cAmt = 28, cDesc = usableW - cQty - cUnit - cAmt;
+  const lineHead = () => {
+    setF(NAVY); doc.rect(mL, y, usableW, 7, 'F');
+    setT([255, 255, 255]); doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
+    doc.text('QTY', mL + 3, y + 4.7);
+    doc.text('DESCRIPTION', mL + cQty + 2, y + 4.7);
+    doc.text('UNIT PRICE', mL + cQty + cDesc + cUnit - 2, y + 4.7, { align: 'right' });
+    doc.text('AMOUNT', mL + usableW - 2, y + 4.7, { align: 'right' });
+    y += 7;
+  };
+  ensure(30); lineHead();
+
+  let lines = [], grandTotal = 0;
+  if (q.type === 'bama') {
+    buildClientLines(q).forEach(l => {
+      const amt = Math.round(l.value * 100) / 100;
+      grandTotal += amt;
+      lines.push({ qty: '1', desc: l.desc, unit: l.value, amt });
+    });
+    if (computed.total && Math.abs(computed.total - grandTotal) > 2) grandTotal = computed.total;
+  } else if (q.type === 'custom') {
+    (q.customLines || []).forEach(l => {
+      const price = parseFloat(l.price) || 0, qty = parseFloat(l.qty) || 1;
+      const amt = Math.round(qty * price * 100) / 100;
+      grandTotal += amt;
+      lines.push({ qty: String(qty), desc: l.desc + (l.unit ? ' (' + l.unit + ')' : ''), unit: price, amt });
+    });
+  } else {
+    grandTotal = computed.total || 0;
+    const lumpDesc = (q.boqLumpDesc != null && q.boqLumpDesc !== '') ? q.boqLumpDesc : `As per ${q.boqRef || 'Client BoQ'}`;
+    lines.push({ qty: '1', desc: lumpDesc, unit: grandTotal, amt: grandTotal });
+  }
+
+  setD(RULE); doc.setLineWidth(0.2);
+  lines.forEach(l => {
+    const descW = doc.splitTextToSize(String(l.desc || ''), cDesc - 4);
+    const rowH = Math.max(7, descW.length * 4 + 3.2);
+    if (ensure(rowH + 2)) lineHead();
+    setT(TEXT); doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+    doc.text(l.qty, mL + 3, y + 4.6);
+    descW.forEach((dl, i) => doc.text(dl, mL + cQty + 2, y + 4.6 + i * 4));
+    doc.text(money(l.unit), mL + cQty + cDesc + cUnit - 2, y + 4.6, { align: 'right' });
+    doc.text(money(l.amt), mL + usableW - 2, y + 4.6, { align: 'right' });
+    y += rowH;
+    doc.line(mL, y, pageW - mR, y);
+  });
+  y += 3;
+
+  // ── Totals block (right-aligned) ───────────────────────────
+  const totW = 84, totX = pageW - mR - totW;
+  const totalsRows = [{ label: 'Subtotal (excl. VAT)', val: grandTotal }];
+  if (q.showDeposit) {
+    const depPct = parseFloat(q.depositPct) || 60;
+    totalsRows.push({ label: `Deposit Required (${depPct}%)`, val: Math.round(grandTotal * depPct / 100 * 100) / 100, red: true });
+  }
+  ensure(totalsRows.length * 6 + 16);
+  totalsRows.forEach(r => {
+    setT(r.red ? RED : MUTED); doc.setFont('helvetica', r.red ? 'bold' : 'normal'); doc.setFontSize(9);
+    doc.text(r.label, totX, y + 4);
+    doc.text(money(r.val), pageW - mR, y + 4, { align: 'right' });
+    y += 6;
+  });
+  setF(NAVY); doc.rect(totX - 2, y, totW + 2, 8.5, 'F');
+  setT([255, 255, 255]); doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5);
+  doc.text('TOTAL', totX + 2, y + 5.8);
+  doc.text(money(grandTotal), pageW - mR - 2, y + 5.8, { align: 'right' });
+  y += 11;
+  setT(SUBTLE); doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
+  doc.text('All prices are exclusive of VAT', pageW - mR, y, { align: 'right' });
+  y += 7;
+
+  // ── Steel Section Schedule ─────────────────────────────────
+  const tkRows = (q.takeoff || []).filter(r => r.type);
+  if (tkRows.length) {
+    const rowKg = r => (r._unit === 'EA')
+      ? (r.kgm || 0) * (r.qty || 1)
+      : ((r.length || 0) / 1000) * (r.kgm || 0) * (r.qty || 1);
+    const sW = usableW, cSec = sW * 0.44, cLen = sW * 0.20, cQ = sW * 0.12, cKg = sW * 0.24;
+    const schedHead = () => {
+      setF(BANDBG); doc.rect(mL, y, sW, 6.5, 'F');
+      setD(RULE); doc.setLineWidth(0.3); doc.line(mL, y + 6.5, mL + sW, y + 6.5);
+      setT([55, 65, 81]); doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5);
+      doc.text('SECTION PROFILE', mL + 2, y + 4.4);
+      doc.text('LENGTH', mL + cSec + cLen - 2, y + 4.4, { align: 'right' });
+      doc.text('QTY', mL + cSec + cLen + cQ - 2, y + 4.4, { align: 'right' });
+      doc.text('TOTAL KG', mL + sW - 2, y + 4.4, { align: 'right' });
+      y += 6.5;
+    };
+    ensure(34);
+    setT([85, 85, 85]); doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
+    doc.text('STEEL SECTION SCHEDULE', mL, y);
+    setD(RED); doc.setLineWidth(0.6); doc.line(mL, y + 1.6, pageW - mR, y + 1.6);
+    y += 4.5;
+    schedHead();
+
+    const drawSchedRow = r => {
+      if (ensure(6.5)) schedHead();
+      const isEA = r._unit === 'EA';
+      const kg = rowKg(r);
+      setT(TEXT); doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+      doc.text(String(r.type).slice(0, 46), mL + 2, y + 4.3);
+      doc.text(isEA ? '\u2014' : (r.length ? r.length.toLocaleString('en-GB') + ' mm' : '\u2014'), mL + cSec + cLen - 2, y + 4.3, { align: 'right' });
+      doc.text(String(r.qty || 1), mL + cSec + cLen + cQ - 2, y + 4.3, { align: 'right' });
+      doc.text(kg > 0 ? kg.toFixed(1) + ' kg' : '\u2014', mL + sW - 2, y + 4.3, { align: 'right' });
+      setD(RULE); doc.setLineWidth(0.15); doc.line(mL, y + 6.2, mL + sW, y + 6.2);
+      y += 6.2;
+    };
+
+    const areas = q.areas || [];
+    const namedIds = areas.map(a => a.id);
+    const distinct = [...new Set(tkRows.map(r => r.area || ''))];
+    let totalKgSum = 0; tkRows.forEach(r => { totalKgSum += rowKg(r); });
+
+    if (distinct.length > 1) {
+      const usedIds = [
+        ...namedIds.filter(id => distinct.includes(id)),
+        ...distinct.filter(id => id && !namedIds.includes(id)),
+        ...(distinct.includes('') ? [''] : [])
+      ];
+      usedIds.forEach(areaId => {
+        const areaRows = tkRows.filter(r => (r.area || '') === areaId);
+        if (!areaRows.length) return;
+        const areaName = (areas.find(a => a.id === areaId)?.name) || (areaId || 'Unspecified');
+        const areaKg = areaRows.reduce((s, r) => s + rowKg(r), 0);
+        if (ensure(7)) schedHead();
+        setF(AREABG); doc.rect(mL, y, sW, 6, 'F');
+        setT(NAVY); doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
+        doc.text(areaName.toUpperCase().slice(0, 50), mL + 2, y + 4.1);
+        doc.text(areaKg > 0 ? areaKg.toFixed(1) + ' kg' : '\u2014', mL + sW - 2, y + 4.1, { align: 'right' });
+        y += 6;
+        areaRows.forEach(drawSchedRow);
+      });
+    } else {
+      tkRows.forEach(drawSchedRow);
     }
 
-    return await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result.split(',')[1]);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
+    const fittingsPct = parseFloat(q.fittingsPct) || 10;
+    const fittingsKg = totalKgSum * (fittingsPct / 100);
+    const footRows = [];
+    if (totalKgSum > 0) footRows.push(['Structural Members subtotal', totalKgSum.toFixed(1) + ' kg', false]);
+    if (fittingsKg > 0) footRows.push([`Fittings & Connections (${fittingsPct}%)`, fittingsKg.toFixed(1) + ' kg', false]);
+    footRows.push(['Total Steel Weight', (totalKgSum + fittingsKg) > 0 ? (totalKgSum + fittingsKg).toFixed(1) + ' kg' : '\u2014', true]);
+    ensure(footRows.length * 6 + 3);
+    footRows.forEach(([label, val, bold]) => {
+      if (bold) { setD([55, 65, 81]); doc.setLineWidth(0.4); doc.line(mL, y, mL + sW, y); }
+      setT(bold ? NAVY : MUTED); doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(bold ? 9 : 8);
+      doc.text(label, mL + 2, y + 4.4);
+      doc.text(val, mL + sW - 2, y + 4.4, { align: 'right' });
+      y += 6;
     });
-  } finally {
-    document.body.removeChild(wrap);
+    y += 4;
   }
+
+  // ── Price by Area (client-facing, optional) ────────────────
+  if (q.pricingMode === 'area' && q.showAreaPdf) {
+    try {
+      const bd = computeAreaBreakdown(q);
+      if (bd.rows.length) {
+        const detailed = q.clientAreaDetail === 'detailed';
+        const sell = v => Math.round(v * (1 + bd.marginPct / 100));
+        ensure(30);
+        setT([51, 51, 51]); doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
+        doc.text('Price by Area', mL, y); y += 5;
+
+        if (!detailed) {
+          const cA = usableW * 0.5, cT = usableW * 0.2, cP = usableW * 0.3;
+          const head = () => {
+            setF(NAVY); doc.rect(mL, y, usableW, 6.5, 'F');
+            setT([255, 255, 255]); doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
+            doc.text('AREA', mL + 2, y + 4.4);
+            doc.text('TONNES', mL + cA + cT - 2, y + 4.4, { align: 'right' });
+            doc.text('PRICE', mL + usableW - 2, y + 4.4, { align: 'right' });
+            y += 6.5;
+          };
+          head();
+          bd.rows.forEach(r => {
+            if (ensure(7)) head();
+            setT(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+            doc.text(String(r.name).slice(0, 50), mL + 2, y + 4.5);
+            doc.setFont('helvetica', 'normal'); setT(MUTED);
+            doc.text((r.kg / 1000).toFixed(2) + ' t', mL + cA + cT - 2, y + 4.5, { align: 'right' });
+            setT(TEXT); doc.setFont('helvetica', 'bold');
+            doc.text(money(r.total), mL + usableW - 2, y + 4.5, { align: 'right' });
+            setD(RULE); doc.setLineWidth(0.15); doc.line(mL, y + 6.4, pageW - mR, y + 6.4);
+            y += 6.4;
+          });
+          ensure(8);
+          setD([51, 51, 51]); doc.setLineWidth(0.4); doc.line(mL, y, pageW - mR, y);
+          setT(NAVY); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+          doc.text('Total', mL + 2, y + 4.8);
+          setT(MUTED); doc.text((bd.grand.kg / 1000).toFixed(2) + ' t', mL + cA + cT - 2, y + 4.8, { align: 'right' });
+          setT(NAVY); doc.text(money(bd.grand.total), mL + usableW - 2, y + 4.8, { align: 'right' });
+          y += 8;
+        } else {
+          const cols = ['AREA', 'MATERIAL', 'INSTALL', 'FAB', 'DESIGN', 'FINISHING', 'DEL/PRELIMS', 'TOTAL'];
+          const w = [usableW * 0.19, usableW * 0.115, usableW * 0.105, usableW * 0.105, usableW * 0.11, usableW * 0.125, usableW * 0.13, usableW * 0.12];
+          const xs = []; let acc = mL; w.forEach(cw => { xs.push(acc); acc += cw; });
+          const head = () => {
+            setF(NAVY); doc.rect(mL, y, usableW, 6.5, 'F');
+            setT([255, 255, 255]); doc.setFont('helvetica', 'bold'); doc.setFontSize(6.8);
+            cols.forEach((c, i) => {
+              if (i === 0) doc.text(c, xs[i] + 2, y + 4.3);
+              else doc.text(c, xs[i] + w[i] - 1.5, y + 4.3, { align: 'right' });
+            });
+            y += 6.5;
+          };
+          head();
+          const drawAreaRow = (vals, bold, nameSub) => {
+            if (ensure(bold ? 8 : 8.5)) head();
+            setT(bold ? NAVY : TEXT); doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(8);
+            doc.text(String(vals[0]).slice(0, 22), xs[0] + 2, y + 4.2);
+            if (nameSub) { setT(SUBTLE); doc.setFontSize(6.5); doc.text(nameSub, xs[0] + 2, y + 7.2); }
+            setT(bold ? NAVY : TEXT); doc.setFontSize(8);
+            for (let i = 1; i < vals.length; i++) doc.text(String(vals[i]), xs[i] + w[i] - 1.5, y + 4.2, { align: 'right' });
+            setD(RULE); doc.setLineWidth(0.15);
+            const rh = nameSub ? 8.4 : 7;
+            doc.line(mL, y + rh, pageW - mR, y + rh); y += rh;
+          };
+          bd.rows.forEach(r => drawAreaRow([
+            r.name, money(sell(r.material)), money(sell(r.cats.installation)), money(sell(r.cats.fabrication)),
+            money(sell(r.cats.design)), money(sell(r.cats.painting + r.cats.galvanising)), money(sell(r.jobwide)), money(r.total)
+          ], false, (r.kg / 1000).toFixed(2) + ' t'));
+          drawAreaRow([
+            'Total', money(sell(bd.grand.material)),
+            money(sell(bd.rows.reduce((s, r) => s + r.cats.installation, 0))),
+            money(sell(bd.rows.reduce((s, r) => s + r.cats.fabrication, 0))),
+            money(sell(bd.rows.reduce((s, r) => s + r.cats.design, 0))),
+            money(sell(bd.rows.reduce((s, r) => s + r.cats.painting + r.cats.galvanising, 0))),
+            money(sell(bd.rows.reduce((s, r) => s + r.jobwide, 0))),
+            money(bd.grand.total)
+          ], true, null);
+        }
+        setT(SUBTLE); doc.setFont('helvetica', 'normal'); doc.setFontSize(7);
+        doc.text('All prices exclusive of VAT. Per-area prices are inclusive of margin.', mL, y + 3);
+        y += 8;
+      }
+    } catch (e) { console.warn('[QB PDF] area table skipped:', e.message); }
+  }
+
+  // ── Footer note ────────────────────────────────────────────
+  ensure(16);
+  setT(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+  doc.text('If you have any questions concerning this quotation, please contact info@bamafabrication.co.uk', mL, y + 3);
+  setT(TEXT); doc.setFont('helvetica', 'bold');
+  doc.text('Thank you for your business!', mL, y + 8);
+  y += 14;
+
+  // ── T&Cs — three sections ──────────────────────────────────
+  const stripMarkers = s => String(s || '').replace(/\[\s*[X?\u2713\s]\s*\]/gi, '').replace(/^[-\u2022*]\s*/gm, '').trim();
+  const sectionHead = (num, title, colour) => {
+    ensure(14);
+    setF(colour); doc.rect(mL, y, usableW, 7, 'F');
+    setT([255, 255, 255]); doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
+    doc.text(num + '   ' + title.toUpperCase(), mL + 3, y + 4.7);
+    y += 10;
+  };
+
+  doc.addPage(); y = mT;
+  setD(NAVY); doc.setLineWidth(0.8); doc.line(mL, y, pageW - mR, y); y += 5;
+
+  // 01 — Project Specific Clarifications
+  sectionHead('01', 'Project Specific Clarifications', NAVY);
+  const tcNotes = ((q.helperAnalysis && q.helperAnalysis.tc_notes) || []).filter(t => t.heading || t.text);
+  const projectTCsRaw = (q.projectTCs || '').trim();
+  const drawCard = (heading, text) => {
+    const bodyLines = text ? doc.splitTextToSize(text, usableW - 10) : [];
+    const cardH = 5 + (heading ? 4.5 : 0) + bodyLines.length * 3.8 + 2;
+    ensure(cardH + 2);
+    setD(NAVY); doc.setLineWidth(0.8); doc.line(mL + 1, y, mL + 1, y + cardH - 2);
+    let cy = y + 3;
+    if (heading) {
+      setT(NAVY); doc.setFont('helvetica', 'bold'); doc.setFontSize(7.8);
+      doc.text(heading.toUpperCase(), mL + 5, cy); cy += 4.5;
+    }
+    setT([51, 51, 51]); doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
+    bodyLines.forEach(l => { doc.text(l, mL + 5, cy); cy += 3.8; });
+    y += cardH + 2;
+  };
+  if (tcNotes.length) {
+    tcNotes.forEach(t => {
+      const h = stripMarkers(t.heading || 'Note'), tx = stripMarkers(t.text || '');
+      if (h || tx) drawCard(h, tx);
+    });
+  } else if (projectTCsRaw) {
+    projectTCsRaw.split(/\n{2,}/).map(stripMarkers).filter(Boolean).forEach(p => drawCard('', p));
+  } else {
+    setT(SUBTLE); doc.setFont('helvetica', 'italic'); doc.setFontSize(8);
+    doc.text('No project-specific clarifications noted.', mL + 3, y + 2); y += 8;
+  }
+  y += 4;
+
+  // 02 — Standard Exclusions
+  sectionHead('02', 'Standard Exclusions', RED);
+  (typeof BAMA_EXCLUSIONS !== 'undefined' ? BAMA_EXCLUSIONS : []).forEach(e => {
+    const wrapped = doc.splitTextToSize(String(e), usableW - 10);
+    const h = wrapped.length * 3.8 + 2.4;
+    ensure(h);
+    setT(NAVY); doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
+    doc.text('\u2014', mL + 2, y + 3);
+    setT([51, 51, 51]); doc.setFont('helvetica', 'normal');
+    wrapped.forEach((l, i) => doc.text(l, mL + 8, y + 3 + i * 3.8));
+    y += h;
+    setD([240, 240, 244]); doc.setLineWidth(0.15); doc.line(mL, y - 0.8, pageW - mR, y - 0.8);
+  });
+  y += 5;
+
+  // 03 — Commercial Terms & Conditions
+  sectionHead('03', 'Commercial Terms & Conditions', [44, 62, 80]);
+  (typeof BAMA_TC !== 'undefined' ? BAMA_TC : []).filter(tc => tc.h !== 'Exclusions').forEach(tc => {
+    const body = doc.splitTextToSize(`${tc.h}:  ${tc.t}`, usableW - 4);
+    const h = body.length * 3.8 + 3;
+    ensure(h);
+    body.forEach((l, i) => {
+      if (i === 0) {
+        // Bold heading portion drawn separately for the first line
+        setT(NAVY); doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
+        const headPart = tc.h + ':';
+        doc.text(headPart, mL + 2, y + 3);
+        const hw = doc.getTextWidth(headPart + ' ');
+        setT([68, 68, 68]); doc.setFont('helvetica', 'normal');
+        doc.text(l.slice(headPart.length).trimStart(), mL + 2 + hw, y + 3);
+      } else {
+        setT([68, 68, 68]); doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
+        doc.text(l, mL + 2, y + 3 + i * 3.8);
+      }
+    });
+    y += h;
+    setD([240, 240, 244]); doc.setLineWidth(0.15); doc.line(mL, y - 1, pageW - mR, y - 1);
+  });
+
+  // ── Page footers: ref + Page X of Y (mandatory) ────────────
+  const pages = doc.getNumberOfPages();
+  for (let i = 1; i <= pages; i++) {
+    doc.setPage(i);
+    setT(SUBTLE); doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
+    doc.text(`Quotation ${q.ref || ''}${revStr} \u00B7 BAMA Fabrication Ltd`, mL, pageH - 8);
+    doc.text(`Page ${i} of ${pages}`, pageW - mR, pageH - 8, { align: 'right' });
+  }
+
+  return doc;
+}
+
+// Render the client-facing quote to a base64 PDF string — NATIVE jsPDF.
+// (Replaces the old html2pdf/html2canvas capture that produced blank pages.)
+async function renderQuotePdfToBase64(q) {
+  const JsPDFCtor = await qbResolveJsPDF();
+  // Logo: prefer locally-uploaded, then SharePoint-cached (loaded by caller)
+  let logo = '';
+  try { logo = await loadBamaLogoDataUri(); } catch (e) { /* non-fatal */ }
+  const doc = drawClientQuotePDF(JsPDFCtor, q, logo);
+  const blob = doc.output('blob');
+  // Diagnostic (mandatory): a healthy quote PDF is tens of KB.
+  console.log('[QB PDF] native blob size:', blob.size, 'bytes,', doc.getNumberOfPages(), 'pages');
+  if (blob.size < 8000) console.warn('[QB PDF] PDF suspiciously small (<8KB) — check renderer');
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
 }
 
 function escHtml(s) {
