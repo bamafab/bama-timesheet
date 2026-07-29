@@ -3535,7 +3535,7 @@ function selectReport(name) {
   // Babcock and Cost Analysis each bring their own toolbars + KPI rows.
   // Hide the generic shared chrome so they don't visually clash.
   // (Both elements only exist on reports.html; harmless no-op elsewhere.)
-  const ownsChrome = (name === 'babcock' || name === 'costanalysis' || name === 'holidays');
+  const ownsChrome = (name === 'babcock' || name === 'costanalysis' || name === 'holidays' || name === 'productivity');
   const periodBar = document.getElementById('rptPeriodToolbar');
   if (periodBar) periodBar.style.display = ownsChrome ? 'none' : '';
   const sharedKpi = document.getElementById('rptKpiRow');
@@ -6035,6 +6035,10 @@ function renderReports() {
   }
   if (activeReport === 'holidays') {
     renderHolidayReport();
+    return;
+  }
+  if (activeReport === 'productivity') {
+    renderProductivityReport();
     return;
   }
 
@@ -28370,6 +28374,111 @@ function renderReportsEmployeeGrid() {
         <div style="font-size:10px;color:var(--subtle);margin-top:3px">${emp.hasPin ? '&#128274; PIN set' : '&#128275; No PIN'}</div>
       </div>`;
   }).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PRODUCTIVITY GRID — who did what, per day (Phase C1b)
+// ═══════════════════════════════════════════════════════════════════════════
+// Person × date (or job × date) matrix from kiosk ProjectHours: each cell
+// lists job numbers + hours for that day. Dates only, no clock times, by
+// design — the point is output per person per job, not attendance policing.
+let _pgRows = null, _pgMeta = null;
+
+async function renderProductivityReport(run) {
+  const grid = document.getElementById('pgGrid');
+  if (!grid) return;
+  const fromEl = document.getElementById('pgFrom'), toEl = document.getElementById('pgTo');
+  if (fromEl && !fromEl.value) {
+    const t = new Date(); const f = new Date(t.getTime() - 13 * 86400000);
+    fromEl.value = f.toISOString().slice(0, 10);
+    toEl.value   = t.toISOString().slice(0, 10);
+  }
+  if (!run && !_pgRows) return;   // panel opened — wait for explicit Run
+  const from = fromEl?.value, to = toEl?.value;
+  if (!from || !to || from > to) { grid.innerHTML = '<div style="padding:20px;color:var(--red);font-size:12px">Pick a valid date range.</div>'; return; }
+  const days = Math.round((new Date(to) - new Date(from)) / 86400000) + 1;
+  if (days > 31) { grid.innerHTML = '<div style="padding:20px;color:var(--red);font-size:12px">Range capped at 31 days — narrow the dates.</div>'; return; }
+
+  if (run) {
+    grid.innerHTML = '<div style="padding:30px;text-align:center;color:var(--muted);font-size:12px">Loading…</div>';
+    try {
+      _pgRows = await api.get(`/api/project-hours?from=${from}&to=${to}`);
+      _pgMeta = { from, to };
+    } catch (e) {
+      grid.innerHTML = `<div style="padding:20px;color:var(--red);font-size:12px">Could not load hours: ${escapeHtml(e.message)}</div>`;
+      return;
+    }
+  }
+
+  const incS000 = document.getElementById('pgIncS000')?.checked;
+  const view = document.getElementById('pgView')?.value || 'person';
+  const rows = (_pgRows || []).filter(r => incS000 || r.project_number !== 'S000');
+
+  // date columns
+  const dates = [];
+  for (let d = new Date(_pgMeta.from + 'T12:00:00'); d <= new Date(_pgMeta.to + 'T12:00:00'); d = new Date(d.getTime() + 86400000)) {
+    dates.push(d.toISOString().slice(0, 10));
+  }
+  const dayName = iso => new Date(iso + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short' });
+  const isWeekend = iso => [0, 6].includes(new Date(iso + 'T12:00:00').getDay());
+
+  // matrix[rowKey][date] = [{k: job-or-name, h: hours}]
+  const matrix = {}, rowTotals = {};
+  for (const r of rows) {
+    const date = String(r.date).slice(0, 10);
+    const rowKey = view === 'person' ? (r.employee_name || 'Unknown') : (r.project_number || '—');
+    const cellKey = view === 'person' ? (r.project_number || '—') : (r.employee_name || 'Unknown');
+    const h = parseFloat(r.hours) || 0;
+    ((matrix[rowKey] = matrix[rowKey] || {})[date] = matrix[rowKey][date] || {});
+    matrix[rowKey][date][cellKey] = (matrix[rowKey][date][cellKey] || 0) + h;
+    rowTotals[rowKey] = (rowTotals[rowKey] || 0) + h;
+  }
+  const rowKeys = Object.keys(matrix).sort();
+  if (!rowKeys.length) { grid.innerHTML = '<div style="padding:20px;color:var(--muted);font-size:12px">No hours in this range.</div>'; return; }
+
+  const csvBtn = document.getElementById('pgCsvBtn'); if (csvBtn) csvBtn.style.display = '';
+
+  const th = 'padding:6px 8px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;border-bottom:2px solid var(--border);white-space:nowrap;text-align:center';
+  let html = `<div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:11px;min-width:100%">
+    <thead><tr>
+      <th style="${th};text-align:left;position:sticky;left:0;background:var(--bg)">${view === 'person' ? 'Person' : 'Job'}</th>
+      ${dates.map(d => `<th style="${th};${isWeekend(d) ? 'opacity:.5' : ''}">${dayName(d)}<br>${d.slice(8)}/${d.slice(5, 7)}</th>`).join('')}
+      <th style="${th};text-align:right">Total</th>
+    </tr></thead><tbody>`;
+  for (const rk of rowKeys) {
+    html += `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:6px 8px;font-weight:600;white-space:nowrap;position:sticky;left:0;background:var(--bg)">${escapeHtml(rk)}</td>`;
+    for (const d of dates) {
+      const cell = matrix[rk][d];
+      if (!cell) { html += `<td style="padding:4px 6px;text-align:center;color:var(--border);${isWeekend(d) ? 'background:rgba(255,255,255,.015)' : ''}">·</td>`; continue; }
+      const parts = Object.entries(cell).sort((a, b) => b[1] - a[1])
+        .map(([k, h]) => `<div style="white-space:nowrap"><span style="color:var(--accent)">${escapeHtml(k)}</span> <span style="font-family:var(--font-mono)">${Math.round(h * 10) / 10}</span></div>`);
+      html += `<td style="padding:4px 6px;vertical-align:top;${isWeekend(d) ? 'background:rgba(255,255,255,.015)' : ''}">${parts.join('')}</td>`;
+    }
+    html += `<td style="padding:6px 8px;text-align:right;font-family:var(--font-mono);font-weight:700">${Math.round(rowTotals[rk] * 10) / 10}</td></tr>`;
+  }
+  const grand = Object.values(rowTotals).reduce((s, v) => s + v, 0);
+  html += `<tr><td style="padding:6px 8px;font-weight:700">Total</td><td colspan="${dates.length}"></td>
+    <td style="padding:6px 8px;text-align:right;font-family:var(--font-mono);font-weight:700;color:var(--accent)">${Math.round(grand * 10) / 10}</td></tr>`;
+  html += `</tbody></table></div>
+    <div style="font-size:10.5px;color:var(--subtle);margin-top:8px">Hours per job per day from the kiosk. ${incS000 ? 'Including' : 'Excluding'} S000 non-productive time. Weekends shaded.</div>`;
+  grid.innerHTML = html;
+}
+
+function exportProductivityCsv() {
+  if (!_pgRows || !_pgMeta) { toast('Run the report first', 'error'); return; }
+  const incS000 = document.getElementById('pgIncS000')?.checked;
+  const rows = (_pgRows || []).filter(r => incS000 || r.project_number !== 'S000');
+  const lines = ['date,employee,job,hours'];
+  rows.slice().sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.employee_name).localeCompare(String(b.employee_name)))
+    .forEach(r => lines.push([String(r.date).slice(0, 10), `"${(r.employee_name || '').replace(/"/g, '""')}"`, r.project_number || '', parseFloat(r.hours) || 0].join(',')));
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `productivity-${_pgMeta.from}-to-${_pgMeta.to}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast('CSV downloaded', 'success');
 }
 
 function selectReportsEmployee(name) {

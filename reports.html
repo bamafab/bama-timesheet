@@ -127,6 +127,11 @@
         <div class="report-picker-name">Attendance</div>
         <div class="report-picker-desc">Late arrivals, absences, patterns</div>
       </div>
+      <div class="report-picker-card" data-report="productivity" onclick="selectReport('productivity')">
+        <div class="report-picker-icon">&#128119;</div>
+        <div class="report-picker-name">Productivity grid</div>
+        <div class="report-picker-desc">Who worked on which job, day by day</div>
+      </div>
       <div class="report-picker-card" data-report="babcock" onclick="selectReport('babcock')">
         <div class="report-picker-icon">&#9875;</div>
         <div class="report-picker-name">Babcock overview</div>
@@ -202,6 +207,28 @@
     </div>
 
     <!-- Report: Babcock Overview -->
+    <div class="report-panel" id="rptPanel-productivity">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+        <label style="font-size:12px;color:var(--muted)">From <input type="date" id="pgFrom" style="margin-left:4px"></label>
+        <label style="font-size:12px;color:var(--muted)">To <input type="date" id="pgTo" style="margin-left:4px"></label>
+        <select id="pgView" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px">
+          <option value="person">By person</option>
+          <option value="job">By job</option>
+        </select>
+        <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:5px"><input type="checkbox" id="pgIncS000"> include S000</label>
+        <button class="btn btn-primary btn-sm" onclick="renderProductivityReport(true)">▶ Run</button>
+        <button class="btn btn-ghost btn-sm" id="pgCsvBtn" onclick="exportProductivityCsv()" style="display:none">⬇ CSV</button>
+        <button class="btn btn-ghost btn-sm" onclick="const d=document.getElementById('pgHelp');d.style.display=d.style.display==='none'?'':'none'">?</button>
+      </div>
+      <div id="pgHelp" style="display:none;font-size:11.5px;color:var(--muted);line-height:1.6;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px">
+        Every cell shows the job number(s) a person clocked to that day, with hours — dates only, no clock times, so you get a feel
+        for output per person per job. Data comes straight from the kiosk (ProjectHours). S000 (non-productive) is hidden unless ticked.
+        <strong>Something looks wrong?</strong> Someone missing on a day they worked → they didn't clock in, or clocked to the wrong job number.
+        A whole day blank for everyone → check the kiosk was running. Range is capped at 31 days — narrow the dates for longer periods.
+      </div>
+      <div id="pgGrid"><div style="padding:30px;text-align:center;color:var(--muted);font-size:12px">Pick a range and press Run.</div></div>
+    </div>
+
     <div class="report-panel" id="rptPanel-babcock">
       <!-- FY toggle -->
       <div style="display:flex;gap:10px;align-items:center;margin-bottom:18px;flex-wrap:wrap">
@@ -322,6 +349,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260729d"></script>
+<script src="shared.js?v=20260729e"></script>
 </body>
 </html>
