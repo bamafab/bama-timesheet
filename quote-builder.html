@@ -12964,6 +12964,58 @@ function computeAreaBreakdown(q) {
     };
   });
 
+  // ── Whole-area total overrides ("clean tile" price) ─────
+  // q.areaTotalOverrides[id] = the client-facing total (inc. margin) this
+  // area should SHOW. Nothing in the underlying quote changes — material,
+  // design, fab etc. stay exactly as calculated. The difference between the
+  // computed total and the pinned total is absorbed by the other areas
+  // (tonnage-weighted, skipping locked areas), so the job total never moves.
+  const tOv = q.areaTotalOverrides || {};
+  const tOvIds = rows.filter(r => tOv[r.id] != null && tOv[r.id] !== '').map(r => r.id);
+  if (tOvIds.length && rows.length > 1) {
+    const mF = 1 + marginPct / 100;
+    let deltaPre = 0; // pre-margin cost displaced by the pins (+ = pushed onto others)
+    tOvIds.forEach(oid => {
+      const r = rows.find(x => x.id === oid);
+      const target    = r2(parseFloat(tOv[oid]) || 0);
+      const targetPre = r2(target / mF);
+      deltaPre += r.subtotal - targetPre;
+      // Rebuild the row around the target. Fold the adjustment into the
+      // editable cats proportionally so the row stays internally additive
+      // (the detailed per-area PDF re-derives sell prices per category).
+      const adj = r2(targetPre - r.subtotal);
+      const catSum = AREA_PRICE_CATS.reduce((s,c)=>s+r.cats[c],0);
+      AREA_PRICE_CATS.forEach(c => {
+        const w = catSum > 0 ? r.cats[c]/catSum : 1/AREA_PRICE_CATS.length;
+        r.cats[c] = r2(r.cats[c] + adj * w);
+      });
+      r.subtotal = r2(r.material + AREA_PRICE_CATS.reduce((s,c)=>s+r.cats[c],0) + r.jobwide);
+      r.margin   = r2(target - r.subtotal);
+      r.total    = target;
+      r.shared   = r2(AREA_PRICE_CATS.reduce((s,c)=>s+r.cats[c],0) + r.jobwide);
+      r._totalOverride = true;
+    });
+    // Recipients: areas without a pinned total, preferring unlocked ones.
+    let rcpt = rows.filter(r => !r._totalOverride && !(q.areaFullLocks||[]).includes(r.id));
+    if (!rcpt.length) rcpt = rows.filter(r => !r._totalOverride);
+    if (rcpt.length && Math.abs(deltaPre) >= 0.01) {
+      const rKg = rcpt.reduce((s,r)=>s+r.kg,0);
+      rcpt.forEach(r => {
+        const w = rKg > 0 ? r.kg/rKg : 1/rcpt.length;
+        const add = r2(deltaPre * w);
+        const catSum = AREA_PRICE_CATS.reduce((s,c)=>s+r.cats[c],0);
+        AREA_PRICE_CATS.forEach(c => {
+          const cw = catSum > 0 ? r.cats[c]/catSum : 1/AREA_PRICE_CATS.length;
+          r.cats[c] = r2(r.cats[c] + add * cw);
+        });
+        r.subtotal = r2(r.material + AREA_PRICE_CATS.reduce((s,c)=>s+r.cats[c],0) + r.jobwide);
+        r.margin   = r2(r.subtotal * marginPct / 100);
+        r.total    = r2(r.subtotal + r.margin);
+        r.shared   = r2(AREA_PRICE_CATS.reduce((s,c)=>s+r.cats[c],0) + r.jobwide);
+      });
+    }
+  }
+
   // ── Reconcile to the headline (penny-exact) ──────────────
   // The client PDF and the Calcs summary quote G.total (single-pass global).
   // Per-area figures are independently 2dp-rounded, and when areas are LOCKED
@@ -12979,7 +13031,8 @@ function computeAreaBreakdown(q) {
     const targetPre    = marginPct ? r2((G.total || 0) / (1 + marginPct / 100)) : (G.total || 0);
     const gapPre       = r2(targetPre - preMarginSum);
     if (Math.abs(gapPre) >= 0.01) {
-      const big = rows.reduce((a, b) => (b.total > a.total ? b : a), rows[0]);
+      const pool = rows.some(r => !r._totalOverride) ? rows.filter(r => !r._totalOverride) : rows;
+      const big = pool.reduce((a, b) => (b.total > a.total ? b : a), pool[0]);
       // Land the pre-margin gap on material (a genuine per-area cost line),
       // then rebuild subtotal → margin → total → shared so the row stays
       // internally additive and category sums reconcile.
@@ -13123,13 +13176,14 @@ function renderAreaBreakdown() {
   bd.rows.forEach(r => {
     const isActive = r.id === q.activeAreaId;
     const anyLock = AREA_PRICE_CATS.some(c => (q.areaPricingLocks||[]).includes(r.id+'|'+c) || (q.areaPricing[r.id] && q.areaPricing[r.id][c] != null));
+    const totPinned = !!r._totalOverride;
     const areaLocked = (q.areaFullLocks||[]).includes(r.id);
     const lockBtn = `<span onclick="event.stopPropagation();toggleAreaLock('${escHtml(r.id)}')"
         title="${areaLocked ? 'Area locked — click to release' : 'Lock this area price (held when you add areas)'}"
         style="cursor:pointer;font-size:13px;margin-right:5px;${areaLocked ? '' : 'opacity:0.35'}">${areaLocked ? '🔒' : '🔓'}</span>`;
     html += `<tr onclick="onActiveAreaChange('${escHtml(r.id)}')" style="border-top:1px solid var(--border);cursor:pointer;${isActive ? 'background:var(--surface-2,rgba(255,255,255,0.04))' : ''}">
       <td style="padding:5px 3px;text-align:left">
-        <div style="color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${lockBtn}${escHtml(r.name)}${anyLock && !areaLocked ? ' <span title="has manual overrides" style="color:var(--accent)">●</span>' : ''}</div>
+        <div style="color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${lockBtn}${escHtml(r.name)}${totPinned ? ' <span title="area total pinned — difference absorbed by other areas" style="font-size:11px">📌</span>' : ''}${anyLock && !areaLocked && !totPinned ? ' <span title="has manual overrides" style="color:var(--accent)">●</span>' : ''}</div>
         <div style="font-size:10px;color:var(--subtle);font-family:var(--font-mono)">${(r.kg/1000).toFixed(2)} t</div>
       </td>
       ${money(r.material)}
@@ -13213,6 +13267,28 @@ function renderAreaDrawer() {
       </label>
     </div>`;
 
+  // ── Pin area total ("clean tile" price) ──────────────────
+  const tOvRaw = (q.areaTotalOverrides || {})[id];
+  const hasTotOv = tOvRaw != null && tOvRaw !== '';
+  html += `<div style="margin:0 0 14px;padding:10px;background:var(--surface);border:1px solid ${hasTotOv ? 'var(--accent)' : 'var(--border)'};border-radius:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <label style="font-size:12px;color:var(--text);font-weight:600">📌 Pin area total</label>
+        ${hasTotOv
+          ? `<button type="button" onclick="resetAreaTotalOverride()" style="font-size:10px;padding:2px 7px;background:none;border:1px solid var(--border);border-radius:5px;color:var(--muted);cursor:pointer">↺ auto</button>`
+          : `<span style="font-size:10px;color:var(--subtle)">auto</span>`}
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="color:var(--muted);font-size:13px">£</span>
+        <input type="number" step="1" min="0" value="${hasTotOv ? f2(parseFloat(tOvRaw)) : f2(row.total)}"
+          onchange="setAreaTotalOverride(this.value)"
+          style="flex:1;padding:7px 9px;background:var(--bg);border:1px solid ${hasTotOv ? 'var(--accent)' : 'var(--border)'};border-radius:6px;color:var(--text);font-family:var(--font-mono);font-size:13px">
+      </div>
+      <div style="font-size:10px;color:var(--subtle);margin-top:6px;line-height:1.5">
+        Sets the price this area <strong>shows</strong> (inc. margin). The difference is absorbed by the other areas —
+        material, design and all underlying costs stay exactly as calculated, and the job total never moves.
+      </div>
+    </div>`;
+
   AREA_PRICE_CATS.forEach(c => {
     const locked = locks.includes(id+'|'+c) || (ov[c] != null && ov[c] !== '');
     const val = f2(row.cats[c]);
@@ -13225,9 +13301,9 @@ function renderAreaDrawer() {
       </div>
       <div style="display:flex;align-items:center;gap:6px">
         <span style="color:var(--muted);font-size:13px">£</span>
-        <input type="number" step="0.01" value="${val}" data-cat="${c}"
+        <input type="number" step="0.01" value="${val}" data-cat="${c}" ${hasTotOv ? 'disabled' : ''}
           onchange="setAreaCost('${c}', this.value)"
-          style="flex:1;padding:7px 9px;background:var(--bg);border:1px solid ${locked ? 'var(--accent)' : 'var(--border)'};border-radius:6px;color:var(--text);font-family:var(--font-mono);font-size:13px">
+          style="flex:1;padding:7px 9px;background:var(--bg);border:1px solid ${locked ? 'var(--accent)' : 'var(--border)'};border-radius:6px;color:var(--text);font-family:var(--font-mono);font-size:13px;${hasTotOv ? 'opacity:0.45' : ''}">
       </div>
     </div>`;
   });
@@ -13242,7 +13318,9 @@ function renderAreaDrawer() {
       <div style="display:flex;justify-content:space-between;color:var(--subtle);font-size:11px;margin-top:4px"><span>of job total ${f0(bd.grand.total)}</span><span style="font-family:var(--font-mono)">${bd.grand.total ? (row.total/bd.grand.total*100).toFixed(1) : '0.0'}%</span></div>
     </div>
     <div style="font-size:10px;color:var(--subtle);margin-top:12px;line-height:1.5">
-      ${bd.mode === 'float'
+      ${hasTotOv
+        ? 'Total pinned: category figures are auto-scaled to land on the pinned price — release the pin (↺ auto) to edit them individually.'
+        : bd.mode === 'float'
         ? 'Float mode: editing a figure changes the job total directly.'
         : 'Fixed mode: editing a figure rebalances the other areas so the job total stays the same. Edited fields are pinned (↺ to release).'}
     </div>`;
@@ -13270,6 +13348,44 @@ function resetAreaCost(cat) {
   saveAll();
   renderAreaBreakdown();
   renderAreaDrawer();
+}
+
+// ── Pin / release a whole-area total (clean-tile price) ────
+// Pins the client-facing total for one area (e.g. show a sensible gate price
+// even when its material share is heavy). The delta moves onto the other
+// areas' figures; the underlying quote costs are never touched.
+function setAreaTotalOverride(value) {
+  const q = getQuote(); if (!q) return;
+  const id = q.activeAreaId; if (id == null) return;
+  const v = parseFloat(value);
+  if (isNaN(v) || v < 0) { toast('Enter a valid price', 'error'); return; }
+  const buckets = areaBuckets(q);
+  if (buckets.length < 2) { toast('Need at least two areas — there is nowhere to absorb the difference', 'error'); renderAreaDrawer(); return; }
+  const others = buckets.filter(b => b.id !== id);
+  const ov = q.areaTotalOverrides || {};
+  if (others.every(b => ov[b.id] != null && ov[b.id] !== '')) {
+    toast('Every other area already has a pinned total — release one first', 'error');
+    renderAreaDrawer(); return;
+  }
+  if (!q.areaTotalOverrides) q.areaTotalOverrides = {};
+  q.areaTotalOverrides[id] = Math.round(v * 100) / 100;
+  saveAll();
+  renderAreaBreakdown();
+  renderAreaDrawer();
+  toast('Area total pinned — difference absorbed by the other areas', 'success');
+}
+
+function resetAreaTotalOverride() {
+  const q = getQuote(); if (!q) return;
+  const id = q.activeAreaId;
+  if (q.areaTotalOverrides) {
+    delete q.areaTotalOverrides[id];
+    if (!Object.keys(q.areaTotalOverrides).length) delete q.areaTotalOverrides;
+  }
+  saveAll();
+  renderAreaBreakdown();
+  renderAreaDrawer();
+  toast('Pin released — area back to calculated price', 'success');
 }
 
 // True when the whole area is locked (all editable cats pinned at their
@@ -20385,6 +20501,7 @@ const HELP_CONTENT = {
           <li><span class="h-step-num">1</span><div><strong>Hold job total fixed</strong> (default on) — when you edit one area's figure, the others rebalance so the headline job total stays put. Turn it off (Float) to let edits move the job total.</div></li>
           <li><span class="h-step-num">2</span><div><strong>🔒 Lock area</strong> — when you're happy with an area, lock it (the padlock on each row, or the toggle in Edit area). Its figures are pinned at their current value, so adding or removing other areas can't make them drift. Only unlocked areas share the rebalance.</div></li>
           <li><span class="h-step-num">3</span><div>A locked area is still <strong>editable</strong> — change a figure and it just updates the pinned value; the lock stays on until you switch it off.</div></li>
+          <li><span class="h-step-num">4</span><div><strong>📌 Pin area total</strong> (in Edit area) — type the exact price an area should <strong>show</strong> on the quote, inc. margin. Use it when one area looks wrong to the client (e.g. a single gate priced high because of its material share): the difference is silently absorbed by the other areas, all underlying material/design/fab costs stay exactly as calculated, and the job total never moves. ↺ auto releases the pin.</div></li>
         </ul>
         <div class="h-tip">Workflow: price area 1, lock it; price area 2, lock it; and so on. Each locked area holds while you work on the next, so finished areas never move when you add the next one. Unlocking an area releases its pins and it rejoins the tonnage split.</div>
       </div>`
