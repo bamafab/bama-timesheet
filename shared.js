@@ -7752,7 +7752,11 @@ function _renderSupplierTable() {
         onclick="openSupplierDetail(${s.id})"
         onmouseenter="this.style.background='rgba(255,255,255,.03)'" onmouseleave="this.style.background=''">
       <td style="padding:11px 12px 11px 0">
-        <div style="font-weight:600">${escapeHtml(s.supplier_name)}</div>
+        <div style="font-weight:600">${escapeHtml(s.supplier_name)}${(() => {
+          const ap = (typeof SUP_APPROVAL !== 'undefined' && SUP_APPROVAL[s.approval_status]) || null;
+          return ap && s.approval_status !== 'unapproved'
+            ? ` <span style="background:${ap.color}22;color:${ap.color};border:1px solid ${ap.color}55;border-radius:4px;padding:1px 6px;font-size:9.5px;font-weight:700;vertical-align:1px">${ap.label}</span>` : '';
+        })()}</div>
         ${svcNames ? `<div style="font-size:11px;color:var(--accent);margin-top:1px">${escapeHtml(svcNames)}</div>` : ''}
       </td>
       <td style="padding:11px 8px;text-align:center">
@@ -7999,6 +8003,7 @@ async function openSupplierDetail(supplierId) {
 
   // Render header immediately, load POs async
   _renderSupplierDetailHeader(supplier);
+  _supDocQueue = []; loadSupplierDocs(supplierId);   // D2 docs & approval section
   document.getElementById('supplierDetailPoArea').innerHTML =
     '<div style="padding:20px;text-align:center;color:var(--muted)"><div class="spinner"></div></div>';
   document.getElementById('supplierDetailModal').classList.add('active');
@@ -45723,4 +45728,248 @@ function exportDocsCsv() {
   a.download = `company-documents-${new Date().toISOString().slice(0,10)}.csv`;
   a.click(); URL.revokeObjectURL(a.href);
   toast('CSV downloaded', 'success');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// D2 — SUPPLIER DOCS & APPROVAL (2026-07-30) — inside the supplier detail
+// modal (office.html › Suppliers). Approval status per FPC s9 + per-supplier
+// document register with expiry, drag & drop AI parsing (same pattern as the
+// D1 Company Docs importer). Files → BAMA / 04 - Suppliers & Subcontractors /
+// <Supplier Name>. Register in SupplierDocuments via /api/supplier-documents.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const SUP_DOC_TYPES = {
+  insurance_el: { label: 'Employers\u2019 Liability', color: '#3b82f6' },
+  insurance_pl: { label: 'Public Liability',         color: '#38bdf8' },
+  insurance_pi: { label: 'Professional Indemnity',   color: '#818cf8' },
+  quality:      { label: 'Quality Cert',             color: '#22c55e' },
+  cis:          { label: 'CIS / Tax',                color: '#eab308' },
+  hs:           { label: 'H&S / RAMS',               color: '#f97316' },
+  other:        { label: 'Other',                    color: '#94a3b8' }
+};
+const SUP_APPROVAL = {
+  unapproved:  { label: 'Unapproved',  color: '#94a3b8' },
+  approved:    { label: 'Approved',    color: '#22c55e' },
+  conditional: { label: 'Conditional', color: '#eab308' },
+  suspended:   { label: 'SUSPENDED',   color: '#ef4444' }
+};
+let _supDocs = [];         // docs for the open supplier
+let _supDocQueue = [];     // drag&drop parse queue (open supplier)
+let _supDocsAllMap = null; // supplier_id → {expired, soon} for the list view
+
+async function supplierDocsFolder(supplierName) {
+  const safe = supplierName.replace(/[~"#%&*:<>?{|}/\\]/g, '-').trim().slice(0, 100);
+  return await getOrCreateSubfolder(SP_TAX.suppliers, safe, BAMA_DRIVE_ID);
+}
+
+function _supDocExpiry(d) { return docExpiryInfo(d); }  // same logic as D1
+
+// ── Load + render the section ────────────────────────────────────────────────
+async function loadSupplierDocs(supplierId) {
+  const host = document.getElementById('supplierDocsArea');
+  if (!host) return;
+  host.innerHTML = '<div style="color:var(--muted);font-size:12px">Loading docs…</div>';
+  try { _supDocs = await api.get(`/api/supplier-documents?supplier_id=${supplierId}`); }
+  catch (e) { host.innerHTML = `<div style="color:var(--red);font-size:12px">Docs unavailable: ${escapeHtml(e.message)} — run api/sql/create-supplier-documents.sql?</div>`; return; }
+  renderSupplierDocsArea();
+}
+
+function renderSupplierDocsArea() {
+  const host = document.getElementById('supplierDocsArea');
+  const supplier = (_suppliers || []).find(s => s.id === _supplierDetailId);
+  if (!host || !supplier) return;
+  const st = SUP_APPROVAL[supplier.approval_status] || SUP_APPROVAL.unapproved;
+
+  // Approval row
+  let html = `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+    <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)">FPC Approval</span>
+    <span style="background:${st.color}22;color:${st.color};border:1px solid ${st.color}66;border-radius:6px;padding:3px 10px;font-size:12px;font-weight:700">${st.label}</span>
+    <select id="supApprovalSel" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-size:12px">
+      ${Object.entries(SUP_APPROVAL).map(([k, v]) => `<option value="${k}" ${k === (supplier.approval_status || 'unapproved') ? 'selected' : ''}>${v.label}</option>`).join('')}
+    </select>
+    <label style="font-size:11.5px;color:var(--muted)">Review due
+      <input id="supApprovalReview" type="date" value="${supplier.approval_review_due ? String(supplier.approval_review_due).slice(0,10) : ''}"
+        style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--text);font-size:12px;margin-left:4px"></label>
+    <button class="btn btn-ghost btn-sm" onclick="saveSupplierApproval()">💾 Set</button>
+    ${supplier.approved_by ? `<span style="font-size:11px;color:var(--muted)">last set by ${escapeHtml(supplier.approved_by)}</span>` : ''}
+  </div>`;
+
+  // Doc rows
+  const rows = (_supDocs || []).slice().sort((a, b) => _supDocExpiry(a).sort - _supDocExpiry(b).sort);
+  html += rows.length ? `<div style="display:flex;flex-direction:column;gap:4px;margin-bottom:8px">` + rows.map(d => {
+    const t = SUP_DOC_TYPES[d.doc_type] || SUP_DOC_TYPES.other;
+    const exp = _supDocExpiry(d);
+    const title = d.web_url ? `<a href="${escapeHtml(d.web_url)}" target="_blank" style="color:var(--text);text-decoration:underline dotted">${escapeHtml(d.title)}</a>` : escapeHtml(d.title);
+    return `<div style="display:flex;align-items:center;gap:8px;font-size:12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;${d.is_archived ? 'opacity:.45' : ''}">
+      <span style="background:${t.color}22;color:${t.color};border:1px solid ${t.color}55;border-radius:5px;padding:1px 7px;font-size:10.5px;font-weight:600;white-space:nowrap">${t.label}</span>
+      <span style="font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${title}</span>
+      <span style="font-size:11px;color:var(--muted);white-space:nowrap">${d.expiry_date || 'no expiry'}</span>
+      ${exp.badge}
+      <button class="btn btn-ghost btn-sm" onclick="supDocRenew(${d.id})" title="Renew">🔁</button>
+      <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="supDocDelete(${d.id})" title="Delete (soft)">🗑</button>
+    </div>`;
+  }).join('') + '</div>'
+  : '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">No documents on file — drop insurance certificates, quality certs or CIS letters below.</div>';
+
+  // Drop zone + review cards
+  html += `<div ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
+       ondragleave="this.style.borderColor='var(--border)'"
+       ondrop="event.preventDefault();this.style.borderColor='var(--border)';supDocHandleFiles(event.dataTransfer.files)"
+       onclick="document.getElementById('supDocInput').click()"
+       style="border:1.5px dashed var(--border);border-radius:8px;padding:10px;text-align:center;cursor:pointer;font-size:12px;color:var(--muted)">
+     📥 Drop supplier documents here (auto-read) or click to browse
+     <input id="supDocInput" type="file" multiple style="display:none" onchange="supDocHandleFiles(this.files);this.value=''">
+  </div>
+  <div id="supDocCards" style="margin-top:8px"></div>`;
+
+  host.innerHTML = html;
+  _renderSupDocCards();
+}
+
+async function saveSupplierApproval() {
+  const supplier = (_suppliers || []).find(s => s.id === _supplierDetailId);
+  if (!supplier) return;
+  const status = document.getElementById('supApprovalSel').value;
+  const review = document.getElementById('supApprovalReview').value || null;
+  try {
+    await api.put(`/api/supplier-approval/${supplier.id}`, { approval_status: status, approval_review_due: review });
+    supplier.approval_status = status; supplier.approval_review_due = review;
+    toast(`Approval set: ${SUP_APPROVAL[status].label}`, 'success');
+    renderSupplierDocsArea();
+    if (typeof _renderSupplierTable === 'function') _renderSupplierTable();
+  } catch (e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+// ── Drag & drop → AI parse (per supplier) ────────────────────────────────────
+function supDocHandleFiles(fileList) {
+  for (const f of fileList) _supDocQueue.push({ file: f, parsed: null, state: 'queued' });
+  _renderSupDocCards();
+  _supDocProcessQueue();
+}
+
+async function _supDocProcessQueue() {
+  const next = _supDocQueue.find(q => q.state === 'queued');
+  if (!next) return;
+  next.state = 'parsing'; _renderSupDocCards();
+  const f = next.file;
+  const isImg = f.type.startsWith('image/');
+  const isPdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
+  try {
+    if (!isImg && !isPdf) {
+      next.parsed = { title: f.name.replace(/\.[^.]+$/, '').replace(/_/g, ' '), doc_type: 'other' };
+      next.state = 'review'; next.note = 'This file type can\u2019t be auto-read — check the fields yourself.';
+    } else {
+      const dataUri = await _fileToDataUri(f);
+      const result = await callClaude({
+        model: 'claude-sonnet-4-6', max_tokens: 500,
+        messages: [{ role: 'user', content: [
+          isImg ? { type: 'image',    source: { type: 'base64', media_type: f.type, data: dataUri.split(',')[1] } }
+                : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: dataUri.split(',')[1] } },
+          { type: 'text', text: `Extract metadata from this supplier/subcontractor document (insurance certificate or schedule, quality certificate, CIS/tax letter, H&S doc). Return ONLY JSON, no markdown:
+{
+  "title": "concise title, e.g. 'Public Liability Insurance \u00a35m' or 'ISO 9001 Certificate'",
+  "doc_type": "insurance_el | insurance_pl | insurance_pi | quality | cis | hs | other",
+  "doc_ref": "policy / certificate number as printed",
+  "issuer": "insurer or issuing body",
+  "issue_date": "YYYY-MM-DD",
+  "expiry_date": "YYYY-MM-DD",
+  "notes": "one short line, e.g. indemnity limit"
+}
+Rules: null for anything not clearly printed — NEVER guess, especially dates. doc_type guidance: employers' liability → insurance_el; public/products liability → insurance_pl; professional indemnity → insurance_pi; ISO/1090/CHAS/Constructionline certs → quality; CIS verification, UTR or gross-payment-status letters → cis; RAMS, method statements, H&S policies → hs. Expiry = period-of-insurance end or valid-until date as printed. Include the indemnity/cover limit in notes if shown.` }
+        ] }]
+      });
+      const text = (result.content?.find(b => b.type === 'text')?.text || '').trim();
+      const s = text.indexOf('{'), e = text.lastIndexOf('}');
+      const p = JSON.parse(text.slice(s, e + 1));
+      if (!SUP_DOC_TYPES[p.doc_type]) p.doc_type = 'other';
+      next.parsed = p; next.state = 'review';
+    }
+  } catch (err) {
+    console.error('Supplier doc parse failed', err);
+    next.parsed = { title: f.name.replace(/\.[^.]+$/, '').replace(/_/g, ' '), doc_type: 'other' };
+    next.state = 'review'; next.note = 'Auto-read failed — fill the fields yourself.';
+  }
+  _renderSupDocCards();
+  _supDocProcessQueue();
+}
+
+function _renderSupDocCards() {
+  const host = document.getElementById('supDocCards');
+  if (!host) return;
+  const live = _supDocQueue.filter(q => q.state !== 'done');
+  if (!live.length) { host.innerHTML = ''; return; }
+  host.innerHTML = _supDocQueue.map((q, i) => {
+    if (q.state === 'done') return '';
+    const p = q.parsed || {};
+    const head = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <span>📄</span><strong style="font-size:12px">${escapeHtml(q.file.name)}</strong>
+      <span style="margin-left:auto;font-size:11px;color:${q.state === 'parsing' ? 'var(--accent)' : q.state === 'error' ? 'var(--red)' : '#3ecf8e'}">
+        ${q.state === 'parsing' || q.state === 'queued' ? '🤖 Reading…' : q.state === 'saving' ? 'Saving…' : q.state === 'error' ? ('Failed: ' + escapeHtml(q.err || '')) : '✓ Check & save'}</span></div>`;
+    if (q.state === 'parsing' || q.state === 'queued')
+      return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:6px">${head}</div>`;
+    const fld = (key, label, val, type = 'text') => `<div><label style="font-size:10px;color:var(--muted);display:block">${label}</label>
+      <input type="${type}" value="${escapeHtml(val ?? '')}" onchange="_supDocQueue[${i}].parsed['${key}']=this.value||null"
+        style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:5px;padding:4px 7px;color:var(--text);font-size:11.5px;box-sizing:border-box"></div>`;
+    return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:6px">
+      ${head}
+      ${q.note ? `<div style="font-size:11px;color:#eab308;margin-bottom:4px">⚠ ${escapeHtml(q.note)}</div>` : ''}
+      <div style="display:grid;grid-template-columns:2fr 1.3fr 1fr 1fr 1fr auto;gap:6px;align-items:end">
+        ${fld('title', 'Title', p.title)}
+        <div><label style="font-size:10px;color:var(--muted);display:block">Type</label>
+          <select onchange="_supDocQueue[${i}].parsed.doc_type=this.value"
+            style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:5px;padding:4px 5px;color:var(--text);font-size:11.5px">
+            ${Object.entries(SUP_DOC_TYPES).map(([k, v]) => `<option value="${k}" ${k === p.doc_type ? 'selected' : ''}>${v.label}</option>`).join('')}
+          </select></div>
+        ${fld('doc_ref', 'Ref', p.doc_ref)}
+        ${fld('issue_date', 'Issued', p.issue_date, 'date')}
+        ${fld('expiry_date', 'Expires', p.expiry_date, 'date')}
+        <div style="display:flex;gap:5px">
+          <button class="btn btn-primary btn-sm" onclick="supDocSaveCard(${i})">💾</button>
+          <button class="btn btn-ghost btn-sm" onclick="_supDocQueue.splice(${i},1);_renderSupDocCards()">✕</button>
+        </div>
+      </div></div>`;
+  }).join('');
+}
+
+async function supDocSaveCard(i) {
+  const q = _supDocQueue[i];
+  const supplier = (_suppliers || []).find(s => s.id === _supplierDetailId);
+  if (!q || !supplier || q.state === 'saving') return;
+  const p = q.parsed || {};
+  if (!p.title || !String(p.title).trim()) { toast('Title is required', 'error'); return; }
+  q.state = 'saving'; _renderSupDocCards();
+  try {
+    const folder = await supplierDocsFolder(supplier.supplier_name);
+    const up = await uploadFileToFolder(folder.id, q.file.name, await q.file.arrayBuffer(),
+                                        q.file.type || 'application/octet-stream', BAMA_DRIVE_ID);
+    await api.post('/api/supplier-documents', {
+      supplier_id: supplier.id, doc_type: p.doc_type || 'other', title: String(p.title).trim(),
+      doc_ref: p.doc_ref || null, issuer: p.issuer || null,
+      issue_date: p.issue_date || null, expiry_date: p.expiry_date || null,
+      reminder_days: 60, notes: p.notes || null,
+      file_name: q.file.name, sharepoint_file_id: up.id,
+      drive_id: BAMA_DRIVE_ID, web_url: up.webUrl || null
+    });
+    q.state = 'done';
+    toast(`Saved — ${p.title}`, 'success');
+    await loadSupplierDocs(supplier.id);
+  } catch (err) {
+    q.state = 'error'; q.err = err.message; _renderSupDocCards();
+  }
+}
+
+// Renew = card prefilled? Keep it simple and robust: renew archives the old
+// row after the user drops/saves the replacement; here we just archive with
+// confirmation so the drop zone flow stays the single way in.
+async function supDocRenew(id) {
+  const d = (_supDocs || []).find(r => r.id === id); if (!d) return;
+  if (!await bamaConfirm(`Renewing "${d.title}": drop the new certificate in the box below, save it, then this old version will be archived. Archive the old one now?`, 'Renew Document')) return;
+  try { await api.put(`/api/supplier-documents/${id}`, { is_archived: 1 }); toast('Old version archived — drop the new one below', 'success'); loadSupplierDocs(_supplierDetailId); }
+  catch (e) { toast('Failed: ' + e.message, 'error'); }
+}
+async function supDocDelete(id) {
+  const d = (_supDocs || []).find(r => r.id === id); if (!d) return;
+  if (!await bamaConfirm(`Delete "${d.title}" from the register? The SharePoint file stays put (soft delete, audited).`, 'Delete Document')) return;
+  try { await api.delete(`/api/supplier-documents/${id}`); toast('Deleted', 'success'); loadSupplierDocs(_supplierDetailId); }
+  catch (e) { toast('Delete failed: ' + e.message, 'error'); }
 }

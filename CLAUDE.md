@@ -982,6 +982,25 @@ H&S) with first-class expiry reminders. Lives entirely on `dashboard.html`
   `showToast` alias for the Health tab lives at the top of the D1 script
   block.
 
+## Supplier records (D2 — Suppliers tab, 2026-07-30)
+
+FPC s9 layer on the existing Suppliers module. Inside the supplier detail
+modal (office.html › Suppliers) a "Docs & Approval" section
+(`supplierDocsArea`, rendered by `renderSupplierDocsArea()` in shared.js):
+approval status Unapproved/Approved/Conditional/Suspended + review-due date
+(PUT `/api/supplier-approval/{id}`, columns on Suppliers via
+`api/sql/create-supplier-documents.sql` — **ALTER TABLE ⇒ the deploy restart
+covers it**), audited via logChange('supplier', …, 'approval_change').
+Per-supplier document register (`SupplierDocuments` table,
+`/api/supplier-documents` — same route shapes as company-documents incl.
+`/expiring`): types insurance_el/pl/pi, quality, cis, hs, other; drag & drop
+AI parsing identical to the D1 importer (reader-only, editable card, save
+uploads to **BAMA / 04 - Suppliers & Subcontractors / <Supplier Name>**
+(find-or-create, sanitised) + register row). Renew flow: archive old →
+drop new (single way in via the drop zone). Approval badge shows next to the
+supplier name in the list (skipped when unapproved to avoid noise).
+`docExpiryInfo()` from D1 is reused for badges.
+
 ## Modal → Page mapping
 
 Every `id=…Modal` element in the HTML, by page. Handy when tracing an
