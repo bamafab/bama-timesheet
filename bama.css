@@ -1401,8 +1401,8 @@
 /* ── Quote line items editor (quotes.html) ── */
 .qli-grid {
   display: grid;
-  /* #  category  qty  unit  labour  vat?  vat%  excl  vat£  total */
-  grid-template-columns: 28px 1.6fr 70px 90px 64px 56px 70px 100px 90px 110px;
+  /* #  category  qty  unit  labour  hrs  vat?  vat%  excl  vat£  total */
+  grid-template-columns: 28px 1.6fr 70px 90px 64px 58px 56px 70px 100px 90px 110px;
   gap: 6px;
   align-items: center;
   padding: 6px 4px;

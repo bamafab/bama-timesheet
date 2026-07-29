@@ -27198,11 +27198,20 @@ function _weightedProjectProgress() {
 
 // Sum hours (qty) on Labour-flagged lines across all attached quotes.
 function _sumLabourHoursScheduled() {
+  // Hours come from the dedicated labour_hours column (transferred from QB's
+  // real estimates at mark-won — Fault Register F1). Legacy fallback: on rows
+  // predating the column, the old convention was hours-in-quantity, but ONLY
+  // when quantity>1 (the qty=1 seed pattern was meaningless, not 1 hour).
   let total = 0;
   for (const q of _projectFinancials.quotes) {
     for (const li of (q._lineItems || [])) {
       if (!li.is_labour) continue;
-      total += parseFloat(li.quantity) || 0;
+      if (li.labour_hours != null && li.labour_hours !== '') {
+        total += parseFloat(li.labour_hours) || 0;
+      } else {
+        const qty = parseFloat(li.quantity) || 0;
+        if (qty > 1) total += qty;   // legacy hand-entered hours
+      }
     }
   }
   return total;
@@ -33460,6 +33469,7 @@ function renderQuoteLineItems() {
         <div><input type="number" data-field="quantity" min="0" step="0.01" value="${qty}" oninput="onQuoteLineItemEdit(${idx}, 'quantity', this.value)"></div>
         <div><input type="number" data-field="unit_price" min="0" step="0.01" value="${price.toFixed(2)}" oninput="onQuoteLineItemEdit(${idx}, 'unit_price', this.value)"></div>
         <div style="text-align:center"><input type="checkbox" data-field="is_labour" ${li.is_labour ? 'checked' : ''} onchange="onQuoteLineItemEdit(${idx}, 'is_labour', this.checked ? 1 : 0)"></div>
+        <div><input type="number" data-field="labour_hours" min="0" step="0.5" value="${li.labour_hours != null ? (parseFloat(li.labour_hours) || 0) : ''}" placeholder="—" title="Estimated labour hours (feeds Hours Scheduled)" oninput="onQuoteLineItemEdit(${idx}, 'labour_hours', this.value)" ${li.is_labour ? '' : 'disabled style="opacity:.35"'}></div>
         <div style="text-align:center"><input type="checkbox" data-field="vat_applies" ${vatOn ? 'checked' : ''} onchange="onQuoteLineItemEdit(${idx}, 'vat_applies', this.checked ? 1 : 0)"></div>
         <div><input type="number" data-field="vat_rate" min="0" max="100" step="0.5" value="${rate}" oninput="onQuoteLineItemEdit(${idx}, 'vat_rate', this.value)" ${vatOn ? '' : 'disabled style="opacity:.4"'}></div>
         <div class="qli-derived" data-derived="excl">£${excl.toFixed(2)}</div>
@@ -33478,6 +33488,12 @@ function onQuoteLineItemEdit(idx, field, value) {
   const item = _quoteLineItemsCache[idx];
   if (!item) return;
 
+  if (field === 'labour_hours') {
+    item.labour_hours = (value === '' || value == null) ? null : (parseFloat(value) || 0);
+    item._dirty = true;
+    _refreshQuoteLineItemTotals();
+    return;
+  }
   if (field === 'description') {
     item.description = String(value);
   } else if (field === 'is_labour' || field === 'vat_applies') {
@@ -33551,7 +33567,8 @@ async function saveQuoteLineItems() {
     unit_price:   parseFloat(li.unit_price) || 0,
     vat_applies:  li.vat_applies ? 1 : 0,
     vat_rate:     parseFloat(li.vat_rate)   || 0,
-    is_labour:    li.is_labour ? 1 : 0
+    is_labour:    li.is_labour ? 1 : 0,
+    labour_hours: (li.labour_hours === '' || li.labour_hours == null) ? null : (parseFloat(li.labour_hours) || 0)
   }));
   await api.put('/api/quote-line-items-bulk', { items });
   // Mark clean so re-saving without further edits is a no-op.

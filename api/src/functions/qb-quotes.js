@@ -461,6 +461,7 @@ app.http('qb-quotes-mark-won', {
             const body = await request.json();
             const {
                 existing_project_id = null,   // ASSIGN path: attach to a live project
+                labour_hours = null,          // { fabrication: n, approval_fab_pack: n, installation: n, ... } from QB engine
                 project_name,
                 client_id        = null,
                 quote_value      = null,
@@ -503,6 +504,34 @@ app.http('qb-quotes-mark-won', {
                 delivery:         'cost_delivery'
             };
 
+            // Estimated labour hours per category (Fault Register F1).
+            // Preferred source: the labour_hours map computed client-side by
+            // QB's engine and sent in the body. Fallback: derive from the
+            // quote_data blob with the SAME field mapping (fabrication =
+            // fabHours; approval_fab_pack = fabpack + strEng + architect +
+            // draughtsman + connDesign hours; installation = crew x days x 8).
+            // Survey/painting are priced per-visit/per-m2, not hours -> null.
+            function deriveHoursFromBlob(srcQuote) {
+                try {
+                    const b = JSON.parse(srcQuote.quote_data || '{}');
+                    const f = v => parseFloat(v) || 0;
+                    const days = f(b.instDays);
+                    const isGlobal = b.globalDays !== false;
+                    let instHours = 0;
+                    (b.labourRows || []).forEach(r => {
+                        const qty = parseFloat(r.qty) || 1;
+                        const rowLocked = isGlobal && (r.useGlobalDays !== false);
+                        const d = rowLocked ? days : (parseFloat(r.days) ?? days);
+                        instHours += qty * (d || 0) * 8;
+                    });
+                    return {
+                        fabrication: f(b.fabHours) || null,
+                        approval_fab_pack: (f(b.fabpackHours) + f(b.structEngHours) + f(b.architectHours) + f(b.designHours) + f(b.connDesignHours)) || null,
+                        installation: instHours || null
+                    };
+                } catch (e) { return {}; }
+            }
+
             // Seed the 9 line items for this QB quote with REAL sell values.
             // The cost_* columns are NET (pre-margin); total_ex_vat is the sell
             // price (with margin). We scale each line's cost by
@@ -543,18 +572,38 @@ app.http('qb-quotes-mark-won', {
                         }
                     }
 
+                    const hoursMap = (labour_hours && typeof labour_hours === 'object')
+                        ? labour_hours : deriveHoursFromBlob(srcQuote);
                     for (const r of rows) {
-                        await query(
-                            `INSERT INTO QuoteLineItems
-                                (tender_id, qb_quote_id, line_no, category, description,
-                                 quantity, unit_price, vat_applies, vat_rate, is_labour,
-                                 created_at, updated_at)
-                             VALUES
-                                (NULL, @q, @line_no, @category, @description,
-                                 1, @unit_price, 1, 20.00, @is_labour, GETUTCDATE(), GETUTCDATE())`,
-                            { q: qbQuoteId, line_no: r.line_no, category: r.category,
-                              description: r.description, unit_price: r.price, is_labour: r.is_labour }
-                        );
+                        const hrs = r.is_labour && hoursMap[r.category] != null
+                            ? Math.round(parseFloat(hoursMap[r.category]) * 100) / 100 : null;
+                        const params = { q: qbQuoteId, line_no: r.line_no, category: r.category,
+                              description: r.description, unit_price: r.price, is_labour: r.is_labour,
+                              labour_hours: hrs };
+                        try {
+                            await query(
+                                `INSERT INTO QuoteLineItems
+                                    (tender_id, qb_quote_id, line_no, category, description,
+                                     quantity, unit_price, vat_applies, vat_rate, is_labour,
+                                     labour_hours, created_at, updated_at)
+                                 VALUES
+                                    (NULL, @q, @line_no, @category, @description,
+                                     1, @unit_price, 1, 20.00, @is_labour,
+                                     @labour_hours, GETUTCDATE(), GETUTCDATE())`, params);
+                        } catch (e) {
+                            // Pre-migration fallback: seed without the hours column
+                            // so prices are never lost to a missing ALTER TABLE.
+                            context.warn('seed with labour_hours failed, retrying without:', e.message);
+                            await query(
+                                `INSERT INTO QuoteLineItems
+                                    (tender_id, qb_quote_id, line_no, category, description,
+                                     quantity, unit_price, vat_applies, vat_rate, is_labour,
+                                     created_at, updated_at)
+                                 VALUES
+                                    (NULL, @q, @line_no, @category, @description,
+                                     1, @unit_price, 1, 20.00, @is_labour, GETUTCDATE(), GETUTCDATE())`,
+                                params);
+                        }
                     }
                 } catch (e) {
                     context.warn('seedQbLineItems failed (non-fatal):', e.message);

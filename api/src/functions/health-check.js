@@ -134,7 +134,8 @@ app.http('health-check', {
                   JOIN QuoteBuilderQuotes q ON q.id = li.qb_quote_id
                  WHERE li.is_labour = 1
                  GROUP BY q.reference
-                HAVING SUM(CASE WHEN li.quantity <> 1 THEN 1 ELSE 0 END) = 0
+                HAVING SUM(CASE WHEN li.quantity <> 1 OR li.labour_hours IS NOT NULL
+                                THEN 1 ELSE 0 END) = 0
                 ORDER BY q.reference`);
             return r.recordset;
         }));

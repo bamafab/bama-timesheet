@@ -6,6 +6,18 @@ management, and a standalone UK steel section reference.
 
 ## Rules for Claude Code
 
+- **Robustness definition of done (system-wide).** Anything shipped that
+  produces findings, numbers or documents must include its export/copy path,
+  its Help/troubleshooting note, and a way back (undo/revert or soft-delete)
+  in the SAME commit — not as a follow-up. Established Phase B, 2026-07-29.
+- **QuoteLineItems.labour_hours owns estimated hours** (Fault Register F1).
+  `quantity` means qty×price for contract value ONLY — never store hours in
+  it. mark-won transfers QB's hour estimates (fabrication = fabHours;
+  approval_fab_pack = fabpack+strEng+architect+draughtsman+connDesign;
+  installation = crew×days×8) via `computeQuoteHoursByCategory()` in QB, with
+  a blob-parse fallback server-side. Project Tracker's Hours Scheduled reads
+  labour_hours (legacy hours-in-quantity honoured only when quantity>1).
+
 - **Always run `node --check shared.js` after editing it.** It's ~9700 lines of
   untested global-scope JS — a syntax error breaks every page at once.
 - **Run `python3 preflight.py <file.html>` before every push that touches an

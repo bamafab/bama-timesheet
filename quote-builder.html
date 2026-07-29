@@ -16800,6 +16800,7 @@ async function createProjectFromQuote() {
     // 3. Mark as won via API — creates Project row
     status.textContent = 'Creating project in ERP...';
     const result = await qbFetch('PUT', '/api/qb-quotes/' + q.id + '/mark-won', {
+      labour_hours:                 computeQuoteHoursByCategory(q),
       project_name:                 name,
       client_id:                    clientId,
       quote_value:                  value,
@@ -16849,6 +16850,7 @@ async function assignQuoteToExistingProject() {
   try {
     const result = await qbFetch('PUT', '/api/qb-quotes/' + q.id + '/mark-won', {
       existing_project_id: parseInt(projectId, 10),
+      labour_hours: computeQuoteHoursByCategory(q),
       quote_value: q._computed?.total || null
     });
 
@@ -18230,6 +18232,35 @@ document.addEventListener('click', e => {
 // client quote, cost breakdown, and handover pack.
 // Produces identical three-section layout in every document.
 // ══════════════════════════════════════════════════════════════
+// ESTIMATED LABOUR HOURS BY PROJECT-LINE CATEGORY (Fault Register F1).
+// Sent with mark-won so the project's line items carry the REAL hour
+// estimates, read by Project Tracker's "Hours Scheduled". Deterministic —
+// mirrors computeQuoteTotals' bucket composition exactly:
+//   fabrication        = workshop fab hours
+//   approval_fab_pack  = fab pack + struct eng + architect + draughtsman + conn design
+//   installation       = Σ crew qty × days × 8h  (global-days logic mirrored)
+// Survey and painting are priced per-visit / per-m², not hours → omitted.
+// Wizard (stair/balustrade) labour is £-based → not converted to hours (v1).
+function computeQuoteHoursByCategory(q) {
+  const f = v => parseFloat(v) || 0;
+  const days = f(q.instDays);
+  const isGlobal = q.globalDays !== false;
+  let instHours = 0;
+  (q.labourRows || []).forEach(r => {
+    const qty = parseFloat(r.qty) || 1;
+    const rowLocked = isGlobal && (r.useGlobalDays !== false);
+    const d = rowLocked ? days : (parseFloat(r.days) ?? days);
+    instHours += qty * (d || 0) * 8;
+  });
+  const out = {};
+  const fab = f(q.fabHours);
+  const afp = f(q.fabpackHours) + f(q.structEngHours) + f(q.architectHours) + f(q.designHours) + f(q.connDesignHours);
+  if (fab > 0) out.fabrication = Math.round(fab * 100) / 100;
+  if (afp > 0) out.approval_fab_pack = Math.round(afp * 100) / 100;
+  if (instHours > 0) out.installation = Math.round(instHours * 100) / 100;
+  return out;
+}
+
 // PRE-FLIGHT CHECK — validate a quote before PDF / mark-won
 // Returns { errors: [], warnings: [], ok: bool }
 //   errors   = must-fix before sending (blocks with confirmation)

@@ -163,7 +163,7 @@ app.http('quote-line-items-update', {
             const body = await request.json();
             const fields = [];
             const params = { id };
-            const allowed = ['description', 'quantity', 'unit_price', 'vat_applies', 'vat_rate', 'is_labour'];
+            const allowed = ['description', 'quantity', 'unit_price', 'vat_applies', 'vat_rate', 'is_labour', 'labour_hours'];
             for (const key of allowed) {
                 if (body[key] !== undefined) {
                     fields.push(`${key} = @${key}`);
@@ -201,7 +201,7 @@ app.http('quote-line-items-bulk-update', {
             const items = Array.isArray(body.items) ? body.items : [];
             if (!items.length) return badRequest('items array is required', request);
 
-            const allowed = ['description', 'quantity', 'unit_price', 'vat_applies', 'vat_rate', 'is_labour'];
+            const allowed = ['description', 'quantity', 'unit_price', 'vat_applies', 'vat_rate', 'is_labour', 'labour_hours'];
             const updated = [];
             for (const item of items) {
                 if (!item.id) continue;

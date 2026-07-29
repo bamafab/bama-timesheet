@@ -11,7 +11,7 @@ confusion. LOW = quality/robustness debt.
 
 ---
 
-## F1 · CRITICAL — QB → Project hours transfer is wrong by design collision
+## F1 · CRITICAL — QB → Project hours transfer is wrong by design collision ✅ FIXED B1 2026-07-29 (migration + backfill SQL in api/sql/, pasted in chat)
 
 **Symptom:** Project Tracker "Hours Scheduled" shows a meaningless small number
 (typically 5) for every QB-won project, regardless of the hours quoted.
