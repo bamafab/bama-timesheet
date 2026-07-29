@@ -3535,7 +3535,7 @@ function selectReport(name) {
   // Babcock and Cost Analysis each bring their own toolbars + KPI rows.
   // Hide the generic shared chrome so they don't visually clash.
   // (Both elements only exist on reports.html; harmless no-op elsewhere.)
-  const ownsChrome = (name === 'babcock' || name === 'costanalysis' || name === 'holidays' || name === 'productivity' || name === 'faboutput');
+  const ownsChrome = (name === 'babcock' || name === 'costanalysis' || name === 'holidays' || name === 'productivity' || name === 'faboutput' || name === 'cvr');
   const periodBar = document.getElementById('rptPeriodToolbar');
   if (periodBar) periodBar.style.display = ownsChrome ? 'none' : '';
   const sharedKpi = document.getElementById('rptKpiRow');
@@ -6043,6 +6043,10 @@ function renderReports() {
   }
   if (activeReport === 'faboutput') {
     renderFabOutputReport();
+    return;
+  }
+  if (activeReport === 'cvr') {
+    renderCvrReport();
     return;
   }
 
@@ -28515,6 +28519,207 @@ async function renderProductivityReport(run) {
     </div>
     <div style="font-size:10.5px;color:var(--subtle);margin-top:8px">Hours per job per day from the kiosk. ${incS000 ? 'Including' : 'Excluding'} S000 non-productive time. Weekends shaded. Colours are consistent per job.</div>`;
   grid.innerHTML = html;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CVR / WIP — value vs cost per live project (Phase C4)
+// ═══════════════════════════════════════════════════════════════════════════
+// Facts come from /api/cvr-summary; every derived figure (margin, billing
+// position) is computed here in plain arithmetic, definitions in the help.
+let _cvrRows = null;
+
+function _cvrDerive(r) {
+  const contract  = +r.contract_value || 0;
+  const certified = +r.certified_net || 0;
+  const applied   = +r.applied_net || 0;
+  const value     = certified > 0 ? certified : applied;   // certified wins
+  const valueIsApplied = certified <= 0 && applied > 0;
+  const cost      = (+r.labour_cost || 0) + (+r.po_nett || 0);
+  const margin    = value - cost;
+  const billing   = value - (+r.invoiced_net || 0);        // + = under-billed WIP
+  const pctComplete = contract > 0 ? Math.min(100, Math.round(value / contract * 100)) : null;
+  return { contract, value, valueIsApplied, cost, margin, billing, pctComplete };
+}
+
+async function renderCvrReport(run) {
+  const tbl = document.getElementById('cvrTable');
+  if (!tbl) return;
+  if (run || !_cvrRows) {
+    tbl.innerHTML = '<div style="padding:30px;text-align:center;color:var(--muted);font-size:12px">Loading…</div>';
+    try {
+      const all = document.getElementById('cvrAll')?.checked ? '?all=1' : '';
+      _cvrRows = await api.get('/api/cvr-summary' + all);
+    } catch (e) {
+      tbl.innerHTML = `<div style="padding:20px;color:var(--red);font-size:12px">Could not load CVR: ${escapeHtml(e.message)}</div>`;
+      return;
+    }
+  }
+  const rows = (_cvrRows || []).map(r => ({ ...r, _d: _cvrDerive(r) }))
+    .sort((a, b) => (b._d.value || 0) - (a._d.value || 0));
+  if (!rows.length) { tbl.innerHTML = '<div style="padding:20px;color:var(--muted);font-size:12px">No live projects.</div>'; return; }
+
+  document.getElementById('cvrPdfBtn').style.display = '';
+  document.getElementById('cvrCsvBtn').style.display = '';
+
+  const money = v => v == null ? '—' : '£' + Math.round(v).toLocaleString('en-GB');
+  const hue = key => { let h = 0; const s = String(key); for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h % 360; };
+
+  // KPI strip
+  const sum = k => rows.reduce((s, r) => s + (r._d[k] || 0), 0);
+  const sumRaw = k => rows.reduce((s, r) => s + (+r[k] || 0), 0);
+  const kpi = (label, val, col) => `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 16px;min-width:150px">
+      <div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">${label}</div>
+      <div style="font-size:19px;font-weight:700;font-family:var(--font-mono);color:${col || 'var(--text)'}">${val}</div></div>`;
+  const kEl = document.getElementById('cvrKpis');
+  kEl.style.display = 'flex'; kEl.style.gap = '10px'; kEl.style.flexWrap = 'wrap';
+  const totMargin = sum('margin'), totBilling = sum('billing');
+  kEl.innerHTML =
+    kpi('Contract book', money(sum('contract'))) +
+    kpi('Value to date', money(sum('value'))) +
+    kpi('Cost to date', money(sum('cost'))) +
+    kpi('Margin to date', money(totMargin), totMargin < 0 ? 'var(--red)' : 'var(--green)') +
+    kpi('Under-billed (WIP)', money(totBilling), totBilling > 0 ? 'var(--accent)' : 'var(--green)') +
+    kpi('Cash outstanding', money(sumRaw('outstanding_gross')), sumRaw('outstanding_gross') > 0 ? 'var(--accent)' : 'var(--text)') +
+    kpi('Retention held', money(sumRaw('retention_held')));
+
+  const th = 'padding:8px 8px;font-size:9.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;border-bottom:2px solid var(--border);text-align:right;white-space:nowrap';
+  const td = 'padding:8px 8px;border-bottom:1px solid var(--border);text-align:right;font-family:var(--font-mono);font-size:12px;white-space:nowrap';
+  let html = `<div style="overflow-x:auto;border:1px solid var(--border);border-radius:10px;background:var(--card,#161616)">
+    <table style="border-collapse:separate;border-spacing:0;min-width:100%">
+    <thead><tr>
+      <th style="${th};text-align:left;position:sticky;left:0;background:var(--card,#161616);z-index:2;padding-left:12px">Project</th>
+      <th style="${th}">Contract</th><th style="${th}">Value to date</th><th style="${th}">% </th>
+      <th style="${th}">Cost to date</th><th style="${th}">Margin</th>
+      <th style="${th}">Billing position</th>
+      <th style="${th}">Invoiced</th><th style="${th}">Paid</th><th style="${th}">Outstanding</th><th style="${th}">Retention</th>
+    </tr></thead><tbody>`;
+  rows.forEach((r, ri) => {
+    const d = r._d;
+    const h = hue(r.project_number);
+    const zebra = ri % 2 ? 'background:rgba(255,255,255,.018);' : '';
+    html += `<tr>
+      <td style="padding:8px 12px;border-bottom:1px solid var(--border);white-space:nowrap;position:sticky;left:0;background:var(--card,#161616);z-index:2;${zebra}">
+        <span style="display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:20px;background:hsla(${h},70%,55%,.14);border:1px solid hsla(${h},70%,60%,.45);color:hsl(${h},75%,72%);font-size:11px">${escapeHtml(r.project_number)}</span>
+        <span style="font-size:11px;color:var(--muted);margin-left:6px">${escapeHtml((r.project_name || '').slice(0, 34))}</span>
+        ${r.last_afp_ref ? `<span style="font-size:10px;color:var(--subtle);margin-left:4px">${escapeHtml(r.last_afp_ref)}</span>` : ''}
+      </td>
+      <td style="${td};${zebra}">${money(d.contract || null)}</td>
+      <td style="${td};${zebra};${d.valueIsApplied ? 'color:var(--accent)' : ''}" title="${d.valueIsApplied ? 'Applied — awaiting certification' : 'Certified'}">${money(d.value || null)}${d.valueIsApplied ? '<span style="font-size:9px"> appl.</span>' : ''}</td>
+      <td style="${td};${zebra};color:var(--muted)">${d.pctComplete != null ? d.pctComplete + '%' : '—'}</td>
+      <td style="${td};${zebra}" title="Labour ${money(+r.labour_cost)} (${Math.round(+r.labour_hours || 0)}h) + POs ${money(+r.po_nett)}">${money(d.cost || null)}</td>
+      <td style="${td};${zebra};color:${d.margin < 0 ? 'var(--red)' : 'var(--green)'};font-weight:700">${money(d.margin)}</td>
+      <td style="${td};${zebra};color:${d.billing > 0 ? 'var(--accent)' : 'var(--green)'}" title="${d.billing > 0 ? 'Under-billed — earned value not yet invoiced' : 'Fully billed / cash ahead'}">${d.billing > 0 ? '▲ ' : ''}${money(Math.abs(d.billing))}</td>
+      <td style="${td};${zebra}">${money(+r.invoiced_net || null)}</td>
+      <td style="${td};${zebra}">${money(+r.paid_gross || null)}</td>
+      <td style="${td};${zebra};${+r.outstanding_gross > 0 ? 'color:var(--accent)' : ''}">${money(+r.outstanding_gross || null)}</td>
+      <td style="${td};${zebra};color:var(--muted)">${money(+r.retention_held || null)}</td>
+    </tr>`;
+  });
+  html += `</tbody></table></div>
+    <div style="font-size:10.5px;color:var(--subtle);margin-top:8px">Sorted by value to date. Cost = kiosk labour at basic rate + nett PO commitments (leads supplier invoices). Hover cells for breakdowns.</div>`;
+  tbl.innerHTML = html;
+}
+
+function exportCvrCsv() {
+  if (!_cvrRows) { toast('Refresh first', 'error'); return; }
+  const lines = ['project,name,status,contract,value_to_date,value_basis,pct_complete,labour_cost,labour_hours,po_nett,cost_to_date,margin_to_date,billing_position,invoiced_net,paid_gross,outstanding,retention_held'];
+  _cvrRows.forEach(r => {
+    const d = _cvrDerive(r);
+    lines.push([r.project_number, `"${(r.project_name || '').replace(/"/g, '""')}"`, r.status,
+      d.contract, d.value, d.valueIsApplied ? 'applied' : 'certified', d.pctComplete ?? '',
+      +r.labour_cost || 0, +r.labour_hours || 0, +r.po_nett || 0, d.cost, d.margin, d.billing,
+      +r.invoiced_net || 0, +r.paid_gross || 0, +r.outstanding_gross || 0, +r.retention_held || 0].join(','));
+  });
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `cvr-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click(); URL.revokeObjectURL(a.href);
+}
+
+// Native jsPDF CVR pack — landscape A4 management one-pager (CLAUDE.md rules)
+async function exportCvrPDF() {
+  if (!_cvrRows) { toast('Refresh first', 'error'); return; }
+  const JsPDFCtor = await resolveJsPDFCtor();
+  const doc = new JsPDFCtor({ unit: 'mm', format: 'a4', orientation: 'landscape' });
+  const pageW = 297, pageH = 210, mL = 12, W = pageW - 24;
+  const NAVY = [26,26,46], TEXT = [34,34,34], MUTED = [110,110,110], RED = [208,2,27], GREEN = [22,140,80], AMBER = [200,110,0], RULE = [215,218,224];
+  const sT = c => doc.setTextColor(c[0],c[1],c[2]);
+  const money = v => v == null ? '\u2014' : '\u00A3' + Math.round(v).toLocaleString('en-GB');
+  const rows = (_cvrRows || []).map(r => ({ ...r, _d: _cvrDerive(r) })).sort((a, b) => (b._d.value || 0) - (a._d.value || 0));
+  const sum = k => rows.reduce((s, r) => s + (r._d[k] || 0), 0);
+  const sumRaw = k => rows.reduce((s, r) => s + (+r[k] || 0), 0);
+
+  doc.setFillColor(26,26,46); doc.rect(0, 0, pageW, 24, 'F');
+  sT([255,255,255]); doc.setFont('helvetica','bold'); doc.setFontSize(15);
+  doc.text('CVR / WIP \u2014 Cost & Value Reconciliation', mL, 10.5);
+  doc.setFont('helvetica','normal'); doc.setFontSize(8.5);
+  doc.text(`${rows.length} project${rows.length !== 1 ? 's' : ''} \u00B7 ${new Date().toLocaleDateString('en-GB')} \u00B7 BAMA Fabrication Ltd`, mL, 17.5);
+  let y = 31;
+
+  // KPI band
+  const kpis = [
+    ['CONTRACT BOOK', money(sum('contract')), TEXT], ['VALUE TO DATE', money(sum('value')), TEXT],
+    ['COST TO DATE', money(sum('cost')), TEXT], ['MARGIN', money(sum('margin')), sum('margin') < 0 ? RED : GREEN],
+    ['UNDER-BILLED WIP', money(sum('billing')), sum('billing') > 0 ? AMBER : GREEN],
+    ['OUTSTANDING', money(sumRaw('outstanding_gross')), AMBER], ['RETENTION', money(sumRaw('retention_held')), MUTED]
+  ];
+  const kw = W / kpis.length;
+  kpis.forEach((k, i) => {
+    const x = mL + i * kw;
+    doc.setDrawColor(215,218,224); doc.setLineWidth(0.2); doc.roundedRect(x + 1, y, kw - 2, 14, 1.5, 1.5, 'S');
+    sT(MUTED); doc.setFontSize(5.8); doc.setFont('helvetica','bold'); doc.text(k[0], x + 3.5, y + 5);
+    sT(k[2]); doc.setFontSize(10); doc.text(k[1], x + 3.5, y + 11);
+  });
+  y += 20;
+
+  const cols = [
+    ['PROJECT', 62, 'left'], ['CONTRACT', 24], ['VALUE', 26], ['%', 10],
+    ['COST', 24], ['MARGIN', 24], ['BILLING POS.', 24], ['INVOICED', 24], ['PAID', 24], ['OUTST.', 22], ['RETN.', 20]
+  ];
+  const xs = []; let acc = mL; cols.forEach(c => { xs.push(acc); acc += c[1]; });
+  const head = () => {
+    doc.setFillColor(26,26,46); doc.rect(mL, y, W, 6.5, 'F');
+    sT([255,255,255]); doc.setFont('helvetica','bold'); doc.setFontSize(6.5);
+    cols.forEach((c, i) => doc.text(c[0], c[2] === 'left' ? xs[i] + 2 : xs[i] + c[1] - 2, y + 4.4, { align: c[2] === 'left' ? 'left' : 'right' }));
+    y += 6.5;
+  };
+  head();
+  doc.setFontSize(7.6);
+  const cell = (i, txt, col, bold) => {
+    sT(col || TEXT); doc.setFont('helvetica', bold ? 'bold' : 'normal');
+    doc.text(String(txt), cols[i][2] === 'left' ? xs[i] + 2 : xs[i] + cols[i][1] - 2, y + 4.2, { align: cols[i][2] === 'left' ? 'left' : 'right' });
+  };
+  for (const r of rows) {
+    if (y + 6 > pageH - 14) { doc.addPage(); y = 12; head(); doc.setFontSize(7.6); }
+    const d = r._d;
+    cell(0, `${r.project_number}  ${(r.project_name || '').slice(0, 30)}`, TEXT, true);
+    cell(1, money(d.contract || null));
+    cell(2, money(d.value || null) + (d.valueIsApplied ? '*' : ''), d.valueIsApplied ? AMBER : TEXT);
+    cell(3, d.pctComplete != null ? d.pctComplete + '%' : '\u2014', MUTED);
+    cell(4, money(d.cost || null));
+    cell(5, money(d.margin), d.margin < 0 ? RED : GREEN, true);
+    cell(6, money(d.billing), d.billing > 0 ? AMBER : GREEN);
+    cell(7, money(+r.invoiced_net || null));
+    cell(8, money(+r.paid_gross || null));
+    cell(9, money(+r.outstanding_gross || null), +r.outstanding_gross > 0 ? AMBER : TEXT);
+    cell(10, money(+r.retention_held || null), MUTED);
+    doc.setDrawColor(215,218,224); doc.setLineWidth(0.12); doc.line(mL, y + 6, mL + W, y + 6);
+    y += 6;
+  }
+  y += 6;
+  sT(MUTED); doc.setFont('helvetica','normal'); doc.setFontSize(6.5);
+  doc.splitTextToSize('Value = certified AFP value to date (* = applied, awaiting certification). Cost = kiosk labour at basic rates + nett PO commitments (leads supplier invoices; excludes overheads). Margin = value \u2212 cost. Billing position = value \u2212 invoiced (positive = under-billed WIP being funded by BAMA). Figures are live from the ERP at time of printing.', W).forEach(l => { doc.text(l, mL, y); y += 3.2; });
+  const pages = doc.getNumberOfPages();
+  for (let i = 1; i <= pages; i++) {
+    doc.setPage(i);
+    sT([150,150,150]); doc.setFontSize(7);
+    doc.text('BAMA Fabrication ERP \u00B7 CVR / WIP pack', mL, pageH - 6);
+    doc.text(`Page ${i} of ${pages}`, pageW - mL, pageH - 6, { align: 'right' });
+  }
+  const blob = doc.output('blob');
+  console.log('[CVR PDF] blob size:', blob.size);
+  doc.save(`CVR-WIP-${new Date().toISOString().slice(0, 10)}.pdf`);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

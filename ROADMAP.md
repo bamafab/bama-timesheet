@@ -27,8 +27,11 @@ completed 2026-07-29. This file tracks the build phases and newly-scoped work.
   totals, ChangeLog audit on every mutation; StockItems table). Built ready —
   Mateusz will populate on a quiet day. **C3b** cut lists / bar optimisation
   against recorded stock — after stock is populated.
-- **C4** CVR / WIP management pack (value applied vs cost to date per live
-  project, cash position) — lands in reports.html
+- **C4** CVR / WIP ✅ SHIPPED 2026-07-29 (reports.html: per-project value
+  [certified-first, applied flagged] vs cost [labour + PO nett], margin,
+  billing position/WIP, cash columns, KPI strip; GET /api/cvr-summary;
+  CSV + native landscape PDF management pack; help with definitions).
+  Phase C COMPLETE.
 - **F8 rolling** Help + "Something looks wrong?" per module as phases touch it
 
 ## Phase D — Document & QMS layer  (scoped 2026-07-29, NOT started)

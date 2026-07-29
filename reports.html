@@ -137,6 +137,11 @@
         <div class="report-picker-name">Fab output</div>
         <div class="report-picker-desc">Tonnes per person per day, from stage moves</div>
       </div>
+      <div class="report-picker-card" data-report="cvr" onclick="selectReport('cvr')">
+        <div class="report-picker-icon">&#128202;</div>
+        <div class="report-picker-name">CVR / WIP</div>
+        <div class="report-picker-desc">Value vs cost per live project, cash position</div>
+      </div>
       <div class="report-picker-card" data-report="babcock" onclick="selectReport('babcock')">
         <div class="report-picker-icon">&#9875;</div>
         <div class="report-picker-name">Babcock overview</div>
@@ -256,6 +261,27 @@
         Range capped at 31 days.
       </div>
       <div id="foGrid"><div style="padding:30px;text-align:center;color:var(--muted);font-size:12px">Pick a range and press Run.</div></div>
+    </div>
+
+    <div class="report-panel" id="rptPanel-cvr">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+        <label style="font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:5px"><input type="checkbox" id="cvrAll" onchange="renderCvrReport(true)"> include completed projects</label>
+        <button class="btn btn-primary btn-sm" onclick="renderCvrReport(true)">↻ Refresh</button>
+        <button class="btn btn-ghost btn-sm" id="cvrPdfBtn" onclick="exportCvrPDF()" style="display:none">⬇ PDF pack</button>
+        <button class="btn btn-ghost btn-sm" id="cvrCsvBtn" onclick="exportCvrCsv()" style="display:none">⬇ CSV</button>
+        <button class="btn btn-ghost btn-sm" onclick="const d=document.getElementById('cvrHelp');d.style.display=d.style.display==='none'?'':'none'">?</button>
+      </div>
+      <div id="cvrHelp" style="display:none;font-size:11.5px;color:var(--muted);line-height:1.6;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px">
+        One line per live project. <strong>Value</strong> = certified AFP value to date (applied where nothing's certified yet, shown in amber).
+        <strong>Cost</strong> = kiosk labour at basic rates + nett PO commitments. <strong>Margin to date</strong> = value − cost.
+        <strong>Billing position</strong>: value earned vs invoiced — positive = under-billed (work done, not yet invoiced = WIP you're funding);
+        negative = over-billed (cash ahead of work). <strong>Cash</strong>: invoiced, paid, outstanding, retention held.
+        <strong>Something looks wrong?</strong> Contract £0 → quote lines not seeded (open the project's quote in QB, save once).
+        Value £0 with work done → no AFP raised yet, so the margin column can't see the earning — raise the valuation.
+        Costs are commitments to date, not final: POs lead supplier invoices, labour is basic rate without overheads.
+      </div>
+      <div id="cvrKpis" style="display:none;margin-bottom:12px"></div>
+      <div id="cvrTable"><div style="padding:30px;text-align:center;color:var(--muted);font-size:12px">Loading…</div></div>
     </div>
 
     <div class="report-panel" id="rptPanel-babcock">
@@ -378,6 +404,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260729g"></script>
+<script src="shared.js?v=20260729h"></script>
 </body>
 </html>
