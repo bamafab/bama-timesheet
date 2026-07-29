@@ -108,8 +108,15 @@
   <!-- STEP 3: MAPPING -->
   <div class="mig-card">
     <div class="mig-step"><span class="mig-num">3</span> Mapping — where each existing folder goes</div>
-    <div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">Scan (1) and create (2) first. Default is <strong>leave in place</strong> — only what you explicitly map will move. Moving a folder moves everything inside it in one operation.</div>
-    <div id="migMapList"><div style="padding:16px;color:var(--muted);font-size:12px">Run steps 1 and 2 first.</div></div>
+    <div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">
+      <strong>🤖 Auto-map</strong> builds the whole plan for you: project folders (S/C/BC refs) matched to their year via the ERP database
+      (folder creation date as fallback), legacy Quotation year folders translated to the new numbering under Sales & Estimating,
+      and recognisable company folders (insurance, policies, RAMS, H&S…) homed. Everything it can't place confidently is listed as
+      <em>leave in place</em> for you to decide. Every row stays editable before anything moves.
+    </div>
+    <button class="btn btn-primary btn-sm" onclick="migAutoMap()">🤖 Auto-map everything</button>
+    <span id="migMapStatus" style="font-size:11.5px;color:var(--muted);margin-left:8px"></span>
+    <div id="migMapList" style="margin-top:10px"><div style="padding:16px;color:var(--muted);font-size:12px">Run steps 1 and 2, then Auto-map.</div></div>
   </div>
 
   <!-- STEP 4: DRY RUN + EXECUTE -->
@@ -223,7 +230,7 @@ async function migInventory() {
     document.getElementById('migInvList').innerHTML = _inv.map(f =>
       `<div class="mig-row"><span style="flex:1">📁 ${escapeHtml(f.name)}</span><span style="color:var(--muted);font-family:var(--font-mono)">${f.childCount} item${f.childCount !== 1 ? 's' : ''}</span></div>`).join('')
       + (files ? `<div class="mig-row" style="color:var(--accent)">⚠ ${files} loose file(s) in the root — worth homing manually.</div>` : '');
-    migRenderMapping();
+    /* auto-map replaces mapping render */
   } catch (e) { st.textContent = ''; toast('Scan failed: ' + e.message, 'error'); }
 }
 
@@ -278,11 +285,130 @@ async function migCreateTree() {
     for (const node of migParseTree()) await createRec(rootId, node, '', 0);
     st.textContent = 'Tree ready.';
     log('\n── Folder IDs above are what the ERP gets repointed to (05 Projects especially) — copy the log or leave this tab open. ──');
-    migRenderMapping();
+    /* auto-map replaces mapping render */
   } catch (e) { st.textContent = ''; toast('Create failed: ' + e.message, 'error'); }
 }
 
-// ── Step 3: mapping ──────────────────────────────────────────────────────────
+// ── Step 3: auto-mapping (the intelligence lives here) ──────────────────────
+let _plan = [];   // [{itemId, name, fromLabel, toId, toLabel, reason}]
+
+async function gChildren(itemId) {
+  let items = [], url = `/drives/${BAMA_DRIVE_ID}/items/${itemId}/children?$top=200&$select=id,name,folder,createdDateTime`;
+  while (url) {
+    const res = await g(url.replace(G, ''));
+    const j = await res.json();
+    items = items.concat(j.value || []);
+    url = j['@odata.nextLink'] ? j['@odata.nextLink'].replace(G, '') : null;
+  }
+  return items;
+}
+
+const yearName = y => String(y - 2022).padStart(2, '0') + ' - ' + y;
+const _yearFolderCache = {};
+async function targetYearFolder(parentId, y) {
+  const key = parentId + ':' + y;
+  if (!_yearFolderCache[key]) _yearFolderCache[key] = await migEnsureFolder(parentId, yearName(y));
+  return _yearFolderCache[key];
+}
+
+async function migAutoMap() {
+  if (!_inv.length || !Object.keys(_canon).length) { toast('Run steps 1 and 2 first', 'error'); return; }
+  const st = document.getElementById('migMapStatus'); st.textContent = 'Thinking…';
+  _plan = [];
+  const canonIds = new Set(Object.values(_canon).map(n => n.id));
+
+  // Project year lookup from the ERP itself
+  let projYear = {};
+  try {
+    const projects = await api.get('/api/projects');
+    for (const p of (projects || [])) {
+      const y = parseInt(String(p.created_at || p.start_date || '').slice(0, 4));
+      if (p.project_number && y) projYear[String(p.project_number).toUpperCase()] = y;
+    }
+    st.textContent = `ERP knows ${Object.keys(projYear).length} projects…`;
+  } catch (e) { st.textContent = 'ERP lookup unavailable — using folder dates.'; }
+
+  const canonName = Object.keys(_canon).find(n => n.includes('Projects'));
+  const projectsId = _canon[canonName]?.id;
+  const salesName = Object.keys(_canon).find(n => n.includes('Sales'));
+  const salesId = _canon[salesName]?.id;
+
+  const yearOf = (fname, created) => {
+    const ref = (fname.match(/^(S|C|BC)\s?-?\d+/i) || [])[0];
+    if (ref) {
+      const key = ref.replace(/\s|-/g, '').toUpperCase();
+      if (projYear[key]) return projYear[key];
+      const cm = key.match(/^C(\d{2})/);          // C26xxxx → 2026
+      if (cm) return 2000 + parseInt(cm[1]);
+    }
+    const y = parseInt(String(created || '').slice(0, 4));
+    return (y >= 2023 && y <= new Date().getFullYear()) ? y : null;
+  };
+
+  // Company-folder name heuristics → canonical target
+  const findTarget = label => {
+    for (const [name, node] of Object.entries(_canon)) {
+      if (name === label) return { id: node.id, label: name };
+      for (const [cn, cid] of Object.entries(node.children)) if (cn === label) return { id: cid, label: `${name} / ${cn}` };
+    }
+    return null;
+  };
+  const HEUR = [
+    [/insur/i,               '01 - Insurances'],
+    [/polic|handbook/i,      '02 - Policies & Procedures'],
+    [/accredit|certificat/i, '03 - Accreditations & Certifications'],
+    [/h&s|health|safety/i,   '04 - H&S'],
+    [/rams/i,                '06 - RAMS Library (generic)'],
+    [/weld/i,                '03 - Weld Procedures (WPS-PQR)'],
+    [/employe|staff|hr\b/i, '03 - Employees'],
+    [/supplier|subcontract/i,'04 - Suppliers & Subcontractors'],
+    [/account|invoice|remitt/i, '07 - Accounts']
+  ];
+
+  for (const f of _inv) {
+    if (canonIds.has(f.id) || f.name === document.getElementById('migParent').value.trim()) continue;
+
+    // Legacy Projects/: map each CHILD project folder to its year
+    if (/^projects$/i.test(f.name) && projectsId) {
+      const kids = await gChildren(f.id);
+      for (const k of kids.filter(x => x.folder)) {
+        const y = yearOf(k.name, k.createdDateTime);
+        if (y) {
+          const tid = await targetYearFolder(projectsId, y);
+          _plan.push({ itemId: k.id, name: 'Projects / ' + k.name, toId: tid, toLabel: `${canonName} / ${yearName(y)}`, reason: projYear[(k.name.match(/^(S|C|BC)\s?-?\d+/i) || [''])[0]?.replace(/\s|-/g, '').toUpperCase()] ? 'ERP year' : 'ref/date' });
+        } else {
+          _plan.push({ itemId: k.id, name: 'Projects / ' + k.name, toId: '', toLabel: '— leave (year unknown) —', reason: '?' });
+        }
+      }
+      continue;
+    }
+
+    // Legacy Quotation/: translate each old year folder's CHILDREN into new Sales years
+    if (/^quotation$/i.test(f.name) && salesId) {
+      const years = await gChildren(f.id);
+      for (const yf of years.filter(x => x.folder)) {
+        const ym = yf.name.match(/(20\d{2})/);
+        if (!ym) { _plan.push({ itemId: yf.id, name: 'Quotation / ' + yf.name, toId: '', toLabel: '— leave (no year in name) —', reason: '?' }); continue; }
+        const tid = await targetYearFolder(salesId, parseInt(ym[1]));
+        const quotes = await gChildren(yf.id);
+        for (const q of quotes.filter(x => x.folder)) {
+          _plan.push({ itemId: q.id, name: `Quotation / ${yf.name} / ${q.name}`, toId: tid, toLabel: `${salesName} / ${yearName(parseInt(ym[1]))}`, reason: 'year folder' });
+        }
+      }
+      continue;
+    }
+
+    // Company-folder heuristics on remaining roots
+    const hit = HEUR.find(([re]) => re.test(f.name));
+    const target = hit ? findTarget(hit[1]) : null;
+    if (target) _plan.push({ itemId: f.id, name: f.name, toId: target.id, toLabel: target.label, reason: 'name match' });
+    else _plan.push({ itemId: f.id, name: f.name, toId: '', toLabel: '— leave in place —', reason: '?' });
+  }
+
+  st.textContent = `${_plan.filter(p => p.toId).length} of ${_plan.length} placed automatically.`;
+  migRenderPlan();
+}
+
 function migTargets() {
   const t = [{ v: '', label: '— leave in place —' }];
   for (const [name, node] of Object.entries(_canon)) {
@@ -292,23 +418,20 @@ function migTargets() {
   return t;
 }
 
-function migRenderMapping() {
+function migRenderPlan() {
   const el = document.getElementById('migMapList');
-  if (!_inv.length || !Object.keys(_canon).length) return;
-  const canonIds = new Set([...Object.values(_canon).map(n => n.id)]);
-  const rows = _inv.filter(f => !canonIds.has(f.id));   // don't offer to move the new tree into itself
-  const opts = migTargets().map(t => `<option value="${t.v}">${escapeHtml(t.label)}</option>`).join('');
-  el.innerHTML = rows.map(f =>
-    `<div class="mig-row"><span style="flex:1">📁 ${escapeHtml(f.name)} <span style="color:var(--subtle);font-size:10.5px">(${f.childCount})</span></span>
-       <select class="mig-input mig-target" data-id="${f.id}" data-name="${escapeHtml(f.name)}">${opts}</select></div>`).join('')
-    || '<div style="padding:12px;color:var(--muted);font-size:12px">Nothing outside the canonical tree.</div>';
+  if (!_plan.length) { el.innerHTML = '<div style="padding:12px;color:var(--muted);font-size:12px">Nothing to map.</div>'; return; }
+  const opts = migTargets();
+  el.innerHTML = _plan.map((p, i) => `<div class="mig-row">
+      <span style="flex:1">📁 ${escapeHtml(p.name)} <span style="color:var(--subtle);font-size:10px">${escapeHtml(p.reason || '')}</span></span>
+      <select class="mig-input" onchange="_plan[${i}].toId=this.value;_plan[${i}].toLabel=this.selectedOptions[0].textContent">
+        ${opts.map(o => `<option value="${o.v}" ${o.v === p.toId ? 'selected' : ''}>${escapeHtml(o.label)}</option>`).join('')}
+        ${p.toId && !opts.some(o => o.v === p.toId) ? `<option value="${p.toId}" selected>${escapeHtml(p.toLabel)}</option>` : ''}
+      </select>
+    </div>`).join('');
 }
 
-function migPlan() {
-  return [...document.querySelectorAll('.mig-target')]
-    .filter(s => s.value)
-    .map(s => ({ itemId: s.dataset.id, name: s.dataset.name, toId: s.value, toName: s.selectedOptions[0].textContent }));
-}
+function migPlan() { return _plan.filter(p => p.toId).map(p => ({ itemId: p.itemId, name: p.name, toId: p.toId, toName: p.toLabel })); }
 
 // ── Step 4: dry run / execute / revert ──────────────────────────────────────
 function migDryRun() {
