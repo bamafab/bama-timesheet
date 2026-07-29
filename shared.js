@@ -18725,6 +18725,7 @@ function renderAssembly() {
           <button class="btn btn-primary" style="padding:5px 12px;font-size:11px${selCount ? '' : ';opacity:.4;pointer-events:none'}" onclick="openBulkStageModal('fab', _assembliesByJob[${jobId}], 'projects')">&#128296; Fab</button>
           <button class="btn btn-primary" style="padding:5px 12px;font-size:11px;background:rgba(234,179,8,.9);border-color:rgba(234,179,8,.9)${selCount ? '' : ';opacity:.4;pointer-events:none'}" onclick="openBulkStageModal('weld', _assembliesByJob[${jobId}], 'projects')">&#128293; Weld</button>
           <button class="btn btn-primary" style="padding:5px 12px;font-size:11px${selCount ? '' : ';opacity:.4;pointer-events:none'}" onclick="openBulkStageModal('complete', _assembliesByJob[${jobId}], 'projects')">&#10003; Complete</button>
+          ${isDraftsman ? `<button class="btn btn-ghost" style="padding:5px 12px;font-size:11px;color:var(--red);border-color:rgba(239,68,68,.4)${selCount ? '' : ';opacity:.4;pointer-events:none'}" onclick="bulkDeleteAssemblies(_assembliesByJob[${jobId}])">&#128465; Delete</button>` : ''}
           <button class="btn btn-ghost" style="padding:5px 12px;font-size:11px" onclick="toggleBulkSelect()">Cancel</button>
         </span>
       </div>`;
@@ -20424,6 +20425,43 @@ async function deleteAssembly(id) {
       toast(`Delete failed: ${e.message}`, 'error');
     }
   }
+}
+
+// Bulk delete — draftsman only, from the Assembly section's multi-select bar.
+// Reuses DELETE /api/job-assemblies/:id per selected assembly. Fabricated
+// assemblies are protected server-side (409 fabricated_protected) and are
+// skipped with a count in the summary toast rather than aborting the batch.
+async function bulkDeleteAssemblies(pool) {
+  const selected = (pool || []).filter(a => _bulkSelected.has(a.id));
+  if (!selected.length) return;
+  const ok = await bamaConfirm({
+    title: `Delete ${selected.length} assembl${selected.length > 1 ? 'ies' : 'y'}?`,
+    body: 'This removes the selected assemblies and their parts. PDFs stay in SharePoint. Assemblies already marked as fabricated will be skipped (roll back BOM first).',
+    confirmText: 'Delete',
+    icon: '&#128465;',
+    tone: 'danger'
+  });
+  if (!ok) return;
+  setLoading(true);
+  let deleted = 0, protectedCount = 0, failed = 0;
+  for (const a of selected) {
+    try {
+      await api.delete(`/api/job-assemblies/${a.id}`);
+      deleted++;
+    } catch (e) {
+      if (e && e.body && e.body.error === 'fabricated_protected') protectedCount++;
+      else failed++;
+    }
+  }
+  setLoading(false);
+  _bulkSelected.clear();
+  _bulkSelectMode = false;
+  await loadJobAssemblies(parseInt(currentJob.id));
+  renderAssembly();
+  const bits = [`${deleted} deleted`];
+  if (protectedCount) bits.push(`${protectedCount} skipped (fabricated — roll back BOM first)`);
+  if (failed) bits.push(`${failed} failed`);
+  toast(bits.join(' · '), failed ? 'error' : (protectedCount ? 'warn' : 'success'));
 }
 
 // ── Attach PDF to a manual-entry assembly ────────────────────────────────────
