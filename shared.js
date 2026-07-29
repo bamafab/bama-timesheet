@@ -28422,8 +28422,22 @@ async function renderProductivityReport(run) {
   const dayName = iso => new Date(iso + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short' });
   const isWeekend = iso => [0, 6].includes(new Date(iso + 'T12:00:00').getDay());
 
-  // matrix[rowKey][date] = [{k: job-or-name, h: hours}]
-  const matrix = {}, rowTotals = {};
+  // Consistent colour per job — hash → hue, so S1996 is the SAME colour on
+  // every row, every day, every run. Legend below the grid.
+  const jobHue = key => {
+    let h = 0; const s = String(key);
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return h % 360;
+  };
+  const chipStyle = key => {
+    const hue = jobHue(key);
+    return `display:inline-flex;align-items:center;gap:4px;padding:1px 7px;border-radius:20px;` +
+           `background:hsla(${hue},70%,55%,.14);border:1px solid hsla(${hue},70%,60%,.45);` +
+           `color:hsl(${hue},75%,72%);font-size:10.5px;line-height:1.7;white-space:nowrap`;
+  };
+
+  // matrix[rowKey][date] = { cellKey: hours }
+  const matrix = {}, rowTotals = {}, dayTotals = {}, jobTotals = {};
   for (const r of rows) {
     const date = String(r.date).slice(0, 10);
     const rowKey = view === 'person' ? (r.employee_name || 'Unknown') : (r.project_number || '—');
@@ -28432,36 +28446,58 @@ async function renderProductivityReport(run) {
     ((matrix[rowKey] = matrix[rowKey] || {})[date] = matrix[rowKey][date] || {});
     matrix[rowKey][date][cellKey] = (matrix[rowKey][date][cellKey] || 0) + h;
     rowTotals[rowKey] = (rowTotals[rowKey] || 0) + h;
+    dayTotals[date]   = (dayTotals[date]   || 0) + h;
+    const jobKey = r.project_number || '—';
+    jobTotals[jobKey] = (jobTotals[jobKey] || 0) + h;
   }
   const rowKeys = Object.keys(matrix).sort();
   if (!rowKeys.length) { grid.innerHTML = '<div style="padding:20px;color:var(--muted);font-size:12px">No hours in this range.</div>'; return; }
 
   const csvBtn = document.getElementById('pgCsvBtn'); if (csvBtn) csvBtn.style.display = '';
+  const fmtH = v => (Math.round(v * 10) / 10).toLocaleString('en-GB');
 
-  const th = 'padding:6px 8px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;border-bottom:2px solid var(--border);white-space:nowrap;text-align:center';
-  let html = `<div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:11px;min-width:100%">
+  const STICKY_L = 'position:sticky;left:0;background:var(--card,#161616);z-index:2;box-shadow:2px 0 6px rgba(0,0,0,.35)';
+  const STICKY_R = 'position:sticky;right:0;background:var(--card,#161616);z-index:2;box-shadow:-2px 0 6px rgba(0,0,0,.35)';
+  const th = 'padding:8px 6px;font-size:9.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;border-bottom:2px solid var(--border);white-space:nowrap;text-align:center';
+
+  let html = `<div style="overflow-x:auto;border:1px solid var(--border);border-radius:10px;background:var(--card,#161616)">
+    <table style="border-collapse:separate;border-spacing:0;font-size:11px;min-width:100%">
     <thead><tr>
-      <th style="${th};text-align:left;position:sticky;left:0;background:var(--bg)">${view === 'person' ? 'Person' : 'Job'}</th>
-      ${dates.map(d => `<th style="${th};${isWeekend(d) ? 'opacity:.5' : ''}">${dayName(d)}<br>${d.slice(8)}/${d.slice(5, 7)}</th>`).join('')}
-      <th style="${th};text-align:right">Total</th>
+      <th style="${th};text-align:left;${STICKY_L};padding-left:12px">${view === 'person' ? 'Person' : 'Job'}</th>
+      ${dates.map(d => `<th style="${th};${isWeekend(d) ? 'color:var(--border)' : ''}">${dayName(d)}<br><span style="font-size:10.5px;color:${isWeekend(d) ? 'var(--border)' : 'var(--text)'}">${d.slice(8)}/${d.slice(5, 7)}</span></th>`).join('')}
+      <th style="${th};text-align:right;${STICKY_R};padding-right:12px">Total</th>
     </tr></thead><tbody>`;
-  for (const rk of rowKeys) {
-    html += `<tr style="border-bottom:1px solid var(--border)">
-      <td style="padding:6px 8px;font-weight:600;white-space:nowrap;position:sticky;left:0;background:var(--bg)">${escapeHtml(rk)}</td>`;
+
+  rowKeys.forEach((rk, ri) => {
+    const zebra = ri % 2 ? 'background:rgba(255,255,255,.018)' : '';
+    html += `<tr>
+      <td style="padding:8px 12px;font-weight:600;white-space:nowrap;${STICKY_L};border-bottom:1px solid var(--border)">${escapeHtml(rk)}</td>`;
     for (const d of dates) {
       const cell = matrix[rk][d];
-      if (!cell) { html += `<td style="padding:4px 6px;text-align:center;color:var(--border);${isWeekend(d) ? 'background:rgba(255,255,255,.015)' : ''}">·</td>`; continue; }
+      const we = isWeekend(d) ? 'background:rgba(255,255,255,.025);' : zebra + ';';
+      if (!cell) { html += `<td style="padding:6px;text-align:center;color:rgba(255,255,255,.08);border-bottom:1px solid var(--border);${we}">·</td>`; continue; }
       const parts = Object.entries(cell).sort((a, b) => b[1] - a[1])
-        .map(([k, h]) => `<div style="white-space:nowrap"><span style="color:var(--accent)">${escapeHtml(k)}</span> <span style="font-family:var(--font-mono)">${Math.round(h * 10) / 10}</span></div>`);
-      html += `<td style="padding:4px 6px;vertical-align:top;${isWeekend(d) ? 'background:rgba(255,255,255,.015)' : ''}">${parts.join('')}</td>`;
+        .map(([k, h]) => `<span style="${chipStyle(k)}" title="${escapeHtml(k)} — ${fmtH(h)}h">${escapeHtml(k)} <strong style="font-family:var(--font-mono);font-weight:700">${fmtH(h)}</strong></span>`);
+      html += `<td style="padding:5px 6px;vertical-align:top;border-bottom:1px solid var(--border);${we}"><div style="display:flex;flex-direction:column;gap:3px;align-items:flex-start">${parts.join('')}</div></td>`;
     }
-    html += `<td style="padding:6px 8px;text-align:right;font-family:var(--font-mono);font-weight:700">${Math.round(rowTotals[rk] * 10) / 10}</td></tr>`;
-  }
+    html += `<td style="padding:8px 12px;text-align:right;font-family:var(--font-mono);font-weight:700;${STICKY_R};border-bottom:1px solid var(--border)">${fmtH(rowTotals[rk])}</td></tr>`;
+  });
+
+  // Footer: per-day totals so the grand total is ALWAYS visible (pinned right)
   const grand = Object.values(rowTotals).reduce((s, v) => s + v, 0);
-  html += `<tr><td style="padding:6px 8px;font-weight:700">Total</td><td colspan="${dates.length}"></td>
-    <td style="padding:6px 8px;text-align:right;font-family:var(--font-mono);font-weight:700;color:var(--accent)">${Math.round(grand * 10) / 10}</td></tr>`;
-  html += `</tbody></table></div>
-    <div style="font-size:10.5px;color:var(--subtle);margin-top:8px">Hours per job per day from the kiosk. ${incS000 ? 'Including' : 'Excluding'} S000 non-productive time. Weekends shaded.</div>`;
+  html += `<tr>
+      <td style="padding:8px 12px;font-weight:700;${STICKY_L};border-top:2px solid var(--border)">Total</td>
+      ${dates.map(d => `<td style="padding:6px;text-align:center;font-family:var(--font-mono);font-size:10.5px;color:var(--muted);border-top:2px solid var(--border)">${dayTotals[d] ? fmtH(dayTotals[d]) : ''}</td>`).join('')}
+      <td style="padding:8px 12px;text-align:right;font-family:var(--font-mono);font-weight:700;font-size:12.5px;color:var(--accent);${STICKY_R};border-top:2px solid var(--border)">${fmtH(grand)}</td>
+    </tr></tbody></table></div>`;
+
+  // Job legend with range totals — the at-a-glance "where did the fortnight go"
+  const legend = Object.entries(jobTotals).sort((a, b) => b[1] - a[1])
+    .map(([k, h]) => `<span style="${chipStyle(k)};font-size:11px;padding:3px 10px">${escapeHtml(k)} <strong style="font-family:var(--font-mono)">${fmtH(h)}h</strong> <span style="opacity:.65;font-size:10px">${grand ? Math.round(h / grand * 100) : 0}%</span></span>`).join(' ');
+  html += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center">
+      <span style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Jobs this period</span>${legend}
+    </div>
+    <div style="font-size:10.5px;color:var(--subtle);margin-top:8px">Hours per job per day from the kiosk. ${incS000 ? 'Including' : 'Excluding'} S000 non-productive time. Weekends shaded. Colours are consistent per job.</div>`;
   grid.innerHTML = html;
 }
 

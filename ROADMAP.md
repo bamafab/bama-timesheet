@@ -12,8 +12,10 @@ completed 2026-07-29. This file tracks the build phases and newly-scoped work.
 - **C1b** Productivity grid (person × job × day, reports.html) — 2026-07-29
 
 ## Next
-- **C2** Capacity board (workshop load, weeks ahead, from won work + pipeline)
-  + "done by" on fab stage moves (tonnes per person per day)
+- **C2** Capacity board ✅ SHIPPED 2026-07-29 (ED Overview: next-8-weeks
+  stacked load vs capacity line from remaining estimated hours × deadlines;
+  /api/capacity-summary). "Done by" on fab stage moves deliberately deferred
+  → **C2b** (needs a schema change on stage moves + picker UI).
 - **C3** Stock register with voice entry (Web Speech + Claude parse, validated
   against the steel database) → cut lists / bar optimisation wired to stock
 - **C4** CVR / WIP management pack (value applied vs cost to date per live

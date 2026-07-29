@@ -13,6 +13,11 @@ management, and a standalone UK steel section reference.
   `--update` and justify it in the commit message. The harness extracts the
   engine from the live page at runtime (self-healing helper resolution), so
   it always tests what ships.
+- **Graphics are part of done (raised twice by Mateusz, 2026-07-29).** Any
+  grid/board/report UI ships looking DESIGNED, not raw: consistent per-entity
+  colours (hash→hue chips), pinned/sticky totals that can't scroll off-screen,
+  zebra/weekend shading, legends, hover titles, proper spacing. If it looks
+  like a data dump, it isn't finished.
 - **Robustness definition of done (system-wide).** Anything shipped that
   produces findings, numbers or documents must include its export/copy path,
   its Help/troubleshooting note, and a way back (undo/revert or soft-delete)
