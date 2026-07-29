@@ -6824,8 +6824,15 @@ async function saveAll() {
         if ((q[f] ?? '') === snap[f] && (col in payload)) delete payload[col];
       });
     }
+    // Baseline = the values THIS save carries, captured synchronously with the
+    // payload — NOT after the await. q can change while the save is in flight
+    // (autosave coalescing); a post-await snapshot would record those unsent
+    // changes as already-saved and the pending save would silently drop them
+    // (the "status doesn't update" race, 2026-07-29).
+    const sentSnap = {};
+    QB_CONTESTED.forEach(([f]) => { sentSnap[f] = q[f] ?? ''; });
     const updated = await qbFetch('PUT', `/api/qb-quotes/${q.id}`, payload);
-    _qbSnapshotCols(q);   // saved state is the new baseline
+    _qbColSnapshots[q.id] = sentSnap;   // saved state is the new baseline
     // Sync updated_at back
     const local = quotes.find(x => x.id == q.id);
     if (local) { local.updated_at = updated.updated_at; local.total_ex_vat = updated.total_ex_vat; }
