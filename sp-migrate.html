@@ -312,8 +312,15 @@ async function targetYearFolder(parentId, y) {
 }
 
 async function migAutoMap() {
-  if (!_inv.length || !Object.keys(_canon).length) { toast('Run steps 1 and 2 first', 'error'); return; }
-  const st = document.getElementById('migMapStatus'); st.textContent = 'Thinking…';
+  const st = document.getElementById('migMapStatus');
+  // Self-sufficient: on a fresh page load the in-memory scan/tree are empty
+  // even though the tree exists in SharePoint. Resolve both automatically —
+  // migCreateTree is idempotent (finds existing folders, creates nothing new
+  // if the tree matches the box).
+  if (!_inv.length) { st.textContent = 'Scanning…'; await migInventory(); }
+  if (!Object.keys(_canon).length) { st.textContent = 'Resolving existing tree…'; await migCreateTree(); }
+  if (!_inv.length || !Object.keys(_canon).length) { toast('Could not resolve the tree — check the log', 'error'); return; }
+  st.textContent = 'Thinking…';
   _plan = [];
   const canonIds = new Set(Object.values(_canon).map(n => n.id));
 
