@@ -40,6 +40,16 @@ Scoped per Mateusz: the ERP becomes the home for company documents and QMS
 paperwork, filing everything into a PROPER SharePoint folder taxonomy instead
 of the current ad-hoc naming.
 
+**D0 — IN PROGRESS 2026-07-29:** migration tool built (`sp-migrate.html`, not
+linked from hub — direct URL): inventory scan, editable canonical tree with
+idempotent creation, per-folder mapping (default leave-in-place), dry-run,
+logged execution with downloadable move-log, and revert-from-log. Runs with
+Mateusz's own delegated Graph permissions (he outranks Daniel). Moves keep
+item IDs stable so ERP sharepoint_*_id references survive. Awaiting Mateusz's
+answers on D1–D5 (naming, legacy scope, 04 Sales, BAMA-specific folders,
+numbering) + OneDrive backup before execution. After migration: repoint ERP
+folder-creation code to the new taxonomy (follow-up commit).
+
 **D0 — SharePoint taxonomy design (prerequisite, decisions needed from
 Mateusz before any code):** agree the canonical folder tree (company-level:
 policies / insurances / RAMS library / QMS; supplier-level; employee-level;

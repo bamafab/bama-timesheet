@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BAMA SharePoint Migration (D0)</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="bama.css?v=20260729c">
+<style>
+.mig-wrap { max-width: 1200px; margin: 0 auto; padding: 20px; }
+.mig-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; margin-bottom: 16px; }
+.mig-step { display:flex; align-items:center; gap:8px; font-size:15px; font-weight:700; margin-bottom:8px; }
+.mig-num { width:22px; height:22px; border-radius:50%; background:var(--accent); color:#000; display:inline-flex; align-items:center; justify-content:center; font-size:12px; }
+.mig-input { background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; color: var(--text); font-size: 12.5px; }
+.mig-row { display:flex; align-items:center; gap:10px; padding:6px 10px; border-bottom:1px solid var(--border); font-size:12.5px; }
+.mig-log { font-family: var(--font-mono); font-size: 11px; background: var(--card); border:1px solid var(--border); border-radius:8px; padding:10px 12px; max-height:260px; overflow-y:auto; white-space:pre-wrap; }
+</style>
+</head>
+<body>
+<div class="loading-bar" id="loadingBar" style="width:0"></div>
+<div class="topbar">
+  <a href="hub.html" style="text-decoration:none"><div class="logo"><span style="color:#D0021B">BAMA</span> <span style="color:#D0021B">FABRICATION</span><span> SP MIGRATION</span></div></a>
+  <div class="topbar-right"><a href="hub.html" style="text-decoration:none"><button class="manager-btn">&#8592; Hub</button></a></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<div class="mig-wrap">
+  <div class="mig-card" style="border-color:rgba(208,2,27,.5)">
+    <strong style="color:var(--red)">⚠ Admin tool — D0 folder taxonomy migration.</strong>
+    <span style="font-size:12px;color:var(--muted)">Runs with YOUR Microsoft permissions. Moves keep item IDs (ERP links survive) and nothing is copied or deleted — but take the OneDrive backup first anyway. Work the steps top to bottom; nothing moves until step 4's Execute, and every move is logged with a revert path.</span>
+  </div>
+
+  <!-- STEP 1: INVENTORY -->
+  <div class="mig-card">
+    <div class="mig-step"><span class="mig-num">1</span> Inventory — what exists now</div>
+    <button class="btn btn-primary btn-sm" onclick="migInventory()">🔍 Scan SharePoint root</button>
+    <span id="migInvStatus" style="font-size:11.5px;color:var(--muted);margin-left:8px"></span>
+    <div id="migInvList" style="margin-top:10px"></div>
+  </div>
+
+  <!-- STEP 2: CANONICAL TREE -->
+  <div class="mig-card">
+    <div class="mig-step"><span class="mig-num">2</span> Canonical tree — edit to taste, then create</div>
+    <div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">Indent with two spaces for subfolders. Creating is idempotent — existing folders are left alone. Project subfolders (05) are created per-project by the ERP later, not here.</div>
+    <textarea id="migTree" class="mig-input" rows="14" style="width:100%;font-family:var(--font-mono);font-size:12px">01 Company
+  10 Insurances
+  20 Policies
+  30 Certifications
+  40 RAMS Library
+  50 QMS
+02 Employees
+03 Suppliers
+04 Sales
+05 Projects</textarea>
+    <div style="margin-top:8px">
+      <button class="btn btn-primary btn-sm" onclick="migCreateTree()">📁 Create tree (idempotent)</button>
+      <span id="migTreeStatus" style="font-size:11.5px;color:var(--muted);margin-left:8px"></span>
+    </div>
+  </div>
+
+  <!-- STEP 3: MAPPING -->
+  <div class="mig-card">
+    <div class="mig-step"><span class="mig-num">3</span> Mapping — where each existing folder goes</div>
+    <div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">Scan (1) and create (2) first. Default is <strong>leave in place</strong> — only what you explicitly map will move. Moving a folder moves everything inside it in one operation.</div>
+    <div id="migMapList"><div style="padding:16px;color:var(--muted);font-size:12px">Run steps 1 and 2 first.</div></div>
+  </div>
+
+  <!-- STEP 4: DRY RUN + EXECUTE -->
+  <div class="mig-card">
+    <div class="mig-step"><span class="mig-num">4</span> Dry run, execute, revert</div>
+    <button class="btn btn-ghost btn-sm" onclick="migDryRun()">🧪 Dry-run report</button>
+    <button class="btn btn-primary btn-sm" id="migExecBtn" onclick="migExecute()" disabled style="opacity:.4">▶ Execute moves</button>
+    <button class="btn btn-ghost btn-sm" onclick="migDownloadLog()">⬇ Move log (undo map)</button>
+    <label class="btn btn-ghost btn-sm" style="cursor:pointer">↩ Revert from log<input type="file" accept=".csv" style="display:none" onchange="migRevert(this.files[0])"></label>
+    <div id="migLog" class="mig-log" style="margin-top:10px">Ready.</div>
+  </div>
+</div>
+
+<script src="shared.js?v=20260729h"></script>
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// D0 MIGRATION TOOL — inventory / create tree / map / move, with revert.
+// All Graph calls are delegated (the signed-in user's own permissions).
+// Moves are PATCH parentReference: item IDs are stable, so DB references
+// held by the ERP (sharepoint_*_id columns) keep working after the move.
+// ═══════════════════════════════════════════════════════════════════════════
+let _inv = [];            // root folders [{id, name, childCount}]
+let _canon = {};          // name -> {id, children: {name -> id}}
+let _moveLog = [];        // [{itemId, name, fromId, toId, toName, at}]
+
+const G = 'https://graph.microsoft.com/v1.0';
+async function g(path, opts = {}) {
+  const token = await getToken();
+  const res = await fetch(`${G}${path}`, {
+    ...opts,
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...(opts.headers || {}) }
+  });
+  if (!res.ok && res.status !== 409) throw new Error(`Graph ${res.status}: ${(await res.text()).slice(0, 180)}`);
+  return res;
+}
+const log = m => { const el = document.getElementById('migLog'); el.textContent += '\n' + m; el.scrollTop = el.scrollHeight; };
+
+// ── Step 1: inventory ────────────────────────────────────────────────────────
+async function migInventory() {
+  const st = document.getElementById('migInvStatus'); st.textContent = 'Scanning…';
+  try {
+    let items = [], url = `/drives/${BAMA_DRIVE_ID}/root/children?$top=200`;
+    while (url) {
+      const res = await g(url.replace(G, ''));
+      const j = await res.json();
+      items = items.concat(j.value || []);
+      url = j['@odata.nextLink'] ? j['@odata.nextLink'].replace(G, '') : null;
+    }
+    _inv = items.filter(i => i.folder).map(i => ({ id: i.id, name: i.name, childCount: i.folder.childCount }));
+    const files = items.filter(i => !i.folder).length;
+    st.textContent = `${_inv.length} root folders, ${files} loose root files.`;
+    document.getElementById('migInvList').innerHTML = _inv.map(f =>
+      `<div class="mig-row"><span style="flex:1">📁 ${escapeHtml(f.name)}</span><span style="color:var(--muted);font-family:var(--font-mono)">${f.childCount} item${f.childCount !== 1 ? 's' : ''}</span></div>`).join('')
+      + (files ? `<div class="mig-row" style="color:var(--accent)">⚠ ${files} loose file(s) in the root — worth homing manually.</div>` : '');
+    migRenderMapping();
+  } catch (e) { st.textContent = ''; toast('Scan failed: ' + e.message, 'error'); }
+}
+
+// ── Step 2: canonical tree ───────────────────────────────────────────────────
+function migParseTree() {
+  const lines = document.getElementById('migTree').value.split('\n').filter(l => l.trim());
+  const tree = [];   // [{name, children: [name]}]
+  for (const l of lines) {
+    if (/^\s/.test(l)) { if (tree.length) tree[tree.length - 1].children.push(l.trim()); }
+    else tree.push({ name: l.trim(), children: [] });
+  }
+  return tree;
+}
+
+async function migEnsureFolder(parentId, name) {
+  const res = await g(`/drives/${BAMA_DRIVE_ID}/items/${parentId}/children`, {
+    method: 'POST',
+    body: JSON.stringify({ name, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' })
+  });
+  if (res.status === 201) return (await res.json()).id;
+  // 409 = exists — fetch by path
+  const get = await g(`/drives/${BAMA_DRIVE_ID}/items/${parentId}:/${encodeURIComponent(name)}`);
+  return (await get.json()).id;
+}
+
+async function migCreateTree() {
+  const st = document.getElementById('migTreeStatus'); st.textContent = 'Creating…';
+  try {
+    const rootRes = await g(`/drives/${BAMA_DRIVE_ID}/root`);
+    const rootId = (await rootRes.json()).id;
+    _canon = {};
+    for (const node of migParseTree()) {
+      const id = await migEnsureFolder(rootId, node.name);
+      _canon[node.name] = { id, children: {} };
+      log(`✓ ${node.name}`);
+      for (const child of node.children) {
+        _canon[node.name].children[child] = await migEnsureFolder(id, child);
+        log(`  ✓ ${node.name} / ${child}`);
+      }
+    }
+    st.textContent = 'Tree ready.';
+    migRenderMapping();
+  } catch (e) { st.textContent = ''; toast('Create failed: ' + e.message, 'error'); }
+}
+
+// ── Step 3: mapping ──────────────────────────────────────────────────────────
+function migTargets() {
+  const t = [{ v: '', label: '— leave in place —' }];
+  for (const [name, node] of Object.entries(_canon)) {
+    t.push({ v: node.id, label: name });
+    for (const [cn, cid] of Object.entries(node.children)) t.push({ v: cid, label: `${name} / ${cn}` });
+  }
+  return t;
+}
+
+function migRenderMapping() {
+  const el = document.getElementById('migMapList');
+  if (!_inv.length || !Object.keys(_canon).length) return;
+  const canonIds = new Set([...Object.values(_canon).map(n => n.id)]);
+  const rows = _inv.filter(f => !canonIds.has(f.id));   // don't offer to move the new tree into itself
+  const opts = migTargets().map(t => `<option value="${t.v}">${escapeHtml(t.label)}</option>`).join('');
+  el.innerHTML = rows.map(f =>
+    `<div class="mig-row"><span style="flex:1">📁 ${escapeHtml(f.name)} <span style="color:var(--subtle);font-size:10.5px">(${f.childCount})</span></span>
+       <select class="mig-input mig-target" data-id="${f.id}" data-name="${escapeHtml(f.name)}">${opts}</select></div>`).join('')
+    || '<div style="padding:12px;color:var(--muted);font-size:12px">Nothing outside the canonical tree.</div>';
+}
+
+function migPlan() {
+  return [...document.querySelectorAll('.mig-target')]
+    .filter(s => s.value)
+    .map(s => ({ itemId: s.dataset.id, name: s.dataset.name, toId: s.value, toName: s.selectedOptions[0].textContent }));
+}
+
+// ── Step 4: dry run / execute / revert ──────────────────────────────────────
+function migDryRun() {
+  const plan = migPlan();
+  log(`\n── DRY RUN — ${plan.length} move(s) ──`);
+  if (!plan.length) { log('Nothing mapped. Default is leave-in-place.'); return; }
+  plan.forEach(p => log(`  ${p.name}  →  ${p.toName}`));
+  log('Everything inside each folder moves with it. IDs stay stable; ERP links survive.');
+  const b = document.getElementById('migExecBtn'); b.disabled = false; b.style.opacity = '1';
+}
+
+async function migExecute() {
+  const plan = migPlan();
+  if (!plan.length) return;
+  const ok = await bamaConfirm(`Move ${plan.length} folder(s) into the new tree? Each move is logged; the move log is your undo map. You took the OneDrive backup, yes?`, 'Execute migration');
+  if (!ok) return;
+  log(`\n── EXECUTING ${plan.length} move(s) ──`);
+  let done = 0, failed = 0;
+  for (const p of plan) {
+    try {
+      // record the CURRENT parent first (for revert)
+      const cur = await g(`/drives/${BAMA_DRIVE_ID}/items/${p.itemId}?$select=id,name,parentReference`);
+      const fromId = (await cur.json()).parentReference.id;
+      const res = await g(`/drives/${BAMA_DRIVE_ID}/items/${p.itemId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ parentReference: { id: p.toId }, '@microsoft.graph.conflictBehavior': 'fail' })
+      });
+      if (res.status === 409) { log(`  ✗ ${p.name} — name clash at destination, skipped`); failed++; continue; }
+      _moveLog.push({ itemId: p.itemId, name: p.name, fromId, toId: p.toId, toName: p.toName, at: new Date().toISOString() });
+      log(`  ✓ ${p.name} → ${p.toName}`); done++;
+    } catch (e) { log(`  ✗ ${p.name} — ${e.message}`); failed++; }
+  }
+  log(`── DONE: ${done} moved, ${failed} failed/skipped. Download the move log NOW and keep it. ──`);
+  toast(failed ? `${done} moved, ${failed} failed` : `${done} folder(s) moved`, failed ? 'error' : 'success');
+  migInventory();
+}
+
+function migDownloadLog() {
+  if (!_moveLog.length) { toast('No moves this session', 'error'); return; }
+  const lines = ['itemId,name,fromParentId,toParentId,toName,at'];
+  _moveLog.forEach(m => lines.push([m.itemId, `"${m.name.replace(/"/g, '""')}"`, m.fromId, m.toId, `"${m.toName}"`, m.at].join(',')));
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `sp-move-log-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.csv`;
+  a.click(); URL.revokeObjectURL(a.href);
+}
+
+async function migRevert(file) {
+  if (!file) return;
+  const text = await file.text();
+  const rows = text.split('\n').slice(1).filter(l => l.trim()).map(l => {
+    const m = l.match(/^([^,]+),"((?:[^"]|"")*)",([^,]+),([^,]+),/);
+    return m ? { itemId: m[1], name: m[2].replace(/""/g, '"'), fromId: m[3] } : null;
+  }).filter(Boolean);
+  if (!rows.length) { toast('Could not read that log', 'error'); return; }
+  const ok = await bamaConfirm(`Revert ${rows.length} move(s) — put every folder back where the log says it came from?`, 'Revert migration');
+  if (!ok) return;
+  log(`\n── REVERTING ${rows.length} move(s) ──`);
+  let done = 0, failed = 0;
+  for (const r of rows) {
+    try {
+      const res = await g(`/drives/${BAMA_DRIVE_ID}/items/${r.itemId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ parentReference: { id: r.fromId }, '@microsoft.graph.conflictBehavior': 'fail' })
+      });
+      if (res.status === 409) { log(`  ✗ ${r.name} — clash, skipped`); failed++; continue; }
+      log(`  ↩ ${r.name}`); done++;
+    } catch (e) { log(`  ✗ ${r.name} — ${e.message}`); failed++; }
+  }
+  log(`── REVERT DONE: ${done} restored, ${failed} failed. ──`);
+  migInventory();
+}
+</script>
+</body>
+</html>
