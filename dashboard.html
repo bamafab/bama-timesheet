@@ -1442,12 +1442,12 @@ async function loadTenderFolderFiles(ref) {
 
     // Search for the tender folder by quote ref name
     const year = document.getElementById('qlYear').value;
-    // D0: new quote folders live in 00 - BAMA/05 - Sales & Estimating with
+    // D0: new quote folders live in BAMA/05 - Sales & Estimating with
     // year−2022 prefixes ("04 - 2026"); legacy ones remain in Quotation/ with
     // year−2023 prefixes ("03 - 2026"). Try new first, fall back to legacy.
     const newYear = `${String(parseInt(year) - 2022).padStart(2,'0')} - ${year}`;
     const oldYear = `${String(parseInt(year) - 2023).padStart(2,'0')} - ${year}`;
-    let data = await graphGet(`/drives/${BAMA_DRIVE_ID}/root:/${encodeURIComponent('00 - BAMA/05 - Sales & Estimating/' + newYear)}:/children?$top=200&$select=name,id,folder`);
+    let data = await graphGet(`/drives/${BAMA_DRIVE_ID}/root:/${encodeURIComponent('BAMA/05 - Sales & Estimating/' + newYear)}:/children?$top=200&$select=name,id,folder`);
     if (!data || !(data.value || []).length) {
       data = await graphGet(`/drives/${BAMA_DRIVE_ID}/root:/${encodeURIComponent('Quotation/' + oldYear)}:/children?$top=200&$select=name,id,folder`);
     }
@@ -4164,7 +4164,7 @@ async function trResendNotify(tenderId) {
   </div>
   <p style="font-size:12px;color:var(--muted);margin:0 0 12px;line-height:1.6">
     Insurances, policies, accreditations and H&amp;S documents — files are stored in SharePoint under
-    <strong>00 - BAMA / 01 - Company Management</strong>. Set an expiry date and the register warns
+    <strong>BAMA / 01 - Company Management</strong>. Set an expiry date and the register warns
     everywhere on this dashboard when a renewal is due (default 60 days ahead).
     <strong>Renew</strong> uploads the new certificate and archives the old one (reversible);
     Delete is a soft-delete.
@@ -4830,7 +4830,7 @@ function copyHealthReport() {
 <script>
 // ═══════════════ COMPANY DOCUMENT LIBRARY (D1, 2026-07-29) ═══════════════
 // Register lives in SQL (CompanyDocuments via /api/company-documents);
-// files upload straight to SharePoint 00 - BAMA / 01 - Company Management
+// files upload straight to SharePoint BAMA / 01 - Company Management
 // with the user's delegated Graph token. Expiry reminders surface as the
 // red strip under the tab bar + a count badge on the Docs tab.
 
@@ -4839,8 +4839,8 @@ window.toast = window.toast || showToast;
 
 // SP_TAX subset (source of truth: SP_TAX const in shared.js — dashboard is standalone)
 const DOC_SP = {
-  companyMgmt: '012IX7LSN2UW4U3TVFFZBZHYHRYRBMXN35',   // 01 - Company Management
-  insurances:  '012IX7LSNVQU324JJXDZB3XT64QNGIKXIH'    // └ 01 - Insurances
+  companyMgmt: '012IX7LSIATGLNRCQ7F5HYWZK5GWFHD4N6',   // 01 - Company Management
+  insurances:  '012IX7LSORMMH6FFLDE5CLEDLLKFCLL62A'    // └ 01 - Insurances
 };
 // Year folder convention (D0): prefix = year − 2022, zero-padded ("04 - 2026")
 function docYearName(y) { return String(y - 2022).padStart(2, '0') + ' - ' + y; }

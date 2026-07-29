@@ -11071,24 +11071,26 @@ const BAMA_DRIVE_ID = 'b!CxTKk9lEwkyweUqAo3CRas-huywW4KtLqOk2tNzmx-P7CX86DNhTQo1
 const PROJECTS_FOLDER = 'Projects';
 
 // ═══ D0 SHAREPOINT TAXONOMY (created 2026-07-29 via sp-migrate.html) ═══════
-// The canonical tree lives under "00 - BAMA". IDs are stable across renames
+// The canonical tree lives under "BAMA" (re-created 2026-07-29 after the
+// first tree was deleted; NOTE the root has NO "00 - " prefix now). IDs are
+// stable across renames
 // and moves. NEW folders are created here; OLD folders keep working via their
 // stored IDs / drive-wide search (findProjectFolder) — the two worlds coexist
 // until migration completes.
 const SP_TAX = {
-  root:             '012IX7LSNA2CTI52LHSJAIR2N2GMFK46WL',   // 00 - BAMA
-  companyMgmt:      '012IX7LSN2UW4U3TVFFZBZHYHRYRBMXN35',   // 01 - Company Management
-  insurances:       '012IX7LSNVQU324JJXDZB3XT64QNGIKXIH',
-  quality:          '012IX7LSIN2OBJGBXMXJHYI5EOWCFLJHG5',   // 02 - Quality (QMS)
-  ramsLibrary:      '012IX7LSOBVNDFIYAKSRHZ3D3OGOK6GASY',
-  employees:        '012IX7LSL3PNWVCBO5MNAKBPC7JW7NLVN6',   // 03 - Employees
-  suppliers:        '012IX7LSNP24HQIPFQVVGZJFMF2M5IKZK2',   // 04 - Suppliers & Subcontractors
-  sales:            '012IX7LSI6QMSU7K3CW5EY33X7G2U6A6DN',   // 05 - Sales & Estimating
-  projects:         '012IX7LSMPF56OATZNWFD2JIYV3DACHGSB',   // 06 - Projects
-  accounts:         '012IX7LSMTCLUNMLLSRNEIQL6CZSYOM2XR',   // 07 - Accounts
-  salesInvoices:    '012IX7LSMNZQKP2OTTRRHICEE7SCET3NZZ',
-  purchaseInvoices: '012IX7LSJ3Y3M7H47GK5AK4JAAI63ZEFOR',
-  statements:       '012IX7LSIJNFBH6XZADNF3TGMWEKT255Y7'
+  root:             '012IX7LSJS63XEEHFXVJAZLIKPUZFESUAZ',   // BAMA
+  companyMgmt:      '012IX7LSIATGLNRCQ7F5HYWZK5GWFHD4N6',   // 01 - Company Management
+  insurances:       '012IX7LSORMMH6FFLDE5CLEDLLKFCLL62A',
+  quality:          '012IX7LSIDSXAXWAYG4RBYUPDBUBND5J6L',   // 02 - Quality (QMS)
+  ramsLibrary:      '012IX7LSPARZYZTWUWAFFKQRCXQWE663PN',
+  employees:        '012IX7LSMBL27NGJRP4FAJJ4VQQSRVDTB4',   // 03 - Employees
+  suppliers:        '012IX7LSMZ5XQ2RAY3GVD2JICMAW3NWK2L',   // 04 - Suppliers & Subcontractors
+  sales:            '012IX7LSL4JSLDHWGPWBDKBQ4KCN7CHWIV',   // 05 - Sales & Estimating
+  projects:         '012IX7LSIALYTE44LGNFA2ZNXJF2BTHBBF',   // 06 - Projects
+  accounts:         '012IX7LSIOGCVS3VHU3BCY2ZZH3DTVRAGZ',   // 07 - Accounts
+  salesInvoices:    '012IX7LSKGPXKNB2IVFRAZFJW6SDXXR4DG',
+  purchaseInvoices: '012IX7LSKSEKGSMPUQVRBIOHKSJRITKCCA',
+  statements:       '012IX7LSIKAIJKQUUCEFD2GHZVEHWSQ32Q'
 };
 
 // Year folder convention (Mateusz, D0): prefix = year − 2022, zero-padded,

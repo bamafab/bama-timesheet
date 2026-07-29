@@ -3,7 +3,7 @@
 //
 // Register of company-level documents (insurances, policies, accreditations,
 // H&S) with expiry tracking. Files live in SharePoint under
-// 00 - BAMA / 01 - Company Management — the FRONTEND uploads via Graph
+// BAMA / 01 - Company Management — the FRONTEND uploads via Graph
 // (user delegated token) and stores the resulting file metadata here.
 // This API is metadata + reminder logic only; it never touches Graph.
 //

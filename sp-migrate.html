@@ -130,7 +130,7 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260729i"></script>
+<script src="shared.js?v=20260729j"></script>
 <script>
 // ═══════════════════════════════════════════════════════════════════════════
 // D0 MIGRATION TOOL — inventory / create tree / map / move, with revert.
@@ -250,30 +250,39 @@ function migParseTree() {
   return root.children;
 }
 
-async function migEnsureFolder(parentId, name) {
+// resolveOnly=true → exact-match GET by path, NEVER creates. This is the
+// guard against the 2026-07-29 incident: the wrapper input said "BAMA" while
+// the real folder was "00 - BAMA", and the old create-on-miss behaviour
+// silently forked a brand-new root, collapsing the migration.
+async function migEnsureFolder(parentId, name, resolveOnly) {
+  if (resolveOnly) {
+    const get = await g(`/drives/${BAMA_DRIVE_ID}/items/${parentId}:/${encodeURIComponent(name)}`);
+    if (!get.ok) throw new Error(`Folder "${name}" not found (exact match, case-sensitive path). Nothing was created — fix the name in the tree box / wrapper input so it matches SharePoint exactly.`);
+    return (await get.json()).id;
+  }
   const res = await g(`/drives/${BAMA_DRIVE_ID}/items/${parentId}/children`, {
     method: 'POST',
     body: JSON.stringify({ name, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' })
   });
-  if (res.status === 201) return (await res.json()).id;
+  if (res.status === 201) { log(`  ⚠ CREATED new folder "${name}" (did not exist)`); return (await res.json()).id; }
   // 409 = exists — fetch by path
   const get = await g(`/drives/${BAMA_DRIVE_ID}/items/${parentId}:/${encodeURIComponent(name)}`);
   return (await get.json()).id;
 }
 
-async function migCreateTree() {
-  const st = document.getElementById('migTreeStatus'); st.textContent = 'Creating…';
+async function migCreateTree(resolveOnly) {
+  const st = document.getElementById('migTreeStatus'); st.textContent = resolveOnly ? 'Resolving…' : 'Creating…';
   try {
     const rootRes = await g(`/drives/${BAMA_DRIVE_ID}/root`);
     let rootId = (await rootRes.json()).id;
     const wrapper = document.getElementById('migParent').value.trim();
     if (wrapper) {
-      rootId = await migEnsureFolder(rootId, wrapper);
+      rootId = await migEnsureFolder(rootId, wrapper, resolveOnly);
       log(`✓ ${wrapper}  [${rootId}]`);
     }
     _canon = {};
     async function createRec(parentId, node, path, depth) {
-      const id = await migEnsureFolder(parentId, node.name);
+      const id = await migEnsureFolder(parentId, node.name, resolveOnly);
       log(`${'  '.repeat(depth)}✓ ${path}${node.name}  [${id}]`);
       if (depth === 0) _canon[node.name] = { id, children: {} };
       else if (depth === 1) {
@@ -318,7 +327,10 @@ async function migAutoMap() {
   // migCreateTree is idempotent (finds existing folders, creates nothing new
   // if the tree matches the box).
   if (!_inv.length) { st.textContent = 'Scanning…'; await migInventory(); }
-  if (!Object.keys(_canon).length) { st.textContent = 'Resolving existing tree…'; await migCreateTree(); }
+  // resolve-only: Auto-map must NEVER create folders — if any tree folder
+  // (especially the wrapper) doesn't exist under its exact name, it aborts
+  // instead of silently forking a duplicate tree.
+  if (!Object.keys(_canon).length) { st.textContent = 'Resolving existing tree…'; await migCreateTree(true); }
   if (!_inv.length || !Object.keys(_canon).length) { toast('Could not resolve the tree — check the log', 'error'); return; }
   st.textContent = 'Thinking…';
   _plan = [];

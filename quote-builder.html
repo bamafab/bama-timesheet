@@ -16850,10 +16850,10 @@ async function createProjectFromQuote() {
       const g = 'https://graph.microsoft.com/v1.0';
       const hdr = { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' };
 
-      // D0 taxonomy: new project folders live in 00 - BAMA / 06 - Projects /
+      // D0 taxonomy: new project folders live in BAMA / 06 - Projects /
       // <NN - year> (prefix = year − 2022, "04 - 2026"). Year folder is
       // created on first use each January — nobody makes it by hand.
-      const SP_PROJECTS_ID = '012IX7LSMPF56OATZNWFD2JIYV3DACHGSB';
+      const SP_PROJECTS_ID = '012IX7LSIALYTE44LGNFA2ZNXJF2BTHBBF';
       const yyyy = new Date().getFullYear();
       const yearName = String(yyyy - 2022).padStart(2, '0') + ' - ' + yyyy;
       let projectsRootId;

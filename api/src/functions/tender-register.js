@@ -67,10 +67,10 @@ async function spFindChild(token, parentId, name) {
     } catch { return null; }
 }
 
-// D0 taxonomy: new quote folders live under 00 - BAMA / 05 - Sales &
+// D0 taxonomy: new quote folders live under BAMA / 05 - Sales &
 // Estimating (by stable ID). Legacy Quotation/ stays readable where old
 // records reference it; nothing new is created there.
-const SP_SALES_ID = '012IX7LSI6QMSU7K3CW5EY33X7G2U6A6DN';
+const SP_SALES_ID = '012IX7LSL4JSLDHWGPWBDKBQ4KCN7CHWIV';
 async function spGetQuotationRoot(token) {
     return await spFetch(token,
         `/drives/${SP_DRIVE_ID}/items/${SP_SALES_ID}?$select=id,name,webUrl`

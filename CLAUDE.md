@@ -926,7 +926,7 @@ H&S) with first-class expiry reminders. Lives entirely on `dashboard.html`
 
 - **Storage split:** SQL holds metadata + reminder logic only. Files upload
   from the browser straight to SharePoint via the user's delegated Graph
-  token — the API never touches Graph. Destination folders (00 - BAMA /
+  token — the API never touches Graph. Destination folders (BAMA /
   01 - Company Management): insurance → `01 - Insurances/<NN - year>` (year
   of issue date, `spYearName` convention year−2022); policy →
   `02 - Policies & Procedures`; accreditation →
@@ -934,6 +934,17 @@ H&S) with first-class expiry reminders. Lives entirely on `dashboard.html`
   Management root. Dashboard is standalone (no shared.js) so it carries a
   local `DOC_SP` ID subset + local Graph helpers — **SP_TAX in shared.js
   remains the source of truth**; if taxonomy IDs ever change, update both.
+  **History:** the first D0 tree ("00 - BAMA") was deleted 2026-07-29 after
+  a failed migration — Auto-map's wrapper input said "BAMA" while the folder
+  was "00 - BAMA", and create-on-miss silently forked a duplicate root. The
+  tree was re-created the same day as plain **"BAMA"** (no numeric prefix on
+  the root) and every ID repointed: SP_TAX (shared.js), DOC_SP
+  (dashboard.html), SP_SALES_ID (tender-register.js), SP_PROJECTS_ID
+  (quote-builder.html). sp-migrate.html now guards against a repeat:
+  Auto-map resolves the tree in **resolve-only mode** (exact-name GET by
+  path, aborts on any miss, never creates), and the explicit Create-tree
+  button logs a ⚠ whenever it actually creates a folder rather than finding
+  one.
 - **Expiry logic:** per-doc `reminder_days` (default 60). `GET
   /api/company-documents/expiring` returns expired + inside-window docs and
   powers the always-visible red strip under the ED tab bar plus a count
