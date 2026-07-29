@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BAMA Stock</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="bama.css?v=20260729c">
+<style>
+.stk-wrap { max-width: 1300px; margin: 0 auto; padding: 20px; }
+.stk-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; margin-bottom: 16px; }
+.stk-chip { display:inline-flex; align-items:center; gap:4px; padding:2px 9px; border-radius:20px; font-size:11px; white-space:nowrap; }
+.stk-mic { width: 86px; height: 86px; border-radius: 50%; border: 2px solid var(--border); background: var(--card);
+  font-size: 34px; cursor: pointer; transition: all .15s; display:flex; align-items:center; justify-content:center; }
+.stk-mic.rec { border-color: #ef4444; background: rgba(239,68,68,.15); animation: stkpulse 1.2s infinite; }
+@keyframes stkpulse { 0%,100% { box-shadow: 0 0 0 0 rgba(239,68,68,.4); } 50% { box-shadow: 0 0 0 14px rgba(239,68,68,0); } }
+.stk-input { background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; color: var(--text); font-size: 12.5px; }
+.stk-step { padding: 3px 10px; font-size: 15px; line-height: 1; background: var(--card); border: 1px solid var(--border); border-radius: 6px; color: var(--text); cursor: pointer; }
+.stk-th { padding: 8px 10px; font-size: 9.5px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; border-bottom: 2px solid var(--border); text-align: left; white-space: nowrap; }
+.stk-td { padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 12.5px; vertical-align: middle; }
+</style>
+</head>
+<body>
+<div class="loading-bar" id="loadingBar" style="width:0"></div>
+
+<div class="topbar">
+  <a href="hub.html" style="text-decoration:none"><div class="logo"><span style="color:#D0021B">BAMA</span> <span style="color:#D0021B">FABRICATION</span><span> STOCK</span></div></a>
+  <div class="topbar-right">
+    <select id="stkWho" class="stk-input" style="min-width:150px" onchange="localStorage.setItem('bama_stock_who', this.value)"></select>
+    <a href="hub.html" style="text-decoration:none"><button class="manager-btn">&#8592; Hub</button></a>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div class="stk-wrap">
+
+  <!-- ═══ VOICE / MANUAL ENTRY ═══ -->
+  <div class="stk-card">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:6px">
+      <h3 style="margin:0;font-size:15px">🎙 Add stock</h3>
+      <span style="font-size:11.5px;color:var(--muted)">Hold the mic and read the rack: <em>"six lengths of 203 by 133 by 25 UB at twelve metres, rack B"</em></span>
+      <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="const d=document.getElementById('stkHelp');d.style.display=d.style.display==='none'?'':'none'">?</button>
+    </div>
+    <div id="stkHelp" style="display:none;font-size:11.5px;color:var(--muted);line-height:1.6;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px">
+      Speak (or type) what's on the racks, press <strong>Parse</strong>, check the rows, press <strong>Save</strong>.
+      The AI only transcribes what you said into rows — every section is then checked against the BAMA steel database:
+      <span style="color:var(--green)">✓ matched</span> rows get the real kg/m for tonnage; <span style="color:var(--accent)">⚠ unverified</span> rows
+      save fine but carry no weight until corrected. Lengths can be said in metres ("twelve metres") or mm.
+      Several items in one breath is fine — separate with "and" or a pause.
+      <strong>Something looks wrong?</strong> Mic does nothing → use Chrome/Edge (needs Web Speech) or just type in the box.
+      Section unverified → check the designation matches the steel database format (e.g. 203x133x25 UB, 100x100x8 SHS).
+      Every add, adjust and delete is in the change log with your name — pick it top right.
+    </div>
+    <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
+      <button class="stk-mic" id="stkMic" onclick="stkToggleMic()" title="Push to talk">🎙</button>
+      <div style="flex:1;min-width:280px">
+        <textarea id="stkTranscript" class="stk-input" rows="3" style="width:100%;resize:vertical" placeholder="…or type here: 6x 203x133x25 UB @ 12m rack B, 10x 100x100x8 SHS @ 7.5m"></textarea>
+        <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
+          <button class="btn btn-primary btn-sm" id="stkParseBtn" onclick="stkParse()">✨ Parse</button>
+          <button class="btn btn-ghost btn-sm" onclick="stkAddManualRow()">+ Add row manually</button>
+          <span id="stkParseStatus" style="font-size:11.5px;color:var(--muted)"></span>
+        </div>
+      </div>
+    </div>
+    <div id="stkReview" style="margin-top:12px"></div>
+  </div>
+
+  <!-- ═══ STOCK LIST ═══ -->
+  <div class="stk-card">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+      <h3 style="margin:0;font-size:15px">📦 In stock</h3>
+      <input id="stkSearch" class="stk-input" placeholder="Search section / location…" style="width:220px" oninput="stkRenderList()">
+      <label style="font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:5px"><input type="checkbox" id="stkShowDel" onchange="stkLoad()"> show deleted</label>
+      <button class="btn btn-ghost btn-sm" onclick="stkLoad()">↻</button>
+      <button class="btn btn-ghost btn-sm" onclick="stkExportCsv()">⬇ CSV</button>
+      <span id="stkTotals" style="margin-left:auto;font-size:12px;color:var(--muted)"></span>
+    </div>
+    <div id="stkList"><div style="padding:30px;text-align:center;color:var(--muted);font-size:12px">Loading…</div></div>
+  </div>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="shared.js?v=20260729g"></script>
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// STOCK REGISTER (Phase C3) — voice + manual entry, steel-db validated
+//
+// Two-engine rule: the AI ONLY turns speech/text into candidate rows. All
+// validation (section exists in the BAMA steel database), kg/m lookup and
+// tonnage arithmetic is deterministic JS against steel-sections.json.
+// ═══════════════════════════════════════════════════════════════════════════
+
+let _sections = [];          // [{f: family, d: designation, kgm}]
+let _sectionIndex = {};      // normalised designation -> entry
+let _stock = [];
+let _review = [];            // rows awaiting save
+
+function stkNorm(s) {
+  return String(s || '').toUpperCase().replace(/\s+/g, ' ').trim()
+    .replace(/\s*[X×]\s*/g, 'x').replace(/(\d)X(\d)/g, '$1x$2');
+}
+
+// Match "203x133x25 UB" / "UB 203x133x25" / bare "203x133x25" (if unique)
+function stkMatchSection(raw) {
+  const n = stkNorm(raw);
+  if (_sectionIndex[n]) return _sectionIndex[n];
+  // try swapped order: FAMILY DIMS -> DIMS FAMILY
+  const m = n.match(/^([A-Z]+)\s+(.+)$/);
+  if (m && _sectionIndex[`${m[2]} ${m[1]}`]) return _sectionIndex[`${m[2]} ${m[1]}`];
+  // bare designation, unique across families
+  const bare = _sections.filter(s => stkNorm(s.d) === n);
+  if (bare.length === 1) return bare[0];
+  return null;
+}
+
+const FAMILY_ABBR = {
+  'Universal Beams': 'UB', 'Universal Columns': 'UC', 'Parallel Flange Channels': 'PFC',
+  'Square Hollow Sections': 'SHS', 'Rectangular Hollow Sections': 'RHS', 'Circular Hollow Sections': 'CHS',
+  'Equal Angles': 'EA', 'Unequal Angles': 'UA', 'Flat Bars': 'FLAT', 'Round Bars': 'ROUND',
+  'Square Bars': 'SQ', 'Tees': 'TEE', 'Universal Bearing Piles': 'UBP'
+};
+
+async function stkLoadSections() {
+  const res = await fetch('steel-sections.json');
+  _sections = await res.json();
+  _sectionIndex = {};
+  for (const s of _sections) {
+    const abbr = FAMILY_ABBR[s.f] || s.f.toUpperCase();
+    _sectionIndex[stkNorm(`${s.d} ${abbr}`)] = s;
+    _sectionIndex[stkNorm(`${abbr} ${s.d}`)] = s;
+  }
+}
+
+function stkHue(key) { let h = 0; const s = String(key); for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h % 360; }
+function stkChip(txt, key) {
+  const hue = stkHue(key || txt);
+  return `<span class="stk-chip" style="background:hsla(${hue},70%,55%,.14);border:1px solid hsla(${hue},70%,60%,.45);color:hsl(${hue},75%,72%)">${escapeHtml(txt)}</span>`;
+}
+const fmtKg2 = v => v >= 1000 ? (Math.round(v / 100) / 10).toLocaleString('en-GB') + 't' : Math.round(v).toLocaleString('en-GB') + 'kg';
+function rowKg(r) { return (r.kgm && r.length_mm && r.qty) ? r.kgm * (r.length_mm / 1000) * r.qty : 0; }
+
+// ── Voice ────────────────────────────────────────────────────────────────────
+let _rec = null, _recOn = false;
+function stkToggleMic() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { toast('Voice needs Chrome or Edge — type in the box instead', 'error'); return; }
+  if (_recOn) { _rec.stop(); return; }
+  _rec = new SR();
+  _rec.lang = 'en-GB'; _rec.continuous = true; _rec.interimResults = true;
+  const ta = document.getElementById('stkTranscript');
+  const base = ta.value ? ta.value.trim() + ' ' : '';
+  _rec.onresult = ev => {
+    let final = '', interim = '';
+    for (const r of ev.results) (r.isFinal ? final += r[0].transcript : interim += r[0].transcript);
+    ta.value = base + final + interim;
+  };
+  _rec.onend = () => { _recOn = false; document.getElementById('stkMic').classList.remove('rec'); };
+  _rec.onerror = e => { toast('Mic: ' + e.error, 'error'); };
+  _rec.start(); _recOn = true;
+  document.getElementById('stkMic').classList.add('rec');
+}
+
+// ── Parse (AI transcribes → JS validates) ───────────────────────────────────
+async function stkParse() {
+  const text = document.getElementById('stkTranscript').value.trim();
+  if (!text) { toast('Say or type something first', 'error'); return; }
+  const btn = document.getElementById('stkParseBtn'); btn.disabled = true;
+  const st = document.getElementById('stkParseStatus'); st.textContent = 'Parsing…';
+  try {
+    const resp = await callClaude({
+      model: 'claude-sonnet-4-6', max_tokens: 1500,
+      messages: [{ role: 'user', content:
+`Convert this spoken steel stocktake into rows. Text: "${text}"
+
+Rules:
+- Output ONLY a JSON array, no prose, no markdown fences.
+- Each row: {"section": "<dims + family abbreviation, e.g. 203x133x25 UB, 100x100x8 SHS, 200x90 PFC>", "length_mm": <integer millimetres>, "qty": <integer>, "location": "<rack/bay if mentioned, else null>", "grade": "<steel grade if mentioned, else null>"}
+- "twelve metres" / "12m" => 12000. "7 and a half metres" => 7500. Plain large numbers like 12000 are already mm.
+- Family words: universal beam/UB, universal column/UC, channel/PFC, box section or SHS, RHS, CHS/tube, angle/EA, flat.
+- Transcribe ONLY what was said. Do not invent quantities, sections or locations.`}]
+    });
+    const raw = (resp.content || []).map(c => c.text || '').join('').replace(/```json|```/g, '').trim();
+    const rows = JSON.parse(raw);
+    if (!Array.isArray(rows) || !rows.length) throw new Error('nothing recognised');
+    rows.forEach(r => stkPushReview({
+      section: r.section, length_mm: parseInt(r.length_mm) || null,
+      qty: parseInt(r.qty) || 1, location: r.location || '', grade: r.grade || '', source: 'voice'
+    }));
+    st.textContent = `${rows.length} row${rows.length !== 1 ? 's' : ''} recognised — check and save.`;
+    document.getElementById('stkTranscript').value = '';
+  } catch (e) {
+    st.textContent = '';
+    toast('Could not parse that — try again or add rows manually. ' + e.message, 'error');
+  } finally { btn.disabled = false; }
+}
+
+function stkAddManualRow() {
+  stkPushReview({ section: '', length_mm: null, qty: 1, location: '', grade: '', source: 'manual' });
+}
+
+function stkPushReview(row) {
+  const match = row.section ? stkMatchSection(row.section) : null;
+  if (match) { row.section = `${match.d} ${FAMILY_ABBR[match.f] || match.f}`; row.family = match.f; row.kgm = match.kgm; }
+  else { row.family = null; row.kgm = null; }
+  _review.push(row);
+  stkRenderReview();
+}
+
+function stkReviewEdit(i, field, value) {
+  const r = _review[i]; if (!r) return;
+  if (field === 'section') {
+    r.section = value;
+    const m = stkMatchSection(value);
+    r.family = m ? m.f : null; r.kgm = m ? m.kgm : null;
+    if (m) r.section = `${m.d} ${FAMILY_ABBR[m.f] || m.f}`;
+    stkRenderReview(); return;
+  }
+  if (field === 'length_mm' || field === 'qty') r[field] = parseInt(value) || null;
+  else r[field] = value;
+  stkRenderReview();
+}
+
+function stkRenderReview() {
+  const el = document.getElementById('stkReview');
+  if (!_review.length) { el.innerHTML = ''; return; }
+  let html = `<table style="width:100%;border-collapse:collapse">
+    <thead><tr><th class="stk-th">Section</th><th class="stk-th">Length mm</th><th class="stk-th">Qty</th>
+    <th class="stk-th">Location</th><th class="stk-th">Grade</th><th class="stk-th">Weight</th><th class="stk-th"></th></tr></thead><tbody>`;
+  _review.forEach((r, i) => {
+    const ok = !!r.kgm;
+    html += `<tr>
+      <td class="stk-td" style="min-width:190px">
+        <input class="stk-input" style="width:100%" value="${escapeHtml(r.section || '')}" list="stkSectionList" onchange="stkReviewEdit(${i},'section',this.value)">
+        <div style="font-size:10px;margin-top:2px;color:${ok ? 'var(--green)' : 'var(--accent)'}">${ok ? '✓ ' + escapeHtml(r.family) + ' · ' + r.kgm + ' kg/m' : '⚠ not in steel database — will save unverified'}</div>
+      </td>
+      <td class="stk-td"><input type="number" class="stk-input" style="width:90px" value="${r.length_mm || ''}" onchange="stkReviewEdit(${i},'length_mm',this.value)"></td>
+      <td class="stk-td"><input type="number" class="stk-input" style="width:60px" min="1" value="${r.qty || 1}" onchange="stkReviewEdit(${i},'qty',this.value)"></td>
+      <td class="stk-td"><input class="stk-input" style="width:90px" value="${escapeHtml(r.location || '')}" onchange="stkReviewEdit(${i},'location',this.value)"></td>
+      <td class="stk-td"><input class="stk-input" style="width:70px" value="${escapeHtml(r.grade || '')}" placeholder="S355" onchange="stkReviewEdit(${i},'grade',this.value)"></td>
+      <td class="stk-td" style="font-family:var(--font-mono)">${rowKg(r) ? fmtKg2(rowKg(r)) : '—'}</td>
+      <td class="stk-td"><button class="stk-step" onclick="_review.splice(${i},1);stkRenderReview()" title="Remove">✕</button></td>
+    </tr>`;
+  });
+  const totKg = _review.reduce((s, r) => s + rowKg(r), 0);
+  html += `</tbody></table>
+    <div style="display:flex;gap:10px;align-items:center;margin-top:10px">
+      <button class="btn btn-primary" onclick="stkSaveReview()">💾 Save ${_review.length} row${_review.length !== 1 ? 's' : ''} to stock</button>
+      <button class="btn btn-ghost btn-sm" onclick="_review=[];stkRenderReview()">Clear</button>
+      <span style="font-size:12px;color:var(--muted)">${totKg ? '≈ ' + fmtKg2(totKg) : ''}</span>
+    </div>`;
+  el.innerHTML = html;
+}
+
+async function stkSaveReview() {
+  const bad = _review.filter(r => !r.section || !r.length_mm);
+  if (bad.length) { toast(`${bad.length} row(s) missing section or length`, 'error'); return; }
+  const who = document.getElementById('stkWho').value || 'unknown';
+  try {
+    await api.post('/api/stock-bulk', { items: _review, entered_by: who });
+    toast(`${_review.length} row(s) added to stock`, 'success');
+    _review = [];
+    stkRenderReview();
+    stkLoad();
+  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+// ── List ─────────────────────────────────────────────────────────────────────
+async function stkLoad() {
+  try {
+    const inc = document.getElementById('stkShowDel').checked ? '&include_deleted=1' : '';
+    _stock = await api.get('/api/stock?x=1' + inc);
+    stkRenderList();
+  } catch (e) {
+    document.getElementById('stkList').innerHTML = `<div style="padding:20px;color:var(--red);font-size:12px">Could not load stock: ${escapeHtml(e.message)}<br><span style="color:var(--muted)">If the StockItems table hasn't been created yet, run api/sql/create-stock.sql.</span></div>`;
+  }
+}
+
+function stkRenderList() {
+  const el = document.getElementById('stkList');
+  const q = (document.getElementById('stkSearch').value || '').toLowerCase();
+  const rows = _stock.filter(r => !q || String(r.section).toLowerCase().includes(q) || String(r.location || '').toLowerCase().includes(q));
+  if (!rows.length) {
+    el.innerHTML = '<div style="padding:30px;text-align:center;color:var(--muted);font-size:12px">No stock recorded yet — walk the racks with the mic when you get a quiet day.</div>';
+    document.getElementById('stkTotals').textContent = '';
+    return;
+  }
+  let html = `<table style="width:100%;border-collapse:collapse">
+    <thead><tr><th class="stk-th">Section</th><th class="stk-th">Length</th><th class="stk-th">Qty</th>
+    <th class="stk-th">Weight</th><th class="stk-th">Location</th><th class="stk-th">Grade</th><th class="stk-th">Added</th><th class="stk-th"></th></tr></thead><tbody>`;
+  rows.forEach(r => {
+    const del = r.is_deleted;
+    html += `<tr style="${del ? 'opacity:.45' : ''}">
+      <td class="stk-td">${stkChip(r.section, r.family || r.section)}${r.kgm ? '' : ' <span style="font-size:10px;color:var(--accent)" title="Not matched to the steel database — no weight">⚠</span>'}</td>
+      <td class="stk-td" style="font-family:var(--font-mono)">${(r.length_mm / 1000).toLocaleString('en-GB')} m</td>
+      <td class="stk-td">
+        <span style="display:inline-flex;align-items:center;gap:6px">
+          ${del ? '' : `<button class="stk-step" onclick="stkAdjust(${r.id},-1)">−</button>`}
+          <strong style="font-family:var(--font-mono);min-width:24px;text-align:center">${r.qty}</strong>
+          ${del ? '' : `<button class="stk-step" onclick="stkAdjust(${r.id},1)">+</button>`}
+        </span>
+      </td>
+      <td class="stk-td" style="font-family:var(--font-mono)">${rowKg(r) ? fmtKg2(rowKg(r)) : '—'}</td>
+      <td class="stk-td">${escapeHtml(r.location || '—')}</td>
+      <td class="stk-td">${escapeHtml(r.grade || '—')}</td>
+      <td class="stk-td" style="font-size:10.5px;color:var(--subtle)">${escapeHtml(r.created_by || '')}<br>${String(r.created_at || '').slice(0, 10)}</td>
+      <td class="stk-td">${del
+        ? `<button class="stk-step" onclick="stkRestore(${r.id})" title="Restore">↩</button>`
+        : `<button class="stk-step" onclick="stkDelete(${r.id}, '${escapeHtml(r.section)}')" title="Delete">🗑</button>`}</td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  el.innerHTML = html;
+  const live = rows.filter(r => !r.is_deleted);
+  const pcs = live.reduce((s, r) => s + (r.qty || 0), 0);
+  const kg = live.reduce((s, r) => s + rowKg(r), 0);
+  document.getElementById('stkTotals').textContent = `${pcs} pieces · ≈ ${fmtKg2(kg)}`;
+}
+
+async function stkAdjust(id, d) {
+  const r = _stock.find(x => x.id === id); if (!r) return;
+  const nq = Math.max(0, (r.qty || 0) + d);
+  const who = document.getElementById('stkWho').value || 'unknown';
+  try {
+    await api.put(`/api/stock/${id}`, { qty: nq, entered_by: who });
+    r.qty = nq; stkRenderList();
+  } catch (e) { toast('Adjust failed: ' + e.message, 'error'); }
+}
+
+async function stkDelete(id, section) {
+  const ok = await bamaConfirm(`Remove "${section}" from stock? It can be restored via "show deleted".`, 'Remove stock line');
+  if (!ok) return;
+  try { await api.delete(`/api/stock/${id}`); stkLoad(); }
+  catch (e) { toast('Delete failed: ' + e.message, 'error'); }
+}
+
+async function stkRestore(id) {
+  const who = document.getElementById('stkWho').value || 'unknown';
+  try { await api.put(`/api/stock/${id}`, { is_deleted: 0, entered_by: who }); stkLoad(); }
+  catch (e) { toast('Restore failed: ' + e.message, 'error'); }
+}
+
+function stkExportCsv() {
+  const live = _stock.filter(r => !r.is_deleted);
+  if (!live.length) { toast('Nothing to export', 'error'); return; }
+  const lines = ['section,family,length_mm,qty,kg_per_m,total_kg,grade,location,notes,added_by,added_at'];
+  live.forEach(r => lines.push([`"${r.section}"`, `"${r.family || ''}"`, r.length_mm, r.qty, r.kgm || '', Math.round(rowKg(r)), `"${r.grade || ''}"`, `"${r.location || ''}"`, `"${(r.notes || '').replace(/"/g, '""')}"`, `"${r.created_by || ''}"`, String(r.created_at || '').slice(0, 10)].join(',')));
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `stock-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click(); URL.revokeObjectURL(a.href);
+}
+
+// ── Boot ─────────────────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', async () => {
+  // Name picker (attribution) — kiosk-style, remembered
+  try {
+    const emps = await api.get('/api/employees');
+    const sel = document.getElementById('stkWho');
+    sel.innerHTML = '<option value="">Who are you?</option>' +
+      (emps || []).filter(e => e.active !== false).map(e => `<option value="${escapeHtml(e.name)}">${escapeHtml(e.name)}</option>`).join('');
+    const last = localStorage.getItem('bama_stock_who');
+    if (last) sel.value = last;
+  } catch (e) { console.warn('employees load:', e.message); }
+
+  await stkLoadSections();
+  // Section datalist for the review editor
+  const dl = document.createElement('datalist'); dl.id = 'stkSectionList';
+  dl.innerHTML = _sections.slice(0, 2000).map(s => `<option value="${escapeHtml(s.d + ' ' + (FAMILY_ABBR[s.f] || s.f))}">`).join('');
+  document.body.appendChild(dl);
+  stkLoad();
+});
+</script>
+</body>
+</html>

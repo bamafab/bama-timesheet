@@ -20,8 +20,13 @@ completed 2026-07-29. This file tracks the build phases and newly-scoped work.
   now REQUIRED + remembered (localStorage); new Fab output report in
   reports.html (kg per person per day, job-colour chips, stage filter, CSV,
   help) on new GET /api/fab-output.
-- **C3** Stock register with voice entry (Web Speech + Claude parse, validated
-  against the steel database) → cut lists / bar optimisation wired to stock
+- **C3** Stock register ✅ SHIPPED 2026-07-29 (stock.html: push-to-talk voice
+  entry via Web Speech + Claude transcription, deterministic validation +
+  kg/m against steel-sections.json generated from the steel database; manual
+  rows, review-before-save, qty steppers, soft delete + restore, CSV, tonnage
+  totals, ChangeLog audit on every mutation; StockItems table). Built ready —
+  Mateusz will populate on a quiet day. **C3b** cut lists / bar optimisation
+  against recorded stock — after stock is populated.
 - **C4** CVR / WIP management pack (value applied vs cost to date per live
   project, cash position) — lands in reports.html
 - **F8 rolling** Help + "Something looks wrong?" per module as phases touch it
