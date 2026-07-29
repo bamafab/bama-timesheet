@@ -329,7 +329,7 @@ app.http('qb-quotes-update', {
 
             const allowed = [
                 'revision', 'status',
-                'date_sent', 'decision_due', 'valid_until', 'chasing_date',
+                'date_created', 'date_sent', 'decision_due', 'valid_until', 'chasing_date',
                 'company', 'contact', 'email', 'phone', 'site_address', 'prepared_by',
                 'loss_reason', 'loss_competitor', 'loss_comment',
                 'total_ex_vat', 'total_kg', 'margin_pct',

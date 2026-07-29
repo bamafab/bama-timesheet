@@ -6761,6 +6761,7 @@ async function saveAll() {
     const payload = {
       revision:    q.revision   || '',
       status:      q.status     || 'draft',
+      date_created: q.date      || null,
       date_sent:   q.dateSent   || null,
       decision_due: q.decisionDue || null,
       chasing_date: q.chasingDate || null,
@@ -7518,7 +7519,7 @@ async function selectQuote(id) {
         ref:          row.reference,
         revision:     row.revision    || blob.revision || '',
         status:       row.status      || blob.status   || 'draft',
-        date:         row.date_created || blob.date,
+        date:         blob.date || row.date_created,
         dateSent:     row.date_sent   || blob.dateSent || '',
         decisionDue:  row.decision_due || blob.decisionDue || '',
         sharepointFolderId:       row.sharepoint_folder_id        || null,
