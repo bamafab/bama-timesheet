@@ -10,6 +10,16 @@ management, and a standalone UK steel section reference.
   produces findings, numbers or documents must include its export/copy path,
   its Help/troubleshooting note, and a way back (undo/revert or soft-delete)
   in the SAME commit — not as a follow-up. Established Phase B, 2026-07-29.
+- **ChangeLog convention (Fault Register F6).** State transitions on
+  commercial entities (quote status, AFP certify/un-certify, invoice
+  void/delete, hard deletes) are audited via `logChange()` from
+  `api/src/changelog.js` — non-fatal by design. When adding a NEW
+  state-changing endpoint, wire logChange in the same commit. Viewer:
+  ED Health tab → Recent changes; API: GET /api/change-log.
+- **QB hard delete rule (Fault Register F4).** DELETE /api/qb-quotes/:id is
+  guarded server-side: only never-sent drafts (or archived rows) with no
+  project link, cascading QuoteLineItems + snapshots. Sent quotes are archive-
+  only. next-ref counts NULL-status rows as LIVE (collision guard).
 - **QB quote field ownership (Fault Register F2/F9).** QuoteBuilderQuotes
   fields fall into three classes. (1) *QB-owned*: quote_data blob, cost_*,
   total_ex_vat/total_kg/margin_pct, sharepoint ids — always sent by saveAll.

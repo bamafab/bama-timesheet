@@ -45,6 +45,7 @@
 const { app } = require('@azure/functions');
 const { requireAuth } = require('../auth');
 const { query } = require('../db');
+const { logChange } = require('../changelog');
 const { ok, created, badRequest, notFound, serverError, preflight } = require('../responses');
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -527,6 +528,8 @@ app.http('applications-uncertify', {
             if (status !== 'Certified') {
                 return badRequest(`Only Certified AFPs can be un-certified — current status is ${status}`, request);
             }
+            await logChange('application', id, 'AFP#' + id, 'uncertified',
+                'Certified', 'Submitted', auth.name || auth.email);
             // Unwind per-line: paid returns to its pre-cert base
             await query(
                 `UPDATE ApplicationLineItems
@@ -686,6 +689,11 @@ app.http('applications-certificate-confirm', {
             // can be entered manually; the file can be attached later.
             const wasAlreadyCertified = existing.recordset[0].status === 'Certified'
                                      || existing.recordset[0].status === 'Invoiced';
+            const _certAudit = () => logChange('application', id,
+                body.certificate_ref || ('AFP#' + id),
+                wasAlreadyCertified ? 'certificate_updated' : 'certified',
+                existing.recordset[0].status, 'Certified', auth.name || auth.email);
+            await _certAudit();
 
             await query(
                 `UPDATE Applications SET
@@ -1595,6 +1603,8 @@ app.http('invoices-delete', {
                     updated_at = GETUTCDATE()
                  WHERE invoice_id = @id`, { id });
             await query('DELETE FROM InvoiceLineItems WHERE invoice_id = @id', { id });
+            await logChange('invoice', id, inv.ref || ('INV#' + id), 'hard_delete',
+                inv.status, null, auth.name || auth.email);
             await query('DELETE FROM Invoices WHERE id = @id', { id });
             return ok({ id, deleted: true }, request);
         } catch (err) {
@@ -1613,6 +1623,7 @@ app.http('invoices-void', {
         if (auth.status) return auth;
         try {
             const id = parseInt(request.params.id);
+            const prev = await query('SELECT ref, status FROM Invoices WHERE id = @id', { id });
             await query(
                 `UPDATE Invoices SET
                     status            = 'Void',
@@ -1622,6 +1633,9 @@ app.http('invoices-void', {
                  WHERE id = @id`,
                 { id }
             );
+            const p = prev.recordset[0] || {};
+            await logChange('invoice', id, p.ref || ('INV#' + id), 'voided',
+                p.status || null, 'Void', auth.name || auth.email);
             return ok({ id, status: 'Void' }, request);
         } catch (err) {
             context.error('Error voiding invoice:', err);

@@ -74,7 +74,7 @@ used by all four call sites.
 
 ---
 
-## F4 · MEDIUM — QB numbering skips (+2) after accidental duplicate; no hard delete
+## F4 · MEDIUM — QB numbering skips (+2) after accidental duplicate; no hard delete ✅ FIXED B3 2026-07-29 (mechanism confirmed by health data: number consumed while duplicate was live; hard delete for never-sent drafts + NULL-status counted as live in next-ref; numbering self-healed in live test)
 
 **Symptom (reported):** accidental Duplicate → archive → next quote ref jumps
 two instead of one.
@@ -109,7 +109,7 @@ migration.
 
 ---
 
-## F6 · MEDIUM — No audit trail on state changes
+## F6 · MEDIUM — No audit trail on state changes ✅ FIXED B3 2026-07-29 (ChangeLog table + logChange helper; wired into quote status/hard-delete/mark-won, AFP certify/un-certify, invoice void/delete; Recent Changes viewer in ED Health tab)
 
 **Symptom:** "who marked this AFP certified?" / "who archived this quote?"
 cannot be answered; reverts are guesswork.

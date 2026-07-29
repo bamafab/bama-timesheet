@@ -3163,7 +3163,7 @@ function switchDashTab(tab) {
   document.getElementById('dashHealthView').style.display   = tab === 'health'   ? '' : 'none';
   if (tab === 'tenders' && !_trTenders.length) loadTenderRegister();
   if (tab === 'overview') loadOverview();
-  if (tab === 'health' && !_healthData) runHealthCheck();
+  if (tab === 'health' && !_healthData) { runHealthCheck(); loadChangeLog(); }
 }
 
 // ── API fetch helper ──────────────────────────────────────────
@@ -4011,6 +4011,16 @@ async function trResendNotify(tenderId) {
   </p>
   <div id="hcSummary" style="display:none;margin-bottom:16px"></div>
   <div id="hcResults"><div style="text-align:center;padding:60px;color:var(--muted)">Press <strong>Run checks</strong> to scan.</div></div>
+
+  <!-- Recent changes (ChangeLog — Fault Register F6) -->
+  <div style="display:flex;align-items:center;gap:10px;margin:26px 0 6px">
+    <h3 style="margin:0;font-size:15px">📜 Recent changes</h3>
+    <button class="btn btn-ghost btn-sm" onclick="loadChangeLog()">↻ Refresh</button>
+    <span style="font-size:11px;color:var(--muted)">who changed what — status changes, certificates, voids, deletions</span>
+  </div>
+  <div id="hcChangeLog" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:4px 0">
+    <div style="text-align:center;padding:24px;color:var(--muted);font-size:12px">Press ↻ Refresh to load.</div>
+  </div>
 </div>
 </div>
 
@@ -4521,6 +4531,34 @@ function drawHealthPDF(jsPDF, d) {
     doc.text(`Page ${i} of ${pages}`, pageW - mR, pageH - 8, { align: 'right' });
   }
   return doc;
+}
+
+// ── Recent changes viewer (ChangeLog / Fault Register F6) ──────────────────
+async function loadChangeLog() {
+  const el = document.getElementById('hcChangeLog');
+  if (!el) return;
+  el.innerHTML = '<div style="text-align:center;padding:24px;color:var(--muted);font-size:12px">Loading…</div>';
+  try {
+    const rows = await trFetch('/api/change-log?limit=100');
+    if (!Array.isArray(rows) || !rows.length) {
+      el.innerHTML = '<div style="text-align:center;padding:24px;color:var(--muted);font-size:12px">No changes recorded yet. (Run the ChangeLog SQL migration if this stays empty after a status change.)</div>';
+      return;
+    }
+    const badge = a => ({
+      status_change: 'var(--accent)', hard_delete: 'var(--red)', voided: 'var(--red)',
+      certified: 'var(--green)', certificate_updated: 'var(--green)', uncertified: 'var(--accent)'
+    }[a] || 'var(--muted)');
+    el.innerHTML = rows.map(r => `
+      <div style="display:grid;grid-template-columns:130px 90px 110px 1fr 140px;gap:10px;align-items:center;padding:7px 12px;border-bottom:1px solid var(--border);font-size:12px">
+        <span style="color:var(--muted);font-family:var(--font-mono);font-size:11px">${escHtml(r.changed_at || '')}</span>
+        <span style="font-family:var(--font-mono)">${escHtml(r.entity_ref || (r.entity_type + '#' + r.entity_id))}</span>
+        <span style="color:${badge(r.action)};font-weight:600">${escHtml(String(r.action||'').replace(/_/g,' '))}</span>
+        <span style="color:var(--muted)">${r.old_value != null ? escHtml(r.old_value) + ' → ' : ''}<span style="color:var(--text)">${escHtml(r.new_value ?? '—')}</span></span>
+        <span style="color:var(--subtle);text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(r.changed_by || '')}</span>
+      </div>`).join('');
+  } catch (e) {
+    el.innerHTML = `<div style="text-align:center;padding:24px;color:var(--red);font-size:12px">Could not load change log: ${escHtml(e.message)}</div>`;
+  }
 }
 
 // Serialise the last health-check run to plain text and copy to clipboard,

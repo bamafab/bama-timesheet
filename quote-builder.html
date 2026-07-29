@@ -7047,6 +7047,33 @@ async function saveCurrentQuote() {
 
 async function deleteQuote() {
   const q = getQuote(); if (!q) return;
+
+  // Never-sent drafts can be PERMANENTLY deleted (Fault Register F4) —
+  // frees the quote number immediately (e.g. an accidental Duplicate).
+  // Anything that has been sent keeps its history: archive only.
+  const neverSent = (q.status === 'draft' || !q.status) && !q.dateSent;
+  if (neverSent) {
+    const hard = await bamaConfirm(
+      `"${q.ref}" is a draft that was never sent. Delete it permanently? This cannot be undone and frees the quote number for reuse. (Cancel here to archive it instead.)`,
+      'Delete draft permanently'
+    );
+    if (hard) {
+      try {
+        await qbFetch('DELETE', `/api/qb-quotes/${q.id}`);
+        quotes = quotes.filter(x => x.id != q.id);
+        currentId = null;
+        renderSidebar();
+        document.getElementById('quoteEditor').style.display = 'none';
+        document.getElementById('emptyState').style.display = '';
+        toast(`"${q.ref}" permanently deleted — its number is free for the next quote`, 'success');
+      } catch(e) {
+        toast('Permanent delete failed: ' + e.message, 'error');
+      }
+      return;
+    }
+    // fall through to the archive offer
+  }
+
   const confirmed = await bamaConfirm(
     `Archive "${q.ref}"? It will be hidden from your list but can be recovered by changing its status back.`,
     'Archive Quote'
@@ -20913,6 +20940,7 @@ const HELP_CONTENT = {
       <div class="h-section">
         <div class="h-heading"><span class="h-icon">🗺</span> How Quote Builder works</div>
         <p class="h-p">A five-step workflow — work left to right through the tabs. Each tab feeds the next.</p>
+        <div class="h-tip"><strong>Deleting vs archiving:</strong> a draft that was <em>never sent</em> can be deleted permanently (Delete button → first prompt) — this frees its quote number for reuse, e.g. after an accidental Duplicate. Anything that has been sent to a client can only be <em>archived</em> (recoverable via the status filter) so its history is kept. Every status change and deletion is recorded in the change log with who did it and when.</div>
         <ul class="h-steps">
           <li><span class="h-step-num">1</span><div><strong>Header</strong> — client details, dates, scope. Appears at the top of every PDF.</div></li>
           <li><span class="h-step-num">2</span><div><strong>Takeoff</strong> — every steel member: section, length, qty, finish. Drives tonnage and material cost.</div></li>

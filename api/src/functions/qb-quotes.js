@@ -23,6 +23,7 @@
 const { app } = require('@azure/functions');
 const { requireAuth } = require('../auth');
 const { query } = require('../db');
+const { logChange } = require('../changelog');
 const { ok, created, badRequest, notFound, serverError, preflight } = require('../responses');
 
 // OPTIONS preflight — covers all /api/qb-quotes/* and /api/qb-snapshots/*
@@ -108,7 +109,8 @@ app.http('qb-quotes-next-ref', {
             const [qbRes, tRes, trRes] = await Promise.all([
                 query(
                     `SELECT TOP 1 reference FROM QuoteBuilderQuotes
-                      WHERE reference LIKE @yearPat AND status != 'deleted'
+                      WHERE reference LIKE @yearPat
+                        AND (status IS NULL OR status <> 'deleted')
                       ORDER BY LEN(reference) DESC, reference DESC`,
                     { yearPat }
                 ),
@@ -352,11 +354,24 @@ app.http('qb-quotes-update', {
             if (!fields.length) return badRequest('No valid fields to update', request);
             fields.push(`updated_at = GETUTCDATE()`);
 
+            // Audit status transitions (Fault Register F6) — read old value first
+            let oldStatus = null;
+            if ('status' in body) {
+                try {
+                    const prev = await query('SELECT status, reference FROM QuoteBuilderQuotes WHERE id = @id', { id });
+                    oldStatus = prev.recordset[0] || null;
+                } catch (e) { /* non-fatal */ }
+            }
+
             const result = await query(
                 `UPDATE QuoteBuilderQuotes SET ${fields.join(', ')} OUTPUT INSERTED.* WHERE id = @id`,
                 params
             );
             if (!result.recordset.length) return notFound(request);
+            if (oldStatus && oldStatus.status !== body.status) {
+                await logChange('qb_quote', id, oldStatus.reference, 'status_change',
+                    oldStatus.status, body.status, auth.name || auth.email);
+            }
             return ok(result.recordset[0], request);
         } catch (err) {
             context.error('qb-quotes-update:', err);
@@ -472,6 +487,8 @@ app.http('qb-quotes-mark-won', {
             } = body;
 
             const createdBy = auth.name || auth.email || 'unknown';
+            await logChange('qb_quote', id, quote.reference, 'status_change',
+                quote.status, 'won', createdBy);
 
             // The 9 fixed line categories seeded against every quote (mirrors
             // DEFAULT_LINE_ITEMS in quote-financials.js — kept inline to avoid
@@ -729,11 +746,41 @@ app.http('qb-quotes-delete', {
         try {
             const id = parseInt(request.params.id);
             if (!id) return badRequest('Invalid id', request);
+
+            // ── Hard-delete guard (Fault Register F4) ──────────────────────
+            // Permanent deletion is allowed ONLY for quotes that were never
+            // sent to a client: status 'draft' (or already archived) with no
+            // date_sent — mirrors the invoicing Draft/Void rule. Anything that
+            // has been sent/won/lost keeps its history; use archive instead.
+            const qRes = await query(
+                'SELECT reference, status, date_sent, project_id FROM QuoteBuilderQuotes WHERE id = @id', { id });
+            if (!qRes.recordset.length) return notFound(request);
+            const q = qRes.recordset[0];
+            const deletable = (q.status === 'draft' || q.status === 'deleted' || q.status == null)
+                              && q.date_sent == null;
+            if (!deletable) {
+                return badRequest(`"${q.reference}" has been sent (status: ${q.status}) — archive it instead of permanent deletion so its history is kept`, request);
+            }
+            if (q.project_id != null) {
+                return badRequest(`"${q.reference}" is linked to a project — unlink it before permanent deletion`, request);
+            }
+            const linked = await query('SELECT COUNT(*) AS n FROM ProjectQuotes WHERE qb_quote_id = @id', { id });
+            if (linked.recordset[0].n > 0) {
+                return badRequest(`"${q.reference}" is attached to a project — detach it before permanent deletion`, request);
+            }
+
+            // Cascade children first (line items + revision snapshots)
+            await query('DELETE FROM QuoteLineItems WHERE qb_quote_id = @id', { id });
+            try { await query('DELETE FROM QuoteBuilderSnapshots WHERE quote_id = @id', { id }); }
+            catch (e) { context.warn('snapshot cascade:', e.message); }
+
             const result = await query(
                 `DELETE FROM QuoteBuilderQuotes OUTPUT DELETED.id, DELETED.reference WHERE id = @id`,
                 { id }
             );
             if (!result.recordset.length) return notFound(request);
+            await logChange('qb_quote', id, q.reference, 'hard_delete',
+                q.status || '(null)', null, auth.name || auth.email);
             return ok({ deleted: true, id, reference: result.recordset[0].reference }, request);
         } catch (err) {
             context.error('qb-quotes-delete:', err);
