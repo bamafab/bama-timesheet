@@ -14,8 +14,12 @@ completed 2026-07-29. This file tracks the build phases and newly-scoped work.
 ## Next
 - **C2** Capacity board ✅ SHIPPED 2026-07-29 (ED Overview: next-8-weeks
   stacked load vs capacity line from remaining estimated hours × deadlines;
-  /api/capacity-summary). "Done by" on fab stage moves deliberately deferred
-  → **C2b** (needs a schema change on stage moves + picker UI).
+  /api/capacity-summary).
+- **C2b** ✅ SHIPPED 2026-07-29 — no schema change needed: JobAssemblyActions
+  ledger existed since the staged-fab build. Operator picker on stage moves is
+  now REQUIRED + remembered (localStorage); new Fab output report in
+  reports.html (kg per person per day, job-colour chips, stage filter, CSV,
+  help) on new GET /api/fab-output.
 - **C3** Stock register with voice entry (Web Speech + Claude parse, validated
   against the steel database) → cut lists / bar optimisation wired to stock
 - **C4** CVR / WIP management pack (value applied vs cost to date per live

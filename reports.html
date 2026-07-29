@@ -132,6 +132,11 @@
         <div class="report-picker-name">Productivity grid</div>
         <div class="report-picker-desc">Who worked on which job, day by day</div>
       </div>
+      <div class="report-picker-card" data-report="faboutput" onclick="selectReport('faboutput')">
+        <div class="report-picker-icon">&#128296;</div>
+        <div class="report-picker-name">Fab output</div>
+        <div class="report-picker-desc">Tonnes per person per day, from stage moves</div>
+      </div>
       <div class="report-picker-card" data-report="babcock" onclick="selectReport('babcock')">
         <div class="report-picker-icon">&#9875;</div>
         <div class="report-picker-name">Babcock overview</div>
@@ -227,6 +232,30 @@
         A whole day blank for everyone → check the kiosk was running. Range is capped at 31 days — narrow the dates for longer periods.
       </div>
       <div id="pgGrid"><div style="padding:30px;text-align:center;color:var(--muted);font-size:12px">Pick a range and press Run.</div></div>
+    </div>
+
+    <div class="report-panel" id="rptPanel-faboutput">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+        <label style="font-size:12px;color:var(--muted)">From <input type="date" id="foFrom" style="margin-left:4px"></label>
+        <label style="font-size:12px;color:var(--muted)">To <input type="date" id="foTo" style="margin-left:4px"></label>
+        <select id="foStage" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12px">
+          <option value="">All stages</option>
+          <option value="fab">Fabricated</option>
+          <option value="weld">Welded</option>
+          <option value="complete">Completed</option>
+        </select>
+        <button class="btn btn-primary btn-sm" onclick="renderFabOutputReport(true)">▶ Run</button>
+        <button class="btn btn-ghost btn-sm" id="foCsvBtn" onclick="exportFabOutputCsv()" style="display:none">⬇ CSV</button>
+        <button class="btn btn-ghost btn-sm" onclick="const d=document.getElementById('foHelp');d.style.display=d.style.display==='none'?'':'none'">?</button>
+      </div>
+      <div id="foHelp" style="display:none;font-size:11.5px;color:var(--muted);line-height:1.6;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px">
+        Every fabricate / weld / complete action recorded on assemblies, as <strong>kilograms per person per day</strong>
+        (pieces × assembly weight from the Tekla drawing). This is how much steel each person put through, job by job.
+        <strong>Something looks wrong?</strong> "Unassigned" rows → the operator wasn't picked on the stage move (it's now required,
+        pre-filled with the last person). 0&nbsp;kg with pieces → that assembly's drawing carried no weight (manual BOM rows have none).
+        Range capped at 31 days.
+      </div>
+      <div id="foGrid"><div style="padding:30px;text-align:center;color:var(--muted);font-size:12px">Pick a range and press Run.</div></div>
     </div>
 
     <div class="report-panel" id="rptPanel-babcock">
@@ -349,6 +378,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260729f"></script>
+<script src="shared.js?v=20260729g"></script>
 </body>
 </html>

@@ -3535,7 +3535,7 @@ function selectReport(name) {
   // Babcock and Cost Analysis each bring their own toolbars + KPI rows.
   // Hide the generic shared chrome so they don't visually clash.
   // (Both elements only exist on reports.html; harmless no-op elsewhere.)
-  const ownsChrome = (name === 'babcock' || name === 'costanalysis' || name === 'holidays' || name === 'productivity');
+  const ownsChrome = (name === 'babcock' || name === 'costanalysis' || name === 'holidays' || name === 'productivity' || name === 'faboutput');
   const periodBar = document.getElementById('rptPeriodToolbar');
   if (periodBar) periodBar.style.display = ownsChrome ? 'none' : '';
   const sharedKpi = document.getElementById('rptKpiRow');
@@ -6039,6 +6039,10 @@ function renderReports() {
   }
   if (activeReport === 'productivity') {
     renderProductivityReport();
+    return;
+  }
+  if (activeReport === 'faboutput') {
+    renderFabOutputReport();
     return;
   }
 
@@ -20902,7 +20906,7 @@ async function openBulkStageModal(stage, pool, surface) {
   }
 
   const titleMap = { fab: 'Mark fabricated — bulk', weld: 'Mark welded — bulk', complete: 'Mark complete — bulk' };
-  const opLabelMap = { fab: 'FABRICATOR (optional)', weld: 'WELDER (optional)', complete: 'WELDER (optional)' };
+  const opLabelMap = { fab: 'FABRICATOR', weld: 'WELDER', complete: 'WELDER' };
   document.getElementById('bsTitle').textContent = titleMap[stage];
   document.getElementById('bsSubtitle').textContent =
     `${_bulkRows.length} assembl${_bulkRows.length > 1 ? 'ies' : 'y'} · qty pre-filled to all remaining — edit any box to do a partial.`;
@@ -20910,11 +20914,15 @@ async function openBulkStageModal(stage, pool, surface) {
 
   // Operator dropdown (optional in bulk regardless of surface)
   const opSel = document.getElementById('bsOperator');
-  opSel.innerHTML = '<option value="">— none —</option>';
+  opSel.innerHTML = '<option value="">— who did it? —</option>';
   const staff = (state.timesheetData.employees || [])
     .filter(e => (e.staffType || 'workshop') === 'workshop' && e.active !== false)
     .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
   for (const w of staff) opSel.innerHTML += `<option value="${w.id}" data-name="${escapeHtml(w.name)}">${escapeHtml(w.name)}</option>`;
+  // Remember-last: attribution feeds the Fab output report, so the picker is
+  // required — but pre-filled from last time, so it costs zero taps normally.
+  const lastOp = localStorage.getItem('bama_last_operator');
+  if (lastOp && [...opSel.options].some(o => o.value === lastOp)) opSel.value = lastOp;
 
   // Machine dropdown — hidden for fab
   const machWrap = document.getElementById('bsMachineWrap');
@@ -20996,6 +21004,14 @@ async function confirmBulkStage() {
   if (!ok) return;
 
   const opSel = document.getElementById('bsOperator');
+  if (!opSel.value) {
+    toast(`Pick who ${stage === 'fab' ? 'fabricated' : 'welded'} these — it feeds the Fab output report`, 'error');
+    opSel.focus();
+    const btn0 = document.getElementById('bsConfirmBtn');
+    btn0.disabled = false; btn0.style.opacity = '1';
+    return;
+  }
+  localStorage.setItem('bama_last_operator', opSel.value);
   const opId = opSel.value ? parseInt(opSel.value) : null;
   const opName = opSel.selectedOptions[0]?.dataset?.name || null;
   const machSel = document.getElementById('bsMachine');
@@ -28499,6 +28515,127 @@ async function renderProductivityReport(run) {
     </div>
     <div style="font-size:10.5px;color:var(--subtle);margin-top:8px">Hours per job per day from the kiosk. ${incS000 ? 'Including' : 'Excluding'} S000 non-productive time. Weekends shaded. Colours are consistent per job.</div>`;
   grid.innerHTML = html;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FAB OUTPUT — kg per person per day from JobAssemblyActions (Phase C2b)
+// ═══════════════════════════════════════════════════════════════════════════
+let _foRows = null, _foMeta = null;
+
+async function renderFabOutputReport(run) {
+  const grid = document.getElementById('foGrid');
+  if (!grid) return;
+  const fromEl = document.getElementById('foFrom'), toEl = document.getElementById('foTo');
+  if (fromEl && !fromEl.value) {
+    const t = new Date(); const f = new Date(t.getTime() - 13 * 86400000);
+    fromEl.value = f.toISOString().slice(0, 10);
+    toEl.value   = t.toISOString().slice(0, 10);
+  }
+  if (!run && !_foRows) return;
+  const from = fromEl?.value, to = toEl?.value;
+  if (!from || !to || from > to) { grid.innerHTML = '<div style="padding:20px;color:var(--red);font-size:12px">Pick a valid date range.</div>'; return; }
+  const days = Math.round((new Date(to) - new Date(from)) / 86400000) + 1;
+  if (days > 31) { grid.innerHTML = '<div style="padding:20px;color:var(--red);font-size:12px">Range capped at 31 days — narrow the dates.</div>'; return; }
+
+  if (run) {
+    grid.innerHTML = '<div style="padding:30px;text-align:center;color:var(--muted);font-size:12px">Loading…</div>';
+    const stage = document.getElementById('foStage')?.value || '';
+    try {
+      _foRows = await api.get(`/api/fab-output?from=${from}&to=${to}${stage ? '&stage=' + stage : ''}`);
+      _foMeta = { from, to, stage };
+    } catch (e) {
+      grid.innerHTML = `<div style="padding:20px;color:var(--red);font-size:12px">Could not load fab output: ${escapeHtml(e.message)}</div>`;
+      return;
+    }
+  }
+
+  const rows = _foRows || [];
+  const dates = [];
+  for (let d = new Date(_foMeta.from + 'T12:00:00'); d <= new Date(_foMeta.to + 'T12:00:00'); d = new Date(d.getTime() + 86400000)) {
+    dates.push(d.toISOString().slice(0, 10));
+  }
+  const dayName = iso => new Date(iso + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short' });
+  const isWeekend = iso => [0, 6].includes(new Date(iso + 'T12:00:00').getDay());
+  const jobHue = key => { let h = 0; const s = String(key); for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h % 360; };
+  const chipStyle = key => {
+    const hue = jobHue(key);
+    return `display:inline-flex;align-items:center;gap:4px;padding:1px 7px;border-radius:20px;` +
+           `background:hsla(${hue},70%,55%,.14);border:1px solid hsla(${hue},70%,60%,.45);` +
+           `color:hsl(${hue},75%,72%);font-size:10.5px;line-height:1.7;white-space:nowrap`;
+  };
+  const fmtKg = v => v >= 1000 ? (Math.round(v / 100) / 10).toLocaleString('en-GB') + 't' : Math.round(v).toLocaleString('en-GB') + 'kg';
+
+  // matrix[person][date][job] = {kg, pcs}
+  const matrix = {}, rowTotals = {}, dayTotals = {}, jobTotals = {};
+  for (const r of rows) {
+    const person = r.operator || 'Unassigned';
+    const job = r.project_number || '—';
+    const kg = parseFloat(r.kg) || 0, pcs = parseInt(r.qty) || 0;
+    ((matrix[person] = matrix[person] || {})[r.date] = matrix[person][r.date] || {});
+    const c = matrix[person][r.date][job] = matrix[person][r.date][job] || { kg: 0, pcs: 0 };
+    c.kg += kg; c.pcs += pcs;
+    rowTotals[person] = (rowTotals[person] || 0) + kg;
+    dayTotals[r.date] = (dayTotals[r.date] || 0) + kg;
+    jobTotals[job]    = (jobTotals[job]    || 0) + kg;
+  }
+  const people = Object.keys(matrix).sort((a, b) => (rowTotals[b] || 0) - (rowTotals[a] || 0));
+  if (!people.length) { grid.innerHTML = '<div style="padding:20px;color:var(--muted);font-size:12px">No stage moves in this range.</div>'; return; }
+
+  const csvBtn = document.getElementById('foCsvBtn'); if (csvBtn) csvBtn.style.display = '';
+
+  const STICKY_L = 'position:sticky;left:0;background:var(--card,#161616);z-index:2;box-shadow:2px 0 6px rgba(0,0,0,.35)';
+  const STICKY_R = 'position:sticky;right:0;background:var(--card,#161616);z-index:2;box-shadow:-2px 0 6px rgba(0,0,0,.35)';
+  const th = 'padding:8px 6px;font-size:9.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;border-bottom:2px solid var(--border);white-space:nowrap;text-align:center';
+
+  let html = `<div style="overflow-x:auto;border:1px solid var(--border);border-radius:10px;background:var(--card,#161616)">
+    <table style="border-collapse:separate;border-spacing:0;font-size:11px;min-width:100%">
+    <thead><tr>
+      <th style="${th};text-align:left;${STICKY_L};padding-left:12px">Person</th>
+      ${dates.map(d => `<th style="${th};${isWeekend(d) ? 'color:var(--border)' : ''}">${dayName(d)}<br><span style="font-size:10.5px;color:${isWeekend(d) ? 'var(--border)' : 'var(--text)'}">${d.slice(8)}/${d.slice(5, 7)}</span></th>`).join('')}
+      <th style="${th};text-align:right;${STICKY_R};padding-right:12px">Total</th>
+    </tr></thead><tbody>`;
+  people.forEach((pk, ri) => {
+    const zebra = ri % 2 ? 'background:rgba(255,255,255,.018)' : '';
+    html += `<tr>
+      <td style="padding:8px 12px;font-weight:600;white-space:nowrap;${STICKY_L};border-bottom:1px solid var(--border);${pk === 'Unassigned' ? 'color:var(--muted);font-style:italic' : ''}">${escapeHtml(pk)}</td>`;
+    for (const d of dates) {
+      const cell = matrix[pk][d];
+      const we = isWeekend(d) ? 'background:rgba(255,255,255,.025);' : zebra + ';';
+      if (!cell) { html += `<td style="padding:6px;text-align:center;color:rgba(255,255,255,.08);border-bottom:1px solid var(--border);${we}">·</td>`; continue; }
+      const parts = Object.entries(cell).sort((a, b) => b[1].kg - a[1].kg)
+        .map(([job, c]) => `<span style="${chipStyle(job)}" title="${escapeHtml(job)} — ${fmtKg(c.kg)} across ${c.pcs} piece${c.pcs !== 1 ? 's' : ''}">${escapeHtml(job)} <strong style="font-family:var(--font-mono);font-weight:700">${fmtKg(c.kg)}</strong><span style="opacity:.6;font-size:9.5px">·${c.pcs}pc</span></span>`);
+      html += `<td style="padding:5px 6px;vertical-align:top;border-bottom:1px solid var(--border);${we}"><div style="display:flex;flex-direction:column;gap:3px;align-items:flex-start">${parts.join('')}</div></td>`;
+    }
+    html += `<td style="padding:8px 12px;text-align:right;font-family:var(--font-mono);font-weight:700;${STICKY_R};border-bottom:1px solid var(--border)">${fmtKg(rowTotals[pk] || 0)}</td></tr>`;
+  });
+  const grand = Object.values(rowTotals).reduce((s, v) => s + v, 0);
+  html += `<tr>
+      <td style="padding:8px 12px;font-weight:700;${STICKY_L};border-top:2px solid var(--border)">Total</td>
+      ${dates.map(d => `<td style="padding:6px;text-align:center;font-family:var(--font-mono);font-size:10.5px;color:var(--muted);border-top:2px solid var(--border)">${dayTotals[d] ? fmtKg(dayTotals[d]) : ''}</td>`).join('')}
+      <td style="padding:8px 12px;text-align:right;font-family:var(--font-mono);font-weight:700;font-size:12.5px;color:var(--accent);${STICKY_R};border-top:2px solid var(--border)">${fmtKg(grand)}</td>
+    </tr></tbody></table></div>`;
+
+  const legend = Object.entries(jobTotals).sort((a, b) => b[1] - a[1])
+    .map(([k, kg]) => `<span style="${chipStyle(k)};font-size:11px;padding:3px 10px">${escapeHtml(k)} <strong style="font-family:var(--font-mono)">${fmtKg(kg)}</strong> <span style="opacity:.65;font-size:10px">${grand ? Math.round(kg / grand * 100) : 0}%</span></span>`).join(' ');
+  html += `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center">
+      <span style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">Jobs this period</span>${legend}
+    </div>
+    <div style="font-size:10.5px;color:var(--subtle);margin-top:8px">Kilograms = pieces × assembly weight from the drawing. ${_foMeta.stage ? 'Stage: ' + _foMeta.stage + '.' : 'All stages (a piece fabricated then welded counts in both).'} People sorted by output. Weekends shaded.</div>`;
+  grid.innerHTML = html;
+}
+
+function exportFabOutputCsv() {
+  if (!_foRows || !_foMeta) { toast('Run the report first', 'error'); return; }
+  const lines = ['date,person,stage,job,assembly,pieces,kg'];
+  (_foRows || []).slice().sort((a, b) => String(a.date).localeCompare(String(b.date)))
+    .forEach(r => lines.push([r.date, `"${(r.operator || 'Unassigned').replace(/"/g, '""')}"`, r.stage, r.project_number || '', r.assembly_mark || '', r.qty || 0, r.kg || 0].join(',')));
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `fab-output-${_foMeta.from}-to-${_foMeta.to}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast('CSV downloaded', 'success');
 }
 
 function exportProductivityCsv() {
