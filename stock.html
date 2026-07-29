@@ -66,6 +66,28 @@
     <div id="stkReview" style="margin-top:12px"></div>
   </div>
 
+  <!-- ═══ CUT LIST OPTIMISER (C3b) ═══ -->
+  <div class="stk-card">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+      <h3 style="margin:0;font-size:15px">✂ Cut list</h3>
+      <select id="clJob" class="stk-input" style="min-width:240px"><option value="">Pick a job…</option></select>
+      <label style="font-size:11.5px;color:var(--muted)">Kerf <input type="number" id="clKerf" class="stk-input" value="5" min="0" style="width:52px;margin-left:4px"> mm</label>
+      <label style="font-size:11.5px;color:var(--muted)">Mill lengths <input id="clStd" class="stk-input" value="12000, 7500, 6000" style="width:150px;margin-left:4px"></label>
+      <button class="btn btn-primary btn-sm" onclick="clRun()">▶ Optimise</button>
+      <button class="btn btn-ghost btn-sm" id="clCsvBtn" onclick="clExportCsv()" style="display:none">⬇ CSV</button>
+      <button class="btn btn-ghost btn-sm" onclick="const d=document.getElementById('clHelp');d.style.display=d.style.display==='none'?'':'none'">?</button>
+    </div>
+    <div id="clHelp" style="display:none;font-size:11.5px;color:var(--muted);line-height:1.6;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px">
+      Takes every part on the job's assemblies (length × quantity × assemblies-off, straight from the Tekla imports), groups by
+      section, and packs the cuts into bars — <strong>your recorded stock first</strong>, then mill lengths — best-fit-decreasing with the
+      kerf added per cut. Each bar shows its cuts and offcut; waste % per section. <strong>Deduct used stock</strong> takes the consumed
+      bars off the register (audited, restorable via qty). <strong>Something looks wrong?</strong> A section marked "no stock match" just
+      means nothing on the racks matches — it packs into mill lengths and that's your buying list. Parts with no length (manual BOM
+      rows) are listed but not packed. The plan is a suggestion — it doesn't know a bar is bent or promised elsewhere; check before cutting.
+    </div>
+    <div id="clResult"></div>
+  </div>
+
   <!-- ═══ STOCK LIST ═══ -->
   <div class="stk-card">
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
@@ -83,6 +105,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="shared.js?v=20260729g"></script>
+<script src="steel-match.js?v=20260729h"></script>
 <script>
 // ═══════════════════════════════════════════════════════════════════════════
 // STOCK REGISTER (Phase C3) — voice + manual entry, steel-db validated
@@ -92,45 +115,23 @@
 // tonnage arithmetic is deterministic JS against steel-sections.json.
 // ═══════════════════════════════════════════════════════════════════════════
 
-let _sections = [];          // [{f: family, d: designation, kgm}]
-let _sectionIndex = {};      // normalised designation -> entry
+let _sections = [];          // [{f, d, kgm}] raw
+let _steelIdx = [];          // steelBuildIndex output (numeric matcher)
 let _stock = [];
 let _review = [];            // rows awaiting save
 
-function stkNorm(s) {
-  return String(s || '').toUpperCase().replace(/\s+/g, ' ').trim()
-    .replace(/\s*[X×]\s*/g, 'x').replace(/(\d)X(\d)/g, '$1x$2');
-}
+const FAMILY_ABBR = STEEL_FAMILY_ABBR;   // from steel-match.js
 
-// Match "203x133x25 UB" / "UB 203x133x25" / bare "203x133x25" (if unique)
+// Numeric matcher (steel-match.js): "*"/"by"/spacing tolerant, "5"=="5.0",
+// snaps a misheard mass/thickness to the nearest real one and flags it.
 function stkMatchSection(raw) {
-  const n = stkNorm(raw);
-  if (_sectionIndex[n]) return _sectionIndex[n];
-  // try swapped order: FAMILY DIMS -> DIMS FAMILY
-  const m = n.match(/^([A-Z]+)\s+(.+)$/);
-  if (m && _sectionIndex[`${m[2]} ${m[1]}`]) return _sectionIndex[`${m[2]} ${m[1]}`];
-  // bare designation, unique across families
-  const bare = _sections.filter(s => stkNorm(s.d) === n);
-  if (bare.length === 1) return bare[0];
-  return null;
+  return steelMatch(raw, _steelIdx);   // {entry, corrected, original, display} | null
 }
-
-const FAMILY_ABBR = {
-  'Universal Beams': 'UB', 'Universal Columns': 'UC', 'Parallel Flange Channels': 'PFC',
-  'Square Hollow Sections': 'SHS', 'Rectangular Hollow Sections': 'RHS', 'Circular Hollow Sections': 'CHS',
-  'Equal Angles': 'EA', 'Unequal Angles': 'UA', 'Flat Bars': 'FLAT', 'Round Bars': 'ROUND',
-  'Square Bars': 'SQ', 'Tees': 'TEE', 'Universal Bearing Piles': 'UBP'
-};
 
 async function stkLoadSections() {
   const res = await fetch('steel-sections.json');
   _sections = await res.json();
-  _sectionIndex = {};
-  for (const s of _sections) {
-    const abbr = FAMILY_ABBR[s.f] || s.f.toUpperCase();
-    _sectionIndex[stkNorm(`${s.d} ${abbr}`)] = s;
-    _sectionIndex[stkNorm(`${abbr} ${s.d}`)] = s;
-  }
+  _steelIdx = steelBuildIndex(_sections);
 }
 
 function stkHue(key) { let h = 0; const s = String(key); for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h % 360; }
@@ -178,7 +179,9 @@ Rules:
 - Output ONLY a JSON array, no prose, no markdown fences.
 - Each row: {"section": "<dims + family abbreviation, e.g. 203x133x25 UB, 100x100x8 SHS, 200x90 PFC>", "length_mm": <integer millimetres>, "qty": <integer>, "location": "<rack/bay if mentioned, else null>", "grade": "<steel grade if mentioned, else null>"}
 - "twelve metres" / "12m" => 12000. "7 and a half metres" => 7500. Plain large numbers like 12000 are already mm.
-- Family words: universal beam/UB, universal column/UC, channel/PFC, box section or SHS, RHS, CHS/tube, angle/EA, flat.
+- Family words: universal beam/UB, universal column/UC, channel/PFC, box section or SHS, RHS, CHS/tube/pipe, angle/EA/RSA, flat, round bar.
+- Voice mishears to fix: "you be/you bee/hubie" => UB; "you see/you sea" => UC; "pee eff see" => PFC; "ess aitch ess" => SHS; "are aitch ess" => RHS; "sea aitch ess" => CHS.
+- Keep every NUMBER exactly as heard — do NOT round or correct dimensions; validation happens elsewhere.
 - Transcribe ONLY what was said. Do not invent quantities, sections or locations.`}]
     });
     const raw = (resp.content || []).map(c => c.text || '').join('').replace(/```json|```/g, '').trim();
@@ -201,9 +204,11 @@ function stkAddManualRow() {
 }
 
 function stkPushReview(row) {
-  const match = row.section ? stkMatchSection(row.section) : null;
-  if (match) { row.section = `${match.d} ${FAMILY_ABBR[match.f] || match.f}`; row.family = match.f; row.kgm = match.kgm; }
-  else { row.family = null; row.kgm = null; }
+  const m = row.section ? stkMatchSection(row.section) : null;
+  if (m) {
+    row._original = m.corrected ? row.section : null;
+    row.section = m.display; row.family = m.entry.f; row.kgm = m.entry.kgm;
+  } else { row.family = null; row.kgm = null; row._original = null; }
   _review.push(row);
   stkRenderReview();
 }
@@ -211,10 +216,9 @@ function stkPushReview(row) {
 function stkReviewEdit(i, field, value) {
   const r = _review[i]; if (!r) return;
   if (field === 'section') {
-    r.section = value;
     const m = stkMatchSection(value);
-    r.family = m ? m.f : null; r.kgm = m ? m.kgm : null;
-    if (m) r.section = `${m.d} ${FAMILY_ABBR[m.f] || m.f}`;
+    if (m) { r._original = m.corrected ? value : null; r.section = m.display; r.family = m.entry.f; r.kgm = m.entry.kgm; }
+    else { r._original = null; r.section = value; r.family = null; r.kgm = null; }
     stkRenderReview(); return;
   }
   if (field === 'length_mm' || field === 'qty') r[field] = parseInt(value) || null;
@@ -233,7 +237,9 @@ function stkRenderReview() {
     html += `<tr>
       <td class="stk-td" style="min-width:190px">
         <input class="stk-input" style="width:100%" value="${escapeHtml(r.section || '')}" list="stkSectionList" onchange="stkReviewEdit(${i},'section',this.value)">
-        <div style="font-size:10px;margin-top:2px;color:${ok ? 'var(--green)' : 'var(--accent)'}">${ok ? '✓ ' + escapeHtml(r.family) + ' · ' + r.kgm + ' kg/m' : '⚠ not in steel database — will save unverified'}</div>
+        <div style="font-size:10px;margin-top:2px;color:${ok ? (r._original ? 'var(--accent)' : 'var(--green)') : 'var(--accent)'}">${ok
+          ? (r._original ? '✓ corrected from "' + escapeHtml(r._original) + '" → nearest real section · ' + r.kgm + ' kg/m' : '✓ ' + escapeHtml(r.family) + ' · ' + r.kgm + ' kg/m')
+          : '⚠ not in steel database — will save unverified'}</div>
       </td>
       <td class="stk-td"><input type="number" class="stk-input" style="width:90px" value="${r.length_mm || ''}" onchange="stkReviewEdit(${i},'length_mm',this.value)"></td>
       <td class="stk-td"><input type="number" class="stk-input" style="width:60px" min="1" value="${r.qty || 1}" onchange="stkReviewEdit(${i},'qty',this.value)"></td>
@@ -353,6 +359,176 @@ function stkExportCsv() {
   a.click(); URL.revokeObjectURL(a.href);
 }
 
+// ── Cut list optimiser (C3b) ─────────────────────────────────────────────────
+// Deterministic best-fit-decreasing packing. Demand = job parts (Tekla data).
+// Supply = matched stock bars first, then configured mill lengths (infinite).
+let _clPlan = null;
+
+async function clLoadJobs() {
+  try {
+    const jobs = await api.get('/api/drawings');
+    const sel = document.getElementById('clJob');
+    sel.innerHTML = '<option value="">Pick a job…</option>' +
+      (jobs || []).slice().reverse().map(j => `<option value="${j.id}">${escapeHtml((j.project_number || '') + ' — ' + (j.job_name || ''))}</option>`).join('');
+  } catch (e) { console.warn('jobs load:', e.message); }
+}
+
+function clSectionKey(profileRaw) {
+  const m = stkMatchSection(profileRaw);
+  return m ? { key: m.display, kgm: m.entry.kgm, matched: true } : { key: String(profileRaw || '?').trim(), kgm: null, matched: false };
+}
+
+async function clRun() {
+  const jobId = parseInt(document.getElementById('clJob').value);
+  if (!jobId) { toast('Pick a job first', 'error'); return; }
+  const kerf = Math.max(0, parseInt(document.getElementById('clKerf').value) || 0);
+  const stdLens = (document.getElementById('clStd').value || '').split(/[ ,;]+/).map(v => parseInt(v)).filter(v => v > 0).sort((a, b) => a - b);
+  const out = document.getElementById('clResult');
+  out.innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted);font-size:12px">Optimising…</div>';
+
+  let assemblies;
+  try { assemblies = await api.get(`/api/job-assemblies?job_id=${jobId}`); }
+  catch (e) { out.innerHTML = `<div style="padding:16px;color:var(--red);font-size:12px">Could not load job parts: ${escapeHtml(e.message)}</div>`; return; }
+
+  // Demand: per section key → list of cut lengths (expanded per qty)
+  const demand = {}, meta = {}, unpackable = [];
+  for (const a of (assemblies || [])) {
+    const asmQty = parseInt(a.quantity) || 1;
+    for (const p of (a.parts || [])) {
+      const total = (parseInt(p.quantity) || 1) * asmQty;
+      const len = parseInt(p.length_mm) || 0;
+      if (!len) { unpackable.push(`${p.part_mark || '?'} (${p.profile || 'no profile'}) × ${total} — no length`); continue; }
+      const sk = clSectionKey(p.profile);
+      (demand[sk.key] = demand[sk.key] || []).push(...Array(total).fill(len));
+      meta[sk.key] = sk;
+    }
+  }
+  const keys = Object.keys(demand);
+  if (!keys.length) { out.innerHTML = '<div style="padding:16px;color:var(--muted);font-size:12px">No parts with lengths on this job.</div>'; return; }
+
+  // Supply: live stock grouped by matched section key
+  const stockByKey = {};
+  for (const s of _stock.filter(r => !r.is_deleted && r.qty > 0)) {
+    const sk = clSectionKey(s.section);
+    (stockByKey[sk.key] = stockByKey[sk.key] || []).push(...Array(s.qty).fill(0).map(() => ({ len: s.length_mm, stockId: s.id, loc: s.location })));
+  }
+
+  const plan = { jobId, kerf, sections: [], stockUse: {} };
+  for (const key of keys.sort()) {
+    const cuts = demand[key].slice().sort((a, b) => b - a);
+    const avail = (stockByKey[key] || []).slice().sort((a, b) => a.len - b.len);   // shortest stock first opens
+    const bars = [];   // {source:'stock'|'mill', len, stockId?, loc?, cuts:[], rem}
+    const fits = (bar, c) => bar.rem >= c + (bar.cuts.length ? kerf : 0);
+    const use = (bar, c) => { bar.rem -= c + (bar.cuts.length ? kerf : 0); bar.cuts.push(c); };
+    let short = 0;
+    for (const c of cuts) {
+      // best-fit among open bars
+      let best = null;
+      for (const b of bars) if (fits(b, c) && (!best || b.rem < best.rem)) best = b;
+      if (best) { use(best, c); continue; }
+      // open a stock bar: smallest that fits
+      const si = avail.findIndex(s => s.len >= c);
+      if (si >= 0) {
+        const s = avail.splice(si, 1)[0];
+        const bar = { source: 'stock', len: s.len, stockId: s.stockId, loc: s.loc, cuts: [], rem: s.len };
+        use(bar, c); bars.push(bar);
+        plan.stockUse[s.stockId] = (plan.stockUse[s.stockId] || 0) + 1;
+        continue;
+      }
+      // open a mill bar: smallest standard that fits
+      const std = stdLens.find(L => L >= c);
+      if (!std) { short++; continue; }   // longer than any bar — flagged
+      const bar = { source: 'mill', len: std, cuts: [], rem: std };
+      use(bar, c); bars.push(bar);
+    }
+    const totCut = cuts.reduce((s, v) => s + v, 0);
+    const totBar = bars.reduce((s, b) => s + b.len, 0);
+    plan.sections.push({ key, kgm: meta[key].kgm, matched: meta[key].matched, cuts: cuts.length, bars, totCut, totBar,
+      waste: totBar ? Math.round((totBar - totCut) / totBar * 100) : 0, short });
+  }
+  _clPlan = plan;
+  clRender(unpackable);
+  document.getElementById('clCsvBtn').style.display = '';
+}
+
+function clRender(unpackable) {
+  const out = document.getElementById('clResult');
+  const p = _clPlan; if (!p) return;
+  const kerf = p.kerf;
+  let html = '';
+  for (const sec of p.sections) {
+    const hue = stkHue(sec.key);
+    const stockBars = sec.bars.filter(b => b.source === 'stock').length;
+    const millBars  = sec.bars.filter(b => b.source === 'mill');
+    const millSummary = {};
+    millBars.forEach(b => millSummary[b.len] = (millSummary[b.len] || 0) + 1);
+    html += `<div style="margin-top:14px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+        ${stkChip(sec.key, sec.key)}
+        <span style="font-size:11.5px;color:var(--muted)">${sec.cuts} cuts · ${sec.bars.length} bars (${stockBars} from stock, ${millBars.length} to buy) · waste <strong style="color:${sec.waste > 15 ? 'var(--accent)' : 'var(--green)'}">${sec.waste}%</strong>${sec.kgm ? ' · ' + fmtKg2(sec.totBar / 1000 * sec.kgm) + ' total' : ''}</span>
+        ${!sec.matched ? '<span style="font-size:10.5px;color:var(--accent)">⚠ no stock match — section not in steel db, mill lengths only</span>' : ''}
+        ${sec.short ? `<span style="font-size:10.5px;color:var(--red)">✗ ${sec.short} cut(s) longer than any bar!</span>` : ''}
+        ${Object.keys(millSummary).length ? `<span style="font-size:11px;color:var(--text)">Buy: ${Object.entries(millSummary).map(([L, n]) => n + ' × ' + (L / 1000) + 'm').join(', ')}</span>` : ''}
+      </div>`;
+    sec.bars.forEach((b, bi) => {
+      const segs = b.cuts.map((c, ci) => {
+        const w = c / b.len * 100;
+        return `<div title="${c} mm" style="width:${w}%;background:hsla(${hue},70%,${45 + (ci % 3) * 8}%,.8);display:flex;align-items:center;justify-content:center;font-size:9px;font-family:var(--font-mono);color:#fff;overflow:hidden;white-space:nowrap;border-right:1px solid rgba(0,0,0,.5)">${w > 6 ? c : ''}</div>`;
+      }).join('');
+      const offcut = b.rem;
+      html += `<div style="display:flex;align-items:center;gap:10px;margin:3px 0">
+        <span style="font-size:10.5px;color:var(--muted);min-width:130px;text-align:right;font-family:var(--font-mono)">${b.source === 'stock' ? '📦 stock ' + (b.loc ? '(' + escapeHtml(b.loc) + ') ' : '') : '🏭 mill '}${(b.len / 1000)}m</span>
+        <div style="flex:1;height:22px;display:flex;background:var(--card);border:1px solid var(--border);border-radius:5px;overflow:hidden">
+          ${segs}${offcut > 0 ? `<div title="offcut ${offcut} mm" style="flex:1;display:flex;align-items:center;justify-content:center;font-size:9px;color:var(--subtle);font-family:var(--font-mono)">${offcut > b.len * 0.04 ? offcut : ''}</div>` : ''}
+        </div>
+      </div>`;
+    });
+    html += '</div>';
+  }
+  const stockRows = Object.keys(p.stockUse).length;
+  if (stockRows) {
+    html += `<div style="margin-top:14px"><button class="btn btn-primary btn-sm" onclick="clDeductStock()">📦 Deduct used stock (${Object.values(p.stockUse).reduce((s, v) => s + v, 0)} bar(s) from ${stockRows} line(s))</button>
+      <span style="font-size:11px;color:var(--muted);margin-left:8px">audited — reversible with the qty steppers</span></div>`;
+  }
+  if (unpackable && unpackable.length) {
+    html += `<div style="margin-top:10px;font-size:11px;color:var(--accent)">Not packed (no length data): ${unpackable.map(escapeHtml).join(' · ')}</div>`;
+  }
+  html += `<div style="margin-top:8px;font-size:10.5px;color:var(--subtle)">Best-fit-decreasing, ${kerf}mm kerf per cut, stock bars before mill lengths. A plan, not a promise — check the bars before cutting.</div>`;
+  out.innerHTML = html;
+}
+
+async function clDeductStock() {
+  const p = _clPlan; if (!p || !Object.keys(p.stockUse).length) return;
+  const total = Object.values(p.stockUse).reduce((s, v) => s + v, 0);
+  const ok = await bamaConfirm(`Deduct ${total} bar(s) from stock as used on this cut list? Each line's qty drops by the bars consumed (change-logged; put them back with the + stepper if plans change).`, 'Deduct used stock');
+  if (!ok) return;
+  const who = document.getElementById('stkWho').value || 'unknown';
+  let done = 0, failed = 0;
+  for (const [stockId, used] of Object.entries(p.stockUse)) {
+    const r = _stock.find(x => x.id === parseInt(stockId));
+    if (!r) { failed++; continue; }
+    try {
+      await api.put(`/api/stock/${stockId}`, { qty: Math.max(0, (r.qty || 0) - used), entered_by: who });
+      done++;
+    } catch (e) { failed++; }
+  }
+  toast(failed ? `${done} line(s) adjusted, ${failed} failed` : `Stock deducted — ${done} line(s) adjusted`, failed ? 'error' : 'success');
+  stkLoad();
+}
+
+function clExportCsv() {
+  const p = _clPlan; if (!p) { toast('Run the optimiser first', 'error'); return; }
+  const lines = ['section,bar_no,source,bar_length_mm,location,cuts_mm,offcut_mm'];
+  for (const sec of p.sections) {
+    sec.bars.forEach((b, i) => lines.push([`"${sec.key}"`, i + 1, b.source, b.len, `"${b.loc || ''}"`, `"${b.cuts.join(' + ')}"`, b.rem].join(',')));
+  }
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `cut-list-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click(); URL.revokeObjectURL(a.href);
+}
+
 // ── Boot ─────────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', async () => {
   // Name picker (attribution) — kiosk-style, remembered
@@ -371,6 +547,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   dl.innerHTML = _sections.slice(0, 2000).map(s => `<option value="${escapeHtml(s.d + ' ' + (FAMILY_ABBR[s.f] || s.f))}">`).join('');
   document.body.appendChild(dl);
   stkLoad();
+  clLoadJobs();
 });
 </script>
 </body>
