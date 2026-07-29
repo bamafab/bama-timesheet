@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>BAMA Projects & Jobs</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260728a">
+<link rel="stylesheet" href="bama.css?v=20260729a">
 <style>
   /* Project filter chips (scoped to this page — no shared cache-bust needed) */
   .proj-filter-bar {
@@ -336,7 +336,7 @@
      UPLOAD FILE MODAL (all elements)
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="uploadFileModal">
-  <div class="modal" style="width:520px;max-width:95vw">
+  <div class="modal" style="width:520px;max-width:95vw;max-height:92vh;overflow-y:auto">
     <div class="modal-title" id="uploadFileTitle">Upload File</div>
     <div style="color:var(--muted);font-size:13px;margin-bottom:20px" id="uploadFileContext"></div>
 
@@ -355,7 +355,7 @@
         <div class="upload-zone-icon">&#128196;</div>
         <div class="upload-zone-text" id="uploadFileZoneText">Click or drag files here</div>
       </div>
-      <div id="uploadFileList" style="margin-top:8px"></div>
+      <div id="uploadFileList" style="margin-top:8px;max-height:200px;overflow-y:auto;padding-right:4px"></div>
     </div>
 
     <!-- Approval status toggle (only for Approval uploads) -->
@@ -399,7 +399,7 @@
      See SPEC-job-fabrication-rework.md §5
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="assemblyReviewModal">
-  <div class="modal" style="width:780px;max-width:96vw">
+  <div class="modal" style="width:780px;max-width:96vw;max-height:92vh;overflow-y:auto">
     <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:10px">
       <div class="modal-title" style="margin:0">Review assemblies</div>
       <span id="armCounter" style="font-size:12px;color:var(--subtle)"></span>
@@ -528,7 +528,7 @@
      Loose items OCR'd from supplier slips/quotations
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="bomManualReviewModal">
-  <div class="modal" style="width:780px;max-width:96vw">
+  <div class="modal" style="width:780px;max-width:96vw;max-height:92vh;overflow-y:auto">
     <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:10px">
       <div class="modal-title" style="margin:0">Review BOM lines</div>
       <span id="bmrCounter" style="font-size:12px;color:var(--subtle)"></span>
@@ -554,7 +554,7 @@
      the items' required finish
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="generateDnModal">
-  <div class="modal" style="width:640px;max-width:96vw">
+  <div class="modal" style="width:640px;max-width:96vw;max-height:92vh;overflow-y:auto">
     <div class="modal-title" style="margin-bottom:6px">Generate delivery note</div>
     <div style="color:var(--muted);font-size:12px;margin-bottom:18px">
       <span id="gdnItemCount">0</span> items · sending for <b id="gdnFinishName"></b> · total qty <span id="gdnItemQtySum">0</span>

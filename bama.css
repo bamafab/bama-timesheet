@@ -705,12 +705,17 @@
     display: none; position: fixed; inset: 0;
     background: rgba(0,0,0,.7); z-index: 200;
     align-items: center; justify-content: center;
+    overflow-y: auto;              /* tall modals scroll instead of clipping */
+    padding: 24px 12px;
   }
   .modal-overlay.active { display: flex; }
   #confirmModal { z-index: 300; }
   .modal {
     background: var(--card); border: 1px solid var(--border);
     border-radius: 16px; padding: 32px; width: 400px; max-width: 90vw;
+    margin: auto;                  /* with flex centring, auto margins stop
+                                      content taller than the viewport being
+                                      cut off at top/bottom (unscrollable) */
   }
   .modal-title { font-family: var(--font-display); font-size: 28px; margin-bottom: 20px; }
   .modal-actions { display: flex; gap: 10px; margin-top: 24px; justify-content: flex-end; }
