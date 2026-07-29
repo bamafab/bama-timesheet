@@ -42,6 +42,10 @@
   <div class="mig-card">
     <div class="mig-step"><span class="mig-num">2</span> Canonical tree — edit to taste, then create</div>
     <div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">Indent with two spaces for subfolders. Creating is idempotent — existing folders are left alone. Project subfolders (05) are created per-project by the ERP later, not here.</div>
+    <label style="font-size:11.5px;color:var(--muted);display:block;margin-bottom:8px">Wrap everything in one parent folder:
+      <input id="migParent" class="mig-input" value="BAMA" style="width:220px;margin-left:6px" placeholder="blank = drive root">
+      <span style="color:var(--subtle)">— greenfield pattern: whole tree lives under this, old SharePoint untouched</span>
+    </label>
     <textarea id="migTree" class="mig-input" rows="14" style="width:100%;font-family:var(--font-mono);font-size:12px">01 Company
   10 Insurances
   20 Policies
@@ -147,18 +151,25 @@ async function migCreateTree() {
   const st = document.getElementById('migTreeStatus'); st.textContent = 'Creating…';
   try {
     const rootRes = await g(`/drives/${BAMA_DRIVE_ID}/root`);
-    const rootId = (await rootRes.json()).id;
+    let rootId = (await rootRes.json()).id;
+    const wrapper = document.getElementById('migParent').value.trim();
+    if (wrapper) {
+      rootId = await migEnsureFolder(rootId, wrapper);
+      log(`✓ ${wrapper}  [${rootId}]`);
+    }
     _canon = {};
     for (const node of migParseTree()) {
       const id = await migEnsureFolder(rootId, node.name);
       _canon[node.name] = { id, children: {} };
-      log(`✓ ${node.name}`);
+      log(`✓ ${node.name}  [${id}]`);
       for (const child of node.children) {
-        _canon[node.name].children[child] = await migEnsureFolder(id, child);
-        log(`  ✓ ${node.name} / ${child}`);
+        const cid = await migEnsureFolder(id, child);
+        _canon[node.name].children[child] = cid;
+        log(`  ✓ ${node.name} / ${child}  [${cid}]`);
       }
     }
     st.textContent = 'Tree ready.';
+    log('\n── Folder IDs above are what the ERP gets repointed to (05 Projects especially) — copy the log or leave this tab open. ──');
     migRenderMapping();
   } catch (e) { st.textContent = ''; toast('Create failed: ' + e.message, 'error'); }
 }
