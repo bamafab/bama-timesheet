@@ -3999,6 +3999,7 @@ async function trResendNotify(tenderId) {
       <option>2026</option><option>2025</option>
     </select>
     <button class="btn btn-primary btn-sm" id="hcRunBtn" onclick="runHealthCheck()">▶ Run checks</button>
+    <button class="btn btn-ghost btn-sm" id="hcCopyBtn" onclick="copyHealthReport()" style="display:none">📋 Copy report</button>
     <span id="hcRanAt" style="font-size:11px;color:var(--muted)"></span>
   </div>
   <p style="font-size:12px;color:var(--muted);margin:0 0 16px;line-height:1.6">
@@ -4286,6 +4287,8 @@ function renderHealthCheck() {
   const sum = document.getElementById('hcSummary');
   const ranEl = document.getElementById('hcRanAt');
   if (ranEl) ranEl.textContent = 'Last run: ' + new Date(d.ran_at).toLocaleString('en-GB');
+  const copyBtn = document.getElementById('hcCopyBtn');
+  if (copyBtn) copyBtn.style.display = '';
 
   const okCount  = d.checks.filter(c => c.status === 'ok').length;
   const issCount = d.checks.filter(c => c.status === 'issues').length;
@@ -4327,6 +4330,41 @@ function renderHealthCheck() {
       ${body}
     </details>`;
   }).join('');
+}
+
+// Serialise the last health-check run to plain text and copy to clipboard,
+// so findings can be pasted into chat/email verbatim.
+function copyHealthReport() {
+  const d = _healthData; if (!d) { toast('Run the checks first', 'error'); return; }
+  const lines = [];
+  lines.push(`BAMA ERP HEALTH CHECK — year ${d.year} — run ${new Date(d.ran_at).toLocaleString('en-GB')}`);
+  lines.push(`Total findings: ${d.total_findings}`);
+  lines.push('');
+  for (const c of d.checks) {
+    const head = `[${c.fault}] ${c.title}`;
+    if (c.status === 'ok') { lines.push(`OK    ${head}`); continue; }
+    if (c.status === 'error') { lines.push(`ERROR ${head} — ${c.error || 'unknown'}`); continue; }
+    lines.push(`${String(c.count).padStart(3)} x ${head}`);
+    if (c.rows && c.rows.length) {
+      const cols = Object.keys(c.rows[0]);
+      lines.push('      ' + cols.join(' | '));
+      for (const r of c.rows) lines.push('      ' + cols.map(k => String(r[k] ?? '')).join(' | '));
+      if (c.count > c.rows.length) lines.push(`      … plus ${c.count - c.rows.length} more (API caps at 100 rows per check)`);
+    }
+    lines.push('');
+  }
+  const text = lines.join('\n');
+  (navigator.clipboard?.writeText(text) || Promise.reject()).then(
+    () => toast('Report copied — paste it wherever you need', 'success'),
+    () => {
+      // Fallback for older browsers / non-secure contexts
+      const ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); toast('Report copied', 'success'); }
+      catch(e) { toast('Could not copy automatically — check console', 'error'); console.log(text); }
+      document.body.removeChild(ta);
+    }
+  );
 }
 </script>
 </body>
