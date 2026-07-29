@@ -16850,16 +16850,21 @@ async function createProjectFromQuote() {
       const g = 'https://graph.microsoft.com/v1.0';
       const hdr = { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' };
 
-      // Get Projects/ root
+      // D0 taxonomy: new project folders live in 00 - BAMA / 06 - Projects /
+      // <NN - year> (prefix = year − 2022, "04 - 2026"). Year folder is
+      // created on first use each January — nobody makes it by hand.
+      const SP_PROJECTS_ID = '012IX7LSMPF56OATZNWFD2JIYV3DACHGSB';
+      const yyyy = new Date().getFullYear();
+      const yearName = String(yyyy - 2022).padStart(2, '0') + ' - ' + yyyy;
       let projectsRootId;
-      const rootRes = await fetch(g + '/drives/' + driveId + '/root:/Projects', { headers: hdr });
-      if (rootRes.ok) { projectsRootId = (await rootRes.json()).id; }
+      const yrCreate = await fetch(g + '/drives/' + driveId + '/items/' + SP_PROJECTS_ID + '/children', {
+        method: 'POST', headers: hdr,
+        body: JSON.stringify({ name: yearName, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' })
+      });
+      if (yrCreate.status === 201) projectsRootId = (await yrCreate.json()).id;
       else {
-        const cr = await fetch(g + '/drives/' + driveId + '/root/children', {
-          method: 'POST', headers: hdr,
-          body: JSON.stringify({ name: 'Projects', folder: {}, '@microsoft.graph.conflictBehavior': 'fail' })
-        });
-        projectsRootId = (await cr.json()).id;
+        const yrGet = await fetch(g + '/drives/' + driveId + '/items/' + SP_PROJECTS_ID + ':/' + encodeURIComponent(yearName), { headers: hdr });
+        projectsRootId = (await yrGet.json()).id;
       }
       // Create project folder
       const pfRes = await fetch(g + '/drives/' + driveId + '/items/' + projectsRootId + '/children', {

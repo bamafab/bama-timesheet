@@ -1438,13 +1438,15 @@ async function loadTenderFolderFiles(ref) {
 
     // Search for the tender folder by quote ref name
     const year = document.getElementById('qlYear').value;
-    const yearNum = parseInt(year) - 2023;
-    const yearFolder = `${yearNum.toString().padStart(2,'0')} - ${year}`;
-    const path = `Quotation/${yearFolder}`;
-
-    // List subfolders to find one starting with this ref
-    const enc = encodeURIComponent(path);
-    const data = await graphGet(`/drives/${BAMA_DRIVE_ID}/root:/${enc}:/children?$top=200&$select=name,id,folder`);
+    // D0: new quote folders live in 00 - BAMA/05 - Sales & Estimating with
+    // year−2022 prefixes ("04 - 2026"); legacy ones remain in Quotation/ with
+    // year−2023 prefixes ("03 - 2026"). Try new first, fall back to legacy.
+    const newYear = `${String(parseInt(year) - 2022).padStart(2,'0')} - ${year}`;
+    const oldYear = `${String(parseInt(year) - 2023).padStart(2,'0')} - ${year}`;
+    let data = await graphGet(`/drives/${BAMA_DRIVE_ID}/root:/${encodeURIComponent('00 - BAMA/05 - Sales & Estimating/' + newYear)}:/children?$top=200&$select=name,id,folder`);
+    if (!data || !(data.value || []).length) {
+      data = await graphGet(`/drives/${BAMA_DRIVE_ID}/root:/${encodeURIComponent('Quotation/' + oldYear)}:/children?$top=200&$select=name,id,folder`);
+    }
     if (!data) return;
 
     const match = (data.value || []).find(f => f.folder && f.name.toUpperCase().startsWith(ref.toUpperCase()));

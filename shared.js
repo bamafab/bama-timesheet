@@ -11070,6 +11070,41 @@ const USER_ACCESS_FILE = 'user-access.json';
 const BAMA_DRIVE_ID = 'b!CxTKk9lEwkyweUqAo3CRas-huywW4KtLqOk2tNzmx-P7CX86DNhTQo14pLuU_tZu';
 const PROJECTS_FOLDER = 'Projects';
 
+// ═══ D0 SHAREPOINT TAXONOMY (created 2026-07-29 via sp-migrate.html) ═══════
+// The canonical tree lives under "00 - BAMA". IDs are stable across renames
+// and moves. NEW folders are created here; OLD folders keep working via their
+// stored IDs / drive-wide search (findProjectFolder) — the two worlds coexist
+// until migration completes.
+const SP_TAX = {
+  root:             '012IX7LSNA2CTI52LHSJAIR2N2GMFK46WL',   // 00 - BAMA
+  companyMgmt:      '012IX7LSN2UW4U3TVFFZBZHYHRYRBMXN35',   // 01 - Company Management
+  insurances:       '012IX7LSNVQU324JJXDZB3XT64QNGIKXIH',
+  quality:          '012IX7LSIN2OBJGBXMXJHYI5EOWCFLJHG5',   // 02 - Quality (QMS)
+  ramsLibrary:      '012IX7LSOBVNDFIYAKSRHZ3D3OGOK6GASY',
+  employees:        '012IX7LSL3PNWVCBO5MNAKBPC7JW7NLVN6',   // 03 - Employees
+  suppliers:        '012IX7LSNP24HQIPFQVVGZJFMF2M5IKZK2',   // 04 - Suppliers & Subcontractors
+  sales:            '012IX7LSI6QMSU7K3CW5EY33X7G2U6A6DN',   // 05 - Sales & Estimating
+  projects:         '012IX7LSMPF56OATZNWFD2JIYV3DACHGSB',   // 06 - Projects
+  accounts:         '012IX7LSMTCLUNMLLSRNEIQL6CZSYOM2XR',   // 07 - Accounts
+  salesInvoices:    '012IX7LSMNZQKP2OTTRRHICEE7SCET3NZZ',
+  purchaseInvoices: '012IX7LSJ3Y3M7H47GK5AK4JAAI63ZEFOR',
+  statements:       '012IX7LSIJNFBH6XZADNF3TGMWEKT255Y7'
+};
+
+// Year folder convention (Mateusz, D0): prefix = year − 2022, zero-padded,
+// dashed — BAMA est. 2023 ⇒ "01 - 2023" … "04 - 2026", "05 - 2027" auto next
+// January. NOTE: the LEGACY Quotation/ tree used year − 2023 ("03 - 2026");
+// reads against old folders must keep that formula (see dashboard quick-link).
+function spYearName(y) {
+  const yyyy = y || new Date().getFullYear();
+  return String(yyyy - 2022).padStart(2, '0') + ' - ' + yyyy;
+}
+
+// Parent for NEW project folders: 06 - Projects / <NN - year> (auto-created).
+async function spNewProjectParent() {
+  return await getOrCreateSubfolder(SP_TAX.projects, spYearName(), BAMA_DRIVE_ID);
+}
+
 // Element folder names (auto-created inside each job folder).
 // Order matters — createJob() iterates Object.values() to create folders
 // in declaration order. The seDrawings folder is the draftsman's private
@@ -26159,7 +26194,7 @@ async function convertQuoteToProject(tender) {
   // 1. Create SharePoint folders. Projects sit directly under the Projects/ root —
   // no year folder layer (unlike Quotation/, which is grouped per year).
   const token = await getToken();
-  const projectsRoot = await getOrCreateFolderByPath(PROJECTS_FOLDER_PATH, token);
+  const projectsRoot = await spNewProjectParent();   // D0: 06 - Projects/<year>
   const projectFolder = await createFolderInDrive(projectsRoot.id, folderName);
 
   // Create the standard subfolders inside the project folder
@@ -28085,7 +28120,7 @@ async function submitCreateProject() {
     if (!isExistingLegacyProject) {
       try {
         const token = await getToken();
-        const projectsRoot = await getOrCreateFolderByPath(PROJECTS_FOLDER_PATH, token);
+        const projectsRoot = await spNewProjectParent();   // D0: 06 - Projects/<year>
         const clientPart  = sanitiseFolderSegment(companyName);
         const projectPart = sanitiseFolderSegment(projectName);
         const folderName  = [projectNumber, clientPart, projectPart].filter(Boolean).join(' - ');
@@ -31897,7 +31932,7 @@ async function convertBabcockQuoteToProject(q, opts) {
   //    same as the tender-side conversion — no separate Babcock projects
   //    folder, the BC prefix is the differentiator.
   const token = await getToken();
-  const projectsRoot = await getOrCreateFolderByPath(PROJECTS_FOLDER_PATH, token);
+  const projectsRoot = await spNewProjectParent();   // D0: 06 - Projects/<year>
   const projectFolder = await createFolderInDrive(projectsRoot.id, folderName);
 
   // Create the standard 9 subfolders

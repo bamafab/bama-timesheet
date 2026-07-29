@@ -47,8 +47,15 @@ logged execution with downloadable move-log, and revert-from-log. Runs with
 Mateusz's own delegated Graph permissions (he outranks Daniel). Moves keep
 item IDs stable so ERP sharepoint_*_id references survive. Awaiting Mateusz's
 answers on D1–D5 (naming, legacy scope, 04 Sales, BAMA-specific folders,
-numbering) + OneDrive backup before execution. After migration: repoint ERP
-folder-creation code to the new taxonomy (follow-up commit).
+numbering) + OneDrive backup before execution. ERP REPOINTED 2026-07-29
+(same day tree was created): SP_TAX taxonomy constants + spYearName
+(year−2022, auto-creates each January) in shared.js; new project folders →
+06 - Projects/<NN - year> (tender→project, babcock→project, projects-page,
+QB mark-won inline); new quote folders → 05 - Sales & Estimating/<NN - year>
+(tender-register server); ED tender quick-link reads new path with legacy
+Quotation/ (year−2023) fallback. Old folders keep working via stored IDs +
+drive-wide search. Remaining: content migration after backup (steps 1/3/4 of
+the tool). Babcock basePath left in its own world deliberately.
 
 **D0 — SharePoint taxonomy design (prerequisite, decisions needed from
 Mateusz before any code):** agree the canonical folder tree (company-level:

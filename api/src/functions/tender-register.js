@@ -67,12 +67,14 @@ async function spFindChild(token, parentId, name) {
     } catch { return null; }
 }
 
-// Get root "Quotation" folder ID
+// D0 taxonomy: new quote folders live under 00 - BAMA / 05 - Sales &
+// Estimating (by stable ID). Legacy Quotation/ stays readable where old
+// records reference it; nothing new is created there.
+const SP_SALES_ID = '012IX7LSI6QMSU7K3CW5EY33X7G2U6A6DN';
 async function spGetQuotationRoot(token) {
-    const data = await spFetch(token,
-        `/drives/${SP_DRIVE_ID}/root:/Quotation?$select=id,name,webUrl`
+    return await spFetch(token,
+        `/drives/${SP_DRIVE_ID}/items/${SP_SALES_ID}?$select=id,name,webUrl`
     );
-    return data;
 }
 
 // Create folder under parent
@@ -86,9 +88,10 @@ async function spCreateFolder(token, parentId, name) {
 // Ensure year folder exists e.g. "03 - 2026" (year - 2023, zero-padded)
 async function spEnsureYearFolder(token) {
     const yyyy = new Date().getFullYear();
-    // Prefix = years since BAMA started (2023=00, 2024=01, 2025=02, 2026=03…)
-    // Sorting convention only — no other meaning.
-    const prefix = String(yyyy - 2023).padStart(2, '0');
+    // D0 convention: prefix = year − 2022 (BAMA est. 2023 ⇒ "01 - 2023" …
+    // "04 - 2026"). The LEGACY Quotation/ tree used year − 2023 — that
+    // formula lives on only in reads against old folders.
+    const prefix = String(yyyy - 2022).padStart(2, '0');
     const yearFolderName = `${prefix} - ${yyyy}`;
 
     const root = await spGetQuotationRoot(token);
