@@ -1787,13 +1787,17 @@ tr.drag-dragging { opacity:0.35; }
 
     <div style="margin-top:12px;display:flex;align-items:center;gap:10px">
       <div class="field" style="flex:1;margin:0">
-        <label style="font-size:11px;color:var(--muted)">Import into area (optional)</label>
+        <label style="font-size:11px;color:var(--muted)">Import into area</label>
         <div style="display:flex;gap:6px;margin-top:4px">
-          <select id="psAreaSelect" style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:5px;padding:6px 8px;color:var(--text);font-size:12px">
+          <select id="psAreaSelect" onchange="if(this.value)document.getElementById('psNewAreaName').value=''" style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:5px;padding:6px 8px;color:var(--text);font-size:12px">
             <option value="">Use areas from file (Notes column)</option>
           </select>
-          <input type="text" id="psNewAreaName" placeholder="Or type new area name"
+          <input type="text" id="psNewAreaName" placeholder="Or type NEW area name" oninput="if(this.value)document.getElementById('psAreaSelect').value=''"
             style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:5px;padding:6px 8px;color:var(--text);font-size:12px">
+        </div>
+        <div id="psExistingNote" style="font-size:10.5px;color:var(--subtle);margin-top:6px;line-height:1.5">
+          Importing always <strong>adds</strong> rows — your existing takeoff is never overwritten or merged.
+          Doing a second takeoff for another part of the job? Type a <strong>new area name</strong> so its members stay clearly separated, even if some sections repeat.
         </div>
       </div>
     </div>
@@ -13931,6 +13935,17 @@ let _psRows = [];
 
 function openPlanswiftImport() {
   _psRows = [];
+  // Refresh the area dropdown so newly created areas are always offered,
+  // and remind the user how many rows already exist (import never touches them).
+  updateMoveToAreaOptions();
+  const q0 = getQuote();
+  const existingCount = (q0?.takeoff || []).filter(r => r.type).length;
+  const noteEl = document.getElementById('psExistingNote');
+  if (noteEl) noteEl.innerHTML =
+    (existingCount
+      ? `Your takeoff already has <strong>${existingCount} row${existingCount===1?'':'s'}</strong> — importing always <strong>adds</strong> rows, nothing is overwritten or merged. `
+      : `Importing always <strong>adds</strong> rows — your existing takeoff is never overwritten or merged. `)
+    + `Doing a second takeoff for another part of the job? Type a <strong>new area name</strong> so its members stay clearly separated, even if some sections repeat.`;
   document.getElementById('psPreview').style.display = 'none';
   document.getElementById('psImportBtn').disabled = true;
   document.getElementById('psImportBtn').style.opacity = '0.4';
@@ -15144,39 +15159,91 @@ function executeFullQuoteAutomation(q, fresh) {
 }
 
 
-function importPlanswift() {
+async function importPlanswift() {
   const q = getQuote(); if (!q) return;
   if (!_psRows.length) { toast('Nothing to import', 'error'); return; }
 
   q.areas = q.areas || [];
+  q.takeoff = q.takeoff || [];
   const forceAreaId  = document.getElementById('psAreaSelect')?.value || '';
   const newAreaName  = document.getElementById('psNewAreaName')?.value?.trim() || '';
   const count = _psRows.length;
 
-  // create a new area if user typed one
+  // Typed new area name: guard against silently reusing an existing area of
+  // the same name — that would merge two takeoffs into one bucket. Ask first.
   let targetAreaId = forceAreaId;
+  let createNewArea = false;
   if (!targetAreaId && newAreaName) {
+    const clash = q.areas.find(a => (a.name || '').toLowerCase() === newAreaName.toLowerCase());
+    if (clash) {
+      const reuse = await bamaConfirm(
+        `An area called "${clash.name}" already exists. Import these ${count} rows INTO that existing area (they will be added alongside its current members — nothing is overwritten)? Cancel to go back and pick a different name.`,
+        'Area name already exists');
+      if (!reuse) return;
+      targetAreaId = clash.id;
+    } else {
+      createNewArea = true;
+    }
+  }
+
+  // Notes-column mode: pre-resolve which file areas map onto EXISTING areas,
+  // so the user is told before two separate takeoffs get combined per-area.
+  const notesAreaMap = {};
+  if (!targetAreaId && !createNewArea) {
+    const reusedNames = [];
+    const distinctNotes = [...new Set(_psRows.map(r => r._notes || '').filter(Boolean))];
+    distinctNotes.forEach((note, i) => {
+      const existing = q.areas.find(a => (a.name || '').toLowerCase() === note.toLowerCase());
+      if (existing) { notesAreaMap[note] = existing.id; reusedNames.push(existing.name); }
+      else notesAreaMap[note] = null; // create later, after confirmation
+    });
+    if (reusedNames.length) {
+      const proceed = await bamaConfirm(
+        `The file's Notes column matches ${reusedNames.length} existing area${reusedNames.length===1?'':'s'} (${reusedNames.join(', ')}). Rows for these will be ADDED into those areas alongside their current members — nothing is overwritten, but if this is a separate takeoff you may want a fresh area name instead. Continue?`,
+        'File areas match existing areas');
+      if (!proceed) return;
+    }
+    // Create the genuinely-new areas now
+    distinctNotes.forEach((note, i) => {
+      if (notesAreaMap[note]) return;
+      const area = { id: 'area_' + Date.now() + '_' + i, name: note, collapsed: false };
+      q.areas.push(area);
+      notesAreaMap[note] = area.id;
+    });
+  }
+
+  // ── Duplicate-member safety check ─────────────────────────
+  // A repeated import into the SAME area silently doubles the steel. Two
+  // takeoffs sharing member profiles is fine ACROSS areas — only flag when an
+  // identical member (type + length + unit) would land in an area where it
+  // already exists. Never blocks different-area imports.
+  const areaOf = r => targetAreaId || notesAreaMap[r._notes || ''] || '';
+  if (!createNewArea) {
+    const existingKeys = new Set(
+      q.takeoff.filter(r => r.type).map(r =>
+        `${(r.area || '')}|${String(r.type).trim().toLowerCase()}|${r.length || 0}|${r._unit || 'MM'}`)
+    );
+    const dupes = _psRows.filter(r =>
+      existingKeys.has(`${areaOf(r)}|${String(r.type).trim().toLowerCase()}|${r.length || 0}|${r._unit || 'MM'}`));
+    if (dupes.length) {
+      const areaName = id => (q.areas.find(a => a.id === id)?.name) || 'Unspecified';
+      const sample = [...new Set(dupes.slice(0, 4).map(r => `${r.type} (${areaName(areaOf(r))})`))].join(', ');
+      const proceed = await bamaConfirm(
+        `${dupes.length} of the ${count} rows are identical to members ALREADY in the same area (e.g. ${sample}${dupes.length > 4 ? ', …' : ''}). Importing will add them again and double-count that steel. If this is a second takeoff for a different part of the job, cancel and choose a new area instead. Import anyway?`,
+        'Possible duplicate takeoff');
+      if (!proceed) return;
+    }
+  }
+
+  // Create the typed new area only now that all checks have passed (so a
+  // cancelled import leaves no empty orphan area behind).
+  if (createNewArea) {
     targetAreaId = 'area_' + Date.now();
     q.areas.push({ id: targetAreaId, name: newAreaName, collapsed: false });
   }
 
-  // collect unique notes-based areas from file
-  const notesAreaMap = {};
-  if (!targetAreaId) {
-    _psRows.forEach(r => {
-      const note = r._notes || '';
-      if (note && !notesAreaMap[note]) {
-        // find existing area with same name or create
-        let existing = q.areas.find(a => a.name.toLowerCase() === note.toLowerCase());
-        if (!existing) {
-          existing = { id: 'area_' + Date.now() + '_' + Object.keys(notesAreaMap).length, name: note, collapsed: false };
-          q.areas.push(existing);
-        }
-        notesAreaMap[note] = existing.id;
-      }
-    });
-  }
-
+  // ── Import — strictly ADDITIVE: existing rows are never touched ──
+  const before = q.takeoff.filter(r => r.type).length;
   _psRows.forEach(r => {
     const area = targetAreaId || notesAreaMap[r._notes||''] || '';
     q.takeoff.push({ type: r.type, length: r.length, qty: r.qty, kgm: r.kgm, rate: r.rate, area, _unit: r._unit });
@@ -15185,6 +15252,11 @@ function importPlanswift() {
   saveAll(); renderTakeoff(); recalcAll(); updateMoveToAreaOptions();
   closePlanswiftModal();
   if (document.getElementById('psNewAreaName')) document.getElementById('psNewAreaName').value = '';
+
+  const destName = targetAreaId
+    ? ((q.areas.find(a => a.id === targetAreaId)?.name) || 'area')
+    : 'areas from the file';
+  toast(`Imported ${count} rows into ${targetAreaId ? '"' + destName + '"' : destName} — existing ${before} row${before===1?'':'s'} untouched`, 'success');
 
   _psRows = [];
 
@@ -20822,6 +20894,7 @@ const HELP_CONTENT = {
           <li><span class="h-step-num">3</span><div>Set material rate (£/kg) — defaults to global steel price.</div></li>
           <li><span class="h-step-num">4</span><div>Set <strong>Finish</strong>: Galvanised, Primer, Powder Coat, or None — feeds galvanising tonnage in Calcs automatically.</div></li>
           <li><span class="h-step-num">5</span><div>Use <strong>Areas</strong> to group members by location (Ground Floor, Mezzanine, Roof).</div></li>
+          <li><span class="h-step-num">6</span><div><strong>PlanSwift Import is always additive</strong> — it only ever adds rows; your existing takeoff is never overwritten or merged. Pick an existing area, type a new area name, or leave it on "Use areas from file". If a second import would put identical members (same section + length) into an area that already has them, or the file's area names match existing areas, you get a warning first — so two separate takeoffs never get silently compiled into one.</div></li>
         </ul>
         <div class="h-tip">Import from PlanSwift with the ↑ PlanSwift button — paste the schedule and the system parses it automatically. For stairs, spiral stairs or balustrades, use the 🪜 / 🌀 / 🛡 wizards in the Takeoff bar (see the <strong>Wizards</strong> help tab) to build and price them automatically.</div>
       </div>
