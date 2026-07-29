@@ -196,3 +196,15 @@ fault number here.
 5. **B4** — F3 win-rate unification + F5 galvanising label (small, batched).
 6. **B5** — F10 golden tests (before Phase C building starts).
 7. F7 verified via B0 data; F8 rolls out with each later phase.
+
+
+---
+
+## Phase C1 — Job Costing ✅ SHIPPED 2026-07-29
+
+Project Tracker gains a "Job Costing — Estimate vs Actual" card per project:
+QB net cost buckets (labour vs bought-in) against actual kiosk labour cost and
+nett PO commitments, with variance, hours est-vs-logged, contract value and
+running margin. Native jsPDF export + in-card help ("Something looks wrong?")
+per the robustness DoD. API: /api/project-quotes now carries est_* columns.
+Caveats stated in-product: actuals = commitments to date, not final cost.

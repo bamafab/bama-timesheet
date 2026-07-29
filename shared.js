@@ -27162,6 +27162,7 @@ async function loadProjectFinancials(projectId) {
   await _loadLabourHoursLogged(currentProjectRecord ? currentProjectRecord.project_number : null);
 
   renderProjectFinancialDashboard();
+  try { renderJobCosting(); } catch (e) { /* card may not be on this page */ }
 }
 
 // Sum (qty × unit_price) across all line items of all quotes; optional filter.
@@ -27197,6 +27198,164 @@ function _weightedProjectProgress() {
 }
 
 // Sum hours (qty) on Labour-flagged lines across all attached quotes.
+// ═══════════════════════════════════════════════════════════════════════════
+// JOB COSTING — estimate vs actual (Phase C1)
+// ═══════════════════════════════════════════════════════════════════════════
+// Estimated costs: QB's NET cost buckets carried on each attached quote row
+// (est_* columns from /api/project-quotes — published every time the quote is
+// saved in QB). Actual labour: kiosk ProjectHours × basic rate (S000 excluded,
+// CIS included, no OT uplift — established convention). Actual bought-in:
+// nett committed on active POs. Committed ≠ invoiced: this view leads cash.
+let _projectPoNetTotal = null;   // null until loadProjectPos resolves
+let _projectPoCount    = 0;
+
+function _jcEstimates() {
+  const LABOUR = ['est_fabrication', 'est_installation', 'est_design', 'est_survey'];
+  const BOUGHT = ['est_material', 'est_painting', 'est_galvanising', 'est_delivery', 'est_prelims'];
+  let labour = 0, bought = 0, any = false;
+  for (const q of _projectFinancials.quotes) {
+    LABOUR.forEach(k => { if (q[k] != null) { labour += parseFloat(q[k]) || 0; any = true; } });
+    BOUGHT.forEach(k => { if (q[k] != null) { bought += parseFloat(q[k]) || 0; any = true; } });
+  }
+  return { labour, bought, total: labour + bought, any };
+}
+
+function renderJobCosting() {
+  const card = document.getElementById('ptJobCostingCard');
+  const body = document.getElementById('ptJobCostingBody');
+  if (!card || !body) return;
+  if (!_projectFinancials.quotes.length) { card.style.display = 'none'; return; }
+  card.style.display = '';
+
+  const est = _jcEstimates();
+  const estHrs   = _sumLabourHoursScheduled();
+  const actHrs   = _projectLabourHoursLogged || 0;
+  const actLab   = _projectLabourCostLogged || 0;
+  const actPo    = _projectPoNetTotal;          // may still be null (loading)
+  const contract = _sumLineItems();
+
+  const money = v => v == null ? '—' : '£' + Math.round(v).toLocaleString('en-GB');
+  const hrs   = v => v == null ? '—' : (Math.round(v * 10) / 10).toLocaleString('en-GB') + ' h';
+  const varCell = (e, a) => {
+    if (e == null || a == null || !(e > 0)) return '<td style="padding:7px 10px;text-align:right;color:var(--subtle)">—</td>';
+    const d = a - e, pct = Math.round(d / e * 100);
+    const col = d > 0 ? 'var(--red)' : 'var(--green)';
+    return `<td style="padding:7px 10px;text-align:right;font-family:var(--font-mono);color:${col};white-space:nowrap">${d > 0 ? '▲' : '▼'} ${money(Math.abs(d))} <span style="font-size:10px;opacity:.8">(${d > 0 ? '+' : ''}${pct}%)</span></td>`;
+  };
+  const td  = 'padding:7px 10px;text-align:right;font-family:var(--font-mono);white-space:nowrap';
+  const tdL = 'padding:7px 10px;text-align:left';
+
+  const rows = [
+    { label: 'Labour', sub: `${hrs(estHrs || null)} estimated · ${hrs(actHrs)} logged`,
+      e: est.any ? est.labour : null, a: actLab },
+    { label: 'Bought-in (material, finishing, delivery, prelims)',
+      sub: actPo == null ? 'POs loading…' : `${_projectPoCount} active PO${_projectPoCount === 1 ? '' : 's'} committed (nett)`,
+      e: est.any ? est.bought : null, a: actPo },
+  ];
+  const totE = est.any ? est.total : null;
+  const totA = (actPo == null) ? null : actLab + actPo;
+
+  let html = `<table style="width:100%;border-collapse:collapse;font-size:12.5px">
+    <thead><tr style="color:var(--muted);font-size:10.5px;text-transform:uppercase;letter-spacing:.04em">
+      <th style="${tdL};font-weight:600">Category</th>
+      <th style="${td};font-weight:600">Estimated (QB net cost)</th>
+      <th style="${td};font-weight:600">Actual to date</th>
+      <th style="${td};font-weight:600">Variance</th>
+    </tr></thead><tbody>`;
+  rows.forEach(r => {
+    html += `<tr style="border-top:1px solid var(--border)">
+      <td style="${tdL}"><div>${r.label}</div><div style="font-size:10.5px;color:var(--subtle)">${r.sub}</div></td>
+      <td style="${td}">${money(r.e)}</td>
+      <td style="${td}">${money(r.a)}</td>
+      ${varCell(r.e, r.a)}
+    </tr>`;
+  });
+  html += `<tr style="border-top:2px solid var(--border);font-weight:700">
+      <td style="${tdL}">Total cost</td>
+      <td style="${td}">${money(totE)}</td>
+      <td style="${td}">${money(totA)}</td>
+      ${varCell(totE, totA)}
+    </tr></tbody></table>`;
+
+  const marginEst = (totE != null && contract > 0) ? contract - totE : null;
+  const marginRun = (totA != null && contract > 0) ? contract - totA : null;
+  html += `<div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:12px">
+      <div><span style="color:var(--muted)">Contract value</span> <strong style="font-family:var(--font-mono)">${money(contract || null)}</strong></div>
+      <div><span style="color:var(--muted)">Margin at estimate</span> <strong style="font-family:var(--font-mono);color:${marginEst != null && marginEst < 0 ? 'var(--red)' : 'var(--text)'}">${money(marginEst)}</strong></div>
+      <div><span style="color:var(--muted)">Contract − cost to date</span> <strong style="font-family:var(--font-mono);color:${marginRun != null && marginRun < 0 ? 'var(--red)' : 'var(--green)'}">${money(marginRun)}</strong> <span style="font-size:10px;color:var(--subtle)">(labour + PO commitments so far — not final margin)</span></div>
+    </div>`;
+  if (!est.any) {
+    html += `<div style="margin-top:8px;font-size:11px;color:var(--accent)">No estimated costs on the attached quote(s) yet — open the quote in QB and save once to publish its cost breakdown here.</div>`;
+  }
+  body.innerHTML = html;
+}
+
+// Native jsPDF one-pager of the costing table (CLAUDE.md PDF rules).
+async function exportJobCostingPDF() {
+  const JsPDFCtor = await resolveJsPDFCtor();
+  const proj = currentProjectRecord || {};
+  const est = _jcEstimates();
+  const actPo = _projectPoNetTotal, actLab = _projectLabourCostLogged || 0;
+  const contract = _sumLineItems();
+  const doc = new JsPDFCtor({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  const pageW = 210, mL = 14, W = pageW - 28;
+  const NAVY = [26,26,46], TEXT = [34,34,34], MUTED = [110,110,110], RED = [208,2,27], GREEN = [22,140,80], RULE = [215,218,224];
+  const sT = c => doc.setTextColor(c[0],c[1],c[2]);
+  const money = v => v == null ? '\u2014' : '\u00A3' + Math.round(v).toLocaleString('en-GB');
+  let y = 16;
+  doc.setFillColor(26,26,46); doc.rect(0, 0, pageW, 26, 'F');
+  sT([255,255,255]); doc.setFont('helvetica','bold'); doc.setFontSize(15);
+  doc.text('Job Costing \u2014 Estimate vs Actual', mL, 11);
+  doc.setFont('helvetica','normal'); doc.setFontSize(9);
+  doc.text(`${proj.project_number || ''}  ${proj.project_name || ''}  \u00B7  ${new Date().toLocaleDateString('en-GB')}`, mL, 19);
+  y = 36;
+  const rows = [
+    ['Labour', est.any ? est.labour : null, actLab,
+     `${(_sumLabourHoursScheduled()||0).toFixed(0)}h est \u00B7 ${(_projectLabourHoursLogged||0).toFixed(0)}h logged`],
+    ['Bought-in (material, finishing, delivery, prelims)', est.any ? est.bought : null, actPo,
+     `${_projectPoCount} active POs (nett committed)`],
+    ['TOTAL COST', est.any ? est.total : null, actPo == null ? null : actLab + actPo, '']
+  ];
+  doc.setFontSize(8); sT([255,255,255]);
+  doc.setFillColor(26,26,46); doc.rect(mL, y, W, 7, 'F');
+  doc.setFont('helvetica','bold');
+  doc.text('CATEGORY', mL + 2, y + 4.7);
+  doc.text('ESTIMATED', mL + W - 78, y + 4.7, { align: 'right' });
+  doc.text('ACTUAL', mL + W - 42, y + 4.7, { align: 'right' });
+  doc.text('VARIANCE', mL + W - 2, y + 4.7, { align: 'right' });
+  y += 7;
+  rows.forEach(([label, e, a, sub], i) => {
+    const bold = i === rows.length - 1;
+    const rh = sub ? 10 : 8;
+    sT(TEXT); doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(9);
+    doc.splitTextToSize(label, W - 90).forEach((l, li) => doc.text(l, mL + 2, y + 4.5 + li * 3.6));
+    if (sub) { sT(MUTED); doc.setFontSize(7); doc.text(sub, mL + 2, y + 8.4); }
+    sT(TEXT); doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(9);
+    doc.text(money(e), mL + W - 78, y + 4.5, { align: 'right' });
+    doc.text(money(a), mL + W - 42, y + 4.5, { align: 'right' });
+    if (e != null && a != null && e > 0) {
+      const d = a - e; sT(d > 0 ? RED : GREEN);
+      doc.text(`${d > 0 ? '+' : '\u2212'}${money(Math.abs(d)).slice(0)} (${d > 0 ? '+' : ''}${Math.round(d / e * 100)}%)`, mL + W - 2, y + 4.5, { align: 'right' });
+    } else { sT(MUTED); doc.text('\u2014', mL + W - 2, y + 4.5, { align: 'right' }); }
+    doc.setDrawColor(215,218,224); doc.setLineWidth(bold ? 0.5 : 0.15);
+    doc.line(mL, y + rh, mL + W, y + rh);
+    y += rh;
+  });
+  y += 8;
+  const marginEst = (est.any && contract > 0) ? contract - est.total : null;
+  const marginRun = (actPo != null && contract > 0) ? contract - (actLab + actPo) : null;
+  sT(TEXT); doc.setFont('helvetica','normal'); doc.setFontSize(9.5);
+  doc.text(`Contract value: ${money(contract || null)}     Margin at estimate: ${money(marginEst)}     Contract \u2212 cost to date: ${money(marginRun)}`, mL, y);
+  y += 8;
+  sT(MUTED); doc.setFontSize(7.5);
+  doc.splitTextToSize('Estimated = QB net cost buckets published on quote save. Actual labour = kiosk hours \u00D7 basic rate (S000 excluded, CIS included, no OT uplift). Actual bought-in = nett committed on active POs \u2014 commitments, not supplier invoices, so this leads cash. Contract \u2212 cost to date is not final margin until the job closes.', W).forEach(l => { doc.text(l, mL, y); y += 3.6; });
+  sT([150,150,150]); doc.setFontSize(7.5);
+  doc.text('BAMA Fabrication ERP \u00B7 Job Costing \u00B7 Page 1 of 1', mL, 289);
+  const blob = doc.output('blob');
+  console.log('[JobCosting PDF] blob size:', blob.size);
+  doc.save(`Job-Costing-${proj.project_number || 'project'}-${new Date().toISOString().slice(0,10)}.pdf`);
+}
+
 function _sumLabourHoursScheduled() {
   // Hours come from the dedicated labour_hours column (transferred from QB's
   // real estimates at mark-won — Fault Register F1). Legacy fallback: on rows
@@ -27257,6 +27416,9 @@ function renderProjectPoList(pos) {
   const active = pos.filter(p => p.status !== 'Cancelled');
   const totalGross = active.reduce((s, p) => s + (Number(p.total_value) || 0), 0);
   const totalNett  = active.reduce((s, p) => s + (_poNet(p) || 0), 0);
+  _projectPoNetTotal = totalNett;          // consumed by Job Costing (C1)
+  _projectPoCount    = active.length;
+  try { renderJobCosting(); } catch (e) { /* card may not be on this page */ }
 
   if (totalEl) {
     totalEl.textContent = active.length

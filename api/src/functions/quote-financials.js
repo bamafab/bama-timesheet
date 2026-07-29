@@ -266,7 +266,16 @@ app.http('project-quotes-list', {
                         COALESCE(t.quote_value, q.total_ex_vat)         AS quote_value,
                         t.comments                                      AS quote_comments,
                         t.client_id                                     AS client_id,
-                        COALESCE(c.company_name, q.company)             AS company_name
+                        COALESCE(c.company_name, q.company)             AS company_name,
+                        q.cost_material     AS est_material,
+                        q.cost_fabrication  AS est_fabrication,
+                        q.cost_installation AS est_installation,
+                        q.cost_design       AS est_design,
+                        q.cost_painting     AS est_painting,
+                        q.cost_galvanising  AS est_galvanising,
+                        q.cost_survey       AS est_survey,
+                        q.cost_delivery     AS est_delivery,
+                        q.cost_prelims      AS est_prelims
                  FROM ProjectQuotes pq
                  LEFT JOIN Tenders t            ON t.id  = pq.tender_id
                  LEFT JOIN QuoteBuilderQuotes q ON q.id  = pq.qb_quote_id

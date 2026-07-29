@@ -235,8 +235,26 @@
           <div class="pt-tile-icon">📦</div>
           <div class="pt-tile-label">Running Cost</div>
           <div class="pt-tile-value" id="ptTileRunningValue">—</div>
-          <div class="pt-tile-meta">Phase 4 — POs / supplier invoices</div>
+          <div class="pt-tile-meta">Committed on POs (nett, excl. cancelled)</div>
         </div>
+      </div>
+
+      <!-- ══ JOB COSTING — estimate vs actual (Phase C1) ══ -->
+      <div class="card" id="ptJobCostingCard" style="margin-top:14px;display:none">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+          <div class="card-title" style="margin:0">💷 Job Costing — Estimate vs Actual</div>
+          <button class="btn btn-ghost btn-sm" onclick="exportJobCostingPDF()">⬇ PDF</button>
+          <button class="btn btn-ghost btn-sm" onclick="const d=document.getElementById('ptJcHelp');d.style.display=d.style.display==='none'?'':'none'">?</button>
+        </div>
+        <div id="ptJcHelp" style="display:none;font-size:11.5px;color:var(--muted);line-height:1.6;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px">
+          <strong>Where these numbers come from:</strong> Estimated costs are QB's net cost buckets, published when the quote is saved.
+          Actual labour = kiosk hours × each employee's basic rate (S000 excluded, CIS included, no OT uplift).
+          Actual bought-in = nett value committed on this project's POs (cancelled excluded) — commitments, not supplier invoices, so it leads the cash by a few weeks.
+          <strong>Something looks wrong?</strong> Estimated column all “—” → the quote pre-dates cost publishing: open it in QB and save once.
+          Hours 0 but people worked → check they clocked to this project number in the kiosk.
+          Bought-in higher than estimate early on → normal: steel is bought up front, labour lands later. Values live-update as hours and POs land.
+        </div>
+        <div id="ptJobCostingBody"><div style="padding:14px;color:var(--subtle);font-size:12px">Loading…</div></div>
       </div>
 
       <!-- Attached quotes + per-line progress -->
@@ -711,6 +729,7 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260729c"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="shared.js?v=20260729d"></script>
 </body>
 </html>
