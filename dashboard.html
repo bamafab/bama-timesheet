@@ -4000,6 +4000,7 @@ async function trResendNotify(tenderId) {
     </select>
     <button class="btn btn-primary btn-sm" id="hcRunBtn" onclick="runHealthCheck()">▶ Run checks</button>
     <button class="btn btn-ghost btn-sm" id="hcCopyBtn" onclick="copyHealthReport()" style="display:none">📋 Copy report</button>
+    <button class="btn btn-ghost btn-sm" id="hcXlsxBtn" onclick="exportHealthExcel()" style="display:none">⬇ Excel</button>
     <span id="hcRanAt" style="font-size:11px;color:var(--muted)"></span>
   </div>
   <p style="font-size:12px;color:var(--muted);margin:0 0 16px;line-height:1.6">
@@ -4289,6 +4290,8 @@ function renderHealthCheck() {
   if (ranEl) ranEl.textContent = 'Last run: ' + new Date(d.ran_at).toLocaleString('en-GB');
   const copyBtn = document.getElementById('hcCopyBtn');
   if (copyBtn) copyBtn.style.display = '';
+  const xlsxBtn = document.getElementById('hcXlsxBtn');
+  if (xlsxBtn) xlsxBtn.style.display = '';
 
   const okCount  = d.checks.filter(c => c.status === 'ok').length;
   const issCount = d.checks.filter(c => c.status === 'issues').length;
@@ -4330,6 +4333,42 @@ function renderHealthCheck() {
       ${body}
     </details>`;
   }).join('');
+}
+
+// Export the last health-check run as an .xlsx workbook: a Summary sheet plus
+// one sheet per check that has findings. SheetJS is lazy-loaded on first use
+// so the dashboard doesn't pay the download cost unless Excel export is used.
+async function exportHealthExcel() {
+  const d = _healthData; if (!d) { toast('Run the checks first', 'error'); return; }
+  if (typeof XLSX === 'undefined') {
+    try {
+      await new Promise((res, rej) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+        s.onload = res; s.onerror = () => rej(new Error('SheetJS failed to load'));
+        document.head.appendChild(s);
+      });
+    } catch(e) { toast('Could not load Excel library: ' + e.message, 'error'); return; }
+  }
+  try {
+    const wb = XLSX.utils.book_new();
+    const summary = d.checks.map(c => ({
+      Fault: c.fault, Check: c.title,
+      Status: c.status === 'ok' ? 'Clean' : c.status === 'error' ? 'CHECK FAILED' : 'Findings',
+      Findings: c.count, Error: c.error || ''
+    }));
+    summary.unshift({ Fault: '', Check: `BAMA ERP Health Check — year ${d.year}`, Status: '', Findings: d.total_findings, Error: 'run ' + new Date(d.ran_at).toLocaleString('en-GB') });
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summary), 'Summary');
+    let n = 1;
+    for (const c of d.checks) {
+      if (!c.rows || !c.rows.length) continue;
+      // Sheet names: max 31 chars, no special chars
+      const name = (`${n++} ${c.fault.replace(/\//g,'-')}`).slice(0, 31);
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(c.rows), name);
+    }
+    XLSX.writeFile(wb, `BAMA-health-check-${d.year}-${new Date(d.ran_at).toISOString().slice(0,10)}.xlsx`);
+    toast('Excel report downloaded', 'success');
+  } catch(e) { toast('Excel export failed: ' + e.message, 'error'); }
 }
 
 // Serialise the last health-check run to plain text and copy to clipboard,
