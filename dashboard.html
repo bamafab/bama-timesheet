@@ -4000,6 +4000,7 @@ async function trResendNotify(tenderId) {
     </select>
     <button class="btn btn-primary btn-sm" id="hcRunBtn" onclick="runHealthCheck()">▶ Run checks</button>
     <button class="btn btn-ghost btn-sm" id="hcCopyBtn" onclick="copyHealthReport()" style="display:none">📋 Copy report</button>
+    <button class="btn btn-ghost btn-sm" id="hcPdfBtn" onclick="exportHealthPDF()" style="display:none">⬇ PDF report</button>
     <button class="btn btn-ghost btn-sm" id="hcXlsxBtn" onclick="exportHealthExcel()" style="display:none">⬇ Excel</button>
     <span id="hcRanAt" style="font-size:11px;color:var(--muted)"></span>
   </div>
@@ -4292,6 +4293,8 @@ function renderHealthCheck() {
   if (copyBtn) copyBtn.style.display = '';
   const xlsxBtn = document.getElementById('hcXlsxBtn');
   if (xlsxBtn) xlsxBtn.style.display = '';
+  const pdfBtn = document.getElementById('hcPdfBtn');
+  if (pdfBtn) pdfBtn.style.display = '';
 
   const okCount  = d.checks.filter(c => c.status === 'ok').length;
   const issCount = d.checks.filter(c => c.status === 'issues').length;
@@ -4362,13 +4365,162 @@ async function exportHealthExcel() {
     let n = 1;
     for (const c of d.checks) {
       if (!c.rows || !c.rows.length) continue;
-      // Sheet names: max 31 chars, no special chars
-      const name = (`${n++} ${c.fault.replace(/\//g,'-')}`).slice(0, 31);
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(c.rows), name);
+      // Context rows above the data so each sheet is self-explanatory
+      const ws = XLSX.utils.aoa_to_sheet([
+        [`${c.fault} — ${c.title}`],
+        [`${c.count} finding${c.count===1?'':'s'} — year ${d.year} — run ${new Date(d.ran_at).toLocaleString('en-GB')}`],
+        []
+      ]);
+      XLSX.utils.sheet_add_json(ws, c.rows, { origin: 'A4' });
+      const cols = Object.keys(c.rows[0]);
+      ws['!cols'] = cols.map(k => ({ wch: Math.max(k.length,
+        ...c.rows.slice(0, 40).map(r => String(r[k] ?? '').length)) + 2 }));
+      const name = (`${n++} ${c.fault.replace(/[\/\\?*\[\]:]/g, '-')}`).slice(0, 31);
+      XLSX.utils.book_append_sheet(wb, ws, name);
     }
     XLSX.writeFile(wb, `BAMA-health-check-${d.year}-${new Date(d.ran_at).toISOString().slice(0,10)}.xlsx`);
     toast('Excel report downloaded', 'success');
   } catch(e) { toast('Excel export failed: ' + e.message, 'error'); }
+}
+
+
+// ── Native jsPDF health report (per CLAUDE.md PDF rules) ──────────────────
+// Designed, printable report: cover band, status summary, one section per
+// check with findings tables (repeating headers across page breaks),
+// "Page X of Y" footers. jsPDF is lazy-loaded on first use.
+async function exportHealthPDF() {
+  const d = _healthData; if (!d) { toast('Run the checks first', 'error'); return; }
+  if (!(window.jspdf && window.jspdf.jsPDF)) {
+    try {
+      await new Promise((res, rej) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+        s.onload = res; s.onerror = () => rej(new Error('jsPDF failed to load'));
+        document.head.appendChild(s);
+      });
+    } catch(e) { toast('Could not load PDF library: ' + e.message, 'error'); return; }
+  }
+  try {
+    const doc = drawHealthPDF(window.jspdf.jsPDF, d);
+    const blob = doc.output('blob');
+    console.log('[Health PDF] blob size:', blob.size, 'bytes,', doc.getNumberOfPages(), 'pages');
+    if (blob.size < 8000) console.warn('[Health PDF] suspiciously small — check renderer');
+    doc.save(`BAMA-health-check-${d.year}-${new Date(d.ran_at).toISOString().slice(0,10)}.pdf`);
+    toast('PDF report downloaded', 'success');
+  } catch(e) { toast('PDF export failed: ' + e.message, 'error'); console.error(e); }
+}
+
+function drawHealthPDF(jsPDF, d) {
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  try { doc.setProperties({ title: `BAMA Health Check ${d.year}`, author: 'BAMA Fabrication ERP', creator: 'BAMA Fabrication ERP' }); } catch(e) {}
+  const pageW = 210, pageH = 297, mL = 14, mR = 14, mT = 14, mB = 18;
+  const W = pageW - mL - mR;
+  const RED = [208,2,27], NAVY = [26,26,46], TEXT = [34,34,34], MUTED = [110,110,110],
+        GREEN = [22,140,80], AMBER = [200,110,0], RULE = [215,218,224], BAND = [243,244,246];
+  let y = mT;
+  const sT = c => doc.setTextColor(c[0],c[1],c[2]);
+  const sF = c => doc.setFillColor(c[0],c[1],c[2]);
+  const sD = c => doc.setDrawColor(c[0],c[1],c[2]);
+  const ensure = h => { if (y + h > pageH - mB) { doc.addPage(); y = mT; return true; } return false; };
+
+  // ── Cover band ──
+  sF(NAVY); doc.rect(0, 0, pageW, 34, 'F');
+  sT([255,255,255]); doc.setFont('helvetica','bold'); doc.setFontSize(18);
+  doc.text('BAMA ERP — Data Health Check', mL, 15);
+  doc.setFont('helvetica','normal'); doc.setFontSize(9.5);
+  doc.text(`Year ${d.year}   ·   Run ${new Date(d.ran_at).toLocaleString('en-GB')}   ·   Read-only integrity scan (FAULT-REGISTER.md)`, mL, 23);
+  sF(d.total_findings ? RED : GREEN); doc.roundedRect(pageW - mR - 52, 9, 52, 16, 2, 2, 'F');
+  doc.setFont('helvetica','bold'); doc.setFontSize(13);
+  doc.text(String(d.total_findings), pageW - mR - 26, 16.5, { align: 'center' });
+  doc.setFontSize(7); doc.text('FINDINGS', pageW - mR - 26, 21.5, { align: 'center' });
+  y = 42;
+
+  // ── Summary table ──
+  sT(TEXT); doc.setFont('helvetica','bold'); doc.setFontSize(11);
+  doc.text('Summary', mL, y); y += 5;
+  const cF = 20, cS = 30, cN = 24, cT2 = W - cF - cS - cN;
+  const sumHead = () => {
+    sF(NAVY); doc.rect(mL, y, W, 6.5, 'F');
+    sT([255,255,255]); doc.setFont('helvetica','bold'); doc.setFontSize(7.5);
+    doc.text('FAULT', mL + 2, y + 4.4);
+    doc.text('CHECK', mL + cF + 2, y + 4.4);
+    doc.text('STATUS', mL + cF + cT2 + 2, y + 4.4);
+    doc.text('FINDINGS', mL + W - 2, y + 4.4, { align: 'right' });
+    y += 6.5;
+  };
+  sumHead();
+  d.checks.forEach(c => {
+    const titleLines = doc.splitTextToSize(c.title, cT2 - 4);
+    const rh = Math.max(6.5, titleLines.length * 3.8 + 2.8);
+    if (ensure(rh)) sumHead();
+    sT(NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(8);
+    doc.text(c.fault, mL + 2, y + 4.3);
+    sT(TEXT); doc.setFont('helvetica','normal');
+    titleLines.forEach((l, i) => doc.text(l, mL + cF + 2, y + 4.3 + i * 3.8));
+    const st = c.status === 'ok' ? ['Clean', GREEN] : c.status === 'error' ? ['CHECK FAILED', RED] : ['Findings', AMBER];
+    sT(st[1]); doc.setFont('helvetica','bold');
+    doc.text(st[0], mL + cF + cT2 + 2, y + 4.3);
+    sT(c.count ? TEXT : MUTED);
+    doc.text(c.count ? String(c.count) : '—', mL + W - 2, y + 4.3, { align: 'right' });
+    sD(RULE); doc.setLineWidth(0.15); doc.line(mL, y + rh, mL + W, y + rh);
+    y += rh;
+  });
+  y += 8;
+
+  // ── Findings sections ──
+  d.checks.filter(c => (c.rows && c.rows.length) || c.status === 'error').forEach(c => {
+    ensure(24);
+    sF(c.status === 'error' ? RED : NAVY); doc.rect(mL, y, W, 8, 'F');
+    sT([255,255,255]); doc.setFont('helvetica','bold'); doc.setFontSize(8.5);
+    const head = doc.splitTextToSize(`${c.fault} — ${c.title}`, W - 30)[0];
+    doc.text(head, mL + 3, y + 5.3);
+    doc.setFontSize(8);
+    doc.text(c.status === 'error' ? 'FAILED' : `${c.count} finding${c.count===1?'':'s'}`, mL + W - 3, y + 5.3, { align: 'right' });
+    y += 11;
+
+    if (c.status === 'error') {
+      sT(RED); doc.setFont('helvetica','normal'); doc.setFontSize(8.5);
+      doc.splitTextToSize(String(c.error || 'unknown error'), W - 4).forEach(l => { ensure(5); doc.text(l, mL + 2, y); y += 4.2; });
+      y += 5; return;
+    }
+
+    const cols = Object.keys(c.rows[0]);
+    const colW = cols.map(() => W / cols.length);
+    const xs = []; let acc = mL; colW.forEach(w => { xs.push(acc); acc += w; });
+    const tblHead = () => {
+      sF(BAND); doc.rect(mL, y, W, 6, 'F');
+      sD(RULE); doc.setLineWidth(0.3); doc.line(mL, y + 6, mL + W, y + 6);
+      sT([70,78,92]); doc.setFont('helvetica','bold'); doc.setFontSize(7);
+      cols.forEach((k, i) => doc.text(k.toUpperCase().replace(/_/g,' ').slice(0, 24), xs[i] + 1.5, y + 4.1));
+      y += 6;
+    };
+    tblHead();
+    doc.setFontSize(7.8);
+    c.rows.forEach(r => {
+      const wrapped = cols.map((k, i) => doc.splitTextToSize(String(r[k] ?? ''), colW[i] - 3));
+      const rh = Math.max(5.6, Math.max(...wrapped.map(w => w.length)) * 3.4 + 2.4);
+      if (ensure(rh)) tblHead();
+      sT(TEXT); doc.setFont('helvetica','normal');
+      wrapped.forEach((w, i) => w.forEach((l, li) => doc.text(l, xs[i] + 1.5, y + 3.8 + li * 3.4)));
+      sD(RULE); doc.setLineWidth(0.12); doc.line(mL, y + rh, mL + W, y + rh);
+      y += rh;
+    });
+    if (c.count > c.rows.length) {
+      ensure(6); sT(MUTED); doc.setFontSize(7);
+      doc.text(`… plus ${c.count - c.rows.length} more (report caps at 100 rows per check)`, mL + 1.5, y + 3.5); y += 6;
+    }
+    y += 7;
+  });
+
+  // ── Footers ──
+  const pages = doc.getNumberOfPages();
+  for (let i = 1; i <= pages; i++) {
+    doc.setPage(i);
+    sT([150,150,150]); doc.setFont('helvetica','normal'); doc.setFontSize(7.5);
+    doc.text('BAMA Fabrication ERP · generated automatically · findings reference FAULT-REGISTER.md', mL, pageH - 8);
+    doc.text(`Page ${i} of ${pages}`, pageW - mR, pageH - 8, { align: 'right' });
+  }
+  return doc;
 }
 
 // Serialise the last health-check run to plain text and copy to clipboard,
