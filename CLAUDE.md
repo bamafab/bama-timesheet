@@ -1328,6 +1328,16 @@ the ITP's count equals `_inspProgress`'s required count at both EXC2 and EXC3).
 registers every issued CoC **and** DoP — one table, `doc_type` discriminator.
 API `api/src/functions/job-certificates.js`.
 
+**TWO scopes, one document family (Mateusz, 2026-07-30).** `doc_type = 'coc'`
+is supply AND install; `doc_type = 'doc'` is **supply only** and its declaration
+expressly excludes erection, alignment, final connections and works by others.
+Same evidence, same gathering, different declared responsibility; each keeps its
+own revision sequence. `drawCocPDF` branches on `d.mode`, and the scope is
+printed on the face of the document as well as in the wording. **Do not confuse
+`'doc'` with `'dop'`** — 'doc' is this commercial Declaration of Conformity;
+'dop' is the regulated Declaration of Performance. The O&M pack picks up
+whichever of the two was issued.
+
 **A CoC is contractual, not regulated**, which is why contractors all word the
 request differently — so the narrative CAN be AI-drafted. What cannot:
 `cocGatherFacts(jobId)` reads every FIGURE out of the ERP — assemblies

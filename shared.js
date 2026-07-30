@@ -49951,11 +49951,17 @@ Rules:
 
 // ── CoC PDF — native jsPDF, portrait ────────────────────────────────────────
 function drawCocPDF(jsPDF, d, logoDataUri) {
+  // Supply-only jobs get a Declaration of Conformity; supply-and-install gets a
+  // Certificate of Conformity (Mateusz's distinction, 2026-07-30). Same document
+  // and the same evidence — what differs is the scope of responsibility declared.
+  const supplyOnly = d.mode === 'doc';
+  const docTitle = supplyOnly ? 'DECLARATION OF CONFORMITY' : 'CERTIFICATE OF CONFORMITY';
+  const docTitleTc = supplyOnly ? 'Declaration of Conformity' : 'Certificate of Conformity';
   const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
   try {
     doc.setProperties({
-      title: `Certificate of Conformity — ${d.certRef || ''}`,
-      subject: `Certificate of Conformity${d.jobName ? ' — ' + d.jobName : ''}`,
+      title: `${docTitleTc} — ${d.certRef || ''}`,
+      subject: `${docTitleTc}${d.jobName ? ' — ' + d.jobName : ''}`,
       author: 'BAMA Fabrication', creator: 'BAMA Fabrication ERP'
     });
   } catch (e) { /* non-critical */ }
@@ -49977,9 +49983,9 @@ function drawCocPDF(jsPDF, d, logoDataUri) {
       } catch (e) { /* logo optional */ }
     }
     doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(14);
-    doc.text('CERTIFICATE OF CONFORMITY', tx, 13);
+    doc.text(docTitle, tx, 13);
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(190, 190, 195);
-    doc.text('BAMA Fabrication Ltd  ·  structural steelwork', tx, 19.5);
+    doc.text(`BAMA Fabrication Ltd  ·  structural steelwork  ·  ${supplyOnly ? 'supply only' : 'supply and installation'}`, tx, 19.5);
     doc.setTextColor(...accent); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
     doc.text(d.certRef || '', pageW - mR, 13, { align: 'right' });
     doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(190, 190, 195);
@@ -50042,6 +50048,7 @@ function drawCocPDF(jsPDF, d, logoDataUri) {
   kv([
     ['Client', d.client], ['Project', d.jobName], ['Contract / job no', d.jobNumber],
     ['Site', d.site], ['Execution class', d.execClass ? `${d.execClass} to EN 1090-2` : null],
+    ['Scope', supplyOnly ? 'Supply only — fabrication and delivery' : 'Supply and installation'],
     ['Assemblies supplied', d.assemblyCount ? String(d.assemblyCount) : null],
     ['Total weight', d.totalWeightKg ? `${d.totalWeightKg.toLocaleString('en-GB')} kg` : null]
   ]);
@@ -50096,11 +50103,18 @@ function drawCocPDF(jsPDF, d, logoDataUri) {
   // Declaration + signature
   sectionTitle('Declaration');
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(45, 45, 50);
-  const decl = doc.splitTextToSize(
-    'We certify that the steelwork described above has been fabricated and supplied in accordance with the '
-    + 'contract documents, the approved drawings and the applicable requirements of EN 1090-2 for the execution '
-    + 'class stated, and that the materials, welding and inspection records supporting this certificate are held '
-    + 'by BAMA Fabrication Ltd and are available for inspection on request.', usableW);
+  const declText = supplyOnly
+    ? 'We certify that the steelwork described above has been fabricated and supplied in accordance with the '
+      + 'contract documents, the approved drawings and the applicable requirements of EN 1090-2 for the execution '
+      + 'class stated, and that the materials, welding and inspection records supporting this declaration are held '
+      + 'by BAMA Fabrication Ltd and are available for inspection on request. This declaration covers supply only: '
+      + 'installation of the steelwork was not carried out by BAMA Fabrication Ltd, and no responsibility is accepted '
+      + 'for erection, alignment, final connections, or works carried out by others.'
+    : 'We certify that the steelwork described above has been fabricated, supplied and installed in accordance with the '
+      + 'contract documents, the approved drawings and the applicable requirements of EN 1090-2 for the execution '
+      + 'class stated, and that the materials, welding, inspection and erection records supporting this certificate are '
+      + 'held by BAMA Fabrication Ltd and are available for inspection on request.';
+  const decl = doc.splitTextToSize(declText, usableW);
   need(decl.length * 4.3 + 32);
   doc.text(decl, mL, y); y += decl.length * 4.3 + 10;
 
@@ -50118,7 +50132,7 @@ function drawCocPDF(jsPDF, d, logoDataUri) {
   for (let p = 1; p <= total; p++) {
     doc.setPage(p);
     doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5); doc.setTextColor(140, 140, 145);
-    doc.text(`Certificate of Conformity  ·  ${d.certRef || ''}  ·  BAMA Fabrication Ltd`, mL, pageH - 8);
+    doc.text(`${docTitleTc}  ·  ${d.certRef || ''}  ·  BAMA Fabrication Ltd`, mL, pageH - 8);
     doc.text(`Page ${p} of ${total}`, pageW - mR, pageH - 8, { align: 'right' });
   }
   return doc;
@@ -50137,7 +50151,7 @@ async function renderCocPdfBlob(d) {
 }
 
 // ── CoC UI ──────────────────────────────────────────────────────────────────
-let _cocFacts = null, _cocIssued = [];
+let _cocFacts = null, _cocIssued = [], _cocMode = 'coc';   // 'coc' = supply+install, 'doc' = supply only
 
 async function cocOpen() {
   if (!_inspJob) { toast('Pick a job first', 'error'); return; }
@@ -50146,7 +50160,7 @@ async function cocOpen() {
     div.innerHTML = `<div id="cocModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:1001;align-items:flex-start;justify-content:center;padding:26px;overflow-y:auto">
       <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:860px;overflow:hidden">
         <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <h3 style="margin:0;font-size:16px;flex:1">📜 Certificate of Conformity</h3>
+          <h3 id="cocModalTitle" style="margin:0;font-size:16px;flex:1">📜 Certificate of Conformity</h3>
           <button class="btn btn-ghost btn-sm" onclick="document.getElementById('cocModal').style.display='none'">✕</button>
         </div>
         <div id="cocBody" style="padding:16px 20px;max-height:80vh;overflow-y:auto"></div>
@@ -50158,7 +50172,7 @@ async function cocOpen() {
   host.innerHTML = '<div style="color:var(--muted);font-size:12px">Gathering the records for this job…</div>';
   try {
     _cocFacts = await cocGatherFacts(_inspJob);
-    _cocIssued = await api.get(`/api/job-certificates?job_id=${_inspJob}&doc_type=coc`).catch(() => []);
+    _cocIssued = await api.get(`/api/job-certificates?job_id=${_inspJob}&doc_type=${_cocMode}`).catch(() => []);
   } catch (e) {
     host.innerHTML = `<div style="color:var(--red);font-size:12px">${escapeHtml(e.message)}</div>`;
     return;
@@ -50170,12 +50184,25 @@ function _cocRender() {
   const host = document.getElementById('cocBody'); if (!host) return;
   const f = _cocFacts;
   const nextRev = _cocIssued.length ? Math.max(..._cocIssued.map(c => Number(c.revision) || 0)) + 1 : 1;
-  const ref = `COC-${(f.job && f.job.job_number) || 'JOB'}-${String(nextRev).padStart(2, '0')}`;
+  const ref = `${_cocMode.toUpperCase()}-${(f.job && f.job.job_number) || 'JOB'}-${String(nextRev).padStart(2, '0')}`;
+  const t = document.getElementById('cocModalTitle');
+  if (t) t.textContent = _cocMode === 'doc' ? '📜 Declaration of Conformity (supply only)'
+                                            : '📜 Certificate of Conformity (supply & install)';
   const box = (n, label, color) => `<div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid ${color};border-radius:8px;padding:7px 12px;min-width:96px">
     <div style="font-size:17px;font-weight:800;color:${color}">${n}</div>
     <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">${label}</div></div>`;
 
   host.innerHTML = `
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+      <span style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;font-weight:700">Scope</span>
+      ${[['coc', 'Supply &amp; install — Certificate'], ['doc', 'Supply only — Declaration']].map(([k, lbl]) => {
+        const on = _cocMode === k;
+        return `<button onclick="cocSetMode('${k}')" style="cursor:pointer;border-radius:14px;padding:4px 13px;font-size:12px;border:1px solid ${on ? 'var(--accent)' : 'var(--border)'};background:${on ? 'rgba(224,94,0,.14)' : 'var(--surface)'};color:${on ? 'var(--accent)' : 'var(--muted)'};font-weight:${on ? 700 : 400}">${lbl}</button>`;
+      }).join('')}
+      <span style="font-size:11px;color:var(--muted)">${_cocMode === 'doc'
+        ? 'Declares fabrication and delivery only — erection by others is expressly excluded.'
+        : 'Declares fabrication, delivery and installation.'}</span>
+    </div>
     <p style="font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.6">
       Every figure below is read from this job's own records — assemblies, BAMA MAT 001 heat numbers, inspection records,
       welder approvals and finishes. <strong>Nothing here is drafted or estimated.</strong> Only the scope-of-supply wording is
@@ -50236,6 +50263,7 @@ function _cocPdfData() {
   const g = id => (document.getElementById(id) || {}).value || '';
   const f = _cocFacts;
   return {
+    mode: _cocMode,
     certRef: g('coc_ref'),
     revision: (_cocIssued.length ? Math.max(..._cocIssued.map(c => Number(c.revision) || 0)) : 0) + 1,
     issueDate: g('coc_date'), issuedBy: g('coc_by'),
@@ -50266,7 +50294,7 @@ async function cocIssue() {
       `Issue <strong>${escapeHtml(d.certRef)}</strong> as revision ${d.revision}?<br><br>
        <span style="font-size:12px;color:var(--muted)">The figures on it are frozen at today's values, the PDF is filed to the job folder,
        and any previous revision is superseded.</span>${warn}`,
-      'Issue Certificate of Conformity')) return;
+      _cocMode === 'doc' ? 'Issue Declaration of Conformity' : 'Issue Certificate of Conformity')) return;
   try {
     const blob = await renderCocPdfBlob(d);
     const name = `${d.certRef}.pdf`;
@@ -50274,7 +50302,7 @@ async function cocIssue() {
     const folder = await findProjectFolder(_inspJob).catch(() => null);
     if (folder) up = await uploadFileToFolder(folder.id, name, await blob.arrayBuffer(), 'application/pdf', BAMA_DRIVE_ID);
     await api.post('/api/job-certificates', {
-      job_id: _inspJob, doc_type: 'coc', cert_ref: d.certRef,
+      job_id: _inspJob, doc_type: _cocMode, cert_ref: d.certRef,
       issue_date: d.issueDate, issued_by: d.issuedBy, exec_class: d.execClass,
       scope_text: d.scopeText,
       payload: {   // frozen snapshot — the live figures move on after today
@@ -50290,7 +50318,7 @@ async function cocIssue() {
     toast(up ? `${d.certRef} issued and filed to the job folder` : `${d.certRef} issued — SharePoint unavailable, PDF opened instead`, 'success');
     if (up && up.webUrl) window.open(up.webUrl, '_blank');
     else window.open(URL.createObjectURL(blob), '_blank');
-    _cocIssued = await api.get(`/api/job-certificates?job_id=${_inspJob}&doc_type=coc`).catch(() => []);
+    _cocIssued = await api.get(`/api/job-certificates?job_id=${_inspJob}&doc_type=${_cocMode}`).catch(() => []);
     _cocRender();
   } catch (e) { toast('Issue failed: ' + e.message, 'error'); }
 }
@@ -51122,10 +51150,11 @@ async function omGatherSources(jobId) {
   try { certs = await api.get(`/api/job-certificates?job_id=${jobId}`); } catch (_) {}
   const latest = t => (certs || []).filter(c => c.doc_type === t && c.status !== 'superseded')
                                    .sort((a, b) => b.revision - a.revision)[0];
-  const dop = latest('dop'), coc = latest('coc');
+  const dop = latest('dop'), coc = latest('coc') || latest('doc');
   if (dop && dop.sharepoint_file_id) add({ group: 'Certification', title: 'Declaration of Performance',
     subtitle: `${dop.cert_ref} rev ${dop.revision}`, kind: 'file', fileId: dop.sharepoint_file_id, driveId: dop.drive_id });
-  if (coc && coc.sharepoint_file_id) add({ group: 'Certification', title: 'Certificate of Conformity',
+  if (coc && coc.sharepoint_file_id) add({ group: 'Certification',
+    title: coc.doc_type === 'doc' ? 'Declaration of Conformity (supply only)' : 'Certificate of Conformity',
     subtitle: `${coc.cert_ref} rev ${coc.revision}`, kind: 'file', fileId: coc.sharepoint_file_id, driveId: coc.drive_id });
 
   // ITP — generated live so it reflects what was actually achieved
@@ -51341,4 +51370,15 @@ async function omBuild(toSharePoint) {
     _omIssued = await api.get(`/api/job-certificates?job_id=${_inspJob}&doc_type=om`).catch(() => []);
     _omRender();
   } catch (e) { say(''); toast('Pack failed: ' + e.message, 'error'); }
+}
+
+// Supply-only vs supply-and-install. Same evidence, different declared
+// responsibility — and its own revision sequence, since they are different
+// documents to a client.
+async function cocSetMode(mode) {
+  if (mode === _cocMode) return;
+  _cocMode = mode === 'doc' ? 'doc' : 'coc';
+  try { _cocIssued = await api.get(`/api/job-certificates?job_id=${_inspJob}&doc_type=${_cocMode}`); }
+  catch (_) { _cocIssued = []; }
+  _cocRender();
 }

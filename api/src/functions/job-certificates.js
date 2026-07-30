@@ -21,7 +21,14 @@ const { query } = require('../db');
 const { logChange } = require('../changelog');
 const { ok, created, badRequest, notFound, serverError, preflight } = require('../responses');
 
-const DOC_TYPES = ['coc', 'dop'];
+// 'coc' = Certificate of Conformity (supply AND install)
+// 'doc' = Declaration of Conformity (supply only) — Mateusz's distinction,
+//         2026-07-30: same document and same evidence, different scope of
+//         responsibility. NOT a Declaration of Performance; that is 'dop'
+//         and is the regulated one.
+// 'dop' = Declaration of Performance (regulated, CPR)
+// 'om'  = O&M / handover pack
+const DOC_TYPES = ['coc', 'doc', 'dop', 'om'];
 const COLS = `id, job_id, doc_type, cert_ref, revision,
     CONVERT(varchar(10), issue_date, 23) AS issue_date,
     issued_by, exec_class, scope_text, payload, status, superseded_by,
@@ -62,7 +69,7 @@ app.http('job-certificates-create', {
             const b = await request.json();
             const jobId = parseInt(b.job_id);
             if (!Number.isFinite(jobId))          return badRequest('job_id is required', request);
-            if (!DOC_TYPES.includes(b.doc_type))  return badRequest("doc_type must be 'coc' or 'dop'", request);
+            if (!DOC_TYPES.includes(b.doc_type))  return badRequest('doc_type must be one of ' + DOC_TYPES.join(', '), request);
             if (!b.cert_ref || !String(b.cert_ref).trim()) return badRequest('cert_ref is required', request);
 
             // Revision continues the sequence for this job + document type, and the

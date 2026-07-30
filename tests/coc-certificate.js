@@ -81,5 +81,25 @@ ok(/warning, not a lock/.test(ui),                  'gaps warn without blocking,
 ok(/never edited in place/.test(ui),                're-issue behaviour is explained to the user');
 ok(/frozen at today's values/.test(ui),             'the freeze is explained at the point of issue');
 
+console.log('\nSupply-only (DoC) vs supply-and-install (CoC)');
+// Mateusz's distinction: same evidence, different declared responsibility.
+// This must NOT be confused with a Declaration of PERFORMANCE, which is regulated.
+ok(/'coc', 'doc', 'dop', 'om'/.test(api), 'the API accepts all four document types', (api.match(/DOC_TYPES = \[[^\]]*\]/) || [''])[0]);
+ok(/NOT a Declaration of Performance/i.test(api), 'the API comment warns against confusing doc with dop');
+ok(/supply AND install/i.test(api) && /supply only/i.test(api), 'both scopes are documented at the type list');
+ok(/DECLARATION OF CONFORMITY/.test(render) && /CERTIFICATE OF CONFORMITY/.test(render),
+   'the renderer carries both titles');
+ok(/const supplyOnly = d\.mode === 'doc'/.test(render), 'the renderer branches on an explicit mode, not a guess');
+ok(/no responsibility is accepted[\s\S]{0,120}erection/.test(render),
+   'supply-only wording expressly excludes erection and works by others');
+ok(/fabricated, supplied and installed/.test(render), 'supply-and-install wording covers installation');
+ok(/erection records/.test(render), 'and cites erection records');
+ok(/Scope', supplyOnly \?/.test(render), 'the scope is stated on the face of the document, not just in the wording');
+ok(/supply only' : 'supply and installation'/.test(render), 'the header sub-line states the scope too');
+const uiMode = shared.slice(shared.indexOf('async function cocSetMode'));
+ok(/doc_type=\$\{_cocMode\}/.test(shared), 'each scope keeps its own revision sequence');
+ok(/_cocMode === 'doc' \? 'Issue Declaration/.test(shared), 'the confirm dialog names the right document');
+ok(/latest\('coc'\) \|\| latest\('doc'\)/.test(shared), 'the O&M pack picks up whichever was issued');
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
