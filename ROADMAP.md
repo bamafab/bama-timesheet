@@ -149,3 +149,75 @@ Priority order as it stands:
     PIN checking.
 11. **Housekeeping** — two known preflight errors in QB (`plantTypeSelect`,
     `scopeTemplateDD`); F8 rolling help per module.
+
+---
+
+## Phase F — merged forward plan (2026-07-30)
+
+**Numbering warning.** An earlier session's plan used "E1 + E2" to mean *plant
+register + consumables/reorder*; this session reused E1/E2 for *welder
+qualifications + inspection sampling*. Both labels are now in the history. This
+Phase F list supersedes both — one source of truth, use these numbers.
+
+**Dropped on the floor and worth noting:** that earlier plan asked three
+decisions (welding machines into Plant or separate; consumable issue-out kiosk
+or office; reorder POs auto-draft or basket) and paired the plant register with
+a consumables/reorder half. The plant register was built; the decisions were
+never put to Mateusz and the consumables half was never built. Carried into F3
+below.
+
+Ranked by value, with what this session's work already changed:
+
+- **F1 — O&M / handover pack generator.** Highest value, and materially cheaper
+  than when it was first proposed: the pack's contents are now mostly captured.
+  Already in the system — material certs with heat numbers (BAMA MAT 001, live
+  since the phase 2 seed), weld records (BAMA FAB 001), release records (REL
+  001), welder qualifications + 6-month confirmations, inspection & NDT records,
+  plant inspection certificates, company docs (UKCA 1090 EXC3, ISO 9001/14001/
+  45001, insurances), COSHH sheets. Still to build: as-built drawing selection,
+  Declaration of Performance / CE-UKCA template, warranties, and the indexed
+  bookmarked PDF assembly. Main contractors chase these for weeks.
+- **F2 — Material traceability report** (heat number → assembly → despatch).
+  NOTE: `api/src/functions/traceability.js` is welding machines / service types
+  / suppliers — it is NOT material traceability, despite the name. Heat numbers
+  currently live inside MAT 001 submission JSON, not a queryable column, so this
+  needs either extraction into a proper table or a normalised traceability
+  table. Closes the EN 1090 loop.
+- **F3 — Consumables & requisitions** (the dropped half). CON 001 exists as a
+  QMS form so issue-out is *recorded* but not *stocked* — no ledger, no reorder.
+  Decisions, with recommendations:
+  · *Welding machines into Plant?* **Recommend NOT a full migration.**
+    `WeldingMachines` is FK'd from `JobAssemblies.welding_machine_id` (twice,
+    see add-job-fabrication + add-staged-fabrication) and feeds the QMS machine
+    picker; moving it breaks both for little gain. Instead give each machine an
+    optional `PlantItems` row for its inspection regimes (PAT, gauge
+    calibration) linked by a nullable `plant_id`, leaving the FKs alone.
+  · *Consumable issue-out?* **Recommend kiosk taps by the workshop.**
+    Office-only entry means it won't get done; the shop already knows what it
+    took off the shelf.
+  · *Reorder POs?* **Recommend a basket to approve, never auto-created drafts.**
+    Auto-drafts accumulate and get sent by accident, and nothing that creates a
+    financial commitment should happen without a human — same principle as the
+    money rules.
+- **F4 — Toolbox talk register.** Cheapest win on the list now: the QMS engine,
+  personnel picker and finger-signature field all exist, so it really is a
+  definition row plus a register view.
+- **F5 — Accident / near-miss register + RIDDOR helper.** POL001 promises an
+  accident book and an F2508 process and there is no digital form. This one
+  carries legal weight (RIDDOR reporting deadlines) and near-miss trending is
+  what 45001 auditors ask for. Full build, not a form row.
+- **F6 — Management review + audit pack.** 9001/14001/45001 all require annual
+  management review with objectives and KPIs; the Health tab and CVR already
+  hold the numbers.
+- **F7 — Cash flow forecast** (13-week). AFP dates, invoice due dates and
+  supplier payment runs are all already in the system; mostly assembly.
+- **F8 — Waste transfer / environmental register** for 14001.
+- ~~Weld map / NDT tracking per contract~~ — **largely delivered** by the E2
+  inspection module (per-contract plan, per-assembly records, per-category
+  sampling). What's left is the visual weld map itself, which is low value
+  against the rest of this list.
+
+**Immediate, ahead of all of the above:** the Labour Cost tile shows the quote
+budget rather than LabourLog actuals, which quietly undermines CVR and Job
+Costing — those reports look precise and are not. Plus the two FAB 001 ↔
+inspection-record loose ends from E2.
