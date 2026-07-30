@@ -3422,6 +3422,7 @@ function switchTab(name) {
   if (name === 'docs') renderDocsTab();
   if (name === 'qms') renderQmsTab();
   if (name === 'training') renderTrainingTab();
+  if (name === 'help') renderHelpTab();
   if (name === 'plant') renderPlantTab();
   if (name === 'welders') renderWeldersTab();
   if (name === 'inspection') renderInspectionTab();
@@ -23337,6 +23338,9 @@ function renderUnifiedSidebar() {
     </button>
     <button class="sidebar-nav-item${a('office','docs')}" data-tab="docs" onclick="navToOfficeTab('docs')">
       <span class="sidebar-nav-icon">📁</span> Company Docs
+    </button>
+    <button class="sidebar-nav-item${a('office','help')}" data-tab="help" onclick="navToOfficeTab('help')">
+      <span class="sidebar-nav-icon">❓</span> Help &amp; FAQ
     </button>
 
     <hr class="sidebar-nav-divider">
@@ -46735,9 +46739,11 @@ function openQmsForm(formId) {
 
 function qmsYn(btn) {
   document.querySelectorAll(`.qms-yn[data-key="${btn.dataset.key}"]`).forEach(b => {
-    const on = b === btn;
-    b.style.background = on ? (b.dataset.val === 'Yes' ? 'rgba(62,207,142,.2)' : 'rgba(255,107,107,.2)') : '';
-    b.style.borderColor = on ? (b.dataset.val === 'Yes' ? 'var(--green)' : 'var(--red)') : 'var(--border)';
+    const on = b === btn, tone = b.dataset.tone;
+    const col = tone === 'good' ? 'var(--green)' : tone === 'bad' ? 'var(--red)' : 'var(--muted)';
+    const bg  = tone === 'good' ? 'rgba(62,207,142,.2)' : tone === 'bad' ? 'rgba(255,107,107,.2)' : 'rgba(150,150,150,.2)';
+    b.style.background = on ? bg : '';
+    b.style.borderColor = on ? col : 'var(--border)';
   });
   document.getElementById('qf_' + btn.dataset.key).value = btn.dataset.val;
 }
@@ -46747,6 +46753,7 @@ async function submitQmsForm() {
   const def = JSON.parse(form.definition);
   const answers = {}; const images = {};
   for (const f of def.fields) {
+    if (f.type === 'note')       { continue; }
     if (f.type === 'photo')      { images[f.key] = _qmsPhotos[f.key] || null; answers[f.key] = _qmsPhotos[f.key] ? 'photo attached' : ''; continue; }
     if (f.type === 'signature')  { images[f.key] = _qmsSigData(f.key);        answers[f.key] = images[f.key] ? 'signed' : ''; continue; }
     if (f.type === 'personnel')  { answers[f.key] = (_qmsPersonnelSel[f.key] || []).join(', '); continue; }
@@ -46767,6 +46774,15 @@ async function submitQmsForm() {
     doc.setFontSize(10);
     for (const f of def.fields) {
       if (y > 262) { doc.addPage(); y = 22; }
+      // Procedure-reference note: small italic, no key/value
+      if (f.type === 'note') {
+        doc.setFont('helvetica', 'italic'); doc.setFontSize(8.5); doc.setTextColor(120);
+        const nlines = doc.splitTextToSize(String(f.text || ''), W - 2 * M);
+        if (y + nlines.length * 4 > 275) { doc.addPage(); y = 22; }
+        doc.text(nlines, M, y); y += nlines.length * 4 + 2.5;
+        doc.setTextColor(0); doc.setFontSize(10); doc.setFont('helvetica', 'normal');
+        continue;
+      }
       // Tables render as their own mini grid
       if (f.type === 'table') {
         const rows = answers[f.key] || [];
@@ -46831,6 +46847,112 @@ async function submitQmsForm() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ── HELP / FAQ (2026-07-30) — Office › Help & FAQ ───────────────────────────
+// Central, searchable plain-English guide to every ERP area. Data-driven:
+// edit HELP_TOPICS to add/adjust — no other code changes needed. Deliberately
+// non-technical (written for whoever opens the tab, not for a developer).
+const HELP_TOPICS = [
+  { area: 'Getting around', icon: '🧭', items: [
+    { q: 'What are the main parts of the ERP?', a: 'Estimating & Quoting (win the work), Projects (run the job), Office (people, docs, quality, invoicing). The left-hand menu on each page groups everything; this Help tab explains each part.' },
+    { q: 'A page looks broken or a list is empty', a: 'Almost always a database update that has not been run yet. Go to Estimating Dashboard ▸ Health ▸ Migration status — anything marked "needs running" is the cause. Run that SQL in Azure (office WiFi), then hard-refresh.' },
+    { q: 'I updated something but still see the old version', a: 'Hard-refresh the page: Ctrl+Shift+R (Windows) or Cmd+Shift+R (Mac). Updates need a fresh load to take effect.' },
+    { q: 'Where does everything save?', a: 'SharePoint, under the BAMA tree: Projects go to 06 - Projects, quotes to 05 - Sales & Estimating, quality records to 02 - Quality, company/employee/supplier docs to 01/03/04. The ERP files things automatically.' },
+  ]},
+  { area: 'Estimating & Quoting', icon: '💷', items: [
+    { q: 'Estimating Dashboard vs Quote Builder vs Tender Register?', a: 'Tender Register = enquiries coming in. Quote Builder = build the priced quote. Estimating Dashboard = the overview of everything (win rate, health checks, quick links).' },
+    { q: 'How do I start a quote?', a: 'Open Quote Builder and either start fresh or pull an enquiry through from the Tender Register. The pricing engine does all the arithmetic — you set quantities, grades and adjustments.' },
+    { q: 'What does "mark as won" do?', a: 'It turns the quote into a live Project and creates the job folder in SharePoint automatically. The quote figures are carried across.' },
+  ]},
+  { area: 'Projects', icon: '🏗', items: [
+    { q: 'What is the Projects page for?', a: 'Running a live job: drawings, BOM, fabrication/weld tracking, delivery notes, RAMS, site packs and the certificates that go out at the end.' },
+    { q: 'What does fab → weld staging mean?', a: 'Assemblies move through fabrication then welding as separate stages, so you can see exactly what is cut, what is welded and what is left. You can roll a stage back if something was marked by mistake.' },
+    { q: 'Fixings and loose items on the BOM', a: 'Bolts, anchors and consumables sit on the BOM as a separate item type with their own despatch tracking, so loose items get delivered and signed for like everything else.' },
+  ]},
+  { area: 'RAMS & Site Packs', icon: '📋', items: [
+    { q: 'What is a RAMS and when do I make one?', a: 'Risk Assessment & Method Statement — the safety document for a job before work starts. Generate it from the Projects page; it drafts the scope and sequence from the drawing, you review, and it produces a PDF (and optional editable Word).' },
+    { q: 'Brief vs Complex vs Tier 1?', a: 'Brief = small jobs. Complex = the everyday professional default. Tier 1 = principal-contractor submissions (adds a formal document-control and approval table).' },
+    { q: 'The work-area pin on the site plan', a: 'Click on the uploaded site plan to drop a "WORK AREA" pin. It prints onto the PDF exactly where you placed it.' },
+  ]},
+  { area: 'QMS Forms & Check Sheets', icon: '📝', items: [
+    { q: 'What are QMS Forms?', a: 'The quality records — weld/dimensional checks, material receiving, final release, calibration, NCRs and so on. Open Office ▸ QMS Forms, pick a sheet, fill it, and it files a PDF to SharePoint and logs the submission.' },
+    { q: 'How do I do a weld / dimensional check?', a: 'It is evidence, not an essay. Pick the job, type the drawing/assembly, take a photo, tap the outcome (Good quality / Needs rework, and Pass / Fail on dimensions), put your name, sign, Submit. The written procedure lives in Company Docs — the form just proves you did the check.' },
+    { q: 'Where do the completed sheets go?', a: 'A PDF is filed automatically to 02 - Quality (QMS) in SharePoint, and the submission is listed under the form so you can see recent ones. Photos and signatures are embedded in the PDF, not stored loose.' },
+    { q: 'Can we add a new check sheet?', a: 'Yes — a check sheet is just a definition row in the QmsForms table (a small piece of JSON). Adding one is an SQL insert, no code. Field types available: text, number, date, select, tick (yes/no with your own labels), long text, job/machine/personnel picker, photo, signature and repeating tables.' },
+  ]},
+  { area: 'Company / Employee / Supplier Docs', icon: '📁', items: [
+    { q: 'Where do insurances and policies live?', a: 'Office ▸ Company Docs. Drag PDFs in and the reader pulls out the reference, issuer and expiry for you to eyeball and save. Expiry reminders show on the Estimating Dashboard.' },
+    { q: 'Employee documents and contracts', a: 'Office ▸ Employees ▸ Docs on a person: their register plus a contract, offer letter and new-starter sheet generator. The contract/offer wording is still a DRAFT template — check it before any real use.' },
+    { q: 'Supplier approval status', a: 'Office ▸ Suppliers: each supplier has an approval status (approved / conditional / suspended) with a review-due date, plus a document area for their insurances and quality certs.' },
+  ]},
+  { area: 'Training, Plant & Welders', icon: '🎓', items: [
+    { q: 'Training Matrix', a: 'Office ▸ Training Matrix: a person-by-certificate grid with colour-coded expiry (red expired, amber within 60 days, green valid). Tap a cell to add or renew a cert. People here are the same roster the RAMS picker uses.' },
+    { q: 'Direct employee vs subcontractor', a: 'People move between the two as work demands. Tap a name in the Training Matrix to toggle Direct employee ↔ Subcontractor. Adrian, Jason, Craig, Barry, Elliot and Rafal are currently subcontractors.' },
+    { q: 'Plant Register', a: 'Office ▸ Plant Register: statutory inspections (LOLER, PUWER, PAT, calibration, service, MOT) with cert import and auto-advancing due dates. Welding machines live here now too.' },
+    { q: 'Welder Approvals', a: 'Office ▸ Welder Approvals: each welder has two clocks — the 6-monthly EN ISO 9606 confirmation and the certificate expiry. Both must be valid for the welder to be usable, and the range of approval is checked as a warning at point of use.' },
+  ]},
+  { area: 'Certificates & Handover', icon: '📜', items: [
+    { q: 'Certificate of Conformity vs Declaration of Performance?', a: 'CoC = our statement that the steelwork matches the contract (supply and install). DoP = the regulated CE/UKCA performance declaration under the Construction Products Regulation. Declaration of Conformity (DoC) is the supply-only version.' },
+    { q: 'What is the O&M / handover pack?', a: 'One bound PDF that pulls together the DoP, CoC, ITP, as-built drawings, quality records, accreditations and any warranties — the full end-of-job handover in a single file.' },
+    { q: 'Why does it block me until I confirm the numbers?', a: 'The regulated body/FPC numbers are read off your own UKCA certificate and must be confirmed character-for-character by a person before a DoP can issue. This is deliberate — a wrong number on a regulated document is serious.' },
+  ]},
+  { area: 'Invoicing & Payment', icon: '🧾', items: [
+    { q: 'Invoice vs Pro Forma vs Credit Note?', a: 'Invoice = the real request for payment. Pro Forma = a "here is what it will be" before the real invoice. Credit Note = cancels or reduces an invoice already sent (linked back to its parent).' },
+    { q: 'What is reverse-charge VAT?', a: 'For most construction work between VAT-registered businesses, the customer accounts for the VAT, not us — so the invoice shows no VAT and a reverse-charge note. It is set per client and defaults on.' },
+    { q: 'What is an AFP?', a: 'Application for Payment — on staged/valuation jobs you apply for payment against a schedule of values as the work progresses, rather than one final invoice. The AFP module tracks the cumulative valuation and certificates.' },
+    { q: 'Chasing unpaid invoices', a: 'The aged-debt view flags overdue invoices and gives a one-click chaser email. Payment terms are set per client.' },
+  ]},
+];
+
+let _helpQuery = '';
+function renderHelpTab() {
+  const host = document.getElementById('tab-help');
+  if (!host) return;
+  const q = _helpQuery.trim().toLowerCase();
+  const match = it => !q || (it.q + ' ' + it.a).toLowerCase().includes(q);
+  const hue = s => { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
+  const groups = HELP_TOPICS
+    .map(g => ({ ...g, items: g.items.filter(match) }))
+    .filter(g => g.items.length);
+  const total = groups.reduce((n, g) => n + g.items.length, 0);
+  const hl = txt => {
+    if (!q) return escapeHtml(txt);
+    const i = txt.toLowerCase().indexOf(q);
+    if (i < 0) return escapeHtml(txt);
+    return escapeHtml(txt.slice(0, i)) + '<mark style="background:rgba(255,214,10,.35);color:inherit;border-radius:2px">' +
+      escapeHtml(txt.slice(i, i + q.length)) + '</mark>' + escapeHtml(txt.slice(i + q.length));
+  };
+  host.innerHTML = `
+    <div style="position:sticky;top:0;background:var(--bg);z-index:2;padding-bottom:10px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px">
+        <h3 style="margin:0;font-size:16px">❓ Help &amp; FAQ</h3>
+        <span style="font-size:11.5px;color:var(--muted)">Plain-English guide to every part of the ERP</span>
+      </div>
+      <input id="helpSearch" type="text" placeholder="Search — e.g. weld check, empty dropdown, reverse charge, RAMS…"
+        value="${escapeHtml(_helpQuery)}" oninput="_helpQuery=this.value;renderHelpTab();setTimeout(()=>{const e=document.getElementById('helpSearch');if(e){e.focus();e.setSelectionRange(e.value.length,e.value.length);}},0)"
+        style="width:100%;max-width:560px;padding:9px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px">
+      ${q ? `<div style="font-size:11.5px;color:var(--muted);margin-top:6px">${total} result${total === 1 ? '' : 's'} for “${escapeHtml(_helpQuery)}”</div>` : ''}
+    </div>
+    ${groups.length ? groups.map(g => {
+      const h = hue(g.area);
+      return `<div style="margin:14px 0 0">
+        <div style="display:inline-flex;align-items:center;gap:7px;padding:4px 11px;border-radius:20px;font-size:12px;font-weight:600;
+          background:hsla(${h},70%,55%,.16);color:hsl(${h},70%,72%);border:1px solid hsla(${h},70%,55%,.35)">
+          <span>${g.icon}</span>${escapeHtml(g.area)}</div>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:9px">
+          ${g.items.map(it => `
+            <div style="background:var(--card);border:1px solid var(--border);border-left:3px solid hsl(${h},70%,55%);
+              border-radius:8px;padding:11px 14px">
+              <div style="font-size:13px;font-weight:600;margin-bottom:4px">${hl(it.q)}</div>
+              <div style="font-size:12.5px;color:var(--muted);line-height:1.55">${hl(it.a)}</div>
+            </div>`).join('')}
+        </div></div>`;
+    }).join('') : `<div style="margin-top:24px;color:var(--muted);font-size:13px">
+        No matches for “${escapeHtml(_helpQuery)}”. Try a simpler word, or clear the search to browse everything.</div>`}
+    <div style="margin-top:22px;padding-top:12px;border-top:1px solid var(--border);font-size:11px;color:var(--muted)">
+      Can't find it here? This guide is edited in <code>HELP_TOPICS</code> in shared.js — ask for a new entry any time.</div>`;
+}
+
+
 // TRAINING MATRIX (2026-07-30) — Office › Training Matrix.
 // Person × cert-type grid over the SitePersonnel / SitePersonnelCerts /
 // CertTypes schema built in RAMS Phase 2b (expiry first-class). Cells are
@@ -47191,12 +47313,14 @@ function _qmsFieldHtml(f) {
   const req = f.required ? ' <span style="color:var(--red)">*</span>' : '';
   const lbl = `<label style="color:var(--muted);display:block;margin-bottom:4px">${escapeHtml(f.label)}${req}</label>`;
   switch (f.type) {
-    case 'yesno':
+    case 'yesno': {
+      const yL = f.yesLabel || 'Yes', nL = f.noLabel || 'No', aL = f.naLabel || 'N/A';
       return `<div>${lbl}<div style="display:flex;gap:8px">
-        <button class="btn btn-ghost btn-sm qms-yn" data-key="${f.key}" data-val="Yes" onclick="qmsYn(this)" style="flex:1">✓ Yes</button>
-        <button class="btn btn-ghost btn-sm qms-yn" data-key="${f.key}" data-val="No" onclick="qmsYn(this)" style="flex:1">✗ No</button>
-        ${f.allowNa ? `<button class="btn btn-ghost btn-sm qms-yn" data-key="${f.key}" data-val="N/A" onclick="qmsYn(this)" style="flex:1">N/A</button>` : ''}
+        <button class="btn btn-ghost btn-sm qms-yn" data-key="${f.key}" data-val="${escapeHtml(yL)}" data-tone="good" onclick="qmsYn(this)" style="flex:1">✓ ${escapeHtml(yL)}</button>
+        <button class="btn btn-ghost btn-sm qms-yn" data-key="${f.key}" data-val="${escapeHtml(nL)}" data-tone="bad" onclick="qmsYn(this)" style="flex:1">✗ ${escapeHtml(nL)}</button>
+        ${f.allowNa ? `<button class="btn btn-ghost btn-sm qms-yn" data-key="${f.key}" data-val="${escapeHtml(aL)}" data-tone="na" onclick="qmsYn(this)" style="flex:1">${escapeHtml(aL)}</button>` : ''}
         </div><input type="hidden" id="qf_${f.key}"></div>`;
+    }
     case 'select':
       return `<div>${lbl}<select id="qf_${f.key}" style="${_QMS_INPUT}"><option value=""></option>${(f.options || []).map(o => `<option>${escapeHtml(o)}</option>`).join('')}</select></div>`;
     case 'textarea':
@@ -47218,6 +47342,8 @@ function _qmsFieldHtml(f) {
     case 'table':
       return `<div>${lbl}<div id="qft_${f.key}"></div>
         <button class="btn btn-ghost btn-sm" onclick="qmsTableAddRow('${f.key}')" style="margin-top:5px">＋ Add row</button></div>`;
+    case 'note':
+      return `<div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:6px;padding:8px 11px;font-size:11.5px;color:var(--muted);line-height:1.55">${escapeHtml(f.text || f.label || '')}</div>`;
     default:
       return `<div>${lbl}<input id="qf_${f.key}" type="${f.type === 'date' ? 'date' : f.type === 'number' ? 'number' : 'text'}" style="${_QMS_INPUT}"></div>`;
   }
@@ -47233,12 +47359,19 @@ async function _qmsHydratePickers(def) {
       const live = (projects || []).filter(p => p.status !== 'Closed');
       for (const f of def.fields.filter(x => x.type === 'job')) {
         const el = document.getElementById('qf_' + f.key);
-        if (el) el.innerHTML = '<option value=""></option>' + live.map(p =>
-          `<option value="${escapeHtml(p.project_number + ' — ' + p.project_name)}">${escapeHtml(p.project_number + ' — ' + p.project_name)}</option>`).join('');
+        if (!el) continue;
+        if (live.length) {
+          el.innerHTML = '<option value=""></option>' + live.map(p =>
+            `<option value="${escapeHtml(p.project_number + ' — ' + p.project_name)}">${escapeHtml(p.project_number + ' — ' + p.project_name)}</option>`).join('');
+        } else {
+          // No live jobs → a blank dropdown is useless; give a text box instead.
+          el.outerHTML = `<input id="qf_${f.key}" type="text" placeholder="Type job / contract ref" style="${_QMS_INPUT}">`;
+        }
       }
+      // No live drawing list is wired, so a select here is always an empty box — use text.
       for (const f of def.fields.filter(x => x.type === 'drawing')) {
         const el = document.getElementById('qf_' + f.key);
-        if (el) el.innerHTML = '<option value="">— type below if not listed —</option>';
+        if (el) el.outerHTML = `<input id="qf_${f.key}" type="text" placeholder="Drawing ref" style="${_QMS_INPUT}">`;
       }
     } catch (_) {
       for (const f of def.fields.filter(x => x.type === 'job' || x.type === 'drawing')) {

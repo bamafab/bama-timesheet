@@ -1128,6 +1128,43 @@ BAMA CAR 001 (NCR/CAR). Validated: 7 definitions, 96 fields, all types known.
 role, phone, company and a **Direct employee ↔ Subcontractor** toggle (people
 move both ways as work demands), via the existing PUT /api/site-personnel/{id}.
 
+## QMS check sheets — EVIDENCE, not paperwork (2026-07-30, Mateusz's rule)
+
+**A shop-floor check sheet is proof the check happened, not a form to fill.**
+The written procedure lives in Company Docs; the sheet references it and
+captures the outcome. Target shape: pick job → photo → tap the outcome →
+name → sign → save. Keep required fields to the genuine minimum. If a sheet
+grows past ~5 real inputs, it's drifting back into paperwork — push back.
+`slim-qms-checksheets.sql` re-authored FAB/REL/MAT/SITE to this (each 9 fields
+but most are a read-only note, optional photo/sig/notes; 4–5 real inputs).
+tec 001 (office contract review) and CAR 001 (NCR) stay form-shaped by nature.
+
+Two engine additions supporting this (both definition-only, no per-sheet code):
+- **note** field type → read-only instruction/procedure-reference text (accent
+  left-border card). Skipped in answer collection; rendered small-italic on the
+  PDF so the filed record shows which procedure applied.
+- **yesno** now takes `yesLabel`/`noLabel`/`naLabel` → the tap buttons show
+  your own words (e.g. "Good quality" / "Poor — needs rework", "Pass"/"Fail").
+  `qmsYn()` colours by `data-tone` (good=green/bad=red/na=grey), not by the
+  literal value, so custom labels still colour correctly. Stored value = label.
+
+**Empty-dropdown fix (Mateusz found it):** the `job` picker used to render a
+`<select>` with only a blank option when there were no live jobs, and the
+`drawing` picker was a select with no list behind it — both looked like an
+empty box with nothing in it. `_qmsHydratePickers()` now swaps either to a
+plain text input when there's nothing to pick. Rule: never render a picker
+that can resolve to a single blank option — fall back to text.
+
+## Help & FAQ tab (2026-07-30)
+
+Office ▸ Help & FAQ (`tab-help`, `renderHelpTab`, sidebar ❓). Central,
+searchable, plain-English guide to every ERP area — written for whoever opens
+it, not for a developer. Content is data-driven in `HELP_TOPICS` (array of
+`{area, icon, items:[{q,a}]}`): **add an entry = edit that array, nothing
+else.** Live search highlights matches; area chips use the hash→hue colour
+convention. When a new module ships, add its Help entries in the same commit
+(same spirit as the robustness definition of done).
+
 ## Plant Register (2026-07-30 — Office › Traceability › Plant Register)
 
 Company plant & equipment register: `tab-plant` in office.html, module at the
