@@ -203,7 +203,8 @@ Ranked by value, with what this session's work already changed:
     achieved, coatings) and a signature block. Free-text draftable by AI
     because nothing in it is a regulated declaration — but every figure quoted
     must come from the ERP's own records, never invented.
-  · **ITP — Inspection & Test Plan.** Per contract, and it should PRE-FILL from
+  · **ITP — ✅ DONE 2026-07-30** (see CLAUDE.md). Built as specified below.
+    **Inspection & Test Plan.** Per contract, and it should PRE-FILL from
     the E2 inspection plan rather than being typed: activities, reference
     documents, acceptance criteria, intervention type (H hold / W witness /
     S surveillance / R review), responsibility and record reference. The NDT

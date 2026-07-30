@@ -49100,6 +49100,7 @@ function _inspRender() {
           style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12.5px">
           ${EXEC_CLASSES.map(c => `<option ${c === _inspPlan.exec_class ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
       <button class="btn btn-ghost btn-sm" onclick="inspLogOpen()">＋ Log an inspection</button>
+      <button class="btn btn-ghost btn-sm" onclick="itpOpen()">📋 ITP</button>
       <button class="btn btn-ghost btn-sm" onclick="inspSaveCounts()">💾 Save weld counts</button>
       ${(totalNdtShort || totalVisShort)
         ? `<span style="background:#3b1a1a;color:#ff9b9b;border:1px solid #ff6b6b55;border-radius:6px;padding:4px 10px;font-size:11.5px">
@@ -49386,4 +49387,413 @@ async function plantLoadWelders(machineId) {
   } catch (e) {
     host.innerHTML = `<span style="color:var(--muted)">Authorised welders unavailable (${escapeHtml(e.message)})</span>`;
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// INSPECTION & TEST PLAN (F1a, 2026-07-30)
+//
+// The ITP hangs off the E2 inspection plan, so it reads the SAME execution
+// class and the SAME verified NdtExtentRules percentages the sampling uses —
+// the document and the reality cannot drift apart.
+//
+// NO AI HERE AT ALL. Every row is derived: the standard activity list below,
+// plus the job's weld categories and their verified percentages. There is
+// nothing to draft, so nothing is drafted — an ITP is a factual schedule, and
+// an invented acceptance criterion or hold point would be a liability.
+//
+// Intervention types: H = Hold (work stops), W = Witness (client invited, may
+// proceed if absent), S = Surveillance (monitored), R = Review (records only).
+// ═══════════════════════════════════════════════════════════════════════════
+
+const ITP_INTERVENTIONS = {
+  H: { label: 'H — Hold',         color: '#ff6b6b', note: 'Work stops until inspected and released' },
+  W: { label: 'W — Witness',      color: '#eab308', note: 'Client invited; may proceed if they do not attend' },
+  S: { label: 'S — Surveillance', color: '#38bdf8', note: 'Monitored; no notification required' },
+  R: { label: 'R — Review',       color: '#8b9bb4', note: 'Records reviewed only' }
+};
+
+// Standard BAMA activity list. Deliberately data, not code — edit here and the
+// generator picks it up. record_ref values match the seeded QMS form codes so
+// the ITP points at the sheet that actually captures the record.
+const ITP_TEMPLATE = [
+  { stage: 'Contract',    activity: 'Technical and contract review',                       ref_doc: 'EN 1090-2, contract documents', acceptance: 'Requirements understood, capability confirmed, differences resolved', intervention: 'R', frequency: 'Each contract',  responsibility: 'BAMA', record_ref: 'BAMA tec 001' },
+  { stage: 'Material',    activity: 'Material receiving inspection and identification',    ref_doc: 'EN 10025, purchase order',      acceptance: 'Matches PO; 3.1 certificates received; heat numbers recorded and marked', intervention: 'R', frequency: 'Each delivery', responsibility: 'BAMA', record_ref: 'BAMA MAT 001' },
+  { stage: 'Material',    activity: 'Welding consumable control and issue',                ref_doc: 'EN ISO 14341 / WPS',            acceptance: 'Correct designation, batch recorded, packaging intact, stored dry', intervention: 'S', frequency: 'Each issue',    responsibility: 'BAMA', record_ref: 'CON 001' },
+  { stage: 'Fabrication', activity: 'Cutting, drilling and preparation to drawing',        ref_doc: 'Approved drawings, EN 1090-2',  acceptance: 'Dimensions and tolerances to EN 1090-2; edges to specification', intervention: 'S', frequency: 'Each assembly', responsibility: 'BAMA', record_ref: 'BAMA FAB 001' },
+  { stage: 'Fabrication', activity: 'Fit-up inspection prior to welding',                  ref_doc: 'Approved drawings, WPS',        acceptance: 'Joint geometry, root gap and alignment within WPS range', intervention: 'H', frequency: '100%',          responsibility: 'BAMA', record_ref: 'BAMA FAB 001' },
+  { stage: 'Welding',     activity: 'Welder qualification and validity verified',          ref_doc: 'EN ISO 9606-1',                 acceptance: 'Valid certificate covering the process, position and thickness; 6-month confirmation current', intervention: 'R', frequency: 'Each welder',   responsibility: 'BAMA', record_ref: 'Welder approvals register' },
+  { stage: 'Welding',     activity: 'Welding to approved WPS',                             ref_doc: 'WPS / WPQR',                    acceptance: 'Parameters within qualified range; correct consumable and preheat', intervention: 'S', frequency: 'Continuous',    responsibility: 'BAMA', record_ref: 'BAMA FAB 001' },
+  { stage: 'Welding',     activity: 'Welding equipment verification current',              ref_doc: 'EN 1090-2, BAM VER 001',        acceptance: 'Calibration/verification in date', intervention: 'R', frequency: 'Per schedule',  responsibility: 'BAMA', record_ref: 'BAM VER 001' },
+  { stage: 'Finishing',   activity: 'Surface preparation and coating',                     ref_doc: 'ISO 8501-1, coating spec',      acceptance: 'Preparation grade and dry film thickness to specification', intervention: 'S', frequency: 'Each batch',    responsibility: 'BAMA', record_ref: 'BAMA REL 001' },
+  { stage: 'Release',     activity: 'Final dimensional and visual inspection',             ref_doc: 'EN 1090-2, approved drawings',  acceptance: 'Tolerances met; part marks legible after erection', intervention: 'H', frequency: '100%',          responsibility: 'BAMA', record_ref: 'BAMA REL 001' },
+  { stage: 'Release',     activity: 'Release for despatch and Declaration of Performance', ref_doc: 'EN 1090-1',                     acceptance: 'All records complete; NDT sample satisfied; DoP issued', intervention: 'H', frequency: 'Each release', responsibility: 'BAMA', record_ref: 'BAMA REL 001 / DoP' },
+  { stage: 'Despatch',    activity: 'Loading, delivery note and site receipt',             ref_doc: 'Delivery note',                 acceptance: 'Quantities agreed; no transit damage', intervention: 'S', frequency: 'Each load',     responsibility: 'BAMA', record_ref: 'Delivery note / SDN' }
+];
+
+// Build the ITP rows for a plan. Pure function — deterministic, unit tested.
+// `plan` and `rules` are the same objects the E2 sampling uses, which is the
+// whole point: one source, so the ITP can never promise 10% while the register
+// requires 20%.
+function itpGenerateRows(plan, rules) {
+  if (!plan) return [];
+  const rows = [];
+  let seq = 0;
+  const push = r => rows.push({ ...r, seq: (seq += 10), is_auto: 1 });
+
+  ITP_TEMPLATE.forEach(t => {
+    push({ ...t });
+    // After fit-up, insert the inspection rows that come from the real plan.
+    if (t.activity.indexOf('Welding to approved WPS') === 0) {
+      let counts = {};
+      try { counts = plan.weld_counts ? JSON.parse(plan.weld_counts) : {}; } catch (_) { counts = {}; }
+      const cats = [...new Set([
+        ...Object.keys(counts),
+        ...(rules || []).filter(r => r.exec_class === plan.exec_class).map(r => r.weld_category)
+      ])];
+      cats.forEach(cat => {
+        const population = Number(counts[cat]) || 0;
+        const catRules = (rules || []).filter(r => r.exec_class === plan.exec_class && r.weld_category === cat);
+        const pct = catRules.length ? Math.max(...catRules.map(r => Number(r.pct_required) || 0)) : 0;
+        const unverified = catRules.some(r => !r.verified);
+        const method = (catRules[0] && catRules[0].method_hint) || 'UT or RT';
+
+        // Visual: always 100%, every category, every execution class.
+        push({
+          stage: 'Inspection',
+          activity: `Visual weld inspection — ${cat}`,
+          ref_doc: 'EN ISO 17637, EN 1090-2',
+          acceptance: `Quality level to EN ISO 5817 as specified for ${plan.exec_class}`,
+          intervention: 'H', frequency: '100% of welds',
+          responsibility: 'BAMA', record_ref: 'BAMA FAB 001',
+          ndt_category: cat, inspection_type: 'visual'
+        });
+        // Supplementary NDT: only where the verified rules require it.
+        if (pct > 0) {
+          const required = population ? Math.ceil(population * pct / 100) : null;
+          push({
+            stage: 'Inspection',
+            activity: `Supplementary NDT (${method}) — ${cat}`,
+            ref_doc: `EN 1090-2 Table 24, ${plan.exec_class}`,
+            acceptance: `Acceptance to EN ISO 5817 quality level for ${plan.exec_class}`
+                        + (unverified ? ' [extent to be confirmed against EN 1090-2 Table 24]' : ''),
+            intervention: 'W',
+            frequency: `${pct}% of category${required ? ` (${required} of ${population} welds)` : ''}`,
+            responsibility: 'Third party NDT',
+            record_ref: 'NDT report',
+            ndt_category: cat, inspection_type: method.indexOf('MT') === 0 ? 'MT' : 'UT',
+            notes: unverified ? 'Percentage not yet verified against EN 1090-2 Table 24' : null
+          });
+        }
+      });
+    }
+  });
+  return rows;
+}
+
+// Live achieved-vs-planned for an ITP row, read off the real inspection records.
+function itpRowProgress(row, plan, records) {
+  if (!row.ndt_category || !row.inspection_type) return null;
+  let counts = {};
+  try { counts = plan && plan.weld_counts ? JSON.parse(plan.weld_counts) : {}; } catch (_) {}
+  const population = Number(counts[row.ndt_category]) || 0;
+  if (row.inspection_type === 'visual') {
+    const done = (records || []).filter(r => r.weld_category === row.ndt_category && r.inspection_type === 'visual')
+                                .reduce((s, r) => s + (Number(r.weld_count) || 1), 0);
+    return { required: population, done, short: Math.max(0, population - done) };
+  }
+  const pctMatch = /(\d+(?:\.\d+)?)%/.exec(row.frequency || '');
+  const pct = pctMatch ? Number(pctMatch[1]) : 0;
+  const required = population && pct ? Math.ceil(population * pct / 100) : 0;
+  const done = (records || []).filter(r => r.weld_category === row.ndt_category && r.inspection_type !== 'visual')
+                              .reduce((s, r) => s + (Number(r.weld_count) || 1), 0);
+  return { required, done, short: Math.max(0, required - done) };
+}
+
+// ── ITP PDF — native jsPDF, landscape (per the CLAUDE.md PDF rule) ──────────
+function drawItpPDF(jsPDF, data, logoDataUri) {
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' });
+  try {
+    doc.setProperties({
+      title: `ITP — ${data.jobNumber || ''}`,
+      subject: `Inspection & Test Plan${data.jobName ? ' — ' + data.jobName : ''}`,
+      author: 'BAMA Fabrication', creator: 'BAMA Fabrication ERP'
+    });
+  } catch (e) { /* non-critical */ }
+
+  const pageW = 297, pageH = 210, mL = 10, mR = 10, mB = 12;
+  const usableW = pageW - mL - mR;
+  const accent = [255, 107, 0];
+  let y = 0;
+
+  const header = () => {
+    doc.setFillColor(24, 24, 27); doc.rect(0, 0, pageW, 22, 'F');
+    let tx = mL;
+    if (logoDataUri) {
+      try {
+        const props = doc.getImageProperties(logoDataUri);   // data URIs have no naturalWidth
+        const h = 12, w = h * (props.width / props.height);
+        doc.addImage(logoDataUri, mL, 5, w, h);
+        tx = mL + w + 5;
+      } catch (e) { /* logo optional */ }
+    }
+    doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
+    doc.text('INSPECTION & TEST PLAN', tx, 11);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(190, 190, 195);
+    doc.text([data.jobNumber, data.jobName, data.client].filter(Boolean).join('  ·  '), tx, 17);
+    doc.setTextColor(...accent); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+    doc.text(`Execution class ${data.execClass || ''}`, pageW - mR, 11, { align: 'right' });
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(190, 190, 195);
+    doc.text(`Rev ${data.rev || '01'}  ·  ${data.issueDate || ''}`, pageW - mR, 16.5, { align: 'right' });
+    y = 27;
+  };
+
+  // Intervention key — an ITP is useless if the reader can't decode H/W/S/R
+  const key = () => {
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(90, 90, 95);
+    doc.text('H = Hold point (work stops until released)   W = Witness (client invited, may proceed if absent)   '
+           + 'S = Surveillance (monitored)   R = Review of records', mL, y);
+    y += 5;
+  };
+
+  // Column widths must sum to usableW (277mm)
+  const cols = [
+    { k: 'stage',          w: 22, label: 'Stage' },
+    { k: 'activity',       w: 60, label: 'Activity' },
+    { k: 'ref_doc',        w: 42, label: 'Reference' },
+    { k: 'acceptance',     w: 62, label: 'Acceptance criteria' },
+    { k: 'intervention',   w: 12, label: 'Type', center: true },
+    { k: 'frequency',      w: 32, label: 'Frequency' },
+    { k: 'responsibility', w: 22, label: 'By' },
+    { k: 'record_ref',     w: 25, label: 'Record' }
+  ];
+
+  const tableHead = () => {
+    doc.setFillColor(240, 240, 242); doc.rect(mL, y, usableW, 7, 'F');
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(60, 60, 65);
+    let x = mL;
+    cols.forEach(c => {
+      doc.text(c.label, c.center ? x + c.w / 2 : x + 1.5, y + 4.7, c.center ? { align: 'center' } : undefined);
+      x += c.w;
+    });
+    y += 7;
+  };
+
+  header(); key(); tableHead();
+
+  const rows = data.rows || [];
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7);
+  rows.forEach((r, i) => {
+    // Measure the tallest wrapped cell before drawing, so nothing overlaps
+    const cells = cols.map(c => doc.splitTextToSize(String(r[c.k] ?? ''), c.w - 3));
+    const rowH = Math.max(6, Math.max(...cells.map(l => l.length)) * 3.1 + 2.6);
+    if (y + rowH > pageH - mB) { doc.addPage(); header(); tableHead(); doc.setFont('helvetica', 'normal'); doc.setFontSize(7); }
+
+    if (i % 2) { doc.setFillColor(249, 249, 250); doc.rect(mL, y, usableW, rowH, 'F'); }
+    // Hold points get a red left edge — the rows that stop work should be findable
+    if (r.intervention === 'H') { doc.setFillColor(220, 70, 70); doc.rect(mL, y, 1.2, rowH, 'F'); }
+
+    let x = mL;
+    cols.forEach((c, ci) => {
+      if (c.center) {
+        doc.setFont('helvetica', 'bold');
+        if (r.intervention === 'H') doc.setTextColor(200, 40, 40);
+        else if (r.intervention === 'W') doc.setTextColor(170, 120, 10);
+        else doc.setTextColor(70, 70, 75);
+        doc.text(String(r[c.k] ?? ''), x + c.w / 2, y + 4.4, { align: 'center' });
+        doc.setFont('helvetica', 'normal'); doc.setTextColor(40, 40, 45);
+      } else {
+        doc.setTextColor(40, 40, 45);
+        doc.text(cells[ci], x + 1.5, y + 4.2);
+      }
+      x += c.w;
+    });
+    doc.setDrawColor(226, 226, 230); doc.setLineWidth(0.1);
+    doc.line(mL, y + rowH, mL + usableW, y + rowH);
+    y += rowH;
+  });
+
+  // Signature block
+  if (y + 26 > pageH - mB) { doc.addPage(); header(); }
+  y += 6;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(40, 40, 45);
+  doc.text('Prepared by', mL, y);
+  doc.text('Client acceptance', mL + 100, y);
+  doc.setDrawColor(120, 120, 125); doc.setLineWidth(0.2);
+  doc.line(mL, y + 12, mL + 80, y + 12);
+  doc.line(mL + 100, y + 12, mL + 180, y + 12);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(110, 110, 115);
+  doc.text('Name / signature / date', mL, y + 16);
+  doc.text('Name / signature / date', mL + 100, y + 16);
+
+  // Footer on every page
+  const total = doc.getNumberOfPages();
+  for (let p = 1; p <= total; p++) {
+    doc.setPage(p);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5); doc.setTextColor(140, 140, 145);
+    doc.text('BAMA Fabrication Ltd  ·  Inspection & Test Plan  ·  generated from the live inspection plan', mL, pageH - 6);
+    doc.text(`Page ${p} of ${total}`, pageW - mR, pageH - 6, { align: 'right' });
+  }
+  return doc;
+}
+
+async function renderItpPdfBlob(data) {
+  const Ctor = resolveJsPDFCtor();
+  if (!Ctor) throw new Error('jsPDF not loaded on this page');
+  await loadLogoDataUri();
+  const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
+  const doc = drawItpPDF(Ctor, data, logo);
+  const blob = doc.output('blob');
+  console.log(`ITP PDF: ${(blob.size / 1024).toFixed(1)}KB`);   // <8KB = blank capture
+  if (blob.size < 8192) console.warn('ITP PDF suspiciously small — check the renderer');
+  return blob;
+}
+
+// ── ITP UI ──────────────────────────────────────────────────────────────────
+let _itpRows = [];
+
+async function itpOpen() {
+  if (!_inspPlan) { toast('Create the inspection plan first', 'error'); return; }
+  if (!document.getElementById('itpModal')) {
+    const div = document.createElement('div');
+    div.innerHTML = `<div id="itpModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:1001;align-items:flex-start;justify-content:center;padding:24px;overflow-y:auto">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:1180px;overflow:hidden">
+        <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <h3 style="margin:0;font-size:16px;flex:1">📋 Inspection &amp; Test Plan</h3>
+          <button class="btn btn-ghost btn-sm" onclick="itpRegenerate()">↻ Regenerate from plan</button>
+          <button class="btn btn-ghost btn-sm" onclick="itpAddRow()">＋ Row</button>
+          <button class="btn btn-primary btn-sm" onclick="itpMakePdf(false)">📄 PDF</button>
+          <button class="btn btn-primary btn-sm" onclick="itpMakePdf(true)">💾 PDF → SharePoint</button>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('itpModal').style.display='none'">✕</button>
+        </div>
+        <div id="itpBody" style="padding:14px 18px;max-height:80vh;overflow:auto"></div>
+      </div></div>`;
+    document.body.appendChild(div.firstElementChild);
+  }
+  document.getElementById('itpModal').style.display = 'flex';
+  document.getElementById('itpBody').innerHTML = '<div style="color:var(--muted);font-size:12px">Loading…</div>';
+  try { _itpRows = await api.get(`/api/itp-rows?plan_id=${_inspPlan.id}`); }
+  catch (e) {
+    document.getElementById('itpBody').innerHTML = `<div style="color:var(--red);font-size:12px">${escapeHtml(e.message)} — run api/sql/create-itp-rows.sql first.</div>`;
+    return;
+  }
+  if (!_itpRows.length) await itpRegenerate(true);
+  _itpRender();
+}
+
+function _itpRender() {
+  const host = document.getElementById('itpBody'); if (!host) return;
+  const cols = [
+    ['stage', 'Stage', 92], ['activity', 'Activity', 210], ['ref_doc', 'Reference', 150],
+    ['acceptance', 'Acceptance criteria', 220], ['frequency', 'Frequency', 120],
+    ['responsibility', 'By', 96], ['record_ref', 'Record', 110]
+  ];
+  const unverified = _itpRows.some(r => r.notes && /not yet verified/.test(r.notes));
+  host.innerHTML = `
+    <div style="font-size:11.5px;color:var(--muted);line-height:1.6;margin-bottom:10px">
+      Generated from this job's inspection plan — <strong>${escapeHtml(_inspPlan.exec_class)}</strong> and your verified NDT extents —
+      so the ITP and the register can never contradict each other. Visual is 100% on every category. Edit any cell and that row
+      becomes yours: <strong>Regenerate</strong> refreshes only the generated rows and leaves your edits and additions alone.
+      ${Object.entries(ITP_INTERVENTIONS).map(([k, v]) => `<span style="color:${v.color}">${v.label}</span>`).join(' · ')}
+    </div>
+    ${unverified ? `<div style="background:#3b2f0f;border:1px solid #eab308;border-radius:7px;padding:8px 12px;font-size:11.5px;color:#f0e0a4;margin-bottom:10px">
+      ⚠ At least one NDT extent on this plan is still unverified, so the document says "to be confirmed" in the acceptance column.
+      Verify the rules before issuing this to a client.</div>` : ''}
+    <table style="width:100%;border-collapse:collapse;font-size:11px">
+      <thead><tr>
+        ${cols.map(c => `<th style="text-align:left;padding:5px;font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--border)">${c[1]}</th>`).join('')}
+        <th style="text-align:center;padding:5px;font-size:9px;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--border)">Type</th>
+        <th style="text-align:left;padding:5px;font-size:9px;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--border)">Progress</th>
+        <th style="border-bottom:1px solid var(--border)"></th>
+      </tr></thead>
+      <tbody>${_itpRows.map((r, i) => {
+        const iv = ITP_INTERVENTIONS[r.intervention] || ITP_INTERVENTIONS.S;
+        const prog = itpRowProgress(r, _inspPlan, _inspRecords);
+        const cell = (k, w) => `<td style="padding:3px;border-bottom:1px solid var(--border)">
+          <input value="${escapeHtml(r[k] ?? '')}" onchange="itpEdit(${r.id}, '${k}', this.value)"
+            style="width:${w}px;max-width:100%;background:${r.is_auto ? 'transparent' : 'var(--surface)'};border:1px solid ${r.is_auto ? 'transparent' : 'var(--border)'};border-radius:4px;padding:3px 5px;color:var(--text);font-size:11px"></td>`;
+        return `<tr style="${i % 2 ? 'background:rgba(255,255,255,0.015);' : ''}${r.intervention === 'H' ? 'border-left:3px solid #ff6b6b;' : ''}">
+          ${cols.map(c => cell(c[0], c[2])).join('')}
+          <td style="padding:3px;border-bottom:1px solid var(--border);text-align:center">
+            <select onchange="itpEdit(${r.id}, 'intervention', this.value)"
+              style="background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:2px;color:${iv.color};font-weight:700;font-size:11px">
+              ${Object.keys(ITP_INTERVENTIONS).map(k => `<option value="${k}" ${k === r.intervention ? 'selected' : ''}>${k}</option>`).join('')}
+            </select></td>
+          <td style="padding:3px;border-bottom:1px solid var(--border);font-size:10.5px;white-space:nowrap">
+            ${prog ? `<span style="color:${prog.short ? '#eab308' : '#3ecf8e'}">${prog.done}/${prog.required || 0}${prog.short ? ` (${prog.short} short)` : ' ✓'}</span>` : '<span style="color:var(--border)">—</span>'}</td>
+          <td style="padding:3px;border-bottom:1px solid var(--border)">
+            <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="itpDeleteRow(${r.id})">🗑</button></td>
+        </tr>`;
+      }).join('')}</tbody></table>`;
+}
+
+async function itpRegenerate(silent) {
+  if (!silent && !await bamaConfirm(
+      'Regenerate the generated rows from the current inspection plan?<br><br><span style="font-size:12px;color:var(--muted)">Rows you have edited or added by hand are kept — only the automatically generated ones are refreshed.</span>',
+      'Regenerate ITP')) return;
+  try {
+    const rows = itpGenerateRows(_inspPlan, _ndtRules);
+    const res = await api.post('/api/itp-rows-bulk', { plan_id: _inspPlan.id, job_id: _inspJob, rows });
+    _itpRows = await api.get(`/api/itp-rows?plan_id=${_inspPlan.id}`);
+    if (!silent) toast(`${res.inserted} rows generated${res.hand_added_kept ? `, ${res.hand_added_kept} of your own kept` : ''}`, 'success');
+    _itpRender();
+  } catch (e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+async function itpEdit(id, field, value) {
+  try {
+    await api.put(`/api/itp-rows/${id}`, { [field]: value });
+    const r = _itpRows.find(x => x.id === id);
+    if (r) { r[field] = value; r.is_auto = 0; }
+    _itpRender();
+  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+async function itpAddRow() {
+  try {
+    const maxSeq = _itpRows.reduce((m, r) => Math.max(m, Number(r.seq) || 0), 0);
+    await api.post('/api/itp-rows', {
+      plan_id: _inspPlan.id, job_id: _inspJob, seq: maxSeq + 10,
+      activity: 'New activity', intervention: 'S', responsibility: 'BAMA', is_auto: 0
+    });
+    _itpRows = await api.get(`/api/itp-rows?plan_id=${_inspPlan.id}`);
+    _itpRender();
+  } catch (e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+async function itpDeleteRow(id) {
+  const r = _itpRows.find(x => x.id === id);
+  if (!await bamaConfirm(`Remove "${escapeHtml((r && r.activity) || 'this row')}" from the ITP?`, 'Delete Row')) return;
+  try {
+    await api.delete(`/api/itp-rows/${id}`);
+    _itpRows = _itpRows.filter(x => x.id !== id);
+    _itpRender();
+  } catch (e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+async function itpMakePdf(toSharePoint) {
+  try {
+    let job = null;
+    try { job = (await api.get('/api/projects')).find(p => String(p.id) === String(_inspJob)); } catch (_) {}
+    const blob = await renderItpPdfBlob({
+      jobNumber: job ? (job.job_number || '') : '',
+      jobName: job ? (job.name || '') : '',
+      client: job ? (job.client_name || '') : '',
+      execClass: _inspPlan.exec_class,
+      issueDate: new Date().toISOString().slice(0, 10),
+      rev: '01',
+      rows: _itpRows
+    });
+    const name = `ITP - ${(job && job.job_number) || 'job'} - ${new Date().toISOString().slice(0, 10)}.pdf`;
+    if (!toSharePoint) {
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+      toast('ITP opened — check it before issuing', 'success');
+      return;
+    }
+    const folder = await findProjectFolder(_inspJob);
+    if (!folder) { toast('Job folder not found in SharePoint — the PDF opened instead', 'warning'); window.open(URL.createObjectURL(blob), '_blank'); return; }
+    const up = await uploadFileToFolder(folder.id, name, await blob.arrayBuffer(), 'application/pdf', BAMA_DRIVE_ID);
+    toast('ITP saved to the job folder', 'success');
+    if (up.webUrl) window.open(up.webUrl, '_blank');
+  } catch (e) { toast('PDF failed: ' + e.message, 'error'); }
 }

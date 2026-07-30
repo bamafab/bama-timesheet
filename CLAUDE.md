@@ -1287,6 +1287,41 @@ guarded query, never folded into `ITEM_COLS`, so the register still loads before
 the migration runs. Pinned by `tests/plant-welding-sync.js` (26 cases, mostly
 safety properties).
 
+## Inspection & Test Plan (F1a, 2026-07-30 — Office › Inspection & NDT › 📋 ITP)
+
+`ItpRows` hangs off `JobInspectionPlans` so the ITP and the real NDT sampling
+read the SAME exec class and the SAME verified `NdtExtentRules` percentages —
+they cannot drift apart. `api/sql/create-itp-rows.sql` (new table, no restart);
+API `api/src/functions/itp.js`.
+
+**NO AI in this generator, deliberately.** `itpGenerateRows(plan, rules)` is a
+pure function over `ITP_TEMPLATE` (the standard BAMA activity list, held as data
+so it can be edited in one place) plus the job's weld categories. An ITP is a
+factual schedule; an invented acceptance criterion or hold point would be a
+liability. Visual rows are always 100% and always intervention `H`; NDT rows
+appear only where a verified percentage is non-zero, spell out the count
+("10% of category (8 of 80 welds)"), and carry a "[extent to be confirmed
+against EN 1090-2 Table 24]" caveat plus a note whenever the rule is still
+unverified — so an unverified figure cannot be issued to a client silently.
+
+**Regeneration never destroys the user's work.** Rows are `is_auto = 1` when
+generated; editing any cell sets `is_auto = 0` ("it's yours now"), and
+`POST /api/itp-rows-bulk` soft-deletes only the auto rows. A client's
+hand-added witness point survives regeneration — losing one silently would be
+worse than not regenerating at all. The response reports `hand_added_kept`.
+
+`itpRowProgress()` gives live achieved-vs-planned per row off the real
+inspection records, shown in the modal (`3/8 (5 short)`), returning `null` for
+non-inspection rows rather than a misleading zero.
+PDF: `drawItpPDF` / `renderItpPdfBlob` — native jsPDF, **landscape** (ITP tables
+are wide), columns summing exactly to the 277mm usable width, row height
+measured from the tallest wrapped cell before drawing, repeating table header on
+page break, red left edge on hold points, intervention key printed on every page
+(an ITP is useless if H/W/S/R can't be decoded), signature block, "Page X of Y",
+blob-size diagnostic. Saves to the job's SharePoint folder via
+`findProjectFolder`. Pinned by `tests/itp-generate.js` (33 cases, including that
+the ITP's count equals `_inspProgress`'s required count at both EXC2 and EXC3).
+
 ## Modal → Page mapping
 
 Every `id=…Modal` element in the HTML, by page. Handy when tracing an

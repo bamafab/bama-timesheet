@@ -954,6 +954,16 @@
       "seedForms": []
     },
     {
+      "script": "create-itp-rows.sql",
+      "title": "One ITP per job, hung off the existing JobInspectionPlans row so the ITP and",
+      "kind": "structural",
+      "tables": [
+        "ItpRows"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
       "script": "create-labour-log.sql",
       "title": "LabourLog \u2014 the locked audit record of approved hours, fed from ProjectHours",
       "kind": "structural",
