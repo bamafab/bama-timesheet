@@ -1062,6 +1062,35 @@ personnel picker uses); ＋ Cert type posts to CertTypes (user-editable list
 per the 2b decision). Daniel is no longer involved in the ERP (2026-07-30)
 — Mateusz owns schema/infra decisions; QB Won→Project is unblocked.
 
+## D4 phase 2 — rich QMS field types (2026-07-30)
+
+Engine still definition-driven (**new sheet = SQL INSERT, no code**), now with
+the field types the bigger FPC sheets need. `_qmsFieldHtml()` renders,
+`_qmsHydratePickers()` fills live ERP data, `_qmsInitSignatures()` wires
+canvases:
+- **job** → live projects (non-Closed) from /api/projects; **machine** →
+  /api/welding-machines; **personnel** → shared SitePersonnel roster
+  (multi-select chips, same roster as RAMS + Training Matrix); **drawing** →
+  select with free-text fallback. Every picker degrades to a plain text input
+  if its API is unavailable, so a sheet is never un-fillable.
+- **photo** → `capture="environment"` (phone camera), preview thumb, embedded
+  in the PDF via `getImageProperties` proportions.
+- **signature** → finger/mouse canvas (touch handlers `passive:false`),
+  PNG embedded; `_qmsSigTouched` means an untouched pad saves nothing.
+- **table** → repeating rows with `columns` from the definition; rendered as a
+  mini grid in the PDF with header + zebra-free rows; blank rows dropped.
+- **yesno** supports `allowNa: true` for a third N/A button.
+Images live in the PDF only — never in the submission JSON (size).
+`api/sql/seed-qms-forms-phase2.sql` adds the remaining 7 sheets:
+BAMA tec 001 (contract review), CON 001 (consumables), BAMA MAT 001 (material
+receiving, with cert photo), BAMA FAB 001 (fabrication inspection, dual
+signature), BAMA REL 001 (final release), BAMA SITE 001 (site daily),
+BAMA CAR 001 (NCR/CAR). Validated: 7 definitions, 96 fields, all types known.
+
+**Training Matrix:** tapping a person's name opens `tmEditModal` — name, site
+role, phone, company and a **Direct employee ↔ Subcontractor** toggle (people
+move both ways as work demands), via the existing PUT /api/site-personnel/{id}.
+
 ## Modal → Page mapping
 
 Every `id=…Modal` element in the HTML, by page. Handy when tracing an

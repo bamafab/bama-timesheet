@@ -46609,24 +46609,14 @@ function openQmsForm(formId) {
         </div></div></div>`;
     document.body.appendChild(div.firstElementChild);
   }
+  _qmsPhotos = {}; _qmsPersonnelSel = {}; _qmsTableData = {};
   document.getElementById('qmsFormTitle').textContent = `${_qmsActiveForm.form_code} — ${_qmsActiveForm.title}`;
-  const inputStyle = 'width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);box-sizing:border-box;font-size:13px';
-  document.getElementById('qmsFormBody').innerHTML = def.fields.map(f => {
-    const req = f.required ? ' <span style="color:var(--red)">*</span>' : '';
-    if (f.type === 'yesno') return `<div><label style="color:var(--muted);display:block;margin-bottom:4px">${escapeHtml(f.label)}${req}</label>
-      <div style="display:flex;gap:8px"><button class="btn btn-ghost btn-sm qms-yn" data-key="${f.key}" data-val="Yes" onclick="qmsYn(this)" style="flex:1">✓ Yes</button>
-      <button class="btn btn-ghost btn-sm qms-yn" data-key="${f.key}" data-val="No" onclick="qmsYn(this)" style="flex:1">✗ No</button></div>
-      <input type="hidden" id="qf_${f.key}"></div>`;
-    if (f.type === 'select') return `<div><label style="color:var(--muted);display:block;margin-bottom:4px">${escapeHtml(f.label)}${req}</label>
-      <select id="qf_${f.key}" style="${inputStyle}"><option value=""></option>${(f.options || []).map(o => `<option>${escapeHtml(o)}</option>`).join('')}</select></div>`;
-    if (f.type === 'textarea') return `<div><label style="color:var(--muted);display:block;margin-bottom:4px">${escapeHtml(f.label)}${req}</label>
-      <textarea id="qf_${f.key}" rows="2" style="${inputStyle};resize:vertical"></textarea></div>`;
-    return `<div><label style="color:var(--muted);display:block;margin-bottom:4px">${escapeHtml(f.label)}${req}</label>
-      <input id="qf_${f.key}" type="${f.type === 'date' ? 'date' : f.type === 'number' ? 'number' : 'text'}" style="${inputStyle}"></div>`;
-  }).join('');
+  document.getElementById('qmsFormBody').innerHTML = def.fields.map(f => _qmsFieldHtml(f)).join('');
   // Sensible defaults
   const dateField = def.fields.find(f => f.type === 'date');
   if (dateField) { const el = document.getElementById('qf_' + dateField.key); if (el && !el.value) el.value = new Date().toISOString().slice(0, 10); }
+  _qmsHydratePickers(def);      // async: fills job/machine/personnel/drawing options
+  _qmsInitSignatures(def);      // finger-draw canvases
   document.getElementById('qmsFormStatus').textContent = '';
   document.getElementById('qmsFormModal').style.display = 'flex';
 }
@@ -46643,9 +46633,15 @@ function qmsYn(btn) {
 async function submitQmsForm() {
   const form = _qmsActiveForm; if (!form) return;
   const def = JSON.parse(form.definition);
-  const answers = {};
-  for (const f of def.fields) answers[f.key] = (document.getElementById('qf_' + f.key)?.value || '').trim();
-  const missing = def.fields.filter(f => f.required && !answers[f.key]);
+  const answers = {}; const images = {};
+  for (const f of def.fields) {
+    if (f.type === 'photo')      { images[f.key] = _qmsPhotos[f.key] || null; answers[f.key] = _qmsPhotos[f.key] ? 'photo attached' : ''; continue; }
+    if (f.type === 'signature')  { images[f.key] = _qmsSigData(f.key);        answers[f.key] = images[f.key] ? 'signed' : ''; continue; }
+    if (f.type === 'personnel')  { answers[f.key] = (_qmsPersonnelSel[f.key] || []).join(', '); continue; }
+    if (f.type === 'table')      { answers[f.key] = _qmsTableRows(f); continue; }
+    answers[f.key] = (document.getElementById('qf_' + f.key)?.value || '').trim();
+  }
+  const missing = def.fields.filter(f => f.required && (Array.isArray(answers[f.key]) ? !answers[f.key].length : !answers[f.key]));
   const status = document.getElementById('qmsFormStatus'), btn = document.getElementById('qmsGoBtn');
   if (missing.length) { status.textContent = 'Required: ' + missing.map(f => f.label).join(', '); return; }
   btn.disabled = true; status.textContent = 'Rendering PDF…';
@@ -46658,8 +46654,41 @@ async function submitQmsForm() {
     doc.text(`${form.form_code} — ${form.title}`, M, y); y += 9;
     doc.setFontSize(10);
     for (const f of def.fields) {
+      if (y > 262) { doc.addPage(); y = 22; }
+      // Tables render as their own mini grid
+      if (f.type === 'table') {
+        const rows = answers[f.key] || [];
+        doc.setFont('helvetica', 'bold'); doc.text(f.label + ':', M, y); y += 5;
+        doc.setFontSize(9);
+        const cols = f.columns || [];
+        const colW = (W - 2 * M) / Math.max(1, cols.length);
+        doc.setFont('helvetica', 'bold');
+        cols.forEach((c, i) => doc.text(String(c), M + i * colW, y));
+        y += 4; doc.setDrawColor(200); doc.line(M, y - 2.5, W - M, y - 2.5);
+        doc.setFont('helvetica', 'normal');
+        for (const r of rows) {
+          if (y > 272) { doc.addPage(); y = 22; }
+          cols.forEach((c, i) => doc.text(String(r[i] ?? '').slice(0, 28), M + i * colW, y));
+          y += 4.6;
+        }
+        if (!rows.length) { doc.text('— none recorded —', M, y); y += 4.6; }
+        doc.setFontSize(10); y += 3; continue;
+      }
+      // Images (photo / signature)
+      if ((f.type === 'photo' || f.type === 'signature') && images[f.key]) {
+        doc.setFont('helvetica', 'normal'); doc.text(f.label + ':', M, y); y += 4;
+        try {
+          const props = doc.getImageProperties(images[f.key]);
+          const maxW = f.type === 'signature' ? 70 : 90;
+          const h = Math.min(f.type === 'signature' ? 22 : 70, (props.height / props.width) * maxW);
+          const w = (props.width / props.height) * h;
+          if (y + h > 275) { doc.addPage(); y = 22; }
+          doc.addImage(images[f.key], f.type === 'signature' ? 'PNG' : undefined, M, y, w, h);
+          y += h + 5;
+        } catch (imgErr) { doc.text('(image could not be embedded)', M, y); y += 6; }
+        continue;
+      }
       const val = answers[f.key] || '—';
-      if (y > 268) { doc.addPage(); y = 22; }
       doc.setFont('helvetica', 'normal'); doc.text(f.label + ':', M, y);
       doc.setFont('helvetica', 'bold');
       const lines = doc.splitTextToSize(String(val), 85);
@@ -46673,13 +46702,13 @@ async function submitQmsForm() {
     console.log('QMS PDF size:', blob.size);
     status.textContent = 'Filing to SharePoint…';
     const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ').replace(':', '');
-    const keyBit = answers.machine || answers.instrument || '';
+    const keyBit = answers.machine || answers.instrument || answers.job || answers.contract_no || '';
     const fileName = `${form.form_code} - ${keyBit ? keyBit + ' - ' : ''}${stamp}.pdf`.replace(/[~"#%&*:<>?{|}/\\]/g, '-');
     const folder = await qmsTargetFolder(def.folder);
     const up = await uploadFileToFolder(folder.id, fileName, await blob.arrayBuffer(), 'application/pdf', BAMA_DRIVE_ID);
     status.textContent = 'Registering…';
     await api.post('/api/qms-submissions', {
-      form_id: form.id, form_code: form.form_code, answers,
+      form_id: form.id, form_code: form.form_code, answers,   // images stay in the PDF, not the JSON
       file_name: fileName, sharepoint_file_id: up.id, web_url: up.webUrl || null
     });
     toast(`${form.form_code} submitted & filed`, 'success');
@@ -46785,7 +46814,8 @@ function _tmRenderGrid() {
     const typeBadge = p.type === 'subcontractor'
       ? '<span style="font-size:9px;color:#a855f7;border:1px solid #a855f755;border-radius:4px;padding:0 4px;margin-left:5px">SUB</span>' : '';
     return `<tr style="${zebra}">
-      <td style="padding:7px 10px;border-bottom:1px solid var(--border);position:sticky;left:0;background:var(--surface);z-index:2;white-space:nowrap">
+      <td onclick="tmEditPerson(${p.id})" title="Edit person / change staff↔subcontractor"
+        style="padding:7px 10px;border-bottom:1px solid var(--border);position:sticky;left:0;background:var(--surface);z-index:2;white-space:nowrap;cursor:pointer">
         <div style="font-weight:600">${escapeHtml(p.name)}${typeBadge}</div>
         <div style="font-size:10px;color:var(--muted)">${escapeHtml(p.site_role || '')}${p.company ? ' · ' + escapeHtml(p.company) : ''}</div>
       </td>
@@ -46965,4 +46995,262 @@ function tmExportCsv() {
   a.download = `training-matrix-${new Date().toISOString().slice(0, 10)}.csv`;
   a.click(); URL.revokeObjectURL(a.href);
   toast('CSV downloaded', 'success');
+}
+
+// ── Training matrix: edit a person (staff ↔ subcontractor, role, company) ────
+// Uses the existing PUT /api/site-personnel/{id}; people move between direct
+// employment and subcontract as work demands, so this must be a two-way switch.
+let _tmEditId = null;
+function tmEditPerson(id) {
+  const p = _tmPeople.find(x => x.id === id); if (!p) return;
+  _tmEditId = id;
+  if (!document.getElementById('tmEditModal')) {
+    const div = document.createElement('div');
+    div.innerHTML = `<div id="tmEditModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:1002;align-items:center;justify-content:center;padding:20px">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:420px;padding:18px">
+        <h3 id="tmEditTitle" style="margin:0 0 12px;font-size:14.5px"></h3>
+        <div style="display:grid;gap:8px;font-size:12px">
+          <div><label style="font-size:10.5px;color:var(--muted)">Name</label>
+            <input id="tmeName" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);box-sizing:border-box"></div>
+          <div><label style="font-size:10.5px;color:var(--muted)">Site role</label>
+            <input id="tmeRole" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);box-sizing:border-box"></div>
+          <div><label style="font-size:10.5px;color:var(--muted)">Engagement</label>
+            <div style="display:flex;gap:8px;margin-top:3px">
+              <button class="btn btn-ghost btn-sm tme-type" data-val="staff" onclick="tmePickType(this)" style="flex:1">👷 Direct employee</button>
+              <button class="btn btn-ghost btn-sm tme-type" data-val="subcontractor" onclick="tmePickType(this)" style="flex:1">🤝 Subcontractor</button>
+            </div><input type="hidden" id="tmeType"></div>
+          <div id="tmeCompanyWrap"><label style="font-size:10.5px;color:var(--muted)">Company (subcontractors)</label>
+            <input id="tmeCompany" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);box-sizing:border-box"></div>
+          <div><label style="font-size:10.5px;color:var(--muted)">Phone</label>
+            <input id="tmePhone" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);box-sizing:border-box"></div>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('tmEditModal').style.display='none'">Cancel</button>
+          <button class="btn btn-primary btn-sm" onclick="tmSaveEditPerson()">💾 Save</button>
+        </div></div></div>`;
+    document.body.appendChild(div.firstElementChild);
+  }
+  document.getElementById('tmEditTitle').textContent = `Edit — ${p.name}`;
+  document.getElementById('tmeName').value = p.name || '';
+  document.getElementById('tmeRole').value = p.site_role || '';
+  document.getElementById('tmeCompany').value = p.company || '';
+  document.getElementById('tmePhone').value = p.phone || '';
+  document.getElementById('tmeType').value = p.type || 'staff';
+  document.querySelectorAll('.tme-type').forEach(b => tmePaintType(b, b.dataset.val === (p.type || 'staff')));
+  document.getElementById('tmEditModal').style.display = 'flex';
+}
+function tmePaintType(btn, on) {
+  btn.style.background = on ? (btn.dataset.val === 'staff' ? 'rgba(59,130,246,.2)' : 'rgba(168,85,247,.2)') : '';
+  btn.style.borderColor = on ? (btn.dataset.val === 'staff' ? '#3b82f6' : '#a855f7') : 'var(--border)';
+}
+function tmePickType(btn) {
+  document.querySelectorAll('.tme-type').forEach(b => tmePaintType(b, b === btn));
+  document.getElementById('tmeType').value = btn.dataset.val;
+}
+async function tmSaveEditPerson() {
+  const name = document.getElementById('tmeName').value.trim();
+  if (!name) { toast('Name is required', 'error'); return; }
+  try {
+    await api.put(`/api/site-personnel/${_tmEditId}`, {
+      name, site_role: document.getElementById('tmeRole').value.trim(),
+      type: document.getElementById('tmeType').value,
+      company: document.getElementById('tmeCompany').value.trim(),
+      phone: document.getElementById('tmePhone').value.trim()
+    });
+    document.getElementById('tmEditModal').style.display = 'none';
+    toast('Updated', 'success');
+    renderTrainingTab();
+  } catch (e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// D4 PHASE 2 — rich field types for the QMS engine (2026-07-30)
+// Adds: job / machine / drawing / personnel pickers (live ERP data — the
+// reason paper can't compete), photo capture, finger-drawn signatures and
+// repeating tables. Still definition-driven: a new sheet is a SQL INSERT.
+// ═══════════════════════════════════════════════════════════════════════════
+
+let _qmsPhotos = {};          // key → dataURI
+let _qmsPersonnelSel = {};    // key → [names]
+let _qmsTableData = {};       // key → [[c1,c2,…], …]
+const _QMS_INPUT = 'width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);box-sizing:border-box;font-size:13px';
+
+function _qmsFieldHtml(f) {
+  const req = f.required ? ' <span style="color:var(--red)">*</span>' : '';
+  const lbl = `<label style="color:var(--muted);display:block;margin-bottom:4px">${escapeHtml(f.label)}${req}</label>`;
+  switch (f.type) {
+    case 'yesno':
+      return `<div>${lbl}<div style="display:flex;gap:8px">
+        <button class="btn btn-ghost btn-sm qms-yn" data-key="${f.key}" data-val="Yes" onclick="qmsYn(this)" style="flex:1">✓ Yes</button>
+        <button class="btn btn-ghost btn-sm qms-yn" data-key="${f.key}" data-val="No" onclick="qmsYn(this)" style="flex:1">✗ No</button>
+        ${f.allowNa ? `<button class="btn btn-ghost btn-sm qms-yn" data-key="${f.key}" data-val="N/A" onclick="qmsYn(this)" style="flex:1">N/A</button>` : ''}
+        </div><input type="hidden" id="qf_${f.key}"></div>`;
+    case 'select':
+      return `<div>${lbl}<select id="qf_${f.key}" style="${_QMS_INPUT}"><option value=""></option>${(f.options || []).map(o => `<option>${escapeHtml(o)}</option>`).join('')}</select></div>`;
+    case 'textarea':
+      return `<div>${lbl}<textarea id="qf_${f.key}" rows="${f.rows || 2}" style="${_QMS_INPUT};resize:vertical"></textarea></div>`;
+    case 'job': case 'machine': case 'drawing':
+      return `<div>${lbl}<select id="qf_${f.key}" style="${_QMS_INPUT}" data-picker="${f.type}"><option value="">Loading…</option></select></div>`;
+    case 'personnel':
+      return `<div>${lbl}<div id="qfp_${f.key}" data-key="${f.key}"
+        style="display:flex;flex-wrap:wrap;gap:5px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px;min-height:34px">
+        <span style="font-size:11.5px;color:var(--muted)">Loading roster…</span></div></div>`;
+    case 'photo':
+      return `<div>${lbl}<input type="file" accept="image/*" capture="environment" onchange="qmsPhotoPick('${f.key}', this)"
+          style="font-size:12px;color:var(--text)">
+        <div id="qfimg_${f.key}" style="margin-top:6px"></div></div>`;
+    case 'signature':
+      return `<div>${lbl}<canvas id="qfsig_${f.key}" width="440" height="120"
+          style="width:100%;height:110px;background:#fff;border:1px solid var(--border);border-radius:6px;touch-action:none;cursor:crosshair"></canvas>
+        <div style="text-align:right;margin-top:3px"><button class="btn btn-ghost btn-sm" onclick="qmsSigClear('${f.key}')">Clear</button></div></div>`;
+    case 'table':
+      return `<div>${lbl}<div id="qft_${f.key}"></div>
+        <button class="btn btn-ghost btn-sm" onclick="qmsTableAddRow('${f.key}')" style="margin-top:5px">＋ Add row</button></div>`;
+    default:
+      return `<div>${lbl}<input id="qf_${f.key}" type="${f.type === 'date' ? 'date' : f.type === 'number' ? 'number' : 'text'}" style="${_QMS_INPUT}"></div>`;
+  }
+}
+
+// ── Picker hydration (live ERP data) ────────────────────────────────────────
+async function _qmsHydratePickers(def) {
+  const need = t => def.fields.some(f => f.type === t);
+  // Jobs
+  if (need('job') || need('drawing')) {
+    try {
+      const projects = await api.get('/api/projects');
+      const live = (projects || []).filter(p => p.status !== 'Closed');
+      for (const f of def.fields.filter(x => x.type === 'job')) {
+        const el = document.getElementById('qf_' + f.key);
+        if (el) el.innerHTML = '<option value=""></option>' + live.map(p =>
+          `<option value="${escapeHtml(p.project_number + ' — ' + p.project_name)}">${escapeHtml(p.project_number + ' — ' + p.project_name)}</option>`).join('');
+      }
+      for (const f of def.fields.filter(x => x.type === 'drawing')) {
+        const el = document.getElementById('qf_' + f.key);
+        if (el) el.innerHTML = '<option value="">— type below if not listed —</option>';
+      }
+    } catch (_) {
+      for (const f of def.fields.filter(x => x.type === 'job' || x.type === 'drawing')) {
+        const el = document.getElementById('qf_' + f.key);
+        if (el) el.outerHTML = `<input id="qf_${f.key}" type="text" placeholder="Type job/drawing ref" style="${_QMS_INPUT}">`;
+      }
+    }
+  }
+  // Welding machines
+  if (need('machine')) {
+    try {
+      const machines = await api.get('/api/welding-machines');
+      for (const f of def.fields.filter(x => x.type === 'machine')) {
+        const el = document.getElementById('qf_' + f.key);
+        if (el) el.innerHTML = '<option value=""></option>' + (machines || []).map(m =>
+          `<option value="${escapeHtml(m.machine_name)}">${escapeHtml(m.machine_name)}${m.serial_number ? ' (' + escapeHtml(m.serial_number) + ')' : ''}</option>`).join('');
+      }
+    } catch (_) {
+      for (const f of def.fields.filter(x => x.type === 'machine')) {
+        const el = document.getElementById('qf_' + f.key);
+        if (el) el.outerHTML = `<input id="qf_${f.key}" type="text" placeholder="Machine ID" style="${_QMS_INPUT}">`;
+      }
+    }
+  }
+  // Personnel (shared roster — same one as RAMS & the training matrix)
+  if (need('personnel')) {
+    let people = [];
+    try { people = await api.get('/api/site-personnel'); } catch (_) {}
+    for (const f of def.fields.filter(x => x.type === 'personnel')) {
+      const host = document.getElementById('qfp_' + f.key);
+      if (!host) continue;
+      _qmsPersonnelSel[f.key] = [];
+      host.innerHTML = people.length ? people.map(p =>
+        `<button class="btn btn-ghost btn-sm qms-person" data-key="${f.key}" data-name="${escapeHtml(p.name)}"
+          onclick="qmsTogglePerson(this)" style="font-size:11.5px;padding:3px 9px">${escapeHtml(p.name)}</button>`).join('')
+        : '<span style="font-size:11.5px;color:var(--muted)">Roster empty — add people in the Training Matrix.</span>';
+    }
+  }
+  // Tables: seed one blank row
+  for (const f of def.fields.filter(x => x.type === 'table')) { _qmsTableData[f.key] = [[]]; _qmsRenderTable(f); }
+}
+
+function qmsTogglePerson(btn) {
+  const key = btn.dataset.key, name = btn.dataset.name;
+  const sel = _qmsPersonnelSel[key] = _qmsPersonnelSel[key] || [];
+  const i = sel.indexOf(name);
+  if (i >= 0) { sel.splice(i, 1); btn.style.background = ''; btn.style.borderColor = 'var(--border)'; btn.style.color = ''; }
+  else { sel.push(name); btn.style.background = 'rgba(224,94,0,.2)'; btn.style.borderColor = 'var(--accent)'; btn.style.color = 'var(--text)'; }
+}
+
+// ── Photos ──────────────────────────────────────────────────────────────────
+async function qmsPhotoPick(key, input) {
+  const file = input.files[0]; if (!file) return;
+  try {
+    const dataUri = await _fileToDataUri(file);
+    _qmsPhotos[key] = dataUri;
+    document.getElementById('qfimg_' + key).innerHTML =
+      `<img src="${dataUri}" style="max-width:160px;border-radius:6px;border:1px solid var(--border)">`;
+  } catch (e) { toast('Could not read photo: ' + e.message, 'error'); }
+}
+
+// ── Signature canvases (finger / mouse) ─────────────────────────────────────
+const _qmsSigTouched = {};
+function _qmsInitSignatures(def) {
+  for (const f of def.fields.filter(x => x.type === 'signature')) {
+    const c = document.getElementById('qfsig_' + f.key);
+    if (!c) continue;
+    _qmsSigTouched[f.key] = false;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+    ctx.strokeStyle = '#111'; ctx.lineWidth = 2.2; ctx.lineCap = 'round';
+    let drawing = false;
+    const pos = e => {
+      const r = c.getBoundingClientRect();
+      const p = e.touches ? e.touches[0] : e;
+      return [(p.clientX - r.left) * (c.width / r.width), (p.clientY - r.top) * (c.height / r.height)];
+    };
+    const start = e => { e.preventDefault(); drawing = true; _qmsSigTouched[f.key] = true; const [x, y] = pos(e); ctx.beginPath(); ctx.moveTo(x, y); };
+    const move  = e => { if (!drawing) return; e.preventDefault(); const [x, y] = pos(e); ctx.lineTo(x, y); ctx.stroke(); };
+    const end   = () => { drawing = false; };
+    c.addEventListener('mousedown', start); c.addEventListener('mousemove', move);
+    c.addEventListener('mouseup', end);     c.addEventListener('mouseleave', end);
+    c.addEventListener('touchstart', start, { passive: false });
+    c.addEventListener('touchmove', move, { passive: false });
+    c.addEventListener('touchend', end);
+  }
+}
+function qmsSigClear(key) {
+  const c = document.getElementById('qfsig_' + key); if (!c) return;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.strokeStyle = '#111'; ctx.lineWidth = 2.2; ctx.lineCap = 'round';
+  _qmsSigTouched[key] = false;
+}
+function _qmsSigData(key) {
+  if (!_qmsSigTouched[key]) return null;
+  const c = document.getElementById('qfsig_' + key);
+  return c ? c.toDataURL('image/png') : null;
+}
+
+// ── Repeating tables ────────────────────────────────────────────────────────
+function _qmsRenderTable(f) {
+  const host = document.getElementById('qft_' + f.key); if (!host) return;
+  const cols = f.columns || [];
+  const rows = _qmsTableData[f.key] || [];
+  host.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:11.5px">
+    <thead><tr>${cols.map(c => `<th style="text-align:left;padding:2px 4px;color:var(--muted);font-size:10px">${escapeHtml(c)}</th>`).join('')}<th></th></tr></thead>
+    <tbody>${rows.map((r, ri) => `<tr>${cols.map((c, ci) =>
+      `<td style="padding:2px"><input value="${escapeHtml(r[ci] || '')}"
+        onchange="_qmsTableData['${f.key}'][${ri}][${ci}]=this.value"
+        style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:4px 6px;color:var(--text);font-size:11.5px;box-sizing:border-box"></td>`).join('')}
+      <td style="padding:2px"><button class="btn btn-ghost btn-sm" style="color:var(--red);padding:2px 6px"
+        onclick="_qmsTableData['${f.key}'].splice(${ri},1);_qmsRenderTableByKey('${f.key}')">✕</button></td></tr>`).join('')}
+    </tbody></table>`;
+}
+function _qmsRenderTableByKey(key) {
+  const def = JSON.parse(_qmsActiveForm.definition);
+  const f = def.fields.find(x => x.key === key);
+  if (f) _qmsRenderTable(f);
+}
+function qmsTableAddRow(key) {
+  (_qmsTableData[key] = _qmsTableData[key] || []).push([]);
+  _qmsRenderTableByKey(key);
+}
+function _qmsTableRows(f) {
+  return (_qmsTableData[f.key] || []).filter(r => r.some(v => (v || '').trim()));
 }
