@@ -86,3 +86,56 @@ sheets don't need code.
 Order rationale: D0 unblocks everything; D1/D2 are independent after that;
 D3 needs a contract template from Mateusz; D4 is the largest and benefits
 from the taxonomy + form-engine groundwork.
+
+### Phase D status — 2026-07-30
+
+- **D0** tree created + ERP repointed (root `BAMA`, IDs in `SP_TAX`).
+  **Outstanding: Mateusz runs the legacy content migration** in
+  `sp-migrate.html` (Auto-map → dry-run → execute; move-log CSV is the undo).
+- **D1** ✅ Company docs register — office.html › Company Docs, drag&drop AI
+  import, expiry strip on ED.
+- **D2** ✅ Supplier records — FPC s9 approval status + SupplierDocuments.
+- **D3** ✅ Employee docs + contract generator; **D3b** ✅ offer letter +
+  electronic new-starter sheet.
+- **D4** ✅ Data-driven QMS engine + all 9 FPC sheets as definitions + rich
+  field types (job/machine/drawing/personnel pickers, photo, signature,
+  repeating tables). New sheets are a SQL INSERT, no code.
+- **Training Matrix** ✅ person × cert grid on the RAMS 2b schema.
+- **Plant Register** ✅ statutory inspection tracking (LOLER/PUWER/PAT/
+  calibration/service/MOT), newest-certificate-wins, bulk cert drop with
+  deterministic matcher.
+
+## Phase E — open queue (2026-07-30)
+
+Priority order as it stands:
+
+1. **⚠ 2dp rounding on financial calculations** — oldest urgent item on the
+   list and still open (see CLAUDE.md "Roadmap / queued"). Round every
+   intermediate monetary step, not just the final `.toFixed(2)`; consolidate
+   the several local `fmtGBP` definitions into one. Touches Babcock line-item
+   accumulation, marked-up total preview, edit-line-items. Golden tests gate
+   the QB engine, so a regression here is catchable.
+2. **Welder qualification register (E1)** — the real FPC/EN 1090 gap. Scope
+   per certificate (process, material group, thickness/diameter range,
+   positions), 6-month employer endorsement AND 3-year re-test tracked
+   separately, certificate PDFs to `02 - Quality (QMS)`, plus a scope check
+   that flags assigning a welder outside his approval range. Training-matrix
+   cells cannot express this.
+3. **F7** — assign-path double counting, verify against live data.
+4. **QB Won→Project rebuild** — half-state C260327; schema decision is
+   Mateusz's now (Daniel is out).
+5. **Running Cost tile source** — aggregate POs + supplier invoices; and point
+   the Labour Cost tile at LabourLog actuals instead of the quote budget.
+6. **Balustrade F7** — step 3 spigots for glass families, step 2 handrail
+   image-button picker. Blocked on real numbers from Mateusz.
+7. **Staircase / balustrade live calibration** — Q250410 through the spiral
+   wizard vs the £15k fab line; welded balustrade £333/m vs 305–325 envelope.
+8. **Policy / RA template studio** — parked by Mateusz; produce, tweak and
+   sign policies and risk assessments from templates (new modal family like
+   the RAMS generator).
+9. **Retention ledger + release invoicing**, **sales-side remittance OCR** —
+   both parked.
+10. **Mobile clock-in page** (PIN, no Microsoft account) — needs server-side
+    PIN checking.
+11. **Housekeeping** — two known preflight errors in QB (`plantTypeSelect`,
+    `scopeTemplateDD`); F8 rolling help per module.
