@@ -120,10 +120,17 @@ Priority order as it stands:
    logs and advances together, certificate reader that fills the form for a
    human to check rather than saving, and the 🔍 Check-a-welder scope test.
    `tests/welder-scope.js` (43 cases) is the gate.
-   **Next step for this module:** wire the scope check into the point of use —
-   BAMA FAB 001's welder picker and the assembly weld sign-off — so an
-   out-of-scope welder is flagged at the moment of assignment, not on a report
-   afterwards. Needs Mateusz's call on whether that blocks or just warns.
+   Scope check is wired into the point of use as a **warning** (Mateusz's call:
+   blocking would stop the shop when the register lags reality) — the override
+   is recorded on the inspection record.
+2b. ~~Inspection & NDT sampling (E2)~~ ✅ **DONE 2026-07-30** — Office ›
+   Inspection & NDT. Visual pinned at 100% (never sampled); supplementary NDT
+   sampled from the editable, verify-before-trust `NdtExtentRules` table;
+   per-job weld population, shortfall badges, failed-inspection audit.
+   `tests/inspection-sampling.js` (36 cases).
+   **Still to do here:** BAMA FAB 001 submissions should auto-create an
+   inspection record (link exists — `qms_submission_id` — but nothing writes it
+   yet), and a printable inspection summary for the job file / release pack.
 3. **F7** — assign-path double counting, verify against live data.
 4. **QB Won→Project rebuild** — half-state C260327; schema decision is
    Mateusz's now (Daniel is out).

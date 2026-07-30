@@ -3424,6 +3424,7 @@ function switchTab(name) {
   if (name === 'training') renderTrainingTab();
   if (name === 'plant') renderPlantTab();
   if (name === 'welders') renderWeldersTab();
+  if (name === 'inspection') renderInspectionTab();
   if (name === 'project' || name === 'employee') renderManagerView();
 }
 
@@ -23310,6 +23311,9 @@ function renderUnifiedSidebar() {
         </button>
         <button class="sidebar-nav-item${a('office','welders')}" data-tab="welders" onclick="navToOfficeTab('welders')">
           <span class="sidebar-nav-icon">🔥</span> Welder Approvals
+        </button>
+        <button class="sidebar-nav-item${a('office','inspection')}" data-tab="inspection" onclick="navToOfficeTab('inspection')">
+          <span class="sidebar-nav-icon">📐</span> Inspection &amp; NDT
         </button>
       </div>
     </div>
@@ -48913,4 +48917,448 @@ function weldRunCheck() {
         ${r.notes && r.notes.length ? `<div style="font-size:11px;color:#eab308;margin-top:3px">${r.notes.map(escapeHtml).join('<br>')}</div>` : ''}
       </div>`).join('') : ''}
     ${anyNotes ? '<div style="font-size:11px;color:#eab308;margin-top:6px">Where the certificate has no printed range for something, this register says so rather than assuming — check those against the paper certificate.</div>' : ''}`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// INSPECTION & NDT SAMPLING (E2, 2026-07-30) — Office › Traceability › Inspection
+//
+// Sampled inspection so not every piece needs signing off.
+//
+// TWO RULES THIS MODULE ENFORCES AND WILL NOT LET YOU BEND:
+//   1. VISUAL inspection is 100% of welds at EVERY execution class. It is not
+//      a sample. `_inspRequired()` hard-codes 100% for visual regardless of
+//      what the rules table says.
+//   2. SUPPLEMENTARY NDT (UT/RT/MT/PT) is sampled by percentage — and those
+//      percentages come from the editable NdtExtentRules table, NEVER from
+//      code. Every seeded rule starts UNVERIFIED and the UI says so loudly
+//      until a human has checked it against EN 1090-2 Table 24. A compliance
+//      figure nobody has confirmed is worse than no figure, because it looks
+//      authoritative.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const INSP_TYPES = ['visual', 'UT', 'RT', 'MT', 'PT'];
+const INSP_RESULTS = {
+  pass:     { label: 'Pass',     color: '#3ecf8e' },
+  fail:     { label: 'Fail',     color: '#ff6b6b' },
+  repaired: { label: 'Repaired', color: '#eab308' }
+};
+const EXEC_CLASSES = ['EXC1', 'EXC2', 'EXC3', 'EXC4'];
+
+let _ndtRules = [], _inspPlan = null, _inspRecords = [], _inspJob = null, _inspAssemblies = [];
+let _inspWeldWarning = null;   // set by inspCheckWelder(), recorded on the record
+
+// How many welds must be inspected, for one category, at one execution class.
+// Deterministic: population × percentage, rounded UP (you cannot do 0.4 of an
+// inspection, and rounding down would under-sample).
+function _inspRequired(population, pct, inspectionType) {
+  const n = Math.max(0, Number(population) || 0);
+  if (inspectionType === 'visual') return n;         // always 100%, never sampled
+  const p = Math.max(0, Math.min(100, Number(pct) || 0));
+  if (!n || !p) return 0;
+  return Math.ceil(n * p / 100);
+}
+
+// Rules lookup for a category at a class. Utilisation-specific rows are kept
+// separate so the user picks which applies; we return them all.
+function _inspRulesFor(execClass, category) {
+  return (_ndtRules || []).filter(r => r.exec_class === execClass && r.weld_category === category);
+}
+
+// Progress for a job: per category, required vs done, plus a shortfall list.
+function _inspProgress(plan, records, rules) {
+  const counts = (() => {
+    try { return plan && plan.weld_counts ? JSON.parse(plan.weld_counts) : {}; } catch { return {}; }
+  })();
+  const cats = [...new Set([...Object.keys(counts), ...(rules || []).filter(r => r.exec_class === plan.exec_class).map(r => r.weld_category)])];
+  return cats.map(cat => {
+    const population = Number(counts[cat]) || 0;
+    const catRules = (rules || []).filter(r => r.exec_class === plan.exec_class && r.weld_category === cat);
+    // Where a category has utilisation variants, the HIGHEST percentage is the
+    // safe assumption unless the user has told us which applies.
+    const pct = catRules.length ? Math.max(...catRules.map(r => Number(r.pct_required) || 0)) : 0;
+    const unverified = catRules.some(r => !r.verified);
+    const done = {};
+    INSP_TYPES.forEach(t => {
+      done[t] = (records || [])
+        .filter(r => r.weld_category === cat && r.inspection_type === t)
+        .reduce((s, r) => s + (Number(r.weld_count) || 1), 0);
+    });
+    const ndtDone = INSP_TYPES.filter(t => t !== 'visual').reduce((s, t) => s + done[t], 0);
+    const visualRequired = _inspRequired(population, 100, 'visual');
+    const ndtRequired = _inspRequired(population, pct, 'UT');
+    return {
+      category: cat, population, pct, unverified,
+      method_hint: catRules[0] ? catRules[0].method_hint : null,
+      visualRequired, visualDone: done.visual,
+      ndtRequired, ndtDone, done,
+      visualShort: Math.max(0, visualRequired - done.visual),
+      ndtShort: Math.max(0, ndtRequired - ndtDone),
+      failures: (records || []).filter(r => r.weld_category === cat && r.result === 'fail').length
+    };
+  }).filter(r => r.population > 0 || r.ndtDone > 0 || r.visualDone > 0);
+}
+
+// ── Tab ──────────────────────────────────────────────────────────────────────
+async function renderInspectionTab() {
+  const root = document.getElementById('tab-inspection');
+  if (!root) return;
+  root.innerHTML = '<div style="color:var(--muted);padding:20px">Loading…</div>';
+  let jobs = [];
+  try {
+    [_ndtRules, jobs] = await Promise.all([api.get('/api/ndt-rules'), api.get('/api/projects')]);
+  } catch (e) {
+    root.innerHTML = `<div style="color:var(--red);padding:20px;font-size:12.5px">Inspection module unavailable: ${escapeHtml(e.message)} — run api/sql/create-inspection-plans.sql first.</div>`;
+    return;
+  }
+  const live = (jobs || []).filter(j => j.status !== 'closed' && !j.is_deleted);
+  const unverified = (_ndtRules || []).filter(r => !r.verified).length;
+
+  root.innerHTML = `<div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+      <h3 style="margin:0">📐 Inspection &amp; NDT</h3>
+      <select id="inspJobSel" onchange="inspLoadJob(this.value)"
+        style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;min-width:280px">
+        <option value="">— pick a job —</option>
+        ${live.map(j => `<option value="${j.id}">${escapeHtml(j.job_number || '')} ${escapeHtml(j.name || j.client_name || '')}</option>`).join('')}
+      </select>
+      <button class="btn btn-ghost btn-sm" onclick="inspOpenRules()">⚙ NDT extent rules${unverified ? ` <span style="color:#eab308">(${unverified} unverified)</span>` : ''}</button>
+    </div>
+    ${unverified ? `<div style="background:#3b2f0f;border:1px solid #eab308;border-radius:8px;padding:9px 13px;font-size:12px;color:#f0e0a4;margin-bottom:10px;line-height:1.6">
+      ⚠ <strong>${unverified} of ${_ndtRules.length} NDT extent rules are unverified.</strong> They were seeded as indicative starting
+      points only — nobody has checked them against EN 1090-2 Table 24 or the BAMA QMS manual. Until you open
+      <strong>NDT extent rules</strong>, correct each percentage and press Verify, treat the required figures below as a draft.
+      A compliance number that looks authoritative but has not been checked is worse than no number at all.</div>` : ''}
+    <p style="font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.6">
+      <strong>Visual inspection is 100% of welds at every execution class</strong> — that part is not sampled, and this page won't
+      let it be. What is sampled is supplementary NDT (UT / RT / MT / PT), by percentage, depending on execution class, weld
+      category and how hard the weld is working. Enter the weld population per category, log inspections as they happen, and the
+      shortfall is worked out for you. Sample counts always round <strong>up</strong>.</p>
+    <div id="inspBody"><div style="color:var(--muted);font-size:12px;padding:14px">Pick a job to open or start its inspection plan.</div></div>
+  </div>`;
+}
+
+async function inspLoadJob(jobId) {
+  const host = document.getElementById('inspBody');
+  if (!jobId) { host.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:14px">Pick a job.</div>'; return; }
+  host.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:14px">Loading…</div>';
+  _inspJob = jobId;
+  try {
+    const [plans, recs] = await Promise.all([
+      api.get(`/api/inspection-plans?job_id=${jobId}`),
+      api.get(`/api/inspection-records?job_id=${jobId}`).catch(() => [])
+    ]);
+    _inspPlan = (plans || [])[0] || null;
+    _inspRecords = recs || [];
+    try { _inspAssemblies = await api.get(`/api/job-assemblies/${jobId}`); } catch (_) { _inspAssemblies = []; }
+  } catch (e) { host.innerHTML = `<div style="color:var(--red);font-size:12px;padding:14px">${escapeHtml(e.message)}</div>`; return; }
+  _inspRender();
+}
+
+function _inspRender() {
+  const host = document.getElementById('inspBody'); if (!host) return;
+  if (!_inspPlan) {
+    host.innerHTML = `<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px">
+      <div style="font-size:13px;margin-bottom:10px">No inspection plan for this job yet.</div>
+      <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
+        <div><label style="font-size:10px;color:var(--muted);display:block">Execution class</label>
+          <select id="inspNewExec" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12.5px">
+            ${EXEC_CLASSES.map(c => `<option ${c === 'EXC2' ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
+        <button class="btn btn-primary btn-sm" onclick="inspCreatePlan()">Create plan</button>
+      </div>
+      <div style="font-size:11.5px;color:var(--muted);margin-top:8px">
+        The execution class comes off the contract or the BAMA tec 001 review — it is not something to guess at here.</div>
+    </div>`;
+    return;
+  }
+
+  const prog = _inspProgress(_inspPlan, _inspRecords, _ndtRules);
+  let counts = {}; try { counts = JSON.parse(_inspPlan.weld_counts || '{}'); } catch (_) {}
+  const allCats = [...new Set((_ndtRules || []).filter(r => r.exec_class === _inspPlan.exec_class).map(r => r.weld_category))];
+  const totalNdtShort = prog.reduce((s, p) => s + p.ndtShort, 0);
+  const totalVisShort = prog.reduce((s, p) => s + p.visualShort, 0);
+  const failures = prog.reduce((s, p) => s + p.failures, 0);
+
+  const bar = (done, req, color) => {
+    const pct = req ? Math.min(100, Math.round(done / req * 100)) : (done ? 100 : 0);
+    return `<div style="background:var(--card);border-radius:4px;height:7px;overflow:hidden;min-width:70px">
+      <div style="width:${pct}%;height:100%;background:${color}"></div></div>
+      <span style="font-size:10.5px;color:var(--muted);white-space:nowrap">${done}/${req || 0}</span>`;
+  };
+
+  host.innerHTML = `
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+      <div><label style="font-size:10px;color:var(--muted);display:block">Execution class</label>
+        <select id="inspExec" onchange="inspSetExec(this.value)"
+          style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text);font-size:12.5px">
+          ${EXEC_CLASSES.map(c => `<option ${c === _inspPlan.exec_class ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
+      <button class="btn btn-ghost btn-sm" onclick="inspLogOpen()">＋ Log an inspection</button>
+      <button class="btn btn-ghost btn-sm" onclick="inspSaveCounts()">💾 Save weld counts</button>
+      ${(totalNdtShort || totalVisShort)
+        ? `<span style="background:#3b1a1a;color:#ff9b9b;border:1px solid #ff6b6b55;border-radius:6px;padding:4px 10px;font-size:11.5px">
+            ⚠ short by ${totalVisShort ? `${totalVisShort} visual` : ''}${totalVisShort && totalNdtShort ? ' and ' : ''}${totalNdtShort ? `${totalNdtShort} NDT` : ''} — not ready for release</span>`
+        : `<span style="background:#0f2f22;color:#8ee6bd;border:1px solid #3ecf8e55;border-radius:6px;padding:4px 10px;font-size:11.5px">✓ sample satisfied on every category</span>`}
+      ${failures ? `<span style="background:#3b1a1a;color:#ff9b9b;border:1px solid #ff6b6b55;border-radius:6px;padding:4px 10px;font-size:11.5px">${failures} failed inspection${failures > 1 ? 's' : ''}</span>` : ''}
+    </div>
+
+    <table style="width:100%;border-collapse:collapse;font-size:11.5px;background:var(--surface);border:1px solid var(--border);border-radius:8px">
+      <thead><tr>${['Weld category', 'Welds on job', 'NDT %', 'Visual (100%)', 'Supplementary NDT', 'Method', ''].map(h =>
+        `<th style="text-align:left;padding:7px 8px;font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--border)">${h}</th>`).join('')}</tr></thead>
+      <tbody>${allCats.map((cat, i) => {
+        const p = prog.find(x => x.category === cat) || { population: 0, pct: 0, visualRequired: 0, visualDone: 0, ndtRequired: 0, ndtDone: 0, visualShort: 0, ndtShort: 0, unverified: true, method_hint: null, failures: 0 };
+        const rule = _inspRulesFor(_inspPlan.exec_class, cat)[0] || {};
+        return `<tr style="${i % 2 ? 'background:rgba(255,255,255,0.018);' : ''}">
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border)">${escapeHtml(cat)}
+            ${p.unverified ? '<span style="color:#eab308;font-size:10px" title="This percentage has not been verified against EN 1090-2 Table 24"> ⚠ unverified</span>' : ''}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border)">
+            <input type="number" min="0" value="${counts[cat] ?? ''}" id="inspCnt_${btoa(cat).replace(/[^a-zA-Z0-9]/g, '')}"
+              style="width:76px;background:var(--card);border:1px solid var(--border);border-radius:5px;padding:3px 6px;color:var(--text);font-size:11.5px"></td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border);font-weight:700;color:${p.pct ? 'var(--text)' : 'var(--muted)'}">${p.pct}%</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border)">
+            <div style="display:flex;align-items:center;gap:6px">${bar(p.visualDone, p.visualRequired, p.visualShort ? '#eab308' : '#3ecf8e')}</div></td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border)">
+            <div style="display:flex;align-items:center;gap:6px">${p.ndtRequired ? bar(p.ndtDone, p.ndtRequired, p.ndtShort ? '#ff6b6b' : '#3ecf8e') : '<span style="color:var(--muted)">none required</span>'}</div></td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border);color:var(--muted)">${escapeHtml(rule.method_hint || '—')}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border)">
+            ${p.failures ? `<span style="color:#ff6b6b;font-size:10.5px">${p.failures} fail</span>` : ''}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>
+
+    <h4 style="margin:16px 0 6px;font-size:13px">Inspections logged (${_inspRecords.length})</h4>
+    ${_inspRecords.length ? `<div style="display:flex;flex-direction:column;gap:3px">` + _inspRecords.map(r => {
+      const res = INSP_RESULTS[r.result] || INSP_RESULTS.pass;
+      return `<div style="display:flex;gap:8px;align-items:center;font-size:11.5px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:5px 10px">
+        <span style="background:${res.color}22;color:${res.color};border:1px solid ${res.color}55;border-radius:5px;padding:1px 7px;font-size:10px;font-weight:700">${res.label}</span>
+        <strong>${escapeHtml(r.inspection_type)}</strong>
+        <span>${escapeHtml(r.assembly_mark || '—')}</span>
+        <span style="color:var(--muted)">${escapeHtml(r.weld_category)} · ${r.weld_count} weld${r.weld_count > 1 ? 's' : ''}</span>
+        ${r.welder_name ? `<span style="color:var(--muted)">welder ${escapeHtml(r.welder_name)}</span>` : ''}
+        ${r.report_ref ? `<span style="color:var(--muted)">rpt ${escapeHtml(r.report_ref)}</span>` : ''}
+        <span style="margin-left:auto;color:var(--muted)">${escapeHtml(r.inspected_on || '')} ${escapeHtml(r.inspector || '')}</span>
+        <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="inspDeleteRecord(${r.id})">🗑</button>
+      </div>`;
+    }).join('') + '</div>' : '<div style="font-size:12px;color:var(--muted)">Nothing logged yet.</div>'}`;
+}
+
+async function inspCreatePlan() {
+  const ec = document.getElementById('inspNewExec').value;
+  try {
+    await api.post('/api/inspection-plans', { job_id: _inspJob, exec_class: ec });
+    toast(`Plan created — ${ec}`, 'success');
+    inspLoadJob(_inspJob);
+  } catch (e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+async function inspSetExec(ec) {
+  try {
+    await api.put(`/api/inspection-plans/${_inspPlan.id}`, { exec_class: ec });
+    _inspPlan.exec_class = ec;
+    toast(`Execution class set to ${ec} — required NDT recalculated`, 'success');
+    _inspRender();
+  } catch (e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+async function inspSaveCounts() {
+  const cats = [...new Set((_ndtRules || []).filter(r => r.exec_class === _inspPlan.exec_class).map(r => r.weld_category))];
+  const counts = {};
+  cats.forEach(cat => {
+    const el = document.getElementById('inspCnt_' + btoa(cat).replace(/[^a-zA-Z0-9]/g, ''));
+    const n = el ? Number(el.value) : 0;
+    if (n > 0) counts[cat] = n;
+  });
+  try {
+    await api.put(`/api/inspection-plans/${_inspPlan.id}`, { weld_counts: counts });
+    _inspPlan.weld_counts = JSON.stringify(counts);
+    toast('Weld counts saved', 'success');
+    _inspRender();
+  } catch (e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+async function inspDeleteRecord(id) {
+  if (!await bamaConfirm('Delete this inspection record? Soft delete and audited.', 'Delete Record')) return;
+  try {
+    await api.delete(`/api/inspection-records/${id}`);
+    toast('Deleted', 'success');
+    inspLoadJob(_inspJob);
+  } catch (e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+// ── Log an inspection (with the welder scope check wired in as a WARNING) ────
+function inspLogOpen() {
+  if (!document.getElementById('inspLogModal')) {
+    const div = document.createElement('div');
+    div.innerHTML = `<div id="inspLogModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:1001;align-items:flex-start;justify-content:center;padding:40px;overflow-y:auto">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:640px;overflow:hidden">
+        <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
+          <h3 style="margin:0;font-size:16px;flex:1">📐 Log an inspection</h3>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('inspLogModal').style.display='none'">✕</button>
+        </div>
+        <div id="inspLogBody" style="padding:16px 20px"></div>
+      </div></div>`;
+    document.body.appendChild(div.firstElementChild);
+  }
+  const cats = [...new Set((_ndtRules || []).filter(r => r.exec_class === _inspPlan.exec_class).map(r => r.weld_category))];
+  const welders = [...new Set((_weldQuals || []).map(q => q.person_name))].sort();
+  document.getElementById('inspLogBody').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+      <div><label style="font-size:10px;color:var(--muted);display:block">Weld category</label>
+        <select id="il_cat" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 7px;color:var(--text);font-size:12.5px">
+          ${cats.map(c => `<option>${escapeHtml(c)}</option>`).join('')}</select></div>
+      <div><label style="font-size:10px;color:var(--muted);display:block">Inspection type</label>
+        <select id="il_type" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 7px;color:var(--text);font-size:12.5px">
+          ${INSP_TYPES.map(t => `<option>${t}</option>`).join('')}</select></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr;gap:8px;margin-bottom:8px">
+      <div><label style="font-size:10px;color:var(--muted);display:block">Assembly mark</label>
+        <input id="il_mark" list="il_marks" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box">
+        <datalist id="il_marks">${(_inspAssemblies || []).map(a => `<option value="${escapeHtml(a.assembly_mark)}"></option>`).join('')}</datalist></div>
+      <div><label style="font-size:10px;color:var(--muted);display:block">Welds covered</label>
+        <input id="il_count" type="number" min="1" value="1" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box"></div>
+      <div><label style="font-size:10px;color:var(--muted);display:block">Result</label>
+        <select id="il_result" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 7px;color:var(--text);font-size:12.5px">
+          ${Object.entries(INSP_RESULTS).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('')}</select></div>
+      <div><label style="font-size:10px;color:var(--muted);display:block">Date</label>
+        <input id="il_date" type="date" value="${new Date().toISOString().slice(0, 10)}" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1.3fr 1.3fr 1fr;gap:8px;margin-bottom:8px">
+      <div><label style="font-size:10px;color:var(--muted);display:block">Welder</label>
+        <select id="il_welder" onchange="inspCheckWelder()" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 7px;color:var(--text);font-size:12.5px">
+          <option value="">— not recorded —</option>${welders.map(w => `<option>${escapeHtml(w)}</option>`).join('')}</select></div>
+      <div><label style="font-size:10px;color:var(--muted);display:block">Inspector</label>
+        <input id="il_inspector" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box"></div>
+      <div><label style="font-size:10px;color:var(--muted);display:block">NDT report ref</label>
+        <input id="il_ref" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box"></div>
+    </div>
+    <div id="il_weldWarn"></div>
+    <div style="margin-bottom:10px"><label style="font-size:10px;color:var(--muted);display:block">Notes</label>
+      <input id="il_notes" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box"></div>
+    <button class="btn btn-primary btn-sm" onclick="inspSaveRecord()">💾 Log it</button>`;
+  document.getElementById('inspLogModal').style.display = 'flex';
+}
+
+// The welder scope check at the point of use. It WARNS and records — it does not
+// block. Mateusz's call (2026-07-30): blocking would stop the shop when the
+// register is behind reality, so the override is captured in the record's notes
+// instead, which is what makes it auditable afterwards.
+function inspCheckWelder() {
+  const host = document.getElementById('il_weldWarn'); if (!host) return;
+  const name = (document.getElementById('il_welder') || {}).value || '';
+  if (!name) { host.innerHTML = ''; _inspWeldWarning = null; return; }
+  if (!_weldQuals || !_weldQuals.length) {
+    host.innerHTML = `<div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">No welder approvals loaded — open Welder Approvals once to enable the scope check.</div>`;
+    _inspWeldWarning = null; return;
+  }
+  const res = weldCheckPerson(name, { onDate: (document.getElementById('il_date') || {}).value || undefined });
+  if (res.ok) {
+    host.innerHTML = `<div style="background:#0f2f22;border:1px solid #3ecf8e55;border-radius:7px;padding:7px 11px;font-size:11.5px;color:#8ee6bd;margin-bottom:8px">
+      ✓ ${escapeHtml(name)} holds a valid qualification (${escapeHtml(res.match.cert_no)}). Scope against this weld isn't checked here —
+      use 🔍 Check a welder on the Welder Approvals tab for the full thickness/position test.</div>`;
+    _inspWeldWarning = null;
+  } else {
+    const why = res.results.length ? res.results[0].fails.join('; ') : res.verdict;
+    host.innerHTML = `<div style="background:#3b1a1a;border:1px solid #ff6b6b;border-radius:7px;padding:8px 11px;font-size:11.5px;color:#f0b4b4;margin-bottom:8px">
+      ⚠ <strong>${escapeHtml(name)} has no usable qualification on file</strong> — ${escapeHtml(why)}.<br>
+      You can still log this inspection, but the override will be recorded against it. Sort the certificate or the
+      6-month confirmation out.</div>`;
+    _inspWeldWarning = `Welder approval warning at time of logging: ${why}`;
+  }
+}
+
+async function inspSaveRecord() {
+  const g = id => (document.getElementById(id) || {}).value || '';
+  const notes = [g('il_notes'), _inspWeldWarning].filter(Boolean).join(' | ');
+  const mark = g('il_mark');
+  const asm = (_inspAssemblies || []).find(a => a.assembly_mark === mark);
+  try {
+    await api.post('/api/inspection-records', {
+      plan_id: _inspPlan.id, job_id: _inspJob,
+      assembly_id: asm ? asm.id : null, assembly_mark: mark || null,
+      weld_category: g('il_cat'), inspection_type: g('il_type'),
+      weld_count: Number(g('il_count')) || 1, result: g('il_result') || 'pass',
+      inspector: g('il_inspector') || null, welder_name: g('il_welder') || null,
+      inspected_on: g('il_date') || null, report_ref: g('il_ref') || null,
+      notes: notes || null
+    });
+    toast(_inspWeldWarning ? 'Logged — with the welder approval warning recorded against it' : 'Inspection logged', _inspWeldWarning ? 'warning' : 'success');
+    document.getElementById('inspLogModal').style.display = 'none';
+    _inspWeldWarning = null;
+    inspLoadJob(_inspJob);
+  } catch (e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+// ── NDT extent rules editor ─────────────────────────────────────────────────
+function inspOpenRules() {
+  if (!document.getElementById('inspRulesModal')) {
+    const div = document.createElement('div');
+    div.innerHTML = `<div id="inspRulesModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:1001;align-items:flex-start;justify-content:center;padding:30px;overflow-y:auto">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:900px;overflow:hidden">
+        <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
+          <h3 style="margin:0;font-size:16px;flex:1">⚙ Supplementary NDT extent rules</h3>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('inspRulesModal').style.display='none'">✕</button>
+        </div>
+        <div id="inspRulesBody" style="padding:16px 20px;max-height:78vh;overflow-y:auto"></div>
+      </div></div>`;
+    document.body.appendChild(div.firstElementChild);
+  }
+  _inspRenderRules();
+  document.getElementById('inspRulesModal').style.display = 'flex';
+}
+
+function _inspRenderRules() {
+  const host = document.getElementById('inspRulesBody'); if (!host) return;
+  const unver = (_ndtRules || []).filter(r => !r.verified).length;
+  host.innerHTML = `
+    <div style="background:#3b2f0f;border:1px solid #eab308;border-radius:8px;padding:10px 13px;font-size:12px;color:#f0e0a4;margin-bottom:12px;line-height:1.6">
+      These percentages govern how much supplementary NDT the ERP says a job needs, so they must come from
+      <strong>BAMA's own copy of EN 1090-2 Table 24</strong> (or the QMS manual), not from anyone's memory. The seeded values are
+      indicative starting points and are deliberately marked unverified. Correct each percentage against the standard, then press
+      <strong>Verify</strong> — your name and the date are recorded against it and every change is logged.
+      ${unver ? `<br><strong>${unver} still unverified.</strong>` : '<br>All rules verified.'}
+      <br><br><strong>Visual inspection is not in this table</strong> — it is 100% at every execution class and is not sampled.</div>
+    <table style="width:100%;border-collapse:collapse;font-size:11.5px">
+      <thead><tr>${['Class', 'Weld category', 'Utilisation', 'NDT %', 'Method', 'Verified', ''].map(h =>
+        `<th style="text-align:left;padding:6px;font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--border)">${h}</th>`).join('')}</tr></thead>
+      <tbody>${(_ndtRules || []).map((r, i) => `<tr style="${i % 2 ? 'background:rgba(255,255,255,0.018);' : ''}">
+        <td style="padding:5px 6px;border-bottom:1px solid var(--border);font-weight:700">${escapeHtml(r.exec_class)}</td>
+        <td style="padding:5px 6px;border-bottom:1px solid var(--border)">${escapeHtml(r.weld_category)}</td>
+        <td style="padding:5px 6px;border-bottom:1px solid var(--border);color:var(--muted)">${escapeHtml(r.utilisation || '—')}</td>
+        <td style="padding:5px 6px;border-bottom:1px solid var(--border)">
+          <input type="number" min="0" max="100" step="1" value="${r.pct_required}" id="ndtPct_${r.id}"
+            style="width:66px;background:var(--card);border:1px solid var(--border);border-radius:5px;padding:3px 6px;color:var(--text);font-size:11.5px"></td>
+        <td style="padding:5px 6px;border-bottom:1px solid var(--border);color:var(--muted)">${escapeHtml(r.method_hint || '—')}</td>
+        <td style="padding:5px 6px;border-bottom:1px solid var(--border)">
+          ${r.verified
+            ? `<span style="color:#3ecf8e;font-size:10.5px">✓ ${escapeHtml(r.verified_by || '')} ${escapeHtml(r.verified_at || '')}</span>`
+            : '<span style="color:#eab308;font-size:10.5px">⚠ unverified</span>'}</td>
+        <td style="padding:5px 6px;border-bottom:1px solid var(--border);white-space:nowrap">
+          <button class="btn btn-ghost btn-sm" onclick="inspSaveRule(${r.id})">💾</button>
+          ${r.verified
+            ? `<button class="btn btn-ghost btn-sm" onclick="inspVerifyRule(${r.id}, 0)">un-verify</button>`
+            : `<button class="btn btn-ghost btn-sm" style="color:#3ecf8e" onclick="inspVerifyRule(${r.id}, 1)">Verify</button>`}</td>
+      </tr>`).join('')}</tbody></table>`;
+}
+
+async function inspSaveRule(id) {
+  const el = document.getElementById('ndtPct_' + id); if (!el) return;
+  try {
+    await api.put(`/api/ndt-rules/${id}`, { pct_required: Number(el.value) });
+    _ndtRules = await api.get('/api/ndt-rules');
+    _inspRenderRules();
+    if (_inspPlan) _inspRender();
+    toast('Percentage saved — still unverified until you press Verify', 'success');
+  } catch (e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+async function inspVerifyRule(id, on) {
+  const r = (_ndtRules || []).find(x => x.id === id);
+  if (on && !await bamaConfirm(
+      `Confirm that <strong>${escapeHtml(r.pct_required)}%</strong> is correct for ${escapeHtml(r.exec_class)} — ${escapeHtml(r.weld_category)}${r.utilisation ? ' (' + escapeHtml(r.utilisation) + ')' : ''}, checked against EN 1090-2 Table 24 or the BAMA QMS manual?<br><br><span style="font-size:12px;color:var(--muted)">Your name and today's date are recorded against this rule and the change is logged.</span>`,
+      'Verify NDT Extent')) return;
+  try {
+    await api.put(`/api/ndt-rules/${id}`, { verified: on ? 1 : 0, pct_required: Number(document.getElementById('ndtPct_' + id).value) });
+    _ndtRules = await api.get('/api/ndt-rules');
+    _inspRenderRules();
+    if (_inspPlan) _inspRender();
+    toast(on ? 'Verified' : 'Marked unverified', 'success');
+  } catch (e) { toast('Failed: ' + e.message, 'error'); }
 }

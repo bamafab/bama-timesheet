@@ -942,6 +942,18 @@
       "seedForms": []
     },
     {
+      "script": "create-inspection-plans.sql",
+      "title": "Sampled inspection instead of signing off every piece.",
+      "kind": "structural",
+      "tables": [
+        "JobInspectionPlans",
+        "JobInspectionRecords",
+        "NdtExtentRules"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
       "script": "create-labour-log.sql",
       "title": "LabourLog \u2014 the locked audit record of approved hours, fed from ProjectHours",
       "kind": "structural",

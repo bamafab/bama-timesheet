@@ -1213,6 +1213,47 @@ matrix (welders are often subcontractors). 🔍 **Check a welder** is the point 
 the module: job parameters in, approved/not-approved out with reasons, before
 the weld is assigned. ED gets a purple `weldAlertStrip` from /expiring.
 
+## Inspection & NDT sampling (E2, 2026-07-30 — Office › Traceability › Inspection & NDT)
+
+`tab-inspection` in office.html, module at the end of shared.js
+(`renderInspectionTab`). Tables `NdtExtentRules` + `JobInspectionPlans` +
+`JobInspectionRecords` (`api/sql/create-inspection-plans.sql`, new tables, no
+restart); API `api/src/functions/inspection-plans.js`.
+
+**TWO RULES THE MODULE WILL NOT LET ANYONE BEND:**
+1. **Visual inspection is 100% at every execution class** — never sampled.
+   `_inspRequired()` hard-codes 100% for `inspectionType === 'visual'` no
+   matter what the rules table says. Mateusz's initial framing ("EXC2 is
+   roughly 10% so sign off 10%") conflated visual with supplementary NDT; the
+   10% figures apply only to NDT.
+2. **The percentages live in DATA, never in code, and start UNVERIFIED.**
+   `NdtExtentRules` is seeded with the EN 1090-2 Table 24 categories and
+   indicative values, every row `verified = 0`, `source_note` saying so. The
+   tab shows a loud amber banner listing how many are unverified and the
+   per-category rows carry "⚠ unverified" until a human edits the percentage
+   and presses Verify (name + date recorded, `logChange`d). **Never hard-code
+   a compliance percentage from recall** — a figure that looks authoritative
+   but nobody checked is worse than no figure. Same principle as never letting
+   AI invent a hazard score.
+
+Sample counts round **UP** (`Math.ceil`) — rounding down under-samples, which
+would report compliance while one inspection short. Where a category has
+utilisation variants, the HIGHER percentage is assumed until the user says
+which applies. A category with no rule for that class gets 0% NDT required
+(never a guess) but still 100% visual. Weld population per category is entered
+per job (`weld_counts` JSON); progress bars show visual and NDT separately with
+a shortfall badge that says "not ready for release". Failed inspections are
+counted separately from sample progress and `logChange`d on creation.
+Pinned by `tests/inspection-sampling.js` (36 cases).
+
+**Welder scope check at the point of use — WARNS, does not block.** Mateusz's
+call (2026-07-30): blocking would stop the shop whenever the register is behind
+reality. `inspCheckWelder()` runs on welder selection in the log-inspection
+modal; if there's no usable qualification it shows a red panel and sets
+`_inspWeldWarning`, which is appended to the record's notes so the override is
+auditable afterwards. Full thickness/position scope testing stays on the
+Welder Approvals tab (🔍 Check a welder).
+
 ## Modal → Page mapping
 
 Every `id=…Modal` element in the HTML, by page. Handy when tracing an
