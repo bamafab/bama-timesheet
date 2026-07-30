@@ -3376,6 +3376,7 @@ function switchTab(name) {
   if (name === 'docs') renderDocsTab();
   if (name === 'qms') renderQmsTab();
   if (name === 'training') renderTrainingTab();
+  if (name === 'plant') renderPlantTab();
   if (name === 'project' || name === 'employee') renderManagerView();
 }
 
@@ -23256,6 +23257,9 @@ function renderUnifiedSidebar() {
         </button>
         <button class="sidebar-nav-item${a('office','qms')}" data-tab="qms" onclick="navToOfficeTab('qms')">
           <span class="sidebar-nav-icon">📋</span> QMS Forms
+        </button>
+        <button class="sidebar-nav-item${a('office','plant')}" data-tab="plant" onclick="navToOfficeTab('plant')">
+          <span class="sidebar-nav-icon">🚜</span> Plant Register
         </button>
       </div>
     </div>
@@ -47253,4 +47257,501 @@ function qmsTableAddRow(key) {
 }
 function _qmsTableRows(f) {
   return (_qmsTableData[f.key] || []).filter(r => r.some(v => (v || '').trim()));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PLANT REGISTER (2026-07-30)
+// Company plant & equipment with statutory-inspection tracking — office.html
+// › Traceability › 🚜 Plant Register (tab-plant). One row per item; regime
+// due-date columns (LOLER / PUWER / PAT / Calibration / Service / MOT) drive
+// training-matrix-style traffic lights. Per-item document register: drag &
+// drop inspection certs → AI parse (reader-only, two-engine rule — dates come
+// off the printed cert or the user, never invented) → SharePoint
+// BAMA / 02 - Quality (QMS) / 07 - Plant & Equipment / <Ref - Name>.
+// Saving a cert whose type maps to a regime auto-advances that due date.
+// API: /api/plant-items (+/expiring), /api/plant-documents.
+// SQL: api/sql/create-plant-register.sql (new tables — no restart).
+// ═══════════════════════════════════════════════════════════════════════════
+
+const PLANT_CATS = {
+  lifting_equipment: { label: 'Lifting Equipment', color: '#f97316' },
+  lifting_accessory: { label: 'Lifting Accessory', color: '#eab308' },
+  access:            { label: 'Access',            color: '#a855f7' },
+  welding:           { label: 'Welding',           color: '#ef4444' },
+  machine:           { label: 'Workshop Machine',  color: '#3b82f6' },
+  power_tool:        { label: 'Power Tool',        color: '#2dd4bf' },
+  vehicle:           { label: 'Vehicle',           color: '#22c55e' },
+  measuring:         { label: 'Measuring',         color: '#c084fc' },
+  other:             { label: 'Other',             color: '#94a3b8' }
+};
+const PLANT_STATUS = {
+  in_service:   { label: 'In Service',   color: '#3ecf8e' },
+  under_repair: { label: 'Under Repair', color: '#eab308' },
+  quarantined:  { label: 'Quarantined',  color: '#ff6b6b' },
+  off_hired:    { label: 'Off-hired',    color: '#8b9bb4' },
+  disposed:     { label: 'Disposed',     color: '#64748b' }
+};
+const PLANT_REGIMES = [
+  { key: 'loler_due',   label: 'LOLER',       hint: 'Thorough examination (6mo accessories / lifting people, 12mo equipment)' },
+  { key: 'puwer_due',   label: 'PUWER',       hint: 'PUWER inspection' },
+  { key: 'pat_due',     label: 'PAT',         hint: 'Portable appliance test' },
+  { key: 'calib_due',   label: 'Calibration', hint: 'Calibration due' },
+  { key: 'service_due', label: 'Service',     hint: 'Service / maintenance due' },
+  { key: 'mot_due',     label: 'MOT/Ins',     hint: 'MOT / insurance renewal (vehicles)' }
+];
+// Cert type → regime column it advances on save
+const PLANT_DOC_TYPES = {
+  loler:       { label: 'LOLER Cert',     color: '#f97316', regime: 'loler_due' },
+  puwer:       { label: 'PUWER Insp.',    color: '#eab308', regime: 'puwer_due' },
+  pat:         { label: 'PAT Test',       color: '#2dd4bf', regime: 'pat_due' },
+  calibration: { label: 'Calibration',    color: '#c084fc', regime: 'calib_due' },
+  service:     { label: 'Service Report', color: '#3b82f6', regime: 'service_due' },
+  mot:         { label: 'MOT / Insurance',color: '#22c55e', regime: 'mot_due' },
+  manual:      { label: 'Manual',         color: '#94a3b8', regime: null },
+  other:       { label: 'Other',          color: '#8b9bb4', regime: null }
+};
+
+let _plantItems = [], _plantFilter = 'all', _plantSearch = '', _plantShowRetired = false;
+let _plantEditId = null, _plantDocs = [], _plantDocQueue = [];
+
+async function plantDocsFolder(item) {
+  const parent = await getOrCreateSubfolder(SP_TAX.quality, '07 - Plant & Equipment', BAMA_DRIVE_ID);
+  const safe = `${item.plant_ref} - ${item.name}`.replace(/[~"#%&*:<>?{|}/\\]/g, '-').trim().slice(0, 100);
+  return await getOrCreateSubfolder(parent.id, safe, BAMA_DRIVE_ID);
+}
+
+function _plantDueInfo(dateStr) {
+  if (!dateStr) return { cls: 'none', days: null, sort: 9e9 };
+  const days = Math.floor((new Date(String(dateStr).slice(0, 10) + 'T00:00:00') -
+    new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00')) / 86400000);
+  if (days < 0)   return { cls: 'expired', days, sort: days };
+  if (days <= 60) return { cls: 'soon',    days, sort: days };
+  return { cls: 'ok', days, sort: days };
+}
+const _PLANT_DUE_COLORS = { expired: '#ff6b6b', soon: '#eab308', ok: '#3ecf8e', none: 'var(--border)' };
+
+function _plantNextRef() {
+  let max = 0;
+  (_plantItems || []).forEach(p => { const m = /^P-(\d+)$/.exec(p.plant_ref || ''); if (m) max = Math.max(max, +m[1]); });
+  return 'P-' + String(max + 1).padStart(3, '0');
+}
+
+// ── Tab ──────────────────────────────────────────────────────────────────────
+async function renderPlantTab() {
+  const root = document.getElementById('tab-plant');
+  if (!root) return;
+  root.innerHTML = '<div style="color:var(--muted);padding:20px">Loading…</div>';
+  try { _plantItems = await api.get('/api/plant-items'); }
+  catch (e) {
+    root.innerHTML = `<div style="color:var(--red);padding:20px;font-size:12.5px">Plant register unavailable: ${escapeHtml(e.message)} — run api/sql/create-plant-register.sql first.</div>`;
+    return;
+  }
+  root.innerHTML = `<div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+      <h3 style="margin:0">🚜 Plant Register</h3>
+      <button class="btn btn-primary btn-sm" onclick="plantOpenItem(null)">＋ Plant item</button>
+      <button class="btn btn-ghost btn-sm" onclick="plantExportCsv()">⬇ CSV</button>
+      <button class="btn btn-ghost btn-sm" onclick="renderPlantTab()">↻</button>
+      <label style="font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:5px;cursor:pointer">
+        <input type="checkbox" ${_plantShowRetired ? 'checked' : ''} onchange="_plantShowRetired=this.checked;_plantRenderGrid();_plantRenderChips()">
+        show off-hired / disposed</label>
+      <input id="plantSearch" type="text" placeholder="Search ref, name, serial, location…" value="${escapeHtml(_plantSearch)}"
+        oninput="_plantSearch=this.value;_plantRenderGrid()"
+        style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:5px 10px;color:var(--text);font-size:12px;margin-left:auto;min-width:220px">
+    </div>
+    <p style="font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.6">
+      Every item of plant &amp; equipment with its statutory inspection dates — tap a row to edit details, set due
+      dates or drop inspection certificates (auto-read; a saved LOLER / PAT / calibration / service cert advances
+      the matching due date). Colours: <span style="color:#3ecf8e">■ in date</span>
+      <span style="color:#eab308">■ due ≤60 days</span> <span style="color:#ff6b6b">■ overdue</span> · — = not applicable.
+      Certificates file to SharePoint under 02 - Quality (QMS) / 07 - Plant &amp; Equipment.</p>
+    <div id="plantChips" style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap"></div>
+    <div id="plantSummary" style="margin-bottom:10px"></div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:auto;max-height:calc(100vh - 320px)">
+      <table id="plantGrid" style="border-collapse:collapse;font-size:11.5px;min-width:100%"></table>
+    </div>
+  </div>`;
+  _plantRenderChips(); _plantRenderGrid();
+}
+
+function _plantVisibleBase() {
+  return (_plantItems || []).filter(p => _plantShowRetired || (p.status !== 'disposed' && p.status !== 'off_hired'));
+}
+
+function _plantRenderChips() {
+  const el = document.getElementById('plantChips'); if (!el) return;
+  const base = _plantVisibleBase();
+  const counts = { all: base.length };
+  base.forEach(p => counts[p.category] = (counts[p.category] || 0) + 1);
+  const chip = (key, label, color) => {
+    const on = _plantFilter === key;
+    return `<button onclick="_plantFilter='${key}';_plantRenderChips();_plantRenderGrid()" style="cursor:pointer;border-radius:14px;padding:4px 12px;font-size:12px;border:1px solid ${on ? color : 'var(--border)'};background:${on ? color + '22' : 'var(--surface)'};color:${on ? color : 'var(--muted)'};font-weight:${on ? 700 : 400}">${label} <span style="opacity:.7">${counts[key] || 0}</span></button>`;
+  };
+  el.innerHTML = chip('all', 'All', '#e05e00') +
+    Object.entries(PLANT_CATS).filter(([k]) => counts[k]).map(([k, c]) => chip(k, c.label, c.color)).join('');
+}
+
+function _plantRenderGrid() {
+  const q = _plantSearch.trim().toLowerCase();
+  const items = _plantVisibleBase()
+    .filter(p => _plantFilter === 'all' || p.category === _plantFilter)
+    .filter(p => !q || [p.plant_ref, p.name, p.make, p.model, p.serial_no, p.location, p.hire_company]
+      .some(v => (v || '').toLowerCase().includes(q)));
+
+  const thBase = 'padding:8px 6px;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);position:sticky;top:0;background:var(--card);z-index:3;border-bottom:1px solid var(--border);white-space:nowrap';
+  let html = `<thead><tr>
+    <th style="${thBase};left:0;z-index:4;text-align:left;min-width:210px">Item</th>
+    <th style="${thBase};text-align:left;min-width:100px">Location</th>
+    ${PLANT_REGIMES.map(r => `<th style="${thBase};text-align:center;min-width:78px" title="${escapeHtml(r.hint)}">${r.label}</th>`).join('')}
+    <th style="${thBase};text-align:center;min-width:90px">Status</th>
+  </tr></thead><tbody>`;
+
+  let inService = 0, hired = 0, expired = 0, soon = 0;
+  html += items.map((p, i) => {
+    const zebra = i % 2 ? 'background:rgba(255,255,255,0.018);' : '';
+    const cat = PLANT_CATS[p.category] || PLANT_CATS.other;
+    const st = PLANT_STATUS[p.status] || PLANT_STATUS.in_service;
+    const active = p.status === 'in_service' || p.status === 'under_repair';
+    if (p.status === 'in_service') inService++;
+    if (p.ownership === 'hired' && p.status !== 'off_hired' && p.status !== 'disposed') hired++;
+    const hireBadge = p.ownership === 'hired'
+      ? '<span style="font-size:9px;color:#38bdf8;border:1px solid #38bdf855;border-radius:4px;padding:0 4px;margin-left:5px">HIRE</span>' : '';
+    return `<tr style="${zebra}${active ? '' : 'opacity:.5;'}" onclick="plantOpenItem(${p.id})" title="Edit ${escapeHtml(p.plant_ref)}">
+      <td style="padding:7px 10px;border-bottom:1px solid var(--border);position:sticky;left:0;background:var(--surface);z-index:2;white-space:nowrap;cursor:pointer">
+        <div style="font-weight:600">
+          <span style="color:${cat.color};font-size:10.5px;font-weight:700">${escapeHtml(p.plant_ref)}</span>
+          ${escapeHtml(p.name)}${hireBadge}</div>
+        <div style="font-size:10px;color:var(--muted)">
+          <span style="color:${cat.color}">●</span> ${cat.label}${p.make || p.model ? ' · ' + escapeHtml([p.make, p.model].filter(Boolean).join(' ')) : ''}${p.serial_no ? ' · s/n ' + escapeHtml(p.serial_no) : ''}</div>
+      </td>
+      <td style="padding:7px 8px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted);cursor:pointer">${escapeHtml(p.location || '—')}</td>
+      ${PLANT_REGIMES.map(r => {
+        const info = _plantDueInfo(p[r.key]);
+        if (active) { if (info.cls === 'expired') expired++; if (info.cls === 'soon') soon++; }
+        const col = _PLANT_DUE_COLORS[info.cls];
+        const inner = info.cls === 'none' ? `<span style="color:var(--border)">—</span>`
+          : `<span style="color:${col};font-weight:700">${info.cls === 'expired' ? 'OVERDUE' : info.days + 'd'}</span><br><span style="font-size:9px;color:var(--muted)">${String(p[r.key]).slice(0, 10)}</span>`;
+        return `<td style="padding:6px 4px;border-bottom:1px solid var(--border);text-align:center;cursor:pointer;line-height:1.25">${inner}</td>`;
+      }).join('')}
+      <td style="padding:6px 4px;border-bottom:1px solid var(--border);text-align:center;cursor:pointer">
+        <span style="background:${st.color}22;color:${st.color};border:1px solid ${st.color}55;border-radius:5px;padding:2px 8px;font-size:10.5px;font-weight:700;white-space:nowrap">${st.label}</span></td>
+    </tr>`;
+  }).join('');
+  html += `</tbody>`;
+  const grid = document.getElementById('plantGrid');
+  if (grid) grid.innerHTML = items.length ? html
+    : `<tbody><tr><td style="padding:30px;text-align:center;color:var(--muted)">No plant items${q || _plantFilter !== 'all' ? ' match the filter' : ' yet — add the first one'}.</td></tr></tbody>`;
+
+  const card = (n, label, color) => `<div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid ${color};border-radius:8px;padding:8px 14px;min-width:110px">
+    <div style="font-size:20px;font-weight:800;color:${color}">${n}</div>
+    <div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">${label}</div></div>`;
+  const summary = document.getElementById('plantSummary');
+  if (summary) summary.innerHTML = `<div style="display:flex;gap:10px;flex-wrap:wrap">
+    ${card(inService, 'In service', '#3ecf8e')}${card(hired, 'On hire', '#38bdf8')}
+    ${card(soon, 'Due ≤60 days', '#eab308')}${card(expired, 'Overdue', '#ff6b6b')}</div>`;
+}
+
+function plantExportCsv() {
+  const cols = ['plant_ref', 'name', 'category', 'make', 'model', 'serial_no', 'location', 'ownership',
+    'hire_company', 'purchase_date', 'status', 'loler_due', 'puwer_due', 'pat_due', 'calib_due',
+    'service_due', 'mot_due', 'notes'];
+  const esc = v => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const csv = cols.join(',') + '\n' + (_plantItems || []).map(p => cols.map(c => esc(p[c])).join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = `plant-register-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click(); URL.revokeObjectURL(a.href);
+  toast('Plant register CSV exported', 'success');
+}
+
+// ── Item modal (self-injecting) ──────────────────────────────────────────────
+function _plantEnsureModal() {
+  if (document.getElementById('plantModal')) return;
+  const div = document.createElement('div');
+  div.innerHTML = `<div id="plantModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:1000;align-items:flex-start;justify-content:center;padding:30px;overflow-y:auto">
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:800px;overflow:hidden">
+      <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
+        <h3 id="plantModalTitle" style="margin:0;font-size:16px;flex:1"></h3>
+        <button id="plantDeleteBtn" class="btn btn-ghost btn-sm" style="color:var(--red);display:none" onclick="plantDeleteItem()">🗑 Delete</button>
+        <button class="btn btn-ghost btn-sm" onclick="document.getElementById('plantModal').style.display='none'">✕</button>
+      </div>
+      <div id="plantModalBody" style="padding:16px 20px;max-height:74vh;overflow-y:auto"></div>
+    </div></div>`;
+  document.body.appendChild(div.firstElementChild);
+}
+
+function plantOpenItem(id) {
+  _plantEnsureModal();
+  _plantEditId = id; _plantDocQueue = []; _plantDocs = [];
+  const p = id != null ? (_plantItems || []).find(x => x.id === id) || {} : {};
+  document.getElementById('plantModalTitle').textContent =
+    id != null ? `🚜 ${p.plant_ref || ''} — ${p.name || ''}` : '🚜 New Plant Item';
+  document.getElementById('plantDeleteBtn').style.display = id != null ? '' : 'none';
+
+  const fld = (key, label, val, type = 'text', extra = '') => `<div><label style="font-size:10px;color:var(--muted);display:block">${label}</label>
+    <input id="pf_${key}" type="${type}" value="${escapeHtml(val ?? '')}" ${extra}
+      style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box"></div>`;
+  const sel = (key, label, opts, cur) => `<div><label style="font-size:10px;color:var(--muted);display:block">${label}</label>
+    <select id="pf_${key}" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 7px;color:var(--text);font-size:12.5px">
+      ${Object.entries(opts).map(([k, v]) => `<option value="${k}" ${k === cur ? 'selected' : ''}>${v.label}</option>`).join('')}
+    </select></div>`;
+
+  document.getElementById('plantModalBody').innerHTML = `
+    <div style="display:grid;grid-template-columns:110px 2fr 1.3fr;gap:8px;margin-bottom:8px">
+      ${fld('plant_ref', 'Ref', p.plant_ref ?? _plantNextRef())}
+      ${fld('name', 'Name / description', p.name)}
+      ${sel('category', 'Category', PLANT_CATS, p.category || 'machine')}
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:8px">
+      ${fld('make', 'Make', p.make)}${fld('model', 'Model', p.model)}
+      ${fld('serial_no', 'Serial no', p.serial_no)}${fld('location', 'Location', p.location, 'text', 'placeholder="Workshop / site / person"')}
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1.4fr 1fr 1fr;gap:8px;margin-bottom:10px">
+      ${sel('ownership', 'Ownership', { owned: { label: 'Owned' }, hired: { label: 'Hired' } }, p.ownership || 'owned')}
+      ${fld('hire_company', 'Hire company', p.hire_company)}
+      ${fld('purchase_date', 'Purchased', p.purchase_date ? String(p.purchase_date).slice(0, 10) : '', 'date')}
+      ${sel('status', 'Status', PLANT_STATUS, p.status || 'in_service')}
+    </div>
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:5px">
+      Inspection / maintenance due dates <span style="font-weight:400;text-transform:none">(leave blank = not applicable)</span></div>
+    <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:10px">
+      ${PLANT_REGIMES.map(r => fld(r.key, r.label, p[r.key] ? String(p[r.key]).slice(0, 10) : '', 'date', `title="${escapeHtml(r.hint)}"`)).join('')}
+    </div>
+    <div style="margin-bottom:12px"><label style="font-size:10px;color:var(--muted);display:block">Notes</label>
+      <textarea id="pf_notes" rows="2" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box;resize:vertical">${escapeHtml(p.notes ?? '')}</textarea></div>
+    <div style="display:flex;gap:8px;margin-bottom:14px">
+      <button class="btn btn-primary btn-sm" onclick="plantSaveItem()">💾 Save</button>
+      <button class="btn btn-ghost btn-sm" onclick="document.getElementById('plantModal').style.display='none'">Cancel</button>
+    </div>
+    <div id="plantDocsSection" style="border-top:1px solid var(--border);padding-top:12px">
+      ${id != null ? '<div id="plantDocsArea"><div style="color:var(--muted);font-size:12px">Loading docs…</div></div>'
+                   : '<div style="font-size:12px;color:var(--muted)">Save the item first, then drop its inspection certificates here.</div>'}
+    </div>`;
+  document.getElementById('plantModal').style.display = 'flex';
+  if (id != null) loadPlantDocs(id);
+}
+
+function _plantCollectForm() {
+  const v = k => { const el = document.getElementById('pf_' + k); return el ? (el.value.trim() || null) : null; };
+  const body = {
+    plant_ref: v('plant_ref'), name: v('name'), category: v('category'),
+    make: v('make'), model: v('model'), serial_no: v('serial_no'), location: v('location'),
+    ownership: v('ownership'), hire_company: v('hire_company'),
+    purchase_date: v('purchase_date'), status: v('status'), notes: v('notes')
+  };
+  PLANT_REGIMES.forEach(r => body[r.key] = v(r.key));
+  return body;
+}
+
+async function plantSaveItem() {
+  const body = _plantCollectForm();
+  if (!body.plant_ref) { toast('Ref is required', 'error'); return; }
+  if (!body.name) { toast('Name is required', 'error'); return; }
+  try {
+    if (_plantEditId != null) {
+      await api.put(`/api/plant-items/${_plantEditId}`, body);
+      toast(`Saved — ${body.plant_ref}`, 'success');
+    } else {
+      const res = await api.post('/api/plant-items', body);
+      _plantEditId = res.id;
+      toast(`Added — ${body.plant_ref}`, 'success');
+    }
+    _plantItems = await api.get('/api/plant-items');
+    _plantRenderChips(); _plantRenderGrid();
+    plantOpenItem(_plantEditId);   // re-open in edit mode → docs area live
+  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+async function plantDeleteItem() {
+  const p = (_plantItems || []).find(x => x.id === _plantEditId); if (!p) return;
+  if (!await bamaConfirm(`Delete ${p.plant_ref} — ${p.name} from the register? Its SharePoint documents stay put (soft delete, audited). Tip: use status Disposed / Off-hired to retire an item but keep its history visible.`, 'Delete Plant Item')) return;
+  try {
+    await api.delete(`/api/plant-items/${_plantEditId}`);
+    toast('Deleted', 'success');
+    document.getElementById('plantModal').style.display = 'none';
+    _plantItems = await api.get('/api/plant-items');
+    _plantRenderChips(); _plantRenderGrid();
+  } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
+}
+
+// ── Per-item documents (D1/D2/D3 drag&drop AI-parse pattern) ─────────────────
+async function loadPlantDocs(plantId) {
+  const host = document.getElementById('plantDocsArea');
+  if (!host) return;
+  try { _plantDocs = await api.get(`/api/plant-documents?plant_id=${plantId}`); }
+  catch (e) { host.innerHTML = `<div style="color:var(--red);font-size:12px">Docs unavailable: ${escapeHtml(e.message)}</div>`; return; }
+  renderPlantDocsArea();
+}
+
+function renderPlantDocsArea() {
+  const host = document.getElementById('plantDocsArea'); if (!host) return;
+  let html = `<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:6px">Certificates &amp; documents</div>`;
+  const rows = (_plantDocs || []).slice().sort((a, b) => docExpiryInfo(a).sort - docExpiryInfo(b).sort);
+  html += rows.length ? `<div style="display:flex;flex-direction:column;gap:4px;margin-bottom:8px">` + rows.map(d => {
+    const t = PLANT_DOC_TYPES[d.doc_type] || PLANT_DOC_TYPES.other;
+    const exp = docExpiryInfo(d);
+    const title = d.web_url ? `<a href="${escapeHtml(d.web_url)}" target="_blank" style="color:var(--text);text-decoration:underline dotted">${escapeHtml(d.title)}</a>` : escapeHtml(d.title);
+    return `<div style="display:flex;align-items:center;gap:8px;font-size:12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;${d.is_archived ? 'opacity:.45' : ''}">
+      <span style="background:${t.color}22;color:${t.color};border:1px solid ${t.color}55;border-radius:5px;padding:1px 7px;font-size:10.5px;font-weight:600;white-space:nowrap">${t.label}</span>
+      <span style="font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${title}</span>
+      <span style="font-size:11px;color:var(--muted);white-space:nowrap">${d.expiry_date || 'no expiry'}</span>
+      ${exp.badge}
+      <button class="btn btn-ghost btn-sm" onclick="plantDocRenew(${d.id})" title="Renew — archive this, drop the new cert">🔁</button>
+      <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="plantDocDelete(${d.id})" title="Delete (soft)">🗑</button>
+    </div>`;
+  }).join('') + '</div>'
+  : '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">No documents on file — drop LOLER / PAT / calibration certificates or service reports below.</div>';
+
+  html += `<div ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
+       ondragleave="this.style.borderColor='var(--border)'"
+       ondrop="event.preventDefault();this.style.borderColor='var(--border)';plantDocHandleFiles(event.dataTransfer.files)"
+       onclick="document.getElementById('plantDocInput').click()"
+       style="border:1.5px dashed var(--border);border-radius:8px;padding:10px;text-align:center;cursor:pointer;font-size:12px;color:var(--muted)">
+     📥 Drop inspection certs / service reports here (auto-read) or click to browse
+     <input id="plantDocInput" type="file" multiple style="display:none" onchange="plantDocHandleFiles(this.files);this.value=''">
+  </div>
+  <div id="plantDocCards" style="margin-top:8px"></div>`;
+  host.innerHTML = html;
+  _renderPlantDocCards();
+}
+
+function plantDocHandleFiles(fileList) {
+  for (const f of fileList) _plantDocQueue.push({ file: f, parsed: null, state: 'queued' });
+  _renderPlantDocCards();
+  _plantDocProcessQueue();
+}
+
+async function _plantDocProcessQueue() {
+  const next = _plantDocQueue.find(q => q.state === 'queued');
+  if (!next) return;
+  next.state = 'parsing'; _renderPlantDocCards();
+  const f = next.file;
+  const isImg = f.type.startsWith('image/');
+  const isPdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
+  try {
+    if (!isImg && !isPdf) {
+      next.parsed = { title: f.name.replace(/\.[^.]+$/, '').replace(/_/g, ' '), doc_type: 'other' };
+      next.state = 'review'; next.note = 'This file type can\u2019t be auto-read — check the fields yourself.';
+    } else {
+      const dataUri = await _fileToDataUri(f);
+      const result = await callClaude({
+        model: 'claude-sonnet-4-6', max_tokens: 500,
+        messages: [{ role: 'user', content: [
+          isImg ? { type: 'image',    source: { type: 'base64', media_type: f.type, data: dataUri.split(',')[1] } }
+                : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: dataUri.split(',')[1] } },
+          { type: 'text', text: `Extract metadata from this plant/equipment document (LOLER thorough examination report, PUWER inspection, PAT test certificate, calibration certificate, service report, MOT certificate or insurance schedule). Return ONLY JSON, no markdown:
+{
+  "title": "concise title, e.g. 'LOLER Thorough Examination — Genie GS-1932'",
+  "doc_type": "loler | puwer | pat | calibration | service | mot | manual | other",
+  "doc_ref": "report / certificate number as printed",
+  "issuer": "inspection body, engineer or garage",
+  "issue_date": "YYYY-MM-DD (date of examination / test / service)",
+  "expiry_date": "YYYY-MM-DD (next examination due / valid until / next test date)",
+  "notes": "one short line, e.g. defects noted or 'no defects'"
+}
+Rules: null for anything not clearly printed — NEVER guess, especially dates. doc_type guidance: LOLER report of thorough examination \u2192 loler; PUWER / general equipment inspection \u2192 puwer; portable appliance test \u2192 pat; calibration certificate \u2192 calibration; service / maintenance report \u2192 service; MOT or motor insurance \u2192 mot; operator or instruction manual \u2192 manual. expiry_date = the printed next-due / latest-date-of-next-examination; if only an interval is printed (e.g. '6 months from examination') and the examination date is printed, you may compute exam date + interval, otherwise null.` }
+        ] }]
+      });
+      const text = (result.content?.find(b => b.type === 'text')?.text || '').trim();
+      const s = text.indexOf('{'), e = text.lastIndexOf('}');
+      const p = JSON.parse(text.slice(s, e + 1));
+      if (!PLANT_DOC_TYPES[p.doc_type]) p.doc_type = 'other';
+      next.parsed = p; next.state = 'review';
+    }
+  } catch (err) {
+    console.error('Plant doc parse failed', err);
+    next.parsed = { title: f.name.replace(/\.[^.]+$/, '').replace(/_/g, ' '), doc_type: 'other' };
+    next.state = 'review'; next.note = 'Auto-read failed — fill the fields yourself.';
+  }
+  _renderPlantDocCards();
+  _plantDocProcessQueue();
+}
+
+function _renderPlantDocCards() {
+  const host = document.getElementById('plantDocCards');
+  if (!host) return;
+  const live = _plantDocQueue.filter(q => q.state !== 'done');
+  if (!live.length) { host.innerHTML = ''; return; }
+  host.innerHTML = _plantDocQueue.map((q, i) => {
+    if (q.state === 'done') return '';
+    const p = q.parsed || {};
+    const head = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <span>📄</span><strong style="font-size:12px">${escapeHtml(q.file.name)}</strong>
+      <span style="margin-left:auto;font-size:11px;color:${q.state === 'parsing' ? 'var(--accent)' : q.state === 'error' ? 'var(--red)' : '#3ecf8e'}">
+        ${q.state === 'parsing' || q.state === 'queued' ? '🤖 Reading…' : q.state === 'saving' ? 'Saving…' : q.state === 'error' ? ('Failed: ' + escapeHtml(q.err || '')) : '✓ Check & save'}</span></div>`;
+    if (q.state === 'parsing' || q.state === 'queued')
+      return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:6px">${head}</div>`;
+    const fld = (key, label, val, type = 'text') => `<div><label style="font-size:10px;color:var(--muted);display:block">${label}</label>
+      <input type="${type}" value="${escapeHtml(val ?? '')}" onchange="_plantDocQueue[${i}].parsed['${key}']=this.value||null"
+        style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:5px;padding:4px 7px;color:var(--text);font-size:11.5px;box-sizing:border-box"></div>`;
+    return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:6px">
+      ${head}
+      ${q.note ? `<div style="font-size:11px;color:#eab308;margin-bottom:4px">⚠ ${escapeHtml(q.note)}</div>` : ''}
+      <div style="display:grid;grid-template-columns:2fr 1.3fr 1fr 1fr 1fr auto;gap:6px;align-items:end">
+        ${fld('title', 'Title', p.title)}
+        <div><label style="font-size:10px;color:var(--muted);display:block">Type</label>
+          <select onchange="_plantDocQueue[${i}].parsed.doc_type=this.value"
+            style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:5px;padding:4px 5px;color:var(--text);font-size:11.5px">
+            ${Object.entries(PLANT_DOC_TYPES).map(([k, v]) => `<option value="${k}" ${k === p.doc_type ? 'selected' : ''}>${v.label}</option>`).join('')}
+          </select></div>
+        ${fld('doc_ref', 'Ref', p.doc_ref)}
+        ${fld('issue_date', 'Issued', p.issue_date, 'date')}
+        ${fld('expiry_date', 'Next due', p.expiry_date, 'date')}
+        <div style="display:flex;gap:5px">
+          <button class="btn btn-primary btn-sm" onclick="plantDocSaveCard(${i})">💾</button>
+          <button class="btn btn-ghost btn-sm" onclick="_plantDocQueue.splice(${i},1);_renderPlantDocCards()">✕</button>
+        </div>
+      </div></div>`;
+  }).join('');
+}
+
+async function plantDocSaveCard(i) {
+  const q = _plantDocQueue[i];
+  const item = (_plantItems || []).find(x => x.id === _plantEditId);
+  if (!q || !item || q.state === 'saving') return;
+  const p = q.parsed || {};
+  if (!p.title || !String(p.title).trim()) { toast('Title is required', 'error'); return; }
+  q.state = 'saving'; _renderPlantDocCards();
+  try {
+    const folder = await plantDocsFolder(item);
+    const up = await uploadFileToFolder(folder.id, q.file.name, await q.file.arrayBuffer(),
+                                        q.file.type || 'application/octet-stream', BAMA_DRIVE_ID);
+    await api.post('/api/plant-documents', {
+      plant_id: item.id, doc_type: p.doc_type || 'other', title: String(p.title).trim(),
+      doc_ref: p.doc_ref || null, issuer: p.issuer || null,
+      issue_date: p.issue_date || null, expiry_date: p.expiry_date || null,
+      reminder_days: 30, notes: p.notes || null,
+      file_name: q.file.name, sharepoint_file_id: up.id,
+      drive_id: BAMA_DRIVE_ID, web_url: up.webUrl || null
+    });
+    // Two-engine note: the due date comes off the printed cert (or the user's
+    // edit of the review card) — this only copies it onto the matching regime.
+    const regime = (PLANT_DOC_TYPES[p.doc_type] || {}).regime;
+    if (regime && p.expiry_date) {
+      await api.put(`/api/plant-items/${item.id}`, { [regime]: p.expiry_date });
+      item[regime] = p.expiry_date;
+      toast(`Saved — ${p.title} · ${PLANT_REGIMES.find(r => r.key === regime).label} due date set to ${p.expiry_date}`, 'success');
+    } else {
+      toast(`Saved — ${p.title}`, 'success');
+    }
+    q.state = 'done';
+    _plantItems = await api.get('/api/plant-items');
+    _plantRenderChips(); _plantRenderGrid();
+    await loadPlantDocs(item.id);
+  } catch (err) {
+    q.state = 'error'; q.err = err.message; _renderPlantDocCards();
+  }
+}
+
+async function plantDocRenew(id) {
+  const d = (_plantDocs || []).find(r => r.id === id); if (!d) return;
+  if (!await bamaConfirm(`Renewing "${d.title}": drop the new certificate in the box below, save it, then this old version will be archived. Archive the old one now?`, 'Renew Document')) return;
+  try { await api.put(`/api/plant-documents/${id}`, { is_archived: 1 }); toast('Old version archived — drop the new one below', 'success'); loadPlantDocs(_plantEditId); }
+  catch (e) { toast('Failed: ' + e.message, 'error'); }
+}
+async function plantDocDelete(id) {
+  const d = (_plantDocs || []).find(r => r.id === id); if (!d) return;
+  if (!await bamaConfirm(`Delete "${d.title}" from the register? The SharePoint file stays put (soft delete, audited).`, 'Delete Document')) return;
+  try { await api.delete(`/api/plant-documents/${id}`); toast('Deleted', 'success'); loadPlantDocs(_plantEditId); }
+  catch (e) { toast('Delete failed: ' + e.message, 'error'); }
 }

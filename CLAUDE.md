@@ -1091,6 +1091,34 @@ BAMA CAR 001 (NCR/CAR). Validated: 7 definitions, 96 fields, all types known.
 role, phone, company and a **Direct employee ↔ Subcontractor** toggle (people
 move both ways as work demands), via the existing PUT /api/site-personnel/{id}.
 
+## Plant Register (2026-07-30 — Office › Traceability › Plant Register)
+
+Company plant & equipment register: `tab-plant` in office.html, module at the
+end of shared.js (`renderPlantTab`). One `PlantItems` row per item with six
+regime due-date DATE columns — `loler_due` / `puwer_due` / `pat_due` /
+`calib_due` / `service_due` / `mot_due` (NULL = regime not applicable) —
+rendered training-matrix-style: sticky item column, traffic lights (green /
+amber ≤60d / red overdue), category chips (fixed palette in `PLANT_CATS`),
+summary cards, zebra rows, CSV export. Statuses: in_service / under_repair /
+quarantined / off_hired / disposed (transitions audited via logChange; retire
+items by status, soft-delete only for mistakes). `plant_ref` unique among
+live rows, auto-suggested `P-NNN`. Tap a row → `plantModal` (self-injecting):
+details + regime dates + per-item docs area (D1/D2/D3 drag&drop AI-parse
+pattern; reader-only two-engine rule). Docs table `PlantDocuments`
+(loler/puwer/pat/calibration/service/mot/manual/other); files upload to
+SharePoint `BAMA / 02 - Quality (QMS) / 07 - Plant & Equipment / <Ref - Name>`
+(find-or-create). **Saving a cert whose doc_type maps to a regime
+auto-advances that item's due date** — the date always comes off the printed
+cert or the user's review-card edit, never invented. API:
+`api/src/functions/plant-register.js` — /api/plant-items (+/expiring: regimes
+unpivoted, in_service+under_repair only, ≤60 days), /api/plant-documents.
+ED shows a `plantAlertStrip` (dashboard.html, amber) fed by /expiring,
+deep-linking office.html?tab=plant. SQL:
+`api/sql/create-plant-register.sql` — new tables only, no restart. The
+Welding Equipment tab (WeldingMachines) stays separate — it feeds the QMS
+machine picker; welders can also be listed in the plant register but nothing
+migrates automatically.
+
 ## Modal → Page mapping
 
 Every `id=…Modal` element in the HTML, by page. Handy when tracing an

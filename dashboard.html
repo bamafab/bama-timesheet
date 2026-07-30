@@ -725,6 +725,7 @@
 
 <!-- Expiry alert strip (D1) — populated by loadDocAlerts(), visible on every tab -->
 <div id="docAlertStrip" onclick="location.href='office.html?tab=docs'" style="display:none;cursor:pointer;background:#3b1a1a;border-bottom:1px solid var(--red);padding:7px 20px;font-size:12.5px;color:#f0b4b4"></div>
+<div id="plantAlertStrip" onclick="location.href='office.html?tab=plant'" style="display:none;cursor:pointer;background:#3b2f0f;border-bottom:1px solid #eab308;padding:7px 20px;font-size:12.5px;color:#f0e0a4"></div>
 
 <!-- Main layout -->
 <div id="dashQuotesView" style="display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden">
@@ -4738,11 +4739,29 @@ async function loadDocAlerts() {
     strip.innerHTML = `⚠ Company documents: ${bits.join(' · ')} — <span style="text-decoration:underline">open register (Office › Company Docs)</span>`;
   } catch (e) { console.warn('Doc alerts unavailable:', e.message); }
 }
+
+// ═══ Plant Register inspection alert strip (register lives in office.html › Plant Register) ═══
+async function loadPlantAlerts() {
+  try {
+    const rows = await trFetch('/api/plant-items/expiring');
+    const strip = document.getElementById('plantAlertStrip');
+    if (!rows || !rows.length) { strip.style.display = 'none'; return; }
+    const overdue = rows.filter(d => (d.days_left ?? 0) < 0);
+    const soon    = rows.filter(d => (d.days_left ?? 0) >= 0);
+    const REG = { loler_due:'LOLER', puwer_due:'PUWER', pat_due:'PAT', calib_due:'Calibration', service_due:'Service', mot_due:'MOT' };
+    const nm = d => `${escHtml(d.plant_ref)} ${REG[d.regime] || d.regime}`;
+    const bits = [];
+    if (overdue.length) bits.push(`<strong style="color:#ff6b6b">${overdue.length} overdue</strong> (${overdue.slice(0,3).map(nm).join(', ')}${overdue.length > 3 ? '…' : ''})`);
+    if (soon.length)    bits.push(`<strong style="color:#eab308">${soon.length} due ≤60 days</strong> (${soon.slice(0,3).map(nm).join(', ')}${soon.length > 3 ? '…' : ''})`);
+    strip.style.display = '';
+    strip.innerHTML = `🚜 Plant inspections: ${bits.join(' · ')} — <span style="text-decoration:underline">open register (Office › Plant Register)</span>`;
+  } catch (e) { console.warn('Plant alerts unavailable:', e.message); }
+}
 (function hookDocAlerts() {
   const orig = window.showDashMain;
   if (typeof orig === 'function') {
-    window.showDashMain = function () { orig.apply(this, arguments); loadDocAlerts(); };
-  } else { setTimeout(loadDocAlerts, 1500); }
+    window.showDashMain = function () { orig.apply(this, arguments); loadDocAlerts(); loadPlantAlerts(); };
+  } else { setTimeout(loadDocAlerts, 1500); setTimeout(loadPlantAlerts, 1500); }
 })();
 </script>
 </body>
