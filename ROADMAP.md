@@ -228,7 +228,9 @@ Ranked by value, with what this session's work already changed:
   · *Reorder POs:* **basket to approve before sending.** Confirmed — nothing
     that creates a financial commitment goes out without a human pressing
     something.
-  · *Welding machines:* **MIGRATE INTO PLANT** — Mateusz's decision, overriding
+  · *Welding machines:* ✅ **DONE 2026-07-30** (see CLAUDE.md). Below was the
+    plan; it was built as described, kiosk untouched.
+    **MIGRATE INTO PLANT** — Mateusz's decision, overriding
     the earlier recommendation to keep them separate (I argued against it on FK
     grounds; he wants one place and one fewer sidebar line, which is a fair
     call on usability). Do it WITHOUT breaking the two foreign keys:

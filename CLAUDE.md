@@ -1264,6 +1264,29 @@ modal; if there's no usable qualification it shows a red panel and sets
 auditable afterwards. Full thickness/position scope testing stays on the
 Welder Approvals tab (🔍 Check a welder).
 
+## Welding machines live in the Plant Register (F3, 2026-07-30)
+
+Mateusz's decision — one place, one fewer sidebar line. **WeldingMachines was
+NOT dropped and its rows are never deleted**, because
+`JobAssemblies.welding_machine_id` FKs it in both add-job-fabrication.sql and
+add-staged-fabrication.sql, and the workshop kiosk reads
+`/api/welding-machines`. So: `PlantItems` (category `welding`) is the editing
+surface, and `syncWeldingMachine()` in plant-register.js keeps the shadow
+WeldingMachines row in step behind it — **the kiosk therefore needed no change
+at all**, which is the point. Mapping: name→machine_name, serial_no→serial_number,
+calib_due→expiry_date (a welding machine's verification expiry IS its
+calibration date — BAM VER 001), status disposed/off_hired→is_active 0.
+Deleting a plant item DEACTIVATES the machine, never deletes it.
+`WeldingMachineWelders` (authorised welders) is untouched and now surfaces in
+the plant modal via `plantLoadWelders()`. The Welding Equipment sidebar entry is
+removed; `tab-welding` markup and its renderer are deliberately LEFT IN PLACE
+(unreachable, harmless) rather than ripped out.
+Migration: `api/sql/migrate-welding-machines-into-plant.sql` — **contains ALTER
+TABLE ⇒ Function App restart required.** The welding link is fetched in its own
+guarded query, never folded into `ITEM_COLS`, so the register still loads before
+the migration runs. Pinned by `tests/plant-welding-sync.js` (26 cases, mostly
+safety properties).
+
 ## Modal → Page mapping
 
 Every `id=…Modal` element in the HTML, by page. Handy when tracing an

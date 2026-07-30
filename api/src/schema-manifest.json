@@ -1173,6 +1173,19 @@
       "seedForms": []
     },
     {
+      "script": "migrate-welding-machines-into-plant.sql",
+      "title": "Mateusz's decision: welding machines live in the Plant Register, not on their",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "WeldingMachines",
+          "column": "plant_id"
+        }
+      ],
+      "seedForms": []
+    },
+    {
       "script": "retire-approval-revisions.sql",
       "title": "Soft-delete flag for approval revisions. A deleted revision disappears from",
       "kind": "structural",

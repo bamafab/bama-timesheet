@@ -23300,9 +23300,6 @@ function renderUnifiedSidebar() {
     <div class="sidebar-nav-group">
       <div class="sidebar-nav-label-toggle" onclick="toggleSidebarGroup(this)">Traceability <span class="chevron">&#9660;</span></div>
       <div class="sidebar-nav-subitems">
-        <button class="sidebar-nav-item${a('office','welding')}" data-tab="welding" onclick="navToOfficeTab('welding')">
-          <span class="sidebar-nav-icon">🔥</span> Welding Equipment
-        </button>
         <button class="sidebar-nav-item${a('office','qms')}" data-tab="qms" onclick="navToOfficeTab('qms')">
           <span class="sidebar-nav-icon">📋</span> QMS Forms
         </button>
@@ -47709,12 +47706,23 @@ function plantOpenItem(id) {
       <button class="btn btn-primary btn-sm" onclick="plantSaveItem()">💾 Save</button>
       <button class="btn btn-ghost btn-sm" onclick="document.getElementById('plantModal').style.display='none'">Cancel</button>
     </div>
+    <div id="plantWeldingSection" style="border-top:1px solid var(--border);padding-top:12px;margin-bottom:12px;display:${(p.category === 'welding' || id == null) ? 'block' : 'none'}">
+      ${p.category === 'welding' && id != null
+        ? `<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:6px">Welding machine</div>
+           <div style="font-size:11.5px;color:var(--muted);line-height:1.6;margin-bottom:8px">
+             This machine also appears in the workshop kiosk so the lads can pick which machine they welded with, and on the
+             BAM VER 001 verification sheet. Its <strong>Calibration</strong> date above is its verification expiry — the two are
+             the same date, kept in one place.${p.welding_machine_id ? '' : ' <span style="color:#eab308">⚠ not yet linked to a kiosk machine record — save the item once the migration has run.</span>'}</div>
+           <div id="plantWelderList" style="font-size:12px;color:var(--muted)">Loading authorised welders…</div>`
+        : ''}
+    </div>
     <div id="plantDocsSection" style="border-top:1px solid var(--border);padding-top:12px">
       ${id != null ? '<div id="plantDocsArea"><div style="color:var(--muted);font-size:12px">Loading docs…</div></div>'
                    : '<div style="font-size:12px;color:var(--muted)">Save the item first, then drop its inspection certificates here.</div>'}
     </div>`;
   document.getElementById('plantModal').style.display = 'flex';
   if (id != null) loadPlantDocs(id);
+  if (id != null && p.category === 'welding' && p.welding_machine_id) plantLoadWelders(p.welding_machine_id);
 }
 
 function _plantCollectForm() {
@@ -49361,4 +49369,21 @@ async function inspVerifyRule(id, on) {
     if (_inspPlan) _inspRender();
     toast(on ? 'Verified' : 'Marked unverified', 'success');
   } catch (e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+// Authorised welders for a welding machine. WeldingMachineWelders is untouched
+// by the F3 migration — the list simply surfaces here now instead of on the old
+// Welding Equipment tab, so nothing was lost when that tab came off the sidebar.
+async function plantLoadWelders(machineId) {
+  const host = document.getElementById('plantWelderList');
+  if (!host) return;
+  try {
+    const m = await api.get(`/api/welding-machines/${machineId}`);
+    const w = m.welders || [];
+    host.innerHTML = `<strong style="color:var(--text)">Authorised welders:</strong> ` +
+      (w.length ? w.map(x => `<span style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:2px 9px;margin:0 3px;font-size:11.5px;color:var(--text);display:inline-block">${escapeHtml(x.employee_name)}</span>`).join('')
+                : '<span style="color:#eab308">none recorded</span>');
+  } catch (e) {
+    host.innerHTML = `<span style="color:var(--muted)">Authorised welders unavailable (${escapeHtml(e.message)})</span>`;
+  }
 }

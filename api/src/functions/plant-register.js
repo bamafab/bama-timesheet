@@ -31,6 +31,50 @@ const STATUSES   = ['in_service', 'under_repair', 'quarantined', 'off_hired', 'd
 const REGIMES    = ['loler_due', 'puwer_due', 'pat_due', 'calib_due', 'service_due', 'mot_due'];
 const DOC_TYPES  = ['loler', 'puwer', 'pat', 'calibration', 'service', 'mot', 'manual', 'other'];
 
+// ─── Welding machines live in this register (F3, Mateusz's decision) ─────────
+// WeldingMachines is NOT dropped: JobAssemblies.welding_machine_id points at it
+// in two migrations and the workshop kiosk reads /api/welding-machines. So the
+// plant row is the editing surface and we keep the WeldingMachines row in step
+// behind it — meaning every historic assembly still resolves and the kiosk
+// needs no change whatsoever. A welding machine's calib_due IS its verification
+// expiry (BAM VER 001), so it maps to WeldingMachines.expiry_date.
+async function syncWeldingMachine(plantId, context) {
+    try {
+        const p = await query(
+            `SELECT id, name, serial_no, CONVERT(varchar(10), calib_due, 23) AS calib_due, status, notes, category
+             FROM PlantItems WHERE id = @id AND is_deleted = 0`, { id: plantId });
+        if (!p.recordset.length) return;
+        const item = p.recordset[0];
+        if (item.category !== 'welding') return;   // only welding items shadow a machine
+
+        const existing = await query(`SELECT id FROM WeldingMachines WHERE plant_id = @pid`, { pid: plantId });
+        const isActive = (item.status === 'disposed' || item.status === 'off_hired') ? 0 : 1;
+        const params = {
+            pid: plantId,
+            name: String(item.name || 'Welding machine').slice(0, 200),
+            serial: item.serial_no || null,
+            expiry: item.calib_due || null,
+            notes: item.notes || null,
+            active: isActive
+        };
+        if (existing.recordset.length) {
+            await query(
+                `UPDATE WeldingMachines SET machine_name = @name, serial_number = @serial,
+                        expiry_date = @expiry, notes = @notes, is_active = @active, updated_at = GETUTCDATE()
+                 WHERE plant_id = @pid`, params);
+        } else {
+            await query(
+                `INSERT INTO WeldingMachines (machine_name, serial_number, expiry_date, notes, is_active, plant_id)
+                 VALUES (@name, @serial, @expiry, @notes, @active, @pid)`, params);
+        }
+    } catch (err) {
+        // Never fail the plant save because the shadow row misbehaved — the
+        // plant register is the source of truth and a resync is idempotent.
+        // Most likely cause: plant_id column missing (migration not yet run).
+        if (context) context.warn('Welding machine sync skipped: ' + err.message);
+    }
+}
+
 const ITEM_COLS = `id, plant_ref, name, category, make, model, serial_no, location,
     ownership, hire_company, CONVERT(varchar(10), purchase_date, 23) AS purchase_date, status,
     ${REGIMES.map(r => `CONVERT(varchar(10), ${r}, 23) AS ${r}`).join(', ')},
@@ -64,7 +108,19 @@ app.http('plant-items-list', {
             const res = await query(
                 `SELECT ${ITEM_COLS} FROM PlantItems WHERE is_deleted = 0
                  ORDER BY CASE status WHEN 'disposed' THEN 2 WHEN 'off_hired' THEN 1 ELSE 0 END, plant_ref`);
-            return ok(res.recordset, request);
+            const items = res.recordset;
+            // Welding-machine links, fetched separately and defensively: if the
+            // migration hasn't run (no plant_id column) the register must still
+            // load rather than 500. Never fold this into ITEM_COLS.
+            try {
+                const links = await query(`SELECT id, plant_id FROM WeldingMachines WHERE plant_id IS NOT NULL`);
+                const byPlant = {};
+                links.recordset.forEach(l => { byPlant[l.plant_id] = l.id; });
+                items.forEach(i => { i.welding_machine_id = byPlant[i.id] || null; });
+            } catch (e) {
+                context.warn('Welding machine links unavailable (migration not run?): ' + e.message);
+            }
+            return ok(items, request);
         } catch (err) {
             context.error('plant-items list error:', err);
             return serverError('Failed to load plant register', request);
@@ -135,7 +191,9 @@ app.http('plant-items-create', {
                  VALUES (@plant_ref, @name, @category, @make, @model, @serial_no, @location, @ownership, @hire_company,
                          @purchase_date, @status, ${REGIMES.map(r => '@' + r).join(', ')}, @notes, @created_by)`,
                 params);
-            return created({ id: res.recordset[0].id }, request);
+            const newId = res.recordset[0].id;
+            if (params.category === 'welding') await syncWeldingMachine(newId, context);
+            return created({ id: newId }, request);
         } catch (err) {
             context.error('plant-items create error:', err);
             return serverError('Failed to create plant item', request);
@@ -189,6 +247,7 @@ app.http('plant-items-update', {
                 await logChange('plant_item', id, `${before.plant_ref} ${before.name}`,
                     'status_change', before.status, b.status, auth.name || auth.email);
             }
+            await syncWeldingMachine(id, context);   // no-op unless category is 'welding'
             return ok({ id, updated: true }, request);
         } catch (err) {
             context.error('plant-items update error:', err);
@@ -210,6 +269,11 @@ app.http('plant-items-delete', {
             const cur = await query(`SELECT id, plant_ref, name FROM PlantItems WHERE id = @id AND is_deleted = 0`, { id });
             if (!cur.recordset.length) return notFound('Plant item not found', request);
             await query(`UPDATE PlantItems SET is_deleted = 1, updated_at = SYSUTCDATETIME() WHERE id = @id`, { id });
+            // Deactivate the shadow machine — NEVER delete it. JobAssemblies rows
+            // point at its id and deleting would orphan fabrication history.
+            try {
+                await query(`UPDATE WeldingMachines SET is_active = 0, updated_at = GETUTCDATE() WHERE plant_id = @pid`, { pid: id });
+            } catch (e) { context.warn('Welding machine deactivate skipped: ' + e.message); }
             await logChange('plant_item', id, `${cur.recordset[0].plant_ref} ${cur.recordset[0].name}`,
                 'soft_delete', 'active', 'deleted', auth.name || auth.email);
             return ok({ id, deleted: true }, request);
