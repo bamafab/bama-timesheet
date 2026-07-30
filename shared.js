@@ -10265,6 +10265,8 @@ function renderStaffList() {
               <div style="display:flex;gap:6px;margin-top:8px">
                 <button class="tiny-btn" style="background:var(--surface);color:var(--muted);border:1px solid var(--border)"
                   onclick="editEmployee('${emp.id}')">&#9998; Edit</button>
+                <button class="tiny-btn" style="background:var(--surface);color:var(--muted);border:1px solid var(--border)"
+                  onclick="openEmployeeDocs('${(emp.name||'').replace(/'/g,"\\'")}')">&#128193; Docs</button>
                 <button class="tiny-btn tiny-reject" onclick="toggleEmployeeActive('${emp.id}')">
                   ${emp.active === false ? '&#10003; Re-activate' : '&#9940; Deactivate'}
                 </button>
@@ -45972,4 +45974,349 @@ async function supDocDelete(id) {
   if (!await bamaConfirm(`Delete "${d.title}" from the register? The SharePoint file stays put (soft delete, audited).`, 'Delete Document')) return;
   try { await api.delete(`/api/supplier-documents/${id}`); toast('Deleted', 'success'); loadSupplierDocs(_supplierDetailId); }
   catch (e) { toast('Delete failed: ' + e.message, 'error'); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// D3 — EMPLOYEE DOCUMENTS + CONTRACT GENERATION (2026-07-30)
+// Per-employee doc register (office.html › Employees, "📁 Docs" on each
+// card): contracts, right-to-work, certs, reviews — drag & drop AI parsing
+// (D1/D2 pattern), files → BAMA / 03 - Employees / <Employee Name>.
+// Contract generator: deterministic template (two-engine rule — merge fields
+// only, wording lives in CONTRACT_TEMPLATE below; source of truth for the
+// wording is templates/TEMPLATE-employment-contract.md), native jsPDF
+// renderer per the PDF rules, saved + registered as doc_type 'contract'.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const EMP_DOC_TYPES = {
+  contract: { label: 'Contract',       color: '#a855f7' },
+  rtw:      { label: 'Right to Work',  color: '#3b82f6' },
+  cert:     { label: 'Cert / Training',color: '#22c55e' },
+  review:   { label: 'Review',         color: '#eab308' },
+  hs:       { label: 'H&S',            color: '#f97316' },
+  other:    { label: 'Other',          color: '#94a3b8' }
+};
+let _empDocsEmp = null, _empDocs = [], _empDocQueue = [];
+
+async function employeeDocsFolder(name) {
+  const safe = name.replace(/[~"#%&*:<>?{|}/\\]/g, '-').trim().slice(0, 100);
+  return await getOrCreateSubfolder(SP_TAX.employees, safe, BAMA_DRIVE_ID);
+}
+
+// ── Docs modal (self-injecting) ──────────────────────────────────────────────
+function openEmployeeDocs(empName) {
+  _empDocsEmp = empName; _empDocQueue = [];
+  if (!document.getElementById('empDocsModal')) {
+    const div = document.createElement('div');
+    div.innerHTML = `<div id="empDocsModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:1000;align-items:flex-start;justify-content:center;padding:30px;overflow-y:auto">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:760px;overflow:hidden">
+        <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
+          <h3 id="empDocsTitle" style="margin:0;font-size:16px;flex:1"></h3>
+          <button class="btn btn-primary btn-sm" onclick="openContractGen()">📝 Generate contract</button>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('empDocsModal').style.display='none'">✕</button>
+        </div>
+        <div id="empDocsBody" style="padding:16px 20px;max-height:70vh;overflow-y:auto"></div>
+      </div></div>`;
+    document.body.appendChild(div.firstElementChild);
+  }
+  document.getElementById('empDocsTitle').textContent = `📁 ${empName} — Documents`;
+  document.getElementById('empDocsModal').style.display = 'flex';
+  loadEmployeeDocs();
+}
+
+async function loadEmployeeDocs() {
+  const body = document.getElementById('empDocsBody');
+  body.innerHTML = '<div style="color:var(--muted);font-size:12px">Loading…</div>';
+  try { _empDocs = await api.get(`/api/employee-documents?employee=${encodeURIComponent(_empDocsEmp)}`); }
+  catch (e) { body.innerHTML = `<div style="color:var(--red);font-size:12px">Unavailable: ${escapeHtml(e.message)} — run api/sql/create-employee-documents.sql?</div>`; return; }
+  renderEmployeeDocs();
+}
+
+function renderEmployeeDocs() {
+  const body = document.getElementById('empDocsBody');
+  const rows = (_empDocs || []).slice().sort((a, b) => docExpiryInfo(a).sort - docExpiryInfo(b).sort);
+  let html = rows.length ? `<div style="display:flex;flex-direction:column;gap:4px;margin-bottom:10px">` + rows.map(d => {
+    const t = EMP_DOC_TYPES[d.doc_type] || EMP_DOC_TYPES.other;
+    const exp = docExpiryInfo(d);
+    const title = d.web_url ? `<a href="${escapeHtml(d.web_url)}" target="_blank" style="color:var(--text);text-decoration:underline dotted">${escapeHtml(d.title)}</a>` : escapeHtml(d.title);
+    return `<div style="display:flex;align-items:center;gap:8px;font-size:12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;${d.is_archived ? 'opacity:.45' : ''}">
+      <span style="background:${t.color}22;color:${t.color};border:1px solid ${t.color}55;border-radius:5px;padding:1px 7px;font-size:10.5px;font-weight:600;white-space:nowrap">${t.label}</span>
+      <span style="font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${title}</span>
+      <span style="font-size:11px;color:var(--muted)">${d.expiry_date || d.issue_date || ''}</span>
+      ${exp.badge}
+      <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="empDocDelete(${d.id})" title="Delete (soft)">🗑</button>
+    </div>`;
+  }).join('') + '</div>'
+  : '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">No documents on file yet.</div>';
+
+  html += `<div ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
+     ondragleave="this.style.borderColor='var(--border)'"
+     ondrop="event.preventDefault();this.style.borderColor='var(--border)';empDocHandleFiles(event.dataTransfer.files)"
+     onclick="document.getElementById('empDocInput').click()"
+     style="border:1.5px dashed var(--border);border-radius:8px;padding:10px;text-align:center;cursor:pointer;font-size:12px;color:var(--muted)">
+     📥 Drop signed contracts, RTW docs, training certs here (auto-read) or click to browse
+     <input id="empDocInput" type="file" multiple style="display:none" onchange="empDocHandleFiles(this.files);this.value=''">
+  </div><div id="empDocCards" style="margin-top:8px"></div>`;
+  body.innerHTML = html;
+  _renderEmpDocCards();
+}
+
+function empDocHandleFiles(fileList) {
+  for (const f of fileList) _empDocQueue.push({ file: f, parsed: null, state: 'queued' });
+  _renderEmpDocCards(); _empDocProcessQueue();
+}
+
+async function _empDocProcessQueue() {
+  const next = _empDocQueue.find(q => q.state === 'queued');
+  if (!next) return;
+  next.state = 'parsing'; _renderEmpDocCards();
+  const f = next.file;
+  const isImg = f.type.startsWith('image/');
+  const isPdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
+  try {
+    if (!isImg && !isPdf) {
+      next.parsed = { title: f.name.replace(/\.[^.]+$/, '').replace(/_/g, ' '), doc_type: 'other' };
+      next.state = 'review'; next.note = 'Can\u2019t auto-read this type — check fields yourself.';
+    } else {
+      const dataUri = await _fileToDataUri(f);
+      const result = await callClaude({
+        model: 'claude-sonnet-4-6', max_tokens: 400,
+        messages: [{ role: 'user', content: [
+          isImg ? { type: 'image',    source: { type: 'base64', media_type: f.type, data: dataUri.split(',')[1] } }
+                : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: dataUri.split(',')[1] } },
+          { type: 'text', text: `Extract metadata from this employee document (employment contract, right-to-work / passport / visa, training certificate e.g. CSCS/CPCS/coded welder, appraisal). Return ONLY JSON, no markdown:
+{"title":"concise title","doc_type":"contract | rtw | cert | review | hs | other","doc_ref":"cert/document number","issuer":"issuing body","issue_date":"YYYY-MM-DD","expiry_date":"YYYY-MM-DD","notes":"one short line"}
+Rules: null when not printed — NEVER guess dates. Training/competence cards → cert; passport/visa/share-code letters → rtw; signed employment contracts → contract.` }
+        ] }]
+      });
+      const text = (result.content?.find(b => b.type === 'text')?.text || '').trim();
+      const p = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1));
+      if (!EMP_DOC_TYPES[p.doc_type]) p.doc_type = 'other';
+      next.parsed = p; next.state = 'review';
+    }
+  } catch (err) {
+    next.parsed = { title: f.name.replace(/\.[^.]+$/, '').replace(/_/g, ' '), doc_type: 'other' };
+    next.state = 'review'; next.note = 'Auto-read failed — fill fields yourself.';
+  }
+  _renderEmpDocCards(); _empDocProcessQueue();
+}
+
+function _renderEmpDocCards() {
+  const host = document.getElementById('empDocCards');
+  if (!host) return;
+  if (!_empDocQueue.filter(q => q.state !== 'done').length) { host.innerHTML = ''; return; }
+  host.innerHTML = _empDocQueue.map((q, i) => {
+    if (q.state === 'done') return '';
+    const p = q.parsed || {};
+    const head = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span>📄</span>
+      <strong style="font-size:12px">${escapeHtml(q.file.name)}</strong>
+      <span style="margin-left:auto;font-size:11px;color:${q.state==='error'?'var(--red)':q.state==='review'?'#3ecf8e':'var(--accent)'}">
+        ${q.state==='review'?'✓ Check & save':q.state==='saving'?'Saving…':q.state==='error'?('Failed: '+escapeHtml(q.err||'')):'🤖 Reading…'}</span></div>`;
+    if (q.state !== 'review' && q.state !== 'error')
+      return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:6px">${head}</div>`;
+    const fld = (key, label, val, type='text') => `<div><label style="font-size:10px;color:var(--muted);display:block">${label}</label>
+      <input type="${type}" value="${escapeHtml(val ?? '')}" onchange="_empDocQueue[${i}].parsed['${key}']=this.value||null"
+        style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:5px;padding:4px 7px;color:var(--text);font-size:11.5px;box-sizing:border-box"></div>`;
+    return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:6px">${head}
+      ${q.note ? `<div style="font-size:11px;color:#eab308;margin-bottom:4px">⚠ ${escapeHtml(q.note)}</div>` : ''}
+      <div style="display:grid;grid-template-columns:2fr 1.2fr 1fr 1fr 1fr auto;gap:6px;align-items:end">
+        ${fld('title','Title',p.title)}
+        <div><label style="font-size:10px;color:var(--muted);display:block">Type</label>
+          <select onchange="_empDocQueue[${i}].parsed.doc_type=this.value" style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:5px;padding:4px 5px;color:var(--text);font-size:11.5px">
+            ${Object.entries(EMP_DOC_TYPES).map(([k,v]) => `<option value="${k}" ${k===p.doc_type?'selected':''}>${v.label}</option>`).join('')}
+          </select></div>
+        ${fld('doc_ref','Ref',p.doc_ref)}
+        ${fld('issue_date','Issued',p.issue_date,'date')}
+        ${fld('expiry_date','Expires',p.expiry_date,'date')}
+        <div style="display:flex;gap:5px">
+          <button class="btn btn-primary btn-sm" onclick="empDocSaveCard(${i})">💾</button>
+          <button class="btn btn-ghost btn-sm" onclick="_empDocQueue.splice(${i},1);_renderEmpDocCards()">✕</button>
+        </div></div></div>`;
+  }).join('');
+}
+
+async function empDocSaveCard(i) {
+  const q = _empDocQueue[i];
+  if (!q || q.state === 'saving' || !_empDocsEmp) return;
+  const p = q.parsed || {};
+  if (!p.title) { toast('Title is required', 'error'); return; }
+  q.state = 'saving'; _renderEmpDocCards();
+  try {
+    const folder = await employeeDocsFolder(_empDocsEmp);
+    const up = await uploadFileToFolder(folder.id, q.file.name, await q.file.arrayBuffer(), q.file.type || 'application/octet-stream', BAMA_DRIVE_ID);
+    await api.post('/api/employee-documents', {
+      employee_name: _empDocsEmp, doc_type: p.doc_type || 'other', title: p.title,
+      doc_ref: p.doc_ref || null, issuer: p.issuer || null,
+      issue_date: p.issue_date || null, expiry_date: p.expiry_date || null,
+      reminder_days: 60, notes: p.notes || null,
+      file_name: q.file.name, sharepoint_file_id: up.id, drive_id: BAMA_DRIVE_ID, web_url: up.webUrl || null
+    });
+    q.state = 'done'; toast(`Saved — ${p.title}`, 'success');
+    await loadEmployeeDocs();
+  } catch (err) { q.state = 'error'; q.err = err.message; _renderEmpDocCards(); }
+}
+
+async function empDocDelete(id) {
+  const d = (_empDocs || []).find(r => r.id === id); if (!d) return;
+  if (!await bamaConfirm(`Delete "${d.title}" from the register? The SharePoint file stays put (soft delete, audited).`, 'Delete Document')) return;
+  try { await api.delete(`/api/employee-documents/${id}`); toast('Deleted', 'success'); loadEmployeeDocs(); }
+  catch (e) { toast('Delete failed: ' + e.message, 'error'); }
+}
+
+// ── Contract generator ───────────────────────────────────────────────────────
+// Wording source of truth: templates/TEMPLATE-employment-contract.md.
+// Tweaks = edit CONTRACT_TEMPLATE strings; {f.x} values come from the form.
+const CONTRACT_ROLE_PRESETS = {
+  'Fabricator/Welder': { hours: 45, pattern: 'Monday to Friday, 07:30–16:30 with a 60-minute unpaid break', payBasis: 'hour' },
+  'Steel Erector':     { hours: 45, pattern: 'Monday to Friday, hours per site programme (typically 07:30–16:30)', payBasis: 'hour' },
+  'Draftsman':         { hours: 40, pattern: 'Monday to Friday, 08:00–16:30 with a 30-minute unpaid break', payBasis: 'year' },
+  'Office Administrator': { hours: 40, pattern: 'Monday to Friday, 08:00–16:30 with a 30-minute unpaid break', payBasis: 'year' }
+};
+
+function openContractGen() {
+  if (!document.getElementById('contractGenModal')) {
+    const div = document.createElement('div');
+    div.innerHTML = `<div id="contractGenModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1001;align-items:flex-start;justify-content:center;padding:30px;overflow-y:auto">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:560px;overflow:hidden">
+        <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+          <h3 style="margin:0;font-size:16px">📝 Generate employment contract</h3>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('contractGenModal').style.display='none'">✕</button>
+        </div>
+        <div style="padding:16px 20px;display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12px">
+          <div style="grid-column:1/3"><label style="color:var(--muted);display:block;margin-bottom:3px">Employee address (home)</label>
+            <input id="cgAddress" type="text" placeholder="12 Some Street, Peterborough PE1 1AA" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);box-sizing:border-box"></div>
+          <div><label style="color:var(--muted);display:block;margin-bottom:3px">Job title (preset fills defaults)</label>
+            <select id="cgRole" onchange="cgApplyPreset()" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text)">
+              ${Object.keys(CONTRACT_ROLE_PRESETS).map(r => `<option>${r}</option>`).join('')}<option>Custom…</option>
+            </select></div>
+          <div><label style="color:var(--muted);display:block;margin-bottom:3px">Start date</label>
+            <input id="cgStart" type="date" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);box-sizing:border-box"></div>
+          <div><label style="color:var(--muted);display:block;margin-bottom:3px">Pay (£)</label>
+            <input id="cgPay" type="number" step="0.01" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);box-sizing:border-box"></div>
+          <div><label style="color:var(--muted);display:block;margin-bottom:3px">Per</label>
+            <select id="cgPayBasis" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text)">
+              <option value="hour">hour (paid weekly)</option><option value="year">year (paid monthly)</option></select></div>
+          <div><label style="color:var(--muted);display:block;margin-bottom:3px">Hours / week</label>
+            <input id="cgHours" type="number" value="45" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);box-sizing:border-box"></div>
+          <div><label style="color:var(--muted);display:block;margin-bottom:3px">Holiday days (incl. bank hols)</label>
+            <input id="cgHoliday" type="number" value="28" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);box-sizing:border-box"></div>
+          <div style="grid-column:1/3"><label style="color:var(--muted);display:block;margin-bottom:3px">Working pattern</label>
+            <input id="cgPattern" type="text" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);box-sizing:border-box"></div>
+          <div><label style="color:var(--muted);display:block;margin-bottom:3px">Probation (months)</label>
+            <input id="cgProbation" type="number" value="3" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);box-sizing:border-box"></div>
+          <div><label style="color:var(--muted);display:block;margin-bottom:3px">Notice after probation</label>
+            <select id="cgNotice" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text)">
+              <option>1 week</option><option selected>1 month</option><option>2 months</option></select></div>
+          <div id="cgStatus" style="grid-column:1/3;color:var(--muted);min-height:15px"></div>
+        </div>
+        <div style="padding:12px 20px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end">
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('contractGenModal').style.display='none'">Cancel</button>
+          <button class="btn btn-primary btn-sm" id="cgGoBtn" onclick="generateContract()">Generate PDF & file it</button>
+        </div>
+      </div></div>`;
+    document.body.appendChild(div.firstElementChild);
+  }
+  cgApplyPreset();
+  document.getElementById('cgStart').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('contractGenModal').style.display = 'flex';
+}
+function cgApplyPreset() {
+  const p = CONTRACT_ROLE_PRESETS[document.getElementById('cgRole').value];
+  if (!p) return;
+  document.getElementById('cgHours').value = p.hours;
+  document.getElementById('cgPattern').value = p.pattern;
+  document.getElementById('cgPayBasis').value = p.payBasis;
+}
+
+function _contractSections(f) {
+  const payFreq = f.payBasis === 'hour' ? 'weekly' : 'monthly';
+  return [
+    ['STATEMENT OF MAIN TERMS OF EMPLOYMENT', ''],
+    ['Parties', `Employer: BAMA Fabrication Ltd, Gloucester House Office 2, London Road, Peterborough PE2 8AN ("the Company").\nEmployee: ${f.name}${f.address ? ', ' + f.address : ''}.\nJob title: ${f.role}.\nStart date: ${f.startDate}. No previous employment counts towards continuous employment. The first ${f.probation} months are a probationary period during which performance and suitability are assessed.`],
+    ['1. Place of work', `Your normal place of work is the Company's manufacturing facility at 11 Enterprise Way, Enterprise Park, Yaxley, Peterborough PE7 3WY. You may be required to work at the Company's offices, client sites and construction sites within the UK as the needs of the business require. Travel time and expenses for site work are paid in accordance with the Company's current site-work arrangements.`],
+    ['2. Pay', `Your pay is \u00a3${f.pay} per ${f.payBasis}, paid ${payFreq} in arrears by bank transfer. Overtime is available at the Company's discretion and paid at the rates notified from time to time. Deductions are only made where required by law (PAYE, National Insurance, court orders, pension) or where you have agreed in writing.`],
+    ['3. Hours of work', `Normal hours: ${f.hours} hours per week, ${f.pattern}. You may be required to work reasonable additional hours to meet production and site deadlines.`],
+    ['4. Holidays', `The holiday year runs 1 January to 31 December. Your entitlement is ${f.holiday} days including public holidays. Requests are made through the Company's time-keeping system and are subject to approval. Untaken holiday may not be carried over except as required by law. On termination, accrued untaken holiday is paid; holiday taken in excess of accrual is deducted from final pay.`],
+    ['5. Sickness', `You must notify the Managing Director before 07:30 on the first day of absence. Statutory Sick Pay applies; there is no contractual sick pay unless notified in writing. Fit notes are required after 7 days.`],
+    ['6. Pension', `You will be auto-enrolled into the Company's workplace pension scheme where eligible, with contributions at statutory minimum rates unless otherwise agreed.`],
+    ['7. PPE, tools & training', `The Company provides required PPE free of charge; you must use it and keep it in good condition. Company plant and machines may only be used with authorisation. You must hold and maintain the certifications required for your role (e.g. CSCS, coded welder, CPCS); the Company records these in its training matrix and may fund renewals at its discretion.`],
+    ['8. Health, safety & conduct', `You must comply with the Company's Health & Safety Policy (POL001), COSHH arrangements, safe systems of work, and all Company policies as amended from time to time (available on demand). Smoking, alcohol and drugs rules per POL001 apply. Failure to follow safety rules is a disciplinary matter and may constitute gross misconduct.`],
+    ['9. Notice', `During probation: one week's notice on either side. After probation: from you, ${f.notice}; from the Company, the greater of ${f.notice} and the statutory minimum (one week per complete year of service, up to twelve weeks).`],
+    ['10. Disciplinary & grievance', `The Company follows the ACAS Code of Practice. Disciplinary and grievance matters should be raised with Mateusz Braczyk, Managing Director. The procedures are non-contractual.`],
+    ['11. Confidentiality & intellectual property', `You must not disclose confidential information (pricing, client lists, drawings, the Company's systems) during or after employment. Work products, drawings and designs created in the course of employment belong to the Company.`],
+    ['12. Other', `There are no collective agreements affecting your employment. There is no requirement to work outside the UK.`]
+  ];
+}
+
+async function generateContract() {
+  const f = {
+    name: _empDocsEmp,
+    address: document.getElementById('cgAddress').value.trim(),
+    role: document.getElementById('cgRole').value,
+    startDate: document.getElementById('cgStart').value,
+    pay: document.getElementById('cgPay').value,
+    payBasis: document.getElementById('cgPayBasis').value,
+    hours: document.getElementById('cgHours').value,
+    holiday: document.getElementById('cgHoliday').value,
+    pattern: document.getElementById('cgPattern').value.trim(),
+    probation: document.getElementById('cgProbation').value,
+    notice: document.getElementById('cgNotice').value
+  };
+  const status = document.getElementById('cgStatus'), btn = document.getElementById('cgGoBtn');
+  if (!f.pay || !f.startDate) { status.textContent = 'Pay and start date are required.'; return; }
+  btn.disabled = true; status.textContent = 'Rendering PDF…';
+  try {
+    const JsPDF = await resolveJsPDFCtor();
+    const doc = new JsPDF({ unit: 'mm', format: 'a4' });
+    const W = 210, M = 20, maxW = W - 2 * M, bottom = 275;
+    let y = 22;
+    const line = (txt, size, style, gap) => {
+      doc.setFontSize(size); doc.setFont('helvetica', style);
+      for (const l of doc.splitTextToSize(txt, maxW)) {
+        if (y > bottom) { doc.addPage(); y = 22; }
+        doc.text(l, M, y); y += size * 0.45;
+      }
+      y += gap;
+    };
+    const sections = _contractSections(f);
+    line(sections[0][0], 14, 'bold', 4);
+    line('BAMA Fabrication Ltd — issued ' + new Date().toISOString().slice(0, 10), 9, 'normal', 6);
+    for (const [h, t] of sections.slice(1)) {
+      if (!t) continue;
+      line(h, 11, 'bold', 1.5);
+      for (const para of t.split('\n')) line(para, 10, 'normal', 1.5);
+      y += 2;
+    }
+    y += 8; if (y > bottom - 30) { doc.addPage(); y = 22; }
+    line('Signed for the Company: ____________________    Mateusz Braczyk, Managing Director    Date: __________', 10, 'normal', 6);
+    line(`Signed by the Employee: ____________________    ${f.name}    Date: __________`, 10, 'normal', 2);
+    const total = doc.internal.getNumberOfPages();
+    for (let p = 1; p <= total; p++) {
+      doc.setPage(p); doc.setFontSize(8); doc.setFont('helvetica', 'normal');
+      doc.text(`Employment Contract — ${f.name} — Page ${p} of ${total}`, W / 2, 290, { align: 'center' });
+    }
+    const blob = doc.output('blob');
+    console.log('Contract PDF size:', blob.size, blob.size < 8192 ? '⚠ suspiciously small' : 'ok');
+
+    status.textContent = 'Uploading to SharePoint…';
+    const fileName = `Employment Contract - ${f.name} - ${f.startDate}.pdf`;
+    const folder = await employeeDocsFolder(f.name);
+    const up = await uploadFileToFolder(folder.id, fileName, await blob.arrayBuffer(), 'application/pdf', BAMA_DRIVE_ID);
+
+    status.textContent = 'Registering…';
+    await api.post('/api/employee-documents', {
+      employee_name: f.name, doc_type: 'contract',
+      title: `Employment Contract — ${f.role}`,
+      issue_date: new Date().toISOString().slice(0, 10),
+      notes: `\u00a3${f.pay}/${f.payBasis}, ${f.hours}h/wk, start ${f.startDate} (generated, unsigned)`,
+      file_name: fileName, sharepoint_file_id: up.id, drive_id: BAMA_DRIVE_ID, web_url: up.webUrl || null
+    });
+    // Also open it for immediate print/sign
+    window.open(URL.createObjectURL(blob), '_blank');
+    toast('Contract generated & filed — print, sign, then drop the signed copy back in', 'success');
+    document.getElementById('contractGenModal').style.display = 'none';
+    loadEmployeeDocs();
+  } catch (e) {
+    status.textContent = 'Failed: ' + e.message;
+    toast('Contract generation failed: ' + e.message, 'error');
+  } finally { btn.disabled = false; }
 }

@@ -1001,6 +1001,27 @@ drop new (single way in via the drop zone). Approval badge shows next to the
 supplier name in the list (skipped when unapproved to avoid noise).
 `docExpiryInfo()` from D1 is reused for badges.
 
+## Employee documents + contract generation (D3 — 2026-07-30)
+
+"📁 Docs" button on each employee card (office.html › Employees) opens
+`empDocsModal` (self-injecting, shared.js): per-employee register
+(`EmployeeDocuments` table keyed by employee_name, `/api/employee-documents`
+— same shapes as the D1/D2 APIs incl. `/expiring`), types
+contract/rtw/cert/review/hs/other, drag & drop AI parsing (D1/D2 pattern),
+files → **BAMA / 03 - Employees / <Employee Name>** (find-or-create).
+**Contract generator** (`contractGenModal`): role presets
+(Fabricator/Welder, Erector, Draftsman, Office Admin) fill hours/pattern/pay
+basis; deterministic sections in `_contractSections()` — wording source of
+truth is `templates/TEMPLATE-employment-contract.md` (address = 11 Enterprise
+Way, Yaxley PE7 3WY — NOT Culley Court); native jsPDF render (splitTextToSize,
+page breaks, Page X of Y, blob-size diagnostic), opens for print/sign, files
+to the employee folder + registers as doc_type 'contract' (unsigned noted).
+Signed copy comes back through the same drop zone. DOCX twin renderer =
+future nicety. SQL: `api/sql/create-employee-documents.sql` (new table, no
+restart). Note: the FPC document itself still says 46 Culley Court and
+contains two leftover "Kilnbridge" references (s8.1, s11.5) — Mateusz to fix
+in the source doc.
+
 ## Modal → Page mapping
 
 Every `id=…Modal` element in the HTML, by page. Handy when tracing an

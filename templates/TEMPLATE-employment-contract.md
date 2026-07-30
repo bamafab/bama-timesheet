@@ -21,7 +21,7 @@ continuous employment. {{probation_clause}}
 
 ### 1. Place of work
 Your normal place of work is the Company's manufacturing facility at
-46 Culley Court, Peterborough PE2 6WA. You may be required to work at the
+11 Enterprise Way, Enterprise Park, Yaxley, Peterborough PE7 3WY. You may be required to work at the
 Company's offices, client sites and construction sites within the UK as the
 needs of the business require. {{site_travel_clause}}
 <!-- default site_travel_clause: "Travel time and expenses for site work are
