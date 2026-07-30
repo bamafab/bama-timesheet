@@ -1022,6 +1022,30 @@ restart). Note: the FPC document itself still says 46 Culley Court and
 contains two leftover "Kilnbridge" references (s8.1, s11.5) — Mateusz to fix
 in the source doc.
 
+## D3b Offer letter + New Starter form / D4 QMS engine (2026-07-30)
+
+**D3b (in empDocsModal):** ✉️ Offer letter generator (`openOfferGen`,
+role→duties presets in OFFER_DUTIES_PRESETS, wording mirrors Marek's real
+offer letter incl. Christmas-shutdown holiday clause; doc_type 'offer') and
+📋 New Starter Information Sheet (`openStarterForm` — electronic version of
+the paper sheet: personal/bank/NI/RTW/emergency/P45/driving-licence fields,
+STARTER_FIELDS const; hand device to the starter, save renders PDF + files;
+RTW expiry saved as the register expiry so it alerts; doc_type 'starter').
+Both use `_empPdfHeader()` text letterhead (Enterprise Way address).
+
+**D4 foundation:** data-driven QMS engine — `QmsForms` (versioned JSON
+definitions; **new sheets = SQL INSERT, no code**) + `QmsSubmissions`
+(answers JSON, audited 'submitted' via logChange). SQL
+`api/sql/create-qms-forms.sql` seeds BAM VER 001 (Welding Equipment
+Checksheet) + BAMA CAL 001 (Calibration Log Entry). Office sidebar "📋 QMS
+Forms" (tab-qms, `renderQmsTab`): form cards → generic modal renderer
+(field types text/number/date/select/textarea/yesno with tap buttons) →
+native jsPDF → files to BAMA / 02 - Quality (QMS) / (02 - Forms & Check
+Sheets (masters) | 05 - Calibration Records) → registers submission; recent
+submissions list on the tab. Remaining 7 sheets defined in
+templates/TEMPLATE-qms-check-sheets.md — add as definition rows; richer
+field types (pickers/photo/finger-signature/table) are the next D4 phase.
+
 ## Modal → Page mapping
 
 Every `id=…Modal` element in the HTML, by page. Handy when tracing an

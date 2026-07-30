@@ -3374,6 +3374,7 @@ function switchTab(name) {
   if (name === 'suppliers') renderSuppliersTab();
   if (name === 'clients') renderOfficeClientsTab();
   if (name === 'docs') renderDocsTab();
+  if (name === 'qms') renderQmsTab();
   if (name === 'project' || name === 'employee') renderManagerView();
 }
 
@@ -23248,6 +23249,9 @@ function renderUnifiedSidebar() {
       <div class="sidebar-nav-subitems collapsed">
         <button class="sidebar-nav-item${a('office','welding')}" data-tab="welding" onclick="navToOfficeTab('welding')">
           <span class="sidebar-nav-icon">🔥</span> Welding Equipment
+        </button>
+        <button class="sidebar-nav-item${a('office','qms')}" data-tab="qms" onclick="navToOfficeTab('qms')">
+          <span class="sidebar-nav-icon">📋</span> QMS Forms
         </button>
       </div>
     </div>
@@ -45989,6 +45993,8 @@ async function supDocDelete(id) {
 
 const EMP_DOC_TYPES = {
   contract: { label: 'Contract',       color: '#a855f7' },
+  offer:    { label: 'Offer Letter',   color: '#c084fc' },
+  starter:  { label: 'Starter Form',   color: '#2dd4bf' },
   rtw:      { label: 'Right to Work',  color: '#3b82f6' },
   cert:     { label: 'Cert / Training',color: '#22c55e' },
   review:   { label: 'Review',         color: '#eab308' },
@@ -46011,7 +46017,9 @@ function openEmployeeDocs(empName) {
       <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:760px;overflow:hidden">
         <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
           <h3 id="empDocsTitle" style="margin:0;font-size:16px;flex:1"></h3>
-          <button class="btn btn-primary btn-sm" onclick="openContractGen()">📝 Generate contract</button>
+          <button class="btn btn-ghost btn-sm" onclick="openOfferGen()">✉️ Offer letter</button>
+          <button class="btn btn-ghost btn-sm" onclick="openStarterForm()">📋 New starter form</button>
+          <button class="btn btn-primary btn-sm" onclick="openContractGen()">📝 Contract</button>
           <button class="btn btn-ghost btn-sm" onclick="document.getElementById('empDocsModal').style.display='none'">✕</button>
         </div>
         <div id="empDocsBody" style="padding:16px 20px;max-height:70vh;overflow-y:auto"></div>
@@ -46319,4 +46327,360 @@ async function generateContract() {
     status.textContent = 'Failed: ' + e.message;
     toast('Contract generation failed: ' + e.message, 'error');
   } finally { btn.disabled = false; }
+}
+
+// ═══ D3b — OFFER LETTER + NEW STARTER FORM (2026-07-30, modelled on Marek's real docs) ═══
+
+const OFFER_DUTIES_PRESETS = {
+  'Labourer': 'assisting with general workshop activities, preparing and moving materials, maintaining a clean and safe working environment, supporting fabrication and production staff, loading and unloading materials, and carrying out any other reasonable duties as instructed by your manager',
+  'Fabricator/Welder': 'fabrication and welding of structural steelwork to drawings, operating workshop plant and machinery you are trained on, marking and inspecting your own work, maintaining a clean and safe working environment, and carrying out any other reasonable duties as instructed by your manager',
+  'Steel Erector': 'erection of structural steelwork on site to drawings and method statements, safe slinging and signalling where qualified, snagging and bolting-up, maintaining a safe working area, and carrying out any other reasonable duties as instructed by your manager',
+  'Office Administrator': 'general office administration, answering calls and emails, processing paperwork and filing in the Company systems, and carrying out any other reasonable duties as instructed by your manager'
+};
+
+function openOfferGen() {
+  if (!document.getElementById('offerGenModal')) {
+    const div = document.createElement('div');
+    div.innerHTML = `<div id="offerGenModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1001;align-items:flex-start;justify-content:center;padding:30px;overflow-y:auto">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:560px;overflow:hidden">
+        <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+          <h3 style="margin:0;font-size:16px">✉️ Offer of Employment</h3>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('offerGenModal').style.display='none'">✕</button></div>
+        <div style="padding:16px 20px;display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12px">
+          <div style="grid-column:1/3"><label style="color:var(--muted);display:block;margin-bottom:3px">Candidate home address</label>
+            <input id="ofAddress" type="text" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);box-sizing:border-box"></div>
+          <div><label style="color:var(--muted);display:block;margin-bottom:3px">Position</label>
+            <select id="ofRole" onchange="const p=OFFER_DUTIES_PRESETS[this.value];if(p)document.getElementById('ofDuties').value=p"
+              style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 8px;color:var(--text)">
+              ${Object.keys(OFFER_DUTIES_PRESETS).map(r => `<option>${r}</option>`).join('')}<option>Custom…</option></select></div>
+          <div><label style="color:var(--muted);display:block;margin-bottom:3px">Start date</label>
+            <input id="ofStart" type="date" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);box-sizing:border-box"></div>
+          <div><label style="color:var(--muted);display:block;margin-bottom:3px">Pay (£/hour)</label>
+            <input id="ofPay" type="number" step="0.01" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);box-sizing:border-box"></div>
+          <div><label style="color:var(--muted);display:block;margin-bottom:3px">Hours / week</label>
+            <input id="ofHours" type="number" value="40" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);box-sizing:border-box"></div>
+          <div><label style="color:var(--muted);display:block;margin-bottom:3px">Unpaid break (min)</label>
+            <input id="ofBreak" type="number" value="30" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);box-sizing:border-box"></div>
+          <div><label style="color:var(--muted);display:block;margin-bottom:3px">Holiday days (+ 8 bank hols)</label>
+            <input id="ofHoliday" type="number" value="20" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);box-sizing:border-box"></div>
+          <div style="grid-column:1/3"><label style="color:var(--muted);display:block;margin-bottom:3px">Duties</label>
+            <textarea id="ofDuties" rows="4" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);resize:vertical;box-sizing:border-box">${OFFER_DUTIES_PRESETS['Labourer']}</textarea></div>
+          <div id="ofStatus" style="grid-column:1/3;color:var(--muted);min-height:15px"></div>
+        </div>
+        <div style="padding:12px 20px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end">
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('offerGenModal').style.display='none'">Cancel</button>
+          <button class="btn btn-primary btn-sm" id="ofGoBtn" onclick="generateOffer()">Generate PDF & file it</button>
+        </div></div></div>`;
+    document.body.appendChild(div.firstElementChild);
+  }
+  document.getElementById('ofStart').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('offerGenModal').style.display = 'flex';
+}
+
+// Shared mini-letterhead for D3 PDFs (text-based — logo optional later)
+function _empPdfHeader(doc, W) {
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.setTextColor(200, 30, 30);
+  doc.text('BAMA FABRICATION', 20, 16);
+  doc.setTextColor(0, 0, 0);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(110, 110, 110);
+  doc.text('11 Enterprise Way, Enterprise Park, Yaxley, Peterborough PE7 3WY · 01733 855212 · info@bamafabrication.co.uk', 20, 21);
+  doc.setDrawColor(200, 30, 30); doc.setLineWidth(0.6); doc.line(20, 24, W - 20, 24);
+  doc.setTextColor(0, 0, 0);
+}
+
+async function generateOffer() {
+  const f = {
+    name: _empDocsEmp,
+    address: document.getElementById('ofAddress').value.trim(),
+    role: document.getElementById('ofRole').value,
+    start: document.getElementById('ofStart').value,
+    pay: document.getElementById('ofPay').value,
+    hours: document.getElementById('ofHours').value,
+    brk: document.getElementById('ofBreak').value,
+    holiday: document.getElementById('ofHoliday').value,
+    duties: document.getElementById('ofDuties').value.trim()
+  };
+  const status = document.getElementById('ofStatus'), btn = document.getElementById('ofGoBtn');
+  if (!f.pay || !f.start) { status.textContent = 'Pay and start date are required.'; return; }
+  btn.disabled = true; status.textContent = 'Rendering…';
+  try {
+    const JsPDF = await resolveJsPDFCtor();
+    const doc = new JsPDF({ unit: 'mm', format: 'a4' });
+    const W = 210, M = 20, maxW = W - 2 * M; let y = 34;
+    _empPdfHeader(doc, W);
+    const line = (t, size, style, gap) => { doc.setFontSize(size); doc.setFont('helvetica', style);
+      for (const l of doc.splitTextToSize(t, maxW)) { if (y > 272) { doc.addPage(); y = 22; } doc.text(l, M, y); y += size * 0.45; } y += gap; };
+    line(`Offer of Employment — ${f.role}`, 13, 'bold', 5);
+    line(`Date: ${new Date().toLocaleDateString('en-GB')}`, 10, 'normal', 3);
+    line(`To: ${f.name}${f.address ? '\n' + f.address : ''}`, 10, 'normal', 5);
+    line(`Dear ${f.name.split(' ')[0]},`, 10, 'normal', 3);
+    line(`We are delighted to offer you the position of ${f.role} at BAMA Fabrication Ltd. This letter sets out the key terms of our offer of employment.`, 10, 'normal', 4);
+    line('Start Date', 10.5, 'bold', 1);
+    line(`Your anticipated start date will be ${new Date(f.start + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}. You will be working Monday to Friday, ${f.hours} hours per week, with a ${f.brk} minute unpaid break. Your primary place of work will be the Company's usual business address or any other location reasonably required for the performance of your duties.`, 10, 'normal', 4);
+    line('Salary', 10.5, 'bold', 1);
+    line(`Your salary will be \u00a3${f.pay} per hour. You may choose to be paid monthly or weekly.`, 10, 'normal', 4);
+    line('Holiday Entitlement', 10.5, 'bold', 1);
+    line(`You will be entitled to ${f.holiday} days paid annual leave, plus the 8 UK statutory bank holidays, per holiday year, pro-rated for any part-year of service. All holiday requests must be submitted in advance and are subject to management approval. Please note that you will be required to reserve part of your annual leave for the Company's Christmas shutdown period.`, 10, 'normal', 4);
+    line('Duties', 10.5, 'bold', 1);
+    line(`As a ${f.role}, your duties will include ${f.duties}.`, 10, 'normal', 5);
+    line('We look forward to welcoming you to the team.', 10, 'normal', 3);
+    line('Kind regards,\nMateusz Braczyk\nDirector', 10, 'normal', 0);
+    const blob = doc.output('blob');
+    console.log('Offer PDF size:', blob.size);
+    status.textContent = 'Filing…';
+    const fileName = `Offer of Employment - ${f.name} - ${f.start}.pdf`;
+    const folder = await employeeDocsFolder(f.name);
+    const up = await uploadFileToFolder(folder.id, fileName, await blob.arrayBuffer(), 'application/pdf', BAMA_DRIVE_ID);
+    await api.post('/api/employee-documents', {
+      employee_name: f.name, doc_type: 'offer', title: `Offer of Employment — ${f.role}`,
+      issue_date: new Date().toISOString().slice(0, 10),
+      notes: `\u00a3${f.pay}/hr, ${f.hours}h/wk, start ${f.start}`,
+      file_name: fileName, sharepoint_file_id: up.id, drive_id: BAMA_DRIVE_ID, web_url: up.webUrl || null });
+    window.open(URL.createObjectURL(blob), '_blank');
+    toast('Offer letter generated & filed', 'success');
+    document.getElementById('offerGenModal').style.display = 'none';
+    loadEmployeeDocs();
+  } catch (e) { status.textContent = 'Failed: ' + e.message; }
+  finally { btn.disabled = false; }
+}
+
+// ── New Starter Information Form (electronic version of the paper sheet) ────
+const STARTER_FIELDS = [
+  ['Employee Personal Details', [['full_name','Full name'],['dob','Date of birth','date'],['address','Home address'],['phone','Phone number'],['email','Email address']]],
+  ['Bank Details', [['bank_name','Bank name'],['account_no','Account number'],['sort_code','Sort code']]],
+  ['National Insurance', [['ni_number','NI number']]],
+  ['Right to Work', [['rtw_type','Document type (passport/visa/share code)'],['rtw_number','Document number'],['rtw_expiry','Expiry date (if applicable)','date']]],
+  ['Emergency Contact', [['ec_name','Contact name'],['ec_relationship','Relationship'],['ec_phone','Phone number']]],
+  ['Tax', [['p45','P45 provided? (yes/no — if no, complete HMRC Starter Checklist)']]],
+  ['Driving Licence (if applicable)', [['dl_number','Licence number'],['dl_expiry','Expiry date','date'],['dl_endorsements','Endorsements (if any)']]]
+];
+
+function openStarterForm() {
+  if (!document.getElementById('starterFormModal')) {
+    const fields = STARTER_FIELDS.map(([sec, fs]) =>
+      `<div style="grid-column:1/3;font-weight:700;font-size:12px;margin-top:6px;color:var(--accent)">${sec}</div>` +
+      fs.map(([k, label, type]) => `<div${label.length > 40 ? ' style="grid-column:1/3"' : ''}>
+        <label style="color:var(--muted);display:block;margin-bottom:3px;font-size:11px">${label}</label>
+        <input id="sf_${k}" type="${type || 'text'}" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);box-sizing:border-box"></div>`).join('')
+    ).join('');
+    const div = document.createElement('div');
+    div.innerHTML = `<div id="starterFormModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1001;align-items:flex-start;justify-content:center;padding:30px;overflow-y:auto">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:620px;overflow:hidden">
+        <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+          <h3 style="margin:0;font-size:16px">📋 New Employee Information Sheet</h3>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('starterFormModal').style.display='none'">✕</button></div>
+        <div style="padding:6px 20px 16px;display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;max-height:65vh;overflow-y:auto">
+          ${fields}
+          <div id="sfStatus" style="grid-column:1/3;color:var(--muted);min-height:15px"></div>
+        </div>
+        <div style="padding:12px 20px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end;align-items:center">
+          <span style="font-size:11px;color:var(--muted);margin-right:auto">Hand the phone/tablet to the new starter to fill in, then save — a signed-declaration PDF is filed automatically.</span>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('starterFormModal').style.display='none'">Cancel</button>
+          <button class="btn btn-primary btn-sm" id="sfGoBtn" onclick="saveStarterForm()">Save & file PDF</button>
+        </div></div></div>`;
+    document.body.appendChild(div.firstElementChild);
+  }
+  const nameEl = document.getElementById('sf_full_name');
+  if (nameEl && !nameEl.value) nameEl.value = _empDocsEmp || '';
+  document.getElementById('starterFormModal').style.display = 'flex';
+}
+
+async function saveStarterForm() {
+  const v = k => (document.getElementById('sf_' + k)?.value || '').trim();
+  if (!v('full_name')) { document.getElementById('sfStatus').textContent = 'Full name is required.'; return; }
+  const btn = document.getElementById('sfGoBtn'), status = document.getElementById('sfStatus');
+  btn.disabled = true; status.textContent = 'Rendering…';
+  try {
+    const JsPDF = await resolveJsPDFCtor();
+    const doc = new JsPDF({ unit: 'mm', format: 'a4' });
+    const W = 210, M = 20; let y = 34;
+    _empPdfHeader(doc, W);
+    doc.setFontSize(13); doc.setFont('helvetica', 'bold');
+    doc.text('New Employee Information Sheet', M, y); y += 8;
+    for (const [sec, fs] of STARTER_FIELDS) {
+      if (y > 260) { doc.addPage(); y = 22; }
+      doc.setFontSize(10.5); doc.setFont('helvetica', 'bold'); doc.text(sec, M, y); y += 5.5;
+      doc.setFontSize(10); doc.setFont('helvetica', 'normal');
+      for (const [k, label] of fs) {
+        const val = v(k) || '—';
+        if (y > 272) { doc.addPage(); y = 22; }
+        doc.text(`${label.split(' (')[0]}:`, M + 3, y);
+        doc.setFont('helvetica', 'bold'); doc.text(String(val).slice(0, 70), M + 70, y); doc.setFont('helvetica', 'normal');
+        y += 5.5;
+      }
+      y += 2;
+    }
+    y += 4; if (y > 255) { doc.addPage(); y = 22; }
+    doc.setFontSize(9.5);
+    doc.text('I confirm that the above information is accurate and complete.', M, y); y += 8;
+    doc.text(`Completed electronically by ${v('full_name')} on ${new Date().toLocaleDateString('en-GB')}.`, M, y); y += 10;
+    doc.text('Signature: ____________________________        Date: ______________', M, y);
+    const blob = doc.output('blob');
+    status.textContent = 'Filing…';
+    const empName = _empDocsEmp || v('full_name');
+    const fileName = `New Employee Sheet - ${empName} - ${new Date().toISOString().slice(0, 10)}.pdf`;
+    const folder = await employeeDocsFolder(empName);
+    const up = await uploadFileToFolder(folder.id, fileName, await blob.arrayBuffer(), 'application/pdf', BAMA_DRIVE_ID);
+    await api.post('/api/employee-documents', {
+      employee_name: empName, doc_type: 'starter', title: 'New Employee Information Sheet',
+      issue_date: new Date().toISOString().slice(0, 10),
+      expiry_date: v('rtw_expiry') || null,   // RTW expiry drives the reminder
+      notes: [v('ni_number') && 'NI ' + v('ni_number'), v('rtw_type') && ('RTW: ' + v('rtw_type') + ' ' + v('rtw_number'))].filter(Boolean).join(' · ') || null,
+      file_name: fileName, sharepoint_file_id: up.id, drive_id: BAMA_DRIVE_ID, web_url: up.webUrl || null });
+    window.open(URL.createObjectURL(blob), '_blank');
+    toast('Starter sheet saved & filed — print for a wet signature if needed', 'success');
+    document.getElementById('starterFormModal').style.display = 'none';
+    loadEmployeeDocs();
+  } catch (e) { status.textContent = 'Failed: ' + e.message; }
+  finally { btn.disabled = false; }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// D4 — QMS DIGITAL CHECK SHEETS (foundation, 2026-07-30)
+// Data-driven engine: form definitions live in QmsForms (JSON), rendered
+// here generically — new sheets need a SQL INSERT, no code. Submissions
+// render to native jsPDF and file to BAMA / 02 - Quality (QMS) subfolders,
+// then register in QmsSubmissions (audited). Seeded: BAM VER 001 Welding
+// Equipment Checksheet + BAMA CAL 001 Calibration Log Entry. Remaining 7
+// sheets in templates/TEMPLATE-qms-check-sheets.md go in as definitions.
+// ═══════════════════════════════════════════════════════════════════════════
+
+let _qmsForms = [], _qmsActiveForm = null;
+const QMS_FOLDER_NAMES = { checksheets: '02 - Forms & Check Sheets (masters)', calibration: '05 - Calibration Records' };
+
+async function qmsTargetFolder(hint) {
+  return await getOrCreateSubfolder(SP_TAX.quality, QMS_FOLDER_NAMES[hint] || QMS_FOLDER_NAMES.checksheets, BAMA_DRIVE_ID);
+}
+
+async function renderQmsTab() {
+  const root = document.getElementById('tab-qms');
+  if (!root) return;
+  root.innerHTML = '<div style="color:var(--muted);padding:20px">Loading forms…</div>';
+  try { _qmsForms = await api.get('/api/qms-forms'); }
+  catch (e) { root.innerHTML = `<div style="color:var(--red);padding:20px;font-size:12.5px">QMS forms unavailable: ${escapeHtml(e.message)} — run api/sql/create-qms-forms.sql first.</div>`; return; }
+  root.innerHTML = `<div style="max-width:900px">
+    <h3 style="margin:0 0 4px">📋 QMS Forms & Check Sheets</h3>
+    <p style="font-size:12px;color:var(--muted);margin:0 0 14px;line-height:1.6">
+      Digital versions of the FPC check sheets — fill in on any device, the signed-off PDF files itself to
+      <strong>BAMA / 02 - Quality (QMS)</strong> and the submission is registered and audited.
+      New sheets are added as definitions (no code) — the full planned set is in templates/TEMPLATE-qms-check-sheets.md.</p>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px" id="qmsFormCards">
+      ${_qmsForms.map(f => `<div class="card" style="margin:0;padding:16px;cursor:pointer" onclick="openQmsForm(${f.id})">
+        <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--accent)">${escapeHtml(f.form_code)}</div>
+        <div style="font-weight:700;margin:4px 0 6px">${escapeHtml(f.title)}</div>
+        <div style="font-size:11px;color:var(--muted)">Tap to fill in →</div>
+      </div>`).join('')}
+    </div>
+    <h4 style="margin:20px 0 6px;font-size:13px">Recent submissions</h4>
+    <div id="qmsRecent" style="font-size:12px;color:var(--muted)">Loading…</div>
+  </div>`;
+  try {
+    const subs = await api.get('/api/qms-submissions');
+    document.getElementById('qmsRecent').innerHTML = subs.length ? subs.slice(0, 15).map(s =>
+      `<div style="display:flex;gap:10px;padding:5px 0;border-bottom:1px solid var(--border)">
+        <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--accent);min-width:110px">${escapeHtml(s.form_code)}</span>
+        <span style="flex:1">${s.web_url ? `<a href="${escapeHtml(s.web_url)}" target="_blank" style="color:var(--text)">${escapeHtml(s.file_name || 'submission')}</a>` : escapeHtml(s.file_name || 'submission')}</span>
+        <span>${escapeHtml(s.submitted_by || '')}</span>
+        <span style="color:var(--muted)">${String(s.created_at).slice(0, 10)}</span>
+      </div>`).join('') : 'None yet.';
+  } catch (_) {}
+}
+
+function openQmsForm(formId) {
+  _qmsActiveForm = _qmsForms.find(f => f.id === formId);
+  if (!_qmsActiveForm) return;
+  const def = JSON.parse(_qmsActiveForm.definition);
+  if (!document.getElementById('qmsFormModal')) {
+    const div = document.createElement('div');
+    div.innerHTML = `<div id="qmsFormModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1001;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:560px;overflow:hidden">
+        <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+          <h3 id="qmsFormTitle" style="margin:0;font-size:15px"></h3>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('qmsFormModal').style.display='none'">✕</button></div>
+        <div id="qmsFormBody" style="padding:14px 20px;max-height:65vh;overflow-y:auto;display:flex;flex-direction:column;gap:10px;font-size:12.5px"></div>
+        <div style="padding:12px 20px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end;align-items:center">
+          <span id="qmsFormStatus" style="font-size:11.5px;color:var(--muted);margin-right:auto"></span>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('qmsFormModal').style.display='none'">Cancel</button>
+          <button class="btn btn-primary btn-sm" id="qmsGoBtn" onclick="submitQmsForm()">✓ Submit & file PDF</button>
+        </div></div></div>`;
+    document.body.appendChild(div.firstElementChild);
+  }
+  document.getElementById('qmsFormTitle').textContent = `${_qmsActiveForm.form_code} — ${_qmsActiveForm.title}`;
+  const inputStyle = 'width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);box-sizing:border-box;font-size:13px';
+  document.getElementById('qmsFormBody').innerHTML = def.fields.map(f => {
+    const req = f.required ? ' <span style="color:var(--red)">*</span>' : '';
+    if (f.type === 'yesno') return `<div><label style="color:var(--muted);display:block;margin-bottom:4px">${escapeHtml(f.label)}${req}</label>
+      <div style="display:flex;gap:8px"><button class="btn btn-ghost btn-sm qms-yn" data-key="${f.key}" data-val="Yes" onclick="qmsYn(this)" style="flex:1">✓ Yes</button>
+      <button class="btn btn-ghost btn-sm qms-yn" data-key="${f.key}" data-val="No" onclick="qmsYn(this)" style="flex:1">✗ No</button></div>
+      <input type="hidden" id="qf_${f.key}"></div>`;
+    if (f.type === 'select') return `<div><label style="color:var(--muted);display:block;margin-bottom:4px">${escapeHtml(f.label)}${req}</label>
+      <select id="qf_${f.key}" style="${inputStyle}"><option value=""></option>${(f.options || []).map(o => `<option>${escapeHtml(o)}</option>`).join('')}</select></div>`;
+    if (f.type === 'textarea') return `<div><label style="color:var(--muted);display:block;margin-bottom:4px">${escapeHtml(f.label)}${req}</label>
+      <textarea id="qf_${f.key}" rows="2" style="${inputStyle};resize:vertical"></textarea></div>`;
+    return `<div><label style="color:var(--muted);display:block;margin-bottom:4px">${escapeHtml(f.label)}${req}</label>
+      <input id="qf_${f.key}" type="${f.type === 'date' ? 'date' : f.type === 'number' ? 'number' : 'text'}" style="${inputStyle}"></div>`;
+  }).join('');
+  // Sensible defaults
+  const dateField = def.fields.find(f => f.type === 'date');
+  if (dateField) { const el = document.getElementById('qf_' + dateField.key); if (el && !el.value) el.value = new Date().toISOString().slice(0, 10); }
+  document.getElementById('qmsFormStatus').textContent = '';
+  document.getElementById('qmsFormModal').style.display = 'flex';
+}
+
+function qmsYn(btn) {
+  document.querySelectorAll(`.qms-yn[data-key="${btn.dataset.key}"]`).forEach(b => {
+    const on = b === btn;
+    b.style.background = on ? (b.dataset.val === 'Yes' ? 'rgba(62,207,142,.2)' : 'rgba(255,107,107,.2)') : '';
+    b.style.borderColor = on ? (b.dataset.val === 'Yes' ? 'var(--green)' : 'var(--red)') : 'var(--border)';
+  });
+  document.getElementById('qf_' + btn.dataset.key).value = btn.dataset.val;
+}
+
+async function submitQmsForm() {
+  const form = _qmsActiveForm; if (!form) return;
+  const def = JSON.parse(form.definition);
+  const answers = {};
+  for (const f of def.fields) answers[f.key] = (document.getElementById('qf_' + f.key)?.value || '').trim();
+  const missing = def.fields.filter(f => f.required && !answers[f.key]);
+  const status = document.getElementById('qmsFormStatus'), btn = document.getElementById('qmsGoBtn');
+  if (missing.length) { status.textContent = 'Required: ' + missing.map(f => f.label).join(', '); return; }
+  btn.disabled = true; status.textContent = 'Rendering PDF…';
+  try {
+    const JsPDF = await resolveJsPDFCtor();
+    const doc = new JsPDF({ unit: 'mm', format: 'a4' });
+    const W = 210, M = 20; let y = 34;
+    _empPdfHeader(doc, W);
+    doc.setFontSize(13); doc.setFont('helvetica', 'bold');
+    doc.text(`${form.form_code} — ${form.title}`, M, y); y += 9;
+    doc.setFontSize(10);
+    for (const f of def.fields) {
+      const val = answers[f.key] || '—';
+      if (y > 268) { doc.addPage(); y = 22; }
+      doc.setFont('helvetica', 'normal'); doc.text(f.label + ':', M, y);
+      doc.setFont('helvetica', 'bold');
+      const lines = doc.splitTextToSize(String(val), 85);
+      doc.text(lines, M + 92, y);
+      y += Math.max(6, lines.length * 4.6 + 1.4);
+    }
+    y += 6; if (y > 265) { doc.addPage(); y = 22; }
+    doc.setFontSize(9); doc.setFont('helvetica', 'normal');
+    doc.text(`Submitted electronically via BAMA ERP on ${new Date().toLocaleString('en-GB')}.`, M, y);
+    const blob = doc.output('blob');
+    console.log('QMS PDF size:', blob.size);
+    status.textContent = 'Filing to SharePoint…';
+    const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ').replace(':', '');
+    const keyBit = answers.machine || answers.instrument || '';
+    const fileName = `${form.form_code} - ${keyBit ? keyBit + ' - ' : ''}${stamp}.pdf`.replace(/[~"#%&*:<>?{|}/\\]/g, '-');
+    const folder = await qmsTargetFolder(def.folder);
+    const up = await uploadFileToFolder(folder.id, fileName, await blob.arrayBuffer(), 'application/pdf', BAMA_DRIVE_ID);
+    status.textContent = 'Registering…';
+    await api.post('/api/qms-submissions', {
+      form_id: form.id, form_code: form.form_code, answers,
+      file_name: fileName, sharepoint_file_id: up.id, web_url: up.webUrl || null
+    });
+    toast(`${form.form_code} submitted & filed`, 'success');
+    document.getElementById('qmsFormModal').style.display = 'none';
+    renderQmsTab();
+  } catch (e) { status.textContent = 'Failed: ' + e.message; }
+  finally { btn.disabled = false; }
 }

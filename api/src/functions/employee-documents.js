@@ -20,7 +20,7 @@ const { query } = require('../db');
 const { logChange } = require('../changelog');
 const { ok, created, badRequest, notFound, serverError, preflight } = require('../responses');
 
-const DOC_TYPES = ['contract', 'rtw', 'cert', 'review', 'hs', 'other'];
+const DOC_TYPES = ['contract', 'offer', 'starter', 'rtw', 'cert', 'review', 'hs', 'other'];
 
 const SELECT_COLS = `id, employee_name, employee_ref, doc_type, title, doc_ref, issuer,
     CONVERT(varchar(10), issue_date, 23)  AS issue_date,
