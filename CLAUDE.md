@@ -1359,6 +1359,44 @@ blank key-values dropped; declaration + signature block; filed to the job's
 SharePoint folder. Pinned by `tests/coc-certificate.js` (43 cases, mostly
 honesty properties rather than layout).
 
+## Declaration of Performance (F1c, 2026-07-30 — Office › Inspection & NDT › 🏷 DoP)
+
+The regulated document: a DoP under the Construction Products Regulations against
+BS EN 1090-1, with the prescribed numbered clauses (CPR Annex III). Records into
+`JobCertificates` with `doc_type = 'dop'` — no new table. Config lives in
+`Settings` under key `dop_config`.
+
+**Where the AI is used, and where it is refused.** Mateusz's point was fair —
+the ERP already holds the UKCA/FPC certificate, so it should read the numbers
+itself rather than asking him to type them. `dopReadCertificate()` finds the
+accreditation document in the Company Docs register, downloads it from SharePoint
+via Graph (`/items/{id}/content` + `getToken()`), and extracts approved body
+name/number, FPC certificate number, standard, AVCP system, exec class and
+marking — prompt demands exact transcription, forbids inferring, and specifically
+forbids guessing a body number from the body's name. **Anything freshly read is
+re-marked unverified**, and issue is BLOCKED until a human confirms
+character-for-character (name + date stored). That's the one-click compromise:
+he types nothing, but the declaration isn't issued on an unchecked OCR.
+
+**Declared performance values are never generated.** `DOP_CHARACTERISTICS` holds
+the standard's characteristic NAMES (flagged in the UI to be checked against
+BAMA's own copy of Annex ZA — rows are editable/addable/removable). The
+performance VALUES start blank and are never filled in for us; blank rows are
+filtered out of the PDF rather than printed as empty claims, and **'NPD' is never
+defaulted** — it's a real declaration and has to be typed deliberately.
+`dopAssemble()` returns hard `blockers` (unverified, no body number, no FPC
+number, no standard, no AVCP system, every characteristic blank) separately from
+`warnings` (some blank, exec-class mismatch between job and FPC certificate).
+The Issue button is disabled while any blocker stands — unlike the CoC, which
+only warns, because this one is regulatory.
+
+`_abToBase64()` converts the downloaded certificate in 32KB chunks;
+`String.fromCharCode(...bytes)` throws on anything over ~100KB and a certificate
+PDF is bigger than that. PDF: `drawDopPDF` / `renderDopPdfBlob` — native jsPDF
+portrait, numbered clauses 1–7, declared-performance table, statutory
+sole-responsibility statement, signature block. Pinned by
+`tests/dop-declaration.js` (40 cases, framed as what the ERP refuses to do).
+
 ## Modal → Page mapping
 
 Every `id=…Modal` element in the HTML, by page. Handy when tracing an

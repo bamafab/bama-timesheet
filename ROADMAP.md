@@ -181,7 +181,10 @@ Ranked by value, with what this session's work already changed:
   native jsPDF on the SDN/DN pattern (two-engine: AI drafts narrative only,
   deterministic renderer builds the document):**
 
-  · **DoP — Declaration of Performance.** TERMINOLOGY MATTERS HERE. For
+  · **DoP — ✅ DONE 2026-07-30** (see CLAUDE.md). Built as below, with the
+    numbers read off the UKCA certificate in Company Docs rather than typed
+    (Mateusz's call) and a single one-time human confirmation before issue.
+    **Declaration of Performance.** TERMINOLOGY MATTERS HERE. For
     structural steelwork under EN 1090-1 the regulated document is a
     *Declaration of Performance* under the Construction Products Regulation,
     not a "Declaration of Conformity" (that belongs to other directives). Its

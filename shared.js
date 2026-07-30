@@ -49102,6 +49102,7 @@ function _inspRender() {
       <button class="btn btn-ghost btn-sm" onclick="inspLogOpen()">＋ Log an inspection</button>
       <button class="btn btn-ghost btn-sm" onclick="itpOpen()">📋 ITP</button>
       <button class="btn btn-ghost btn-sm" onclick="cocOpen()">📜 CoC</button>
+      <button class="btn btn-ghost btn-sm" onclick="dopOpen()">🏷 DoP</button>
       <button class="btn btn-ghost btn-sm" onclick="inspSaveCounts()">💾 Save weld counts</button>
       ${(totalNdtShort || totalVisShort)
         ? `<span style="background:#3b1a1a;color:#ff9b9b;border:1px solid #ff6b6b55;border-radius:6px;padding:4px 10px;font-size:11.5px">
@@ -50290,5 +50291,570 @@ async function cocIssue() {
     else window.open(URL.createObjectURL(blob), '_blank');
     _cocIssued = await api.get(`/api/job-certificates?job_id=${_inspJob}&doc_type=coc`).catch(() => []);
     _cocRender();
+  } catch (e) { toast('Issue failed: ' + e.message, 'error'); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DECLARATION OF PERFORMANCE (F1c, 2026-07-30)
+//
+// The regulated one. For structural steelwork this is a Declaration of
+// Performance under the Construction Products Regulations, against the
+// designated standard BS EN 1090-1 — NOT a "Declaration of Conformity", and the
+// field list is prescribed (CPR Annex III / EN 1090-1 Annex ZA).
+//
+// Mateusz's position, which is fair: the ERP already holds the UKCA/FPC
+// certificate, so it should read the numbers off it rather than asking him to
+// type them. That's what `dopReadCertificate()` does — downloads the
+// accreditation document from SharePoint and extracts the printed fields,
+// reader-only, exactly like every other certificate import.
+//
+// Where the line still sits: the extracted numbers and the DECLARED PERFORMANCE
+// values are confirmed by a human ONCE and then stored (Settings key
+// `dop_config`), because this document names BAMA as manufacturer and a misread
+// digit becomes BAMA's liability. Same pattern as NdtExtentRules — seeded,
+// flagged unverified, verified once, reused silently forever after.
+//
+// The essential-characteristic NAMES below are the standard's own table
+// headings. The PERFORMANCE VALUES are BAMA's declaration and start blank —
+// they are never guessed, and 'NPD' (No Performance Determined) is a legitimate
+// declaration that must be chosen deliberately, not defaulted into.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const DOP_SETTINGS_KEY = 'dop_config';
+
+// Characteristic names per EN 1090-1 Annex ZA. Flagged for checking against
+// BAMA's own copy — the ERP must not present a standard's table from recall as
+// though it were authoritative.
+const DOP_CHARACTERISTICS = [
+  'Tolerance on dimensions and shape',
+  'Weldability',
+  'Fracture toughness',
+  'Load bearing capacity',
+  'Deformation at serviceability limit state',
+  'Fatigue strength',
+  'Fire resistance',
+  'Reaction to fire',
+  'Release of cadmium and its compounds',
+  'Radioactive emission',
+  'Durability'
+];
+
+function dopBlankConfig() {
+  return {
+    marking: 'UKCA',                     // UKCA | CE  (CE still needed for NI/EU)
+    manufacturer: 'BAMA Fabrication Ltd',
+    address: '11 Enterprise Way, Enterprise Park, Yaxley, Peterborough PE7 3WY',
+    standard: 'BS EN 1090-1:2009+A1:2011',
+    avcp_system: '2+',
+    approved_body_name: '',
+    approved_body_number: '',
+    fpc_certificate_no: '',
+    exec_class: '',
+    method: '',                          // declaration method (3a / 3b / structural properties)
+    characteristics: DOP_CHARACTERISTICS.map(c => ({ characteristic: c, performance: '' })),
+    verified: false, verified_by: '', verified_at: '',
+    source_note: 'Not yet verified — read from the UKCA certificate and confirmed by a human once.'
+  };
+}
+
+async function dopLoadConfig() {
+  try {
+    const s = await api.get(`/api/settings/${DOP_SETTINGS_KEY}`);
+    const raw = s && (s.value ?? s.Value ?? (Array.isArray(s) ? (s[0] || {}).value : null));
+    if (raw) {
+      const cfg = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      return { ...dopBlankConfig(), ...cfg };
+    }
+  } catch (_) { /* not set yet */ }
+  return dopBlankConfig();
+}
+
+async function dopSaveConfig(cfg) {
+  await api.post('/api/settings', { key: DOP_SETTINGS_KEY, value: JSON.stringify(cfg) });
+}
+
+// Download the UKCA / FPC certificate straight out of the company documents
+// register and read the printed fields off it. Reader-only.
+// ArrayBuffer → base64 in chunks. String.fromCharCode(...bytes) throws
+// "Maximum call stack size exceeded" on anything more than ~100KB, and a
+// certificate PDF is comfortably bigger than that.
+function _abToBase64(buf) {
+  const bytes = new Uint8Array(buf);
+  const CHUNK = 0x8000;
+  let out = '';
+  for (let i = 0; i < bytes.length; i += CHUNK)
+    out += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  return btoa(out);
+}
+
+async function dopReadCertificate() {
+  const docs = await api.get('/api/company-documents');
+  const candidates = (docs || []).filter(d =>
+    /1090|ukca|factory production|fpc|accredit/i.test(`${d.title || ''} ${d.doc_ref || ''} ${d.issuer || ''}`));
+  if (!candidates.length) throw new Error('No UKCA / EN 1090 certificate found in Company Docs — upload it there first (Office › Company Docs)');
+  // Prefer accreditation category, then the most recently issued
+  candidates.sort((a, b) => (b.category === 'accreditation') - (a.category === 'accreditation')
+                          || String(b.issue_date || '').localeCompare(String(a.issue_date || '')));
+  const doc = candidates.find(d => d.sharepoint_file_id) || candidates[0];
+  if (!doc.sharepoint_file_id) throw new Error(`"${doc.title}" has no file attached in SharePoint`);
+
+  const token = await getToken();
+  const res = await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${doc.drive_id || BAMA_DRIVE_ID}/items/${doc.sharepoint_file_id}/content`,
+    { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new Error(`Couldn't download "${doc.title}" from SharePoint (${res.status})`);
+  const buf = await res.arrayBuffer();
+  const b64 = _abToBase64(buf);
+  const isPdf = /\.pdf$/i.test(doc.file_name || '') || /pdf/i.test(doc.title || '');
+
+  const result = await callClaude({
+    model: 'claude-sonnet-4-6', max_tokens: 700,
+    messages: [{ role: 'user', content: [
+      isPdf ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } }
+            : { type: 'image',    source: { type: 'base64', media_type: 'image/png', data: b64 } },
+      { type: 'text', text: `This is a Factory Production Control / EN 1090-1 certificate for a structural steel fabricator. Return ONLY JSON, no markdown:
+{
+  "approved_body_name": "the certification body's name exactly as printed",
+  "approved_body_number": "its four-digit approved/notified body number as printed",
+  "fpc_certificate_no": "the certificate number as printed",
+  "standard": "the standard cited, e.g. BS EN 1090-1:2009+A1:2011",
+  "avcp_system": "the AVCP / attestation system, e.g. 2+",
+  "exec_class": "the highest execution class covered, e.g. EXC3",
+  "marking": "UKCA or CE, whichever the certificate relates to",
+  "issue_date": "YYYY-MM-DD",
+  "expiry_date": "YYYY-MM-DD"
+}
+Rules: copy every value EXACTLY as printed, character for character — these go on a regulatory declaration, so a transcription error matters more than a missing value. Return null for anything not clearly printed. Do NOT infer, expand abbreviations, or tidy up formatting. Do NOT guess a body number from the body's name.` }
+    ] }]
+  });
+  const text = (result.content?.find(b => b.type === 'text')?.text || '').trim();
+  const s = text.indexOf('{'), e = text.lastIndexOf('}');
+  const parsed = JSON.parse(text.slice(s, e + 1));
+  return { parsed, sourceDoc: doc };
+}
+
+// Everything the DoP needs, gathered deterministically. Returns blockers
+// separately from warnings: a DoP with no approved body number is not a DoP.
+function dopAssemble(cfg, job, facts) {
+  const blockers = [], warnings = [];
+  if (!cfg.verified) blockers.push('The manufacturer / approved body details have not been verified yet');
+  if (!cfg.approved_body_number) blockers.push('No approved body number');
+  if (!cfg.fpc_certificate_no)   blockers.push('No FPC certificate number');
+  if (!cfg.standard)             blockers.push('No designated standard');
+  if (!cfg.avcp_system)          blockers.push('No AVCP system');
+  const declared = (cfg.characteristics || []).filter(c => String(c.performance || '').trim());
+  if (!declared.length) blockers.push('No declared performance values set — every characteristic is blank');
+  else if (declared.length < (cfg.characteristics || []).length)
+    warnings.push(`${(cfg.characteristics || []).length - declared.length} characteristic(s) left blank — they will be omitted, so use NPD if that is the intent`);
+  if (!facts || !facts.execClass) warnings.push('No execution class on the job inspection plan — the certificate value will be used');
+  else if (cfg.exec_class && facts.execClass && cfg.exec_class !== facts.execClass)
+    warnings.push(`Job is ${facts.execClass} but the FPC certificate covers ${cfg.exec_class} — check the certificate covers this work`);
+  return { blockers, warnings, declared };
+}
+
+// ── DoP PDF — native jsPDF, portrait, prescribed numbered layout ────────────
+// The numbered items follow CPR Annex III so the document is recognisable to a
+// building control officer or main contractor's QA reading it.
+function drawDopPDF(jsPDF, d, logoDataUri) {
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  try {
+    doc.setProperties({
+      title: `Declaration of Performance — ${d.dopNo || ''}`,
+      subject: 'Declaration of Performance (BS EN 1090-1)',
+      author: 'BAMA Fabrication', creator: 'BAMA Fabrication ERP'
+    });
+  } catch (e) { /* non-critical */ }
+
+  const pageW = 210, pageH = 297, mL = 18, mR = 18, mB = 16;
+  const usableW = pageW - mL - mR;
+  const accent = [255, 107, 0];
+  let y = 0;
+
+  const header = () => {
+    doc.setFillColor(24, 24, 27); doc.rect(0, 0, pageW, 26, 'F');
+    let tx = mL;
+    if (logoDataUri) {
+      try {
+        const props = doc.getImageProperties(logoDataUri);
+        const h = 13, w = h * (props.width / props.height);
+        doc.addImage(logoDataUri, mL, 6.5, w, h);
+        tx = mL + w + 6;
+      } catch (e) { /* logo optional */ }
+    }
+    doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
+    doc.text('DECLARATION OF PERFORMANCE', tx, 12.5);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(190, 190, 195);
+    doc.text(`${d.standard || ''}${d.marking ? '  ·  ' + d.marking + ' marking' : ''}`, tx, 19);
+    doc.setTextColor(...accent); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+    doc.text(`No. ${d.dopNo || ''}`, pageW - mR, 12.5, { align: 'right' });
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(190, 190, 195);
+    doc.text(`Rev ${d.revision || 1}  ·  ${d.issueDate || ''}`, pageW - mR, 18.5, { align: 'right' });
+    y = 33;
+  };
+  const need = h => { if (y + h > pageH - mB) { doc.addPage(); header(); } };
+
+  // Numbered clause: "3. Intended use ..." with wrapped body
+  const clause = (n, title, body) => {
+    const lines = doc.splitTextToSize(String(body || ''), usableW - 8);
+    need(lines.length * 4.3 + 9);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...accent);
+    doc.text(`${n}.`, mL, y);
+    doc.setTextColor(35, 35, 40);
+    doc.text(title, mL + 7, y);
+    y += 4.6;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(45, 45, 50);
+    doc.text(lines, mL + 7, y);
+    y += lines.length * 4.3 + 4.5;
+  };
+
+  header();
+
+  clause(1, 'Unique identification code of the product-type', d.productType || '');
+  clause(2, 'Intended use', d.intendedUse || '');
+  clause(3, 'Manufacturer', [d.manufacturer, d.address].filter(Boolean).join('\n'));
+  clause(4, 'System of assessment and verification of constancy of performance',
+    `System ${d.avcpSystem || ''}`);
+  clause(5, 'Designated standard and approved body',
+    `${d.standard || ''}\n${d.approvedBodyName || ''}${d.approvedBodyNumber ? ` (approved body no. ${d.approvedBodyNumber})` : ''} `
+    + `carried out the initial inspection of the manufacturing plant and of factory production control, and the continuing `
+    + `surveillance, assessment and evaluation of factory production control under system ${d.avcpSystem || ''}, and issued `
+    + `the certificate of conformity of the factory production control no. ${d.fpcCertificateNo || ''}.`);
+
+  // 6. Declared performance table
+  need(20);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...accent);
+  doc.text('6.', mL, y); doc.setTextColor(35, 35, 40); doc.text('Declared performance', mL + 7, y);
+  y += 6;
+  const wCh = usableW * 0.52, wPf = usableW - wCh;
+  const drawHead = () => {
+    doc.setFillColor(242, 242, 244); doc.rect(mL, y, usableW, 6.5, 'F');
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(70, 70, 75);
+    doc.text('Essential characteristic', mL + 1.5, y + 4.4);
+    doc.text('Performance', mL + wCh + 1.5, y + 4.4);
+    y += 6.5;
+  };
+  drawHead();
+  (d.characteristics || []).forEach((c, i) => {
+    const l1 = doc.splitTextToSize(String(c.characteristic || ''), wCh - 3);
+    const l2 = doc.splitTextToSize(String(c.performance || ''), wPf - 3);
+    const rowH = Math.max(5.6, Math.max(l1.length, l2.length) * 3.5 + 2.2);
+    if (y + rowH > pageH - mB) { doc.addPage(); header(); drawHead(); }
+    if (i % 2) { doc.setFillColor(250, 250, 251); doc.rect(mL, y, usableW, rowH, 'F'); }
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(40, 40, 45);
+    doc.text(l1, mL + 1.5, y + 4);
+    doc.text(l2, mL + wCh + 1.5, y + 4);
+    doc.setDrawColor(228, 228, 232); doc.setLineWidth(0.1);
+    doc.line(mL, y + rowH, mL + usableW, y + rowH);
+    y += rowH;
+  });
+  y += 5;
+  if (d.method) {
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(110, 110, 115);
+    const ml = doc.splitTextToSize(`Method of declaration: ${d.method}`, usableW - 7);
+    need(ml.length * 3.6 + 4); doc.text(ml, mL + 7, y); y += ml.length * 3.6 + 4;
+  }
+
+  clause(7, 'Appropriate technical documentation / specific technical documentation',
+    d.techDoc || 'Not applicable.');
+
+  // Statutory statement + signature
+  need(46);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(45, 45, 50);
+  const stmt = doc.splitTextToSize(
+    'The performance of the product identified above is in conformity with the set of declared performance. '
+    + 'This declaration of performance is issued, in accordance with the Construction Products Regulations, under the sole '
+    + 'responsibility of the manufacturer identified above.', usableW);
+  doc.text(stmt, mL, y); y += stmt.length * 4.3 + 8;
+
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(40, 40, 45);
+  doc.text('Signed for and on behalf of the manufacturer', mL, y);
+  y += 4;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(60, 60, 65);
+  if (d.issuedBy) doc.text(String(d.issuedBy), mL, y + 14);
+  if (d.place || d.issueDate) doc.text([d.place, d.issueDate].filter(Boolean).join(', '), mL + 100, y + 14);
+  doc.setDrawColor(120, 120, 125); doc.setLineWidth(0.2);
+  doc.line(mL, y + 17, mL + 80, y + 17);
+  doc.line(mL + 100, y + 17, mL + 100 + 62, y + 17);
+  doc.setFontSize(7); doc.setTextColor(110, 110, 115);
+  doc.text('Name, position and signature', mL, y + 21);
+  doc.text('Place and date of issue', mL + 100, y + 21);
+
+  const total = doc.getNumberOfPages();
+  for (let p = 1; p <= total; p++) {
+    doc.setPage(p);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5); doc.setTextColor(140, 140, 145);
+    doc.text(`Declaration of Performance  ·  No. ${d.dopNo || ''}  ·  ${d.manufacturer || ''}`, mL, pageH - 8);
+    doc.text(`Page ${p} of ${total}`, pageW - mR, pageH - 8, { align: 'right' });
+  }
+  return doc;
+}
+
+async function renderDopPdfBlob(d) {
+  const Ctor = resolveJsPDFCtor();
+  if (!Ctor) throw new Error('jsPDF not loaded on this page');
+  await loadLogoDataUri();
+  const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
+  const doc = drawDopPDF(Ctor, d, logo);
+  const blob = doc.output('blob');
+  console.log(`DoP PDF: ${(blob.size / 1024).toFixed(1)}KB`);
+  if (blob.size < 8192) console.warn('DoP PDF suspiciously small — check the renderer');
+  return blob;
+}
+
+// ── DoP UI ──────────────────────────────────────────────────────────────────
+let _dopCfg = null, _dopIssued = [], _dopFacts = null;
+
+async function dopOpen() {
+  if (!_inspJob) { toast('Pick a job first', 'error'); return; }
+  if (!document.getElementById('dopModal')) {
+    const div = document.createElement('div');
+    div.innerHTML = `<div id="dopModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:1001;align-items:flex-start;justify-content:center;padding:26px;overflow-y:auto">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:900px;overflow:hidden">
+        <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <h3 style="margin:0;font-size:16px;flex:1">🏷 Declaration of Performance</h3>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('dopModal').style.display='none'">✕</button>
+        </div>
+        <div id="dopBody" style="padding:16px 20px;max-height:80vh;overflow-y:auto"></div>
+      </div></div>`;
+    document.body.appendChild(div.firstElementChild);
+  }
+  document.getElementById('dopModal').style.display = 'flex';
+  const host = document.getElementById('dopBody');
+  host.innerHTML = '<div style="color:var(--muted);font-size:12px">Loading…</div>';
+  try {
+    _dopCfg = await dopLoadConfig();
+    _dopFacts = _cocFacts && _cocFacts.job && String(_cocFacts.job.id) === String(_inspJob)
+      ? _cocFacts : await cocGatherFacts(_inspJob);
+    _dopIssued = await api.get(`/api/job-certificates?job_id=${_inspJob}&doc_type=dop`).catch(() => []);
+  } catch (e) { host.innerHTML = `<div style="color:var(--red);font-size:12px">${escapeHtml(e.message)}</div>`; return; }
+  _dopRender();
+}
+
+function _dopRender() {
+  const host = document.getElementById('dopBody'); if (!host) return;
+  const cfg = _dopCfg, f = _dopFacts;
+  const { blockers, warnings } = dopAssemble(cfg, f && f.job, f);
+  const nextRev = _dopIssued.length ? Math.max(..._dopIssued.map(c => Number(c.revision) || 0)) + 1 : 1;
+  const dopNo = `DOP-${(f && f.job && f.job.job_number) || 'JOB'}-${String(nextRev).padStart(2, '0')}`;
+  const fld = (k, label, val, extra = '') => `<div><label style="font-size:10px;color:var(--muted);display:block">${label}</label>
+    <input id="dop_${k}" value="${escapeHtml(val ?? '')}" ${extra}
+      style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box"></div>`;
+
+  host.innerHTML = `
+    <p style="font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.6">
+      This is the <strong>regulated</strong> document — a Declaration of Performance under the Construction Products Regulations,
+      against ${escapeHtml(cfg.standard || 'BS EN 1090-1')}. Its fields are prescribed, and it names BAMA as manufacturer under
+      BAMA's sole responsibility. The numbers below are read off your own UKCA / FPC certificate in Company Docs; you confirm them
+      <strong>once</strong> and they're reused on every DoP after that.</p>
+
+    <div style="background:${cfg.verified ? '#0f2f22' : '#3b1a1a'};border:1px solid ${cfg.verified ? '#3ecf8e' : '#ff6b6b'};border-radius:8px;padding:10px 13px;font-size:12px;color:${cfg.verified ? '#8ee6bd' : '#f0b4b4'};margin-bottom:12px;line-height:1.6">
+      ${cfg.verified
+        ? `✓ Manufacturer and approved body details verified by ${escapeHtml(cfg.verified_by || '')} on ${escapeHtml(cfg.verified_at || '')}.`
+        : `⚠ <strong>Not verified yet.</strong> Press <strong>Read my UKCA certificate</strong> to pull the approved body and FPC numbers
+           off the certificate in Company Docs, check every character against the paper, then press Verify. A DoP cannot be issued
+           until this is done once.`}
+    </div>
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+      <button class="btn btn-ghost btn-sm" onclick="dopReadCert()">📖 Read my UKCA certificate</button>
+      ${cfg.verified ? `<button class="btn btn-ghost btn-sm" onclick="dopSetVerified(false)">Un-verify to edit</button>`
+                     : `<button class="btn btn-primary btn-sm" onclick="dopSetVerified(true)">✓ Verify these details</button>`}
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px">
+      ${fld('approved_body_name', 'Approved body', cfg.approved_body_name)}
+      ${fld('approved_body_number', 'Approved body no.', cfg.approved_body_number)}
+      ${fld('fpc_certificate_no', 'FPC certificate no.', cfg.fpc_certificate_no)}
+    </div>
+    <div style="display:grid;grid-template-columns:1.6fr 1fr .8fr .8fr;gap:8px;margin-bottom:8px">
+      ${fld('standard', 'Designated standard', cfg.standard)}
+      ${fld('method', 'Declaration method', cfg.method, 'placeholder="e.g. method 3a"')}
+      ${fld('avcp_system', 'AVCP system', cfg.avcp_system)}
+      <div><label style="font-size:10px;color:var(--muted);display:block">Marking</label>
+        <select id="dop_marking" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 7px;color:var(--text);font-size:12.5px">
+          <option ${cfg.marking === 'UKCA' ? 'selected' : ''}>UKCA</option>
+          <option ${cfg.marking === 'CE' ? 'selected' : ''}>CE</option></select></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 2fr .7fr;gap:8px;margin-bottom:12px">
+      ${fld('manufacturer', 'Manufacturer', cfg.manufacturer)}
+      ${fld('address', 'Registered address', cfg.address)}
+      ${fld('exec_class', 'FPC covers', cfg.exec_class, 'placeholder="EXC3"')}
+    </div>
+
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:4px">Declared performance</div>
+    <div style="font-size:11.5px;color:#f0e0a4;background:#3b2f0f;border:1px solid #eab308;border-radius:7px;padding:8px 11px;margin-bottom:8px;line-height:1.6">
+      The characteristic names come from the standard's own table and should be checked against your copy of
+      <strong>BS EN 1090-1 Annex ZA</strong> — add or remove rows to match it. The <strong>performance values are BAMA's
+      declaration</strong>, so they start blank and are never filled in for you. A blank row is omitted from the document;
+      <strong>NPD</strong> ("No Performance Determined") is a valid declaration but has to be chosen deliberately.</div>
+    <table style="width:100%;border-collapse:collapse;font-size:11.5px;margin-bottom:8px">
+      <tbody>${(cfg.characteristics || []).map((c, i) => `<tr>
+        <td style="padding:3px;border-bottom:1px solid var(--border);width:52%">
+          <input value="${escapeHtml(c.characteristic || '')}" onchange="_dopCfg.characteristics[${i}].characteristic=this.value"
+            style="width:100%;background:transparent;border:1px solid transparent;border-radius:4px;padding:3px 5px;color:var(--text);font-size:11.5px"></td>
+        <td style="padding:3px;border-bottom:1px solid var(--border)">
+          <input value="${escapeHtml(c.performance || '')}" placeholder="blank = omitted · type NPD if none determined"
+            onchange="_dopCfg.characteristics[${i}].performance=this.value"
+            style="width:100%;background:var(--surface);border:1px solid ${String(c.performance || '').trim() ? 'var(--border)' : '#eab30855'};border-radius:4px;padding:3px 5px;color:var(--text);font-size:11.5px"></td>
+        <td style="padding:3px;border-bottom:1px solid var(--border);width:26px">
+          <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="_dopCfg.characteristics.splice(${i},1);_dopRender()">✕</button></td>
+      </tr>`).join('')}</tbody></table>
+    <button class="btn btn-ghost btn-sm" onclick="_dopCfg.characteristics.push({characteristic:'',performance:''});_dopRender()">＋ Characteristic</button>
+    <button class="btn btn-ghost btn-sm" onclick="dopSaveCfg()">💾 Save details</button>
+
+    <div style="border-top:1px solid var(--border);margin:14px 0 10px"></div>
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:6px">This job</div>
+    ${blockers.length ? `<div style="background:#3b1a1a;border:1px solid #ff6b6b;border-radius:8px;padding:9px 13px;font-size:12px;color:#f0b4b4;margin-bottom:10px;line-height:1.6">
+      <strong>Cannot issue yet:</strong><br>${blockers.map(b => '• ' + escapeHtml(b)).join('<br>')}</div>` : ''}
+    ${warnings.length ? `<div style="background:#3b2f0f;border:1px solid #eab308;border-radius:8px;padding:9px 13px;font-size:12px;color:#f0e0a4;margin-bottom:10px;line-height:1.6">
+      ${warnings.map(w => '• ' + escapeHtml(w)).join('<br>')}</div>` : ''}
+    ${_dopIssued.length ? `<div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">Already issued:
+      ${_dopIssued.map(c => `<a ${c.web_url ? `href="${escapeHtml(c.web_url)}" target="_blank"` : ''} style="color:var(--accent);text-decoration:underline dotted">${escapeHtml(c.cert_ref)} rev ${c.revision}</a>`).join(' · ')}</div>` : ''}
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px">
+      ${fld('no', 'DoP number', dopNo)}
+      ${fld('date', 'Date of issue', new Date().toISOString().slice(0, 10), 'type="date"')}
+      ${fld('place', 'Place of issue', 'Peterborough')}
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+      ${fld('by', 'Signed by (name and position)', 'Mateusz Braczyk, Director')}
+      ${fld('techdoc', 'Clause 7 — technical documentation', 'Not applicable.')}
+    </div>
+    <div style="margin-bottom:10px">
+      <label style="font-size:10px;color:var(--muted);display:block">1 — Product-type identification (drafted from the job; edit freely)</label>
+      <textarea id="dop_producttype" rows="2" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box;resize:vertical">${escapeHtml(_dopProductType())}</textarea>
+      <label style="font-size:10px;color:var(--muted);display:block;margin-top:6px">2 — Intended use</label>
+      <textarea id="dop_intendeduse" rows="2" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box;resize:vertical">Structural steel components for use in building works, to be incorporated in load-bearing structures designed in accordance with BS EN 1993.</textarea>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-ghost btn-sm" onclick="dopPreview()">👁 Preview PDF</button>
+      <button class="btn btn-primary btn-sm" ${blockers.length ? 'disabled style="opacity:.45;cursor:not-allowed"' : ''} onclick="dopIssue()">🏷 Issue &amp; file to SharePoint</button>
+    </div>`;
+}
+
+// Deterministic, from the job — no AI needed for a one-line identification.
+function _dopProductType() {
+  const f = _dopFacts;
+  const bits = ['Fabricated structural steel components'];
+  if (f && f.job) {
+    if (f.job.name) bits.push(`for ${f.job.name}`);
+    if (f.job.job_number) bits.push(`(contract ${f.job.job_number})`);
+  }
+  if (f && f.execClass) bits.push(`, execution class ${f.execClass}`);
+  return bits.join(' ').replace(' ,', ',');
+}
+
+function _dopCollect() {
+  const g = k => (document.getElementById('dop_' + k) || {}).value || '';
+  _dopCfg.approved_body_name = g('approved_body_name');
+  _dopCfg.approved_body_number = g('approved_body_number');
+  _dopCfg.fpc_certificate_no = g('fpc_certificate_no');
+  _dopCfg.standard = g('standard');
+  _dopCfg.method = g('method');
+  _dopCfg.avcp_system = g('avcp_system');
+  _dopCfg.marking = g('marking');
+  _dopCfg.manufacturer = g('manufacturer');
+  _dopCfg.address = g('address');
+  _dopCfg.exec_class = g('exec_class');
+  return _dopCfg;
+}
+
+async function dopSaveCfg() {
+  try { await dopSaveConfig(_dopCollect()); toast('Details saved', 'success'); _dopRender(); }
+  catch (e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+async function dopReadCert() {
+  toast('Reading your UKCA certificate from Company Docs…', 'info');
+  try {
+    const { parsed, sourceDoc } = await dopReadCertificate();
+    Object.entries({
+      approved_body_name: parsed.approved_body_name, approved_body_number: parsed.approved_body_number,
+      fpc_certificate_no: parsed.fpc_certificate_no, standard: parsed.standard,
+      avcp_system: parsed.avcp_system, exec_class: parsed.exec_class, marking: parsed.marking
+    }).forEach(([k, v]) => { if (v) _dopCfg[k] = v; });
+    _dopCfg.verified = false;   // anything freshly read must be re-confirmed
+    _dopCfg.source_note = `Read from "${sourceDoc.title}" — check every character against the certificate, then Verify.`;
+    _dopRender();
+    toast(`Read from "${sourceDoc.title}" — check every character, then press Verify`, 'success');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function dopSetVerified(on) {
+  _dopCollect();
+  if (on) {
+    const missing = ['approved_body_name', 'approved_body_number', 'fpc_certificate_no', 'standard', 'avcp_system']
+      .filter(k => !String(_dopCfg[k] || '').trim());
+    if (missing.length) { toast('Fill in the approved body and FPC details first', 'error'); return; }
+    if (!await bamaConfirm(
+      `Confirm these are correct, character for character, against the certificate?<br><br>
+       <strong>${escapeHtml(_dopCfg.approved_body_name)}</strong>, approved body no.
+       <strong>${escapeHtml(_dopCfg.approved_body_number)}</strong><br>
+       FPC certificate <strong>${escapeHtml(_dopCfg.fpc_certificate_no)}</strong><br>
+       ${escapeHtml(_dopCfg.standard)}, system ${escapeHtml(_dopCfg.avcp_system)}<br><br>
+       <span style="font-size:12px;color:var(--muted)">These go on every Declaration of Performance BAMA issues, under BAMA's sole
+       responsibility as manufacturer. Your name and today's date are recorded against the confirmation.</span>`,
+      'Verify Manufacturer Details')) return;
+    _dopCfg.verified = true;
+    _dopCfg.verified_by = (typeof currentUser === 'object' && currentUser && (currentUser.name || currentUser.email)) || 'BAMA';
+    _dopCfg.verified_at = new Date().toISOString().slice(0, 10);
+  } else {
+    _dopCfg.verified = false; _dopCfg.verified_by = ''; _dopCfg.verified_at = '';
+  }
+  try { await dopSaveConfig(_dopCfg); _dopRender(); toast(on ? 'Verified' : 'Un-verified — edit and verify again', 'success'); }
+  catch (e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+function _dopPdfData() {
+  const g = k => (document.getElementById('dop_' + k) || {}).value || '';
+  const cfg = _dopCollect();
+  return {
+    dopNo: g('no'),
+    revision: (_dopIssued.length ? Math.max(..._dopIssued.map(c => Number(c.revision) || 0)) : 0) + 1,
+    issueDate: g('date'), place: g('place'), issuedBy: g('by'),
+    productType: g('producttype'), intendedUse: g('intendeduse'), techDoc: g('techdoc'),
+    manufacturer: cfg.manufacturer, address: cfg.address, standard: cfg.standard,
+    avcpSystem: cfg.avcp_system, marking: cfg.marking, method: cfg.method,
+    approvedBodyName: cfg.approved_body_name, approvedBodyNumber: cfg.approved_body_number,
+    fpcCertificateNo: cfg.fpc_certificate_no,
+    // Blank performance = omitted. NPD must be typed deliberately.
+    characteristics: (cfg.characteristics || []).filter(c => String(c.performance || '').trim())
+  };
+}
+
+async function dopPreview() {
+  try { window.open(URL.createObjectURL(await renderDopPdfBlob(_dopPdfData())), '_blank'); }
+  catch (e) { toast('Preview failed: ' + e.message, 'error'); }
+}
+
+async function dopIssue() {
+  const { blockers } = dopAssemble(_dopCollect(), _dopFacts && _dopFacts.job, _dopFacts);
+  if (blockers.length) { toast('Cannot issue: ' + blockers[0], 'error'); return; }
+  const d = _dopPdfData();
+  if (!await bamaConfirm(
+      `Issue <strong>${escapeHtml(d.dopNo)}</strong> as revision ${d.revision}?<br><br>
+       <span style="font-size:12px;color:var(--muted)">This is a regulatory declaration issued under BAMA's sole responsibility as
+       manufacturer. ${d.characteristics.length} declared performance value(s) will appear; blank characteristics are omitted.</span>`,
+      'Issue Declaration of Performance')) return;
+  try {
+    const blob = await renderDopPdfBlob(d);
+    const name = `${d.dopNo}.pdf`;
+    let up = null;
+    const folder = await findProjectFolder(_inspJob).catch(() => null);
+    if (folder) up = await uploadFileToFolder(folder.id, name, await blob.arrayBuffer(), 'application/pdf', BAMA_DRIVE_ID);
+    await api.post('/api/job-certificates', {
+      job_id: _inspJob, doc_type: 'dop', cert_ref: d.dopNo,
+      issue_date: d.issueDate, issued_by: d.issuedBy,
+      exec_class: (_dopFacts && _dopFacts.execClass) || _dopCfg.exec_class || null,
+      scope_text: d.productType,
+      payload: d,   // frozen: the declaration exactly as issued
+      file_name: name,
+      sharepoint_file_id: up ? up.id : null,
+      drive_id: up ? BAMA_DRIVE_ID : null,
+      web_url: up ? (up.webUrl || null) : null
+    });
+    toast(up ? `${d.dopNo} issued and filed to the job folder` : `${d.dopNo} issued — PDF opened`, 'success');
+    window.open(up && up.webUrl ? up.webUrl : URL.createObjectURL(blob), '_blank');
+    _dopIssued = await api.get(`/api/job-certificates?job_id=${_inspJob}&doc_type=dop`).catch(() => []);
+    _dopRender();
   } catch (e) { toast('Issue failed: ' + e.message, 'error'); }
 }
