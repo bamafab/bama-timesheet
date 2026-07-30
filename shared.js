@@ -23250,8 +23250,8 @@ function renderUnifiedSidebar() {
 
     <!-- Traceability -->
     <div class="sidebar-nav-group">
-      <div class="sidebar-nav-label-toggle collapsed" onclick="toggleSidebarGroup(this)">Traceability <span class="chevron">&#9660;</span></div>
-      <div class="sidebar-nav-subitems collapsed">
+      <div class="sidebar-nav-label-toggle" onclick="toggleSidebarGroup(this)">Traceability <span class="chevron">&#9660;</span></div>
+      <div class="sidebar-nav-subitems">
         <button class="sidebar-nav-item${a('office','welding')}" data-tab="welding" onclick="navToOfficeTab('welding')">
           <span class="sidebar-nav-icon">🔥</span> Welding Equipment
         </button>
@@ -46581,6 +46581,12 @@ async function renderQmsTab() {
     </div>
     <h4 style="margin:20px 0 6px;font-size:13px">Recent submissions</h4>
     <div id="qmsRecent" style="font-size:12px;color:var(--muted)">Loading…</div>
+    <h4 style="margin:22px 0 4px;font-size:13px">External certificates — calibration, LOLER, PAT</h4>
+    <p style="font-size:11.5px;color:var(--muted);margin:0 0 8px;line-height:1.6">
+      These are issued by outside bodies (UKAS labs, LOLER examiners, PAT contractors), so they aren't filled in here —
+      they're dropped into the <strong>Plant Register</strong> and this panel always shows the newest one on file.
+      The check sheets above stay for what BAMA does in-house (routine validation checks, pre-use inspections).</p>
+    <div id="qmsExternalCerts" style="font-size:12px;color:var(--muted)">Loading…</div>
   </div>`;
   try {
     const subs = await api.get('/api/qms-submissions');
@@ -46592,6 +46598,49 @@ async function renderQmsTab() {
         <span style="color:var(--muted)">${String(s.created_at).slice(0, 10)}</span>
       </div>`).join('') : 'None yet.';
   } catch (_) {}
+  _qmsRenderExternalCerts();
+}
+
+// Live view of externally-issued certificates, read straight off the plant
+// register + its document index — so the QMS tab never shows a stale date.
+async function _qmsRenderExternalCerts() {
+  const host = document.getElementById('qmsExternalCerts');
+  if (!host) return;
+  try {
+    const [items, docs] = await Promise.all([
+      api.get('/api/plant-items'),
+      api.get('/api/plant-documents').catch(() => [])
+    ]);
+    _plantItems = items; _plantAllDocs = docs; _plantBuildDocIdx();
+    const REG = ['calib_due', 'loler_due', 'pat_due'];
+    const rows = items.filter(p => p.status !== 'disposed' && REG.some(r => p[r]));
+    if (!rows.length) {
+      host.innerHTML = 'Nothing on file yet — drop calibration, LOLER or PAT certificates on the Plant Register and they appear here. <a onclick="navToOfficeTab(\'plant\')" style="color:var(--accent);cursor:pointer;text-decoration:underline">Open Plant Register →</a>';
+      return;
+    }
+    const label = { calib_due: 'Calibration', loler_due: 'LOLER', pat_due: 'PAT' };
+    host.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:11.5px">
+      <thead><tr>${['Item', 'Regime', 'Due', 'Newest certificate on file'].map(h =>
+        `<th style="text-align:left;padding:5px 6px;font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--border)">${h}</th>`).join('')}</tr></thead>
+      <tbody>${rows.flatMap((p, i) => REG.filter(r => p[r]).map(r => {
+        const info = _plantDueInfo(p[r]);
+        const col = _PLANT_DUE_COLORS[info.cls];
+        const hit = _plantDueSource(p.id, r);
+        const cert = hit
+          ? (hit.doc.web_url ? `<a href="${escapeHtml(hit.doc.web_url)}" target="_blank" style="color:var(--text);text-decoration:underline dotted">${escapeHtml(hit.doc.title)}</a>` : escapeHtml(hit.doc.title))
+            + (hit.doc.issuer ? ` <span style="color:var(--muted)">· ${escapeHtml(hit.doc.issuer)}</span>` : '')
+          : '<span style="color:#eab308">⚠ date entered by hand — no certificate filed</span>';
+        return `<tr style="${i % 2 ? 'background:rgba(255,255,255,0.018);' : ''}">
+          <td style="padding:5px 6px;border-bottom:1px solid var(--border);cursor:pointer" onclick="navToOfficeTab('plant')">
+            <strong style="color:var(--accent);font-size:10.5px">${escapeHtml(p.plant_ref)}</strong> ${escapeHtml(p.name)}</td>
+          <td style="padding:5px 6px;border-bottom:1px solid var(--border)">${label[r]}</td>
+          <td style="padding:5px 6px;border-bottom:1px solid var(--border);color:${col};font-weight:700;white-space:nowrap">
+            ${String(p[r]).slice(0, 10)} ${info.cls === 'expired' ? '(OVERDUE)' : info.cls === 'soon' ? `(${info.days}d)` : ''}</td>
+          <td style="padding:5px 6px;border-bottom:1px solid var(--border)">${cert}</td></tr>`;
+      })).join('')}</tbody></table>`;
+  } catch (e) {
+    host.innerHTML = `<span style="color:var(--muted)">Plant register not available yet (${escapeHtml(e.message)}) — run api/sql/create-plant-register.sql.</span>`;
+  }
 }
 
 function openQmsForm(formId) {
@@ -47313,6 +47362,9 @@ const PLANT_DOC_TYPES = {
 
 let _plantItems = [], _plantFilter = 'all', _plantSearch = '', _plantShowRetired = false;
 let _plantEditId = null, _plantDocs = [], _plantDocQueue = [];
+let _plantAllDocs = [];    // every live plant doc — drives 'newest cert wins'
+let _plantDocIdx = {};     // plantId → regimeKey → { expiry, doc }
+let _plantBulkQueue = [];  // register-level drop queue (auto-matched)
 
 async function plantDocsFolder(item) {
   const parent = await getOrCreateSubfolder(SP_TAX.quality, '07 - Plant & Equipment', BAMA_DRIVE_ID);
@@ -47336,16 +47388,64 @@ function _plantNextRef() {
   return 'P-' + String(max + 1).padStart(3, '0');
 }
 
+// ── Newest-cert-wins: docs index + self-healing reconcile ────────────────────
+// External bodies (UKAS labs, LOLER examiners, PAT contractors) issue the
+// certificates; they land in the document register. The register's due dates
+// must never be older than the newest certificate on file, so we index the
+// docs and quietly advance any regime column that a cert has already moved
+// past. Dates are only ever pushed FORWARD, and only from a date printed on a
+// cert (or typed by the user on the review card) — nothing is invented.
+function _plantBuildDocIdx() {
+  _plantDocIdx = {};
+  (_plantAllDocs || []).forEach(d => {
+    const regime = (PLANT_DOC_TYPES[d.doc_type] || {}).regime;
+    if (!regime || !d.expiry_date || d.is_archived) return;
+    const byPlant = _plantDocIdx[d.plant_id] = _plantDocIdx[d.plant_id] || {};
+    const cur = byPlant[regime];
+    if (!cur || String(d.expiry_date) > String(cur.expiry)) byPlant[regime] = { expiry: String(d.expiry_date).slice(0, 10), doc: d };
+  });
+}
+
+async function _plantReconcileFromDocs() {
+  const patches = [];
+  (_plantItems || []).forEach(p => {
+    const byRegime = _plantDocIdx[p.id]; if (!byRegime) return;
+    const body = {};
+    Object.entries(byRegime).forEach(([regime, hit]) => {
+      const cur = p[regime] ? String(p[regime]).slice(0, 10) : null;
+      if (!cur || hit.expiry > cur) { body[regime] = hit.expiry; p[regime] = hit.expiry; }
+    });
+    if (Object.keys(body).length) patches.push({ id: p.id, ref: p.plant_ref, body });
+  });
+  if (!patches.length) return 0;
+  for (const patch of patches) {
+    try { await api.put(`/api/plant-items/${patch.id}`, patch.body); }
+    catch (e) { console.warn('Plant reconcile failed for ' + patch.ref, e.message); }
+  }
+  return patches.length;
+}
+
+// Is this displayed date backed by a certificate on file?
+function _plantDueSource(plantId, regime) {
+  const hit = (_plantDocIdx[plantId] || {})[regime];
+  return hit || null;
+}
+
 // ── Tab ──────────────────────────────────────────────────────────────────────
 async function renderPlantTab() {
   const root = document.getElementById('tab-plant');
   if (!root) return;
   root.innerHTML = '<div style="color:var(--muted);padding:20px">Loading…</div>';
-  try { _plantItems = await api.get('/api/plant-items'); }
-  catch (e) {
+  try {
+    [_plantItems, _plantAllDocs] = await Promise.all([
+      api.get('/api/plant-items'),
+      api.get('/api/plant-documents').catch(() => [])
+    ]);
+  } catch (e) {
     root.innerHTML = `<div style="color:var(--red);padding:20px;font-size:12.5px">Plant register unavailable: ${escapeHtml(e.message)} — run api/sql/create-plant-register.sql first.</div>`;
     return;
   }
+  _plantBuildDocIdx();
   root.innerHTML = `<div>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
       <h3 style="margin:0">🚜 Plant Register</h3>
@@ -47363,15 +47463,34 @@ async function renderPlantTab() {
       Every item of plant &amp; equipment with its statutory inspection dates — tap a row to edit details, set due
       dates or drop inspection certificates (auto-read; a saved LOLER / PAT / calibration / service cert advances
       the matching due date). Colours: <span style="color:#3ecf8e">■ in date</span>
-      <span style="color:#eab308">■ due ≤60 days</span> <span style="color:#ff6b6b">■ overdue</span> · — = not applicable.
+      <span style="color:#eab308">■ due ≤60 days</span> <span style="color:#ff6b6b">■ overdue</span> · — = not applicable · 📄 = date comes from a certificate on file.
       Certificates file to SharePoint under 02 - Quality (QMS) / 07 - Plant &amp; Equipment.</p>
     <div id="plantChips" style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap"></div>
     <div id="plantSummary" style="margin-bottom:10px"></div>
+    <div ondragover="event.preventDefault();this.style.borderColor='var(--accent)';this.style.background='rgba(224,94,0,0.06)'"
+         ondragleave="this.style.borderColor='var(--border)';this.style.background='transparent'"
+         ondrop="event.preventDefault();this.style.borderColor='var(--border)';this.style.background='transparent';plantBulkHandleFiles(event.dataTransfer.files)"
+         onclick="document.getElementById('plantBulkInput').click()"
+         style="border:1.5px dashed var(--border);border-radius:8px;padding:11px;text-align:center;cursor:pointer;font-size:12px;color:var(--muted);margin-bottom:10px;transition:background .15s">
+      📥 <strong>Drop a whole batch of certificates here</strong> — LOLER, PAT, calibration, service reports — each one is read
+      and matched to its plant item by serial number, asset ref or make/model. No item on file? It offers to create it from the certificate.
+      <input id="plantBulkInput" type="file" multiple style="display:none" onchange="plantBulkHandleFiles(this.files);this.value=''">
+    </div>
+    <div id="plantBulkCards" style="margin-bottom:10px"></div>
+    <div id="plantReconcileNote" style="margin-bottom:8px"></div>
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:auto;max-height:calc(100vh - 320px)">
       <table id="plantGrid" style="border-collapse:collapse;font-size:11.5px;min-width:100%"></table>
     </div>
   </div>`;
   _plantRenderChips(); _plantRenderGrid();
+  // Newest cert wins — quietly pull any date a certificate has already moved on.
+  const moved = await _plantReconcileFromDocs();
+  if (moved) {
+    _plantRenderGrid();
+    const note = document.getElementById('plantReconcileNote');
+    if (note) note.innerHTML = `<div style="background:#0f2f22;border:1px solid #3ecf8e;border-radius:7px;padding:7px 12px;font-size:12px;color:#8ee6bd">
+      ✓ ${moved} item${moved > 1 ? 's' : ''} refreshed from newer certificates on file — due dates always follow the latest certificate.</div>`;
+  }
 }
 
 function _plantVisibleBase() {
@@ -47429,8 +47548,10 @@ function _plantRenderGrid() {
         const info = _plantDueInfo(p[r.key]);
         if (active) { if (info.cls === 'expired') expired++; if (info.cls === 'soon') soon++; }
         const col = _PLANT_DUE_COLORS[info.cls];
+        const src_ = _plantDueSource(p.id, r.key);
+        const cert = src_ ? ` <span style="font-size:9px" title="From certificate: ${escapeHtml(src_.doc.title)}${src_.doc.doc_ref ? ' (' + escapeHtml(src_.doc.doc_ref) + ')' : ''}">📄</span>` : '';
         const inner = info.cls === 'none' ? `<span style="color:var(--border)">—</span>`
-          : `<span style="color:${col};font-weight:700">${info.cls === 'expired' ? 'OVERDUE' : info.days + 'd'}</span><br><span style="font-size:9px;color:var(--muted)">${String(p[r.key]).slice(0, 10)}</span>`;
+          : `<span style="color:${col};font-weight:700">${info.cls === 'expired' ? 'OVERDUE' : info.days + 'd'}</span><br><span style="font-size:9px;color:var(--muted)">${String(p[r.key]).slice(0, 10)}${cert}</span>`;
         return `<td style="padding:6px 4px;border-bottom:1px solid var(--border);text-align:center;cursor:pointer;line-height:1.25">${inner}</td>`;
       }).join('')}
       <td style="padding:6px 4px;border-bottom:1px solid var(--border);text-align:center;cursor:pointer">
@@ -47515,8 +47636,19 @@ function plantOpenItem(id) {
     <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:5px">
       Inspection / maintenance due dates <span style="font-weight:400;text-transform:none">(leave blank = not applicable)</span></div>
     <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:10px">
-      ${PLANT_REGIMES.map(r => fld(r.key, r.label, p[r.key] ? String(p[r.key]).slice(0, 10) : '', 'date', `title="${escapeHtml(r.hint)}"`)).join('')}
+      ${PLANT_REGIMES.map(r => {
+        const hit = id != null ? _plantDueSource(id, r.key) : null;
+        const cur = p[r.key] ? String(p[r.key]).slice(0, 10) : null;
+        const stale = hit && cur && hit.expiry > cur;
+        const hint = hit
+          ? `<div style="font-size:9.5px;color:${stale ? '#eab308' : '#8ee6bd'};margin-top:2px;line-height:1.3" title="${escapeHtml(hit.doc.title)}">📄 cert: ${escapeHtml(hit.expiry)}${stale ? ' — newer than the date above' : ''}</div>`
+          : '';
+        return fld(r.key, r.label, cur ?? '', 'date', `title="${escapeHtml(r.hint)}"`) + hint;
+      }).join('')}
     </div>
+    <div style="font-size:11px;color:var(--muted);margin:-4px 0 10px;line-height:1.5">
+      📄 = a certificate on file already carries this date. External bodies issue LOLER, PAT and calibration certificates —
+      drop them in below (or on the register for a whole batch) and the date follows the newest one automatically.</div>
     <div style="margin-bottom:12px"><label style="font-size:10px;color:var(--muted);display:block">Notes</label>
       <textarea id="pf_notes" rows="2" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box;resize:vertical">${escapeHtml(p.notes ?? '')}</textarea></div>
     <div style="display:flex;gap:8px;margin-bottom:14px">
@@ -47735,8 +47867,7 @@ async function plantDocSaveCard(i) {
       toast(`Saved — ${p.title}`, 'success');
     }
     q.state = 'done';
-    _plantItems = await api.get('/api/plant-items');
-    _plantRenderChips(); _plantRenderGrid();
+    await _plantAfterBulk();          // refresh items + docs index (newest cert wins)
     await loadPlantDocs(item.id);
   } catch (err) {
     q.state = 'error'; q.err = err.message; _renderPlantDocCards();
@@ -47746,12 +47877,285 @@ async function plantDocSaveCard(i) {
 async function plantDocRenew(id) {
   const d = (_plantDocs || []).find(r => r.id === id); if (!d) return;
   if (!await bamaConfirm(`Renewing "${d.title}": drop the new certificate in the box below, save it, then this old version will be archived. Archive the old one now?`, 'Renew Document')) return;
-  try { await api.put(`/api/plant-documents/${id}`, { is_archived: 1 }); toast('Old version archived — drop the new one below', 'success'); loadPlantDocs(_plantEditId); }
+  try { await api.put(`/api/plant-documents/${id}`, { is_archived: 1 }); toast('Old version archived — drop the new one below', 'success'); await _plantAfterBulk(); loadPlantDocs(_plantEditId); }
   catch (e) { toast('Failed: ' + e.message, 'error'); }
 }
 async function plantDocDelete(id) {
   const d = (_plantDocs || []).find(r => r.id === id); if (!d) return;
   if (!await bamaConfirm(`Delete "${d.title}" from the register? The SharePoint file stays put (soft delete, audited).`, 'Delete Document')) return;
-  try { await api.delete(`/api/plant-documents/${id}`); toast('Deleted', 'success'); loadPlantDocs(_plantEditId); }
+  try { await api.delete(`/api/plant-documents/${id}`); toast('Deleted', 'success'); await _plantAfterBulk(); loadPlantDocs(_plantEditId); }
   catch (e) { toast('Delete failed: ' + e.message, 'error'); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PLANT REGISTER — REGISTER-LEVEL BULK CERTIFICATE IMPORT (2026-07-30)
+// Drop the whole envelope from the LOLER examiner / PAT contractor / UKAS lab
+// on the register and each certificate finds its own item. Deterministic
+// matcher (two-engine rule): Claude only READS the printed asset identifiers
+// off the cert; the scoring, matching and date handling is plain JS below, and
+// every match is shown with its confidence for the user to override.
+// ═══════════════════════════════════════════════════════════════════════════
+
+function _plantNorm(s) { return String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); }
+
+// Score a parsed certificate against one plant item. 0 = no evidence.
+function _plantMatchScore(item, p) {
+  const iSer = _plantNorm(item.serial_no), cSer = _plantNorm(p.serial);
+  if (iSer && cSer) {
+    if (iSer === cSer) return { score: 100, why: 'serial number' };
+    if (iSer.length >= 5 && cSer.length >= 5 && (iSer.includes(cSer) || cSer.includes(iSer)))
+      return { score: 88, why: 'serial number (partial)' };
+  }
+  const iRef = _plantNorm(item.plant_ref), cRef = _plantNorm(p.asset_ref);
+  if (iRef && cRef && iRef === cRef) return { score: 92, why: 'asset ref' };
+
+  const iMake = _plantNorm(item.make), iModel = _plantNorm(item.model);
+  const hay = _plantNorm([p.make, p.model, p.description, p.asset_ref, p.title].join(' '));
+  let score = 0; const why = [];
+  if (iMake && hay.includes(iMake)) { score += 34; why.push('make'); }
+  if (iModel && iModel.length >= 3 && hay.includes(iModel)) { score += 40; why.push('model'); }
+  // Name tokens (ignore generic words so 'lift'/'machine' alone never matches)
+  const GENERIC = new Set(['LIFT', 'MACHINE', 'TOOL', 'SET', 'THE', 'AND', 'LTD', 'UNIT', 'NO']);
+  const tokens = String(item.name || '').toUpperCase().split(/[^A-Z0-9]+/).filter(t => t.length >= 4 && !GENERIC.has(t));
+  const hits = tokens.filter(t => hay.includes(t)).length;
+  if (hits) { score += Math.min(30, hits * 15); why.push('description'); }
+  return { score, why: why.join(' + ') };
+}
+
+function _plantBestMatch(p) {
+  const pool = (_plantItems || []).filter(x => x.status !== 'disposed');
+  let best = null, runnerUp = 0;
+  pool.forEach(item => {
+    const { score, why } = _plantMatchScore(item, p);
+    if (!best || score > best.score) { runnerUp = best ? best.score : 0; best = { item, score, why }; }
+    else if (score > runnerUp) runnerUp = score;
+  });
+  if (!best || best.score < 30) return { item: null, conf: 'none', score: 0, why: '' };
+  // Ambiguity guard — two items scoring close together is not a confident match.
+  const ambiguous = best.score - runnerUp < 15 && runnerUp >= 30;
+  const conf = ambiguous ? 'low' : best.score >= 85 ? 'high' : best.score >= 55 ? 'medium' : 'low';
+  return { item: best.item, conf, score: best.score, why: ambiguous ? best.why + ' (ambiguous — check)' : best.why };
+}
+
+function plantBulkHandleFiles(fileList) {
+  for (const f of fileList) _plantBulkQueue.push({ file: f, parsed: null, state: 'queued', targetId: null, conf: 'none', why: '' });
+  _plantRenderBulkCards();
+  _plantBulkProcess();
+}
+
+async function _plantBulkProcess() {
+  const next = _plantBulkQueue.find(q => q.state === 'queued');
+  if (!next) return;
+  next.state = 'parsing'; _plantRenderBulkCards();
+  const f = next.file;
+  const isImg = f.type.startsWith('image/');
+  const isPdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
+  try {
+    if (!isImg && !isPdf) {
+      next.parsed = { title: f.name.replace(/\.[^.]+$/, '').replace(/_/g, ' '), doc_type: 'other' };
+      next.note = 'This file type can\u2019t be auto-read — pick the item and fill the fields yourself.';
+    } else {
+      const dataUri = await _fileToDataUri(f);
+      const result = await callClaude({
+        model: 'claude-sonnet-4-6', max_tokens: 600,
+        messages: [{ role: 'user', content: [
+          isImg ? { type: 'image',    source: { type: 'base64', media_type: f.type, data: dataUri.split(',')[1] } }
+                : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: dataUri.split(',')[1] } },
+          { type: 'text', text: `This is a plant/equipment certificate or report (LOLER thorough examination, PUWER inspection, PAT test, calibration certificate, service report, MOT or insurance). Read it and return ONLY JSON, no markdown:
+{
+  "title": "concise document title, e.g. 'LOLER Thorough Examination — Genie GS-1932'",
+  "doc_type": "loler | puwer | pat | calibration | service | mot | manual | other",
+  "doc_ref": "report / certificate number as printed",
+  "issuer": "inspection body, UKAS lab, engineer or garage",
+  "issue_date": "YYYY-MM-DD (date of examination / test / service)",
+  "expiry_date": "YYYY-MM-DD (next examination due / valid until / next test date)",
+  "asset_ref": "the owner's asset / plant / ID number printed for the item, if any",
+  "serial_no": "the equipment serial number as printed",
+  "make": "manufacturer of the equipment",
+  "model": "model designation of the equipment",
+  "description": "how the certificate describes the item, e.g. '1.5t chain sling 2-leg'",
+  "notes": "one short line, e.g. defects noted or 'no defects'"
+}
+Rules: null for anything not clearly printed — NEVER guess, especially dates and serial numbers. The asset identifiers matter as much as the dates: copy serial_no, asset_ref, make and model EXACTLY as printed, character for character, including any letter prefixes. doc_type guidance: LOLER report of thorough examination \u2192 loler; PUWER / general equipment inspection \u2192 puwer; portable appliance test \u2192 pat; calibration certificate \u2192 calibration; service or maintenance report \u2192 service; MOT or motor insurance \u2192 mot; operator manual \u2192 manual. expiry_date = the printed next-due / latest date of next examination; if only an interval is printed and the examination date is printed you may add the interval to it, otherwise null.` }
+        ] }]
+      });
+      const text = (result.content?.find(b => b.type === 'text')?.text || '').trim();
+      const s = text.indexOf('{'), e = text.lastIndexOf('}');
+      const p = JSON.parse(text.slice(s, e + 1));
+      if (!PLANT_DOC_TYPES[p.doc_type]) p.doc_type = 'other';
+      p.serial = p.serial_no || p.serial || null;   // matcher reads .serial
+      next.parsed = p;
+    }
+  } catch (err) {
+    console.error('Plant bulk parse failed', err);
+    next.parsed = { title: f.name.replace(/\.[^.]+$/, '').replace(/_/g, ' '), doc_type: 'other' };
+    next.note = 'Auto-read failed — pick the item and fill the fields yourself.';
+  }
+  const m = _plantBestMatch(next.parsed || {});
+  next.targetId = m.item ? m.item.id : 'new';
+  next.conf = m.conf; next.why = m.why;
+  next.state = 'review';
+  _plantRenderBulkCards();
+  _plantBulkProcess();
+}
+
+const _PLANT_CONF = {
+  high:   { label: '✓ matched',        color: '#3ecf8e' },
+  medium: { label: '≈ likely match',   color: '#eab308' },
+  low:    { label: '? check the match', color: '#f97316' },
+  none:   { label: '✚ no item found',  color: '#38bdf8' }
+};
+
+function _plantRenderBulkCards() {
+  const host = document.getElementById('plantBulkCards');
+  if (!host) return;
+  const live = _plantBulkQueue.filter(q => q.state !== 'done');
+  if (!live.length) { host.innerHTML = ''; return; }
+  const ready = live.filter(q => q.state === 'review').length;
+
+  const bar = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+    <strong style="font-size:12.5px">${live.length} certificate${live.length > 1 ? 's' : ''} to file</strong>
+    <span style="font-size:11.5px;color:var(--muted)">${ready} ready · matched by serial / asset ref / make &amp; model</span>
+    ${ready > 1 ? `<button class="btn btn-primary btn-sm" onclick="plantBulkSaveAll()">💾 Save all ${ready}</button>` : ''}
+    <button class="btn btn-ghost btn-sm" onclick="_plantBulkQueue=[];_plantRenderBulkCards()">Clear</button>
+  </div>`;
+
+  host.innerHTML = bar + _plantBulkQueue.map((q, i) => {
+    if (q.state === 'done') return '';
+    const p = q.parsed || {};
+    const c = _PLANT_CONF[q.conf] || _PLANT_CONF.none;
+    const head = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
+      <span>📄</span><strong style="font-size:12px">${escapeHtml(q.file.name)}</strong>
+      ${q.state === 'review' ? `<span style="background:${c.color}22;color:${c.color};border:1px solid ${c.color}55;border-radius:5px;padding:1px 8px;font-size:10.5px;font-weight:700">${c.label}${q.why ? ' · ' + escapeHtml(q.why) : ''}</span>` : ''}
+      <span style="margin-left:auto;font-size:11px;color:${q.state === 'parsing' || q.state === 'queued' ? 'var(--accent)' : q.state === 'error' ? 'var(--red)' : '#3ecf8e'}">
+        ${q.state === 'parsing' || q.state === 'queued' ? '🤖 Reading…' : q.state === 'saving' ? 'Saving…' : q.state === 'error' ? ('Failed: ' + escapeHtml(q.err || '')) : '✓ Check &amp; save'}</span></div>`;
+    if (q.state === 'parsing' || q.state === 'queued')
+      return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:6px">${head}</div>`;
+
+    const fld = (key, label, val, type = 'text', span = '') => `<div style="${span}"><label style="font-size:10px;color:var(--muted);display:block">${label}</label>
+      <input type="${type}" value="${escapeHtml(val ?? '')}" onchange="_plantBulkQueue[${i}].parsed['${key}']=this.value||null"
+        style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:5px;padding:4px 7px;color:var(--text);font-size:11.5px;box-sizing:border-box"></div>`;
+    const regime = (PLANT_DOC_TYPES[p.doc_type] || {}).regime;
+    const isNew = q.targetId === 'new';
+    const opts = (_plantItems || []).filter(x => x.status !== 'disposed')
+      .map(x => `<option value="${x.id}" ${String(q.targetId) === String(x.id) ? 'selected' : ''}>${escapeHtml(x.plant_ref)} — ${escapeHtml(x.name)}${x.serial_no ? ' (s/n ' + escapeHtml(x.serial_no) + ')' : ''}</option>`).join('');
+
+    return `<div style="background:var(--surface);border:1px solid ${q.conf === 'high' ? '#3ecf8e44' : 'var(--border)'};border-radius:8px;padding:10px;margin-bottom:6px">
+      ${head}
+      ${q.note ? `<div style="font-size:11px;color:#eab308;margin-bottom:5px">⚠ ${escapeHtml(q.note)}</div>` : ''}
+      <div style="display:grid;grid-template-columns:1.6fr 1.5fr 1.1fr .9fr .9fr;gap:6px;align-items:end;margin-bottom:6px">
+        <div><label style="font-size:10px;color:var(--muted);display:block">Plant item</label>
+          <select onchange="_plantBulkQueue[${i}].targetId=this.value;_plantRenderBulkCards()"
+            style="width:100%;background:var(--card);border:1px solid ${isNew ? '#38bdf8' : 'var(--border)'};border-radius:5px;padding:4px 5px;color:var(--text);font-size:11.5px">
+            ${opts}<option value="new" ${isNew ? 'selected' : ''}>➕ Create new item from this certificate</option>
+          </select></div>
+        ${fld('title', 'Title', p.title)}
+        <div><label style="font-size:10px;color:var(--muted);display:block">Type</label>
+          <select onchange="_plantBulkQueue[${i}].parsed.doc_type=this.value;_plantRenderBulkCards()"
+            style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:5px;padding:4px 5px;color:var(--text);font-size:11.5px">
+            ${Object.entries(PLANT_DOC_TYPES).map(([k, v]) => `<option value="${k}" ${k === p.doc_type ? 'selected' : ''}>${v.label}</option>`).join('')}
+          </select></div>
+        ${fld('issue_date', 'Issued', p.issue_date, 'date')}
+        ${fld('expiry_date', 'Next due', p.expiry_date, 'date')}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr) auto;gap:6px;align-items:end">
+        ${fld('serial', isNew ? 'Serial no (new item)' : 'Serial on cert', p.serial)}
+        ${fld('make', 'Make', p.make)}
+        ${fld('model', 'Model', p.model)}
+        ${fld('doc_ref', 'Cert ref', p.doc_ref)}
+        <div style="display:flex;gap:5px">
+          <button class="btn btn-primary btn-sm" onclick="plantBulkSaveCard(${i})">💾</button>
+          <button class="btn btn-ghost btn-sm" onclick="_plantBulkQueue.splice(${i},1);_plantRenderBulkCards()">✕</button>
+        </div>
+      </div>
+      ${regime && p.expiry_date
+        ? `<div style="font-size:10.5px;color:#8ee6bd;margin-top:5px">→ will set <strong>${PLANT_REGIMES.find(r => r.key === regime).label}</strong> due ${escapeHtml(p.expiry_date)}${isNew ? ' on the new item' : ''}</div>`
+        : regime ? `<div style="font-size:10.5px;color:#eab308;margin-top:5px">⚠ no next-due date read — the ${PLANT_REGIMES.find(r => r.key === regime).label} date won't move. Type it above if it's on the certificate.</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+async function plantBulkSaveCard(i, opts = {}) {
+  const q = _plantBulkQueue[i];
+  if (!q || q.state === 'saving' || q.state === 'done') return false;
+  const p = q.parsed || {};
+  if (!p.title || !String(p.title).trim()) { if (!opts.quiet) toast('Title is required', 'error'); return false; }
+  q.state = 'saving'; _plantRenderBulkCards();
+  try {
+    let item;
+    if (q.targetId === 'new') {
+      const name = [p.make, p.model].filter(Boolean).join(' ') || p.description || String(p.title).trim();
+      const body = {
+        plant_ref: _plantNextRef(),
+        name: String(name).slice(0, 150),
+        category: p.doc_type === 'calibration' ? 'measuring'
+                : p.doc_type === 'mot' ? 'vehicle'
+                : p.doc_type === 'loler' ? 'lifting_equipment'
+                : p.doc_type === 'pat' ? 'power_tool' : 'machine',
+        make: p.make || null, model: p.model || null, serial_no: p.serial || null,
+        notes: 'Created from certificate ' + (p.doc_ref || q.file.name)
+      };
+      const regimeNew = (PLANT_DOC_TYPES[p.doc_type] || {}).regime;
+      if (regimeNew && p.expiry_date) body[regimeNew] = p.expiry_date;
+      const res = await api.post('/api/plant-items', body);
+      item = { ...body, id: res.id };
+      _plantItems.push(item);
+    } else {
+      item = (_plantItems || []).find(x => String(x.id) === String(q.targetId));
+      if (!item) throw new Error('Plant item not found — pick one from the list');
+    }
+
+    const folder = await plantDocsFolder(item);
+    const up = await uploadFileToFolder(folder.id, q.file.name, await q.file.arrayBuffer(),
+                                        q.file.type || 'application/octet-stream', BAMA_DRIVE_ID);
+    await api.post('/api/plant-documents', {
+      plant_id: item.id, doc_type: p.doc_type || 'other', title: String(p.title).trim(),
+      doc_ref: p.doc_ref || null, issuer: p.issuer || null,
+      issue_date: p.issue_date || null, expiry_date: p.expiry_date || null,
+      reminder_days: 30, notes: p.notes || null,
+      file_name: q.file.name, sharepoint_file_id: up.id,
+      drive_id: BAMA_DRIVE_ID, web_url: up.webUrl || null
+    });
+
+    // Newest cert wins — only ever push the date forward.
+    const regime = (PLANT_DOC_TYPES[p.doc_type] || {}).regime;
+    if (regime && p.expiry_date && q.targetId !== 'new') {
+      const cur = item[regime] ? String(item[regime]).slice(0, 10) : null;
+      if (!cur || String(p.expiry_date) > cur) {
+        await api.put(`/api/plant-items/${item.id}`, { [regime]: p.expiry_date });
+        item[regime] = p.expiry_date;
+      }
+    }
+    q.state = 'done';
+    if (!opts.quiet) toast(`Filed — ${p.title} → ${item.plant_ref}`, 'success');
+    if (!opts.batch) await _plantAfterBulk();
+    return true;
+  } catch (err) {
+    q.state = 'error'; q.err = err.message; _plantRenderBulkCards();
+    return false;
+  }
+}
+
+async function plantBulkSaveAll() {
+  const idx = _plantBulkQueue.map((q, i) => i).filter(i => _plantBulkQueue[i].state === 'review');
+  if (!idx.length) return;
+  let ok = 0, failed = 0;
+  for (const i of idx) {
+    const done = await plantBulkSaveCard(i, { quiet: true, batch: true });
+    done ? ok++ : failed++;
+  }
+  await _plantAfterBulk();
+  if (failed) toast(`${ok} filed, ${failed} failed — the failures are still on screen`, failed > ok ? 'error' : 'success');
+  else toast(`${ok} certificate${ok > 1 ? 's' : ''} filed and due dates updated`, 'success');
+}
+
+async function _plantAfterBulk() {
+  try {
+    [_plantItems, _plantAllDocs] = await Promise.all([
+      api.get('/api/plant-items'),
+      api.get('/api/plant-documents').catch(() => [])
+    ]);
+    _plantBuildDocIdx();
+  } catch (e) { console.warn('Plant refresh failed', e.message); }
+  _plantRenderChips(); _plantRenderGrid(); _plantRenderBulkCards();
 }

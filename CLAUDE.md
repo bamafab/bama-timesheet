@@ -71,6 +71,10 @@ management, and a standalone UK steel section reference.
 - **Do not touch hub.html OAuth logic without asking first.** The token-handoff
   dance (`#access_token` capture → sessionStorage → `bama_return_page` bounce) is
   load-bearing for every authenticated page. Changes here have broken prod before.
+- **Sidebar groups default to expanded.** `renderUnifiedSidebar()` — no
+  `collapsed` class on any `sidebar-nav-label-toggle` / `sidebar-nav-subitems`
+  at render time (Mateusz, 2026-07-30: Traceability kept hiding its tabs).
+  Users can still collapse a group by hand; don't ship one collapsed.
 - **Chart.js is loaded in office.html only.** Reports (with charts) have moved from
   manager to office. Don't add the CDN tag to other pages.
 - **Tender ↔ Quote financial separation.** The Tender page and Tender list must
@@ -1112,6 +1116,32 @@ auto-advances that item's due date** — the date always comes off the printed
 cert or the user's review-card edit, never invented. API:
 `api/src/functions/plant-register.js` — /api/plant-items (+/expiring: regimes
 unpivoted, in_service+under_repair only, ≤60 days), /api/plant-documents.
+**Newest certificate wins (2026-07-30).** Calibration, LOLER and PAT are all
+done by outside bodies, so the certificate is the source of truth, not a typed
+date. `_plantBuildDocIdx()` indexes live (non-archived) docs to
+plantId → regime → newest expiry; `_plantReconcileFromDocs()` runs on tab load
+and pushes any regime column FORWARD to match a newer cert on file (never
+backwards, never a date that wasn't printed or typed by the user). Grid cells
+carry a 📄 marker when the date is cert-backed; the item modal shows the
+cert date under each regime input and warns in amber when the typed date is
+older than a cert. QMS Forms tab has an **External certificates** panel
+(`_qmsRenderExternalCerts()`) reading the same index — the QMS check sheets
+stay for in-house work (routine validation, pre-use inspection) and never
+duplicate an external cert.
+
+**Register-level bulk import (2026-07-30).** Drop the whole envelope from the
+examiner on the register: each cert is read (asset identifiers as well as
+dates), then a DETERMINISTIC matcher in JS picks the item — serial exact 100 /
+partial 88, asset_ref 92, make 34 + model 40 + description tokens, generic
+words ('lift','machine','tool'…) excluded, disposed items excluded, and an
+ambiguity guard drops confidence to `low` when the runner-up is within 15
+points (identical twin machines with no serial). Confidence badge + reason on
+every card, item override dropdown, and `➕ Create new item from this
+certificate` which prefills make/model/serial/category from the cert. Save-all
+for the batch. Pinned by `tests/plant-match.js` (21 cases) — **run it before
+any push touching the matcher or the docs index.** Per-item drop zone in the
+modal is unchanged; manual entry is always available.
+
 ED shows a `plantAlertStrip` (dashboard.html, amber) fed by /expiring,
 deep-linking office.html?tab=plant. SQL:
 `api/sql/create-plant-register.sql` — new tables only, no restart. The
