@@ -3426,6 +3426,7 @@ function switchTab(name) {
   if (name === 'welders') renderWeldersTab();
   if (name === 'inspection') renderInspectionTab();
   if (name === 'toolbox') renderToolboxTab();
+  if (name === 'consumables') renderConsumablesTab();
   if (name === 'project' || name === 'employee') renderManagerView();
 }
 
@@ -23315,6 +23316,9 @@ function renderUnifiedSidebar() {
         </button>
         <button class="sidebar-nav-item${a('office','toolbox')}" data-tab="toolbox" onclick="navToOfficeTab('toolbox')">
           <span class="sidebar-nav-icon">🗣</span> Toolbox Talks
+        </button>
+        <button class="sidebar-nav-item${a('office','consumables')}" data-tab="consumables" onclick="navToOfficeTab('consumables')">
+          <span class="sidebar-nav-icon">🧰</span> Consumables
         </button>
       </div>
     </div>
@@ -52104,7 +52108,6 @@ async function tbtDoSeed() {
 }
 
 async function tbtNewTalk() {
-  const topic = prompt ? null : null;   // styled dialog below instead of window.prompt
   if (!document.getElementById('tbtNewModal')) {
     const div = document.createElement('div');
     div.innerHTML = `<div id="tbtNewModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:1001;align-items:flex-start;justify-content:center;padding:40px;overflow-y:auto">
@@ -52372,5 +52375,595 @@ async function tbtDeleteDelivery(id) {
   const d = _tbtDeliveries.find(x => x.id === id);
   if (!await bamaConfirm(`Delete the record of "${escapeHtml((d && d.talk_title) || 'this talk')}" on ${escapeHtml((d && d.delivered_on) || '')}? Soft delete and audited — the filed PDF stays in SharePoint.`, 'Delete Record')) return;
   try { await api.delete(`/api/toolbox-deliveries/${id}`); toast('Deleted', 'success'); renderToolboxTab(); }
+  catch (e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONSUMABLES (2026-07-30) — Office › Traceability › 🧰 Consumables
+//
+// Mateusz's call, and it was the right one: the PRIMARY route is a printed tally
+// sheet hung on the wall. The lads are already marking fab / weld / complete —
+// adding a screen tap per welding rod is how you end up with a register nobody
+// fills in and worse data than the paper it replaced. So: print the sheet, and
+// type it in once a week. The kiosk-style quick issue is there as the optional
+// route, not the expected one.
+//
+// STOCK IS DERIVED from the movement ledger, never stored — a running total
+// drifts the first time a movement is edited, and then nobody trusts it.
+// NOTHING AUTO-ORDERS: basket → approved by a human → ordered.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const CONS_CATEGORIES = {
+  wire:      { label: 'Welding wire',   color: '#f97316' },
+  electrode: { label: 'Electrodes',     color: '#ef4444' },
+  gas:       { label: 'Gas',            color: '#38bdf8' },
+  abrasive:  { label: 'Abrasives',      color: '#eab308' },
+  ppe:       { label: 'PPE',            color: '#22c55e' },
+  fixings:   { label: 'Fixings',        color: '#a855f7' },
+  paint:     { label: 'Paint & coatings', color: '#c084fc' },
+  other:     { label: 'Other',          color: '#94a3b8' }
+};
+const CONS_UNITS = ['each', 'kg', 'box', 'roll', 'bottle', 'litre', 'pack'];
+
+let _cons = [], _consMoves = [], _consBasket = [], _consFilter = 'all', _consSearch = '';
+
+// Pure: stock health for one item. Tested — this drives the reorder prompt, and
+// a wrong answer either runs the shop out of wire or orders wire it doesn't need.
+function consStockState(item) {
+  // Number(null) === 0, so a MISSING stock figure would otherwise read as
+  // "out of stock" and trigger a reorder for an item we know nothing about.
+  // Absent and zero are different things and must stay different.
+  const raw = item.stock;
+  if (raw === null || raw === undefined || raw === '')
+    return { cls: 'unknown', label: 'No stock figure', color: '#8b9bb4', short: 0 };
+  const stock = Number(raw);
+  const level = item.reorder_level == null || item.reorder_level === '' ? null : Number(item.reorder_level);
+  const onOrder = Number(item.on_order) || 0;
+  if (!isFinite(stock)) return { cls: 'unknown', label: 'No stock figure', color: '#8b9bb4', short: 0 };
+  if (stock <= 0)       return { cls: 'out', label: 'Out of stock', color: '#ff6b6b', short: level ? level - stock : 0 };
+  if (level == null)    return { cls: 'nolevel', label: 'No reorder level set', color: '#8b9bb4', short: 0 };
+  if (stock <= level)   return { cls: 'low', label: 'At or below reorder level', color: '#eab308', short: level - stock };
+  return { cls: 'ok', label: 'In stock', color: '#3ecf8e', short: 0 };
+}
+
+// Pure: what to suggest ordering. Never suggests for something already on order,
+// and rounds up to a whole pack where a pack size is known.
+function consSuggestReorder(item) {
+  const st = consStockState(item);
+  if (st.cls !== 'low' && st.cls !== 'out') return null;
+  if (Number(item.on_order) > 0) return null;          // already coming
+  const rq = Number(item.reorder_qty);
+  if (isFinite(rq) && rq > 0) return rq;
+  const level = Number(item.reorder_level);
+  const stock = Number(item.stock) || 0;
+  if (isFinite(level) && level > 0) return Math.max(1, Math.ceil(level * 2 - stock));
+  return null;
+}
+
+// Pure: group the catalogue for the printed sheet — by category, then code.
+function consSheetGroups(items) {
+  const active = (items || []).filter(i => i.is_active !== 0 && i.is_active !== false);
+  const byCat = {};
+  active.forEach(i => { (byCat[i.category || 'other'] = byCat[i.category || 'other'] || []).push(i); });
+  return Object.keys(byCat)
+    .sort((a, b) => Object.keys(CONS_CATEGORIES).indexOf(a) - Object.keys(CONS_CATEGORIES).indexOf(b))
+    .map(cat => ({
+      category: cat,
+      label: (CONS_CATEGORIES[cat] || CONS_CATEGORIES.other).label,
+      items: byCat[cat].sort((a, b) => String(a.item_code).localeCompare(String(b.item_code)))
+    }));
+}
+
+// ── The tally sheet: the primary route, printed and hung on the wall ────────
+function drawConsSheetPDF(jsPDF, d, logoDataUri) {
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  try {
+    doc.setProperties({ title: 'Consumables issue sheet', subject: 'Consumables tally sheet',
+      author: 'BAMA Fabrication', creator: 'BAMA Fabrication ERP' });
+  } catch (e) { /* non-critical */ }
+  const pageW = 210, pageH = 297, mL = 12, mR = 12, mB = 12;
+  const usableW = pageW - mL - mR;
+  const accent = [255, 107, 0];
+  let y = 0;
+
+  // Columns: item, then tally boxes to tick, then who / job
+  const wItem = 74, wTally = 62, wWho = 30, wJob = usableW - wItem - wTally - wWho;
+
+  const header = () => {
+    doc.setFillColor(24, 24, 27); doc.rect(0, 0, pageW, 22, 'F');
+    let tx = mL;
+    if (logoDataUri) {
+      try { const p = doc.getImageProperties(logoDataUri); const h = 11, w = h * (p.width / p.height);
+        doc.addImage(logoDataUri, mL, 5.5, w, h); tx = mL + w + 5; } catch (e) {}
+    }
+    doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
+    doc.text('CONSUMABLES — WHAT YOU TOOK', tx, 11);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(190, 190, 195);
+    doc.text('One line per item taken. Tally the quantity, initial it, and put the job number on if it is for a job.', tx, 17);
+    doc.setTextColor(...accent); doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
+    doc.text(`Week beginning ${d.weekOf || '____________'}`, pageW - mR, 11, { align: 'right' });
+    y = 28;
+  };
+  const drawHead = () => {
+    doc.setFillColor(240, 240, 242); doc.rect(mL, y, usableW, 6.5, 'F');
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(70, 70, 75);
+    doc.text('Item', mL + 1.5, y + 4.4);
+    doc.text('Quantity taken (tally)', mL + wItem + 1.5, y + 4.4);
+    doc.text('Initials', mL + wItem + wTally + 1.5, y + 4.4);
+    doc.text('Job no', mL + wItem + wTally + wWho + 1.5, y + 4.4);
+    y += 6.5;
+  };
+  header(); drawHead();
+
+  const rowH = 8.5;
+  (d.groups || []).forEach(g => {
+    if (y + rowH * 2 > pageH - mB) { doc.addPage(); header(); drawHead(); }
+    // Category band
+    doc.setFillColor(250, 246, 242); doc.rect(mL, y, usableW, 5.5, 'F');
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(...accent);
+    doc.text(String(g.label).toUpperCase(), mL + 1.5, y + 3.9);
+    y += 5.5;
+    g.items.forEach((it, i) => {
+      if (y + rowH > pageH - mB) { doc.addPage(); header(); drawHead(); }
+      if (i % 2) { doc.setFillColor(250, 250, 251); doc.rect(mL, y, usableW, rowH, 'F'); }
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(35, 35, 40);
+      const label = [it.item_code, it.name].filter(Boolean).join('  ');
+      doc.text(doc.splitTextToSize(label, wItem - 3)[0], mL + 1.5, y + 5.6);
+      if (it.spec || it.pack_size) {
+        doc.setFontSize(6); doc.setTextColor(130, 130, 135);
+        doc.text(doc.splitTextToSize([it.spec, it.pack_size].filter(Boolean).join(' · '), wItem - 3)[0], mL + 1.5, y + 8);
+      }
+      // Tally boxes — small squares are quicker to mark than writing a number
+      doc.setDrawColor(200, 200, 205); doc.setLineWidth(0.15);
+      for (let b = 0; b < 10; b++) doc.rect(mL + wItem + 2 + b * 5.8, y + 2.4, 4.4, 4.4);
+      doc.setFontSize(5.5); doc.setTextColor(150, 150, 155);
+      doc.text(it.unit || '', mL + wItem + wTally - 8, y + 7.4);
+      // Ruled boxes for initials and job number
+      doc.setDrawColor(200, 200, 205);
+      doc.line(mL + wItem + wTally + 2, y + 6.6, mL + wItem + wTally + wWho - 3, y + 6.6);
+      doc.line(mL + wItem + wTally + wWho + 2, y + 6.6, mL + usableW - 2, y + 6.6);
+      doc.setDrawColor(226, 226, 230); doc.setLineWidth(0.1);
+      doc.line(mL, y + rowH, mL + usableW, y + rowH);
+      y += rowH;
+    });
+  });
+
+  // Blank lines for anything not on the list
+  if (y + rowH * 3 > pageH - mB) { doc.addPage(); header(); drawHead(); }
+  doc.setFillColor(250, 246, 242); doc.rect(mL, y, usableW, 5.5, 'F');
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(...accent);
+  doc.text('SOMETHING NOT ON THE LIST', mL + 1.5, y + 3.9);
+  y += 5.5;
+  for (let i = 0; i < (d.blankRows || 5); i++) {
+    if (y + rowH > pageH - mB) { doc.addPage(); header(); drawHead(); }
+    doc.setDrawColor(200, 200, 205); doc.setLineWidth(0.15);
+    doc.line(mL + 2, y + 6.6, mL + wItem - 3, y + 6.6);
+    doc.line(mL + wItem + 2, y + 6.6, mL + wItem + wTally - 3, y + 6.6);
+    doc.line(mL + wItem + wTally + 2, y + 6.6, mL + wItem + wTally + wWho - 3, y + 6.6);
+    doc.line(mL + wItem + wTally + wWho + 2, y + 6.6, mL + usableW - 2, y + 6.6);
+    doc.setDrawColor(226, 226, 230); doc.setLineWidth(0.1);
+    doc.line(mL, y + rowH, mL + usableW, y + rowH);
+    y += rowH;
+  }
+
+  const total = doc.getNumberOfPages();
+  for (let p = 1; p <= total; p++) {
+    doc.setPage(p);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5); doc.setTextColor(140, 140, 145);
+    doc.text('Hand the finished sheet to the office — it gets typed in and keeps the stock figures honest.', mL, pageH - 6);
+    doc.text(`Page ${p} of ${total}`, pageW - mR, pageH - 6, { align: 'right' });
+  }
+  return doc;
+}
+
+async function renderConsSheetPdfBlob(d) {
+  const Ctor = await resolveJsPDFCtor();
+  if (!Ctor) throw new Error('jsPDF not loaded on this page');
+  await loadLogoDataUri();
+  const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
+  const blob = drawConsSheetPDF(Ctor, d, logo).output('blob');
+  console.log(`Consumables sheet: ${(blob.size / 1024).toFixed(1)}KB`);
+  return blob;
+}
+
+// ── Tab ─────────────────────────────────────────────────────────────────────
+async function renderConsumablesTab() {
+  const root = document.getElementById('tab-consumables');
+  if (!root) return;
+  root.innerHTML = '<div style="color:var(--muted);padding:20px">Loading…</div>';
+  try {
+    [_cons, _consMoves, _consBasket] = await Promise.all([
+      api.get('/api/consumables'),
+      api.get('/api/consumable-movements').catch(() => []),
+      api.get('/api/consumable-reorders').catch(() => [])
+    ]);
+  } catch (e) {
+    root.innerHTML = `<div style="color:var(--red);padding:20px;font-size:12.5px">Consumables unavailable: ${escapeHtml(e.message)} — run api/sql/create-consumables.sql first.</div>`;
+    return;
+  }
+  const low = _cons.filter(i => ['low', 'out'].includes(consStockState(i).cls));
+  const suggestions = _cons.map(i => ({ item: i, qty: consSuggestReorder(i) })).filter(s => s.qty);
+  const basket = _consBasket.filter(r => r.status === 'basket');
+  const approved = _consBasket.filter(r => r.status === 'approved');
+
+  root.innerHTML = `<div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+      <h3 style="margin:0">🧰 Consumables</h3>
+      <button class="btn btn-primary btn-sm" onclick="consPrintSheet()">🖨 Print the tally sheet</button>
+      <button class="btn btn-ghost btn-sm" onclick="consTypeSheet()">⌨ Type in a finished sheet</button>
+      <button class="btn btn-ghost btn-sm" onclick="consQuickIssue()">⚡ Quick issue</button>
+      <button class="btn btn-ghost btn-sm" onclick="consNewItem()">＋ Item</button>
+      <button class="btn btn-ghost btn-sm" onclick="renderConsumablesTab()">↻</button>
+      <input type="text" placeholder="Search…" value="${escapeHtml(_consSearch)}" oninput="_consSearch=this.value;_consRenderList()"
+        style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:5px 10px;color:var(--text);font-size:12px;margin-left:auto;min-width:180px">
+    </div>
+    <p style="font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.6">
+      <strong>Print the sheet and hang it up</strong> — that's the main route, and it's meant to be. The lads have enough to mark
+      already; ticking a box beats tapping a screen for every rod. Type the finished sheet in once a week and the stock figures stay
+      honest. Stock is worked out from the movements ledger, so it never drifts. Nothing is ordered automatically: a reorder goes in
+      the basket and waits for you to approve it.</p>
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+      ${[[_cons.length, 'Items', '#38bdf8'], [low.length, 'Low or out', low.length ? '#ff6b6b' : '#3ecf8e'],
+         [basket.length, 'In basket', basket.length ? '#eab308' : '#8b9bb4'],
+         [approved.length, 'Approved to order', approved.length ? '#3ecf8e' : '#8b9bb4']]
+        .map(([n, l, c]) => `<div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid ${c};border-radius:8px;padding:7px 12px;min-width:96px">
+          <div style="font-size:17px;font-weight:800;color:${c}">${n}</div>
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">${l}</div></div>`).join('')}
+    </div>
+
+    ${suggestions.length ? `<div style="background:#3b2f0f;border:1px solid #eab308;border-radius:8px;padding:10px 13px;margin-bottom:12px">
+      <div style="font-size:12px;color:#f0e0a4;line-height:1.6;margin-bottom:6px">
+        <strong>${suggestions.length} item${suggestions.length > 1 ? 's' : ''} at or below the reorder level</strong> and not already on order.
+        Adding to the basket doesn't order anything — you approve it after.</div>
+      ${suggestions.map(s => `<div style="display:flex;align-items:center;gap:8px;font-size:11.5px;color:#f0e0a4;padding:2px 0">
+        <span style="flex:1">${escapeHtml(s.item.item_code)} ${escapeHtml(s.item.name)}
+          <span style="opacity:.75">— ${s.item.stock} ${escapeHtml(s.item.unit)} left, level ${s.item.reorder_level}</span></span>
+        <button class="btn btn-ghost btn-sm" onclick="consAddToBasket(${s.item.id}, ${s.qty})">＋ basket ${s.qty}</button>
+      </div>`).join('')}
+    </div>` : ''}
+
+    ${_consBasket.filter(r => r.status !== 'cancelled').length ? `
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:5px">Reorder basket</div>
+      <div style="margin-bottom:12px">${_consBasket.filter(r => r.status !== 'cancelled').map(r => {
+        const st = { basket: ['#eab308', 'awaiting approval'], approved: ['#3ecf8e', 'approved — ready to order'],
+                     ordered: ['#38bdf8', 'ordered'] }[r.status] || ['#8b9bb4', r.status];
+        return `<div style="display:flex;align-items:center;gap:8px;font-size:11.5px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;margin-bottom:3px">
+          <span style="color:${st[0]};font-size:10px;font-weight:700;min-width:118px">${st[1]}</span>
+          <span style="flex:1;min-width:0"><strong>${escapeHtml(r.item_code || '')}</strong> ${escapeHtml(r.name || '')}
+            <span style="color:var(--muted)">${r.qty} ${escapeHtml(r.unit || '')}${r.supplier_name ? ' · ' + escapeHtml(r.supplier_name) : ''}</span></span>
+          ${r.status === 'basket' ? `<button class="btn btn-ghost btn-sm" style="color:#3ecf8e" onclick="consApprove(${r.id})">✓ Approve</button>` : ''}
+          ${r.status === 'approved' ? `<button class="btn btn-ghost btn-sm" onclick="consMarkOrdered(${r.id})">Mark ordered</button>` : ''}
+          ${r.approved_by ? `<span style="font-size:10px;color:var(--muted)">by ${escapeHtml(r.approved_by)}</span>` : ''}
+          <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="consRemoveBasket(${r.id})">🗑</button>
+        </div>`;
+      }).join('')}</div>` : ''}
+
+    <div id="consList"></div>`;
+  _consRenderList();
+}
+
+function _consRenderList() {
+  const host = document.getElementById('consList'); if (!host) return;
+  const q = _consSearch.trim().toLowerCase();
+  const items = _cons.filter(i => !q || [i.item_code, i.name, i.spec, i.supplier_name, i.location]
+    .some(v => (v || '').toLowerCase().includes(q)));
+  host.innerHTML = `
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:5px">Catalogue (${items.length})</div>
+    <table style="width:100%;border-collapse:collapse;font-size:11.5px;background:var(--surface);border:1px solid var(--border);border-radius:8px">
+      <thead><tr>${['Item', 'Spec', 'Stock', 'Level', 'On order', 'Location', ''].map(h =>
+        `<th style="text-align:left;padding:6px 8px;font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);border-bottom:1px solid var(--border)">${h}</th>`).join('')}</tr></thead>
+      <tbody>${items.length ? items.map((i, n) => {
+        const st = consStockState(i);
+        const cat = CONS_CATEGORIES[i.category] || CONS_CATEGORIES.other;
+        return `<tr style="${n % 2 ? 'background:rgba(255,255,255,0.015);' : ''}${i.is_active === 0 ? 'opacity:.5;' : ''}">
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border)">
+            <span style="color:${cat.color};font-size:10px;font-weight:700">${escapeHtml(i.item_code)}</span>
+            <strong>${escapeHtml(i.name)}</strong></td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border);color:var(--muted)">${escapeHtml(i.spec || '')}${i.pack_size ? ' · ' + escapeHtml(i.pack_size) : ''}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border);font-weight:700;color:${st.color};white-space:nowrap">
+            ${st.cls === 'unknown' ? '—' : `${i.stock} ${escapeHtml(i.unit)}`}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border);color:var(--muted)">${i.reorder_level ?? '—'}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border);color:var(--muted)">${Number(i.on_order) || '—'}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border);color:var(--muted)">${escapeHtml(i.location || '')}</td>
+          <td style="padding:6px 8px;border-bottom:1px solid var(--border);white-space:nowrap">
+            <button class="btn btn-ghost btn-sm" onclick="consQuickIssue(${i.id})" title="Issue">⚡</button>
+            <button class="btn btn-ghost btn-sm" onclick="consReceive(${i.id})" title="Booking in a delivery">📦</button>
+            <button class="btn btn-ghost btn-sm" onclick="consEditItem(${i.id})">✏</button>
+          </td></tr>`;
+      }).join('') : `<tr><td colspan="7" style="padding:24px;text-align:center;color:var(--muted)">No items${q ? ' match' : ' yet — add the first one'}.</td></tr>`}</tbody>
+    </table>`;
+}
+
+async function consPrintSheet() {
+  try {
+    const monday = new Date();
+    monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+    const blob = await renderConsSheetPdfBlob({
+      weekOf: monday.toISOString().slice(0, 10),
+      groups: consSheetGroups(_cons), blankRows: 5
+    });
+    window.open(URL.createObjectURL(blob), '_blank');
+  } catch (e) { toast('Print failed: ' + e.message, 'error'); }
+}
+
+// ── Movements: quick issue, receive, and typing in a paper sheet ────────────
+function _consModal(id, title, body, maxW) {
+  if (!document.getElementById(id)) {
+    const div = document.createElement('div');
+    div.innerHTML = `<div id="${id}" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:1001;align-items:flex-start;justify-content:center;padding:30px;overflow-y:auto">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:${maxW || 640}px;overflow:hidden">
+        <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
+          <h3 id="${id}T" style="margin:0;font-size:16px;flex:1"></h3>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('${id}').style.display='none'">✕</button>
+        </div>
+        <div id="${id}B" style="padding:16px 20px;max-height:78vh;overflow-y:auto"></div>
+      </div></div>`;
+    document.body.appendChild(div.firstElementChild);
+  }
+  document.getElementById(id + 'T').textContent = title;
+  document.getElementById(id + 'B').innerHTML = body;
+  document.getElementById(id).style.display = 'flex';
+}
+
+async function _consJobOptions() {
+  try {
+    const jobs = (await api.get('/api/projects')).filter(j => j.status !== 'closed' && !j.is_deleted);
+    return '<option value="">— no job —</option>' + jobs.map(j =>
+      `<option value="${j.id}" data-no="${escapeHtml(j.job_number || '')}">${escapeHtml(j.job_number || '')} ${escapeHtml(j.name || '')}</option>`).join('');
+  } catch (_) { return '<option value="">— no job —</option>'; }
+}
+
+async function consQuickIssue(itemId) {
+  const jobs = await _consJobOptions();
+  let roster = [];
+  try { roster = await api.get('/api/site-personnel'); } catch (_) {}
+  const inp = (id, label, extra = '') => `<div><label style="font-size:10px;color:var(--muted);display:block">${label}</label>
+    <input id="${id}" ${extra} style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box"></div>`;
+  _consModal('consIssueM', '⚡ Quick issue', `
+    <p style="font-size:11.5px;color:var(--muted);margin:0 0 10px;line-height:1.6">
+      The optional route — handy for a one-off or a big draw. Day to day, the printed sheet is less hassle.</p>
+    <div style="display:grid;grid-template-columns:2fr 1fr 1.4fr;gap:8px;margin-bottom:8px">
+      <div><label style="font-size:10px;color:var(--muted);display:block">Item</label>
+        <select id="ciItem" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 7px;color:var(--text);font-size:12.5px">
+          ${_cons.filter(i => i.is_active !== 0).map(i => `<option value="${i.id}" ${i.id === itemId ? 'selected' : ''}>${escapeHtml(i.item_code)} — ${escapeHtml(i.name)} (${i.stock} ${escapeHtml(i.unit)} left)</option>`).join('')}
+        </select></div>
+      ${inp('ciQty', 'Quantity', 'type="number" step="0.01" min="0.01" value="1"')}
+      <div><label style="font-size:10px;color:var(--muted);display:block">Taken by</label>
+        <input id="ciWho" list="ciRoster" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box">
+        <datalist id="ciRoster">${roster.filter(p => p.active !== 0).map(p => `<option value="${escapeHtml(p.name)}"></option>`).join('')}</datalist></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1.6fr 1fr 1fr;gap:8px;margin-bottom:10px">
+      <div><label style="font-size:10px;color:var(--muted);display:block">Job</label>
+        <select id="ciJob" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 7px;color:var(--text);font-size:12.5px">${jobs}</select></div>
+      ${inp('ciBatch', 'Batch no (welding consumables)')}
+      ${inp('ciDate', 'Date', 'type="date" value="' + new Date().toISOString().slice(0, 10) + '"')}
+    </div>
+    <button class="btn btn-primary btn-sm" onclick="consDoIssue()">⚡ Issue it</button>`);
+}
+
+async function consDoIssue() {
+  const g = id => (document.getElementById(id) || {}).value || '';
+  const jobSel = document.getElementById('ciJob');
+  const item = _cons.find(i => String(i.id) === g('ciItem'));
+  const qty = Number(g('ciQty'));
+  if (!item) { toast('Pick an item', 'error'); return; }
+  if (!isFinite(qty) || qty <= 0) { toast('Quantity must be more than zero', 'error'); return; }
+  // Warn but don't block: the shelf is the truth, the ledger is catching up.
+  if (isFinite(Number(item.stock)) && qty > Number(item.stock)) {
+    if (!await bamaConfirm(`The ledger only shows ${item.stock} ${escapeHtml(item.unit)} of ${escapeHtml(item.name)} and you're issuing ${qty}.<br><br><span style="font-size:12px;color:var(--muted)">That usually means a delivery wasn't booked in. Record it anyway? Stock will go negative, which is a flag to reconcile rather than an error.</span>`, 'More than the ledger shows')) return;
+  }
+  if (item.batch_tracked && !g('ciBatch').trim()) {
+    if (!await bamaConfirm('This item is batch tracked and no batch number was entered. Welding consumables are traceable under EN 1090 — record it without a batch?', 'No batch number')) return;
+  }
+  try {
+    await api.post('/api/consumable-movements', {
+      consumable_id: item.id, direction: 'out', qty,
+      batch_no: g('ciBatch') || null, issued_to: g('ciWho') || null,
+      job_id: g('ciJob') || null,
+      job_number: jobSel && jobSel.selectedOptions[0] ? (jobSel.selectedOptions[0].dataset.no || null) : null,
+      moved_on: g('ciDate'), source: 'kiosk'
+    });
+    toast(`Issued ${qty} ${item.unit} of ${item.name}`, 'success');
+    document.getElementById('consIssueM').style.display = 'none';
+    renderConsumablesTab();
+  } catch (e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+async function consReceive(itemId) {
+  const item = _cons.find(i => i.id === itemId); if (!item) return;
+  const inp = (id, label, extra = '') => `<div><label style="font-size:10px;color:var(--muted);display:block">${label}</label>
+    <input id="${id}" ${extra} style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box"></div>`;
+  _consModal('consRecvM', `📦 Book in — ${item.name}`, `
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:10px">
+      ${inp('crQty', `Quantity (${escapeHtml(item.unit)})`, 'type="number" step="0.01" min="0.01"')}
+      ${inp('crBatch', 'Batch / cast no')}
+      ${inp('crPo', 'PO number')}
+      ${inp('crDate', 'Date', 'type="date" value="' + new Date().toISOString().slice(0, 10) + '"')}
+    </div>
+    <button class="btn btn-primary btn-sm" onclick="consDoReceive(${item.id})">📦 Book it in</button>`);
+}
+
+async function consDoReceive(itemId) {
+  const g = id => (document.getElementById(id) || {}).value || '';
+  const qty = Number(g('crQty'));
+  if (!isFinite(qty) || qty <= 0) { toast('Quantity must be more than zero', 'error'); return; }
+  try {
+    await api.post('/api/consumable-movements', {
+      consumable_id: itemId, direction: 'in', qty,
+      batch_no: g('crBatch') || null, po_number: g('crPo') || null,
+      moved_on: g('crDate'), source: 'delivery'
+    });
+    toast('Booked in', 'success');
+    document.getElementById('consRecvM').style.display = 'none';
+    renderConsumablesTab();
+  } catch (e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+// Type in a completed paper sheet — the route that makes the paper primary route work.
+async function consTypeSheet() {
+  const jobs = await _consJobOptions();
+  const row = n => `<tr id="ctRow${n}">
+    <td style="padding:2px"><select class="ctItem" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:4px;color:var(--text);font-size:11.5px">
+      <option value="">— item —</option>
+      ${_cons.filter(i => i.is_active !== 0).map(i => `<option value="${i.id}">${escapeHtml(i.item_code)} ${escapeHtml(i.name)}</option>`).join('')}</select></td>
+    <td style="padding:2px"><input class="ctQty" type="number" step="0.01" min="0" style="width:70px;background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:4px;color:var(--text);font-size:11.5px"></td>
+    <td style="padding:2px"><input class="ctWho" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:4px;color:var(--text);font-size:11.5px"></td>
+    <td style="padding:2px"><select class="ctJob" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:4px;color:var(--text);font-size:11.5px">${jobs}</select></td>
+    <td style="padding:2px"><input class="ctBatch" style="width:90px;background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:4px;color:var(--text);font-size:11.5px"></td>
+  </tr>`;
+  _consModal('consTypeM', '⌨ Type in a finished tally sheet', `
+    <p style="font-size:11.5px;color:var(--muted);margin:0 0 10px;line-height:1.6">
+      One line per row off the paper. Leave a row blank to skip it. If one line is unreadable the rest still go in — the bad ones
+      come back listed so you can chase them.</p>
+    <div style="margin-bottom:8px;display:flex;gap:8px;align-items:end">
+      <div><label style="font-size:10px;color:var(--muted);display:block">Date on the sheet</label>
+        <input id="ctDate" type="date" value="${new Date().toISOString().slice(0, 10)}"
+          style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px"></div>
+      <button class="btn btn-ghost btn-sm" onclick="consAddSheetRow()">＋ Row</button>
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:11.5px">
+      <thead><tr>${['Item', 'Qty', 'Taken by', 'Job', 'Batch'].map(h =>
+        `<th style="text-align:left;padding:3px;font-size:9px;text-transform:uppercase;color:var(--muted)">${h}</th>`).join('')}</tr></thead>
+      <tbody id="ctBody">${Array.from({ length: 8 }, (_, i) => row(i)).join('')}</tbody>
+    </table>
+    <div id="ctResult" style="margin:8px 0;font-size:11.5px"></div>
+    <button class="btn btn-primary btn-sm" onclick="consSaveSheet()">💾 Record the sheet</button>`, 860);
+  window._ctRowHtml = row;
+  window._ctRowCount = 8;
+}
+
+function consAddSheetRow() {
+  const body = document.getElementById('ctBody');
+  if (!body || !window._ctRowHtml) return;
+  body.insertAdjacentHTML('beforeend', window._ctRowHtml(window._ctRowCount++));
+}
+
+async function consSaveSheet() {
+  const date = (document.getElementById('ctDate') || {}).value || null;
+  const rows = [];
+  document.querySelectorAll('#ctBody tr').forEach(tr => {
+    const id = tr.querySelector('.ctItem').value;
+    const qty = tr.querySelector('.ctQty').value;
+    if (!id || !qty) return;
+    const jobSel = tr.querySelector('.ctJob');
+    rows.push({
+      consumable_id: id, direction: 'out', qty: Number(qty),
+      issued_to: tr.querySelector('.ctWho').value || null,
+      job_id: jobSel.value || null,
+      job_number: jobSel.selectedOptions[0] ? (jobSel.selectedOptions[0].dataset.no || null) : null,
+      batch_no: tr.querySelector('.ctBatch').value || null
+    });
+  });
+  if (!rows.length) { toast('Nothing filled in', 'error'); return; }
+  try {
+    const res = await api.post('/api/consumable-movements-bulk', { rows, moved_on: date, source: 'paper' });
+    const out = document.getElementById('ctResult');
+    if (res.failures && res.failures.length) {
+      out.innerHTML = `<span style="color:#ff9b9b">${res.inserted} recorded. Couldn't do: ${res.failures.map(f => 'line ' + f.line + ' (' + escapeHtml(f.reason) + ')').join(', ')}</span>`;
+      toast(`${res.inserted} recorded, ${res.failures.length} failed`, 'error');
+    } else {
+      out.innerHTML = `<span style="color:#8ee6bd">${res.inserted} movements recorded.</span>`;
+      toast(`Sheet recorded — ${res.inserted} lines`, 'success');
+      document.getElementById('consTypeM').style.display = 'none';
+    }
+    renderConsumablesTab();
+  } catch (e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+// ── Catalogue and basket actions ────────────────────────────────────────────
+function consNewItem() { consEditItem(null); }
+
+function consEditItem(id) {
+  const i = id != null ? _cons.find(x => x.id === id) || {} : {};
+  const inp = (k, label, val, extra = '') => `<div><label style="font-size:10px;color:var(--muted);display:block">${label}</label>
+    <input id="ce_${k}" value="${escapeHtml(val ?? '')}" ${extra} style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box"></div>`;
+  _consModal('consItemM', id != null ? `✏ ${i.item_code} — ${i.name}` : '＋ New consumable', `
+    <div style="display:grid;grid-template-columns:.9fr 2fr 1.2fr;gap:8px;margin-bottom:8px">
+      ${inp('code', 'Item code', i.item_code, 'placeholder="auto"')}
+      ${inp('name', 'Name', i.name)}
+      <div><label style="font-size:10px;color:var(--muted);display:block">Category</label>
+        <select id="ce_cat" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 7px;color:var(--text);font-size:12.5px">
+          ${Object.entries(CONS_CATEGORIES).map(([k, v]) => `<option value="${k}" ${k === i.category ? 'selected' : ''}>${v.label}</option>`).join('')}</select></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1.4fr .8fr 1fr 1.4fr;gap:8px;margin-bottom:8px">
+      ${inp('spec', 'Spec', i.spec, 'placeholder="G3Si1 1.0mm"')}
+      <div><label style="font-size:10px;color:var(--muted);display:block">Unit</label>
+        <select id="ce_unit" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 7px;color:var(--text);font-size:12.5px">
+          ${CONS_UNITS.map(u => `<option ${u === i.unit ? 'selected' : ''}>${u}</option>`).join('')}</select></div>
+      ${inp('pack', 'Pack size', i.pack_size, 'placeholder="15kg reel"')}
+      ${inp('loc', 'Location', i.location, 'placeholder="Rack 3"')}
+    </div>
+    <div style="display:grid;grid-template-columns:1.4fr 1fr .8fr .8fr .8fr;gap:8px;margin-bottom:8px">
+      ${inp('sup', 'Supplier', i.supplier_name)}
+      ${inp('part', 'Supplier part no', i.supplier_part)}
+      ${inp('open', 'Opening qty', i.opening_qty ?? 0, 'type="number" step="0.01"')}
+      ${inp('rlevel', 'Reorder level', i.reorder_level, 'type="number" step="0.01"')}
+      ${inp('rqty', 'Reorder qty', i.reorder_qty, 'type="number" step="0.01"')}
+    </div>
+    <label style="display:flex;gap:6px;align-items:center;font-size:12px;margin-bottom:10px;cursor:pointer">
+      <input type="checkbox" id="ce_batch" ${i.batch_tracked ? 'checked' : ''}>
+      Batch tracked — welding consumables should be, for EN 1090 traceability</label>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-primary btn-sm" onclick="consSaveItem(${id != null ? id : 'null'})">💾 Save</button>
+      ${id != null ? `<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="consDeleteItem(${id})">🗑 Retire</button>` : ''}
+    </div>
+    ${id != null ? `<div style="font-size:11px;color:var(--muted);margin-top:8px">Opening qty is the shelf count when the ledger started — changing it moves the derived stock figure for everything since.</div>` : ''}`);
+}
+
+async function consSaveItem(id) {
+  const g = k => (document.getElementById('ce_' + k) || {}).value || '';
+  if (!g('name').trim()) { toast('Name is required', 'error'); return; }
+  const body = {
+    item_code: g('code') || undefined, name: g('name'), category: g('cat'),
+    spec: g('spec'), unit: g('unit'), pack_size: g('pack'), location: g('loc'),
+    supplier_name: g('sup'), supplier_part: g('part'),
+    opening_qty: g('open'), reorder_level: g('rlevel'), reorder_qty: g('rqty'),
+    batch_tracked: (document.getElementById('ce_batch') || {}).checked ? 1 : 0
+  };
+  try {
+    if (id != null) await api.put(`/api/consumables/${id}`, body);
+    else await api.post('/api/consumables', body);
+    toast('Saved', 'success');
+    document.getElementById('consItemM').style.display = 'none';
+    renderConsumablesTab();
+  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+async function consDeleteItem(id) {
+  const i = _cons.find(x => x.id === id);
+  if (!await bamaConfirm(`Retire ${escapeHtml((i && i.name) || 'this item')} from the catalogue? Its issue history stays intact — nothing already recorded is lost.`, 'Retire Item')) return;
+  try {
+    await api.delete(`/api/consumables/${id}`);
+    toast('Retired', 'success');
+    document.getElementById('consItemM').style.display = 'none';
+    renderConsumablesTab();
+  } catch (e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+async function consAddToBasket(itemId, qty) {
+  const i = _cons.find(x => x.id === itemId);
+  try {
+    await api.post('/api/consumable-reorders', { consumable_id: itemId, qty, stock_at_request: i ? i.stock : null });
+    toast('In the basket — nothing ordered until you approve it', 'success');
+    renderConsumablesTab();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function consApprove(id) {
+  const r = _consBasket.find(x => x.id === id);
+  if (!await bamaConfirm(`Approve ordering <strong>${r.qty} ${escapeHtml(r.unit || '')}</strong> of ${escapeHtml(r.name || '')}${r.supplier_name ? ' from ' + escapeHtml(r.supplier_name) : ''}?<br><br><span style="font-size:12px;color:var(--muted)">This records your approval against your name. It still doesn't place an order — raise the PO in the usual way and mark it ordered.</span>`, 'Approve Reorder')) return;
+  try { await api.put(`/api/consumable-reorders/${id}`, { status: 'approved' }); toast('Approved', 'success'); renderConsumablesTab(); }
+  catch (e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+async function consMarkOrdered(id) {
+  try { await api.put(`/api/consumable-reorders/${id}`, { status: 'ordered' }); toast('Marked as ordered', 'success'); renderConsumablesTab(); }
+  catch (e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+async function consRemoveBasket(id) {
+  if (!await bamaConfirm('Remove this from the reorder basket?', 'Remove')) return;
+  try { await api.delete(`/api/consumable-reorders/${id}`); toast('Removed', 'success'); renderConsumablesTab(); }
   catch (e) { toast('Failed: ' + e.message, 'error'); }
 }

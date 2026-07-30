@@ -932,6 +932,18 @@
       "seedForms": []
     },
     {
+      "script": "create-consumables.sql",
+      "title": "Three tables:",
+      "kind": "structural",
+      "tables": [
+        "ConsumableMovements",
+        "ConsumableReorders",
+        "Consumables"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
       "script": "create-employee-documents.sql",
       "title": "Per-employee document register (contracts, right-to-work, certs, reviews)",
       "kind": "structural",

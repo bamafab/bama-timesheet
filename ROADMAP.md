@@ -160,6 +160,36 @@ Priority order as it stands:
 
 ---
 
+## Hiring pipeline — offer letter lifecycle (Mateusz's spec, 2026-07-30)
+
+**The flaw this fixes:** the offer letter generator was built inside the
+per-employee Docs modal (D3b), so it sits behind an Employees record — but an
+offer letter goes to a CANDIDATE, who is not an employee yet. You currently have
+to create an employee to offer someone a job, which is backwards.
+
+Mateusz's design, to be built as specified (mirrors the QB quote lifecycle):
+
+1. **Offer letter reachable in its own right** — top level in Employees (or its
+   own tab), not nested behind a person who doesn't exist yet.
+2. **Every offer is a record with a lifecycle**, like QB quotations:
+   draft → sent → accepted / declined / withdrawn / lapsed. Ref sequence,
+   revisions, PDF filed, register view showing what's outstanding.
+3. **Sent → awaiting decision**, visible as a pipeline (who we're waiting on,
+   how long, when the offer lapses).
+4. **Accepted → one click creates the Employee record**, populated from the
+   offer's own fields (name, address, contact, role, rate, hours, start date) —
+   no retyping, and the offer stays linked to the employee it became.
+5. **Then auto-draft the contract** from the same data, and pre-fill the New
+   Starter Information Sheet with name / surname / phone / email so the starter
+   only completes what BAMA can't know (bank, NI, RTW, emergency contact).
+
+Implementation notes for whoever picks this up: needs a `JobOffers` table
+(candidate details + offer terms + status + revision + file refs, same shape as
+`JobCertificates`), an offers register UI, and a `created_employee_id` link.
+Step 4 is the piece with real value — it turns three separate re-typings into
+one. `OFFER_DUTIES_PRESETS` and `_contractSections()` already exist and should be
+reused rather than duplicated.
+
 ## Phase F — merged forward plan (2026-07-30)
 
 **Numbering warning.** An earlier session's plan used "E1 + E2" to mean *plant
@@ -230,7 +260,9 @@ Ranked by value, with what this session's work already changed:
   Note `api/src/functions/traceability.js` remains welding machines / service
   types / suppliers despite its name — material traceability is in
   `heat-allocations.js`.
-- **F3 — Consumables & requisitions** (the dropped half). CON 001 exists as a
+- ~~**F3 — Consumables & requisitions**~~ ✅ **DONE 2026-07-30** (catalogue, ledger, tally sheet, quick issue, approval-gated reorder basket). Requisition-to-PO handoff is still manual: approve then raise the PO as usual and mark it ordered.
+  Original spec below.
+- **F3 (original spec)** — consumables & requisitions (the dropped half). CON 001 exists as a
   QMS form so issue-out is *recorded* but not *stocked* — no ledger, no reorder.
   **All three decisions settled by Mateusz 2026-07-30:**
   · *Consumable issue-out:* **BOTH.** Primary is a printable tally sheet PDF to

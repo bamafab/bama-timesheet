@@ -1508,6 +1508,38 @@ closing brace matches first and the capture truncates silently, so assertions
 about the tail of the prompt fail against correct code. Slice between known
 boundaries instead.
 
+## Consumables (2026-07-30 — Office › Traceability › 🧰 Consumables)
+
+`Consumables` + `ConsumableMovements` + `ConsumableReorders`
+(`api/sql/create-consumables.sql`, new tables, no restart); API
+`api/src/functions/consumables.js`.
+
+**PAPER IS THE PRIMARY ROUTE, deliberately** (Mateusz's call and he was right):
+print the tally sheet, hang it up, type it in weekly. `drawConsSheetPDF` prints
+tick-boxes rather than a number field — quicker to mark with gloves on — grouped
+by category, with blank lines for anything off-catalogue. The kiosk-style
+⚡ Quick issue exists as the *optional* route; adding a screen tap per welding rod
+is how you get a register nobody fills in. `consTypeSheet()` types a finished
+sheet in one go and reports bad lines by number rather than discarding the good
+ones.
+
+**STOCK IS DERIVED, NEVER STORED**: `opening_qty + Σin − Σout`, computed in the
+list query. A stored running total drifts the first time a movement is edited and
+then nobody trusts the figure. There is deliberately no `current_stock` column.
+
+**BUG WORTH REMEMBERING:** `consStockState()` originally did `Number(item.stock)`,
+and `Number(null) === 0` — so a MISSING stock figure read as "out of stock" and
+would have suggested a reorder for an item nothing is known about. Absent and
+zero must stay different; it now checks for null/undefined/'' first.
+
+**Nothing auto-orders**: basket → approved (recorded against a name) → ordered
+against a PO. Duplicate basket entries for the same item are refused. Suggestions
+never fire for something already on order. Issuing more than the ledger shows
+warns and proceeds (the shelf is the truth, the ledger is catching up) and going
+negative is a flag to reconcile, not an error. Batch-tracked items warn if issued
+without a batch number — welding consumables are traceable under EN 1090 and
+CON 001 records issue against a batch.
+
 ## Modal → Page mapping
 
 Every `id=…Modal` element in the HTML, by page. Handy when tracing an
