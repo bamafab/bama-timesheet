@@ -1251,11 +1251,16 @@ function fmtDate(d) {
   if (isNaN(obj.getTime())) return '—';
   return obj.toLocaleDateString('en-GB', { day:'2-digit', month:'short' });
 }
+// Abbreviated tile format (£1.3m / £45k) — dashboard tiles ONLY, never on a
+// document. This page deliberately does NOT load shared.js, so this is a
+// standalone copy of gbpShort() from shared.js's MONEY section. Keep the two
+// in step — tests/money-rounding.js compares them and fails if they diverge.
 function fmtGBP(v) {
-  if (!v) return '—';
-  if (v >= 1000000) return '£' + (v/1000000).toFixed(1) + 'm';
-  if (v >= 1000) return '£' + Math.round(v/1000) + 'k';
-  return '£' + Math.round(v).toLocaleString();
+  if (v === null || v === undefined || v === '' || !Number(v)) return '—';
+  const n = Number(v);
+  if (Math.abs(n) >= 1000000) return '£' + (n / 1000000).toFixed(1) + 'm';
+  if (Math.abs(n) >= 1000)    return '£' + Math.round(n / 1000) + 'k';
+  return '£' + Math.round(n).toLocaleString('en-GB');
 }
 
 // ─── Render list ──────────────────────────────────────────

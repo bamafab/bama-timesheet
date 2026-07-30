@@ -109,12 +109,11 @@ from the taxonomy + form-engine groundwork.
 
 Priority order as it stands:
 
-1. **⚠ 2dp rounding on financial calculations** — oldest urgent item on the
-   list and still open (see CLAUDE.md "Roadmap / queued"). Round every
-   intermediate monetary step, not just the final `.toFixed(2)`; consolidate
-   the several local `fmtGBP` definitions into one. Touches Babcock line-item
-   accumulation, marked-up total preview, edit-line-items. Golden tests gate
-   the QB engine, so a regression here is catchable.
+1. ~~2dp rounding on financial calculations~~ ✅ **DONE 2026-07-30** — MONEY
+   section in shared.js (`_r2` / `sumMoney` / `pctOf` / `gbp2` / `gbpWhole` /
+   `gbpShort`), invoice preview-vs-saved mismatch fixed on both client paths
+   and server-side, BACS + reconciliation totals, Babcock PDF fallbacks.
+   `tests/money-rounding.js` (37 assertions) is the gate.
 2. **Welder qualification register (E1)** — the real FPC/EN 1090 gap. Scope
    per certificate (process, material group, thickness/diameter range,
    positions), 6-month employer endorsement AND 3-year re-test tracked

@@ -19255,10 +19255,13 @@ function fmtDateLong(s) {
   if (isNaN(d.getTime())) return String(s);
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
 }
+// Client prices are quoted to the whole pound across all BAMA PDFs.
+// This page deliberately does NOT load shared.js, so this is a standalone copy
+// of gbpWhole() from shared.js's MONEY section. Keep the two in step —
+// tests/money-rounding.js compares them and fails if they diverge.
 function fmtGBP(v) {
   if (v === null || v === undefined || v === '') return '—';
-  // Client prices are quoted to the whole pound across all PDFs.
-  return '£' + Math.round(Number(v)).toLocaleString('en-GB');
+  return '£' + Math.round(Number(v) || 0).toLocaleString('en-GB');
 }
 
 function openPdfWindow(html) {

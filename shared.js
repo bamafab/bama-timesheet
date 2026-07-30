@@ -606,6 +606,52 @@ function getWeekDates(offset = 0) {
 // in BST (00:30 BST = 23:30 UTC the previous day). Every caller in this
 // file passes a locally-constructed Date (new Date(), new Date(yyyy,mm,dd),
 // or copies thereof), so this stays correct in all cases.
+// ═══════════════════════════════════════════
+// MONEY — one place for all monetary rounding and formatting
+// ═══════════════════════════════════════════
+// Floating point makes 0.1 + 0.2 = 0.30000000000000004, and that error
+// accumulates across line items: a quote summed from 40 lines can land on
+// 1290.2999999 and then round DIFFERENTLY depending on which screen renders
+// it. Two rules keep every screen and document agreeing:
+//
+//   1. Round at EVERY monetary step, not just the final .toFixed(2).
+//   2. A total is the sum of the ROUNDED lines that are printed next to it —
+//      never the rounded sum of unrounded lines — so an invoice always adds up
+//      when the client checks it with a calculator.
+//
+// Use _r2() for a single value and sumMoney() for any list of money.
+// Do not write `.reduce((s, x) => s + x.amount, 0)` on monetary values.
+
+const _r2 = v => Math.round((Number(v) || 0) * 100) / 100;
+
+// Sum money so the total equals the sum of the printed (2dp) line values.
+// sumMoney(rows, r => r.qty * r.price)  ·  sumMoney(amounts)
+function sumMoney(list, pick) {
+  return (list || []).reduce((s, item) => {
+    const v = pick ? pick(item) : item;
+    return _r2(s + _r2(v));
+  }, 0);
+}
+
+// Percentage of a money value, rounded (retention, VAT, markup).
+const pctOf = (value, pct) => _r2(_r2(value) * (Number(pct) || 0) / 100);
+
+// ── Formatting ──
+// gbp2      £1,290.30  — invoices, statements, anything reconciled to the penny
+// gbpWhole  £1,290     — client-facing quote PDFs (BAMA quotes whole pounds)
+// gbpShort  £1.3k      — dashboard tiles only, never on a document
+const gbp2 = v => (v === null || v === undefined || v === '') ? '—'
+  : '\u00a3' + _r2(v).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const gbpWhole = v => (v === null || v === undefined || v === '') ? '—'
+  : '\u00a3' + Math.round(Number(v) || 0).toLocaleString('en-GB');
+function gbpShort(v) {
+  if (v === null || v === undefined || v === '' || !Number(v)) return '—';
+  const n = Number(v);
+  if (Math.abs(n) >= 1000000) return '\u00a3' + (n / 1000000).toFixed(1) + 'm';
+  if (Math.abs(n) >= 1000)    return '\u00a3' + Math.round(n / 1000) + 'k';
+  return '\u00a3' + Math.round(n).toLocaleString('en-GB');
+}
+
 function dateStr(d) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
@@ -30255,7 +30301,6 @@ function populateBabcockValidationFields(header, missingFields = []) {
 }
 
 // Shared 2dp rounding helper for all Babcock financial calculations
-const _r2 = v => Math.round(v * 100) / 100;
 // Net value of a PO row (total_value is gross; subtract vat_amount, or derive from vat_rate)
 const _poNet = p => {
   if (p.total_value == null) return 0;
@@ -30265,8 +30310,7 @@ const _poNet = p => {
   return gross;
 };
 // Shared GBP formatter for Babcock tracker (replaces 3 local copies)
-const _fmtGBP = v => (v === null || v === undefined || v === '') ? '—'
-  : `£${Number(v).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const _fmtGBP = gbp2;   // canonical: see the MONEY section at the top
 
 function updateBabcockMarkedUpTotal(markup) {
   if (!_babcockRawData) return;
@@ -31734,7 +31778,7 @@ async function handleAdvanceFromQuoteReceived(qSummary, next) {
                         : []);
     let grandTotal = q.total_value;
     if (grandTotal === null || grandTotal === undefined || !isFinite(grandTotal)) {
-      grandTotal = lineItems.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+      grandTotal = sumMoney(lineItems, l => l.amount);
     }
     pdfBlob = await renderBabcockQuotePDF({
       quoteRef:    q.quote_ref,
@@ -31773,9 +31817,9 @@ async function handleAdvanceFromQuoteReceived(qSummary, next) {
   const pdfFileName = `${safeRef} - ${safeCust} - ${safeWO}.pdf`;
 
   // Build the tokens used by the emailQuoteSent template
-  const fmtGBP = v => (v === null || v === undefined || v === '')
-    ? '\u00a30.00'
-    : `\u00a3${Number(v).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  // Canonical formatter (MONEY section, top of file); '£0.00' rather than '—'
+  // because this feeds email body text where a dash reads as a mistake.
+  const fmtGBP = v => (v === null || v === undefined || v === '') ? '\u00a30.00' : gbp2(v);
 
   const tokens = {
     contact_name:  babcockExtractContactName(q.quote_for_area) || 'Sir or Madam',
@@ -33884,7 +33928,7 @@ async function submitBabcockEdit() {
     // produce a quote with a blank total.
     let grandTotal = payload.total_value;
     if (grandTotal === null || grandTotal === undefined || !isFinite(grandTotal)) {
-      grandTotal = lineItems.reduce((s, l) => s + (Number(l.amount) || 0), 0);
+      grandTotal = sumMoney(lineItems, l => l.amount);
     }
 
     const pdfBlob = await renderBabcockQuotePDF({
@@ -36572,7 +36616,7 @@ function renderInvKpis() {
 
   const outstandingAR = _invInvoiceList
     .filter(i => i.kind === 'invoice' && i.status !== 'Paid' && i.status !== 'Cancelled' && i.status !== 'Void')
-    .reduce((s, i) => s + Number(i.total_outstanding || i.gross_amount || 0), 0);
+    .reduce((s, i) => _r2(s + _r2(i.total_outstanding || i.gross_amount || 0)), 0);
 
   const today = new Date().toISOString().slice(0, 10);
   const overdueCount = _invInvoiceList
@@ -37106,7 +37150,7 @@ function _invPoRecon(inv) {
   const poTotal = Number(inv.po_total_value || 0);
   if (!poTotal) return 'unmatched';
   const sum = _invSupInvoices.filter(i => i.po_id === inv.po_id)
-                             .reduce((s, i) => s + Number(i.gross || 0), 0);
+                             .reduce((s, i) => _r2(s + _r2(i.gross)), 0);
   if (Math.abs(sum - poTotal) <= 1.00) return 'matched';
   if (sum > poTotal + 1.00) return 'discrepancy';
   return 'unmatched';
@@ -37412,8 +37456,8 @@ function _stmtReconcile() {
   // Our unpaid invoices for this supplier that the statement doesn't show
   const notOnStatement = ours.filter(inv => !inv.paid_at && !usedOurIds.has(inv.id));
 
-  const stmtTotal = results.reduce((s, r) => s + (r.match && r.match.paid_at ? 0 : r.amt), 0);
-  const ourOutstanding = ours.filter(i => !i.paid_at).reduce((s, i) => s + Number(i.gross || 0), 0);
+  const stmtTotal = sumMoney(results, r => (r.match && r.match.paid_at ? 0 : r.amt));
+  const ourOutstanding = sumMoney(ours.filter(i => !i.paid_at), i => i.gross);
   const claimed = _stmtParsed.total_outstanding != null ? Number(_stmtParsed.total_outstanding) : null;
 
   // Due-date buckets — supplier terms matter (60d EOM ≠ payable today).
@@ -37955,7 +37999,7 @@ async function openSupMatchModal() {
   }
   const supplierId = supplierIds[0];
   const fmt2 = v => Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const total = sel.reduce((s, i) => s + Number(i.gross || 0), 0);
+  const total = sumMoney(sel, i => i.gross);
 
   document.getElementById('invSupMatchLabel').textContent =
     `${sel.length} invoice${sel.length === 1 ? '' : 's'} from ${sel[0].supplier_name || 'supplier'} — £${fmt2(total)}`;
@@ -38593,7 +38637,7 @@ function _bacsRenderList() {
 
 function _bacsRenderTotals() {
   const sel = _bacsCandidates.filter(i => _bacsSelected.has(i.id));
-  const total = sel.reduce((s, i) => s + Number(i.gross || 0), 0);
+  const total = sumMoney(sel, i => i.gross);
   const suppliers = new Set(sel.map(i => i.supplier_id)).size;
   document.getElementById('bacsTotals').textContent =
     `${sel.length} invoice${sel.length === 1 ? '' : 's'} · ${suppliers} supplier${suppliers === 1 ? '' : 's'} · £${total.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -38630,7 +38674,7 @@ async function confirmBacsRun() {
   const runDate = document.getElementById('bacsRunDate').value;
   if (!runDate) { toast('Pick a payment date', 'error'); return; }
   const fmt2 = v => Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const total = sel.reduce((s, i) => s + Number(i.gross || 0), 0);
+  const total = sumMoney(sel, i => i.gross);
   const suppliers = new Set(sel.map(i => i.supplier_id)).size;
 
   const okGo = await bamaConfirm({
@@ -38680,7 +38724,7 @@ async function confirmBacsRun() {
             invDate: inv.invoice_date || null,
             gross: Number(inv.gross || 0)
           })),
-          total: +invs.reduce((s, i) => s + Number(i.gross || 0), 0).toFixed(2)
+          total: sumMoney(invs, i => i.gross)
         });
         const folder = await _findOrCreateRemittanceFolder(runDate);
         const fileName = sanitizeSpFilename(`Remittance - ${supplierName} - ${runDate}.pdf`);
@@ -41043,7 +41087,10 @@ function _invToggleRetentionFields() {
 
 // ── Totals recalc ──
 function recalcInvoiceTotals() {
-  const net = _invLineRows.reduce((s, l) => s + (Number(l.quantity || 0) * Number(l.unit_price || 0)), 0);
+  // MUST match _invPayload()'s maths exactly, or the preview shows one total
+  // and the saved/printed invoice shows another. Per-line 2dp then summed —
+  // the same rule the PDF prints, so the invoice always adds up.
+  const net = sumMoney(_invLineRows, l => Number(l.quantity || 0) * Number(l.unit_price || 0));
   const treatment = document.getElementById('invNewVatTreatment').value;
   const vatApplies = treatment === 'standard';
   const cisReverse = treatment === 'reverse_charge';
@@ -41051,10 +41098,9 @@ function recalcInvoiceTotals() {
   let retention = 0;
   const mode = document.getElementById('invNewRetentionMode').value;
   if (mode === 'pct') {
-    const pct = Number(document.getElementById('invNewRetentionPct').value || 0);
-    retention = +(net * pct / 100).toFixed(2);
+    retention = pctOf(net, document.getElementById('invNewRetentionPct').value || 0);
   } else if (mode === 'amt') {
-    retention = +(Number(document.getElementById('invNewRetentionAmt').value || 0)).toFixed(2);
+    retention = _r2(document.getElementById('invNewRetentionAmt').value || 0);
   }
 
   // VAT calculated on net minus retention (standard UK practice).
@@ -41062,11 +41108,11 @@ function recalcInvoiceTotals() {
   // the gross (the customer accounts for VAT to HMRC). The VAT amount
   // is still computed and shown for information, but as a "reverse
   // charge" figure rather than a billable VAT line.
-  const vatBase = net - retention;
-  const standardVat = vatApplies ? +(vatBase * 0.20).toFixed(2) : 0;
+  const vatBase = _r2(net - retention);
+  const standardVat = vatApplies ? pctOf(vatBase, 20) : 0;
   const vat = cisReverse ? 0 : standardVat;
-  const reverseCharge = cisReverse ? +(vatBase * 0.20).toFixed(2) : 0;
-  const gross = +(net - retention + vat).toFixed(2);
+  const reverseCharge = cisReverse ? pctOf(vatBase, 20) : 0;
+  const gross = _r2(net - retention + vat);
 
   document.getElementById('invTotalNet').textContent       = '£' + _invFmt2(net);
   document.getElementById('invTotalRetention').textContent = '£' + _invFmt2(retention);
@@ -41179,24 +41225,24 @@ function _buildInvoicePayload() {
       quantity: Number(l.quantity || 0),
       unit: l.unit || null,
       unit_price: Number(l.unit_price || 0),
-      line_total: +(Number(l.quantity || 0) * Number(l.unit_price || 0)).toFixed(2)
+      line_total: _r2(Number(l.quantity || 0) * Number(l.unit_price || 0))
     }));
 
-  const net = cleanLines.reduce((s, l) => s + l.line_total, 0);
+  const net = sumMoney(cleanLines, l => l.line_total);
   let retention = 0, retention_pct = null;
   if (mode === 'pct') {
     retention_pct = Number(document.getElementById('invNewRetentionPct').value || 0);
-    retention = +(net * retention_pct / 100).toFixed(2);
+    retention = pctOf(net, retention_pct);
   } else if (mode === 'amt') {
-    retention = +(Number(document.getElementById('invNewRetentionAmt').value || 0)).toFixed(2);
+    retention = _r2(document.getElementById('invNewRetentionAmt').value || 0);
   }
-  const vatBase = net - retention;
+  const vatBase = _r2(net - retention);
   // CIS domestic reverse charge: VAT is shown for info as reverse charge,
   // but NOT added to the supplier's gross — customer accounts for it.
-  const standardVat = vatApplies ? +(vatBase * 0.20).toFixed(2) : 0;
+  const standardVat = vatApplies ? pctOf(vatBase, 20) : 0;
   const vat = cisReverse ? 0 : standardVat;
-  const reverseCharge = cisReverse ? +(vatBase * 0.20).toFixed(2) : 0;
-  const gross = +(net - retention + vat).toFixed(2);
+  const reverseCharge = cisReverse ? pctOf(vatBase, 20) : 0;
+  const gross = _r2(net - retention + vat);
 
   return {
     kind,
@@ -41210,7 +41256,7 @@ function _buildInvoicePayload() {
     is_retention_release: (_invEditing && _invEditing.is_retention_release) ? 1 : 0,
     vat_applies: vatApplies ? 1 : 0,
     cis_reverse_charge: cisReverse ? 1 : 0,
-    net_amount: +net.toFixed(2),
+    net_amount: _r2(net),
     vat_amount: vat,
     reverse_charge_amount: reverseCharge,
     retention_pct,

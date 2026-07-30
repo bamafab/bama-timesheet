@@ -816,10 +816,13 @@ app.http('applications-generate-invoice', {
             //   zero           → no VAT at all
             const treatment = ['standard', 'reverse_charge', 'zero'].includes(app2.client_vat_treatment)
                             ? app2.client_vat_treatment : 'reverse_charge';
-            const vatBase = +(netAmount - retention).toFixed(2);
-            const vatAmount     = treatment === 'standard'       ? +(vatBase * 0.20).toFixed(2) : 0;
-            const reverseCharge = treatment === 'reverse_charge' ? +(vatBase * 0.20).toFixed(2) : 0;
-            const grossAmount   = +(netAmount - retention + vatAmount).toFixed(2);
+            // Round at every step (see the MONEY section in shared.js) so this
+            // matches what the invoice modal and the PDF compute to the penny.
+            const r2 = v => Math.round((Number(v) || 0) * 100) / 100;
+            const vatBase = r2(r2(netAmount) - r2(retention));
+            const vatAmount     = treatment === 'standard'      ? r2(vatBase * 0.20) : 0;
+            const reverseCharge = treatment === 'reverse_charge' ? r2(vatBase * 0.20) : 0;
+            const grossAmount   = r2(vatBase + vatAmount);
 
             // Due date = invoice date + client payment terms (default 30 days)
             const termsDays = Number(app2.client_payment_terms) > 0 ? Number(app2.client_payment_terms) : 30;
