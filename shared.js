@@ -3375,6 +3375,7 @@ function switchTab(name) {
   if (name === 'clients') renderOfficeClientsTab();
   if (name === 'docs') renderDocsTab();
   if (name === 'qms') renderQmsTab();
+  if (name === 'training') renderTrainingTab();
   if (name === 'project' || name === 'employee') renderManagerView();
 }
 
@@ -23223,6 +23224,9 @@ function renderUnifiedSidebar() {
         </button>
         <button class="sidebar-nav-item${a('office','staff')}" data-tab="staff" onclick="navToOfficeTab('staff')">
           <span class="sidebar-nav-icon">👥</span> Employees
+        </button>
+        <button class="sidebar-nav-item${a('office','training')}" data-tab="training" onclick="navToOfficeTab('training')">
+          <span class="sidebar-nav-icon">🎓</span> Training Matrix
         </button>
       </div>
     </div>
@@ -46683,4 +46687,282 @@ async function submitQmsForm() {
     renderQmsTab();
   } catch (e) { status.textContent = 'Failed: ' + e.message; }
   finally { btn.disabled = false; }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TRAINING MATRIX (2026-07-30) — Office › Training Matrix.
+// Person × cert-type grid over the SitePersonnel / SitePersonnelCerts /
+// CertTypes schema built in RAMS Phase 2b (expiry first-class). Cells are
+// tap-to-manage; expiry colouring matches the document registers
+// (red expired / amber ≤60 days / green in date). Feeds the same roster the
+// RAMS personnel picker uses — one source of truth.
+// ═══════════════════════════════════════════════════════════════════════════
+
+let _tmPeople = [], _tmCertTypes = [], _tmFilter = 'all', _tmSearch = '';
+
+function _tmCertStatus(cert) {
+  if (!cert) return { cls: 'none' };
+  if (!cert.expiry_date) return { cls: 'noexp' };
+  const days = Math.floor((new Date(String(cert.expiry_date).slice(0,10) + 'T00:00:00') - new Date(new Date().toISOString().slice(0,10) + 'T00:00:00')) / 86400000);
+  if (days < 0) return { cls: 'expired', days };
+  if (days <= 60) return { cls: 'soon', days };
+  return { cls: 'ok', days };
+}
+const _TM_COLORS = { expired: '#ff6b6b', soon: '#eab308', ok: '#3ecf8e', noexp: '#8b9bb4', none: 'var(--border)' };
+
+async function renderTrainingTab() {
+  const root = document.getElementById('tab-training');
+  if (!root) return;
+  root.innerHTML = '<div style="color:var(--muted);padding:20px">Loading…</div>';
+  try {
+    [_tmPeople, _tmCertTypes] = await Promise.all([
+      api.get('/api/site-personnel'),
+      api.get('/api/cert-types')
+    ]);
+  } catch (e) {
+    root.innerHTML = `<div style="color:var(--red);padding:20px;font-size:12.5px">Training matrix unavailable: ${escapeHtml(e.message)} — run the RAMS 2b SitePersonnel migration first.</div>`;
+    return;
+  }
+  root.innerHTML = `<div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+      <h3 style="margin:0">🎓 Training Matrix</h3>
+      <button class="btn btn-primary btn-sm" onclick="tmAddPerson()">＋ Person</button>
+      <button class="btn btn-ghost btn-sm" onclick="tmAddCertType()">＋ Cert type</button>
+      <button class="btn btn-ghost btn-sm" onclick="tmExportCsv()">⬇ CSV</button>
+      <button class="btn btn-ghost btn-sm" onclick="renderTrainingTab()">↻</button>
+      <input id="tmSearch" type="text" placeholder="Search…" value="${escapeHtml(_tmSearch)}"
+        oninput="_tmSearch=this.value;_tmRenderGrid()"
+        style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:5px 10px;color:var(--text);font-size:12px;margin-left:auto">
+    </div>
+    <p style="font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.6">
+      One roster shared with the RAMS personnel picker. Tap any cell to add or manage that person's certificate —
+      expiry drives the colour: <span style="color:#3ecf8e">■ in date</span>
+      <span style="color:#eab308">■ ≤60 days</span> <span style="color:#ff6b6b">■ expired</span>
+      <span style="color:#8b9bb4">■ no expiry recorded</span> · blank = not held.</p>
+    <div id="tmChips" style="display:flex;gap:6px;margin-bottom:8px"></div>
+    <div id="tmSummary" style="margin-bottom:10px"></div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:auto;max-height:calc(100vh - 300px)">
+      <table id="tmGrid" style="border-collapse:collapse;font-size:11.5px;min-width:100%"></table>
+    </div>
+  </div>`;
+  _tmRenderChips(); _tmRenderGrid();
+}
+
+function _tmRenderChips() {
+  const counts = { all: _tmPeople.length,
+    staff: _tmPeople.filter(p => p.type === 'staff').length,
+    subcontractor: _tmPeople.filter(p => p.type === 'subcontractor').length };
+  const chip = (k, label, color) => {
+    const on = _tmFilter === k;
+    return `<button onclick="_tmFilter='${k}';_tmRenderChips();_tmRenderGrid()" style="cursor:pointer;border-radius:14px;padding:4px 12px;font-size:12px;border:1px solid ${on ? color : 'var(--border)'};background:${on ? color + '22' : 'var(--surface)'};color:${on ? color : 'var(--muted)'};font-weight:${on ? 700 : 400}">${label} <span style="opacity:.7">${counts[k]}</span></button>`;
+  };
+  document.getElementById('tmChips').innerHTML =
+    chip('all', 'All', '#e05e00') + chip('staff', 'Staff', '#3b82f6') + chip('subcontractor', 'Subcontractors', '#a855f7');
+}
+
+function _tmBestCert(person, typeName) {
+  const certs = (person.certs || []).filter(c => c.cert_type === typeName);
+  if (!certs.length) return null;
+  return certs.slice().sort((a, b) => String(b.expiry_date || '9999').localeCompare(String(a.expiry_date || '9999')))[0];
+}
+
+function _tmRenderGrid() {
+  const q = _tmSearch.trim().toLowerCase();
+  const people = _tmPeople
+    .filter(p => _tmFilter === 'all' || p.type === _tmFilter)
+    .filter(p => !q || (p.name + ' ' + (p.site_role || '') + ' ' + (p.company || '')).toLowerCase().includes(q));
+  const types = _tmCertTypes;
+
+  const thBase = 'padding:8px 6px;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);position:sticky;top:0;background:var(--card);z-index:3;border-bottom:1px solid var(--border);white-space:nowrap';
+  let html = `<thead><tr>
+    <th style="${thBase};left:0;z-index:4;text-align:left;min-width:180px">Person</th>
+    ${types.map(t => `<th style="${thBase};text-align:center;min-width:76px">${escapeHtml(t.name)}</th>`).join('')}
+  </tr></thead><tbody>`;
+
+  let expired = 0, soon = 0;
+  html += people.map((p, i) => {
+    const zebra = i % 2 ? 'background:rgba(255,255,255,0.018);' : '';
+    const typeBadge = p.type === 'subcontractor'
+      ? '<span style="font-size:9px;color:#a855f7;border:1px solid #a855f755;border-radius:4px;padding:0 4px;margin-left:5px">SUB</span>' : '';
+    return `<tr style="${zebra}">
+      <td style="padding:7px 10px;border-bottom:1px solid var(--border);position:sticky;left:0;background:var(--surface);z-index:2;white-space:nowrap">
+        <div style="font-weight:600">${escapeHtml(p.name)}${typeBadge}</div>
+        <div style="font-size:10px;color:var(--muted)">${escapeHtml(p.site_role || '')}${p.company ? ' · ' + escapeHtml(p.company) : ''}</div>
+      </td>
+      ${types.map(t => {
+        const cert = _tmBestCert(p, t.name);
+        const st = _tmCertStatus(cert);
+        if (st.cls === 'expired') expired++; if (st.cls === 'soon') soon++;
+        const col = _TM_COLORS[st.cls];
+        const inner = !cert ? '<span style="color:var(--border)">—</span>'
+          : st.cls === 'noexp' ? `<span style="color:${col};font-weight:600">✓</span>`
+          : `<span style="color:${col};font-weight:700">${st.cls === 'expired' ? 'EXP' : st.days + 'd'}</span><br><span style="font-size:9px;color:var(--muted)">${String(cert.expiry_date).slice(0, 10)}</span>`;
+        return `<td onclick="tmOpenCell(${p.id}, '${escapeHtml(t.name).replace(/'/g, "\\'")}')"
+          style="padding:6px 4px;border-bottom:1px solid var(--border);text-align:center;cursor:pointer;${cert ? `background:${col}14;` : ''}"
+          onmouseenter="this.style.outline='1px solid var(--accent)'" onmouseleave="this.style.outline=''">${inner}</td>`;
+      }).join('')}
+    </tr>`;
+  }).join('');
+  html += '</tbody>';
+  document.getElementById('tmGrid').innerHTML = html ||
+    '<tr><td style="padding:30px;color:var(--muted)">No personnel yet — add someone.</td></tr>';
+
+  const card = (lbl, n, col) => `<div style="display:inline-block;background:var(--surface);border:1px solid ${n ? col : 'var(--border)'};border-radius:8px;padding:8px 14px;margin-right:10px"><span style="font-size:11px;color:var(--muted)">${lbl}</span> <span style="font-size:16px;font-weight:700;color:${n ? col : 'var(--text)'}">${n}</span></div>`;
+  document.getElementById('tmSummary').innerHTML =
+    card('Expired certs', expired, '#ff6b6b') + card('Expiring ≤60d', soon, '#eab308') + card('People', people.length, '#3ecf8e');
+}
+
+// ── Cell modal: manage one person × cert type ────────────────────────────────
+let _tmCellPerson = null, _tmCellType = null;
+function tmOpenCell(personId, typeName) {
+  _tmCellPerson = _tmPeople.find(p => p.id === personId); _tmCellType = typeName;
+  if (!_tmCellPerson) return;
+  if (!document.getElementById('tmCellModal')) {
+    const div = document.createElement('div');
+    div.innerHTML = `<div id="tmCellModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:1001;align-items:center;justify-content:center;padding:20px">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:440px;overflow:hidden">
+        <div style="padding:13px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+          <h3 id="tmCellTitle" style="margin:0;font-size:14.5px"></h3>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('tmCellModal').style.display='none'">✕</button></div>
+        <div id="tmCellBody" style="padding:14px 18px;font-size:12.5px"></div>
+      </div></div>`;
+    document.body.appendChild(div.firstElementChild);
+  }
+  document.getElementById('tmCellTitle').textContent = `${_tmCellPerson.name} — ${typeName}`;
+  _tmRenderCell();
+  document.getElementById('tmCellModal').style.display = 'flex';
+}
+
+function _tmRenderCell() {
+  const certs = (_tmCellPerson.certs || []).filter(c => c.cert_type === _tmCellType);
+  const inputStyle = 'width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);box-sizing:border-box;font-size:12.5px';
+  document.getElementById('tmCellBody').innerHTML =
+    (certs.length ? certs.map(c => {
+      const st = _tmCertStatus(c); const col = _TM_COLORS[st.cls];
+      return `<div style="display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;margin-bottom:6px">
+        <span style="flex:1"><strong>${escapeHtml(c.cert_number || 'no number')}</strong>
+          <span style="color:var(--muted);font-size:11px"> · ${c.issue_date ? 'issued ' + String(c.issue_date).slice(0,10) : ''}${c.expiry_date ? ' · expires ' + String(c.expiry_date).slice(0,10) : ' · no expiry'}</span></span>
+        <span style="color:${col};font-weight:700;font-size:11px">${st.cls === 'expired' ? 'EXPIRED' : st.cls === 'soon' ? st.days + 'd' : st.cls === 'ok' ? '✓' : '✓'}</span>
+        <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="tmDeleteCert(${c.id})">🗑</button>
+      </div>`;
+    }).join('') : '<div style="color:var(--muted);margin-bottom:8px">Not held.</div>') +
+    `<div style="border-top:1px solid var(--border);padding-top:10px;margin-top:6px">
+      <div style="font-weight:700;margin-bottom:6px">Add / renew</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div style="grid-column:1/3"><label style="font-size:10.5px;color:var(--muted)">Cert number</label>
+          <input id="tmcNum" type="text" style="${inputStyle}"></div>
+        <div><label style="font-size:10.5px;color:var(--muted)">Issue date</label>
+          <input id="tmcIssue" type="date" style="${inputStyle}"></div>
+        <div><label style="font-size:10.5px;color:var(--muted)">Expiry date</label>
+          <input id="tmcExpiry" type="date" style="${inputStyle}"></div>
+      </div>
+      <div style="text-align:right;margin-top:10px">
+        <button class="btn btn-primary btn-sm" onclick="tmSaveCert()">💾 Save</button>
+      </div>
+    </div>`;
+}
+
+async function tmSaveCert() {
+  try {
+    await api.post(`/api/site-personnel/${_tmCellPerson.id}/cert`, {
+      cert_type: _tmCellType,
+      cert_number: document.getElementById('tmcNum').value.trim(),
+      issue_date: document.getElementById('tmcIssue').value || null,
+      expiry_date: document.getElementById('tmcExpiry').value || null
+    });
+    toast('Cert saved', 'success');
+    _tmPeople = await api.get('/api/site-personnel');
+    _tmCellPerson = _tmPeople.find(p => p.id === _tmCellPerson.id);
+    _tmRenderCell(); _tmRenderGrid();
+  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+async function tmDeleteCert(certId) {
+  if (!await bamaConfirm('Remove this certificate entry?', 'Remove Cert')) return;
+  try {
+    await api.delete(`/api/site-personnel/${_tmCellPerson.id}/cert/${certId}`);
+    _tmPeople = await api.get('/api/site-personnel');
+    _tmCellPerson = _tmPeople.find(p => p.id === _tmCellPerson.id);
+    _tmRenderCell(); _tmRenderGrid();
+  } catch (e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+async function tmAddPerson() {
+  if (!document.getElementById('tmPersonModal')) {
+    const div = document.createElement('div');
+    div.innerHTML = `<div id="tmPersonModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:1001;align-items:center;justify-content:center;padding:20px">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:400px;padding:18px">
+        <h3 style="margin:0 0 12px;font-size:14.5px">＋ Add person to roster</h3>
+        <div style="display:grid;gap:8px;font-size:12px">
+          <input id="tmpName" placeholder="Full name *" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text)">
+          <input id="tmpRole" placeholder="Site role (e.g. Erector)" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text)">
+          <select id="tmpType" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text)">
+            <option value="staff">Staff</option><option value="subcontractor">Subcontractor</option></select>
+          <input id="tmpCompany" placeholder="Company (subbies)" style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text)">
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('tmPersonModal').style.display='none'">Cancel</button>
+          <button class="btn btn-primary btn-sm" onclick="tmSavePerson()">Save</button>
+        </div></div></div>`;
+    document.body.appendChild(div.firstElementChild);
+  }
+  document.getElementById('tmPersonModal').style.display = 'flex';
+}
+async function tmSavePerson() {
+  const name = document.getElementById('tmpName').value.trim();
+  if (!name) { toast('Name is required', 'error'); return; }
+  try {
+    await api.post('/api/site-personnel', {
+      name, site_role: document.getElementById('tmpRole').value.trim(),
+      type: document.getElementById('tmpType').value,
+      company: document.getElementById('tmpCompany').value.trim()
+    });
+    document.getElementById('tmPersonModal').style.display = 'none';
+    toast('Added to roster', 'success');
+    renderTrainingTab();
+  } catch (e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+async function tmAddCertType() {
+  if (!document.getElementById('tmCertTypeModal')) {
+    const div = document.createElement('div');
+    div.innerHTML = `<div id="tmCertTypeModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:1001;align-items:center;justify-content:center;padding:20px">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:360px;padding:18px">
+        <h3 style="margin:0 0 12px;font-size:14.5px">＋ New certificate type</h3>
+        <input id="tmctName" placeholder="e.g. Confined Spaces" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);box-sizing:border-box;font-size:12.5px">
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('tmCertTypeModal').style.display='none'">Cancel</button>
+          <button class="btn btn-primary btn-sm" onclick="tmSaveCertType()">Save</button>
+        </div></div></div>`;
+    document.body.appendChild(div.firstElementChild);
+  }
+  document.getElementById('tmCertTypeModal').style.display = 'flex';
+}
+async function tmSaveCertType() {
+  const name = document.getElementById('tmctName').value.trim();
+  if (!name) { toast('Name is required', 'error'); return; }
+  try {
+    await api.post('/api/cert-types', { name });
+    document.getElementById('tmCertTypeModal').style.display = 'none';
+    toast('Cert type added', 'success');
+    renderTrainingTab();
+  } catch (e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+function tmExportCsv() {
+  const types = _tmCertTypes;
+  const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const rows = ['Name,Role,Type,Company,' + types.map(t => t.name).join(',')];
+  for (const p of _tmPeople) {
+    rows.push([p.name, p.site_role, p.type, p.company].map(esc).join(',') + ',' +
+      types.map(t => {
+        const c = _tmBestCert(p, t.name);
+        return esc(c ? (c.expiry_date ? String(c.expiry_date).slice(0, 10) : 'held (no expiry)') : '');
+      }).join(','));
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([rows.join('\n')], { type: 'text/csv' }));
+  a.download = `training-matrix-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click(); URL.revokeObjectURL(a.href);
+  toast('CSV downloaded', 'success');
 }

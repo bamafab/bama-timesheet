@@ -1046,6 +1046,22 @@ submissions list on the tab. Remaining 7 sheets defined in
 templates/TEMPLATE-qms-check-sheets.md — add as definition rows; richer
 field types (pickers/photo/finger-signature/table) are the next D4 phase.
 
+## Training Matrix (2026-07-30 — Office › Training Matrix)
+
+Person × cert-type grid over the RAMS 2b schema (SitePersonnel /
+SitePersonnelCerts / CertTypes — no backend changes, the cert endpoints
+already existed). `renderTrainingTab()` in shared.js, tab-training in
+office.html, sidebar entry in the HR group. Sticky name column + header,
+staff/subcontractor chips, search, expiry colouring identical to the
+document registers (red expired / amber ≤60d / green / grey no-expiry,
+blank = not held), summary cards, CSV export. Tap a cell → tmCellModal:
+existing certs for that person+type (delete) + add/renew form (number,
+issue, expiry — a renewal is just a newer cert; `_tmBestCert` shows the
+latest expiry). ＋ Person posts to the shared roster (same one the RAMS
+personnel picker uses); ＋ Cert type posts to CertTypes (user-editable list
+per the 2b decision). Daniel is no longer involved in the ERP (2026-07-30)
+— Mateusz owns schema/infra decisions; QB Won→Project is unblocked.
+
 ## Modal → Page mapping
 
 Every `id=…Modal` element in the HTML, by page. Handy when tracing an
