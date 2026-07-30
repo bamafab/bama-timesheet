@@ -49101,6 +49101,7 @@ function _inspRender() {
           ${EXEC_CLASSES.map(c => `<option ${c === _inspPlan.exec_class ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
       <button class="btn btn-ghost btn-sm" onclick="inspLogOpen()">＋ Log an inspection</button>
       <button class="btn btn-ghost btn-sm" onclick="itpOpen()">📋 ITP</button>
+      <button class="btn btn-ghost btn-sm" onclick="cocOpen()">📜 CoC</button>
       <button class="btn btn-ghost btn-sm" onclick="inspSaveCounts()">💾 Save weld counts</button>
       ${(totalNdtShort || totalVisShort)
         ? `<span style="background:#3b1a1a;color:#ff9b9b;border:1px solid #ff6b6b55;border-radius:6px;padding:4px 10px;font-size:11.5px">
@@ -49796,4 +49797,498 @@ async function itpMakePdf(toSharePoint) {
     toast('ITP saved to the job folder', 'success');
     if (up.webUrl) window.open(up.webUrl, '_blank');
   } catch (e) { toast('PDF failed: ' + e.message, 'error'); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CERTIFICATE OF CONFORMITY (F1b, 2026-07-30)
+//
+// A CoC is a CONTRACTUAL document, not a regulated declaration — which is why
+// main contractors all ask for it in slightly different words. So the narrative
+// can be AI-drafted freely. What cannot be drafted is any FIGURE: heat numbers,
+// drawing revisions, NDT extent achieved, tonnage and welder certificate
+// numbers are gathered from the ERP's own records by `cocGatherFacts()` and
+// passed to the renderer as data. The AI is given the facts and asked for prose
+// ABOUT them; it is never asked to supply one.
+//
+// Every issued certificate freezes its facts in JobCertificates.payload,
+// because the live figures move on and a re-render a year later would no longer
+// match the paper the client is holding.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Pull every certifiable fact for a job out of the ERP. Defensive throughout:
+// a missing source yields an empty section flagged for the user, never a guess.
+async function cocGatherFacts(jobId) {
+  const facts = {
+    job: null, execClass: null, assemblies: [], totalWeightKg: 0, assemblyCount: 0,
+    heatNumbers: [], drawings: [], ndt: [], welders: [], coatings: [], gaps: []
+  };
+
+  try {
+    const jobs = await api.get('/api/projects');
+    facts.job = (jobs || []).find(p => String(p.id) === String(jobId)) || null;
+  } catch (_) {}
+  if (!facts.job) facts.gaps.push('Job record not found');
+
+  // Assemblies — tonnage and marks
+  try {
+    const asm = await api.get(`/api/job-assemblies/${jobId}`);
+    facts.assemblies = asm || [];
+    facts.assemblyCount = facts.assemblies.reduce((s, a) => s + (Number(a.quantity) || 0), 0);
+    facts.totalWeightKg = _r2(facts.assemblies.reduce((s, a) => s + (Number(a.total_weight_kg) || 0), 0));
+    facts.drawings = [...new Set(facts.assemblies.map(a => a.file_name).filter(Boolean))];
+  } catch (_) { facts.gaps.push('Assembly list unavailable'); }
+  if (!facts.assemblies.length) facts.gaps.push('No assemblies recorded against this job');
+
+  // Inspection plan + records → NDT extent ACHIEVED (not planned)
+  try {
+    const plans = await api.get(`/api/inspection-plans?job_id=${jobId}`);
+    const plan = (plans || [])[0];
+    if (plan) {
+      facts.execClass = plan.exec_class;
+      const recs = await api.get(`/api/inspection-records?job_id=${jobId}`).catch(() => []);
+      if (!_ndtRules || !_ndtRules.length) { try { _ndtRules = await api.get('/api/ndt-rules'); } catch (_) {} }
+      facts.ndt = _inspProgress(plan, recs || [], _ndtRules || []).map(p => ({
+        category: p.category, population: p.population,
+        visualDone: p.visualDone, visualRequired: p.visualRequired,
+        ndtDone: p.ndtDone, ndtRequired: p.ndtRequired,
+        pct: p.pct, failures: p.failures,
+        satisfied: p.visualShort === 0 && p.ndtShort === 0
+      }));
+      const short = facts.ndt.filter(n => !n.satisfied);
+      if (short.length) facts.gaps.push(`Inspection sample not yet satisfied on: ${short.map(n => n.category).join(', ')}`);
+      const failed = facts.ndt.reduce((s, n) => s + n.failures, 0);
+      if (failed) facts.gaps.push(`${failed} failed inspection(s) recorded — confirm each was repaired and re-inspected`);
+    } else {
+      facts.gaps.push('No inspection plan for this job — execution class and NDT extent unknown');
+    }
+  } catch (_) { facts.gaps.push('Inspection data unavailable'); }
+
+  // Heat numbers from BAMA MAT 001 submissions (read out of the answers JSON)
+  try {
+    const subs = await api.get('/api/qms-submissions?form_code=BAMA MAT 001');
+    (subs || []).forEach(s => {
+      let a = {};
+      try { a = typeof s.answers === 'string' ? JSON.parse(s.answers) : (s.answers || {}); } catch (_) { return; }
+      const jobRef = String(a.job || '');
+      const jn = facts.job && facts.job.job_number ? String(facts.job.job_number) : '';
+      if (jn && jobRef && jobRef.indexOf(jn) < 0) return;   // other job's delivery
+      const items = Array.isArray(a.items) ? a.items : [];
+      items.forEach(row => {
+        const vals = Array.isArray(row) ? row : Object.values(row || {});
+        const heat = vals.find(v => v && /^[A-Za-z0-9\-\/]{4,}$/.test(String(v).trim()) && /\d/.test(String(v)));
+        if (heat) facts.heatNumbers.push({
+          section: String(vals[0] ?? '').trim(), grade: String(vals[1] ?? '').trim(),
+          qty: String(vals[2] ?? '').trim(), heat: String(vals[3] ?? heat).trim(),
+          supplier: a.supplier || null, po: a.po_number || null
+        });
+      });
+      if (a.action && a.action !== 'Accepted') facts.gaps.push(`Material receipt marked "${a.action}" on PO ${a.po_number || '?'}`);
+    });
+  } catch (_) { facts.gaps.push('Material records (BAMA MAT 001) unavailable'); }
+  if (!facts.heatNumbers.length) facts.gaps.push('No heat / cast numbers found — complete BAMA MAT 001 for this job');
+
+  // Welders who worked the job, with their certificate numbers
+  try {
+    if (!_weldQuals || !_weldQuals.length) { try { _weldQuals = await api.get('/api/welder-quals'); } catch (_) {} }
+    const names = [...new Set((facts.assemblies || []).map(a => a.welder_name).filter(Boolean))];
+    const fromRecords = [...new Set(((await api.get(`/api/inspection-records?job_id=${jobId}`).catch(() => [])) || [])
+      .map(r => r.welder_name).filter(Boolean))];
+    [...new Set([...names, ...fromRecords])].forEach(n => {
+      const held = (_weldQuals || []).filter(q =>
+        String(q.person_name).trim().toLowerCase() === String(n).trim().toLowerCase());
+      if (held.length) held.forEach(q => facts.welders.push({
+        name: q.person_name, cert_no: q.cert_no, process: q.process,
+        standard: q.standard, usable: weldQualValidity(q).usable
+      }));
+      else { facts.welders.push({ name: n, cert_no: null, process: null, standard: null, usable: false });
+             facts.gaps.push(`No qualification on file for welder ${n}`); }
+    });
+    const bad = facts.welders.filter(w => !w.usable).map(w => w.name);
+    if (bad.length) facts.gaps.push(`Welder qualification not valid/on file: ${[...new Set(bad)].join(', ')}`);
+  } catch (_) {}
+
+  // Coatings from the finish labels already on the assemblies
+  facts.coatings = [...new Set((facts.assemblies || []).map(a => a.finish_label_raw).filter(Boolean))];
+  if (!facts.coatings.length) facts.gaps.push('No finish/coating recorded on the assemblies');
+
+  return facts;
+}
+
+// AI drafts prose ABOUT the facts. It is given them and told not to add any.
+async function cocDraftScope(facts) {
+  const summary = {
+    job_number: facts.job ? facts.job.job_number : null,
+    job_name: facts.job ? facts.job.name : null,
+    client: facts.job ? facts.job.client_name : null,
+    execution_class: facts.execClass,
+    assemblies: facts.assemblyCount,
+    total_weight_kg: facts.totalWeightKg,
+    assembly_marks: (facts.assemblies || []).slice(0, 25).map(a => a.assembly_mark),
+    coatings: facts.coatings,
+    weld_categories: (facts.ndt || []).map(n => n.category)
+  };
+  const result = await callClaude({
+    model: 'claude-sonnet-4-6', max_tokens: 700,
+    messages: [{ role: 'user', content: [{ type: 'text', text:
+`Write the scope-of-supply paragraphs for a structural steelwork Certificate of Conformity, for BAMA Fabrication Ltd (a UK structural steel fabricator).
+
+FACTS (the only information you may use):
+${JSON.stringify(summary, null, 2)}
+
+Rules:
+- Two or three short paragraphs of plain professional English. No headings, no bullet points, no markdown.
+- Describe WHAT was supplied and to what standards, in general terms drawn only from the facts above.
+- Do NOT state any number, quantity, weight, certificate number, heat number, percentage or date that is not in the facts above. If something isn't there, don't mention it.
+- Do NOT invent standards, approvals, notified bodies or test results.
+- Do NOT claim compliance with anything not implied by the execution class given.
+- Write as the fabricator, third person ("BAMA Fabrication Ltd has fabricated and supplied...").
+- If a fact is null, simply write around it.` }] }]
+  });
+  return (result.content?.find(b => b.type === 'text')?.text || '').trim();
+}
+
+// ── CoC PDF — native jsPDF, portrait ────────────────────────────────────────
+function drawCocPDF(jsPDF, d, logoDataUri) {
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  try {
+    doc.setProperties({
+      title: `Certificate of Conformity — ${d.certRef || ''}`,
+      subject: `Certificate of Conformity${d.jobName ? ' — ' + d.jobName : ''}`,
+      author: 'BAMA Fabrication', creator: 'BAMA Fabrication ERP'
+    });
+  } catch (e) { /* non-critical */ }
+
+  const pageW = 210, pageH = 297, mL = 16, mR = 16, mB = 16;
+  const usableW = pageW - mL - mR;
+  const accent = [255, 107, 0];
+  let y = 0;
+
+  const header = () => {
+    doc.setFillColor(24, 24, 27); doc.rect(0, 0, pageW, 26, 'F');
+    let tx = mL;
+    if (logoDataUri) {
+      try {
+        const props = doc.getImageProperties(logoDataUri);
+        const h = 13, w = h * (props.width / props.height);
+        doc.addImage(logoDataUri, mL, 6.5, w, h);
+        tx = mL + w + 6;
+      } catch (e) { /* logo optional */ }
+    }
+    doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(14);
+    doc.text('CERTIFICATE OF CONFORMITY', tx, 13);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(190, 190, 195);
+    doc.text('BAMA Fabrication Ltd  ·  structural steelwork', tx, 19.5);
+    doc.setTextColor(...accent); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+    doc.text(d.certRef || '', pageW - mR, 13, { align: 'right' });
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(190, 190, 195);
+    doc.text(`Rev ${d.revision || 1}  ·  ${d.issueDate || ''}`, pageW - mR, 19, { align: 'right' });
+    y = 33;
+  };
+
+  const need = h => { if (y + h > pageH - mB) { doc.addPage(); header(); } };
+
+  const sectionTitle = t => {
+    need(12);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...accent);
+    doc.text(t.toUpperCase(), mL, y);
+    doc.setDrawColor(...accent); doc.setLineWidth(0.3);
+    doc.line(mL, y + 1.6, mL + usableW, y + 1.6);
+    y += 6.5;
+  };
+
+  const kv = pairs => {
+    doc.setFontSize(8.5);
+    pairs.filter(p => p[1] !== null && p[1] !== undefined && String(p[1]).trim() !== '').forEach(p => {
+      need(6);
+      doc.setFont('helvetica', 'normal'); doc.setTextColor(110, 110, 115);
+      doc.text(String(p[0]), mL, y);
+      doc.setFont('helvetica', 'bold'); doc.setTextColor(35, 35, 40);
+      const lines = doc.splitTextToSize(String(p[1]), usableW - 46);
+      doc.text(lines, mL + 46, y);
+      y += Math.max(5, lines.length * 4.2);
+    });
+    y += 2;
+  };
+
+  const table = (headers, widths, rows) => {
+    if (!rows.length) return;
+    const drawHead = () => {
+      doc.setFillColor(242, 242, 244); doc.rect(mL, y, usableW, 6.5, 'F');
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(70, 70, 75);
+      let x = mL;
+      headers.forEach((h, i) => { doc.text(h, x + 1.5, y + 4.4); x += widths[i]; });
+      y += 6.5;
+    };
+    need(16); drawHead();
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
+    rows.forEach((r, ri) => {
+      const cells = r.map((c, i) => doc.splitTextToSize(String(c ?? ''), widths[i] - 3));
+      const rowH = Math.max(5.4, Math.max(...cells.map(l => l.length)) * 3.4 + 2);
+      if (y + rowH > pageH - mB) { doc.addPage(); header(); drawHead(); doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); }
+      if (ri % 2) { doc.setFillColor(250, 250, 251); doc.rect(mL, y, usableW, rowH, 'F'); }
+      let x = mL;
+      cells.forEach((lines, i) => { doc.setTextColor(40, 40, 45); doc.text(lines, x + 1.5, y + 3.9); x += widths[i]; });
+      doc.setDrawColor(228, 228, 232); doc.setLineWidth(0.1);
+      doc.line(mL, y + rowH, mL + usableW, y + rowH);
+      y += rowH;
+    });
+    y += 4;
+  };
+
+  header();
+
+  kv([
+    ['Client', d.client], ['Project', d.jobName], ['Contract / job no', d.jobNumber],
+    ['Site', d.site], ['Execution class', d.execClass ? `${d.execClass} to EN 1090-2` : null],
+    ['Assemblies supplied', d.assemblyCount ? String(d.assemblyCount) : null],
+    ['Total weight', d.totalWeightKg ? `${d.totalWeightKg.toLocaleString('en-GB')} kg` : null]
+  ]);
+
+  if (d.scopeText) {
+    sectionTitle('Scope of supply');
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(45, 45, 50);
+    String(d.scopeText).split(/\n\s*\n/).forEach(para => {
+      const lines = doc.splitTextToSize(para.trim(), usableW);
+      need(lines.length * 4.3 + 3);
+      doc.text(lines, mL, y); y += lines.length * 4.3 + 3;
+    });
+    y += 2;
+  }
+
+  if ((d.heatNumbers || []).length) {
+    sectionTitle('Material traceability');
+    table(['Section', 'Grade', 'Qty', 'Heat / cast no', 'Supplier'],
+      [46, 24, 16, 42, 50],
+      d.heatNumbers.map(h => [h.section, h.grade, h.qty, h.heat, h.supplier]));
+  }
+
+  if ((d.ndt || []).length) {
+    sectionTitle('Inspection carried out');
+    table(['Weld category', 'Welds', 'Visual', 'NDT required', 'NDT done'],
+      [72, 20, 26, 30, 30],
+      d.ndt.map(n => [n.category, n.population || '—',
+        `${n.visualDone}/${n.visualRequired}`,
+        n.ndtRequired ? `${n.ndtRequired} (${n.pct}%)` : 'none',
+        n.ndtRequired ? String(n.ndtDone) : '—']));
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(110, 110, 115);
+    need(6);
+    doc.text('Visual inspection is carried out on 100% of welds. Supplementary NDT extent is to EN 1090-2 for the stated execution class.', mL, y);
+    y += 6;
+  }
+
+  if ((d.welders || []).length) {
+    sectionTitle('Welder qualifications');
+    table(['Welder', 'Certificate no', 'Process', 'Standard'],
+      [58, 44, 30, 46],
+      d.welders.map(w => [w.name, w.cert_no || '—', w.process || '—', w.standard || '—']));
+  }
+
+  if ((d.coatings || []).length) {
+    sectionTitle('Surface treatment');
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(45, 45, 50);
+    const lines = doc.splitTextToSize(d.coatings.join('; '), usableW);
+    need(lines.length * 4.3 + 4);
+    doc.text(lines, mL, y); y += lines.length * 4.3 + 5;
+  }
+
+  // Declaration + signature
+  sectionTitle('Declaration');
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(45, 45, 50);
+  const decl = doc.splitTextToSize(
+    'We certify that the steelwork described above has been fabricated and supplied in accordance with the '
+    + 'contract documents, the approved drawings and the applicable requirements of EN 1090-2 for the execution '
+    + 'class stated, and that the materials, welding and inspection records supporting this certificate are held '
+    + 'by BAMA Fabrication Ltd and are available for inspection on request.', usableW);
+  need(decl.length * 4.3 + 32);
+  doc.text(decl, mL, y); y += decl.length * 4.3 + 10;
+
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(40, 40, 45);
+  doc.text('Signed on behalf of BAMA Fabrication Ltd', mL, y);
+  doc.setDrawColor(120, 120, 125); doc.setLineWidth(0.2);
+  doc.line(mL, y + 14, mL + 80, y + 14);
+  doc.line(mL + 96, y + 14, mL + 96 + 62, y + 14);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(110, 110, 115);
+  doc.text('Signature', mL, y + 18);
+  doc.text('Name and position', mL + 96, y + 18);
+  if (d.issuedBy) { doc.setFontSize(8); doc.setTextColor(40, 40, 45); doc.text(String(d.issuedBy), mL + 96, y + 12); }
+
+  const total = doc.getNumberOfPages();
+  for (let p = 1; p <= total; p++) {
+    doc.setPage(p);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5); doc.setTextColor(140, 140, 145);
+    doc.text(`Certificate of Conformity  ·  ${d.certRef || ''}  ·  BAMA Fabrication Ltd`, mL, pageH - 8);
+    doc.text(`Page ${p} of ${total}`, pageW - mR, pageH - 8, { align: 'right' });
+  }
+  return doc;
+}
+
+async function renderCocPdfBlob(d) {
+  const Ctor = resolveJsPDFCtor();
+  if (!Ctor) throw new Error('jsPDF not loaded on this page');
+  await loadLogoDataUri();
+  const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
+  const doc = drawCocPDF(Ctor, d, logo);
+  const blob = doc.output('blob');
+  console.log(`CoC PDF: ${(blob.size / 1024).toFixed(1)}KB`);
+  if (blob.size < 8192) console.warn('CoC PDF suspiciously small — check the renderer');
+  return blob;
+}
+
+// ── CoC UI ──────────────────────────────────────────────────────────────────
+let _cocFacts = null, _cocIssued = [];
+
+async function cocOpen() {
+  if (!_inspJob) { toast('Pick a job first', 'error'); return; }
+  if (!document.getElementById('cocModal')) {
+    const div = document.createElement('div');
+    div.innerHTML = `<div id="cocModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:1001;align-items:flex-start;justify-content:center;padding:26px;overflow-y:auto">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:860px;overflow:hidden">
+        <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <h3 style="margin:0;font-size:16px;flex:1">📜 Certificate of Conformity</h3>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('cocModal').style.display='none'">✕</button>
+        </div>
+        <div id="cocBody" style="padding:16px 20px;max-height:80vh;overflow-y:auto"></div>
+      </div></div>`;
+    document.body.appendChild(div.firstElementChild);
+  }
+  document.getElementById('cocModal').style.display = 'flex';
+  const host = document.getElementById('cocBody');
+  host.innerHTML = '<div style="color:var(--muted);font-size:12px">Gathering the records for this job…</div>';
+  try {
+    _cocFacts = await cocGatherFacts(_inspJob);
+    _cocIssued = await api.get(`/api/job-certificates?job_id=${_inspJob}&doc_type=coc`).catch(() => []);
+  } catch (e) {
+    host.innerHTML = `<div style="color:var(--red);font-size:12px">${escapeHtml(e.message)}</div>`;
+    return;
+  }
+  _cocRender();
+}
+
+function _cocRender() {
+  const host = document.getElementById('cocBody'); if (!host) return;
+  const f = _cocFacts;
+  const nextRev = _cocIssued.length ? Math.max(..._cocIssued.map(c => Number(c.revision) || 0)) + 1 : 1;
+  const ref = `COC-${(f.job && f.job.job_number) || 'JOB'}-${String(nextRev).padStart(2, '0')}`;
+  const box = (n, label, color) => `<div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid ${color};border-radius:8px;padding:7px 12px;min-width:96px">
+    <div style="font-size:17px;font-weight:800;color:${color}">${n}</div>
+    <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">${label}</div></div>`;
+
+  host.innerHTML = `
+    <p style="font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.6">
+      Every figure below is read from this job's own records — assemblies, BAMA MAT 001 heat numbers, inspection records,
+      welder approvals and finishes. <strong>Nothing here is drafted or estimated.</strong> Only the scope-of-supply wording is
+      AI-written, from those same facts, for you to edit before issuing.</p>
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+      ${box(f.assemblyCount || 0, 'Assemblies', '#38bdf8')}
+      ${box((f.totalWeightKg || 0).toLocaleString('en-GB'), 'kg', '#38bdf8')}
+      ${box(f.heatNumbers.length, 'Heat numbers', f.heatNumbers.length ? '#3ecf8e' : '#ff6b6b')}
+      ${box(f.welders.length, 'Welders', f.welders.length ? '#3ecf8e' : '#eab308')}
+      ${box(f.execClass || '—', 'Exec class', f.execClass ? '#3ecf8e' : '#ff6b6b')}
+    </div>
+
+    ${f.gaps.length ? `<div style="background:#3b2f0f;border:1px solid #eab308;border-radius:8px;padding:10px 13px;font-size:12px;color:#f0e0a4;margin-bottom:12px;line-height:1.65">
+      <strong>⚠ ${f.gaps.length} thing${f.gaps.length > 1 ? 's' : ''} to resolve before this certificate should go out:</strong><br>
+      ${f.gaps.map(g => '• ' + escapeHtml(g)).join('<br>')}
+      <br><br>You can still issue it — this is a warning, not a lock — but you are signing to say the records exist, so fix these first
+      where you can.</div>`
+    : `<div style="background:#0f2f22;border:1px solid #3ecf8e;border-radius:8px;padding:9px 13px;font-size:12px;color:#8ee6bd;margin-bottom:12px">
+      ✓ Every supporting record is present: heat numbers, welder approvals, inspection sample satisfied, finishes recorded.</div>`}
+
+    ${_cocIssued.length ? `<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">
+      Already issued: ${_cocIssued.map(c => `<a ${c.web_url ? `href="${escapeHtml(c.web_url)}" target="_blank"` : ''} style="color:var(--accent);text-decoration:underline dotted">${escapeHtml(c.cert_ref)} rev ${c.revision}</a> <span style="opacity:.7">(${escapeHtml(c.status)}, ${escapeHtml(c.issue_date || '')})</span>`).join(' · ')}<br>
+      Issuing again creates <strong>rev ${nextRev}</strong> and supersedes the previous one — issued certificates are never edited in place.</div>` : ''}
+
+    <div style="display:grid;grid-template-columns:1.2fr 1fr 1.6fr;gap:8px;margin-bottom:8px">
+      <div><label style="font-size:10px;color:var(--muted);display:block">Certificate ref</label>
+        <input id="coc_ref" value="${escapeHtml(ref)}" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box"></div>
+      <div><label style="font-size:10px;color:var(--muted);display:block">Issue date</label>
+        <input id="coc_date" type="date" value="${new Date().toISOString().slice(0, 10)}" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box"></div>
+      <div><label style="font-size:10px;color:var(--muted);display:block">Signed by (name and position)</label>
+        <input id="coc_by" value="Mateusz Braczyk, Director" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box"></div>
+    </div>
+
+    <div style="margin-bottom:10px">
+      <label style="font-size:10px;color:var(--muted);display:block">Scope of supply
+        <span style="text-transform:none">— AI-drafted from the facts above, then yours to edit</span></label>
+      <textarea id="coc_scope" rows="7" placeholder="Press ✨ Draft scope, or type it yourself"
+        style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);font-size:12.5px;box-sizing:border-box;resize:vertical;line-height:1.6"></textarea>
+    </div>
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-ghost btn-sm" onclick="cocDraft()">✨ Draft scope</button>
+      <button class="btn btn-ghost btn-sm" onclick="cocPreview()">👁 Preview PDF</button>
+      <button class="btn btn-primary btn-sm" onclick="cocIssue()">📜 Issue &amp; file to SharePoint</button>
+    </div>`;
+}
+
+async function cocDraft() {
+  const ta = document.getElementById('coc_scope');
+  ta.value = 'Drafting…'; ta.disabled = true;
+  try { ta.value = await cocDraftScope(_cocFacts); }
+  catch (e) { ta.value = ''; toast('Draft failed: ' + e.message + ' — type the scope yourself', 'error'); }
+  ta.disabled = false;
+}
+
+function _cocPdfData() {
+  const g = id => (document.getElementById(id) || {}).value || '';
+  const f = _cocFacts;
+  return {
+    certRef: g('coc_ref'),
+    revision: (_cocIssued.length ? Math.max(..._cocIssued.map(c => Number(c.revision) || 0)) : 0) + 1,
+    issueDate: g('coc_date'), issuedBy: g('coc_by'),
+    client: f.job ? f.job.client_name : null,
+    jobName: f.job ? f.job.name : null,
+    jobNumber: f.job ? f.job.job_number : null,
+    site: f.job ? (f.job.site_address || f.job.site || null) : null,
+    execClass: f.execClass, assemblyCount: f.assemblyCount, totalWeightKg: f.totalWeightKg,
+    scopeText: g('coc_scope'),
+    heatNumbers: f.heatNumbers, ndt: f.ndt, welders: f.welders, coatings: f.coatings
+  };
+}
+
+async function cocPreview() {
+  try {
+    const blob = await renderCocPdfBlob(_cocPdfData());
+    window.open(URL.createObjectURL(blob), '_blank');
+  } catch (e) { toast('Preview failed: ' + e.message, 'error'); }
+}
+
+async function cocIssue() {
+  const d = _cocPdfData();
+  if (!d.scopeText.trim()) { toast('Add the scope of supply first', 'error'); return; }
+  const warn = _cocFacts.gaps.length
+    ? `<br><br><strong style="color:#eab308">${_cocFacts.gaps.length} outstanding item(s)</strong> were flagged above. You are certifying that the supporting records exist.`
+    : '';
+  if (!await bamaConfirm(
+      `Issue <strong>${escapeHtml(d.certRef)}</strong> as revision ${d.revision}?<br><br>
+       <span style="font-size:12px;color:var(--muted)">The figures on it are frozen at today's values, the PDF is filed to the job folder,
+       and any previous revision is superseded.</span>${warn}`,
+      'Issue Certificate of Conformity')) return;
+  try {
+    const blob = await renderCocPdfBlob(d);
+    const name = `${d.certRef}.pdf`;
+    let up = null;
+    const folder = await findProjectFolder(_inspJob).catch(() => null);
+    if (folder) up = await uploadFileToFolder(folder.id, name, await blob.arrayBuffer(), 'application/pdf', BAMA_DRIVE_ID);
+    await api.post('/api/job-certificates', {
+      job_id: _inspJob, doc_type: 'coc', cert_ref: d.certRef,
+      issue_date: d.issueDate, issued_by: d.issuedBy, exec_class: d.execClass,
+      scope_text: d.scopeText,
+      payload: {   // frozen snapshot — the live figures move on after today
+        assemblyCount: d.assemblyCount, totalWeightKg: d.totalWeightKg,
+        heatNumbers: d.heatNumbers, ndt: d.ndt, welders: d.welders,
+        coatings: d.coatings, gapsAtIssue: _cocFacts.gaps
+      },
+      file_name: name,
+      sharepoint_file_id: up ? up.id : null,
+      drive_id: up ? BAMA_DRIVE_ID : null,
+      web_url: up ? (up.webUrl || null) : null
+    });
+    toast(up ? `${d.certRef} issued and filed to the job folder` : `${d.certRef} issued — SharePoint unavailable, PDF opened instead`, 'success');
+    if (up && up.webUrl) window.open(up.webUrl, '_blank');
+    else window.open(URL.createObjectURL(blob), '_blank');
+    _cocIssued = await api.get(`/api/job-certificates?job_id=${_inspJob}&doc_type=coc`).catch(() => []);
+    _cocRender();
+  } catch (e) { toast('Issue failed: ' + e.message, 'error'); }
 }

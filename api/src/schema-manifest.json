@@ -964,6 +964,16 @@
       "seedForms": []
     },
     {
+      "script": "create-job-certificates.sql",
+      "title": "Every Certificate of Conformity and Declaration of Performance BAMA issues,",
+      "kind": "structural",
+      "tables": [
+        "JobCertificates"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
       "script": "create-labour-log.sql",
       "title": "LabourLog \u2014 the locked audit record of approved hours, fed from ProjectHours",
       "kind": "structural",

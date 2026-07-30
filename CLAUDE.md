@@ -1322,6 +1322,43 @@ blob-size diagnostic. Saves to the job's SharePoint folder via
 `findProjectFolder`. Pinned by `tests/itp-generate.js` (33 cases, including that
 the ITP's count equals `_inspProgress`'s required count at both EXC2 and EXC3).
 
+## Certificate of Conformity (F1b, 2026-07-30 — Office › Inspection & NDT › 📜 CoC)
+
+`JobCertificates` (`api/sql/create-job-certificates.sql`, new table, no restart)
+registers every issued CoC **and** DoP — one table, `doc_type` discriminator.
+API `api/src/functions/job-certificates.js`.
+
+**A CoC is contractual, not regulated**, which is why contractors all word the
+request differently — so the narrative CAN be AI-drafted. What cannot:
+`cocGatherFacts(jobId)` reads every FIGURE out of the ERP — assemblies
+(tonnage, marks, finishes), BAMA MAT 001 heat numbers (out of the submission
+answers JSON, filtered to the job), inspection plan + records for NDT extent
+**achieved**, welder qualifications with validity. `cocDraftScope()` passes those
+facts as JSON and forbids the model from stating any number, heat number,
+certificate number, percentage or date not present in them, or inventing
+standards/notified bodies/approvals. Contrast the DoP, which is regulated and
+whose fields are not AI-drafted at all (see the rule near the top of this file).
+
+**Gaps are surfaced, never swallowed.** Missing heat numbers, an unmet
+inspection sample, failed inspections, invalid welder qualifications, a
+non-'Accepted' material receipt — each becomes a `gaps` entry shown in an amber
+panel before issue, and the panel says plainly it's a warning not a lock (his
+call throughout: don't stop the shop, do record it). `gapsAtIssue` is stored in
+the payload so what was outstanding at signing is provable later.
+
+**Issued certificates are frozen.** `payload` snapshots every certified figure,
+because live NDT counts and drawing revisions move on and a re-render a year
+later would no longer match the paper the client holds. Re-issuing increments
+`revision`, supersedes the previous row, and the PUT endpoint accepts only file
+refs / notes / status — it explicitly refuses to edit certified figures.
+
+PDF: `drawCocPDF` / `renderCocPdfBlob` — native jsPDF portrait; sections are
+omitted entirely when there's no data rather than printed empty; the "visual
+inspection is carried out on 100% of welds" line is fixed text, not derived;
+blank key-values dropped; declaration + signature block; filed to the job's
+SharePoint folder. Pinned by `tests/coc-certificate.js` (43 cases, mostly
+honesty properties rather than layout).
+
 ## Modal → Page mapping
 
 Every `id=…Modal` element in the HTML, by page. Handy when tracing an

@@ -196,7 +196,8 @@ Ranked by value, with what this session's work already changed:
     free-text product description / scope.
     NEEDED FROM MATEUSZ: notified body number, FPC certificate number,
     declared performance values, execution class per product-type.
-  · **CoC — Certificate of Conformity.** A contractual/commercial document,
+  · **CoC — ✅ DONE 2026-07-30** (see CLAUDE.md). Built as specified below.
+    **Certificate of Conformity.** A contractual/commercial document,
     not a regulated one, which is why main contractors ask for it in wording
     that varies. Template with the job's actual data (contract, drawings and
     revisions, materials with heat numbers, welding standards, NDT extent
