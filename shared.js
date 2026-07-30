@@ -49103,6 +49103,7 @@ function _inspRender() {
       <button class="btn btn-ghost btn-sm" onclick="itpOpen()">📋 ITP</button>
       <button class="btn btn-ghost btn-sm" onclick="cocOpen()">📜 CoC</button>
       <button class="btn btn-ghost btn-sm" onclick="dopOpen()">🏷 DoP</button>
+      <button class="btn btn-ghost btn-sm" onclick="traceOpen()">🔗 Traceability</button>
       <button class="btn btn-primary btn-sm" onclick="omOpen()">📚 O&amp;M Pack</button>
       <button class="btn btn-ghost btn-sm" onclick="inspSaveCounts()">💾 Save weld counts</button>
       ${(totalNdtShort || totalVisShort)
@@ -51381,4 +51382,331 @@ async function cocSetMode(mode) {
   try { _cocIssued = await api.get(`/api/job-certificates?job_id=${_inspJob}&doc_type=${_cocMode}`); }
   catch (_) { _cocIssued = []; }
   _cocRender();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MATERIAL TRACEABILITY (2026-07-30)
+//
+// Closes the EN 1090 chain: heat/cast number → assembly → who fabricated and
+// welded it, on which machine → despatch.
+//
+// The chain is only as strong as what was recorded, and the report says so
+// rather than implying more than it can prove. Per assembly it reports one of:
+//   piece    — heats allocated to that specific assembly (AssemblyHeatAllocations)
+//   contract — heats known for the job but not allocated to this assembly
+//   none     — no heat numbers recorded for the job at all
+// Contract level is generally accepted at EXC2; EXC3 and client traceability
+// clauses usually want piece level. Never claim piece level from contract data.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const TRACE_LEVELS = {
+  piece:    { label: 'Piece level',    color: '#3ecf8e' },
+  contract: { label: 'Contract level', color: '#eab308' },
+  none:     { label: 'No heat data',   color: '#ff6b6b' }
+};
+
+// Pure: build the chain. Deterministic and unit-tested — no AI anywhere near it,
+// because a traceability claim is either supported by records or it isn't.
+function traceBuildChain({ assemblies, heats, allocations, actions, despatches }) {
+  const allocByAsm = {};
+  (allocations || []).forEach(a => {
+    const key = a.assembly_id != null ? String(a.assembly_id) : `mark:${a.assembly_mark}`;
+    (allocByAsm[key] = allocByAsm[key] || []).push(a);
+  });
+  const actByAsm = {};
+  (actions || []).forEach(a => { (actByAsm[String(a.assembly_id)] = actByAsm[String(a.assembly_id)] || []).push(a); });
+
+  const anyHeats = (heats || []).length > 0;
+  const rows = (assemblies || []).map(asm => {
+    const key = String(asm.id);
+    const alloc = allocByAsm[key] || allocByAsm[`mark:${asm.assembly_mark}`] || [];
+    const acts = actByAsm[key] || [];
+    const stage = s => acts.filter(a => a.stage === s);
+    const names = s => [...new Set(stage(s).map(a => a.operator_name).filter(Boolean))];
+    const level = alloc.length ? 'piece' : (anyHeats ? 'contract' : 'none');
+    return {
+      assembly_id: asm.id, mark: asm.assembly_mark, quantity: asm.quantity,
+      weight_kg: asm.total_weight_kg || null, status: asm.status,
+      level,
+      heats: alloc.map(a => a.heat_no),
+      allocations: alloc,
+      fabricatedBy: names('fab'), weldedBy: names('weld'), completedBy: names('complete'),
+      machines: [...new Set(acts.map(a => a.welding_machine_id).filter(v => v != null))],
+      qtyFab: stage('fab').reduce((s, a) => s + (Number(a.qty) || 0), 0),
+      qtyWeld: stage('weld').reduce((s, a) => s + (Number(a.qty) || 0), 0),
+      qtyComplete: stage('complete').reduce((s, a) => s + (Number(a.qty) || 0), 0),
+      despatched: (despatches || []).filter(d =>
+        String(d.assembly_mark || '').trim().toLowerCase() === String(asm.assembly_mark || '').trim().toLowerCase())
+    };
+  });
+
+  const counts = { piece: 0, contract: 0, none: 0 };
+  rows.forEach(r => counts[r.level]++);
+  // Heats received but never allocated anywhere — the honest gap list.
+  const allocatedHeats = new Set((allocations || []).map(a => String(a.heat_no).trim()));
+  const unallocated = (heats || []).filter(h => !allocatedHeats.has(String(h.heat).trim()));
+  return {
+    rows, counts,
+    heatCount: (heats || []).length,
+    unallocated,
+    overallLevel: counts.piece && !counts.contract && !counts.none ? 'piece'
+                : counts.none === rows.length && rows.length ? 'none' : 'contract'
+  };
+}
+
+// Reverse lookup: given a heat number, which assemblies contain it.
+function traceWhereUsed(heatNo, allocations) {
+  const key = String(heatNo || '').trim().toLowerCase();
+  if (!key) return [];
+  return (allocations || [])
+    .filter(a => String(a.heat_no || '').trim().toLowerCase() === key)
+    .map(a => ({ assembly_id: a.assembly_id, mark: a.assembly_mark, section: a.section, grade: a.grade }));
+}
+
+// ── Gather + report ─────────────────────────────────────────────────────────
+async function traceGather(jobId) {
+  const facts = _cocFacts && _cocFacts.job && String(_cocFacts.job.id) === String(jobId)
+    ? _cocFacts : await cocGatherFacts(jobId);
+  const [assemblies, allocations] = await Promise.all([
+    api.get(`/api/job-assemblies/${jobId}`).catch(() => []),
+    api.get(`/api/heat-allocations?job_id=${jobId}`).catch(() => [])
+  ]);
+  let actions = [];
+  try { actions = await api.get(`/api/job-assemblies/${jobId}/actions`); } catch (_) {
+    // Not every deployment exposes an actions endpoint; the chain degrades to
+    // heats + assemblies + despatch rather than failing.
+  }
+  return {
+    job: facts.job, execClass: facts.execClass,
+    heats: facts.heatNumbers || [],
+    chain: traceBuildChain({ assemblies: assemblies || [], heats: facts.heatNumbers || [],
+                             allocations: allocations || [], actions, despatches: [] }),
+    allocations: allocations || []
+  };
+}
+
+function drawTracePDF(jsPDF, d, logoDataUri) {
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' });
+  try {
+    doc.setProperties({ title: `Material Traceability — ${d.jobNumber || ''}`,
+      subject: 'Material traceability report', author: 'BAMA Fabrication', creator: 'BAMA Fabrication ERP' });
+  } catch (e) { /* non-critical */ }
+  const pageW = 297, pageH = 210, mL = 12, mR = 12, mB = 14;
+  const usableW = pageW - mL - mR;
+  const accent = [255, 107, 0];
+  let y = 0;
+
+  const header = () => {
+    doc.setFillColor(24, 24, 27); doc.rect(0, 0, pageW, 22, 'F');
+    let tx = mL;
+    if (logoDataUri) {
+      try { const p = doc.getImageProperties(logoDataUri); const h = 12, w = h * (p.width / p.height);
+        doc.addImage(logoDataUri, mL, 5, w, h); tx = mL + w + 5; } catch (e) {}
+    }
+    doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
+    doc.text('MATERIAL TRACEABILITY', tx, 11);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(190, 190, 195);
+    doc.text([d.jobNumber, d.jobName, d.client].filter(Boolean).join('  ·  '), tx, 17);
+    doc.setTextColor(...accent); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+    doc.text(`${(TRACE_LEVELS[d.overallLevel] || {}).label || ''}`, pageW - mR, 11, { align: 'right' });
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(190, 190, 195);
+    doc.text(`${d.execClass || ''}  ·  ${d.issueDate || ''}`, pageW - mR, 16.5, { align: 'right' });
+    y = 27;
+  };
+  header();
+
+  // State the limits of the chain plainly, at the top.
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(90, 90, 95);
+  const note = d.overallLevel === 'piece'
+    ? 'Every assembly below has heat/cast numbers allocated to it — piece-level traceability.'
+    : d.overallLevel === 'none'
+      ? 'No heat/cast numbers are recorded for this contract. Complete BAMA MAT 001 for the deliveries to establish traceability.'
+      : 'Heat/cast numbers are recorded for this contract. Assemblies marked "contract" have not had specific heats allocated to '
+        + 'them, so traceability for those is at contract level: the listed heats were supplied to this contract, but the '
+        + 'individual piece each went into was not recorded.';
+  doc.splitTextToSize(note, usableW).forEach(l => { doc.text(l, mL, y); y += 3.6; });
+  y += 4;
+
+  const table = (title, headers, widths, rows) => {
+    if (!rows.length) return;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...accent);
+    if (y + 14 > pageH - mB) { doc.addPage(); header(); }
+    doc.text(title.toUpperCase(), mL, y);
+    doc.setDrawColor(...accent); doc.setLineWidth(0.3); doc.line(mL, y + 1.6, mL + usableW, y + 1.6);
+    y += 6;
+    const drawHead = () => {
+      doc.setFillColor(242, 242, 244); doc.rect(mL, y, usableW, 6, 'F');
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(70, 70, 75);
+      let x = mL; headers.forEach((h, i) => { doc.text(h, x + 1.5, y + 4.1); x += widths[i]; });
+      y += 6;
+    };
+    drawHead();
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7);
+    rows.forEach((r, ri) => {
+      const cells = r.map((cv, i) => doc.splitTextToSize(String(cv ?? ''), widths[i] - 3));
+      const rowH = Math.max(5, Math.max(...cells.map(l => l.length)) * 3.2 + 1.8);
+      if (y + rowH > pageH - mB) { doc.addPage(); header(); drawHead(); doc.setFont('helvetica', 'normal'); doc.setFontSize(7); }
+      if (ri % 2) { doc.setFillColor(250, 250, 251); doc.rect(mL, y, usableW, rowH, 'F'); }
+      let x = mL;
+      cells.forEach((lines, i) => { doc.setTextColor(40, 40, 45); doc.text(lines, x + 1.5, y + 3.7); x += widths[i]; });
+      doc.setDrawColor(228, 228, 232); doc.setLineWidth(0.1); doc.line(mL, y + rowH, mL + usableW, y + rowH);
+      y += rowH;
+    });
+    y += 5;
+  };
+
+  table('Material received', ['Section', 'Grade', 'Qty', 'Heat / cast no', 'Supplier', 'PO'],
+    [62, 28, 18, 46, 66, 53],
+    (d.heats || []).map(h => [h.section, h.grade, h.qty, h.heat, h.supplier, h.po]));
+
+  table('Assemblies', ['Mark', 'Qty', 'kg', 'Traceability', 'Heats allocated', 'Fabricated by', 'Welded by'],
+    [30, 14, 20, 30, 66, 56, 57],
+    (d.rows || []).map(r => [r.mark, r.quantity, r.weight_kg ? Number(r.weight_kg).toFixed(0) : '',
+      (TRACE_LEVELS[r.level] || {}).label || r.level,
+      r.heats.join(', ') || '—', r.fabricatedBy.join(', ') || '—', r.weldedBy.join(', ') || '—']));
+
+  if ((d.unallocated || []).length) {
+    table('Heats received but not allocated to any assembly', ['Heat / cast no', 'Section', 'Grade', 'Supplier'],
+      [50, 80, 40, 103],
+      d.unallocated.map(h => [h.heat, h.section, h.grade, h.supplier]));
+  }
+
+  const total = doc.getNumberOfPages();
+  for (let p = 1; p <= total; p++) {
+    doc.setPage(p);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5); doc.setTextColor(140, 140, 145);
+    doc.text(`Material traceability  ·  ${d.jobNumber || ''}  ·  BAMA Fabrication Ltd`, mL, pageH - 6);
+    doc.text(`Page ${p} of ${total}`, pageW - mR, pageH - 6, { align: 'right' });
+  }
+  return doc;
+}
+
+async function renderTracePdfBlob(d) {
+  const Ctor = await resolveJsPDFCtor();
+  if (!Ctor) throw new Error('jsPDF not loaded on this page');
+  await loadLogoDataUri();
+  const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
+  const blob = drawTracePDF(Ctor, d, logo).output('blob');
+  console.log(`Traceability PDF: ${(blob.size / 1024).toFixed(1)}KB`);
+  return blob;
+}
+
+// ── UI ──────────────────────────────────────────────────────────────────────
+let _trace = null;
+
+async function traceOpen() {
+  if (!_inspJob) { toast('Pick a job first', 'error'); return; }
+  if (!document.getElementById('traceModal')) {
+    const div = document.createElement('div');
+    div.innerHTML = `<div id="traceModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:1001;align-items:flex-start;justify-content:center;padding:26px;overflow-y:auto">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:1000px;overflow:hidden">
+        <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <h3 style="margin:0;font-size:16px;flex:1">🔗 Material Traceability</h3>
+          <button class="btn btn-ghost btn-sm" onclick="tracePdf()">📄 PDF</button>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('traceModal').style.display='none'">✕</button>
+        </div>
+        <div id="traceBody" style="padding:16px 20px;max-height:80vh;overflow-y:auto"></div>
+      </div></div>`;
+    document.body.appendChild(div.firstElementChild);
+  }
+  document.getElementById('traceModal').style.display = 'flex';
+  const host = document.getElementById('traceBody');
+  host.innerHTML = '<div style="color:var(--muted);font-size:12px">Following the chain…</div>';
+  try { _trace = await traceGather(_inspJob); }
+  catch (e) { host.innerHTML = `<div style="color:var(--red);font-size:12px">${escapeHtml(e.message)}</div>`; return; }
+  _traceRender();
+}
+
+function _traceRender() {
+  const host = document.getElementById('traceBody'); if (!host) return;
+  const t = _trace, c = t.chain;
+  const lvl = TRACE_LEVELS[c.overallLevel] || TRACE_LEVELS.none;
+  const box = (n, label, color) => `<div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid ${color};border-radius:8px;padding:7px 12px;min-width:96px">
+    <div style="font-size:17px;font-weight:800;color:${color}">${n}</div>
+    <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">${label}</div></div>`;
+
+  host.innerHTML = `
+    <div style="background:${c.overallLevel === 'piece' ? '#0f2f22' : c.overallLevel === 'none' ? '#3b1a1a' : '#3b2f0f'};
+                border:1px solid ${lvl.color};border-radius:8px;padding:10px 13px;font-size:12px;
+                color:${c.overallLevel === 'piece' ? '#8ee6bd' : c.overallLevel === 'none' ? '#f0b4b4' : '#f0e0a4'};margin-bottom:12px;line-height:1.6">
+      <strong>${lvl.label}</strong> for this contract.
+      ${c.overallLevel === 'piece'
+        ? ' Every assembly has its heats allocated — this is what an EXC3 or a client traceability clause wants.'
+        : c.overallLevel === 'none'
+          ? ' No heat numbers on file. Complete BAMA MAT 001 for the deliveries first — without it there is no chain to report.'
+          : ' The heats supplied to this contract are known, but which piece each went into is not recorded for every assembly.'
+            + ' That is normally accepted at EXC2. Allocate heats below if this job needs piece level.'}
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+      ${box(c.heatCount, 'Heats received', c.heatCount ? '#3ecf8e' : '#ff6b6b')}
+      ${box(c.counts.piece, 'Piece level', '#3ecf8e')}
+      ${box(c.counts.contract, 'Contract level', '#eab308')}
+      ${box(c.unallocated.length, 'Heats unused', c.unallocated.length ? '#eab308' : '#3ecf8e')}
+    </div>
+
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:5px">Allocate heats to assemblies</div>
+    <div style="font-size:11.5px;color:var(--muted);margin-bottom:8px;line-height:1.6">
+      Tick the heats, tick the assemblies, and link them. Allocating the same pair twice is skipped rather than duplicated.</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px">
+      <div><div style="font-size:10px;color:var(--muted);margin-bottom:3px">Heats received (${t.heats.length})</div>
+        <div style="max-height:180px;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:5px">
+          ${t.heats.length ? t.heats.map((h, i) => `<label style="display:flex;gap:6px;align-items:center;font-size:11.5px;padding:2px 0;cursor:pointer">
+            <input type="checkbox" class="trHeat" data-i="${i}">
+            <span><strong>${escapeHtml(h.heat)}</strong> <span style="color:var(--muted)">${escapeHtml(h.section || '')} ${escapeHtml(h.grade || '')}</span></span></label>`).join('')
+            : '<div style="font-size:11.5px;color:#eab308;padding:4px">None — complete BAMA MAT 001 for this job</div>'}</div></div>
+      <div><div style="font-size:10px;color:var(--muted);margin-bottom:3px">Assemblies (${c.rows.length})</div>
+        <div style="max-height:180px;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:5px">
+          ${c.rows.map(r => `<label style="display:flex;gap:6px;align-items:center;font-size:11.5px;padding:2px 0;cursor:pointer">
+            <input type="checkbox" class="trAsm" data-id="${r.assembly_id}" data-mark="${escapeHtml(r.mark)}">
+            <span><strong>${escapeHtml(r.mark)}</strong>
+              <span style="color:${(TRACE_LEVELS[r.level] || {}).color}">● ${(TRACE_LEVELS[r.level] || {}).label}</span>
+              ${r.heats.length ? `<span style="color:var(--muted)">${escapeHtml(r.heats.join(', '))}</span>` : ''}</span></label>`).join('')}</div></div>
+    </div>
+    <button class="btn btn-primary btn-sm" onclick="traceAllocate()">🔗 Link selected</button>
+
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:14px 0 5px">Chain</div>
+    <table style="width:100%;border-collapse:collapse;font-size:11.5px">
+      <thead><tr>${['Assembly', 'Level', 'Heats', 'Fabricated', 'Welded', 'Machine'].map(h =>
+        `<th style="text-align:left;padding:5px;font-size:9px;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--border)">${h}</th>`).join('')}</tr></thead>
+      <tbody>${c.rows.map((r, i) => `<tr style="${i % 2 ? 'background:rgba(255,255,255,0.015);' : ''}">
+        <td style="padding:5px;border-bottom:1px solid var(--border)"><strong>${escapeHtml(r.mark)}</strong>
+          <span style="color:var(--muted)">×${r.quantity}</span></td>
+        <td style="padding:5px;border-bottom:1px solid var(--border);color:${(TRACE_LEVELS[r.level] || {}).color}">${(TRACE_LEVELS[r.level] || {}).label}</td>
+        <td style="padding:5px;border-bottom:1px solid var(--border)">${escapeHtml(r.heats.join(', ') || '—')}</td>
+        <td style="padding:5px;border-bottom:1px solid var(--border);color:var(--muted)">${escapeHtml(r.fabricatedBy.join(', ') || '—')}</td>
+        <td style="padding:5px;border-bottom:1px solid var(--border);color:var(--muted)">${escapeHtml(r.weldedBy.join(', ') || '—')}</td>
+        <td style="padding:5px;border-bottom:1px solid var(--border);color:var(--muted)">${r.machines.join(', ') || '—'}</td>
+      </tr>`).join('')}</tbody></table>`;
+}
+
+async function traceAllocate() {
+  const heats = [...document.querySelectorAll('.trHeat:checked')].map(el => _trace.heats[+el.dataset.i]);
+  const asms = [...document.querySelectorAll('.trAsm:checked')].map(el => ({ id: +el.dataset.id, mark: el.dataset.mark }));
+  if (!heats.length || !asms.length) { toast('Tick at least one heat and one assembly', 'error'); return; }
+  const rows = [];
+  asms.forEach(a => heats.forEach(h => rows.push({
+    assembly_id: a.id, assembly_mark: a.mark, heat_no: h.heat,
+    section: h.section || null, grade: h.grade || null,
+    supplier: h.supplier || null, po_number: h.po || null, qty: h.qty || null
+  })));
+  try {
+    const res = await api.post('/api/heat-allocations-bulk', { job_id: _inspJob, rows });
+    toast(`${res.inserted} link${res.inserted === 1 ? '' : 's'} made${res.skipped ? `, ${res.skipped} already there` : ''}`, 'success');
+    _trace = await traceGather(_inspJob);
+    _traceRender();
+  } catch (e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+async function tracePdf() {
+  try {
+    const t = _trace;
+    const blob = await renderTracePdfBlob({
+      jobNumber: t.job ? t.job.job_number : '', jobName: t.job ? t.job.name : '',
+      client: t.job ? t.job.client_name : '', execClass: t.execClass,
+      issueDate: new Date().toISOString().slice(0, 10),
+      overallLevel: t.chain.overallLevel, heats: t.heats,
+      rows: t.chain.rows, unallocated: t.chain.unallocated
+    });
+    window.open(URL.createObjectURL(blob), '_blank');
+  } catch (e) { toast('PDF failed: ' + e.message, 'error'); }
 }

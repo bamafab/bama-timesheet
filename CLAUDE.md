@@ -1446,6 +1446,31 @@ reason in the UI and stored in the payload; an entirely empty pack throws rather
 than producing a cover with nothing behind it. Encrypted client PDFs load with
 `ignoreEncryption`.
 
+## Material traceability (2026-07-30 — Office › Inspection & NDT › 🔗 Traceability)
+
+**The gap this filled:** the ERP knew which heats arrived (BAMA MAT 001), which
+assemblies were made and by whom (JobAssemblies + JobAssemblyActions) and what
+was despatched — but **nothing joined a heat number to an assembly**, so
+traceability could only ever be stated at contract level.
+`AssemblyHeatAllocations` (`api/sql/create-heat-allocations.sql`, new table, no
+restart) is that bridge, many-to-many; API `api/src/functions/heat-allocations.js`
+(+ `/api/heat-allocations-bulk`, which skips duplicate assembly+heat pairs
+rather than doubling the paperwork).
+
+**Never claim a level the records don't support.** `traceBuildChain()` grades
+every assembly: `piece` (heats allocated to that specific assembly), `contract`
+(heats known for the job but not allocated to this one) or `none` (no heats
+recorded at all). The job's overall level is its weakest assembly — one
+unallocated assembly means the contract is contract-level, not piece-level.
+Contract level is generally accepted at EXC2; EXC3 and client traceability
+clauses usually want piece. The report states the limitation in prose at the top
+of the PDF, and lists heats received but never allocated as an explicit gap.
+Allocation is optional and done by ticking heats × assemblies — matching falls
+back to `assembly_mark` when there's no id, and despatch matching is
+case/whitespace insensitive. `traceWhereUsed()` is the reverse lookup.
+`drawTracePDF` is landscape native jsPDF. Pinned by `tests/traceability.js`
+(31 cases, mostly about not overstating the level).
+
 ## Modal → Page mapping
 
 Every `id=…Modal` element in the HTML, by page. Handy when tracing an

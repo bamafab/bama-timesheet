@@ -942,6 +942,16 @@
       "seedForms": []
     },
     {
+      "script": "create-heat-allocations.sql",
+      "title": "THE MISSING LINK. Before this the ERP knew:",
+      "kind": "structural",
+      "tables": [
+        "AssemblyHeatAllocations"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
       "script": "create-inspection-plans.sql",
       "title": "Sampled inspection instead of signing off every piece.",
       "kind": "structural",

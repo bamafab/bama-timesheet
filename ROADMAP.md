@@ -134,8 +134,16 @@ Priority order as it stands:
 3. **F7** — assign-path double counting, verify against live data.
 4. **QB Won→Project rebuild** — half-state C260327; schema decision is
    Mateusz's now (Daniel is out).
-5. **Running Cost tile source** — aggregate POs + supplier invoices; and point
-   the Labour Cost tile at LabourLog actuals instead of the quote budget.
+5. ~~Running Cost / Labour Cost tile sources~~ ✅ **ALREADY DONE** (verified in
+   code 2026-07-30 — this entry was stale and had been recommended repeatedly
+   off it, wrongly). `_projectLabourCostLogged` = Σ(ProjectHours × basic rate),
+   S000 excluded, CIS included, no OT uplift; the tile reads that, and falls
+   back to showing variance vs the quote budget only as *meta text*. Running
+   Cost = nett total of active POs, which is **commitments not invoices** by
+   deliberate design (documented on the Job Costing PDF: commitments lead cash).
+   If supplier-invoice-based actuals are ever wanted they'd be a second figure,
+   not a replacement. **Lesson: verify against the code before recommending a
+   fix from a roadmap line.**
 6. **Balustrade F7** — step 3 spigots for glass families, step 2 handrail
    image-button picker. Blocked on real numbers from Mateusz.
 7. **Staircase / balustrade live calibration** — Q250410 through the spiral
@@ -216,12 +224,12 @@ Ranked by value, with what this session's work already changed:
     percentages, so the ITP and the actual sampling can never disagree. Visual
     always shows as 100%. Issue as a document AND keep it live so achieved-vs-
     planned is visible during the job.
-- **F2 — Material traceability report** (heat number → assembly → despatch).
-  NOTE: `api/src/functions/traceability.js` is welding machines / service types
-  / suppliers — it is NOT material traceability, despite the name. Heat numbers
-  currently live inside MAT 001 submission JSON, not a queryable column, so this
-  needs either extraction into a proper table or a normalised traceability
-  table. Closes the EN 1090 loop.
+- ~~**F2 — Material traceability report**~~ ✅ **DONE 2026-07-30** —
+  `AssemblyHeatAllocations` bridges heat → assembly (the link that didn't
+  exist), report grades each assembly piece/contract/none and never overstates.
+  Note `api/src/functions/traceability.js` remains welding machines / service
+  types / suppliers despite its name — material traceability is in
+  `heat-allocations.js`.
 - **F3 — Consumables & requisitions** (the dropped half). CON 001 exists as a
   QMS form so issue-out is *recorded* but not *stocked* — no ledger, no reorder.
   **All three decisions settled by Mateusz 2026-07-30:**
