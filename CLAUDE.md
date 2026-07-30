@@ -1471,6 +1471,43 @@ case/whitespace insensitive. `traceWhereUsed()` is the reverse lookup.
 `drawTracePDF` is landscape native jsPDF. Pinned by `tests/traceability.js`
 (31 cases, mostly about not overstating the level).
 
+## Toolbox talks (2026-07-30 — Office › Traceability › 🗣 Toolbox Talks)
+
+`ToolboxTalks` (library) + `ToolboxTalkDeliveries` (each time one was given) —
+`api/sql/create-toolbox-talks.sql`, new tables, no restart; API
+`api/src/functions/toolbox-talks.js`.
+
+**SIGNATURE IMAGES NEVER REACH THE DATABASE.** The signed PDF filed to
+SharePoint is the evidence; the register stores name / role / signed flag only.
+The API strips anything else deliberately and the client never sends the image.
+Same rule as the QMS engine.
+
+**An attendance record can't be empty or half-made.** The API rejects a delivery
+with no attendees or no named presenter; the UI blocks it first; and signing a
+name auto-ticks their attendance so it's impossible to have a signature without
+a record. Deliveries snapshot `talk_ref` and `talk_title`, so deleting a library
+talk never orphans the evidence that it was given.
+
+**AI drafts talk CONTENT — the right use here** (safety guidance in plain words,
+not a calculation or a regulated declaration). Prompt forbids invented
+statistics, demands UK practice and trade specificity, and forbids asserting
+that BAMA has any particular permit system or kit. Drafts are `source:'drafted'`,
+badged in the UI, and the review banner says what the draft cannot know.
+`TBT_STARTER_LIBRARY` (10 talks, in shared.js so the wording lives in one place)
+seeds on demand: hot works, height, lifting, manual handling, PPE, plant checks,
+COSHH/fume, site traffic, electrical, housekeeping.
+
+Paper first, device optional: `drawTbtPDF` prints ruled signature lines plus
+spare rows for walk-ups (14 on a blank print), and renders captured e-signatures
+where they exist. Job-specific talks file to the job folder; general ones to
+`01 - Company Management / 04 - H&S / Toolbox Talks`.
+
+**TESTING TRAP, hit three times today:** do NOT use `/functionName[\s\S]*?\n}/`
+to extract a function whose body contains a JSON template — the template's
+closing brace matches first and the capture truncates silently, so assertions
+about the tail of the prompt fail against correct code. Slice between known
+boundaries instead.
+
 ## Modal → Page mapping
 
 Every `id=…Modal` element in the HTML, by page. Handy when tracing an

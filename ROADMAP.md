@@ -259,9 +259,10 @@ Ranked by value, with what this session's work already changed:
       5. Plant categories already carry the type, so machine "types" come free.
     Migration must backfill a PlantItems row per existing WeldingMachine and
     link it; existing assembly history stays intact.
-- **F4 — Toolbox talk register.** Cheapest win on the list now: the QMS engine,
-  personnel picker and finger-signature field all exist, so it really is a
-  definition row plus a register view.
+- ~~**F4 — Toolbox talk register**~~ ✅ **DONE 2026-07-30** — library +
+  AI drafting + delivery register with signatures, own tab rather than a QMS
+  definition row (a talk needs reusable content and an attendance history,
+  which the generic form engine doesn't model).
 - **F5 — Accident / near-miss register + RIDDOR helper.** POL001 promises an
   accident book and an F2508 process and there is no digital form. This one
   carries legal weight (RIDDOR reporting deadlines) and near-miss trending is

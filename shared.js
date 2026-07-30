@@ -3425,6 +3425,7 @@ function switchTab(name) {
   if (name === 'plant') renderPlantTab();
   if (name === 'welders') renderWeldersTab();
   if (name === 'inspection') renderInspectionTab();
+  if (name === 'toolbox') renderToolboxTab();
   if (name === 'project' || name === 'employee') renderManagerView();
 }
 
@@ -23311,6 +23312,9 @@ function renderUnifiedSidebar() {
         </button>
         <button class="sidebar-nav-item${a('office','inspection')}" data-tab="inspection" onclick="navToOfficeTab('inspection')">
           <span class="sidebar-nav-icon">📐</span> Inspection &amp; NDT
+        </button>
+        <button class="sidebar-nav-item${a('office','toolbox')}" data-tab="toolbox" onclick="navToOfficeTab('toolbox')">
+          <span class="sidebar-nav-icon">🗣</span> Toolbox Talks
         </button>
       </div>
     </div>
@@ -51709,4 +51713,664 @@ async function tracePdf() {
     });
     window.open(URL.createObjectURL(blob), '_blank');
   } catch (e) { toast('PDF failed: ' + e.message, 'error'); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TOOLBOX TALKS (2026-07-30) — Office › Traceability › 🗣 Toolbox Talks
+//
+// Library + generator + attendance register. An auditor doesn't ask whether you
+// do toolbox talks; they ask to see who attended which one and when, and they
+// look for the topics that match the work actually going on.
+//
+// The generator drafts talk CONTENT, which is the right use of AI here — this is
+// safety guidance in BAMA's own words, not a regulated declaration and not a
+// calculation. Drafts land as `source: 'drafted'` and are editable before use.
+// What is NOT drafted: attendance, dates, names. Those are recorded.
+//
+// SIGNATURES NEVER REACH THE DATABASE. The signed PDF filed to SharePoint is
+// the evidence; the register stores who attended and whether they signed.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const TBT_CATEGORIES = {
+  general:         { label: 'General',            color: '#94a3b8' },
+  height:          { label: 'Working at height',  color: '#f97316' },
+  manual_handling: { label: 'Manual handling',    color: '#eab308' },
+  hot_works:       { label: 'Hot works',          color: '#ef4444' },
+  ppe:             { label: 'PPE',                color: '#22c55e' },
+  lifting:         { label: 'Lifting operations', color: '#f59e0b' },
+  plant:           { label: 'Plant & equipment',  color: '#3b82f6' },
+  coshh:           { label: 'COSHH',              color: '#a855f7' },
+  electrical:      { label: 'Electrical',         color: '#06b6d4' },
+  site_traffic:    { label: 'Site traffic',       color: '#84cc16' },
+  environment:     { label: 'Environment',        color: '#10b981' },
+  welfare:         { label: 'Welfare',            color: '#c084fc' }
+};
+
+// Starter library — the talks a steel fabricator and erector actually needs.
+// Seeded into the table on first open so the module isn't empty on day one.
+// Wording is deliberately BAMA-generic and should be reviewed before use.
+const TBT_STARTER_LIBRARY = [
+  { category: 'hot_works', title: 'Hot works — welding, cutting and grinding',
+    summary: 'Fire risk, fume, screens, permits and fire watch.',
+    key_points: ['Hot work permit in place before starting where required',
+      'Clear combustibles within 10m or protect them', 'Screens up to protect others from arc flash',
+      'Local exhaust ventilation or forced ventilation for fume — never rely on natural airflow',
+      'Extinguisher to hand and a fire watch kept after finishing', 'Gas bottles upright, secured, valves closed when not in use'] },
+  { category: 'height', title: 'Working at height — erection and access',
+    summary: 'Hierarchy of control, edge protection, harness use and inspection.',
+    key_points: ['Avoid working at height where the work can be done from the ground',
+      'MEWP or scaffold before ladders; ladders for short-duration low-risk access only',
+      'Harness and twin lanyard clipped to a suitable anchor at all times when exposed',
+      'Inspect harness and lanyard before every use and record it', 'Exclusion zone below — nobody works underneath',
+      'Nothing carried up by hand that could be dropped; tools tethered'] },
+  { category: 'lifting', title: 'Lifting operations — slinging and signalling',
+    summary: 'Lift plan, accessory condition, one signaller, exclusion zone.',
+    key_points: ['Lift plan understood by everyone involved before the lift starts',
+      'Check slings, shackles and chains for damage and for a current LOLER examination',
+      'Never exceed the SWL — remember the angle of the sling reduces capacity',
+      'One appointed signaller, and everyone knows who it is', 'Nobody under a suspended load, ever',
+      'Tag lines to control the load rather than hands'] },
+  { category: 'manual_handling', title: 'Manual handling of steel sections',
+    summary: 'Assess, plan, use plant, protect hands and backs.',
+    key_points: ['Use the crane, forklift or trolley in preference to lifting by hand',
+      'Assess weight, sharp edges and route before picking anything up', 'Two-person lifts briefed and coordinated',
+      'Gloves for sharp edges and swarf; steel toecaps always', 'Keep loads close to the body, bend the knees, no twisting',
+      'Report strains early rather than working through them'] },
+  { category: 'ppe', title: 'PPE — what to wear and why',
+    summary: 'Minimum site PPE, welding PPE, condition and replacement.',
+    key_points: ['Hard hat, hi-vis, safety boots and eye protection as a minimum on site',
+      'Welding: filter to suit the process, leathers, gauntlets, and screens for others',
+      'Hearing protection when grinding or cutting', 'Correct fitting dust or fume mask, face fit tested where needed',
+      'Damaged PPE is replaced, not patched — ask, it costs less than an injury'] },
+  { category: 'plant', title: 'Plant and equipment — pre-use checks',
+    summary: 'Inspection dates, defect reporting, no unauthorised use.',
+    key_points: ['Check the inspection or calibration date before use — if it is out of date, do not use it',
+      'Visual check for damage, guards in place, cables and leads sound',
+      'Only use plant you are trained and authorised for', 'Report defects immediately and quarantine the item',
+      'Abrasive wheels changed only by a trained and appointed person'] },
+  { category: 'coshh', title: 'COSHH — welding fume, paints and solvents',
+    summary: 'Fume is a carcinogen, read the sheet, control at source.',
+    key_points: ['All welding fume is treated as a carcinogen — control it at source, every time',
+      'On-torch extraction or LEV in the shop; forced ventilation in confined spaces',
+      'Read the safety data sheet before using any new product',
+      'Solvents and paints: ventilation, gloves, no smoking, correct storage',
+      'Wash hands before eating — do not carry contamination home'] },
+  { category: 'site_traffic', title: 'Site traffic, deliveries and unloading',
+    summary: 'Segregation, banksman, reversing, load security.',
+    key_points: ['Keep to pedestrian routes and stay out of vehicle areas',
+      'Banksman for all reversing; make eye contact with the driver',
+      'Never stand between a load and a fixed object', 'Check load security before slings come off',
+      'Hi-vis at all times where vehicles operate'] },
+  { category: 'electrical', title: 'Electrical safety on site and in the shop',
+    summary: 'PAT dates, cable condition, 110V, isolation.',
+    key_points: ['Check the PAT label is in date before plugging anything in',
+      'Look over cables and plugs for damage — do not use taped repairs',
+      '110V through a transformer for site tools wherever possible',
+      'Keep leads out of walkways and off wet ground', 'Isolate and prove dead before working on anything'] },
+  { category: 'welfare', title: 'Housekeeping and welfare',
+    summary: 'Trip hazards, offcuts, access routes, reporting.',
+    key_points: ['Clear as you go — offcuts, banding and packaging off the floor',
+      'Keep walkways and fire exits clear at all times', 'Trailing leads and hoses routed or covered',
+      'Report near misses — they are free lessons and the auditor wants to see them',
+      'Know where the first aider, first aid kit and accident book are'] }
+];
+
+let _tbtTalks = [], _tbtDeliveries = [], _tbtSelected = null, _tbtRoster = [], _tbtSigs = {};
+
+// Ensure the library isn't empty on first use. Seeds from the frontend rather
+// than SQL so the wording lives in one place and can be edited in code.
+async function tbtSeedLibrary() {
+  const created = [];
+  for (let i = 0; i < TBT_STARTER_LIBRARY.length; i++) {
+    const t = TBT_STARTER_LIBRARY[i];
+    try {
+      const res = await api.post('/api/toolbox-talks', {
+        title: t.title, category: t.category, summary: t.summary,
+        key_points: t.key_points, source: 'library',
+        content: t.key_points.map(p => '• ' + p).join('\n')
+      });
+      created.push(res.talk_ref);
+    } catch (e) { console.warn('Talk seed failed:', t.title, e.message); }
+  }
+  return created;
+}
+
+// AI drafts the CONTENT of a new talk. Safety guidance in plain words — not a
+// calculation, not a regulated declaration, and reviewed before it is given.
+async function tbtDraftTalk(topic, category) {
+  const result = await callClaude({
+    model: 'claude-sonnet-4-6', max_tokens: 900,
+    messages: [{ role: 'user', content: [{ type: 'text', text:
+`Write a toolbox talk for BAMA Fabrication Ltd, a UK structural steel fabricator and erector, on this topic:
+
+"${topic}"
+
+Return ONLY JSON, no markdown:
+{
+  "title": "short talk title",
+  "summary": "one sentence for a picker list",
+  "key_points": ["6 to 9 short, specific, practical points"],
+  "content": "the talk as plain text a supervisor can read out: 3 or 4 short paragraphs, no headings, no bullets"
+}
+
+Rules:
+- UK terminology and UK practice (HSE, CDM, PUWER, LOLER, COSHH, EN 1090 where relevant).
+- Practical and specific to steel fabrication and erection — not generic office safety filler.
+- Every point must be something a fabricator, welder or erector can actually DO or CHECK.
+- No legal advice, no citations of specific regulation numbers unless you are certain, and no invented statistics or accident figures.
+- Plain direct English, the way a supervisor speaks to a gang. No corporate padding.
+- Do not claim BAMA has any particular procedure, permit system or equipment — write it so it is true of a competent fabricator generally.` }] }]
+  });
+  const text = (result.content?.find(b => b.type === 'text')?.text || '').trim();
+  const s = text.indexOf('{'), e = text.lastIndexOf('}');
+  const p = JSON.parse(text.slice(s, e + 1));
+  return { ...p, category: TBT_CATEGORIES[category] ? category : 'general', source: 'drafted' };
+}
+
+// ── Talk sheet PDF: content + attendance register with signatures ───────────
+function drawTbtPDF(jsPDF, d, logoDataUri) {
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  try {
+    doc.setProperties({ title: `Toolbox Talk — ${d.talkRef || ''} ${d.title || ''}`,
+      subject: 'Toolbox talk record', author: 'BAMA Fabrication', creator: 'BAMA Fabrication ERP' });
+  } catch (e) { /* non-critical */ }
+  const pageW = 210, pageH = 297, mL = 16, mR = 16, mB = 14;
+  const usableW = pageW - mL - mR;
+  const accent = [255, 107, 0];
+  let y = 0;
+
+  const header = () => {
+    doc.setFillColor(24, 24, 27); doc.rect(0, 0, pageW, 24, 'F');
+    let tx = mL;
+    if (logoDataUri) {
+      try { const p = doc.getImageProperties(logoDataUri); const h = 12, w = h * (p.width / p.height);
+        doc.addImage(logoDataUri, mL, 6, w, h); tx = mL + w + 5; } catch (e) {}
+    }
+    doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
+    doc.text('TOOLBOX TALK', tx, 12);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(190, 190, 195);
+    doc.text(d.categoryLabel || '', tx, 18);
+    doc.setTextColor(...accent); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+    doc.text(d.talkRef || '', pageW - mR, 12, { align: 'right' });
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(190, 190, 195);
+    doc.text(d.deliveredOn || '', pageW - mR, 17.5, { align: 'right' });
+    y = 30;
+  };
+  const need = h => { if (y + h > pageH - mB) { doc.addPage(); header(); } };
+  header();
+
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.setTextColor(30, 30, 35);
+  doc.splitTextToSize(String(d.title || ''), usableW).forEach(l => { doc.text(l, mL, y); y += 6.5; });
+  y += 2;
+
+  const kv = pairs => {
+    doc.setFontSize(8.5);
+    pairs.filter(p => p[1]).forEach(p => {
+      need(6);
+      doc.setFont('helvetica', 'normal'); doc.setTextColor(115, 115, 120); doc.text(p[0], mL, y);
+      doc.setFont('helvetica', 'bold'); doc.setTextColor(35, 35, 40);
+      doc.text(doc.splitTextToSize(String(p[1]), usableW - 40), mL + 40, y);
+      y += 5.4;
+    });
+    y += 3;
+  };
+  kv([['Given by', d.deliveredBy], ['Date', d.deliveredOn], ['Job / contract', d.jobLabel], ['Location', d.location]]);
+
+  if ((d.keyPoints || []).length) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...accent);
+    need(10); doc.text('KEY POINTS', mL, y);
+    doc.setDrawColor(...accent); doc.setLineWidth(0.3); doc.line(mL, y + 1.6, mL + usableW, y + 1.6);
+    y += 6.5;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(40, 40, 45);
+    d.keyPoints.forEach(p => {
+      const lines = doc.splitTextToSize(String(p), usableW - 6);
+      need(lines.length * 4.4 + 2);
+      doc.setTextColor(...accent); doc.text('•', mL, y);
+      doc.setTextColor(40, 40, 45); doc.text(lines, mL + 5, y);
+      y += lines.length * 4.4 + 1.6;
+    });
+    y += 4;
+  }
+
+  if (d.content) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...accent);
+    need(10); doc.text('THE TALK', mL, y);
+    doc.setDrawColor(...accent); doc.setLineWidth(0.3); doc.line(mL, y + 1.6, mL + usableW, y + 1.6);
+    y += 6.5;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(45, 45, 50);
+    String(d.content).split(/\n\s*\n|\n/).filter(s => s.trim()).forEach(para => {
+      const lines = doc.splitTextToSize(para.trim().replace(/^•\s*/, '• '), usableW);
+      need(lines.length * 4.4 + 3);
+      doc.text(lines, mL, y); y += lines.length * 4.4 + 3;
+    });
+    y += 2;
+  }
+
+  if (d.notes) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...accent);
+    need(10); doc.text('QUESTIONS RAISED / ACTIONS', mL, y); y += 5.5;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(45, 45, 50);
+    const lines = doc.splitTextToSize(String(d.notes), usableW);
+    need(lines.length * 4.4 + 4); doc.text(lines, mL, y); y += lines.length * 4.4 + 5;
+  }
+
+  // Attendance register — always on a fresh block so it can be signed on paper
+  need(40);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...accent);
+  doc.text('ATTENDANCE — I CONFIRM I ATTENDED AND UNDERSTOOD THIS TALK', mL, y);
+  doc.setDrawColor(...accent); doc.setLineWidth(0.3); doc.line(mL, y + 1.6, mL + usableW, y + 1.6);
+  y += 6.5;
+  const wName = 62, wRole = 44, wSig = usableW - wName - wRole;
+  const drawHead = () => {
+    doc.setFillColor(242, 242, 244); doc.rect(mL, y, usableW, 6, 'F');
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(70, 70, 75);
+    doc.text('Name', mL + 1.5, y + 4.1);
+    doc.text('Role', mL + wName + 1.5, y + 4.1);
+    doc.text('Signature', mL + wName + wRole + 1.5, y + 4.1);
+    y += 6;
+  };
+  drawHead();
+  const rows = (d.attendees || []).length ? d.attendees : [];
+  const rowH = 12;
+  rows.forEach((a, i) => {
+    if (y + rowH > pageH - mB) { doc.addPage(); header(); drawHead(); }
+    if (i % 2) { doc.setFillColor(250, 250, 251); doc.rect(mL, y, usableW, rowH, 'F'); }
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(35, 35, 40);
+    doc.text(String(a.name || ''), mL + 1.5, y + 7.5);
+    doc.setTextColor(100, 100, 105); doc.setFontSize(7.5);
+    doc.text(String(a.role || ''), mL + wName + 1.5, y + 7.5);
+    // Electronic signature if captured, otherwise a ruled line to sign on paper
+    if (a.signature) {
+      try { doc.addImage(a.signature, 'PNG', mL + wName + wRole + 2, y + 1.5, 40, 9); }
+      catch (e) { /* fall through to the line */ }
+    } else {
+      doc.setDrawColor(190, 190, 195); doc.setLineWidth(0.2);
+      doc.line(mL + wName + wRole + 2, y + 9, mL + usableW - 3, y + 9);
+    }
+    doc.setDrawColor(228, 228, 232); doc.setLineWidth(0.1);
+    doc.line(mL, y + rowH, mL + usableW, y + rowH);
+    y += rowH;
+  });
+  // Spare rows so the printed sheet can take walk-ups
+  const spare = Math.max(0, (d.spareRows != null ? d.spareRows : 4));
+  for (let i = 0; i < spare; i++) {
+    if (y + rowH > pageH - mB) { doc.addPage(); header(); drawHead(); }
+    doc.setDrawColor(190, 190, 195); doc.setLineWidth(0.2);
+    doc.line(mL + 2, y + 9, mL + wName - 3, y + 9);
+    doc.line(mL + wName + 2, y + 9, mL + wName + wRole - 3, y + 9);
+    doc.line(mL + wName + wRole + 2, y + 9, mL + usableW - 3, y + 9);
+    doc.setDrawColor(228, 228, 232); doc.setLineWidth(0.1);
+    doc.line(mL, y + rowH, mL + usableW, y + rowH);
+    y += rowH;
+  }
+
+  const total = doc.getNumberOfPages();
+  for (let p = 1; p <= total; p++) {
+    doc.setPage(p);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5); doc.setTextColor(140, 140, 145);
+    doc.text(`Toolbox talk  ·  ${d.talkRef || ''}  ·  BAMA Fabrication Ltd`, mL, pageH - 6);
+    doc.text(`Page ${p} of ${total}`, pageW - mR, pageH - 6, { align: 'right' });
+  }
+  return doc;
+}
+
+async function renderTbtPdfBlob(d) {
+  const Ctor = await resolveJsPDFCtor();
+  if (!Ctor) throw new Error('jsPDF not loaded on this page');
+  await loadLogoDataUri();
+  const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
+  const blob = drawTbtPDF(Ctor, d, logo).output('blob');
+  console.log(`Toolbox talk PDF: ${(blob.size / 1024).toFixed(1)}KB`);
+  return blob;
+}
+
+// ── Tab ─────────────────────────────────────────────────────────────────────
+async function renderToolboxTab() {
+  const root = document.getElementById('tab-toolbox');
+  if (!root) return;
+  root.innerHTML = '<div style="color:var(--muted);padding:20px">Loading…</div>';
+  try {
+    [_tbtTalks, _tbtDeliveries] = await Promise.all([
+      api.get('/api/toolbox-talks'),
+      api.get('/api/toolbox-deliveries').catch(() => [])
+    ]);
+  } catch (e) {
+    root.innerHTML = `<div style="color:var(--red);padding:20px;font-size:12.5px">Toolbox talks unavailable: ${escapeHtml(e.message)} — run api/sql/create-toolbox-talks.sql first.</div>`;
+    return;
+  }
+  root.innerHTML = `<div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+      <h3 style="margin:0">🗣 Toolbox Talks</h3>
+      <button class="btn btn-primary btn-sm" onclick="tbtDeliver()">✍ Give a talk</button>
+      <button class="btn btn-ghost btn-sm" onclick="tbtNewTalk()">✨ Draft a new talk</button>
+      ${_tbtTalks.length ? '' : '<button class="btn btn-ghost btn-sm" onclick="tbtDoSeed()">📚 Load the starter library</button>'}
+      <button class="btn btn-ghost btn-sm" onclick="renderToolboxTab()">↻</button>
+    </div>
+    <p style="font-size:12px;color:var(--muted);margin:0 0 12px;line-height:1.6">
+      A library of talks, and a record of every time one was given. Auditors don't ask whether you do toolbox talks — they ask to
+      see who attended which one, and whether the topics match the work that was going on. Print a sheet and sign it on paper, or
+      capture signatures on the device; either way the signed PDF is filed and the register keeps who and when.</p>
+    ${!_tbtTalks.length ? `<div style="background:#3b2f0f;border:1px solid #eab308;border-radius:8px;padding:10px 13px;font-size:12px;color:#f0e0a4;margin-bottom:12px">
+      The library is empty. <strong>Load the starter library</strong> puts in 10 talks written for steel fabrication and erection —
+      hot works, working at height, lifting, manual handling, PPE, plant checks, COSHH and welding fume, site traffic, electrical,
+      housekeeping. Read them over and edit before giving them; they're a starting point, not gospel.</div>` : ''}
+
+    <div style="display:grid;grid-template-columns:1.15fr 1fr;gap:14px">
+      <div>
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:6px">Library (${_tbtTalks.length})</div>
+        ${_tbtTalks.map(t => {
+          const c = TBT_CATEGORIES[t.category] || TBT_CATEGORIES.general;
+          const given = _tbtDeliveries.filter(d => d.talk_id === t.id);
+          const last = given[0];
+          return `<div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid ${c.color};border-radius:7px;padding:8px 11px;margin-bottom:5px">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <span style="font-size:10px;color:${c.color};font-weight:700">${escapeHtml(t.talk_ref)}</span>
+              <strong style="font-size:12.5px;flex:1;min-width:0">${escapeHtml(t.title)}</strong>
+              ${t.source === 'drafted' ? '<span style="font-size:9.5px;color:#38bdf8">AI draft</span>' : ''}
+              <button class="btn btn-ghost btn-sm" onclick="tbtDeliver(${t.id})">✍ Give</button>
+              <button class="btn btn-ghost btn-sm" onclick="tbtPrint(${t.id})">🖨</button>
+            </div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px">${escapeHtml(t.summary || '')}</div>
+            <div style="font-size:10.5px;color:${given.length ? '#3ecf8e' : '#eab308'};margin-top:2px">
+              ${given.length ? `given ${given.length}× · last ${escapeHtml(last.delivered_on)} to ${last.attendee_count} ${last.attendee_count === 1 ? 'person' : 'people'}`
+                             : 'never given'}</div>
+          </div>`;
+        }).join('')}
+      </div>
+      <div>
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:6px">Recent deliveries (${_tbtDeliveries.length})</div>
+        ${_tbtDeliveries.length ? _tbtDeliveries.slice(0, 40).map(d => `
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:7px;padding:7px 11px;margin-bottom:4px;font-size:11.5px">
+            <div style="display:flex;gap:8px;align-items:center">
+              <strong>${escapeHtml(d.delivered_on)}</strong>
+              <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(d.talk_title || d.talk_ref || '')}</span>
+              ${d.web_url ? `<a href="${escapeHtml(d.web_url)}" target="_blank" style="color:var(--accent)">📄</a>` : ''}
+              <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="tbtDeleteDelivery(${d.id})">🗑</button>
+            </div>
+            <div style="font-size:10.5px;color:var(--muted)">${d.attendee_count} attended · by ${escapeHtml(d.delivered_by)}${d.job_number ? ' · ' + escapeHtml(d.job_number) : ''}${d.location ? ' · ' + escapeHtml(d.location) : ''}</div>
+          </div>`).join('')
+        : '<div style="font-size:12px;color:var(--muted)">Nothing recorded yet.</div>'}
+      </div>
+    </div>
+  </div>`;
+}
+
+async function tbtDoSeed() {
+  if (!await bamaConfirm('Load the 10 starter talks into the library? They are written for steel fabrication and erection, and you can edit or delete any of them afterwards.', 'Load Starter Library')) return;
+  toast('Loading…', 'info');
+  const made = await tbtSeedLibrary();
+  toast(`${made.length} talks added — read them over before giving them`, 'success');
+  renderToolboxTab();
+}
+
+async function tbtNewTalk() {
+  const topic = prompt ? null : null;   // styled dialog below instead of window.prompt
+  if (!document.getElementById('tbtNewModal')) {
+    const div = document.createElement('div');
+    div.innerHTML = `<div id="tbtNewModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:1001;align-items:flex-start;justify-content:center;padding:40px;overflow-y:auto">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:680px;overflow:hidden">
+        <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
+          <h3 style="margin:0;font-size:16px;flex:1">✨ Draft a new toolbox talk</h3>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('tbtNewModal').style.display='none'">✕</button>
+        </div>
+        <div id="tbtNewBody" style="padding:16px 20px;max-height:76vh;overflow-y:auto"></div>
+      </div></div>`;
+    document.body.appendChild(div.firstElementChild);
+  }
+  document.getElementById('tbtNewBody').innerHTML = `
+    <div style="display:grid;grid-template-columns:2fr 1fr;gap:8px;margin-bottom:8px">
+      <div><label style="font-size:10px;color:var(--muted);display:block">Topic — what has come up on site?</label>
+        <input id="tbtTopic" placeholder="e.g. dropped objects when bolting up at height"
+          style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box"></div>
+      <div><label style="font-size:10px;color:var(--muted);display:block">Category</label>
+        <select id="tbtCat" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px;color:var(--text);font-size:12.5px">
+          ${Object.entries(TBT_CATEGORIES).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('')}</select></div>
+    </div>
+    <button class="btn btn-primary btn-sm" onclick="tbtDoDraft()">✨ Draft it</button>
+    <div id="tbtDraftArea" style="margin-top:12px"></div>`;
+  document.getElementById('tbtNewModal').style.display = 'flex';
+}
+
+async function tbtDoDraft() {
+  const topic = (document.getElementById('tbtTopic') || {}).value || '';
+  const cat = (document.getElementById('tbtCat') || {}).value || 'general';
+  if (!topic.trim()) { toast('Say what the talk is about', 'error'); return; }
+  const area = document.getElementById('tbtDraftArea');
+  area.innerHTML = '<div style="color:var(--accent);font-size:12px">🤖 Drafting…</div>';
+  try {
+    const d = await tbtDraftTalk(topic, cat);
+    area.innerHTML = `
+      <div style="background:#3b2f0f;border:1px solid #eab308;border-radius:7px;padding:8px 11px;font-size:11.5px;color:#f0e0a4;margin-bottom:8px;line-height:1.6">
+        This is a draft. <strong>Read it properly before you give it</strong> — it's safety guidance written from a general
+        understanding of steel work, not from your site, your method statement or your kit. Edit anything that doesn't match how
+        BAMA actually works.</div>
+      <div style="margin-bottom:6px"><label style="font-size:10px;color:var(--muted);display:block">Title</label>
+        <input id="tbtDTitle" value="${escapeHtml(d.title || '')}" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box"></div>
+      <div style="margin-bottom:6px"><label style="font-size:10px;color:var(--muted);display:block">Summary</label>
+        <input id="tbtDSummary" value="${escapeHtml(d.summary || '')}" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box"></div>
+      <div style="margin-bottom:6px"><label style="font-size:10px;color:var(--muted);display:block">Key points (one per line)</label>
+        <textarea id="tbtDPoints" rows="8" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box;resize:vertical">${escapeHtml((d.key_points || []).join('\n'))}</textarea></div>
+      <div style="margin-bottom:8px"><label style="font-size:10px;color:var(--muted);display:block">The talk</label>
+        <textarea id="tbtDContent" rows="7" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box;resize:vertical">${escapeHtml(d.content || '')}</textarea></div>
+      <button class="btn btn-primary btn-sm" onclick="tbtSaveDraft('${escapeHtml(d.category)}')">💾 Add to the library</button>`;
+  } catch (e) { area.innerHTML = `<div style="color:var(--red);font-size:12px">Draft failed: ${escapeHtml(e.message)} — you can still add a talk by hand.</div>`; }
+}
+
+async function tbtSaveDraft(category) {
+  const g = id => (document.getElementById(id) || {}).value || '';
+  const points = g('tbtDPoints').split('\n').map(s => s.replace(/^[•\-\s]+/, '').trim()).filter(Boolean);
+  if (!g('tbtDTitle').trim()) { toast('Title is required', 'error'); return; }
+  try {
+    await api.post('/api/toolbox-talks', {
+      title: g('tbtDTitle'), category, summary: g('tbtDSummary'),
+      key_points: points, content: g('tbtDContent'), source: 'drafted'
+    });
+    toast('Added to the library', 'success');
+    document.getElementById('tbtNewModal').style.display = 'none';
+    renderToolboxTab();
+  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+// Print a blank sheet — the paper route, which is what most gangs will use.
+async function tbtPrint(talkId) {
+  const t = _tbtTalks.find(x => x.id === talkId); if (!t) return;
+  let points = []; try { points = t.key_points ? JSON.parse(t.key_points) : []; } catch (_) {}
+  try {
+    const blob = await renderTbtPdfBlob({
+      talkRef: t.talk_ref, title: t.title,
+      categoryLabel: (TBT_CATEGORIES[t.category] || {}).label,
+      keyPoints: points, content: t.content,
+      deliveredOn: '', deliveredBy: '', attendees: [], spareRows: 14
+    });
+    window.open(URL.createObjectURL(blob), '_blank');
+  } catch (e) { toast('Print failed: ' + e.message, 'error'); }
+}
+
+// ── Give a talk: attendees off the roster, signatures on the device ─────────
+async function tbtDeliver(talkId) {
+  if (!_tbtTalks.length) { toast('Load or draft a talk first', 'error'); return; }
+  _tbtSelected = talkId ? _tbtTalks.find(t => t.id === talkId) : _tbtTalks[0];
+  _tbtSigs = {};
+  try { _tbtRoster = await api.get('/api/site-personnel'); } catch (_) { _tbtRoster = []; }
+  let jobs = [];
+  try { jobs = (await api.get('/api/projects')).filter(j => j.status !== 'closed' && !j.is_deleted); } catch (_) {}
+
+  if (!document.getElementById('tbtDeliverModal')) {
+    const div = document.createElement('div');
+    div.innerHTML = `<div id="tbtDeliverModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:1001;align-items:flex-start;justify-content:center;padding:26px;overflow-y:auto">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:760px;overflow:hidden">
+        <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
+          <h3 style="margin:0;font-size:16px;flex:1">✍ Give a toolbox talk</h3>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('tbtDeliverModal').style.display='none'">✕</button>
+        </div>
+        <div id="tbtDeliverBody" style="padding:16px 20px;max-height:80vh;overflow-y:auto"></div>
+      </div></div>`;
+    document.body.appendChild(div.firstElementChild);
+  }
+  const who = (typeof currentUser === 'object' && currentUser && (currentUser.name || currentUser.email)) || '';
+  document.getElementById('tbtDeliverBody').innerHTML = `
+    <div style="display:grid;grid-template-columns:1.6fr 1.2fr;gap:8px;margin-bottom:8px">
+      <div><label style="font-size:10px;color:var(--muted);display:block">Talk</label>
+        <select id="tbtDelTalk" onchange="_tbtSelected=_tbtTalks.find(t=>t.id==this.value)"
+          style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 7px;color:var(--text);font-size:12.5px">
+          ${_tbtTalks.map(t => `<option value="${t.id}" ${t.id === _tbtSelected.id ? 'selected' : ''}>${escapeHtml(t.talk_ref)} — ${escapeHtml(t.title)}</option>`).join('')}
+        </select></div>
+      <div><label style="font-size:10px;color:var(--muted);display:block">Job (optional)</label>
+        <select id="tbtDelJob" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 7px;color:var(--text);font-size:12.5px">
+          <option value="">— not job specific —</option>
+          ${jobs.map(j => `<option value="${j.id}" data-no="${escapeHtml(j.job_number || '')}">${escapeHtml(j.job_number || '')} ${escapeHtml(j.name || '')}</option>`).join('')}
+        </select></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1.4fr;gap:8px;margin-bottom:10px">
+      <div><label style="font-size:10px;color:var(--muted);display:block">Date</label>
+        <input id="tbtDelDate" type="date" value="${new Date().toISOString().slice(0, 10)}" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box"></div>
+      <div><label style="font-size:10px;color:var(--muted);display:block">Location</label>
+        <input id="tbtDelLoc" placeholder="Workshop / site" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box"></div>
+      <div><label style="font-size:10px;color:var(--muted);display:block">Given by</label>
+        <input id="tbtDelBy" value="${escapeHtml(who)}" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box"></div>
+    </div>
+
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:5px">
+      Who attended <span style="font-weight:400;text-transform:none">— tap a name, then sign on the device or leave it to sign on paper</span></div>
+    <div style="max-height:230px;overflow:auto;border:1px solid var(--border);border-radius:7px;padding:6px;margin-bottom:8px">
+      ${_tbtRoster.filter(p => p.active !== 0).map(p => `
+        <div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px">
+          <input type="checkbox" class="tbtAtt" data-name="${escapeHtml(p.name)}" data-role="${escapeHtml(p.site_role || '')}" onchange="_tbtRenderSigBtn()">
+          <span style="flex:1;min-width:0"><strong>${escapeHtml(p.name)}</strong>
+            <span style="color:var(--muted)">${escapeHtml(p.site_role || '')}${p.type === 'subcontractor' ? ' · subcontractor' : ''}</span></span>
+          <span id="tbtSigState_${escapeHtml(p.name).replace(/[^a-zA-Z0-9]/g, '')}" style="font-size:10.5px;color:var(--muted)"></span>
+          <button class="btn btn-ghost btn-sm" onclick="tbtSign('${escapeHtml(p.name)}')">✍ Sign</button>
+        </div>`).join('') || '<div style="font-size:12px;color:#eab308">No roster — add people in Office › Training Matrix first.</div>'}
+    </div>
+    <div style="margin-bottom:10px"><label style="font-size:10px;color:var(--muted);display:block">Questions raised / actions</label>
+      <textarea id="tbtDelNotes" rows="2" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box;resize:vertical"></textarea></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-ghost btn-sm" onclick="tbtDeliverGo(false)">👁 Preview sheet</button>
+      <button class="btn btn-primary btn-sm" onclick="tbtDeliverGo(true)">✍ Record it &amp; file the sheet</button>
+    </div>`;
+  document.getElementById('tbtDeliverModal').style.display = 'flex';
+}
+
+function _tbtRenderSigBtn() { /* checkbox state is read at save time; hook kept for clarity */ }
+
+// Finger/mouse signature pad — same approach as the QMS forms.
+function tbtSign(name) {
+  const id = 'tbtPad';
+  if (!document.getElementById(id)) {
+    const div = document.createElement('div');
+    div.innerHTML = `<div id="${id}" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:1002;align-items:center;justify-content:center;padding:20px">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;max-width:520px;width:100%">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <strong id="tbtPadName" style="flex:1;font-size:14px"></strong>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('tbtPad').style.display='none'">✕</button>
+        </div>
+        <div style="font-size:11.5px;color:var(--muted);margin-bottom:6px">Sign below with a finger or the mouse</div>
+        <canvas id="tbtPadCanvas" width="480" height="150" style="width:100%;background:#fff;border-radius:8px;touch-action:none"></canvas>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="btn btn-ghost btn-sm" onclick="tbtPadClear()">Clear</button>
+          <button class="btn btn-primary btn-sm" onclick="tbtPadSave()">Save signature</button>
+        </div>
+      </div></div>`;
+    document.body.appendChild(div.firstElementChild);
+    const cv = document.getElementById('tbtPadCanvas');
+    const ctx = cv.getContext('2d');
+    ctx.lineWidth = 2.4; ctx.lineCap = 'round'; ctx.strokeStyle = '#111';
+    let drawing = false;
+    const pos = e => {
+      const r = cv.getBoundingClientRect();
+      const t = e.touches ? e.touches[0] : e;
+      return [(t.clientX - r.left) * (cv.width / r.width), (t.clientY - r.top) * (cv.height / r.height)];
+    };
+    const start = e => { drawing = true; ctx.beginPath(); ctx.moveTo(...pos(e)); e.preventDefault(); };
+    const move  = e => { if (!drawing) return; ctx.lineTo(...pos(e)); ctx.stroke(); e.preventDefault(); };
+    const end   = () => { drawing = false; };
+    cv.addEventListener('mousedown', start); cv.addEventListener('mousemove', move);
+    cv.addEventListener('mouseup', end); cv.addEventListener('mouseleave', end);
+    cv.addEventListener('touchstart', start); cv.addEventListener('touchmove', move); cv.addEventListener('touchend', end);
+  }
+  document.getElementById('tbtPadName').textContent = name;
+  document.getElementById('tbtPad').dataset.name = name;
+  tbtPadClear();
+  document.getElementById('tbtPad').style.display = 'flex';
+}
+function tbtPadClear() {
+  const cv = document.getElementById('tbtPadCanvas'); if (!cv) return;
+  const ctx = cv.getContext('2d'); ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cv.width, cv.height);
+}
+function tbtPadSave() {
+  const pad = document.getElementById('tbtPad');
+  const name = pad.dataset.name;
+  _tbtSigs[name] = document.getElementById('tbtPadCanvas').toDataURL('image/png');
+  const el = document.getElementById('tbtSigState_' + name.replace(/[^a-zA-Z0-9]/g, ''));
+  if (el) { el.textContent = '✓ signed'; el.style.color = '#3ecf8e'; }
+  // Signing implies attendance — tick the box so it can't be signed but unrecorded.
+  document.querySelectorAll('.tbtAtt').forEach(cb => { if (cb.dataset.name === name) cb.checked = true; });
+  pad.style.display = 'none';
+  toast(`${name} signed`, 'success');
+}
+
+async function tbtDeliverGo(save) {
+  const g = id => (document.getElementById(id) || {}).value || '';
+  const t = _tbtSelected;
+  const picked = [...document.querySelectorAll('.tbtAtt:checked')].map(cb => ({
+    name: cb.dataset.name, role: cb.dataset.role || null,
+    signed: !!_tbtSigs[cb.dataset.name], signature: _tbtSigs[cb.dataset.name] || null
+  }));
+  if (save && !picked.length) { toast('Tick who attended — a talk with nobody at it is not a record', 'error'); return; }
+  if (save && !g('tbtDelBy').trim()) { toast('Who gave the talk?', 'error'); return; }
+  let points = []; try { points = t.key_points ? JSON.parse(t.key_points) : []; } catch (_) {}
+  const jobSel = document.getElementById('tbtDelJob');
+  const jobNo = jobSel && jobSel.selectedOptions[0] ? (jobSel.selectedOptions[0].dataset.no || '') : '';
+
+  try {
+    const blob = await renderTbtPdfBlob({
+      talkRef: t.talk_ref, title: t.title,
+      categoryLabel: (TBT_CATEGORIES[t.category] || {}).label,
+      keyPoints: points, content: t.content,
+      deliveredOn: g('tbtDelDate'), deliveredBy: g('tbtDelBy'),
+      jobLabel: jobNo || null, location: g('tbtDelLoc') || null,
+      notes: g('tbtDelNotes') || null,
+      attendees: picked, spareRows: save ? 2 : 10
+    });
+    if (!save) { window.open(URL.createObjectURL(blob), '_blank'); return; }
+
+    const name = `Toolbox Talk - ${t.talk_ref} - ${g('tbtDelDate')}.pdf`;
+    let up = null;
+    try {
+      // Job-specific talks file with the job; general ones under Company Mgmt H&S.
+      const jid = g('tbtDelJob');
+      const folder = jid
+        ? await findProjectFolder(jid)
+        : await getOrCreateSubfolder(
+            (await getOrCreateSubfolder(SP_TAX.companyMgmt, '04 - H&S', BAMA_DRIVE_ID)).id,
+            'Toolbox Talks', BAMA_DRIVE_ID);
+      if (folder) up = await uploadFileToFolder(folder.id, name, await blob.arrayBuffer(), 'application/pdf', BAMA_DRIVE_ID);
+    } catch (e) { console.warn('Toolbox talk filing failed:', e.message); }
+
+    await api.post('/api/toolbox-deliveries', {
+      talk_id: t.id, talk_ref: t.talk_ref, talk_title: t.title,
+      job_id: g('tbtDelJob') || null, job_number: jobNo || null,
+      location: g('tbtDelLoc') || null, delivered_on: g('tbtDelDate'),
+      delivered_by: g('tbtDelBy'),
+      // Signature images deliberately NOT sent — they live in the filed PDF.
+      attendees: picked.map(a => ({ name: a.name, role: a.role, signed: a.signed })),
+      notes: g('tbtDelNotes') || null,
+      file_name: name, sharepoint_file_id: up ? up.id : null,
+      drive_id: up ? BAMA_DRIVE_ID : null, web_url: up ? (up.webUrl || null) : null
+    });
+    const signedCount = picked.filter(a => a.signed).length;
+    toast(up ? `Recorded — ${picked.length} attended, ${signedCount} signed on the device, sheet filed`
+             : `Recorded — ${picked.length} attended (SharePoint unavailable, sheet opened)`, 'success');
+    if (!up) window.open(URL.createObjectURL(blob), '_blank');
+    document.getElementById('tbtDeliverModal').style.display = 'none';
+    renderToolboxTab();
+  } catch (e) { toast('Failed: ' + e.message, 'error'); }
+}
+
+async function tbtDeleteDelivery(id) {
+  const d = _tbtDeliveries.find(x => x.id === id);
+  if (!await bamaConfirm(`Delete the record of "${escapeHtml((d && d.talk_title) || 'this talk')}" on ${escapeHtml((d && d.delivered_on) || '')}? Soft delete and audited — the filed PDF stays in SharePoint.`, 'Delete Record')) return;
+  try { await api.delete(`/api/toolbox-deliveries/${id}`); toast('Deleted', 'success'); renderToolboxTab(); }
+  catch (e) { toast('Failed: ' + e.message, 'error'); }
 }

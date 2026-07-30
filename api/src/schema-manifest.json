@@ -1162,6 +1162,17 @@
       "seedForms": []
     },
     {
+      "script": "create-toolbox-talks.sql",
+      "title": "Two tables, because a talk and a delivery of that talk are different things:",
+      "kind": "structural",
+      "tables": [
+        "ToolboxTalkDeliveries",
+        "ToolboxTalks"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
       "script": "create-welder-qualifications.sql",
       "title": "Welder qualification certificates (EN ISO 9606-1 / EN ISO 14732 / ASME IX).",
       "kind": "structural",
