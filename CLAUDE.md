@@ -1397,6 +1397,45 @@ portrait, numbered clauses 1–7, declared-performance table, statutory
 sole-responsibility statement, signature block. Pinned by
 `tests/dop-declaration.js` (40 cases, framed as what the ERP refuses to do).
 
+## O&M / Handover Pack (F1d, 2026-07-30 — Office › Inspection & NDT › 📚 O&M Pack)
+
+Binds everything already on file into one indexed PDF. Recorded in
+`JobCertificates` with `doc_type = 'om'` (added to the API's DOC_TYPES — **no
+migration**); `payload` holds the section manifest, page count and any failures.
+
+**office.html now loads BOTH jsPDF and pdf-lib** — it previously loaded neither,
+which meant the ITP/CoC/DoP renderers shipped earlier the same day would have
+failed from this page. Any page rendering a PDF carries the tag (CLAUDE.md rule).
+
+**BUG FIXED, worth remembering:** `resolveJsPDFCtor()` is **async**. Called
+without `await` it returns a Promise, which is truthy, so a `if (!Ctor) throw`
+guard passes and `new Ctor()` then throws "not a constructor". All three
+renderers (ITP, CoC, DoP) had this. `tests/om-pack.js` now asserts no
+un-awaited `resolveJsPDFCtor()` call exists anywhere in shared.js.
+
+**Two-pass pagination, because the contents page changes its own page numbers.**
+`omAssemblePack()`: collect every source and measure its real page count →
+`omLayout()` settles how many contents pages are needed (each section costs one
+divider + its pages) → draw front matter with true page numbers → bind. Both
+`omPaginate()` and `omLayout()` are pure and unit-tested, including the
+30/31-section boundary where the contents spills to a second page and every
+section shifts down.
+
+**On bookmarks, deliberately:** pdf-lib has no outline API, so navigation is a
+contents page with real page numbers plus a divider before each section, NOT a
+PDF sidebar tree. Hand-writing outline objects risks a subtly corrupt file, and
+a pack that won't open at the client's end is far worse than one without a
+sidebar. The UI says so rather than leaving the user to wonder.
+
+Sources (`omGatherSources`): latest non-superseded DoP and CoC, ITP generated
+live at build time, as-built drawings off the job assemblies, QMS submissions
+filtered to the job, company accreditations (ticked) and insurances (unticked by
+default). Plus a drop zone for warranties, coating certs and third-party NDT
+reports. **Nothing is silently dropped** — anything unreadable is listed with its
+reason in the UI and stored in the payload; an entirely empty pack throws rather
+than producing a cover with nothing behind it. Encrypted client PDFs load with
+`ignoreEncryption`.
+
 ## Modal → Page mapping
 
 Every `id=…Modal` element in the HTML, by page. Handy when tracing an

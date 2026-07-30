@@ -49103,6 +49103,7 @@ function _inspRender() {
       <button class="btn btn-ghost btn-sm" onclick="itpOpen()">📋 ITP</button>
       <button class="btn btn-ghost btn-sm" onclick="cocOpen()">📜 CoC</button>
       <button class="btn btn-ghost btn-sm" onclick="dopOpen()">🏷 DoP</button>
+      <button class="btn btn-primary btn-sm" onclick="omOpen()">📚 O&amp;M Pack</button>
       <button class="btn btn-ghost btn-sm" onclick="inspSaveCounts()">💾 Save weld counts</button>
       ${(totalNdtShort || totalVisShort)
         ? `<span style="background:#3b1a1a;color:#ff9b9b;border:1px solid #ff6b6b55;border-radius:6px;padding:4px 10px;font-size:11.5px">
@@ -49639,7 +49640,7 @@ function drawItpPDF(jsPDF, data, logoDataUri) {
 }
 
 async function renderItpPdfBlob(data) {
-  const Ctor = resolveJsPDFCtor();
+  const Ctor = await resolveJsPDFCtor();
   if (!Ctor) throw new Error('jsPDF not loaded on this page');
   await loadLogoDataUri();
   const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
@@ -50124,7 +50125,7 @@ function drawCocPDF(jsPDF, d, logoDataUri) {
 }
 
 async function renderCocPdfBlob(d) {
-  const Ctor = resolveJsPDFCtor();
+  const Ctor = await resolveJsPDFCtor();
   if (!Ctor) throw new Error('jsPDF not loaded on this page');
   await loadLogoDataUri();
   const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
@@ -50590,7 +50591,7 @@ function drawDopPDF(jsPDF, d, logoDataUri) {
 }
 
 async function renderDopPdfBlob(d) {
-  const Ctor = resolveJsPDFCtor();
+  const Ctor = await resolveJsPDFCtor();
   if (!Ctor) throw new Error('jsPDF not loaded on this page');
   await loadLogoDataUri();
   const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
@@ -50857,4 +50858,487 @@ async function dopIssue() {
     _dopIssued = await api.get(`/api/job-certificates?job_id=${_inspJob}&doc_type=dop`).catch(() => []);
     _dopRender();
   } catch (e) { toast('Issue failed: ' + e.message, 'error'); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// O&M / HANDOVER PACK (F1d, 2026-07-30)
+//
+// Binds everything the ERP already holds into one indexed PDF: cover, contents
+// with real page numbers, then each section behind a divider — DoP, CoC, ITP,
+// as-built drawings, material certificates with heat numbers, weld and release
+// records, welder qualifications, NDT reports, company accreditations, and any
+// warranties dropped in.
+//
+// ON BOOKMARKS, HONESTLY: pdf-lib has no outline/bookmark API, so this pack
+// navigates by a contents page with accurate page numbers plus a divider page
+// before each section — not by a PDF sidebar tree. Writing raw outline objects
+// by hand risks emitting a subtly corrupt file, and a handover pack that won't
+// open in the client's viewer is far worse than one without a sidebar.
+//
+// Page numbers are computed by a two-pass layout: measure every section, lay
+// out, and if the contents page count changes as a result, lay out again until
+// it settles. Otherwise the index would be off by a page.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const OM_ROWS_PER_INDEX_PAGE = 30;
+
+// Pure: assign start pages. `frontPages` = cover + contents. Each section costs
+// one divider page plus its own pages.
+function omPaginate(sections, frontPages) {
+  let page = frontPages + 1;
+  return sections.map(s => {
+    const dividerPage = page;
+    const contentStart = page + 1;
+    page += 1 + (Number(s.pageCount) || 0);
+    return { ...s, dividerPage, contentStart, startPage: dividerPage };
+  });
+}
+
+// Pure: settle the layout, because the contents length changes the page numbers
+// it is describing. Converges in one or two rounds; capped so it can never spin.
+function omLayout(sections, rowsPerPage = OM_ROWS_PER_INDEX_PAGE) {
+  const rows = sections.length;
+  let indexPages = Math.max(1, Math.ceil(rows / rowsPerPage));
+  let laid = omPaginate(sections, 1 + indexPages);
+  for (let i = 0; i < 5; i++) {
+    const needed = Math.max(1, Math.ceil(rows / rowsPerPage));
+    if (needed === indexPages) break;
+    indexPages = needed;
+    laid = omPaginate(sections, 1 + indexPages);
+  }
+  const totalPages = laid.length
+    ? laid[laid.length - 1].dividerPage + (Number(laid[laid.length - 1].pageCount) || 0)
+    : 1 + indexPages;
+  return { sections: laid, indexPages, frontPages: 1 + indexPages, totalPages };
+}
+
+// Cover + contents, as their own jsPDF document.
+function drawOmFrontMatter(jsPDF, d, logoDataUri) {
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  try {
+    doc.setProperties({
+      title: `O&M / Handover Pack — ${d.jobNumber || ''}`,
+      subject: `Operation & Maintenance Manual${d.jobName ? ' — ' + d.jobName : ''}`,
+      author: 'BAMA Fabrication', creator: 'BAMA Fabrication ERP'
+    });
+  } catch (e) { /* non-critical */ }
+  const pageW = 210, pageH = 297, mL = 20, mR = 20;
+  const usableW = pageW - mL - mR;
+  const accent = [255, 107, 0];
+
+  // ── Cover ──
+  doc.setFillColor(24, 24, 27); doc.rect(0, 0, pageW, 92, 'F');
+  if (logoDataUri) {
+    try {
+      const p = doc.getImageProperties(logoDataUri);
+      const h = 18, w = h * (p.width / p.height);
+      doc.addImage(logoDataUri, mL, 22, w, h);
+    } catch (e) { /* logo optional */ }
+  }
+  doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(24);
+  doc.text('OPERATION &', mL, 62);
+  doc.text('MAINTENANCE MANUAL', mL, 74);
+  doc.setTextColor(...accent); doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+  doc.text('Structural steelwork handover pack', mL, 84);
+
+  let y = 112;
+  const row = (k, v) => {
+    if (v === null || v === undefined || String(v).trim() === '') return;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(120, 120, 125);
+    doc.text(String(k), mL, y);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5); doc.setTextColor(30, 30, 35);
+    const lines = doc.splitTextToSize(String(v), usableW - 44);
+    doc.text(lines, mL + 44, y);
+    y += Math.max(7, lines.length * 5.2);
+  };
+  row('Project', d.jobName); row('Contract no', d.jobNumber); row('Client', d.client);
+  row('Site', d.site); row('Execution class', d.execClass ? `${d.execClass} to BS EN 1090-2` : null);
+  row('Issued', d.issueDate); row('Revision', d.revision ? String(d.revision) : null);
+  row('Prepared by', d.issuedBy);
+
+  y += 6;
+  doc.setDrawColor(...accent); doc.setLineWidth(0.5); doc.line(mL, y, mL + 44, y); y += 10;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(80, 80, 85);
+  const blurb = doc.splitTextToSize(
+    'This pack contains the quality records for the steelwork supplied under the above contract: the declaration of '
+    + 'performance and certificate of conformity, the inspection and test plan, as-built drawings, material '
+    + 'certification traceable by heat number, welding and inspection records, welder qualifications and the '
+    + "fabricator's accreditations. Records are held by BAMA Fabrication Ltd and available for inspection on request.",
+    usableW);
+  doc.text(blurb, mL, y);
+
+  doc.setFontSize(7.5); doc.setTextColor(140, 140, 145);
+  doc.text('BAMA Fabrication Ltd  ·  11 Enterprise Way, Enterprise Park, Yaxley, Peterborough PE7 3WY', mL, pageH - 16);
+
+  // ── Contents ──
+  const contentsHeader = () => {
+    doc.addPage();
+    doc.setFillColor(24, 24, 27); doc.rect(0, 0, pageW, 22, 'F');
+    doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
+    doc.text('CONTENTS', mL, 14);
+    doc.setTextColor(...accent); doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
+    doc.text(`${d.jobNumber || ''}${d.jobName ? '  ·  ' + d.jobName : ''}`, pageW - mR, 14, { align: 'right' });
+    y = 34;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(120, 120, 125);
+    doc.text('SECTION', mL, y); doc.text('PAGE', pageW - mR, y, { align: 'right' });
+    doc.setDrawColor(210, 210, 215); doc.setLineWidth(0.2); doc.line(mL, y + 2, pageW - mR, y + 2);
+    y += 8;
+  };
+  contentsHeader();
+  (d.sections || []).forEach((s, i) => {
+    if (y > pageH - 26) contentsHeader();
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...accent);
+    doc.text(String(i + 1).padStart(2, '0'), mL, y);
+    doc.setFont('helvetica', 'normal'); doc.setTextColor(35, 35, 40);
+    const label = doc.splitTextToSize(String(s.title || ''), usableW - 34);
+    doc.text(label[0], mL + 11, y);
+    doc.setFont('helvetica', 'bold'); doc.setTextColor(60, 60, 65);
+    doc.text(String(s.startPage), pageW - mR, y, { align: 'right' });
+    if (s.subtitle) {
+      y += 4;
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(140, 140, 145);
+      doc.text(doc.splitTextToSize(String(s.subtitle), usableW - 34)[0], mL + 11, y);
+      doc.setFontSize(9);
+    }
+    y += 7.5;
+  });
+  return doc;
+}
+
+// One divider page per section.
+function drawOmDivider(jsPDF, section, index, logoDataUri) {
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  const pageW = 210, pageH = 297, mL = 20;
+  const accent = [255, 107, 0];
+  doc.setFillColor(24, 24, 27); doc.rect(0, 0, pageW, 58, 'F');
+  doc.setTextColor(...accent); doc.setFont('helvetica', 'bold'); doc.setFontSize(34);
+  doc.text(String(index + 1).padStart(2, '0'), mL, 40);
+  doc.setTextColor(255, 255, 255); doc.setFontSize(16);
+  doc.text(doc.splitTextToSize(String(section.title || ''), pageW - mL - 40), mL + 26, 36);
+  if (section.subtitle) {
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(190, 190, 195);
+    doc.text(doc.splitTextToSize(String(section.subtitle), pageW - mL - 40)[0], mL + 26, 46);
+  }
+  if (section.note) {
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(80, 80, 85);
+    doc.text(doc.splitTextToSize(String(section.note), pageW - mL * 2), mL, 74);
+  }
+  doc.setFontSize(7.5); doc.setTextColor(150, 150, 155);
+  doc.text(`O&M Pack  ·  Section ${index + 1}`, mL, pageH - 14);
+  return doc;
+}
+
+// ── Fetch a SharePoint PDF as bytes (via downloadUrl — avoids CORS on /content)
+async function omFetchPdf(fileId, driveId) {
+  const token = await getToken();
+  const metaRes = await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${driveId || BAMA_DRIVE_ID}/items/${fileId}`,
+    { headers: { Authorization: `Bearer ${token}` } });
+  if (!metaRes.ok) throw new Error('meta ' + metaRes.status);
+  const meta = await metaRes.json();
+  const url = meta['@microsoft.graph.downloadUrl'];
+  if (!url) throw new Error('no download url');
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('download ' + res.status);
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+// Assemble the pack. `sources` is an ordered list of:
+//   { title, subtitle, note, kind:'blob'|'file', blob?, fileId?, driveId? }
+// Returns { blob, manifest, failures }. Anything that can't be fetched or parsed
+// is REPORTED, never silently dropped — a missing certificate in a handover pack
+// is exactly the thing the client will notice.
+async function omAssemblePack(sources, meta, onProgress) {
+  if (typeof PDFLib === 'undefined' || !PDFLib.PDFDocument)
+    throw new Error('pdf-lib not loaded on this page');
+  const JsPDFCtor = await resolveJsPDFCtor();
+  if (!JsPDFCtor) throw new Error('jsPDF not loaded on this page');
+  await loadLogoDataUri();
+  const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
+
+  // Pass 1 — collect bytes and page counts
+  const prepared = [], failures = [];
+  for (let i = 0; i < sources.length; i++) {
+    const s = sources[i];
+    if (onProgress) onProgress(`Collecting ${i + 1} of ${sources.length}: ${s.title}`);
+    try {
+      const bytes = s.kind === 'blob'
+        ? new Uint8Array(await s.blob.arrayBuffer())
+        : await omFetchPdf(s.fileId, s.driveId);
+      const probe = await PDFLib.PDFDocument.load(bytes, { ignoreEncryption: true });
+      prepared.push({ ...s, bytes, pageCount: probe.getPageCount() });
+    } catch (e) {
+      failures.push({ title: s.title, reason: e.message });
+    }
+  }
+  if (!prepared.length) throw new Error('Nothing could be collected for the pack');
+
+  // Pass 2 — settle the page numbering, then build
+  const layout = omLayout(prepared);
+  if (onProgress) onProgress('Building the contents page…');
+  const front = drawOmFrontMatter(JsPDFCtor, { ...meta, sections: layout.sections }, logo);
+
+  const out = await PDFLib.PDFDocument.create();
+  out.setTitle(`O&M Pack — ${meta.jobNumber || ''}`);
+  out.setAuthor('BAMA Fabrication Ltd');
+  out.setProducer('BAMA Fabrication ERP');
+  out.setCreationDate(new Date());
+
+  const append = async bytes => {
+    const src = await PDFLib.PDFDocument.load(bytes, { ignoreEncryption: true });
+    const pages = await out.copyPages(src, src.getPageIndices());
+    pages.forEach(p => out.addPage(p));
+  };
+
+  await append(new Uint8Array(front.output('arraybuffer')));
+  for (let i = 0; i < layout.sections.length; i++) {
+    const s = layout.sections[i];
+    if (onProgress) onProgress(`Binding section ${i + 1} of ${layout.sections.length}…`);
+    await append(new Uint8Array(drawOmDivider(JsPDFCtor, s, i, logo).output('arraybuffer')));
+    await append(s.bytes);
+  }
+
+  const bytes = await out.save();
+  const blob = new Blob([bytes], { type: 'application/pdf' });
+  console.log(`O&M pack: ${(blob.size / 1024 / 1024).toFixed(2)}MB, ${out.getPageCount()} pages`);
+  return {
+    blob,
+    manifest: layout.sections.map((s, i) => ({
+      no: i + 1, title: s.title, subtitle: s.subtitle || null,
+      startPage: s.startPage, pages: s.pageCount
+    })),
+    failures,
+    pageCount: out.getPageCount()
+  };
+}
+
+// Everything in this job that COULD go in the pack, as togglable candidates.
+async function omGatherSources(jobId) {
+  const out = [];
+  const add = (o) => out.push({ include: true, ...o });
+
+  // Generated documents already issued for this job
+  let certs = [];
+  try { certs = await api.get(`/api/job-certificates?job_id=${jobId}`); } catch (_) {}
+  const latest = t => (certs || []).filter(c => c.doc_type === t && c.status !== 'superseded')
+                                   .sort((a, b) => b.revision - a.revision)[0];
+  const dop = latest('dop'), coc = latest('coc');
+  if (dop && dop.sharepoint_file_id) add({ group: 'Certification', title: 'Declaration of Performance',
+    subtitle: `${dop.cert_ref} rev ${dop.revision}`, kind: 'file', fileId: dop.sharepoint_file_id, driveId: dop.drive_id });
+  if (coc && coc.sharepoint_file_id) add({ group: 'Certification', title: 'Certificate of Conformity',
+    subtitle: `${coc.cert_ref} rev ${coc.revision}`, kind: 'file', fileId: coc.sharepoint_file_id, driveId: coc.drive_id });
+
+  // ITP — generated live so it reflects what was actually achieved
+  add({ group: 'Certification', title: 'Inspection & Test Plan', subtitle: 'generated from the live inspection plan',
+        kind: 'itp', note: 'Generated at the time this pack was produced.' });
+
+  // As-built drawings
+  try {
+    const asm = await api.get(`/api/job-assemblies/${jobId}`);
+    const seen = new Set();
+    (asm || []).forEach(a => {
+      if (!a.sharepoint_file_id || seen.has(a.sharepoint_file_id)) return;
+      seen.add(a.sharepoint_file_id);
+      add({ group: 'Drawings', title: a.file_name || a.assembly_mark,
+            subtitle: `assembly ${a.assembly_mark}`, kind: 'file',
+            fileId: a.sharepoint_file_id, driveId: a.sharepoint_drive_id });
+    });
+  } catch (_) {}
+
+  // QMS records for this job (material, fabrication, release, site, CAR)
+  try {
+    const subs = await api.get('/api/qms-submissions');
+    let jobNo = null;
+    try { jobNo = ((await api.get('/api/projects')).find(p => String(p.id) === String(jobId)) || {}).job_number; } catch (_) {}
+    (subs || []).forEach(s => {
+      if (!s.sharepoint_file_id && !s.web_url) return;
+      let a = {}; try { a = typeof s.answers === 'string' ? JSON.parse(s.answers) : (s.answers || {}); } catch (_) {}
+      if (jobNo && a.job && String(a.job).indexOf(String(jobNo)) < 0) return;
+      if (!s.sharepoint_file_id) return;
+      add({ group: 'Records', title: `${s.form_code} — ${(s.file_name || '').replace(/\.pdf$/i, '')}`,
+            subtitle: String(s.created_at || '').slice(0, 10), kind: 'file',
+            fileId: s.sharepoint_file_id, driveId: null });
+    });
+  } catch (_) {}
+
+  // Company accreditations and insurances
+  try {
+    const docs = await api.get('/api/company-documents');
+    (docs || []).filter(d => d.sharepoint_file_id && ['accreditation', 'insurance'].includes(d.category))
+      .forEach(d => add({ group: 'Company', title: d.title, subtitle: d.doc_ref || d.issuer || null,
+                          kind: 'file', fileId: d.sharepoint_file_id, driveId: d.drive_id,
+                          include: d.category === 'accreditation' }));
+  } catch (_) {}
+
+  return out;
+}
+
+// ── O&M pack UI ─────────────────────────────────────────────────────────────
+let _omSources = [], _omExtra = [], _omIssued = [];
+
+async function omOpen() {
+  if (!_inspJob) { toast('Pick a job first', 'error'); return; }
+  if (!document.getElementById('omModal')) {
+    const div = document.createElement('div');
+    div.innerHTML = `<div id="omModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:1001;align-items:flex-start;justify-content:center;padding:26px;overflow-y:auto">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:880px;overflow:hidden">
+        <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <h3 style="margin:0;font-size:16px;flex:1">📚 O&amp;M / Handover Pack</h3>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('omModal').style.display='none'">✕</button>
+        </div>
+        <div id="omBody" style="padding:16px 20px;max-height:80vh;overflow-y:auto"></div>
+      </div></div>`;
+    document.body.appendChild(div.firstElementChild);
+  }
+  document.getElementById('omModal').style.display = 'flex';
+  const host = document.getElementById('omBody');
+  host.innerHTML = '<div style="color:var(--muted);font-size:12px">Finding everything on file for this job…</div>';
+  try {
+    _omSources = await omGatherSources(_inspJob);
+    _omExtra = [];
+    _omIssued = await api.get(`/api/job-certificates?job_id=${_inspJob}&doc_type=om`).catch(() => []);
+  } catch (e) { host.innerHTML = `<div style="color:var(--red);font-size:12px">${escapeHtml(e.message)}</div>`; return; }
+  _omRender();
+}
+
+function _omRender() {
+  const host = document.getElementById('omBody'); if (!host) return;
+  const all = [..._omSources, ..._omExtra];
+  const groups = [...new Set(all.map(s => s.group))];
+  const chosen = all.filter(s => s.include).length;
+  const nextRev = _omIssued.length ? Math.max(..._omIssued.map(c => Number(c.revision) || 0)) + 1 : 1;
+  const missing = [];
+  if (!_omSources.some(s => s.title === 'Declaration of Performance')) missing.push('No Declaration of Performance issued yet for this job');
+  if (!_omSources.some(s => s.title === 'Certificate of Conformity')) missing.push('No Certificate of Conformity issued yet for this job');
+  if (!_omSources.some(s => s.group === 'Drawings')) missing.push('No drawings found on the job assemblies');
+
+  host.innerHTML = `
+    <p style="font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.6">
+      Everything below is already on file for this job. Tick what goes in, drag the order if you need to, and it binds into one PDF
+      with a cover, a contents page carrying <strong>real page numbers</strong>, and a divider before each section.
+      <br><span style="font-size:11.5px">Navigation is by the contents page and dividers rather than a PDF sidebar — pdf-lib can't write
+      bookmark trees, and I'd rather not hand-write outline objects into a file your client has to open.</span></p>
+
+    ${missing.length ? `<div style="background:#3b2f0f;border:1px solid #eab308;border-radius:8px;padding:9px 13px;font-size:12px;color:#f0e0a4;margin-bottom:10px;line-height:1.6">
+      ${missing.map(m => '• ' + escapeHtml(m)).join('<br>')}</div>` : ''}
+
+    ${_omIssued.length ? `<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">Already issued:
+      ${_omIssued.map(c => `<a ${c.web_url ? `href="${escapeHtml(c.web_url)}" target="_blank"` : ''} style="color:var(--accent);text-decoration:underline dotted">${escapeHtml(c.cert_ref)} rev ${c.revision}</a>`).join(' · ')}</div>` : ''}
+
+    ${groups.map(g => `
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:10px 0 5px">
+        ${escapeHtml(g)}
+        <button class="btn btn-ghost btn-sm" style="font-weight:400;text-transform:none" onclick="omToggleGroup('${escapeHtml(g)}')">toggle all</button></div>
+      ${all.map((s, i) => s.group !== g ? '' : `
+        <label style="display:flex;align-items:center;gap:9px;font-size:12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;margin-bottom:3px;cursor:pointer">
+          <input type="checkbox" ${s.include ? 'checked' : ''} onchange="omToggle(${i}, this.checked)">
+          <span style="flex:1;min-width:0"><strong>${escapeHtml(s.title)}</strong>
+            ${s.subtitle ? `<span style="color:var(--muted)"> · ${escapeHtml(s.subtitle)}</span>` : ''}</span>
+          ${s.kind === 'itp' ? '<span style="font-size:10px;color:#38bdf8;white-space:nowrap">generated now</span>' : ''}
+          ${s.kind === 'blob' ? '<span style="font-size:10px;color:#3ecf8e;white-space:nowrap">uploaded</span>' : ''}
+        </label>`).join('')}`).join('')}
+
+    <div ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
+         ondragleave="this.style.borderColor='var(--border)'"
+         ondrop="event.preventDefault();this.style.borderColor='var(--border)';omAddExtra(event.dataTransfer.files)"
+         onclick="document.getElementById('omExtraInput').click()"
+         style="border:1.5px dashed var(--border);border-radius:8px;padding:11px;text-align:center;cursor:pointer;font-size:12px;color:var(--muted);margin:12px 0 10px">
+      📥 Drop in warranties, coating certificates, third-party NDT reports or anything else the client has asked for (PDF)
+      <input id="omExtraInput" type="file" accept="application/pdf" multiple style="display:none" onchange="omAddExtra(this.files);this.value=''">
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr 1.4fr;gap:8px;margin-bottom:10px">
+      <div><label style="font-size:10px;color:var(--muted);display:block">Issue date</label>
+        <input id="om_date" type="date" value="${new Date().toISOString().slice(0, 10)}" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box"></div>
+      <div><label style="font-size:10px;color:var(--muted);display:block">Revision</label>
+        <input id="om_rev" value="${nextRev}" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box"></div>
+      <div><label style="font-size:10px;color:var(--muted);display:block">Prepared by</label>
+        <input id="om_by" value="Mateusz Braczyk, Director" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box"></div>
+    </div>
+
+    <div id="omProgress" style="font-size:12px;color:var(--accent);margin-bottom:8px"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <button class="btn btn-primary btn-sm" ${chosen ? '' : 'disabled style="opacity:.45;cursor:not-allowed"'} onclick="omBuild(false)">📚 Build pack (${chosen})</button>
+      <button class="btn btn-primary btn-sm" ${chosen ? '' : 'disabled style="opacity:.45;cursor:not-allowed"'} onclick="omBuild(true)">💾 Build &amp; file to SharePoint</button>
+    </div>`;
+}
+
+function omToggle(i, on) { const all = [..._omSources, ..._omExtra]; all[i].include = on; _omRender(); }
+function omToggleGroup(g) {
+  const all = [..._omSources, ..._omExtra];
+  const rows = all.filter(s => s.group === g);
+  const turnOn = rows.some(s => !s.include);
+  rows.forEach(s => { s.include = turnOn; });
+  _omRender();
+}
+function omAddExtra(files) {
+  for (const f of files) {
+    if (!/pdf$/i.test(f.type) && !/\.pdf$/i.test(f.name)) { toast(`${f.name} isn't a PDF — skipped`, 'error'); continue; }
+    _omExtra.push({ include: true, group: 'Warranties & other', title: f.name.replace(/\.pdf$/i, ''), kind: 'blob', blob: f });
+  }
+  _omRender();
+}
+
+async function omBuild(toSharePoint) {
+  const g = id => (document.getElementById(id) || {}).value || '';
+  const prog = document.getElementById('omProgress');
+  const say = m => { if (prog) prog.textContent = m; };
+  const all = [..._omSources, ..._omExtra].filter(s => s.include);
+  let job = null;
+  try { job = (await api.get('/api/projects')).find(p => String(p.id) === String(_inspJob)); } catch (_) {}
+
+  try {
+    // Generate the ITP inline if it was ticked
+    const sources = [];
+    for (const s of all) {
+      if (s.kind === 'itp') {
+        say('Generating the ITP…');
+        let rows = [];
+        try { rows = await api.get(`/api/itp-rows?plan_id=${_inspPlan.id}`); } catch (_) {}
+        if (!rows.length) rows = itpGenerateRows(_inspPlan, _ndtRules);
+        const blob = await renderItpPdfBlob({
+          jobNumber: job ? job.job_number : '', jobName: job ? job.name : '',
+          client: job ? job.client_name : '', execClass: _inspPlan ? _inspPlan.exec_class : '',
+          issueDate: g('om_date'), rev: g('om_rev'), rows
+        });
+        sources.push({ ...s, kind: 'blob', blob });
+      } else sources.push(s);
+    }
+
+    const res = await omAssemblePack(sources, {
+      jobNumber: job ? job.job_number : '', jobName: job ? job.name : '',
+      client: job ? job.client_name : '', site: job ? (job.site_address || job.site || '') : '',
+      execClass: _inspPlan ? _inspPlan.exec_class : '',
+      issueDate: g('om_date'), revision: g('om_rev'), issuedBy: g('om_by')
+    }, say);
+
+    say('');
+    if (res.failures.length) {
+      toast(`${res.failures.length} item(s) couldn't be included — see the list`, 'error');
+      if (prog) prog.innerHTML = `<span style="color:#ff9b9b">Left out: ${res.failures.map(f => escapeHtml(f.title) + ' (' + escapeHtml(f.reason) + ')').join('; ')}</span>`;
+    }
+
+    const name = `O&M Pack - ${(job && job.job_number) || 'job'} - rev ${g('om_rev')}.pdf`;
+    if (!toSharePoint) {
+      window.open(URL.createObjectURL(res.blob), '_blank');
+      toast(`Pack built — ${res.pageCount} pages`, 'success');
+      return;
+    }
+    const folder = await findProjectFolder(_inspJob).catch(() => null);
+    let up = null;
+    if (folder) up = await uploadFileToFolder(folder.id, name, await res.blob.arrayBuffer(), 'application/pdf', BAMA_DRIVE_ID);
+    await api.post('/api/job-certificates', {
+      job_id: _inspJob, doc_type: 'om', cert_ref: `OM-${(job && job.job_number) || 'JOB'}-${String(g('om_rev')).padStart(2, '0')}`,
+      issue_date: g('om_date'), issued_by: g('om_by'),
+      exec_class: _inspPlan ? _inspPlan.exec_class : null,
+      scope_text: `${res.pageCount} pages, ${res.manifest.length} sections`,
+      payload: { manifest: res.manifest, failures: res.failures, pageCount: res.pageCount },
+      file_name: name, sharepoint_file_id: up ? up.id : null,
+      drive_id: up ? BAMA_DRIVE_ID : null, web_url: up ? (up.webUrl || null) : null
+    });
+    toast(up ? `Pack filed to the job folder — ${res.pageCount} pages` : `Pack built (${res.pageCount} pages) — SharePoint unavailable`, 'success');
+    window.open(up && up.webUrl ? up.webUrl : URL.createObjectURL(res.blob), '_blank');
+    _omIssued = await api.get(`/api/job-certificates?job_id=${_inspJob}&doc_type=om`).catch(() => []);
+    _omRender();
+  } catch (e) { say(''); toast('Pack failed: ' + e.message, 'error'); }
 }
