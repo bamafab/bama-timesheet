@@ -1,0 +1,1198 @@
+{
+  "generated_from": "api/sql",
+  "migrations": [
+    {
+      "script": "add-afp-v2.sql",
+      "title": "Builds on add-invoicing.sql + add-afps-extras.sql (already deployed). Adds:",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "ApplicationLineItems",
+          "column": "certified_pct"
+        },
+        {
+          "table": "ApplicationLineItems",
+          "column": "gross_amount_paid"
+        },
+        {
+          "table": "ApplicationLineItems",
+          "column": "item_description"
+        },
+        {
+          "table": "ApplicationLineItems",
+          "column": "item_no"
+        },
+        {
+          "table": "ApplicationLineItems",
+          "column": "item_quote_ref"
+        },
+        {
+          "table": "ApplicationLineItems",
+          "column": "item_wo_no"
+        },
+        {
+          "table": "ApplicationLineItems",
+          "column": "section"
+        },
+        {
+          "table": "Applications",
+          "column": "contract_no"
+        },
+        {
+          "table": "Applications",
+          "column": "cumulative_value_net"
+        },
+        {
+          "table": "Applications",
+          "column": "previous_certificate_value"
+        },
+        {
+          "table": "Applications",
+          "column": "retention_pct"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-afps-extras.sql",
+      "title": "Builds on add-invoicing.sql (already deployed). Adds:",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "ApplicationLineItems",
+          "column": "certified_this_app_value"
+        },
+        {
+          "table": "ApplicationLineItems",
+          "column": "cumulative_value"
+        },
+        {
+          "table": "Applications",
+          "column": "is_final"
+        },
+        {
+          "table": "Applications",
+          "column": "period_end"
+        },
+        {
+          "table": "Applications",
+          "column": "period_start"
+        },
+        {
+          "table": "UserPermissions",
+          "column": "afps"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-babcock-quotes-original-ref-and-po.sql",
+      "title": "Babcock Quotes: add original_quote_ref + po_number",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "BabcockQuotes",
+          "column": "original_quote_ref"
+        },
+        {
+          "table": "BabcockQuotes",
+          "column": "po_number"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-babcock-quotes-revision.sql",
+      "title": "Babcock Quotes: add revision counter",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "BabcockQuotes",
+          "column": "revision"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-bank-reconciliation.sql",
+      "title": "Creates:",
+      "kind": "structural",
+      "tables": [
+        "BankAccounts",
+        "BankStatements",
+        "BankTransactionDocs",
+        "BankTransactions"
+      ],
+      "columns": [
+        {
+          "table": "UserPermissions",
+          "column": "reconcile"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-bom-fixings-and-despatch-ledger.sql",
+      "title": "Migration: BOM fixings + partial-despatch ledger",
+      "kind": "structural",
+      "tables": [
+        "JobBomDespatches"
+      ],
+      "columns": [
+        {
+          "table": "JobBomItems",
+          "column": "despatched_qty"
+        },
+        {
+          "table": "JobBomItems",
+          "column": "item_type"
+        },
+        {
+          "table": "JobBomItems",
+          "column": "unit_weight_kg"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-client-vat-terms.sql",
+      "title": "Per-client VAT treatment + payment terms for sales invoicing.",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "Clients",
+          "column": "payment_terms_days"
+        },
+        {
+          "table": "Clients",
+          "column": "vat_treatment"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-clockentries-approval.sql",
+      "title": "Add approval tracking to ClockEntries so amendments stay approved across reloads.",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "ClockEntries",
+          "column": "approved_by"
+        },
+        {
+          "table": "ClockEntries",
+          "column": "is_approved"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-clockentries-break-mins.sql",
+      "title": "Add break_mins to ClockEntries table",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "ClockEntries",
+          "column": "break_mins"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-construction-number.sql",
+      "title": "Add construction_number to DrawingApprovalRevisions",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "DrawingApprovalRevisions",
+          "column": "construction_number"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-cost-galvanising.sql",
+      "title": "QB previously saved painting + galvanising combined into cost_painting,",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "QuoteBuilderQuotes",
+          "column": "cost_galvanising"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-employee-pay-type-carryover.sql",
+      "title": "Add pay_type and carryover_days to Employees table",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "Employees",
+          "column": "carryover_days"
+        },
+        {
+          "table": "Employees",
+          "column": "pay_type"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-employee-start-date.sql",
+      "title": "Add start_date to Employees table",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "Employees",
+          "column": "start_date"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-estimating-dashboard-perm.sql",
+      "title": "Add estimating_dashboard permission column to UserPermissions",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "UserPermissions",
+          "column": "estimating_dashboard"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-invoicing.sql",
+      "title": "Invoice Tracker \u2014 Schema migration (Phase 1)",
+      "kind": "structural",
+      "tables": [
+        "ApplicationLineItems",
+        "Applications",
+        "InvoiceAttachments",
+        "InvoiceLineItems",
+        "InvoicePayments",
+        "Invoices",
+        "Receipts"
+      ],
+      "columns": [
+        {
+          "table": "PurchaseOrders",
+          "column": "supplier_invoice_ref"
+        },
+        {
+          "table": "UserPermissions",
+          "column": "invoicing"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-job-fabrication.sql",
+      "title": "Job & Fabrication Rework \u2014 Schema migration (Commit 1 of 12)",
+      "kind": "structural",
+      "tables": [
+        "JobAssemblies",
+        "JobAssemblyParts",
+        "JobBomItems"
+      ],
+      "columns": [
+        {
+          "table": "DrawingJobs",
+          "column": "created_by"
+        },
+        {
+          "table": "DrawingJobs",
+          "column": "sharepoint_folder_id"
+        },
+        {
+          "table": "ServiceTypes",
+          "column": "is_finish"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-payroll-holiday-columns.sql",
+      "title": "Add holiday pay columns to PayrollArchive",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "PayrollArchive",
+          "column": "bank_holiday_hours"
+        },
+        {
+          "table": "PayrollArchive",
+          "column": "bank_holiday_pay"
+        },
+        {
+          "table": "PayrollArchive",
+          "column": "holiday_hours"
+        },
+        {
+          "table": "PayrollArchive",
+          "column": "holiday_pay"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-project-hidden-from-workshop.sql",
+      "title": "Adds Projects.hidden_from_workshop \u2014 flags projects that should NOT appear on",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "Projects",
+          "column": "hidden_from_workshop"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-project-sheets.sql",
+      "title": "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+      "kind": "structural",
+      "tables": [
+        "ProjectSheetRevisions",
+        "ProjectSheets"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "add-project-site-and-contacts.sql",
+      "title": "Project Tracker: site address + additional contacts + threaded comments",
+      "kind": "structural",
+      "tables": [
+        "ProjectComments",
+        "ProjectContacts"
+      ],
+      "columns": [
+        {
+          "table": "Projects",
+          "column": "site_address_line1"
+        },
+        {
+          "table": "Projects",
+          "column": "site_address_line2"
+        },
+        {
+          "table": "Projects",
+          "column": "site_city"
+        },
+        {
+          "table": "Projects",
+          "column": "site_contact_email"
+        },
+        {
+          "table": "Projects",
+          "column": "site_contact_name"
+        },
+        {
+          "table": "Projects",
+          "column": "site_contact_phone"
+        },
+        {
+          "table": "Projects",
+          "column": "site_county"
+        },
+        {
+          "table": "Projects",
+          "column": "site_postcode"
+        },
+        {
+          "table": "Projects",
+          "column": "site_same_as_client"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-projecthours-edit-audit.sql",
+      "title": "Audit trail for employee-edited project hours.",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "ProjectHours",
+          "column": "edit_reason"
+        },
+        {
+          "table": "ProjectHours",
+          "column": "edited_at"
+        },
+        {
+          "table": "ProjectHours",
+          "column": "edited_by"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-projecthours-unique.sql",
+      "title": "Unique index on ProjectHours (emp, project, date) + duplicate merge",
+      "kind": "manual",
+      "tables": [],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "add-purchase-orders-vat.sql",
+      "title": "Purchase Orders: add VAT (Nett / Gross split) \u2014 Phase 1a follow-up",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "PurchaseOrders",
+          "column": "vat_amount"
+        },
+        {
+          "table": "PurchaseOrders",
+          "column": "vat_rate"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-qb-chase-log.sql",
+      "title": "Add chase-logging columns to QuoteBuilderQuotes",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "QuoteBuilderQuotes",
+          "column": "chase_count"
+        },
+        {
+          "table": "QuoteBuilderQuotes",
+          "column": "chased_at"
+        },
+        {
+          "table": "QuoteBuilderQuotes",
+          "column": "chased_by"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-qb-chasing-date.sql",
+      "title": "Add chasing_date column to QuoteBuilderQuotes",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "QuoteBuilderQuotes",
+          "column": "chasing_date"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-qb-quote-id-to-projectquotes.sql",
+      "title": "Allow QB (QuoteBuilderQuotes) quotes to link into ProjectQuotes / QuoteLineItems",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "ProjectQuotes",
+          "column": "id"
+        },
+        {
+          "table": "ProjectQuotes",
+          "column": "qb_quote_id"
+        },
+        {
+          "table": "QuoteLineItems",
+          "column": "qb_quote_id"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-qb-quotes.sql",
+      "title": "Quote Builder integration \u2014 Schema migration",
+      "kind": "structural",
+      "tables": [
+        "QuoteBuilderQuotes",
+        "QuoteBuilderSnapshots"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "add-quote-lineitems-and-progress.sql",
+      "title": "Quote Line Items + Multi-quote Projects + Per-line Progress",
+      "kind": "structural",
+      "tables": [
+        "ProjectLineProgress",
+        "ProjectQuotes",
+        "QuoteLineItems"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "add-quoteline-labour-hours.sql",
+      "title": "Adds QuoteLineItems.labour_hours: the ESTIMATED labour hours a line carries,",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "QuoteLineItems",
+          "column": "labour_hours"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-remittance-retention.sql",
+      "title": "Remittance advice + retention release invoicing (2026-07-27)",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "Invoices",
+          "column": "is_retention_release"
+        },
+        {
+          "table": "PurchaseOrders",
+          "column": "paid_ref"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-sdn-sequence.sql",
+      "title": "Settings row seeding the Site DN number sequence",
+      "kind": "manual",
+      "tables": [],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "add-staged-fabrication.sql",
+      "title": "Staged / Partial Fabrication \u2014 Schema migration (Commit 1 of build)",
+      "kind": "structural",
+      "tables": [
+        "JobAssemblyActions"
+      ],
+      "columns": [
+        {
+          "table": "JobAssemblies",
+          "column": "qty_completed"
+        },
+        {
+          "table": "JobAssemblies",
+          "column": "qty_fabbed"
+        },
+        {
+          "table": "JobAssemblies",
+          "column": "qty_welded"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-subcontractor-cis.sql",
+      "title": "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "SupplierInvoices",
+          "column": "cis_deduction"
+        },
+        {
+          "table": "SupplierInvoices",
+          "column": "cis_rate"
+        },
+        {
+          "table": "SupplierInvoices",
+          "column": "invoice_type"
+        },
+        {
+          "table": "SupplierInvoices",
+          "column": "labour_gross"
+        },
+        {
+          "table": "Suppliers",
+          "column": "bank_account_no"
+        },
+        {
+          "table": "Suppliers",
+          "column": "bank_sort_code"
+        },
+        {
+          "table": "Suppliers",
+          "column": "cis_rate"
+        },
+        {
+          "table": "Suppliers",
+          "column": "is_subcontractor"
+        },
+        {
+          "table": "Suppliers",
+          "column": "payment_on_account"
+        },
+        {
+          "table": "Suppliers",
+          "column": "utr_number"
+        },
+        {
+          "table": "Suppliers",
+          "column": "via_amazon"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-supplier-payment-terms.sql",
+      "title": "Add payment terms columns to Suppliers",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "Suppliers",
+          "column": "payment_dd"
+        },
+        {
+          "table": "Suppliers",
+          "column": "payment_term_type"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-suppliers-parse-source.sql",
+      "title": "Add parse_source_text to Suppliers",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "Suppliers",
+          "column": "parse_source_text"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-tender-assigned-notify.sql",
+      "title": "Add assigned_to_id and notification tracking to Tenders",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "Tenders",
+          "column": "assigned_to_id"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-tenders-quote-fields.sql",
+      "title": "Add quote-specific fields to Tenders table",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "Tenders",
+          "column": "chasing_date"
+        },
+        {
+          "table": "Tenders",
+          "column": "quote_value"
+        },
+        {
+          "table": "Tenders",
+          "column": "sent_date"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "add-zinc-phosphate-primer-finish.sql",
+      "title": "ServiceTypes rows for zinc phosphate primer finish",
+      "kind": "manual",
+      "tables": [],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "approve-all-existing-project-hours.sql",
+      "title": "One-off: approve historic ProjectHours",
+      "kind": "manual",
+      "tables": [],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "babcock-new-workflow-columns.sql",
+      "title": "Babcock workflow: new columns for the revised post-payment flow",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "BabcockQuotes",
+          "column": "bama_sw_po_pdf_url"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "babcock-quotes-lifecycle-expansion.sql",
+      "title": "Babcock Quotes \u2014 full-lifecycle workflow expansion.",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "BabcockQuotes",
+          "column": "bama_sw_invoice_due_date"
+        },
+        {
+          "table": "BabcockQuotes",
+          "column": "bama_sw_invoice_number"
+        },
+        {
+          "table": "BabcockQuotes",
+          "column": "bama_sw_invoice_pdf_id"
+        },
+        {
+          "table": "BabcockQuotes",
+          "column": "bama_sw_invoice_pdf_url"
+        },
+        {
+          "table": "BabcockQuotes",
+          "column": "bama_sw_invoice_sent_at"
+        },
+        {
+          "table": "BabcockQuotes",
+          "column": "bama_sw_po_number"
+        },
+        {
+          "table": "BabcockQuotes",
+          "column": "coupa_invoice_due_date"
+        },
+        {
+          "table": "BabcockQuotes",
+          "column": "coupa_invoice_gross_total"
+        },
+        {
+          "table": "BabcockQuotes",
+          "column": "coupa_invoice_number"
+        },
+        {
+          "table": "BabcockQuotes",
+          "column": "coupa_invoice_pdf_id"
+        },
+        {
+          "table": "BabcockQuotes",
+          "column": "coupa_invoice_pdf_url"
+        },
+        {
+          "table": "BabcockQuotes",
+          "column": "coupa_po_ref"
+        },
+        {
+          "table": "BabcockQuotes",
+          "column": "customer_email"
+        },
+        {
+          "table": "BabcockQuotes",
+          "column": "linked_project_id"
+        },
+        {
+          "table": "BabcockQuotes",
+          "column": "payment_received_at"
+        },
+        {
+          "table": "Projects",
+          "column": "source_babcock_quote_id"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "backfill-labour-hours-f1.sql",
+      "title": "One-off: backfill QuoteLineItems.labour_hours (Fault F1)",
+      "kind": "manual",
+      "tables": [],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "backfill-po-approval.sql",
+      "title": "One-off: backfill PO approval state",
+      "kind": "manual",
+      "tables": [],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "backfill-po-project-links.sql",
+      "title": "One-off: set PurchaseOrders.project_id from job_number",
+      "kind": "manual",
+      "tables": [],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "cleanup-payroll-2026-04-27-test-data.sql",
+      "title": "One-off: remove payroll test data",
+      "kind": "manual",
+      "tables": [],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "create-amendments.sql",
+      "title": "ClockingAmendments table",
+      "kind": "structural",
+      "tables": [
+        "ClockingAmendments"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "create-babcock-quotes.sql",
+      "title": "Babcock Quotes Tracker",
+      "kind": "structural",
+      "tables": [
+        "BabcockQuotes"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "create-changelog.sql",
+      "title": "Audit trail: who changed what, when, from what to what. Written by the",
+      "kind": "structural",
+      "tables": [
+        "ChangeLog"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "create-client-contacts.sql",
+      "title": "ClientContacts table",
+      "kind": "structural",
+      "tables": [
+        "ClientContacts"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "create-clients-tenders.sql",
+      "title": "Clients table",
+      "kind": "structural",
+      "tables": [
+        "Clients",
+        "Tenders"
+      ],
+      "columns": [
+        {
+          "table": "UserPermissions",
+          "column": "edit_quotes"
+        },
+        {
+          "table": "UserPermissions",
+          "column": "tenders"
+        },
+        {
+          "table": "UserPermissions",
+          "column": "view_quotes"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "create-company-documents.sql",
+      "title": "One register of company-level documents (insurances, policies,",
+      "kind": "structural",
+      "tables": [
+        "CompanyDocuments"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "create-employee-documents.sql",
+      "title": "Per-employee document register (contracts, right-to-work, certs, reviews)",
+      "kind": "structural",
+      "tables": [
+        "EmployeeDocuments"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "create-labour-log.sql",
+      "title": "LabourLog \u2014 the locked audit record of approved hours, fed from ProjectHours",
+      "kind": "structural",
+      "tables": [
+        "LabourLog"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "create-office-tasks.sql",
+      "title": "Office Tasks \u2014 migrate from SharePoint JSON to SQL",
+      "kind": "structural",
+      "tables": [
+        "OfficeTasks"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "create-payroll-comments-revisions.sql",
+      "title": "Payroll comments and revisions tracking.",
+      "kind": "structural",
+      "tables": [
+        "PayrollComments",
+        "PayrollRevisions"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "create-plant-register.sql",
+      "title": "Company plant & equipment register with statutory-inspection tracking:",
+      "kind": "structural",
+      "tables": [
+        "PlantDocuments",
+        "PlantItems"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "create-projects.sql",
+      "title": "Projects table \u2014 created from a Won quote, mirrors quote ref with C prefix",
+      "kind": "structural",
+      "tables": [
+        "Projects"
+      ],
+      "columns": [
+        {
+          "table": "UserPermissions",
+          "column": "edit_projects"
+        },
+        {
+          "table": "UserPermissions",
+          "column": "view_projects"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "create-purchase-orders.sql",
+      "title": "Purchase Orders \u2014 Phase 1a",
+      "kind": "structural",
+      "tables": [
+        "POAttachments",
+        "POLineItems",
+        "PurchaseOrders"
+      ],
+      "columns": [
+        {
+          "table": "UserPermissions",
+          "column": "edit_purchase_orders"
+        },
+        {
+          "table": "UserPermissions",
+          "column": "view_purchase_orders"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "create-qms-forms.sql",
+      "title": "Data-driven form engine: QmsForms holds versioned JSON definitions",
+      "kind": "structural",
+      "tables": [
+        "QmsForms",
+        "QmsSubmissions"
+      ],
+      "columns": [],
+      "seedForms": [
+        "BAM VER 001",
+        "BAMA CAL 001"
+      ]
+    },
+    {
+      "script": "create-site-personnel.sql",
+      "title": "Site Personnel roster  \u2014  RAMS module phase 2b   (safe re-run version)",
+      "kind": "structural",
+      "tables": [
+        "CertTypes",
+        "SitePersonnel",
+        "SitePersonnelCerts"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "create-stock.sql",
+      "title": "Steel stock on the racks: one row per section+length batch. Voice or manual",
+      "kind": "structural",
+      "tables": [
+        "StockItems"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "create-supplier-documents.sql",
+      "title": "FPC layer on the existing Suppliers table: approval status (FPC s9 \u2014",
+      "kind": "structural",
+      "tables": [
+        "SupplierDocuments"
+      ],
+      "columns": [
+        {
+          "table": "Suppliers",
+          "column": "approval_review_due"
+        },
+        {
+          "table": "Suppliers",
+          "column": "approval_status"
+        },
+        {
+          "table": "Suppliers",
+          "column": "approved_at"
+        },
+        {
+          "table": "Suppliers",
+          "column": "approved_by"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "create-supplier-invoices.sql",
+      "title": "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+      "kind": "structural",
+      "tables": [
+        "SupplierInvoices",
+        "SupplierPaymentRuns"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "create-tender-comments.sql",
+      "title": "Tender Comments",
+      "kind": "structural",
+      "tables": [
+        "TenderComments"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "create-tender-register.sql",
+      "title": "Tender Register \u2014 Schema migration (safe re-run version)",
+      "kind": "structural",
+      "tables": [
+        "TenderAssignees",
+        "TenderComments",
+        "TenderRegister"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "import-po-fixes-2026.sql",
+      "title": "One-off: corrections to the 2026 PO import",
+      "kind": "manual",
+      "tables": [],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "import-po-tracker-2026.sql",
+      "title": "One-off: import the 2026 PO tracker spreadsheet",
+      "kind": "manual",
+      "tables": [],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "migrate-drawings-blob-to-sql.sql",
+      "title": "One-off: move drawing blobs into SQL",
+      "kind": "manual",
+      "tables": [
+        "DrawingApprovalRevisions",
+        "DrawingElementFiles",
+        "DrawingElementNotes",
+        "DrawingJobSite",
+        "DrawingRevisionFiles"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "retire-approval-revisions.sql",
+      "title": "Soft-delete flag for approval revisions. A deleted revision disappears from",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "DrawingApprovalRevisions",
+          "column": "is_deleted"
+        }
+      ],
+      "seedForms": []
+    },
+    {
+      "script": "seed-qms-forms-phase2.sql",
+      "title": "Definition rows only \u2014 NO code needed (the engine renders from JSON).",
+      "kind": "structural",
+      "tables": [],
+      "columns": [],
+      "seedForms": [
+        "BAMA CAR 001",
+        "BAMA FAB 001",
+        "BAMA MAT 001",
+        "BAMA REL 001",
+        "BAMA SITE 001",
+        "BAMA tec 001",
+        "CON 001"
+      ]
+    },
+    {
+      "script": "widen-approval-status.sql",
+      "title": "Widens the DrawingApprovalRevisions status check constraint",
+      "kind": "manual",
+      "tables": [],
+      "columns": [],
+      "seedForms": []
+    },
+    {
+      "script": "widen-bom-status-on-site.sql",
+      "title": "Adds 'on_site' to the JobBomItems status check constraint",
+      "kind": "manual",
+      "tables": [],
+      "columns": [],
+      "seedForms": []
+    }
+  ]
+}

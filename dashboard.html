@@ -3263,7 +3263,7 @@ function switchDashTab(tab) {
   document.getElementById('dashHealthView').style.display   = tab === 'health'   ? '' : 'none';
   if (tab === 'tenders' && !_trTenders.length) loadTenderRegister();
   if (tab === 'overview') loadOverview();
-  if (tab === 'health' && !_healthData) { runHealthCheck(); loadChangeLog(); }
+  if (tab === 'health' && !_healthData) { runHealthCheck(); loadChangeLog(); loadSchemaCheck(); }
 }
 
 // ── API fetch helper ──────────────────────────────────────────
@@ -4144,6 +4144,18 @@ async function trResendNotify(tenderId) {
   <div id="hcChangeLog" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:4px 0">
     <div style="text-align:center;padding:24px;color:var(--muted);font-size:12px">Press ↻ Refresh to load.</div>
   </div>
+
+  <!-- Database migrations — which api/sql scripts have actually been run -->
+  <div style="display:flex;align-items:center;gap:10px;margin:26px 0 6px;flex-wrap:wrap">
+    <h3 style="margin:0;font-size:15px">🗄 Database migrations</h3>
+    <button class="btn btn-ghost btn-sm" onclick="loadSchemaCheck()">↻ Check database</button>
+    <label style="font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:5px;cursor:pointer">
+      <input type="checkbox" id="hcMigAll" onchange="renderSchemaCheck()"> show everything already applied</label>
+    <span style="font-size:11px;color:var(--muted)">asks the database what exists — no need to remember</span>
+  </div>
+  <div id="hcMigrations" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px">
+    <div style="color:var(--muted);font-size:12px">Press ↻ Check database to inspect the live schema.</div>
+  </div>
 </div>
 </div>
 
@@ -4717,6 +4729,69 @@ function copyHealthReport() {
       document.body.removeChild(ta);
     }
   );
+}
+</script>
+
+<script>
+// ═══ Database migration status (GET /api/schema-check) ═══
+// Every script in api/sql/ is probed against sys.tables / sys.columns so
+// "did I run that one?" is answered by the database, not by memory.
+let _schemaCheck = null;
+
+async function loadSchemaCheck() {
+  const host = document.getElementById('hcMigrations');
+  if (!host) return;
+  host.innerHTML = '<div style="color:var(--muted);font-size:12px">Inspecting the live schema…</div>';
+  try { _schemaCheck = await trFetch('/api/schema-check'); }
+  catch (e) {
+    host.innerHTML = `<div style="color:#ff6b6b;font-size:12px">Couldn't inspect the schema: ${escHtml(e.message)}<br>
+      <span style="color:var(--muted)">If this 404s the Function App hasn't finished deploying yet — try again in a couple of minutes.</span></div>`;
+    return;
+  }
+  renderSchemaCheck();
+}
+
+function renderSchemaCheck() {
+  const host = document.getElementById('hcMigrations');
+  if (!host || !_schemaCheck) return;
+  const showAll = document.getElementById('hcMigAll')?.checked;
+  const STY = {
+    missing:      { label: 'NEEDS RUNNING', color: '#ff6b6b', order: 0 },
+    partial:      { label: 'PART-APPLIED',  color: '#eab308', order: 1 },
+    unverifiable: { label: 'DATA ONLY',     color: '#8b9bb4', order: 2 },
+    applied:      { label: 'APPLIED',       color: '#3ecf8e', order: 3 }
+  };
+  const c = _schemaCheck.counts || {};
+  const card = (n, label, color) => `<div style="background:var(--card);border:1px solid var(--border);border-left:3px solid ${color};border-radius:8px;padding:8px 14px;min-width:104px">
+    <div style="font-size:20px;font-weight:800;color:${color}">${n || 0}</div>
+    <div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">${label}</div></div>`;
+
+  const rows = (_schemaCheck.migrations || [])
+    .filter(m => showAll || m.status !== 'applied')
+    .sort((a, b) => (STY[a.status].order - STY[b.status].order) || a.script.localeCompare(b.script));
+
+  const attention = (c.missing || 0) + (c.partial || 0);
+  host.innerHTML = `
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+      ${card(c.missing, 'Needs running', '#ff6b6b')}${card(c.partial, 'Part-applied', '#eab308')}
+      ${card(c.applied, 'Applied', '#3ecf8e')}${card(c.unverifiable, 'Data only', '#8b9bb4')}
+    </div>
+    <p style="font-size:11.5px;color:var(--muted);margin:0 0 10px;line-height:1.6">
+      ${attention ? `<strong style="color:#eab308">${attention} script${attention > 1 ? 's' : ''} need attention.</strong> ` : '<strong style="color:#3ecf8e">Everything detectable is applied.</strong> '}
+      <strong>Data only</strong> = backfills, imports and constraint changes — nothing structural to look for, so those can't be
+      confirmed automatically. Ask for the script by name and it'll be pasted in chat ready for the Query Editor.
+      ${_schemaCheck.table_count} tables live · checked ${String(_schemaCheck.checked_at).slice(0, 16).replace('T', ' ')}.</p>
+    ${rows.length ? rows.map(m => {
+      const s = STY[m.status];
+      return `<div style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-top:1px solid var(--border)">
+        <span style="background:${s.color}22;color:${s.color};border:1px solid ${s.color}55;border-radius:5px;padding:2px 8px;font-size:10px;font-weight:700;white-space:nowrap;min-width:104px;text-align:center">${s.label}</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-family:var(--font-mono);font-size:11.5px;color:var(--text)">api/sql/${escHtml(m.script)}</div>
+          <div style="font-size:11px;color:var(--muted);line-height:1.5">${escHtml(m.title || '')}</div>
+          ${m.missing && m.missing.length && m.status !== 'unverifiable'
+            ? `<div style="font-size:10.5px;color:#ff9b9b;margin-top:2px">not in the database: ${m.missing.slice(0, 8).map(escHtml).join(', ')}${m.missing.length > 8 ? ` +${m.missing.length - 8} more` : ''}</div>` : ''}
+        </div></div>`;
+    }).join('') : '<div style="font-size:12px;color:var(--muted)">Nothing outstanding.</div>'}`;
 }
 </script>
 

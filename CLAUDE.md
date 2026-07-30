@@ -109,6 +109,15 @@ management, and a standalone UK steel section reference.
   user asks for a labour-data wipe, default to deleting ProjectHours only
   and explicitly confirm before touching anything else. Don't suggest
   deleting ClockEntries even as a "full reset" option.
+- **Never guess whether a migration has run — ask the database.**
+  ED › Health › **Database migrations** calls `GET /api/schema-check`, which
+  probes `sys.tables` / `sys.columns` (and the QmsForms seed rows) against
+  `api/src/schema-manifest.json` and reports every script in `api/sql/` as
+  applied / part-applied / needs-running / data-only. Regenerate the manifest
+  with `python3 api/sql/build-manifest.py` and commit the JSON **in the same
+  commit as any new migration**, or the new script won't be checked. Data-only
+  scripts (backfills, imports, constraint widenings) can't be probed
+  structurally and are deliberately listed as unverifiable rather than assumed.
 - **Paste SQL migrations inline in chat — never just reference the path.**
   When a change requires a `.sql` script under `api/sql/`, the user runs it
   manually against `bama-erp` (Azure portal Query Editor). They expect the
