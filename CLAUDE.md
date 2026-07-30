@@ -1172,6 +1172,47 @@ Welding Equipment tab (WeldingMachines) stays separate — it feeds the QMS
 machine picker; welders can also be listed in the plant register but nothing
 migrates automatically.
 
+## Welder Approvals (E1, 2026-07-30 — Office › Traceability › Welder Approvals)
+
+`tab-welders` in office.html, module at the end of shared.js
+(`renderWeldersTab`). Exists because a training-matrix "Coded Welder" tick
+cannot answer what an EN 1090 assessor asks: which process, which material
+group, what thickness, which positions, and was it valid on the day of the
+weld. Tables `WelderQualifications` + `WelderQualConfirmations`
+(`api/sql/create-welder-qualifications.sql`, new tables, no restart); API
+`api/src/functions/welder-qualifications.js` — /api/welder-quals
+(+/expiring, both clocks unpivoted), /api/welder-qual-confirm/{id},
+/api/welder-qual-confirmations.
+
+**Two independent validity clocks, and BOTH gate usability.** `expiry_date` is
+the certificate's own expiry; `confirm_due` is the employer's 6-monthly
+confirmation of validity (EN ISO 9606-1 §9.2) — the one that lapses while the
+certificate's face date still looks fine. `weldQualValidity()` returns
+unusable if either has passed, or if status is lapsed/revoked/superseded.
+`POST /api/welder-qual-confirm/{id}` writes the signed confirmation to the log
+AND moves `confirm_due` (+6 months, capped at the certificate expiry) in one
+endpoint so the two can never disagree; every confirmation is `logChange`d.
+
+**RANGE OF APPROVAL IS STORED AS PRINTED AND ONLY EVER COMPARED AGAINST.**
+This is the two-engine rule at its sharpest: a wrong "yes" here licenses an
+unqualified weld. Claude reads the printed range off the certificate (prompt is
+explicit: read the RANGE OF APPROVAL section, not the test piece, and never
+derive a range from a test thickness); `_weldScopeCheck()` does plain-JS
+comparison. Specifically: position checking is **membership only** — a
+certificate printing PF is NOT treated as licensing PC; a missing printed range
+yields a "check it by hand" note, never a silent pass; every failure reason is
+reported, not just the first. `weldCheckPerson()` picks the best certificate a
+person holds. Pinned by `tests/welder-scope.js` (43 cases) — **run it before
+any push touching validity or scope logic.**
+
+Certificate import fills the form for a human to check and **does not save** —
+`weldCertApply()` populates fields, the user confirms against the paper, then
+Save. Files go to `BAMA / 02 - Quality (QMS) / 04 - Welder Qualifications`.
+Welder picker reads the same SitePersonnel roster as RAMS and the training
+matrix (welders are often subcontractors). 🔍 **Check a welder** is the point of
+the module: job parameters in, approved/not-approved out with reasons, before
+the weld is assigned. ED gets a purple `weldAlertStrip` from /expiring.
+
 ## Modal → Page mapping
 
 Every `id=…Modal` element in the HTML, by page. Handy when tracing an

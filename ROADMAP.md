@@ -114,12 +114,16 @@ Priority order as it stands:
    `gbpShort`), invoice preview-vs-saved mismatch fixed on both client paths
    and server-side, BACS + reconciliation totals, Babcock PDF fallbacks.
    `tests/money-rounding.js` (37 assertions) is the gate.
-2. **Welder qualification register (E1)** — the real FPC/EN 1090 gap. Scope
-   per certificate (process, material group, thickness/diameter range,
-   positions), 6-month employer endorsement AND 3-year re-test tracked
-   separately, certificate PDFs to `02 - Quality (QMS)`, plus a scope check
-   that flags assigning a welder outside his approval range. Training-matrix
-   cells cannot express this.
+2. ~~Welder qualification register (E1)~~ ✅ **DONE 2026-07-30** — Office ›
+   Welder Approvals. Printed range of approval per certificate, both validity
+   clocks (6-month confirmation + expiry) with the confirmation endpoint that
+   logs and advances together, certificate reader that fills the form for a
+   human to check rather than saving, and the 🔍 Check-a-welder scope test.
+   `tests/welder-scope.js` (43 cases) is the gate.
+   **Next step for this module:** wire the scope check into the point of use —
+   BAMA FAB 001's welder picker and the assembly weld sign-off — so an
+   out-of-scope welder is flagged at the moment of assignment, not on a report
+   afterwards. Needs Mateusz's call on whether that blocks or just warns.
 3. **F7** — assign-path double counting, verify against live data.
 4. **QB Won→Project rebuild** — half-state C260327; schema decision is
    Mateusz's now (Daniel is out).

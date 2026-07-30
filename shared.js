@@ -3423,6 +3423,7 @@ function switchTab(name) {
   if (name === 'qms') renderQmsTab();
   if (name === 'training') renderTrainingTab();
   if (name === 'plant') renderPlantTab();
+  if (name === 'welders') renderWeldersTab();
   if (name === 'project' || name === 'employee') renderManagerView();
 }
 
@@ -23306,6 +23307,9 @@ function renderUnifiedSidebar() {
         </button>
         <button class="sidebar-nav-item${a('office','plant')}" data-tab="plant" onclick="navToOfficeTab('plant')">
           <span class="sidebar-nav-icon">🚜</span> Plant Register
+        </button>
+        <button class="sidebar-nav-item${a('office','welders')}" data-tab="welders" onclick="navToOfficeTab('welders')">
+          <span class="sidebar-nav-icon">🔥</span> Welder Approvals
         </button>
       </div>
     </div>
@@ -48204,4 +48208,709 @@ async function _plantAfterBulk() {
     _plantBuildDocIdx();
   } catch (e) { console.warn('Plant refresh failed', e.message); }
   _plantRenderChips(); _plantRenderGrid(); _plantRenderBulkCards();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WELDER APPROVALS (E1, 2026-07-30) — Office › Traceability › 🔥 Welder Approvals
+//
+// A "Coded Welder" tick in the training matrix can't answer the questions an
+// EN 1090 assessor actually asks: which process, which material group, what
+// thickness, which positions, and was it still valid on the day of the weld?
+// So qualifications get their own register with BOTH validity clocks:
+//
+//   • 6-month employer confirmation (EN ISO 9606-1 §9.2) — the one that
+//     quietly lapses while the certificate's face date still looks fine
+//   • the certificate's own expiry / re-test date
+//
+// RANGE OF APPROVAL IS STORED AS PRINTED AND ONLY EVER COMPARED AGAINST.
+// Claude reads the printed range off the certificate; _weldScopeCheck() does
+// plain-JS comparison. Nothing derives a range from a test thickness — that
+// would be inventing qualification scope, and it is exactly what must not
+// happen in a module whose whole purpose is proving compliance.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const WELD_PROCESSES = {
+  '111': 'MMA / stick (111)',
+  '135': 'MAG solid wire (135)',
+  '136': 'MAG flux-cored (136)',
+  '138': 'MAG metal-cored (138)',
+  '141': 'TIG (141)',
+  '311': 'Oxy-acetylene (311)'
+};
+const WELD_POSITIONS = ['PA', 'PB', 'PC', 'PD', 'PE', 'PF', 'PG', 'PH', 'PJ', 'H-L045', 'J-L045'];
+const WELD_STATUS = {
+  valid:      { label: 'Valid',      color: '#3ecf8e' },
+  lapsed:     { label: 'Lapsed',     color: '#ff6b6b' },
+  revoked:    { label: 'Revoked',    color: '#ff6b6b' },
+  superseded: { label: 'Superseded', color: '#8b9bb4' }
+};
+
+let _weldQuals = [], _weldSearch = '', _weldShowInactive = false;
+let _weldEditId = null, _weldDocQueue = [], _weldConfLog = [];
+
+// ── Validity: two clocks, worst one governs ─────────────────────────────────
+function _weldClock(dateStr) {
+  if (!dateStr) return { cls: 'none', days: null };
+  const days = Math.floor((new Date(String(dateStr).slice(0, 10) + 'T00:00:00') -
+    new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00')) / 86400000);
+  if (days < 0)   return { cls: 'expired', days };
+  if (days <= 60) return { cls: 'soon', days };
+  return { cls: 'ok', days };
+}
+const _WELD_COLORS = { expired: '#ff6b6b', soon: '#eab308', ok: '#3ecf8e', none: 'var(--border)' };
+
+// Overall usability of a qualification TODAY (or on a given date).
+function weldQualValidity(q, onDate) {
+  const on = onDate ? String(onDate).slice(0, 10) : new Date().toISOString().slice(0, 10);
+  if (q.status === 'revoked')    return { usable: false, reason: 'certificate revoked' };
+  if (q.status === 'superseded') return { usable: false, reason: 'superseded by a newer certificate' };
+  if (q.status === 'lapsed')     return { usable: false, reason: 'marked lapsed' };
+  if (q.expiry_date && String(q.expiry_date).slice(0, 10) < on)
+    return { usable: false, reason: `certificate expired ${String(q.expiry_date).slice(0, 10)}` };
+  if (q.confirm_due && String(q.confirm_due).slice(0, 10) < on)
+    return { usable: false, reason: `6-month confirmation overdue since ${String(q.confirm_due).slice(0, 10)}` };
+  return { usable: true, reason: '' };
+}
+
+// ── Scope check — comparison only, never inference ──────────────────────────
+// need: { process, material_group, thickness, diameter, position, joint_type, product_form, onDate }
+// Any field left out is simply not checked.
+function _weldScopeCheck(q, need) {
+  const fails = [], notes = [];
+  const v = weldQualValidity(q, need.onDate);
+  if (!v.usable) fails.push(v.reason);
+
+  if (need.process && String(q.process).trim() !== String(need.process).trim())
+    fails.push(`qualified for process ${q.process}, not ${need.process}`);
+
+  if (need.material_group && q.material_group) {
+    if (String(q.material_group).toUpperCase().split(/[,/\s]+/).filter(Boolean)
+        .indexOf(String(need.material_group).toUpperCase().trim()) < 0)
+      fails.push(`material group ${q.material_group} does not cover ${need.material_group}`);
+  } else if (need.material_group && !q.material_group) {
+    notes.push('no material group printed on the certificate — check it by hand');
+  }
+
+  const thk = Number(need.thickness);
+  if (need.thickness !== undefined && need.thickness !== null && need.thickness !== '' && isFinite(thk)) {
+    if (q.thickness_min == null && q.thickness_max == null)
+      notes.push('no thickness range printed on the certificate — check it by hand');
+    else {
+      if (q.thickness_min != null && thk < Number(q.thickness_min) - 1e-9)
+        fails.push(`${thk}mm is below the approved range (${q.thickness_min}–${q.thickness_max ?? '?'}mm)`);
+      if (q.thickness_max != null && thk > Number(q.thickness_max) + 1e-9)
+        fails.push(`${thk}mm is above the approved range (${q.thickness_min ?? '?'}–${q.thickness_max}mm)`);
+    }
+  }
+
+  const dia = Number(need.diameter);
+  if (need.diameter !== undefined && need.diameter !== null && need.diameter !== '' && isFinite(dia)) {
+    if (q.diameter_min == null && q.diameter_max == null)
+      notes.push('no diameter range printed on the certificate — check it by hand');
+    else {
+      if (q.diameter_min != null && dia < Number(q.diameter_min) - 1e-9)
+        fails.push(`Ø${dia}mm is below the approved range (${q.diameter_min}–${q.diameter_max ?? '?'}mm)`);
+      if (q.diameter_max != null && dia > Number(q.diameter_max) + 1e-9)
+        fails.push(`Ø${dia}mm is above the approved range (${q.diameter_min ?? '?'}–${q.diameter_max}mm)`);
+    }
+  }
+
+  if (need.position) {
+    const approved = String(q.positions || '').toUpperCase().split(/[,;/\s]+/).filter(Boolean);
+    if (!approved.length) notes.push('no positions printed on the certificate — check it by hand');
+    // Membership only. Position coverage rules are NOT applied: a certificate
+    // that qualifies PF does not automatically license PC here, because the
+    // approved list is what the certificate actually says.
+    else if (approved.indexOf(String(need.position).toUpperCase().trim()) < 0)
+      fails.push(`position ${need.position} is not in the approved list (${approved.join(', ')})`);
+  }
+
+  if (need.joint_type && q.joint_type && q.joint_type !== 'both' && q.joint_type !== need.joint_type)
+    fails.push(`qualified for ${q.joint_type} joints, not ${need.joint_type}`);
+  if (need.product_form && q.product_form && q.product_form !== 'both' && q.product_form !== need.product_form)
+    fails.push(`qualified on ${q.product_form}, not ${need.product_form}`);
+
+  return { ok: !fails.length, fails, notes };
+}
+
+// Best answer across everything a person holds.
+function weldCheckPerson(personName, need) {
+  const held = (_weldQuals || []).filter(q =>
+    String(q.person_name).trim().toLowerCase() === String(personName).trim().toLowerCase());
+  if (!held.length) return { ok: false, verdict: 'no qualifications on file', results: [] };
+  const results = held.map(q => ({ q, ...(_weldScopeCheck(q, need)) }));
+  const good = results.find(r => r.ok);
+  return {
+    ok: !!good,
+    verdict: good ? `covered by ${good.q.cert_no}` : 'not covered by any certificate on file',
+    match: good ? good.q : null,
+    results
+  };
+}
+
+// ── Tab ──────────────────────────────────────────────────────────────────────
+async function renderWeldersTab() {
+  const root = document.getElementById('tab-welders');
+  if (!root) return;
+  root.innerHTML = '<div style="color:var(--muted);padding:20px">Loading…</div>';
+  try { _weldQuals = await api.get('/api/welder-quals'); }
+  catch (e) {
+    root.innerHTML = `<div style="color:var(--red);padding:20px;font-size:12.5px">Welder register unavailable: ${escapeHtml(e.message)} — run api/sql/create-welder-qualifications.sql first.</div>`;
+    return;
+  }
+  root.innerHTML = `<div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+      <h3 style="margin:0">🔥 Welder Approvals</h3>
+      <button class="btn btn-primary btn-sm" onclick="weldOpenQual(null)">＋ Qualification</button>
+      <button class="btn btn-ghost btn-sm" onclick="weldOpenChecker()">🔍 Check a welder</button>
+      <button class="btn btn-ghost btn-sm" onclick="weldExportCsv()">⬇ CSV</button>
+      <button class="btn btn-ghost btn-sm" onclick="renderWeldersTab()">↻</button>
+      <label style="font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:5px;cursor:pointer">
+        <input type="checkbox" ${_weldShowInactive ? 'checked' : ''} onchange="_weldShowInactive=this.checked;_weldRenderGrid()">
+        show superseded / revoked</label>
+      <input type="text" placeholder="Search welder, cert no, process…" value="${escapeHtml(_weldSearch)}"
+        oninput="_weldSearch=this.value;_weldRenderGrid()"
+        style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:5px 10px;color:var(--text);font-size:12px;margin-left:auto;min-width:220px">
+    </div>
+    <p style="font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.6">
+      Every welder qualification with its <strong>approved range as printed on the certificate</strong> and both validity clocks.
+      The <strong>6-month confirmation</strong> is the one that catches people — a certificate can be years from expiry and still
+      lapse because nobody signed the periodic confirmation. Tap 🔍 <strong>Check a welder</strong> before assigning work and it
+      compares the job against the printed range. Nothing here is inferred: a certificate approving PF is not treated as
+      approving PC, and a blank range is reported as "check by hand" rather than a yes.</p>
+    <div id="weldSummary" style="margin-bottom:10px"></div>
+    <div id="weldGridWrap" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:auto;max-height:calc(100vh - 300px)">
+      <table id="weldGrid" style="border-collapse:collapse;font-size:11.5px;min-width:100%"></table>
+    </div>
+  </div>`;
+  _weldRenderGrid();
+}
+
+function _weldRenderGrid() {
+  const q = _weldSearch.trim().toLowerCase();
+  const rows = (_weldQuals || [])
+    .filter(x => _weldShowInactive || (x.status !== 'superseded' && x.status !== 'revoked'))
+    .filter(x => !q || [x.person_name, x.cert_no, x.process, x.material_group, x.positions, x.examiner]
+      .some(v => (v || '').toLowerCase().includes(q)));
+
+  const th = 'padding:8px 6px;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);position:sticky;top:0;background:var(--card);z-index:3;border-bottom:1px solid var(--border);white-space:nowrap';
+  let html = `<thead><tr>
+    <th style="${th};left:0;z-index:4;text-align:left;min-width:180px">Welder</th>
+    <th style="${th};text-align:left;min-width:130px">Certificate</th>
+    <th style="${th};text-align:left;min-width:210px">Approved range (as printed)</th>
+    <th style="${th};text-align:center;min-width:120px" title="Employer's periodic confirmation of validity — EN ISO 9606-1 §9.2">6-month confirm</th>
+    <th style="${th};text-align:center;min-width:100px">Expiry</th>
+    <th style="${th};text-align:center;min-width:120px">Usable now</th>
+  </tr></thead><tbody>`;
+
+  let usable = 0, confirmDue = 0, lapsed = 0;
+  const people = new Set();
+  html += rows.map((x, i) => {
+    people.add(String(x.person_name).trim().toLowerCase());
+    const zebra = i % 2 ? 'background:rgba(255,255,255,0.018);' : '';
+    const cf = _weldClock(x.confirm_due), ex = _weldClock(x.expiry_date);
+    const v = weldQualValidity(x);
+    if (v.usable) usable++; else lapsed++;
+    if (cf.cls === 'soon' || cf.cls === 'expired') confirmDue++;
+    const st = WELD_STATUS[x.status] || WELD_STATUS.valid;
+    const clockCell = (c, date) => {
+      if (c.cls === 'none') return `<span style="color:var(--border)">not recorded</span>`;
+      const col = _WELD_COLORS[c.cls];
+      return `<span style="color:${col};font-weight:700">${c.cls === 'expired' ? 'OVERDUE' : c.days + 'd'}</span>
+              <br><span style="font-size:9px;color:var(--muted)">${String(date).slice(0, 10)}</span>`;
+    };
+    const range = [
+      x.material_group ? escapeHtml(x.material_group) : null,
+      (x.thickness_min != null || x.thickness_max != null)
+        ? `t ${x.thickness_min ?? '?'}–${x.thickness_max ?? '∞'}mm` : null,
+      (x.diameter_min != null || x.diameter_max != null)
+        ? `Ø ${x.diameter_min ?? '?'}–${x.diameter_max ?? '∞'}mm` : null,
+      x.positions ? escapeHtml(x.positions) : null,
+      x.joint_type && x.joint_type !== 'both' ? escapeHtml(x.joint_type) : null,
+      x.product_form && x.product_form !== 'both' ? escapeHtml(x.product_form) : null
+    ].filter(Boolean).join(' · ');
+    return `<tr style="${zebra}" onclick="weldOpenQual(${x.id})" title="Open ${escapeHtml(x.cert_no)}">
+      <td style="padding:7px 10px;border-bottom:1px solid var(--border);position:sticky;left:0;background:var(--surface);z-index:2;cursor:pointer;white-space:nowrap">
+        <div style="font-weight:600">${escapeHtml(x.person_name)}</div>
+        <div style="font-size:10px;color:var(--muted)">${escapeHtml(WELD_PROCESSES[x.process] || ('Process ' + x.process))}</div></td>
+      <td style="padding:7px 8px;border-bottom:1px solid var(--border);cursor:pointer">
+        ${x.web_url ? `<a href="${escapeHtml(x.web_url)}" target="_blank" onclick="event.stopPropagation()" style="color:var(--text);text-decoration:underline dotted">${escapeHtml(x.cert_no)}</a>` : escapeHtml(x.cert_no)}
+        <div style="font-size:10px;color:var(--muted)">${escapeHtml(x.standard || '')}${x.examiner ? ' · ' + escapeHtml(x.examiner) : ''}</div></td>
+      <td style="padding:7px 8px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted);cursor:pointer">${range || '<span style="color:#eab308">nothing recorded — open and fill in from the certificate</span>'}</td>
+      <td style="padding:6px 4px;border-bottom:1px solid var(--border);text-align:center;cursor:pointer;line-height:1.25">${clockCell(cf, x.confirm_due)}</td>
+      <td style="padding:6px 4px;border-bottom:1px solid var(--border);text-align:center;cursor:pointer;line-height:1.25">${clockCell(ex, x.expiry_date)}</td>
+      <td style="padding:6px 4px;border-bottom:1px solid var(--border);text-align:center;cursor:pointer">
+        ${v.usable
+          ? `<span style="background:#3ecf8e22;color:#3ecf8e;border:1px solid #3ecf8e55;border-radius:5px;padding:2px 8px;font-size:10.5px;font-weight:700">USABLE</span>`
+          : `<span style="background:#ff6b6b22;color:#ff6b6b;border:1px solid #ff6b6b55;border-radius:5px;padding:2px 8px;font-size:10.5px;font-weight:700" title="${escapeHtml(v.reason)}">NOT USABLE</span>`}
+        ${x.status !== 'valid' ? `<div style="font-size:9px;color:${st.color};margin-top:2px">${st.label}</div>` : ''}</td>
+    </tr>`;
+  }).join('');
+  html += '</tbody>';
+
+  const grid = document.getElementById('weldGrid');
+  if (grid) grid.innerHTML = rows.length ? html
+    : `<tbody><tr><td style="padding:30px;text-align:center;color:var(--muted)">No qualifications${q ? ' match the search' : ' on file yet — add the first certificate'}.</td></tr></tbody>`;
+
+  const card = (n, label, color) => `<div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid ${color};border-radius:8px;padding:8px 14px;min-width:110px">
+    <div style="font-size:20px;font-weight:800;color:${color}">${n}</div>
+    <div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">${label}</div></div>`;
+  const sum = document.getElementById('weldSummary');
+  if (sum) sum.innerHTML = `<div style="display:flex;gap:10px;flex-wrap:wrap">
+    ${card(people.size, 'Welders', '#38bdf8')}${card(usable, 'Usable now', '#3ecf8e')}
+    ${card(confirmDue, 'Confirm ≤60d', '#eab308')}${card(lapsed, 'Not usable', '#ff6b6b')}</div>`;
+}
+
+function weldExportCsv() {
+  const cols = ['person_name', 'cert_no', 'standard', 'process', 'material_group', 'product_form', 'joint_type',
+    'thickness_min', 'thickness_max', 'diameter_min', 'diameter_max', 'positions', 'filler_designation',
+    'backing', 'examiner', 'test_date', 'issue_date', 'confirm_due', 'expiry_date', 'status'];
+  const esc = v => { const s = v == null ? '' : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const csv = cols.join(',') + '\n' + (_weldQuals || []).map(q => cols.map(c => esc(q[c])).join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = `welder-approvals-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click(); URL.revokeObjectURL(a.href);
+  toast('Welder approvals CSV exported', 'success');
+}
+
+// ── Qualification modal (self-injecting) ────────────────────────────────────
+function _weldEnsureModal() {
+  if (document.getElementById('weldModal')) return;
+  const div = document.createElement('div');
+  div.innerHTML = `<div id="weldModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:1000;align-items:flex-start;justify-content:center;padding:30px;overflow-y:auto">
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:860px;overflow:hidden">
+      <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
+        <h3 id="weldModalTitle" style="margin:0;font-size:16px;flex:1"></h3>
+        <button id="weldDeleteBtn" class="btn btn-ghost btn-sm" style="color:var(--red);display:none" onclick="weldDeleteQual()">🗑 Delete</button>
+        <button class="btn btn-ghost btn-sm" onclick="document.getElementById('weldModal').style.display='none'">✕</button>
+      </div>
+      <div id="weldModalBody" style="padding:16px 20px;max-height:76vh;overflow-y:auto"></div>
+    </div></div>`;
+  document.body.appendChild(div.firstElementChild);
+}
+
+async function weldOpenQual(id) {
+  _weldEnsureModal();
+  _weldEditId = id; _weldDocQueue = []; _weldConfLog = [];
+  const q = id != null ? (_weldQuals || []).find(x => x.id === id) || {} : {};
+  document.getElementById('weldModalTitle').textContent =
+    id != null ? `🔥 ${q.person_name} — ${q.process} (${q.cert_no})` : '🔥 New Welder Qualification';
+  document.getElementById('weldDeleteBtn').style.display = id != null ? '' : 'none';
+
+  // Roster for the welder picker (same SitePersonnel roster the RAMS picker uses)
+  let roster = [];
+  try { roster = await api.get('/api/site-personnel'); } catch (_) {}
+
+  const fld = (key, label, val, type = 'text', extra = '') => `<div><label style="font-size:10px;color:var(--muted);display:block">${label}</label>
+    <input id="wf_${key}" type="${type}" value="${escapeHtml(val ?? '')}" ${extra}
+      style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box"></div>`;
+  const sel = (key, label, opts, cur, blank) => `<div><label style="font-size:10px;color:var(--muted);display:block">${label}</label>
+    <select id="wf_${key}" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 7px;color:var(--text);font-size:12.5px">
+      ${blank ? `<option value="" ${!cur ? 'selected' : ''}>— ${blank} —</option>` : ''}
+      ${Object.entries(opts).map(([k, v]) => `<option value="${k}" ${k === String(cur) ? 'selected' : ''}>${typeof v === 'string' ? v : v.label}</option>`).join('')}
+    </select></div>`;
+
+  const welders = roster.filter(p => p.active !== 0);
+  document.getElementById('weldModalBody').innerHTML = `
+    <div style="display:grid;grid-template-columns:1.6fr 1.2fr 1.4fr;gap:8px;margin-bottom:8px">
+      <div><label style="font-size:10px;color:var(--muted);display:block">Welder</label>
+        <input id="wf_person_name" list="wf_roster" value="${escapeHtml(q.person_name ?? '')}" placeholder="Type or pick from the roster"
+          style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box">
+        <datalist id="wf_roster">${welders.map(p => `<option value="${escapeHtml(p.name)}">${escapeHtml(p.site_role || '')}${p.type === 'subcontractor' ? ' (subcontractor)' : ''}</option>`).join('')}</datalist>
+        <input id="wf_personnel_id" type="hidden" value="${q.personnel_id ?? ''}"></div>
+      ${fld('cert_no', 'Certificate no', q.cert_no)}
+      ${fld('standard', 'Standard', q.standard ?? 'EN ISO 9606-1')}
+    </div>
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:12px 0 5px">
+      Range of approval — copy exactly as printed on the certificate</div>
+    <div style="display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr;gap:8px;margin-bottom:8px">
+      ${sel('process', 'Process', WELD_PROCESSES, q.process, 'select')}
+      ${fld('material_group', 'Material group', q.material_group, 'text', 'placeholder="M11 or M11,M21"')}
+      ${sel('product_form', 'Product form', { plate: 'Plate', pipe: 'Pipe', both: 'Both' }, q.product_form, 'not stated')}
+      ${sel('joint_type', 'Joint type', { BW: 'Butt (BW)', FW: 'Fillet (FW)', both: 'Both' }, q.joint_type, 'not stated')}
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr) 1.6fr;gap:8px;margin-bottom:8px">
+      ${fld('thickness_min', 'Thickness min (mm)', q.thickness_min, 'number', 'step="0.01"')}
+      ${fld('thickness_max', 'Thickness max (mm)', q.thickness_max, 'number', 'step="0.01"')}
+      ${fld('diameter_min', 'Ø min (mm)', q.diameter_min, 'number', 'step="0.01"')}
+      ${fld('diameter_max', 'Ø max (mm)', q.diameter_max, 'number', 'step="0.01"')}
+      ${fld('positions', 'Positions', q.positions, 'text', 'placeholder="PA,PB,PC,PF"')}
+    </div>
+    <div style="display:grid;grid-template-columns:1.4fr 1fr 1.6fr;gap:8px;margin-bottom:8px">
+      ${fld('filler_designation', 'Filler / consumable', q.filler_designation)}
+      ${sel('backing', 'Backing', { mb: 'With backing (mb)', nb: 'No backing (nb)' }, q.backing, 'not stated')}
+      ${fld('transfer_mode', 'Transfer mode / other', q.transfer_mode)}
+    </div>
+    <div style="margin-bottom:12px"><label style="font-size:10px;color:var(--muted);display:block">Anything else printed on the certificate that doesn't fit above</label>
+      <input id="wf_range_notes" type="text" value="${escapeHtml(q.range_notes ?? '')}"
+        style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box"></div>
+
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:12px 0 5px">Validity</div>
+    <div style="display:grid;grid-template-columns:1.6fr 1fr 1fr 1fr 1fr;gap:8px;margin-bottom:6px">
+      ${fld('examiner', 'Examiner / notified body', q.examiner)}
+      ${fld('test_date', 'Test date', q.test_date ? String(q.test_date).slice(0, 10) : '', 'date')}
+      ${fld('issue_date', 'Issued', q.issue_date ? String(q.issue_date).slice(0, 10) : '', 'date')}
+      ${fld('confirm_due', '6-month confirm due', q.confirm_due ? String(q.confirm_due).slice(0, 10) : '', 'date')}
+      ${fld('expiry_date', 'Expiry / re-test', q.expiry_date ? String(q.expiry_date).slice(0, 10) : '', 'date')}
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 3fr;gap:8px;margin-bottom:10px">
+      ${sel('status', 'Status', WELD_STATUS, q.status || 'valid')}
+      <div><label style="font-size:10px;color:var(--muted);display:block">Notes</label>
+        <input id="wf_notes" type="text" value="${escapeHtml(q.notes ?? '')}"
+          style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+      <button class="btn btn-primary btn-sm" onclick="weldSaveQual()">💾 Save</button>
+      ${id != null ? '<button class="btn btn-ghost btn-sm" style="border-color:#3ecf8e;color:#3ecf8e" onclick="weldConfirmSixMonths()">✍ Record 6-month confirmation</button>' : ''}
+      <button class="btn btn-ghost btn-sm" onclick="document.getElementById('weldModal').style.display='none'">Cancel</button>
+    </div>
+    <div id="weldCertArea" style="border-top:1px solid var(--border);padding-top:12px">
+      ${id != null ? '<div style="color:var(--muted);font-size:12px">Loading…</div>'
+                   : `<div ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
+       ondragleave="this.style.borderColor='var(--border)'"
+       ondrop="event.preventDefault();this.style.borderColor='var(--border)';weldCertHandleFiles(event.dataTransfer.files)"
+       onclick="document.getElementById('weldCertInput').click()"
+       style="border:1.5px dashed var(--border);border-radius:8px;padding:11px;text-align:center;cursor:pointer;font-size:12px;color:var(--muted)">
+     📥 <strong>Drop the certificate here first</strong> and the fields above fill themselves — the printed range is read off the
+     certificate, then you check it before saving.
+     <input id="weldCertInput" type="file" multiple style="display:none" onchange="weldCertHandleFiles(this.files);this.value=''">
+  </div><div id="weldCertCards" style="margin-top:8px"></div>`}
+    </div>`;
+  document.getElementById('weldModal').style.display = 'flex';
+  if (id != null) weldLoadCertArea(id);
+}
+
+function _weldCollectForm() {
+  const v = k => { const el = document.getElementById('wf_' + k); return el ? (el.value.trim() || null) : null; };
+  return {
+    personnel_id: v('personnel_id'), person_name: v('person_name'), cert_no: v('cert_no'),
+    standard: v('standard'), process: v('process'), material_group: v('material_group'),
+    product_form: v('product_form'), joint_type: v('joint_type'),
+    thickness_min: v('thickness_min'), thickness_max: v('thickness_max'),
+    diameter_min: v('diameter_min'), diameter_max: v('diameter_max'),
+    positions: v('positions'), filler_designation: v('filler_designation'),
+    backing: v('backing'), transfer_mode: v('transfer_mode'), range_notes: v('range_notes'),
+    examiner: v('examiner'), test_date: v('test_date'), issue_date: v('issue_date'),
+    confirm_due: v('confirm_due'), expiry_date: v('expiry_date'),
+    status: v('status') || 'valid', notes: v('notes')
+  };
+}
+
+async function weldSaveQual() {
+  const body = _weldCollectForm();
+  if (!body.person_name) { toast('Welder name is required', 'error'); return; }
+  if (!body.cert_no)     { toast('Certificate number is required', 'error'); return; }
+  if (!body.process)     { toast('Process is required', 'error'); return; }
+  // Nudge, don't block — a certificate with no range recorded is still better
+  // on file than not on file, but it can't be scope-checked.
+  const noRange = body.thickness_min == null && body.thickness_max == null && !body.positions;
+  try {
+    if (_weldEditId != null) {
+      await api.put(`/api/welder-quals/${_weldEditId}`, body);
+    } else {
+      const res = await api.post('/api/welder-quals', body);
+      _weldEditId = res.id;
+    }
+    toast(noRange ? `Saved — but no thickness range or positions recorded, so this one can't be scope-checked`
+                  : `Saved — ${body.person_name} ${body.process}`,
+          noRange ? 'warning' : 'success');
+    _weldQuals = await api.get('/api/welder-quals');
+    _weldRenderGrid();
+    weldOpenQual(_weldEditId);
+  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+async function weldDeleteQual() {
+  const q = (_weldQuals || []).find(x => x.id === _weldEditId); if (!q) return;
+  if (!await bamaConfirm(`Delete ${q.person_name}'s certificate ${q.cert_no} from the register? Soft delete and audited — but for a certificate that has simply run out, set the status to Lapsed or Superseded instead so the history stays provable.`, 'Delete Qualification')) return;
+  try {
+    await api.delete(`/api/welder-quals/${_weldEditId}`);
+    toast('Deleted', 'success');
+    document.getElementById('weldModal').style.display = 'none';
+    _weldQuals = await api.get('/api/welder-quals');
+    _weldRenderGrid();
+  } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
+}
+
+// ── 6-month confirmation ────────────────────────────────────────────────────
+async function weldConfirmSixMonths() {
+  const q = (_weldQuals || []).find(x => x.id === _weldEditId); if (!q) return;
+  const who = (typeof currentUser === 'object' && currentUser && (currentUser.name || currentUser.email)) || '';
+  if (!await bamaConfirm(
+    `Confirm that ${q.person_name} has been welding within the range of certificate ${q.cert_no} and that the qualification remains valid?<br><br>
+     <span style="font-size:12px;color:var(--muted)">This is the EN ISO 9606-1 §9.2 periodic confirmation. It is recorded against your name
+     (${escapeHtml(who || 'signed-in user')}) with today's date, and the next confirmation will fall due in 6 months —
+     or on the certificate's expiry date if that comes first.</span>`,
+    'Record 6-Month Confirmation')) return;
+  try {
+    const res = await api.post(`/api/welder-qual-confirm/${q.id}`, {
+      confirmed_by: who || 'BAMA',
+      evidence: 'Periodic confirmation — welder in continuous employment and welding within the certified range'
+    });
+    toast(`Confirmed — next confirmation due ${res.next_due}`, 'success');
+    _weldQuals = await api.get('/api/welder-quals');
+    _weldRenderGrid();
+    weldOpenQual(q.id);
+  } catch (e) { toast('Failed to record: ' + e.message, 'error'); }
+}
+
+async function weldLoadCertArea(id) {
+  const host = document.getElementById('weldCertArea'); if (!host) return;
+  try { _weldConfLog = await api.get(`/api/welder-qual-confirmations?qualification_id=${id}`); }
+  catch (_) { _weldConfLog = []; }
+  const q = (_weldQuals || []).find(x => x.id === id) || {};
+  host.innerHTML = `
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:6px">Confirmation history</div>
+    ${_weldConfLog.length
+      ? `<div style="display:flex;flex-direction:column;gap:3px;margin-bottom:10px">` + _weldConfLog.map(c =>
+          `<div style="font-size:11.5px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:5px 10px;display:flex;gap:8px">
+            <span style="color:#3ecf8e">✍</span><strong>${escapeHtml(c.confirmed_on)}</strong>
+            <span style="color:var(--muted)">by ${escapeHtml(c.confirmed_by)}</span>
+            <span style="margin-left:auto;color:var(--muted)">next due ${escapeHtml(c.next_due || '—')}</span></div>`).join('') + '</div>'
+      : '<div style="font-size:12px;color:#eab308;margin-bottom:10px">⚠ No confirmation ever recorded against this certificate. If it has been held more than 6 months, an assessor will ask for this.</div>'}
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:6px">Certificate file</div>
+    ${q.web_url
+      ? `<div style="font-size:12px;margin-bottom:8px">📄 <a href="${escapeHtml(q.web_url)}" target="_blank" style="color:var(--text);text-decoration:underline dotted">${escapeHtml(q.file_name || q.cert_no)}</a></div>`
+      : '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">No file attached.</div>'}
+    <div ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
+         ondragleave="this.style.borderColor='var(--border)'"
+         ondrop="event.preventDefault();this.style.borderColor='var(--border)';weldCertHandleFiles(event.dataTransfer.files)"
+         onclick="document.getElementById('weldCertInput2').click()"
+         style="border:1.5px dashed var(--border);border-radius:8px;padding:10px;text-align:center;cursor:pointer;font-size:12px;color:var(--muted)">
+      📥 Drop the certificate (or a renewal) here — it's read, the fields are filled for you to check, and the file goes to SharePoint
+      <input id="weldCertInput2" type="file" multiple style="display:none" onchange="weldCertHandleFiles(this.files);this.value=''">
+    </div>
+    <div id="weldCertCards" style="margin-top:8px"></div>`;
+  _weldRenderCertCards();
+}
+
+// ── Certificate import (reader-only; the printed range is never invented) ────
+async function weldCertsFolder() {
+  return await getOrCreateSubfolder(SP_TAX.quality, '04 - Welder Qualifications', BAMA_DRIVE_ID);
+}
+
+function weldCertHandleFiles(fileList) {
+  for (const f of fileList) _weldDocQueue.push({ file: f, parsed: null, state: 'queued' });
+  _weldRenderCertCards();
+  _weldCertProcess();
+}
+
+async function _weldCertProcess() {
+  const next = _weldDocQueue.find(q => q.state === 'queued');
+  if (!next) return;
+  next.state = 'parsing'; _weldRenderCertCards();
+  const f = next.file;
+  const isImg = f.type.startsWith('image/');
+  const isPdf = f.type === 'application/pdf' || /\.pdf$/i.test(f.name);
+  try {
+    if (!isImg && !isPdf) {
+      next.parsed = {}; next.state = 'review';
+      next.note = 'This file type can\u2019t be read automatically — fill the fields in from the certificate.';
+    } else {
+      const dataUri = await _fileToDataUri(f);
+      const result = await callClaude({
+        model: 'claude-sonnet-4-6', max_tokens: 900,
+        messages: [{ role: 'user', content: [
+          isImg ? { type: 'image',    source: { type: 'base64', media_type: f.type, data: dataUri.split(',')[1] } }
+                : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: dataUri.split(',')[1] } },
+          { type: 'text', text: `This is a welder qualification certificate (EN ISO 9606-1, EN ISO 14732, ASME IX or similar). Read the RANGE OF APPROVAL section and return ONLY JSON, no markdown:
+{
+  "person_name": "welder's full name as printed",
+  "cert_no": "certificate / approval number",
+  "standard": "e.g. EN ISO 9606-1",
+  "process": "welding process NUMBER only, e.g. 135 / 136 / 141 / 111 / 138",
+  "material_group": "parent material group(s) in the range of approval, e.g. M11 or M11,M21",
+  "product_form": "plate | pipe | both",
+  "joint_type": "BW | FW | both",
+  "thickness_min": number or null,
+  "thickness_max": number or null,
+  "diameter_min": number or null,
+  "diameter_max": number or null,
+  "positions": "approved welding positions, comma separated, e.g. PA,PB,PC,PF",
+  "filler_designation": "filler metal / consumable designation or group",
+  "backing": "mb | nb",
+  "transfer_mode": "if stated",
+  "range_notes": "anything else in the range of approval that doesn't fit the fields above",
+  "examiner": "examiner or examining body / notified body",
+  "test_date": "YYYY-MM-DD",
+  "issue_date": "YYYY-MM-DD",
+  "confirm_due": "YYYY-MM-DD — date the next 6-monthly confirmation of validity is due, if printed",
+  "expiry_date": "YYYY-MM-DD — certificate expiry / date of next re-test, if printed"
+}
+CRITICAL RULES:
+- Read the RANGE OF APPROVAL, not the test piece details. A certificate tested on 10mm plate typically approves a WIDER range, and that approved range is printed on the certificate — report the printed approved range.
+- Do NOT calculate or widen anything. If the approved thickness range is not printed, return null for thickness_min and thickness_max. Never derive a range from the test thickness.
+- Thicknesses and diameters in millimetres, as numbers only (no units, no ranges in one string).
+- positions: copy only the position codes that are actually printed. Do not add positions you believe are covered by implication.
+- null for anything not clearly printed, especially every date.` }
+        ] }]
+      });
+      const text = (result.content?.find(b => b.type === 'text')?.text || '').trim();
+      const s = text.indexOf('{'), e = text.lastIndexOf('}');
+      const p = JSON.parse(text.slice(s, e + 1));
+      if (p.process) p.process = String(p.process).replace(/[^0-9]/g, '') || null;
+      if (p.positions) p.positions = String(p.positions).toUpperCase().replace(/\s*[;/]\s*/g, ',').replace(/\s+/g, ',').replace(/,+/g, ',');
+      next.parsed = p; next.state = 'review';
+    }
+  } catch (err) {
+    console.error('Welder cert parse failed', err);
+    next.parsed = {}; next.state = 'review';
+    next.note = 'Couldn\u2019t read the certificate — fill the fields in by hand.';
+  }
+  _weldRenderCertCards();
+  _weldCertProcess();
+}
+
+function _weldRenderCertCards() {
+  const host = document.getElementById('weldCertCards'); if (!host) return;
+  const live = _weldDocQueue.filter(q => q.state !== 'done');
+  if (!live.length) { host.innerHTML = ''; return; }
+  host.innerHTML = _weldDocQueue.map((q, i) => {
+    if (q.state === 'done') return '';
+    const p = q.parsed || {};
+    const head = `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <span>📄</span><strong style="font-size:12px">${escapeHtml(q.file.name)}</strong>
+      <span style="margin-left:auto;font-size:11px;color:${q.state === 'parsing' || q.state === 'queued' ? 'var(--accent)' : q.state === 'error' ? 'var(--red)' : '#3ecf8e'}">
+        ${q.state === 'parsing' || q.state === 'queued' ? '🤖 Reading the range of approval…'
+          : q.state === 'saving' ? 'Saving…' : q.state === 'error' ? ('Failed: ' + escapeHtml(q.err || '')) : '✓ Check every figure against the certificate'}</span></div>`;
+    if (q.state === 'parsing' || q.state === 'queued')
+      return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:6px">${head}</div>`;
+    const summary = [
+      p.process ? `process ${escapeHtml(p.process)}` : null,
+      p.material_group ? escapeHtml(p.material_group) : null,
+      (p.thickness_min != null || p.thickness_max != null) ? `t ${p.thickness_min ?? '?'}–${p.thickness_max ?? '?'}mm` : null,
+      p.positions ? escapeHtml(p.positions) : null,
+      p.expiry_date ? `expires ${escapeHtml(p.expiry_date)}` : null
+    ].filter(Boolean).join(' · ');
+    return `<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:6px">
+      ${head}
+      ${q.note ? `<div style="font-size:11px;color:#eab308;margin-bottom:5px">⚠ ${escapeHtml(q.note)}</div>` : ''}
+      <div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">${summary || 'nothing readable found — fill the form in by hand'}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn btn-primary btn-sm" onclick="weldCertApply(${i})">⬆ Fill the form above</button>
+        <button class="btn btn-ghost btn-sm" onclick="weldCertAttach(${i})">📎 Attach file to this qualification</button>
+        <button class="btn btn-ghost btn-sm" onclick="_weldDocQueue.splice(${i},1);_weldRenderCertCards()">✕</button>
+      </div>
+      <div style="font-size:10.5px;color:var(--muted);margin-top:6px">
+        Nothing is saved until you press Save above — check the range against the certificate first.</div>
+    </div>`;
+  }).join('');
+}
+
+// Push what was read into the form for the user to check. Deliberately does NOT
+// save: a wrong range in this register licenses a bad weld, so a human confirms.
+function weldCertApply(i) {
+  const q = _weldDocQueue[i]; if (!q || !q.parsed) return;
+  let filled = 0;
+  Object.entries(q.parsed).forEach(([k, v]) => {
+    if (v === null || v === undefined || v === '') return;
+    const el = document.getElementById('wf_' + k);
+    if (!el) return;
+    if (el.tagName === 'SELECT' && !Array.from(el.options).some(o => o.value === String(v))) return;
+    el.value = v; filled++;
+  });
+  toast(`${filled} field${filled === 1 ? '' : 's'} filled from the certificate — check them, then Save`, 'success');
+}
+
+async function weldCertAttach(i) {
+  const q = _weldDocQueue[i];
+  if (!q || _weldEditId == null) { toast('Save the qualification first, then attach the file', 'error'); return; }
+  q.state = 'saving'; _weldRenderCertCards();
+  try {
+    const folder = await weldCertsFolder();
+    const up = await uploadFileToFolder(folder.id, q.file.name, await q.file.arrayBuffer(),
+                                        q.file.type || 'application/octet-stream', BAMA_DRIVE_ID);
+    await api.put(`/api/welder-quals/${_weldEditId}`, {
+      file_name: q.file.name, sharepoint_file_id: up.id,
+      drive_id: BAMA_DRIVE_ID, web_url: up.webUrl || null
+    });
+    q.state = 'done';
+    toast('Certificate filed to SharePoint', 'success');
+    _weldQuals = await api.get('/api/welder-quals');
+    _weldRenderGrid();
+    weldLoadCertArea(_weldEditId);
+  } catch (e) { q.state = 'error'; q.err = e.message; _weldRenderCertCards(); }
+}
+
+// ── "Check a welder" — the point of the whole module ────────────────────────
+function weldOpenChecker() {
+  if (!document.getElementById('weldCheckModal')) {
+    const div = document.createElement('div');
+    div.innerHTML = `<div id="weldCheckModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:1001;align-items:flex-start;justify-content:center;padding:40px;overflow-y:auto">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:620px;overflow:hidden">
+        <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
+          <h3 style="margin:0;font-size:16px;flex:1">🔍 Is this welder approved for this work?</h3>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('weldCheckModal').style.display='none'">✕</button>
+        </div>
+        <div id="weldCheckBody" style="padding:16px 20px"></div>
+      </div></div>`;
+    document.body.appendChild(div.firstElementChild);
+  }
+  const names = [...new Set((_weldQuals || []).map(q => q.person_name))].sort();
+  const f = (id, label, extra = '') => `<div><label style="font-size:10px;color:var(--muted);display:block">${label}</label>
+    <input id="${id}" ${extra} style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;box-sizing:border-box"></div>`;
+  document.getElementById('weldCheckBody').innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+      <div><label style="font-size:10px;color:var(--muted);display:block">Welder</label>
+        <select id="wc_person" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 7px;color:var(--text);font-size:12.5px">
+          ${names.map(n => `<option>${escapeHtml(n)}</option>`).join('')}</select></div>
+      <div><label style="font-size:10px;color:var(--muted);display:block">Process</label>
+        <select id="wc_process" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 7px;color:var(--text);font-size:12.5px">
+          <option value="">— any —</option>
+          ${Object.entries(WELD_PROCESSES).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:8px">
+      ${f('wc_thickness', 'Thickness (mm)', 'type="number" step="0.1"')}
+      ${f('wc_diameter', 'Ø (mm, pipe)', 'type="number" step="0.1"')}
+      ${f('wc_material', 'Material group', 'placeholder="M11"')}
+      <div><label style="font-size:10px;color:var(--muted);display:block">Position</label>
+        <select id="wc_position" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 7px;color:var(--text);font-size:12.5px">
+          <option value="">— any —</option>${WELD_POSITIONS.map(p => `<option>${p}</option>`).join('')}</select></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px">
+      <div><label style="font-size:10px;color:var(--muted);display:block">Joint</label>
+        <select id="wc_joint" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 7px;color:var(--text);font-size:12.5px">
+          <option value="">— any —</option><option value="BW">Butt (BW)</option><option value="FW">Fillet (FW)</option></select></div>
+      <div><label style="font-size:10px;color:var(--muted);display:block">Product form</label>
+        <select id="wc_form" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 7px;color:var(--text);font-size:12.5px">
+          <option value="">— any —</option><option value="plate">Plate</option><option value="pipe">Pipe</option></select></div>
+      ${f('wc_date', 'On date', 'type="date" value="' + new Date().toISOString().slice(0, 10) + '"')}
+    </div>
+    <button class="btn btn-primary btn-sm" onclick="weldRunCheck()">Check</button>
+    <div id="wc_result" style="margin-top:12px"></div>`;
+  document.getElementById('weldCheckModal').style.display = 'flex';
+}
+
+function weldRunCheck() {
+  const g = id => (document.getElementById(id) || {}).value || '';
+  const need = {
+    process: g('wc_process') || undefined,
+    thickness: g('wc_thickness') || undefined,
+    diameter: g('wc_diameter') || undefined,
+    material_group: g('wc_material') || undefined,
+    position: g('wc_position') || undefined,
+    joint_type: g('wc_joint') || undefined,
+    product_form: g('wc_form') || undefined,
+    onDate: g('wc_date') || undefined
+  };
+  const person = g('wc_person');
+  const res = weldCheckPerson(person, need);
+  const host = document.getElementById('wc_result');
+  const anyNotes = res.results.some(r => r.notes && r.notes.length);
+  host.innerHTML = `
+    <div style="background:${res.ok ? '#0f2f22' : '#3b1a1a'};border:1px solid ${res.ok ? '#3ecf8e' : '#ff6b6b'};border-radius:8px;padding:11px 14px;margin-bottom:10px">
+      <div style="font-size:15px;font-weight:800;color:${res.ok ? '#3ecf8e' : '#ff6b6b'}">
+        ${res.ok ? '✓ APPROVED' : '✗ NOT APPROVED'}</div>
+      <div style="font-size:12px;color:${res.ok ? '#8ee6bd' : '#f0b4b4'};margin-top:2px">${escapeHtml(person)} — ${escapeHtml(res.verdict)}</div>
+      ${!res.ok ? '<div style="font-size:11.5px;color:#f0b4b4;margin-top:5px">Do not assign this weld on the strength of this register. Either use a welder who is covered, or get the qualification extended before the work starts.</div>' : ''}
+    </div>
+    ${res.results.length ? res.results.map(r => `
+      <div style="border:1px solid var(--border);border-left:3px solid ${r.ok ? '#3ecf8e' : '#ff6b6b'};border-radius:7px;padding:8px 11px;margin-bottom:5px;background:var(--surface)">
+        <div style="font-size:12px;font-weight:600">${escapeHtml(r.q.cert_no)}
+          <span style="color:var(--muted);font-weight:400">· ${escapeHtml(WELD_PROCESSES[r.q.process] || r.q.process)}${r.q.positions ? ' · ' + escapeHtml(r.q.positions) : ''}${(r.q.thickness_min != null || r.q.thickness_max != null) ? ` · t ${r.q.thickness_min ?? '?'}–${r.q.thickness_max ?? '∞'}mm` : ''}</span></div>
+        ${r.fails.length ? `<div style="font-size:11.5px;color:#ff9b9b;margin-top:3px">${r.fails.map(escapeHtml).join('<br>')}</div>` : '<div style="font-size:11.5px;color:#8ee6bd;margin-top:3px">covers this work</div>'}
+        ${r.notes && r.notes.length ? `<div style="font-size:11px;color:#eab308;margin-top:3px">${r.notes.map(escapeHtml).join('<br>')}</div>` : ''}
+      </div>`).join('') : ''}
+    ${anyNotes ? '<div style="font-size:11px;color:#eab308;margin-top:6px">Where the certificate has no printed range for something, this register says so rather than assuming — check those against the paper certificate.</div>' : ''}`;
 }
