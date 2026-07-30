@@ -52,6 +52,16 @@ management, and a standalone UK steel section reference.
   a blob-parse fallback server-side. Project Tracker's Hours Scheduled reads
   labour_hours (legacy hours-in-quantity honoured only when quantity>1).
 
+- **Regulated declarations are configuration, not AI output.** A Declaration of
+  Performance (EN 1090-1 / CPR Annex III) contains prescribed fields — notified
+  body number, FPC certificate number, AVCP system, declared performance,
+  execution class. These are constants off BAMA's UKCA certificate and must be
+  stored as verified config (seeded blank, entered once, reused), exactly like
+  `NdtExtentRules`. **AI never drafts them**; it drafts only free-text product
+  description. Note the terminology: structural steel gets a *Declaration of
+  Performance* (regulated), not a "Declaration of Conformity"; a *Certificate of
+  Conformity* is a separate contractual document whose figures must still come
+  from ERP records rather than being invented.
 - **Money: round at every step, and totals are sums of printed lines.**
   One place for all of it — the **MONEY** section at the top of `shared.js`:
   `_r2(v)` (round one value), `sumMoney(list, pick)` (round each line, then the

@@ -168,15 +168,49 @@ below.
 
 Ranked by value, with what this session's work already changed:
 
-- **F1 — O&M / handover pack generator.** Highest value, and materially cheaper
-  than when it was first proposed: the pack's contents are now mostly captured.
-  Already in the system — material certs with heat numbers (BAMA MAT 001, live
-  since the phase 2 seed), weld records (BAMA FAB 001), release records (REL
-  001), welder qualifications + 6-month confirmations, inspection & NDT records,
-  plant inspection certificates, company docs (UKCA 1090 EXC3, ISO 9001/14001/
-  45001, insurances), COSHH sheets. Still to build: as-built drawing selection,
-  Declaration of Performance / CE-UKCA template, warranties, and the indexed
-  bookmarked PDF assembly. Main contractors chase these for weeks.
+- **F1 — O&M / handover pack generator + DoP, CoC and ITP.** Highest value, and
+  materially cheaper than when first proposed: the pack's contents are mostly
+  captured already — material certs with heat numbers (BAMA MAT 001, live since
+  the phase 2 seed), weld records (FAB 001), release records (REL 001), welder
+  qualifications + 6-month confirmations, inspection & NDT records, plant
+  inspection certificates, company docs (UKCA 1090 EXC3, ISO 9001/14001/45001,
+  insurances), COSHH sheets. To build: as-built drawing selection, warranties,
+  and the indexed bookmarked PDF assembly.
+
+  **Scope confirmed by Mateusz 2026-07-30 — three generated documents, all
+  native jsPDF on the SDN/DN pattern (two-engine: AI drafts narrative only,
+  deterministic renderer builds the document):**
+
+  · **DoP — Declaration of Performance.** TERMINOLOGY MATTERS HERE. For
+    structural steelwork under EN 1090-1 the regulated document is a
+    *Declaration of Performance* under the Construction Products Regulation,
+    not a "Declaration of Conformity" (that belongs to other directives). Its
+    content is PRESCRIBED (CPR Annex III / EN 1090-1 ZA.3): unique
+    identification code of the product-type, intended use, manufacturer,
+    AVCP system (2+ for structural steel), the notified body number, the FPC
+    certificate number, and declared performance against the harmonised
+    specification. **AI must NOT draft any of those fields.** They are
+    constants that come off BAMA's UKCA 1090 EXC3 certificate and must be
+    stored as verified configuration — same pattern as NdtExtentRules: seeded
+    blank/unverified, entered once by Mateusz, then reused. AI drafts only the
+    free-text product description / scope.
+    NEEDED FROM MATEUSZ: notified body number, FPC certificate number,
+    declared performance values, execution class per product-type.
+  · **CoC — Certificate of Conformity.** A contractual/commercial document,
+    not a regulated one, which is why main contractors ask for it in wording
+    that varies. Template with the job's actual data (contract, drawings and
+    revisions, materials with heat numbers, welding standards, NDT extent
+    achieved, coatings) and a signature block. Free-text draftable by AI
+    because nothing in it is a regulated declaration — but every figure quoted
+    must come from the ERP's own records, never invented.
+  · **ITP — Inspection & Test Plan.** Per contract, and it should PRE-FILL from
+    the E2 inspection plan rather than being typed: activities, reference
+    documents, acceptance criteria, intervention type (H hold / W witness /
+    S surveillance / R review), responsibility and record reference. The NDT
+    rows derive from the job's exec class and its verified NdtExtentRules
+    percentages, so the ITP and the actual sampling can never disagree. Visual
+    always shows as 100%. Issue as a document AND keep it live so achieved-vs-
+    planned is visible during the job.
 - **F2 — Material traceability report** (heat number → assembly → despatch).
   NOTE: `api/src/functions/traceability.js` is welding machines / service types
   / suppliers — it is NOT material traceability, despite the name. Heat numbers
@@ -185,20 +219,31 @@ Ranked by value, with what this session's work already changed:
   table. Closes the EN 1090 loop.
 - **F3 — Consumables & requisitions** (the dropped half). CON 001 exists as a
   QMS form so issue-out is *recorded* but not *stocked* — no ledger, no reorder.
-  Decisions, with recommendations:
-  · *Welding machines into Plant?* **Recommend NOT a full migration.**
-    `WeldingMachines` is FK'd from `JobAssemblies.welding_machine_id` (twice,
-    see add-job-fabrication + add-staged-fabrication) and feeds the QMS machine
-    picker; moving it breaks both for little gain. Instead give each machine an
-    optional `PlantItems` row for its inspection regimes (PAT, gauge
-    calibration) linked by a nullable `plant_id`, leaving the FKs alone.
-  · *Consumable issue-out?* **Recommend kiosk taps by the workshop.**
-    Office-only entry means it won't get done; the shop already knows what it
-    took off the shelf.
-  · *Reorder POs?* **Recommend a basket to approve, never auto-created drafts.**
-    Auto-drafts accumulate and get sent by accident, and nothing that creates a
-    financial commitment should happen without a human — same principle as the
-    money rules.
+  **All three decisions settled by Mateusz 2026-07-30:**
+  · *Consumable issue-out:* **BOTH.** Primary is a printable tally sheet PDF to
+    hang in the workshop — his reasoning, which is right: the lads are already
+    marking fab / weld / complete and adding another screen tap per rod is how
+    you get a register nobody fills in. The kiosk tap is built too, as the
+    optional route. Paper is the default, digital is the bonus.
+  · *Reorder POs:* **basket to approve before sending.** Confirmed — nothing
+    that creates a financial commitment goes out without a human pressing
+    something.
+  · *Welding machines:* **MIGRATE INTO PLANT** — Mateusz's decision, overriding
+    the earlier recommendation to keep them separate (I argued against it on FK
+    grounds; he wants one place and one fewer sidebar line, which is a fair
+    call on usability). Do it WITHOUT breaking the two foreign keys:
+      1. `PlantItems` becomes the single editing surface (category `welding`).
+      2. `WeldingMachines` survives ONLY as the identity row those FKs point at
+         (`JobAssemblies.welding_machine_id`, in both add-job-fabrication and
+         add-staged-fabrication) — add `plant_id` to it (ALTER ⇒ **Function App
+         restart required**) and auto-maintain the row from the plant record.
+      3. Remove the Welding Equipment tab from the office sidebar.
+      4. Kiosk machine picker reads plant items of category `welding` and writes
+         the linked `WeldingMachines.id`, so lads pick the machine they welded
+         with and nothing downstream changes shape.
+      5. Plant categories already carry the type, so machine "types" come free.
+    Migration must backfill a PlantItems row per existing WeldingMachine and
+    link it; existing assembly history stays intact.
 - **F4 — Toolbox talk register.** Cheapest win on the list now: the QMS engine,
   personnel picker and finger-signature field all exist, so it really is a
   definition row plus a register view.
