@@ -14728,6 +14728,9 @@ const HOUSE_HEAD  = [245, 245, 245];
 // Draw the standard BAMA letterhead. Returns { y } — the first free y below
 // the header rule. opts: { title, accent, meta:[{label,value}], showLogo,
 // showCompanyDetails, marginL, marginR }.
+// Layout: logo top-left, company details to the RIGHT of the logo (not
+// beneath), big italic accent title top-right with a right-aligned meta grid
+// below it, full-width rule under the tallest column.
 function bamaDocHeader(doc, logoDataUri, opts) {
   opts = opts || {};
   const g = _houseGlobal();
@@ -14737,33 +14740,49 @@ function bamaDocHeader(doc, logoDataUri, opts) {
   const mR = opts.marginR != null ? opts.marginR : 14;
   const setText = c => doc.setTextColor(c[0], c[1], c[2]);
   const y0 = mL;
-  let leftY = y0;
+  let leftBottom = y0;   // lowest y reached by the logo / company block
+  let coX = mL;          // x where the company block starts (right of logo)
+  let logoBottom = y0;
 
-  // LEFT: logo (proportional) or company name, then company details.
+  // LEFT: logo (proportional). Company details sit to its right.
   let logoDrawn = false;
   if (opts.showLogo !== false && logoDataUri) {
     try {
-      const RENDER_W = 55;
+      const RENDER_W = 46; // mm — a touch narrower so the address fits beside it
       const props = doc.getImageProperties(logoDataUri);
-      const ratio = (props && props.width && props.height) ? (props.width / props.height) : (55 / 24);
+      const ratio = (props && props.width && props.height) ? (props.width / props.height) : (46 / 20);
       const renderH = RENDER_W / ratio;
       doc.addImage(logoDataUri, props.fileType || 'PNG', mL, y0, RENDER_W, renderH, undefined, 'FAST');
-      leftY = y0 + renderH + 4;
+      coX = mL + RENDER_W + 6;
+      logoBottom = y0 + renderH;
       logoDrawn = true;
     } catch (e) { logoDrawn = false; }
   }
   if (!logoDrawn) {
     doc.setFont('helvetica', 'bold'); doc.setFontSize(20); setText(accent);
-    doc.text(g.companyName || 'BAMA FABRICATION', mL, y0 + 8); leftY = y0 + 14;
+    doc.text(g.companyName || 'BAMA FABRICATION', mL, y0 + 8);
+    coX = mL + doc.getTextWidth(g.companyName || 'BAMA FABRICATION') + 8;
+    logoBottom = y0 + 10;
   }
+
+  // Company block, vertically roughly centred against the logo, to its right.
   if (opts.showCompanyDetails !== false) {
-    setText(HOUSE_MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
     const coLines = [];
     if (g.address) String(g.address).split('\n').forEach(l => coLines.push(l));
     if (g.phone)  coLines.push('Tel: ' + g.phone);
     if (g.email)  coLines.push(g.email);
     if (g.vatNumber) coLines.push('VAT: ' + g.vatNumber);
-    coLines.forEach(l => { doc.text(String(l), mL, leftY); leftY += 3.8; });
+    // Keep the company block clear of the right-hand title/meta column.
+    const coWrapW = Math.max(40, (pageW - mR - 62) - coX);
+    setText(HOUSE_MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+    // Nudge down so the first line aligns with the top third of the logo.
+    let coY = y0 + 3.5;
+    coLines.forEach(l => {
+      doc.splitTextToSize(String(l), coWrapW).forEach(w => { doc.text(w, coX, coY); coY += 3.8; });
+    });
+    leftBottom = Math.max(logoBottom, coY - 3.8);
+  } else {
+    leftBottom = logoBottom;
   }
 
   // RIGHT: italic accent title + meta grid.
@@ -14784,7 +14803,7 @@ function bamaDocHeader(doc, logoDataUri, opts) {
     rightY += 4.4 * Math.max(1, vLines.length);
   }
 
-  let y = Math.max(leftY, rightY) + 2;
+  let y = Math.max(leftBottom, rightY) + 2;
   doc.setDrawColor(HOUSE_INK[0], HOUSE_INK[1], HOUSE_INK[2]); doc.setLineWidth(0.5);
   doc.line(mL, y, pageW - mR, y);
   return { y: y + 7 };
@@ -14845,47 +14864,11 @@ function drawDnPDF(jsPDF, dn, proj, job, logoDataUri) {
 
   const fmtDate = new Date(dn.createdAt).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
 
-  // ── Header: logo + company left, title + meta right ──────────
-  let y = marginL;
-  let leftY = y;
-  let logoDrawn = false;
-  if (t.showLogo !== false && logoDataUri) {
-    try {
-      // Preserve the logo's real aspect ratio. jsPDF.getImageProperties reads
-      // the intrinsic pixel dimensions straight off the data URI (data URIs
-      // have no naturalWidth/naturalHeight), so height is derived, never fixed.
-      const RENDER_W = 55; // mm
-      const props = doc.getImageProperties(logoDataUri);
-      const ratio = (props && props.width && props.height) ? (props.width / props.height) : (55 / 24);
-      const renderH = RENDER_W / ratio;
-      doc.addImage(logoDataUri, props.fileType || 'PNG', marginL, y, RENDER_W, renderH, undefined, 'FAST');
-      leftY = y + renderH + 4;
-      logoDrawn = true;
-    } catch (e) { logoDrawn = false; }
-  }
-  if (!logoDrawn) {
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(20); setText(accent);
-    doc.text(g.companyName || 'BAMA FABRICATION', marginL, y + 8); leftY = y + 14;
-  }
-  if (t.showCompanyDetails !== false) {
-    setText(MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
-    const coLines = [];
-    if (g.address) String(g.address).split('\n').forEach(l => coLines.push(l));
-    if (g.phone)  coLines.push('Tel: ' + g.phone);
-    if (g.email)  coLines.push(g.email);
-    if (g.vatNumber) coLines.push('VAT: ' + g.vatNumber);
-    coLines.forEach(l => { doc.text(String(l), marginL, leftY); leftY += 3.8; });
-  }
-
-  // RIGHT: italic title + meta rows
-  doc.setFont('helvetica', 'bolditalic'); doc.setFontSize(20); setText(accent);
-  doc.text(t.title || 'Delivery Note', pageW - marginR, y + 8, { align: 'right' });
-
-  let rightY = y + 16;
-  // Client-facing DNs (site delivery) relabel supplier-oriented fields and add
-  // the client's PO. Supplier DNs (galvanising / powder etc.) keep 'Supplier:'.
+  // ── Header — shared BAMA letterhead (logo left, company block right of it,
+  //    italic accent title + meta grid hard-right). Client-facing DNs (site
+  //    delivery) relabel supplier-oriented fields and add the client's PO;
+  //    supplier DNs (galvanising / powder etc.) keep 'Supplier:'.
   const isClient = dn.docType === 'client';
-  // Only emit meta rows that carry a real value — no empty labels, no gaps.
   const metaRows = [
     { label: 'DN Number:',  value: dn.number },
     { label: 'Date:',       value: fmtDate },
@@ -14895,23 +14878,15 @@ function drawDnPDF(jsPDF, dn, proj, job, logoDataUri) {
     { label: isClient ? 'Client PO:' : null, value: isClient ? dn.clientPo : null },
     { label: isClient ? 'Client:' : 'Supplier:', value: dn.destinationName },
     { label: isClient ? null : 'For:', value: isClient ? null : dn.finishName }
-  ].filter(r => r.label && r.value != null && String(r.value).trim() !== '');
-
-  doc.setFontSize(9);
-  const metaValX = pageW - marginR;
-  const metaLabelX = pageW - marginR - 42;
-  for (const r of metaRows) {
-    setText(TEXT); doc.setFont('helvetica', 'bold');
-    doc.text(r.label, metaLabelX, rightY, { align: 'right' });
-    setText(TEXT); doc.setFont('helvetica', 'normal');
-    const vLines = doc.splitTextToSize(String(r.value || ''), 40);
-    doc.text(vLines[0] || '', metaValX, rightY, { align: 'right' });
-    rightY += 4.4 * Math.max(1, vLines.length);
-  }
-
-  y = Math.max(leftY, rightY) + 2;
-  setDraw(TEXT); doc.setLineWidth(0.5); doc.line(marginL, y, pageW - marginR, y);
-  y += 7;
+  ];
+  const _hdr = bamaDocHeader(doc, (t.showLogo !== false ? logoDataUri : ''), {
+    title: t.title || 'Delivery Note',
+    accent,
+    marginL, marginR,
+    showCompanyDetails: t.showCompanyDetails !== false,
+    meta: metaRows
+  });
+  let y = _hdr.y;
 
   // ── Deliver-to panel ──────────────────
   const dt = dn.deliverTo || {};
@@ -29196,31 +29171,39 @@ function exportPaymentsDueCsv() {
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
 
-// Native jsPDF Payments Due schedule — portrait A4 (CLAUDE.md PDF rules)
+// Native jsPDF Payments Due schedule — portrait A4, BAMA house style.
 async function exportPaymentsDuePDF() {
   if (!_pdrRows) { toast('Refresh first', 'error'); return; }
   const { rows, total, overdueTotal, count, byDate, inclDd } = _pdrData();
   if (!rows.length) { toast('Nothing to export', 'error'); return; }
   const JsPDFCtor = await resolveJsPDFCtor();
+  await (typeof loadLogoDataUri === 'function' ? loadLogoDataUri() : Promise.resolve());
+  const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
   const doc = new JsPDFCtor({ unit: 'mm', format: 'a4', orientation: 'portrait' });
-  const pageW = 210, pageH = 297, mL = 12, W = pageW - 24;
-  const NAVY = [26,26,46], TEXT = [34,34,34], MUTED = [110,110,110], RED = [208,2,27], ACCENT = [22,110,180], RULE = [215,218,224];
+  try { doc.setProperties({ title: 'Payments Due', subject: 'Supplier invoices to pay', author: 'BAMA Fabrication', creator: 'BAMA Fabrication ERP' }); } catch (e) {}
+  const pageW = 210, pageH = 297, mL = 14, mR = 14, W = pageW - mL - mR;
+  const accent = _houseAccent();
+  const TEXT = HOUSE_INK, MUTED = HOUSE_MUTED, RED = [208,2,27], RULE = HOUSE_RULE, HEAD = HOUSE_HEAD;
   const sT = c => doc.setTextColor(c[0],c[1],c[2]);
   const money = v => v == null ? '\u2014' : gbp2(v);
   const fmtDue = iso => iso ? new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }) : '\u2014';
   const today = new Date().toISOString().slice(0, 10);
 
-  doc.setFillColor(NAVY[0],NAVY[1],NAVY[2]); doc.rect(0, 0, pageW, 24, 'F');
-  sT([255,255,255]); doc.setFont('helvetica','bold'); doc.setFontSize(15);
-  doc.text('Payments Due \u2014 Supplier Invoices', mL, 10.5);
-  doc.setFont('helvetica','normal'); doc.setFontSize(8.5);
-  const sub = `Due on or before ${byDate ? fmtDue(byDate) : 'any date'} \u00B7 ${count} invoice${count !== 1 ? 's' : ''} \u00B7 ${new Date().toLocaleDateString('en-GB')} \u00B7 BAMA Fabrication Ltd`;
-  doc.text(sub, mL, 17.5);
-  let y = 31;
+  // ── Letterhead ──
+  const _h = bamaDocHeader(doc, logo, {
+    title: 'PAYMENTS DUE',
+    accent, marginL: mL, marginR: mR,
+    meta: [
+      { label: 'Due by:',    value: byDate ? fmtDue(byDate) : 'any date' },
+      { label: 'Invoices:',  value: String(count) },
+      { label: 'Prepared:',  value: new Date().toLocaleDateString('en-GB') }
+    ]
+  });
+  let y = _h.y;
 
-  // KPI band
+  // ── KPI band (framed cards, house palette) ──
   const kpis = [
-    ['TOTAL TO PAY', money(total), ACCENT],
+    ['TOTAL TO PAY', money(total), accent],
     ['INVOICES', String(count), TEXT],
     ['SUPPLIERS', String(rows.length), TEXT],
     ['OVERDUE', money(overdueTotal), overdueTotal > 0 ? RED : MUTED],
@@ -29229,71 +29212,73 @@ async function exportPaymentsDuePDF() {
   const kw = W / kpis.length;
   kpis.forEach((k, i) => {
     const x = mL + i * kw;
-    doc.setDrawColor(RULE[0],RULE[1],RULE[2]); doc.setLineWidth(0.2); doc.roundedRect(x + 1, y, kw - 2, 14, 1.5, 1.5, 'S');
-    sT(MUTED); doc.setFontSize(5.8); doc.setFont('helvetica','bold'); doc.text(k[0], x + 3, y + 5);
-    sT(k[2]); doc.setFontSize(10); doc.text(k[1], x + 3, y + 11);
+    doc.setFillColor(HEAD[0],HEAD[1],HEAD[2]); doc.setDrawColor(RULE[0],RULE[1],RULE[2]); doc.setLineWidth(0.2);
+    doc.roundedRect(x + 1, y, kw - 2, 15, 1.5, 1.5, 'FD');
+    sT(MUTED); doc.setFontSize(6); doc.setFont('helvetica','bold'); doc.text(k[0], x + 3.5, y + 5.5);
+    sT(k[2]); doc.setFontSize(11); doc.text(k[1], x + 3.5, y + 11.5);
   });
-  y += 21;
+  y += 22;
 
-  const cols = [['SUPPLIER / INVOICE', 78, 'left'], ['PO', 26, 'left'], ['PROJECT', 34, 'left'], ['DUE', 22], ['GROSS', 26]];
+  // ── Section heading ──
+  y = bamaSectionHeading(doc, y, 'SUPPLIER INVOICES TO PAY', { accent, marginL: mL, usableW: W });
+
+  const cols = [['Supplier / Invoice', 76, 'left'], ['PO', 26, 'left'], ['Project', 34, 'left'], ['Due', 22, 'right'], ['Gross', 26, 'right']];
   const xs = []; let acc = mL; cols.forEach(c => { xs.push(acc); acc += c[1]; });
   const head = () => {
-    doc.setFillColor(NAVY[0],NAVY[1],NAVY[2]); doc.rect(mL, y, W, 6.5, 'F');
-    sT([255,255,255]); doc.setFont('helvetica','bold'); doc.setFontSize(6.8);
+    doc.setFillColor(HEAD[0],HEAD[1],HEAD[2]); doc.rect(mL, y, W, 6.5, 'F');
+    doc.setDrawColor(RULE[0],RULE[1],RULE[2]); doc.setLineWidth(0.2); doc.rect(mL, y, W, 6.5);
+    sT(TEXT); doc.setFont('helvetica','bold'); doc.setFontSize(7.2);
     cols.forEach((c, i) => doc.text(c[0], c[2] === 'left' ? xs[i] + 2 : xs[i] + c[1] - 2, y + 4.4, { align: c[2] === 'left' ? 'left' : 'right' }));
     y += 6.5;
   };
   head();
 
-  const ensure = h => { if (y + h > pageH - 16) { doc.addPage(); y = 12; head(); } };
+  const ensure = h => { if (y + h > pageH - 18) { doc.addPage(); y = mL + 4; head(); } };
   for (const r of rows) {
     ensure(7);
-    // Supplier header row
-    doc.setFillColor(244,246,249); doc.rect(mL, y, W, 6, 'F');
-    sT(TEXT); doc.setFont('helvetica','bold'); doc.setFontSize(8);
-    doc.text(doc.splitTextToSize(r.supplier, cols[0][1] - 4)[0], xs[0] + 2, y + 4.2);
-    if (r.overdue > 0) { sT(RED); doc.setFont('helvetica','normal'); doc.setFontSize(6.2); doc.text(`${money(r.overdue)} overdue`, xs[3] + cols[3][1] - 2, y + 4.2, { align: 'right' }); }
-    sT(TEXT); doc.setFont('helvetica','bold'); doc.setFontSize(8);
+    // Supplier group row
+    doc.setFillColor(250, 244, 238); doc.rect(mL, y, W, 6, 'F'); // faint warm band
+    sT(TEXT); doc.setFont('helvetica','bold'); doc.setFontSize(8.2);
+    doc.text(doc.splitTextToSize(r.supplier, cols[0][1] + cols[1][1] + cols[2][1] - 4)[0], xs[0] + 2, y + 4.2);
+    if (r.overdue > 0) { sT(RED); doc.setFont('helvetica','normal'); doc.setFontSize(6.4); doc.text(`${money(r.overdue)} overdue`, xs[3] + cols[3][1] - 2, y + 4.2, { align: 'right' }); }
+    sT(TEXT); doc.setFont('helvetica','bold'); doc.setFontSize(8.2);
     doc.text(money(r.total), xs[4] + cols[4][1] - 2, y + 4.2, { align: 'right' });
     y += 6;
     // Invoice lines
-    doc.setFontSize(7.4); doc.setFont('helvetica','normal');
-    for (const inv of r.invoices) {
-      ensure(5);
+    doc.setFontSize(7.6); doc.setFont('helvetica','normal');
+    r.invoices.forEach((inv, ii) => {
+      ensure(5.2);
+      if (ii % 2) { doc.setFillColor(250,250,251); doc.rect(mL, y, W, 5.2, 'F'); }
       const dueStr = inv.due_date ? String(inv.due_date).slice(0, 10) : null;
       const od = !inv.is_dd && dueStr && dueStr < today;
       sT(MUTED);
       const ref = (inv.invoice_ref || ('#' + inv.id)) + (inv.invoice_type === 'subcontractor' ? '  CIS' : '') + (inv.is_dd ? '  DD' : '');
-      doc.text('   ' + doc.splitTextToSize(ref, cols[0][1] - 8)[0], xs[0] + 2, y + 3.8);
-      doc.text(doc.splitTextToSize(inv.po_reference || '', cols[1][1] - 2)[0] || '', xs[1] + 2, y + 3.8);
-      doc.text(doc.splitTextToSize(inv.project_number || inv.job_number || inv.cost_centre || '', cols[2][1] - 2)[0] || '', xs[2] + 2, y + 3.8);
+      doc.text('   ' + doc.splitTextToSize(ref, cols[0][1] - 8)[0], xs[0] + 2, y + 3.7);
+      doc.text(doc.splitTextToSize(inv.po_reference || '', cols[1][1] - 2)[0] || '', xs[1] + 2, y + 3.7);
+      doc.text(doc.splitTextToSize(inv.project_number || inv.job_number || inv.cost_centre || '', cols[2][1] - 2)[0] || '', xs[2] + 2, y + 3.7);
       sT(od ? RED : MUTED);
-      doc.text(inv.is_dd ? 'DD' : fmtDue(dueStr), xs[3] + cols[3][1] - 2, y + 3.8, { align: 'right' });
+      doc.text(inv.is_dd ? 'DD' : fmtDue(dueStr), xs[3] + cols[3][1] - 2, y + 3.7, { align: 'right' });
       sT(TEXT);
-      doc.text(money(inv._amt), xs[4] + cols[4][1] - 2, y + 3.8, { align: 'right' });
-      doc.setDrawColor(RULE[0],RULE[1],RULE[2]); doc.setLineWidth(0.1); doc.line(mL, y + 5, mL + W, y + 5);
-      y += 5;
-    }
+      doc.text(money(inv._amt), xs[4] + cols[4][1] - 2, y + 3.7, { align: 'right' });
+      doc.setDrawColor(RULE[0],RULE[1],RULE[2]); doc.setLineWidth(0.1); doc.line(mL, y + 5.2, mL + W, y + 5.2);
+      y += 5.2;
+    });
   }
-  // Grand total
-  ensure(9);
-  y += 2;
-  doc.setDrawColor(NAVY[0],NAVY[1],NAVY[2]); doc.setLineWidth(0.4); doc.line(mL, y, mL + W, y);
-  y += 5;
-  sT(TEXT); doc.setFont('helvetica','bold'); doc.setFontSize(10);
-  doc.text('TOTAL TO PAY', xs[0] + 2, y);
-  sT(ACCENT); doc.text(money(total), xs[4] + cols[4][1] - 2, y, { align: 'right' });
-  y += 8;
-  sT(MUTED); doc.setFont('helvetica','normal'); doc.setFontSize(6.5);
-  doc.splitTextToSize('Gross (VAT-inclusive) unpaid supplier invoices due on or before the selected date, grouped by supplier. Invoices already marked paid (Pay & Remit / BACS run) are excluded. ' + (inclDd ? 'Direct debits are included and flagged DD.' : 'Direct debits are excluded.') + ' Due dates derive from each supplier\u2019s payment terms. Figures are live from the ERP at time of printing.', W).forEach(l => { doc.text(l, mL, y); y += 3.2; });
 
-  const pages = doc.getNumberOfPages();
-  for (let i = 1; i <= pages; i++) {
-    doc.setPage(i);
-    sT([150,150,150]); doc.setFontSize(7);
-    doc.text('BAMA Fabrication ERP \u00B7 Payments Due', mL, pageH - 6);
-    doc.text(`Page ${i} of ${pages}`, pageW - mL, pageH - 6, { align: 'right' });
-  }
+  // ── Grand total band ──
+  ensure(10);
+  y += 2;
+  doc.setFillColor(HEAD[0],HEAD[1],HEAD[2]); doc.rect(mL, y, W, 8, 'F');
+  doc.setDrawColor(accent[0],accent[1],accent[2]); doc.setLineWidth(0.5); doc.line(mL, y, mL + W, y);
+  sT(TEXT); doc.setFont('helvetica','bold'); doc.setFontSize(10);
+  doc.text('TOTAL TO PAY', xs[0] + 2, y + 5.4);
+  sT(accent); doc.text(money(total), xs[4] + cols[4][1] - 2, y + 5.4, { align: 'right' });
+  y += 13;
+
+  sT(MUTED); doc.setFont('helvetica','normal'); doc.setFontSize(7);
+  doc.splitTextToSize('Gross (VAT-inclusive) unpaid supplier invoices due on or before the selected date, grouped by supplier. Invoices already marked paid (Pay & Remit / BACS run) are excluded. ' + (inclDd ? 'Direct debits are included and flagged DD.' : 'Direct debits are excluded.') + ' Due dates derive from each supplier\u2019s payment terms. Figures are live from the ERP at time of printing.', W).forEach(l => { if (y > pageH - 18) { doc.addPage(); y = mL + 4; } doc.text(l, mL, y); y += 3.4; });
+
+  bamaDocFooter(doc, { marginL: mL, marginR: mR, caption: 'Payments Due  \u00b7  BAMA Fabrication Ltd' });
   const blob = doc.output('blob');
   console.log('[Payments Due PDF] blob size:', blob.size);
   doc.save(`payments-due-${byDate || new Date().toISOString().slice(0, 10)}.pdf`);
