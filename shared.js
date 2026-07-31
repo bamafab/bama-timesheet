@@ -50189,6 +50189,52 @@ async function inspLoadJob(jobId) {
   _inspRender();
 }
 
+// Live figures for the current job's inspection panel, straight off the BOM
+// (_inspAssemblies is loaded in inspLoadJob). assemblyQty = total pieces of all
+// marks; distinctMarks = number of assembly marks; totalParts = sum of part
+// quantities; weldEstimate = parts-minus-one joint proxy × assembly quantity,
+// summed. The weld figure is an ESTIMATE (no weld data exists to count) and is
+// always overridable in the per-category inputs.
+function _inspDerivedFigures() {
+  const asm = _inspAssemblies || [];
+  let assemblyQty = 0, totalParts = 0, weldEstimate = 0;
+  for (const a of asm) {
+    const q = Number(a.quantity) || 0;
+    assemblyQty += q;
+    const parts = a.parts || [];
+    const pieces = parts.reduce((s, p) => s + (Number(p.quantity) || 0), 0);
+    totalParts += pieces * (q || 1);
+    // joints ≈ distinct pieces − 1 per single assembly, × how many of it we make
+    const distinctPieces = parts.reduce((s, p) => s + (Number(p.quantity) || 0), 0);
+    const jointsPerAssembly = Math.max(0, distinctPieces - 1);
+    weldEstimate += jointsPerAssembly * (q || 1);
+  }
+  return { assemblyQty, distinctMarks: asm.length, totalParts, weldEstimate };
+}
+
+// Fill any BLANK weld-category box with the job-wide estimate as a starting
+// point — never overwrites a figure already entered. The estimate is job-wide
+// (the model can't tell butt from fillet), so it seeds the boxes for you to
+// split/adjust rather than pretending to know the per-category breakdown.
+function inspAutoEstimateWelds() {
+  const der = _inspDerivedFigures();
+  if (!der.weldEstimate) { toast('No parts data to estimate from — upload the BOM first', 'error'); return; }
+  const allCats = [...new Set((_ndtRules || []).filter(r => r.exec_class === (_inspPlan && _inspPlan.exec_class)).map(r => r.weld_category))];
+  let filled = 0;
+  // Seed the whole estimate into the first empty category; if every category is
+  // already filled, do nothing (respect the user's numbers).
+  for (const cat of allCats) {
+    const el = document.getElementById('inspCnt_' + btoa(cat).replace(/[^a-zA-Z0-9]/g, ''));
+    if (el && (el.value === '' || el.value == null)) {
+      el.value = der.weldEstimate;
+      filled++;
+      break; // one seed box — the user splits across categories from there
+    }
+  }
+  if (filled) toast(`Seeded ~${der.weldEstimate} welds into the first empty category — split across categories as needed, then Save.`, 'success');
+  else toast('Every category already has a figure — clear one to re-seed.', 'info');
+}
+
 function _inspRender() {
   const host = document.getElementById('inspBody'); if (!host) return;
   if (!_inspPlan) {
@@ -50212,6 +50258,14 @@ function _inspRender() {
   const totalNdtShort = prog.reduce((s, p) => s + p.ndtShort, 0);
   const totalVisShort = prog.reduce((s, p) => s + p.visualShort, 0);
   const failures = prog.reduce((s, p) => s + p.failures, 0);
+
+  // ── Live figures pulled straight from the project BOM (JobAssemblies) ──────
+  // No more hand-typing how many assemblies the job has — the ERP already knows.
+  // Weld count can't be *counted* (no weld data exists in the model), so it's an
+  // ESTIMATE using the parts-minus-one joint proxy: each assembly of N distinct
+  // pieces needs roughly N-1 joins, times the assembly quantity. Always
+  // overridable — the per-category inputs below stay editable.
+  const der = _inspDerivedFigures();
 
   const bar = (done, req, color) => {
     const pct = req ? Math.min(100, Math.round(done / req * 100)) : (done ? 100 : 0);
@@ -50239,6 +50293,31 @@ function _inspRender() {
         : `<span style="background:#0f2f22;color:#8ee6bd;border:1px solid #3ecf8e55;border-radius:6px;padding:4px 10px;font-size:11.5px">✓ sample satisfied on every category</span>`}
       ${failures ? `<span style="background:#3b1a1a;color:#ff9b9b;border:1px solid #ff6b6b55;border-radius:6px;padding:4px 10px;font-size:11.5px">${failures} failed inspection${failures > 1 ? 's' : ''}</span>` : ''}
     </div>
+
+    <!-- Live BOM figures — pulled from the project, not typed -->
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:stretch;margin-bottom:12px">
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:9px 14px;min-width:130px">
+        <div style="font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">Assemblies on job</div>
+        <div style="font-size:19px;font-weight:800;color:var(--text)">${der.assemblyQty.toLocaleString('en-GB')}</div>
+        <div style="font-size:10px;color:var(--muted)">${der.distinctMarks} distinct mark${der.distinctMarks === 1 ? '' : 's'} · from BOM</div>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:9px 14px;min-width:130px">
+        <div style="font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">Pieces (parts)</div>
+        <div style="font-size:19px;font-weight:800;color:var(--text)">${der.totalParts.toLocaleString('en-GB')}</div>
+        <div style="font-size:10px;color:var(--muted)">across all assemblies</div>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:9px 14px;min-width:150px">
+        <div style="font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">Est. welds <span style="color:#eab308" title="Estimate only — parts-minus-one joint proxy. There is no weld data in the model to count; treat as a starting point and override per category below.">⚠ est.</span></div>
+        <div style="font-size:19px;font-weight:800;color:#eab308">~${der.weldEstimate.toLocaleString('en-GB')}</div>
+        <div style="font-size:10px;color:var(--muted)">parts − 1 per assembly</div>
+      </div>
+      <div style="display:flex;align-items:center">
+        <button class="btn btn-ghost btn-sm" onclick="inspAutoEstimateWelds()"
+          title="Fill any blank weld-category boxes below with the estimate as a starting point. Existing figures are left alone — clear a box first if you want to reset it.">↻ Auto-estimate welds</button>
+      </div>
+    </div>
+    ${der.assemblyQty === 0 ? `<div style="background:#3b2f0f;border:1px solid #eab308;border-radius:8px;padding:9px 13px;font-size:11.5px;color:#f0e0a4;margin-bottom:10px;line-height:1.5">
+      No assemblies found for this job yet — upload the drawing &amp; BOM on the Projects page first, then these figures fill in automatically.</div>` : ''}
 
     <table style="width:100%;border-collapse:collapse;font-size:11.5px;background:var(--surface);border:1px solid var(--border);border-radius:8px">
       <thead><tr>${['Weld category', 'Welds on job', 'NDT %', 'Visual (100%)', 'Supplementary NDT', 'Method', ''].map(h =>
