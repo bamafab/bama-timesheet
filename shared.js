@@ -47573,7 +47573,7 @@ async function saveStarterForm() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 let _qmsForms = [], _qmsActiveForm = null;
-const QMS_FOLDER_NAMES = { checksheets: '02 - Forms & Check Sheets (masters)', calibration: '05 - Calibration Records' };
+const QMS_FOLDER_NAMES = { checksheets: '06 - Completed Check Sheets', calibration: '05 - Calibration Records' };
 
 async function qmsTargetFolder(hint) {
   return await getOrCreateSubfolder(SP_TAX.quality, QMS_FOLDER_NAMES[hint] || QMS_FOLDER_NAMES.checksheets, BAMA_DRIVE_ID);
@@ -47589,7 +47589,8 @@ async function renderQmsTab() {
     <h3 style="margin:0 0 4px">📋 QMS Forms & Check Sheets</h3>
     <p style="font-size:12px;color:var(--muted);margin:0 0 14px;line-height:1.6">
       Digital versions of the FPC check sheets — fill in on any device, the signed-off PDF files itself to
-      <strong>BAMA / 02 - Quality (QMS)</strong> and the submission is registered and audited.
+      <strong>BAMA / 02 - Quality (QMS) / 06 - Completed Check Sheets</strong> (calibration records go to
+      <strong>05 - Calibration Records</strong>) and the submission is registered and audited below with a link to the file.
       New sheets are added as definitions (no code) — the full planned set is in templates/TEMPLATE-qms-check-sheets.md.</p>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px" id="qmsFormCards">
       ${_qmsForms.map(f => `<div class="card" style="margin:0;padding:16px;cursor:pointer" onclick="openQmsForm(${f.id})">
@@ -47722,11 +47723,25 @@ async function submitQmsForm() {
   btn.disabled = true; status.textContent = 'Rendering PDF…';
   try {
     const JsPDF = await resolveJsPDFCtor();
+    await (typeof loadLogoDataUri === 'function' ? loadLogoDataUri() : Promise.resolve());
+    const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
     const doc = new JsPDF({ unit: 'mm', format: 'a4' });
-    const W = 210, M = 20; let y = 34;
-    _empPdfHeader(doc, W);
-    doc.setFontSize(13); doc.setFont('helvetica', 'bold');
-    doc.text(`${form.form_code} — ${form.title}`, M, y); y += 9;
+    const W = 210, M = 14;
+    const accent = _houseAccent();
+    // Pull a couple of headline fields (job / machine / instrument) into the
+    // letterhead meta grid so the record is identifiable at a glance.
+    const metaHint = answers.job || answers.machine || answers.instrument || answers.contract_no || '';
+    const _qh = bamaDocHeader(doc, logo, {
+      title: 'QMS RECORD', accent, marginL: M, marginR: M,
+      meta: [
+        { label: 'Form:', value: form.form_code },
+        { label: 'Ref:',  value: metaHint },
+        { label: 'Date:', value: new Date().toLocaleDateString('en-GB') }
+      ]
+    });
+    let y = _qh.y;
+    // Sheet title (the form's own name) as an accent section heading.
+    y = bamaSectionHeading(doc, y, String(form.title || '').toUpperCase(), { accent, marginL: M, usableW: W - 2 * M });
     doc.setFontSize(10);
     for (const f of def.fields) {
       if (y > 262) { doc.addPage(); y = 22; }
@@ -47779,9 +47794,10 @@ async function submitQmsForm() {
       doc.text(lines, M + 92, y);
       y += Math.max(6, lines.length * 4.6 + 1.4);
     }
-    y += 6; if (y > 265) { doc.addPage(); y = 22; }
-    doc.setFontSize(9); doc.setFont('helvetica', 'normal');
-    doc.text(`Submitted electronically via BAMA ERP on ${new Date().toLocaleString('en-GB')}.`, M, y);
+    y += 6; if (y > 262) { doc.addPage(); y = 22; }
+    doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+    doc.text(`Submitted electronically via BAMA ERP on ${new Date().toLocaleString('en-GB')}${_qmsSubmitterName() ? ' by ' + _qmsSubmitterName() : ''}.`, M, y);
+    bamaDocFooter(doc, { marginL: M, marginR: M, caption: `${form.form_code}  \u00b7  BAMA Fabrication Ltd` });
     const blob = doc.output('blob');
     console.log('QMS PDF size:', blob.size);
     status.textContent = 'Filing to SharePoint…';
@@ -47790,16 +47806,25 @@ async function submitQmsForm() {
     const fileName = `${form.form_code} - ${keyBit ? keyBit + ' - ' : ''}${stamp}.pdf`.replace(/[~"#%&*:<>?{|}/\\]/g, '-');
     const folder = await qmsTargetFolder(def.folder);
     const up = await uploadFileToFolder(folder.id, fileName, await blob.arrayBuffer(), 'application/pdf', BAMA_DRIVE_ID);
+    // Graph sometimes omits webUrl on the upload response; fall back to a folder
+    // link so the Recent list is always clickable and the file is findable.
+    const webUrl = up.webUrl || folder.webUrl || null;
     status.textContent = 'Registering…';
     await api.post('/api/qms-submissions', {
       form_id: form.id, form_code: form.form_code, answers,   // images stay in the PDF, not the JSON
-      file_name: fileName, sharepoint_file_id: up.id, web_url: up.webUrl || null
+      file_name: fileName, sharepoint_file_id: up.id, web_url: webUrl
     });
-    toast(`${form.form_code} submitted & filed`, 'success');
+    toast(`${form.form_code} filed to ${QMS_FOLDER_NAMES[def.folder] || QMS_FOLDER_NAMES.checksheets}`, 'success');
     document.getElementById('qmsFormModal').style.display = 'none';
     renderQmsTab();
   } catch (e) { status.textContent = 'Failed: ' + e.message; }
   finally { btn.disabled = false; }
+}
+
+// Best-effort name of whoever's filling the sheet, for the PDF footline.
+function _qmsSubmitterName() {
+  try { return (typeof currentManagerUser !== 'undefined' && currentManagerUser && (currentManagerUser.name || currentManagerUser)) || ''; }
+  catch (e) { return ''; }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -47832,7 +47857,7 @@ const HELP_TOPICS = [
   { area: 'QMS Forms & Check Sheets', icon: '📝', items: [
     { q: 'What are QMS Forms?', a: 'The quality records — weld/dimensional checks, material receiving, final release, calibration, NCRs and so on. Open Office ▸ QMS Forms, pick a sheet, fill it, and it files a PDF to SharePoint and logs the submission.' },
     { q: 'How do I do a weld / dimensional check?', a: 'It is evidence, not an essay. Pick the job, type the drawing/assembly, take a photo, tap the outcome (Good quality / Needs rework, and Pass / Fail on dimensions), put your name, sign, Submit. The written procedure lives in Company Docs — the form just proves you did the check.' },
-    { q: 'Where do the completed sheets go?', a: 'A PDF is filed automatically to 02 - Quality (QMS) in SharePoint, and the submission is listed under the form so you can see recent ones. Photos and signatures are embedded in the PDF, not stored loose.' },
+    { q: 'Where do the completed sheets go?', a: 'A PDF is filed automatically to 02 - Quality (QMS) / 06 - Completed Check Sheets in SharePoint (calibration records go to 05 - Calibration Records), and the submission is listed under the form with a clickable link so you can open the exact file. Photos and signatures are embedded in the PDF, not stored loose.' },
     { q: 'Can we add a new check sheet?', a: 'Yes — a check sheet is just a definition row in the QmsForms table (a small piece of JSON). Adding one is an SQL insert, no code. Field types available: text, number, date, select, tick (yes/no with your own labels), long text, job/machine/personnel picker, photo, signature and repeating tables.' },
   ]},
   { area: 'Company / Employee / Supplier Docs', icon: '📁', items: [
