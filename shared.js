@@ -47585,6 +47585,10 @@ async function renderQmsTab() {
   root.innerHTML = '<div style="color:var(--muted);padding:20px">Loading forms…</div>';
   try { _qmsForms = await api.get('/api/qms-forms'); }
   catch (e) { root.innerHTML = `<div style="color:var(--red);padding:20px;font-size:12.5px">QMS forms unavailable: ${escapeHtml(e.message)} — run api/sql/create-qms-forms.sql first.</div>`; return; }
+  // Material receiving (MAT 001) is retired — steel heat numbers now come from
+  // the mill test certs dragged onto the job (Traceability ▸ Inspection & NDT),
+  // not a hand-keyed form. Hide it from the picker; existing submissions remain.
+  _qmsForms = (_qmsForms || []).filter(f => !/MAT\s*001/i.test(f.form_code || ''));
   root.innerHTML = `<div style="max-width:900px">
     <h3 style="margin:0 0 4px">📋 QMS Forms & Check Sheets</h3>
     <p style="font-size:12px;color:var(--muted);margin:0 0 14px;line-height:1.6">
@@ -47855,7 +47859,7 @@ const HELP_TOPICS = [
     { q: 'The work-area pin on the site plan', a: 'Click on the uploaded site plan to drop a "WORK AREA" pin. It prints onto the PDF exactly where you placed it.' },
   ]},
   { area: 'QMS Forms & Check Sheets', icon: '📝', items: [
-    { q: 'What are QMS Forms?', a: 'The quality records — weld/dimensional checks, material receiving, final release, calibration, NCRs and so on. Open Office ▸ QMS Forms, pick a sheet, fill it, and it files a PDF to SharePoint and logs the submission.' },
+    { q: 'What are QMS Forms?', a: 'The quality records — weld/dimensional checks, final release, calibration, NCRs and so on. Open Office ▸ QMS Forms, pick a sheet, fill it, and it files a PDF to SharePoint and logs the submission. (Material receiving is no longer a form — steel heat numbers now come from the mill test certs you drag onto the job under Inspection & NDT.)' },
     { q: 'How do I do a weld / dimensional check?', a: 'It is evidence, not an essay. Pick the job, type the drawing/assembly, take a photo, tap the outcome (Good quality / Needs rework, and Pass / Fail on dimensions), put your name, sign, Submit. The written procedure lives in Company Docs — the form just proves you did the check.' },
     { q: 'Where do the completed sheets go?', a: 'A PDF is filed automatically to 02 - Quality (QMS) / 06 - Completed Check Sheets in SharePoint (calibration records go to 05 - Calibration Records), and the submission is listed under the form with a clickable link so you can open the exact file. Photos and signatures are embedded in the PDF, not stored loose.' },
     { q: 'Can we add a new check sheet?', a: 'Yes — a check sheet is just a definition row in the QmsForms table (a small piece of JSON). Adding one is an SQL insert, no code. Field types available: text, number, date, select, tick (yes/no with your own labels), long text, job/machine/personnel picker, photo, signature and repeating tables.' },
@@ -50074,7 +50078,7 @@ const INSP_RESULTS = {
 };
 const EXEC_CLASSES = ['EXC1', 'EXC2', 'EXC3', 'EXC4'];
 
-let _ndtRules = [], _inspPlan = null, _inspRecords = [], _inspJob = null, _inspAssemblies = [], _inspBom = [];
+let _ndtRules = [], _inspPlan = null, _inspRecords = [], _inspJob = null, _inspAssemblies = [], _inspBom = [], _inspCerts = [], _inspStcPending = [];
 let _inspWeldWarning = null;   // set by inspCheckWelder(), recorded on the record
 
 // How many welds must be inspected, for one category, at one execution class.
@@ -50187,8 +50191,10 @@ async function inspLoadJob(jobId) {
     const resolved = await _inspAssembliesForProject(jobId);
     _inspAssemblies = resolved.assemblies;
     _inspBom = resolved.bom;
+    _inspCerts = await _inspSteelCertsForProject(jobId);
   } catch (e) { host.innerHTML = `<div style="color:var(--red);font-size:12px;padding:14px">${escapeHtml(e.message)}</div>`; return; }
   _inspRender();
+  inspRenderStcList();
 }
 
 // Assemblies AND BOM items both live under DrawingJobs (linked by project_number,
@@ -50217,8 +50223,185 @@ async function _inspAssembliesForProject(projectId) {
   return { assemblies, bom };
 }
 
-// Live figures for the current job's inspection panel, straight off the BOM
-// (_inspAssemblies is loaded in inspLoadJob). assemblyQty = total pieces of all
+// ── Steel test certs (material traceability) ────────────────────────────────
+// The mill 3.1 cert is the heat-number source. Certs are filed per drawing job;
+// aggregate across the project's packages, same as assemblies/BOM.
+async function _inspSteelCertsForProject(projectId) {
+  let projectNumber = null;
+  try {
+    const projects = await api.get('/api/projects');
+    const p = (projects || []).find(x => String(x.id) === String(projectId));
+    projectNumber = p && (p.project_number || p.job_number);
+  } catch (_) {}
+  if (!projectNumber) return [];
+  let drawingJobs = [];
+  try { drawingJobs = await api.get(`/api/drawings?project_number=${encodeURIComponent(projectNumber)}`); } catch (_) { drawingJobs = []; }
+  if (!Array.isArray(drawingJobs) || !drawingJobs.length) return [];
+  const lists = await Promise.all(drawingJobs.map(dj =>
+    api.get(`/api/steel-test-certs?job_id=${encodeURIComponent(dj.id)}`).catch(() => [])));
+  const all = [];
+  lists.forEach((list, i) => (list || []).forEach(c => all.push({ ...c, _drawing_job_id: drawingJobs[i].id })));
+  return all;
+}
+
+// The first drawing job of the current project — where new certs are filed and
+// their heats keyed. (Assemblies may span packages, but a cert attaches to one.)
+async function _inspPrimaryDrawingJob(projectId) {
+  try {
+    const projects = await api.get('/api/projects');
+    const p = (projects || []).find(x => String(x.id) === String(projectId));
+    const pn = p && (p.project_number || p.job_number);
+    if (!pn) return null;
+    const djs = await api.get(`/api/drawings?project_number=${encodeURIComponent(pn)}`);
+    return { drawingJob: (djs || [])[0] || null, projectNumber: pn };
+  } catch (_) { return null; }
+}
+
+// Read dropped cert files with Claude — one review card per file.
+async function inspStcFiles(fileList) {
+  const files = Array.from(fileList || []).filter(Boolean);
+  if (!files.length) return;
+  for (const file of files) {
+    const pending = { id: 'stc' + Date.now() + Math.random().toString(36).slice(2, 6), file, status: 'reading', heats: [], meta: {} };
+    _inspStcPending.push(pending);
+    inspRenderStcList();
+    try {
+      const dataUri = await _fileToDataUri(file);
+      const b64 = dataUri.split(',')[1];
+      const isImg = /^image\//.test(file.type);
+      const res = await callClaude({
+        model: 'claude-sonnet-4-6', max_tokens: 3000,
+        messages: [{ role: 'user', content: [
+          isImg
+            ? { type: 'image',    source: { type: 'base64', media_type: file.type, data: b64 } }
+            : { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } },
+          { type: 'text', text:
+            'This is a steel mill test certificate (EN 10204 3.1). Extract ONLY what is printed — never invent. Return STRICT JSON, no markdown:\n' +
+            '{"cert_no":string|null,"supplier":string|null,"standard":string|null,"cert_date":"YYYY-MM-DD"|null,' +
+            '"heats":[{"heat_no":string,"section":string|null,"grade":string|null,"qty":string|null}]}\n' +
+            'heat_no = the cast/heat number. section = product/dimension (e.g. "UB 305x165x40", "PL 12mm"). grade = steel grade (e.g. S355J2). qty = quantity/length if shown, else null. One entry per heat line on the cert.' }
+        ] }]
+      });
+      let txt = '';
+      (res.content || []).forEach(b => { if (b.type === 'text') txt += b.text; });
+      let parsed = {};
+      try { parsed = JSON.parse(txt.replace(/```json|```/g, '').trim()); } catch (_) { parsed = {}; }
+      pending.meta = { cert_no: parsed.cert_no || '', supplier: parsed.supplier || '', standard: parsed.standard || '', cert_date: parsed.cert_date || '' };
+      pending.heats = Array.isArray(parsed.heats) ? parsed.heats.filter(h => h && h.heat_no) : [];
+      pending.status = pending.heats.length ? 'ready' : 'empty';
+    } catch (e) {
+      pending.status = 'error'; pending.error = e.message;
+    }
+    inspRenderStcList();
+  }
+}
+
+function inspRenderStcList() {
+  const host = document.getElementById('stcList');
+  if (!host) return;
+  const esc = s => escapeHtml(String(s == null ? '' : s));
+  let html = '';
+
+  // Filed certs already on the job
+  if ((_inspCerts || []).length) {
+    html += '<div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:2px 0 5px">On file</div>';
+    html += _inspCerts.map(c => `<div style="display:flex;gap:8px;align-items:center;font-size:11.5px;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:5px 10px;margin-bottom:4px">
+      <span style="color:#3ecf8e">✓</span>
+      <span style="flex:1">${c.web_url ? `<a href="${esc(c.web_url)}" target="_blank" style="color:var(--text)">${esc(c.cert_no || c.file_name || 'cert')}</a>` : esc(c.cert_no || c.file_name || 'cert')}</span>
+      <span style="color:var(--muted)">${esc(c.supplier || '')}</span>
+      <span style="color:var(--muted)">${c.heat_count || 0} heat${(c.heat_count || 0) === 1 ? '' : 's'}</span>
+      <button class="btn btn-ghost btn-sm" style="color:var(--red);padding:2px 7px" onclick="inspStcDelete(${c.id})">🗑</button>
+    </div>`).join('');
+  }
+
+  // Pending review cards
+  for (const p of _inspStcPending) {
+    if (p.status === 'reading') {
+      html += `<div style="font-size:11.5px;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-bottom:4px;color:var(--muted)">Reading ${esc(p.file.name)}…</div>`;
+      continue;
+    }
+    if (p.status === 'error') {
+      html += `<div style="font-size:11.5px;background:#3b1a1a;border:1px solid #ff6b6b55;border-radius:6px;padding:8px 10px;margin-bottom:4px;color:#ff9b9b">Couldn't read ${esc(p.file.name)}: ${esc(p.error || '')} <button class="btn btn-ghost btn-sm" onclick="inspStcDiscard('${p.id}')">dismiss</button></div>`;
+      continue;
+    }
+    const rows = p.heats.map((h, i) => `<tr>
+      <td style="padding:2px 4px"><input value="${esc(h.section)}" oninput="inspStcEdit('${p.id}',${i},'section',this.value)" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:2px 5px;color:var(--text);font-size:11px"></td>
+      <td style="padding:2px 4px"><input value="${esc(h.grade)}" oninput="inspStcEdit('${p.id}',${i},'grade',this.value)" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:2px 5px;color:var(--text);font-size:11px"></td>
+      <td style="padding:2px 4px"><input value="${esc(h.qty)}" oninput="inspStcEdit('${p.id}',${i},'qty',this.value)" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:2px 5px;color:var(--text);font-size:11px"></td>
+      <td style="padding:2px 4px"><input value="${esc(h.heat_no)}" oninput="inspStcEdit('${p.id}',${i},'heat_no',this.value)" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:2px 5px;color:var(--text);font-size:11px;font-family:var(--font-mono)"></td>
+    </tr>`).join('');
+    html += `<div style="background:var(--card);border:1px solid var(--accent);border-radius:8px;padding:10px 12px;margin-bottom:6px">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+        <strong style="font-size:11.5px">${esc(p.file.name)}</strong>
+        ${p.status === 'empty' ? '<span style="color:#eab308;font-size:11px">no heat lines read — add them manually or dismiss</span>' : `<span style="color:#3ecf8e;font-size:11px">${p.heats.length} heat line${p.heats.length === 1 ? '' : 's'}</span>`}
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:6px">
+        <input placeholder="Cert no" value="${esc(p.meta.cert_no)}" oninput="inspStcMeta('${p.id}','cert_no',this.value)" style="background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:3px 6px;color:var(--text);font-size:11px">
+        <input placeholder="Supplier" value="${esc(p.meta.supplier)}" oninput="inspStcMeta('${p.id}','supplier',this.value)" style="background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:3px 6px;color:var(--text);font-size:11px">
+        <input placeholder="Standard" value="${esc(p.meta.standard)}" oninput="inspStcMeta('${p.id}','standard',this.value)" style="background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:3px 6px;color:var(--text);font-size:11px">
+      </div>
+      ${p.heats.length ? `<table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:6px">
+        <thead><tr>${['Section', 'Grade', 'Qty', 'Heat / cast no'].map(h => `<th style="text-align:left;font-size:9.5px;color:var(--muted);padding:0 4px">${h}</th>`).join('')}</tr></thead>
+        <tbody>${rows}</tbody></table>` : ''}
+      <div style="display:flex;gap:6px;justify-content:flex-end">
+        <button class="btn btn-ghost btn-sm" onclick="inspStcAddRow('${p.id}')">＋ heat line</button>
+        <button class="btn btn-ghost btn-sm" onclick="inspStcDiscard('${p.id}')">Discard</button>
+        <button class="btn btn-primary btn-sm" onclick="inspStcSave('${p.id}')">💾 File cert &amp; save heats</button>
+      </div>
+    </div>`;
+  }
+  host.innerHTML = html || '<div style="font-size:11px;color:var(--muted)">No steel test certs on file for this job yet.</div>';
+}
+
+function _inspStcPend(id) { return _inspStcPending.find(p => p.id === id); }
+function inspStcMeta(id, k, v) { const p = _inspStcPend(id); if (p) p.meta[k] = v; }
+function inspStcEdit(id, i, k, v) { const p = _inspStcPend(id); if (p && p.heats[i]) p.heats[i][k] = v; }
+function inspStcAddRow(id) { const p = _inspStcPend(id); if (p) { p.heats.push({ section: '', grade: '', qty: '', heat_no: '' }); inspRenderStcList(); } }
+function inspStcDiscard(id) { _inspStcPending = _inspStcPending.filter(p => p.id !== id); inspRenderStcList(); }
+
+async function inspStcSave(id) {
+  const p = _inspStcPend(id);
+  if (!p) return;
+  const heats = (p.heats || []).filter(h => String(h.heat_no || '').trim());
+  if (!heats.length) { toast('No heat numbers to save — add at least one, or discard', 'error'); return; }
+  try {
+    const info = await _inspPrimaryDrawingJob(_inspJob);
+    if (!info || !info.drawingJob) throw new Error('No drawing package on this project to file the cert against — upload the drawing first');
+    // File the cert PDF to SharePoint (02 - Quality (QMS) / material certs)
+    let spId = null, webUrl = null, fileName = p.file.name;
+    try {
+      const folder = await getOrCreateSubfolder(SP_TAX.quality, '04 - Material Test Certs', BAMA_DRIVE_ID);
+      const safe = `${info.projectNumber} - ${p.meta.cert_no || fileName}`.replace(/[~"#%&*:<>?{|}/\\]/g, '-');
+      const up = await uploadFileToFolder(folder.id, safe.endsWith('.pdf') ? safe : safe + '.pdf', await p.file.arrayBuffer(), p.file.type || 'application/pdf', BAMA_DRIVE_ID);
+      spId = up.id; webUrl = up.webUrl || folder.webUrl || null; fileName = safe;
+    } catch (e) { console.warn('Cert SharePoint upload failed (non-fatal):', e.message); }
+    // Record the cert + its heat lines
+    await api.post('/api/steel-test-certs', {
+      job_id: info.drawingJob.id, project_number: info.projectNumber,
+      cert_no: p.meta.cert_no || null, supplier: p.meta.supplier || null,
+      standard: p.meta.standard || null, cert_date: p.meta.cert_date || null,
+      file_name: fileName, sharepoint_file_id: spId, web_url: webUrl,
+      heats: heats.map(h => ({ heat_no: h.heat_no, section: h.section || null, grade: h.grade || null, qty: h.qty || null }))
+    });
+    toast(`Cert filed — ${heats.length} heat${heats.length === 1 ? '' : 's'} recorded`, 'success');
+    _inspStcPending = _inspStcPending.filter(x => x.id !== id);
+    _inspCerts = await _inspSteelCertsForProject(_inspJob);
+    inspRenderStcList();
+  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+async function inspStcDelete(certId) {
+  const okGo = await bamaConfirm({ title: 'Delete steel test cert?', message: 'This removes the cert and the heat numbers it recorded from the traceability chain. The SharePoint file is left in place.', confirmText: 'Delete', danger: true });
+  if (!okGo) return;
+  try {
+    await api.delete(`/api/steel-test-certs/${certId}`);
+    toast('Cert removed', 'success');
+    _inspCerts = await _inspSteelCertsForProject(_inspJob);
+    inspRenderStcList();
+  } catch (e) { toast('Delete failed: ' + e.message, 'error'); }
+}
+
+
 // marks; distinctMarks = number of assembly marks; totalParts = sum of part
 // quantities; weldEstimate = parts-minus-one joint proxy × assembly quantity,
 // summed. The weld figure is an ESTIMATE (no weld data exists to count) and is
@@ -50388,6 +50571,25 @@ function _inspRender() {
     </div>
     ${der.assemblyQty === 0 ? `<div style="background:#3b2f0f;border:1px solid #eab308;border-radius:8px;padding:9px 13px;font-size:11.5px;color:#f0e0a4;margin-bottom:10px;line-height:1.5">
       No assemblies found for this job yet — upload the drawing &amp; BOM on the Projects page first, then these figures fill in automatically.</div>` : ''}
+
+    <!-- Steel test certs — the mill 3.1 cert is the heat-number source (no MAT form) -->
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+        <strong style="font-size:12.5px">🏭 Steel test certificates</strong>
+        <span style="font-size:11px;color:var(--muted)">drag the mill 3.1 certs here — heat numbers are read automatically and feed the CoC / DoP / Traceability</span>
+      </div>
+      <div id="stcDrop" onclick="document.getElementById('stcFile').click()"
+           ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
+           ondragleave="this.style.borderColor='var(--border)'"
+           ondrop="event.preventDefault();this.style.borderColor='var(--border)';inspStcFiles(event.dataTransfer.files)"
+           style="border:1.5px dashed var(--border);border-radius:8px;padding:16px;text-align:center;cursor:pointer;font-size:12px;color:var(--muted)">
+        Drop steel test cert PDFs here, or click to browse
+        <input type="file" id="stcFile" accept="application/pdf,image/*" multiple style="display:none"
+               onchange="inspStcFiles(this.files)">
+      </div>
+      <div id="stcList" style="margin-top:10px"></div>
+    </div>
+    <script>if(typeof inspRenderStcList==='function')inspRenderStcList();</script>
 
     <table style="width:100%;border-collapse:collapse;font-size:11.5px;background:var(--surface);border:1px solid var(--border);border-radius:8px">
       <thead><tr>${['Weld category', 'Welds on job', 'NDT %', 'Visual (100%)', 'Supplementary NDT', 'Method', ''].map(h =>
@@ -50697,7 +50899,7 @@ const ITP_INTERVENTIONS = {
 // the ITP points at the sheet that actually captures the record.
 const ITP_TEMPLATE = [
   { stage: 'Contract',    activity: 'Technical and contract review',                       ref_doc: 'EN 1090-2, contract documents', acceptance: 'Requirements understood, capability confirmed, differences resolved', intervention: 'R', frequency: 'Each contract',  responsibility: 'BAMA', record_ref: 'BAMA tec 001' },
-  { stage: 'Material',    activity: 'Material receiving inspection and identification',    ref_doc: 'EN 10025, purchase order',      acceptance: 'Matches PO; 3.1 certificates received; heat numbers recorded and marked', intervention: 'R', frequency: 'Each delivery', responsibility: 'BAMA', record_ref: 'BAMA MAT 001' },
+  { stage: 'Material',    activity: 'Material receiving inspection and identification',    ref_doc: 'EN 10025, purchase order',      acceptance: 'Matches PO; 3.1 test certificates on file; heat numbers recorded and marked', intervention: 'R', frequency: 'Each delivery', responsibility: 'BAMA', record_ref: 'Steel test cert' },
   { stage: 'Material',    activity: 'Welding consumable control and issue',                ref_doc: 'EN ISO 14341 / WPS',            acceptance: 'Correct designation, batch recorded, packaging intact, stored dry', intervention: 'S', frequency: 'Each issue',    responsibility: 'BAMA', record_ref: 'CON 001' },
   { stage: 'Fabrication', activity: 'Cutting, drilling and preparation to drawing',        ref_doc: 'Approved drawings, EN 1090-2',  acceptance: 'Dimensions and tolerances to EN 1090-2; edges to specification', intervention: 'S', frequency: 'Each assembly', responsibility: 'BAMA', record_ref: 'BAMA FAB 001' },
   { stage: 'Fabrication', activity: 'Fit-up inspection prior to welding',                  ref_doc: 'Approved drawings, WPS',        acceptance: 'Joint geometry, root gap and alignment within WPS range', intervention: 'H', frequency: '100%',          responsibility: 'BAMA', record_ref: 'BAMA FAB 001' },
@@ -51106,7 +51308,7 @@ async function itpMakePdf(toSharePoint) {
 async function cocGatherFacts(jobId) {
   const facts = {
     job: null, execClass: null, assemblies: [], totalWeightKg: 0, assemblyCount: 0,
-    heatNumbers: [], drawings: [], ndt: [], welders: [], coatings: [], gaps: []
+    heatNumbers: [], drawings: [], ndt: [], welders: [], coatings: [], gaps: [], steelCerts: []
   };
 
   try {
@@ -51158,29 +51360,29 @@ async function cocGatherFacts(jobId) {
     }
   } catch (_) { facts.gaps.push('Inspection data unavailable'); }
 
-  // Heat numbers from BAMA MAT 001 submissions (read out of the answers JSON)
+  // Heat numbers — read from the steel TEST CERTS filed against this job's
+  // drawing packages (the mill 3.1 cert is the source of truth), via the shared
+  // AssemblyHeatAllocations table. Replaces the old hand-keyed MAT 001 form.
   try {
-    const subs = await api.get('/api/qms-submissions?form_code=BAMA MAT 001');
-    (subs || []).forEach(s => {
-      let a = {};
-      try { a = typeof s.answers === 'string' ? JSON.parse(s.answers) : (s.answers || {}); } catch (_) { return; }
-      const jobRef = String(a.job || '');
-      const jn = facts.job && facts.job.job_number ? String(facts.job.job_number) : '';
-      if (jn && jobRef && jobRef.indexOf(jn) < 0) return;   // other job's delivery
-      const items = Array.isArray(a.items) ? a.items : [];
-      items.forEach(row => {
-        const vals = Array.isArray(row) ? row : Object.values(row || {});
-        const heat = vals.find(v => v && /^[A-Za-z0-9\-\/]{4,}$/.test(String(v).trim()) && /\d/.test(String(v)));
-        if (heat) facts.heatNumbers.push({
-          section: String(vals[0] ?? '').trim(), grade: String(vals[1] ?? '').trim(),
-          qty: String(vals[2] ?? '').trim(), heat: String(vals[3] ?? heat).trim(),
-          supplier: a.supplier || null, po: a.po_number || null
-        });
-      });
-      if (a.action && a.action !== 'Accepted') facts.gaps.push(`Material receipt marked "${a.action}" on PO ${a.po_number || '?'}`);
-    });
-  } catch (_) { facts.gaps.push('Material records (BAMA MAT 001) unavailable'); }
-  if (!facts.heatNumbers.length) facts.gaps.push('No heat / cast numbers found — complete BAMA MAT 001 for this job');
+    const projects = await api.get('/api/projects');
+    const proj = (projects || []).find(x => String(x.id) === String(jobId));
+    const projectNumber = proj && (proj.project_number || proj.job_number);
+    let drawingJobs = [];
+    if (projectNumber) { try { drawingJobs = await api.get(`/api/drawings?project_number=${encodeURIComponent(projectNumber)}`); } catch (_) {} }
+    const allocLists = await Promise.all((drawingJobs || []).map(dj =>
+      api.get(`/api/heat-allocations?job_id=${encodeURIComponent(dj.id)}`).catch(() => [])));
+    const allocs = [].concat(...allocLists);
+    facts.heatNumbers = allocs.filter(a => a.heat_no).map(a => ({
+      section: a.section || '', grade: a.grade || '', qty: a.qty || '',
+      heat: a.heat_no, supplier: a.supplier || null, po: a.po_number || null,
+      assembly_mark: a.assembly_mark || null
+    }));
+    // Are any steel test certs actually on file? (soft-gate signal)
+    const certLists = await Promise.all((drawingJobs || []).map(dj =>
+      api.get(`/api/steel-test-certs?job_id=${encodeURIComponent(dj.id)}`).catch(() => [])));
+    facts.steelCerts = [].concat(...certLists);
+  } catch (_) { facts.gaps.push('Material test-cert records unavailable'); }
+  if (!facts.heatNumbers.length) facts.gaps.push('No heat / cast numbers on file — drag the steel test certs onto this job');
 
   // Welders who worked the job, with their certificate numbers
   try {
@@ -51497,7 +51699,7 @@ function _cocRender() {
         : 'Declares fabrication, delivery and installation.'}</span>
     </div>
     <p style="font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.6">
-      Every figure below is read from this job's own records — assemblies, BAMA MAT 001 heat numbers, inspection records,
+      Every figure below is read from this job's own records — assemblies, steel test-cert heat numbers, inspection records,
       welder approvals and finishes. <strong>Nothing here is drafted or estimated.</strong> Only the scope-of-supply wording is
       AI-written, from those same facts, for you to edit before issuing.</p>
 
@@ -51505,6 +51707,7 @@ function _cocRender() {
       ${box(f.assemblyCount || 0, 'Assemblies', '#38bdf8')}
       ${box((f.totalWeightKg || 0).toLocaleString('en-GB'), 'kg', '#38bdf8')}
       ${box(f.heatNumbers.length, 'Heat numbers', f.heatNumbers.length ? '#3ecf8e' : '#ff6b6b')}
+      ${box((f.steelCerts || []).length, 'Test certs', (f.steelCerts || []).length ? '#3ecf8e' : '#ff6b6b')}
       ${box(f.welders.length, 'Welders', f.welders.length ? '#3ecf8e' : '#eab308')}
       ${box(f.execClass || '—', 'Exec class', f.execClass ? '#3ecf8e' : '#ff6b6b')}
     </div>
@@ -52820,7 +53023,7 @@ function drawTracePDF(jsPDF, d, logoDataUri) {
   const note = d.overallLevel === 'piece'
     ? 'Every assembly below has heat/cast numbers allocated to it — piece-level traceability.'
     : d.overallLevel === 'none'
-      ? 'No heat/cast numbers are recorded for this contract. Complete BAMA MAT 001 for the deliveries to establish traceability.'
+      ? 'No heat/cast numbers are recorded for this contract. Drag the steel test certs onto the job to establish traceability.'
       : 'Heat/cast numbers are recorded for this contract. Assemblies marked "contract" have not had specific heats allocated to '
         + 'them, so traceability for those is at contract level: the listed heats were supplied to this contract, but the '
         + 'individual piece each went into was not recorded.';
@@ -52933,7 +53136,7 @@ function _traceRender() {
       ${c.overallLevel === 'piece'
         ? ' Every assembly has its heats allocated — this is what an EXC3 or a client traceability clause wants.'
         : c.overallLevel === 'none'
-          ? ' No heat numbers on file. Complete BAMA MAT 001 for the deliveries first — without it there is no chain to report.'
+          ? ' No heat numbers on file. Drag the steel test certs onto the job first — without them there is no chain to report.'
           : ' The heats supplied to this contract are known, but which piece each went into is not recorded for every assembly.'
             + ' That is normally accepted at EXC2. Allocate heats below if this job needs piece level.'}
     </div>
@@ -52953,7 +53156,7 @@ function _traceRender() {
           ${t.heats.length ? t.heats.map((h, i) => `<label style="display:flex;gap:6px;align-items:center;font-size:11.5px;padding:2px 0;cursor:pointer">
             <input type="checkbox" class="trHeat" data-i="${i}">
             <span><strong>${escapeHtml(h.heat)}</strong> <span style="color:var(--muted)">${escapeHtml(h.section || '')} ${escapeHtml(h.grade || '')}</span></span></label>`).join('')
-            : '<div style="font-size:11.5px;color:#eab308;padding:4px">None — complete BAMA MAT 001 for this job</div>'}</div></div>
+            : '<div style="font-size:11.5px;color:#eab308;padding:4px">None — drag the steel test certs onto this job</div>'}</div></div>
       <div><div style="font-size:10px;color:var(--muted);margin-bottom:3px">Assemblies (${c.rows.length})</div>
         <div style="max-height:180px;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:5px">
           ${c.rows.map(r => `<label style="display:flex;gap:6px;align-items:center;font-size:11.5px;padding:2px 0;cursor:pointer">

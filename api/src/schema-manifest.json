@@ -1117,6 +1117,21 @@
       "seedForms": []
     },
     {
+      "script": "create-steel-test-certs.sql",
+      "title": "Replaces the MAT 001 \"material receiving inspection\" form as the heat-number",
+      "kind": "structural",
+      "tables": [
+        "SteelTestCerts"
+      ],
+      "columns": [
+        {
+          "table": "AssemblyHeatAllocations",
+          "column": "steel_cert_id"
+        }
+      ],
+      "seedForms": []
+    },
+    {
       "script": "create-stock.sql",
       "title": "Steel stock on the racks: one row per section+length batch. Voice or manual",
       "kind": "structural",

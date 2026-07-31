@@ -19,7 +19,7 @@ const { query } = require('../db');
 const { ok, created, badRequest, notFound, serverError, preflight } = require('../responses');
 
 const COLS = `id, job_id, assembly_id, assembly_mark, heat_no, section, grade, supplier,
-    po_number, qms_submission_id, qty, notes, created_by, created_at`;
+    po_number, qms_submission_id, steel_cert_id, qty, notes, created_by, created_at`;
 
 for (const r of ['heat-allocations', 'heat-allocations-bulk']) {
     app.http(r + '-options', {
