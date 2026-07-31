@@ -14690,6 +14690,126 @@ async function renderDnPdfBlob(dn, proj, job, filename) {
   return blob;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// BAMA HOUSE STYLE — shared PDF chrome (extracted from the delivery-note look)
+// ───────────────────────────────────────────────────────────────────────────
+// One letterhead, one section rule, one footer, so every BAMA document reads
+// as the same family: real logo + company block top-left, big italic accent
+// title top-right with a right-aligned label/value meta grid, a full-width
+// rule beneath, accent section headings, and a small muted "Page X of Y"
+// footer. Renderers call these instead of hand-rolling a header each time.
+// Colours come from TEMPLATE_DEFAULTS/global settings so a future settings
+// change (accent, company details, logo) flows to every document at once.
+// ───────────────────────────────────────────────────────────────────────────
+function _houseGlobal() {
+  const s = (typeof _pickTplSettings === 'function') ? _pickTplSettings() : null;
+  return (s && s.global) || (typeof TEMPLATE_DEFAULTS !== 'undefined' ? TEMPLATE_DEFAULTS.global
+    : { companyName: 'BAMA FABRICATION', address: '', phone: '', email: '', vatNumber: '' });
+}
+function _houseAccent(hex) {
+  return (typeof hexToRgb === 'function' && hexToRgb(hex || '#ff6b00')) || [255, 107, 0];
+}
+// Shared palette — keep in step with drawDnPDF.
+const HOUSE_INK   = [34, 34, 34];
+const HOUSE_MUTED = [90, 90, 90];
+const HOUSE_SOFT  = [68, 68, 68];
+const HOUSE_RULE  = [204, 204, 204];
+const HOUSE_HEAD  = [245, 245, 245];
+
+// Draw the standard BAMA letterhead. Returns { y } — the first free y below
+// the header rule. opts: { title, accent, meta:[{label,value}], showLogo,
+// showCompanyDetails, marginL, marginR }.
+function bamaDocHeader(doc, logoDataUri, opts) {
+  opts = opts || {};
+  const g = _houseGlobal();
+  const accent = opts.accent || _houseAccent();
+  const pageW = 210;
+  const mL = opts.marginL != null ? opts.marginL : 14;
+  const mR = opts.marginR != null ? opts.marginR : 14;
+  const setText = c => doc.setTextColor(c[0], c[1], c[2]);
+  const y0 = mL;
+  let leftY = y0;
+
+  // LEFT: logo (proportional) or company name, then company details.
+  let logoDrawn = false;
+  if (opts.showLogo !== false && logoDataUri) {
+    try {
+      const RENDER_W = 55;
+      const props = doc.getImageProperties(logoDataUri);
+      const ratio = (props && props.width && props.height) ? (props.width / props.height) : (55 / 24);
+      const renderH = RENDER_W / ratio;
+      doc.addImage(logoDataUri, props.fileType || 'PNG', mL, y0, RENDER_W, renderH, undefined, 'FAST');
+      leftY = y0 + renderH + 4;
+      logoDrawn = true;
+    } catch (e) { logoDrawn = false; }
+  }
+  if (!logoDrawn) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(20); setText(accent);
+    doc.text(g.companyName || 'BAMA FABRICATION', mL, y0 + 8); leftY = y0 + 14;
+  }
+  if (opts.showCompanyDetails !== false) {
+    setText(HOUSE_MUTED); doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+    const coLines = [];
+    if (g.address) String(g.address).split('\n').forEach(l => coLines.push(l));
+    if (g.phone)  coLines.push('Tel: ' + g.phone);
+    if (g.email)  coLines.push(g.email);
+    if (g.vatNumber) coLines.push('VAT: ' + g.vatNumber);
+    coLines.forEach(l => { doc.text(String(l), mL, leftY); leftY += 3.8; });
+  }
+
+  // RIGHT: italic accent title + meta grid.
+  doc.setFont('helvetica', 'bolditalic'); doc.setFontSize(20); setText(accent);
+  doc.text(String(opts.title || ''), pageW - mR, y0 + 8, { align: 'right' });
+
+  let rightY = y0 + 16;
+  const meta = (opts.meta || []).filter(r => r && r.label && r.value != null && String(r.value).trim() !== '');
+  doc.setFontSize(9);
+  const valX = pageW - mR;
+  const labelX = pageW - mR - 42;
+  for (const r of meta) {
+    setText(HOUSE_INK); doc.setFont('helvetica', 'bold');
+    doc.text(String(r.label), labelX, rightY, { align: 'right' });
+    doc.setFont('helvetica', 'normal');
+    const vLines = doc.splitTextToSize(String(r.value), 40);
+    doc.text(vLines[0] || '', valX, rightY, { align: 'right' });
+    rightY += 4.4 * Math.max(1, vLines.length);
+  }
+
+  let y = Math.max(leftY, rightY) + 2;
+  doc.setDrawColor(HOUSE_INK[0], HOUSE_INK[1], HOUSE_INK[2]); doc.setLineWidth(0.5);
+  doc.line(mL, y, pageW - mR, y);
+  return { y: y + 7 };
+}
+
+// Accent section heading with an underline rule. Returns the y below it.
+function bamaSectionHeading(doc, y, label, opts) {
+  opts = opts || {};
+  const accent = opts.accent || _houseAccent();
+  const mL = opts.marginL != null ? opts.marginL : 14;
+  const usableW = opts.usableW != null ? opts.usableW : (210 - mL - (opts.marginR != null ? opts.marginR : 14));
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(opts.size || 9); doc.setTextColor(accent[0], accent[1], accent[2]);
+  doc.text(String(label), mL, y);
+  doc.setDrawColor(accent[0], accent[1], accent[2]); doc.setLineWidth(0.3);
+  doc.line(mL, y + 1.6, mL + usableW, y + 1.6);
+  return y + 6.5;
+}
+
+// Muted "Page X of Y" footer on every page, with an optional left caption.
+function bamaDocFooter(doc, opts) {
+  opts = opts || {};
+  const pageW = 210, pageH = 297;
+  const mL = opts.marginL != null ? opts.marginL : 14;
+  const mR = opts.marginR != null ? opts.marginR : 14;
+  const total = doc.internal.getNumberOfPages();
+  for (let p = 1; p <= total; p++) {
+    doc.setPage(p);
+    doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(opts.size || 8);
+    if (opts.caption) doc.text(String(opts.caption), mL, pageH - 8);
+    doc.text(`Page ${p} of ${total}`, pageW - mR, pageH - 8, { align: 'right' });
+  }
+}
+
 // Native jsPDF delivery-note renderer. Returns a Blob. Modelled on
 // drawBabcockQuotePDF — same margins, colour approach and page-break logic.
 function drawDnPDF(jsPDF, dn, proj, job, logoDataUri) {
@@ -52519,31 +52639,44 @@ function drawTbtPDF(jsPDF, d, logoDataUri) {
     doc.setProperties({ title: `Toolbox Talk — ${d.talkRef || ''} ${d.title || ''}`,
       subject: 'Toolbox talk record', author: 'BAMA Fabrication', creator: 'BAMA Fabrication ERP' });
   } catch (e) { /* non-critical */ }
-  const pageW = 210, pageH = 297, mL = 16, mR = 16, mB = 14;
+  const pageW = 210, pageH = 297, mL = 14, mR = 14, mB = 14;
   const usableW = pageW - mL - mR;
-  const accent = [255, 107, 0];
+  const accent = _houseAccent();
   let y = 0;
 
-  const header = () => {
-    doc.setFillColor(24, 24, 27); doc.rect(0, 0, pageW, 24, 'F');
+  // Full BAMA letterhead on page 1; a compact branded strip on continuation
+  // pages so a long attendance register stays on-brand without wasting space.
+  const fullHeader = () => {
+    const r = bamaDocHeader(doc, logoDataUri, {
+      title: 'TOOLBOX TALK',
+      accent,
+      marginL: mL, marginR: mR,
+      meta: [
+        { label: 'Ref:',      value: d.talkRef },
+        { label: 'Category:', value: d.categoryLabel },
+        { label: 'Date:',     value: d.deliveredOn }
+      ]
+    });
+    y = r.y;
+  };
+  const contHeader = () => {
     let tx = mL;
     if (logoDataUri) {
-      try { const p = doc.getImageProperties(logoDataUri); const h = 12, w = h * (p.width / p.height);
-        doc.addImage(logoDataUri, mL, 6, w, h); tx = mL + w + 5; } catch (e) {}
+      try { const p = doc.getImageProperties(logoDataUri); const h = 9, w = h * (p.width / p.height);
+        doc.addImage(logoDataUri, mL, 10, w, h); tx = mL + w + 5; } catch (e) {}
     }
-    doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
-    doc.text('TOOLBOX TALK', tx, 12);
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(190, 190, 195);
-    doc.text(d.categoryLabel || '', tx, 18);
-    doc.setTextColor(...accent); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
-    doc.text(d.talkRef || '', pageW - mR, 12, { align: 'right' });
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(190, 190, 195);
-    doc.text(d.deliveredOn || '', pageW - mR, 17.5, { align: 'right' });
-    y = 30;
+    doc.setTextColor(accent[0], accent[1], accent[2]); doc.setFont('helvetica', 'bolditalic'); doc.setFontSize(12);
+    doc.text('TOOLBOX TALK', pageW - mR, 16, { align: 'right' });
+    doc.setTextColor(115, 115, 120); doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
+    doc.text(`${d.talkRef || ''}${d.talkRef && d.deliveredOn ? '  \u00b7  ' : ''}${d.deliveredOn || ''}`, pageW - mR, 20.5, { align: 'right' });
+    doc.setDrawColor(HOUSE_RULE[0], HOUSE_RULE[1], HOUSE_RULE[2]); doc.setLineWidth(0.3);
+    doc.line(mL, 23, pageW - mR, 23);
+    y = 29;
   };
-  const need = h => { if (y + h > pageH - mB) { doc.addPage(); header(); } };
-  header();
+  const need = h => { if (y + h > pageH - mB) { doc.addPage(); contHeader(); } };
+  fullHeader();
 
+  // Talk title (the topic itself), large, below the letterhead.
   doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.setTextColor(30, 30, 35);
   doc.splitTextToSize(String(d.title || ''), usableW).forEach(l => { doc.text(l, mL, y); y += 6.5; });
   y += 2;
@@ -52562,10 +52695,8 @@ function drawTbtPDF(jsPDF, d, logoDataUri) {
   kv([['Given by', d.deliveredBy], ['Date', d.deliveredOn], ['Job / contract', d.jobLabel], ['Location', d.location]]);
 
   if ((d.keyPoints || []).length) {
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...accent);
-    need(10); doc.text('KEY POINTS', mL, y);
-    doc.setDrawColor(...accent); doc.setLineWidth(0.3); doc.line(mL, y + 1.6, mL + usableW, y + 1.6);
-    y += 6.5;
+    need(10);
+    y = bamaSectionHeading(doc, y, 'KEY POINTS', { accent, marginL: mL, usableW });
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(40, 40, 45);
     d.keyPoints.forEach(p => {
       const lines = doc.splitTextToSize(String(p), usableW - 6);
@@ -52578,10 +52709,8 @@ function drawTbtPDF(jsPDF, d, logoDataUri) {
   }
 
   if (d.content) {
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...accent);
-    need(10); doc.text('THE TALK', mL, y);
-    doc.setDrawColor(...accent); doc.setLineWidth(0.3); doc.line(mL, y + 1.6, mL + usableW, y + 1.6);
-    y += 6.5;
+    need(10);
+    y = bamaSectionHeading(doc, y, 'THE TALK', { accent, marginL: mL, usableW });
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(45, 45, 50);
     String(d.content).split(/\n\s*\n|\n/).filter(s => s.trim()).forEach(para => {
       const lines = doc.splitTextToSize(para.trim().replace(/^•\s*/, '• '), usableW);
@@ -52601,10 +52730,7 @@ function drawTbtPDF(jsPDF, d, logoDataUri) {
 
   // Attendance register — always on a fresh block so it can be signed on paper
   need(40);
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(...accent);
-  doc.text('ATTENDANCE — I CONFIRM I ATTENDED AND UNDERSTOOD THIS TALK', mL, y);
-  doc.setDrawColor(...accent); doc.setLineWidth(0.3); doc.line(mL, y + 1.6, mL + usableW, y + 1.6);
-  y += 6.5;
+  y = bamaSectionHeading(doc, y, 'ATTENDANCE \u2014 I CONFIRM I ATTENDED AND UNDERSTOOD THIS TALK', { accent, marginL: mL, usableW });
   const wName = 62, wRole = 44, wSig = usableW - wName - wRole;
   const drawHead = () => {
     doc.setFillColor(242, 242, 244); doc.rect(mL, y, usableW, 6, 'F');
@@ -52618,7 +52744,7 @@ function drawTbtPDF(jsPDF, d, logoDataUri) {
   const rows = (d.attendees || []).length ? d.attendees : [];
   const rowH = 12;
   rows.forEach((a, i) => {
-    if (y + rowH > pageH - mB) { doc.addPage(); header(); drawHead(); }
+    if (y + rowH > pageH - mB) { doc.addPage(); contHeader(); drawHead(); }
     if (i % 2) { doc.setFillColor(250, 250, 251); doc.rect(mL, y, usableW, rowH, 'F'); }
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(35, 35, 40);
     doc.text(String(a.name || ''), mL + 1.5, y + 7.5);
@@ -52639,7 +52765,7 @@ function drawTbtPDF(jsPDF, d, logoDataUri) {
   // Spare rows so the printed sheet can take walk-ups
   const spare = Math.max(0, (d.spareRows != null ? d.spareRows : 4));
   for (let i = 0; i < spare; i++) {
-    if (y + rowH > pageH - mB) { doc.addPage(); header(); drawHead(); }
+    if (y + rowH > pageH - mB) { doc.addPage(); contHeader(); drawHead(); }
     doc.setDrawColor(190, 190, 195); doc.setLineWidth(0.2);
     doc.line(mL + 2, y + 9, mL + wName - 3, y + 9);
     doc.line(mL + wName + 2, y + 9, mL + wName + wRole - 3, y + 9);
@@ -52649,13 +52775,7 @@ function drawTbtPDF(jsPDF, d, logoDataUri) {
     y += rowH;
   }
 
-  const total = doc.getNumberOfPages();
-  for (let p = 1; p <= total; p++) {
-    doc.setPage(p);
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5); doc.setTextColor(140, 140, 145);
-    doc.text(`Toolbox talk  ·  ${d.talkRef || ''}  ·  BAMA Fabrication Ltd`, mL, pageH - 6);
-    doc.text(`Page ${p} of ${total}`, pageW - mR, pageH - 6, { align: 'right' });
-  }
+  bamaDocFooter(doc, { marginL: mL, marginR: mR, caption: `Toolbox Talk  \u00b7  ${d.talkRef || ''}  \u00b7  BAMA Fabrication Ltd` });
   return doc;
 }
 
