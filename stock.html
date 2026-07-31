@@ -129,7 +129,7 @@ function stkMatchSection(raw) {
 }
 
 async function stkLoadSections() {
-  const res = await fetch('steel-sections.json');
+  const res = await fetch('steel-sections.json?v=20260731s');
   _sections = await res.json();
   _steelIdx = steelBuildIndex(_sections);
 }
