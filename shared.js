@@ -37110,7 +37110,7 @@ function _invSupplierFiltered() {
   const term = (_invSupplierSearchTerm || '').toLowerCase().trim();
   if (term) {
     list = list.filter(inv =>
-      `${inv.supplier_name || ''} ${inv.po_reference || ''} ${inv.invoice_ref || ''} ${inv.job_number || ''} ${inv.cost_centre || ''} ${inv.babcock_quote_ref || ''} ${inv.paid_at ? 'paid' : 'unpaid'}`
+      `${inv.supplier_name || ''} ${inv.po_reference || ''} ${inv.invoice_ref || ''} ${inv.job_number || ''} ${inv.cost_centre || ''} ${inv.babcock_quote_ref || ''} ${inv.notes || ''} ${inv.paid_at ? 'paid' : 'unpaid'}`
         .toLowerCase().includes(term));
   }
   if (_invSupSortKey) {
@@ -37711,7 +37711,7 @@ async function _bimpParseOne(i) {
             text: `Extract from this UK invoice sent to BAMA Fabrication. It is either a SUPPLIER invoice (VAT invoice from a company) or a SUBCONTRACTOR invoice (individual/small firm charging for labour, often with a CIS deduction like "Less 20%", a UTR number, bank details). Return ONLY JSON, no markdown:
 {
   "invoice_type": "supplier" or "subcontractor",
-  "supplier_name": "the person or company that ISSUED the invoice (not BAMA Fabrication)",
+  "supplier_name": "the company/person that ISSUED and is OWED money on this invoice — the SELLER. This is NOT the customer/recipient.",
   "invoice_ref": "invoice number if shown",
   "invoice_date": "YYYY-MM-DD",
   "net_amount": 0, "vat_amount": 0, "gross_amount": 0,
@@ -37723,8 +37723,13 @@ async function _bimpParseOne(i) {
   "bank_sort_code": "subcontractor: sort code if shown",
   "bank_account_no": "subcontractor: account number if shown",
   "po_reference": "BAMA's PO reference if shown — looks like P260501 (P + 6 digits)",
-  "sold_via": "amazon" if this is an Amazon / Amazon Business marketplace invoice (Amazon branding, amazon.co.uk order number, "Sold by ..." seller line) — otherwise null. supplier_name must be the ACTUAL SELLER, not Amazon.
+  "sold_via": "amazon" if this is an Amazon / Amazon Business marketplace invoice (Amazon branding, amazon.co.uk order number, "Sold by ..." seller line) — otherwise null,
+  "amazon_seller": "when sold_via is amazon: the actual seller/merchant name, else null"
 }
+CRITICAL — who is the supplier:
+- The invoice is ADDRESSED TO "Bama Fabrication" / "BAMA Fabrication Ltd" — that is US, the CUSTOMER. NEVER return a Bama/BAMA name as supplier_name.
+- The SELLER (supplier_name) is the party on the letterhead/logo who issues the "Sales Invoice", quotes their own VAT number, and gives bank/remittance details for payment. Their name usually appears at the very top (logo) and again in "Bank Details / remittances to". Trading divisions: return the trading entity as shown (e.g. "Laser Profiles" or "WEC Group Ltd").
+- If the only company name you can read is a Bama variant, set supplier_name to null rather than guessing.
 Classify as subcontractor when it's labour/days/hours from an individual, mentions CIS, a % deduction, or a UTR. Null anything not clearly shown. Use the final printed totals.`
           }
         ]
@@ -37743,8 +37748,32 @@ Classify as subcontractor when it's labour/days/hours from an individual, mentio
   _bimpUpdateFooter();
 }
 
+// Post-parse cleanup shared by both import paths:
+//  • never let BAMA (the customer) be read as the supplier — that's a misread
+//  • when the invoice is Amazon-brokered, the SUPPLIER we track is Amazon
+//    (POs are always raised to Amazon), keeping the real seller as a note so
+//    it's still searchable. Mutates & returns the parsed object.
+function _invNormaliseParsedSupplier(p) {
+  if (!p) return p;
+  const norm = v => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const n = norm(p.supplier_name);
+  // "bama" / "bamafabrication" / "bamafabricationltd" → the model grabbed the addressee
+  if (n && (n === 'bama' || n.startsWith('bamafab'))) {
+    p._supplierWasBama = true;   // used to warn the user
+    p.supplier_name = null;
+  }
+  if (p.sold_via === 'amazon') {
+    if (p.supplier_name && norm(p.supplier_name) !== 'amazon' && !p.amazon_seller) {
+      p.amazon_seller = p.supplier_name;   // preserve what was read as the seller
+    }
+    p.supplier_name = 'Amazon';            // track & match under Amazon
+  }
+  return p;
+}
+
 async function _bimpApplyParsed(i, p) {
   const it = _bimpItems[i];
+  _invNormaliseParsedSupplier(p);
   it.parsed = p;
   it.type = p.invoice_type === 'subcontractor' ? 'subcontractor' : 'supplier';
   it.ref  = p.invoice_ref || '';
@@ -38042,7 +38071,9 @@ async function bimpSaveAll() {
         sharepoint_file_url: driveItem.webUrl,
         filename: fileName,
         source: 'manual',
-        notes: 'Bulk import'
+        notes: it.viaAmazon && (it.parsed?.amazon_seller)
+          ? `Bulk import · via Amazon — seller: ${it.parsed.amazon_seller}`
+          : 'Bulk import'
       });
 
       it.status = 'saved';
@@ -38431,7 +38462,7 @@ async function _supAddHandleFile(file) {
             text: `Extract from this UK invoice sent to BAMA Fabrication. It is either a SUPPLIER invoice (VAT invoice from a company) or a SUBCONTRACTOR invoice (an individual/small firm charging for labour, often with a CIS deduction like "Less 20%", a UTR number, and bank details). Return ONLY JSON, no markdown:
 {
   "invoice_type": "supplier" or "subcontractor",
-  "supplier_name": "the person or company that ISSUED the invoice (not BAMA Fabrication — BAMA is the customer)",
+  "supplier_name": "the company/person that ISSUED and is OWED money on this invoice — the SELLER. NOT the customer/recipient.",
   "invoice_ref": "invoice number if shown",
   "invoice_date": "YYYY-MM-DD",
   "net_amount": 0,
@@ -38445,8 +38476,13 @@ async function _supAddHandleFile(file) {
   "bank_sort_code": "subcontractor only: sort code if shown",
   "bank_account_no": "subcontractor only: account number if shown",
   "po_reference": "BAMA's PO reference if shown — looks like P260501 (P + 6 digits)",
-  "sold_via": "amazon" if this is an Amazon marketplace invoice (Amazon branding, amazon.co.uk order number, "Sold by ..." line) — otherwise null. supplier_name must be the ACTUAL SELLER, not Amazon.
+  "sold_via": "amazon" if this is an Amazon / Amazon Business marketplace invoice (Amazon branding, amazon.co.uk order number, "Sold by ..." line) — otherwise null,
+  "amazon_seller": "when sold_via is amazon: the actual seller/merchant name, else null"
 }
+CRITICAL — who is the supplier:
+- The invoice is ADDRESSED TO "Bama Fabrication" / "BAMA Fabrication Ltd" — that is US, the CUSTOMER. NEVER return a Bama/BAMA name as supplier_name.
+- The SELLER (supplier_name) is the party on the letterhead/logo who issues the invoice, quotes their own VAT number, and gives bank/remittance details for payment. Their name usually appears at the top (logo) and again in "Bank Details / remittances to". For trading divisions return the trading entity as shown (e.g. "Laser Profiles").
+- If the only company name you can read is a Bama variant, set supplier_name to null rather than guessing.
 Classify as subcontractor when the invoice is for labour/days/hours from an individual, mentions CIS, a percentage deduction, or a UTR number. Set any field to null if not clearly shown.
 IMPORTANT: Use the final printed totals from the invoice — not a goods-only subtotal.`
           }
@@ -38456,6 +38492,7 @@ IMPORTANT: Use the final printed totals from the invoice — not a goods-only su
     const text = (result.content?.find(b => b.type === 'text')?.text || '').trim();
     const s = text.indexOf('{'), e = text.lastIndexOf('}');
     parsed = JSON.parse(text.slice(s, e + 1));
+    _invNormaliseParsedSupplier(parsed);
   } catch (err) {
     console.error('Add-invoice parse failed', err);
     label.textContent = `${file.name} · ${(file.size / 1024).toFixed(0)} KB — couldn't read it, fill in manually`;
@@ -38531,6 +38568,12 @@ IMPORTANT: Use the final printed totals from the invoice — not a goods-only su
     }
   }
 
+  // Amazon-brokered: keep the real seller searchable in the notes field
+  if (parsed.sold_via === 'amazon' && parsed.amazon_seller) {
+    const notesEl = document.getElementById('supAddNotes');
+    if (notesEl && !notesEl.value.trim()) notesEl.value = `via Amazon — seller: ${parsed.amazon_seller}`;
+  }
+
   // Auto-pick the PO when the invoice quotes our reference
   let poMatched = false;
   if (parsed.po_reference && matchedSupplier) {
@@ -38544,12 +38587,16 @@ IMPORTANT: Use the final printed totals from the invoice — not a goods-only su
 
   const bits = [];
   const who = parsedIsSub ? 'subcontractor' : 'supplier';
-  bits.push(matchedSupplier ? `${who}: ${matchedSupplier.supplier_name}` :
-            (parsed.supplier_name ? (parsedIsSub
-              ? `new subcontractor "${parsed.supplier_name}" — details pre-filled below, hit Save Subcontractor`
-              : `supplier "${parsed.supplier_name}" not found — pick manually`) : ''));
+  if (parsed._supplierWasBama) {
+    bits.push('couldn\'t read the seller (invoice is addressed to BAMA) — pick the supplier manually');
+  } else {
+    bits.push(matchedSupplier ? `${who}: ${matchedSupplier.supplier_name}` :
+              (parsed.supplier_name ? (parsedIsSub
+                ? `new subcontractor "${parsed.supplier_name}" — details pre-filled below, hit Save Subcontractor`
+                : `supplier "${parsed.supplier_name}" not found — pick manually`) : ''));
+  }
   if (parsed.po_reference) bits.push(poMatched ? `PO ${parsed.po_reference} matched` : `PO ${parsed.po_reference} not found`);
-  if (parsed.sold_via === 'amazon') bits.push('Amazon marketplace — if the seller has "Paid on account" terms it will land as PAID');
+  if (parsed.sold_via === 'amazon') bits.push(`Amazon${parsed.amazon_seller ? ' (seller: ' + parsed.amazon_seller + ')' : ''} — tracked under Amazon`);
   label.innerHTML = `${escapeHtml(file.name)} · ${(file.size / 1024).toFixed(0)} KB — <span style="color:var(--green);font-weight:600">parsed ✓</span>${bits.filter(Boolean).length ? ' <span style="color:var(--muted)">(' + escapeHtml(bits.filter(Boolean).join(', ')) + ')</span>' : ''}`;
 }
 
