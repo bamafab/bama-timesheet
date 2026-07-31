@@ -50184,9 +50184,34 @@ async function inspLoadJob(jobId) {
     ]);
     _inspPlan = (plans || [])[0] || null;
     _inspRecords = recs || [];
-    try { _inspAssemblies = await api.get(`/api/job-assemblies/${jobId}`); } catch (_) { _inspAssemblies = []; }
+    _inspAssemblies = await _inspAssembliesForProject(jobId);
   } catch (e) { host.innerHTML = `<div style="color:var(--red);font-size:12px;padding:14px">${escapeHtml(e.message)}</div>`; return; }
   _inspRender();
+}
+
+// Assemblies live under DrawingJobs (the drawing packages), which link to a
+// Project by project_number — NOT by Projects.id, and NOT via the BOM. So:
+// Projects.id -> project_number -> every DrawingJob with that number -> their
+// JobAssemblies (with parts). A project can have several drawing jobs, so we
+// aggregate across all of them. This is the "assembly section", not the BOM
+// (which only holds despatch-tracked pieces, not the full assembly list).
+async function _inspAssembliesForProject(projectId) {
+  let projectNumber = null;
+  try {
+    const projects = await api.get('/api/projects');
+    const p = (projects || []).find(x => String(x.id) === String(projectId));
+    projectNumber = p && (p.project_number || p.job_number);
+  } catch (_) {}
+  if (!projectNumber) return [];
+  let drawingJobs = [];
+  try { drawingJobs = await api.get(`/api/drawings?project_number=${encodeURIComponent(projectNumber)}`); } catch (_) { drawingJobs = []; }
+  if (!Array.isArray(drawingJobs) || !drawingJobs.length) return [];
+  const perJob = await Promise.all(drawingJobs.map(dj =>
+    api.get(`/api/job-assemblies?job_id=${encodeURIComponent(dj.id)}`).catch(() => [])));
+  // Flatten; tag each with its drawing job so nothing collides across packages.
+  const all = [];
+  perJob.forEach((list, i) => (list || []).forEach(a => all.push({ ...a, _drawing_job_id: drawingJobs[i].id })));
+  return all;
 }
 
 // Live figures for the current job's inspection panel, straight off the BOM
@@ -51052,9 +51077,11 @@ async function cocGatherFacts(jobId) {
   } catch (_) {}
   if (!facts.job) facts.gaps.push('Job record not found');
 
-  // Assemblies — tonnage and marks
+  // Assemblies — tonnage and marks. Assemblies live under DrawingJobs (linked
+  // by project_number), not directly under the Projects id, so resolve through
+  // the same chain the Inspection panel uses.
   try {
-    const asm = await api.get(`/api/job-assemblies/${jobId}`);
+    const asm = await _inspAssembliesForProject(jobId);
     facts.assemblies = asm || [];
     facts.assemblyCount = facts.assemblies.reduce((s, a) => s + (Number(a.quantity) || 0), 0);
     facts.totalWeightKg = _r2(facts.assemblies.reduce((s, a) => s + (Number(a.total_weight_kg) || 0), 0));
@@ -52382,9 +52409,9 @@ async function omGatherSources(jobId) {
   add({ group: 'Certification', title: 'Inspection & Test Plan', subtitle: 'generated from the live inspection plan',
         kind: 'itp', note: 'Generated at the time this pack was produced.' });
 
-  // As-built drawings
+  // As-built drawings — assemblies resolve through DrawingJobs (by project_number)
   try {
-    const asm = await api.get(`/api/job-assemblies/${jobId}`);
+    const asm = await _inspAssembliesForProject(jobId);
     const seen = new Set();
     (asm || []).forEach(a => {
       if (!a.sharepoint_file_id || seen.has(a.sharepoint_file_id)) return;
@@ -52694,14 +52721,15 @@ function traceWhereUsed(heatNo, allocations) {
 async function traceGather(jobId) {
   const facts = _cocFacts && _cocFacts.job && String(_cocFacts.job.id) === String(jobId)
     ? _cocFacts : await cocGatherFacts(jobId);
-  const [assemblies, allocations] = await Promise.all([
-    api.get(`/api/job-assemblies/${jobId}`).catch(() => []),
-    api.get(`/api/heat-allocations?job_id=${jobId}`).catch(() => [])
-  ]);
+  // facts.assemblies is already resolved through the project -> DrawingJobs
+  // chain. Heat allocations and per-assembly actions are keyed to the drawing
+  // jobs, so gather actions across whichever drawing jobs the assemblies span.
+  const assemblies = facts.assemblies || [];
+  const drawingJobIds = [...new Set(assemblies.map(a => a._drawing_job_id).filter(Boolean))];
+  const allocations = await api.get(`/api/heat-allocations?job_id=${jobId}`).catch(() => []);
   let actions = [];
-  try { actions = await api.get(`/api/job-assemblies/${jobId}/actions`); } catch (_) {
-    // Not every deployment exposes an actions endpoint; the chain degrades to
-    // heats + assemblies + despatch rather than failing.
+  for (const dj of drawingJobIds) {
+    try { const a = await api.get(`/api/job-assemblies/${dj}/actions`); if (Array.isArray(a)) actions = actions.concat(a); } catch (_) {}
   }
   return {
     job: facts.job, execClass: facts.execClass,
