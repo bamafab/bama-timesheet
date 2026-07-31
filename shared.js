@@ -50140,7 +50140,12 @@ async function renderInspectionTab() {
     root.innerHTML = `<div style="color:var(--red);padding:20px;font-size:12.5px">Inspection module unavailable: ${escapeHtml(e.message)} — run api/sql/create-inspection-plans.sql first.</div>`;
     return;
   }
-  const live = (jobs || []).filter(j => j.status !== 'closed' && !j.is_deleted);
+  // Projects use project_number / project_name and the canonical status set
+  // (In Progress / On Hold / Complete / Archived / Cancelled) — NOT job_number
+  // /name/'closed'. Live = anything not finished/dropped, matching the rest of
+  // the app (project-tracker). Wrong field names here rendered every option
+  // blank, so the picker looked empty even though projects existed.
+  const live = (jobs || []).filter(j => j.status !== 'Complete' && j.status !== 'Archived' && j.status !== 'Cancelled');
   const unverified = (_ndtRules || []).filter(r => !r.verified).length;
 
   root.innerHTML = `<div>
@@ -50149,7 +50154,7 @@ async function renderInspectionTab() {
       <select id="inspJobSel" onchange="inspLoadJob(this.value)"
         style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 9px;color:var(--text);font-size:12.5px;min-width:280px">
         <option value="">— pick a job —</option>
-        ${live.map(j => `<option value="${j.id}">${escapeHtml(j.job_number || '')} ${escapeHtml(j.name || j.client_name || '')}</option>`).join('')}
+        ${live.map(j => `<option value="${j.id}">${escapeHtml(j.project_number || '')} ${escapeHtml(j.project_name || j.company_name || '')}</option>`).join('')}
       </select>
       <button class="btn btn-ghost btn-sm" onclick="inspOpenRules()">⚙ NDT extent rules${unverified ? ` <span style="color:#eab308">(${unverified} unverified)</span>` : ''}</button>
     </div>
@@ -50899,7 +50904,14 @@ async function itpDeleteRow(id) {
 async function itpMakePdf(toSharePoint) {
   try {
     let job = null;
-    try { job = (await api.get('/api/projects')).find(p => String(p.id) === String(_inspJob)); } catch (_) {}
+    try {
+      job = (await api.get('/api/projects')).find(p => String(p.id) === String(_inspJob));
+      if (job) {
+        job.job_number  = job.job_number  || job.project_number || '';
+        job.name        = job.name        || job.project_name   || '';
+        job.client_name = job.client_name || job.company_name   || '';
+      }
+    } catch (_) {}
     const blob = await renderItpPdfBlob({
       jobNumber: job ? (job.job_number || '') : '',
       jobName: job ? (job.name || '') : '',
@@ -50951,6 +50963,13 @@ async function cocGatherFacts(jobId) {
   try {
     const jobs = await api.get('/api/projects');
     facts.job = (jobs || []).find(p => String(p.id) === String(jobId)) || null;
+    // Projects rows carry project_number / project_name; the cert renderers
+    // (CoC ref, DoP number, O&M, Traceability) read job_number / name. Expose
+    // both so a Projects row and a legacy job row both work.
+    if (facts.job) {
+      facts.job.job_number = facts.job.job_number || facts.job.project_number || null;
+      facts.job.name       = facts.job.name       || facts.job.project_name   || facts.job.company_name || null;
+    }
   } catch (_) {}
   if (!facts.job) facts.gaps.push('Job record not found');
 
@@ -52301,7 +52320,7 @@ async function omGatherSources(jobId) {
   try {
     const subs = await api.get('/api/qms-submissions');
     let jobNo = null;
-    try { jobNo = ((await api.get('/api/projects')).find(p => String(p.id) === String(jobId)) || {}).job_number; } catch (_) {}
+    try { const _p = (await api.get('/api/projects')).find(p => String(p.id) === String(jobId)) || {}; jobNo = _p.job_number || _p.project_number || null; } catch (_) {}
     (subs || []).forEach(s => {
       if (!s.sharepoint_file_id && !s.web_url) return;
       let a = {}; try { a = typeof s.answers === 'string' ? JSON.parse(s.answers) : (s.answers || {}); } catch (_) {}
@@ -52437,7 +52456,14 @@ async function omBuild(toSharePoint) {
   const say = m => { if (prog) prog.textContent = m; };
   const all = [..._omSources, ..._omExtra].filter(s => s.include);
   let job = null;
-  try { job = (await api.get('/api/projects')).find(p => String(p.id) === String(_inspJob)); } catch (_) {}
+  try {
+    job = (await api.get('/api/projects')).find(p => String(p.id) === String(_inspJob));
+    if (job) {
+      job.job_number  = job.job_number  || job.project_number || '';
+      job.name        = job.name        || job.project_name   || '';
+      job.client_name = job.client_name || job.company_name   || '';
+    }
+  } catch (_) {}
 
   try {
     // Generate the ITP inline if it was ticked
@@ -53310,7 +53336,7 @@ async function tbtDeliver(talkId) {
   _tbtSigs = {};
   try { _tbtRoster = await api.get('/api/site-personnel'); } catch (_) { _tbtRoster = []; }
   let jobs = [];
-  try { jobs = (await api.get('/api/projects')).filter(j => j.status !== 'closed' && !j.is_deleted); } catch (_) {}
+  try { jobs = (await api.get('/api/projects')).filter(j => j.status !== 'Complete' && j.status !== 'Archived' && j.status !== 'Cancelled'); } catch (_) {}
 
   if (!document.getElementById('tbtDeliverModal')) {
     const div = document.createElement('div');
@@ -53335,7 +53361,7 @@ async function tbtDeliver(talkId) {
       <div><label style="font-size:10px;color:var(--muted);display:block">Job (optional)</label>
         <select id="tbtDelJob" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 7px;color:var(--text);font-size:12.5px">
           <option value="">— not job specific —</option>
-          ${jobs.map(j => `<option value="${j.id}" data-no="${escapeHtml(j.job_number || '')}">${escapeHtml(j.job_number || '')} ${escapeHtml(j.name || '')}</option>`).join('')}
+          ${jobs.map(j => `<option value="${j.id}" data-no="${escapeHtml(j.project_number || j.job_number || '')}">${escapeHtml(j.project_number || j.job_number || '')} ${escapeHtml(j.project_name || j.name || '')}</option>`).join('')}
         </select></div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr 1.4fr;gap:8px;margin-bottom:10px">
@@ -53822,9 +53848,9 @@ function _consModal(id, title, body, maxW) {
 
 async function _consJobOptions() {
   try {
-    const jobs = (await api.get('/api/projects')).filter(j => j.status !== 'closed' && !j.is_deleted);
+    const jobs = (await api.get('/api/projects')).filter(j => j.status !== 'Complete' && j.status !== 'Archived' && j.status !== 'Cancelled');
     return '<option value="">— no job —</option>' + jobs.map(j =>
-      `<option value="${j.id}" data-no="${escapeHtml(j.job_number || '')}">${escapeHtml(j.job_number || '')} ${escapeHtml(j.name || '')}</option>`).join('');
+      `<option value="${j.id}" data-no="${escapeHtml(j.project_number || j.job_number || '')}">${escapeHtml(j.project_number || j.job_number || '')} ${escapeHtml(j.project_name || j.name || '')}</option>`).join('');
   } catch (_) { return '<option value="">— no job —</option>'; }
 }
 
