@@ -50253,7 +50253,7 @@ async function _inspPrimaryDrawingJob(projectId) {
     const pn = p && (p.project_number || p.job_number);
     if (!pn) return null;
     const djs = await api.get(`/api/drawings?project_number=${encodeURIComponent(pn)}`);
-    return { drawingJob: (djs || [])[0] || null, projectNumber: pn };
+    return { drawingJob: (djs || [])[0] || null, projectNumber: pn, projectName: (p && (p.project_name || p.name)) || '' };
   } catch (_) { return null; }
 }
 
@@ -50285,10 +50285,20 @@ async function inspStcFiles(fileList) {
       let txt = '';
       (res.content || []).forEach(b => { if (b.type === 'text') txt += b.text; });
       let parsed = {};
-      try { parsed = JSON.parse(txt.replace(/```json|```/g, '').trim()); } catch (_) { parsed = {}; }
+      // Tolerant extraction: Claude sometimes wraps JSON in prose or fences.
+      // Try a clean parse first, then fall back to the first {...} block.
+      const clean = txt.replace(/```json|```/g, '').trim();
+      try { parsed = JSON.parse(clean); }
+      catch (_) {
+        const m = clean.match(/\{[\s\S]*\}/);
+        if (m) { try { parsed = JSON.parse(m[0]); } catch (_) { parsed = {}; } }
+      }
       pending.meta = { cert_no: parsed.cert_no || '', supplier: parsed.supplier || '', standard: parsed.standard || '', cert_date: parsed.cert_date || '' };
       pending.heats = Array.isArray(parsed.heats) ? parsed.heats.filter(h => h && h.heat_no) : [];
-      pending.status = pending.heats.length ? 'ready' : 'empty';
+      // Never leave the user with nothing to type into — seed a blank row when
+      // the parse comes back empty so they can key the heats by hand.
+      if (!pending.heats.length) { pending.heats = [{ section: '', grade: '', qty: '', heat_no: '' }]; pending.status = 'empty'; }
+      else pending.status = 'ready';
     } catch (e) {
       pending.status = 'error'; pending.error = e.message;
     }
@@ -50367,13 +50377,17 @@ async function inspStcSave(id) {
   try {
     const info = await _inspPrimaryDrawingJob(_inspJob);
     if (!info || !info.drawingJob) throw new Error('No drawing package on this project to file the cert against — upload the drawing first');
-    // File the cert PDF to SharePoint (02 - Quality (QMS) / material certs)
+    // File the cert PDF to SharePoint under a per-project subfolder so certs
+    // are easy to find, not dumped into one flat folder:
+    //   02 - Quality (QMS) / 04 - Material Test Certs / <C-number - Project name>
     let spId = null, webUrl = null, fileName = p.file.name;
     try {
-      const folder = await getOrCreateSubfolder(SP_TAX.quality, '04 - Material Test Certs', BAMA_DRIVE_ID);
+      const parent = await getOrCreateSubfolder(SP_TAX.quality, '04 - Material Test Certs', BAMA_DRIVE_ID);
+      const projLabel = `${info.projectNumber}${info.projectName ? ' - ' + info.projectName : ''}`.replace(/[~"#%&*:<>?{|}/\\]/g, '-').slice(0, 120);
+      const projFolder = await getOrCreateSubfolder(parent.id, projLabel, BAMA_DRIVE_ID);
       const safe = `${info.projectNumber} - ${p.meta.cert_no || fileName}`.replace(/[~"#%&*:<>?{|}/\\]/g, '-');
-      const up = await uploadFileToFolder(folder.id, safe.endsWith('.pdf') ? safe : safe + '.pdf', await p.file.arrayBuffer(), p.file.type || 'application/pdf', BAMA_DRIVE_ID);
-      spId = up.id; webUrl = up.webUrl || folder.webUrl || null; fileName = safe;
+      const up = await uploadFileToFolder(projFolder.id, safe.endsWith('.pdf') ? safe : safe + '.pdf', await p.file.arrayBuffer(), p.file.type || 'application/pdf', BAMA_DRIVE_ID);
+      spId = up.id; webUrl = up.webUrl || projFolder.webUrl || null; fileName = safe;
     } catch (e) { console.warn('Cert SharePoint upload failed (non-fatal):', e.message); }
     // Record the cert + its heat lines
     await api.post('/api/steel-test-certs', {
