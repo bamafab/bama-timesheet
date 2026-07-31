@@ -50420,48 +50420,48 @@ async function inspStcDelete(certId) {
 // quantities; weldEstimate = parts-minus-one joint proxy × assembly quantity,
 // summed. The weld figure is an ESTIMATE (no weld data exists to count) and is
 // always overridable in the per-category inputs.
-function _inspDerivedFigures() {
-  const asm = _inspAssemblies || [];
-  const bom = _inspBom || [];
-  let assemblyQty = 0, totalParts = 0, weldEstimate = 0, totalWeightKg = 0;
-  // Piece-count stage rollup (for the "N / M pcs" subtitle)
+// Pure tonnage-weighted production rollup from an assembly list (+ optional BOM
+// for despatch). Shared by the Inspection panel and the CoC/DoP/ITP so the
+// figures are computed identically everywhere. Returns fab/weld/despatch % by
+// tonnage plus the raw totals.
+function _prodFiguresFrom(assemblies, bom) {
+  const asm = assemblies || [], b = bom || [];
+  let assemblyQty = 0, totalWeightKg = 0, fabKg = 0, weldKg = 0;
   let fabbed = 0, welded = 0, completed = 0, onBom = 0;
-  // Tonnage-weighted stage rollup (kg) — a big column counts more than a cleat
-  let fabKg = 0, weldKg = 0;
   for (const a of asm) {
-    const q = Number(a.quantity) || 0;
-    const unit = Number(a.total_weight_kg) || 0;
-    assemblyQty += q;
-    totalWeightKg += unit * q;                       // Σ(qty × unit): the tonnage
+    const q = Number(a.quantity) || 0, unit = Number(a.total_weight_kg) || 0;
+    assemblyQty += q; totalWeightKg += unit * q;
     const f = Number(a.qty_fabbed) || 0, w = Number(a.qty_welded) || 0, c = Number(a.qty_completed) || 0;
     fabbed += f; welded += w; completed += c; onBom += w + c;
-    fabKg  += unit * (f + c);                         // fabricated OR direct-completed
-    weldKg += unit * (w + c);                         // welded OR direct-completed
-    const parts = a.parts || [];
-    const distinctPieces = parts.reduce((s, p) => s + (Number(p.quantity) || 0), 0);
-    totalParts += distinctPieces * (q || 1);
-    weldEstimate += Math.max(0, distinctPieces - 1) * (q || 1);
+    fabKg += unit * (f + c); weldKg += unit * (w + c);
   }
-  // Despatch tonnage from the BOM ledger (despatched_qty × source assembly unit wt)
-  let despatchedKg = 0, despatchedPcs = 0, onSitePcs = 0;
-  for (const b of bom) {
-    const dq = Number(b.despatched_qty) || 0;
-    const unit = Number(b.assembly_weight_kg) || 0;
-    despatchedKg += unit * dq;
-    despatchedPcs += dq;
-    if (b.status === 'on_site') onSitePcs += Number(b.quantity) || 0;
+  let despatchedKg = 0, despatchedPcs = 0;
+  for (const r of b) {
+    const dq = Number(r.despatched_qty) || 0, unit = Number(r.assembly_weight_kg) || 0;
+    despatchedKg += unit * dq; despatchedPcs += dq;
   }
   const pct = (part, whole) => whole > 0 ? Math.round(part / whole * 100) : 0;
   return {
-    assemblyQty, distinctMarks: asm.length, totalParts, weldEstimate,
-    totalWeightKg, totalTonnes: totalWeightKg / 1000,
+    assemblyQty, totalWeightKg, totalTonnes: totalWeightKg / 1000,
     fabbed, welded, completed, onBom,
-    // tonnage-weighted percentages (Mateusz's choice)
-    fabPct:      pct(fabKg, totalWeightKg),
-    weldPct:     pct(weldKg, totalWeightKg),
+    fabPct: pct(fabKg, totalWeightKg), weldPct: pct(weldKg, totalWeightKg),
     despatchPct: pct(despatchedKg, totalWeightKg),
-    despatchedPcs, onSitePcs, despatchedTonnes: despatchedKg / 1000
+    despatchedPcs, despatchedTonnes: despatchedKg / 1000
   };
+}
+
+function _inspDerivedFigures() {
+  const asm = _inspAssemblies || [];
+  const prod = _prodFiguresFrom(asm, _inspBom || []);
+  // Parts + weld estimate are panel-only extras on top of the shared rollup.
+  let totalParts = 0, weldEstimate = 0;
+  for (const a of asm) {
+    const q = Number(a.quantity) || 0;
+    const distinctPieces = (a.parts || []).reduce((s, p) => s + (Number(p.quantity) || 0), 0);
+    totalParts += distinctPieces * (q || 1);
+    weldEstimate += Math.max(0, distinctPieces - 1) * (q || 1);
+  }
+  return { ...prod, distinctMarks: asm.length, totalParts, weldEstimate };
 }
 
 // Fill any BLANK weld-category box with the job-wide estimate as a starting
@@ -51347,7 +51347,7 @@ async function itpMakePdf(toSharePoint) {
 async function cocGatherFacts(jobId) {
   const facts = {
     job: null, execClass: null, assemblies: [], totalWeightKg: 0, assemblyCount: 0,
-    heatNumbers: [], drawings: [], ndt: [], welders: [], coatings: [], gaps: [], steelCerts: []
+    heatNumbers: [], drawings: [], ndt: [], welders: [], coatings: [], gaps: [], steelCerts: [], production: null
   };
 
   try {
@@ -51367,11 +51367,15 @@ async function cocGatherFacts(jobId) {
   // by project_number), not directly under the Projects id, so resolve through
   // the same chain the Inspection panel uses.
   try {
-    const asm = (await _inspAssembliesForProject(jobId)).assemblies;
-    facts.assemblies = asm || [];
+    const resolved = await _inspAssembliesForProject(jobId);
+    facts.assemblies = resolved.assemblies || [];
     facts.assemblyCount = facts.assemblies.reduce((s, a) => s + (Number(a.quantity) || 0), 0);
     facts.totalWeightKg = _r2(facts.assemblies.reduce((s, a) => s + ((Number(a.total_weight_kg) || 0) * (Number(a.quantity) || 0)), 0));
     facts.drawings = [...new Set(facts.assemblies.map(a => a.file_name).filter(Boolean))];
+    // Tonnage-weighted production state (fab/weld/despatch) for the readiness view
+    facts.production = _prodFiguresFrom(facts.assemblies, resolved.bom || []);
+    if (facts.production.despatchPct < 100 && facts.assemblies.length)
+      facts.gaps.push(`Only ${facts.production.despatchPct}% despatched by tonnage (${facts.production.despatchedTonnes.toFixed(2)}t of ${facts.production.totalTonnes.toFixed(2)}t) — confirm this certificate covers what has actually been delivered`);
   } catch (_) { facts.gaps.push('Assembly list unavailable'); }
   if (!facts.assemblies.length) facts.gaps.push('No assemblies recorded against this job');
 
@@ -51744,7 +51748,10 @@ function _cocRender() {
 
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
       ${box(f.assemblyCount || 0, 'Assemblies', '#38bdf8')}
-      ${box((f.totalWeightKg || 0).toLocaleString('en-GB'), 'kg', '#38bdf8')}
+      ${box(((f.totalWeightKg || 0) / 1000).toLocaleString('en-GB', { maximumFractionDigits: 2 }) + 't', 'Tonnage', '#38bdf8')}
+      ${f.production ? box(f.production.fabPct + '%', 'Fabricated', f.production.fabPct >= 100 ? '#3ecf8e' : '#eab308') : ''}
+      ${f.production ? box(f.production.weldPct + '%', 'Welded', f.production.weldPct >= 100 ? '#3ecf8e' : '#eab308') : ''}
+      ${f.production ? box(f.production.despatchPct + '%', 'Despatched', f.production.despatchPct >= 100 ? '#3ecf8e' : '#eab308') : ''}
       ${box(f.heatNumbers.length, 'Heat numbers', f.heatNumbers.length ? '#3ecf8e' : '#ff6b6b')}
       ${box((f.steelCerts || []).length, 'Test certs', (f.steelCerts || []).length ? '#3ecf8e' : '#ff6b6b')}
       ${box(f.welders.length, 'Welders', f.welders.length ? '#3ecf8e' : '#eab308')}
@@ -53013,16 +53020,26 @@ async function traceGather(jobId) {
   // jobs, so gather actions across whichever drawing jobs the assemblies span.
   const assemblies = facts.assemblies || [];
   const drawingJobIds = [...new Set(assemblies.map(a => a._drawing_job_id).filter(Boolean))];
-  const allocations = await api.get(`/api/heat-allocations?job_id=${jobId}`).catch(() => []);
-  let actions = [];
+  // Heat allocations, actions AND BOM despatch are all keyed to DrawingJobs ids
+  // (not the Projects id), so gather across every drawing package the job spans.
+  let allocations = [], actions = [], bom = [];
   for (const dj of drawingJobIds) {
+    try { const a = await api.get(`/api/heat-allocations?job_id=${encodeURIComponent(dj)}`); if (Array.isArray(a)) allocations = allocations.concat(a); } catch (_) {}
     try { const a = await api.get(`/api/job-assemblies/${dj}/actions`); if (Array.isArray(a)) actions = actions.concat(a); } catch (_) {}
+    try { const b = await api.get(`/api/job-bom-items?job_id=${encodeURIComponent(dj)}`); if (Array.isArray(b)) bom = bom.concat(b); } catch (_) {}
   }
+  // Map BOM rows into the despatch shape traceBuildChain expects (per assembly
+  // mark), only where something has actually shipped.
+  const despatches = bom.filter(b => (Number(b.despatched_qty) || 0) > 0).map(b => ({
+    assembly_mark: b.source_assembly_mark || null,
+    despatched_qty: Number(b.despatched_qty) || 0,
+    status: b.status, description: b.description
+  }));
   return {
     job: facts.job, execClass: facts.execClass,
     heats: facts.heatNumbers || [],
     chain: traceBuildChain({ assemblies: assemblies || [], heats: facts.heatNumbers || [],
-                             allocations: allocations || [], actions, despatches: [] }),
+                             allocations: allocations || [], actions, despatches }),
     allocations: allocations || []
   };
 }
@@ -53101,11 +53118,16 @@ function drawTracePDF(jsPDF, d, logoDataUri) {
     [62, 28, 18, 46, 66, 53],
     (d.heats || []).map(h => [h.section, h.grade, h.qty, h.heat, h.supplier, h.po]));
 
-  table('Assemblies', ['Mark', 'Qty', 'kg', 'Traceability', 'Heats allocated', 'Fabricated by', 'Welded by'],
-    [30, 14, 20, 30, 66, 56, 57],
-    (d.rows || []).map(r => [r.mark, r.quantity, r.weight_kg ? Number(r.weight_kg).toFixed(0) : '',
+  table('Assemblies', ['Mark', 'Qty', 'kg', 'Traceability', 'Heats allocated', 'Fabricated by', 'Welded by', 'Despatched'],
+    [26, 12, 18, 28, 60, 48, 48, 33],
+    (d.rows || []).map(r => {
+      const dq = (r.despatched || []).reduce((s, x) => s + (Number(x.despatched_qty) || 0), 0);
+      const onSite = (r.despatched || []).some(x => x.status === 'on_site');
+      return [r.mark, r.quantity, r.weight_kg ? Number(r.weight_kg).toFixed(0) : '',
       (TRACE_LEVELS[r.level] || {}).label || r.level,
-      r.heats.join(', ') || '—', r.fabricatedBy.join(', ') || '—', r.weldedBy.join(', ') || '—']));
+      r.heats.join(', ') || '—', r.fabricatedBy.join(', ') || '—', r.weldedBy.join(', ') || '—',
+      dq ? `${dq}/${r.quantity}${onSite ? ' on site' : ''}` : '—'];
+    }));
 
   if ((d.unallocated || []).length) {
     table('Heats received but not allocated to any assembly', ['Heat / cast no', 'Section', 'Grade', 'Supplier'],
@@ -53208,9 +53230,14 @@ function _traceRender() {
 
     <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:14px 0 5px">Chain</div>
     <table style="width:100%;border-collapse:collapse;font-size:11.5px">
-      <thead><tr>${['Assembly', 'Level', 'Heats', 'Fabricated', 'Welded', 'Machine'].map(h =>
+      <thead><tr>${['Assembly', 'Level', 'Heats', 'Fabricated', 'Welded', 'Machine', 'Despatched'].map(h =>
         `<th style="text-align:left;padding:5px;font-size:9px;text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--border)">${h}</th>`).join('')}</tr></thead>
-      <tbody>${c.rows.map((r, i) => `<tr style="${i % 2 ? 'background:rgba(255,255,255,0.015);' : ''}">
+      <tbody>${c.rows.map((r, i) => {
+        const dq = (r.despatched || []).reduce((s, d) => s + (Number(d.despatched_qty) || 0), 0);
+        const onSite = (r.despatched || []).some(d => d.status === 'on_site');
+        const dLabel = dq ? `${dq}/${r.quantity}${onSite ? ' · on site' : ''}` : '—';
+        const dColor = dq >= r.quantity ? '#3ecf8e' : dq ? '#eab308' : 'var(--muted)';
+        return `<tr style="${i % 2 ? 'background:rgba(255,255,255,0.015);' : ''}">
         <td style="padding:5px;border-bottom:1px solid var(--border)"><strong>${escapeHtml(r.mark)}</strong>
           <span style="color:var(--muted)">×${r.quantity}</span></td>
         <td style="padding:5px;border-bottom:1px solid var(--border);color:${(TRACE_LEVELS[r.level] || {}).color}">${(TRACE_LEVELS[r.level] || {}).label}</td>
@@ -53218,7 +53245,8 @@ function _traceRender() {
         <td style="padding:5px;border-bottom:1px solid var(--border);color:var(--muted)">${escapeHtml(r.fabricatedBy.join(', ') || '—')}</td>
         <td style="padding:5px;border-bottom:1px solid var(--border);color:var(--muted)">${escapeHtml(r.weldedBy.join(', ') || '—')}</td>
         <td style="padding:5px;border-bottom:1px solid var(--border);color:var(--muted)">${r.machines.join(', ') || '—'}</td>
-      </tr>`).join('')}</tbody></table>`;
+        <td style="padding:5px;border-bottom:1px solid var(--border);color:${dColor}">${dLabel}</td>
+      </tr>`; }).join('')}</tbody></table>`;
 }
 
 async function traceAllocate() {
