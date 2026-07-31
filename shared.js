@@ -51074,7 +51074,31 @@ function drawItpPDF(jsPDF, data, logoDataUri) {
     y += 7;
   };
 
-  header(); key(); tableHead();
+  // Production status — where the job actually is right now (tonnage-weighted),
+  // so the ITP reflects real progress, not just the planned inspection regime.
+  const prodStatus = () => {
+    const p = data.production;
+    if (!p) return;
+    const chip = (label, pct, tonnes) => {
+      const col = pct >= 100 ? [62, 207, 142] : pct > 0 ? [234, 179, 8] : [150, 150, 155];
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(...col);
+      const txt = `${label}: ${pct}%${tonnes != null ? ` (${tonnes.toFixed(2)}t)` : ''}`;
+      doc.text(txt, x, y); x += doc.getTextWidth(txt) + 8;
+    };
+    let x = mL;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(90, 90, 95);
+    const lead = 'Production status (by tonnage):  ';
+    doc.text(lead, x, y); x += doc.getTextWidth(lead);
+    chip('Fabrication', p.fabPct, null);
+    chip('Welding', p.weldPct, null);
+    chip('Despatched', p.despatchPct, p.despatchedTonnes);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(120, 120, 125);
+    const tt = `Total ${(p.totalTonnes || 0).toFixed(2)}t · ${p.assemblyQty || 0} pcs`;
+    doc.text(tt, pageW - mR, y, { align: 'right' });
+    y += 6;
+  };
+
+  header(); key(); prodStatus(); tableHead();
 
   const rows = data.rows || [];
   doc.setFont('helvetica', 'normal'); doc.setFontSize(7);
@@ -51284,7 +51308,8 @@ async function itpMakePdf(toSharePoint) {
       execClass: _inspPlan.exec_class,
       issueDate: new Date().toISOString().slice(0, 10),
       rev: '01',
-      rows: _itpRows
+      rows: _itpRows,
+      production: _inspDerivedFigures()
     });
     const name = `ITP - ${(job && job.job_number) || 'job'} - ${new Date().toISOString().slice(0, 10)}.pdf`;
     if (!toSharePoint) {
