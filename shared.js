@@ -3590,7 +3590,7 @@ function selectReport(name) {
   // Babcock and Cost Analysis each bring their own toolbars + KPI rows.
   // Hide the generic shared chrome so they don't visually clash.
   // (Both elements only exist on reports.html; harmless no-op elsewhere.)
-  const ownsChrome = (name === 'babcock' || name === 'costanalysis' || name === 'holidays' || name === 'productivity' || name === 'faboutput' || name === 'cvr');
+  const ownsChrome = (name === 'babcock' || name === 'costanalysis' || name === 'holidays' || name === 'productivity' || name === 'faboutput' || name === 'cvr' || name === 'paymentsdue');
   const periodBar = document.getElementById('rptPeriodToolbar');
   if (periodBar) periodBar.style.display = ownsChrome ? 'none' : '';
   const sharedKpi = document.getElementById('rptKpiRow');
@@ -6102,6 +6102,10 @@ function renderReports() {
   }
   if (activeReport === 'cvr') {
     renderCvrReport();
+    return;
+  }
+  if (activeReport === 'paymentsdue') {
+    renderPaymentsDueReport();
     return;
   }
 
@@ -28866,6 +28870,304 @@ async function exportCvrPDF() {
   const blob = doc.output('blob');
   console.log('[CVR PDF] blob size:', blob.size);
   doc.save(`CVR-WIP-${new Date().toISOString().slice(0, 10)}.pdf`);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PAYMENTS DUE — unpaid supplier invoices to pay by a chosen date
+// Facts come from /api/supplier-invoices?status=unpaid; all bucketing/summing
+// is plain arithmetic here. Two toggles (both off by default): include overdue,
+// include direct debits. Definitions live in the panel Help.
+// ═══════════════════════════════════════════════════════════════════════════
+let _pdrRows = null;   // raw unpaid supplier invoices (cached)
+let _pdrMeta = null;   // { byDate, overdue, dd } snapshot of last render
+
+function _pdrEndOfMonth(offset) {
+  // offset 0 = this month, 1 = next month. Returns YYYY-MM-DD of last day.
+  const t = new Date();
+  const d = new Date(t.getFullYear(), t.getMonth() + offset + 1, 0);
+  return d.toISOString().slice(0, 10);
+}
+
+function pdrPreset(kind) {
+  const el = document.getElementById('pdrByDate');
+  if (!el) return;
+  if (kind === 'eom')  el.value = _pdrEndOfMonth(0);
+  else if (kind === 'eonm') el.value = _pdrEndOfMonth(1);
+  else {
+    const days = parseInt(kind, 10) || 0;
+    el.value = new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
+  }
+  renderPaymentsDueReport(true);
+}
+
+// Filtered + grouped view of the cached rows against the current controls.
+function _pdrData() {
+  const byDate  = document.getElementById('pdrByDate')?.value || null;
+  const overdue = !!document.getElementById('pdrOverdue')?.checked;
+  const inclDd  = !!document.getElementById('pdrDd')?.checked;
+  const today   = new Date().toISOString().slice(0, 10);
+
+  const open = (_pdrRows || []).filter(inv => {
+    if (inv.paid_at) return false;
+    if (Number(inv.gross || 0) <= 0.005) return false;
+    if (inv.is_dd) return inclDd;                 // DD only if opted in
+    const due = inv.due_date ? String(inv.due_date).slice(0, 10) : null;
+    if (!due) return false;                       // no due date → not schedulable
+    if (byDate && due > byDate) return false;     // past the window
+    if (!overdue && due < today) return false;    // overdue excluded unless opted in
+    return true;
+  });
+
+  const bySupplier = new Map();
+  let total = 0, overdueTotal = 0;
+  for (const inv of open) {
+    const key = inv.supplier_name || '— Unknown —';
+    const amt = Number(inv.gross || 0);
+    const due = inv.due_date ? String(inv.due_date).slice(0, 10) : null;
+    const isOverdue = !inv.is_dd && due && due < today;
+    if (!bySupplier.has(key)) bySupplier.set(key, { supplier: key, total: 0, overdue: 0, invoices: [] });
+    const row = bySupplier.get(key);
+    row.total += amt;
+    if (isOverdue) row.overdue += amt;
+    row.invoices.push({ ...inv, _amt: amt, _overdue: isOverdue });
+    total += amt;
+    if (isOverdue) overdueTotal += amt;
+  }
+  const rows = Array.from(bySupplier.values()).sort((a, b) => b.total - a.total);
+  for (const r of rows) {
+    r.invoices.sort((a, b) => String(a.due_date || '9999').localeCompare(String(b.due_date || '9999')));
+  }
+  return { rows, total, overdueTotal, count: open.length, byDate, overdue, inclDd };
+}
+
+async function renderPaymentsDueReport(run) {
+  const tbl = document.getElementById('pdrTable');
+  if (!tbl) return;
+  // Default the date to end of this month on first open
+  const dateEl = document.getElementById('pdrByDate');
+  if (dateEl && !dateEl.value) dateEl.value = _pdrEndOfMonth(0);
+
+  if (run || !_pdrRows) {
+    tbl.innerHTML = '<div style="padding:30px;text-align:center;color:var(--muted);font-size:12px">Loading…</div>';
+    try {
+      _pdrRows = await api.get('/api/supplier-invoices?status=unpaid');
+    } catch (e) {
+      tbl.innerHTML = `<div style="padding:20px;color:var(--red);font-size:12px">Could not load supplier invoices: ${escapeHtml(e.message)}</div>`;
+      return;
+    }
+  }
+
+  const { rows, total, overdueTotal, count, byDate, inclDd } = _pdrData();
+  _pdrMeta = { byDate, overdue: !!document.getElementById('pdrOverdue')?.checked, dd: inclDd };
+
+  const pdfBtn = document.getElementById('pdrPdfBtn'), csvBtn = document.getElementById('pdrCsvBtn');
+
+  if (!rows.length) {
+    if (pdfBtn) pdfBtn.style.display = 'none';
+    if (csvBtn) csvBtn.style.display = 'none';
+    const kEl = document.getElementById('pdrKpis'); if (kEl) kEl.style.display = 'none';
+    tbl.innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted);font-size:12px">Nothing due in this window. 🎉</div>';
+    return;
+  }
+  if (pdfBtn) pdfBtn.style.display = '';
+  if (csvBtn) csvBtn.style.display = '';
+
+  const hue = key => { let h = 0; const s = String(key); for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h % 360; };
+  const fmtDue = iso => iso ? new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }) : '—';
+
+  // KPI strip
+  const kEl = document.getElementById('pdrKpis');
+  const kpi = (label, val, col) => `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 16px;min-width:150px">
+      <div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">${label}</div>
+      <div style="font-size:19px;font-weight:700;font-family:var(--font-mono);color:${col || 'var(--text)'}">${val}</div></div>`;
+  kEl.style.display = 'flex'; kEl.style.gap = '10px'; kEl.style.flexWrap = 'wrap';
+  kEl.innerHTML =
+    kpi('Total to pay', gbp2(total), 'var(--accent)') +
+    kpi('Invoices', String(count)) +
+    kpi('Suppliers', String(rows.length)) +
+    (overdueTotal > 0 ? kpi('Of which overdue', gbp2(overdueTotal), 'var(--red)') : '') +
+    kpi('Due on or before', byDate ? fmtDue(byDate) : 'any');
+
+  const th = 'padding:8px;font-size:9.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;border-bottom:2px solid var(--border);text-align:right;white-space:nowrap';
+  const td = 'padding:8px;border-bottom:1px solid var(--border);text-align:right;font-family:var(--font-mono);font-size:12px;white-space:nowrap';
+  let html = `<div style="overflow-x:auto;border:1px solid var(--border);border-radius:10px;background:var(--card,#161616)">
+    <table style="border-collapse:separate;border-spacing:0;min-width:100%">
+    <thead><tr>
+      <th style="${th};text-align:left;padding-left:12px">Supplier / Invoice</th>
+      <th style="${th};text-align:left">PO</th>
+      <th style="${th};text-align:left">Project</th>
+      <th style="${th}">Due</th>
+      <th style="${th}">Gross</th>
+    </tr></thead><tbody>`;
+
+  rows.forEach(r => {
+    const h = hue(r.supplier);
+    html += `<tr>
+      <td style="padding:9px 12px;border-bottom:1px solid var(--border);white-space:nowrap;font-weight:700">
+        <span style="display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:20px;background:hsla(${h},70%,55%,.14);border:1px solid hsla(${h},70%,60%,.45);color:hsl(${h},75%,72%);font-size:12px">${escapeHtml(r.supplier)}</span>
+        ${r.overdue > 0 ? `<span style="font-size:10px;color:var(--red);margin-left:6px">${gbp2(r.overdue)} overdue</span>` : ''}
+      </td>
+      <td style="border-bottom:1px solid var(--border)"></td>
+      <td style="border-bottom:1px solid var(--border)"></td>
+      <td style="border-bottom:1px solid var(--border)"></td>
+      <td style="${td};font-weight:700">${gbp2(r.total)}</td>
+    </tr>`;
+    r.invoices.forEach((inv, ii) => {
+      const zebra = ii % 2 ? 'background:rgba(255,255,255,.018);' : '';
+      html += `<tr>
+        <td style="padding:6px 12px 6px 26px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11.5px;color:var(--muted);${zebra}">
+          ${escapeHtml(inv.invoice_ref || ('#' + inv.id))}
+          ${inv.invoice_type === 'subcontractor' ? '<span style="color:#b596e8;font-size:10px;margin-left:6px">CIS</span>' : ''}
+          ${inv.is_dd ? '<span style="color:var(--subtle);font-size:10px;margin-left:6px">DD</span>' : ''}
+        </td>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--muted);text-align:left;${zebra}">${escapeHtml(inv.po_reference || '')}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted);text-align:left;${zebra}">${escapeHtml(inv.project_number || inv.job_number || inv.cost_centre || '')}</td>
+        <td style="${td};${zebra};${inv._overdue ? 'color:var(--red);font-weight:600' : 'color:var(--muted)'}">${inv.is_dd ? 'DD' : fmtDue(inv.due_date ? String(inv.due_date).slice(0, 10) : null)}</td>
+        <td style="${td};${zebra}">${gbp2(inv._amt)}</td>
+      </tr>`;
+    });
+  });
+  html += `</tbody>
+    <tfoot><tr>
+      <td style="padding:10px 12px;border-top:2px solid var(--border);font-weight:700">TOTAL TO PAY</td>
+      <td style="border-top:2px solid var(--border)"></td>
+      <td style="border-top:2px solid var(--border)"></td>
+      <td style="border-top:2px solid var(--border)"></td>
+      <td style="${td};border-top:2px solid var(--border);border-bottom:none;font-weight:700;color:var(--accent)">${gbp2(total)}</td>
+    </tr></tfoot>
+    </table></div>
+    <div style="font-size:10.5px;color:var(--subtle);margin-top:8px">Gross (VAT-inclusive) unpaid supplier invoices due on or before the selected date. Paid invoices excluded. ${inclDd ? 'Direct debits included (flagged DD).' : 'Direct debits excluded.'}</div>`;
+  tbl.innerHTML = html;
+}
+
+function exportPaymentsDueCsv() {
+  if (!_pdrRows) { toast('Refresh first', 'error'); return; }
+  const { rows, total, byDate } = _pdrData();
+  if (!rows.length) { toast('Nothing to export', 'error'); return; }
+  const esc = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+  const lines = [['Supplier', 'Invoice Ref', 'PO Ref', 'Project', 'Invoice Date', 'Due Date', 'Gross'].map(esc).join(',')];
+  for (const r of rows) {
+    for (const inv of r.invoices) {
+      lines.push([r.supplier, inv.invoice_ref || '', inv.po_reference || '',
+        inv.project_number || inv.job_number || inv.cost_centre || '',
+        String(inv.invoice_date || '').slice(0, 10),
+        inv.is_dd ? 'DD' : String(inv.due_date || '').slice(0, 10),
+        Number(inv._amt || 0).toFixed(2)].map(esc).join(','));
+    }
+  }
+  lines.push('');
+  lines.push(['PAYMENT PER SUPPLIER', '', '', '', '', '', ''].map(esc).join(','));
+  for (const r of rows) lines.push([r.supplier, '', '', '', '', '', r.total.toFixed(2)].map(esc).join(','));
+  lines.push(['', '', '', '', '', 'TOTAL', total.toFixed(2)].map(esc).join(','));
+  const blob = new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `payments-due-${byDate || new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+// Native jsPDF Payments Due schedule — portrait A4 (CLAUDE.md PDF rules)
+async function exportPaymentsDuePDF() {
+  if (!_pdrRows) { toast('Refresh first', 'error'); return; }
+  const { rows, total, overdueTotal, count, byDate, inclDd } = _pdrData();
+  if (!rows.length) { toast('Nothing to export', 'error'); return; }
+  const JsPDFCtor = await resolveJsPDFCtor();
+  const doc = new JsPDFCtor({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  const pageW = 210, pageH = 297, mL = 12, W = pageW - 24;
+  const NAVY = [26,26,46], TEXT = [34,34,34], MUTED = [110,110,110], RED = [208,2,27], ACCENT = [22,110,180], RULE = [215,218,224];
+  const sT = c => doc.setTextColor(c[0],c[1],c[2]);
+  const money = v => v == null ? '\u2014' : gbp2(v);
+  const fmtDue = iso => iso ? new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }) : '\u2014';
+  const today = new Date().toISOString().slice(0, 10);
+
+  doc.setFillColor(NAVY[0],NAVY[1],NAVY[2]); doc.rect(0, 0, pageW, 24, 'F');
+  sT([255,255,255]); doc.setFont('helvetica','bold'); doc.setFontSize(15);
+  doc.text('Payments Due \u2014 Supplier Invoices', mL, 10.5);
+  doc.setFont('helvetica','normal'); doc.setFontSize(8.5);
+  const sub = `Due on or before ${byDate ? fmtDue(byDate) : 'any date'} \u00B7 ${count} invoice${count !== 1 ? 's' : ''} \u00B7 ${new Date().toLocaleDateString('en-GB')} \u00B7 BAMA Fabrication Ltd`;
+  doc.text(sub, mL, 17.5);
+  let y = 31;
+
+  // KPI band
+  const kpis = [
+    ['TOTAL TO PAY', money(total), ACCENT],
+    ['INVOICES', String(count), TEXT],
+    ['SUPPLIERS', String(rows.length), TEXT],
+    ['OVERDUE', money(overdueTotal), overdueTotal > 0 ? RED : MUTED],
+    ['DIRECT DEBITS', inclDd ? 'incl.' : 'excl.', MUTED]
+  ];
+  const kw = W / kpis.length;
+  kpis.forEach((k, i) => {
+    const x = mL + i * kw;
+    doc.setDrawColor(RULE[0],RULE[1],RULE[2]); doc.setLineWidth(0.2); doc.roundedRect(x + 1, y, kw - 2, 14, 1.5, 1.5, 'S');
+    sT(MUTED); doc.setFontSize(5.8); doc.setFont('helvetica','bold'); doc.text(k[0], x + 3, y + 5);
+    sT(k[2]); doc.setFontSize(10); doc.text(k[1], x + 3, y + 11);
+  });
+  y += 21;
+
+  const cols = [['SUPPLIER / INVOICE', 78, 'left'], ['PO', 26, 'left'], ['PROJECT', 34, 'left'], ['DUE', 22], ['GROSS', 26]];
+  const xs = []; let acc = mL; cols.forEach(c => { xs.push(acc); acc += c[1]; });
+  const head = () => {
+    doc.setFillColor(NAVY[0],NAVY[1],NAVY[2]); doc.rect(mL, y, W, 6.5, 'F');
+    sT([255,255,255]); doc.setFont('helvetica','bold'); doc.setFontSize(6.8);
+    cols.forEach((c, i) => doc.text(c[0], c[2] === 'left' ? xs[i] + 2 : xs[i] + c[1] - 2, y + 4.4, { align: c[2] === 'left' ? 'left' : 'right' }));
+    y += 6.5;
+  };
+  head();
+
+  const ensure = h => { if (y + h > pageH - 16) { doc.addPage(); y = 12; head(); } };
+  for (const r of rows) {
+    ensure(7);
+    // Supplier header row
+    doc.setFillColor(244,246,249); doc.rect(mL, y, W, 6, 'F');
+    sT(TEXT); doc.setFont('helvetica','bold'); doc.setFontSize(8);
+    doc.text(doc.splitTextToSize(r.supplier, cols[0][1] - 4)[0], xs[0] + 2, y + 4.2);
+    if (r.overdue > 0) { sT(RED); doc.setFont('helvetica','normal'); doc.setFontSize(6.2); doc.text(`${money(r.overdue)} overdue`, xs[3] + cols[3][1] - 2, y + 4.2, { align: 'right' }); }
+    sT(TEXT); doc.setFont('helvetica','bold'); doc.setFontSize(8);
+    doc.text(money(r.total), xs[4] + cols[4][1] - 2, y + 4.2, { align: 'right' });
+    y += 6;
+    // Invoice lines
+    doc.setFontSize(7.4); doc.setFont('helvetica','normal');
+    for (const inv of r.invoices) {
+      ensure(5);
+      const dueStr = inv.due_date ? String(inv.due_date).slice(0, 10) : null;
+      const od = !inv.is_dd && dueStr && dueStr < today;
+      sT(MUTED);
+      const ref = (inv.invoice_ref || ('#' + inv.id)) + (inv.invoice_type === 'subcontractor' ? '  CIS' : '') + (inv.is_dd ? '  DD' : '');
+      doc.text('   ' + doc.splitTextToSize(ref, cols[0][1] - 8)[0], xs[0] + 2, y + 3.8);
+      doc.text(doc.splitTextToSize(inv.po_reference || '', cols[1][1] - 2)[0] || '', xs[1] + 2, y + 3.8);
+      doc.text(doc.splitTextToSize(inv.project_number || inv.job_number || inv.cost_centre || '', cols[2][1] - 2)[0] || '', xs[2] + 2, y + 3.8);
+      sT(od ? RED : MUTED);
+      doc.text(inv.is_dd ? 'DD' : fmtDue(dueStr), xs[3] + cols[3][1] - 2, y + 3.8, { align: 'right' });
+      sT(TEXT);
+      doc.text(money(inv._amt), xs[4] + cols[4][1] - 2, y + 3.8, { align: 'right' });
+      doc.setDrawColor(RULE[0],RULE[1],RULE[2]); doc.setLineWidth(0.1); doc.line(mL, y + 5, mL + W, y + 5);
+      y += 5;
+    }
+  }
+  // Grand total
+  ensure(9);
+  y += 2;
+  doc.setDrawColor(NAVY[0],NAVY[1],NAVY[2]); doc.setLineWidth(0.4); doc.line(mL, y, mL + W, y);
+  y += 5;
+  sT(TEXT); doc.setFont('helvetica','bold'); doc.setFontSize(10);
+  doc.text('TOTAL TO PAY', xs[0] + 2, y);
+  sT(ACCENT); doc.text(money(total), xs[4] + cols[4][1] - 2, y, { align: 'right' });
+  y += 8;
+  sT(MUTED); doc.setFont('helvetica','normal'); doc.setFontSize(6.5);
+  doc.splitTextToSize('Gross (VAT-inclusive) unpaid supplier invoices due on or before the selected date, grouped by supplier. Invoices already marked paid (Pay & Remit / BACS run) are excluded. ' + (inclDd ? 'Direct debits are included and flagged DD.' : 'Direct debits are excluded.') + ' Due dates derive from each supplier\u2019s payment terms. Figures are live from the ERP at time of printing.', W).forEach(l => { doc.text(l, mL, y); y += 3.2; });
+
+  const pages = doc.getNumberOfPages();
+  for (let i = 1; i <= pages; i++) {
+    doc.setPage(i);
+    sT([150,150,150]); doc.setFontSize(7);
+    doc.text('BAMA Fabrication ERP \u00B7 Payments Due', mL, pageH - 6);
+    doc.text(`Page ${i} of ${pages}`, pageW - mL, pageH - 6, { align: 'right' });
+  }
+  const blob = doc.output('blob');
+  console.log('[Payments Due PDF] blob size:', blob.size);
+  doc.save(`payments-due-${byDate || new Date().toISOString().slice(0, 10)}.pdf`);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

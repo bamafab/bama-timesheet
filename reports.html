@@ -142,6 +142,11 @@
         <div class="report-picker-name">CVR / WIP</div>
         <div class="report-picker-desc">Value vs cost per live project, cash position</div>
       </div>
+      <div class="report-picker-card" data-report="paymentsdue" onclick="selectReport('paymentsdue')">
+        <div class="report-picker-icon">&#128179;</div>
+        <div class="report-picker-name">Payments due</div>
+        <div class="report-picker-desc">Supplier invoices to pay by a chosen date</div>
+      </div>
       <div class="report-picker-card" data-report="babcock" onclick="selectReport('babcock')">
         <div class="report-picker-icon">&#9875;</div>
         <div class="report-picker-name">Babcock overview</div>
@@ -284,6 +289,39 @@
       <div id="cvrTable"><div style="padding:30px;text-align:center;color:var(--muted);font-size:12px">Loading…</div></div>
     </div>
 
+    <!-- Report: Payments Due (supplier invoices to pay) -->
+    <div class="report-panel" id="rptPanel-paymentsdue">
+      <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px">
+        <div>
+          <label style="display:block;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Due on or before</label>
+          <input type="date" class="field-input" id="pdrByDate" style="padding:6px 10px;font-size:13px" onchange="renderPaymentsDueReport(true)">
+        </div>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-ghost btn-sm" onclick="pdrPreset('eom')">End of this month</button>
+          <button class="btn btn-ghost btn-sm" onclick="pdrPreset('eonm')">End of next month</button>
+          <button class="btn btn-ghost btn-sm" onclick="pdrPreset('7')">Next 7 days</button>
+          <button class="btn btn-ghost btn-sm" onclick="pdrPreset('30')">Next 30 days</button>
+        </div>
+        <label style="font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:5px"><input type="checkbox" id="pdrOverdue" onchange="renderPaymentsDueReport(true)"> include overdue</label>
+        <label style="font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:5px"><input type="checkbox" id="pdrDd" onchange="renderPaymentsDueReport(true)"> include direct debits</label>
+        <div style="margin-left:auto;display:flex;gap:6px">
+          <button class="btn btn-primary btn-sm" onclick="renderPaymentsDueReport(true)">↻ Refresh</button>
+          <button class="btn btn-ghost btn-sm" id="pdrPdfBtn" onclick="exportPaymentsDuePDF()" style="display:none">⬇ PDF</button>
+          <button class="btn btn-ghost btn-sm" id="pdrCsvBtn" onclick="exportPaymentsDueCsv()" style="display:none">⬇ CSV</button>
+          <button class="btn btn-ghost btn-sm" onclick="const d=document.getElementById('pdrHelp');d.style.display=d.style.display==='none'?'':'none'">?</button>
+        </div>
+      </div>
+      <div id="pdrHelp" style="display:none;font-size:11.5px;color:var(--muted);line-height:1.6;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px">
+        Every unpaid supplier invoice with a due date on or before the chosen date, grouped by supplier. Due dates come from each supplier's payment terms.
+        <strong>Include overdue</strong> (off by default) adds anything already past its due date — turn it on for a true "what do I owe right now" list.
+        <strong>Include direct debits</strong> (off by default) adds DD invoices, which the supplier collects automatically — flagged <em>DD</em> so you don't double-pay.
+        Invoices already marked paid (Pay &amp; Remit / BACS run) are excluded. Figures are gross (VAT-inclusive) and live at time of printing.
+        Change a wrong due date by fixing the supplier's payment terms in Office → Suppliers.
+      </div>
+      <div id="pdrKpis" style="display:none;margin-bottom:12px"></div>
+      <div id="pdrTable"><div style="padding:30px;text-align:center;color:var(--muted);font-size:12px">Pick a date and hit Refresh.</div></div>
+    </div>
+
     <div class="report-panel" id="rptPanel-babcock">
       <!-- FY toggle -->
       <div style="display:flex;gap:10px;align-items:center;margin-bottom:18px;flex-wrap:wrap">
@@ -404,6 +442,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260731c"></script>
+<script src="shared.js?v=20260731d"></script>
 </body>
 </html>
