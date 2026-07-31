@@ -50222,19 +50222,31 @@ async function _inspAssembliesForProject(projectId) {
 // always overridable in the per-category inputs.
 function _inspDerivedFigures() {
   const asm = _inspAssemblies || [];
-  let assemblyQty = 0, totalParts = 0, weldEstimate = 0;
+  let assemblyQty = 0, totalParts = 0, weldEstimate = 0, totalWeightKg = 0;
+  // Lifecycle roll-up across the whole job (staged fab → weld → complete).
+  let fabbed = 0, welded = 0, completed = 0, onBom = 0;
   for (const a of asm) {
     const q = Number(a.quantity) || 0;
     assemblyQty += q;
+    // total_weight_kg is the weight of ONE assembly, so job weight = Σ(qty × each)
+    totalWeightKg += (Number(a.total_weight_kg) || 0) * q;
+    fabbed    += Number(a.qty_fabbed)    || 0;
+    welded    += Number(a.qty_welded)    || 0;
+    completed += Number(a.qty_completed) || 0;
+    onBom     += (Number(a.qty_welded) || 0) + (Number(a.qty_completed) || 0);
     const parts = a.parts || [];
-    const pieces = parts.reduce((s, p) => s + (Number(p.quantity) || 0), 0);
-    totalParts += pieces * (q || 1);
-    // joints ≈ distinct pieces − 1 per single assembly, × how many of it we make
     const distinctPieces = parts.reduce((s, p) => s + (Number(p.quantity) || 0), 0);
+    totalParts += distinctPieces * (q || 1);
     const jointsPerAssembly = Math.max(0, distinctPieces - 1);
     weldEstimate += jointsPerAssembly * (q || 1);
   }
-  return { assemblyQty, distinctMarks: asm.length, totalParts, weldEstimate };
+  const fabPct = assemblyQty ? Math.round((fabbed + completed) / assemblyQty * 100) : 0;
+  const weldPct = assemblyQty ? Math.round((welded + completed) / assemblyQty * 100) : 0;
+  return {
+    assemblyQty, distinctMarks: asm.length, totalParts, weldEstimate,
+    totalWeightKg, totalTonnes: totalWeightKg / 1000,
+    fabbed, welded, completed, onBom, fabPct, weldPct
+  };
 }
 
 // Fill any BLANK weld-category box with the job-wide estimate as a starting
@@ -50321,15 +50333,25 @@ function _inspRender() {
 
     <!-- Live BOM figures — pulled from the project, not typed -->
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:stretch;margin-bottom:12px">
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:9px 14px;min-width:130px">
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:9px 14px;min-width:120px">
         <div style="font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">Assemblies on job</div>
         <div style="font-size:19px;font-weight:800;color:var(--text)">${der.assemblyQty.toLocaleString('en-GB')}</div>
-        <div style="font-size:10px;color:var(--muted)">${der.distinctMarks} distinct mark${der.distinctMarks === 1 ? '' : 's'} · from BOM</div>
+        <div style="font-size:10px;color:var(--muted)">${der.distinctMarks} distinct mark${der.distinctMarks === 1 ? '' : 's'}</div>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:9px 14px;min-width:110px">
+        <div style="font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">Tonnage</div>
+        <div style="font-size:19px;font-weight:800;color:var(--text)">${der.totalTonnes.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}t</div>
+        <div style="font-size:10px;color:var(--muted)">Σ qty × unit wt</div>
       </div>
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:9px 14px;min-width:130px">
-        <div style="font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">Pieces (parts)</div>
-        <div style="font-size:19px;font-weight:800;color:var(--text)">${der.totalParts.toLocaleString('en-GB')}</div>
-        <div style="font-size:10px;color:var(--muted)">across all assemblies</div>
+        <div style="font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">Fabrication</div>
+        <div style="font-size:19px;font-weight:800;color:${der.fabPct >= 100 ? '#3ecf8e' : 'var(--text)'}">${der.fabPct}%</div>
+        <div style="font-size:10px;color:var(--muted)">${(der.fabbed + der.completed).toLocaleString('en-GB')} / ${der.assemblyQty.toLocaleString('en-GB')} pcs</div>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:9px 14px;min-width:130px">
+        <div style="font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">Welding</div>
+        <div style="font-size:19px;font-weight:800;color:${der.weldPct >= 100 ? '#3ecf8e' : 'var(--text)'}">${der.weldPct}%</div>
+        <div style="font-size:10px;color:var(--muted)">${(der.welded + der.completed).toLocaleString('en-GB')} / ${der.assemblyQty.toLocaleString('en-GB')} pcs</div>
       </div>
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:9px 14px;min-width:150px">
         <div style="font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">Est. welds <span style="color:#eab308" title="Estimate only — parts-minus-one joint proxy. There is no weld data in the model to count; treat as a starting point and override per category below.">⚠ est.</span></div>
@@ -51084,7 +51106,7 @@ async function cocGatherFacts(jobId) {
     const asm = await _inspAssembliesForProject(jobId);
     facts.assemblies = asm || [];
     facts.assemblyCount = facts.assemblies.reduce((s, a) => s + (Number(a.quantity) || 0), 0);
-    facts.totalWeightKg = _r2(facts.assemblies.reduce((s, a) => s + (Number(a.total_weight_kg) || 0), 0));
+    facts.totalWeightKg = _r2(facts.assemblies.reduce((s, a) => s + ((Number(a.total_weight_kg) || 0) * (Number(a.quantity) || 0)), 0));
     facts.drawings = [...new Set(facts.assemblies.map(a => a.file_name).filter(Boolean))];
   } catch (_) { facts.gaps.push('Assembly list unavailable'); }
   if (!facts.assemblies.length) facts.gaps.push('No assemblies recorded against this job');
