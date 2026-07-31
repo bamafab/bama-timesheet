@@ -37053,10 +37053,42 @@ function renderInvSalesTable() {
 
 let _invSupplierSearchTerm = '';
 let _invSupChip = 'all';   // all | unmatched | unpaid | overdue | paid | dd
+let _invSupSortKey = null;  // supplier | po | invref | project | invdate | due | gross | recon | paid
+let _invSupSortDir = 1;     // 1 = asc (a→z), -1 = desc (z→a)
 
 function _invSupIsOverdue(inv) {
   if (inv.paid_at || !inv.due_date) return false;
   return String(inv.due_date).slice(0, 10) < new Date().toISOString().slice(0, 10);
+}
+
+// Value a column sorts on (string for text columns, number for numeric/date)
+function _invSupSortVal(inv, key) {
+  switch (key) {
+    case 'supplier': return (inv.supplier_name || '').toLowerCase();
+    case 'po':       return (inv.po_reference || '').toLowerCase();
+    case 'invref':   return (inv.invoice_ref || '').toLowerCase();
+    case 'project':  return (inv.job_number || inv.cost_centre || '').toLowerCase();
+    case 'invdate':  return inv.invoice_date ? new Date(inv.invoice_date).getTime() : 0;
+    case 'due':      return inv.is_dd ? Infinity : (inv.due_date ? new Date(inv.due_date).getTime() : 0);
+    case 'gross':    return Number(inv.gross || 0);
+    case 'recon':    return inv.po_id ? _invPoRecon(inv) : '';
+    case 'paid':     return inv.paid_at ? 1 : 0;
+    default:         return '';
+  }
+}
+
+function invSupSort(key) {
+  if (_invSupSortKey === key) _invSupSortDir = -_invSupSortDir;
+  else { _invSupSortKey = key; _invSupSortDir = 1; }
+  _invSupUpdateSortArrows();
+  renderInvSupplierTable();
+}
+
+function _invSupUpdateSortArrows() {
+  ['supplier','po','invref','project','invdate','due','gross','recon','paid'].forEach(k => {
+    const el = document.getElementById('invSupSortArrow-' + k);
+    if (el) el.textContent = (_invSupSortKey === k) ? (_invSupSortDir === 1 ? '▲' : '▼') : '';
+  });
 }
 
 function invSupSetChip(chip) {
@@ -37076,10 +37108,21 @@ function _invSupplierFiltered() {
   else if (_invSupChip === 'paid')    list = list.filter(i => i.paid_at);
   else if (_invSupChip === 'dd')      list = list.filter(i => i.is_dd);
   const term = (_invSupplierSearchTerm || '').toLowerCase().trim();
-  if (!term) return list;
-  return list.filter(inv =>
-    `${inv.supplier_name || ''} ${inv.po_reference || ''} ${inv.invoice_ref || ''} ${inv.job_number || ''} ${inv.cost_centre || ''} ${inv.babcock_quote_ref || ''} ${inv.paid_at ? 'paid' : 'unpaid'}`
-      .toLowerCase().includes(term));
+  if (term) {
+    list = list.filter(inv =>
+      `${inv.supplier_name || ''} ${inv.po_reference || ''} ${inv.invoice_ref || ''} ${inv.job_number || ''} ${inv.cost_centre || ''} ${inv.babcock_quote_ref || ''} ${inv.paid_at ? 'paid' : 'unpaid'}`
+        .toLowerCase().includes(term));
+  }
+  if (_invSupSortKey) {
+    list = list.slice().sort((a, b) => {
+      const va = _invSupSortVal(a, _invSupSortKey);
+      const vb = _invSupSortVal(b, _invSupSortKey);
+      if (va < vb) return -1 * _invSupSortDir;
+      if (va > vb) return  1 * _invSupSortDir;
+      return 0;
+    });
+  }
+  return list;
 }
 
 function _invSupFmtDate(s) {
@@ -37098,6 +37141,7 @@ function renderInvSupplierTable() {
   }
   _invRemitUpdateBtn();
   renderInvAgedCreditors();
+  _invSupUpdateSortArrows();
 
   if (!_invSupInvoices.length) {
     tbody.innerHTML = `<tr><td colspan="11" class="empty-state" style="padding:40px;text-align:center;color:var(--muted)">
@@ -37140,9 +37184,9 @@ function renderInvSupplierTable() {
       <td style="text-align:center">${inv.paid_at ? '' :
         `<input type="checkbox" ${_invRemitSelected.has(inv.id) ? 'checked' : ''}
                 onchange="invRemitToggle(${inv.id}, this.checked)" title="Select">`}</td>
+      <td>${escapeHtml(inv.supplier_name || '')}${inv.invoice_type === 'subcontractor' ? ' <span style="display:inline-block;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600;background:rgba(147,112,219,.18);color:#b596e8" title="Subcontractor — CIS deduction £' + Number(inv.cis_deduction || 0).toFixed(2) + '">CIS</span>' : ''}</td>
       <td>${poCell}</td>
       <td>${escapeHtml(inv.invoice_ref || '')}${fileLink}</td>
-      <td>${escapeHtml(inv.supplier_name || '')}${inv.invoice_type === 'subcontractor' ? ' <span style="display:inline-block;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600;background:rgba(147,112,219,.18);color:#b596e8" title="Subcontractor — CIS deduction £' + Number(inv.cis_deduction || 0).toFixed(2) + '">CIS</span>' : ''}</td>
       <td>${escapeHtml(inv.job_number || inv.cost_centre || '')}${inv.babcock_quote_ref ? ` <span style="font-size:10px;color:var(--muted);font-family:var(--font-mono)">${escapeHtml(inv.babcock_quote_ref)}</span>` : ''}</td>
       <td>${_invSupFmtDate(inv.invoice_date)}</td>
       <td>${dueCell}</td>
@@ -37218,6 +37262,14 @@ async function deleteSupInvoice(id) {
 // ── Aged creditors — mirrors the sales Aged Debt view (who we owe most) ────
 let _invAgedCredOpen = true;
 let _invApAgedExpanded = new Set();
+let _invApAgedSortKey = 'all';  // supplier | current | b30 | b60 | b90 | b90p | all
+let _invApAgedSortDir = -1;     // default: biggest total first
+
+function invApAgedSort(key) {
+  if (_invApAgedSortKey === key) _invApAgedSortDir = -_invApAgedSortDir;
+  else { _invApAgedSortKey = key; _invApAgedSortDir = (key === 'supplier') ? 1 : -1; }
+  renderInvAgedCreditors();
+}
 
 function toggleInvAgedCreditors() {
   _invAgedCredOpen = !_invAgedCredOpen;
@@ -37257,7 +37309,17 @@ function _invApAgedData() {
     row.invoices.push({ ...inv, _bucket: bucket, _outstanding: amt });
     totals[bucket] += amt; totals.all += amt;
   }
-  const rows = Array.from(bySupplier.values()).sort((a, b) => b.all - a.all);
+  const rows = Array.from(bySupplier.values()).sort((a, b) => {
+    let va, vb;
+    if (_invApAgedSortKey === 'supplier') {
+      va = (a.supplier || '').toLowerCase(); vb = (b.supplier || '').toLowerCase();
+      if (va < vb) return -1 * _invApAgedSortDir;
+      if (va > vb) return  1 * _invApAgedSortDir;
+      return 0;
+    }
+    va = a[_invApAgedSortKey] || 0; vb = b[_invApAgedSortKey] || 0;
+    return (va - vb) * _invApAgedSortDir;
+  });
   for (const r of rows) {
     r.invoices.sort((a, b) => String(a.due_date || a.invoice_date || '').localeCompare(String(b.due_date || b.invoice_date || '')));
   }
@@ -37287,13 +37349,14 @@ function renderInvAgedCreditors() {
     return;
   }
 
-  const th = (t, right) => `<th style="padding:6px 8px;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;text-align:${right ? 'right' : 'left'};border-bottom:1px solid var(--border)">${t}</th>`;
+  const arrow = k => _invApAgedSortKey === k ? (_invApAgedSortDir === 1 ? ' ▲' : ' ▼') : '';
+  const th = (t, right, sortKey) => `<th style="padding:6px 8px;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;text-align:${right ? 'right' : 'left'};border-bottom:1px solid var(--border)${sortKey ? ';cursor:pointer;user-select:none' : ''}"${sortKey ? ` onclick="invApAgedSort('${sortKey}')" title="Sort"` : ''}>${t}${sortKey ? arrow(sortKey) : ''}</th>`;
   const td = (t, right, color, bold) => `<td style="padding:6px 8px;text-align:${right ? 'right' : 'left'};${color ? `color:${color};` : ''}${bold ? 'font-weight:600;' : ''}border-bottom:1px solid var(--border)">${t}</td>`;
 
   bodyEl.innerHTML = `
     <table style="width:100%;border-collapse:collapse;font-size:13px">
       <thead><tr>
-        ${th('Supplier')}${_INV_AGED_BUCKETS.map(b => th(b.label, true)).join('')}${th('Total', true)}
+        ${th('Supplier', false, 'supplier')}${_INV_AGED_BUCKETS.map(b => th(b.label, true, b.key)).join('')}${th('Total', true, 'all')}
       </tr></thead>
       <tbody>
         ${rows.map(r => {
