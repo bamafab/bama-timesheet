@@ -37185,8 +37185,8 @@ function renderInvSupplierTable() {
         `<input type="checkbox" ${_invRemitSelected.has(inv.id) ? 'checked' : ''}
                 onchange="invRemitToggle(${inv.id}, this.checked)" title="Select">`}</td>
       <td>${escapeHtml(inv.supplier_name || '')}${inv.invoice_type === 'subcontractor' ? ' <span style="display:inline-block;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600;background:rgba(147,112,219,.18);color:#b596e8" title="Subcontractor — CIS deduction £' + Number(inv.cis_deduction || 0).toFixed(2) + '">CIS</span>' : ''}</td>
-      <td>${poCell}</td>
       <td>${escapeHtml(inv.invoice_ref || '')}${fileLink}</td>
+      <td>${poCell}</td>
       <td>${escapeHtml(inv.job_number || inv.cost_centre || '')}${inv.babcock_quote_ref ? ` <span style="font-size:10px;color:var(--muted);font-family:var(--font-mono)">${escapeHtml(inv.babcock_quote_ref)}</span>` : ''}</td>
       <td>${_invSupFmtDate(inv.invoice_date)}</td>
       <td>${dueCell}</td>
