@@ -3590,7 +3590,7 @@ function selectReport(name) {
   // Babcock and Cost Analysis each bring their own toolbars + KPI rows.
   // Hide the generic shared chrome so they don't visually clash.
   // (Both elements only exist on reports.html; harmless no-op elsewhere.)
-  const ownsChrome = (name === 'babcock' || name === 'costanalysis' || name === 'holidays' || name === 'productivity' || name === 'faboutput' || name === 'cvr' || name === 'paymentsdue');
+  const ownsChrome = (name === 'babcock' || name === 'costanalysis' || name === 'holidays' || name === 'productivity' || name === 'faboutput' || name === 'cvr' || name === 'paymentsdue' || name === 'labourpay');
   const periodBar = document.getElementById('rptPeriodToolbar');
   if (periodBar) periodBar.style.display = ownsChrome ? 'none' : '';
   const sharedKpi = document.getElementById('rptKpiRow');
@@ -6108,6 +6108,10 @@ function renderReports() {
     renderPaymentsDueReport();
     return;
   }
+  if (activeReport === 'labourpay') {
+    renderLabourPayReport();
+    return;
+  }
 
   const empFilter = document.getElementById('rptEmployeeFilter')?.value || '';
 
@@ -8328,6 +8332,8 @@ function openSupplierTermsModal() {
   if (oaEl) oaEl.checked = !!supplier.payment_on_account;
   const azEl = document.getElementById('termAmazonCheckbox');
   if (azEl) azEl.checked = !!supplier.via_amazon;
+  const lbEl = document.getElementById('termLabourCheckbox');
+  if (lbEl) lbEl.checked = !!supplier.is_labour_supplier;
 
   _highlightSelectedTermOption();
 
@@ -8360,6 +8366,7 @@ async function saveSupplierTerms() {
   const selected = document.querySelector('input[name="termType"]:checked');
   const onAccount = document.getElementById('termOnAccCheckbox')?.checked || false;
   const viaAmazon = document.getElementById('termAmazonCheckbox')?.checked || false;
+  const isLabour  = document.getElementById('termLabourCheckbox')?.checked || false;
   // On-account (and pure DD) suppliers don't need a due-date rule
   if (!selected && !onAccount) { toast('Please select a payment term type (or tick Paid on Account)', 'warning'); return; }
 
@@ -8375,6 +8382,7 @@ async function saveSupplierTerms() {
       payment_dd: dd,
       payment_on_account: onAccount,
       via_amazon: viaAmazon,
+      is_labour_supplier: isLabour,
     });
 
     // Patch local cache
@@ -8385,6 +8393,7 @@ async function saveSupplierTerms() {
       _suppliers[idx].payment_dd = dd;
       _suppliers[idx].payment_on_account = onAccount;
       _suppliers[idx].via_amazon = viaAmazon;
+      _suppliers[idx].is_labour_supplier = isLabour;
     }
 
     closeSupplierTermsModal();
@@ -29291,6 +29300,337 @@ async function exportPaymentsDuePDF() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// LABOUR & SUBCONTRACTOR PAYMENTS — weekly spend on agency + subcontract labour
+//   Source: SupplierInvoices. A row counts as labour when it is either
+//     • a CIS subcontractor invoice (invoice_type = 'subcontractor'), or
+//     • from a supplier tagged is_labour_supplier (a labour agency, e.g. WPS).
+//   Materials suppliers are excluded. Gross = amount payable (bank outflow);
+//   CIS retained = deduction held for HMRC (subcontractors only).
+// ═══════════════════════════════════════════════════════════════════════════
+let _lprRows = null;   // raw supplier-invoice cache for this report
+
+// Week-ending Sunday for a given ISO date (BAMA labour invoices run to Sunday).
+function _lprWeekEnding(iso) {
+  if (!iso) return null;
+  const d = new Date(String(iso).slice(0, 10) + 'T00:00:00');
+  if (isNaN(d)) return null;
+  const dow = d.getDay();                 // 0 = Sun
+  const add = (7 - dow) % 7;              // days forward to Sunday
+  d.setDate(d.getDate() + add);
+  return d.toISOString().slice(0, 10);
+}
+
+function _lprIsLabour(inv) {
+  return inv.invoice_type === 'subcontractor' || !!inv.is_labour_supplier;
+}
+
+function _lprPreset(kind) {           // sets the From/To inputs
+  const fromEl = document.getElementById('lprFrom'), toEl = document.getElementById('lprTo');
+  if (!fromEl || !toEl) return;
+  const today = new Date();
+  const iso = d => d.toISOString().slice(0, 10);
+  if (kind === '4w') {
+    const from = new Date(today); from.setDate(from.getDate() - 27);
+    fromEl.value = iso(from); toEl.value = iso(today);
+  } else if (kind === 'tm') {
+    fromEl.value = iso(new Date(today.getFullYear(), today.getMonth(), 1));
+    toEl.value = iso(new Date(today.getFullYear(), today.getMonth() + 1, 0));
+  } else if (kind === 'fy') {
+    // UK FY: 1 Apr → 31 Mar
+    const y = today.getMonth() >= 3 ? today.getFullYear() : today.getFullYear() - 1;
+    fromEl.value = `${y}-04-01`; toEl.value = `${y + 1}-03-31`;
+  }
+}
+function lprPreset(kind) { _lprPreset(kind); renderLabourPayReport(true); }
+
+// Filter the cache to labour invoices inside the date window (by invoice_date).
+function _lprData() {
+  const from = document.getElementById('lprFrom')?.value || null;
+  const to   = document.getElementById('lprTo')?.value || null;
+  const unpaidOnly = !!document.getElementById('lprUnpaidOnly')?.checked;
+  const groupBy = document.getElementById('lprGroup')?.value || 'supplier';
+
+  const inWindow = (_lprRows || []).filter(inv => {
+    if (!_lprIsLabour(inv)) return false;
+    if (Number(inv.gross || 0) <= 0.005) return false;
+    if (unpaidOnly && inv.paid_at) return false;
+    const d = inv.invoice_date ? String(inv.invoice_date).slice(0, 10) : null;
+    if (!d) return false;
+    if (from && d < from) return false;
+    if (to && d > to) return false;
+    return true;
+  }).map(inv => {
+    const gross = Number(inv.gross || 0);
+    const cis   = inv.invoice_type === 'subcontractor' ? Number(inv.cis_deduction || 0) : 0;
+    const kind  = inv.invoice_type === 'subcontractor' ? 'sub' : 'agency';
+    return { ...inv, _gross: gross, _cis: cis, _kind: kind, _wk: _lprWeekEnding(inv.invoice_date) };
+  });
+
+  // Totals
+  let total = 0, cisRetained = 0, subTotal = 0, agencyTotal = 0;
+  for (const inv of inWindow) {
+    total += inv._gross; cisRetained += inv._cis;
+    if (inv._kind === 'sub') subTotal += inv._gross; else agencyTotal += inv._gross;
+  }
+
+  // Grouping
+  const groups = new Map();
+  const keyOf = inv => groupBy === 'week'
+    ? (inv._wk || '— no date —')
+    : (inv.supplier_name || '— Unknown —');
+  for (const inv of inWindow) {
+    const key = keyOf(inv);
+    if (!groups.has(key)) groups.set(key, { key, total: 0, cis: 0, sub: 0, agency: 0, invoices: [] });
+    const g = groups.get(key);
+    g.total += inv._gross; g.cis += inv._cis;
+    if (inv._kind === 'sub') g.sub += inv._gross; else g.agency += inv._gross;
+    g.invoices.push(inv);
+  }
+  const rows = Array.from(groups.values());
+  if (groupBy === 'week') rows.sort((a, b) => String(b.key).localeCompare(String(a.key)));       // newest week first
+  else rows.sort((a, b) => b.total - a.total);                                                    // biggest payee first
+  for (const r of rows) {
+    r.invoices.sort((a, b) => String(b.invoice_date || '').localeCompare(String(a.invoice_date || '')));
+  }
+  return { rows, total, cisRetained, subTotal, agencyTotal, count: inWindow.length, from, to, groupBy, unpaidOnly };
+}
+
+async function renderLabourPayReport(run) {
+  const tbl = document.getElementById('lprTable');
+  if (!tbl) return;
+  // Default to last 4 weeks on first open
+  const fromEl = document.getElementById('lprFrom');
+  if (fromEl && !fromEl.value) _lprPreset('4w');
+
+  if (run || !_lprRows) {
+    tbl.innerHTML = '<div style="padding:30px;text-align:center;color:var(--muted);font-size:12px">Loading…</div>';
+    try {
+      _lprRows = await api.get('/api/supplier-invoices');
+    } catch (e) {
+      tbl.innerHTML = `<div style="padding:20px;color:var(--red);font-size:12px">Could not load supplier invoices: ${escapeHtml(e.message)}</div>`;
+      return;
+    }
+  }
+
+  const { rows, total, cisRetained, subTotal, agencyTotal, count, groupBy, unpaidOnly } = _lprData();
+  const pdfBtn = document.getElementById('lprPdfBtn'), csvBtn = document.getElementById('lprCsvBtn');
+  const kEl = document.getElementById('lprKpis');
+
+  if (!rows.length) {
+    if (pdfBtn) pdfBtn.style.display = 'none';
+    if (csvBtn) csvBtn.style.display = 'none';
+    if (kEl) kEl.style.display = 'none';
+    tbl.innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted);font-size:12px">No labour or subcontractor invoices in this window.</div>';
+    return;
+  }
+  if (pdfBtn) pdfBtn.style.display = '';
+  if (csvBtn) csvBtn.style.display = '';
+
+  const hue = key => { let h = 0; const s = String(key); for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h % 360; };
+  const fmtD = iso => iso ? new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }) : '—';
+
+  // KPI strip
+  const kpi = (label, val, col) => `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 16px;min-width:150px">
+      <div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em">${label}</div>
+      <div style="font-size:19px;font-weight:700;font-family:var(--font-mono);color:${col || 'var(--text)'}">${val}</div></div>`;
+  kEl.style.display = 'flex'; kEl.style.gap = '10px'; kEl.style.flexWrap = 'wrap';
+  kEl.innerHTML =
+    kpi('Total labour spend', gbp2(total), 'var(--accent)') +
+    kpi('Labour agencies', gbp2(agencyTotal)) +
+    kpi('Subcontractors', gbp2(subTotal)) +
+    (cisRetained > 0.005 ? kpi('CIS retained (HMRC)', gbp2(cisRetained), '#b596e8') : '') +
+    kpi('Invoices', String(count));
+
+  const groupHdr = groupBy === 'week' ? 'Week ending / invoice' : 'Supplier / invoice';
+  const th = 'padding:8px;font-size:9.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;border-bottom:2px solid var(--border);text-align:right;white-space:nowrap';
+  const td = 'padding:8px;border-bottom:1px solid var(--border);text-align:right;font-family:var(--font-mono);font-size:12px;white-space:nowrap';
+  let html = `<div style="overflow-x:auto;border:1px solid var(--border);border-radius:10px;background:var(--card,#161616)">
+    <table style="border-collapse:separate;border-spacing:0;min-width:100%">
+    <thead><tr>
+      <th style="${th};text-align:left;padding-left:12px">${groupHdr}</th>
+      <th style="${th};text-align:left">Type</th>
+      <th style="${th};text-align:left">Project</th>
+      <th style="${th}">Date</th>
+      <th style="${th}">CIS held</th>
+      <th style="${th}">Gross</th>
+    </tr></thead><tbody>`;
+
+  const badge = (inv) => inv._kind === 'sub'
+    ? '<span style="display:inline-block;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:600;background:rgba(147,112,219,.18);color:#b596e8">CIS sub</span>'
+    : '<span style="display:inline-block;padding:1px 7px;border-radius:8px;font-size:10px;font-weight:600;background:rgba(22,110,180,.18);color:#6fb0e0">Agency</span>';
+
+  rows.forEach(r => {
+    const h = hue(r.key);
+    const label = groupBy === 'week' ? ('w/e ' + fmtD(r.key)) : r.key;
+    html += `<tr>
+      <td style="padding:9px 12px;border-bottom:1px solid var(--border);white-space:nowrap;font-weight:700">
+        <span style="display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:20px;background:hsla(${h},70%,55%,.14);border:1px solid hsla(${h},70%,60%,.45);color:hsl(${h},75%,72%);font-size:12px">${escapeHtml(label)}</span>
+      </td>
+      <td style="border-bottom:1px solid var(--border)"></td>
+      <td style="border-bottom:1px solid var(--border)"></td>
+      <td style="border-bottom:1px solid var(--border)"></td>
+      <td style="${td};color:#b596e8">${r.cis > 0.005 ? gbp2(r.cis) : ''}</td>
+      <td style="${td};font-weight:700">${gbp2(r.total)}</td>
+    </tr>`;
+    r.invoices.forEach((inv, ii) => {
+      const zebra = ii % 2 ? 'background:rgba(255,255,255,.018);' : '';
+      const sub = groupBy === 'week' ? (inv.supplier_name || '') : (inv.invoice_ref || ('#' + inv.id));
+      html += `<tr>
+        <td style="padding:6px 12px 6px 26px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11.5px;color:var(--muted);${zebra}">
+          ${escapeHtml(sub)}${inv.paid_at ? '<span style="color:#4ea56b;font-size:10px;margin-left:6px">paid</span>' : '<span style="color:var(--subtle);font-size:10px;margin-left:6px">unpaid</span>'}
+        </td>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:left;${zebra}">${badge(inv)}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted);text-align:left;${zebra}">${escapeHtml(inv.project_number || inv.job_number || inv.cost_centre || '')}</td>
+        <td style="${td};${zebra};color:var(--muted)">${fmtD(inv.invoice_date ? String(inv.invoice_date).slice(0, 10) : null)}</td>
+        <td style="${td};${zebra};color:#b596e8">${inv._cis > 0.005 ? gbp2(inv._cis) : ''}</td>
+        <td style="${td};${zebra}">${gbp2(inv._gross)}</td>
+      </tr>`;
+    });
+  });
+  html += `</tbody>
+    <tfoot><tr>
+      <td style="padding:10px 12px;border-top:2px solid var(--border);font-weight:700">TOTAL LABOUR SPEND</td>
+      <td style="border-top:2px solid var(--border)"></td>
+      <td style="border-top:2px solid var(--border)"></td>
+      <td style="border-top:2px solid var(--border)"></td>
+      <td style="${td};border-top:2px solid var(--border);border-bottom:none;color:#b596e8">${cisRetained > 0.005 ? gbp2(cisRetained) : ''}</td>
+      <td style="${td};border-top:2px solid var(--border);border-bottom:none;font-weight:700;color:var(--accent)">${gbp2(total)}</td>
+    </tr></tfoot>
+    </table></div>
+    <div style="font-size:10.5px;color:var(--subtle);margin-top:8px">Gross (amount payable) labour invoices by invoice date. Agencies = labour-supplier-tagged companies; CIS sub = subcontractor invoices (deduction retained for HMRC). ${unpaidOnly ? 'Unpaid only.' : 'Paid + unpaid.'} Materials suppliers excluded.</div>`;
+  tbl.innerHTML = html;
+}
+
+function exportLabourPayCsv() {
+  if (!_lprRows) { toast('Refresh first', 'error'); return; }
+  const { rows, total, cisRetained, groupBy, from, to } = _lprData();
+  if (!rows.length) { toast('Nothing to export', 'error'); return; }
+  const esc = v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+  const lines = [['Group', 'Supplier', 'Invoice Ref', 'Type', 'Project', 'Invoice Date', 'Week Ending', 'Paid', 'CIS Retained', 'Gross'].map(esc).join(',')];
+  for (const r of rows) {
+    const groupLabel = groupBy === 'week' ? ('w/e ' + r.key) : r.key;
+    for (const inv of r.invoices) {
+      lines.push([
+        groupLabel, inv.supplier_name || '', inv.invoice_ref || '',
+        inv._kind === 'sub' ? 'CIS subcontractor' : 'Labour agency',
+        inv.project_number || inv.job_number || inv.cost_centre || '',
+        String(inv.invoice_date || '').slice(0, 10),
+        inv._wk || '', inv.paid_at ? 'paid' : 'unpaid',
+        inv._cis ? inv._cis.toFixed(2) : '', inv._gross.toFixed(2)
+      ].map(esc).join(','));
+    }
+  }
+  lines.push('');
+  lines.push([groupBy === 'week' ? 'PER WEEK' : 'PER SUPPLIER', '', '', '', '', '', '', '', 'CIS', 'Gross'].map(esc).join(','));
+  for (const r of rows) lines.push([groupBy === 'week' ? ('w/e ' + r.key) : r.key, '', '', '', '', '', '', '', r.cis ? r.cis.toFixed(2) : '', r.total.toFixed(2)].map(esc).join(','));
+  lines.push(['', '', '', '', '', '', '', 'TOTAL', cisRetained.toFixed(2), total.toFixed(2)].map(esc).join(','));
+  const blob = new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `labour-payments-${from || ''}_${to || ''}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+// Native jsPDF Labour & Subcontractor Payments schedule — portrait A4 (CLAUDE.md PDF rules)
+async function exportLabourPayPDF() {
+  if (!_lprRows) { toast('Refresh first', 'error'); return; }
+  const { rows, total, cisRetained, subTotal, agencyTotal, count, groupBy, from, to, unpaidOnly } = _lprData();
+  if (!rows.length) { toast('Nothing to export', 'error'); return; }
+  const JsPDFCtor = await resolveJsPDFCtor();
+  const doc = new JsPDFCtor({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  const pageW = 210, pageH = 297, mL = 12, W = pageW - 24;
+  const NAVY = [26,26,46], TEXT = [34,34,34], MUTED = [110,110,110], PURPLE = [128,90,180], ACCENT = [22,110,180], RULE = [215,218,224];
+  const sT = c => doc.setTextColor(c[0],c[1],c[2]);
+  const money = v => v == null ? '\u2014' : gbp2(v);
+  const fmtD = iso => iso ? new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }) : '\u2014';
+
+  doc.setFillColor(NAVY[0],NAVY[1],NAVY[2]); doc.rect(0, 0, pageW, 24, 'F');
+  sT([255,255,255]); doc.setFont('helvetica','bold'); doc.setFontSize(15);
+  doc.text('Labour & Subcontractor Payments', mL, 10.5);
+  doc.setFont('helvetica','normal'); doc.setFontSize(8.5);
+  const period = (from ? fmtD(from) : 'start') + ' \u2013 ' + (to ? fmtD(to) : 'today');
+  const sub = `${period} \u00B7 ${count} invoice${count !== 1 ? 's' : ''}${unpaidOnly ? ' (unpaid only)' : ''} \u00B7 ${new Date().toLocaleDateString('en-GB')} \u00B7 BAMA Fabrication Ltd`;
+  doc.text(sub, mL, 17.5);
+  let y = 31;
+
+  const kpis = [
+    ['TOTAL LABOUR SPEND', money(total), ACCENT],
+    ['AGENCIES', money(agencyTotal), TEXT],
+    ['SUBCONTRACTORS', money(subTotal), TEXT],
+    ['CIS RETAINED', money(cisRetained), cisRetained > 0.005 ? PURPLE : MUTED],
+    ['INVOICES', String(count), MUTED]
+  ];
+  const kw = W / kpis.length;
+  kpis.forEach((k, i) => {
+    const x = mL + i * kw;
+    doc.setDrawColor(RULE[0],RULE[1],RULE[2]); doc.setLineWidth(0.2); doc.roundedRect(x + 1, y, kw - 2, 14, 1.5, 1.5, 'S');
+    sT(MUTED); doc.setFontSize(5.6); doc.setFont('helvetica','bold'); doc.text(k[0], x + 3, y + 5);
+    sT(k[2]); doc.setFontSize(9.5); doc.text(k[1], x + 3, y + 11);
+  });
+  y += 21;
+
+  const cols = [[groupBy === 'week' ? 'WEEK ENDING / INVOICE' : 'SUPPLIER / INVOICE', 70, 'left'], ['TYPE', 22, 'left'], ['PROJECT', 30, 'left'], ['DATE', 20], ['CIS', 20], ['GROSS', 24]];
+  const xs = []; let acc = mL; cols.forEach(c => { xs.push(acc); acc += c[1]; });
+  const head = () => {
+    doc.setFillColor(NAVY[0],NAVY[1],NAVY[2]); doc.rect(mL, y, W, 6.5, 'F');
+    sT([255,255,255]); doc.setFont('helvetica','bold'); doc.setFontSize(6.6);
+    cols.forEach((c, i) => doc.text(c[0], c[2] === 'left' ? xs[i] + 2 : xs[i] + c[1] - 2, y + 4.4, { align: c[2] === 'left' ? 'left' : 'right' }));
+    y += 6.5;
+  };
+  head();
+
+  const ensure = h => { if (y + h > pageH - 16) { doc.addPage(); y = 12; head(); } };
+  for (const r of rows) {
+    ensure(7);
+    const label = groupBy === 'week' ? ('w/e ' + fmtD(r.key)) : r.key;
+    doc.setFillColor(244,246,249); doc.rect(mL, y, W, 6, 'F');
+    sT(TEXT); doc.setFont('helvetica','bold'); doc.setFontSize(8);
+    doc.text(doc.splitTextToSize(label, cols[0][1] - 4)[0], xs[0] + 2, y + 4.2);
+    if (r.cis > 0.005) { sT(PURPLE); doc.setFont('helvetica','normal'); doc.setFontSize(7.4); doc.text(money(r.cis), xs[4] + cols[4][1] - 2, y + 4.2, { align: 'right' }); }
+    sT(TEXT); doc.setFont('helvetica','bold'); doc.setFontSize(8);
+    doc.text(money(r.total), xs[5] + cols[5][1] - 2, y + 4.2, { align: 'right' });
+    y += 6;
+    doc.setFontSize(7.2); doc.setFont('helvetica','normal');
+    for (const inv of r.invoices) {
+      ensure(5);
+      const sub2 = groupBy === 'week' ? (inv.supplier_name || '') : (inv.invoice_ref || ('#' + inv.id));
+      sT(MUTED);
+      doc.text('   ' + doc.splitTextToSize(sub2, cols[0][1] - 8)[0], xs[0] + 2, y + 3.8);
+      doc.text(inv._kind === 'sub' ? 'CIS sub' : 'Agency', xs[1] + 2, y + 3.8);
+      doc.text(doc.splitTextToSize(inv.project_number || inv.job_number || inv.cost_centre || '', cols[2][1] - 2)[0] || '', xs[2] + 2, y + 3.8);
+      doc.text(fmtD(inv.invoice_date ? String(inv.invoice_date).slice(0, 10) : null), xs[3] + cols[3][1] - 2, y + 3.8, { align: 'right' });
+      if (inv._cis > 0.005) { sT(PURPLE); doc.text(money(inv._cis), xs[4] + cols[4][1] - 2, y + 3.8, { align: 'right' }); }
+      sT(TEXT); doc.text(money(inv._gross), xs[5] + cols[5][1] - 2, y + 3.8, { align: 'right' });
+      doc.setDrawColor(RULE[0],RULE[1],RULE[2]); doc.setLineWidth(0.1); doc.line(mL, y + 5, mL + W, y + 5);
+      y += 5;
+    }
+  }
+  ensure(9);
+  y += 2;
+  doc.setDrawColor(NAVY[0],NAVY[1],NAVY[2]); doc.setLineWidth(0.4); doc.line(mL, y, mL + W, y);
+  y += 5;
+  sT(TEXT); doc.setFont('helvetica','bold'); doc.setFontSize(10);
+  doc.text('TOTAL LABOUR SPEND', xs[0] + 2, y);
+  if (cisRetained > 0.005) { sT(PURPLE); doc.setFontSize(8); doc.text('CIS ' + money(cisRetained), xs[4] + cols[4][1] - 2, y, { align: 'right' }); }
+  sT(ACCENT); doc.setFontSize(10); doc.text(money(total), xs[5] + cols[5][1] - 2, y, { align: 'right' });
+  y += 8;
+  sT(MUTED); doc.setFont('helvetica','normal'); doc.setFontSize(6.5);
+  doc.splitTextToSize('Gross (amount payable) labour invoices by invoice date. "Agency" = a labour-supplier-tagged company (e.g. WPS) supplying workers; "CIS sub" = a subcontractor invoice with the CIS deduction retained for HMRC. ' + (unpaidOnly ? 'Unpaid invoices only. ' : 'Paid and unpaid invoices. ') + 'Materials suppliers are excluded. Figures are live from the ERP at time of printing.', W).forEach(l => { doc.text(l, mL, y); y += 3.2; });
+
+  const pages = doc.getNumberOfPages();
+  for (let i = 1; i <= pages; i++) {
+    doc.setPage(i);
+    sT([150,150,150]); doc.setFontSize(7);
+    doc.text('BAMA Fabrication ERP \u00B7 Labour & Subcontractor Payments', mL, pageH - 6);
+    doc.text(`Page ${i} of ${pages}`, pageW - mL, pageH - 6, { align: 'right' });
+  }
+  const blob = doc.output('blob');
+  console.log('[Labour Pay PDF] blob size:', blob.size);
+  doc.save(`labour-payments-${from || ''}_${to || ''}.pdf`);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // FAB OUTPUT — kg per person per day from JobAssemblyActions (Phase C2b)
 // ═══════════════════════════════════════════════════════════════════════════
 let _foRows = null, _foMeta = null;
@@ -38175,7 +38515,7 @@ CRITICAL — who is the supplier:
 - The invoice is ADDRESSED TO "Bama Fabrication" / "BAMA Fabrication Ltd" — that is US, the CUSTOMER. NEVER return a Bama/BAMA name as supplier_name.
 - The SELLER (supplier_name) is the party on the letterhead/logo who issues the "Sales Invoice", quotes their own VAT number, and gives bank/remittance details for payment. Their name usually appears at the very top (logo) and again in "Bank Details / remittances to". Trading divisions: return the trading entity as shown (e.g. "Laser Profiles" or "WEC Group Ltd").
 - If the only company name you can read is a Bama variant, set supplier_name to null rather than guessing.
-Classify as subcontractor when it's labour/days/hours from an individual, mentions CIS, a % deduction, or a UTR. Null anything not clearly shown. Use the final printed totals.`
+Classify as subcontractor ONLY when it's labour/days/hours from an INDIVIDUAL and it mentions CIS, a % deduction, or a UTR. A LABOUR AGENCY — a limited company (name ends "Ltd"/"Limited") that supplies named workers by the week/day with NO CIS deduction and no UTR (often reverse-charge or 0% VAT) — is a normal "supplier", NOT a subcontractor. Null anything not clearly shown. Use the final printed totals.`
           }
         ]
       }]
@@ -39001,7 +39341,7 @@ CRITICAL — who is the supplier:
 - The invoice is ADDRESSED TO "Bama Fabrication" / "BAMA Fabrication Ltd" — that is US, the CUSTOMER. NEVER return a Bama/BAMA name as supplier_name.
 - The SELLER (supplier_name) is the party on the letterhead/logo who issues the invoice, quotes their own VAT number, and gives bank/remittance details for payment. Their name usually appears at the top (logo) and again in "Bank Details / remittances to". For trading divisions return the trading entity as shown (e.g. "Laser Profiles").
 - If the only company name you can read is a Bama variant, set supplier_name to null rather than guessing.
-Classify as subcontractor when the invoice is for labour/days/hours from an individual, mentions CIS, a percentage deduction, or a UTR number. Set any field to null if not clearly shown.
+Classify as subcontractor ONLY when the invoice is for labour/days/hours from an INDIVIDUAL and mentions CIS, a percentage deduction, or a UTR number. A LABOUR AGENCY — a limited company (name ends "Ltd"/"Limited") supplying named workers by the week/day with NO CIS deduction and no UTR (often reverse-charge or 0% VAT) — is a normal "supplier", NOT a subcontractor. Set any field to null if not clearly shown.
 IMPORTANT: Use the final printed totals from the invoice — not a goods-only subtotal.`
           }
         ]

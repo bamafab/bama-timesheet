@@ -383,11 +383,11 @@ app.http('suppliers-create', {
 
             const result = await query(
                 `INSERT INTO Suppliers (supplier_name, address_line1, address_line2, city, county, postcode, telephone, email, contact_name, notes, parse_source_text,
-                                        is_subcontractor, utr_number, cis_rate, bank_sort_code, bank_account_no,
+                                        is_subcontractor, is_labour_supplier, utr_number, cis_rate, bank_sort_code, bank_account_no,
                                         payment_on_account, via_amazon)
                  OUTPUT INSERTED.*
                  VALUES (@supplierName, @addressLine1, @addressLine2, @city, @county, @postcode, @telephone, @email, @contactName, @notes, @parseSourceText,
-                         @isSubcontractor, @utrNumber, @cisRate, @bankSortCode, @bankAccountNo,
+                         @isSubcontractor, @isLabourSupplier, @utrNumber, @cisRate, @bankSortCode, @bankAccountNo,
                          @paymentOnAccount, @viaAmazon)`,
                 {
                     supplierName: supplier_name,
@@ -402,6 +402,7 @@ app.http('suppliers-create', {
                     notes: notes || null,
                     parseSourceText: parse_source_text || null,
                     isSubcontractor: body.is_subcontractor ? 1 : 0,
+                    isLabourSupplier: body.is_labour_supplier ? 1 : 0,
                     utrNumber: body.utr_number || null,
                     cisRate: body.cis_rate != null && body.cis_rate !== '' ? Number(body.cis_rate) : null,
                     bankSortCode: body.bank_sort_code || null,
@@ -462,6 +463,7 @@ app.http('suppliers-update', {
             if (body.payment_term_days !== undefined) { fields.push('payment_term_days = @paymentTermDays'); params.paymentTermDays = body.payment_term_days != null ? parseInt(body.payment_term_days) : null; }
             if (body.payment_dd !== undefined) { fields.push('payment_dd = @paymentDd'); params.paymentDd = body.payment_dd ? 1 : 0; }
             if (body.is_subcontractor !== undefined) { fields.push('is_subcontractor = @isSubcontractor'); params.isSubcontractor = body.is_subcontractor ? 1 : 0; }
+            if (body.is_labour_supplier !== undefined) { fields.push('is_labour_supplier = @isLabourSupplier'); params.isLabourSupplier = body.is_labour_supplier ? 1 : 0; }
             if (body.utr_number !== undefined) { fields.push('utr_number = @utrNumber'); params.utrNumber = body.utr_number || null; }
             if (body.cis_rate !== undefined) { fields.push('cis_rate = @cisRate'); params.cisRate = body.cis_rate != null && body.cis_rate !== '' ? Number(body.cis_rate) : null; }
             if (body.bank_sort_code !== undefined) { fields.push('bank_sort_code = @bankSortCode'); params.bankSortCode = body.bank_sort_code || null; }

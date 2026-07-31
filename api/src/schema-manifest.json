@@ -325,6 +325,19 @@
       "seedForms": []
     },
     {
+      "script": "add-labour-supplier-and-fix-wps.sql",
+      "title": "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "Suppliers",
+          "column": "is_labour_supplier"
+        }
+      ],
+      "seedForms": []
+    },
+    {
       "script": "add-payroll-holiday-columns.sql",
       "title": "Add holiday pay columns to PayrollArchive",
       "kind": "structural",
@@ -1265,6 +1278,19 @@
         "BAMA SITE 001",
         "BAMA tec 001",
         "CON 001"
+      ]
+    },
+    {
+      "script": "slim-qms-checksheets.sql",
+      "title": "evidence pattern: photo + tap-tick outcome + sign. Procedure lives in the docs,",
+      "kind": "structural",
+      "tables": [],
+      "columns": [],
+      "seedForms": [
+        "BAMA FAB 001",
+        "BAMA MAT 001",
+        "BAMA REL 001",
+        "BAMA SITE 001"
       ]
     },
     {

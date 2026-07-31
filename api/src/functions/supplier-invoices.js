@@ -112,6 +112,7 @@ async function recomputePoReconciliation(poId) {
 const LIST_SELECT = `
     SELECT si.*,
            s.supplier_name, s.payment_term_type, s.payment_term_days, s.payment_dd,
+           s.is_subcontractor, s.is_labour_supplier,
            po.reference AS po_reference, po.total_value AS po_total_value,
            po.job_number, po.cost_centre,
            p.project_number, p.project_name,

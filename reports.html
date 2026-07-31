@@ -147,6 +147,11 @@
         <div class="report-picker-name">Payments due</div>
         <div class="report-picker-desc">Supplier invoices to pay by a chosen date</div>
       </div>
+      <div class="report-picker-card" data-report="labourpay" onclick="selectReport('labourpay')">
+        <div class="report-picker-icon">&#128119;</div>
+        <div class="report-picker-name">Labour &amp; subcontractor payments</div>
+        <div class="report-picker-desc">Weekly spend on agency &amp; subcontract labour</div>
+      </div>
       <div class="report-picker-card" data-report="babcock" onclick="selectReport('babcock')">
         <div class="report-picker-icon">&#9875;</div>
         <div class="report-picker-name">Babcock overview</div>
@@ -322,6 +327,46 @@
       <div id="pdrTable"><div style="padding:30px;text-align:center;color:var(--muted);font-size:12px">Pick a date and hit Refresh.</div></div>
     </div>
 
+    <!-- Report: Labour & Subcontractor Payments -->
+    <div class="report-panel" id="rptPanel-labourpay">
+      <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px">
+        <div>
+          <label style="display:block;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">From</label>
+          <input type="date" class="field-input" id="lprFrom" style="padding:6px 10px;font-size:13px" onchange="renderLabourPayReport(true)">
+        </div>
+        <div>
+          <label style="display:block;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">To</label>
+          <input type="date" class="field-input" id="lprTo" style="padding:6px 10px;font-size:13px" onchange="renderLabourPayReport(true)">
+        </div>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-ghost btn-sm" onclick="lprPreset('4w')">Last 4 weeks</button>
+          <button class="btn btn-ghost btn-sm" onclick="lprPreset('tm')">This month</button>
+          <button class="btn btn-ghost btn-sm" onclick="lprPreset('fy')">This FY</button>
+        </div>
+        <select class="field-input" id="lprGroup" style="padding:6px 10px;font-size:13px" onchange="renderLabourPayReport(true)">
+          <option value="supplier">Group by supplier</option>
+          <option value="week">Group by week</option>
+        </select>
+        <label style="font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:5px"><input type="checkbox" id="lprUnpaidOnly" onchange="renderLabourPayReport(true)"> unpaid only</label>
+        <div style="margin-left:auto;display:flex;gap:6px">
+          <button class="btn btn-primary btn-sm" onclick="renderLabourPayReport(true)">↻ Refresh</button>
+          <button class="btn btn-ghost btn-sm" id="lprPdfBtn" onclick="exportLabourPayPDF()" style="display:none">⬇ PDF</button>
+          <button class="btn btn-ghost btn-sm" id="lprCsvBtn" onclick="exportLabourPayCsv()" style="display:none">⬇ CSV</button>
+          <button class="btn btn-ghost btn-sm" onclick="const d=document.getElementById('lprHelp');d.style.display=d.style.display==='none'?'':'none'">?</button>
+        </div>
+      </div>
+      <div id="lprHelp" style="display:none;font-size:11.5px;color:var(--muted);line-height:1.6;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px">
+        Every labour invoice in the period — <strong>CIS subcontractors</strong> (individuals, deduction retained for HMRC) and <strong>labour agencies</strong>
+        (limited companies like WPS that supply workers; tag one in Office → Suppliers → payment terms → "Labour supplier"). Materials suppliers are excluded.
+        <strong>Gross</strong> = amount payable (what leaves the bank). <strong>CIS retained</strong> = deduction held back from subcontractors for HMRC.
+        Group by supplier to see who you pay; group by week to see the weekly wage-bill shape. <strong>Unpaid only</strong> shows what's still outstanding.
+        <strong>Something looks wrong?</strong> WPS still tagged CIS → run the reclassify SQL. A materials supplier appearing → untick "Labour supplier" on their record.
+        Figures are gross and live at time of printing.
+      </div>
+      <div id="lprKpis" style="display:none;margin-bottom:12px"></div>
+      <div id="lprTable"><div style="padding:30px;text-align:center;color:var(--muted);font-size:12px">Pick a range and hit Refresh.</div></div>
+    </div>
+
     <div class="report-panel" id="rptPanel-babcock">
       <!-- FY toggle -->
       <div style="display:flex;gap:10px;align-items:center;margin-bottom:18px;flex-wrap:wrap">
@@ -442,6 +487,6 @@
   </div>
 </div>
 
-<script src="shared.js?v=20260731e"></script>
+<script src="shared.js?v=20260731f"></script>
 </body>
 </html>
