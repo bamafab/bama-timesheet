@@ -16842,9 +16842,18 @@ async function createProjectFromQuote() {
     const spQuoteFolderId = q.sharepointFolderId || q.sharepoint_folder_id || null;
     try {
       const token = qbToken();
-      const projectNumber = q.ref.replace(/^Q/i, 'C');
-      const clientPart  = (client || '').replace(/[\\/:*?"<>|]/g, '-').trim().slice(0, 40);
-      const projectPart = (name || '').replace(/[\\/:*?"<>|]/g, '-').trim().slice(0, 40);
+      // SharePoint/OneDrive-safe folder segment: strip Graph-illegal chars,
+      // slice to length, THEN trim leading/trailing spaces and periods
+      // (SharePoint rejects both → 400 Bad Request) and collapse whitespace.
+      const spSafe = (s) => (s || '')
+        .replace(/[\\/:*?"<>|#%~&{}]/g, '-')   // Graph-illegal set
+        .replace(/\s+/g, ' ')                    // collapse whitespace
+        .slice(0, 40)
+        .replace(/^[\s.]+|[\s.]+$/g, '')         // no leading/trailing space or dot
+        .trim();
+      const projectNumber = spSafe(q.ref.replace(/^Q/i, 'C'));
+      const clientPart  = spSafe(client);
+      const projectPart = spSafe(name);
       const folderName  = [projectNumber, clientPart, projectPart].filter(Boolean).join(' - ');
       const driveId = 'b!CxTKk9lEwkyweUqAo3CRas-huywW4KtLqOk2tNzmx-P7CX86DNhTQo14pLuU_tZu';
       const g = 'https://graph.microsoft.com/v1.0';
@@ -16880,8 +16889,19 @@ async function createProjectFromQuote() {
             body: JSON.stringify({ name: sub, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' })
           }).catch(() => {});
         }
+      } else {
+        // Do NOT swallow — surface the real Graph error so a failed folder
+        // create can never masquerade as success.
+        let detail = '';
+        try { detail = (await pfRes.json())?.error?.message || ''; } catch(_) {}
+        const msg = 'SharePoint project folder failed (HTTP ' + pfRes.status + ') for "' + folderName + '"' + (detail ? ': ' + detail : '');
+        console.error(msg);
+        toast(msg, 'warning');
       }
-    } catch(e) { console.warn('SharePoint folders failed (non-fatal):', e); }
+    } catch(e) {
+      console.error('SharePoint folders failed:', e);
+      toast('SharePoint folder creation failed: ' + (e.message || e), 'warning');
+    }
 
     // 3. Mark as won via API — creates Project row
     status.textContent = 'Creating project in ERP...';
