@@ -11751,6 +11751,21 @@ async function uploadFileToFolder(parentItemId, fileName, fileData, contentType,
   return await res.json();
 }
 
+// Look up a file by name inside a folder. Returns the driveItem if present,
+// else null. Used to avoid uploading a duplicate when someone has already
+// dropped the PDF into the destination folder by hand.
+async function _findFileInFolder(parentItemId, fileName, driveId) {
+  const token = await getToken();
+  const url = `https://graph.microsoft.com/v1.0/drives/${driveId || BAMA_DRIVE_ID}/items/${parentItemId}:/${encodeURIComponent(fileName)}`;
+  try {
+    const res = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
+    if (res.ok) return await res.json();
+    return null; // 404 = not there (the normal case)
+  } catch (_) {
+    return null; // network hiccup — treat as "not found", upload proceeds
+  }
+}
+
 // Strips characters SharePoint disallows in filenames: ~ " # % & * : < > ? { | } / \
 function sanitizeSpFilename(name) {
   return (name || '').replace(/[~"#%&*:<>?{|}/\\]/g, '_');
@@ -37861,6 +37876,33 @@ async function _bimpApplyParsed(i, p) {
   }
 
   _bimpCheckDup(i);
+  await _bimpCheckFileExists(i);
+}
+
+// Option (c): warn on the card when a file of the same computed name is already
+// in the destination folder (hand-dropped by someone). Non-fatal — any error
+// just leaves it.fileExists false so the upload proceeds normally.
+async function _bimpCheckFileExists(i) {
+  const it = _bimpItems[i];
+  it.fileExists = false;
+  try {
+    // Resolve the same supplier name + folder + filename the save step will use.
+    const suppliers = await _invGetSuppliersList();
+    const sName = it.supplierId
+      ? ((suppliers.find(x => String(x.id) === String(it.supplierId)) || {}).supplier_name || '')
+      : (it.newSupplier ? it.newSupplier.supplier_name : '');
+    if (!sName) return; // no supplier resolved yet — can't know the folder
+    const folder = await _findOrCreateSupplierInvoiceFolder(it.date || new Date().toISOString().slice(0, 10));
+    const stamp = sName.replace(/\s+/g, '_').slice(0, 30);
+    const ext = (it.file.name.split('.').pop() || 'pdf').toLowerCase();
+    const fileName = sanitizeSpFilename(`${it.date || 'undated'}_${stamp}_${it.ref || 'no-ref'}.${ext}`);
+    const existing = await _findFileInFolder(folder.id, fileName);
+    it.fileExists = !!existing;
+    it.forceUpload = false; // default: reuse the existing file
+  } catch (_) {
+    it.fileExists = false;
+  }
+  _bimpRenderCard(i);
 }
 
 function _bimpCalcCis(it) {
@@ -37967,6 +38009,15 @@ function _bimpRenderCard(i) {
       </label>
     </div>` : '';
 
+  const fileBanner = it.fileExists ? `
+    <div style="display:flex;align-items:center;gap:10px;background:rgba(96,165,250,.10);border:1px solid #60a5fa;border-radius:6px;padding:6px 10px;margin-top:8px">
+      <span style="font-size:11px;color:#60a5fa;font-weight:600">📎 A file with this name is already in the folder — it will be reused (no duplicate uploaded)</span>
+      <label style="display:flex;align-items:center;gap:5px;font-size:11px;margin-left:auto;white-space:nowrap;cursor:pointer">
+        <input type="checkbox" ${it.forceUpload ? 'checked' : ''} onchange="_bimpItems[${i}].forceUpload=this.checked">
+        upload a fresh copy instead
+      </label>
+    </div>` : '';
+
   host.innerHTML = `
     <div class="card" style="padding:12px 14px;margin-bottom:8px;${!it.include && it.dup ? 'opacity:.65;' : ''}border-left:3px solid ${isSub ? '#b596e8' : 'var(--accent)'}">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
@@ -38013,6 +38064,7 @@ function _bimpRenderCard(i) {
         `}
       </div>
       ${dupBanner}
+      ${fileBanner}
     </div>`;
 }
 
@@ -38027,6 +38079,7 @@ function bimpSupplierPicked(i, val) {
   _bimpCheckDup(i);
   _bimpRenderCard(i);
   _bimpUpdateFooter();
+  _bimpCheckFileExists(i); // supplier changed → destination folder changed
 }
 
 function _bimpUpdateFooter() {
@@ -38078,14 +38131,23 @@ async function bimpSaveAll() {
         }
       }
 
-      // 2. File → SharePoint
+      // 2. File → SharePoint. If a file with the same name is already in the
+      // destination folder (someone dropped it there by hand), reuse it rather
+      // than uploading a duplicate — unless the user explicitly chose to upload
+      // a fresh copy on the review card (it.forceUpload).
       const suppliers = await _invGetSuppliersList();
       const sName = (suppliers.find(x => x.id === supplierId) || {}).supplier_name || 'supplier';
       const folder = await _findOrCreateSupplierInvoiceFolder(it.date || new Date().toISOString().slice(0, 10));
       const stamp = sName.replace(/\s+/g, '_').slice(0, 30);
       const ext = (it.file.name.split('.').pop() || 'pdf').toLowerCase();
       const fileName = sanitizeSpFilename(`${it.date || 'undated'}_${stamp}_${it.ref || 'no-ref'}.${ext}`);
-      const driveItem = await uploadFileToFolder(folder.id, fileName, it.file, it.file.type || 'application/octet-stream');
+      let driveItem = null;
+      if (!it.forceUpload) {
+        driveItem = await _findFileInFolder(folder.id, fileName);
+      }
+      if (!driveItem) {
+        driveItem = await uploadFileToFolder(folder.id, fileName, it.file, it.file.type || 'application/octet-stream');
+      }
 
       // 3. Ledger row
       const isSub = it.type === 'subcontractor';
