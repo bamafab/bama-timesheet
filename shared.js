@@ -50074,7 +50074,7 @@ const INSP_RESULTS = {
 };
 const EXEC_CLASSES = ['EXC1', 'EXC2', 'EXC3', 'EXC4'];
 
-let _ndtRules = [], _inspPlan = null, _inspRecords = [], _inspJob = null, _inspAssemblies = [];
+let _ndtRules = [], _inspPlan = null, _inspRecords = [], _inspJob = null, _inspAssemblies = [], _inspBom = [];
 let _inspWeldWarning = null;   // set by inspCheckWelder(), recorded on the record
 
 // How many welds must be inspected, for one category, at one execution class.
@@ -50184,17 +50184,17 @@ async function inspLoadJob(jobId) {
     ]);
     _inspPlan = (plans || [])[0] || null;
     _inspRecords = recs || [];
-    _inspAssemblies = await _inspAssembliesForProject(jobId);
+    const resolved = await _inspAssembliesForProject(jobId);
+    _inspAssemblies = resolved.assemblies;
+    _inspBom = resolved.bom;
   } catch (e) { host.innerHTML = `<div style="color:var(--red);font-size:12px;padding:14px">${escapeHtml(e.message)}</div>`; return; }
   _inspRender();
 }
 
-// Assemblies live under DrawingJobs (the drawing packages), which link to a
-// Project by project_number — NOT by Projects.id, and NOT via the BOM. So:
-// Projects.id -> project_number -> every DrawingJob with that number -> their
-// JobAssemblies (with parts). A project can have several drawing jobs, so we
-// aggregate across all of them. This is the "assembly section", not the BOM
-// (which only holds despatch-tracked pieces, not the full assembly list).
+// Assemblies AND BOM items both live under DrawingJobs (linked by project_number,
+// not Projects.id). A project can have several drawing packages, so aggregate
+// across all of them. Returns { assemblies, bom } — assemblies carry the fab/
+// weld stage counters; BOM carries despatch state (despatched_qty + status).
 async function _inspAssembliesForProject(projectId) {
   let projectNumber = null;
   try {
@@ -50202,16 +50202,19 @@ async function _inspAssembliesForProject(projectId) {
     const p = (projects || []).find(x => String(x.id) === String(projectId));
     projectNumber = p && (p.project_number || p.job_number);
   } catch (_) {}
-  if (!projectNumber) return [];
+  if (!projectNumber) return { assemblies: [], bom: [] };
   let drawingJobs = [];
   try { drawingJobs = await api.get(`/api/drawings?project_number=${encodeURIComponent(projectNumber)}`); } catch (_) { drawingJobs = []; }
-  if (!Array.isArray(drawingJobs) || !drawingJobs.length) return [];
-  const perJob = await Promise.all(drawingJobs.map(dj =>
-    api.get(`/api/job-assemblies?job_id=${encodeURIComponent(dj.id)}`).catch(() => [])));
-  // Flatten; tag each with its drawing job so nothing collides across packages.
-  const all = [];
-  perJob.forEach((list, i) => (list || []).forEach(a => all.push({ ...a, _drawing_job_id: drawingJobs[i].id })));
-  return all;
+  if (!Array.isArray(drawingJobs) || !drawingJobs.length) return { assemblies: [], bom: [] };
+  const [asmLists, bomLists] = await Promise.all([
+    Promise.all(drawingJobs.map(dj => api.get(`/api/job-assemblies?job_id=${encodeURIComponent(dj.id)}`).catch(() => []))),
+    Promise.all(drawingJobs.map(dj => api.get(`/api/job-bom-items?job_id=${encodeURIComponent(dj.id)}`).catch(() => [])))
+  ]);
+  const assemblies = [];
+  asmLists.forEach((list, i) => (list || []).forEach(a => assemblies.push({ ...a, _drawing_job_id: drawingJobs[i].id })));
+  const bom = [];
+  bomLists.forEach((list, i) => (list || []).forEach(b => bom.push({ ...b, _drawing_job_id: drawingJobs[i].id })));
+  return { assemblies, bom };
 }
 
 // Live figures for the current job's inspection panel, straight off the BOM
@@ -50222,30 +50225,45 @@ async function _inspAssembliesForProject(projectId) {
 // always overridable in the per-category inputs.
 function _inspDerivedFigures() {
   const asm = _inspAssemblies || [];
+  const bom = _inspBom || [];
   let assemblyQty = 0, totalParts = 0, weldEstimate = 0, totalWeightKg = 0;
-  // Lifecycle roll-up across the whole job (staged fab → weld → complete).
+  // Piece-count stage rollup (for the "N / M pcs" subtitle)
   let fabbed = 0, welded = 0, completed = 0, onBom = 0;
+  // Tonnage-weighted stage rollup (kg) — a big column counts more than a cleat
+  let fabKg = 0, weldKg = 0;
   for (const a of asm) {
     const q = Number(a.quantity) || 0;
+    const unit = Number(a.total_weight_kg) || 0;
     assemblyQty += q;
-    // total_weight_kg is the weight of ONE assembly, so job weight = Σ(qty × each)
-    totalWeightKg += (Number(a.total_weight_kg) || 0) * q;
-    fabbed    += Number(a.qty_fabbed)    || 0;
-    welded    += Number(a.qty_welded)    || 0;
-    completed += Number(a.qty_completed) || 0;
-    onBom     += (Number(a.qty_welded) || 0) + (Number(a.qty_completed) || 0);
+    totalWeightKg += unit * q;                       // Σ(qty × unit): the tonnage
+    const f = Number(a.qty_fabbed) || 0, w = Number(a.qty_welded) || 0, c = Number(a.qty_completed) || 0;
+    fabbed += f; welded += w; completed += c; onBom += w + c;
+    fabKg  += unit * (f + c);                         // fabricated OR direct-completed
+    weldKg += unit * (w + c);                         // welded OR direct-completed
     const parts = a.parts || [];
     const distinctPieces = parts.reduce((s, p) => s + (Number(p.quantity) || 0), 0);
     totalParts += distinctPieces * (q || 1);
-    const jointsPerAssembly = Math.max(0, distinctPieces - 1);
-    weldEstimate += jointsPerAssembly * (q || 1);
+    weldEstimate += Math.max(0, distinctPieces - 1) * (q || 1);
   }
-  const fabPct = assemblyQty ? Math.round((fabbed + completed) / assemblyQty * 100) : 0;
-  const weldPct = assemblyQty ? Math.round((welded + completed) / assemblyQty * 100) : 0;
+  // Despatch tonnage from the BOM ledger (despatched_qty × source assembly unit wt)
+  let despatchedKg = 0, despatchedPcs = 0, onSitePcs = 0;
+  for (const b of bom) {
+    const dq = Number(b.despatched_qty) || 0;
+    const unit = Number(b.assembly_weight_kg) || 0;
+    despatchedKg += unit * dq;
+    despatchedPcs += dq;
+    if (b.status === 'on_site') onSitePcs += Number(b.quantity) || 0;
+  }
+  const pct = (part, whole) => whole > 0 ? Math.round(part / whole * 100) : 0;
   return {
     assemblyQty, distinctMarks: asm.length, totalParts, weldEstimate,
     totalWeightKg, totalTonnes: totalWeightKg / 1000,
-    fabbed, welded, completed, onBom, fabPct, weldPct
+    fabbed, welded, completed, onBom,
+    // tonnage-weighted percentages (Mateusz's choice)
+    fabPct:      pct(fabKg, totalWeightKg),
+    weldPct:     pct(weldKg, totalWeightKg),
+    despatchPct: pct(despatchedKg, totalWeightKg),
+    despatchedPcs, onSitePcs, despatchedTonnes: despatchedKg / 1000
   };
 }
 
@@ -50343,15 +50361,20 @@ function _inspRender() {
         <div style="font-size:19px;font-weight:800;color:var(--text)">${der.totalTonnes.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}t</div>
         <div style="font-size:10px;color:var(--muted)">Σ qty × unit wt</div>
       </div>
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:9px 14px;min-width:130px">
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:9px 14px;min-width:120px">
         <div style="font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">Fabrication</div>
         <div style="font-size:19px;font-weight:800;color:${der.fabPct >= 100 ? '#3ecf8e' : 'var(--text)'}">${der.fabPct}%</div>
-        <div style="font-size:10px;color:var(--muted)">${(der.fabbed + der.completed).toLocaleString('en-GB')} / ${der.assemblyQty.toLocaleString('en-GB')} pcs</div>
+        <div style="font-size:10px;color:var(--muted)">by tonnage · ${(der.fabbed + der.completed).toLocaleString('en-GB')}/${der.assemblyQty.toLocaleString('en-GB')} pcs</div>
       </div>
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:9px 14px;min-width:130px">
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:9px 14px;min-width:120px">
         <div style="font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">Welding</div>
         <div style="font-size:19px;font-weight:800;color:${der.weldPct >= 100 ? '#3ecf8e' : 'var(--text)'}">${der.weldPct}%</div>
-        <div style="font-size:10px;color:var(--muted)">${(der.welded + der.completed).toLocaleString('en-GB')} / ${der.assemblyQty.toLocaleString('en-GB')} pcs</div>
+        <div style="font-size:10px;color:var(--muted)">by tonnage · ${(der.welded + der.completed).toLocaleString('en-GB')}/${der.assemblyQty.toLocaleString('en-GB')} pcs</div>
+      </div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:9px 14px;min-width:120px">
+        <div style="font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">Despatched</div>
+        <div style="font-size:19px;font-weight:800;color:${der.despatchPct >= 100 ? '#3ecf8e' : 'var(--text)'}">${der.despatchPct}%</div>
+        <div style="font-size:10px;color:var(--muted)">by tonnage · ${der.despatchedTonnes.toLocaleString('en-GB', { maximumFractionDigits: 2 })}t out</div>
       </div>
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:9px 14px;min-width:150px">
         <div style="font-size:9.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">Est. welds <span style="color:#eab308" title="Estimate only — parts-minus-one joint proxy. There is no weld data in the model to count; treat as a starting point and override per category below.">⚠ est.</span></div>
@@ -51103,7 +51126,7 @@ async function cocGatherFacts(jobId) {
   // by project_number), not directly under the Projects id, so resolve through
   // the same chain the Inspection panel uses.
   try {
-    const asm = await _inspAssembliesForProject(jobId);
+    const asm = (await _inspAssembliesForProject(jobId)).assemblies;
     facts.assemblies = asm || [];
     facts.assemblyCount = facts.assemblies.reduce((s, a) => s + (Number(a.quantity) || 0), 0);
     facts.totalWeightKg = _r2(facts.assemblies.reduce((s, a) => s + ((Number(a.total_weight_kg) || 0) * (Number(a.quantity) || 0)), 0));
@@ -52433,7 +52456,7 @@ async function omGatherSources(jobId) {
 
   // As-built drawings — assemblies resolve through DrawingJobs (by project_number)
   try {
-    const asm = await _inspAssembliesForProject(jobId);
+    const asm = (await _inspAssembliesForProject(jobId)).assemblies;
     const seen = new Set();
     (asm || []).forEach(a => {
       if (!a.sharepoint_file_id || seen.has(a.sharepoint_file_id)) return;
