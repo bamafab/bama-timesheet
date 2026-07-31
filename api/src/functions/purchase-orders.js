@@ -26,14 +26,14 @@ const { ok, created, badRequest, notFound, serverError, preflight } = require('.
 function formatPORef(year2, month2, seq) {
     const yy = String(year2).padStart(2, '0');
     const mm = String(month2).padStart(2, '0');
-    const nn = String(seq).padStart(2, '0');
+    const nn = String(seq).padStart(2, '0'); // min 2 digits; grows naturally for 100+
     return `P${yy}${mm}${nn}`;
 }
 
 // Parse "P260501" → { year2: 26, month2: 5, seq: 1 } | null on garbage
 function parsePORef(ref) {
     if (!ref) return null;
-    const m = String(ref).match(/^P(\d{2})(\d{2})(\d{2})$/);
+    const m = String(ref).match(/^P(\d{2})(\d{2})(\d{2,})$/);
     if (!m) return null;
     return { year2: parseInt(m[1], 10), month2: parseInt(m[2], 10), seq: parseInt(m[3], 10) };
 }
