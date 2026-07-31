@@ -14793,13 +14793,16 @@ function bamaDocHeader(doc, logoDataUri, opts) {
   const meta = (opts.meta || []).filter(r => r && r.label && r.value != null && String(r.value).trim() !== '');
   doc.setFontSize(9);
   const valX = pageW - mR;
-  const labelX = pageW - mR - 42;
+  const valWrapW = 44;                 // value wrap width (mm)
+  const labelX = pageW - mR - valWrapW - 2;
   for (const r of meta) {
     setText(HOUSE_INK); doc.setFont('helvetica', 'bold');
     doc.text(String(r.label), labelX, rightY, { align: 'right' });
     doc.setFont('helvetica', 'normal');
-    const vLines = doc.splitTextToSize(String(r.value), 40);
-    doc.text(vLines[0] || '', valX, rightY, { align: 'right' });
+    const vLines = doc.splitTextToSize(String(r.value), valWrapW);
+    // Print every wrapped line (previously only the first was drawn, so long
+    // project names / POs silently truncated even though the space was kept).
+    vLines.forEach((ln, i) => doc.text(ln, valX, rightY + i * 4.4, { align: 'right' }));
     rightY += 4.4 * Math.max(1, vLines.length);
   }
 
