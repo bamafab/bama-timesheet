@@ -37786,6 +37786,18 @@ async function _bimpApplyParsed(i, p) {
   it.type = p.invoice_type === 'subcontractor' ? 'subcontractor' : 'supplier';
   it.ref  = p.invoice_ref || '';
   it.date = p.invoice_date ? String(p.invoice_date).slice(0, 10) : '';
+  // Date sanity: a mis-read date (e.g. 2008, or a future year) sorts wildly out
+  // of place in the date-ordered ledger. Flag it amber so it's checked, not
+  // silently saved. Plausible window: 2020-01-01 .. today + 60 days.
+  it.dateWarn = false;
+  if (it.date) {
+    const d = new Date(it.date + 'T00:00:00');
+    const floor = new Date('2020-01-01T00:00:00');
+    const ceil = new Date(); ceil.setDate(ceil.getDate() + 60);
+    it.dateWarn = isNaN(d) || d < floor || d > ceil;
+  } else {
+    it.dateWarn = true; // no date read at all
+  }
   if (it.type === 'subcontractor') {
     it.labour  = p.labour_subtotal != null ? Number(p.labour_subtotal).toFixed(2) : '';
     it.cisRate = p.cis_rate != null && [0, 20, 30].includes(Number(p.cis_rate)) ? Number(p.cis_rate) : 20;
@@ -37856,6 +37868,20 @@ function _bimpCalcCis(it) {
   const ded = +(labour * (Number(it.cisRate) || 0) / 100).toFixed(2);
   it.cisDed = labour ? ded.toFixed(2) : '';
   it.payable = labour ? (labour - ded).toFixed(2) : '';
+}
+
+// Re-evaluate the date-plausibility flag after a manual edit in the card.
+function _bimpRecheckDate(i) {
+  const it = _bimpItems[i];
+  if (!it) return;
+  if (it.date) {
+    const d = new Date(it.date + 'T00:00:00');
+    const floor = new Date('2020-01-01T00:00:00');
+    const ceil = new Date(); ceil.setDate(ceil.getDate() + 60);
+    it.dateWarn = isNaN(d) || d < floor || d > ceil;
+  } else {
+    it.dateWarn = true;
+  }
 }
 
 // Duplicate check: same supplier + same normalised ref in the ERP, or an
@@ -37961,9 +37987,9 @@ function _bimpRenderCard(i) {
         </div>
         ${fmtIn('ref', 'Invoice #', it.ref, `oninput="_bimpItems[${i}].ref=this.value;_bimpCheckDup(${i});_bimpRenderCard(${i});_bimpUpdateFooter()"`, 120)}
         <div style="width:130px">
-          <div style="font-size:9px;text-transform:uppercase;color:var(--muted)">Date</div>
-          <input type="date" class="field-input" style="font-size:12px;padding:4px 8px" value="${escapeHtml(it.date)}"
-                 onchange="_bimpItems[${i}].date=this.value">
+          <div style="font-size:9px;text-transform:uppercase;color:${it.dateWarn ? '#ffa500' : 'var(--muted)'}">Date${it.dateWarn ? ' ⚠ check' : ''}</div>
+          <input type="date" class="field-input" style="font-size:12px;padding:4px 8px${it.dateWarn ? ';border-color:#ffa500' : ''}" value="${escapeHtml(it.date)}"
+                 onchange="_bimpItems[${i}].date=this.value;_bimpRecheckDate(${i});_bimpRenderCard(${i})">
         </div>
         ${isSub ? `
           ${fmtIn('labour', 'Labour £', it.labour, `oninput="_bimpItems[${i}].labour=this.value;_bimpCalcCis(_bimpItems[${i}]);_bimpRenderCard(${i})"`, 95)}
@@ -41511,41 +41537,42 @@ async function _buildInvoicePdfData(inv) {
 }
 
 // ── SharePoint folder for the invoice PDF ─────────────────────────────────
+// D0 taxonomy: BAMA / 07 - Accounts / {Sales|Purchase} Invoices / <NN - YYYY> / MM /
+// Year folders use the spYearName() convention (e.g. "04 - 2026") like the rest
+// of the tree; parent IDs come from SP_TAX. Resolved folder IDs are cached per
+// (parentId, childName) so a multi-file import doesn't re-POST the same
+// year/month folder for every file (each re-POST logs a harmless 409).
+const _spFolderCache = new Map();
+
+async function _cachedSubfolder(parentId, childName) {
+  const key = parentId + '|' + childName;
+  if (_spFolderCache.has(key)) return _spFolderCache.get(key);
+  const folder = await getOrCreateSubfolder(parentId, childName, BAMA_DRIVE_ID);
+  _spFolderCache.set(key, folder);
+  return folder;
+}
+
 async function _findOrCreateInvoiceFolder(invoiceDate) {
-  // 01 - Accounts/03 - Sales Invoices/{YYYY}/{MM}/
-  const base = await _findOrCreateAccountsSubfolder('03 - Sales Invoices');
-  return await _appendYearMonthFolders(base, invoiceDate);
+  // 07 - Accounts / <sales invoices> / <NN - YYYY> / MM /
+  return await _appendTaxYearMonth(SP_TAX.salesInvoices, invoiceDate);
 }
 
 async function _findOrCreateSupplierInvoiceFolder(invoiceDate) {
-  // 01 - Accounts/04 - Supplier Invoices/{YYYY}/{MM}/
-  const base = await _findOrCreateAccountsSubfolder('04 - Supplier Invoices');
-  return await _appendYearMonthFolders(base, invoiceDate);
+  // 07 - Accounts / <purchase invoices> / <NN - YYYY> / MM /
+  return await _appendTaxYearMonth(SP_TAX.purchaseInvoices, invoiceDate);
 }
 
-
-// Looks up "01 - Accounts" at the drive root, then gets or creates the named subfolder.
-// If even "01 - Accounts" doesn't exist, this raises — that's a SharePoint setup issue
-// that needs manual intervention rather than auto-creation.
-async function _findOrCreateAccountsSubfolder(subfolderName) {
-  const token = await getToken();
-  const accountsLookup = await fetch(
-    `https://graph.microsoft.com/v1.0/drives/${BAMA_DRIVE_ID}/root:/${encodeURIComponent('01 - Accounts')}`,
-    { headers: { 'Authorization': `Bearer ${token}` } }
-  );
-  if (!accountsLookup.ok) {
-    throw new Error(`SharePoint "01 - Accounts" folder not found at drive root (status ${accountsLookup.status})`);
-  }
-  const accounts = await accountsLookup.json();
-  return await getOrCreateSubfolder(accounts.id, subfolderName, BAMA_DRIVE_ID);
-}
-
-async function _appendYearMonthFolders(baseFolder, dateStr) {
+// Given a SP_TAX parent folder id, append the D0-style year folder ("04 - 2026")
+// then a numeric month folder ("07"). Falls back to the current date when the
+// invoice date is missing or unparseable, so a PDF is never stranded rootless.
+async function _appendTaxYearMonth(parentId, dateStr) {
   const d = new Date(dateStr);
-  const yyyy = String(d.getFullYear());
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const yearFolder = await getOrCreateSubfolder(baseFolder.id, yyyy, BAMA_DRIVE_ID);
-  return await getOrCreateSubfolder(yearFolder.id, mm, BAMA_DRIVE_ID);
+  const valid = !isNaN(d);
+  const yyyy = valid ? d.getFullYear() : new Date().getFullYear();
+  const mm = valid ? String(d.getMonth() + 1).padStart(2, '0')
+                   : String(new Date().getMonth() + 1).padStart(2, '0');
+  const yearFolder = await _cachedSubfolder(parentId, spYearName(yyyy));
+  return await _cachedSubfolder(yearFolder.id, mm);
 }
 
 // ═════════════════════════════════════════════════════════════════════════
