@@ -23176,6 +23176,18 @@ function navToTenders() {
   window.location.href = 'tenders.html';
 }
 
+// Cross-page navigation to the Estimating Dashboard (ED). The Tender Register
+// and Quote pipeline now live inside ED, so the old Tenders/Quotes sidebar
+// buttons were retired in favour of this single entry point.
+function navToDashboard() {
+  const perms = getUserPermissions(currentManagerUser) || {};
+  if (!perms.estimatingDashboard) {
+    toast('You don\'t have permission to access the Estimating Dashboard', 'error');
+    return;
+  }
+  window.location.href = 'dashboard.html';
+}
+
 function navToBabcock() {
   const perms = getUserPermissions(currentManagerUser) || {};
   if (!perms.tenders) {
@@ -23227,8 +23239,7 @@ function updateCrossNavSidebar() {
     btn.style.cursor = hasAccess ? '' : 'not-allowed';
     btn.title = hasAccess ? '' : `You don't have permission to access ${label}`;
   };
-  set('sidebarBtnTenders',         !!perms.tenders,                              'Tenders');
-  set('sidebarBtnQuotations',      !!(perms.viewQuotes || perms.editQuotes),    'Quotations');
+  set('sidebarBtnEstimatingDashboard', !!perms.estimatingDashboard,             'Estimating Dashboard');
   set('sidebarBtnBabcockQuotes',   !!perms.tenders,                              'Babcock Quotes');
   set('sidebarBtnProjectTracker',  !!(perms.viewProjects || perms.editProjects),'Project Tracker');
   set('sidebarBtnPurchaseOrders',  !!(perms.viewPurchaseOrders || perms.editPurchaseOrders), 'Purchase Orders');
@@ -23349,11 +23360,8 @@ function renderUnifiedSidebar() {
     <div class="sidebar-nav-group">
       <div class="sidebar-nav-label-toggle" onclick="toggleSidebarGroup(this)">Finance <span class="chevron">&#9660;</span></div>
       <div class="sidebar-nav-subitems">
-        <button class="sidebar-nav-item${a('tenders')}" id="sidebarBtnTenders" onclick="navToTenders()">
-          <span class="sidebar-nav-icon">📋</span> Tenders
-        </button>
-        <button class="sidebar-nav-item${a('quotes')}" id="sidebarBtnQuotations" onclick="navToQuotes()">
-          <span class="sidebar-nav-icon">📊</span> Quotes
+        <button class="sidebar-nav-item${a('dashboard')}" id="sidebarBtnEstimatingDashboard" onclick="navToDashboard()">
+          <span class="sidebar-nav-icon">📊</span> Estimating Dashboard
         </button>
         <button class="sidebar-nav-item${a('babcock')}" id="sidebarBtnBabcockQuotes" onclick="navToBabcock()">
           <span class="sidebar-nav-icon">⚓</span> Babcock
@@ -43517,8 +43525,7 @@ function updateRecSidebar() {
     el.style.display = show ? '' : 'none';
     if (!show) el.title = `No ${label} permission`;
   };
-  set('sidebarBtnTenders',        !!perms.tenders,                                'Tenders');
-  set('sidebarBtnQuotations',     !!(perms.viewQuotes || perms.editQuotes),        'Quotes');
+  set('sidebarBtnEstimatingDashboard', !!perms.estimatingDashboard,               'Estimating Dashboard');
   set('sidebarBtnBabcockQuotes',  true,                                            'Babcock');
   set('sidebarBtnProjectTracker', !!(perms.viewProjects || perms.editProjects),    'Projects');
   set('sidebarBtnPurchaseOrders', !!(perms.viewPurchaseOrders || perms.editPurchaseOrders), 'POs');
