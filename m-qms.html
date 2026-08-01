@@ -45,6 +45,10 @@
   .m-loading { text-align: center; color: var(--muted); padding: 60px 20px; font-size: 13px; }
   #qmsFormModal input, #qmsFormModal select, #qmsFormModal textarea { font-size: 16px !important; }
   #qmsFormModal .btn { min-height: 40px; }
+  #tbtDeliverModal input, #tbtDeliverModal select, #tbtDeliverModal textarea { font-size: 16px !important; }
+  #tbtDeliverModal .btn { min-height: 40px; }
+  /* The TBT deliver modal is 760px on desktop — let it fill the phone. */
+  #tbtDeliverModal > div { max-width: 100% !important; }
   .m-install { display: none; margin: 22px 0 0; padding: 12px 14px; border-radius: 11px; background: var(--surface); border: 1px dashed var(--border); font-size: 12px; color: var(--muted); line-height: 1.55; }
   .home-tile { padding: 24px 18px; }
   .home-tile .chip { width: 56px; height: 56px; flex-basis: 56px; font-size: 28px; }
@@ -109,6 +113,11 @@
       <div class="meta"><div class="title">Stock</div><div class="sub">Add by voice or manually, view &amp; adjust the register</div></div>
       <div class="arr">&rsaquo;</div>
     </div>
+    <div class="qcard home-tile" onclick="mGo('tbt')">
+      <div class="chip">&#128483;</div>
+      <div class="meta"><div class="title">Toolbox Talks</div><div class="sub">Give a talk, capture attendee signatures &rarr; SharePoint</div></div>
+      <div class="arr">&rsaquo;</div>
+    </div>
     <div class="m-install" id="mInstall">
       &#128161; <strong>Install this app:</strong> <span id="mInstallText">tap your browser menu and choose "Add to Home Screen".</span>
     </div>
@@ -136,6 +145,14 @@
     <input class="m-search" id="stkSearch" placeholder="Search section / location&hellip;" oninput="stkRenderList()">
     <div id="stkList" class="m-loading" style="padding:20px 2px;text-align:left">Loading&hellip;</div>
   </div>
+
+  <!-- TOOLBOX TALKS -->
+  <div class="m-body" id="viewTbt" style="display:none">
+    <div class="m-h">Give a toolbox talk</div>
+    <div id="mTbtCards"><div class="m-loading">Loading talks&hellip;</div></div>
+    <div class="m-recent-h">Recent talks given</div>
+    <div id="mTbtRecent" class="m-loading" style="padding:20px 2px;text-align:left">Loading&hellip;</div>
+  </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" data-jspdf-loaded="1"></script>
@@ -158,7 +175,8 @@ function mWait(cond, ms = 8000) {
 const M_VIEWS = {
   home:  { word: 'ERP',   tag: 'Shop floor',     back: false },
   qms:   { word: 'QMS',   tag: 'Check Sheets',   back: true  },
-  stock: { word: 'STOCK', tag: 'Steel register', back: true  }
+  stock: { word: 'STOCK', tag: 'Steel register', back: true  },
+  tbt:   { word: 'TALKS', tag: 'Toolbox Talks',  back: true  }
 };
 let _mView = 'home';
 function mGo(view) {
@@ -167,6 +185,7 @@ function mGo(view) {
   document.getElementById('viewHome').style.display  = view === 'home'  ? 'block' : 'none';
   document.getElementById('viewQms').style.display   = view === 'qms'   ? 'block' : 'none';
   document.getElementById('viewStock').style.display = view === 'stock' ? 'block' : 'none';
+  document.getElementById('viewTbt').style.display   = view === 'tbt'   ? 'block' : 'none';
   const v = M_VIEWS[view];
   const bw = document.getElementById('mBrandWord');
   bw.textContent = v.word; bw.style.color = view === 'home' ? 'var(--text)' : 'var(--accent)';
@@ -175,6 +194,7 @@ function mGo(view) {
   window.scrollTo(0, 0);
   if (view === 'qms')   { mLoadForms(); mLoadRecent(); }
   if (view === 'stock') { stkEnsureSections(); stkLoad(); }
+  if (view === 'tbt')   { mLoadTalks(); mLoadTbtRecent(); }
 }
 
 async function mBoot() {
@@ -258,6 +278,69 @@ async function mLoadRecent() {
         <span class="rf">${s.web_url ? `<a href="${escapeHtml(s.web_url)}" target="_blank" rel="noopener">${escapeHtml(s.file_name || 'submission')}</a>` : escapeHtml(s.file_name || 'submission')}</span>
         <span class="rd">${String(s.created_at).slice(0,10)}</span>
       </div>`).join('') : '<div class="m-loading" style="padding:16px 2px;text-align:left">None yet — fill one in above.</div>';
+  } catch (e) { host.innerHTML = `<div class="m-loading" style="padding:16px 2px;text-align:left;color:var(--red)">${escapeHtml(e.message)}</div>`; }
+}
+
+// ── TOOLBOX TALKS (delegates to shared.js tbtDeliver engine) ────────────────
+const TBT_MODAL_ID = 'tbt' + 'DeliverModal';
+async function mLoadTalks() {
+  const host = document.getElementById('mTbtCards');
+  try {
+    const talks = await api.get('/api/toolbox-talks');
+    _tbtTalks = talks;   // bare global that tbtDeliver() reads
+    if (!talks || !talks.length) {
+      host.innerHTML = '<div class="m-loading">No toolbox talks in the library yet — add them in Office › Toolbox Talks.</div>';
+      return;
+    }
+    host.innerHTML = talks.map(t => `
+      <div class="qcard" onclick="mGiveTalk(${t.id})">
+        <div class="chip">&#128483;</div>
+        <div class="meta"><div class="code">${escapeHtml(t.talk_ref || '')}</div><div class="title">${escapeHtml(t.title || '')}</div></div>
+        <div class="arr">&rsaquo;</div>
+      </div>`).join('');
+  } catch (e) {
+    host.innerHTML = `<div class="m-loading" style="color:var(--red)">Couldn't load talks: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function mGiveTalk(id) {
+  try {
+    if (typeof tbtDeliver !== 'function') await mWait(() => typeof tbtDeliver === 'function', 5000);
+    if (typeof _tbtTalks === 'undefined' || !Array.isArray(_tbtTalks) || !_tbtTalks.length) _tbtTalks = await api.get('/api/toolbox-talks');
+    await tbtDeliver(id);   // self-injects its modal, loads roster + jobs, handles signatures + filing
+    // The desktop modal reads `currentUser` for "Given by" — blank on mobile, so
+    // prefill it with the signed-in Microsoft name if the field came up empty.
+    setTimeout(() => { const by = document.getElementById('tbtDelBy'); if (by && !by.value && _mMe) by.value = _mMe; }, 150);
+    setTimeout(() => { const m = document.getElementById(TBT_MODAL_ID); if (!m || m.style.display === 'none') toast('Could not open the talk — tap ↻ to refresh and retry.', 'error'); }, 500);
+    mWatchTbt();
+  } catch (e) { toast('Could not open talk: ' + (e.message || e), 'error'); }
+}
+
+let _mTbtWatch = null;
+function mWatchTbt() {
+  if (_mTbtWatch) clearInterval(_mTbtWatch);
+  let wasOpen = false;
+  _mTbtWatch = setInterval(() => {
+    const m = document.getElementById(TBT_MODAL_ID);
+    const open = m && m.style.display !== 'none';
+    if (open) wasOpen = true;
+    if (wasOpen && !open) { clearInterval(_mTbtWatch); _mTbtWatch = null; mLoadTbtRecent(); }
+  }, 500);
+}
+
+async function mLoadTbtRecent() {
+  const host = document.getElementById('mTbtRecent');
+  try {
+    const dels = await api.get('/api/toolbox-deliveries');
+    host.style.padding = '0';
+    host.innerHTML = (dels && dels.length) ? dels.slice(0, 12).map(d => {
+      const att = Array.isArray(d.attendees) ? d.attendees.length : (d.attendees ? (JSON.parse(d.attendees || '[]').length) : 0);
+      return `<div class="m-recent-row">
+        <span class="rc">${escapeHtml(d.talk_ref || '')}</span>
+        <span class="rf">${d.web_url ? `<a href="${escapeHtml(d.web_url)}" target="_blank" rel="noopener">${escapeHtml(d.talk_title || 'talk')}</a>` : escapeHtml(d.talk_title || 'talk')}${att ? ` · ${att} attended` : ''}</span>
+        <span class="rd">${String(d.delivered_on || d.created_at || '').slice(0,10)}</span>
+      </div>`;
+    }).join('') : '<div class="m-loading" style="padding:16px 2px;text-align:left">None yet — give one above.</div>';
   } catch (e) { host.innerHTML = `<div class="m-loading" style="padding:16px 2px;text-align:left;color:var(--red)">${escapeHtml(e.message)}</div>`; }
 }
 
