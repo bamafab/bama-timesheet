@@ -47715,7 +47715,7 @@ async function submitQmsForm() {
   const answers = {}; const images = {};
   for (const f of def.fields) {
     if (f.type === 'note')       { continue; }
-    if (f.type === 'photo')      { images[f.key] = _qmsPhotos[f.key] || null; answers[f.key] = _qmsPhotos[f.key] ? 'photo attached' : ''; continue; }
+    if (f.type === 'photo')      { const ph = Array.isArray(_qmsPhotos[f.key]) ? _qmsPhotos[f.key].filter(Boolean) : (_qmsPhotos[f.key] ? [_qmsPhotos[f.key]] : []); images[f.key] = ph; answers[f.key] = ph.length ? `${ph.length} photo${ph.length > 1 ? 's' : ''} attached` : ''; continue; }
     if (f.type === 'signature')  { images[f.key] = _qmsSigData(f.key);        answers[f.key] = images[f.key] ? 'signed' : ''; continue; }
     if (f.type === 'personnel')  { answers[f.key] = (_qmsPersonnelSel[f.key] || []).join(', '); continue; }
     if (f.type === 'table')      { answers[f.key] = _qmsTableRows(f); continue; }
@@ -47781,19 +47781,51 @@ async function submitQmsForm() {
         if (!rows.length) { doc.text('— none recorded —', M, y); y += 4.6; }
         doc.setFontSize(10); y += 3; continue;
       }
-      // Images (photo / signature)
-      if ((f.type === 'photo' || f.type === 'signature') && images[f.key]) {
+      // Signature (single image)
+      if (f.type === 'signature' && images[f.key]) {
         doc.setFont('helvetica', 'normal'); doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
         doc.text(f.label + ':', M, y); y += 4;
         try {
           const props = doc.getImageProperties(images[f.key]);
-          const maxW = f.type === 'signature' ? 70 : 90;
-          const h = Math.min(f.type === 'signature' ? 22 : 70, (props.height / props.width) * maxW);
+          const maxW = 70;
+          const h = Math.min(22, (props.height / props.width) * maxW);
           const w = (props.width / props.height) * h;
           if (y + h > 275) { doc.addPage(); y = 22; }
-          doc.addImage(images[f.key], f.type === 'signature' ? 'PNG' : undefined, M, y, w, h);
+          doc.addImage(images[f.key], 'PNG', M, y, w, h);
           y += h + 5;
         } catch (imgErr) { doc.text('(image could not be embedded)', M, y); y += 6; }
+        continue;
+      }
+      // Photos (one or many) — laid out 2 across, page-breaking as needed.
+      if (f.type === 'photo') {
+        const photos = (Array.isArray(images[f.key]) ? images[f.key] : (images[f.key] ? [images[f.key]] : [])).filter(Boolean);
+        doc.setFont('helvetica', 'normal'); doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+        doc.text(f.label + (photos.length > 1 ? ` (${photos.length}):` : ':'), M, y); y += 4;
+        if (!photos.length) { doc.setTextColor(HOUSE_INK[0], HOUSE_INK[1], HOUSE_INK[2]); doc.text('—', M, y); y += 6; continue; }
+        const gap = 6, cellW = (W - 2 * M - gap) / 2;   // two columns
+        let col = 0, rowMaxH = 0, rowTopY = y;
+        for (const img of photos) {
+          let w = cellW, h = cellW * 0.72;               // default 25:18-ish
+          try {
+            const props = doc.getImageProperties(img);
+            h = Math.min(70, (props.height / props.width) * cellW);
+            w = (props.width / props.height) * h;
+            if (w > cellW) { w = cellW; h = (props.height / props.width) * cellW; }
+          } catch (_) {}
+          // New row if we're back at col 0 — check page space for the tallest expected cell.
+          if (col === 0) {
+            if (y + h > 275) { doc.addPage(); y = 22; }
+            rowTopY = y; rowMaxH = 0;
+          }
+          const x = M + col * (cellW + gap);
+          try { doc.addImage(img, undefined, x, rowTopY, w, h); }
+          catch (_) { doc.text('(image failed)', x, rowTopY + 5); }
+          rowMaxH = Math.max(rowMaxH, h);
+          col++;
+          if (col === 2) { col = 0; y = rowTopY + rowMaxH + gap; }
+        }
+        if (col === 1) { y = rowTopY + rowMaxH + gap; }   // flush a trailing single
+        y += 2;
         continue;
       }
       const val = answers[f.key] || '—';
@@ -48343,7 +48375,7 @@ async function tmSaveEditPerson() {
 // repeating tables. Still definition-driven: a new sheet is a SQL INSERT.
 // ═══════════════════════════════════════════════════════════════════════════
 
-let _qmsPhotos = {};          // key → dataURI
+let _qmsPhotos = {};          // key → [dataURI, …] (one or many photos per field)
 let _qmsPersonnelSel = {};    // key → [names]
 let _qmsTableData = {};       // key → [[c1,c2,…], …]
 const _QMS_INPUT = 'width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text);box-sizing:border-box;font-size:13px';
@@ -48371,9 +48403,10 @@ function _qmsFieldHtml(f) {
         style="display:flex;flex-wrap:wrap;gap:5px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px;min-height:34px">
         <span style="font-size:11.5px;color:var(--muted)">Loading roster…</span></div></div>`;
     case 'photo':
-      return `<div>${lbl}<input type="file" accept="image/*" capture="environment" onchange="qmsPhotoPick('${f.key}', this)"
+      return `<div>${lbl}<input type="file" accept="image/*" capture="environment" multiple onchange="qmsPhotoPick('${f.key}', this)"
           style="font-size:12px;color:var(--text)">
-        <div id="qfimg_${f.key}" style="margin-top:6px"></div></div>`;
+        <div style="font-size:10.5px;color:var(--muted);margin-top:3px">You can add more than one — tap again to keep adding.</div>
+        <div id="qfimg_${f.key}" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px"></div></div>`;
     case 'signature':
       return `<div>${lbl}<canvas id="qfsig_${f.key}" width="440" height="120"
           style="width:100%;height:110px;background:#fff;border:1px solid var(--border);border-radius:6px;touch-action:none;cursor:crosshair"></canvas>
@@ -48467,13 +48500,33 @@ function qmsTogglePerson(btn) {
 
 // ── Photos ──────────────────────────────────────────────────────────────────
 async function qmsPhotoPick(key, input) {
-  const file = input.files[0]; if (!file) return;
-  try {
-    const dataUri = await _fileToDataUri(file);
-    _qmsPhotos[key] = dataUri;
-    document.getElementById('qfimg_' + key).innerHTML =
-      `<img src="${dataUri}" style="max-width:160px;border-radius:6px;border:1px solid var(--border)">`;
-  } catch (e) { toast('Could not read photo: ' + e.message, 'error'); }
+  const files = Array.from(input.files || []); if (!files.length) return;
+  // _qmsPhotos[key] is an array of dataURIs (append, don't replace, so repeated
+  // taps keep adding). Older single-value entries are coerced to an array.
+  if (!Array.isArray(_qmsPhotos[key])) _qmsPhotos[key] = _qmsPhotos[key] ? [_qmsPhotos[key]] : [];
+  for (const file of files) {
+    try { _qmsPhotos[key].push(await _fileToDataUri(file)); }
+    catch (e) { toast('Could not read photo: ' + e.message, 'error'); }
+  }
+  input.value = '';           // let the same file be re-picked if needed
+  _qmsRenderPhotos(key);
+}
+
+function _qmsRenderPhotos(key) {
+  const host = document.getElementById('qfimg_' + key); if (!host) return;
+  const list = Array.isArray(_qmsPhotos[key]) ? _qmsPhotos[key] : (_qmsPhotos[key] ? [_qmsPhotos[key]] : []);
+  host.innerHTML = list.map((uri, i) => `
+    <div style="position:relative">
+      <img src="${uri}" style="width:88px;height:88px;object-fit:cover;border-radius:6px;border:1px solid var(--border)">
+      <button onclick="qmsPhotoRemove('${key}', ${i})" title="Remove"
+        style="position:absolute;top:-7px;right:-7px;width:22px;height:22px;border-radius:50%;border:none;background:var(--red);color:#fff;font-size:13px;line-height:1;cursor:pointer">×</button>
+    </div>`).join('');
+}
+
+function qmsPhotoRemove(key, i) {
+  if (!Array.isArray(_qmsPhotos[key])) return;
+  _qmsPhotos[key].splice(i, 1);
+  _qmsRenderPhotos(key);
 }
 
 // ── Signature canvases (finger / mouse) ─────────────────────────────────────
