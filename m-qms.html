@@ -328,26 +328,47 @@ async function mSignLoadDocs() {
   try {
     // A project can have several drawing jobs — gather RAMS files across them.
     const jobs = await api.get('/api/drawings?project_number=' + encodeURIComponent(projNum));
+    console.log('[SignRAMS] project', projNum, '→ drawing jobs:', (jobs || []).length, jobs);
     const docs = [];
     for (const j of (jobs || [])) {
       try {
         const el = await api.get('/api/drawing-elements/' + j.id);
+        const ctxKeys = el && el.files ? Object.keys(el.files) : [];
         const rams = (el.files && el.files['rams']) || [];
+        console.log(`[SignRAMS] job ${j.id} (${j.job_name || ''}) contexts:`, ctxKeys, '→ rams:', rams.length);
         for (const f of rams) {
-          // Skip the Word twins — operatives sign the PDF.
-          if (/\.docx$/i.test(f.fileName || f.name || '')) continue;
+          if (/\.docx$/i.test(f.fileName || f.name || '')) continue;   // skip Word twins
           docs.push({ ...f, job_id: j.id, project_number: projNum });
         }
-      } catch (_) {}
+      } catch (elErr) { console.warn('[SignRAMS] drawing-elements failed for job', j.id, elErr.message); }
     }
     _signDocs = docs;
-    // How many acknowledgements already exist per doc, so we can show a count.
+
     let acks = [];
     try { acks = await api.get('/api/acknowledgements?project_number=' + encodeURIComponent(projNum)); } catch (_) {}
     const ackCount = {};
     for (const a of acks) if (a.doc_file_id) ackCount[a.doc_file_id] = (ackCount[a.doc_file_id] || 0) + 1;
 
-    if (!docs.length) { host.innerHTML = '<div class="m-loading" style="padding:20px 2px;text-align:left">No RAMS have been generated for this job yet.</div>'; return; }
+    if (!docs.length) {
+      const jobCount = (jobs || []).length;
+      // On-screen diagnostic (phones have no console) — what did each package hold?
+      let diag = '';
+      for (const j of (jobs || [])) {
+        try {
+          const el = await api.get('/api/drawing-elements/' + j.id);
+          const keys = el && el.files ? Object.keys(el.files) : [];
+          diag += `<div>• job ${j.id} “${escapeHtml(j.job_name || '')}”: ${keys.length ? keys.map(k => `${escapeHtml(k)}(${el.files[k].length})`).join(', ') : 'no files'}</div>`;
+        } catch (e) { diag += `<div>• job ${j.id}: error ${escapeHtml(e.message)}</div>`; }
+      }
+      host.innerHTML = `<div class="m-loading" style="padding:20px 2px;text-align:left">
+        No RAMS found for this job.
+        <div style="font-size:11px;color:var(--muted);margin-top:10px;line-height:1.7">
+          <strong>${jobCount}</strong> drawing package${jobCount !== 1 ? 's' : ''} checked:
+          ${diag || '<div>• none</div>'}
+        </div>
+      </div>`;
+      return;
+    }
     host.innerHTML = docs.map((d, i) => {
       const n = ackCount[d.fileId] || 0;
       return `<div class="qcard" style="cursor:default">
