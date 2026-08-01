@@ -48451,9 +48451,11 @@ async function _qmsHydratePickers(def) {
   if (need('job') || need('drawing')) {
     try {
       const projects = await api.get('/api/projects');
-      // Live = In Progress only (matches the kiosk). The old `!== 'Closed'` test
-      // excluded nothing — 'Closed' isn't a real status — so every project showed.
-      const live = (projects || []).filter(p => p.status === 'In Progress');
+      // Live = In Progress AND not hidden-from-workshop (matches the draftsman
+      // shop-floor tile view; hidden = other-company / not-our-scope jobs).
+      // NB: this reads the RAW /api/projects response, so the field is
+      // hidden_from_workshop (the desktop's loadProjects maps it to `hidden`).
+      const live = (projects || []).filter(p => p.status === 'In Progress' && !p.hidden_from_workshop);
       for (const f of def.fields.filter(x => x.type === 'job')) {
         const el = document.getElementById('qf_' + f.key);
         if (!el) continue;
@@ -48473,13 +48475,16 @@ async function _qmsHydratePickers(def) {
               const proj = live.find(p => p.project_number === pn);
               if (!proj) return;
               const useSite = proj.site_same_as_client === false && (proj.site_address_line1 || proj.site_postcode);
+              // RAW /api/projects field names: site_* for the site address, and
+              // the Clients-join fields (address_line1/city/postcode…) for the
+              // client address — NOT the desktop's mapped client_* names.
               const parts = useSite
                 ? [proj.site_address_line1, proj.site_address_line2, proj.site_city, proj.site_county, proj.site_postcode]
-                : [proj.client_address_line1, proj.client_address_line2, proj.client_city, proj.client_county, proj.client_postcode];
+                : [proj.address_line1, proj.address_line2, proj.city, proj.county, proj.postcode];
               const addr = parts.filter(Boolean).join(', ');
               for (const af of autoFields) {
                 const t = document.getElementById('qf_' + af.key);
-                if (t && !t.value) t.value = addr || (useSite ? proj.site_postcode : proj.client_postcode) || '';
+                if (t && !t.value) t.value = addr || (useSite ? proj.site_postcode : proj.postcode) || '';
               }
             });
           }

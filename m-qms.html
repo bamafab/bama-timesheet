@@ -172,7 +172,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" data-jspdf-loaded="1"></script>
 <script>window.CURRENT_PAGE = 'm-qms';</script>
-<script src="shared.js?v=20260801e"></script>
+<script src="shared.js?v=20260801f"></script>
 <script src="steel-match.js?v=20260801e"></script>
 
 <script>
@@ -310,7 +310,9 @@ async function mSignLoadJobs() {
   const sel = document.getElementById('signJob');
   try {
     const projects = await api.get('/api/projects');
-    _signJobs = (projects || []).filter(p => p.status === 'In Progress');
+    // Raw /api/projects → the field is hidden_from_workshop (not the desktop's
+    // mapped `hidden`). Exclude hidden jobs to match the draftsman shop view.
+    _signJobs = (projects || []).filter(p => p.status === 'In Progress' && !p.hidden_from_workshop);
     sel.innerHTML = '<option value="">Select a job&hellip;</option>' +
       _signJobs.map(p => `<option value="${escapeHtml(p.project_number)}">${escapeHtml(p.project_number + ' — ' + p.project_name)}</option>`).join('');
     document.getElementById('signDocs').innerHTML = '';
