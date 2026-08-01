@@ -48415,9 +48415,17 @@ function _qmsFieldHtml(f) {
         style="display:flex;flex-wrap:wrap;gap:5px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px;min-height:34px">
         <span style="font-size:11.5px;color:var(--muted)">Loading roster…</span></div></div>`;
     case 'photo':
-      return `<div>${lbl}<input type="file" accept="image/*" capture="environment" multiple onchange="qmsPhotoPick('${f.key}', this)"
-          style="font-size:12px;color:var(--text)">
-        <div style="font-size:10.5px;color:var(--muted);margin-top:3px">You can add more than one — tap again to keep adding.</div>
+      // Two entry points: 'Camera' forces the capture device, 'Choose photo'
+      // opens the gallery/files so an already-taken photo can be added. Both
+      // feed the same multi-photo handler.
+      return `<div>${lbl}
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin:0">&#128247; Camera
+            <input type="file" accept="image/*" capture="environment" multiple onchange="qmsPhotoPick('${f.key}', this)" style="display:none"></label>
+          <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin:0">&#128444;&#65039; Choose photo
+            <input type="file" accept="image/*" multiple onchange="qmsPhotoPick('${f.key}', this)" style="display:none"></label>
+        </div>
+        <div style="font-size:10.5px;color:var(--muted);margin-top:3px">Add as many as you like — camera or from your gallery.</div>
         <div id="qfimg_${f.key}" style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px"></div></div>`;
     case 'signature':
       return `<div>${lbl}<canvas id="qfsig_${f.key}" width="440" height="120"

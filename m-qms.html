@@ -172,7 +172,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" data-jspdf-loaded="1"></script>
 <script>window.CURRENT_PAGE = 'm-qms';</script>
-<script src="shared.js?v=20260801c"></script>
+<script src="shared.js?v=20260801d"></script>
 <script src="steel-match.js?v=20260801e"></script>
 
 <script>
@@ -242,7 +242,7 @@ async function mShowWho() {
 }
 
 // ── QMS (delegates to shared.js) ────────────────────────────────────────────
-const M_QMS_ALLOW = [ /FAB\s*001/i, /VER\s*001/i ];
+const M_QMS_ALLOW = [ /FAB\s*001/i, /VER\s*001/i, /SR\s*001/i ];
 const M_ICON = code => (/VER|weld/i.test(code) ? '\uD83D\uDD25' : /FAB|fabricat/i.test(code) ? '\uD83D\uDD27' : /CAL/i.test(code) ? '\uD83D\uDCCF' : '\uD83D\uDCCB');
 
 async function mLoadForms() {
