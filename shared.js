@@ -47746,6 +47746,9 @@ async function submitQmsForm() {
     let y = _qh.y;
     // Sheet title (the form's own name) as an accent section heading.
     y = bamaSectionHeading(doc, y, String(form.title || '').toUpperCase(), { accent, marginL: M, usableW: W - 2 * M });
+    // bamaSectionHeading leaves the pen accent-coloured; reset to ink so the
+    // body doesn't render orange (labels get muted grey, values ink, below).
+    doc.setTextColor(HOUSE_INK[0], HOUSE_INK[1], HOUSE_INK[2]);
     doc.setFontSize(10);
     for (const f of def.fields) {
       if (y > 262) { doc.addPage(); y = 22; }
@@ -47755,17 +47758,18 @@ async function submitQmsForm() {
         const nlines = doc.splitTextToSize(String(f.text || ''), W - 2 * M);
         if (y + nlines.length * 4 > 275) { doc.addPage(); y = 22; }
         doc.text(nlines, M, y); y += nlines.length * 4 + 2.5;
-        doc.setTextColor(0); doc.setFontSize(10); doc.setFont('helvetica', 'normal');
+        doc.setTextColor(HOUSE_INK[0], HOUSE_INK[1], HOUSE_INK[2]); doc.setFontSize(10); doc.setFont('helvetica', 'normal');
         continue;
       }
       // Tables render as their own mini grid
       if (f.type === 'table') {
         const rows = answers[f.key] || [];
-        doc.setFont('helvetica', 'bold'); doc.text(f.label + ':', M, y); y += 5;
+        doc.setFont('helvetica', 'bold'); doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+        doc.text(f.label + ':', M, y); y += 5;
         doc.setFontSize(9);
         const cols = f.columns || [];
         const colW = (W - 2 * M) / Math.max(1, cols.length);
-        doc.setFont('helvetica', 'bold');
+        doc.setFont('helvetica', 'bold'); doc.setTextColor(HOUSE_INK[0], HOUSE_INK[1], HOUSE_INK[2]);
         cols.forEach((c, i) => doc.text(String(c), M + i * colW, y));
         y += 4; doc.setDrawColor(200); doc.line(M, y - 2.5, W - M, y - 2.5);
         doc.setFont('helvetica', 'normal');
@@ -47779,7 +47783,8 @@ async function submitQmsForm() {
       }
       // Images (photo / signature)
       if ((f.type === 'photo' || f.type === 'signature') && images[f.key]) {
-        doc.setFont('helvetica', 'normal'); doc.text(f.label + ':', M, y); y += 4;
+        doc.setFont('helvetica', 'normal'); doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+        doc.text(f.label + ':', M, y); y += 4;
         try {
           const props = doc.getImageProperties(images[f.key]);
           const maxW = f.type === 'signature' ? 70 : 90;
@@ -47792,13 +47797,17 @@ async function submitQmsForm() {
         continue;
       }
       const val = answers[f.key] || '—';
-      doc.setFont('helvetica', 'normal'); doc.text(f.label + ':', M, y);
-      doc.setFont('helvetica', 'bold');
+      doc.setFont('helvetica', 'normal'); doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+      doc.text(f.label + ':', M, y);
+      doc.setFont('helvetica', 'bold'); doc.setTextColor(HOUSE_INK[0], HOUSE_INK[1], HOUSE_INK[2]);
       const lines = doc.splitTextToSize(String(val), 85);
       doc.text(lines, M + 92, y);
       y += Math.max(6, lines.length * 4.6 + 1.4);
     }
-    y += 6; if (y > 262) { doc.addPage(); y = 22; }
+    // Trailing provenance line. Only spill to a new page if it genuinely won't
+    // fit above the footer (≤ ~278mm) — the old 262 threshold pushed this single
+    // line onto a near-empty page 2 on short records.
+    y += 6; if (y > 278) { doc.addPage(); y = 22; }
     doc.setFontSize(9); doc.setFont('helvetica', 'normal'); doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
     doc.text(`Submitted electronically via BAMA ERP on ${new Date().toLocaleString('en-GB')}${_qmsSubmitterName() ? ' by ' + _qmsSubmitterName() : ''}.`, M, y);
     bamaDocFooter(doc, { marginL: M, marginR: M, caption: `${form.form_code}  \u00b7  BAMA Fabrication Ltd` });
@@ -47808,21 +47817,66 @@ async function submitQmsForm() {
     const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ').replace(':', '');
     const keyBit = answers.machine || answers.instrument || answers.job || answers.contract_no || '';
     const fileName = `${form.form_code} - ${keyBit ? keyBit + ' - ' : ''}${stamp}.pdf`.replace(/[~"#%&*:<>?{|}/\\]/g, '-');
+    const bytes = await blob.arrayBuffer();
+    // (1) Master copy — the QMS audit index (06 - Completed Check Sheets, or
+    //     05 - Calibration Records for calibration forms). Always filed here so
+    //     there's one place to find every sheet.
     const folder = await qmsTargetFolder(def.folder);
-    const up = await uploadFileToFolder(folder.id, fileName, await blob.arrayBuffer(), 'application/pdf', BAMA_DRIVE_ID);
+    const up = await uploadFileToFolder(folder.id, fileName, bytes, 'application/pdf', BAMA_DRIVE_ID);
     // Graph sometimes omits webUrl on the upload response; fall back to a folder
     // link so the Recent list is always clickable and the file is findable.
-    const webUrl = up.webUrl || folder.webUrl || null;
+    let webUrl = up.webUrl || folder.webUrl || null;
+
+    // (2) Project copy — if a live job was selected, ALSO drop the sheet into
+    //     that project's SharePoint folder under "QMS Check Sheets", so the
+    //     record lives with the job and isn't just one of thousands in the index.
+    //     Best-effort: a failure here must never lose the master copy above.
+    const projNum = _qmsSelectedProjectNumber(def);
+    if (projNum) {
+      try {
+        status.textContent = 'Filing to project folder…';
+        const projFolder = await findProjectFolder(projNum);
+        if (projFolder && projFolder.id) {
+          const qmsSub = await getOrCreateSubfolder(projFolder.id, 'QMS Check Sheets', BAMA_DRIVE_ID);
+          const pUp = await uploadFileToFolder(qmsSub.id, fileName, bytes, 'application/pdf', BAMA_DRIVE_ID);
+          // Prefer the project-folder link in the register — it's where users look.
+          webUrl = pUp.webUrl || qmsSub.webUrl || webUrl;
+        } else {
+          console.warn('QMS: project folder for', projNum, 'not found — master copy only.');
+        }
+      } catch (projErr) {
+        console.warn('QMS: project-folder copy failed (master copy is safe):', projErr.message);
+      }
+    }
     status.textContent = 'Registering…';
     await api.post('/api/qms-submissions', {
       form_id: form.id, form_code: form.form_code, answers,   // images stay in the PDF, not the JSON
       file_name: fileName, sharepoint_file_id: up.id, web_url: webUrl
     });
-    toast(`${form.form_code} filed to ${QMS_FOLDER_NAMES[def.folder] || QMS_FOLDER_NAMES.checksheets}`, 'success');
+    toast(projNum
+      ? `${form.form_code} filed to ${QMS_FOLDER_NAMES[def.folder] || QMS_FOLDER_NAMES.checksheets} and project ${projNum}`
+      : `${form.form_code} filed to ${QMS_FOLDER_NAMES[def.folder] || QMS_FOLDER_NAMES.checksheets}`, 'success');
     document.getElementById('qmsFormModal').style.display = 'none';
     renderQmsTab();
   } catch (e) { status.textContent = 'Failed: ' + e.message; }
   finally { btn.disabled = false; }
+}
+
+// Resolve the bare project_number the user picked in a `job` field, so the
+// submit handler can file a copy into that project's SharePoint folder. Reads
+// the selected <option>'s data-projnum (set in _qmsHydratePickers). Returns null
+// when no job field, no selection, or the field degraded to a free-text box
+// (no live projects) — in which case we file to the master index only.
+function _qmsSelectedProjectNumber(def) {
+  try {
+    const jobField = (def.fields || []).find(f => f.type === 'job');
+    if (!jobField) return null;
+    const el = document.getElementById('qf_' + jobField.key);
+    if (!el || el.tagName !== 'SELECT') return null;
+    const opt = el.options[el.selectedIndex];
+    const num = opt && opt.getAttribute('data-projnum');
+    return num || null;
+  } catch (_) { return null; }
 }
 
 // Best-effort name of whoever's filling the sheet, for the PDF footline.
@@ -48341,13 +48395,17 @@ async function _qmsHydratePickers(def) {
   if (need('job') || need('drawing')) {
     try {
       const projects = await api.get('/api/projects');
-      const live = (projects || []).filter(p => p.status !== 'Closed');
+      // Live = In Progress only (matches the kiosk). The old `!== 'Closed'` test
+      // excluded nothing — 'Closed' isn't a real status — so every project showed.
+      const live = (projects || []).filter(p => p.status === 'In Progress');
       for (const f of def.fields.filter(x => x.type === 'job')) {
         const el = document.getElementById('qf_' + f.key);
         if (!el) continue;
         if (live.length) {
+          // data-projnum carries the bare project_number so the submit handler
+          // can resolve the SharePoint project folder for a filed copy.
           el.innerHTML = '<option value=""></option>' + live.map(p =>
-            `<option value="${escapeHtml(p.project_number + ' — ' + p.project_name)}">${escapeHtml(p.project_number + ' — ' + p.project_name)}</option>`).join('');
+            `<option data-projnum="${escapeHtml(p.project_number)}" value="${escapeHtml(p.project_number + ' — ' + p.project_name)}">${escapeHtml(p.project_number + ' — ' + p.project_name)}</option>`).join('');
         } else {
           // No live jobs → a blank dropdown is useless; give a text box instead.
           el.outerHTML = `<input id="qf_${f.key}" type="text" placeholder="Type job / contract ref" style="${_QMS_INPUT}">`;
