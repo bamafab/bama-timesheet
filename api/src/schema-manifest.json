@@ -957,6 +957,16 @@
       "seedForms": []
     },
     {
+      "script": "create-document-acknowledgements.sql",
+      "title": "One table serving two flavours of \"someone opened a document the ERP produced",
+      "kind": "structural",
+      "tables": [
+        "DocumentAcknowledgements"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
       "script": "create-employee-documents.sql",
       "title": "Per-employee document register (contracts, right-to-work, certs, reviews)",
       "kind": "structural",
