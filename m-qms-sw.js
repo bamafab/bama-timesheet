@@ -6,8 +6,8 @@
 //   • shared.js / steel-match.js / steel-sections.json / CDN: network-first.
 //   • CSS / manifest / icons: stale-while-revalidate (instant, refresh in bg).
 // Bump SHELL when shipping SW logic changes so it re-activates.
-const SHELL = 'bama-shell-v2';
-const PRECACHE = ['/m-qms.html', '/m-qms.webmanifest', '/bama.css'];
+const SHELL = 'bama-shell-v3';
+const PRECACHE = ['/m-qms.html', '/m-qms.webmanifest', '/bama.css', '/bama-logo.png'];
 
 self.addEventListener('install', (e) => {
   self.skipWaiting();
