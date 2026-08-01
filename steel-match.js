@@ -104,7 +104,27 @@ function steelMatch(raw, index) {
     }
   }
 
-  // 3) dims given without thickness (e.g. "150 SHS") — too ambiguous; no match
+  // 3) partial dims: the input gives the LEADING dimensions and omits the
+  //    trailing one(s) — e.g. "150x90 PFC" (depth×flange, mass omitted) or
+  //    "203x133 UB". If the leading dims resolve to exactly ONE real section,
+  //    it's unambiguous, so use it. Requires a family word (or a single-family
+  //    hit) so we never guess across families. "150 PFC" (one dim, many
+  //    matches) stays ambiguous and falls through.
+  if (nums.length >= 1) {
+    const starts = pool.filter(s => s.dims.length > nums.length
+      && nums.every((v, i) => _near(v, s.dims[i])));
+    const distinct = [...new Map(starts.map(s => [s.d, s])).values()];
+    if (distinct.length === 1) {
+      const fams = new Set(starts.map(c => c.abbr));
+      if (famAbbr || fams.size === 1) {
+        const e = distinct[0];
+        // Dims were simply omitted, nothing misheard — not flagged as a correction.
+        return { entry: e, corrected: false, original: raw, display: `${e.d} ${e.abbr}` };
+      }
+    }
+  }
+
+  // 4) dims given without enough detail AND ambiguous — no match
   return null;
 }
 
