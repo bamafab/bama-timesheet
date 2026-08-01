@@ -326,22 +326,56 @@ async function mSignLoadDocs() {
   if (!projNum) { host.innerHTML = ''; return; }
   host.innerHTML = '<div class="m-loading" style="padding:20px 2px;text-align:left">Finding RAMS&hellip;</div>';
   try {
-    // A project can have several drawing jobs — gather RAMS files across them.
-    const jobs = await api.get('/api/drawings?project_number=' + encodeURIComponent(projNum));
-    console.log('[SignRAMS] project', projNum, '→ drawing jobs:', (jobs || []).length, jobs);
-    const docs = [];
-    for (const j of (jobs || [])) {
+    const byId = {};   // fileId → doc, to dedup across the two sources
+
+    // Source A — DB-registered RAMS (drawing-elements context 'rams'). Gives
+    // job_id + webUrl and matches what the desktop shows.
+    let jobs = [];
+    try { jobs = await api.get('/api/drawings?project_number=' + encodeURIComponent(projNum)) || []; } catch (_) {}
+    for (const j of jobs) {
       try {
         const el = await api.get('/api/drawing-elements/' + j.id);
-        const ctxKeys = el && el.files ? Object.keys(el.files) : [];
-        const rams = (el.files && el.files['rams']) || [];
-        console.log(`[SignRAMS] job ${j.id} (${j.job_name || ''}) contexts:`, ctxKeys, '→ rams:', rams.length);
-        for (const f of rams) {
-          if (/\.docx$/i.test(f.fileName || f.name || '')) continue;   // skip Word twins
-          docs.push({ ...f, job_id: j.id, project_number: projNum });
+        for (const f of ((el.files && el.files['rams']) || [])) {
+          if (/\.docx$/i.test(f.fileName || f.name || '')) continue;
+          const key = f.fileId || f.webUrl || f.name;
+          byId[key] = { name: f.name || f.fileName, fileName: f.fileName, fileId: f.fileId, webUrl: f.webUrl, job_id: j.id, project_number: projNum };
         }
-      } catch (elErr) { console.warn('[SignRAMS] drawing-elements failed for job', j.id, elErr.message); }
+      } catch (_) {}
     }
+
+    // Source B — scan the SharePoint 00 - RAMS folder directly, so RAMS that
+    // were filed to SharePoint but never registered in the DB (older jobs) are
+    // still signable. This is the real source of truth for "what RAMS exist".
+    try {
+      const pf = await findProjectFolder(projNum);
+      if (pf && pf.id) {
+        const drive = pf.parentReference?.driveId || BAMA_DRIVE_ID;
+        // 00 - RAMS subfolder
+        const ramsRoot = await _mGraphChildByName(drive, pf.id, '00 - RAMS');
+        if (ramsRoot) {
+          // Each job has its own subfolder; also allow PDFs directly in root.
+          const level1 = await _mGraphChildren(drive, ramsRoot.id);
+          const pdfEntries = [];
+          for (const item of level1) {
+            if (item.file && /\.pdf$/i.test(item.name)) pdfEntries.push(item);
+            else if (item.folder) {
+              const sub = await _mGraphChildren(drive, item.id);
+              for (const s of sub) if (s.file && /\.pdf$/i.test(s.name)) pdfEntries.push(s);
+            }
+          }
+          for (const p of pdfEntries) {
+            const key = p.id;
+            if (byId[key]) { if (!byId[key].webUrl) byId[key].webUrl = p.webUrl; continue; }
+            // Avoid dup where DB row keyed on a different id but same filename.
+            const dupByName = Object.values(byId).find(d => (d.fileName || d.name) === p.name);
+            if (dupByName) { if (!dupByName.webUrl) dupByName.webUrl = p.webUrl; if (!dupByName.fileId) dupByName.fileId = p.id; continue; }
+            byId[key] = { name: p.name.replace(/\.pdf$/i, ''), fileName: p.name, fileId: p.id, webUrl: p.webUrl, job_id: null, project_number: projNum };
+          }
+        }
+      }
+    } catch (spErr) { console.warn('[SignRAMS] SharePoint scan failed:', spErr.message); }
+
+    const docs = Object.values(byId);
     _signDocs = docs;
 
     let acks = [];
@@ -350,23 +384,7 @@ async function mSignLoadDocs() {
     for (const a of acks) if (a.doc_file_id) ackCount[a.doc_file_id] = (ackCount[a.doc_file_id] || 0) + 1;
 
     if (!docs.length) {
-      const jobCount = (jobs || []).length;
-      // On-screen diagnostic (phones have no console) — what did each package hold?
-      let diag = '';
-      for (const j of (jobs || [])) {
-        try {
-          const el = await api.get('/api/drawing-elements/' + j.id);
-          const keys = el && el.files ? Object.keys(el.files) : [];
-          diag += `<div>• job ${j.id} “${escapeHtml(j.job_name || '')}”: ${keys.length ? keys.map(k => `${escapeHtml(k)}(${el.files[k].length})`).join(', ') : 'no files'}</div>`;
-        } catch (e) { diag += `<div>• job ${j.id}: error ${escapeHtml(e.message)}</div>`; }
-      }
-      host.innerHTML = `<div class="m-loading" style="padding:20px 2px;text-align:left">
-        No RAMS found for this job.
-        <div style="font-size:11px;color:var(--muted);margin-top:10px;line-height:1.7">
-          <strong>${jobCount}</strong> drawing package${jobCount !== 1 ? 's' : ''} checked:
-          ${diag || '<div>• none</div>'}
-        </div>
-      </div>`;
+      host.innerHTML = `<div class="m-loading" style="padding:20px 2px;text-align:left">No RAMS found for this job in the ERP or the 00 - RAMS SharePoint folder.</div>`;
       return;
     }
     host.innerHTML = docs.map((d, i) => {
@@ -386,6 +404,19 @@ async function mSignLoadDocs() {
   } catch (e) {
     host.innerHTML = `<div class="m-loading" style="padding:20px 2px;text-align:left;color:var(--red)">${escapeHtml(e.message)}</div>`;
   }
+}
+
+// Graph helpers for the SharePoint RAMS scan (use the app's existing token).
+async function _mGraphChildren(driveId, itemId) {
+  const res = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/items/${itemId}/children?$top=200&$select=id,name,file,folder,webUrl`,
+    { headers: { Authorization: 'Bearer ' + await getToken() } });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.value || [];
+}
+async function _mGraphChildByName(driveId, parentId, name) {
+  const kids = await _mGraphChildren(driveId, parentId);
+  return kids.find(k => k.folder && k.name === name) || null;
 }
 
 // Sign modal (self-injecting), finger signature pad.
