@@ -310,7 +310,9 @@ Ranked by value, with what this session's work already changed:
   sampling). What's left is the visual weld map itself, which is low value
   against the rest of this list.
 
-**Immediate, ahead of all of the above:** the Labour Cost tile shows the quote
-budget rather than LabourLog actuals, which quietly undermines CVR and Job
-Costing — those reports look precise and are not. Plus the two FAB 001 ↔
+**Immediate, ahead of all of the above:** the two FAB 001 ↔
 inspection-record loose ends from E2.
+(NOTE: the old "Labour Cost tile shows quote budget not actuals" item that
+used to live here was STALE — see the ✅ ALREADY DONE entry above. The tile
+reads Σ(hours × rate) actuals, verified in code 2026-07-30 and re-verified
+2026-08-01. Do not re-add it.)

@@ -3344,7 +3344,7 @@ async function deleteProjectEntry(id) {
   const entry = state.timesheetData.entries.find(e => String(e.id) === String(id));
   if (!entry) return;
   const label = `${entry.projectId} \u2014 ${entry.hours}h on ${fmtDateStr(entry.date)} (${entry.employeeName})`;
-  if (!confirm(`Delete this entry?\n\n${label}\n\nThis cannot be undone.`)) return;
+  if (!(await bamaConfirm({ title: 'Delete entry', body: `${label}<br><br>This cannot be undone.`, confirmText: 'Delete', tone: 'danger' }))) return;
   try {
     await api.delete(`/api/project-hours/${id}`);
     state.timesheetData.entries = state.timesheetData.entries.filter(
@@ -4349,7 +4349,7 @@ async function confirmSubmitAndClockOut() {
 async function confirmDiscardAndClockOut() {
   const ctx = _pendingClockOutData;
   if (!ctx) return;
-  if (!confirm('Discard all pending entries? They will not be saved and the time will be logged as Unproductive.')) {
+  if (!(await bamaConfirm({ title: 'Discard pending entries?', body: 'They will not be saved and the time will be logged as Unproductive.', confirmText: 'Discard', tone: 'danger' }))) {
     return;
   }
   clearPendingEntries(state.currentEmployee);
@@ -5621,7 +5621,7 @@ async function submitBookAbsence() {
   if ((type === 'paid' || type === 'half') && status === 'approved' && emp) {
     const bal = calculateHolidayBalance(emp.name);
     if (bal && workingDays > bal.remainingDays) {
-      if (!confirm(`${emp.name} only has ${bal.remainingDays} days remaining but this is ${workingDays} days. Book anyway?`)) return;
+      if (!(await bamaConfirm({ title: 'Insufficient balance', body: `${emp.name} only has ${bal.remainingDays} days remaining but this is ${workingDays} days. Book anyway?`, confirmText: 'Book anyway', tone: 'warn' }))) return;
     }
   }
 
@@ -5758,7 +5758,7 @@ async function deleteHolidayFromEdit() {
   if (!h) return;
 
   const label = `${h.employeeName} — ${h.type} (${fmtDateStr(h.dateFrom)} → ${fmtDateStr(h.dateTo)})`;
-  if (!confirm(`Delete this record?\n\n${label}\n\nIf this was an approved paid holiday, the balance will be restored.`)) return;
+  if (!(await bamaConfirm({ title: 'Delete record', body: `${label}<br><br>If this was an approved paid holiday, the balance will be restored.`, confirmText: 'Delete', tone: 'danger' }))) return;
 
   try {
     const result = await api.delete(`/api/holidays/${id}`);
@@ -7628,7 +7628,7 @@ async function saveWeldingMachine() {
 }
 
 async function deleteWeldingMachine(id, name) {
-  if (!confirm(`Remove "${name}" from the register?`)) return;
+  if (!(await bamaConfirm({ title: 'Remove machine', body: `Remove "${name}" from the register?`, confirmText: 'Remove', tone: 'danger' }))) return;
   try {
     await api.delete(`/api/welding-machines/${id}`);
     toast('Machine removed', 'info');
@@ -8024,7 +8024,7 @@ async function saveSupplier() {
 }
 
 async function deleteSupplier(id, name) {
-  if (!confirm(`Remove supplier "${name}"?`)) return;
+  if (!(await bamaConfirm({ title: 'Remove supplier', body: `Remove supplier "${name}"?`, confirmText: 'Remove', tone: 'danger' }))) return;
   try {
     await api.delete(`/api/suppliers/${id}`);
     toast('Supplier removed', 'info');
@@ -8037,7 +8037,7 @@ async function deleteSupplierFromForm() {
   const id = document.getElementById('supplierEditId').value;
   const name = document.getElementById('supplierName').value.trim() || 'this supplier';
   if (!id) return;
-  if (!confirm(`Remove supplier "${name}"?\n\nThis hides them from the list but keeps the audit trail. Their existing POs and history are preserved.`)) return;
+  if (!(await bamaConfirm({ title: 'Remove supplier', body: `Remove supplier "${name}"?<br><br>This hides them from the list but keeps the audit trail. Their existing POs and history are preserved.`, confirmText: 'Remove', tone: 'danger' }))) return;
   try {
     await api.delete(`/api/suppliers/${id}`);
     toast('Supplier removed', 'info');
@@ -9191,7 +9191,7 @@ async function confirmMergeSuppliers() {
   if (!keepId || !mergeIds.length) return;
 
   const keepName = document.getElementById('mergeKeepSelect').selectedOptions[0]?.text || '';
-  if (!confirm(`Merge ${mergeIds.length} supplier(s) into "${keepName}"? This cannot be undone.`)) return;
+  if (!(await bamaConfirm({ title: 'Merge suppliers', body: `Merge ${mergeIds.length} supplier(s) into "${keepName}"? This cannot be undone.`, confirmText: 'Merge', tone: 'danger' }))) return;
 
   try {
     const result = await api.post('/api/suppliers/merge', { keep_id: keepId, merge_ids: mergeIds });
@@ -9300,7 +9300,7 @@ async function toggleServiceTypeFinish(id, current) {
 }
 
 async function deleteServiceType(id, name) {
-  if (!confirm(`Remove service "${name}"? Existing supplier assignments will be unaffected.`)) return;
+  if (!(await bamaConfirm({ title: 'Remove service', body: `Remove service "${name}"? Existing supplier assignments will be unaffected.`, confirmText: 'Remove', tone: 'danger' }))) return;
   try {
     await api.delete(`/api/service-types/${id}`);
     await loadServiceTypes();
@@ -9733,7 +9733,7 @@ async function savePayrollComment() {
 }
 
 async function deletePayrollComment(id) {
-  if (!confirm('Delete this payroll instruction?')) return;
+  if (!(await bamaConfirm({ title: 'Delete instruction', body: 'Delete this payroll instruction?', confirmText: 'Delete', tone: 'danger' }))) return;
   try {
     await api.delete(`/api/payroll-comments/${id}`);
     toast('Comment deleted', 'info');
@@ -10542,7 +10542,7 @@ async function toggleEmployeeActive(id) {
   const emp = state.timesheetData.employees.find(e => String(e.id) === String(id));
   if (!emp) return;
   const deactivating = emp.active !== false;
-  if (deactivating && !confirm(`Deactivate ${emp.name}? They will no longer appear on the kiosk or in payroll.`)) return;
+  if (deactivating && !(await bamaConfirm({ title: 'Deactivate employee', body: `Deactivate ${emp.name}? They will no longer appear on the kiosk or in payroll.`, confirmText: 'Deactivate', tone: 'danger' }))) return;
   try {
     await api.put(`/api/employees/${id}`, {
       is_active: !deactivating
@@ -10559,7 +10559,7 @@ async function deleteEmployee(id) {
   const emp = state.timesheetData.employees.find(e => String(e.id) === String(id));
   if (!emp) return;
 
-  if (!confirm(`Remove ${emp.name}? Their historical time entries will be kept.`)) return;
+  if (!(await bamaConfirm({ title: 'Remove employee', body: `Remove ${emp.name}? Their historical time entries will be kept.`, confirmText: 'Remove', tone: 'danger' }))) return;
 
   try {
     // Deactivate rather than truly delete — preserve history
@@ -13097,7 +13097,7 @@ async function bomBulkStatus(status) {
 async function bomBulkDelete() {
   const ids = Array.from(_bomSelected);
   if (!ids.length) return;
-  if (!confirm(`Delete ${ids.length} selected BOM item${ids.length === 1 ? '' : 's'}? This cannot be undone.`)) return;
+  if (!(await bamaConfirm({ title: 'Delete BOM items', body: `Delete ${ids.length} selected BOM item${ids.length === 1 ? '' : 's'}? This cannot be undone.`, confirmText: 'Delete', tone: 'danger' }))) return;
   try {
     const r = await api.post('/api/job-bom-items/bulk-delete', { item_ids: ids });
     await bomReloadAfterBulk();
@@ -13107,7 +13107,7 @@ async function bomBulkDelete() {
 }
 
 async function deleteBomItem(id) {
-  if (!confirm('Delete this BOM item? This cannot be undone.')) return;
+  if (!(await bamaConfirm({ title: 'Delete BOM item', body: 'This cannot be undone.', confirmText: 'Delete', tone: 'danger' }))) return;
   try {
     await api.delete(`/api/job-bom-items/${id}`);
     toast('BOM item deleted', 'success');
@@ -22293,9 +22293,9 @@ function initTemplatesPage() {
 }
 
 // ── Sidebar template selection ──
-function selectTemplate(key) {
+async function selectTemplate(key) {
   if (tplDirty) {
-    if (!confirm('You have unsaved changes. Discard and switch template?')) return;
+    if (!(await bamaConfirm({ title: 'Unsaved changes', body: 'You have unsaved changes. Discard and switch template?', confirmText: 'Discard', tone: 'warn' }))) return;
     tplDraft = tplCloneSettings();
     tplDirty = false;
     updateDirtyIndicator();
@@ -22548,9 +22548,9 @@ async function saveTemplateSettings() {
   }
 }
 
-function discardTemplateChanges() {
+async function discardTemplateChanges() {
   if (!tplDirty) return;
-  if (!confirm('Discard all unsaved changes?')) return;
+  if (!(await bamaConfirm({ title: 'Discard changes', body: 'Discard all unsaved changes?', confirmText: 'Discard', tone: 'warn' }))) return;
   tplDraft = tplCloneSettings();
   tplDirty = false;
   updateDirtyIndicator();
@@ -22841,7 +22841,7 @@ async function uploadLogoToSharePoint() {
 }
 
 async function removeLogo() {
-  if (!confirm('Remove the company logo? Templates will render without it.')) return;
+  if (!(await bamaConfirm({ title: 'Remove logo', body: 'Templates will render without it.', confirmText: 'Remove', tone: 'danger' }))) return;
   try {
     const mergedSettings = (state.timesheetData.settings && state.timesheetData.settings.templates) || {};
     const newSettings = Object.assign({}, mergedSettings);
@@ -23971,7 +23971,7 @@ async function renderInlineClientContacts(clientId) {
 async function deleteClientFromTile(clientId) {
   const client = clientsData.find(c => String(c.id) === String(clientId));
   const name = client ? client.company_name : 'this client';
-  if (!confirm(`Delete "${name}"? This will remove them from the client database.`)) return;
+  if (!(await bamaConfirm({ title: 'Delete client', body: `Delete "${name}"? This will remove them from the client database.`, confirmText: 'Delete', tone: 'danger' }))) return;
   try {
     await api.delete(`/api/clients/${clientId}`);
     clientsData = clientsData.filter(c => String(c.id) !== String(clientId));
@@ -24638,7 +24638,7 @@ async function addTenderComment() {
 }
 
 async function deleteTenderComment(id) {
-  if (!confirm('Delete this comment?')) return;
+  if (!(await bamaConfirm({ title: 'Delete comment', body: 'Delete this comment?', confirmText: 'Delete', tone: 'danger' }))) return;
   try {
     await api.delete(`/api/tender-comments/${id}`);
     toast('Comment deleted', 'success');
@@ -24767,7 +24767,7 @@ async function convertToQuote() {
     return;
   }
 
-  if (!confirm(`Convert ${currentTender.reference} to a Quote?\n\nThis will notify ${handlerName || handlerEmail} and create a task for them.`)) return;
+  if (!(await bamaConfirm({ title: 'Convert to quote', body: `Convert ${currentTender.reference} to a Quote?<br><br>This will notify ${handlerName || handlerEmail} and create a task for them.`, confirmText: 'Convert', tone: 'warn' }))) return;
 
   try {
     // Update status
@@ -25180,7 +25180,7 @@ async function deleteContactFromModal() {
   const id = document.getElementById('ctcId').value;
   const clientId = document.getElementById('ctcClientId').value;
   if (!id) return;
-  if (!confirm('Delete this contact?')) return;
+  if (!(await bamaConfirm({ title: 'Delete contact', body: 'Delete this contact?', confirmText: 'Delete', tone: 'danger' }))) return;
 
   try {
     await api.delete(`/api/client-contacts/${id}`);
@@ -26206,7 +26206,7 @@ async function addQuoteComment() {
 }
 
 async function deleteQuoteComment(id) {
-  if (!confirm('Delete this comment?')) return;
+  if (!(await bamaConfirm({ title: 'Delete comment', body: 'Delete this comment?', confirmText: 'Delete', tone: 'danger' }))) return;
   try {
     await api.delete(`/api/tender-comments/${id}`);
     toast('Comment deleted', 'success');
@@ -27002,7 +27002,7 @@ async function confirmLinkFolder(folderId, folderName) {
   // silent surprise.
   if (currentProjectRecord.sharepoint_folder_id &&
       currentProjectRecord.sharepoint_folder_id !== folderId) {
-    if (!confirm(`Replace the currently linked folder with "${folderName}"?\n\nThe project's existing folder won't be modified — only the link is updated.`)) {
+    if (!(await bamaConfirm({ title: 'Replace linked folder', body: `Replace the currently linked folder with "${folderName}"?<br><br>The project's existing folder won't be modified — only the link is updated.`, confirmText: 'Replace', tone: 'warn' }))) {
       return;
     }
   }

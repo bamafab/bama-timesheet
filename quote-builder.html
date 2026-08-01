@@ -7845,14 +7845,14 @@ function renderRevHistory(q) {
   `).join('');
 }
 
-function restoreSnapshot(ts) {
+async function restoreSnapshot(ts) {
   const q = getQuote(); if (!q) return;
   const snap = (q.revSnapshots || []).find(s => s.ts === ts);
   if (!snap) { toast('Snapshot not found', 'error'); return; }
   const confirmMsg = `Restore to snapshot from ${snap.date} ${snap.time} (${snap.revision}, ${snap.status})?
 
 Current state will be saved as a new snapshot first.`;
-  if (!confirm(confirmMsg)) return;
+  if (!(await bamaConfirm({ title: 'Restore snapshot', body: confirmMsg.replace(/\n/g,'<br>'), confirmText: 'Restore', tone: 'warn' }))) return;
   // Save current state before restoring
   takeRevSnapshot('before_restore', q);
   // Restore data but preserve snapshot history
@@ -17670,7 +17670,7 @@ async function runQuoteHelper() {
   const _existingTcs = _qEdit?.helperAnalysis?.tc_notes || [];
   const _hasEdits = _existingTcs.some(t => t && t._edited);
   if (_hasEdits) {
-    if (!confirm('You have edited the Project Specific Clarifications (T&C) cards.\n\nRe-running the analysis will overwrite them with fresh AI output and your edits will be lost.\n\nContinue?')) {
+    if (!(await bamaConfirm({ title: 'Overwrite your edits?', body: 'You have edited the Project Specific Clarifications (T&C) cards.<br><br>Re-running the analysis will overwrite them with fresh AI output and your edits will be lost.', confirmText: 'Re-run anyway', tone: 'warn' }))) {
       return;
     }
   }
@@ -18079,12 +18079,12 @@ function qhEditTcCard(idx, field, value) {
   if (typeof autosave === 'function') autosave(); else saveAll();
 }
 
-function qhDeleteTcCard(idx) {
+async function qhDeleteTcCard(idx) {
   const q = getQuote();
   const notes = q?.helperAnalysis?.tc_notes;
   if (!notes || !notes[idx]) return;
   const label = (notes[idx].heading || notes[idx].text || 'this clarification').toString().substring(0, 60);
-  if (!confirm(`Delete clarification "${label}"?\n\nIt will be removed from the quote PDF and won't regenerate unless you re-run the analysis.`)) return;
+  if (!(await bamaConfirm({ title: 'Delete clarification', body: `Delete clarification "${label}"?<br><br>It will be removed from the quote PDF and won't regenerate unless you re-run the analysis.`, confirmText: 'Delete', tone: 'danger' }))) return;
   notes.splice(idx, 1);
   if (window._helperParsed?.tc_notes) window._helperParsed.tc_notes = notes;
   if (typeof autosave === 'function') autosave(); else saveAll();

@@ -2534,7 +2534,7 @@ function selectDashEmployee(name) {
   if (!emp) return;
   const hasPin = !!(emp.pin || emp.has_pin || emp.hasPin);
   if (!hasPin) {
-    alert('No PIN set for this user. Set one in Staff management first.');
+    showToast('No PIN set for this user. Set one in Staff management first.', 'error');
     return;
   }
   _dashPendingUser = { name, empId: emp.id };
@@ -2653,7 +2653,7 @@ async function dashDeleteQuote() {
     document.body.appendChild(t);
     setTimeout(() => t.remove(), 3000);
   } catch(e) {
-    alert('Error: ' + e.message);
+    showToast('Error: ' + e.message, 'error');
   }
 }
 
