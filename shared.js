@@ -48473,18 +48473,23 @@ async function _qmsHydratePickers(def) {
               const opt = el.options[el.selectedIndex];
               const pn = opt && opt.getAttribute('data-projnum');
               const proj = live.find(p => p.project_number === pn);
-              if (!proj) return;
-              const useSite = proj.site_same_as_client === false && (proj.site_address_line1 || proj.site_postcode);
+              const useSite = proj && proj.site_same_as_client === false && (proj.site_address_line1 || proj.site_postcode);
               // RAW /api/projects field names: site_* for the site address, and
               // the Clients-join fields (address_line1/city/postcode…) for the
               // client address — NOT the desktop's mapped client_* names.
-              const parts = useSite
+              const parts = !proj ? [] : (useSite
                 ? [proj.site_address_line1, proj.site_address_line2, proj.site_city, proj.site_county, proj.site_postcode]
-                : [proj.address_line1, proj.address_line2, proj.city, proj.county, proj.postcode];
-              const addr = parts.filter(Boolean).join(', ');
+                : [proj.address_line1, proj.address_line2, proj.city, proj.county, proj.postcode]);
+              const addr = parts.filter(Boolean).join(', ') || (proj ? (useSite ? proj.site_postcode : proj.postcode) || '' : '');
               for (const af of autoFields) {
                 const t = document.getElementById('qf_' + af.key);
-                if (t && !t.value) t.value = addr || (useSite ? proj.site_postcode : proj.postcode) || '';
+                if (!t) continue;
+                // Replace only if the field is empty OR still holds the value we
+                // last auto-filled (i.e. the user hasn't hand-edited it). This
+                // updates the address when the job is changed, but never clobbers
+                // an address the user typed themselves.
+                const untouched = !t.value || t.value === t.dataset.autofilled;
+                if (untouched) { t.value = addr; t.dataset.autofilled = addr; }
               }
             });
           }
