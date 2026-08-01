@@ -14786,8 +14786,20 @@ function bamaDocHeader(doc, logoDataUri, opts) {
   }
 
   // RIGHT: italic accent title + meta grid.
-  doc.setFont('helvetica', 'bolditalic'); doc.setFontSize(20); setText(accent);
-  doc.text(String(opts.title || ''), pageW - mR, y0 + 8, { align: 'right' });
+  // Auto-shrink the title if it's too long for the space to the right of the
+  // company block, so long titles (e.g. 'RAMS ACKNOWLEDGEMENT') don't overlap
+  // the address. Shorter titles keep the full size-20 look.
+  const titleStr = String(opts.title || '');
+  doc.setFont('helvetica', 'bolditalic');
+  const titleRightX = pageW - mR;
+  // Left boundary the title must not cross: a little right of the company block.
+  const titleLeftLimit = (opts.showCompanyDetails !== false) ? (pageW - mR - 66) : (mL + 4);
+  const titleMaxW = titleRightX - titleLeftLimit;
+  let titleSize = 20;
+  doc.setFontSize(titleSize);
+  while (titleSize > 11 && doc.getTextWidth(titleStr) > titleMaxW) { titleSize -= 0.5; doc.setFontSize(titleSize); }
+  setText(accent);
+  doc.text(titleStr, titleRightX, y0 + 8, { align: 'right' });
 
   let rightY = y0 + 16;
   const meta = (opts.meta || []).filter(r => r && r.label && r.value != null && String(r.value).trim() !== '');

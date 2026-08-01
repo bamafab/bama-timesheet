@@ -172,7 +172,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" data-jspdf-loaded="1"></script>
 <script>window.CURRENT_PAGE = 'm-qms';</script>
-<script src="shared.js?v=20260801b"></script>
+<script src="shared.js?v=20260801c"></script>
 <script src="steel-match.js?v=20260801e"></script>
 
 <script>
@@ -460,7 +460,7 @@ function mSignOpen(i) {
   const link = document.getElementById('signReadLink');
   if (d.webUrl) { link.href = d.webUrl; link.style.display = 'inline'; } else { link.style.display = 'none'; }
   document.getElementById('signName').value = _mMe || '';
-  document.getElementById('signCompany').value = '';
+  document.getElementById('signCompany').value = 'BAMA Fabrication';
   document.getElementById('signStatus').textContent = '';
   mSignRenderCollected();
   mSignInitPad();
@@ -491,7 +491,7 @@ function mSignAdd() {
   status.textContent = '';
   // Reset for the next person.
   document.getElementById('signName').value = '';
-  document.getElementById('signCompany').value = '';
+  document.getElementById('signCompany').value = 'BAMA Fabrication';
   mSignInitPad();
   mSignRenderCollected();
 }
@@ -602,7 +602,7 @@ async function mSignBuildRegister(d) {
     doc.setTextColor(HOUSE_INK[0], HOUSE_INK[1], HOUSE_INK[2]);
     doc.text(doc.splitTextToSize(String(a.signer_name || ''), cols[0].w - 2), cols[0].x, cy + 4);
     doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
-    doc.text(doc.splitTextToSize(String(a.signer_company || '—'), cols[1].w - 2), cols[1].x, cy + 4);
+    doc.text(doc.splitTextToSize(String(a.signer_company || 'BAMA Fabrication'), cols[1].w - 2), cols[1].x, cy + 4);
     if (a._sig) { try { doc.addImage(a._sig, 'PNG', cols[2].x, cy - 1, 40, 13); } catch (_) {} }
     doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
     doc.text(new Date(a.acknowledged_at).toLocaleDateString('en-GB'), cols[3].x, cy + 4);
