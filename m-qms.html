@@ -121,6 +121,7 @@
       <div class="tag">Check Sheets</div>
     </div>
     <div class="m-who" id="mWho"></div>
+    <button id="mTopInstall" onclick="mDoInstall(event)" style="display:none;margin-left:10px;flex:0 0 auto;background:var(--accent);color:#111;border:none;border-radius:9px;font-weight:700;font-size:12px;padding:8px 12px;font-family:inherit">⤓ Install</button>
   </div>
   <div class="m-body">
     <div class="m-h">Fabrication &amp; Welding</div>
@@ -150,13 +151,13 @@
 // zero edits to this page.
 
 // Which form codes belong on the shop floor for this PoC.
-// Matched case-insensitively against form_code AND title, so it survives you
-// renaming a sheet. Add codes here to widen the mobile set later.
+// Matched case-insensitively against form_code only. Deliberately specific so we
+// don't sweep in adjacent sheets (e.g. CON 001 consumables register, which
+// mentions "welding" in its title but is a stores log, not a check sheet).
+// Add codes here to widen the mobile set later.
 const M_QMS_ALLOW = [
   /FAB\s*001/i,        // Fabrication Inspection Record
-  /VER\s*001/i,        // Welding Equipment Checksheet
-  /\bweld/i,           // any future welding sheet by title
-  /fabricat/i          // any future fabrication sheet by title
+  /VER\s*001/i         // Welding Equipment Checksheet
 ];
 
 const M_ICON = code => {
@@ -221,7 +222,7 @@ async function mLoadForms() {
     const forms = await api.get('/api/qms-forms');
     window._qmsForms = forms;  // openQmsForm() reads this global
     const list = (forms || []).filter(f =>
-      M_QMS_ALLOW.some(rx => rx.test(f.form_code || '') || rx.test(f.title || ''))
+      M_QMS_ALLOW.some(rx => rx.test(f.form_code || ''))
     );
     if (!list.length) {
       host.innerHTML = '<div class="m-loading">No fabrication or welding sheets found. Run the QMS seed SQL first.</div>';
@@ -246,14 +247,23 @@ async function mOpen(id) {
   // pickers (jobs/personnel/drawings), wires camera + signature, and on submit
   // renders the house-style native PDF and files it to SharePoint.
   try {
-    await mWait(() => typeof openQmsForm === 'function');
+    if (typeof openQmsForm !== 'function') {
+      await mWait(() => typeof openQmsForm === 'function', 5000);
+    }
+    // openQmsForm reads _qmsForms to find the definition — make sure it's there.
+    if (!Array.isArray(window._qmsForms) || !window._qmsForms.length) {
+      window._qmsForms = await api.get('/api/qms-forms');
+    }
     openQmsForm(id);
-    // After a successful submit the engine hides its modal and calls
-    // renderQmsTab() (a no-op here — there's no #tab-qms). Refresh our own
-    // recent list shortly after so the shop-floor user sees their filing.
+    // Give the injected modal a beat, then confirm it actually opened; if it
+    // didn't, the user gets a toast rather than a dead tap.
+    setTimeout(() => {
+      const m = document.getElementById(M_MODAL_ID);
+      if (!m || m.style.display === 'none') toast('Form did not open — pull down to refresh and retry.', 'error');
+    }, 400);
     mWatchSubmit();
   } catch (e) {
-    toast('Could not open form: ' + e.message, 'error');
+    toast('Could not open form: ' + (e.message || e), 'error');
   }
 }
 
@@ -298,24 +308,44 @@ async function mLoadRecent() {
 // Contextual install hint (Android shows a real prompt; iOS needs manual A2HS).
 let _mDeferredPrompt = null;
 window.addEventListener('beforeinstallprompt', (e) => {
-  e.preventDefault(); _mDeferredPrompt = e;
+  e.preventDefault(); _mDeferredPrompt = e; mInstallHint();
 });
+window.addEventListener('appinstalled', () => {
+  _mDeferredPrompt = null;
+  const t = document.getElementById('mTopInstall'); if (t) t.style.display = 'none';
+  const b = document.getElementById('mInstall'); if (b) b.style.display = 'none';
+});
+
+async function mDoInstall(ev) {
+  if (ev) ev.preventDefault();
+  if (!_mDeferredPrompt) return;
+  _mDeferredPrompt.prompt();
+  await _mDeferredPrompt.userChoice;
+  _mDeferredPrompt = null;
+  const t = document.getElementById('mTopInstall'); if (t) t.style.display = 'none';
+  const b = document.getElementById('mInstall'); if (b) b.style.display = 'none';
+}
+
 function mInstallHint() {
   const box = document.getElementById('mInstall');
   const txt = document.getElementById('mInstallText');
+  const topBtn = document.getElementById('mTopInstall');
   const standalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
   if (standalone) return; // already installed
   const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
   if (_mDeferredPrompt) {
-    txt.innerHTML = '<a href="#" id="mInstallGo" style="color:var(--accent)">tap here to install to your home screen.</a>';
+    // Android/Chrome — real install prompt available. Surface it in the top bar
+    // (always visible) AND in the hint box.
+    if (topBtn) topBtn.style.display = 'inline-block';
+    txt.innerHTML = '<a href="#" onclick="mDoInstall(event)" style="color:var(--accent)">tap here to install to your home screen.</a>';
     box.style.display = 'block';
-    document.getElementById('mInstallGo').onclick = async (ev) => {
-      ev.preventDefault();
-      _mDeferredPrompt.prompt();
-      await _mDeferredPrompt.userChoice; _mDeferredPrompt = null; box.style.display = 'none';
-    };
   } else if (isIOS) {
     txt.textContent = 'tap the Share button, then “Add to Home Screen”.';
+    box.style.display = 'block';
+  } else {
+    // Chrome hasn't fired beforeinstallprompt yet (needs engagement) — tell the
+    // user the manual route so the option never just "isn't there".
+    txt.innerHTML = 'open your browser menu (⋮) and choose <strong>“Add to Home screen”</strong> / <strong>“Install app”</strong>.';
     box.style.display = 'block';
   }
 }
