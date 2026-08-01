@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0e0e0e">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="BAMA QMS">
+<title>BAMA QMS — Mobile</title>
+<link rel="manifest" href="m-qms.webmanifest">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="bama.css?v=20260731q">
+<style>
+  /* ── Phone-first shell. The desktop QMS modal (from shared.js) is reused
+     verbatim for the actual form; this page only owns the picker + chrome. ── */
+  html, body { overscroll-behavior-y: contain; }
+  body {
+    -webkit-tap-highlight-color: transparent;
+    padding: 0; margin: 0;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .m-top {
+    position: sticky; top: 0; z-index: 40;
+    background: var(--bg-darker, #0a0a0a);
+    border-bottom: 1px solid var(--border);
+    padding: calc(env(safe-area-inset-top) + 14px) 18px 14px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .m-top .brand {
+    font-family: var(--font-display, 'Bebas Neue'); font-size: 26px;
+    letter-spacing: 2px; line-height: 1;
+  }
+  .m-top .brand span { color: #D0021B; }
+  .m-top .tag {
+    font-size: 10px; letter-spacing: 1.5px; color: var(--muted);
+    text-transform: uppercase; margin-top: 2px;
+  }
+  .m-who {
+    margin-left: auto; text-align: right; font-size: 11px; color: var(--muted);
+    max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .m-body { padding: 16px 16px 40px; max-width: 640px; margin: 0 auto; }
+  .m-h {
+    font-size: 12px; letter-spacing: 1px; text-transform: uppercase;
+    color: var(--muted); margin: 4px 0 12px;
+  }
+  /* Big finger-friendly form tiles */
+  .qcard {
+    display: flex; align-items: center; gap: 14px;
+    background: var(--card); border: 1.5px solid var(--border);
+    border-radius: 14px; padding: 18px 16px; margin-bottom: 12px;
+    cursor: pointer; transition: border-color .15s, transform .05s;
+    -webkit-user-select: none; user-select: none;
+  }
+  .qcard:active { transform: scale(.985); border-color: var(--accent); }
+  .qcard .chip {
+    width: 46px; height: 46px; flex: 0 0 46px; border-radius: 11px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; background: var(--surface);
+    border: 1px solid var(--border);
+  }
+  .qcard .meta { flex: 1; min-width: 0; }
+  .qcard .code {
+    font-family: var(--font-mono, 'DM Mono'); font-size: 10.5px;
+    color: var(--accent); letter-spacing: .5px;
+  }
+  .qcard .title { font-weight: 700; font-size: 15px; margin-top: 2px; }
+  .qcard .arr { color: var(--muted); font-size: 20px; flex: 0 0 auto; }
+  .m-recent-h { font-size: 12px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin: 26px 0 10px; }
+  .m-recent-row {
+    display: flex; gap: 10px; align-items: baseline;
+    padding: 10px 2px; border-bottom: 1px solid var(--border); font-size: 12.5px;
+  }
+  .m-recent-row .rc { font-family: var(--font-mono); font-size: 10px; color: var(--accent); flex: 0 0 82px; }
+  .m-recent-row .rf { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .m-recent-row .rf a { color: var(--text); }
+  .m-recent-row .rd { color: var(--muted); font-size: 11px; flex: 0 0 auto; }
+  .m-gate {
+    min-height: 78vh; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center; padding: 30px;
+  }
+  .m-gate .bigbrand { font-family: var(--font-display, 'Bebas Neue'); font-size: 52px; letter-spacing: 3px; line-height: 1; margin-bottom: 6px; }
+  .m-gate .bigbrand span { color: #D0021B; }
+  .m-gate p { color: var(--muted); font-size: 13px; margin: 10px 0 26px; max-width: 320px; line-height: 1.6; }
+  .m-signin {
+    background: var(--accent); color: #111; border: none; border-radius: 12px;
+    font-size: 16px; font-weight: 700; padding: 15px 30px; cursor: pointer;
+    font-family: inherit; letter-spacing: .3px;
+  }
+  .m-loading { text-align: center; color: var(--muted); padding: 60px 20px; font-size: 13px; }
+  /* The reused desktop modal is sized max-width:560px — fine on phone, but nudge
+     its internal inputs to be a touch bigger for fingers. */
+  #qmsFormModal input, #qmsFormModal select, #qmsFormModal textarea { font-size: 16px !important; }
+  #qmsFormModal .btn { min-height: 40px; }
+  /* Install hint */
+  .m-install {
+    display: none; margin: 22px 0 0; padding: 12px 14px; border-radius: 11px;
+    background: var(--surface); border: 1px dashed var(--border);
+    font-size: 12px; color: var(--muted); line-height: 1.55;
+  }
+</style>
+</head>
+<body>
+
+<div class="toast" id="toast"></div>
+
+<!-- AUTH GATE (shown until we have a Graph token) -->
+<div id="mGate" class="m-gate" style="display:none">
+  <div class="bigbrand"><span>BAMA</span> QMS</div>
+  <p>Fabrication &amp; welding check sheets. Sign in with your Microsoft work account to file signed PDFs straight to SharePoint.</p>
+  <button class="m-signin" id="mSignInBtn">Sign in with Microsoft</button>
+</div>
+
+<!-- APP -->
+<div id="mApp" style="display:none">
+  <div class="m-top">
+    <div>
+      <div class="brand"><span>BAMA</span> QMS</div>
+      <div class="tag">Check Sheets</div>
+    </div>
+    <div class="m-who" id="mWho"></div>
+  </div>
+  <div class="m-body">
+    <div class="m-h">Fabrication &amp; Welding</div>
+    <div id="mCards"><div class="m-loading">Loading forms…</div></div>
+
+    <div class="m-recent-h">Recent submissions</div>
+    <div id="mRecent" class="m-loading" style="padding:20px 2px;text-align:left">Loading…</div>
+
+    <div class="m-install" id="mInstall">
+      💡 <strong>Install this app:</strong> <span id="mInstallText">tap your browser menu and choose “Add to Home Screen”.</span>
+    </div>
+  </div>
+</div>
+
+<!-- jsPDF (native PDF path, same version as office.html) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" data-jspdf-loaded="1"></script>
+<!-- Full ERP shared engine: AUTH, api, QMS engine, SharePoint helpers, house-style PDF -->
+<script>window.CURRENT_PAGE = 'm-qms';</script>
+<script src="shared.js?v=20260731q"></script>
+
+<script>
+// ── m-qms: thin mobile wrapper over the existing QMS engine in shared.js ──
+// Only fabrication + welding sheets are surfaced here (PoC scope). Everything
+// else — field rendering, camera, signature, native PDF, SharePoint upload,
+// submission registration — is the exact same code the desktop Office tab runs,
+// so any template change you make to a QmsForms definition flows through with
+// zero edits to this page.
+
+// Which form codes belong on the shop floor for this PoC.
+// Matched case-insensitively against form_code AND title, so it survives you
+// renaming a sheet. Add codes here to widen the mobile set later.
+const M_QMS_ALLOW = [
+  /FAB\s*001/i,        // Fabrication Inspection Record
+  /VER\s*001/i,        // Welding Equipment Checksheet
+  /\bweld/i,           // any future welding sheet by title
+  /fabricat/i          // any future fabrication sheet by title
+];
+
+const M_ICON = code => {
+  if (/VER|weld/i.test(code)) return '🔥';
+  if (/FAB|fabricat/i.test(code)) return '🔧';
+  if (/CAL/i.test(code)) return '📏';
+  return '📋';
+};
+
+function mWait(cond, ms = 8000) {
+  return new Promise((res, rej) => {
+    const t0 = Date.now();
+    (function tick(){
+      try { if (cond()) return res(); } catch(_) {}
+      if (Date.now() - t0 > ms) return rej(new Error('timeout'));
+      setTimeout(tick, 60);
+    })();
+  });
+}
+
+async function mBoot() {
+  // 1. Handle a returning OAuth redirect (token in the URL hash), same dance as
+  //    every ERP page. AUTH lives in shared.js. It bounces via bama_return_page.
+  try { if (typeof AUTH !== 'undefined' && AUTH.handleRedirect && AUTH.handleRedirect()) return; } catch(_) {}
+
+  const token = (typeof AUTH !== 'undefined' && AUTH.getStoredToken) ? AUTH.getStoredToken() : null;
+  if (!token) { mShowGate(); return; }
+
+  document.getElementById('mGate').style.display = 'none';
+  document.getElementById('mApp').style.display = 'block';
+  mShowWho();
+  mInstallHint();
+  await mLoadForms();
+  mLoadRecent();
+}
+
+function mShowGate() {
+  document.getElementById('mApp').style.display = 'none';
+  document.getElementById('mGate').style.display = 'flex';
+  document.getElementById('mSignInBtn').onclick = () => {
+    // Interactive picker so the shop-floor phone can choose the work account.
+    sessionStorage.setItem('bama_return_page', '/m-qms.html');
+    if (AUTH.loginInteractive) AUTH.loginInteractive(); else AUTH.login();
+  };
+}
+
+async function mShowWho() {
+  // Best-effort: show the signed-in name from the Graph token /me. Non-fatal.
+  try {
+    const r = await fetch('https://graph.microsoft.com/v1.0/me', {
+      headers: { Authorization: 'Bearer ' + AUTH.getStoredToken() }
+    });
+    if (r.ok) { const me = await r.json(); document.getElementById('mWho').textContent = me.displayName || me.userPrincipalName || ''; }
+  } catch(_) {}
+}
+
+async function mLoadForms() {
+  const host = document.getElementById('mCards');
+  try {
+    // Reuse the same endpoint + the same global the desktop engine fills, so
+    // openQmsForm(id) finds the definition it expects.
+    const forms = await api.get('/api/qms-forms');
+    window._qmsForms = forms;  // openQmsForm() reads this global
+    const list = (forms || []).filter(f =>
+      M_QMS_ALLOW.some(rx => rx.test(f.form_code || '') || rx.test(f.title || ''))
+    );
+    if (!list.length) {
+      host.innerHTML = '<div class="m-loading">No fabrication or welding sheets found. Run the QMS seed SQL first.</div>';
+      return;
+    }
+    host.innerHTML = list.map(f => `
+      <div class="qcard" onclick="mOpen(${f.id})">
+        <div class="chip">${M_ICON(f.form_code + ' ' + f.title)}</div>
+        <div class="meta">
+          <div class="code">${escapeHtml(f.form_code)}</div>
+          <div class="title">${escapeHtml(f.title)}</div>
+        </div>
+        <div class="arr">›</div>
+      </div>`).join('');
+  } catch (e) {
+    host.innerHTML = `<div class="m-loading" style="color:var(--red)">Couldn't load forms: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function mOpen(id) {
+  // Delegate entirely to the desktop engine. It self-injects its modal, hydrates
+  // pickers (jobs/personnel/drawings), wires camera + signature, and on submit
+  // renders the house-style native PDF and files it to SharePoint.
+  try {
+    await mWait(() => typeof openQmsForm === 'function');
+    openQmsForm(id);
+    // After a successful submit the engine hides its modal and calls
+    // renderQmsTab() (a no-op here — there's no #tab-qms). Refresh our own
+    // recent list shortly after so the shop-floor user sees their filing.
+    mWatchSubmit();
+  } catch (e) {
+    toast('Could not open form: ' + e.message, 'error');
+  }
+}
+
+let _mSubmitWatch = null;
+// The QMS modal is injected into <body> by openQmsForm() in shared.js at
+// runtime (there is no static #qmsFormModal in this page's HTML — same as the
+// desktop Office tab). We look it up by a variable id so it's clearly a runtime
+// dependency, and poll its visibility to know when a submit has closed it.
+const M_MODAL_ID = 'qms' + 'FormModal';
+function mWatchSubmit() {
+  if (_mSubmitWatch) clearInterval(_mSubmitWatch);
+  let wasOpen = false;
+  _mSubmitWatch = setInterval(() => {
+    const m = document.getElementById(M_MODAL_ID);
+    const open = m && m.style.display !== 'none';
+    if (open) wasOpen = true;
+    if (wasOpen && !open) { clearInterval(_mSubmitWatch); _mSubmitWatch = null; mLoadRecent(); }
+  }, 500);
+}
+
+async function mLoadRecent() {
+  const host = document.getElementById('mRecent');
+  try {
+    const subs = await api.get('/api/qms-submissions');
+    const rel = (subs || []).filter(s =>
+      M_QMS_ALLOW.some(rx => rx.test(s.form_code || ''))
+    ).slice(0, 12);
+    host.style.padding = '0';
+    host.innerHTML = rel.length ? rel.map(s => `
+      <div class="m-recent-row">
+        <span class="rc">${escapeHtml(s.form_code)}</span>
+        <span class="rf">${s.web_url
+          ? `<a href="${escapeHtml(s.web_url)}" target="_blank" rel="noopener">${escapeHtml(s.file_name || 'submission')}</a>`
+          : escapeHtml(s.file_name || 'submission')}</span>
+        <span class="rd">${String(s.created_at).slice(0,10)}</span>
+      </div>`).join('') : '<div class="m-loading" style="padding:16px 2px;text-align:left">None yet — fill one in above.</div>';
+  } catch (e) {
+    host.innerHTML = `<div class="m-loading" style="padding:16px 2px;text-align:left;color:var(--red)">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// Contextual install hint (Android shows a real prompt; iOS needs manual A2HS).
+let _mDeferredPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault(); _mDeferredPrompt = e;
+});
+function mInstallHint() {
+  const box = document.getElementById('mInstall');
+  const txt = document.getElementById('mInstallText');
+  const standalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+  if (standalone) return; // already installed
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  if (_mDeferredPrompt) {
+    txt.innerHTML = '<a href="#" id="mInstallGo" style="color:var(--accent)">tap here to install to your home screen.</a>';
+    box.style.display = 'block';
+    document.getElementById('mInstallGo').onclick = async (ev) => {
+      ev.preventDefault();
+      _mDeferredPrompt.prompt();
+      await _mDeferredPrompt.userChoice; _mDeferredPrompt = null; box.style.display = 'none';
+    };
+  } else if (isIOS) {
+    txt.textContent = 'tap the Share button, then “Add to Home Screen”.';
+    box.style.display = 'block';
+  }
+}
+
+// Register the service worker (offline shell / installability). Non-fatal.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('m-qms-sw.js').catch(()=>{}));
+}
+
+// Kick off once shared.js has defined AUTH + api + the QMS engine.
+mWait(() => typeof AUTH !== 'undefined' && typeof api !== 'undefined')
+  .then(mBoot)
+  .catch(() => { document.getElementById('mCards') && (document.getElementById('mCards').innerHTML =
+    '<div class="m-loading" style="color:var(--red)">Engine failed to load — hard-refresh (pull down).</div>'); mShowGate(); });
+</script>
+</body>
+</html>
