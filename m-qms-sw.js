@@ -51,7 +51,7 @@ self.addEventListener('fetch', (event) => {
   }
 
   // shared.js and CDN libs: network-first, fall back to any cached copy.
-  if (isCdn || url.pathname.endsWith('shared.js')) {
+  if (isCdn || url.pathname.endsWith('shared.js') || url.pathname.endsWith('steel-match.js') || url.pathname.endsWith('steel-sections.json')) {
     event.respondWith(fetch(req).catch(() => caches.match(req)));
   }
 });

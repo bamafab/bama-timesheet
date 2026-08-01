@@ -7,277 +7,227 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="BAMA QMS">
-<title>BAMA QMS — Mobile</title>
+<meta name="apple-mobile-web-app-title" content="BAMA">
+<title>BAMA — Mobile</title>
 <link rel="manifest" href="m-qms.webmanifest">
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="bama.css?v=20260731q">
+<link rel="stylesheet" href="bama.css?v=20260801b">
 <style>
-  /* ── Phone-first shell. The desktop QMS modal (from shared.js) is reused
-     verbatim for the actual form; this page only owns the picker + chrome. ── */
   html, body { overscroll-behavior-y: contain; }
-  body {
-    -webkit-tap-highlight-color: transparent;
-    padding: 0; margin: 0;
-    padding-bottom: env(safe-area-inset-bottom);
-  }
-  .m-top {
-    position: sticky; top: 0; z-index: 40;
-    background: var(--bg-darker, #0a0a0a);
-    border-bottom: 1px solid var(--border);
-    padding: calc(env(safe-area-inset-top) + 14px) 18px 14px;
-    display: flex; align-items: center; gap: 12px;
-  }
-  .m-top .brand {
-    font-family: var(--font-display, 'Bebas Neue'); font-size: 26px;
-    letter-spacing: 2px; line-height: 1;
-  }
+  body { -webkit-tap-highlight-color: transparent; padding: 0; margin: 0; padding-bottom: env(safe-area-inset-bottom); }
+  .m-top { position: sticky; top: 0; z-index: 40; background: var(--bg-darker, #0a0a0a); border-bottom: 1px solid var(--border); padding: calc(env(safe-area-inset-top) + 14px) 18px 14px; display: flex; align-items: center; gap: 12px; }
+  .m-top .brand { font-family: var(--font-display, 'Bebas Neue'); font-size: 26px; letter-spacing: 2px; line-height: 1; }
   .m-top .brand span { color: #D0021B; }
-  .m-top .tag {
-    font-size: 10px; letter-spacing: 1.5px; color: var(--muted);
-    text-transform: uppercase; margin-top: 2px;
-  }
-  .m-who {
-    margin-left: auto; text-align: right; font-size: 11px; color: var(--muted);
-    max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
+  .m-top .tag { font-size: 10px; letter-spacing: 1.5px; color: var(--muted); text-transform: uppercase; margin-top: 2px; }
+  .m-back { background: none; border: none; color: var(--muted); font-size: 26px; cursor: pointer; padding: 0 4px 0 0; line-height: 1; display: none; }
+  .m-who { margin-left: auto; text-align: right; font-size: 11px; color: var(--muted); max-width: 34%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .m-body { padding: 16px 16px 40px; max-width: 640px; margin: 0 auto; }
-  .m-h {
-    font-size: 12px; letter-spacing: 1px; text-transform: uppercase;
-    color: var(--muted); margin: 4px 0 12px;
-  }
-  /* Big finger-friendly form tiles */
-  .qcard {
-    display: flex; align-items: center; gap: 14px;
-    background: var(--card); border: 1.5px solid var(--border);
-    border-radius: 14px; padding: 18px 16px; margin-bottom: 12px;
-    cursor: pointer; transition: border-color .15s, transform .05s;
-    -webkit-user-select: none; user-select: none;
-  }
+  .m-h { font-size: 12px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin: 4px 0 12px; }
+  .qcard { display: flex; align-items: center; gap: 14px; background: var(--card); border: 1.5px solid var(--border); border-radius: 14px; padding: 18px 16px; margin-bottom: 12px; cursor: pointer; transition: border-color .15s, transform .05s; -webkit-user-select: none; user-select: none; }
   .qcard:active { transform: scale(.985); border-color: var(--accent); }
-  .qcard .chip {
-    width: 46px; height: 46px; flex: 0 0 46px; border-radius: 11px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 22px; background: var(--surface);
-    border: 1px solid var(--border);
-  }
+  .qcard .chip { width: 46px; height: 46px; flex: 0 0 46px; border-radius: 11px; display: flex; align-items: center; justify-content: center; font-size: 22px; background: var(--surface); border: 1px solid var(--border); }
   .qcard .meta { flex: 1; min-width: 0; }
-  .qcard .code {
-    font-family: var(--font-mono, 'DM Mono'); font-size: 10.5px;
-    color: var(--accent); letter-spacing: .5px;
-  }
+  .qcard .code { font-family: var(--font-mono, 'DM Mono'); font-size: 10.5px; color: var(--accent); letter-spacing: .5px; }
   .qcard .title { font-weight: 700; font-size: 15px; margin-top: 2px; }
+  .qcard .sub { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
   .qcard .arr { color: var(--muted); font-size: 20px; flex: 0 0 auto; }
   .m-recent-h { font-size: 12px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin: 26px 0 10px; }
-  .m-recent-row {
-    display: flex; gap: 10px; align-items: baseline;
-    padding: 10px 2px; border-bottom: 1px solid var(--border); font-size: 12.5px;
-  }
+  .m-recent-row { display: flex; gap: 10px; align-items: baseline; padding: 10px 2px; border-bottom: 1px solid var(--border); font-size: 12.5px; }
   .m-recent-row .rc { font-family: var(--font-mono); font-size: 10px; color: var(--accent); flex: 0 0 82px; }
   .m-recent-row .rf { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .m-recent-row .rf a { color: var(--text); }
   .m-recent-row .rd { color: var(--muted); font-size: 11px; flex: 0 0 auto; }
-  .m-gate {
-    min-height: 78vh; display: flex; flex-direction: column;
-    align-items: center; justify-content: center; text-align: center; padding: 30px;
-  }
+  .m-gate { min-height: 78vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 30px; }
   .m-gate .bigbrand { font-family: var(--font-display, 'Bebas Neue'); font-size: 52px; letter-spacing: 3px; line-height: 1; margin-bottom: 6px; }
   .m-gate .bigbrand span { color: #D0021B; }
   .m-gate p { color: var(--muted); font-size: 13px; margin: 10px 0 26px; max-width: 320px; line-height: 1.6; }
-  .m-signin {
-    background: var(--accent); color: #111; border: none; border-radius: 12px;
-    font-size: 16px; font-weight: 700; padding: 15px 30px; cursor: pointer;
-    font-family: inherit; letter-spacing: .3px;
-  }
+  .m-signin { background: var(--accent); color: #111; border: none; border-radius: 12px; font-size: 16px; font-weight: 700; padding: 15px 30px; cursor: pointer; font-family: inherit; letter-spacing: .3px; }
   .m-loading { text-align: center; color: var(--muted); padding: 60px 20px; font-size: 13px; }
-  /* The reused desktop modal is sized max-width:560px — fine on phone, but nudge
-     its internal inputs to be a touch bigger for fingers. */
   #qmsFormModal input, #qmsFormModal select, #qmsFormModal textarea { font-size: 16px !important; }
   #qmsFormModal .btn { min-height: 40px; }
-  /* Install hint */
-  .m-install {
-    display: none; margin: 22px 0 0; padding: 12px 14px; border-radius: 11px;
-    background: var(--surface); border: 1px dashed var(--border);
-    font-size: 12px; color: var(--muted); line-height: 1.55;
-  }
+  .m-install { display: none; margin: 22px 0 0; padding: 12px 14px; border-radius: 11px; background: var(--surface); border: 1px dashed var(--border); font-size: 12px; color: var(--muted); line-height: 1.55; }
+  .home-tile { padding: 24px 18px; }
+  .home-tile .chip { width: 56px; height: 56px; flex-basis: 56px; font-size: 28px; }
+  .home-tile .title { font-size: 19px; }
+  .stk-mic { width: 100%; border: none; border-radius: 14px; background: var(--accent); color: #111; font-family: inherit; font-weight: 700; font-size: 15px; padding: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px; text-align: center; }
+  .stk-mic.rec { background: var(--red); color: #fff; animation: pulse 1.1s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.7} }
+  .stk-ta { width: 100%; box-sizing: border-box; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px; color: var(--text); font-size: 16px; resize: vertical; min-height: 64px; font-family: inherit; }
+  .stk-btn { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 10px; padding: 12px 14px; font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .stk-btn.primary { background: var(--accent); color: #111; border-color: var(--accent); }
+  .stk-in { width: 100%; box-sizing: border-box; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px; color: var(--text); font-size: 16px; }
+  .stk-rev { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin-bottom: 10px; }
+  .stk-rev .lbl { font-size: 10.5px; color: var(--muted); margin-bottom: 3px; text-transform: uppercase; letter-spacing: .5px; }
+  .stk-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stk-flag { font-size: 11px; margin-top: 6px; line-height: 1.4; }
+  .stk-item { display: flex; align-items: center; gap: 8px; padding: 12px 2px; border-bottom: 1px solid var(--border); }
+  .stk-item .si-main { flex: 1; min-width: 0; }
+  .stk-item .si-sec { font-weight: 700; font-size: 14px; }
+  .stk-item .si-meta { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+  .stk-step { width: 34px; height: 34px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 17px; cursor: pointer; flex: 0 0 auto; }
+  .stk-qty { min-width: 28px; text-align: center; font-weight: 700; font-family: var(--font-mono); }
+  .stk-chip { font-size: 10px; padding: 1px 7px; border-radius: 10px; font-family: var(--font-mono); }
+  .m-search { width: 100%; box-sizing: border-box; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 11px 13px; color: var(--text); font-size: 16px; margin-bottom: 12px; }
 </style>
 </head>
 <body>
 
 <div class="toast" id="toast"></div>
 
-<!-- AUTH GATE (shown until we have a Graph token) -->
 <div id="mGate" class="m-gate" style="display:none">
-  <div class="bigbrand"><span>BAMA</span> QMS</div>
-  <p>Fabrication &amp; welding check sheets. Sign in with your Microsoft work account to file signed PDFs straight to SharePoint.</p>
+  <div class="bigbrand"><span>BAMA</span> ERP</div>
+  <p>Shop-floor tools — check sheets and stock. Sign in with your Microsoft work account.</p>
   <button class="m-signin" id="mSignInBtn">Sign in with Microsoft</button>
 </div>
 
-<!-- APP -->
 <div id="mApp" style="display:none">
   <div class="m-top">
+    <button class="m-back" id="mBack" onclick="mGo('home')">&lsaquo;</button>
     <div>
-      <div class="brand"><span>BAMA</span> QMS</div>
-      <div class="tag">Check Sheets</div>
+      <div class="brand"><span>BAMA</span> <span id="mBrandWord" style="color:var(--text)">ERP</span></div>
+      <div class="tag" id="mTag">Shop floor</div>
     </div>
     <div class="m-who" id="mWho"></div>
-    <button id="mTopInstall" onclick="mDoInstall(event)" style="display:none;margin-left:10px;flex:0 0 auto;background:var(--accent);color:#111;border:none;border-radius:9px;font-weight:700;font-size:12px;padding:8px 12px;font-family:inherit">⤓ Install</button>
+    <button id="mTopInstall" onclick="mDoInstall(event)" style="display:none;margin-left:10px;flex:0 0 auto;background:var(--accent);color:#111;border:none;border-radius:9px;font-weight:700;font-size:12px;padding:8px 12px;font-family:inherit">&#10515; Install</button>
   </div>
-  <div class="m-body">
-    <div class="m-h">Fabrication &amp; Welding</div>
-    <div id="mCards"><div class="m-loading">Loading forms…</div></div>
 
-    <div class="m-recent-h">Recent submissions</div>
-    <div id="mRecent" class="m-loading" style="padding:20px 2px;text-align:left">Loading…</div>
-
-    <div class="m-install" id="mInstall">
-      💡 <strong>Install this app:</strong> <span id="mInstallText">tap your browser menu and choose “Add to Home Screen”.</span>
+  <div class="m-body" id="viewHome">
+    <div class="m-h">Choose a tool</div>
+    <div class="qcard home-tile" onclick="mGo('qms')">
+      <div class="chip">&#128203;</div>
+      <div class="meta"><div class="title">Check Sheets</div><div class="sub">Fabrication &amp; welding QMS records &rarr; SharePoint</div></div>
+      <div class="arr">&rsaquo;</div>
     </div>
+    <div class="qcard home-tile" onclick="mGo('stock')">
+      <div class="chip">&#128230;</div>
+      <div class="meta"><div class="title">Stock</div><div class="sub">Add by voice or manually, view &amp; adjust the register</div></div>
+      <div class="arr">&rsaquo;</div>
+    </div>
+    <div class="m-install" id="mInstall">
+      &#128161; <strong>Install this app:</strong> <span id="mInstallText">tap your browser menu and choose "Add to Home Screen".</span>
+    </div>
+  </div>
+
+  <div class="m-body" id="viewQms" style="display:none">
+    <div class="m-h">Fabrication &amp; Welding</div>
+    <div id="mCards"><div class="m-loading">Loading forms&hellip;</div></div>
+    <div class="m-recent-h">Recent submissions</div>
+    <div id="mRecent" class="m-loading" style="padding:20px 2px;text-align:left">Loading&hellip;</div>
+  </div>
+
+  <div class="m-body" id="viewStock" style="display:none">
+    <div class="m-h">Add stock</div>
+    <button class="stk-mic" id="stkMic" onclick="stkToggleMic()">&#127908; Tap &amp; speak &mdash; say what's on the racks</button>
+    <textarea class="stk-ta" id="stkTranscript" placeholder="e.g. three 203 by 133 by 25 UB at twelve metres in rack B, five 100 by 100 by 8 SHS at 6 metres  &mdash; or type it here" style="margin-top:10px"></textarea>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="stk-btn primary" id="stkParseBtn" onclick="stkParse()" style="flex:1">&#10024; Recognise</button>
+      <button class="stk-btn" onclick="stkAddManualRow()">&#65291; Manual row</button>
+    </div>
+    <div id="stkParseStatus" style="font-size:11.5px;color:var(--muted);margin-top:8px;min-height:14px"></div>
+    <div id="stkReview" style="margin-top:8px"></div>
+
+    <div class="m-h" style="margin-top:26px">Stock register</div>
+    <input class="m-search" id="stkSearch" placeholder="Search section / location&hellip;" oninput="stkRenderList()">
+    <div id="stkList" class="m-loading" style="padding:20px 2px;text-align:left">Loading&hellip;</div>
   </div>
 </div>
 
-<!-- jsPDF (native PDF path, same version as office.html) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" data-jspdf-loaded="1"></script>
-<!-- Full ERP shared engine: AUTH, api, QMS engine, SharePoint helpers, house-style PDF -->
 <script>window.CURRENT_PAGE = 'm-qms';</script>
 <script src="shared.js?v=20260801b"></script>
+<script src="steel-match.js?v=20260729h"></script>
 
 <script>
-// ── m-qms: thin mobile wrapper over the existing QMS engine in shared.js ──
-// Only fabrication + welding sheets are surfaced here (PoC scope). Everything
-// else — field rendering, camera, signature, native PDF, SharePoint upload,
-// submission registration — is the exact same code the desktop Office tab runs,
-// so any template change you make to a QmsForms definition flows through with
-// zero edits to this page.
-
-// Which form codes belong on the shop floor for this PoC.
-// Matched case-insensitively against form_code only. Deliberately specific so we
-// don't sweep in adjacent sheets (e.g. CON 001 consumables register, which
-// mentions "welding" in its title but is a stores log, not a check sheet).
-// Add codes here to widen the mobile set later.
-const M_QMS_ALLOW = [
-  /FAB\s*001/i,        // Fabrication Inspection Record
-  /VER\s*001/i         // Welding Equipment Checksheet
-];
-
-const M_ICON = code => {
-  if (/VER|weld/i.test(code)) return '🔥';
-  if (/FAB|fabricat/i.test(code)) return '🔧';
-  if (/CAL/i.test(code)) return '📏';
-  return '📋';
-};
+// BAMA mobile app — multi-view shell (home / QMS / stock).
+// QMS delegates to shared.js (openQmsForm/submitQmsForm). Stock reuses
+// /api/stock + steel-match.js + callClaude — same server & matcher as stock.html.
 
 function mWait(cond, ms = 8000) {
   return new Promise((res, rej) => {
     const t0 = Date.now();
-    (function tick(){
-      try { if (cond()) return res(); } catch(_) {}
-      if (Date.now() - t0 > ms) return rej(new Error('timeout'));
-      setTimeout(tick, 60);
-    })();
+    (function tick(){ try { if (cond()) return res(); } catch(_) {} if (Date.now() - t0 > ms) return rej(new Error('timeout')); setTimeout(tick, 60); })();
   });
 }
 
-async function mBoot() {
-  // 1. Handle a returning OAuth redirect (token in the URL hash), same dance as
-  //    every ERP page. AUTH lives in shared.js. It bounces via bama_return_page.
-  try { if (typeof AUTH !== 'undefined' && AUTH.handleRedirect && AUTH.handleRedirect()) return; } catch(_) {}
+const M_VIEWS = {
+  home:  { word: 'ERP',   tag: 'Shop floor',     back: false },
+  qms:   { word: 'QMS',   tag: 'Check Sheets',   back: true  },
+  stock: { word: 'STOCK', tag: 'Steel register', back: true  }
+};
+let _mView = 'home';
+function mGo(view) {
+  if (!M_VIEWS[view]) view = 'home';
+  _mView = view;
+  document.getElementById('viewHome').style.display  = view === 'home'  ? 'block' : 'none';
+  document.getElementById('viewQms').style.display   = view === 'qms'   ? 'block' : 'none';
+  document.getElementById('viewStock').style.display = view === 'stock' ? 'block' : 'none';
+  const v = M_VIEWS[view];
+  const bw = document.getElementById('mBrandWord');
+  bw.textContent = v.word; bw.style.color = view === 'home' ? 'var(--text)' : 'var(--accent)';
+  document.getElementById('mTag').textContent = v.tag;
+  document.getElementById('mBack').style.display = v.back ? 'block' : 'none';
+  window.scrollTo(0, 0);
+  if (view === 'qms')   { mLoadForms(); mLoadRecent(); }
+  if (view === 'stock') { stkEnsureSections(); stkLoad(); }
+}
 
+async function mBoot() {
+  try { if (typeof AUTH !== 'undefined' && AUTH.handleRedirect && AUTH.handleRedirect()) return; } catch(_) {}
   const token = (typeof AUTH !== 'undefined' && AUTH.getStoredToken) ? AUTH.getStoredToken() : null;
   if (!token) { mShowGate(); return; }
-
   document.getElementById('mGate').style.display = 'none';
   document.getElementById('mApp').style.display = 'block';
-  mShowWho();
-  mInstallHint();
-  await mLoadForms();
-  mLoadRecent();
+  mShowWho(); mInstallHint(); mGo('home');
 }
 
 function mShowGate() {
   document.getElementById('mApp').style.display = 'none';
   document.getElementById('mGate').style.display = 'flex';
   document.getElementById('mSignInBtn').onclick = () => {
-    // Interactive picker so the shop-floor phone can choose the work account.
     sessionStorage.setItem('bama_return_page', '/m-qms.html');
     if (AUTH.loginInteractive) AUTH.loginInteractive(); else AUTH.login();
   };
 }
 
+let _mMe = '';
 async function mShowWho() {
-  // Best-effort: show the signed-in name from the Graph token /me. Non-fatal.
   try {
-    const r = await fetch('https://graph.microsoft.com/v1.0/me', {
-      headers: { Authorization: 'Bearer ' + AUTH.getStoredToken() }
-    });
-    if (r.ok) { const me = await r.json(); document.getElementById('mWho').textContent = me.displayName || me.userPrincipalName || ''; }
+    const r = await fetch('https://graph.microsoft.com/v1.0/me', { headers: { Authorization: 'Bearer ' + AUTH.getStoredToken() } });
+    if (r.ok) { const me = await r.json(); _mMe = me.displayName || me.userPrincipalName || ''; document.getElementById('mWho').textContent = _mMe; }
   } catch(_) {}
 }
+
+// ── QMS (delegates to shared.js) ────────────────────────────────────────────
+const M_QMS_ALLOW = [ /FAB\s*001/i, /VER\s*001/i ];
+const M_ICON = code => (/VER|weld/i.test(code) ? '\uD83D\uDD25' : /FAB|fabricat/i.test(code) ? '\uD83D\uDD27' : /CAL/i.test(code) ? '\uD83D\uDCCF' : '\uD83D\uDCCB');
 
 async function mLoadForms() {
   const host = document.getElementById('mCards');
   try {
-    // Reuse the same endpoint + the same global the desktop engine fills, so
-    // openQmsForm(id) finds the definition it expects.
     const forms = await api.get('/api/qms-forms');
-    // openQmsForm() in shared.js reads its own module-scoped `let _qmsForms`.
-    // A `window._qmsForms = …` would create a SEPARATE property and leave the
-    // internal binding empty (openQmsForm's .find() then returns undefined and
-    // it silently returns before building the modal). Assign the bare global so
-    // we write the same binding shared.js reads.
-    _qmsForms = forms;
-    const list = (forms || []).filter(f =>
-      M_QMS_ALLOW.some(rx => rx.test(f.form_code || ''))
-    );
-    if (!list.length) {
-      host.innerHTML = '<div class="m-loading">No fabrication or welding sheets found. Run the QMS seed SQL first.</div>';
-      return;
-    }
+    _qmsForms = forms;   // bare global — the binding openQmsForm() reads
+    const list = (forms || []).filter(f => M_QMS_ALLOW.some(rx => rx.test(f.form_code || '')));
+    if (!list.length) { host.innerHTML = '<div class="m-loading">No fabrication or welding sheets found.</div>'; return; }
     host.innerHTML = list.map(f => `
       <div class="qcard" onclick="mOpen(${f.id})">
         <div class="chip">${M_ICON(f.form_code + ' ' + f.title)}</div>
-        <div class="meta">
-          <div class="code">${escapeHtml(f.form_code)}</div>
-          <div class="title">${escapeHtml(f.title)}</div>
-        </div>
-        <div class="arr">›</div>
+        <div class="meta"><div class="code">${escapeHtml(f.form_code)}</div><div class="title">${escapeHtml(f.title)}</div></div>
+        <div class="arr">&rsaquo;</div>
       </div>`).join('');
-  } catch (e) {
-    host.innerHTML = `<div class="m-loading" style="color:var(--red)">Couldn't load forms: ${escapeHtml(e.message)}</div>`;
-  }
+  } catch (e) { host.innerHTML = `<div class="m-loading" style="color:var(--red)">Couldn't load forms: ${escapeHtml(e.message)}</div>`; }
 }
 
 async function mOpen(id) {
-  // Delegate entirely to the desktop engine. It self-injects its modal, hydrates
-  // pickers (jobs/personnel/drawings), wires camera + signature, and on submit
-  // renders the house-style native PDF and files it to SharePoint.
   try {
-    if (typeof openQmsForm !== 'function') {
-      await mWait(() => typeof openQmsForm === 'function', 5000);
-    }
-    // openQmsForm reads shared.js's own `_qmsForms` binding — assign the bare
-    // global (not window.*) so it's the same one .find() looks at.
-    if (typeof _qmsForms === 'undefined' || !Array.isArray(_qmsForms) || !_qmsForms.length) {
-      _qmsForms = await api.get('/api/qms-forms');
-    }
+    if (typeof openQmsForm !== 'function') await mWait(() => typeof openQmsForm === 'function', 5000);
+    if (typeof _qmsForms === 'undefined' || !Array.isArray(_qmsForms) || !_qmsForms.length) _qmsForms = await api.get('/api/qms-forms');
     openQmsForm(id);
-    // Give the injected modal a beat, then confirm it actually opened; if it
-    // didn't, the user gets a toast rather than a dead tap.
-    setTimeout(() => {
-      const m = document.getElementById(M_MODAL_ID);
-      if (!m || m.style.display === 'none') toast('Form did not open — pull down to refresh and retry.', 'error');
-    }, 400);
+    setTimeout(() => { const m = document.getElementById(M_MODAL_ID); if (!m || m.style.display === 'none') toast('Form did not open — pull down to refresh and retry.', 'error'); }, 400);
     mWatchSubmit();
-  } catch (e) {
-    toast('Could not open form: ' + (e.message || e), 'error');
-  }
+  } catch (e) { toast('Could not open form: ' + (e.message || e), 'error'); }
 }
 
 let _mSubmitWatch = null;
-// The QMS modal is injected into <body> by openQmsForm() in shared.js at
-// runtime (there is no static #qmsFormModal in this page's HTML — same as the
-// desktop Office tab). We look it up by a variable id so it's clearly a runtime
-// dependency, and poll its visibility to know when a submit has closed it.
 const M_MODAL_ID = 'qms' + 'FormModal';
 function mWatchSubmit() {
   if (_mSubmitWatch) clearInterval(_mSubmitWatch);
@@ -294,78 +244,208 @@ async function mLoadRecent() {
   const host = document.getElementById('mRecent');
   try {
     const subs = await api.get('/api/qms-submissions');
-    const rel = (subs || []).filter(s =>
-      M_QMS_ALLOW.some(rx => rx.test(s.form_code || ''))
-    ).slice(0, 12);
+    const rel = (subs || []).filter(s => M_QMS_ALLOW.some(rx => rx.test(s.form_code || ''))).slice(0, 12);
     host.style.padding = '0';
     host.innerHTML = rel.length ? rel.map(s => `
       <div class="m-recent-row">
         <span class="rc">${escapeHtml(s.form_code)}</span>
-        <span class="rf">${s.web_url
-          ? `<a href="${escapeHtml(s.web_url)}" target="_blank" rel="noopener">${escapeHtml(s.file_name || 'submission')}</a>`
-          : escapeHtml(s.file_name || 'submission')}</span>
+        <span class="rf">${s.web_url ? `<a href="${escapeHtml(s.web_url)}" target="_blank" rel="noopener">${escapeHtml(s.file_name || 'submission')}</a>` : escapeHtml(s.file_name || 'submission')}</span>
         <span class="rd">${String(s.created_at).slice(0,10)}</span>
       </div>`).join('') : '<div class="m-loading" style="padding:16px 2px;text-align:left">None yet — fill one in above.</div>';
-  } catch (e) {
-    host.innerHTML = `<div class="m-loading" style="padding:16px 2px;text-align:left;color:var(--red)">${escapeHtml(e.message)}</div>`;
-  }
+  } catch (e) { host.innerHTML = `<div class="m-loading" style="padding:16px 2px;text-align:left;color:var(--red)">${escapeHtml(e.message)}</div>`; }
 }
 
-// Contextual install hint (Android shows a real prompt; iOS needs manual A2HS).
+// ── STOCK (reuses /api/stock + steel-match.js + callClaude) ──────────────────
+let _stkSections = null, _stkIdx = null, _stkReview = [], _stkList = [];
+
+async function stkEnsureSections() {
+  if (_stkIdx) return;
+  try { const res = await fetch('steel-sections.json?v=20260731s'); _stkSections = await res.json(); _stkIdx = steelBuildIndex(_stkSections); }
+  catch (e) { console.warn('steel sections load failed', e); _stkIdx = []; }
+}
+function stkMatch(raw) { try { return steelMatch(raw, _stkIdx || []); } catch(_) { return null; } }
+const stkKgOf = r => (r.kgm && r.length_mm && r.qty) ? r.kgm * (r.length_mm / 1000) * r.qty : 0;
+const stkFmtKg = v => v >= 1000 ? (Math.round(v / 100) / 10).toLocaleString('en-GB') + 't' : Math.round(v).toLocaleString('en-GB') + 'kg';
+
+let _stkRec = null, _stkRecOn = false;
+function stkToggleMic() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { toast('Voice needs Chrome — type in the box instead', 'error'); return; }
+  if (_stkRecOn) { _stkRec.stop(); return; }
+  _stkRec = new SR(); _stkRec.lang = 'en-GB'; _stkRec.continuous = true; _stkRec.interimResults = true;
+  const ta = document.getElementById('stkTranscript');
+  const base = ta.value ? ta.value.trim() + ' ' : '';
+  _stkRec.onresult = ev => { let f = '', i = ''; for (const r of ev.results) (r.isFinal ? f += r[0].transcript : i += r[0].transcript); ta.value = base + f + i; };
+  _stkRec.onend = () => { _stkRecOn = false; const b = document.getElementById('stkMic'); b.classList.remove('rec'); b.innerHTML = '\uD83C\uDFA4 Tap &amp; speak &mdash; say what\'s on the racks'; };
+  _stkRec.onerror = e => toast('Mic: ' + e.error, 'error');
+  _stkRec.start(); _stkRecOn = true;
+  const b = document.getElementById('stkMic'); b.classList.add('rec'); b.innerHTML = '\u23F9 Stop &mdash; tap when done';
+}
+
+async function stkParse() {
+  const text = document.getElementById('stkTranscript').value.trim();
+  if (!text) { toast('Say or type something first', 'error'); return; }
+  await stkEnsureSections();   // guarantee the matcher index is ready before validating
+  const btn = document.getElementById('stkParseBtn'); btn.disabled = true;
+  const st = document.getElementById('stkParseStatus'); st.textContent = 'Recognising…';
+  try {
+    const resp = await callClaude({
+      model: 'claude-sonnet-4-6', max_tokens: 1500,
+      messages: [{ role: 'user', content:
+`Convert this spoken steel stocktake into rows. Text: "${text}"
+
+Rules:
+- Output ONLY a JSON array, no prose, no markdown fences.
+- Each row: {"section": "<dims + family abbreviation, e.g. 203x133x25 UB, 100x100x8 SHS, 200x90 PFC>", "length_mm": <integer millimetres>, "qty": <integer>, "location": "<rack/bay if mentioned, else null>", "grade": "<steel grade if mentioned, else null>"}
+- "twelve metres" / "12m" => 12000. "7 and a half metres" => 7500. Plain large numbers like 12000 are already mm.
+- Family words: universal beam/UB, universal column/UC, channel/PFC, box section or SHS, RHS, CHS/tube/pipe, angle/EA/RSA, flat, round bar.
+- Voice mishears to fix: "you be/you bee/hubie" => UB; "you see/you sea" => UC; "pee eff see" => PFC; "ess aitch ess" => SHS; "are aitch ess" => RHS; "sea aitch ess" => CHS.
+- Keep every NUMBER exactly as heard — do NOT round or correct dimensions; validation happens elsewhere.
+- Transcribe ONLY what was said. Do not invent quantities, sections or locations.`}]
+    });
+    const raw = (resp.content || []).map(c => c.text || '').join('').replace(/```json|```/g, '').trim();
+    const rows = JSON.parse(raw);
+    if (!Array.isArray(rows) || !rows.length) throw new Error('nothing recognised');
+    rows.forEach(r => stkPushReview({ section: r.section, length_mm: parseInt(r.length_mm) || null, qty: parseInt(r.qty) || 1, location: r.location || '', grade: r.grade || '', source: 'voice' }));
+    st.textContent = `${rows.length} row${rows.length !== 1 ? 's' : ''} recognised — check and save.`;
+    document.getElementById('stkTranscript').value = '';
+  } catch (e) { st.textContent = ''; toast('Could not recognise that — try again or add a manual row. ' + e.message, 'error'); }
+  finally { btn.disabled = false; }
+}
+
+async function stkAddManualRow() { await stkEnsureSections(); stkPushReview({ section: '', length_mm: null, qty: 1, location: '', grade: '', source: 'manual' }); }
+
+function stkPushReview(row) {
+  const m = row.section ? stkMatch(row.section) : null;
+  if (m) { row._original = m.corrected ? row.section : null; row.section = m.display; row.family = m.entry.f; row.kgm = m.entry.kgm; }
+  else { row.family = null; row.kgm = null; row._original = null; }
+  _stkReview.push(row); stkRenderReview();
+}
+
+function stkReviewEdit(i, field, value) {
+  const r = _stkReview[i]; if (!r) return;
+  if (field === 'section') {
+    const m = stkMatch(value);
+    if (m) { r._original = m.corrected ? value : null; r.section = m.display; r.family = m.entry.f; r.kgm = m.entry.kgm; }
+    else { r._original = null; r.section = value; r.family = null; r.kgm = null; }
+    stkRenderReview(); return;
+  }
+  if (field === 'length_mm' || field === 'qty') r[field] = parseInt(value) || null; else r[field] = value;
+}
+
+function stkRenderReview() {
+  const el = document.getElementById('stkReview');
+  if (!_stkReview.length) { el.innerHTML = ''; return; }
+  let html = _stkReview.map((r, i) => {
+    const ok = !!r.kgm;
+    const flag = ok
+      ? (r._original ? `<span style="color:var(--accent)">\u2713 corrected from "${escapeHtml(r._original)}" &rarr; nearest real section &middot; ${r.kgm} kg/m</span>`
+                     : `<span style="color:var(--green)">\u2713 ${escapeHtml(r.family)} &middot; ${r.kgm} kg/m</span>`)
+      : `<span style="color:var(--accent)">\u26A0 not in steel database — will save unverified</span>`;
+    return `<div class="stk-rev">
+      <div class="lbl">Section</div>
+      <input class="stk-in" list="stkSectionList" value="${escapeHtml(r.section || '')}" onchange="stkReviewEdit(${i},'section',this.value)">
+      <div class="stk-flag">${flag}</div>
+      <div class="stk-grid" style="margin-top:8px">
+        <div><div class="lbl">Length (mm)</div><input class="stk-in" type="number" inputmode="numeric" value="${r.length_mm || ''}" onchange="stkReviewEdit(${i},'length_mm',this.value)"></div>
+        <div><div class="lbl">Qty</div><input class="stk-in" type="number" inputmode="numeric" min="1" value="${r.qty || 1}" onchange="stkReviewEdit(${i},'qty',this.value)"></div>
+        <div><div class="lbl">Location</div><input class="stk-in" value="${escapeHtml(r.location || '')}" onchange="stkReviewEdit(${i},'location',this.value)"></div>
+        <div><div class="lbl">Grade</div><input class="stk-in" placeholder="S355" value="${escapeHtml(r.grade || '')}" onchange="stkReviewEdit(${i},'grade',this.value)"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+        <span style="font-size:12px;color:var(--muted);font-family:var(--font-mono)">${stkKgOf(r) ? stkFmtKg(stkKgOf(r)) : ''}</span>
+        <button class="stk-btn" style="padding:6px 12px;color:var(--red)" onclick="_stkReview.splice(${i},1);stkRenderReview()">Remove</button>
+      </div>
+    </div>`;
+  }).join('');
+  const tot = _stkReview.reduce((s, r) => s + stkKgOf(r), 0);
+  html += `<datalist id="stkSectionList">${(_stkSections || []).slice(0, 400).map(s => `<option value="${escapeHtml(s.d || s.designation || '')}">`).join('')}</datalist>
+    <div style="display:flex;gap:10px;align-items:center;margin-top:4px">
+      <button class="stk-btn primary" style="flex:1" onclick="stkSaveReview()">\uD83D\uDCBE Save ${_stkReview.length} to stock</button>
+      <button class="stk-btn" onclick="_stkReview=[];stkRenderReview()">Clear</button>
+    </div>
+    ${tot ? `<div style="text-align:right;font-size:12px;color:var(--muted);margin-top:6px">&asymp; ${stkFmtKg(tot)}</div>` : ''}`;
+  el.innerHTML = html;
+}
+
+async function stkSaveReview() {
+  const bad = _stkReview.filter(r => !r.section || !r.length_mm);
+  if (bad.length) { toast(`${bad.length} row(s) missing section or length`, 'error'); return; }
+  try {
+    await api.post('/api/stock-bulk', { items: _stkReview, entered_by: _mMe || 'mobile' });
+    toast(`${_stkReview.length} row(s) added to stock`, 'success');
+    _stkReview = []; stkRenderReview(); stkLoad();
+  } catch (e) { toast('Save failed: ' + e.message, 'error'); }
+}
+
+async function stkLoad() {
+  const host = document.getElementById('stkList');
+  try { _stkList = await api.get('/api/stock?x=1'); stkRenderList(); }
+  catch (e) { host.innerHTML = `<div class="m-loading" style="padding:16px 2px;text-align:left;color:var(--red)">${escapeHtml(e.message)}</div>`; }
+}
+
+function stkHue(k){ let h=0; const s=String(k); for(let i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))>>>0; return h%360; }
+
+function stkRenderList() {
+  const host = document.getElementById('stkList');
+  const q = (document.getElementById('stkSearch').value || '').trim().toLowerCase();
+  let rows = _stkList || [];
+  if (q) rows = rows.filter(r => (`${r.section} ${r.location || ''} ${r.grade || ''}`).toLowerCase().includes(q));
+  host.style.padding = '0';
+  if (!rows.length) { host.innerHTML = '<div class="m-loading" style="padding:16px 2px;text-align:left">No stock rows.</div>'; return; }
+  const totKg = rows.reduce((s, r) => s + stkKgOf(r), 0);
+  host.innerHTML =
+    `<div style="font-size:11.5px;color:var(--muted);margin-bottom:6px">${rows.length} item${rows.length!==1?'s':''} &middot; &asymp; ${stkFmtKg(totKg)}</div>` +
+    rows.map(r => {
+      const hue = stkHue(r.family || r.section);
+      const fam = r.family ? `<span class="stk-chip" style="background:hsla(${hue},70%,55%,.16);border:1px solid hsla(${hue},70%,60%,.5);color:hsl(${hue},75%,72%)">${escapeHtml(r.family)}</span>` : '';
+      const len = r.length_mm ? (r.length_mm >= 1000 ? (r.length_mm/1000) + 'm' : r.length_mm + 'mm') : '';
+      const meta = [len, r.location, r.grade, stkKgOf(r)?stkFmtKg(stkKgOf(r)):''].filter(Boolean).map(escapeHtml).join(' &middot; ');
+      return `<div class="stk-item">
+        <div class="si-main">
+          <div class="si-sec">${escapeHtml(r.section)} ${fam}</div>
+          <div class="si-meta">${meta}</div>
+        </div>
+        <button class="stk-step" onclick="stkAdjust(${r.id}, ${(r.qty||0)-1})" title="minus one">&minus;</button>
+        <span class="stk-qty">${r.qty}</span>
+        <button class="stk-step" onclick="stkAdjust(${r.id}, ${(r.qty||0)+1})" title="plus one">&#65291;</button>
+        <button class="stk-step" style="color:var(--red)" onclick="stkRemove(${r.id})" title="Remove">&#128465;</button>
+      </div>`;
+    }).join('');
+}
+
+async function stkAdjust(id, newQty) {
+  if (newQty < 0) return;
+  const r = (_stkList || []).find(x => x.id === id); const prev = r ? r.qty : null; if (r) r.qty = newQty; stkRenderList();
+  try { await api.put('/api/stock/' + id, { qty: newQty, entered_by: _mMe || 'mobile' }); }
+  catch (e) { if (r) r.qty = prev; stkRenderList(); toast('Update failed: ' + e.message, 'error'); }
+}
+
+async function stkRemove(id) {
+  const ok = await (typeof bamaConfirm === 'function' ? bamaConfirm('Remove this stock row?', 'Remove') : Promise.resolve(confirm('Remove this stock row?')));
+  if (!ok) return;
+  try { await api.delete('/api/stock/' + id); toast('Removed', 'success'); _stkList = (_stkList || []).filter(x => x.id !== id); stkRenderList(); }
+  catch (e) { toast('Remove failed: ' + e.message, 'error'); }
+}
+
+// ── Install prompt ──────────────────────────────────────────────────────────
 let _mDeferredPrompt = null;
-window.addEventListener('beforeinstallprompt', (e) => {
-  e.preventDefault(); _mDeferredPrompt = e; mInstallHint();
-});
-window.addEventListener('appinstalled', () => {
-  _mDeferredPrompt = null;
-  const t = document.getElementById('mTopInstall'); if (t) t.style.display = 'none';
-  const b = document.getElementById('mInstall'); if (b) b.style.display = 'none';
-});
-
-async function mDoInstall(ev) {
-  if (ev) ev.preventDefault();
-  if (!_mDeferredPrompt) return;
-  _mDeferredPrompt.prompt();
-  await _mDeferredPrompt.userChoice;
-  _mDeferredPrompt = null;
-  const t = document.getElementById('mTopInstall'); if (t) t.style.display = 'none';
-  const b = document.getElementById('mInstall'); if (b) b.style.display = 'none';
-}
-
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); _mDeferredPrompt = e; mInstallHint(); });
+window.addEventListener('appinstalled', () => { _mDeferredPrompt = null; const t = document.getElementById('mTopInstall'); if (t) t.style.display = 'none'; const b = document.getElementById('mInstall'); if (b) b.style.display = 'none'; });
+async function mDoInstall(ev) { if (ev) ev.preventDefault(); if (!_mDeferredPrompt) return; _mDeferredPrompt.prompt(); await _mDeferredPrompt.userChoice; _mDeferredPrompt = null; const t = document.getElementById('mTopInstall'); if (t) t.style.display = 'none'; const b = document.getElementById('mInstall'); if (b) b.style.display = 'none'; }
 function mInstallHint() {
-  const box = document.getElementById('mInstall');
-  const txt = document.getElementById('mInstallText');
-  const topBtn = document.getElementById('mTopInstall');
+  const box = document.getElementById('mInstall'), txt = document.getElementById('mInstallText'), topBtn = document.getElementById('mTopInstall');
   const standalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
-  if (standalone) return; // already installed
+  if (standalone) return;
   const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
-  if (_mDeferredPrompt) {
-    // Android/Chrome — real install prompt available. Surface it in the top bar
-    // (always visible) AND in the hint box.
-    if (topBtn) topBtn.style.display = 'inline-block';
-    txt.innerHTML = '<a href="#" onclick="mDoInstall(event)" style="color:var(--accent)">tap here to install to your home screen.</a>';
-    box.style.display = 'block';
-  } else if (isIOS) {
-    txt.textContent = 'tap the Share button, then “Add to Home Screen”.';
-    box.style.display = 'block';
-  } else {
-    // Chrome hasn't fired beforeinstallprompt yet (needs engagement) — tell the
-    // user the manual route so the option never just "isn't there".
-    txt.innerHTML = 'open your browser menu (⋮) and choose <strong>“Add to Home screen”</strong> / <strong>“Install app”</strong>.';
-    box.style.display = 'block';
-  }
+  if (_mDeferredPrompt) { if (topBtn) topBtn.style.display = 'inline-block'; txt.innerHTML = '<a href="#" onclick="mDoInstall(event)" style="color:var(--accent)">tap here to install to your home screen.</a>'; box.style.display = 'block'; }
+  else if (isIOS) { txt.textContent = 'tap the Share button, then "Add to Home Screen".'; box.style.display = 'block'; }
+  else { txt.innerHTML = 'open your browser menu and choose <strong>"Add to Home screen"</strong> / <strong>"Install app"</strong>.'; box.style.display = 'block'; }
 }
 
-// Register the service worker (offline shell / installability). Non-fatal.
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('m-qms-sw.js').catch(()=>{}));
-}
+if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('m-qms-sw.js').catch(()=>{}));
 
-// Kick off once shared.js has defined AUTH + api + the QMS engine.
-mWait(() => typeof AUTH !== 'undefined' && typeof api !== 'undefined')
-  .then(mBoot)
-  .catch(() => { document.getElementById('mCards') && (document.getElementById('mCards').innerHTML =
-    '<div class="m-loading" style="color:var(--red)">Engine failed to load — hard-refresh (pull down).</div>'); mShowGate(); });
+mWait(() => typeof AUTH !== 'undefined' && typeof api !== 'undefined').then(mBoot).catch(() => { mShowGate(); });
 </script>
 </body>
 </html>
