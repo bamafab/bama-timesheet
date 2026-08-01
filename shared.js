@@ -47729,7 +47729,7 @@ async function submitQmsForm() {
     if (f.type === 'note')       { continue; }
     if (f.type === 'photo')      { const ph = Array.isArray(_qmsPhotos[f.key]) ? _qmsPhotos[f.key].filter(Boolean) : (_qmsPhotos[f.key] ? [_qmsPhotos[f.key]] : []); images[f.key] = ph; answers[f.key] = ph.length ? `${ph.length} photo${ph.length > 1 ? 's' : ''} attached` : ''; continue; }
     if (f.type === 'signature')  { images[f.key] = _qmsSigData(f.key);        answers[f.key] = images[f.key] ? 'signed' : ''; continue; }
-    if (f.type === 'personnel')  { answers[f.key] = (_qmsPersonnelSel[f.key] || []).join(', '); continue; }
+    if (f.type === 'personnel')  { answers[f.key] = f.single ? (document.getElementById('qf_' + f.key)?.value || '').trim() : (_qmsPersonnelSel[f.key] || []).join(', '); continue; }
     if (f.type === 'table')      { answers[f.key] = _qmsTableRows(f); continue; }
     answers[f.key] = (document.getElementById('qf_' + f.key)?.value || '').trim();
   }
@@ -48411,6 +48411,9 @@ function _qmsFieldHtml(f) {
     case 'job': case 'machine': case 'drawing':
       return `<div>${lbl}<select id="qf_${f.key}" style="${_QMS_INPUT}" data-picker="${f.type}"><option value="">Loading…</option></select></div>`;
     case 'personnel':
+      // single:true → one-name dropdown (e.g. "Reported by"); otherwise the
+      // multi-select tile picker (e.g. "Who attended").
+      if (f.single) return `<div>${lbl}<select id="qf_${f.key}" style="${_QMS_INPUT}" data-picker="personnel-single"><option value="">Loading…</option></select></div>`;
       return `<div>${lbl}<div id="qfp_${f.key}" data-key="${f.key}"
         style="display:flex;flex-wrap:wrap;gap:5px;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px;min-height:34px">
         <span style="font-size:11.5px;color:var(--muted)">Loading roster…</span></div></div>`;
@@ -48459,6 +48462,27 @@ async function _qmsHydratePickers(def) {
           // can resolve the SharePoint project folder for a filed copy.
           el.innerHTML = '<option value=""></option>' + live.map(p =>
             `<option data-projnum="${escapeHtml(p.project_number)}" value="${escapeHtml(p.project_number + ' — ' + p.project_name)}">${escapeHtml(p.project_number + ' — ' + p.project_name)}</option>`).join('');
+          // Auto-fill fields tagged {"autofrom":"job"} with the job's site
+          // address when a job is chosen (still editable). Uses the project's
+          // site address, falling back to the client address, then postcode.
+          const autoFields = (def.fields || []).filter(x => x.autofrom === 'job');
+          if (autoFields.length) {
+            el.addEventListener('change', () => {
+              const opt = el.options[el.selectedIndex];
+              const pn = opt && opt.getAttribute('data-projnum');
+              const proj = live.find(p => p.project_number === pn);
+              if (!proj) return;
+              const useSite = proj.site_same_as_client === false && (proj.site_address_line1 || proj.site_postcode);
+              const parts = useSite
+                ? [proj.site_address_line1, proj.site_address_line2, proj.site_city, proj.site_county, proj.site_postcode]
+                : [proj.client_address_line1, proj.client_address_line2, proj.client_city, proj.client_county, proj.client_postcode];
+              const addr = parts.filter(Boolean).join(', ');
+              for (const af of autoFields) {
+                const t = document.getElementById('qf_' + af.key);
+                if (t && !t.value) t.value = addr || (useSite ? proj.site_postcode : proj.client_postcode) || '';
+              }
+            });
+          }
         } else {
           // No live jobs → a blank dropdown is useless; give a text box instead.
           el.outerHTML = `<input id="qf_${f.key}" type="text" placeholder="Type job / contract ref" style="${_QMS_INPUT}">`;
@@ -48496,7 +48520,20 @@ async function _qmsHydratePickers(def) {
   if (need('personnel')) {
     let people = [];
     try { people = await api.get('/api/site-personnel'); } catch (_) {}
-    for (const f of def.fields.filter(x => x.type === 'personnel')) {
+    const active = (people || []).filter(p => p.active !== 0);
+    // single:true → dropdown
+    for (const f of def.fields.filter(x => x.type === 'personnel' && x.single)) {
+      const el = document.getElementById('qf_' + f.key);
+      if (!el) continue;
+      if (active.length) {
+        el.innerHTML = '<option value=""></option>' + active.map(p =>
+          `<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)}${p.site_role ? ' — ' + escapeHtml(p.site_role) : ''}</option>`).join('');
+      } else {
+        el.outerHTML = `<input id="qf_${f.key}" type="text" placeholder="Name" style="${_QMS_INPUT}">`;
+      }
+    }
+    // multi-select tile picker
+    for (const f of def.fields.filter(x => x.type === 'personnel' && !x.single)) {
       const host = document.getElementById('qfp_' + f.key);
       if (!host) continue;
       _qmsPersonnelSel[f.key] = [];
