@@ -267,27 +267,39 @@ function stkMatch(raw) { try { return steelMatch(raw, _stkIdx || []); } catch(_)
 const stkKgOf = r => (r.kgm && r.length_mm && r.qty) ? r.kgm * (r.length_mm / 1000) * r.qty : 0;
 const stkFmtKg = v => v >= 1000 ? (Math.round(v / 100) / 10).toLocaleString('en-GB') + 't' : Math.round(v).toLocaleString('en-GB') + 'kg';
 
-let _stkRec = null, _stkRecOn = false, _stkRecWant = false;
+let _stkRec = null, _stkRecOn = false, _stkRecWant = false, _stkFinal = '';
 function stkToggleMic() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) { toast('Voice needs Chrome — type in the box instead', 'error'); return; }
   if (_stkRecOn || _stkRecWant) { _stkRecWant = false; try { _stkRec && _stkRec.stop(); } catch(_) {} return; }
   _stkRecWant = true;   // user wants to keep listening until they tap stop
   const ta = document.getElementById('stkTranscript');
+  // Seed committed text from whatever's already typed/dictated, once.
+  _stkFinal = ta.value ? ta.value.trim() + ' ' : '';
   const startRec = () => {
     _stkRec = new SR(); _stkRec.lang = 'en-GB'; _stkRec.continuous = true; _stkRec.interimResults = true;
-    // Re-baseline each (re)start so a mid-sentence pause doesn't duplicate text.
-    let base = ta.value ? ta.value.trim() + ' ' : '';
-    _stkRec.onresult = ev => { let f = '', i = ''; for (const r of ev.results) (r.isFinal ? f += r[0].transcript : i += r[0].transcript); ta.value = base + f + i; };
+    // Only APPEND newly-finalised results (from ev.resultIndex onward) to the
+    // committed string; show committed + the current interim tail. This avoids
+    // the re-append duplication that produced "byby 80 byby 80…".
+    _stkRec.onresult = ev => {
+      let interim = '';
+      for (let k = ev.resultIndex; k < ev.results.length; k++) {
+        const res = ev.results[k];
+        if (res.isFinal) _stkFinal += res[0].transcript + ' ';
+        else interim += res[0].transcript;
+      }
+      ta.value = (_stkFinal + interim).replace(/\s+/g, ' ').trimStart();
+      ta.scrollTop = ta.scrollHeight;
+    };
     _stkRec.onend = () => {
       _stkRecOn = false;
       // Browser auto-stops on silence. If the user hasn't tapped stop, restart
-      // so a natural pause between racks doesn't end dictation.
+      // so a natural pause between racks doesn't end dictation. _stkFinal carries
+      // the committed text across restarts (no re-baseline from the textarea).
       if (_stkRecWant) { try { startRec(); return; } catch(_) {} }
       const b = document.getElementById('stkMic'); b.classList.remove('rec'); b.innerHTML = '\uD83C\uDFA4 Tap &amp; speak &mdash; say what\'s on the racks';
     };
     _stkRec.onerror = e => {
-      // 'no-speech' / 'aborted' are benign during pauses — let onend restart.
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { _stkRecWant = false; toast('Microphone permission needed — allow it in your browser', 'error'); }
       else if (e.error !== 'no-speech' && e.error !== 'aborted') { toast('Mic: ' + e.error, 'error'); }
     };
@@ -295,6 +307,22 @@ function stkToggleMic() {
     const b = document.getElementById('stkMic'); b.classList.add('rec'); b.innerHTML = '\u23F9 Stop &mdash; tap when done';
   };
   try { startRec(); } catch (e) { _stkRecWant = false; toast('Mic: ' + e.message, 'error'); }
+}
+
+// Pull a JSON array of rows out of the model's reply, even if it wrapped the
+// JSON in prose (e.g. "Looking at this, here are the rows: [ ... ]"). Returns
+// the parsed array, or null if nothing valid is found.
+function _stkExtractRows(text) {
+  if (!text) return null;
+  let t = String(text).replace(/```json/gi, '').replace(/```/g, '').trim();
+  // Fast path: whole thing is the array.
+  try { const a = JSON.parse(t); if (Array.isArray(a)) return a; } catch(_) {}
+  // Otherwise, grab from the first '[' to the last ']' and try that.
+  const i = t.indexOf('['), j = t.lastIndexOf(']');
+  if (i >= 0 && j > i) {
+    try { const a = JSON.parse(t.slice(i, j + 1)); if (Array.isArray(a)) return a; } catch(_) {}
+  }
+  return null;
 }
 
 async function stkParse() {
@@ -318,8 +346,9 @@ Rules:
 - Keep every NUMBER exactly as heard — do NOT round or correct dimensions; validation happens elsewhere.
 - Transcribe ONLY what was said. Do not invent quantities, sections or locations.`}]
     });
-    const raw = (resp.content || []).map(c => c.text || '').join('').replace(/```json|```/g, '').trim();
-    const rows = JSON.parse(raw);
+    const rawText = (resp.content || []).map(c => c.text || '').join('');
+    const rows = _stkExtractRows(rawText);
+    if (!rows) throw new Error('no clear list of sections was recognised — try shorter, clearer phrasing');
     if (!Array.isArray(rows) || !rows.length) throw new Error('nothing recognised');
     rows.forEach(r => stkPushReview({ section: r.section, length_mm: parseInt(r.length_mm) || null, qty: parseInt(r.qty) || 1, location: r.location || '', grade: r.grade || '', source: 'voice' }));
     st.textContent = `${rows.length} row${rows.length !== 1 ? 's' : ''} recognised — check and save.`;

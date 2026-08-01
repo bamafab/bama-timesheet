@@ -143,25 +143,33 @@ const fmtKg2 = v => v >= 1000 ? (Math.round(v / 100) / 10).toLocaleString('en-GB
 function rowKg(r) { return (r.kgm && r.length_mm && r.qty) ? r.kgm * (r.length_mm / 1000) * r.qty : 0; }
 
 // ── Voice ────────────────────────────────────────────────────────────────────
-let _rec = null, _recOn = false, _recWant = false;
+let _rec = null, _recOn = false, _recWant = false, _recFinal = '';
 function stkToggleMic() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) { toast('Voice needs Chrome or Edge — type in the box instead', 'error'); return; }
   if (_recOn || _recWant) { _recWant = false; try { _rec && _rec.stop(); } catch(_) {} return; }
   _recWant = true;   // keep listening until the user clicks stop
   const ta = document.getElementById('stkTranscript');
+  _recFinal = ta.value ? ta.value.trim() + ' ' : '';   // seed committed text once
   const startRec = () => {
     _rec = new SR();
     _rec.lang = 'en-GB'; _rec.continuous = true; _rec.interimResults = true;
-    let base = ta.value ? ta.value.trim() + ' ' : '';
+    // Append only newly-finalised results (ev.resultIndex onward); show
+    // committed + current interim. Prevents the re-append duplication.
     _rec.onresult = ev => {
-      let final = '', interim = '';
-      for (const r of ev.results) (r.isFinal ? final += r[0].transcript : interim += r[0].transcript);
-      ta.value = base + final + interim;
+      let interim = '';
+      for (let k = ev.resultIndex; k < ev.results.length; k++) {
+        const res = ev.results[k];
+        if (res.isFinal) _recFinal += res[0].transcript + ' ';
+        else interim += res[0].transcript;
+      }
+      ta.value = (_recFinal + interim).replace(/\s+/g, ' ').trimStart();
+      ta.scrollTop = ta.scrollHeight;
     };
     _rec.onend = () => {
       _recOn = false;
-      // Auto-restart on silence so a pause between racks doesn't end dictation.
+      // Auto-restart on silence so a pause between racks doesn't end dictation;
+      // _recFinal carries committed text across restarts (no textarea re-baseline).
       if (_recWant) { try { startRec(); return; } catch(_) {} }
       document.getElementById('stkMic').classList.remove('rec');
     };
@@ -176,6 +184,19 @@ function stkToggleMic() {
 }
 
 // ── Parse (AI transcribes → JS validates) ───────────────────────────────────
+// Pull a JSON array of rows out of the model's reply, even when wrapped in
+// prose. Returns the parsed array, or null if nothing valid is found.
+function _stkExtractRows(text) {
+  if (!text) return null;
+  let t = String(text).replace(/```json/gi, '').replace(/```/g, '').trim();
+  try { const a = JSON.parse(t); if (Array.isArray(a)) return a; } catch(_) {}
+  const i = t.indexOf('['), j = t.lastIndexOf(']');
+  if (i >= 0 && j > i) {
+    try { const a = JSON.parse(t.slice(i, j + 1)); if (Array.isArray(a)) return a; } catch(_) {}
+  }
+  return null;
+}
+
 async function stkParse() {
   const text = document.getElementById('stkTranscript').value.trim();
   if (!text) { toast('Say or type something first', 'error'); return; }
@@ -196,9 +217,9 @@ Rules:
 - Keep every NUMBER exactly as heard — do NOT round or correct dimensions; validation happens elsewhere.
 - Transcribe ONLY what was said. Do not invent quantities, sections or locations.`}]
     });
-    const raw = (resp.content || []).map(c => c.text || '').join('').replace(/```json|```/g, '').trim();
-    const rows = JSON.parse(raw);
-    if (!Array.isArray(rows) || !rows.length) throw new Error('nothing recognised');
+    const rawText = (resp.content || []).map(c => c.text || '').join('');
+    const rows = _stkExtractRows(rawText);
+    if (!Array.isArray(rows) || !rows.length) throw new Error('no clear list of sections was recognised — try shorter, clearer phrasing');
     rows.forEach(r => stkPushReview({
       section: r.section, length_mm: parseInt(r.length_mm) || null,
       qty: parseInt(r.qty) || 1, location: r.location || '', grade: r.grade || '', source: 'voice'
