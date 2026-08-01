@@ -88,7 +88,13 @@
       <div class="tag" id="mTag">Shop floor</div>
     </div>
     <div class="m-who" id="mWho"></div>
-    <button id="mTopInstall" onclick="mDoInstall(event)" style="display:none;margin-left:10px;flex:0 0 auto;background:var(--accent);color:#111;border:none;border-radius:9px;font-weight:700;font-size:12px;padding:8px 12px;font-family:inherit">&#10515; Install</button>
+    <button id="mRefreshBtn" onclick="mRefresh()" title="Check for updates" style="margin-left:8px;flex:0 0 auto;background:none;border:none;color:var(--muted);font-size:19px;cursor:pointer;line-height:1">&#8635;</button>
+    <button id="mTopInstall" onclick="mDoInstall(event)" style="display:none;margin-left:6px;flex:0 0 auto;background:var(--accent);color:#111;border:none;border-radius:9px;font-weight:700;font-size:12px;padding:8px 12px;font-family:inherit">&#10515; Install</button>
+  </div>
+
+  <div id="mUpdate" style="display:none;align-items:center;gap:10px;background:var(--accent);color:#111;padding:10px 16px;font-size:13px;font-weight:600">
+    <span style="flex:1">A new version is ready.</span>
+    <button onclick="mDoUpdate()" style="background:#111;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-family:inherit;font-weight:700;font-size:13px;cursor:pointer">Update now</button>
   </div>
 
   <div class="m-body" id="viewHome">
@@ -487,8 +493,53 @@ function mInstallHint() {
   else { txt.innerHTML = 'open your browser menu and choose <strong>"Add to Home screen"</strong> / <strong>"Install app"</strong>.'; box.style.display = 'block'; }
 }
 
-if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('m-qms-sw.js').catch(()=>{}));
+// ── Service worker + in-app update handling ─────────────────────────────────
+// Installed PWAs have no pull-to-refresh, so we detect a new version ourselves
+// and offer a one-tap "Update" banner. Also poll for updates when the app is
+// brought back to the foreground.
+let _mSWReg = null, _mReloading = false;
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('m-qms-sw.js').then(reg => {
+      _mSWReg = reg;
+      // A new SW found → when it finishes installing, show the update banner.
+      reg.addEventListener('updatefound', () => {
+        const nw = reg.installing;
+        if (!nw) return;
+        nw.addEventListener('statechange', () => {
+          if (nw.state === 'installed' && navigator.serviceWorker.controller) mShowUpdate();
+        });
+      });
+      // If one is already waiting (installed while app was closed), offer it now.
+      if (reg.waiting && navigator.serviceWorker.controller) mShowUpdate();
+    }).catch(() => {});
+    // When the new SW takes control, reload once to run the fresh code.
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (_mReloading) return; _mReloading = true; window.location.reload();
+    });
+  });
+  // Check for updates whenever the app returns to the foreground.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && _mSWReg) _mSWReg.update().catch(() => {});
+  });
+}
 
+function mShowUpdate() {
+  const bar = document.getElementById('mUpdate');
+  if (bar) bar.style.display = 'flex';
+}
+function mDoUpdate() {
+  const w = _mSWReg && _mSWReg.waiting;
+  if (w) { w.postMessage('SKIP_WAITING'); }         // controllerchange → reload
+  else { window.location.reload(); }
+}
+// Manual refresh (top-bar button) — force an update check, else hard reload.
+function mRefresh() {
+  if (_mSWReg) { _mSWReg.update().then(() => { if (_mSWReg.waiting) mDoUpdate(); else window.location.reload(); }).catch(() => window.location.reload()); }
+  else window.location.reload();
+}
+
+// Kick off once shared.js has defined AUTH + api.
 mWait(() => typeof AUTH !== 'undefined' && typeof api !== 'undefined').then(mBoot).catch(() => { mShowGate(); });
 </script>
 </body>
