@@ -220,7 +220,12 @@ async function mLoadForms() {
     // Reuse the same endpoint + the same global the desktop engine fills, so
     // openQmsForm(id) finds the definition it expects.
     const forms = await api.get('/api/qms-forms');
-    window._qmsForms = forms;  // openQmsForm() reads this global
+    // openQmsForm() in shared.js reads its own module-scoped `let _qmsForms`.
+    // A `window._qmsForms = …` would create a SEPARATE property and leave the
+    // internal binding empty (openQmsForm's .find() then returns undefined and
+    // it silently returns before building the modal). Assign the bare global so
+    // we write the same binding shared.js reads.
+    _qmsForms = forms;
     const list = (forms || []).filter(f =>
       M_QMS_ALLOW.some(rx => rx.test(f.form_code || ''))
     );
@@ -250,9 +255,10 @@ async function mOpen(id) {
     if (typeof openQmsForm !== 'function') {
       await mWait(() => typeof openQmsForm === 'function', 5000);
     }
-    // openQmsForm reads _qmsForms to find the definition — make sure it's there.
-    if (!Array.isArray(window._qmsForms) || !window._qmsForms.length) {
-      window._qmsForms = await api.get('/api/qms-forms');
+    // openQmsForm reads shared.js's own `_qmsForms` binding — assign the bare
+    // global (not window.*) so it's the same one .find() looks at.
+    if (typeof _qmsForms === 'undefined' || !Array.isArray(_qmsForms) || !_qmsForms.length) {
+      _qmsForms = await api.get('/api/qms-forms');
     }
     openQmsForm(id);
     // Give the injected modal a beat, then confirm it actually opened; if it
