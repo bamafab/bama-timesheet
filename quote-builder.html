@@ -11,8 +11,10 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.8.0/mammoth.browser.min.js"></script>
+<script src="ifc-takeoff.js?v=20260801h"></script>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
+@keyframes spin { to { transform: rotate(360deg); } }
 :root {
   --bg: #0e0e0e; --surface: #161616; --card: #1e1e1e; --border: #2a2a2a;
   --accent: #ff6b00; --accent2: #ffb347; --green: #3ecf8e; --red: #ff4444;
@@ -609,6 +611,7 @@ tr.drag-dragging { opacity:0.35; }
           <div class="section-header">
             <div class="section-title">Steel Takeoff</div>
             <div class="flex gap-8">
+              <button class="btn btn-ghost btn-sm" onclick="openIfcImport()" title="Read a full steel takeoff straight out of an IFC model — no Tekla needed">⧉ IFC Import</button>
               <button class="btn btn-ghost btn-sm" onclick="openPlanswiftImport()">↑ PlanSwift Import</button>
               <button class="btn btn-ghost btn-sm" onclick="openStaircaseWizard()" title="Generate staircase steel and inject into takeoff">🪜 Staircase</button>
               <button class="btn btn-ghost btn-sm" onclick="openSpiralWizard()" title="Generate spiral/helical staircase steel and inject into takeoff">🌀 Spiral</button>
@@ -1804,6 +1807,80 @@ tr.drag-dragging { opacity:0.35; }
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closePlanswiftModal()">Cancel</button>
       <button class="btn btn-primary" id="psImportBtn" onclick="importPlanswift()" disabled style="opacity:0.4">Import rows</button>
+    </div>
+  </div>
+</div>
+
+<!-- IFC IMPORT MODAL — reads a full steel takeoff from an IFC model -->
+<div class="modal-overlay" id="ifcModal">
+  <div class="modal" style="max-width:720px">
+    <div class="modal-title">⧉ IFC Import <span style="font-size:11px;color:var(--muted);font-weight:400">— steel takeoff from a model</span></div>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:16px">
+      Drop an <strong>.ifc</strong> model here and every beam, column and member is read out of it —
+      section, length and quantity — grouped by floor level. No Tekla needed, and nothing is estimated:
+      sizes come straight from the model, weights and rates from your steel database.
+    </p>
+
+    <!-- DROP ZONE -->
+    <div class="upload-zone" id="ifcDropzone"
+      onclick="document.getElementById('ifcFile').click()"
+      ondragover="event.preventDefault();this.classList.add('dragover')"
+      ondragleave="this.classList.remove('dragover')"
+      ondrop="event.preventDefault();this.classList.remove('dragover');handleIfcDrop(event)">
+      <div class="icon">🏗️</div>
+      <div id="ifcDropzoneText"><strong>Click to browse</strong> or drag &amp; drop your IFC model here</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">.ifc accepted · IFC2X3 / IFC4 · large files may take a few seconds</div>
+    </div>
+    <input type="file" id="ifcFile" style="display:none" accept=".ifc" onchange="handleIfcFile(this)">
+
+    <!-- BUSY -->
+    <div id="ifcBusy" style="display:none;margin-top:14px;font-size:12px;color:var(--accent2)">
+      <span class="spinner" style="display:inline-block;width:12px;height:12px;border:2px solid var(--border);border-top-color:var(--accent2);border-radius:50%;animation:spin 0.7s linear infinite;vertical-align:middle;margin-right:8px"></span>
+      <span id="ifcBusyText">Reading model…</span>
+    </div>
+
+    <!-- SUMMARY CHIPS -->
+    <div id="ifcSummary" style="display:none;margin-top:14px;flex-wrap:wrap;gap:6px"></div>
+
+    <!-- PREVIEW TABLE -->
+    <div id="ifcPreview" style="display:none;margin-top:12px">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:6px" id="ifcPreviewLabel"></div>
+      <div style="overflow-x:auto;max-height:240px;border:1px solid var(--border);border-radius:6px">
+        <table class="data-table" id="ifcPreviewTable" style="font-size:11px">
+          <thead><tr>
+            <th>Level</th>
+            <th>Type / Section</th>
+            <th style="text-align:right">Length (mm)</th>
+            <th style="text-align:right">Qty</th>
+            <th style="text-align:right">kg/m</th>
+          </tr></thead>
+          <tbody id="ifcPreviewBody"></tbody>
+        </table>
+      </div>
+      <div id="ifcUnmatchedNote" style="display:none;font-size:10.5px;color:var(--amber);margin-top:6px;line-height:1.5"></div>
+    </div>
+
+    <!-- AREA HANDLING -->
+    <div id="ifcAreaWrap" style="display:none;margin-top:12px">
+      <div class="field" style="margin:0">
+        <label style="font-size:11px;color:var(--muted)">Import into area</label>
+        <div style="display:flex;gap:6px;margin-top:4px">
+          <select id="ifcAreaSelect" onchange="if(this.value)document.getElementById('ifcNewAreaName').value=''" style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:5px;padding:6px 8px;color:var(--text);font-size:12px">
+            <option value="">Use floor levels from the model</option>
+          </select>
+          <input type="text" id="ifcNewAreaName" placeholder="Or type one NEW area name" oninput="if(this.value)document.getElementById('ifcAreaSelect').value=''"
+            style="flex:1;background:var(--card);border:1px solid var(--border);border-radius:5px;padding:6px 8px;color:var(--text);font-size:12px">
+        </div>
+        <div style="font-size:10.5px;color:var(--subtle);margin-top:6px;line-height:1.5">
+          By default each floor level in the model becomes its own area (Ground, Roof, and so on).
+          Importing always <strong>adds</strong> rows — your existing takeoff is never overwritten.
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeIfcModal()">Cancel</button>
+      <button class="btn btn-primary" id="ifcImportBtn" onclick="importIfc()" disabled style="opacity:0.4">Import rows</button>
     </div>
   </div>
 </div>
@@ -14603,6 +14680,176 @@ function closePlanswiftModal() {
   document.getElementById('planswiftModal').classList.remove('active');
 }
 
+/* ── IFC IMPORT ──────────────────────────────────────────────────────────
+ * Reads an IFC model client-side (ifc-takeoff.js → web-ifc WASM) into rows
+ * shaped like _psRows, then hands off to the existing importPlanswift()
+ * pipeline for area handling and the additive push into the takeoff.
+ */
+let _ifcRows = [];
+
+function openIfcImport() {
+  const q = getQuote();
+  if (!q) { toast('Open or create a quote first', 'error'); return; }
+  _ifcRows = [];
+  document.getElementById('ifcModal').classList.add('active');
+  document.getElementById('ifcDropzoneText').innerHTML = '<strong>Click to browse</strong> or drag &amp; drop your IFC model here';
+  document.getElementById('ifcBusy').style.display = 'none';
+  document.getElementById('ifcSummary').style.display = 'none';
+  document.getElementById('ifcPreview').style.display = 'none';
+  document.getElementById('ifcAreaWrap').style.display = 'none';
+  const btn = document.getElementById('ifcImportBtn');
+  btn.disabled = true; btn.style.opacity = '0.4';
+  document.getElementById('ifcNewAreaName').value = '';
+  // Populate the "existing area" dropdown from the quote's current areas
+  const sel = document.getElementById('ifcAreaSelect');
+  sel.innerHTML = '<option value="">Use floor levels from the model</option>' +
+    (q.areas || []).map(a => `<option value="${a.id}">${(a.name || 'Unnamed area').replace(/"/g,'&quot;')}</option>`).join('');
+}
+
+function closeIfcModal() {
+  document.getElementById('ifcModal').classList.remove('active');
+}
+
+function handleIfcDrop(e) {
+  const file = e.dataTransfer.files[0];
+  if (file) readIfcFile(file);
+}
+function handleIfcFile(input) {
+  const file = input.files[0];
+  if (file) readIfcFile(file);
+}
+
+async function readIfcFile(file) {
+  if (!file) return;
+  if (!/\.ifc$/i.test(file.name)) { toast('That is not an .ifc file', 'error'); return; }
+  const busy = document.getElementById('ifcBusy');
+  const busyText = document.getElementById('ifcBusyText');
+  busy.style.display = 'block';
+  busyText.textContent = 'Loading the IFC reader…';
+  document.getElementById('ifcSummary').style.display = 'none';
+  document.getElementById('ifcPreview').style.display = 'none';
+  document.getElementById('ifcAreaWrap').style.display = 'none';
+  const btn = document.getElementById('ifcImportBtn');
+  btn.disabled = true; btn.style.opacity = '0.4';
+
+  try {
+    if (!window.IFCTakeoff) throw new Error('IFC reader module not loaded — try a hard refresh (Ctrl+Shift+R).');
+    busyText.textContent = 'Reading model — this can take a few seconds for a big file…';
+    const buf = await file.arrayBuffer();
+
+    const matchFn = (typeof findSteelProfile === 'function') ? findSteelProfile : null;
+    const rateFn  = (typeof sectionMaterialRate === 'function') ? sectionMaterialRate : null;
+
+    const { rows, summary } = await window.IFCTakeoff.parseIFC(buf, {
+      matchFn: matchFn ? (s => matchFn(s)) : undefined,
+      rateFn:  rateFn  ? (s => rateFn(s))  : undefined
+    });
+
+    if (!rows.length) {
+      busy.style.display = 'none';
+      toast('No beams, columns or members found in that model', 'error');
+      document.getElementById('ifcDropzoneText').innerHTML = '⚠ No steel members found — is this a structural model?';
+      return;
+    }
+
+    // Group identical section+length pieces (within 1mm) into qty rows, per level,
+    // reusing the same grouper PlanSwift uses.
+    _ifcRows = groupIfcRows(rows);
+
+    busy.style.display = 'none';
+    renderIfcSummary(summary, file.name);
+    renderIfcPreview(_ifcRows, summary);
+    document.getElementById('ifcAreaWrap').style.display = 'block';
+    btn.disabled = false; btn.style.opacity = '1';
+    document.getElementById('ifcDropzoneText').innerHTML = `✅ <strong>${file.name}</strong> — ${summary.total} members read`;
+  } catch (err) {
+    busy.style.display = 'none';
+    console.error('IFC parse failed:', err);
+    toast('Could not read that IFC: ' + (err.message || err), 'error');
+    document.getElementById('ifcDropzoneText').innerHTML = '⚠ Could not read that model — see the message, or try another export';
+  }
+}
+
+// Group per (level + section + length≈), preserving the level in _notes.
+function groupIfcRows(rows) {
+  const out = [];
+  rows.forEach(r => {
+    const hit = out.find(g =>
+      g.type === r.type &&
+      (g._notes || '') === (r._notes || '') &&
+      Math.abs((g.length || 0) - (r.length || 0)) <= 1
+    );
+    if (hit) hit.qty = (hit.qty || 1) + 1;
+    else out.push({ ...r });
+  });
+  return out;
+}
+
+function renderIfcSummary(s, filename) {
+  const chip = (label, val, col) =>
+    `<span style="display:inline-flex;align-items:center;gap:5px;background:var(--card);border:1px solid var(--border);border-radius:20px;padding:3px 11px;font-size:11px;color:var(--text)">
+       <span style="width:8px;height:8px;border-radius:50%;background:${col}"></span>${label}<strong style="color:${col}">${val}</strong></span>`;
+  const el = document.getElementById('ifcSummary');
+  el.style.display = 'flex';
+  el.innerHTML =
+    chip('Beams', s.beams, 'var(--accent)') +
+    chip('Columns', s.columns, '#6366f1') +
+    chip('Members', s.members, '#3ecf8e') +
+    chip('Levels', s.levels.length, 'var(--accent2)');
+}
+
+function renderIfcPreview(rows, summary) {
+  const wrap = document.getElementById('ifcPreview');
+  const body = document.getElementById('ifcPreviewBody');
+  wrap.style.display = 'block';
+  document.getElementById('ifcPreviewLabel').textContent =
+    `${rows.length} grouped rows across ${summary.levels.length} level${summary.levels.length===1?'':'s'} — review before importing`;
+
+  // Consistent colour per level (hash→hue), matching the house graphics rule.
+  const hue = str => { let h=0; for (let i=0;i<str.length;i++) h=(h*31+str.charCodeAt(i))%360; return h; };
+  body.innerHTML = rows.map(r => {
+    const lvl = r._notes || '—';
+    const h = hue(lvl);
+    const badge = `<span style="display:inline-block;padding:1px 7px;border-radius:10px;font-size:10px;background:hsl(${h} 45% 22%);color:hsl(${h} 70% 78%)">${lvl}</span>`;
+    const warn = r._confidence === 'none'
+      ? ` <span title="Not matched to the steel database — weight will need checking" style="color:var(--amber)">⚠</span>` : '';
+    const kgm = (r.kgm != null && r.kgm > 0) ? r.kgm.toFixed(1) : '<span style="color:var(--amber)">?</span>';
+    return `<tr>
+      <td>${badge}</td>
+      <td>${r.type}${warn}</td>
+      <td style="text-align:right">${r.length ? r.length.toLocaleString() : '—'}</td>
+      <td style="text-align:right">${r.qty}</td>
+      <td style="text-align:right">${kgm}</td>
+    </tr>`;
+  }).join('');
+
+  const note = document.getElementById('ifcUnmatchedNote');
+  if (summary.unmatchedSection > 0) {
+    note.style.display = 'block';
+    note.innerHTML = `⚠ ${summary.unmatchedSection} member${summary.unmatchedSection===1?'':'s'} could not be matched to a steel section in the database — they will import with the name shown, but their kg/m and price won't be set until you correct the section. ${summary.missingLength ? `Also ${summary.missingLength} member${summary.missingLength===1?'':'s'} had no readable length.` : ''}`;
+  } else if (summary.missingLength > 0) {
+    note.style.display = 'block';
+    note.innerHTML = `⚠ ${summary.missingLength} member${summary.missingLength===1?'':'s'} had no readable length and will import as 0mm — check those rows after import.`;
+  } else {
+    note.style.display = 'none';
+  }
+}
+
+// Hand off to the existing PlanSwift apply pipeline: it consumes _psRows and
+// reads the ps area controls, so mirror our selections onto them and reuse it.
+async function importIfc() {
+  if (!_ifcRows.length) { toast('Nothing to import', 'error'); return; }
+  _psRows = _ifcRows.slice();
+  // mirror IFC area controls → ps controls that importPlanswift reads
+  const psSel = document.getElementById('psAreaSelect');
+  const psNew = document.getElementById('psNewAreaName');
+  if (psSel) psSel.value = document.getElementById('ifcAreaSelect').value || '';
+  if (psNew) psNew.value = document.getElementById('ifcNewAreaName').value || '';
+  closeIfcModal();
+  await importPlanswift();  // additive push, area handling, toast, _psRows cleanup
+  _ifcRows = [];
+}
+
 function handlePlanswiftDrop(e) {
   const file = e.dataTransfer.files[0];
   if (file) readPlanswiftFile(file);
@@ -21617,8 +21864,9 @@ const HELP_CONTENT = {
           <li><span class="h-step-num">4</span><div>Set <strong>Finish</strong>: Galvanised, Primer, Powder Coat, or None — feeds galvanising tonnage in Calcs automatically.</div></li>
           <li><span class="h-step-num">5</span><div>Use <strong>Areas</strong> to group members by location (Ground Floor, Mezzanine, Roof).</div></li>
           <li><span class="h-step-num">6</span><div><strong>PlanSwift Import is always additive</strong> — it only ever adds rows; your existing takeoff is never overwritten or merged. Pick an existing area, type a new area name, or leave it on "Use areas from file". If a second import would put identical members (same section + length) into an area that already has them, or the file's area names match existing areas, you get a warning first — so two separate takeoffs never get silently compiled into one.</div></li>
+          <li><span class="h-step-num">7</span><div><strong>IFC Import (⧉) reads the whole takeoff from a model.</strong> When the job comes with an <span class="h-kbd">.ifc</span> file, drop it in and every beam, column and member is read out — section, length and quantity — grouped by floor level, in seconds. No Tekla needed. Sizes come straight from the model; weights and rates from your steel database. Review the preview, then import (additive, same as PlanSwift). Anything the database doesn't recognise is flagged ⚠ so you can fix the section after import.</div></li>
         </ul>
-        <div class="h-tip">Import from PlanSwift with the ↑ PlanSwift button — paste the schedule and the system parses it automatically. For stairs, spiral stairs or balustrades, use the 🪜 / 🌀 / 🛡 wizards in the Takeoff bar (see the <strong>Wizards</strong> help tab) to build and price them automatically.</div>
+        <div class="h-tip">Got an IFC? Use ⧉ IFC Import — it's the fastest route and you don't need anyone with Tekla. Otherwise import from PlanSwift with the ↑ PlanSwift button. For stairs, spiral stairs or balustrades, use the 🪜 / 🌀 / 🛡 wizards in the Takeoff bar (see the <strong>Wizards</strong> help tab) to build and price them automatically.</div>
       </div>
       <div class="h-section">
         <div class="h-heading"><span class="h-icon">❓</span> FAQ</div>
@@ -21630,6 +21878,12 @@ const HELP_CONTENT = {
         <div class="h-a">Each row going for galvanising must have Finish set to "Galvanised". Untagged rows are excluded from the total.</div></div>
         <div class="h-faq"><div class="h-q">Do I include bolts and cleats?</div>
         <div class="h-a">No — the Fittings % in Calcs (default 10%) covers that. List main structural members only.</div></div>
+        <div class="h-faq"><div class="h-q">IFC import: some rows show a ⚠ next to the section</div>
+        <div class="h-a">That member's section text from the model didn't match anything in the steel database, so its kg/m isn't set. The member still imports with the name shown — just correct the section (or type kg/m in) after import and the weight resolves.</div></div>
+        <div class="h-faq"><div class="h-q">IFC import: a row shows 0mm length</div>
+        <div class="h-a">A few models store a member with no readable geometry. Those import as 0mm and are flagged in the preview — set the length by hand on those rows.</div></div>
+        <div class="h-faq"><div class="h-q">IFC import: nothing happens / "reader not loaded"</div>
+        <div class="h-a">The IFC reader downloads once from the web the first time you use it. If it's blocked, hard-refresh (Ctrl+Shift+R) and try again; if it still fails you may be offline.</div></div>
       </div>`
   },
 
