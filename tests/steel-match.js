@@ -66,8 +66,24 @@ t('356x406x463 UC', '356x406x463 UC');
 
 // Reversed + ambiguous still refuses (120x80 RHS has 3 thicknesses).
 t('80x120 box', 'NO MATCH');
-// Wrong family for the size must not invent a section.
-t('203x133x25 column', 'NO MATCH');          // 203x133 is a UB, not a UC
+// "beam"/"column" now search BOTH UB and UC — dims decide. A UB-sized section
+// said as "column" resolves to the real UB rather than failing.
+t('203x133x25 column', '203x133x25 UB');
+t('203x203x46 beam', '203x203x46 UC');    // square size said as "beam" → UC
+t('457x191x67 column', '457x191x67 UB');  // UB size said as "column" → UB
+
+// ── Closest-size snapping (added 2026-08-01) ────────────────────────────────
+// Non-existent serial snaps to the nearest real one within tolerance (flagged).
+t('200x200x46 beam', '203x203x46 UC (corrected)');
+t('200x200x60 column', '203x203x60 UC (corrected)');
+t('250x250x73 column', '254x254x73 UC (corrected)');
+t('200x150x30 beam', '203x133x30 UB (corrected)');
+// Too far from any real serial — must refuse rather than snap wildly.
+t('100x400 beam', 'NO MATCH');
+t('500x500 column', 'NO MATCH');
+t('50x50 beam', 'NO MATCH');
+// Serial snaps but no mass given → still ambiguous (can't pick a mass), refuses.
+t('200x200 beam', 'NO MATCH');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

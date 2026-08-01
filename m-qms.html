@@ -135,7 +135,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" data-jspdf-loaded="1"></script>
 <script>window.CURRENT_PAGE = 'm-qms';</script>
 <script src="shared.js?v=20260801b"></script>
-<script src="steel-match.js?v=20260801d"></script>
+<script src="steel-match.js?v=20260801e"></script>
 
 <script>
 // BAMA mobile app — multi-view shell (home / QMS / stock).
@@ -267,19 +267,34 @@ function stkMatch(raw) { try { return steelMatch(raw, _stkIdx || []); } catch(_)
 const stkKgOf = r => (r.kgm && r.length_mm && r.qty) ? r.kgm * (r.length_mm / 1000) * r.qty : 0;
 const stkFmtKg = v => v >= 1000 ? (Math.round(v / 100) / 10).toLocaleString('en-GB') + 't' : Math.round(v).toLocaleString('en-GB') + 'kg';
 
-let _stkRec = null, _stkRecOn = false;
+let _stkRec = null, _stkRecOn = false, _stkRecWant = false;
 function stkToggleMic() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) { toast('Voice needs Chrome — type in the box instead', 'error'); return; }
-  if (_stkRecOn) { _stkRec.stop(); return; }
-  _stkRec = new SR(); _stkRec.lang = 'en-GB'; _stkRec.continuous = true; _stkRec.interimResults = true;
+  if (_stkRecOn || _stkRecWant) { _stkRecWant = false; try { _stkRec && _stkRec.stop(); } catch(_) {} return; }
+  _stkRecWant = true;   // user wants to keep listening until they tap stop
   const ta = document.getElementById('stkTranscript');
-  const base = ta.value ? ta.value.trim() + ' ' : '';
-  _stkRec.onresult = ev => { let f = '', i = ''; for (const r of ev.results) (r.isFinal ? f += r[0].transcript : i += r[0].transcript); ta.value = base + f + i; };
-  _stkRec.onend = () => { _stkRecOn = false; const b = document.getElementById('stkMic'); b.classList.remove('rec'); b.innerHTML = '\uD83C\uDFA4 Tap &amp; speak &mdash; say what\'s on the racks'; };
-  _stkRec.onerror = e => toast('Mic: ' + e.error, 'error');
-  _stkRec.start(); _stkRecOn = true;
-  const b = document.getElementById('stkMic'); b.classList.add('rec'); b.innerHTML = '\u23F9 Stop &mdash; tap when done';
+  const startRec = () => {
+    _stkRec = new SR(); _stkRec.lang = 'en-GB'; _stkRec.continuous = true; _stkRec.interimResults = true;
+    // Re-baseline each (re)start so a mid-sentence pause doesn't duplicate text.
+    let base = ta.value ? ta.value.trim() + ' ' : '';
+    _stkRec.onresult = ev => { let f = '', i = ''; for (const r of ev.results) (r.isFinal ? f += r[0].transcript : i += r[0].transcript); ta.value = base + f + i; };
+    _stkRec.onend = () => {
+      _stkRecOn = false;
+      // Browser auto-stops on silence. If the user hasn't tapped stop, restart
+      // so a natural pause between racks doesn't end dictation.
+      if (_stkRecWant) { try { startRec(); return; } catch(_) {} }
+      const b = document.getElementById('stkMic'); b.classList.remove('rec'); b.innerHTML = '\uD83C\uDFA4 Tap &amp; speak &mdash; say what\'s on the racks';
+    };
+    _stkRec.onerror = e => {
+      // 'no-speech' / 'aborted' are benign during pauses — let onend restart.
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { _stkRecWant = false; toast('Microphone permission needed — allow it in your browser', 'error'); }
+      else if (e.error !== 'no-speech' && e.error !== 'aborted') { toast('Mic: ' + e.error, 'error'); }
+    };
+    _stkRec.start(); _stkRecOn = true;
+    const b = document.getElementById('stkMic'); b.classList.add('rec'); b.innerHTML = '\u23F9 Stop &mdash; tap when done';
+  };
+  try { startRec(); } catch (e) { _stkRecWant = false; toast('Mic: ' + e.message, 'error'); }
 }
 
 async function stkParse() {

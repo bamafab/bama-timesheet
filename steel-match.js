@@ -27,8 +27,13 @@ const STEEL_FAMILY_ABBR = {
 // spoken word is genuinely ambiguous (e.g. "box" could be square OR rectangular
 // hollow — we search both and let the dimensions disambiguate).
 const STEEL_FAMILY_ALIASES = {
-  UB: 'UB', UNIVERSALBEAM: 'UB', UNIVERSALBEAMS: 'UB', BEAM: 'UB', BEAMS: 'UB', IBEAM: 'UB', UNIBEAM: 'UB',
-  UC: 'UC', UNIVERSALCOLUMN: 'UC', UNIVERSALCOLUMNS: 'UC', COLUMN: 'UC', COLUMNS: 'UC', UNICOLUMN: 'UC',
+  UB: 'UB', UNIVERSALBEAM: 'UB', UNIVERSALBEAMS: 'UB', IBEAM: 'UB', UNIBEAM: 'UB',
+  UC: 'UC', UNIVERSALCOLUMN: 'UC', UNIVERSALCOLUMNS: 'UC', UNICOLUMN: 'UC',
+  // "beam"/"column" are used loosely on the shop floor — a square 203x203 is a
+  // UC, a 457x191 is a UB, and people swap the words. Search BOTH and let the
+  // dimensions decide which it actually is.
+  BEAM: ['UB', 'UC'], BEAMS: ['UB', 'UC'], COLUMN: ['UB', 'UC'], COLUMNS: ['UB', 'UC'],
+  ISECTION: ['UB', 'UC'], HSECTION: ['UB', 'UC'], HBEAM: ['UB', 'UC'],
   PFC: 'PFC', CHANNEL: 'PFC', CHANNELS: 'PFC', PARALLELFLANGECHANNEL: 'PFC', CEECHANNEL: 'PFC',
   // "box" / "hollow" are ambiguous between square and rectangular hollow section
   BOX: ['SHS', 'RHS'], BOXSECTION: ['SHS', 'RHS'], HOLLOW: ['SHS', 'RHS'], HOLLOWSECTION: ['SHS', 'RHS'],
@@ -173,7 +178,54 @@ function steelMatch(raw, index) {
     }
   }
 
-  // 4) not enough detail / ambiguous — no match
+  // 4) CLOSEST SIZE: the cross-section dims don't exist as a real serial (e.g.
+  //    "200x200 beam" — no 200x200, nearest is 203x203; "200x150" → 203x133).
+  //    Snap to the nearest real serial within a sensible tolerance, then resolve
+  //    the mass. Only fires with a family word (so we know where to look) and
+  //    when the snap is unambiguous. Never snaps wildly — capped at 12% of the
+  //    larger nominal dimension, or 25mm, whichever is greater.
+  if (famAbbrs && nums.length >= 2) {
+    // Consider the first two numbers the cross-section; the rest (if any) mass/thk.
+    const want2 = nums.slice(0, 2), tail = nums.slice(2);
+    // Group pool by serial (first two dims), order-insensitive.
+    const serials = new Map();   // "d0xd1" -> { d0, d1, abbr, entries[] }
+    for (const s of pool) {
+      if (s.dims.length < 2) continue;
+      const key = s.abbr + ':' + s.dims[0] + 'x' + s.dims[1];
+      if (!serials.has(key)) serials.set(key, { d0: s.dims[0], d1: s.dims[1], abbr: s.abbr, entries: [] });
+      serials.get(key).entries.push(s);
+    }
+    const dist2 = (a, b) => {
+      // order-insensitive distance between two cross-sections
+      const dA = Math.hypot(a[0] - b[0], a[1] - b[1]);
+      const dB = Math.hypot(a[0] - b[1], a[1] - b[0]);
+      return Math.min(dA, dB);
+    };
+    const nominal = Math.max(...want2);
+    const tol = Math.max(25, nominal * 0.12);
+    let best = null, bestD = Infinity, tie = false;
+    for (const ser of serials.values()) {
+      const d = dist2(want2, [ser.d0, ser.d1]);
+      if (d < bestD - 0.01) { bestD = d; best = ser; tie = false; }
+      else if (Math.abs(d - bestD) <= 0.01) { tie = true; }
+    }
+    if (best && bestD <= tol && !tie) {
+      // Cross-section resolved to one serial. Now pick the mass.
+      let entry = null, corrected = true;
+      if (tail.length) {
+        const massN = tail[tail.length - 1];
+        entry = best.entries.reduce((a, b) =>
+          Math.abs(a.dims[a.dims.length - 1] - massN) <= Math.abs(b.dims[b.dims.length - 1] - massN) ? a : b);
+      } else if (best.entries.length === 1) {
+        entry = best.entries[0];              // only one mass in that serial — unambiguous
+      }
+      if (entry) {
+        return { entry, corrected, original: raw, display: `${entry.d} ${entry.abbr}` };
+      }
+    }
+  }
+
+  // 5) not enough detail / ambiguous — no match
   return null;
 }
 

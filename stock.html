@@ -105,7 +105,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="shared.js?v=20260801b"></script>
-<script src="steel-match.js?v=20260801d"></script>
+<script src="steel-match.js?v=20260801e"></script>
 <script>
 // ═══════════════════════════════════════════════════════════════════════════
 // STOCK REGISTER (Phase C3) — voice + manual entry, steel-db validated
@@ -143,24 +143,36 @@ const fmtKg2 = v => v >= 1000 ? (Math.round(v / 100) / 10).toLocaleString('en-GB
 function rowKg(r) { return (r.kgm && r.length_mm && r.qty) ? r.kgm * (r.length_mm / 1000) * r.qty : 0; }
 
 // ── Voice ────────────────────────────────────────────────────────────────────
-let _rec = null, _recOn = false;
+let _rec = null, _recOn = false, _recWant = false;
 function stkToggleMic() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) { toast('Voice needs Chrome or Edge — type in the box instead', 'error'); return; }
-  if (_recOn) { _rec.stop(); return; }
-  _rec = new SR();
-  _rec.lang = 'en-GB'; _rec.continuous = true; _rec.interimResults = true;
+  if (_recOn || _recWant) { _recWant = false; try { _rec && _rec.stop(); } catch(_) {} return; }
+  _recWant = true;   // keep listening until the user clicks stop
   const ta = document.getElementById('stkTranscript');
-  const base = ta.value ? ta.value.trim() + ' ' : '';
-  _rec.onresult = ev => {
-    let final = '', interim = '';
-    for (const r of ev.results) (r.isFinal ? final += r[0].transcript : interim += r[0].transcript);
-    ta.value = base + final + interim;
+  const startRec = () => {
+    _rec = new SR();
+    _rec.lang = 'en-GB'; _rec.continuous = true; _rec.interimResults = true;
+    let base = ta.value ? ta.value.trim() + ' ' : '';
+    _rec.onresult = ev => {
+      let final = '', interim = '';
+      for (const r of ev.results) (r.isFinal ? final += r[0].transcript : interim += r[0].transcript);
+      ta.value = base + final + interim;
+    };
+    _rec.onend = () => {
+      _recOn = false;
+      // Auto-restart on silence so a pause between racks doesn't end dictation.
+      if (_recWant) { try { startRec(); return; } catch(_) {} }
+      document.getElementById('stkMic').classList.remove('rec');
+    };
+    _rec.onerror = e => {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { _recWant = false; toast('Microphone permission needed — allow it in your browser', 'error'); }
+      else if (e.error !== 'no-speech' && e.error !== 'aborted') { toast('Mic: ' + e.error, 'error'); }
+    };
+    _rec.start(); _recOn = true;
+    document.getElementById('stkMic').classList.add('rec');
   };
-  _rec.onend = () => { _recOn = false; document.getElementById('stkMic').classList.remove('rec'); };
-  _rec.onerror = e => { toast('Mic: ' + e.error, 'error'); };
-  _rec.start(); _recOn = true;
-  document.getElementById('stkMic').classList.add('rec');
+  try { startRec(); } catch (e) { _recWant = false; toast('Mic: ' + e.message, 'error'); }
 }
 
 // ── Parse (AI transcribes → JS validates) ───────────────────────────────────
