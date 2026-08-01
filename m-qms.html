@@ -420,9 +420,12 @@ async function _mGraphChildByName(driveId, parentId, name) {
 }
 
 // Sign modal (self-injecting), finger signature pad.
+
+let _signSession = [];   // signatures collected this session: {name, company, signature}
+
 function mSignOpen(i) {
   const d = _signDocs[i]; if (!d) return;
-  _signSigData = null;
+  _signSigData = null; _signSession = [];
   if (!document.getElementById('signModal')) {
     const div = document.createElement('div');
     div.innerHTML = `<div id="signModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:1001;align-items:flex-start;justify-content:center;padding:16px;overflow-y:auto">
@@ -434,15 +437,19 @@ function mSignOpen(i) {
         <div style="padding:16px 18px;display:flex;flex-direction:column;gap:12px;font-size:13px">
           <div id="signStatement" style="background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:8px;padding:11px 13px;color:var(--text);line-height:1.55"></div>
           <a id="signReadLink" href="#" target="_blank" rel="noopener" style="color:var(--accent);font-size:13px">&#128065; Open and read the RAMS first &rarr;</a>
-          <div><div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Your name</div>
-            <input id="signName" class="stk-in" placeholder="Full name"></div>
-          <div><div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Company (if subcontractor)</div>
-            <input id="signCompany" class="stk-in" placeholder="Optional"></div>
-          <div><div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Signature</div>
-            <canvas id="signPad" width="460" height="150" style="width:100%;height:140px;background:#fff;border:1px solid var(--border);border-radius:8px;touch-action:none"></canvas>
-            <div style="text-align:right;margin-top:4px"><button class="stk-btn" style="padding:5px 12px" onclick="mSignPadClear()">Clear</button></div></div>
+          <div id="signCollected"></div>
+          <div style="border:1px solid var(--border);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:10px">
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Add a signature</div>
+            <input id="signName" class="stk-in" placeholder="Full name">
+            <input id="signCompany" class="stk-in" placeholder="Company (if subcontractor) — optional">
+            <canvas id="signPad" width="460" height="150" style="width:100%;height:130px;background:#fff;border:1px solid var(--border);border-radius:8px;touch-action:none"></canvas>
+            <div style="display:flex;gap:8px;align-items:center">
+              <button class="stk-btn" style="padding:8px 12px" onclick="mSignPadClear()">Clear pad</button>
+              <button class="stk-btn primary" style="flex:1;padding:12px" onclick="mSignAdd()">&#43; Add this signature</button>
+            </div>
+          </div>
           <div id="signStatus" style="font-size:12px;color:var(--muted);min-height:14px"></div>
-          <button class="stk-btn primary" id="signGo" style="padding:14px" onclick="mSignSubmit()">&#9997;&#65039; Sign &amp; record</button>
+          <button class="stk-btn primary" id="signGo" style="padding:14px;opacity:.5" onclick="mSignSaveAll()" disabled>&#9997;&#65039; Save &amp; file register</button>
         </div>
       </div></div>`;
     document.body.appendChild(div.firstElementChild);
@@ -455,9 +462,38 @@ function mSignOpen(i) {
   document.getElementById('signName').value = _mMe || '';
   document.getElementById('signCompany').value = '';
   document.getElementById('signStatus').textContent = '';
-  document.getElementById('signGo').disabled = false;
+  mSignRenderCollected();
   mSignInitPad();
   document.getElementById('signModal').style.display = 'flex';
+}
+
+function mSignRenderCollected() {
+  const host = document.getElementById('signCollected');
+  const go = document.getElementById('signGo');
+  if (!_signSession.length) { host.innerHTML = ''; go.disabled = true; go.style.opacity = '.5'; return; }
+  go.disabled = false; go.style.opacity = '1';
+  go.innerHTML = `&#9997;&#65039; Save ${_signSession.length} signature${_signSession.length !== 1 ? 's' : ''} &amp; file register`;
+  host.innerHTML = `<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Signed this session (${_signSession.length})</div>` +
+    _signSession.map((s, i) => `<div style="display:flex;align-items:center;gap:10px;padding:7px 9px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:6px">
+      <img src="${s.signature}" style="width:60px;height:26px;object-fit:contain;background:#fff;border-radius:3px">
+      <div style="flex:1;min-width:0"><div style="font-weight:600">${escapeHtml(s.name)}</div>${s.company ? `<div style="font-size:11px;color:var(--muted)">${escapeHtml(s.company)}</div>` : ''}</div>
+      <button class="stk-btn" style="padding:4px 10px;color:var(--red)" onclick="_signSession.splice(${i},1);mSignRenderCollected()">&#10005;</button>
+    </div>`).join('');
+}
+
+function mSignAdd() {
+  const name = (document.getElementById('signName').value || '').trim();
+  const company = (document.getElementById('signCompany').value || '').trim();
+  const status = document.getElementById('signStatus');
+  if (!name) { status.textContent = 'Enter a name.'; return; }
+  if (!_signSigData) { status.textContent = 'Sign in the box first.'; return; }
+  _signSession.push({ name, company: company || null, signature: _signSigData });
+  status.textContent = '';
+  // Reset for the next person.
+  document.getElementById('signName').value = '';
+  document.getElementById('signCompany').value = '';
+  mSignInitPad();
+  mSignRenderCollected();
 }
 
 function mSignInitPad() {
@@ -476,26 +512,123 @@ function mSignInitPad() {
 }
 function mSignPadClear() { _signSigData = null; mSignInitPad(); }
 
-async function mSignSubmit() {
+async function mSignSaveAll() {
   const d = _signActiveDoc; if (!d) return;
-  const name = (document.getElementById('signName').value || '').trim();
-  const company = (document.getElementById('signCompany').value || '').trim();
+  // If someone filled the pad but didn't tap "Add", include them too.
+  const pendingName = (document.getElementById('signName').value || '').trim();
+  if (pendingName && _signSigData) _signSession.push({ name: pendingName, company: (document.getElementById('signCompany').value || '').trim() || null, signature: _signSigData });
+  if (!_signSession.length) { document.getElementById('signStatus').textContent = 'Add at least one signature.'; return; }
   const status = document.getElementById('signStatus'), btn = document.getElementById('signGo');
-  if (!name) { status.textContent = 'Enter your name.'; return; }
-  if (!_signSigData) { status.textContent = 'Sign in the box above.'; return; }
-  btn.disabled = true; status.textContent = 'Recording…';
+  btn.disabled = true; status.textContent = 'Recording signatures…';
   try {
-    await api.post('/api/acknowledgements', {
-      doc_type: 'rams', doc_ref: d.name || d.fileName || 'RAMS',
-      doc_file_id: d.fileId || null, doc_web_url: d.webUrl || null,
-      project_number: d.project_number, job_id: d.job_id,
-      signer_name: name, signer_company: company || null,
-      statement: RAMS_STATEMENT, signature: _signSigData
-    });
-    toast('Signed — thank you, ' + name.split(' ')[0], 'success');
+    // 1. Persist each signature as its own acknowledgement row.
+    for (const s of _signSession) {
+      await api.post('/api/acknowledgements', {
+        doc_type: 'rams', doc_ref: d.name || d.fileName || 'RAMS',
+        doc_file_id: d.fileId || null, doc_web_url: d.webUrl || null,
+        project_number: d.project_number, job_id: d.job_id,
+        signer_name: s.name, signer_company: s.company,
+        statement: RAMS_STATEMENT, signature: s.signature
+      });
+    }
+    // 2. Regenerate the acknowledgement register PDF from ALL rows for this
+    //    doc (this session + any prior days) and file it next to the RAMS.
+    status.textContent = 'Building register…';
+    try { await mSignBuildRegister(d); }
+    catch (regErr) { console.warn('register PDF failed:', regErr.message); /* signatures are safe */ }
+
+    toast(`${_signSession.length} signature${_signSession.length !== 1 ? 's' : ''} recorded`, 'success');
     document.getElementById('signModal').style.display = 'none';
-    mSignLoadDocs();   // refresh the signed count
+    _signSession = [];
+    mSignLoadDocs();
   } catch (e) { status.textContent = 'Failed: ' + e.message; btn.disabled = false; }
+}
+
+// Build (or rebuild) the RAMS acknowledgement register PDF from every signature
+// on file for this doc, and upload it next to the RAMS in 00 - RAMS/<job>.
+// Overwrites on each save so it always reflects everyone who has ever signed.
+async function mSignBuildRegister(d) {
+  // 1. All acknowledgements for this exact RAMS file.
+  const all = (await api.get('/api/acknowledgements?project_number=' + encodeURIComponent(d.project_number)) || [])
+    .filter(a => a.doc_file_id === d.fileId);
+  if (!all.length) return;
+  // Oldest first, so the register reads chronologically.
+  all.sort((a, b) => new Date(a.acknowledged_at) - new Date(b.acknowledged_at));
+  // 2. Pull each signature image (not returned by the list endpoint).
+  for (const a of all) {
+    try { const r = await api.get('/api/acknowledgements/' + a.id + '/signature'); a._sig = r && r.signature; }
+    catch (_) { a._sig = null; }
+  }
+
+  // 3. Render house-style register.
+  const JsPDF = await resolveJsPDFCtor();
+  await (typeof loadLogoDataUri === 'function' ? loadLogoDataUri() : Promise.resolve());
+  const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
+  const doc = new JsPDF({ unit: 'mm', format: 'a4' });
+  const W = 210, M = 14, accent = _houseAccent();
+  const h = bamaDocHeader(doc, logo, {
+    title: 'RAMS ACKNOWLEDGEMENT', accent, marginL: M, marginR: M,
+    meta: [
+      { label: 'Document:', value: d.name || d.fileName || 'RAMS' },
+      { label: 'Job:', value: d.project_number || '' },
+      { label: 'Printed:', value: new Date().toLocaleDateString('en-GB') }
+    ]
+  });
+  let y = h.y;
+  y = bamaSectionHeading(doc, y, 'SIGNATURE REGISTER', { accent, marginL: M, usableW: W - 2 * M });
+  doc.setTextColor(HOUSE_INK[0], HOUSE_INK[1], HOUSE_INK[2]);
+  doc.setFont('helvetica', 'italic'); doc.setFontSize(9); doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+  const intro = doc.splitTextToSize('The persons listed below confirm that they have read, understood and will comply with the above Risk Assessment & Method Statement.', W - 2 * M);
+  doc.text(intro, M, y); y += intro.length * 4.4 + 4;
+
+  // Column layout: Name | Company | Signature | Date
+  const cols = [
+    { x: M,        w: 52, label: 'Name' },
+    { x: M + 52,   w: 46, label: 'Company' },
+    { x: M + 98,   w: 48, label: 'Signature' },
+    { x: M + 146,  w: W - M - (M + 146), label: 'Date' }
+  ];
+  const drawHead = () => {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(HOUSE_INK[0], HOUSE_INK[1], HOUSE_INK[2]);
+    cols.forEach(c => doc.text(c.label.toUpperCase(), c.x, y));
+    y += 3; doc.setDrawColor(200); doc.line(M, y, W - M, y); y += 4;
+  };
+  drawHead();
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
+  const rowH = 16;
+  for (const a of all) {
+    if (y + rowH > 275) { doc.addPage(); y = 22; drawHead(); }
+    const cy = y;
+    doc.setTextColor(HOUSE_INK[0], HOUSE_INK[1], HOUSE_INK[2]);
+    doc.text(doc.splitTextToSize(String(a.signer_name || ''), cols[0].w - 2), cols[0].x, cy + 4);
+    doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+    doc.text(doc.splitTextToSize(String(a.signer_company || '—'), cols[1].w - 2), cols[1].x, cy + 4);
+    if (a._sig) { try { doc.addImage(a._sig, 'PNG', cols[2].x, cy - 1, 40, 13); } catch (_) {} }
+    doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+    doc.text(new Date(a.acknowledged_at).toLocaleDateString('en-GB'), cols[3].x, cy + 4);
+    y += rowH; doc.setDrawColor(230); doc.line(M, y - 3, W - M, y - 3);
+  }
+  y += 4;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+  doc.text(`${all.length} signature${all.length !== 1 ? 's' : ''} on record. Register generated via BAMA ERP on ${new Date().toLocaleString('en-GB')}.`, M, y);
+  bamaDocFooter(doc, { marginL: M, marginR: M, caption: `RAMS Acknowledgement  \u00b7  ${d.project_number || 'BAMA Fabrication Ltd'}` });
+
+  // 4. File next to the RAMS in 00 - RAMS/<job>. Stable filename → overwrites.
+  const blob = doc.output('blob');
+  const baseRams = (d.name || d.fileName || 'RAMS').replace(/\.pdf$/i, '');
+  const regName = `${baseRams} - Acknowledgement Register.pdf`.replace(/[~"#%&*:<>?{|}/\\]/g, '-');
+  const pf = await findProjectFolder(d.project_number);
+  if (!pf || !pf.id) return;
+  const drive = pf.parentReference?.driveId || BAMA_DRIVE_ID;
+  const ramsRoot = await getOrCreateSubfolder(pf.id, '00 - RAMS', drive);
+  // Prefer the same job subfolder the RAMS lives in; fall back to the RAMS root.
+  let target = ramsRoot;
+  try {
+    const subs = await _mGraphChildren(drive, ramsRoot.id);
+    const jobSub = subs.find(s => s.folder);
+    if (jobSub) target = jobSub;
+  } catch (_) {}
+  await uploadFileToFolder(target.id, regName, await blob.arrayBuffer(), 'application/pdf', drive);
 }
 
 // ── TOOLBOX TALKS (delegates to shared.js tbtDeliver engine) ────────────────
