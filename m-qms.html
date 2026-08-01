@@ -50,6 +50,7 @@
   /* The TBT deliver modal is 760px on desktop — let it fill the phone. */
   #tbtDeliverModal > div { max-width: 100% !important; }
   #signModal input { font-size: 16px !important; }
+  #snagModal input, #snagModal select, #snagModal textarea { font-size: 16px !important; }
   .m-install { display: none; margin: 22px 0 0; padding: 12px 14px; border-radius: 11px; background: var(--surface); border: 1px dashed var(--border); font-size: 12px; color: var(--muted); line-height: 1.55; }
   .home-tile { padding: 24px 18px; }
   .home-tile .chip { width: 56px; height: 56px; flex-basis: 56px; font-size: 28px; }
@@ -124,6 +125,11 @@
       <div class="meta"><div class="title">Sign RAMS</div><div class="sub">Read the RAMS for a job and sign to confirm understanding</div></div>
       <div class="arr">&rsaquo;</div>
     </div>
+    <div class="qcard home-tile" onclick="mGo('snag')">
+      <div class="chip">&#128681;</div>
+      <div class="meta"><div class="title">Snagging</div><div class="sub">Photo + keyword &rarr; AI writes the snag, per item &rarr; report</div></div>
+      <div class="arr">&rsaquo;</div>
+    </div>
     <div class="m-install" id="mInstall">
       &#128161; <strong>Install this app:</strong> <span id="mInstallText">tap your browser menu and choose "Add to Home Screen".</span>
     </div>
@@ -168,6 +174,19 @@
     </select>
     <div id="signDocs" style="margin-top:6px"></div>
   </div>
+
+  <!-- SNAGGING -->
+  <div class="m-body" id="viewSnag" style="display:none">
+    <div class="m-h">Snagging report</div>
+    <select class="m-search" id="snagJob" onchange="mSnagJobChange()">
+      <option value="">Choose a job&hellip;</option>
+    </select>
+    <input class="m-search" id="snagLocation" placeholder="Site address / location" style="margin-top:8px">
+    <div id="snagList" style="margin-top:14px"></div>
+    <button class="stk-btn" id="snagAddBtn" style="width:100%;padding:14px;margin-top:10px" onclick="mSnagAddOpen()">&#43; Add a snag</button>
+    <button class="stk-btn primary" id="snagSaveBtn" style="width:100%;padding:14px;margin-top:10px;opacity:.5" disabled onclick="mSnagSave()">&#128681; Save &amp; file snagging report</button>
+    <div id="snagStatus" style="font-size:12px;color:var(--muted);margin-top:8px;min-height:14px"></div>
+  </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" data-jspdf-loaded="1"></script>
@@ -192,7 +211,8 @@ const M_VIEWS = {
   qms:   { word: 'QMS',   tag: 'Check Sheets',   back: true  },
   stock: { word: 'STOCK', tag: 'Steel register', back: true  },
   tbt:   { word: 'TALKS', tag: 'Toolbox Talks',  back: true  },
-  sign:  { word: 'RAMS',  tag: 'Read & sign',    back: true  }
+  sign:  { word: 'RAMS',  tag: 'Read & sign',    back: true  },
+  snag:  { word: 'SNAG',  tag: 'Snagging',       back: true  }
 };
 let _mView = 'home';
 function mGo(view) {
@@ -203,6 +223,7 @@ function mGo(view) {
   document.getElementById('viewStock').style.display = view === 'stock' ? 'block' : 'none';
   document.getElementById('viewTbt').style.display   = view === 'tbt'   ? 'block' : 'none';
   document.getElementById('viewSign').style.display  = view === 'sign'  ? 'block' : 'none';
+  document.getElementById('viewSnag').style.display  = view === 'snag'  ? 'block' : 'none';
   const v = M_VIEWS[view];
   const bw = document.getElementById('mBrandWord');
   bw.textContent = v.word; bw.style.color = view === 'home' ? 'var(--text)' : 'var(--accent)';
@@ -213,6 +234,7 @@ function mGo(view) {
   if (view === 'stock') { stkEnsureSections(); stkLoad(); }
   if (view === 'tbt')   { mLoadTalks(); mLoadTbtRecent(); }
   if (view === 'sign')  { mSignLoadJobs(); }
+  if (view === 'snag')  { mSnagInit(); }
 }
 
 async function mBoot() {
@@ -631,6 +653,235 @@ async function mSignBuildRegister(d) {
     if (jobSub) target = jobSub;
   } catch (_) {}
   await uploadFileToFolder(target.id, regName, await blob.arrayBuffer(), 'application/pdf', drive);
+}
+
+// ── SNAGGING (per-photo, AI-drafted snag descriptions) ──────────────────────
+let _snagJobs = [], _snags = [], _snagPhoto = null;
+const SNAG_SEVERITY = ['Minor', 'Major', 'Critical'];
+
+async function mSnagInit() {
+  const sel = document.getElementById('snagJob');
+  try {
+    const projects = await api.get('/api/projects');
+    _snagJobs = (projects || []).filter(p => p.status === 'In Progress' && !p.hidden_from_workshop);
+    sel.innerHTML = '<option value="">Choose a job&hellip;</option>' +
+      _snagJobs.map(p => `<option value="${escapeHtml(p.project_number)}">${escapeHtml(p.project_number + ' — ' + p.project_name)}</option>`).join('');
+  } catch (e) { sel.innerHTML = '<option value="">Could not load jobs</option>'; }
+  _snags = []; mSnagRenderList();
+}
+
+function mSnagJobChange() {
+  // Auto-fill location from the picked job (site address, else client, else PC).
+  const pn = document.getElementById('snagJob').value;
+  const p = _snagJobs.find(x => x.project_number === pn);
+  const loc = document.getElementById('snagLocation');
+  if (!p) return;
+  const useSite = p.site_same_as_client === false && (p.site_address_line1 || p.site_postcode);
+  const parts = useSite
+    ? [p.site_address_line1, p.site_address_line2, p.site_city, p.site_county, p.site_postcode]
+    : [p.address_line1, p.address_line2, p.city, p.county, p.postcode];
+  const addr = parts.filter(Boolean).join(', ') || (useSite ? p.site_postcode : p.postcode) || '';
+  if (!loc.value || loc.value === loc.dataset.autofilled) { loc.value = addr; loc.dataset.autofilled = addr; }
+}
+
+function mSnagRenderList() {
+  const host = document.getElementById('snagList');
+  const saveBtn = document.getElementById('snagSaveBtn');
+  saveBtn.disabled = !_snags.length; saveBtn.style.opacity = _snags.length ? '1' : '.5';
+  if (!_snags.length) { host.innerHTML = '<div class="m-loading" style="padding:12px 2px;text-align:left">No snags yet — tap “Add a snag”.</div>'; return; }
+  const sevColor = s => s === 'Critical' ? '#dc2626' : s === 'Major' ? '#f59e0b' : '#16a34a';
+  host.innerHTML = _snags.map((s, i) => `
+    <div class="qcard" style="cursor:default;align-items:flex-start">
+      ${s.photo ? `<img src="${s.photo}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;flex:0 0 auto">` : '<div class="chip">&#128681;</div>'}
+      <div class="meta" style="flex:1">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
+          <span style="font-weight:700">#${i + 1}</span>
+          <span style="font-size:10px;font-weight:700;color:#fff;background:${sevColor(s.severity)};padding:1px 7px;border-radius:10px">${escapeHtml(s.severity)}</span>
+          ${s.location ? `<span style="font-size:11px;color:var(--muted)">${escapeHtml(s.location)}</span>` : ''}
+        </div>
+        <div style="font-size:13px;line-height:1.45">${escapeHtml(s.description)}</div>
+      </div>
+      <button class="stk-btn" style="padding:4px 10px;color:var(--red);flex:0 0 auto" onclick="_snags.splice(${i},1);mSnagRenderList()">&#10005;</button>
+    </div>`).join('');
+}
+
+// Add-snag modal
+function mSnagAddOpen() {
+  _snagPhoto = null;
+  if (!document.getElementById('snagModal')) {
+    const div = document.createElement('div');
+    div.innerHTML = `<div id="snagModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:1001;align-items:flex-start;justify-content:center;padding:16px;overflow-y:auto">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;width:100%;max-width:520px;overflow:hidden">
+        <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
+          <h3 style="margin:0;font-size:15px;flex:1">Add a snag</h3>
+          <button class="stk-btn" onclick="document.getElementById('snagModal').style.display='none'">&#10005;</button>
+        </div>
+        <div style="padding:16px 18px;display:flex;flex-direction:column;gap:12px;font-size:13px">
+          <div>
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">Photo</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <label class="stk-btn" style="cursor:pointer">&#128247; Camera<input type="file" accept="image/*" capture="environment" style="display:none" onchange="mSnagPhotoPick(this)"></label>
+              <label class="stk-btn" style="cursor:pointer">&#128444;&#65039; Choose photo<input type="file" accept="image/*" style="display:none" onchange="mSnagPhotoPick(this)"></label>
+            </div>
+            <div id="snagPhotoPreview" style="margin-top:8px"></div>
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">Keyword / rough note</div>
+            <input id="snagKeyword" class="stk-in" placeholder="e.g. weld crack, poor housekeeping, levels off">
+            <div style="display:flex;gap:8px;margin-top:8px">
+              <button class="stk-btn primary" style="flex:1" id="snagAiBtn" onclick="mSnagAiDraft()">&#10024; Draft with AI</button>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">Snag description</div>
+            <textarea id="snagDesc" class="stk-in" rows="3" style="resize:vertical" placeholder="Write it, or draft with AI above and tweak"></textarea>
+          </div>
+          <div style="display:flex;gap:10px">
+            <div style="flex:1">
+              <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">Severity</div>
+              <select id="snagSeverity" class="stk-in">${SNAG_SEVERITY.map(s => `<option${s === 'Minor' ? ' selected' : ''}>${s}</option>`).join('')}</select>
+            </div>
+            <div style="flex:1">
+              <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">Location / area</div>
+              <input id="snagArea" class="stk-in" placeholder="e.g. Grid B3, roof">
+            </div>
+          </div>
+          <div id="snagAddStatus" style="font-size:12px;color:var(--muted);min-height:14px"></div>
+          <button class="stk-btn primary" style="padding:14px" onclick="mSnagAddSave()">&#43; Add this snag</button>
+        </div>
+      </div></div>`;
+    document.body.appendChild(div.firstElementChild);
+  }
+  document.getElementById('snagKeyword').value = '';
+  document.getElementById('snagDesc').value = '';
+  document.getElementById('snagArea').value = '';
+  document.getElementById('snagSeverity').value = 'Minor';
+  document.getElementById('snagPhotoPreview').innerHTML = '';
+  document.getElementById('snagAddStatus').textContent = '';
+  document.getElementById('snagModal').style.display = 'flex';
+}
+
+async function mSnagPhotoPick(input) {
+  const f = input.files && input.files[0]; if (!f) return;
+  _snagPhoto = await _mFileToDataUri(f);
+  document.getElementById('snagPhotoPreview').innerHTML = `<img src="${_snagPhoto}" style="width:100%;max-height:220px;object-fit:contain;border-radius:8px;background:#000">`;
+}
+function _mFileToDataUri(file) {
+  return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
+}
+
+async function mSnagAiDraft() {
+  const kw = (document.getElementById('snagKeyword').value || '').trim();
+  const status = document.getElementById('snagAddStatus'), btn = document.getElementById('snagAiBtn');
+  if (!kw) { status.textContent = 'Type a keyword first (e.g. “weld crack”).'; return; }
+  btn.disabled = true; status.textContent = 'Drafting…';
+  try {
+    const resp = await callClaude({
+      model: 'claude-sonnet-4-6', max_tokens: 300,
+      messages: [{ role: 'user', content:
+`You are writing a snag note for a UK structural steel site snagging report. Turn the inspector's shorthand into ONE or TWO concise, professional sentences describing the defect and what needs doing. Plain factual English, no preamble, no markdown. Shorthand: "${kw}"` }]
+    });
+    const txt = (resp.content || []).map(c => c.text || '').join('').trim();
+    if (txt) document.getElementById('snagDesc').value = txt;
+    status.textContent = '';
+  } catch (e) { status.textContent = 'AI unavailable — type the note yourself.'; }
+  finally { btn.disabled = false; }
+}
+
+function mSnagAddSave() {
+  const desc = (document.getElementById('snagDesc').value || '').trim();
+  const status = document.getElementById('snagAddStatus');
+  if (!desc) { status.textContent = 'Add a description (or draft one with AI).'; return; }
+  _snags.push({
+    photo: _snagPhoto,
+    description: desc,
+    severity: document.getElementById('snagSeverity').value || 'Minor',
+    location: (document.getElementById('snagArea').value || '').trim()
+  });
+  document.getElementById('snagModal').style.display = 'none';
+  mSnagRenderList();
+}
+
+async function mSnagSave() {
+  const pn = document.getElementById('snagJob').value;
+  const status = document.getElementById('snagStatus'), btn = document.getElementById('snagSaveBtn');
+  if (!pn) { status.textContent = 'Choose a job first.'; return; }
+  if (!_snags.length) { status.textContent = 'Add at least one snag.'; return; }
+  btn.disabled = true; status.textContent = 'Building report…';
+  try {
+    const proj = _snagJobs.find(p => p.project_number === pn);
+    const blob = await mSnagBuildPDF(proj, document.getElementById('snagLocation').value);
+    const fname = `Snagging Report - ${pn} - ${new Date().toISOString().slice(0, 10)}.pdf`;
+    // File to the project's QMS check-sheets folder (same place as site reports).
+    let webUrl = null, fileId = null;
+    try {
+      const pf = await findProjectFolder(pn);
+      if (pf && pf.id) {
+        const drive = pf.parentReference?.driveId || BAMA_DRIVE_ID;
+        const qroot = await getOrCreateSubfolder(pf.id, 'QMS Check Sheets', drive);
+        const up = await uploadFileToFolder(qroot.id, fname, await blob.arrayBuffer(), 'application/pdf', drive);
+        webUrl = up.webUrl; fileId = up.id;
+      }
+    } catch (e) { console.warn('snag filing failed:', e.message); }
+    if (!webUrl) { window.open(URL.createObjectURL(blob), '_blank'); }
+    toast(`Snagging report filed — ${_snags.length} snag${_snags.length !== 1 ? 's' : ''}`, 'success');
+    _snags = []; mSnagRenderList();
+    status.textContent = webUrl ? 'Filed to SharePoint.' : 'Opened (SharePoint unavailable).';
+  } catch (e) { status.textContent = 'Failed: ' + e.message; btn.disabled = false; }
+}
+
+async function mSnagBuildPDF(proj, location) {
+  const JsPDF = await resolveJsPDFCtor();
+  await (typeof loadLogoDataUri === 'function' ? loadLogoDataUri() : Promise.resolve());
+  const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
+  const doc = new JsPDF({ unit: 'mm', format: 'a4' });
+  const W = 210, M = 14, accent = _houseAccent();
+  const pn = proj ? proj.project_number : '';
+  const h = bamaDocHeader(doc, logo, {
+    title: 'SNAGGING REPORT', accent, marginL: M, marginR: M,
+    meta: [
+      { label: 'Job:', value: proj ? (pn + ' — ' + proj.project_name) : pn },
+      { label: 'Location:', value: location || '' },
+      { label: 'Date:', value: new Date().toLocaleDateString('en-GB') },
+      { label: 'Snags:', value: String(_snags.length) }
+    ]
+  });
+  let y = h.y;
+  const sevRGB = s => s === 'Critical' ? [220, 38, 38] : s === 'Major' ? [245, 158, 11] : [22, 163, 74];
+  for (let i = 0; i < _snags.length; i++) {
+    const s = _snags[i];
+    const imgH = s.photo ? 46 : 0;
+    const need = 12 + imgH + 20;
+    if (y + need > 285) { doc.addPage(); y = 20; }
+    // Heading row: number + severity chip + location
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(HOUSE_INK[0], HOUSE_INK[1], HOUSE_INK[2]);
+    doc.text(`Snag ${i + 1}`, M, y);
+    const c = sevRGB(s.severity); doc.setFillColor(c[0], c[1], c[2]);
+    const chipW = doc.getTextWidth(s.severity) + 6;
+    doc.roundedRect(M + 22, y - 4, chipW, 5.5, 1, 1, 'F');
+    doc.setTextColor(255, 255, 255); doc.setFontSize(8); doc.text(s.severity, M + 25, y);
+    if (s.location) { doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]); doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.text(s.location, M + 26 + chipW, y); }
+    y += 6;
+    // Photo
+    if (s.photo) {
+      try {
+        const props = doc.getImageProperties(s.photo);
+        const ratio = props.width / props.height;
+        const pw = Math.min(60, 46 * ratio), ph = pw / ratio;
+        doc.addImage(s.photo, 'JPEG', M, y, pw, Math.min(ph, 46));
+      } catch (_) {}
+    }
+    // Description beside/under photo
+    const descX = s.photo ? M + 66 : M;
+    const descW = W - M - descX;
+    doc.setTextColor(HOUSE_INK[0], HOUSE_INK[1], HOUSE_INK[2]); doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+    const lines = doc.splitTextToSize(s.description, descW);
+    doc.text(lines, descX, y + 4);
+    y += Math.max(imgH, lines.length * 4.6) + 8;
+    doc.setDrawColor(230); doc.line(M, y - 4, W - M, y - 4);
+  }
+  bamaDocFooter(doc, { marginL: M, marginR: M, caption: `Snagging Report  \u00b7  ${pn || 'BAMA Fabrication Ltd'}` });
+  return doc.output('blob');
 }
 
 // ── TOOLBOX TALKS (delegates to shared.js tbtDeliver engine) ────────────────
