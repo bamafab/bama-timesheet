@@ -38479,6 +38479,121 @@ async function _bimpAddFiles(fileList) {
   for (let i = startIdx; i < _bimpItems.length; i++) await _bimpParseOne(i);
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+// QUICK PO-CREATOR — invoice quotes a P-number the ERP doesn't have
+// (human error: PO never raised, or raised without a number). From the bulk
+// card the user can create that PO on the spot (booked to a job or cost
+// centre, valued at the invoice's own printed figures) or fold the amount
+// into an existing PO instead. All values are read off the invoice; VAT is
+// pro-rata from the invoice's own net:vat ratio — plain arithmetic.
+// ═════════════════════════════════════════════════════════════════════════
+let _bimpQcData = null;      // { cc: {code: label}, projects: [{id, project_number, project_name}] }
+let _bimpQcLoading = false;
+
+async function _bimpQcLoad() {
+  if (_bimpQcData || _bimpQcLoading) return;
+  _bimpQcLoading = true;
+  try {
+    const [settings, projects] = await Promise.all([
+      api.get('/api/settings').catch(() => ({})),
+      api.get('/api/projects').catch(() => [])
+    ]);
+    _bimpQcData = {
+      cc: (settings && settings.purchase_order_cost_centres) || { '8099': 'Workshop', '5099': 'Office' },
+      projects: (Array.isArray(projects) ? projects : [])
+        .filter(p => p.status === 'In Progress')
+        .sort((a, b) => String(b.project_number || '').localeCompare(String(a.project_number || '')))
+    };
+  } finally {
+    _bimpQcLoading = false;
+    _bimpItems.forEach((_, idx) => _bimpRenderCard(idx)); // enable the selects
+  }
+}
+
+function _bimpQcBookOptions() {
+  if (!_bimpQcData) return '<option value="">loading jobs…</option>';
+  const cc = Object.entries(_bimpQcData.cc)
+    .map(([code, label]) => `<option value="cc:${code}">${escapeHtml(code)} — ${escapeHtml(label)}</option>`).join('');
+  const pj = _bimpQcData.projects
+    .map(p => `<option value="pj:${p.id}">${escapeHtml(p.project_number || ('#' + p.id))} — ${escapeHtml((p.project_name || '').slice(0, 40))}</option>`).join('');
+  return `<option value="">➕ create — book to…</option>`
+       + (cc ? `<optgroup label="Cost centres">${cc}</optgroup>` : '')
+       + (pj ? `<optgroup label="Live projects">${pj}</optgroup>` : '');
+}
+
+async function bimpQcCreate(i, idx, val) {
+  const it = _bimpItems[i];
+  const lo = it && it.poLeftover && it.poLeftover[idx];
+  if (!lo || !val) return;
+  const [kind, id] = val.split(':');
+  const bookLabel = kind === 'cc'
+    ? `${id} — ${(_bimpQcData?.cc || {})[id] || 'cost centre'}`
+    : (() => { const p = (_bimpQcData?.projects || []).find(x => String(x.id) === id); return p ? `${p.project_number} — ${p.project_name || ''}` : 'project'; })();
+
+  // VAT pro-rata from the invoice's own printed figures (fallback 20%)
+  const invNet = parseFloat(it.net), invVat = parseFloat(it.vat);
+  const ratio = Number.isFinite(invNet) && invNet > 0 && Number.isFinite(invVat) ? invVat / invNet : 0.2;
+  const vat = Math.round(lo.net * ratio * 100) / 100;
+  const gross = Math.round((lo.net + vat) * 100) / 100;
+
+  const goAhead = await bamaConfirm({
+    title: `Create PO ${lo.label}?`,
+    message: `A PO with this number isn't in the ERP — probably never raised.\n\nCreate ${lo.label} for this supplier at £${lo.net.toFixed(2)} net (£${gross.toFixed(2)} incl VAT), booked to ${bookLabel}?\n\nYou can edit details in the PO tracker afterwards.`,
+    confirmText: 'Create PO'
+  });
+  if (!goAhead) { _bimpRenderCard(i); return; }
+
+  setLoading(true);
+  try {
+    const created = await api.post('/api/purchase-orders', {
+      reference: lo.label,
+      supplier_id: parseInt(it.supplierId),
+      ...(kind === 'cc' ? { cost_centre: id } : { project_id: parseInt(id) }),
+      total_value: gross,
+      vat_rate: Math.round(ratio * 100),
+      vat_amount: vat,
+      description: `Created from supplier invoice ${it.ref || it.file.name} (bulk import)`
+    });
+    _bimpPos.push(created);
+    it.poAllocs = it.poAllocs || [];
+    it.poAllocs.push({ poId: created.id, ref: created.reference || lo.label, net: lo.net });
+    if (!it.poId) it.poId = String(created.id);
+    it.poLeftover.splice(idx, 1);
+    if (!it.poLeftover.length) it.poLeftover = null;
+    if (it.multiPoNote && it.multiPoNote.startsWith('no PO found')) it.multiPoNote = null;
+    toast(`PO ${lo.label} created ✓`, 'success');
+  } catch (e) {
+    toast('Could not create the PO: ' + (e.message || 'unknown error'), 'error');
+  } finally {
+    setLoading(false);
+    _bimpRenderCard(i);
+    _bimpUpdateFooter();
+  }
+}
+
+function bimpQcAssign(i, idx, poId) {
+  const it = _bimpItems[i];
+  const lo = it && it.poLeftover && it.poLeftover[idx];
+  if (!lo || !poId) return;
+  const po = _bimpPos.find(p => String(p.id) === String(poId));
+  if (!po) return;
+  it.poAllocs = it.poAllocs || [];
+  const existing = it.poAllocs.find(a => String(a.poId) === String(poId));
+  if (existing) existing.net = Math.round((existing.net + lo.net) * 100) / 100;
+  else it.poAllocs.push({ poId: po.id, ref: po.reference || ('#' + po.id), net: lo.net });
+  if (!it.poId) it.poId = String(po.id);
+  it.poLeftover.splice(idx, 1);
+  if (!it.poLeftover.length) it.poLeftover = null;
+  if (it.multiPoNote && it.multiPoNote.startsWith('no PO found')) it.multiPoNote = null;
+  _bimpRenderCard(i);
+  _bimpUpdateFooter();
+}
+
+// Order-reference helpers shared by parse resolution, card render and the
+// quick PO-creator: cleaned = uppercase, no spaces, suffix after "/" dropped.
+const _poClean = r => String(r || '').toUpperCase().replace(/\s+/g, '').split('/')[0];
+const _isPoRef = s => /^P\d{6,8}$/.test(s);
+
 async function _bimpParseOne(i) {
   const it = _bimpItems[i];
   it.status = 'parsing'; _bimpRenderCard(i);
@@ -38642,8 +38757,6 @@ async function _bimpApplyParsed(i, p) {
   it.poAllocs = null;      // [{poId, ref, net}] — resolved split, saved as allocations
   it.poLeftover = null;    // [{label, net}] — read off the invoice but no PO to book it to
   it.multiPoNote = null;   // hint when several POs are quoted but can't be split cleanly
-  const _poClean = r => String(r || '').toUpperCase().replace(/\s+/g, '').split('/')[0];
-  const _isPoRef = s => /^P\d{6,8}$/.test(s);
   const _supPosForItem = it.supplierId
     ? _bimpPos.filter(po => String(po.supplier_id) === it.supplierId) : [];
   const _bimpFindPo = (ref) => {
@@ -38677,22 +38790,24 @@ async function _bimpApplyParsed(i, p) {
       (resolved.reduce((s, a) => s + a.net, 0) + leftover.reduce((s, a) => s + a.net, 0)) * 100) / 100;
     const sumOk = Number.isFinite(invNet) && Math.abs(totalRead - invNet) <= 1.00;
 
-    if (sumOk && (resolved.length > 1 || (resolved.length === 1 && leftover.length))) {
-      // Clean split: every line accounted for, at least one PO to book to.
-      it.poAllocs = resolved;
-      it.poId = String(resolved[0].poId);
-      if (leftover.length) it.poLeftover = leftover;
-    } else if (sumOk && resolved.length === 1) {
-      it.poId = String(resolved[0].poId);
-    } else if (grouped.size) {
-      // Lines were read but don't reconcile / don't resolve — say exactly why.
-      if (resolved.length) it.poId = String(resolved[0].poId);
+    if (sumOk) {
+      // Figures reconcile — trust the grouping. Anything unbooked (a name tag,
+      // or a P-number we don't have) surfaces as an actionable leftover.
+      if (resolved.length > 1 || (resolved.length === 1 && leftover.length)) {
+        it.poAllocs = resolved;
+        it.poId = String(resolved[0].poId);
+      } else if (resolved.length === 1) {
+        it.poId = String(resolved[0].poId);
+      }
+      it.poLeftover = leftover.length ? leftover : null;
       const unres = leftover.filter(l => _isPoRef(l.label)).map(l => l.label);
-      const why = [];
-      if (!sumOk && Number.isFinite(invNet))
-        why.push(`lines read £${totalRead.toFixed(2)} vs invoice net £${invNet.toFixed(2)}`);
-      if (unres.length) why.push(`no PO found for ${unres.join(', ')}`);
-      it.multiPoNote = `read ${grouped.size} order refs but couldn't split cleanly${why.length ? ' (' + why.join('; ') + ')' : ''} — save, then 🔗 Match → Split`;
+      if (unres.length && !resolved.length)
+        it.multiPoNote = `no PO found for ${unres.join(', ')} — create it or add to an existing PO below`;
+    } else if (grouped.size) {
+      // Lines were read but don't add up to the invoice net — misread figures,
+      // don't act on them. Say exactly what was read.
+      if (resolved.length) it.poId = String(resolved[0].poId);
+      it.multiPoNote = `read ${grouped.size} order refs but the line totals don't reconcile (£${totalRead.toFixed(2)} read vs £${Number.isFinite(invNet) ? invNet.toFixed(2) : '?'} invoice net) — check the figures, save, then 🔗 Match → Split`;
     }
   }
 
@@ -38902,7 +39017,21 @@ function _bimpRenderCard(i) {
           </div>
         `}
       </div>
-      ${it.poAllocs ? `<div style="font-size:10px;color:#60a5fa;margin-top:6px">🔀 ${escapeHtml(it.poAllocs.map(a => `${a.ref} £${a.net.toFixed(2)} net`).join(' · '))} — read off the invoice, saved as a split${it.poLeftover ? `<span style="color:#ffa500"> · not tied to a PO: ${escapeHtml(it.poLeftover.map(l => `${l.label} £${l.net.toFixed(2)}`).join(', '))}</span>` : ''}</div>` : ''}
+      ${it.poAllocs ? `<div style="font-size:10px;color:#60a5fa;margin-top:6px">🔀 ${escapeHtml(it.poAllocs.map(a => `${a.ref} £${a.net.toFixed(2)} net`).join(' · '))} — read off the invoice, saved as a split</div>` : ''}
+      ${it.poLeftover ? (_bimpQcLoad(), it.poLeftover.map((lo, li) => `
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:rgba(255,165,0,.08);border:1px solid rgba(255,165,0,.4);border-radius:6px;padding:5px 10px;margin-top:6px">
+          <span style="font-size:11px;color:#ffa500;font-weight:600">⚠ ${escapeHtml(lo.label)} £${lo.net.toFixed(2)} — ${_isPoRef(lo.label) ? 'this PO isn\'t in the ERP' : 'not tied to a PO'}</span>
+          <div style="display:flex;gap:6px;margin-left:auto;flex-wrap:wrap">
+            ${_isPoRef(lo.label) ? `<select class="field-input" style="font-size:11px;padding:2px 6px;max-width:220px" ${_bimpQcData ? '' : 'disabled'}
+                    onchange="bimpQcCreate(${i}, ${li}, this.value)">${_bimpQcBookOptions()}</select>` : ''}
+            <select class="field-input" style="font-size:11px;padding:2px 6px;max-width:220px"
+                    onchange="bimpQcAssign(${i}, ${li}, this.value)">
+              <option value="">→ add to an existing PO…</option>
+              ${_bimpPos.filter(po => String(po.supplier_id) === String(it.supplierId) && po.status !== 'Cancelled')
+                        .map(po => `<option value="${po.id}">${escapeHtml(po.reference || ('#' + po.id))}${po.job_number ? ' · ' + escapeHtml(po.job_number) : ''}</option>`).join('')}
+            </select>
+          </div>
+        </div>`).join('')) : ''}
       ${it.multiPoNote ? `<div style="font-size:10px;color:#ffa500;margin-top:6px">⚠ ${escapeHtml(it.multiPoNote)}</div>` : ''}
       ${dupBanner}
       ${fileBanner}
@@ -39160,7 +39289,7 @@ function _supMatchRenderSplitList() {
       <div style="flex:1;min-width:0">
         <span style="font-family:var(--font-mono);font-weight:600;font-size:12px">${escapeHtml(po.reference || ('#' + po.id))}</span>
         ${po.job_number ? `<span style="font-size:11px;color:var(--muted)"> · ${escapeHtml(po.job_number)}</span>` : ''}
-        <div style="font-size:10px;color:var(--subtle)">£${fmt2(po._net)} net${po._matched ? ` · £${fmt2(po._matched)} matched · £${fmt2(remaining)} left` : ''}</div>
+        <div style="font-size:10px;color:var(--subtle)">${po._net > 0 ? `£${fmt2(po._net)} net` : '<span style="color:#ffa500">no value on this PO — type the amount</span>'}${po._matched ? ` · £${fmt2(po._matched)} matched${po._net > 0 ? ` · £${fmt2(remaining)} left` : ''}` : ''}</div>
       </div>
       <div style="width:110px">
         <input type="number" step="0.01" class="field-input" placeholder="net £"
@@ -39180,10 +39309,14 @@ function supMatchToggleSplitPo(poId, checked) {
     const invNet = inv ? Number(inv.net != null ? inv.net : inv.gross) || 0 : 0;
     const allocated = [..._supMatchSplits.values()].reduce((s, v) => s + (parseFloat(v) || 0), 0);
     const po = _supMatchPos.find(p => p.id === poId);
+    const poHasValue = po && po._net > 0;
     const remainingPo = po ? Math.max(0, Math.round((po._net - po._matched) * 100) / 100) : 0;
     const remainingInv = Math.max(0, Math.round((invNet - allocated) * 100) / 100);
-    const prefill = remainingPo > 0 ? Math.min(remainingPo, remainingInv) : remainingInv;
-    _supMatchSplits.set(poId, prefill ? prefill.toFixed(2) : '');
+    // A PO with no value entered (£0 — human error or open order) gives us
+    // nothing to prefill FROM: leave the box empty for the user to type,
+    // instead of dumping the whole remaining invoice into the first tick.
+    const prefill = poHasValue ? Math.min(remainingPo, remainingInv) : 0;
+    _supMatchSplits.set(poId, prefill > 0 ? prefill.toFixed(2) : '');
   } else {
     _supMatchSplits.delete(poId);
   }

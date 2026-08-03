@@ -1689,9 +1689,11 @@ const INV_HELP = {
       <li>Each file becomes a card. The AI fills supplier, invoice number, date, net/VAT/gross and picks the PO when the invoice quotes our P-number.</li>
       <li>Check the amber warnings (odd date, possible duplicate), fix anything wrong, press <b>Save</b>.</li>
     </ol>
-    <div class="hint">If an invoice quotes <b>several</b> of our PO numbers and prints an amount per order, the card shows
-    <b>🔀 split across N POs</b> and it saves already spread across them. If the amounts aren't printed per order, it saves
-    against the first PO with a ⚠ note — use <b>Match → Split</b> afterwards (see the "One invoice → several POs" section).</div>
+    <div class="hint">If an invoice quotes <b>several</b> of our PO numbers, the card groups the line amounts per PO and shows
+    <b>🔀 split across N POs</b> — it saves already spread across them. Lines tagged with a name instead of a P-number
+    (someone ordered without a PO) show as an amber leftover you can fold into an existing PO.
+    If the invoice quotes a P-number that <b>isn't in the ERP</b> (order raised without one — it happens), the card offers
+    <b>➕ create — book to…</b>: pick the job or cost centre and the PO is created on the spot at the invoice's own figures.</div>
     <h3>Single add</h3>
     <p><b>➕ Add Invoice</b> works the same for one invoice — drop the file, it fills itself, pick the PO from the dropdown if it didn't match automatically.</p>
     <h3>Subcontractors (CIS)</h3>
@@ -1723,8 +1725,10 @@ const INV_HELP = {
       <li>Watch the bar at the bottom: it turns <b style="color:var(--green)">green</b> when your amounts add up to the invoice net, and stays <b style="color:#ffa500">amber</b> telling you how much you're over or short.</li>
       <li>Press <b>Match</b>. The invoice now counts against each PO by the amounts you entered — reports and reconciliation are correct per job.</li>
     </ol>
-    <div class="hint">💡 Bulk import does this automatically when the invoice prints an amount per order. The split only needs
-    doing by hand when the supplier just lists the PO numbers without per-order amounts.</div>
+    <div class="hint">💡 Bulk import does this automatically when the invoice tags its lines with PO numbers. The split only
+    needs doing by hand when the invoice gives no per-order amounts at all.<br><br>
+    ⚠ A PO saved with <b>no value</b> (£0 — human error) can't prefill an amount, so its box stays empty — type the net
+    yourself. The green/amber bar still checks your total against the invoice.</div>
     <h3>Checks that protect you</h3>
     <ul>
       <li>If your split doesn't add up to the invoice net (±£1), it asks you to confirm.</li>
@@ -1769,6 +1773,6 @@ function invHelpSection(sec) {
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260803b"></script>
+<script src="shared.js?v=20260803c"></script>
 </body>
 </html>
