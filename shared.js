@@ -38487,7 +38487,7 @@ async function _bimpParseOne(i) {
     const isImg = it.file.type.startsWith('image/');
     const result = await callClaude({
       model: 'claude-sonnet-4-6',
-      max_tokens: 800,
+      max_tokens: 2000,
       messages: [{
         role: 'user',
         content: [
@@ -38510,9 +38510,9 @@ async function _bimpParseOne(i) {
   "utr_number": "subcontractor: UTR if shown",
   "bank_sort_code": "subcontractor: sort code if shown",
   "bank_account_no": "subcontractor: account number if shown",
-  "po_reference": "BAMA's PO reference if shown — looks like P260501 (P + 6 digits). When several are shown, the first one.",
-  "po_references": ["EVERY BAMA PO reference shown on the invoice, P + 6 digits each — consolidated invoices often quote several"],
-  "po_allocations": [{"po_reference": "P260501", "net": 0}] — ONLY when the invoice itemises a NET subtotal per PO/order (per-order sections or a summary table). Copy the printed figures exactly; if per-PO amounts are not printed, return null.,
+  "po_reference": "BAMA's PO reference if shown — starts with P followed by 6-8 digits, e.g. P260501 or P2607101. Suffixes like P260752/8099 or P260768/S1982 mean PO P260752 / P260768 — return just the P-number. When several are shown, the first one.",
+  "po_references": ["EVERY distinct BAMA P-number shown anywhere on the invoice — consolidated invoices often quote several"],
+  "po_lines": [{"po_reference": "P260501", "net": 5.40}] — one entry PER LINE ITEM when the lines are tagged with an order reference (printed under or beside each line, or as section headings). net = that line's printed total. Repeat the same po_reference for every line belonging to it. If a line's tag is a name or word rather than a P-number (e.g. LESZEK), still return it as po_reference exactly as printed. Copy printed figures exactly — do NO arithmetic. Return null when lines carry no order references.,
   "sold_via": "amazon" if this is an Amazon / Amazon Business marketplace invoice (Amazon branding, amazon.co.uk order number, "Sold by ..." seller line) — otherwise null,
   "amazon_seller": "when sold_via is amazon: the actual seller/merchant name, else null"
 }
@@ -38634,46 +38634,78 @@ async function _bimpApplyParsed(i, p) {
     it.willBePaid = !!(it.newSupplier && it.newSupplier.payment_on_account);
   }
 
-  // PO match by our reference(s)
-  it.poAllocs = null;      // [{poId, ref, net}] — resolved auto-split, saved as allocations
-  it.multiPoNote = null;   // hint when several POs are quoted but can't be auto-split
+  // ── PO match by our reference(s) ───────────────────────────────────────────
+  // Preferred path: the AI returns one entry per LINE with its printed total
+  // and PO tag (po_lines). JS groups and sums per PO — deterministic
+  // arithmetic on printed figures only. Lines tagged with a name instead of a
+  // P-number (e.g. "LESZEK") become an unallocated leftover, not a failure.
+  it.poAllocs = null;      // [{poId, ref, net}] — resolved split, saved as allocations
+  it.poLeftover = null;    // [{label, net}] — read off the invoice but no PO to book it to
+  it.multiPoNote = null;   // hint when several POs are quoted but can't be split cleanly
+  const _poClean = r => String(r || '').toUpperCase().replace(/\s+/g, '').split('/')[0];
+  const _isPoRef = s => /^P\d{6,8}$/.test(s);
+  const _supPosForItem = it.supplierId
+    ? _bimpPos.filter(po => String(po.supplier_id) === it.supplierId) : [];
   const _bimpFindPo = (ref) => {
-    const want = String(ref || '').replace(/\s+/g, '').toUpperCase();
-    return want ? _bimpPos.find(po => String(po.supplier_id) === it.supplierId
-      && (po.reference || '').replace(/\s+/g, '').toUpperCase() === want) : null;
+    const want = _poClean(ref);
+    return want ? _supPosForItem.find(po => _poClean(po.reference) === want) : null;
   };
   const refs = [...new Set(
     (Array.isArray(p.po_references) && p.po_references.length ? p.po_references : (p.po_reference ? [p.po_reference] : []))
-      .map(r => String(r || '').replace(/\s+/g, '').toUpperCase()).filter(Boolean))];
+      .map(_poClean).filter(Boolean))];
+  const invNet = parseFloat(it.net);
+  const lines = Array.isArray(p.po_lines) ? p.po_lines : null;
 
-  if (it.supplierId && refs.length > 1) {
-    // Consolidated invoice quoting several POs. If the parse read printed
-    // per-PO net subtotals AND every referenced PO resolves AND the printed
-    // figures add up to the invoice net (±£1) — pre-build the split. All
-    // figures come off the page; the tolerance check is plain arithmetic.
-    const printed = Array.isArray(p.po_allocations) ? p.po_allocations : [];
-    const resolved = [];
-    let allResolve = printed.length > 0;
-    for (const pa of printed) {
-      const hit = _bimpFindPo(pa.po_reference);
-      const net = Number(pa.net);
-      if (!hit || !Number.isFinite(net) || net === 0) { allResolve = false; break; }
-      resolved.push({ poId: hit.id, ref: hit.reference, net: Math.round(net * 100) / 100 });
+  if (it.supplierId && lines && lines.length) {
+    // Group printed line totals by their (cleaned) tag
+    const grouped = new Map();
+    for (const ln of lines) {
+      const net = Number(ln.net);
+      if (!Number.isFinite(net)) continue;
+      const c = _poClean(ln.po_reference) || '(no ref)';
+      const g = grouped.get(c) || { label: c, net: 0 };
+      g.net = Math.round((g.net + net) * 100) / 100;
+      grouped.set(c, g);
     }
-    const invNet = parseFloat(it.net);
-    const sumOk = Number.isFinite(invNet) && resolved.length
-      && Math.abs(resolved.reduce((s, a) => s + a.net, 0) - invNet) <= 1.00;
-    if (allResolve && sumOk && resolved.length > 1) {
+    const resolved = [], leftover = [];
+    for (const g of grouped.values()) {
+      const hit = _isPoRef(g.label) ? _bimpFindPo(g.label) : null;
+      if (hit) resolved.push({ poId: hit.id, ref: hit.reference, net: g.net });
+      else leftover.push({ label: g.label, net: g.net });
+    }
+    const totalRead = Math.round(
+      (resolved.reduce((s, a) => s + a.net, 0) + leftover.reduce((s, a) => s + a.net, 0)) * 100) / 100;
+    const sumOk = Number.isFinite(invNet) && Math.abs(totalRead - invNet) <= 1.00;
+
+    if (sumOk && (resolved.length > 1 || (resolved.length === 1 && leftover.length))) {
+      // Clean split: every line accounted for, at least one PO to book to.
       it.poAllocs = resolved;
       it.poId = String(resolved[0].poId);
-    } else {
+      if (leftover.length) it.poLeftover = leftover;
+    } else if (sumOk && resolved.length === 1) {
+      it.poId = String(resolved[0].poId);
+    } else if (grouped.size) {
+      // Lines were read but don't reconcile / don't resolve — say exactly why.
+      if (resolved.length) it.poId = String(resolved[0].poId);
+      const unres = leftover.filter(l => _isPoRef(l.label)).map(l => l.label);
+      const why = [];
+      if (!sumOk && Number.isFinite(invNet))
+        why.push(`lines read £${totalRead.toFixed(2)} vs invoice net £${invNet.toFixed(2)}`);
+      if (unres.length) why.push(`no PO found for ${unres.join(', ')}`);
+      it.multiPoNote = `read ${grouped.size} order refs but couldn't split cleanly${why.length ? ' (' + why.join('; ') + ')' : ''} — save, then 🔗 Match → Split`;
+    }
+  }
+
+  // Fallback: header-level refs only (no line tags read)
+  if (!it.poAllocs && !it.poId && !it.multiPoNote && refs.length && it.supplierId) {
+    if (refs.length > 1) {
       const first = _bimpFindPo(refs[0]);
       if (first) it.poId = String(first.id);
       it.multiPoNote = `quotes ${refs.length} POs (${refs.join(', ')}) — save, then 🔗 Match → Split to spread it`;
+    } else {
+      const hit = _bimpFindPo(refs[0]);
+      if (hit) it.poId = String(hit.id);
     }
-  } else if (refs.length && it.supplierId) {
-    const hit = _bimpFindPo(refs[0]);
-    if (hit) it.poId = String(hit.id);
   }
 
   _bimpCheckDup(i);
@@ -38862,7 +38894,7 @@ function _bimpRenderCard(i) {
             <div style="font-size:9px;text-transform:uppercase;color:var(--muted)">PO</div>
             ${it.poAllocs ? `
               <div style="display:flex;align-items:center;gap:6px;border:1px solid #60a5fa;border-radius:6px;padding:4px 8px;background:rgba(96,165,250,.10)">
-                <span style="font-size:11px;color:#60a5fa;font-weight:600" title="${escapeHtml(it.poAllocs.map(a => `${a.ref} £${a.net.toFixed(2)}`).join(' · '))}">🔀 split across ${it.poAllocs.length} POs</span>
+                <span style="font-size:11px;color:#60a5fa;font-weight:600" title="${escapeHtml(it.poAllocs.map(a => `${a.ref} £${a.net.toFixed(2)}`).join(' · ') + (it.poLeftover ? ' · unallocated: ' + it.poLeftover.map(l => `${l.label} £${l.net.toFixed(2)}`).join(', ') : ''))}">🔀 split across ${it.poAllocs.length} PO${it.poAllocs.length === 1 ? '' : 's'}</span>
                 <button class="btn btn-ghost" style="margin-left:auto;padding:0 6px;font-size:11px" title="Clear the split — pick one PO instead"
                         onclick="_bimpItems[${i}].poAllocs=null;_bimpRenderCard(${i})">✕</button>
               </div>` : `
@@ -38870,7 +38902,7 @@ function _bimpRenderCard(i) {
           </div>
         `}
       </div>
-      ${it.poAllocs ? `<div style="font-size:10px;color:#60a5fa;margin-top:6px">🔀 ${escapeHtml(it.poAllocs.map(a => `${a.ref} £${a.net.toFixed(2)} net`).join(' · '))} — read off the invoice, saved as a split</div>` : ''}
+      ${it.poAllocs ? `<div style="font-size:10px;color:#60a5fa;margin-top:6px">🔀 ${escapeHtml(it.poAllocs.map(a => `${a.ref} £${a.net.toFixed(2)} net`).join(' · '))} — read off the invoice, saved as a split${it.poLeftover ? `<span style="color:#ffa500"> · not tied to a PO: ${escapeHtml(it.poLeftover.map(l => `${l.label} £${l.net.toFixed(2)}`).join(', '))}</span>` : ''}</div>` : ''}
       ${it.multiPoNote ? `<div style="font-size:10px;color:#ffa500;margin-top:6px">⚠ ${escapeHtml(it.multiPoNote)}</div>` : ''}
       ${dupBanner}
       ${fileBanner}
@@ -38884,6 +38916,7 @@ function bimpSupplierPicked(i, val) {
   it.supplierId = val;
   it.poId = '';
   it.poAllocs = null;
+  it.poLeftover = null;
   it.multiPoNote = null;
   const s = (_invSuppliersCache || []).find(x => String(x.id) === String(val));
   it.willBePaid = !!(s && s.payment_on_account);
@@ -39059,7 +39092,7 @@ async function openSupMatchModal() {
       ...po,
       _net: _poNet(po),
       _matched: Math.round((matchedByPo[po.id] || 0) * 100) / 100
-    }));
+    })).sort((a, b) => String(b.reference || '').localeCompare(String(a.reference || '')));
 
     poSel.innerHTML = '<option value="">— Unmatch (no PO) —</option>' + _supMatchPos.map(po => {
       const remaining = Math.max(0, Math.round((po._net - po._matched) * 100) / 100);
@@ -39533,7 +39566,7 @@ async function _supAddHandleFile(file) {
     const isImg = file.type.startsWith('image/');
     const result = await callClaude({
       model: 'claude-sonnet-4-6',
-      max_tokens: 800,
+      max_tokens: 1500,
       messages: [{
         role: 'user',
         content: [
@@ -39558,8 +39591,8 @@ async function _supAddHandleFile(file) {
   "utr_number": "subcontractor only: UTR if shown",
   "bank_sort_code": "subcontractor only: sort code if shown",
   "bank_account_no": "subcontractor only: account number if shown",
-  "po_reference": "BAMA's PO reference if shown — looks like P260501 (P + 6 digits). When several are shown, the first one.",
-  "po_references": ["EVERY BAMA PO reference shown, P + 6 digits each — consolidated invoices often quote several"],
+  "po_reference": "BAMA's PO reference if shown — starts with P followed by 6-8 digits, e.g. P260501 or P2607101. Suffixes like P260768/S1982 mean PO P260768 — return just the P-number. When several are shown, the first one.",
+  "po_references": ["EVERY distinct BAMA P-number shown anywhere on the invoice — consolidated invoices often quote several"],
   "sold_via": "amazon" if this is an Amazon / Amazon Business marketplace invoice (Amazon branding, amazon.co.uk order number, "Sold by ..." line) — otherwise null,
   "amazon_seller": "when sold_via is amazon: the actual seller/merchant name, else null"
 }
@@ -39681,7 +39714,7 @@ IMPORTANT: Use the final printed totals from the invoice — not a goods-only su
   }
   const _multiPo = Array.isArray(parsed.po_references) ? [...new Set(parsed.po_references.filter(Boolean))] : [];
   if (_multiPo.length > 1) {
-    bits.push(`⚠ quotes ${_multiPo.length} POs (${_multiPo.join(', ')}) — save, then tick it in the ledger and 🔗 Match → Split across several POs`);
+    bits.push(`⚠ quotes ${_multiPo.length} POs (${_multiPo.join(', ')}) — 📥 Bulk Import splits these automatically; or save here, tick it in the ledger and 🔗 Match → Split`);
   } else if (parsed.po_reference) {
     bits.push(poMatched ? `PO ${parsed.po_reference} matched` : `PO ${parsed.po_reference} not found`);
   }
