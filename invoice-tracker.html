@@ -1753,6 +1753,11 @@ const INV_HELP = {
     or leave it (overheads, one-off purchases).</p>
     <h3>I matched the wrong PO</h3>
     <p>Tick the invoice, 🔗 Match to PO, pick the right one (or "Unmatch"). Reconciliation on both POs updates instantly.</p>
+    <h3>A supplier sent a credit note — what do I do?</h3>
+    <p>Just drop it into 📥 Bulk Import like any invoice. It's recognised as a credit note and saves with <b>negative</b>
+    amounts (red <b>CN</b> badge in the ledger), linked to the invoice it credits when that's already in the ledger.
+    Because it's negative, everything nets off by itself: the PO reconciliation, Payments Due, and any payment run you
+    include it in — pay the invoice and the credit note together and the run totals the difference.</p>
     <h3>Where do the files go?</h3>
     <p>Every invoice PDF files itself to SharePoint under <b>01 - Accounts / 04 - Supplier Invoices / year / month</b>, and a 📎 link stays on the ledger row.</p>`
 };
@@ -1775,6 +1780,6 @@ function invHelpSection(sec) {
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260803d"></script>
+<script src="shared.js?v=20260803e"></script>
 </body>
 </html>

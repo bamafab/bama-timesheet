@@ -673,6 +673,19 @@
       "seedForms": []
     },
     {
+      "script": "add-supplier-invoice-credit-notes.sql",
+      "title": "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "SupplierInvoices",
+          "column": "credits_invoice_id"
+        }
+      ],
+      "seedForms": []
+    },
+    {
       "script": "add-supplier-payment-terms.sql",
       "title": "Add payment terms columns to Suppliers",
       "kind": "structural",

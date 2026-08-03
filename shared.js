@@ -37973,12 +37973,12 @@ function renderInvSupplierTable() {
         `<input type="checkbox" ${_invRemitSelected.has(inv.id) ? 'checked' : ''}
                 onchange="invRemitToggle(${inv.id}, this.checked)" title="Select">`}</td>
       <td>${escapeHtml(inv.supplier_name || '')}${inv.invoice_type === 'subcontractor' ? ' <span style="display:inline-block;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600;background:rgba(147,112,219,.18);color:#b596e8" title="Subcontractor — CIS deduction £' + Number(inv.cis_deduction || 0).toFixed(2) + '">CIS</span>' : ''}</td>
-      <td>${escapeHtml(inv.invoice_ref || '')}${fileLink}</td>
+      <td>${escapeHtml(inv.invoice_ref || '')}${Number(inv.gross) < 0 ? ` <span style="display:inline-block;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:700;background:rgba(239,68,68,.18);color:#f87171" title="Credit note${inv.credits_invoice_id ? ' — credits invoice ' + ((_invSupInvoices.find(x => x.id === inv.credits_invoice_id) || {}).invoice_ref || ('#' + inv.credits_invoice_id)) : ''}">CN</span>` : ''}${fileLink}</td>
       <td>${poCell}</td>
       <td>${escapeHtml(inv.job_number || inv.cost_centre || '')}${inv.babcock_quote_ref ? ` <span style="font-size:10px;color:var(--muted);font-family:var(--font-mono)">${escapeHtml(inv.babcock_quote_ref)}</span>` : ''}</td>
       <td>${_invSupFmtDate(inv.invoice_date)}</td>
       <td>${dueCell}</td>
-      <td style="text-align:right">£${fmt2(inv.gross)}</td>
+      <td style="text-align:right;${Number(inv.gross) < 0 ? 'color:#f87171;font-weight:600' : ''}">£${fmt2(inv.gross)}</td>
       <td>${inv.po_id ? invStatusBadge(_invPoRecon(inv)) : ''}</td>
       <td>${inv.paid_at ? `<span style="color:var(--green);font-weight:600" title="${escapeHtml(inv.paid_ref || '')}">✓ Paid</span>
         <div style="font-size:10px;color:var(--muted)">${_invSupFmtDate(inv.paid_at)}${inv.run_ref ? ' · ' + escapeHtml(inv.run_ref) : ''}</div>` : ''}</td>
@@ -38621,6 +38621,8 @@ async function _bimpParseOne(i) {
             type: 'text',
             text: `Extract from this UK invoice sent to BAMA Fabrication. It is either a SUPPLIER invoice (VAT invoice from a company) or a SUBCONTRACTOR invoice (individual/small firm charging for labour, often with a CIS deduction like "Less 20%", a UTR number, bank details). Return ONLY JSON, no markdown:
 {
+  "document_kind": "invoice" or "credit_note" — credit notes say CREDIT NOTE in the header and credit money back to us,
+  "credits_invoice_ref": "credit notes only: the original invoice number being credited, e.g. from 'REF TO INVOICE NO 00758726' — else null",
   "invoice_type": "supplier" or "subcontractor",
   "supplier_name": "the company/person that ISSUED and is OWED money on this invoice — the SELLER. This is NOT the customer/recipient.",
   "invoice_ref": "invoice number if shown",
@@ -38714,11 +38716,17 @@ async function _bimpApplyParsed(i, p) {
       it.cisWarn = true;
     }
   } else {
-    it.net   = p.net_amount   != null ? Number(p.net_amount).toFixed(2)   : '';
-    it.vat   = p.vat_amount   != null ? Number(p.vat_amount).toFixed(2)   : '';
-    it.gross = p.gross_amount != null ? Number(p.gross_amount).toFixed(2)
+    // Credit notes save as NEGATIVE rows — every sum in the system then nets
+    // them off (PO reconciliation, payments due, payment runs). Suppliers
+    // print CN amounts positive; the sign is ours.
+    it.isCreditNote = p.document_kind === 'credit_note';
+    const sign = it.isCreditNote ? -1 : 1;
+    const s2 = v => (sign * Math.abs(Number(v))).toFixed(2);
+    it.net   = p.net_amount   != null ? s2(p.net_amount)   : '';
+    it.vat   = p.vat_amount   != null ? s2(p.vat_amount)   : '';
+    it.gross = p.gross_amount != null ? s2(p.gross_amount)
              : (p.net_amount != null || p.vat_amount != null
-                ? (Number(p.net_amount || 0) + Number(p.vat_amount || 0)).toFixed(2) : '');
+                ? s2(Number(p.net_amount || 0) + Number(p.vat_amount || 0)) : '');
   }
 
   // Supplier match (same normalisation as the single-add flow)
@@ -38780,8 +38788,9 @@ async function _bimpApplyParsed(i, p) {
   if (it.supplierId && lines && lines.length) {
     // Group printed line totals by their (cleaned) tag
     const grouped = new Map();
+    const lnSign = it.isCreditNote ? -1 : 1;
     for (const ln of lines) {
-      const net = Number(ln.net);
+      const net = lnSign * Math.abs(Number(ln.net));
       if (!Number.isFinite(net)) continue;
       const c = _poClean(ln.po_reference) || '(no ref)';
       const g = grouped.get(c) || { label: c, net: 0 };
@@ -38828,6 +38837,24 @@ async function _bimpApplyParsed(i, p) {
     } else {
       const hit = _bimpFindPo(refs[0]);
       if (hit) it.poId = String(hit.id);
+    }
+  }
+
+  // Credit note → find the invoice it credits in the ledger (same supplier,
+  // same normalised ref). Prefill the original's PO when the CN quotes none.
+  it.creditsInvoiceId = null;
+  it.creditsInfo = null;
+  if (it.isCreditNote && p.credits_invoice_ref && it.supplierId) {
+    const wantRef = _stmtNormRef(p.credits_invoice_ref);
+    const orig = wantRef ? _invSupInvoices.find(inv =>
+      String(inv.supplier_id) === String(it.supplierId) &&
+      _stmtNormRef(inv.invoice_ref) === wantRef) : null;
+    if (orig) {
+      it.creditsInvoiceId = orig.id;
+      it.creditsInfo = `credits invoice ${orig.invoice_ref} (£${Number(orig.gross || 0).toFixed(2)}) ✓`;
+      if (!it.poId && !it.poAllocs && orig.po_id) it.poId = String(orig.po_id);
+    } else {
+      it.creditsInfo = `credits invoice ${p.credits_invoice_ref} — not found in the ledger yet (import the invoice first to link them)`;
     }
   }
 
@@ -38981,6 +39008,7 @@ function _bimpRenderCard(i) {
         <span style="font-size:11px;color:var(--muted);font-family:var(--font-mono)">${escapeHtml(it.file.name)}</span>
         <span style="display:inline-block;padding:1px 8px;border-radius:8px;font-size:10px;font-weight:700;background:${isSub ? 'rgba(147,112,219,.18)' : 'rgba(59,130,246,.15)'};color:${isSub ? '#b596e8' : '#60a5fa'}">${isSub ? '👷 SUBCONTRACTOR (CIS)' : '🏭 SUPPLIER'}</span>
         ${it.newSupplier ? `<span style="display:inline-block;padding:1px 8px;border-radius:8px;font-size:10px;font-weight:700;background:rgba(62,207,142,.15);color:var(--green)">NEW ${isSub ? 'SUBBIE' : 'SUPPLIER'} — will be created${it.newSupplier.utr_number ? ' · UTR ' + escapeHtml(it.newSupplier.utr_number) : ''}</span>` : ''}
+        ${it.isCreditNote ? '<span style="display:inline-block;padding:1px 8px;border-radius:8px;font-size:10px;font-weight:700;background:rgba(239,68,68,.18);color:#f87171">📕 CREDIT NOTE — saves negative</span>' : ''}
         ${it.viaAmazon ? '<span style="display:inline-block;padding:1px 8px;border-radius:8px;font-size:10px;font-weight:700;background:rgba(255,153,0,.18);color:#ff9900">🛒 via AMAZON</span>' : ''}
         ${it.willBePaid ? '<span style="display:inline-block;padding:1px 8px;border-radius:8px;font-size:10px;font-weight:700;background:rgba(62,207,142,.15);color:var(--green)">will land as PAID (on account)</span>' : ''}
         ${it.cisWarn ? '<span style="font-size:10px;color:#ffa500">⚠ printed payable ≠ labour × rate — using the invoice figure</span>' : ''}
@@ -39040,6 +39068,7 @@ function _bimpRenderCard(i) {
             </select>
           </div>
         </div>`).join('')) : ''}
+      ${it.creditsInfo ? `<div style="font-size:10px;color:${it.creditsInvoiceId ? 'var(--green)' : '#ffa500'};margin-top:6px">📕 ${escapeHtml(it.creditsInfo)}</div>` : ''}
       ${it.multiPoNote ? `<div style="font-size:10px;color:#ffa500;margin-top:6px">⚠ ${escapeHtml(it.multiPoNote)}</div>` : ''}
       ${dupBanner}
       ${fileBanner}
@@ -39138,6 +39167,7 @@ async function bimpSaveAll() {
         allocations: !isSub && it.poAllocs
           ? it.poAllocs.map(a => ({ po_id: a.poId, net: a.net }))
           : undefined,
+        credits_invoice_id: it.creditsInvoiceId || undefined,
         invoice_type: it.type,
         invoice_ref: it.ref || null,
         invoice_date: it.date || null,
@@ -39718,6 +39748,8 @@ async function _supAddHandleFile(file) {
             type: 'text',
             text: `Extract from this UK invoice sent to BAMA Fabrication. It is either a SUPPLIER invoice (VAT invoice from a company) or a SUBCONTRACTOR invoice (an individual/small firm charging for labour, often with a CIS deduction like "Less 20%", a UTR number, and bank details). Return ONLY JSON, no markdown:
 {
+  "document_kind": "invoice" or "credit_note" — credit notes say CREDIT NOTE in the header and credit money back to us,
+  "credits_invoice_ref": "credit notes only: the original invoice number being credited, e.g. from 'REF TO INVOICE NO 00758726' — else null",
   "invoice_type": "supplier" or "subcontractor",
   "supplier_name": "the company/person that ISSUED and is OWED money on this invoice — the SELLER. NOT the customer/recipient.",
   "invoice_ref": "invoice number if shown",
@@ -39852,6 +39884,14 @@ IMPORTANT: Use the final printed totals from the invoice — not a goods-only su
               (parsed.supplier_name ? (parsedIsSub
                 ? `new subcontractor "${parsed.supplier_name}" — details pre-filled below, hit Save Subcontractor`
                 : `supplier "${parsed.supplier_name}" not found — pick manually`) : ''));
+  }
+  if (parsed.document_kind === 'credit_note') {
+    // Flip the printed amounts negative so the ledger nets it off
+    ['supAddNet', 'supAddVat', 'supAddGross'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el && el.value !== '' && Number(el.value) > 0) el.value = (-Math.abs(Number(el.value))).toFixed(2);
+    });
+    bits.push(`📕 CREDIT NOTE${parsed.credits_invoice_ref ? ` against invoice ${parsed.credits_invoice_ref}` : ''} — amounts saved as negative so it deducts from what's owed`);
   }
   const _multiPo = Array.isArray(parsed.po_references) ? [...new Set(parsed.po_references.filter(Boolean))] : [];
   if (_multiPo.length > 1) {

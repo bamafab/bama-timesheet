@@ -60,6 +60,17 @@ async function getSupplier(id) {
 // Editor. Until SupplierInvoicePOAllocations exists everything degrades to the
 // legacy single-po_id behaviour. Cached after the first positive check.
 let _allocTableKnown = false;
+let _cnColKnown = false;
+async function cnColExists() {
+    if (_cnColKnown) return true;
+    try {
+        const r = await query(
+            `SELECT 1 AS ok FROM sys.columns
+              WHERE object_id = OBJECT_ID('SupplierInvoices') AND name = 'credits_invoice_id'`);
+        if (r.recordset.length) { _cnColKnown = true; return true; }
+    } catch (e) { /* treat as missing */ }
+    return false;
+}
 async function allocTableExists() {
     if (_allocTableKnown) return true;
     try {
@@ -326,19 +337,32 @@ app.http('supplier-invoices-create', {
 
             const invoiceType = body.invoice_type === 'subcontractor' ? 'subcontractor' : 'supplier';
 
+            // Credit note link: negative-amount rows may reference the invoice
+            // they credit. Validated to the same supplier; silently dropped if
+            // the migration hasn't been run yet.
+            let creditsInvoiceId = null;
+            if (body.credits_invoice_id && await cnColExists()) {
+                const orig = await query(
+                    'SELECT id, supplier_id FROM SupplierInvoices WHERE id = @id AND is_deleted = 0',
+                    { id: parseInt(body.credits_invoice_id) });
+                if (orig.recordset.length && orig.recordset[0].supplier_id === supplierId)
+                    creditsInvoiceId = orig.recordset[0].id;
+            }
+
+            const cnCol = creditsInvoiceId != null;
             const ins = await query(
                 `INSERT INTO SupplierInvoices
                     (supplier_id, po_id, babcock_quote_id, invoice_ref, invoice_date,
                      net, vat, gross, due_date, is_dd,
                      invoice_type, labour_gross, cis_rate, cis_deduction,
                      paid_at, paid_by, paid_ref,
-                     sharepoint_file_id, sharepoint_file_url, filename, notes, source, created_by)
+                     sharepoint_file_id, sharepoint_file_url, filename, notes, source, created_by${cnCol ? ', credits_invoice_id' : ''})
                  OUTPUT INSERTED.id
                  VALUES (@supplierId, @poId, @babcockId, @ref, @invDate,
                          @net, @vat, @gross, @dueDate, @isDd,
                          @invoiceType, @labourGross, @cisRate, @cisDeduction,
                          @paidAt, @paidBy, @paidRef,
-                         @spId, @spUrl, @filename, @notes, @source, @createdBy)`,
+                         @spId, @spUrl, @filename, @notes, @source, @createdBy${cnCol ? ', @creditsInvoiceId' : ''})`,
                 {
                     supplierId, poId,
                     babcockId: body.babcock_quote_id ? parseInt(body.babcock_quote_id) : null,
@@ -361,7 +385,8 @@ app.http('supplier-invoices-create', {
                     filename: body.filename || null,
                     notes:    body.notes || null,
                     source:   body.source === 'manual' ? 'manual' : 'parsed',
-                    createdBy
+                    createdBy,
+                    ...(cnCol ? { creditsInvoiceId } : {})
                 }
             );
             const newId = ins.recordset[0].id;
@@ -450,6 +475,8 @@ app.http('supplier-invoices-update', {
             if (body.payment_run_id !== undefined) set('payment_run_id', 'runid', body.payment_run_id || null);
             if (body.babcock_quote_id !== undefined) set('babcock_quote_id', 'bqid', body.babcock_quote_id || null);
             if (body.due_date !== undefined) set('due_date', 'duedate', body.due_date || null); // manual override
+            if (body.credits_invoice_id !== undefined && await cnColExists())
+                set('credits_invoice_id', 'creditsid', body.credits_invoice_id ? parseInt(body.credits_invoice_id) : null);
 
             // Re-derive due date when the invoice date changed and no manual override supplied
             if (body.invoice_date !== undefined && body.due_date === undefined) {
