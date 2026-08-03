@@ -55,35 +55,105 @@ async function getSupplier(id) {
     return r.recordset[0] || null;
 }
 
-// ── Recompute PO reconciliation from the SUM of its linked invoices ─────────
-// Keeps the legacy aggregate columns on PurchaseOrders in sync:
-//   supplier_invoice_gross/net/vat = SUM of linked ledger rows
+// ── Allocations table feature-detect ─────────────────────────────────────────
+// The Function App may deploy before Mateusz runs the migration in Azure Query
+// Editor. Until SupplierInvoicePOAllocations exists everything degrades to the
+// legacy single-po_id behaviour. Cached after the first positive check.
+let _allocTableKnown = false;
+async function allocTableExists() {
+    if (_allocTableKnown) return true;
+    try {
+        const r = await query(
+            `SELECT 1 AS ok FROM sys.tables WHERE name = 'SupplierInvoicePOAllocations'`);
+        if (r.recordset.length) { _allocTableKnown = true; return true; }
+    } catch (e) { /* treat as missing */ }
+    return false;
+}
+
+// ── PO net value (total_value is GROSS on PurchaseOrders) ───────────────────
+// Mirrors _poNet() in shared.js: gross − vat_amount, else strip vat_rate,
+// else assume the figure is already net (legacy rows with no VAT info).
+function poNet(po) {
+    const gross = Number(po.total_value || 0);
+    if (po.vat_amount != null && Number(po.vat_amount) > 0)
+        return Math.round((gross - Number(po.vat_amount)) * 100) / 100;
+    if (po.vat_rate != null && Number(po.vat_rate) > 0)
+        return Math.round((gross / (1 + Number(po.vat_rate) / 100)) * 100) / 100;
+    return gross;
+}
+
+// ── Replace an invoice's allocations with a single full-value one ───────────
+// poId null ⇒ just clear (unmatch). Returns the set of POs whose totals moved.
+async function setSingleAllocation(invoiceId, poId, createdBy) {
+    const affected = new Set();
+    if (!(await allocTableExists())) return affected;
+    const old = await query(
+        'SELECT po_id FROM SupplierInvoicePOAllocations WHERE invoice_id = @id', { id: invoiceId });
+    old.recordset.forEach(r => affected.add(r.po_id));
+    await query('DELETE FROM SupplierInvoicePOAllocations WHERE invoice_id = @id', { id: invoiceId });
+    if (poId) {
+        const inv = await query(
+            'SELECT net, vat, gross FROM SupplierInvoices WHERE id = @id', { id: invoiceId });
+        const i = inv.recordset[0] || {};
+        await query(
+            `INSERT INTO SupplierInvoicePOAllocations (invoice_id, po_id, net, vat, gross, created_by)
+             VALUES (@invId, @poId, @net, @vat, @gross, @by)`,
+            { invId: invoiceId, poId, net: i.net, vat: i.vat, gross: Number(i.gross || 0), by: createdBy || null });
+        affected.add(poId);
+    }
+    return affected;
+}
+
+// ── Recompute PO reconciliation from the SUM of its allocated invoices ──────
+// Source of truth: SupplierInvoicePOAllocations (falls back to si.po_id until
+// the migration runs). Comparison is NET-to-NET: allocated net vs PO net
+// (total_value − vat_amount). Keeps the legacy aggregate columns on
+// PurchaseOrders in sync:
+//   supplier_invoice_gross/net/vat = SUM of allocated shares
 //   supplier_invoice_received_at   = earliest linked created_at (or NULL)
 //   reconciliation_status: matched (within £1) | unmatched (under) | discrepancy (over)
 async function recomputePoReconciliation(poId) {
     if (!poId) return;
-    const poRes = await query('SELECT id, total_value, status FROM PurchaseOrders WHERE id = @id', { id: poId });
+    const poRes = await query(
+        'SELECT id, total_value, vat_amount, vat_rate, status FROM PurchaseOrders WHERE id = @id', { id: poId });
     if (!poRes.recordset.length) return;
     const po = poRes.recordset[0];
 
-    const agg = await query(
-        `SELECT COUNT(*) AS cnt,
-                SUM(gross) AS sum_gross, SUM(net) AS sum_net, SUM(vat) AS sum_vat,
-                MIN(created_at) AS first_at,
-                MAX(invoice_ref) AS any_ref, MAX(invoice_date) AS last_date
-         FROM SupplierInvoices WHERE po_id = @poId AND is_deleted = 0`,
-        { poId }
-    );
+    const useAlloc = await allocTableExists();
+    const agg = useAlloc
+        ? await query(
+            `SELECT COUNT(*) AS cnt,
+                    SUM(a.gross) AS sum_gross, SUM(a.net) AS sum_net, SUM(a.vat) AS sum_vat,
+                    MIN(si.created_at) AS first_at,
+                    MAX(si.invoice_ref) AS any_ref, MAX(si.invoice_date) AS last_date
+               FROM SupplierInvoicePOAllocations a
+               JOIN SupplierInvoices si ON si.id = a.invoice_id AND si.is_deleted = 0
+              WHERE a.po_id = @poId`,
+            { poId })
+        : await query(
+            `SELECT COUNT(*) AS cnt,
+                    SUM(gross) AS sum_gross, SUM(net) AS sum_net, SUM(vat) AS sum_vat,
+                    MIN(created_at) AS first_at,
+                    MAX(invoice_ref) AS any_ref, MAX(invoice_date) AS last_date
+             FROM SupplierInvoices WHERE po_id = @poId AND is_deleted = 0`,
+            { poId });
     const a = agg.recordset[0];
     const cnt = Number(a.cnt || 0);
     const sumGross = Number(a.sum_gross || 0);
+    const sumNet = a.sum_net != null ? Number(a.sum_net) : null;
     const poTotal = Number(po.total_value || 0);
+    const poNetVal = poNet(po);
+
+    // Net-to-net when we have invoice nets; gross fallback for legacy rows
+    // saved without a net figure.
+    const compareLhs = sumNet != null ? sumNet : sumGross;
+    const compareRhs = sumNet != null ? poNetVal : poTotal;
 
     let recon = 'unmatched';
-    if (cnt > 0 && poTotal > 0) {
-        if (Math.abs(sumGross - poTotal) <= 1.00) recon = 'matched';
-        else if (sumGross > poTotal + 1.00)       recon = 'discrepancy';
-        else                                       recon = 'unmatched'; // partial — more invoices expected
+    if (cnt > 0 && compareRhs > 0) {
+        if (Math.abs(compareLhs - compareRhs) <= 1.00) recon = 'matched';
+        else if (compareLhs > compareRhs + 1.00)       recon = 'discrepancy';
+        else                                            recon = 'unmatched'; // partial — more invoices expected
     }
 
     const statusUpdate = (cnt > 0 && !['Closed', 'Cancelled'].includes(po.status)) ? 'Invoiced' : po.status;
@@ -136,21 +206,58 @@ app.http('supplier-invoices-list', {
         const auth = await requireAuth(request);
         if (auth.status) return auth;
         try {
+            const useAlloc = await allocTableExists();
+            // Attach allocations: [{po_id, po_reference, job_number, net, vat, gross}]
+            // to every returned invoice so the UI can show multi-PO splits.
+            const attachAllocations = async (rows) => {
+                if (!useAlloc || !rows.length) return rows;
+                const invIds = rows.map(r => r.id).join(',');
+                const ar = await query(
+                    `SELECT a.invoice_id, a.po_id, a.net, a.vat, a.gross,
+                            po.reference AS po_reference, po.job_number
+                       FROM SupplierInvoicePOAllocations a
+                       JOIN PurchaseOrders po ON po.id = a.po_id
+                      WHERE a.invoice_id IN (${invIds})
+                      ORDER BY a.id`);
+                const byInv = {};
+                for (const al of ar.recordset) {
+                    (byInv[al.invoice_id] = byInv[al.invoice_id] || []).push({
+                        po_id: al.po_id, po_reference: al.po_reference, job_number: al.job_number,
+                        net: al.net != null ? Number(al.net) : null,
+                        vat: al.vat != null ? Number(al.vat) : null,
+                        gross: Number(al.gross || 0)
+                    });
+                }
+                for (const row of rows) row.allocations = byInv[row.id] || [];
+                return rows;
+            };
+
             const id = request.params.id;
             if (id) {
                 const r = await query(LIST_SELECT + ' AND si.id = @id', { id: parseInt(id) });
                 if (!r.recordset.length) return notFound('Invoice not found', request);
+                await attachAllocations(r.recordset);
                 return ok(r.recordset[0], request);
             }
             const params = {};
             let where = '';
             const sp = new URL(request.url).searchParams;
             if (sp.get('supplier_id')) { where += ' AND si.supplier_id = @sid'; params.sid = parseInt(sp.get('supplier_id')); }
-            if (sp.get('po_id'))       { where += ' AND si.po_id = @pid';       params.pid = parseInt(sp.get('po_id')); }
-            if (sp.get('unmatched'))   { where += ' AND si.po_id IS NULL'; }
+            if (sp.get('po_id')) {
+                params.pid = parseInt(sp.get('po_id'));
+                where += useAlloc
+                    ? ' AND (si.po_id = @pid OR EXISTS (SELECT 1 FROM SupplierInvoicePOAllocations ax WHERE ax.invoice_id = si.id AND ax.po_id = @pid))'
+                    : ' AND si.po_id = @pid';
+            }
+            if (sp.get('unmatched')) {
+                where += useAlloc
+                    ? ' AND si.po_id IS NULL AND NOT EXISTS (SELECT 1 FROM SupplierInvoicePOAllocations ax WHERE ax.invoice_id = si.id)'
+                    : ' AND si.po_id IS NULL';
+            }
             if (sp.get('status') === 'unpaid') where += ' AND si.paid_at IS NULL';
             if (sp.get('status') === 'paid')   where += ' AND si.paid_at IS NOT NULL';
             const r = await query(LIST_SELECT + where + ' ORDER BY si.invoice_date DESC, si.id DESC', params);
+            await attachAllocations(r.recordset);
             return ok(r.recordset, request);
         } catch (err) {
             context.error('supplier-invoices list failed:', err);
@@ -182,10 +289,29 @@ app.http('supplier-invoices-create', {
             const supplier = await getSupplier(supplierId);
             if (!supplier) return notFound('Supplier not found', request);
 
-            const poId = body.po_id ? parseInt(body.po_id) : null;
-            if (poId) {
-                const poRes = await query('SELECT id, supplier_id FROM PurchaseOrders WHERE id = @id', { id: poId });
-                if (!poRes.recordset.length) return notFound('PO not found', request);
+            // Optional multi-PO split: allocations: [{po_id, net?, vat?, gross}]
+            // When present it wins over po_id; po_id is then set to the first
+            // allocation's PO (denormalised "primary PO" for legacy views).
+            const allocations = Array.isArray(body.allocations)
+                ? body.allocations
+                    .map(a => ({
+                        po_id: parseInt(a.po_id),
+                        net:   a.net   != null && a.net   !== '' ? Number(a.net)   : null,
+                        vat:   a.vat   != null && a.vat   !== '' ? Number(a.vat)   : null,
+                        gross: a.gross != null && a.gross !== '' ? Number(a.gross) : null
+                    }))
+                    .filter(a => a.po_id && (a.net != null || a.gross != null))
+                : null;
+
+            let poId = body.po_id ? parseInt(body.po_id) : null;
+            if (allocations && allocations.length) poId = allocations[0].po_id;
+
+            const poIdsToCheck = allocations && allocations.length
+                ? [...new Set(allocations.map(a => a.po_id))]
+                : (poId ? [poId] : []);
+            for (const pid of poIdsToCheck) {
+                const poRes = await query('SELECT id, supplier_id FROM PurchaseOrders WHERE id = @id', { id: pid });
+                if (!poRes.recordset.length) return notFound(`PO ${pid} not found`, request);
                 if (poRes.recordset[0].supplier_id !== supplierId)
                     return badRequest('PO belongs to a different supplier', request);
             }
@@ -250,7 +376,33 @@ app.http('supplier-invoices-create', {
                 );
             }
 
-            if (poId) await recomputePoReconciliation(poId);
+            // Mirror the PO link(s) into the allocations table (source of truth)
+            if (await allocTableExists()) {
+                if (allocations && allocations.length) {
+                    // Pro-rata VAT/gross for rows given as net-only, using the
+                    // invoice's own net:vat ratio — deterministic, no AI maths.
+                    const invNet = body.net != null ? Number(body.net) : null;
+                    const invVat = body.vat != null ? Number(body.vat) : 0;
+                    for (const al of allocations) {
+                        let { net, vat, gross: g } = al;
+                        if (net != null && g == null) {
+                            const ratio = invNet && invNet !== 0 ? net / invNet : 0;
+                            vat = vat != null ? vat : Math.round(invVat * ratio * 100) / 100;
+                            g = Math.round((net + vat) * 100) / 100;
+                        } else if (g != null && net == null) {
+                            net = null; // gross-only allocation — net unknown
+                        }
+                        await query(
+                            `INSERT INTO SupplierInvoicePOAllocations (invoice_id, po_id, net, vat, gross, created_by)
+                             VALUES (@invId, @poId, @net, @vat, @gross, @by)`,
+                            { invId: newId, poId: al.po_id, net, vat, gross: g ?? 0, by: createdBy });
+                    }
+                } else if (poId) {
+                    await setSingleAllocation(newId, poId, createdBy);
+                }
+            }
+
+            for (const pid of poIdsToCheck) await recomputePoReconciliation(pid);
 
             const r = await query(LIST_SELECT + ' AND si.id = @id', { id: newId });
             return created(r.recordset[0], request);
@@ -314,6 +466,34 @@ app.http('supplier-invoices-update', {
             const affectedPos = new Set();
             if (inv.po_id) affectedPos.add(inv.po_id);
             if (body.po_id !== undefined && body.po_id) affectedPos.add(parseInt(body.po_id));
+
+            if (await allocTableExists()) {
+                const curAlloc = await query(
+                    'SELECT id, po_id FROM SupplierInvoicePOAllocations WHERE invoice_id = @id', { id });
+                curAlloc.recordset.forEach(a => affectedPos.add(a.po_id));
+
+                if (body.po_id !== undefined) {
+                    // Explicit PO change from the edit form ⇒ collapse to a single
+                    // full-value allocation on the new PO (or none when unmatched).
+                    const newPo = body.po_id ? parseInt(body.po_id) : null;
+                    (await setSingleAllocation(id, newPo, auth.email || auth.name || null))
+                        .forEach(p => affectedPos.add(p));
+                } else if (curAlloc.recordset.length === 1 &&
+                           ['net', 'vat', 'gross'].some(c => body[c] !== undefined)) {
+                    // Amounts edited on a plain single-PO invoice ⇒ keep the one
+                    // allocation covering the full invoice. Multi-PO splits are
+                    // deliberate manual figures — never silently rescale those.
+                    const fresh = await query(
+                        'SELECT net, vat, gross FROM SupplierInvoices WHERE id = @id', { id });
+                    const f = fresh.recordset[0];
+                    await query(
+                        `UPDATE SupplierInvoicePOAllocations
+                            SET net = @net, vat = @vat, gross = @gross, updated_at = GETUTCDATE()
+                          WHERE invoice_id = @id`,
+                        { id, net: f.net, vat: f.vat, gross: Number(f.gross || 0) });
+                }
+            }
+
             for (const pid of affectedPos) await recomputePoReconciliation(pid);
 
             const r = await query(LIST_SELECT + ' AND si.id = @id', { id });
@@ -337,8 +517,19 @@ app.http('supplier-invoices-delete', {
             const id = parseInt(request.params.id);
             const cur = await query('SELECT po_id FROM SupplierInvoices WHERE id = @id AND is_deleted = 0', { id });
             if (!cur.recordset.length) return notFound('Invoice not found', request);
+
+            const affected = new Set();
+            if (cur.recordset[0].po_id) affected.add(cur.recordset[0].po_id);
+            if (await allocTableExists()) {
+                const al = await query(
+                    'SELECT po_id FROM SupplierInvoicePOAllocations WHERE invoice_id = @id', { id });
+                al.recordset.forEach(a => affected.add(a.po_id));
+            }
+
             await query('UPDATE SupplierInvoices SET is_deleted = 1, updated_at = GETUTCDATE() WHERE id = @id', { id });
-            if (cur.recordset[0].po_id) await recomputePoReconciliation(cur.recordset[0].po_id);
+            // Allocations stay in place (the reconciliation JOIN filters deleted
+            // invoices out) so an undelete would restore the split intact.
+            for (const pid of affected) await recomputePoReconciliation(pid);
             return ok({ deleted: true }, request);
         } catch (err) {
             context.error('supplier-invoices delete failed:', err);
@@ -347,11 +538,23 @@ app.http('supplier-invoices-delete', {
     }
 });
 
-// ── POST /api/supplier-invoices-match — link ticked invoices to a PO (or unlink)
-// Body: { invoice_ids: [..], po_id: int|null, babcock_quote_id?: int|null, force?: bool }
-// Over-match guard: if the resulting matched total would exceed the PO total by
-// more than £1, returns { needs_confirm:true, po_total, matched_total, over_by }
-// WITHOUT saving. Client re-posts with force:true after bamaConfirm.
+// ── POST /api/supplier-invoices-match — link invoices ↔ POs ─────────────────
+// TWO MODES:
+//
+// A) Many invoices → one PO (or unlink):
+//    { invoice_ids: [..], po_id: int|null, babcock_quote_id?, force? }
+//    Each invoice gets a single full-value allocation on that PO.
+//
+// B) One invoice split across many POs (consolidated supplier billing):
+//    { invoice_id: int, allocations: [{po_id, net}], force? }
+//    VAT/gross shares are derived pro-rata from the invoice's own net:vat
+//    ratio — deterministic, never invented.
+//
+// Guards (both modes, compared NET-to-NET, £1 tolerance) return
+// { needs_confirm:true, warnings:[{kind, ...}] } WITHOUT saving; the client
+// re-posts with force:true after bamaConfirm:
+//   kind:'po_over'       — a PO's allocated net would exceed its order net
+//   kind:'sum_mismatch'  — (mode B) the splits don't add up to the invoice net
 app.http('supplier-invoices-match', {
     methods: ['POST'],
     authLevel: 'anonymous',
@@ -361,6 +564,115 @@ app.http('supplier-invoices-match', {
         if (auth.status) return auth;
         try {
             const body = await request.json();
+            const createdBy = auth.email || auth.name || null;
+            const useAlloc = await allocTableExists();
+            const r2 = v => Math.round(Number(v) * 100) / 100;
+
+            // Existing allocated net+gross on a PO, excluding the given invoices
+            const poMatchedSoFar = async (poId, excludeIds) => {
+                const notIn = excludeIds.length ? ` AND a.invoice_id NOT IN (${excludeIds.join(',')})` : '';
+                if (useAlloc) {
+                    const r = await query(
+                        `SELECT ISNULL(SUM(a.net),0) AS n, ISNULL(SUM(a.gross),0) AS g, COUNT(*) AS c
+                           FROM SupplierInvoicePOAllocations a
+                           JOIN SupplierInvoices si ON si.id = a.invoice_id AND si.is_deleted = 0
+                          WHERE a.po_id = @poId${notIn}`, { poId });
+                    return r.recordset[0];
+                }
+                const legacyNotIn = excludeIds.length ? ` AND id NOT IN (${excludeIds.join(',')})` : '';
+                const r = await query(
+                    `SELECT ISNULL(SUM(net),0) AS n, ISNULL(SUM(gross),0) AS g, COUNT(*) AS c
+                       FROM SupplierInvoices WHERE po_id = @poId AND is_deleted = 0${legacyNotIn}`, { poId });
+                return r.recordset[0];
+            };
+
+            // ═══ MODE B — split one invoice across several POs ═══
+            if (body.invoice_id && Array.isArray(body.allocations)) {
+                if (!useAlloc)
+                    return badRequest('Splitting an invoice across POs needs the SupplierInvoicePOAllocations migration — run create-supplier-invoice-po-allocations.sql first', request);
+
+                const invId = parseInt(body.invoice_id);
+                const invRes = await query(
+                    `SELECT id, supplier_id, po_id, net, vat, gross, invoice_ref FROM SupplierInvoices
+                      WHERE id = @id AND is_deleted = 0`, { id: invId });
+                if (!invRes.recordset.length) return notFound('Invoice not found', request);
+                const inv = invRes.recordset[0];
+
+                const splits = body.allocations
+                    .map(a => ({ po_id: parseInt(a.po_id), net: r2(a.net) }))
+                    .filter(a => a.po_id && Number.isFinite(a.net) && a.net !== 0);
+                if (!splits.length) return badRequest('allocations is empty', request);
+                if (new Set(splits.map(s => s.po_id)).size !== splits.length)
+                    return badRequest('Duplicate PO in allocations', request);
+
+                const poIds = splits.map(s => s.po_id);
+                const poRes = await query(
+                    `SELECT id, supplier_id, reference, total_value, vat_amount, vat_rate
+                       FROM PurchaseOrders WHERE id IN (${poIds.join(',')})`);
+                if (poRes.recordset.length !== poIds.length) return notFound('One or more POs not found', request);
+                const poById = Object.fromEntries(poRes.recordset.map(p => [p.id, p]));
+                if (poRes.recordset.some(p => p.supplier_id !== inv.supplier_id))
+                    return badRequest('All POs must belong to the same supplier as the invoice', request);
+
+                // ── Guards (net-to-net, £1 tolerance) ──
+                const warnings = [];
+                const invNet = inv.net != null ? Number(inv.net) : null;
+                const sumNet = r2(splits.reduce((s, a) => s + a.net, 0));
+                if (invNet != null && Math.abs(sumNet - invNet) > 1.00) {
+                    warnings.push({
+                        kind: 'sum_mismatch',
+                        invoice_ref: inv.invoice_ref,
+                        invoice_net: r2(invNet),
+                        allocated_net: sumNet,
+                        diff: r2(sumNet - invNet)
+                    });
+                }
+                for (const s of splits) {
+                    const po = poById[s.po_id];
+                    const poNetVal = poNet(po);
+                    const already = await poMatchedSoFar(s.po_id, [invId]);
+                    const wouldBe = r2(Number(already.n) + s.net);
+                    if (poNetVal > 0 && wouldBe > poNetVal + 1.00) {
+                        warnings.push({
+                            kind: 'po_over',
+                            po_reference: po.reference,
+                            po_net: poNetVal,
+                            matched_net: wouldBe,
+                            over_by: r2(wouldBe - poNetVal)
+                        });
+                    }
+                }
+                if (warnings.length && !body.force)
+                    return ok({ needs_confirm: true, warnings }, request);
+
+                // ── Write: replace this invoice's allocations with the split ──
+                const oldAlloc = await query(
+                    'SELECT po_id FROM SupplierInvoicePOAllocations WHERE invoice_id = @id', { id: invId });
+                const affected = new Set(oldAlloc.recordset.map(a => a.po_id));
+                if (inv.po_id) affected.add(inv.po_id);
+                await query('DELETE FROM SupplierInvoicePOAllocations WHERE invoice_id = @id', { id: invId });
+
+                const invVat = inv.vat != null ? Number(inv.vat) : 0;
+                for (const s of splits) {
+                    const ratio = invNet ? s.net / invNet : 0;
+                    const vat = r2(invVat * ratio);
+                    await query(
+                        `INSERT INTO SupplierInvoicePOAllocations (invoice_id, po_id, net, vat, gross, created_by)
+                         VALUES (@invId, @poId, @net, @vat, @gross, @by)`,
+                        { invId, poId: s.po_id, net: s.net, vat, gross: r2(s.net + vat), by: createdBy });
+                    affected.add(s.po_id);
+                }
+                await query(
+                    'UPDATE SupplierInvoices SET po_id = @poId, updated_at = GETUTCDATE() WHERE id = @id',
+                    { id: invId, poId: splits[0].po_id });
+
+                for (const pid of affected) await recomputePoReconciliation(pid);
+
+                const out = await query(LIST_SELECT + ' AND si.id = @id', { id: invId });
+                return ok({ matched: true, invoices: out.recordset }, request);
+            }
+
+            // ═══ MODE A — link ticked invoices to one PO (or unlink) ═══
             const ids = Array.isArray(body.invoice_ids) ? body.invoice_ids.map(Number).filter(Boolean) : [];
             if (!ids.length) return badRequest('invoice_ids is required', request);
             const poId = body.po_id ? parseInt(body.po_id) : null;
@@ -370,42 +682,51 @@ app.http('supplier-invoices-match', {
 
             const idList = ids.join(',');
             const invRes = await query(
-                `SELECT id, supplier_id, po_id, gross FROM SupplierInvoices
+                `SELECT id, supplier_id, po_id, net, gross FROM SupplierInvoices
                   WHERE id IN (${idList}) AND is_deleted = 0`);
             const invoices = invRes.recordset;
             if (invoices.length !== ids.length) return notFound('One or more invoices not found', request);
 
-            const oldPoIds = [...new Set(invoices.map(i => i.po_id).filter(Boolean))];
+            const oldPoIds = new Set(invoices.map(i => i.po_id).filter(Boolean));
+            if (useAlloc) {
+                const oldAl = await query(
+                    `SELECT DISTINCT po_id FROM SupplierInvoicePOAllocations WHERE invoice_id IN (${idList})`);
+                oldAl.recordset.forEach(a => oldPoIds.add(a.po_id));
+            }
 
             if (poId) {
                 const poRes = await query(
-                    'SELECT id, supplier_id, reference, total_value FROM PurchaseOrders WHERE id = @id', { id: poId });
+                    `SELECT id, supplier_id, reference, total_value, vat_amount, vat_rate
+                       FROM PurchaseOrders WHERE id = @id`, { id: poId });
                 if (!poRes.recordset.length) return notFound('PO not found', request);
                 const po = poRes.recordset[0];
 
                 if (invoices.some(i => i.supplier_id !== po.supplier_id))
                     return badRequest('All invoices must belong to the same supplier as the PO', request);
 
-                // Over-match check: existing matched (excluding the ones being moved) + new
-                const existing = await query(
-                    `SELECT ISNULL(SUM(gross),0) AS s FROM SupplierInvoices
-                      WHERE po_id = @poId AND is_deleted = 0 AND id NOT IN (${idList})`,
-                    { poId });
-                const matchedTotal = Number(existing.recordset[0].s)
-                                   + invoices.reduce((s, i) => s + Number(i.gross || 0), 0);
-                const poTotal = Number(po.total_value || 0);
+                // Over-match check — NET when every invoice has one, else gross
+                // fallback (legacy rows saved without a net figure).
+                const allHaveNet = invoices.every(i => i.net != null);
+                const already = await poMatchedSoFar(poId, ids);
+                const incoming = invoices.reduce(
+                    (s, i) => s + Number((allHaveNet ? i.net : i.gross) || 0), 0);
+                const matchedTotal = r2(Number(allHaveNet ? already.n : already.g) + incoming);
+                const poCompare = allHaveNet ? poNet(po) : Number(po.total_value || 0);
 
-                if (poTotal > 0 && matchedTotal > poTotal + 1.00 && !body.force) {
+                if (poCompare > 0 && matchedTotal > poCompare + 1.00 && !body.force) {
                     return ok({
                         needs_confirm: true,
+                        basis: allHaveNet ? 'net' : 'gross',
                         po_reference: po.reference,
-                        po_total: poTotal,
-                        matched_total: +matchedTotal.toFixed(2),
-                        over_by: +(matchedTotal - poTotal).toFixed(2),
-                        invoice_count: (await query(
-                            `SELECT COUNT(*) AS c FROM SupplierInvoices
-                              WHERE po_id = @poId AND is_deleted = 0 AND id NOT IN (${idList})`,
-                            { poId })).recordset[0].c + invoices.length
+                        po_total: poCompare,
+                        matched_total: matchedTotal,
+                        over_by: r2(matchedTotal - poCompare),
+                        invoice_count: Number(already.c) + invoices.length,
+                        warnings: [{
+                            kind: 'po_over', po_reference: po.reference,
+                            po_net: poCompare, matched_net: matchedTotal,
+                            over_by: r2(matchedTotal - poCompare)
+                        }]
                     }, request);
                 }
             }
@@ -418,6 +739,7 @@ app.http('supplier-invoices-match', {
                  WHERE id IN (${idList})`,
                 { poId, ...(babcockId !== undefined ? { bqId: babcockId } : {}) }
             );
+            for (const inv of invoices) await setSingleAllocation(inv.id, poId, createdBy);
 
             for (const affected of new Set([poId, ...oldPoIds].filter(Boolean)))
                 await recomputePoReconciliation(affected);

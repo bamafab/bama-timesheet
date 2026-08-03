@@ -173,6 +173,9 @@
       <button class="inv-tab-btn" id="invTabBtn-supplier" onclick="switchInvTab('supplier')">
         <span class="inv-tab-icon">📥</span> Supplier Invoices
       </button>
+      <button class="inv-tab-btn" style="margin-left:auto" onclick="invHelpOpen()" title="How matching and splitting works">
+        <span class="inv-tab-icon">❓</span> Help
+      </button>
 
     </div>
 
@@ -348,24 +351,49 @@
      MATCH INVOICES TO PO MODAL
 ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="invSupMatchModal">
-  <div class="modal" style="max-width:560px;width:94vw">
+  <div class="modal" style="max-width:640px;width:94vw;max-height:88vh;overflow-y:auto">
     <div class="modal-title">🔗 Match Invoices to PO</div>
-    <div id="invSupMatchLabel" style="font-size:13px;color:var(--muted);margin-bottom:14px"></div>
-    <div style="margin-bottom:12px">
+    <div id="invSupMatchLabel" style="font-size:13px;color:var(--muted);margin-bottom:12px"></div>
+
+    <!-- Mode toggle — split only makes sense for a single ticked invoice -->
+    <div id="invSupMatchModeWrap" style="display:none;gap:6px;margin-bottom:12px">
+      <button class="inv-sup-chip active" id="invSupMatchModeSingle" onclick="supMatchSetMode('single')">One PO</button>
+      <button class="inv-sup-chip" id="invSupMatchModeSplit" onclick="supMatchSetMode('split')">🔀 Split across several POs</button>
+    </div>
+
+    <!-- SINGLE mode: one PO for all ticked invoices -->
+    <div id="invSupMatchSingleWrap" style="margin-bottom:12px">
       <label class="field-label">Purchase Order</label>
       <select class="field-input" id="invSupMatchPo"></select>
       <div style="font-size:11px;color:var(--subtle);margin-top:4px">
+        You can match several invoices to the same PO — tick them all first.
         Pick "Unmatch" to detach the ticked invoices from their current PO.
-        If the combined invoices exceed the order value you'll be asked to confirm.
+        If the combined invoice value goes over the order value (net) you'll be asked to confirm.
       </div>
     </div>
+
+    <!-- SPLIT mode: one invoice, amounts across several POs -->
+    <div id="invSupMatchSplitWrap" style="display:none;margin-bottom:12px">
+      <div style="font-size:11px;color:var(--subtle);margin-bottom:8px">
+        Tick every PO this invoice covers and enter the <b>net £</b> for each.
+        Amounts prefill from what's left to invoice on the PO — adjust to match the invoice.
+      </div>
+      <input type="text" class="field-input" id="invSupMatchSplitSearch"
+             placeholder="Filter POs…" style="font-size:12px;margin-bottom:8px"
+             oninput="_supMatchRenderSplitList()">
+      <div id="invSupMatchSplitList"
+           style="max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:8px"></div>
+      <div id="invSupMatchSplitBar"
+           style="margin-top:10px;padding:8px 12px;border-radius:8px;font-size:12px;font-weight:600"></div>
+    </div>
+
     <div style="margin-bottom:16px" id="invSupMatchBabcockWrap">
       <label class="field-label">Babcock Quote (BAMA SW only)</label>
       <select class="field-input" id="invSupMatchBabcock"></select>
     </div>
     <div style="display:flex;justify-content:flex-end;gap:10px">
       <button class="btn btn-ghost" onclick="closeSupMatchModal()">Cancel</button>
-      <button class="btn btn-primary" onclick="confirmSupMatch()">Match</button>
+      <button class="btn btn-primary" id="invSupMatchConfirmBtn" onclick="confirmSupMatch()">Match</button>
     </div>
   </div>
 </div>
@@ -1590,8 +1618,157 @@
   </div>
 </div>
 
+<!-- ═══════════════════════════════════════
+     HELP DRAWER — Invoice Tracker
+══════════════════════════════════════════ -->
+<div id="invHelpOverlay" onclick="invHelpClose()"
+  style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:800;backdrop-filter:blur(2px)"></div>
+
+<div id="invHelpDrawer"
+  style="display:none;position:fixed;top:0;right:0;bottom:0;width:480px;max-width:96vw;background:var(--card);
+         border-left:1px solid var(--border);z-index:801;flex-direction:column;
+         box-shadow:-8px 0 32px rgba(0,0,0,0.4);overflow:hidden">
+
+  <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0;background:var(--surface)">
+    <div style="flex:1">
+      <div style="font-size:15px;font-weight:700;color:var(--text)">📖 Invoice Tracker — Help</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:1px">Supplier invoices, POs, matching &amp; splitting</div>
+    </div>
+    <button onclick="invHelpClose()" style="background:none;border:1px solid var(--border);border-radius:6px;color:var(--muted);cursor:pointer;font-size:16px;width:30px;height:30px;display:flex;align-items:center;justify-content:center" title="Close">✕</button>
+  </div>
+
+  <div style="display:flex;gap:6px;padding:10px 16px;border-bottom:1px solid var(--border);flex-wrap:wrap;flex-shrink:0;background:var(--surface)">
+    <button class="inv-help-pill active" data-sec="overview" onclick="invHelpSection('overview')">Overview</button>
+    <button class="inv-help-pill" data-sec="adding" onclick="invHelpSection('adding')">Adding invoices</button>
+    <button class="inv-help-pill" data-sec="matchone" onclick="invHelpSection('matchone')">Several invoices → one PO</button>
+    <button class="inv-help-pill" data-sec="split" onclick="invHelpSection('split')">One invoice → several POs</button>
+    <button class="inv-help-pill" data-sec="faq" onclick="invHelpSection('faq')">FAQ</button>
+  </div>
+
+  <div id="invHelpBody" style="flex:1;overflow-y:auto;padding:20px;scrollbar-width:thin;scrollbar-color:#333 transparent"></div>
+</div>
+
+<style>
+.inv-help-pill {
+  background: var(--surface2); border: 1px solid var(--border); color: var(--muted);
+  border-radius: 14px; padding: 4px 12px; font-size: 11px; font-weight: 600; cursor: pointer;
+}
+.inv-help-pill.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.inv-help-pill:hover:not(.active) { background: var(--surface); color: var(--text); }
+#invHelpBody h3 { font-size: 13px; font-weight: 700; color: var(--text); margin: 18px 0 6px; }
+#invHelpBody h3:first-child { margin-top: 0; }
+#invHelpBody p, #invHelpBody li { font-size: 12px; color: var(--muted); line-height: 1.6; }
+#invHelpBody ol, #invHelpBody ul { padding-left: 18px; margin: 6px 0; }
+#invHelpBody b { color: var(--text); }
+#invHelpBody .hint { background: var(--surface2); border-left: 3px solid var(--accent); border-radius: 6px; padding: 8px 12px; margin: 10px 0; font-size: 12px; color: var(--muted); }
+</style>
+
+<script>
+const INV_HELP = {
+  overview: `
+    <h3>What this tab does</h3>
+    <p>The <b>Supplier Invoices</b> tab is the ledger of every invoice a supplier or subcontractor has sent us.
+    Each invoice is linked to the <b>purchase order (PO)</b> it belongs to, so job costs and reports land in the right place.</p>
+    <h3>The three everyday jobs</h3>
+    <ol>
+      <li><b>Add</b> invoices — drag PDFs into 📥 Bulk Import (or ➕ Add Invoice for one). The AI reads the supplier, amounts, date and PO number for you — you just check them.</li>
+      <li><b>Match</b> invoices to POs — tick invoices, press 🔗 Match to PO. This is how reports know which job the money belongs to.</li>
+      <li><b>Pay</b> — tick unpaid invoices and create a payment run when the remittance goes out.</li>
+    </ol>
+    <h3>Reconciliation colours</h3>
+    <p>Each PO compares its <b>net</b> order value against the <b>net</b> of the invoices matched to it (±£1):</p>
+    <ul>
+      <li><b style="color:var(--green)">matched</b> — invoices add up to the order value. Done.</li>
+      <li><b>unmatched</b> — invoices so far are under the order value; more are expected.</li>
+      <li><b style="color:var(--red)">discrepancy</b> — invoices are OVER the order value. Check them.</li>
+    </ul>`,
+  adding: `
+    <h3>Bulk import (the fast way)</h3>
+    <ol>
+      <li>Press <b>📥 Bulk Import</b> and drop all the PDFs in at once.</li>
+      <li>Each file becomes a card. The AI fills supplier, invoice number, date, net/VAT/gross and picks the PO when the invoice quotes our P-number.</li>
+      <li>Check the amber warnings (odd date, possible duplicate), fix anything wrong, press <b>Save</b>.</li>
+    </ol>
+    <div class="hint">If an invoice quotes <b>several</b> of our PO numbers and prints an amount per order, the card shows
+    <b>🔀 split across N POs</b> and it saves already spread across them. If the amounts aren't printed per order, it saves
+    against the first PO with a ⚠ note — use <b>Match → Split</b> afterwards (see the "One invoice → several POs" section).</div>
+    <h3>Single add</h3>
+    <p><b>➕ Add Invoice</b> works the same for one invoice — drop the file, it fills itself, pick the PO from the dropdown if it didn't match automatically.</p>
+    <h3>Subcontractors (CIS)</h3>
+    <p>Invoices from individuals with a CIS deduction are recognised automatically — labour, deduction and payable are read off the invoice. Agencies (Ltd companies, no CIS) count as normal suppliers.</p>`,
+  matchone: `
+    <h3>Several invoices for ONE order — yes, you can!</h3>
+    <p>Some suppliers invoice one order in stages: 3, 4, even 5 invoices for a single PO (part deliveries, balance on completion).
+    <b>You do not need to do anything special — just match them all to the same PO:</b></p>
+    <ol>
+      <li>In the ledger, <b>tick every invoice</b> that belongs to the order (they must be from the same supplier).</li>
+      <li>Press <b>🔗 Match to PO</b>.</li>
+      <li>Pick the PO from the dropdown — it shows the order's net value and how much is still left to invoice.</li>
+      <li>Press <b>Match</b>. All the ticked invoices link to that PO.</li>
+    </ol>
+    <p>You can also do it one at a time as invoices arrive — tick the new one, match it to the same PO. The PO adds them up as it goes:
+    while the total is under the order value it shows <b>unmatched</b> (more expected), and turns
+    <b style="color:var(--green)">matched</b> when the invoices add up to the order (±£1).</p>
+    <div class="hint">💡 If matching one more invoice would push the total <b>over</b> the order value, the system stops and asks
+    <i>"Are you sure? Maybe one invoice too many?"</i> — that usually means one of the ticked invoices belongs to a different order.
+    Check before pressing "Match anyway".</div>`,
+  split: `
+    <h3>One invoice covering SEVERAL orders</h3>
+    <p>Some suppliers send a single consolidated invoice for 5 different POs. If it all sits under one PO, every report for those jobs is wrong.
+    <b>Split it:</b></p>
+    <ol>
+      <li>Tick <b>just that one invoice</b> in the ledger and press <b>🔗 Match to PO</b>.</li>
+      <li>Press <b>🔀 Split across several POs</b> at the top of the window.</li>
+      <li>Tick each PO the invoice covers. The <b>net £</b> box prefills with what's left to invoice on that PO — change it to what the invoice actually charges for that order.</li>
+      <li>Watch the bar at the bottom: it turns <b style="color:var(--green)">green</b> when your amounts add up to the invoice net, and stays <b style="color:#ffa500">amber</b> telling you how much you're over or short.</li>
+      <li>Press <b>Match</b>. The invoice now counts against each PO by the amounts you entered — reports and reconciliation are correct per job.</li>
+    </ol>
+    <div class="hint">💡 Bulk import does this automatically when the invoice prints an amount per order. The split only needs
+    doing by hand when the supplier just lists the PO numbers without per-order amounts.</div>
+    <h3>Checks that protect you</h3>
+    <ul>
+      <li>If your split doesn't add up to the invoice net (±£1), it asks you to confirm.</li>
+      <li>If any single PO would go over its order value, it asks <i>"are these the right amounts for these orders?"</i></li>
+      <li>Everything compares <b>net to net</b> — VAT is spread automatically in the same proportion.</li>
+    </ul>
+    <h3>Changing your mind</h3>
+    <p>Re-do the split any time: tick the invoice, Match → Split, enter the new amounts — the old split is replaced.
+    Or pick a single PO / "Unmatch" to collapse it back to a simple link.</p>`,
+  faq: `
+    <h3>Can I match invoices from different suppliers at once?</h3>
+    <p>No — matching works one supplier at a time, because a PO belongs to one supplier.</p>
+    <h3>Why does it compare net and not gross?</h3>
+    <p>Our PO values are entered net + VAT; suppliers sometimes charge different VAT treatments (reverse charge, zero-rated).
+    Net-to-net is the honest comparison of goods value.</p>
+    <h3>An invoice shows "🔀 +2" in the PO column — what's that?</h3>
+    <p>It's split across several POs. Hover over it to see each PO and the amount allocated to it.</p>
+    <h3>The invoice has no PO at all</h3>
+    <p>That's fine — it saves with an amber <b>no PO</b> badge. Match it later when you know which order it belongs to,
+    or leave it (overheads, one-off purchases).</p>
+    <h3>I matched the wrong PO</h3>
+    <p>Tick the invoice, 🔗 Match to PO, pick the right one (or "Unmatch"). Reconciliation on both POs updates instantly.</p>
+    <h3>Where do the files go?</h3>
+    <p>Every invoice PDF files itself to SharePoint under <b>01 - Accounts / 04 - Supplier Invoices / year / month</b>, and a 📎 link stays on the ledger row.</p>`
+};
+
+function invHelpOpen() {
+  document.getElementById('invHelpOverlay').style.display = 'block';
+  document.getElementById('invHelpDrawer').style.display = 'flex';
+  invHelpSection('overview');
+}
+function invHelpClose() {
+  document.getElementById('invHelpOverlay').style.display = 'none';
+  document.getElementById('invHelpDrawer').style.display = 'none';
+}
+function invHelpSection(sec) {
+  document.querySelectorAll('.inv-help-pill').forEach(p =>
+    p.classList.toggle('active', p.dataset.sec === sec));
+  document.getElementById('invHelpBody').innerHTML = INV_HELP[sec] || '';
+}
+</script>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260801h"></script>
+<script src="shared.js?v=20260803a"></script>
 </body>
 </html>

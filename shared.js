@@ -37895,7 +37895,7 @@ function _invSupplierFiltered() {
   const term = (_invSupplierSearchTerm || '').toLowerCase().trim();
   if (term) {
     list = list.filter(inv =>
-      `${inv.supplier_name || ''} ${inv.po_reference || ''} ${inv.invoice_ref || ''} ${inv.job_number || ''} ${inv.cost_centre || ''} ${inv.babcock_quote_ref || ''} ${inv.notes || ''} ${inv.paid_at ? 'paid' : 'unpaid'}`
+      `${inv.supplier_name || ''} ${inv.po_reference || ''} ${(inv.allocations || []).map(a => `${a.po_reference || ''} ${a.job_number || ''}`).join(' ')} ${inv.invoice_ref || ''} ${inv.job_number || ''} ${inv.cost_centre || ''} ${inv.babcock_quote_ref || ''} ${inv.notes || ''} ${inv.paid_at ? 'paid' : 'unpaid'}`
         .toLowerCase().includes(term));
   }
   if (_invSupSortKey) {
@@ -37954,7 +37954,10 @@ function renderInvSupplierTable() {
   const fmt2 = v => Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 });
   tbody.innerHTML = list.map(inv => {
     const overdue = _invSupIsOverdue(inv);
-    const poCell = inv.po_id
+    const allocs = Array.isArray(inv.allocations) ? inv.allocations : [];
+    const poCell = allocs.length > 1
+      ? `<span style="font-family:var(--font-mono);font-weight:600" title="${escapeHtml(allocs.map(a => `${a.po_reference || ('#' + a.po_id)} £${Number(a.net != null ? a.net : a.gross).toFixed(2)}`).join(' · '))}">${escapeHtml(allocs[0].po_reference || ('#' + allocs[0].po_id))} <span style="display:inline-block;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:700;background:rgba(96,165,250,.15);color:#60a5fa">🔀 +${allocs.length - 1}</span></span>`
+      : inv.po_id
       ? `<span style="font-family:var(--font-mono);font-weight:600">${escapeHtml(inv.po_reference || ('#' + inv.po_id))}</span>`
       : `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:rgba(255,165,0,.15);color:#ffa500">no PO</span>`;
     const dueCell = inv.is_dd
@@ -38507,7 +38510,9 @@ async function _bimpParseOne(i) {
   "utr_number": "subcontractor: UTR if shown",
   "bank_sort_code": "subcontractor: sort code if shown",
   "bank_account_no": "subcontractor: account number if shown",
-  "po_reference": "BAMA's PO reference if shown — looks like P260501 (P + 6 digits)",
+  "po_reference": "BAMA's PO reference if shown — looks like P260501 (P + 6 digits). When several are shown, the first one.",
+  "po_references": ["EVERY BAMA PO reference shown on the invoice, P + 6 digits each — consolidated invoices often quote several"],
+  "po_allocations": [{"po_reference": "P260501", "net": 0}] — ONLY when the invoice itemises a NET subtotal per PO/order (per-order sections or a summary table). Copy the printed figures exactly; if per-PO amounts are not printed, return null.,
   "sold_via": "amazon" if this is an Amazon / Amazon Business marketplace invoice (Amazon branding, amazon.co.uk order number, "Sold by ..." seller line) — otherwise null,
   "amazon_seller": "when sold_via is amazon: the actual seller/merchant name, else null"
 }
@@ -38629,11 +38634,45 @@ async function _bimpApplyParsed(i, p) {
     it.willBePaid = !!(it.newSupplier && it.newSupplier.payment_on_account);
   }
 
-  // PO match by our reference
-  if (p.po_reference && it.supplierId) {
-    const want = String(p.po_reference).replace(/\s+/g, '').toUpperCase();
-    const hit = _bimpPos.find(po => String(po.supplier_id) === it.supplierId
-      && (po.reference || '').replace(/\s+/g, '').toUpperCase() === want);
+  // PO match by our reference(s)
+  it.poAllocs = null;      // [{poId, ref, net}] — resolved auto-split, saved as allocations
+  it.multiPoNote = null;   // hint when several POs are quoted but can't be auto-split
+  const _bimpFindPo = (ref) => {
+    const want = String(ref || '').replace(/\s+/g, '').toUpperCase();
+    return want ? _bimpPos.find(po => String(po.supplier_id) === it.supplierId
+      && (po.reference || '').replace(/\s+/g, '').toUpperCase() === want) : null;
+  };
+  const refs = [...new Set(
+    (Array.isArray(p.po_references) && p.po_references.length ? p.po_references : (p.po_reference ? [p.po_reference] : []))
+      .map(r => String(r || '').replace(/\s+/g, '').toUpperCase()).filter(Boolean))];
+
+  if (it.supplierId && refs.length > 1) {
+    // Consolidated invoice quoting several POs. If the parse read printed
+    // per-PO net subtotals AND every referenced PO resolves AND the printed
+    // figures add up to the invoice net (±£1) — pre-build the split. All
+    // figures come off the page; the tolerance check is plain arithmetic.
+    const printed = Array.isArray(p.po_allocations) ? p.po_allocations : [];
+    const resolved = [];
+    let allResolve = printed.length > 0;
+    for (const pa of printed) {
+      const hit = _bimpFindPo(pa.po_reference);
+      const net = Number(pa.net);
+      if (!hit || !Number.isFinite(net) || net === 0) { allResolve = false; break; }
+      resolved.push({ poId: hit.id, ref: hit.reference, net: Math.round(net * 100) / 100 });
+    }
+    const invNet = parseFloat(it.net);
+    const sumOk = Number.isFinite(invNet) && resolved.length
+      && Math.abs(resolved.reduce((s, a) => s + a.net, 0) - invNet) <= 1.00;
+    if (allResolve && sumOk && resolved.length > 1) {
+      it.poAllocs = resolved;
+      it.poId = String(resolved[0].poId);
+    } else {
+      const first = _bimpFindPo(refs[0]);
+      if (first) it.poId = String(first.id);
+      it.multiPoNote = `quotes ${refs.length} POs (${refs.join(', ')}) — save, then 🔗 Match → Split to spread it`;
+    }
+  } else if (refs.length && it.supplierId) {
+    const hit = _bimpFindPo(refs[0]);
     if (hit) it.poId = String(hit.id);
   }
 
@@ -38821,10 +38860,18 @@ function _bimpRenderCard(i) {
           ${fmtIn('gross', 'Gross £', it.gross, `oninput="_bimpItems[${i}].gross=this.value;_bimpCheckDup(${i});_bimpUpdateFooter()"`, 95)}
           <div style="flex:1.5;min-width:150px">
             <div style="font-size:9px;text-transform:uppercase;color:var(--muted)">PO</div>
-            <select class="field-input" style="font-size:12px;padding:4px 8px" onchange="_bimpItems[${i}].poId=this.value">${poOptions}</select>
+            ${it.poAllocs ? `
+              <div style="display:flex;align-items:center;gap:6px;border:1px solid #60a5fa;border-radius:6px;padding:4px 8px;background:rgba(96,165,250,.10)">
+                <span style="font-size:11px;color:#60a5fa;font-weight:600" title="${escapeHtml(it.poAllocs.map(a => `${a.ref} £${a.net.toFixed(2)}`).join(' · '))}">🔀 split across ${it.poAllocs.length} POs</span>
+                <button class="btn btn-ghost" style="margin-left:auto;padding:0 6px;font-size:11px" title="Clear the split — pick one PO instead"
+                        onclick="_bimpItems[${i}].poAllocs=null;_bimpRenderCard(${i})">✕</button>
+              </div>` : `
+              <select class="field-input" style="font-size:12px;padding:4px 8px" onchange="_bimpItems[${i}].poId=this.value">${poOptions}</select>`}
           </div>
         `}
       </div>
+      ${it.poAllocs ? `<div style="font-size:10px;color:#60a5fa;margin-top:6px">🔀 ${escapeHtml(it.poAllocs.map(a => `${a.ref} £${a.net.toFixed(2)} net`).join(' · '))} — read off the invoice, saved as a split</div>` : ''}
+      ${it.multiPoNote ? `<div style="font-size:10px;color:#ffa500;margin-top:6px">⚠ ${escapeHtml(it.multiPoNote)}</div>` : ''}
       ${dupBanner}
       ${fileBanner}
     </div>`;
@@ -38836,6 +38883,8 @@ function bimpSupplierPicked(i, val) {
   it.newSupplier = null;
   it.supplierId = val;
   it.poId = '';
+  it.poAllocs = null;
+  it.multiPoNote = null;
   const s = (_invSuppliersCache || []).find(x => String(x.id) === String(val));
   it.willBePaid = !!(s && s.payment_on_account);
   _bimpCheckDup(i);
@@ -38916,6 +38965,9 @@ async function bimpSaveAll() {
       await api.post('/api/supplier-invoices', {
         supplier_id: supplierId,
         po_id: !isSub && it.poId ? parseInt(it.poId) : null,
+        allocations: !isSub && it.poAllocs
+          ? it.poAllocs.map(a => ({ po_id: a.poId, net: a.net }))
+          : undefined,
         invoice_type: it.type,
         invoice_ref: it.ref || null,
         invoice_date: it.date || null,
@@ -38968,26 +39020,52 @@ async function openSupMatchModal() {
   }
   const supplierId = supplierIds[0];
   const fmt2 = v => Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const total = sumMoney(sel, i => i.gross);
+  const netTotal = sumMoney(sel, i => i.net != null ? i.net : i.gross);
+  const allHaveNet = sel.every(i => i.net != null);
 
   document.getElementById('invSupMatchLabel').textContent =
-    `${sel.length} invoice${sel.length === 1 ? '' : 's'} from ${sel[0].supplier_name || 'supplier'} — £${fmt2(total)}`;
+    `${sel.length} invoice${sel.length === 1 ? '' : 's'} from ${sel[0].supplier_name || 'supplier'} — £${fmt2(netTotal)} ${allHaveNet ? 'net' : '(gross — no net figure on some)'}`;
 
-  // PO dropdown: this supplier's POs, with total + already-matched sum
+  // Split mode is only offered for a single ticked invoice
+  _supMatchMode = 'single';
+  _supMatchSplits = new Map();
+  const modeWrap = document.getElementById('invSupMatchModeWrap');
+  if (modeWrap) modeWrap.style.display = sel.length === 1 ? 'flex' : 'none';
+  supMatchSetMode('single');
+
+  // PO list: this supplier's POs with net + already-matched (from allocations)
   const poSel = document.getElementById('invSupMatchPo');
   poSel.innerHTML = '<option value="">Loading POs…</option>';
   document.getElementById('invSupMatchModal').classList.add('active');
+  _supMatchPos = [];
   try {
     const pos = await api.get(`/api/purchase-orders?supplier_id=${supplierId}`);
     const active = (pos || []).filter(po => po.status !== 'Cancelled');
+
+    // Matched-so-far per PO from allocations (fallback: legacy single po_id),
+    // EXCLUDING the ticked invoices themselves so re-matching reads sanely.
+    const selIds = new Set(sel.map(i => i.id));
     const matchedByPo = {};
     for (const inv of _invSupInvoices) {
-      if (inv.po_id) matchedByPo[inv.po_id] = (matchedByPo[inv.po_id] || 0) + Number(inv.gross || 0);
+      if (selIds.has(inv.id)) continue;
+      const allocs = Array.isArray(inv.allocations) && inv.allocations.length
+        ? inv.allocations
+        : (inv.po_id ? [{ po_id: inv.po_id, net: inv.net, gross: inv.gross }] : []);
+      for (const a of allocs) {
+        matchedByPo[a.po_id] = (matchedByPo[a.po_id] || 0) + Number(a.net != null ? a.net : a.gross || 0);
+      }
     }
-    poSel.innerHTML = '<option value="">— Unmatch (no PO) —</option>' + active.map(po => {
-      const m = matchedByPo[po.id] || 0;
-      return `<option value="${po.id}">${escapeHtml(po.reference || ('#' + po.id))} — £${fmt2(po.total_value)}${m ? ` (matched £${fmt2(m)})` : ''}${po.job_number ? ' · ' + escapeHtml(po.job_number) : ''}</option>`;
+    _supMatchPos = active.map(po => ({
+      ...po,
+      _net: _poNet(po),
+      _matched: Math.round((matchedByPo[po.id] || 0) * 100) / 100
+    }));
+
+    poSel.innerHTML = '<option value="">— Unmatch (no PO) —</option>' + _supMatchPos.map(po => {
+      const remaining = Math.max(0, Math.round((po._net - po._matched) * 100) / 100);
+      return `<option value="${po.id}">${escapeHtml(po.reference || ('#' + po.id))} — £${fmt2(po._net)} net${po._matched ? ` (£${fmt2(remaining)} left)` : ''}${po.job_number ? ' · ' + escapeHtml(po.job_number) : ''}</option>`;
     }).join('');
+    if (_supMatchMode === 'split') _supMatchRenderSplitList();
   } catch (e) {
     poSel.innerHTML = '<option value="">Failed to load POs</option>';
   }
@@ -39002,6 +39080,108 @@ async function openSupMatchModal() {
     _invLoadBabcockOptions(bqSel, sel.find(i => i.babcock_quote_id)?.babcock_quote_id || null);
   } else if (bqSel) {
     bqSel.innerHTML = '<option value="">— No Babcock quote —</option>';
+  }
+}
+
+// ── Split-mode state & helpers ───────────────────────────────────────────────
+let _supMatchMode = 'single';    // 'single' | 'split'
+let _supMatchPos = [];           // supplier's POs with _net + _matched computed
+let _supMatchSplits = new Map(); // po_id → net £ string
+
+function supMatchSetMode(mode) {
+  _supMatchMode = mode;
+  const one = document.getElementById('invSupMatchModeSingle');
+  const spl = document.getElementById('invSupMatchModeSplit');
+  if (one) one.classList.toggle('active', mode === 'single');
+  if (spl) spl.classList.toggle('active', mode === 'split');
+  const sw = document.getElementById('invSupMatchSingleWrap');
+  const pw = document.getElementById('invSupMatchSplitWrap');
+  if (sw) sw.style.display = mode === 'single' ? '' : 'none';
+  if (pw) pw.style.display = mode === 'split' ? '' : 'none';
+  if (mode === 'split') { _supMatchRenderSplitList(); _supMatchUpdateBar(); }
+}
+
+// The single ticked invoice being split (split mode is gated to one invoice)
+function _supMatchSplitInvoice() {
+  const sel = _invRemitSelection();
+  return sel.length === 1 ? sel[0] : null;
+}
+
+function _supMatchRenderSplitList() {
+  const host = document.getElementById('invSupMatchSplitList');
+  if (!host) return;
+  const q = (document.getElementById('invSupMatchSplitSearch')?.value || '').toLowerCase().trim();
+  const fmt2 = v => Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const list = _supMatchPos.filter(po => !q ||
+    `${po.reference || ''} ${po.job_number || ''} ${po.description || ''}`.toLowerCase().includes(q));
+  if (!list.length) {
+    host.innerHTML = '<div style="padding:16px;text-align:center;font-size:12px;color:var(--muted)">No POs match</div>';
+    return;
+  }
+  host.innerHTML = list.map(po => {
+    const on = _supMatchSplits.has(po.id);
+    const remaining = Math.max(0, Math.round((po._net - po._matched) * 100) / 100);
+    return `
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);${on ? 'background:var(--surface2);' : ''}">
+      <input type="checkbox" ${on ? 'checked' : ''} onchange="supMatchToggleSplitPo(${po.id}, this.checked)">
+      <div style="flex:1;min-width:0">
+        <span style="font-family:var(--font-mono);font-weight:600;font-size:12px">${escapeHtml(po.reference || ('#' + po.id))}</span>
+        ${po.job_number ? `<span style="font-size:11px;color:var(--muted)"> · ${escapeHtml(po.job_number)}</span>` : ''}
+        <div style="font-size:10px;color:var(--subtle)">£${fmt2(po._net)} net${po._matched ? ` · £${fmt2(po._matched)} matched · £${fmt2(remaining)} left` : ''}</div>
+      </div>
+      <div style="width:110px">
+        <input type="number" step="0.01" class="field-input" placeholder="net £"
+               style="font-size:12px;padding:4px 8px;text-align:right"
+               value="${on ? escapeHtml(_supMatchSplits.get(po.id)) : ''}" ${on ? '' : 'disabled'}
+               oninput="supMatchSplitAmtChanged(${po.id}, this.value)">
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function supMatchToggleSplitPo(poId, checked) {
+  if (checked) {
+    // Prefill with what's left on the PO, capped by what's still unallocated
+    // on the invoice — plain arithmetic, always editable.
+    const inv = _supMatchSplitInvoice();
+    const invNet = inv ? Number(inv.net != null ? inv.net : inv.gross) || 0 : 0;
+    const allocated = [..._supMatchSplits.values()].reduce((s, v) => s + (parseFloat(v) || 0), 0);
+    const po = _supMatchPos.find(p => p.id === poId);
+    const remainingPo = po ? Math.max(0, Math.round((po._net - po._matched) * 100) / 100) : 0;
+    const remainingInv = Math.max(0, Math.round((invNet - allocated) * 100) / 100);
+    const prefill = remainingPo > 0 ? Math.min(remainingPo, remainingInv) : remainingInv;
+    _supMatchSplits.set(poId, prefill ? prefill.toFixed(2) : '');
+  } else {
+    _supMatchSplits.delete(poId);
+  }
+  _supMatchRenderSplitList();
+  _supMatchUpdateBar();
+}
+
+function supMatchSplitAmtChanged(poId, val) {
+  if (_supMatchSplits.has(poId)) _supMatchSplits.set(poId, val);
+  _supMatchUpdateBar();
+}
+
+function _supMatchUpdateBar() {
+  const bar = document.getElementById('invSupMatchSplitBar');
+  if (!bar) return;
+  const inv = _supMatchSplitInvoice();
+  const fmt2 = v => Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const invNet = inv ? Number(inv.net != null ? inv.net : inv.gross) || 0 : 0;
+  const hasNet = inv && inv.net != null;
+  const allocated = Math.round([..._supMatchSplits.values()].reduce((s, v) => s + (parseFloat(v) || 0), 0) * 100) / 100;
+  const diff = Math.round((allocated - invNet) * 100) / 100;
+  const okish = Math.abs(diff) <= 1.00 && _supMatchSplits.size > 0;
+  bar.style.background = okish ? 'rgba(62,207,142,.12)' : 'rgba(255,165,0,.12)';
+  bar.style.border = `1px solid ${okish ? 'var(--green)' : '#ffa500'}`;
+  bar.style.color = okish ? 'var(--green)' : '#ffa500';
+  if (!_supMatchSplits.size) {
+    bar.textContent = `Nothing allocated yet — invoice is £${fmt2(invNet)} ${hasNet ? 'net' : 'gross'}`;
+  } else if (okish) {
+    bar.textContent = `✓ £${fmt2(allocated)} allocated across ${_supMatchSplits.size} PO${_supMatchSplits.size === 1 ? '' : 's'} — matches the invoice (£${fmt2(invNet)} ${hasNet ? 'net' : 'gross'})`;
+  } else {
+    bar.textContent = `⚠ £${fmt2(allocated)} allocated vs £${fmt2(invNet)} invoice ${hasNet ? 'net' : 'gross'} — ${diff > 0 ? '£' + fmt2(diff) + ' over' : '£' + fmt2(-diff) + ' short'}`;
   }
 }
 
@@ -39036,13 +39216,58 @@ function closeSupMatchModal() {
 async function confirmSupMatch() {
   const sel = _invRemitSelection();
   if (!sel.length) { closeSupMatchModal(); return; }
-  const poId = document.getElementById('invSupMatchPo').value || null;
+  const fmt2 = v => Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const bqWrapEl = document.getElementById('invSupMatchBabcockWrap');
   const bqEl = document.getElementById('invSupMatchBabcock');
   const bqVisible = bqWrapEl && bqWrapEl.style.display !== 'none';
   const babcockId = bqVisible && bqEl && bqEl.value ? parseInt(bqEl.value) : (bqVisible ? null : undefined);
+
+  // Turn the server's warnings[] into one readable bamaConfirm message
+  const warningsText = (warnings) => (warnings || []).map(w => {
+    if (w.kind === 'sum_mismatch')
+      return `The splits total £${fmt2(w.allocated_net)} but the invoice is £${fmt2(w.invoice_net)} net — £${fmt2(Math.abs(w.diff))} ${w.diff > 0 ? 'over' : 'short'}.`;
+    if (w.kind === 'po_over')
+      return `PO ${w.po_reference} is £${fmt2(w.po_net)} net, but its matched invoices would total £${fmt2(w.matched_net)} — £${fmt2(w.over_by)} over the order value.`;
+    return '';
+  }).filter(Boolean).join('\n\n');
+
+  // ═══ SPLIT mode — one invoice allocated across several POs ═══
+  if (_supMatchMode === 'split') {
+    const inv = _supMatchSplitInvoice();
+    if (!inv) { toast('Split works with exactly one ticked invoice', 'error'); return; }
+    const allocations = [..._supMatchSplits.entries()]
+      .map(([po_id, v]) => ({ po_id, net: parseFloat(v) }))
+      .filter(a => Number.isFinite(a.net) && a.net !== 0);
+    if (!allocations.length) { toast('Tick at least one PO and enter its net amount', 'error'); return; }
+
+    setLoading(true);
+    try {
+      let res = await api.post('/api/supplier-invoices-match', { invoice_id: inv.id, allocations });
+      if (res && res.needs_confirm) {
+        setLoading(false);
+        const goAnyway = await bamaConfirm({
+          title: 'Are you sure these are the right amounts for these orders?',
+          message: warningsText(res.warnings) + '\n\nMatch anyway?',
+          confirmText: 'Match anyway', danger: true
+        });
+        if (!goAnyway) return;
+        setLoading(true);
+        res = await api.post('/api/supplier-invoices-match', { invoice_id: inv.id, allocations, force: true });
+      }
+      toast(`Invoice split across ${allocations.length} PO${allocations.length === 1 ? '' : 's'} ✓`, 'success');
+      _invRemitSelected.clear();
+      closeSupMatchModal();
+      await loadInvoicingData();
+      renderInvSupplierTable();
+    } catch (e) {
+      toast('Split failed: ' + (e.message || 'unknown error'), 'error');
+    } finally { setLoading(false); }
+    return;
+  }
+
+  // ═══ SINGLE mode — all ticked invoices onto one PO (or unmatch) ═══
+  const poId = document.getElementById('invSupMatchPo').value || null;
   const ids = sel.map(i => i.id);
-  const fmt2 = v => Number(v || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   setLoading(true);
   try {
@@ -39053,7 +39278,7 @@ async function confirmSupMatch() {
       setLoading(false);
       const goAnyway = await bamaConfirm({
         title: 'Are you sure? Maybe one invoice too many?',
-        message: `PO ${res.po_reference} totals £${fmt2(res.po_total)}, but the ${res.invoice_count} matched invoice${res.invoice_count === 1 ? '' : 's'} would total £${fmt2(res.matched_total)} — that's £${fmt2(res.over_by)} over the order value.\n\nMatch anyway?`,
+        message: `PO ${res.po_reference} totals £${fmt2(res.po_total)}${res.basis === 'net' ? ' net' : ''}, but the ${res.invoice_count} matched invoice${res.invoice_count === 1 ? '' : 's'} would total £${fmt2(res.matched_total)} — that's £${fmt2(res.over_by)} over the order value.\n\nMatch anyway?`,
         confirmText: 'Match anyway', danger: true
       });
       if (!goAnyway) return;
@@ -39333,7 +39558,8 @@ async function _supAddHandleFile(file) {
   "utr_number": "subcontractor only: UTR if shown",
   "bank_sort_code": "subcontractor only: sort code if shown",
   "bank_account_no": "subcontractor only: account number if shown",
-  "po_reference": "BAMA's PO reference if shown — looks like P260501 (P + 6 digits)",
+  "po_reference": "BAMA's PO reference if shown — looks like P260501 (P + 6 digits). When several are shown, the first one.",
+  "po_references": ["EVERY BAMA PO reference shown, P + 6 digits each — consolidated invoices often quote several"],
   "sold_via": "amazon" if this is an Amazon / Amazon Business marketplace invoice (Amazon branding, amazon.co.uk order number, "Sold by ..." line) — otherwise null,
   "amazon_seller": "when sold_via is amazon: the actual seller/merchant name, else null"
 }
@@ -39453,7 +39679,12 @@ IMPORTANT: Use the final printed totals from the invoice — not a goods-only su
                 ? `new subcontractor "${parsed.supplier_name}" — details pre-filled below, hit Save Subcontractor`
                 : `supplier "${parsed.supplier_name}" not found — pick manually`) : ''));
   }
-  if (parsed.po_reference) bits.push(poMatched ? `PO ${parsed.po_reference} matched` : `PO ${parsed.po_reference} not found`);
+  const _multiPo = Array.isArray(parsed.po_references) ? [...new Set(parsed.po_references.filter(Boolean))] : [];
+  if (_multiPo.length > 1) {
+    bits.push(`⚠ quotes ${_multiPo.length} POs (${_multiPo.join(', ')}) — save, then tick it in the ledger and 🔗 Match → Split across several POs`);
+  } else if (parsed.po_reference) {
+    bits.push(poMatched ? `PO ${parsed.po_reference} matched` : `PO ${parsed.po_reference} not found`);
+  }
   if (parsed.sold_via === 'amazon') bits.push(`Amazon${parsed.amazon_seller ? ' (seller: ' + parsed.amazon_seller + ')' : ''} — tracked under Amazon`);
   label.innerHTML = `${escapeHtml(file.name)} · ${(file.size / 1024).toFixed(0)} KB — <span style="color:var(--green);font-weight:600">parsed ✓</span>${bits.filter(Boolean).length ? ' <span style="color:var(--muted)">(' + escapeHtml(bits.filter(Boolean).join(', ')) + ')</span>' : ''}`;
 }

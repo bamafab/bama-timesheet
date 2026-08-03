@@ -1179,6 +1179,16 @@
       "seedForms": []
     },
     {
+      "script": "create-supplier-invoice-po-allocations.sql",
+      "title": "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
+      "kind": "structural",
+      "tables": [
+        "SupplierInvoicePOAllocations"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
       "script": "create-supplier-invoices.sql",
       "title": "\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550",
       "kind": "structural",
@@ -1303,6 +1313,16 @@
         "BAMA SITE 001",
         "BAMA tec 001",
         "CON 001"
+      ]
+    },
+    {
+      "script": "seed-qms-site-report.sql",
+      "title": "A QMS-style site report the shop-floor / site team fills on their phone.",
+      "kind": "structural",
+      "tables": [],
+      "columns": [],
+      "seedForms": [
+        "BAMA SR 001"
       ]
     },
     {
