@@ -1693,7 +1693,9 @@ const INV_HELP = {
     <b>🔀 split across N POs</b> — it saves already spread across them. Lines tagged with a name instead of a P-number
     (someone ordered without a PO) show as an amber leftover you can fold into an existing PO.
     If the invoice quotes a P-number that <b>isn't in the ERP</b> (order raised without one — it happens), the card offers
-    <b>➕ create — book to…</b>: pick the job or cost centre and the PO is created on the spot at the invoice's own figures.</div>
+    <b>➕ create</b>: the PO is created on the spot <b>keeping that exact number</b>, booked to the job or cost centre you pick,
+    at the invoice's own figures. Name-tagged lines can be created too — those get a brand new PO with the next free number,
+    with the name kept in the description.</div>
     <h3>Single add</h3>
     <p><b>➕ Add Invoice</b> works the same for one invoice — drop the file, it fills itself, pick the PO from the dropdown if it didn't match automatically.</p>
     <h3>Subcontractors (CIS)</h3>
@@ -1773,6 +1775,6 @@ function invHelpSection(sec) {
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="shared.js?v=20260803c"></script>
+<script src="shared.js?v=20260803d"></script>
 </body>
 </html>

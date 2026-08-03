@@ -38510,13 +38510,18 @@ async function _bimpQcLoad() {
   }
 }
 
-function _bimpQcBookOptions() {
+function _bimpQcBookOptions(label) {
   if (!_bimpQcData) return '<option value="">loading jobs…</option>';
   const cc = Object.entries(_bimpQcData.cc)
-    .map(([code, label]) => `<option value="cc:${code}">${escapeHtml(code)} — ${escapeHtml(label)}</option>`).join('');
+    .map(([code, lab]) => `<option value="cc:${code}">${escapeHtml(code)} — ${escapeHtml(lab)}</option>`).join('');
   const pj = _bimpQcData.projects
     .map(p => `<option value="pj:${p.id}">${escapeHtml(p.project_number || ('#' + p.id))} — ${escapeHtml((p.project_name || '').slice(0, 40))}</option>`).join('');
-  return `<option value="">➕ create — book to…</option>`
+  // Stated P-number is KEPT on the created PO; name-tagged lines get a brand
+  // new PO with the next free number (we have no orders starting with names).
+  const head = _isPoRef(label)
+    ? `➕ create ${escapeHtml(label)} (keeps this number) — book to…`
+    : `➕ create new PO (next free number) — book to…`;
+  return `<option value="">${head}</option>`
        + (cc ? `<optgroup label="Cost centres">${cc}</optgroup>` : '')
        + (pj ? `<optgroup label="Live projects">${pj}</optgroup>` : '');
 }
@@ -38536,9 +38541,12 @@ async function bimpQcCreate(i, idx, val) {
   const vat = Math.round(lo.net * ratio * 100) / 100;
   const gross = Math.round((lo.net + vat) * 100) / 100;
 
+  const isRealRef = _isPoRef(lo.label);
   const goAhead = await bamaConfirm({
-    title: `Create PO ${lo.label}?`,
-    message: `A PO with this number isn't in the ERP — probably never raised.\n\nCreate ${lo.label} for this supplier at £${lo.net.toFixed(2)} net (£${gross.toFixed(2)} incl VAT), booked to ${bookLabel}?\n\nYou can edit details in the PO tracker afterwards.`,
+    title: isRealRef ? `Create PO ${lo.label}?` : `Create a new PO for "${lo.label}"?`,
+    message: isRealRef
+      ? `A PO with this number isn't in the ERP — probably never raised.\n\nCreate ${lo.label} — keeping this exact number — for this supplier at £${lo.net.toFixed(2)} net (£${gross.toFixed(2)} incl VAT), booked to ${bookLabel}?\n\nYou can edit details in the PO tracker afterwards.`
+      : `"${lo.label}" isn't a PO number — someone ordered under a name.\n\nCreate a NEW PO (next free number) for this supplier at £${lo.net.toFixed(2)} net (£${gross.toFixed(2)} incl VAT), booked to ${bookLabel}? The tag "${lo.label}" is kept in the PO description.\n\nYou can edit details in the PO tracker afterwards.`,
     confirmText: 'Create PO'
   });
   if (!goAhead) { _bimpRenderCard(i); return; }
@@ -38546,13 +38554,13 @@ async function bimpQcCreate(i, idx, val) {
   setLoading(true);
   try {
     const created = await api.post('/api/purchase-orders', {
-      reference: lo.label,
+      ...(isRealRef ? { reference: lo.label } : {}),
       supplier_id: parseInt(it.supplierId),
       ...(kind === 'cc' ? { cost_centre: id } : { project_id: parseInt(id) }),
       total_value: gross,
       vat_rate: Math.round(ratio * 100),
       vat_amount: vat,
-      description: `Created from supplier invoice ${it.ref || it.file.name} (bulk import)`
+      description: `Created from supplier invoice ${it.ref || it.file.name} (bulk import)${isRealRef ? '' : ` — ordered as "${lo.label}"`}`
     });
     _bimpPos.push(created);
     it.poAllocs = it.poAllocs || [];
@@ -38561,7 +38569,7 @@ async function bimpQcCreate(i, idx, val) {
     it.poLeftover.splice(idx, 1);
     if (!it.poLeftover.length) it.poLeftover = null;
     if (it.multiPoNote && it.multiPoNote.startsWith('no PO found')) it.multiPoNote = null;
-    toast(`PO ${lo.label} created ✓`, 'success');
+    toast(`PO ${created.reference || lo.label} created ✓`, 'success');
   } catch (e) {
     toast('Could not create the PO: ' + (e.message || 'unknown error'), 'error');
   } finally {
@@ -39022,8 +39030,8 @@ function _bimpRenderCard(i) {
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:rgba(255,165,0,.08);border:1px solid rgba(255,165,0,.4);border-radius:6px;padding:5px 10px;margin-top:6px">
           <span style="font-size:11px;color:#ffa500;font-weight:600">⚠ ${escapeHtml(lo.label)} £${lo.net.toFixed(2)} — ${_isPoRef(lo.label) ? 'this PO isn\'t in the ERP' : 'not tied to a PO'}</span>
           <div style="display:flex;gap:6px;margin-left:auto;flex-wrap:wrap">
-            ${_isPoRef(lo.label) ? `<select class="field-input" style="font-size:11px;padding:2px 6px;max-width:220px" ${_bimpQcData ? '' : 'disabled'}
-                    onchange="bimpQcCreate(${i}, ${li}, this.value)">${_bimpQcBookOptions()}</select>` : ''}
+            <select class="field-input" style="font-size:11px;padding:2px 6px;max-width:280px" ${_bimpQcData ? '' : 'disabled'}
+                    onchange="bimpQcCreate(${i}, ${li}, this.value)">${_bimpQcBookOptions(lo.label)}</select>
             <select class="field-input" style="font-size:11px;padding:2px 6px;max-width:220px"
                     onchange="bimpQcAssign(${i}, ${li}, this.value)">
               <option value="">→ add to an existing PO…</option>
