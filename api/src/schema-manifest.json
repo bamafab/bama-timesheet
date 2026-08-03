@@ -1128,6 +1128,16 @@
       ]
     },
     {
+      "script": "create-rams-documents.sql",
+      "title": "Persists every generated RAMS so it can be REVISED (same number, rev+1)",
+      "kind": "structural",
+      "tables": [
+        "RamsDocuments"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
       "script": "create-site-personnel.sql",
       "title": "Site Personnel roster  \u2014  RAMS module phase 2b   (safe re-run version)",
       "kind": "structural",

@@ -860,21 +860,24 @@
 <!-- RAMS GENERATOR (Site Installation) — phase 1: modal shell only. -->
 <div class="modal-overlay" id="ramsModal">
   <div class="modal" style="width:820px;max-width:97vw;max-height:92vh;overflow-y:auto">
-    <div class="modal-title" style="margin-bottom:4px">&#128203; Generate RAMS</div>
+    <div class="modal-title" id="ramsModalTitle" style="margin-bottom:4px">&#128203; Generate RAMS</div>
     <div style="color:var(--muted);font-size:12px;margin-bottom:18px">
       Risk Assessment &amp; Method Statement. Prefilled from the job — edit anything before generating.
-      Saves to <b>00 - RAMS / (job name)</b> in SharePoint. The <b>Tier</b> selector sets document depth
-      (Brief = lean, Tier&nbsp;1 = full approval trail) and resets the standard-section ticks below.
-      <b>Output</b> can add an editable Word (.docx) twin alongside the PDF.
+      Numbered per project (<b>project - 001 - title</b>); use <b>Revise</b> on an existing RAMS in the
+      Site Installation register to issue Rev 01, 02… instead of creating a new document. Tick extra
+      <b>Jobs covered</b> to merge several jobs onto one RAMS. Saves to <b>00 - RAMS</b> in SharePoint
+      (job folder, or a folder named after the title when merged) and lists on every covered job. The
+      <b>Tier</b> selector sets document depth (Brief = lean, Tier&nbsp;1 = full approval trail) and resets
+      the standard-section ticks below. <b>Output</b> can add an editable Word (.docx) twin alongside the PDF.
     </div>
 
     <!-- HEADER -->
     <div class="field-label">HEADER</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
       <div><label style="font-size:11px;color:var(--muted)">Contract No</label><input id="ramsContractNo" type="text" class="field-input"></div>
-      <div><label style="font-size:11px;color:var(--muted)">BAMA Doc No</label><input id="ramsDocNo" type="text" class="field-input"></div>
+      <div><label style="font-size:11px;color:var(--muted)">BAMA Doc No</label><input id="ramsDocNo" type="text" class="field-input" oninput="_ramsDocNoManual=true"></div>
       <div style="grid-column:1 / -1"><label style="font-size:11px;color:var(--muted)">Contract / Project name</label><input id="ramsContract" type="text" class="field-input"></div>
-      <div style="grid-column:1 / -1"><label style="font-size:11px;color:var(--muted)">Title / Works description</label><input id="ramsTitle" type="text" class="field-input" placeholder="e.g. Wing B Lift Steelwork"></div>
+      <div style="grid-column:1 / -1"><label style="font-size:11px;color:var(--muted)">Title / Works description</label><input id="ramsTitle" type="text" class="field-input" placeholder="e.g. Wing B Lift Steelwork" oninput="ramsSyncDocNo()"></div>
       <div><label style="font-size:11px;color:var(--muted)">Client</label><input id="ramsClient" type="text" class="field-input"></div>
       <div><label style="font-size:11px;color:var(--muted)">Principal Contractor</label><input id="ramsPrincipal" type="text" class="field-input"></div>
       <div><label style="font-size:11px;color:var(--muted)">Prepared / Reviewed / Approved by</label><input id="ramsPreparedBy" type="text" class="field-input"></div>
@@ -889,6 +892,14 @@
         </select>
       </div>
     </div>
+
+    <!-- JOBS COVERED (merge picker; locked on revision) -->
+    <div class="field-label" style="display:flex;align-items:center;gap:10px">
+      JOBS COVERED
+      <span id="ramsJobsLockNote" style="display:none;font-weight:400;text-transform:none;letter-spacing:0;font-size:11px;color:var(--muted)">— locked to the original jobs for this revision</span>
+      <button class="btn" id="ramsJobsEditBtn" onclick="ramsToggleJobsLock()" style="display:none;padding:4px 10px;font-size:11px">&#9998; Edit jobs</button>
+    </div>
+    <div id="ramsJobsList" style="border:1px solid var(--border);border-radius:8px;background:var(--bg-darker);margin-bottom:16px;max-height:150px;overflow-y:auto"></div>
 
     <!-- SITE -->
     <div class="field-label">SITE ADDRESS &amp; DETAILS</div>
@@ -1050,6 +1061,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
 <script src="steel-data.js?v=20260731s"></script>
-<script src="shared.js?v=20260803e"></script>
+<script src="shared.js?v=20260803f"></script>
 </body>
 </html>

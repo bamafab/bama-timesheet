@@ -15598,12 +15598,55 @@ function closeSitePackModal() {
 // DOCX (7).
 // ═══════════════════════════════════════════
 let _ramsSitePlanDataUri = null;   // set by ramsPreviewSitePlan(); embedded in the PDF site-plan section.
+
+// ── RAMS register state (numbering / revisions / multi-job merge) ──────────
+let _ramsEditDoc      = null;   // RamsDocuments row when REVISING; null for a new RAMS
+let _ramsAssignedNo   = null;   // rams_no handed out by /api/rams-next-no
+let _ramsRevisionInt  = 0;      // 0 = first issue; printed as Rev 00 / 01 / …
+let _ramsJobIds       = [];     // selected job ids (merge = several)
+let _ramsJobsLocked   = false;  // revisions open with the job list locked
+let _ramsDocNoManual  = false;  // user typed into the Doc No box — stop auto-sync
+let _ramsDocsCache    = {};     // projectId -> RamsDocuments register rows
+const _ramsPad = (n, w) => String(Math.max(0, parseInt(n) || 0)).padStart(w, '0');
 let _ramsSitePlanPin = null;       // {x,y} in % of the image (phase 5 click-to-pin); drawn as a work-area marker in the PDF.
 
-function openRamsModal() {
+async function openRamsModal(existingDocId) {
   const proj = currentProject, job = currentJob;
   if (!job?.id) { toast('No job selected.', 'error'); return; }
   const setV = (id, v) => { const el = document.getElementById(id); if (el) el.value = (v == null ? '' : v); };
+
+  // ── Register state: revising an existing RAMS, or numbering a new one ──
+  _ramsEditDoc = null; _ramsDocNoManual = false;
+  let savedRams = null;
+  try {
+    if (existingDocId) {
+      // REVISION: load the saved row + next revision number; jobs locked.
+      const row = await api.get(`/api/rams-docs/${existingDocId}`);
+      const next = await api.get(`/api/rams-next-no?projectId=${row.project_id}&ramsNo=${row.rams_no}`);
+      _ramsEditDoc = row;
+      _ramsAssignedNo = row.rams_no;
+      _ramsRevisionInt = next.revision;
+      _ramsJobIds = (() => { try { return (JSON.parse(row.job_ids || '[]') || []).map(Number); } catch (e) { return []; } })();
+      if (!_ramsJobIds.length) _ramsJobIds = [parseInt(job.id)];
+      _ramsJobsLocked = true;
+      try { savedRams = row.rams_data ? JSON.parse(row.rams_data) : null; } catch (e) { savedRams = null; }
+    } else {
+      // NEW: next free number for the project. If the register API/table is
+      // missing, fall back to the legacy behaviour (no numbering) gracefully.
+      const next = await api.get(`/api/rams-next-no?projectId=${parseInt(proj.id)}`).catch(() => null);
+      _ramsAssignedNo = next ? next.rams_no : null;
+      _ramsRevisionInt = 0;
+      _ramsJobIds = [parseInt(job.id)];
+      _ramsJobsLocked = false;
+    }
+  } catch (e) {
+    toast('Could not load the RAMS register: ' + e.message, 'error');
+    return;
+  }
+  const mTitle = document.getElementById('ramsModalTitle');
+  if (mTitle) mTitle.innerHTML = _ramsEditDoc
+    ? `\u{1F4CB} Revise RAMS \u2014 Rev ${_ramsPad(_ramsRevisionInt, 2)}`
+    : '\u{1F4CB} Generate RAMS';
 
   // reset site-plan upload state (image + work-area pin)
   _ramsSitePlanDataUri = null;
@@ -15617,68 +15660,166 @@ function openRamsModal() {
 
   // — Header —
   const contractNo = proj?.project_number || proj?.id || '';
-  setV('ramsContractNo', contractNo);
-  setV('ramsDocNo',      contractNo ? `${contractNo}-RAMS-01` : '');
-  setV('ramsContract',   proj?.project_name || proj?.name || '');
-  setV('ramsTitle',      job?.name || proj?.project_name || '');
-  setV('ramsClient',     proj?.client || '');
-  setV('ramsPrincipal',  proj?.client || '');           // default: same as client — editable
-  setV('ramsPreparedBy', _currentDraftsmanName || 'Mateusz Braczyk');
+  const sr = savedRams;   // saved modal state when revising (may be null)
+  setV('ramsContractNo', sr?.contractNo ?? contractNo);
+  setV('ramsTitle',      sr?.title ?? (job?.name || proj?.project_name || ''));
+  // Doc no: "<project> - 001 - <title>" from the register; legacy fallback if
+  // the register was unavailable. Auto-resyncs while the title is edited
+  // until the user types into the Doc No box directly.
+  setV('ramsDocNo', sr?.docNo || ramsComposeDocNo());
+  if (sr?.docNo && sr.docNo !== ramsComposeDocNo()) _ramsDocNoManual = true;
+  setV('ramsContract',   sr?.contract ?? (proj?.project_name || proj?.name || ''));
+  setV('ramsClient',     sr?.client ?? (proj?.client || ''));
+  setV('ramsPrincipal',  sr?.principal ?? (proj?.client || ''));   // default: same as client — editable
+  setV('ramsPreparedBy', sr?.preparedBy ?? (_currentDraftsmanName || 'Mateusz Braczyk'));
   setV('ramsDate',       new Date().toISOString().slice(0, 10));
-  setV('ramsRev',        '00 \u2013 First Issue');
-  const tierSel = document.getElementById('ramsTier'); if (tierSel) tierSel.value = 'complex';
-  setV('ramsHours',      '07:30\u201317:00 Monday to Friday (or as directed at site induction)');
-  setV('ramsAE',         '');
-  setV('ramsScopeText',  '');
-  setV('ramsTasksText',  '');
-  setV('ramsNotes',      '');
+  setV('ramsRev',        _ramsRevisionInt > 0 ? `${_ramsPad(_ramsRevisionInt, 2)} \u2013 Revision` : '00 \u2013 First Issue');
+  const tierSel = document.getElementById('ramsTier'); if (tierSel) tierSel.value = sr?.tier || 'complex';
+  setV('ramsHours',      sr?.hours ?? '07:30\u201317:00 Monday to Friday (or as directed at site induction)');
+  setV('ramsAE',         sr?.ae ?? '');
+  setV('ramsScopeText',  (sr?.scopeLines || []).join('\n'));
+  setV('ramsTasksText',  sr?.tasks?.length
+    ? sr.tasks.map(t => [`${t.title}${t.detail ? ': ' + t.detail : ''}`, ...(t.steps || []).map(s => '- ' + s)].join('\n')).join('\n\n')
+    : '');
+  setV('ramsNotes',      sr?.notes ?? '');
   const rStatus = document.getElementById('ramsScopeStatus'); if (rStatus) rStatus.textContent = '';
+
+  // — Jobs covered (merge picker; locked on revision, with an Edit unlock) —
+  ramsRenderJobsList();
 
   // — Personnel (phase 2b roster picker; falls back to a freeform textarea if
   //   the roster API is unavailable, preserving the old behaviour) —
-  ramsInitPersonnel();
+  ramsInitPersonnel(sr?.personnel || null);
 
-  // — Standard sections (phase 3b pick/add — reset to defaults each open) —
-  ramsRenderStandardSections();
+  // — Standard sections (phase 3b pick/add — defaults, or saved state) —
+  ramsRenderStandardSections(sr || null);
 
-  // — Risk assessment picker (phase 3c — reset to full library each open) —
-  ramsRenderRiskPicker();
+  // — Risk assessment picker (phase 3c — full library, or saved state) —
+  ramsRenderRiskPicker(sr?.risks || null);
 
-  // — Site address (Job Sheet first; falls back to project site / client) —
-  const r = _jobSheetResolved(proj);
-  setV('ramsSiteName',    r.siteName);
-  setV('ramsSiteAddr',    r.lines.join('\n'));
-  setV('ramsSiteContact', r.contact);
-  setV('ramsSitePhone',   r.phone);
-
-  // — Drawings picker (Site Installation files, minus our own generated output) —
-  const allSiteFiles = (job.site && job.site.files) || [];
-  const isGenerated = f => /^(site pack|rams)\b/i.test(String(f.name || f.fileName || ''));
-  const _seen = new Set();
-  const files = allSiteFiles.filter(f => {
-    if (isGenerated(f)) return false;
-    const key = f.fileId || (f.name || f.fileName);
-    if (_seen.has(key)) return false;
-    _seen.add(key); return true;
-  });
-  const drawWrap = document.getElementById('ramsDrawingList');
-  if (drawWrap) {
-    drawWrap.innerHTML = files.length
-      ? files.map(f => {
-          const nm = f.name || f.fileName || 'drawing';
-          return `<label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--border);cursor:pointer">
-            <input type="checkbox" class="rams-draw-check" checked
-                   data-fileid="${escapeHtml(f.fileId || '')}" data-driveid="${escapeHtml(f.driveId || '')}"
-                   data-fname="${escapeHtml(f.fileName || nm)}" style="width:14px;height:14px;accent-color:var(--accent)">
-            <span style="font-size:12px;color:var(--text)">${escapeHtml(nm)}</span>
-          </label>`;
-        }).join('')
-      : `<div style="color:var(--subtle);font-size:12px;padding:8px 0">No drawings in Site Installation yet \u2014 upload one first, or write the scope manually below.</div>`;
+  // — Site plan (restored on revision) —
+  if (sr?.sitePlanDataUri) {
+    _ramsSitePlanDataUri = sr.sitePlanDataUri;
+    _ramsSitePlanPin = sr.sitePlanPin || null;
+    const img = document.getElementById('ramsSitePlanPreview');
+    if (img) { img.src = sr.sitePlanDataUri; }
+    const spWrap2 = document.getElementById('ramsSitePlanWrap'); if (spWrap2) spWrap2.style.display = '';
+    const spRow2  = document.getElementById('ramsSitePlanPinRow'); if (spRow2) spRow2.style.display = 'flex';
+    _ramsPositionSitePlanPin();
   }
-  const refNames = [...new Set(files.map(f => f.name || f.fileName).filter(Boolean))];
-  setV('ramsDrawingRef', refNames.join(', '));
+
+  // — Site address (saved state first, then Job Sheet / project / client) —
+  const r = _jobSheetResolved(proj);
+  setV('ramsSiteName',    sr?.site?.name ?? r.siteName);
+  setV('ramsSiteAddr',    sr?.site?.lines ? sr.site.lines.join('\n') : r.lines.join('\n'));
+  setV('ramsSiteContact', sr?.site?.contactName ?? r.contact);
+  setV('ramsSitePhone',   sr?.site?.contactPhone ?? r.phone);
+
+  // — Drawings picker (union of Site Installation files across selected jobs) —
+  await ramsRenderDrawingsList(sr?.drawingRef || null);
 
   document.getElementById('ramsModal').classList.add('active');
+}
+
+// Compose the register doc number: "<project> - 001 - <title>". Falls back to
+// the legacy "<project>-RAMS-01" if the register was unavailable at open.
+function ramsComposeDocNo() {
+  const proj = currentProject;
+  const contractNo = proj?.project_number || proj?.id || '';
+  const title = (document.getElementById('ramsTitle')?.value || '').trim()
+    || (currentJob?.name || '');
+  if (!_ramsAssignedNo) return contractNo ? `${contractNo}-RAMS-01` : '';
+  return [contractNo, _ramsPad(_ramsAssignedNo, 3), title].filter(Boolean).join(' - ');
+}
+
+// Title input hook — keep the Doc No in sync until it's edited by hand.
+function ramsSyncDocNo() {
+  if (_ramsDocNoManual) return;
+  const el = document.getElementById('ramsDocNo');
+  if (el) el.value = ramsComposeDocNo();
+}
+
+// ── Jobs-covered picker (merge) ─────────────────────────────────────────────
+// New RAMS: all live jobs on the project are tickable, current job pre-ticked.
+// Revision: the original job set is LOCKED by default (same document scope);
+// "Edit jobs" unlocks it so a job can be added or removed at the new revision.
+function ramsRenderJobsList() {
+  const wrap = document.getElementById('ramsJobsList');
+  if (!wrap) return;
+  const proj = currentProject;
+  const jobs = (drawingsData.projects?.[proj?.id]?.jobs) || [];
+  const lockNote = document.getElementById('ramsJobsLockNote');
+  const editBtn  = document.getElementById('ramsJobsEditBtn');
+  if (lockNote) lockNote.style.display = (_ramsEditDoc && _ramsJobsLocked) ? '' : 'none';
+  if (editBtn)  editBtn.style.display  = (_ramsEditDoc && _ramsJobsLocked) ? '' : 'none';
+  if (!jobs.length) {
+    wrap.innerHTML = `<div style="color:var(--subtle);font-size:12px;padding:8px 10px">Only this job \u2014 no other jobs on the project.</div>`;
+    return;
+  }
+  wrap.innerHTML = jobs.map(j => {
+    const jid = parseInt(j.id);
+    const on = _ramsJobIds.includes(jid);
+    const dis = _ramsJobsLocked ? 'disabled' : '';
+    return `<label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--border);cursor:${_ramsJobsLocked ? 'default' : 'pointer'};opacity:${_ramsJobsLocked && !on ? '.45' : '1'}">
+      <input type="checkbox" class="rams-job-check" ${on ? 'checked' : ''} ${dis} value="${jid}"
+             onchange="ramsJobTick(${jid}, this.checked)" style="width:14px;height:14px;accent-color:var(--accent)">
+      <span style="font-size:12px;color:var(--text)">${escapeHtml(j.name || ('Job ' + jid))}</span>
+      ${on && jobs.length > 1 ? `<span style="font-size:10px;color:var(--subtle)">covered</span>` : ''}
+    </label>`;
+  }).join('');
+}
+
+function ramsJobTick(jobId, on) {
+  jobId = parseInt(jobId);
+  if (on) { if (!_ramsJobIds.includes(jobId)) _ramsJobIds.push(jobId); }
+  else _ramsJobIds = _ramsJobIds.filter(x => x !== jobId);
+  ramsRenderJobsList();
+  ramsRenderDrawingsList();   // drawings union follows the job selection
+}
+
+function ramsToggleJobsLock() {
+  _ramsJobsLocked = false;
+  ramsRenderJobsList();
+}
+
+// Union of Site Installation files across every selected job (our own
+// generated Site Pack / RAMS output filtered out, deduped by fileId).
+async function ramsRenderDrawingsList(savedRef) {
+  const drawWrap = document.getElementById('ramsDrawingList');
+  if (!drawWrap) return;
+  const isGenerated = f => /^(site pack|rams)\b/i.test(String(f.name || f.fileName || ''));
+  const _seen = new Set();
+  const files = [];
+  for (const jid of _ramsJobIds) {
+    let siteFiles;
+    if (currentJob && parseInt(currentJob.id) === jid) {
+      siteFiles = (currentJob.site && currentJob.site.files) || [];
+    } else {
+      if (!_drawingElementsCache[jid]) { try { await loadJobElementData(jid); } catch (e) {} }
+      siteFiles = (_drawingElementsCache[jid]?.files?.['site']) || [];
+    }
+    for (const f of siteFiles) {
+      if (isGenerated(f)) continue;
+      const key = f.fileId || (f.name || f.fileName);
+      if (_seen.has(key)) continue;
+      _seen.add(key);
+      files.push(f);
+    }
+  }
+  drawWrap.innerHTML = files.length
+    ? files.map(f => {
+        const nm = f.name || f.fileName || 'drawing';
+        return `<label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--border);cursor:pointer">
+          <input type="checkbox" class="rams-draw-check" checked
+                 data-fileid="${escapeHtml(f.fileId || '')}" data-driveid="${escapeHtml(f.driveId || '')}"
+                 data-fname="${escapeHtml(f.fileName || nm)}" style="width:14px;height:14px;accent-color:var(--accent)">
+          <span style="font-size:12px;color:var(--text)">${escapeHtml(nm)}</span>
+        </label>`;
+      }).join('')
+    : `<div style="color:var(--subtle);font-size:12px;padding:8px 0">No drawings in Site Installation yet \u2014 upload one first, or write the scope manually below.</div>`;
+  const refNames = [...new Set(files.map(f => f.name || f.fileName).filter(Boolean))];
+  const refEl = document.getElementById('ramsDrawingRef');
+  if (refEl) refEl.value = savedRef != null ? savedRef : refNames.join(', ');
 }
 
 function closeRamsModal() {
@@ -15759,9 +15900,10 @@ const _RAMS_FALLBACK_PERSONNEL =
   'Jason Lambie \u2014 Site Supervisor \u2014 CSCS, SSSTS\n' +
   'Adrian Smith \u2014 Steel Erector / Installer \u2014 CSCS, CPCS';
 
-function ramsInitPersonnel() {
+function ramsInitPersonnel(savedPersonnel) {
   _ramsSelectedIds = [];
   _ramsSelectedPersonnel = [];
+  _ramsSavedPersonnel = Array.isArray(savedPersonnel) ? savedPersonnel : null;
   const search = document.getElementById('ramsPersonnelSearch'); if (search) search.value = '';
   const form   = document.getElementById('ramsAddPersonForm');   if (form) form.style.display = 'none';
   ramsHideResults();
@@ -15779,6 +15921,8 @@ function ramsInitPersonnel() {
   ramsLoadRoster();
 }
 
+let _ramsSavedPersonnel = null;   // saved selection to restore on revision
+
 async function ramsLoadRoster() {
   try {
     const [roster, certTypes] = await Promise.all([
@@ -15789,12 +15933,19 @@ async function ramsLoadRoster() {
     _ramsCertTypes = Array.isArray(certTypes) ? certTypes : [];
     _ramsRosterAvailable = true;
 
-    // Preselect the known site crew (matches the old textarea defaults).
-    const preferred = ['Leszek Spychalski', 'Jason Lambie', 'Adrian Smith'];
-    _ramsSelectedIds = _ramsRoster
-      .filter(p => preferred.includes(p.name))
-      .sort((a, b) => preferred.indexOf(a.name) - preferred.indexOf(b.name))
-      .map(p => p.id);
+    if (_ramsSavedPersonnel && _ramsSavedPersonnel.length) {
+      // Revision: restore the saved selection — by id, name fallback.
+      _ramsSelectedIds = _ramsSavedPersonnel
+        .map(sp => _ramsRoster.find(p => (sp.id && p.id === sp.id) || p.name === sp.name)?.id)
+        .filter(Boolean);
+    } else {
+      // Preselect the known site crew (matches the old textarea defaults).
+      const preferred = ['Leszek Spychalski', 'Jason Lambie', 'Adrian Smith'];
+      _ramsSelectedIds = _ramsRoster
+        .filter(p => preferred.includes(p.name))
+        .sort((a, b) => preferred.indexOf(a.name) - preferred.indexOf(b.name))
+        .map(p => p.id);
+    }
 
     ramsPopulateEmployeeDropdown();
     ramsRenderCertCheckboxes();
@@ -16285,21 +16436,31 @@ const RAMS_SECTION_DEFS = [
   { key: 'monitoring',  label: 'Monitoring & Review' }
 ];
 
-function _ramsSecRow(item) {
+function _ramsSecRow(item, checked) {
+  if (checked === undefined) checked = true;
   const v = escapeHtml(item);
   return `<label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
-    <input type="checkbox" class="rams-sec-check" checked value="${v}" style="width:13px;height:13px;margin-top:2px;accent-color:var(--accent)">
+    <input type="checkbox" class="rams-sec-check" ${checked ? 'checked' : ''} value="${v}" style="width:13px;height:13px;margin-top:2px;accent-color:var(--accent)">
     <span style="font-size:12px;color:var(--text);line-height:1.35">${v}</span>
   </label>`;
 }
 
-// Rebuild the six checkbox groups from RAMS_STANDARD (all ticked). Called each
-// time the modal opens so it always resets to the defaults.
-function ramsRenderStandardSections() {
+// Rebuild the checkbox groups from RAMS_STANDARD (all ticked). On a REVISION,
+// `saved` carries the previously-ticked items per section: those render ticked
+// (in their saved order, custom items included) and any standard item that was
+// dropped renders unticked so it can be re-added.
+function ramsRenderStandardSections(saved) {
   const wrap = document.getElementById('ramsStandardSections');
   if (!wrap) return;
   wrap.innerHTML = RAMS_SECTION_DEFS.map(def => {
-    const items = (RAMS_STANDARD[def.key] || []).map(_ramsSecRow).join('');
+    let items;
+    if (saved && Array.isArray(saved[def.key])) {
+      const on = saved[def.key];
+      const extra = (RAMS_STANDARD[def.key] || []).filter(x => !on.includes(x));
+      items = on.map(x => _ramsSecRow(x, true)).concat(extra.map(x => _ramsSecRow(x, false))).join('');
+    } else {
+      items = (RAMS_STANDARD[def.key] || []).map(x => _ramsSecRow(x, true)).join('');
+    }
     return `<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px;background:var(--bg-darker)">
       <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:8px">${escapeHtml(def.label)}</div>
       <div class="rams-sec-items" data-key="${def.key}" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px">${items}</div>
@@ -16359,8 +16520,17 @@ function ramsApplyTierPreset() {
 // objects (_on) so a re-render (after adding) preserves every tick.
 let _ramsRiskRows = [];
 
-function ramsRenderRiskPicker() {
-  _ramsRiskRows = RAMS_RISK_LIBRARY.map(r => ({ ...r, controls: (r.controls || []).slice(), _on: true }));
+function ramsRenderRiskPicker(savedRisks) {
+  if (Array.isArray(savedRisks) && savedRisks.length) {
+    // Revision: saved rows (custom risks included) come back ticked; library
+    // rows that were dropped render unticked for easy re-adding.
+    const savedHaz = new Set(savedRisks.map(r => r.hazard));
+    _ramsRiskRows = savedRisks.map(r => ({ ...r, controls: (r.controls || []).slice(), _on: true }))
+      .concat(RAMS_RISK_LIBRARY.filter(r => !savedHaz.has(r.hazard))
+        .map(r => ({ ...r, controls: (r.controls || []).slice(), _on: false })));
+  } else {
+    _ramsRiskRows = RAMS_RISK_LIBRARY.map(r => ({ ...r, controls: (r.controls || []).slice(), _on: true }));
+  }
   const form = document.getElementById('ramsAddRiskForm'); if (form) form.style.display = 'none';
   _ramsRenderRiskList();
 }
@@ -16538,6 +16708,8 @@ function drawRamsPDF(jsPDF, rams, logoDataUri) {
     coverRow('Client', rams.client);
     coverRow('Principal contractor', rams.principal);
     coverRow('Title', rams.title);
+    if (Array.isArray(rams.jobsCovered) && rams.jobsCovered.length > 1)
+      coverRow('Jobs covered', rams.jobsCovered.join(', '));
     coverRow('Document No', rams.docNo);
     coverRow('Revision', rams.rev);
     coverRow('Issue date', rams.dateStr);
@@ -17305,7 +17477,9 @@ function drawRamsDOCX(docx, rams, assets) {
     }));
     const coverRows = [
       ['Contract name', rams.contract], ['Contract No', rams.contractNo], ['Client', rams.client],
-      ['Principal contractor', rams.principal], ['Title', rams.title], ['Document No', rams.docNo],
+      ['Principal contractor', rams.principal], ['Title', rams.title],
+      ['Jobs covered', (Array.isArray(rams.jobsCovered) && rams.jobsCovered.length > 1) ? rams.jobsCovered.join(', ') : null],
+      ['Document No', rams.docNo],
       ['Revision', rams.rev], ['Issue date', rams.dateStr]
     ].filter(r => r[1] != null && String(r[1]).trim() !== '');
     cov.push(kvTable(coverRows.map(([l, v]) => [l + ':', v]), 52, PORTRAIT_USABLE));
@@ -17664,6 +17838,7 @@ async function confirmRams() {
   const proj = currentProject, job = currentJob;
   const btn = document.getElementById('ramsConfirmBtn');
   if (!job?.id) { toast('No job selected \u2014 cannot save.', 'error'); return; }
+  if (!_ramsJobIds.length) { toast('Tick at least one job for this RAMS to cover.', 'error'); return; }
   if (btn) { btn.disabled = true; btn.style.opacity = '.5'; }
   try {
     await loadLogoDataUri();
@@ -17737,7 +17912,15 @@ async function confirmRams() {
       risks: ramsCollectRisks(),
       sitePlanDataUri: (typeof _ramsSitePlanDataUri !== 'undefined' && _ramsSitePlanDataUri) || null,
       sitePlanPin: (typeof _ramsSitePlanPin !== 'undefined' && _ramsSitePlanPin) || null,
-      notes: getV('ramsNotes')
+      notes: getV('ramsNotes'),
+      // Register fields (numbering / revisions / merge)
+      ramsNo: _ramsAssignedNo,
+      revisionInt: _ramsRevisionInt,
+      jobIds: _ramsJobIds.slice(),
+      jobsCovered: _ramsJobIds.map(jid => {
+        const jj = (drawingsData.projects?.[proj?.id]?.jobs || []).find(x => parseInt(x.id) === jid);
+        return jj ? (jj.name || ('Job ' + jid)) : ('Job ' + jid);
+      })
     };
 
     if (!rams.scopeLines.length && !rams.tasks.length) {
@@ -17748,34 +17931,48 @@ async function confirmRams() {
 
     const blob = await renderRamsPdfBlob(rams);
 
-    // Save to SharePoint: <ProjectFolder>/00 - RAMS/<JobFolder>/<file>.pdf
-    // (decision B — the PROJECT-level RAMS folder, not inside the job folder;
-    // same project-folder lookup as the DN flow). Registered against the job
-    // via DrawingElementFiles context 'rams' so it lists on Site Installation.
+    // Save to SharePoint: <ProjectFolder>/00 - RAMS/<folder>/<file>.pdf
+    // (decision B — the PROJECT-level RAMS folder). Single-job RAMS files
+    // under the job folder as before; a MERGED RAMS files under a folder named
+    // after the document title. The PDF is registered against EVERY covered
+    // job via DrawingElementFiles context 'rams' so it lists on each job's
+    // Site Installation tab.
     const stamp = new Date().toISOString().slice(0, 10);
     const baseName = (rams.docNo || `RAMS - ${proj?.id || 'project'} - ${stamp}`).replace(/[\/\\:*?"<>|]/g, '-');
-    const fileName = baseName + '.pdf';
+    const revTag = ` Rev ${_ramsPad(_ramsRevisionInt, 2)}`;
+    const fileName = baseName + revTag + '.pdf';
 
-    let uploaded;
+    let uploaded, docxUploaded = null;
     try {
       const projectFolder = await findProjectFolder(proj.id);
       if (!projectFolder) throw new Error('project folder not found on SharePoint');
       const driveId = projectFolder.parentReference?.driveId || BAMA_DRIVE_ID;
       const ramsRoot = await getOrCreateSubfolder(projectFolder.id, '00 - RAMS', driveId);
-      const jobFolderName = (job.folderName || job.name || 'Unassigned');
+      const jobFolderName = (_ramsJobIds.length > 1)
+        ? (rams.title || baseName).replace(/[\/\\:*?"<>|]/g, '-')
+        : (job.folderName || job.name || 'Unassigned');
       const jobSub = await getOrCreateSubfolder(ramsRoot.id, jobFolderName, driveId);
       const arrayBuffer = await blob.arrayBuffer();
       uploaded = await uploadFileToFolder(jobSub.id, fileName, arrayBuffer, 'application/pdf', driveId);
 
-      const jobIdInt = parseInt(job.id);
-      if (!job.rams) job.rams = { files: [] };
-      const saved = await api.post(`/api/drawing-elements/${jobIdInt}/file`, {
-        fileContext: 'rams', name: baseName, fileName,
-        fileId: uploaded.id, driveId: uploaded.parentReference?.driveId || driveId,
-        webUrl: uploaded.webUrl, uploadedAt: new Date().toISOString(),
-        uploadedBy: _currentDraftsmanName || null
-      });
-      job.rams.files.push({ ...saved });
+      // Register against every covered job. currentJob keeps its in-memory
+      // list fresh; other jobs pick it up from SQL on next open.
+      for (const jid of _ramsJobIds) {
+        try {
+          const saved = await api.post(`/api/drawing-elements/${jid}/file`, {
+            fileContext: 'rams', name: baseName + revTag, fileName,
+            fileId: uploaded.id, driveId: uploaded.parentReference?.driveId || driveId,
+            webUrl: uploaded.webUrl, uploadedAt: new Date().toISOString(),
+            uploadedBy: _currentDraftsmanName || null
+          });
+          if (parseInt(job.id) === jid) {
+            if (!job.rams) job.rams = { files: [] };
+            job.rams.files.push({ ...saved });
+          }
+        } catch (regErr) {
+          toast(`RAMS saved, but registering it on job ${jid} failed: ${regErr.message}`, 'error');
+        }
+      }
 
       // Phase 7 — editable Word twin. Same rams object, second deterministic
       // renderer (docx.js). A DOCX failure never sinks the flow: the PDF is
@@ -17783,19 +17980,50 @@ async function confirmRams() {
       if (fmt === 'pdf-docx') {
         try {
           const docxBlob = await renderRamsDocxBlob(rams);
-          const docxName = baseName + '.docx';
+          const docxName = baseName + revTag + '.docx';
           const ab2 = await docxBlob.arrayBuffer();
           const up2 = await uploadFileToFolder(jobSub.id, docxName, ab2,
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document', driveId);
-          const saved2 = await api.post(`/api/drawing-elements/${jobIdInt}/file`, {
-            fileContext: 'rams', name: baseName + ' (Word)', fileName: docxName,
-            fileId: up2.id, driveId: up2.parentReference?.driveId || driveId,
-            webUrl: up2.webUrl, uploadedAt: new Date().toISOString(),
-            uploadedBy: _currentDraftsmanName || null
-          });
-          job.rams.files.push({ ...saved2 });
+          docxUploaded = up2;
+          for (const jid of _ramsJobIds) {
+            try {
+              const saved2 = await api.post(`/api/drawing-elements/${jid}/file`, {
+                fileContext: 'rams', name: baseName + revTag + ' (Word)', fileName: docxName,
+                fileId: up2.id, driveId: up2.parentReference?.driveId || driveId,
+                webUrl: up2.webUrl, uploadedAt: new Date().toISOString(),
+                uploadedBy: _currentDraftsmanName || null
+              });
+              if (parseInt(job.id) === jid) job.rams.files.push({ ...saved2 });
+            } catch (regErr) { /* PDF registration toast already covers the pattern */ }
+          }
         } catch (docxErr) {
           toast('PDF saved, but the Word (.docx) version failed: ' + docxErr.message, 'error');
+        }
+      }
+
+      // ── RAMS register row (numbering / revisions). Non-fatal: the PDF is
+      // already filed, so a register failure warns rather than sinks the flow.
+      if (_ramsAssignedNo) {
+        try {
+          await api.post('/api/rams-docs', {
+            project_id: parseInt(proj.id),
+            rams_no: _ramsAssignedNo,
+            revision: _ramsRevisionInt,
+            title: rams.title || null,
+            doc_no: rams.docNo || null,
+            job_ids: _ramsJobIds,
+            rams_data: rams,
+            pdf_file_id: uploaded.id,
+            pdf_drive_id: uploaded.parentReference?.driveId || driveId,
+            pdf_web_url: uploaded.webUrl,
+            docx_file_id: docxUploaded?.id || null,
+            docx_drive_id: docxUploaded?.parentReference?.driveId || null,
+            docx_web_url: docxUploaded?.webUrl || null,
+            created_by: _currentDraftsmanName || null
+          });
+          delete _ramsDocsCache[parseInt(proj.id)];
+        } catch (regErr) {
+          toast('RAMS saved, but the register entry failed (' + regErr.message + ') \u2014 revisions of this document won\u2019t be available. Has create-rams-documents.sql been run?', 'error');
         }
       }
     } catch (saveErr) {
@@ -19213,6 +19441,11 @@ function renderSite() {
     html += ramsFiles.map(f => renderFileRow(f, 'rams')).join('');
   }
 
+  // RAMS register — numbered documents covering this job, with Revise buttons.
+  // Loaded lazily (progressive render) so renderSite stays synchronous.
+  html += `<div id="ramsRegisterWrap"></div>`;
+  setTimeout(() => _ramsRenderRegister(currentProject?.id, currentJob?.id), 0);
+
   // Notes
   html += renderNotesSection(site.notes || [], 'site');
 
@@ -19227,6 +19460,50 @@ function renderSite() {
   }
 
   container.innerHTML = html;
+}
+
+// ── RAMS register block (Site Installation) ─────────────────────────────────
+// Groups RamsDocuments rows by rams_no, shows the LATEST revision of each
+// document covering this job, with a Revise button that reopens the modal
+// prefilled (jobs locked, rev auto-bumped). Superseded revisions are counted.
+async function _ramsRenderRegister(projectId, jobId) {
+  const wrap = document.getElementById('ramsRegisterWrap');
+  if (!wrap || !projectId || !jobId) return;
+  projectId = parseInt(projectId); jobId = parseInt(jobId);
+  let rows;
+  try {
+    if (!_ramsDocsCache[projectId]) _ramsDocsCache[projectId] = await api.get(`/api/rams-docs?projectId=${projectId}`);
+    rows = _ramsDocsCache[projectId];
+  } catch (e) { return; }   // register API/table not available — legacy view only
+  if (!Array.isArray(rows) || !rows.length) return;
+  const covers = r => { try { return (JSON.parse(r.job_ids || '[]') || []).map(Number).includes(jobId); } catch (e) { return false; } };
+  const mine = rows.filter(covers);
+  if (!mine.length) return;
+  const byNo = {};
+  mine.forEach(r => {
+    const g = byNo[r.rams_no] || (byNo[r.rams_no] = { latest: r, count: 0 });
+    if (r.revision > g.latest.revision) g.latest = r;
+    g.count += 1;
+  });
+  const canRevise = isDraftsman && currentJob?.status !== 'closed';
+  let html = `<div style="margin-top:14px;margin-bottom:4px;color:var(--subtle);font-size:10px;text-transform:uppercase;letter-spacing:.05em;font-weight:700">RAMS register</div>`;
+  html += Object.keys(byNo).sort((a, b) => a - b).map(no => {
+    const g = byNo[no], r = g.latest;
+    const jobsN = (() => { try { return (JSON.parse(r.job_ids || '[]') || []).length; } catch (e) { return 1; } })();
+    const dateStr = r.created_at ? new Date(r.created_at).toLocaleDateString('en-GB') : '';
+    return `<div class="file-row">
+      <div class="file-row-icon">&#128203;</div>
+      <div class="file-row-name">${escapeHtml(r.doc_no || ('RAMS ' + _ramsPad(r.rams_no, 3)))}
+        <span style="color:var(--subtle);font-size:11px"> \u2014 Rev ${_ramsPad(r.revision, 2)}${g.count > 1 ? ` (${g.count - 1} superseded)` : ''}${jobsN > 1 ? ` \u00b7 covers ${jobsN} jobs` : ''}</span>
+      </div>
+      <div class="file-row-date">${dateStr}</div>
+      <div class="file-row-actions">
+        ${r.pdf_web_url ? `<a href="${r.pdf_web_url}" target="_blank" class="btn btn-ghost" style="padding:4px 10px;font-size:11px;text-decoration:none">&#128065; View</a>` : ''}
+        ${canRevise ? `<button class="btn" style="padding:4px 10px;font-size:11px;background:rgba(139,92,246,.1);border:1px solid rgba(139,92,246,.3);color:#a78bfa" onclick="openRamsModal(${r.id})">&#9998; Revise</button>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+  wrap.innerHTML = html;
 }
 
 // ═══════════════════════════════════════════
