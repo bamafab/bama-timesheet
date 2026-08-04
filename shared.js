@@ -39521,18 +39521,14 @@ async function _bimpApplyParsed(i, p) {
                 ? s2(Number(p.net_amount || 0) + Number(p.vat_amount || 0)) : '');
   }
 
-  // Supplier match (same normalisation as the single-add flow)
+  // Supplier match — variant-aware (handles initials: "John Taylor Crane Services" ↔ "JT Cranes")
   const suppliers = await _invGetSuppliersList();
-  const norm = v => String(v || '').toLowerCase().replace(/\b(ltd|limited|plc|llp|co|company|uk)\b/g, '').replace(/[^a-z0-9]/g, '');
-  const target = norm(p.supplier_name);
-  const pool = suppliers.filter(s => it.type === 'subcontractor' ? s.is_subcontractor : !s.is_subcontractor);
-  const findIn = list =>
-    list.find(x => norm(x.supplier_name) === target) ||
-    list.find(x => target && (norm(x.supplier_name).includes(target) || target.includes(norm(x.supplier_name)))) || null;
-  const matched = target ? (findIn(pool) || findIn(suppliers)) : null;
+  const matched = _bimpMatchSupplier(p.supplier_name, it.type, suppliers);
   if (matched) {
     it.supplierId = String(matched.id);
-    if (matched.is_subcontractor && it.type !== 'subcontractor') it.type = 'subcontractor';
+    // The ERP record is the source of truth for the type — flip the card BOTH ways
+    if (matched.is_subcontractor && it.type !== 'subcontractor') _bimpApplyType(it, 'subcontractor');
+    else if (!matched.is_subcontractor && it.type === 'subcontractor') _bimpApplyType(it, 'supplier');
   } else if (p.supplier_name) {
     // Will be created on save — badge it clearly. Amazon marketplace sellers
     // get flagged via_amazon + paid-on-account (paid at purchase).
@@ -39703,6 +39699,111 @@ function _bimpRecheckDate(i) {
 
 // Duplicate check: same supplier + same normalised ref in the ERP, or an
 // identical ref+amount earlier in this batch. Flag, don't block.
+// ── Name matching & type override ───────────────────────────────────────────
+// Variants of a company name for matching: full squashed form plus forms where
+// the leading 1..n-1 words collapse to initials — so "John Taylor Crane Services"
+// also yields "jtcraneservices", which substring-matches the ERP's "JT Cranes".
+function _bimpNameVariants(raw) {
+  const words = String(raw || '').toLowerCase()
+    .replace(/\b(ltd|limited|plc|llp|co|company|uk|services|service|and|the)\b/g, ' ')
+    .split(/[^a-z0-9]+/).filter(Boolean);
+  const out = new Set();
+  if (words.length) out.add(words.join(''));
+  for (let k = 1; k < words.length; k++) {
+    out.add(words.slice(0, k).map(w => w[0]).join('') + words.slice(k).join(''));
+  }
+  return [...out].filter(v => v.length >= 3);
+}
+
+// Deterministic fuzzy match against the suppliers list. Prefers the pool that
+// matches `type`, then falls back to the whole list (the ERP record wins on type).
+function _bimpMatchSupplier(name, type, suppliers) {
+  const list = suppliers || _invSuppliersCache || [];
+  const tv = _bimpNameVariants(name);
+  if (!tv.length) return null;
+  const score = s => {
+    const cv = _bimpNameVariants(s.supplier_name);
+    if (cv.some(c => tv.includes(c))) return 2;                                   // exact variant hit
+    if (cv.some(c => tv.some(t => (t.length >= 6 && c.includes(t)) || (c.length >= 6 && t.includes(c))))) return 1; // substring, length-guarded
+    return 0;
+  };
+  const pool = list.filter(s => type === 'subcontractor' ? s.is_subcontractor : !s.is_subcontractor);
+  const rest = list.filter(s => !pool.includes(s));
+  for (const grp of [pool, rest]) {
+    const exact = grp.find(s => score(s) === 2); if (exact) return exact;
+    const partial = grp.find(s => score(s) === 1); if (partial) return partial;
+  }
+  return null;
+}
+
+// Switch a card's type, filling the new type's fields from the parsed invoice
+// where they're blank. Never invents figures — only copies what the AI read.
+function _bimpApplyType(it, type) {
+  it.type = type;
+  const p = it.parsed || {};
+  if (type === 'subcontractor') {
+    if (it.labour == null || it.labour === '') {
+      it.labour = p.labour_subtotal != null ? Number(p.labour_subtotal).toFixed(2)
+                : p.net_amount != null ? Number(p.net_amount).toFixed(2) : '';
+    }
+    if (it.cisRate == null || it.cisRate === '') {
+      it.cisRate = (p.cis_rate != null && [0, 20, 30].includes(Number(p.cis_rate))) ? Number(p.cis_rate) : 20;
+    }
+    _bimpCalcCis(it);
+    if (p.amount_payable != null && Math.abs(Number(p.amount_payable) - (parseFloat(it.payable) || 0)) > 0.02) {
+      it.payable = Number(p.amount_payable).toFixed(2);
+      if (p.cis_deduction != null) it.cisDed = Number(p.cis_deduction).toFixed(2);
+      it.cisWarn = true;
+    }
+  } else {
+    it.isCreditNote = p.document_kind === 'credit_note';
+    const sign = it.isCreditNote ? -1 : 1;
+    const s2 = v => (sign * Math.abs(Number(v))).toFixed(2);
+    if (it.net   == null || it.net   === '') it.net   = p.net_amount   != null ? s2(p.net_amount)   : (p.labour_subtotal != null ? s2(p.labour_subtotal) : '');
+    if (it.vat   == null || it.vat   === '') it.vat   = p.vat_amount   != null ? s2(p.vat_amount)   : '';
+    if (it.gross == null || it.gross === '') it.gross = p.gross_amount != null ? s2(p.gross_amount)
+      : (p.net_amount != null || p.vat_amount != null ? s2(Number(p.net_amount || 0) + Number(p.vat_amount || 0)) : '');
+  }
+}
+
+// Badge click — flip supplier ↔ subcontractor when the AI classified it wrong.
+function bimpTypeToggle(i) {
+  const it = _bimpItems[i];
+  if (!it || (it.status !== 'ready')) return;
+  const newType = it.type === 'subcontractor' ? 'supplier' : 'subcontractor';
+  _bimpApplyType(it, newType);
+  // Selected entity from the wrong pool no longer applies
+  const sel = (_invSuppliersCache || []).find(x => String(x.id) === String(it.supplierId));
+  if (sel && !!sel.is_subcontractor !== (newType === 'subcontractor')) {
+    it.supplierId = ''; it.poId = ''; it.poAllocs = null; it.poLeftover = null; it.multiPoNote = null;
+  }
+  if (it.newSupplier) {
+    it.newSupplier.is_subcontractor = newType === 'subcontractor';
+    it.newSupplier.cis_rate = newType === 'subcontractor' ? (Number(it.cisRate) || 20) : null;
+  }
+  // Nothing picked yet? Try the name against the other pool — this is how
+  // "John Taylor Crane Services" lands on the existing JT Cranes supplier.
+  if (!it.supplierId && it.parsed?.supplier_name) {
+    const m = _bimpMatchSupplier(it.parsed.supplier_name, newType);
+    if (m) { it.supplierId = String(m.id); it.newSupplier = null; }
+  }
+  const s = (_invSuppliersCache || []).find(x => String(x.id) === String(it.supplierId));
+  it.willBePaid = it.supplierId ? !!(s && s.payment_on_account) : !!(it.newSupplier && it.newSupplier.payment_on_account);
+  _bimpCheckDup(i);
+  _bimpRenderCard(i);
+  _bimpUpdateFooter();
+  _bimpCheckFileExists(i);
+}
+
+// Live CIS recompute without rebuilding the card (rebuilding kills input focus):
+// write the computed figures straight into the sibling inputs.
+function _bimpPatchCis(i) {
+  const it = _bimpItems[i];
+  const d = document.getElementById(`bimp_${i}_cisDed`);  if (d) d.value = it.cisDed  ?? '';
+  const pay = document.getElementById(`bimp_${i}_payable`); if (pay) pay.value = it.payable ?? '';
+  _bimpUpdateFooter();
+}
+
 function _bimpCheckDup(i) {
   const it = _bimpItems[i];
   it.dup = null;
@@ -39740,7 +39841,7 @@ function _bimpRenderCard(i) {
   const fmtIn = (id, label, val, oninput, width) => `
     <div style="${width ? `width:${width}px` : 'flex:1'}">
       <div style="font-size:9px;text-transform:uppercase;color:var(--muted)">${label}</div>
-      <input class="field-input" style="font-size:12px;padding:4px 8px" value="${escapeHtml(String(val ?? ''))}" ${oninput}>
+      <input class="field-input" id="bimp_${i}_${id}" style="font-size:12px;padding:4px 8px" value="${escapeHtml(String(val ?? ''))}" ${oninput}>
     </div>`;
 
   if (it.status === 'queued' || it.status === 'parsing') {
@@ -39798,7 +39899,7 @@ function _bimpRenderCard(i) {
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
         ${it.dup ? '' : `<input type="checkbox" ${it.include ? 'checked' : ''} onchange="_bimpItems[${i}].include=this.checked;_bimpUpdateFooter()" title="Include in save">`}
         <span style="font-size:11px;color:var(--muted);font-family:var(--font-mono)">${escapeHtml(it.file.name)}</span>
-        <span style="display:inline-block;padding:1px 8px;border-radius:8px;font-size:10px;font-weight:700;background:${isSub ? 'rgba(147,112,219,.18)' : 'rgba(59,130,246,.15)'};color:${isSub ? '#b596e8' : '#60a5fa'}">${isSub ? '👷 SUBCONTRACTOR (CIS)' : '🏭 SUPPLIER'}</span>
+        <span style="display:inline-block;padding:1px 8px;border-radius:8px;font-size:10px;font-weight:700;cursor:pointer;user-select:none;background:${isSub ? 'rgba(147,112,219,.18)' : 'rgba(59,130,246,.15)'};color:${isSub ? '#b596e8' : '#60a5fa'}" title="Wrong? Click to switch supplier ↔ subcontractor" onclick="bimpTypeToggle(${i})">${isSub ? '👷 SUBCONTRACTOR (CIS)' : '🏭 SUPPLIER'} ⇄</span>
         ${it.newSupplier ? `<span style="display:inline-block;padding:1px 8px;border-radius:8px;font-size:10px;font-weight:700;background:rgba(62,207,142,.15);color:var(--green)">NEW ${isSub ? 'SUBBIE' : 'SUPPLIER'} — will be created${it.newSupplier.utr_number ? ' · UTR ' + escapeHtml(it.newSupplier.utr_number) : ''}</span>` : ''}
         ${it.isCreditNote ? '<span style="display:inline-block;padding:1px 8px;border-radius:8px;font-size:10px;font-weight:700;background:rgba(239,68,68,.18);color:#f87171">📕 CREDIT NOTE — saves negative</span>' : ''}
         ${it.viaAmazon ? '<span style="display:inline-block;padding:1px 8px;border-radius:8px;font-size:10px;font-weight:700;background:rgba(255,153,0,.18);color:#ff9900">🛒 via AMAZON</span>' : ''}
@@ -39812,27 +39913,27 @@ function _bimpRenderCard(i) {
           <div style="font-size:9px;text-transform:uppercase;color:var(--muted)">${isSub ? 'Subcontractor' : 'Supplier'}</div>
           <select class="field-input" style="font-size:12px;padding:4px 8px" onchange="bimpSupplierPicked(${i}, this.value)">${supOptions}</select>
         </div>
-        ${fmtIn('ref', 'Invoice #', it.ref, `oninput="_bimpItems[${i}].ref=this.value;_bimpCheckDup(${i});_bimpRenderCard(${i});_bimpUpdateFooter()"`, 120)}
+        ${fmtIn('ref', 'Invoice #', it.ref, `oninput="_bimpItems[${i}].ref=this.value" onchange="_bimpCheckDup(${i});_bimpRenderCard(${i});_bimpUpdateFooter()"`, 120)}
         <div style="width:130px">
           <div style="font-size:9px;text-transform:uppercase;color:${it.dateWarn ? '#ffa500' : 'var(--muted)'}">Date${it.dateWarn ? ' ⚠ check' : ''}</div>
           <input type="date" class="field-input" style="font-size:12px;padding:4px 8px${it.dateWarn ? ';border-color:#ffa500' : ''}" value="${escapeHtml(it.date)}"
                  onchange="_bimpItems[${i}].date=this.value;_bimpRecheckDate(${i});_bimpRenderCard(${i})">
         </div>
         ${isSub ? `
-          ${fmtIn('labour', 'Labour £', it.labour, `oninput="_bimpItems[${i}].labour=this.value;_bimpCalcCis(_bimpItems[${i}]);_bimpRenderCard(${i})"`, 95)}
+          ${fmtIn('labour', 'Labour £', it.labour, `oninput="_bimpItems[${i}].labour=this.value;_bimpCalcCis(_bimpItems[${i}]);_bimpPatchCis(${i})"`, 95)}
           <div style="width:90px">
             <div style="font-size:9px;text-transform:uppercase;color:var(--muted)">CIS rate</div>
             <select class="field-input" style="font-size:12px;padding:4px 8px"
-                    onchange="_bimpItems[${i}].cisRate=this.value;_bimpCalcCis(_bimpItems[${i}]);_bimpRenderCard(${i})">
+                    onchange="_bimpItems[${i}].cisRate=this.value;_bimpCalcCis(_bimpItems[${i}]);_bimpPatchCis(${i})">
               ${[20, 30, 0].map(r => `<option value="${r}" ${Number(it.cisRate) === r ? 'selected' : ''}>${r}%</option>`).join('')}
             </select>
           </div>
           ${fmtIn('cisDed', 'Deduction £', it.cisDed, `oninput="_bimpItems[${i}].cisDed=this.value"`, 95)}
-          ${fmtIn('payable', 'Payable £', it.payable, `oninput="_bimpItems[${i}].payable=this.value"`, 95)}
+          ${fmtIn('payable', 'Payable £', it.payable, `oninput="_bimpItems[${i}].payable=this.value;_bimpUpdateFooter()"`, 95)}
         ` : `
           ${fmtIn('net', 'Net £', it.net, `oninput="_bimpItems[${i}].net=this.value"`, 90)}
           ${fmtIn('vat', 'VAT £', it.vat, `oninput="_bimpItems[${i}].vat=this.value"`, 90)}
-          ${fmtIn('gross', 'Gross £', it.gross, `oninput="_bimpItems[${i}].gross=this.value;_bimpCheckDup(${i});_bimpUpdateFooter()"`, 95)}
+          ${fmtIn('gross', 'Gross £', it.gross, `oninput="_bimpItems[${i}].gross=this.value;_bimpUpdateFooter()" onchange="_bimpCheckDup(${i});_bimpRenderCard(${i})"`, 95)}
           <div style="flex:1.5;min-width:150px">
             <div style="font-size:9px;text-transform:uppercase;color:var(--muted)">PO</div>
             ${it.poAllocs ? `
