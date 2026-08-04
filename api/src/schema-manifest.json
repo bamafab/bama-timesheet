@@ -1376,6 +1376,14 @@
       "tables": [],
       "columns": [],
       "seedForms": []
+    },
+    {
+      "script": "widen-drawing-element-files-context.sql",
+      "title": "The CK_DEF_Context CHECK on DrawingElementFiles only allowed",
+      "kind": "structural",
+      "tables": [],
+      "columns": [],
+      "seedForms": []
     }
   ]
 }
