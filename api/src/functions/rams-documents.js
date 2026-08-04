@@ -48,20 +48,21 @@ const LIST_COLS = `id, project_id, rams_no, revision, title, doc_no, job_ids,
 app.http('rams-docs-list', {
     methods: ['GET'], authLevel: 'anonymous', route: 'rams-docs',
     handler: async (request, context) => {
-        const auth = requireAuth(request); if (auth.error) return auth.error;
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
         try {
             const projectId = parseInt(new URL(request.url).searchParams.get('projectId'));
-            if (!projectId) return badRequest(request, 'projectId is required');
+            if (!projectId) return badRequest('projectId is required', request);
             const rows = await query(
                 `SELECT ${LIST_COLS} FROM RamsDocuments
                  WHERE project_id = @projectId
                  ORDER BY rams_no ASC, revision ASC`,
                 { projectId }
             );
-            return ok(request, rows.recordset);
+            return ok(rows.recordset, request);
         } catch (e) {
             context.error('rams-docs-list', e);
-            return serverError(request, e.message);
+            return serverError(e.message, request);
         }
     }
 });
@@ -70,16 +71,17 @@ app.http('rams-docs-list', {
 app.http('rams-docs-get', {
     methods: ['GET'], authLevel: 'anonymous', route: 'rams-docs/{id:int}',
     handler: async (request, context) => {
-        const auth = requireAuth(request); if (auth.error) return auth.error;
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
         try {
             const id = parseInt(request.params.id);
             const rows = await query(
                 `SELECT ${LIST_COLS}, rams_data FROM RamsDocuments WHERE id = @id`, { id });
-            if (!rows.recordset.length) return notFound(request, 'RAMS document not found');
-            return ok(request, rows.recordset[0]);
+            if (!rows.recordset.length) return notFound('RAMS document not found', request);
+            return ok(rows.recordset[0], request);
         } catch (e) {
             context.error('rams-docs-get', e);
-            return serverError(request, e.message);
+            return serverError(e.message, request);
         }
     }
 });
@@ -90,11 +92,12 @@ app.http('rams-docs-get', {
 app.http('rams-next-no', {
     methods: ['GET'], authLevel: 'anonymous', route: 'rams-next-no',
     handler: async (request, context) => {
-        const auth = requireAuth(request); if (auth.error) return auth.error;
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
         try {
             const sp = new URL(request.url).searchParams;
             const projectId = parseInt(sp.get('projectId'));
-            if (!projectId) return badRequest(request, 'projectId is required');
+            if (!projectId) return badRequest('projectId is required', request);
             const ramsNo = parseInt(sp.get('ramsNo')) || null;
             if (ramsNo) {
                 const rows = await query(
@@ -102,16 +105,16 @@ app.http('rams-next-no', {
                      WHERE project_id = @projectId AND rams_no = @ramsNo`,
                     { projectId, ramsNo });
                 const maxRev = rows.recordset[0]?.maxRev;
-                if (maxRev == null) return notFound(request, `RAMS ${ramsNo} not found for this project`);
-                return ok(request, { rams_no: ramsNo, revision: maxRev + 1 });
+                if (maxRev == null) return notFound(`RAMS ${ramsNo} not found for this project`, request);
+                return ok({ rams_no: ramsNo, revision: maxRev + 1 }, request);
             }
             const rows = await query(
                 `SELECT ISNULL(MAX(rams_no), 0) + 1 AS nextNo FROM RamsDocuments
                  WHERE project_id = @projectId`, { projectId });
-            return ok(request, { rams_no: rows.recordset[0].nextNo, revision: 0 });
+            return ok({ rams_no: rows.recordset[0].nextNo, revision: 0 }, request);
         } catch (e) {
             context.error('rams-next-no', e);
-            return serverError(request, e.message);
+            return serverError(e.message, request);
         }
     }
 });
@@ -120,16 +123,17 @@ app.http('rams-next-no', {
 app.http('rams-docs-create', {
     methods: ['POST'], authLevel: 'anonymous', route: 'rams-docs',
     handler: async (request, context) => {
-        const auth = requireAuth(request); if (auth.error) return auth.error;
+        const auth = await requireAuth(request);
+        if (auth.status) return auth;
         try {
             const b = await request.json();
             const projectId = parseInt(b.project_id);
             const ramsNo = parseInt(b.rams_no);
             const revision = parseInt(b.revision);
             if (!projectId || !ramsNo || isNaN(revision) || revision < 0)
-                return badRequest(request, 'project_id, rams_no and revision are required');
+                return badRequest('project_id, rams_no and revision are required', request);
             const jobIds = Array.isArray(b.job_ids) ? b.job_ids.map(Number).filter(Boolean) : [];
-            if (!jobIds.length) return badRequest(request, 'job_ids must contain at least one job');
+            if (!jobIds.length) return badRequest('job_ids must contain at least one job', request);
 
             // Collision guard — same pattern as qb-next-ref: the number was
             // handed out by rams-next-no, verify nobody claimed it since.
@@ -138,7 +142,7 @@ app.http('rams-docs-create', {
                  WHERE project_id = @projectId AND rams_no = @ramsNo AND revision = @revision`,
                 { projectId, ramsNo, revision });
             if (clash.recordset.length)
-                return badRequest(request, `RAMS ${ramsNo} Rev ${revision} already exists for this project — reopen the modal to pick up the next number.`);
+                return badRequest(`RAMS ${ramsNo} Rev ${revision} already exists for this project — reopen the modal to pick up the next number.`, request);
 
             // A revision supersedes every earlier row of that number.
             if (revision > 0) {
@@ -181,15 +185,15 @@ app.http('rams-docs-create', {
                 `Rev ${revision} (jobs: ${jobIds.join(', ')})`,
                 b.created_by || auth.name || auth.email);
 
-            return created(request, {
+            return created({
                 id: row.id, project_id: projectId, rams_no: ramsNo, revision,
                 title: b.title || null, doc_no: b.doc_no || null,
                 job_ids: JSON.stringify(jobIds), superseded: false,
                 created_at: row.created_at
-            });
+            }, request);
         } catch (e) {
             context.error('rams-docs-create', e);
-            return serverError(request, e.message);
+            return serverError(e.message, request);
         }
     }
 });
