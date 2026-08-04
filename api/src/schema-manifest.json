@@ -970,6 +970,16 @@
       "seedForms": []
     },
     {
+      "script": "create-delivery-note-register.sql",
+      "title": "One row per generated delivery note, written by the frontend right after",
+      "kind": "structural",
+      "tables": [
+        "DeliveryNoteRegister"
+      ],
+      "columns": [],
+      "seedForms": []
+    },
+    {
       "script": "create-document-acknowledgements.sql",
       "title": "One table serving two flavours of \"someone opened a document the ERP produced",
       "kind": "structural",

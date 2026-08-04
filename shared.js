@@ -13193,6 +13193,7 @@ let _pendingDn = null;
 // the printed PDF banners them per job — it must be obvious what belongs where.
 let _gdnJobIds = [];   // supplier-DN selected jobs
 let _sdnJobIds = [];   // site-DN selected jobs
+let _dnRegCache = {};  // projectDbId -> DeliveryNoteRegister rows
 
 // BOM items for a job WITHOUT touching _bomSelected (loadJobBomItems clears
 // the grid selection — fine on the BOM tab, wrong mid-modal for other jobs).
@@ -13544,6 +13545,27 @@ async function confirmGenerateDnSQL() {
     });
     if (!upRes.ok) throw new Error(`DN upload failed: ${upRes.status}`);
     const uploaded = await upRes.json();
+
+    // Deliveries register row — durable "when was it sent + link" record.
+    // Non-fatal: the DN is already filed, a register hiccup only warns.
+    try {
+      await api.post('/api/dn-register', {
+        ref: dnRef, kind: 'supplier',
+        project_id: parseInt(proj.dbId) || null,
+        job_ids: dnJobIdsUsed,
+        destination: _pendingDn.supplierName || null,
+        line_count: allSelected.length,
+        total_qty: allSelected.reduce((s, i) => s + (Number(i.quantity) || 0), 0),
+        sharepoint_file_id: uploaded.id || null,
+        sharepoint_drive_id: driveId || null,
+        sharepoint_web_url: uploaded.webUrl || null,
+        file_name: dnFileName,
+        created_by: _currentDraftsmanName || null
+      });
+      delete _dnRegCache[parseInt(proj.dbId)];
+    } catch (regErr) {
+      toast('DN saved, but the deliveries register entry failed (' + regErr.message + '). Has create-delivery-note-register.sql been run?', 'error');
+    }
 
     closeGenerateDnModalSQL();
     const msg = toShip.length && rideAlongs.length
@@ -14827,6 +14849,26 @@ async function confirmSiteDn() {
         file_name:           sdnFileName
       });
     } catch (e) { console.warn('SDN file backfill failed (non-fatal):', e.message); }
+
+    // Deliveries register row (non-fatal — the SDN is already filed).
+    try {
+      await api.post('/api/dn-register', {
+        ref: sdnRef, kind: 'site',
+        project_id: parseInt(proj.dbId) || null,
+        job_ids: sdnJobIdsUsed,
+        destination: siteName || null,
+        line_count: lines.length,
+        total_qty: totalPcs,
+        sharepoint_file_id: uploaded.id || null,
+        sharepoint_drive_id: driveId || null,
+        sharepoint_web_url: uploaded.webUrl || null,
+        file_name: sdnFileName,
+        created_by: _currentDraftsmanName || null
+      });
+      delete _dnRegCache[parseInt(proj.dbId)];
+    } catch (regErr) {
+      toast('SDN saved, but the deliveries register entry failed (' + regErr.message + '). Has create-delivery-note-register.sql been run?', 'error');
+    }
 
     closeSiteDnModal();
     toast(`${sdnRef} generated — ${totalPcs} pc${totalPcs > 1 ? 's' : ''} across ${lines.length} line${lines.length > 1 ? 's' : ''}${sdnJobNames.length > 1 ? ` from ${sdnJobNames.length} jobs` : ''} sent to site.`, 'success');
@@ -19638,6 +19680,11 @@ function renderSite() {
   html += `<div id="ramsRegisterWrap"></div>`;
   setTimeout(() => _ramsRenderRegister(currentProject?.dbId, currentJob?.id), 0);
 
+  // Deliveries register — every DN/SDN covering this job, newest first,
+  // with the destination, quantity and a link to the PDF. Lazy like RAMS.
+  html += `<div id="dnRegisterWrap"></div>`;
+  setTimeout(() => _dnRenderRegister(currentProject?.dbId, currentJob?.id), 0);
+
   // Notes
   html += renderNotesSection(site.notes || [], 'site');
 
@@ -19692,6 +19739,44 @@ async function _ramsRenderRegister(projectId, jobId) {
       <div class="file-row-actions">
         ${r.pdf_web_url ? `<a href="${r.pdf_web_url}" target="_blank" class="btn btn-ghost" style="padding:4px 10px;font-size:11px;text-decoration:none">&#128065; View</a>` : ''}
         ${canRevise ? `<button class="btn" style="padding:4px 10px;font-size:11px;background:rgba(139,92,246,.1);border:1px solid rgba(139,92,246,.3);color:#a78bfa" onclick="openRamsModal(${r.id})">&#9998; Revise</button>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+  wrap.innerHTML = html;
+}
+
+// ── Deliveries register block (Site Installation) ───────────────────────────
+// Lists every DN (supplier) and SDN (site) that covers this job, newest first:
+// ref, destination, pieces, date, covers-N-jobs marker and the PDF link.
+async function _dnRenderRegister(projectId, jobId) {
+  const wrap = document.getElementById('dnRegisterWrap');
+  if (!wrap || !projectId || !jobId) return;
+  projectId = parseInt(projectId); jobId = parseInt(jobId);
+  let rows;
+  try {
+    if (!_dnRegCache[projectId]) _dnRegCache[projectId] = await api.get(`/api/dn-register?projectId=${projectId}`);
+    rows = _dnRegCache[projectId];
+  } catch (e) { return; }   // register API/table not available yet — skip quietly
+  if (!Array.isArray(rows) || !rows.length) return;
+  const covers = r => { try { return (JSON.parse(r.job_ids || '[]') || []).map(Number).includes(jobId); } catch (e) { return false; } };
+  const mine = rows.filter(covers);
+  if (!mine.length) return;
+  let html = `<div style="margin-top:14px;margin-bottom:4px;color:var(--subtle);font-size:10px;text-transform:uppercase;letter-spacing:.05em;font-weight:700">Deliveries register</div>`;
+  html += mine.map(r => {
+    const jobsN = (() => { try { return (JSON.parse(r.job_ids || '[]') || []).length; } catch (e) { return 1; } })();
+    const dateStr = r.created_at ? new Date(r.created_at).toLocaleDateString('en-GB') : '';
+    const isSite = r.kind === 'site';
+    const chip = isSite
+      ? `<span style="font-size:10px;color:#3ecf8e;background:rgba(62,207,142,.1);border:1px solid rgba(62,207,142,.3);border-radius:4px;padding:1px 6px;white-space:nowrap">&rarr; Site</span>`
+      : `<span style="font-size:10px;color:var(--accent);background:rgba(255,107,0,.1);border:1px solid rgba(255,107,0,.3);border-radius:4px;padding:1px 6px;white-space:nowrap">&rarr; ${escapeHtml(r.destination || 'Supplier')}</span>`;
+    return `<div class="file-row">
+      <div class="file-row-icon">&#128666;</div>
+      <div class="file-row-name"><b>${escapeHtml(r.ref)}</b> ${chip}
+        <span style="color:var(--subtle);font-size:11px"> \u2014 ${r.total_qty || 0} pcs \u00b7 ${r.line_count || 0} line${(r.line_count || 0) === 1 ? '' : 's'}${jobsN > 1 ? ` \u00b7 covers ${jobsN} jobs` : ''}${isSite && r.destination ? ` \u00b7 ${escapeHtml(r.destination)}` : ''}</span>
+      </div>
+      <div class="file-row-date">${dateStr}</div>
+      <div class="file-row-actions">
+        ${r.sharepoint_web_url ? `<a href="${r.sharepoint_web_url}" target="_blank" class="btn btn-ghost" style="padding:4px 10px;font-size:11px;text-decoration:none">&#128065; View</a>` : ''}
       </div>
     </div>`;
   }).join('');
