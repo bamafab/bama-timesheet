@@ -856,11 +856,26 @@ function renderHome() {
 // Fab Output report groups by the stored operator_name, so anyone selectable
 // here shows on the report automatically.
 function bookableShopStaff() {
-  return (state.timesheetData.employees || [])
+  const list = (state.timesheetData.employees || [])
     .filter(e => e.active !== false)
     .filter(e => (e.staffType || 'workshop') === 'workshop'
-               || ['director', 'project_manager'].includes(e.erpRole))
-    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+               || ['director', 'project_manager'].includes(e.erpRole));
+  // Workshop first, office (director/PM) below — each group alphabetical —
+  // so shop-floor names sit at the top of every picker.
+  const grp = e => ((e.staffType || 'workshop') === 'workshop' ? 0 : 1);
+  return list.sort((a, b) => grp(a) - grp(b) || String(a.name || '').localeCompare(String(b.name || '')));
+}
+
+// Optgroup HTML for the stage-modal operator <select>s: Workshop on top,
+// Office at the bottom, so nobody mis-taps into the wrong group.
+function shopStaffOptionsHtml() {
+  const shop = [], office = [];
+  for (const e of bookableShopStaff()) ((e.staffType || 'workshop') === 'workshop' ? shop : office).push(e);
+  const opt = w => `<option value="${w.id}" data-name="${escapeHtml(w.name)}">${escapeHtml(w.name)}</option>`;
+  let html = '';
+  if (shop.length)   html += `<optgroup label="Workshop">${shop.map(opt).join('')}</optgroup>`;
+  if (office.length) html += `<optgroup label="Office">${office.map(opt).join('')}</optgroup>`;
+  return html;
 }
 
 // Full-width section on the kiosk home screen showing pending assemblies
@@ -7593,13 +7608,20 @@ function closeWeldingMachineForm() {
 function populateWelderCheckboxes(selectedIds) {
   const container = document.getElementById('weldWelderCheckboxes');
   if (!container) return;
-  const workshopStaff = bookableShopStaff();
-  container.innerHTML = workshopStaff.map(e => {
+  const cb = e => {
     const checked = selectedIds.includes(e.id) ? 'checked' : '';
     return `<label style="display:flex;align-items:center;gap:6px;font-size:13px;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:6px 12px;cursor:pointer">
       <input type="checkbox" class="weld-welder-cb" value="${e.id}" ${checked}> ${e.name}
     </label>`;
-  }).join('');
+  };
+  const shop = [], office = [];
+  for (const e of bookableShopStaff()) ((e.staffType || 'workshop') === 'workshop' ? shop : office).push(e);
+  let html = shop.map(cb).join('');
+  if (office.length) {
+    html += `<div style="flex-basis:100%;font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted);margin-top:4px">Office</div>`;
+    html += office.map(cb).join('');
+  }
+  container.innerHTML = html;
 }
 
 async function editWeldingMachine(id) {
@@ -21685,11 +21707,7 @@ async function openStageActionModal(stage, assemblyId, opts) {
   const opLabel = document.getElementById('saOperatorLabel');
   const opSel = document.getElementById('saOperator');
   opLabel.textContent = opLabelMap[stage] + (isDraftsman ? ' (optional)' : '');
-  opSel.innerHTML = `<option value="">${isDraftsman ? '— none —' : 'Select…'}</option>`;
-  const staff = bookableShopStaff();
-  for (const w of staff) {
-    opSel.innerHTML += `<option value="${w.id}" data-name="${escapeHtml(w.name)}">${escapeHtml(w.name)}</option>`;
-  }
+  opSel.innerHTML = `<option value="">${isDraftsman ? '— none —' : 'Select…'}</option>` + shopStaffOptionsHtml();
 
   // Machine dropdown — hidden for fab, shown for weld/complete
   const machWrap = document.getElementById('saMachineWrap');
@@ -21903,8 +21921,7 @@ async function openBulkStageModal(stage, pool, surface) {
   // Operator dropdown (optional in bulk regardless of surface)
   const opSel = document.getElementById('bsOperator');
   opSel.innerHTML = '<option value="">— who did it? —</option>';
-  const staff = bookableShopStaff();
-  for (const w of staff) opSel.innerHTML += `<option value="${w.id}" data-name="${escapeHtml(w.name)}">${escapeHtml(w.name)}</option>`;
+  opSel.innerHTML += shopStaffOptionsHtml();
   // Remember-last: attribution feeds the Fab output report, so the picker is
   // required — but pre-filled from last time, so it costs zero taps normally.
   const lastOp = localStorage.getItem('bama_last_operator');
