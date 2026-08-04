@@ -25,6 +25,7 @@ const FIELDS = [
     'commercial_name', 'commercial_phone', 'commercial_email',
     'pm_name', 'pm_phone', 'pm_email',
     'site_manager_name', 'site_manager_phone', 'site_manager_email',
+    'bama_contact_name', 'bama_contact_phone',
     'client_po_number', 'notes'
 ];
 

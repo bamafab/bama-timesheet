@@ -118,6 +118,23 @@
       "seedForms": []
     },
     {
+      "script": "add-bama-site-contact.sql",
+      "title": "The Job Sheet held only the CLIENT-side contacts (commercial / PM / site",
+      "kind": "structural",
+      "tables": [],
+      "columns": [
+        {
+          "table": "ProjectSheets",
+          "column": "bama_contact_name"
+        },
+        {
+          "table": "ProjectSheets",
+          "column": "bama_contact_phone"
+        }
+      ],
+      "seedForms": []
+    },
+    {
       "script": "add-bank-reconciliation.sql",
       "title": "Creates:",
       "kind": "structural",

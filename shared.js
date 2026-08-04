@@ -13676,6 +13676,8 @@ function _jobSheetResolved(proj) {
       contact: c.n || '',
       phone:   c.p || '',
       email:   c.e || '',
+      bamaName:  js.bama_contact_name || '',
+      bamaPhone: js.bama_contact_phone || '',
       po:      js.client_po_number || proj?.client_po_number || ''
     };
   }
@@ -13775,6 +13777,8 @@ async function openJobSheetModal() {
     _jsSetVal('jsSmName',     js.site_manager_name);
     _jsSetVal('jsSmPhone',    js.site_manager_phone);
     _jsSetVal('jsSmEmail',    js.site_manager_email);
+    _jsSetVal('jsBamaName',   js.bama_contact_name);
+    _jsSetVal('jsBamaPhone',  js.bama_contact_phone);
     _jsSetVal('jsPo',         js.client_po_number);
     _jsSetVal('jsNotes',      js.notes);
   } else {
@@ -14190,7 +14194,8 @@ async function generateJobSheetPdf() {
       contacts: [
         { role: 'Commercial',      name: v('jsComName'), phone: v('jsComPhone'), email: v('jsComEmail') },
         { role: 'Project Manager', name: v('jsPmName'),  phone: v('jsPmPhone'),  email: v('jsPmEmail')  },
-        { role: 'Site Manager',    name: v('jsSmName'),  phone: v('jsSmPhone'),  email: v('jsSmEmail')  }
+        { role: 'Site Manager',    name: v('jsSmName'),  phone: v('jsSmPhone'),  email: v('jsSmEmail')  },
+        { role: 'BAMA Site Contact', name: v('jsBamaName'), phone: v('jsBamaPhone'), email: '' }
       ].filter(c => c.name || c.phone || c.email),
       clientPo: v('jsPo'),
       notes:    v('jsNotes'),
@@ -14554,6 +14559,8 @@ async function saveJobSheet() {
     site_manager_name:  val('jsSmName'),
     site_manager_phone: val('jsSmPhone'),
     site_manager_email: val('jsSmEmail'),
+    bama_contact_name:  val('jsBamaName'),
+    bama_contact_phone: val('jsBamaPhone'),
     client_po_number:   val('jsPo'),
     notes:              val('jsNotes'),
     updated_by:         _currentDraftsmanName || null
@@ -14606,6 +14613,8 @@ async function openSiteDnModal() {
   setVal('sdnDeliverAddr',  r.lines.join('\n'));
   setVal('sdnContactName',  r.contact);
   setVal('sdnContactPhone', r.phone);
+  setVal('sdnBamaName',     r.bamaName || '');
+  setVal('sdnBamaPhone',    r.bamaPhone || '');
   setVal('sdnClientPo',     r.po);
 
   sdnUpdateSelCount();
@@ -14798,6 +14807,8 @@ async function confirmSiteDn() {
     const deliverToLines = getVal('sdnDeliverAddr').split('\n').map(l => l.trim()).filter(Boolean);
     const contactName    = getVal('sdnContactName');
     const contactPhone   = getVal('sdnContactPhone');
+    const bamaName       = getVal('sdnBamaName');
+    const bamaPhone      = getVal('sdnBamaPhone');
     const clientPo       = getVal('sdnClientPo');
     const deliverToContact = [contactName, contactPhone].filter(Boolean).join(' \u00b7 ');
     const siteName = deliverName || (proj?.client || proj?.name || 'Site delivery');
@@ -14811,6 +14822,7 @@ async function confirmSiteDn() {
       deliverTo:       { name: deliverName || 'Site', lines: deliverToLines, contact: deliverToContact },
       finishName:      'Site delivery',
       jobNames:        sdnJobNames,
+      bamaContact:     (bamaName || bamaPhone) ? { name: bamaName, phone: bamaPhone } : null,
       items
     };
     // 3. Render PDF natively with jsPDF (no html2canvas).
@@ -15159,6 +15171,20 @@ function drawDnPDF(jsPDF, dn, proj, job, logoDataUri) {
       if (dtContactPhone) {
         setText([68, 68, 68]); doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
         drawWrapped(dtContactPhone, 4);
+      }
+    }
+    // BAMA's own person on site — so the driver can call either side.
+    if (dn.bamaContact && (dn.bamaContact.name || dn.bamaContact.phone)) {
+      ty += 1.5;
+      setText(MUTED); doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5);
+      doc.text('BAMA CONTACT', boxX + boxPad, ty); ty += 4.2;
+      if (dn.bamaContact.name) {
+        setText(TEXT); doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5);
+        drawWrapped(dn.bamaContact.name, 4.2);
+      }
+      if (dn.bamaContact.phone) {
+        setText([68, 68, 68]); doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+        drawWrapped(dn.bamaContact.phone, 4);
       }
     }
     setDraw(RULE); doc.setLineWidth(0.3);
