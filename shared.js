@@ -15918,8 +15918,8 @@ function ramsComposeDocNo() {
   const contractNo = proj?.project_number || proj?.id || '';
   const title = (document.getElementById('ramsTitle')?.value || '').trim()
     || (currentJob?.name || '');
-  if (!_ramsAssignedNo) return contractNo ? `${contractNo}-RAMS-01` : '';
-  return [contractNo, _ramsPad(_ramsAssignedNo, 3), title].filter(Boolean).join(' - ');
+  const no = _ramsAssignedNo || 1;   // register unreachable — format stays right, number provisional
+  return [contractNo, _ramsPad(no, 3), title].filter(Boolean).join(' - ');
 }
 
 // Title input hook — keep the Doc No in sync until it's edited by hand.
@@ -16890,8 +16890,9 @@ function drawRamsPDF(jsPDF, rams, logoDataUri) {
       doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5); setText(TEXT);
       doc.text(label + ':', marginL + 6, cy);
       doc.setFont('helvetica', 'normal');
-      doc.splitTextToSize(String(value), usableW - 64).forEach((ln, i) => doc.text(ln, marginL + 58, cy + i * 5));
-      cy += 8;
+      const lines = doc.splitTextToSize(String(value), usableW - 64);
+      lines.forEach((ln, i) => doc.text(ln, marginL + 58, cy + i * 5));
+      cy += Math.max(1, lines.length) * 5 + 3;   // row height follows the wrap
     };
     coverRow('Contract name', rams.contract);
     coverRow('Contract No', rams.contractNo);
@@ -17114,8 +17115,8 @@ function drawRamsPDF(jsPDF, rams, logoDataUri) {
   const people = rams.personnel || [];
   if (people.length) {
     const cols = [
-      { title: 'Name', w: 42 }, { title: 'Site role', w: 40 }, { title: 'Type', w: 24 },
-      { title: 'Company', w: 32 }, { title: 'Certifications', w: usableW - 42 - 40 - 24 - 32 }
+      { title: 'Name', w: 46 }, { title: 'Site role', w: 44 },
+      { title: 'Company', w: 40 }, { title: 'Certifications', w: usableW - 46 - 44 - 40 }
     ];
     let cx = marginL; cols.forEach(c => { c.x = cx; cx += c.w; });
     const cell = (c, txt, yy) => doc.text(String(txt == null ? '' : txt), c.x + 1.5, yy);
@@ -17132,19 +17133,17 @@ function drawRamsPDF(jsPDF, rams, logoDataUri) {
       const wrap = (t, c) => doc.splitTextToSize(String(t || ''), c.w - 3);
       const nameL = wrap(p.name, cols[0]);
       const roleL = wrap(p.site_role || p.role || '\u2014', cols[1]);
-      const typeL = wrap(p.type === 'subcontractor' ? 'Subcontractor' : 'Staff', cols[2]);
-      const compL = wrap(p.type === 'subcontractor' ? (p.company || '\u2014') : '\u2014', cols[3]);
-      const certL = wrap((p.certs || []).join(', ') || '\u2014', cols[4]);
-      const n = Math.max(nameL.length, roleL.length, typeL.length, compL.length, certL.length, 1);
+      const compL = wrap('BAMA Fabrication', cols[2]);   // everyone works under the BAMA banner on site
+      const certL = wrap((p.certs || []).join(', ') || '\u2014', cols[3]);
+      const n = Math.max(nameL.length, roleL.length, compL.length, certL.length, 1);
       const rowH = n * 4 + 2;
       if (y + rowH > pageH - marginB) { newPage(); drawHead(); doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); }
       const b = y + 4;
       setText(TEXT);
       doc.setFont('helvetica', 'bold'); nameL.forEach((l, i) => cell(cols[0], l, b + i * 4)); doc.setFont('helvetica', 'normal');
       roleL.forEach((l, i) => cell(cols[1], l, b + i * 4));
-      typeL.forEach((l, i) => cell(cols[2], l, b + i * 4));
-      compL.forEach((l, i) => cell(cols[3], l, b + i * 4));
-      certL.forEach((l, i) => cell(cols[4], l, b + i * 4));
+      compL.forEach((l, i) => cell(cols[2], l, b + i * 4));
+      certL.forEach((l, i) => cell(cols[3], l, b + i * 4));
       setDraw(RULE); doc.setLineWidth(0.15); doc.line(marginL, y + rowH, pageW - marginR, y + rowH);
       y += rowH;
     }
@@ -17393,7 +17392,7 @@ function drawRamsPDF(jsPDF, rams, logoDataUri) {
     if (p) {
       setText([70, 70, 70]); doc.setFontSize(8.5);
       doc.text(String(p.name || ''), bc[0].x + 1.5, y + 5.2);
-      doc.text(String(p.type === 'subcontractor' ? (p.company || '') : 'BAMA Fabrication'), bc[1].x + 1.5, y + 5.2);
+      doc.text('BAMA Fabrication', bc[1].x + 1.5, y + 5.2);
     }
     y += rowH2;
   }
@@ -17806,17 +17805,16 @@ function drawRamsDOCX(docx, rams, assets) {
   body.push(numHeading('Key Personnel & Competency'));
   const people = rams.personnel || [];
   if (people.length) {
-    const pcW = [42, 40, 24, 32, 44].map(mm => Math.round(mm * MM));
+    const pcW = [46, 44, 40, 52].map(mm => Math.round(mm * MM));
     body.push(new Table({
       width: { size: PORTRAIT_USABLE, type: WidthType.DXA }, columnWidths: pcW, borders: GRID,
       rows: [
-        new TableRow({ tableHeader: true, children: ['Name', 'Site role', 'Type', 'Company', 'Certifications'].map(t => cell(cellPara(t, { bold: true, size: 16 }), { shading: { type: ShadingType.CLEAR, fill: HEADFILL } })) }),
+        new TableRow({ tableHeader: true, children: ['Name', 'Site role', 'Company', 'Certifications'].map(t => cell(cellPara(t, { bold: true, size: 16 }), { shading: { type: ShadingType.CLEAR, fill: HEADFILL } })) }),
         ...people.map(p => new TableRow({
           children: [
             cell(cellPara(p.name, { bold: true })),
             cell(cellPara(p.site_role || p.role || '\u2014')),
-            cell(cellPara(p.type === 'subcontractor' ? 'Subcontractor' : 'Staff')),
-            cell(cellPara(p.type === 'subcontractor' ? (p.company || '\u2014') : '\u2014')),
+            cell(cellPara('BAMA Fabrication')),
             cell(cellPara((p.certs || []).join(', ') || '\u2014'))
           ]
         }))
@@ -17966,7 +17964,7 @@ function drawRamsDOCX(docx, rams, assets) {
       height: { value: 460, rule: 'atLeast' },
       children: [
         cell(cellPara(p ? (p.name || '') : '', { size: 17, color: '464646' })),
-        cell(cellPara(p ? (p.type === 'subcontractor' ? (p.company || '') : 'BAMA Fabrication') : '', { size: 17, color: '464646' })),
+        cell(cellPara(p ? 'BAMA Fabrication' : '', { size: 17, color: '464646' })),
         cell(cellPara('')), cell(cellPara(''))
       ]
     }));
