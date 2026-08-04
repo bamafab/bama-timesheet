@@ -848,6 +848,21 @@ function renderHome() {
 // KIOSK FABRICATION TILE (commit 11 — SPEC §8)
 // ═══════════════════════════════════════════
 //
+// ── Bookable shop-floor staff ──────────────────────────────────────────────
+// Who can be attributed as fabricator/welder on assembly stage events.
+// Workshop staff always; PLUS office staff whose ERP role is Director or
+// Project Manager (Mateusz, Leszek) — they fab/weld alongside the shop but
+// must NOT appear as kiosk clock-in tiles (renderHome stays workshop-only).
+// Fab Output report groups by the stored operator_name, so anyone selectable
+// here shows on the report automatically.
+function bookableShopStaff() {
+  return (state.timesheetData.employees || [])
+    .filter(e => e.active !== false)
+    .filter(e => (e.staffType || 'workshop') === 'workshop'
+               || ['director', 'project_manager'].includes(e.erpRole))
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+}
+
 // Full-width section on the kiosk home screen showing pending assemblies
 // workshop-wide. Tapping "Mark fabricated" on any card opens the same
 // welder+machine modal as projects.html (reused via openMarkFabricatedModal
@@ -7578,8 +7593,7 @@ function closeWeldingMachineForm() {
 function populateWelderCheckboxes(selectedIds) {
   const container = document.getElementById('weldWelderCheckboxes');
   if (!container) return;
-  const workshopStaff = (state.timesheetData.employees || [])
-    .filter(e => e.active !== false && e.staffType === 'workshop');
+  const workshopStaff = bookableShopStaff();
   container.innerHTML = workshopStaff.map(e => {
     const checked = selectedIds.includes(e.id) ? 'checked' : '';
     return `<label style="display:flex;align-items:center;gap:6px;font-size:13px;background:var(--card);border:1px solid var(--border);border-radius:8px;padding:6px 12px;cursor:pointer">
@@ -21664,17 +21678,15 @@ async function openStageActionModal(stage, assemblyId, opts) {
   document.getElementById('saQtyLabel').textContent =
     stage === 'fab' ? 'HOW MANY TO FABRICATE?' : stage === 'weld' ? 'HOW MANY TO WELD?' : 'HOW MANY TO COMPLETE?';
 
-  // Operator dropdown. Fab → fabricators; weld/complete → welders. Both live in
-  // Employees with staff_type='workshop', so we list all active workshop staff
+  // Operator dropdown. Fab → fabricators; weld/complete → welders. Lists all
+  // bookable shop-floor staff (workshop + director/PM — see bookableShopStaff)
   // for every stage (the shop knows who fabs vs welds; no separate flag yet).
   const opWrap = document.getElementById('saOperatorWrap');
   const opLabel = document.getElementById('saOperatorLabel');
   const opSel = document.getElementById('saOperator');
   opLabel.textContent = opLabelMap[stage] + (isDraftsman ? ' (optional)' : '');
   opSel.innerHTML = `<option value="">${isDraftsman ? '— none —' : 'Select…'}</option>`;
-  const staff = (state.timesheetData.employees || [])
-    .filter(e => (e.staffType || 'workshop') === 'workshop' && e.active !== false)
-    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+  const staff = bookableShopStaff();
   for (const w of staff) {
     opSel.innerHTML += `<option value="${w.id}" data-name="${escapeHtml(w.name)}">${escapeHtml(w.name)}</option>`;
   }
@@ -21891,9 +21903,7 @@ async function openBulkStageModal(stage, pool, surface) {
   // Operator dropdown (optional in bulk regardless of surface)
   const opSel = document.getElementById('bsOperator');
   opSel.innerHTML = '<option value="">— who did it? —</option>';
-  const staff = (state.timesheetData.employees || [])
-    .filter(e => (e.staffType || 'workshop') === 'workshop' && e.active !== false)
-    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+  const staff = bookableShopStaff();
   for (const w of staff) opSel.innerHTML += `<option value="${w.id}" data-name="${escapeHtml(w.name)}">${escapeHtml(w.name)}</option>`;
   // Remember-last: attribution feeds the Fab output report, so the picker is
   // required — but pre-filled from last time, so it costs zero taps normally.
