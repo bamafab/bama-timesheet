@@ -15823,7 +15823,11 @@ async function openRamsModal(existingDocId) {
     } else {
       // NEW: next free number for the project. If the register API/table is
       // missing, fall back to the legacy behaviour (no numbering) gracefully.
-      const next = await api.get(`/api/rams-next-no?projectId=${parseInt(proj.id)}`).catch(() => null);
+      // proj.id is the project NUMBER string ("S1982"); the SQL id is proj.dbId
+      // (same trap as the Job Sheet — see loadJobSheet).
+      const next = proj?.dbId
+        ? await api.get(`/api/rams-next-no?projectId=${parseInt(proj.dbId)}`).catch(() => null)
+        : null;
       _ramsAssignedNo = next ? next.rams_no : null;
       _ramsRevisionInt = 0;
       _ramsJobIds = [parseInt(job.id)];
@@ -18194,7 +18198,7 @@ async function confirmRams() {
       if (_ramsAssignedNo) {
         try {
           await api.post('/api/rams-docs', {
-            project_id: parseInt(proj.id),
+            project_id: parseInt(proj.dbId),
             rams_no: _ramsAssignedNo,
             revision: _ramsRevisionInt,
             title: rams.title || null,
@@ -18209,7 +18213,7 @@ async function confirmRams() {
             docx_web_url: docxUploaded?.webUrl || null,
             created_by: _currentDraftsmanName || null
           });
-          delete _ramsDocsCache[parseInt(proj.id)];
+          delete _ramsDocsCache[parseInt(proj.dbId)];
         } catch (regErr) {
           toast('RAMS saved, but the register entry failed (' + regErr.message + ') \u2014 revisions of this document won\u2019t be available. Has create-rams-documents.sql been run?', 'error');
         }
@@ -19632,7 +19636,7 @@ function renderSite() {
   // RAMS register — numbered documents covering this job, with Revise buttons.
   // Loaded lazily (progressive render) so renderSite stays synchronous.
   html += `<div id="ramsRegisterWrap"></div>`;
-  setTimeout(() => _ramsRenderRegister(currentProject?.id, currentJob?.id), 0);
+  setTimeout(() => _ramsRenderRegister(currentProject?.dbId, currentJob?.id), 0);
 
   // Notes
   html += renderNotesSection(site.notes || [], 'site');
