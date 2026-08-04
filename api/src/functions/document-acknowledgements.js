@@ -26,10 +26,12 @@ app.http('doc-ack-list', {
             const u = new URL(request.url);
             const proj = u.searchParams.get('project_number');
             const docId = u.searchParams.get('doc_file_id');
+            const dtype = u.searchParams.get('doc_type');
             const params = {};
             let where = 'is_deleted = 0';
             if (proj)  { where += ' AND project_number = @proj'; params.proj = proj; }
             if (docId) { where += ' AND doc_file_id = @docId'; params.docId = docId; }
+            if (dtype) { where += ' AND doc_type = @dtype'; params.dtype = dtype; }
             const res = await query(
                 `SELECT TOP 500 id, doc_type, doc_ref, doc_file_id, doc_web_url, project_number,
                         job_id, signer_name, signer_company, statement,
@@ -52,7 +54,7 @@ app.http('doc-ack-create', {
             const b = await request.json();
             if (!b.doc_type || !b.signer_name) return badRequest('doc_type and signer_name are required', request);
             const dt = String(b.doc_type).toLowerCase();
-            if (!['rams', 'sdn', 'dn'].includes(dt)) return badRequest('doc_type must be rams, sdn or dn', request);
+            if (!['rams', 'sdn', 'dn', 'policy'].includes(dt)) return badRequest('doc_type must be rams, sdn, dn or policy', request);
             const res = await query(
                 `INSERT INTO DocumentAcknowledgements
                     (doc_type, doc_ref, doc_file_id, doc_web_url, project_number, job_id,

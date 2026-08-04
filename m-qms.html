@@ -125,6 +125,11 @@
       <div class="meta"><div class="title">Sign RAMS</div><div class="sub">Read the RAMS for a job and sign to confirm understanding</div></div>
       <div class="arr">&rsaquo;</div>
     </div>
+    <div class="qcard home-tile" onclick="mGo('pol')">
+      <div class="chip">&#128220;</div>
+      <div class="meta"><div class="title">Sign Policies</div><div class="sub">Read company policies &amp; H&amp;S documents and sign to confirm</div></div>
+      <div class="arr">&rsaquo;</div>
+    </div>
     <div class="qcard home-tile" onclick="mGo('snag')">
       <div class="chip">&#128681;</div>
       <div class="meta"><div class="title">Snagging</div><div class="sub">Photo + keyword &rarr; AI writes the snag, per item &rarr; report</div></div>
@@ -175,6 +180,12 @@
     <div id="signDocs" style="margin-top:6px"></div>
   </div>
 
+  <!-- SIGN POLICIES -->
+  <div class="m-body" id="viewPol" style="display:none">
+    <div class="m-h">Company policies &amp; documents</div>
+    <div id="polDocs" class="m-loading" style="padding:20px 2px;text-align:left">Loading&hellip;</div>
+  </div>
+
   <!-- SNAGGING -->
   <div class="m-body" id="viewSnag" style="display:none">
     <div class="m-h">Snagging report</div>
@@ -191,7 +202,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" data-jspdf-loaded="1"></script>
 <script>window.CURRENT_PAGE = 'm-qms';</script>
-<script src="shared.js?v=20260804b"></script>
+<script src="shared.js?v=20260804c"></script>
 <script src="steel-match.js?v=20260801e"></script>
 
 <script>
@@ -212,6 +223,7 @@ const M_VIEWS = {
   stock: { word: 'STOCK', tag: 'Steel register', back: true  },
   tbt:   { word: 'TALKS', tag: 'Toolbox Talks',  back: true  },
   sign:  { word: 'RAMS',  tag: 'Read & sign',    back: true  },
+  pol:   { word: 'SIGN',  tag: 'Policies',       back: true  },
   snag:  { word: 'SNAG',  tag: 'Snagging',       back: true  }
 };
 let _mView = 'home';
@@ -223,6 +235,7 @@ function mGo(view) {
   document.getElementById('viewStock').style.display = view === 'stock' ? 'block' : 'none';
   document.getElementById('viewTbt').style.display   = view === 'tbt'   ? 'block' : 'none';
   document.getElementById('viewSign').style.display  = view === 'sign'  ? 'block' : 'none';
+  document.getElementById('viewPol').style.display   = view === 'pol'   ? 'block' : 'none';
   document.getElementById('viewSnag').style.display  = view === 'snag'  ? 'block' : 'none';
   const v = M_VIEWS[view];
   const bw = document.getElementById('mBrandWord');
@@ -234,6 +247,7 @@ function mGo(view) {
   if (view === 'stock') { stkEnsureSections(); stkLoad(); }
   if (view === 'tbt')   { mLoadTalks(); mLoadTbtRecent(); }
   if (view === 'sign')  { mSignLoadJobs(); }
+  if (view === 'pol')   { mPolLoad(); }
   if (view === 'snag')  { mSnagInit(); }
 }
 
@@ -326,6 +340,8 @@ async function mLoadRecent() {
 // open the PDF read-only and sign "I have read & understood". Each signature is
 // recorded via /api/acknowledgements with the finger-signature image.
 const RAMS_STATEMENT = 'I confirm that I have read, understood and will comply with this Risk Assessment & Method Statement.';
+const POLICY_STATEMENT = 'I confirm that I have read and understood this company policy/document and will comply with it.';
+let _signMode = 'rams';   // 'rams' | 'policy' — decides doc_type, statement and where the register files
 let _signJobs = [], _signDocs = [], _signSigData = null, _signActiveDoc = null;
 
 async function mSignLoadJobs() {
@@ -447,8 +463,10 @@ async function _mGraphChildByName(driveId, parentId, name) {
 
 let _signSession = [];   // signatures collected this session: {name, company, signature}
 
-function mSignOpen(i) {
-  const d = _signDocs[i]; if (!d) return;
+function mSignOpen(i) { _signMode = 'rams'; mSignOpenDoc(_signDocs[i]); }
+
+function mSignOpenDoc(d) {
+  if (!d) return;
   _signSigData = null; _signSession = [];
   if (!document.getElementById('signModal')) {
     const div = document.createElement('div');
@@ -479,9 +497,12 @@ function mSignOpen(i) {
     document.body.appendChild(div.firstElementChild);
   }
   _signActiveDoc = d;
-  document.getElementById('signTitle').textContent = 'Sign: ' + (d.name || d.fileName || 'RAMS');
-  document.getElementById('signStatement').textContent = RAMS_STATEMENT;
+  document.getElementById('signTitle').textContent = 'Sign: ' + (d.name || d.fileName || (_signMode === 'policy' ? 'Policy' : 'RAMS'));
+  document.getElementById('signStatement').textContent = _signMode === 'policy' ? POLICY_STATEMENT : RAMS_STATEMENT;
   const link = document.getElementById('signReadLink');
+  link.innerHTML = _signMode === 'policy'
+    ? '&#128065; Open and read the document first &rarr;'
+    : '&#128065; Open and read the RAMS first &rarr;';
   if (d.webUrl) { link.href = d.webUrl; link.style.display = 'inline'; } else { link.style.display = 'none'; }
   document.getElementById('signName').value = _mMe || '';
   document.getElementById('signCompany').value = 'BAMA Fabrication';
@@ -548,23 +569,23 @@ async function mSignSaveAll() {
     // 1. Persist each signature as its own acknowledgement row.
     for (const s of _signSession) {
       await api.post('/api/acknowledgements', {
-        doc_type: 'rams', doc_ref: d.name || d.fileName || 'RAMS',
+        doc_type: _signMode, doc_ref: d.name || d.fileName || (_signMode === 'policy' ? 'Policy' : 'RAMS'),
         doc_file_id: d.fileId || null, doc_web_url: d.webUrl || null,
-        project_number: d.project_number, job_id: d.job_id,
+        project_number: d.project_number || null, job_id: d.job_id || null,
         signer_name: s.name, signer_company: s.company,
-        statement: RAMS_STATEMENT, signature: s.signature
+        statement: _signMode === 'policy' ? POLICY_STATEMENT : RAMS_STATEMENT, signature: s.signature
       });
     }
     // 2. Regenerate the acknowledgement register PDF from ALL rows for this
     //    doc (this session + any prior days) and file it next to the RAMS.
     status.textContent = 'Building register…';
-    try { await mSignBuildRegister(d); }
+    try { await (_signMode === 'policy' ? mPolBuildRegister(d) : mSignBuildRegister(d)); }
     catch (regErr) { console.warn('register PDF failed:', regErr.message); /* signatures are safe */ }
 
     toast(`${_signSession.length} signature${_signSession.length !== 1 ? 's' : ''} recorded`, 'success');
     document.getElementById('signModal').style.display = 'none';
     _signSession = [];
-    mSignLoadDocs();
+    if (_signMode === 'policy') mPolLoad(); else mSignLoadDocs();
   } catch (e) { status.textContent = 'Failed: ' + e.message; btn.disabled = false; }
 }
 
@@ -653,6 +674,141 @@ async function mSignBuildRegister(d) {
     if (jobSub) target = jobSub;
   } catch (_) {}
   await uploadFileToFolder(target.id, regName, await blob.arrayBuffer(), 'application/pdf', drive);
+}
+
+// ── SIGN POLICIES (company documents read-and-sign) ─────────────────────────
+// Lists live Company Docs in the signable categories, marks the ones the
+// current user has already signed, and reuses the RAMS sign modal in 'policy'
+// mode. Signatures are tied to the SharePoint file id, so renewing a policy
+// (new file) naturally resets the register — everyone signs the new version.
+const POL_SIGNABLE = { policy: 'Policy', hs: 'H&S', ra_ssow: 'RA / SSoW' };
+let _polDocs = [];
+
+async function mPolLoad() {
+  const host = document.getElementById('polDocs');
+  host.innerHTML = '<div class="m-loading" style="padding:20px 2px;text-align:left">Loading documents&hellip;</div>';
+  try {
+    const [docs, acks] = await Promise.all([
+      api.get('/api/company-documents').catch(() => []),
+      api.get('/api/acknowledgements?doc_type=policy').catch(() => [])
+    ]);
+    _polDocs = (docs || []).filter(d => POL_SIGNABLE[d.category] && !d.is_archived && d.sharepoint_file_id);
+    if (!_polDocs.length) {
+      host.innerHTML = '<div class="m-loading" style="padding:20px 2px;text-align:left">No signable policies on file yet — the office adds them under Company Docs.</div>';
+      return;
+    }
+    const meLc = String(_mMe || '').trim().toLowerCase();
+    const byFile = {};
+    (acks || []).forEach(a => { (byFile[a.doc_file_id] = byFile[a.doc_file_id] || []).push(a); });
+    host.innerHTML = _polDocs.map((d, i) => {
+      const sigs = byFile[d.sharepoint_file_id] || [];
+      const mine = meLc && sigs.find(a => String(a.signer_name || '').trim().toLowerCase() === meLc);
+      const signedBadge = mine
+        ? `<span style="color:var(--green,#3ecf8e);font-size:12px;font-weight:600">&#10003; You signed ${new Date(mine.acknowledged_at).toLocaleDateString('en-GB')}</span>`
+        : `<span style="color:var(--muted);font-size:12px">${sigs.length} signature${sigs.length !== 1 ? 's' : ''} on file</span>`;
+      return `<div class="qcard" style="padding:14px 16px;display:flex;flex-direction:column;gap:8px;margin-bottom:10px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:10.5px;font-weight:700;letter-spacing:.4px;color:var(--accent);border:1px solid var(--accent);border-radius:5px;padding:2px 7px">${POL_SIGNABLE[d.category]}</span>
+          <div class="title" style="font-size:14px;flex:1">${escapeHtml(d.title)}</div>
+        </div>
+        <div style="font-size:11.5px;color:var(--muted)">${escapeHtml(d.doc_ref || '')}${d.doc_ref && d.issue_date ? ' &middot; ' : ''}${d.issue_date ? 'Issued ' + d.issue_date : ''}</div>
+        <div>${signedBadge}</div>
+        <div style="display:flex;gap:8px">
+          ${d.web_url ? `<a class="stk-btn" style="text-align:center;text-decoration:none;flex:1" href="${escapeHtml(d.web_url)}" target="_blank" rel="noopener">&#128065; Read</a>` : ''}
+          <button class="stk-btn primary" style="flex:1" onclick="mPolSignOpen(${i})">&#9997;&#65039; Sign</button>
+        </div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    host.innerHTML = `<div class="m-loading" style="padding:20px 2px;text-align:left;color:var(--red)">Failed to load: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function mPolSignOpen(i) {
+  const p = _polDocs[i]; if (!p) return;
+  _signMode = 'policy';
+  mSignOpenDoc({
+    name: p.title, fileName: p.file_name,
+    fileId: p.sharepoint_file_id, driveId: p.drive_id || null,
+    webUrl: p.web_url || null, project_number: null, job_id: null
+  });
+}
+
+// Rebuild the policy signature register PDF from every signature on file for
+// this exact file version and file it in the SAME SharePoint folder as the
+// policy. Stable filename → overwrites on each save.
+async function mPolBuildRegister(d) {
+  const all = (await api.get('/api/acknowledgements?doc_type=policy&doc_file_id=' + encodeURIComponent(d.fileId)) || []);
+  if (!all.length) return;
+  all.sort((a, b) => new Date(a.acknowledged_at) - new Date(b.acknowledged_at));
+  for (const a of all) {
+    try { const r = await api.get('/api/acknowledgements/' + a.id + '/signature'); a._sig = r && r.signature; }
+    catch (_) { a._sig = null; }
+  }
+
+  const JsPDF = await resolveJsPDFCtor();
+  await (typeof loadLogoDataUri === 'function' ? loadLogoDataUri() : Promise.resolve());
+  const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
+  const doc = new JsPDF({ unit: 'mm', format: 'a4' });
+  const W = 210, M = 14, accent = _houseAccent();
+  const h = bamaDocHeader(doc, logo, {
+    title: 'POLICY ACKNOWLEDGEMENT', accent, marginL: M, marginR: M,
+    meta: [
+      { label: 'Document:', value: d.name || d.fileName || 'Policy' },
+      { label: 'Printed:', value: new Date().toLocaleDateString('en-GB') }
+    ]
+  });
+  let y = h.y;
+  y = bamaSectionHeading(doc, y, 'SIGNATURE REGISTER', { accent, marginL: M, usableW: W - 2 * M });
+  doc.setFont('helvetica', 'italic'); doc.setFontSize(9); doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+  const intro = doc.splitTextToSize('The persons listed below confirm that they have read and understood the above company policy/document and will comply with it. Signatures apply to this version of the document.', W - 2 * M);
+  doc.text(intro, M, y); y += intro.length * 4.4 + 4;
+
+  const cols = [
+    { x: M,        w: 52, label: 'Name' },
+    { x: M + 52,   w: 46, label: 'Company' },
+    { x: M + 98,   w: 48, label: 'Signature' },
+    { x: M + 146,  w: W - M - (M + 146), label: 'Date' }
+  ];
+  const drawHead = () => {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(HOUSE_INK[0], HOUSE_INK[1], HOUSE_INK[2]);
+    cols.forEach(c => doc.text(c.label.toUpperCase(), c.x, y));
+    y += 3; doc.setDrawColor(200); doc.line(M, y, W - M, y); y += 4;
+  };
+  drawHead();
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
+  const rowH = 16;
+  for (const a of all) {
+    if (y + rowH > 275) { doc.addPage(); y = bamaDocContinuation(doc, { title: 'POLICY ACKNOWLEDGEMENT', ref: d.name || '', marginL: M, marginR: M }).y; drawHead(); doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); }
+    const cy = y;
+    doc.setTextColor(HOUSE_INK[0], HOUSE_INK[1], HOUSE_INK[2]);
+    doc.text(doc.splitTextToSize(String(a.signer_name || ''), cols[0].w - 2), cols[0].x, cy + 4);
+    doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+    doc.text(doc.splitTextToSize(String(a.signer_company || 'BAMA Fabrication'), cols[1].w - 2), cols[1].x, cy + 4);
+    if (a._sig) { try { doc.addImage(a._sig, 'PNG', cols[2].x, cy - 1, 40, 13); } catch (_) {} }
+    doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+    doc.text(new Date(a.acknowledged_at).toLocaleDateString('en-GB'), cols[3].x, cy + 4);
+    y += rowH; doc.setDrawColor(230); doc.line(M, y - 3, W - M, y - 3);
+  }
+  y += 4;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+  doc.text(`${all.length} signature${all.length !== 1 ? 's' : ''} on record. Register generated via BAMA ERP on ${new Date().toLocaleString('en-GB')}.`, M, y);
+  bamaDocFooter(doc, { marginL: M, marginR: M, caption: 'Policy Acknowledgement  \u00b7  BAMA Fabrication Ltd' });
+
+  // File next to the policy: the register lives in the same folder as the
+  // document it belongs to. Stable filename → overwrites on each rebuild.
+  const blob = doc.output('blob');
+  const drive = d.driveId || BAMA_DRIVE_ID;
+  const token = await getToken();
+  const metaRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${drive}/items/${d.fileId}`,
+    { headers: { Authorization: 'Bearer ' + token } });
+  if (!metaRes.ok) throw new Error('policy file lookup ' + metaRes.status);
+  const meta = await metaRes.json();
+  const parentId = meta.parentReference && meta.parentReference.id;
+  if (!parentId) throw new Error('policy file has no parent folder');
+  const base = (d.name || d.fileName || 'Policy').replace(/\.pdf$/i, '');
+  const regName = `${base} - Signature Register.pdf`.replace(/[~"#%&*:<>?{|}/\\]/g, '-');
+  await uploadFileToFolder(parentId, regName, await blob.arrayBuffer(), 'application/pdf', drive);
 }
 
 // ── SNAGGING (per-photo, AI-drafted snag descriptions) ──────────────────────

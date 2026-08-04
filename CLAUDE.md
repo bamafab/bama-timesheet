@@ -1577,6 +1577,44 @@ negative is a flag to reconcile, not an error. Batch-tracked items warn if issue
 without a batch number — welding consumables are traceable under EN 1090 and
 CON 001 records issue against a batch.
 
+## House-style PDF chrome — every generated document (2026-08-04)
+
+All BAMA documents now share the letterhead family in shared.js:
+`bamaDocHeader` (logo + company block left, italic accent title + meta grid
+right, full rule) / `bamaSectionHeading` / `bamaDocFooter` /
+**`bamaDocContinuation`** (new: slim page-2+ strip — accent italic title left,
+muted ref right, ink rule; multi-page docs don't repeat the full letterhead).
+Helpers take `pageW`/`pageH` options for **landscape** documents (pass 297/210).
+Converted 2026-08-04 (the last dark-bar holdouts): ITP (landscape), CoC/DoC,
+DoP, O&M cover + contents + section dividers, Material Traceability
+(landscape), Consumables tally sheet. Pattern inside each renderer:
+`let _firstPage = true;` in `header()` — first call draws `bamaDocHeader`,
+later calls draw `bamaDocContinuation`. **Regulated CoC/DoP body content
+(clauses, declared performance) untouched — header/footer only.**
+Smoke-test any renderer change with jsPDF in node (see commit 2026-08-04),
+not just `node --check`.
+
+## Policy e-sign (read-and-sign for Company Docs, 2026-08-04)
+
+The DocumentAcknowledgements engine now covers company policies:
+- API: `doc_type` accepts `'policy'`; GET `/api/acknowledgements` filters by
+  `doc_type` and `doc_file_id`.
+- **Mobile** (m-qms.html): "Sign Policies" tile lists live Company Docs in
+  categories `policy` / `hs` / `ra_ssow` (`DOC_SIGNABLE` in shared.js) that
+  have a SharePoint file; shows "✓ You signed <date>" per user; sign modal is
+  the generalised RAMS one (`mSignOpenDoc` + `_signMode` = 'rams'|'policy',
+  statement per mode). On save the register PDF (`mPolBuildRegister`) is
+  rebuilt from ALL signatures for that file and filed in the SAME SharePoint
+  folder as the policy (`<title> - Signature Register.pdf`, overwrites).
+- **Office** (Company Docs tab): ✍ button per signable row →
+  `openDocSignatures` modal: signed list + **outstanding** (active Employees
+  not among signer names, name-matched case-insensitively) + 🖨 local
+  register-PDF print (`printDocSignatureRegister`).
+- **Version reset is structural, not a flag:** signatures key on
+  `doc_file_id`. The renew flow (`renewDoc` → archive + `superseded_by`)
+  uploads a NEW file, so the new version starts with zero signatures and
+  everyone shows outstanding again. No extra clock needed.
+
 ## Modal → Page mapping
 
 Every `id=…Modal` element in the HTML, by page. Handy when tracing an

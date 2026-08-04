@@ -14994,7 +14994,7 @@ function bamaDocHeader(doc, logoDataUri, opts) {
   opts = opts || {};
   const g = _houseGlobal();
   const accent = opts.accent || _houseAccent();
-  const pageW = 210;
+  const pageW = opts.pageW || 210;   // pass 297 for landscape documents
   const mL = opts.marginL != null ? opts.marginL : 14;
   const mR = opts.marginR != null ? opts.marginR : 14;
   const setText = c => doc.setTextColor(c[0], c[1], c[2]);
@@ -15088,7 +15088,7 @@ function bamaSectionHeading(doc, y, label, opts) {
   opts = opts || {};
   const accent = opts.accent || _houseAccent();
   const mL = opts.marginL != null ? opts.marginL : 14;
-  const usableW = opts.usableW != null ? opts.usableW : (210 - mL - (opts.marginR != null ? opts.marginR : 14));
+  const usableW = opts.usableW != null ? opts.usableW : ((opts.pageW || 210) - mL - (opts.marginR != null ? opts.marginR : 14));
   doc.setFont('helvetica', 'bold'); doc.setFontSize(opts.size || 9); doc.setTextColor(accent[0], accent[1], accent[2]);
   doc.text(String(label), mL, y);
   doc.setDrawColor(accent[0], accent[1], accent[2]); doc.setLineWidth(0.3);
@@ -15099,7 +15099,7 @@ function bamaSectionHeading(doc, y, label, opts) {
 // Muted "Page X of Y" footer on every page, with an optional left caption.
 function bamaDocFooter(doc, opts) {
   opts = opts || {};
-  const pageW = 210, pageH = 297;
+  const pageW = opts.pageW || 210, pageH = opts.pageH || 297;
   const mL = opts.marginL != null ? opts.marginL : 14;
   const mR = opts.marginR != null ? opts.marginR : 14;
   const total = doc.internal.getNumberOfPages();
@@ -15110,6 +15110,29 @@ function bamaDocFooter(doc, opts) {
     if (opts.caption) doc.text(String(opts.caption), mL, pageH - 8);
     doc.text(`Page ${p} of ${total}`, pageW - mR, pageH - 8, { align: 'right' });
   }
+}
+
+// Slim strip for page 2+ of a house-style document: small accent italic title
+// left, muted ref right, ink rule beneath. Multi-page documents stay in the
+// family without repeating the full letterhead on every page break.
+// opts: { title, ref, accent, pageW, marginL, marginR }. Returns { y }.
+function bamaDocContinuation(doc, opts) {
+  opts = opts || {};
+  const accent = opts.accent || _houseAccent();
+  const pageW = opts.pageW || 210;
+  const mL = opts.marginL != null ? opts.marginL : 14;
+  const mR = opts.marginR != null ? opts.marginR : 14;
+  doc.setFont('helvetica', 'bolditalic'); doc.setFontSize(11);
+  doc.setTextColor(accent[0], accent[1], accent[2]);
+  doc.text(String(opts.title || ''), mL, 14);
+  if (opts.ref) {
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
+    doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+    doc.text(String(opts.ref), pageW - mR, 14, { align: 'right' });
+  }
+  doc.setDrawColor(HOUSE_INK[0], HOUSE_INK[1], HOUSE_INK[2]); doc.setLineWidth(0.4);
+  doc.line(mL, 16.5, pageW - mR, 16.5);
+  return { y: 22.5 };
 }
 
 // Native jsPDF delivery-note renderer. Returns a Blob. Modelled on
@@ -47523,6 +47546,8 @@ const DOC_CATS = {
 };
 const DOC_CAT_OPTIONS = Object.entries(DOC_CATS)
   .map(([k, c]) => `<option value="${k}">${c.label}</option>`).join('');
+// Categories that carry a read-and-sign obligation (mobile Sign Policies tile).
+const DOC_SIGNABLE = ['policy', 'hs', 'ra_ssow'];
 
 let _docRows = null, _docFilter = 'all', _docEditing = null, _docRenewing = null;
 let _docQueue = [];   // [{file, parsed, state:'parsing'|'review'|'saving'|'done'|'error', err}]
@@ -47810,6 +47835,7 @@ function renderDocTable() {
       <td style="padding:7px 10px;border-bottom:1px solid var(--border);font-size:11.5px">${d.expiry_date || '—'}</td>
       <td style="padding:7px 10px;border-bottom:1px solid var(--border)">${exp.badge}</td>
       <td style="padding:7px 10px;border-bottom:1px solid var(--border);text-align:right;white-space:nowrap">
+        ${DOC_SIGNABLE.includes(d.category) && d.sharepoint_file_id ? `<button class="btn btn-ghost btn-sm" onclick="openDocSignatures(${d.id})" title="Signature register — who has signed, who hasn't">✍</button>` : ''}
         ${d.is_archived
           ? `<button class="btn btn-ghost btn-sm" onclick="unarchiveDoc(${d.id})" title="Restore">↩</button>`
           : `<button class="btn btn-ghost btn-sm" onclick="renewDoc(${d.id})" title="Renew — new version in, this one archived">🔁</button>
@@ -47840,6 +47866,130 @@ function updateDocAlertUi(alertDocs) {
   if (soon.length)    bits.push(`<strong style="color:#eab308">${soon.length} expiring soon</strong> (${soon.slice(0,3).map(d => escapeHtml(d.title)).join(', ')}${soon.length > 3 ? '…' : ''})`);
   strip.style.display = '';
   strip.innerHTML = `⚠ ${bits.join(' · ')}`;
+}
+
+// ── Signature register (read-and-sign, mobile Sign Policies tile) ──────────
+// Signatures are recorded against the SharePoint FILE id, so renewing a policy
+// (new file) resets the register: everyone is outstanding on the new version.
+let _docSigDoc = null, _docSigRows = [];
+
+async function openDocSignatures(id) {
+  const d = (_docRows || []).find(r => r.id === id);
+  if (!d || !d.sharepoint_file_id) { toast('No file on this document', 'error'); return; }
+  _docSigDoc = d;
+  if (!document.getElementById('docSigModal')) {
+    const div = document.createElement('div');
+    div.innerHTML = `
+    <div id="docSigModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:1000;align-items:center;justify-content:center;padding:20px">
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;width:100%;max-width:640px;max-height:92vh;display:flex;flex-direction:column;overflow:hidden">
+        <div style="padding:14px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:10px">
+          <h3 id="docSigTitle" style="margin:0;font-size:16px;flex:1"></h3>
+          <button class="btn btn-ghost btn-sm" onclick="printDocSignatureRegister()" title="Print the register as a PDF">🖨 Register PDF</button>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('docSigModal').style.display='none'">✕</button>
+        </div>
+        <div id="docSigBody" style="padding:18px 20px;overflow-y:auto;font-size:13px"></div>
+      </div>
+    </div>`;
+    document.body.appendChild(div.firstElementChild);
+  }
+  document.getElementById('docSigTitle').textContent = `Signatures — ${d.title}`;
+  const body = document.getElementById('docSigBody');
+  body.innerHTML = '<div style="color:var(--muted);padding:20px 0">Loading…</div>';
+  document.getElementById('docSigModal').style.display = 'flex';
+  try {
+    const [acks, emps] = await Promise.all([
+      api.get('/api/acknowledgements?doc_type=policy&doc_file_id=' + encodeURIComponent(d.sharepoint_file_id)),
+      api.get('/api/employees').catch(() => [])
+    ]);
+    _docSigRows = (acks || []).slice().sort((a, b) => new Date(a.acknowledged_at) - new Date(b.acknowledged_at));
+    const signedLc = new Set(_docSigRows.map(a => String(a.signer_name || '').trim().toLowerCase()));
+    const outstanding = (emps || []).filter(e => !signedLc.has(String(e.name || '').trim().toLowerCase()));
+    const chip = (lbl, n, col) => `<div style="background:var(--surface);border:1px solid ${n ? col : 'var(--border)'};border-radius:8px;padding:8px 14px"><div style="font-size:11px;color:var(--muted)">${lbl}</div><div style="font-size:18px;font-weight:700;color:${col}">${n}</div></div>`;
+    const signedHtml = _docSigRows.length
+      ? _docSigRows.map(a => `<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 10px;border-bottom:1px solid var(--border)">
+          <span style="font-weight:600">${escapeHtml(a.signer_name)}</span>
+          <span style="color:var(--muted)">${escapeHtml(a.signer_company || 'BAMA Fabrication')}</span>
+          <span style="color:var(--muted);white-space:nowrap">${new Date(a.acknowledged_at).toLocaleDateString('en-GB')}</span>
+        </div>`).join('')
+      : '<div style="color:var(--muted);padding:8px 10px">Nobody has signed this version yet.</div>';
+    const outHtml = outstanding.length
+      ? outstanding.map(e => `<span style="display:inline-block;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:3px 11px;margin:0 6px 6px 0;font-size:12px">${escapeHtml(e.name)}</span>`).join('')
+      : '<div style="color:#3ecf8e;padding:4px 0">✓ Every active employee has signed this version.</div>';
+    body.innerHTML = `
+      <div style="display:flex;gap:12px;margin-bottom:14px">${chip('Signed', _docSigRows.length, '#3ecf8e')}${chip('Outstanding (active employees)', outstanding.length, outstanding.length ? '#eab308' : '#3ecf8e')}</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:14px">Signatures apply to this file version — renewing the document starts a fresh register. Staff sign from the mobile app → Sign Policies. Outstanding matches active employees by name against the signatures on file.</div>
+      <div style="font-weight:700;font-size:12px;letter-spacing:.4px;color:var(--accent);margin-bottom:6px">SIGNED</div>
+      <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:16px">${signedHtml}</div>
+      <div style="font-weight:700;font-size:12px;letter-spacing:.4px;color:var(--accent);margin-bottom:8px">OUTSTANDING</div>
+      <div>${outHtml}</div>`;
+  } catch (e) {
+    body.innerHTML = `<div style="color:var(--red);padding:20px 0">Failed to load: ${escapeHtml(e.message)}<br><span style="color:var(--muted);font-size:11.5px">Fresh deploy? Run api/sql/create-document-acknowledgements.sql first.</span></div>`;
+  }
+}
+
+// House-style register PDF, generated locally for print/save. The mobile app
+// files the authoritative copy next to the policy on every save; this one is
+// for "the auditor is standing here" moments.
+async function printDocSignatureRegister() {
+  const d = _docSigDoc; if (!d) return;
+  try {
+    const all = _docSigRows.slice();
+    if (!all.length) { toast('Nobody has signed this version yet', 'error'); return; }
+    for (const a of all) {
+      try { const r = await api.get('/api/acknowledgements/' + a.id + '/signature'); a._sig = r && r.signature; }
+      catch (_) { a._sig = null; }
+    }
+    const JsPDF = await resolveJsPDFCtor();
+    await (typeof loadLogoDataUri === 'function' ? loadLogoDataUri() : Promise.resolve());
+    const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
+    const doc = new JsPDF({ unit: 'mm', format: 'a4' });
+    const W = 210, M = 14, accent = _houseAccent();
+    let y = bamaDocHeader(doc, logo, {
+      title: 'POLICY ACKNOWLEDGEMENT', accent, marginL: M, marginR: M,
+      meta: [
+        { label: 'Document:', value: d.title },
+        { label: 'Ref:', value: d.doc_ref || '' },
+        { label: 'Printed:', value: new Date().toLocaleDateString('en-GB') }
+      ]
+    }).y;
+    y = bamaSectionHeading(doc, y, 'SIGNATURE REGISTER', { accent, marginL: M, usableW: W - 2 * M });
+    doc.setFont('helvetica', 'italic'); doc.setFontSize(9); doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+    const intro = doc.splitTextToSize('The persons listed below confirm that they have read and understood the above company policy/document and will comply with it. Signatures apply to this version of the document.', W - 2 * M);
+    doc.text(intro, M, y); y += intro.length * 4.4 + 4;
+    const cols = [
+      { x: M,       w: 52, label: 'Name' },
+      { x: M + 52,  w: 46, label: 'Company' },
+      { x: M + 98,  w: 48, label: 'Signature' },
+      { x: M + 146, w: W - M - (M + 146), label: 'Date' }
+    ];
+    const drawHead = () => {
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(HOUSE_INK[0], HOUSE_INK[1], HOUSE_INK[2]);
+      cols.forEach(c => doc.text(c.label.toUpperCase(), c.x, y));
+      y += 3; doc.setDrawColor(200); doc.line(M, y, W - M, y); y += 4;
+    };
+    drawHead();
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
+    const rowH = 16;
+    for (const a of all) {
+      if (y + rowH > 275) { doc.addPage(); y = bamaDocContinuation(doc, { title: 'POLICY ACKNOWLEDGEMENT', ref: d.title, marginL: M, marginR: M }).y; drawHead(); doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); }
+      const cy = y;
+      doc.setTextColor(HOUSE_INK[0], HOUSE_INK[1], HOUSE_INK[2]);
+      doc.text(doc.splitTextToSize(String(a.signer_name || ''), cols[0].w - 2), cols[0].x, cy + 4);
+      doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+      doc.text(doc.splitTextToSize(String(a.signer_company || 'BAMA Fabrication'), cols[1].w - 2), cols[1].x, cy + 4);
+      if (a._sig) { try { doc.addImage(a._sig, 'PNG', cols[2].x, cy - 1, 40, 13); } catch (_) {} }
+      doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+      doc.text(new Date(a.acknowledged_at).toLocaleDateString('en-GB'), cols[3].x, cy + 4);
+      y += rowH; doc.setDrawColor(230); doc.line(M, y - 3, W - M, y - 3);
+    }
+    y += 4;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+    doc.text(`${all.length} signature${all.length !== 1 ? 's' : ''} on record. Register generated via BAMA ERP on ${new Date().toLocaleString('en-GB')}.`, M, y);
+    bamaDocFooter(doc, { marginL: M, marginR: M, caption: 'Policy Acknowledgement  \u00b7  BAMA Fabrication Ltd' });
+    const blob = doc.output('blob');
+    console.log('[Policy register PDF] blob size:', blob.size, 'bytes');
+    window.open(URL.createObjectURL(blob), '_blank');
+  } catch (e) { toast('Register PDF failed: ' + e.message, 'error'); }
 }
 
 // ── Manual add / edit / renew modal (self-injecting, bamaConfirm pattern) ───
@@ -52406,26 +52556,28 @@ function drawItpPDF(jsPDF, data, logoDataUri) {
   const accent = [255, 107, 0];
   let y = 0;
 
+  // House style: full letterhead on page 1, slim continuation strip after.
+  let _firstPage = true;
   const header = () => {
-    doc.setFillColor(24, 24, 27); doc.rect(0, 0, pageW, 22, 'F');
-    let tx = mL;
-    if (logoDataUri) {
-      try {
-        const props = doc.getImageProperties(logoDataUri);   // data URIs have no naturalWidth
-        const h = 12, w = h * (props.width / props.height);
-        doc.addImage(logoDataUri, mL, 5, w, h);
-        tx = mL + w + 5;
-      } catch (e) { /* logo optional */ }
+    if (_firstPage) {
+      _firstPage = false;
+      y = bamaDocHeader(doc, logoDataUri, {
+        title: 'INSPECTION & TEST PLAN', pageW, marginL: mL, marginR: mR,
+        meta: [
+          { label: 'Job:',        value: [data.jobNumber, data.jobName].filter(Boolean).join(' — ') },
+          { label: 'Client:',     value: data.client || '' },
+          { label: 'Exec class:', value: data.execClass || '' },
+          { label: 'Rev:',        value: data.rev || '01' },
+          { label: 'Issued:',     value: data.issueDate || '' }
+        ]
+      }).y;
+    } else {
+      y = bamaDocContinuation(doc, {
+        title: 'INSPECTION & TEST PLAN',
+        ref: `${data.jobNumber || ''}  ·  ${data.execClass || ''}  ·  Rev ${data.rev || '01'}`,
+        pageW, marginL: mL, marginR: mR
+      }).y;
     }
-    doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
-    doc.text('INSPECTION & TEST PLAN', tx, 11);
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(190, 190, 195);
-    doc.text([data.jobNumber, data.jobName, data.client].filter(Boolean).join('  ·  '), tx, 17);
-    doc.setTextColor(...accent); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
-    doc.text(`Execution class ${data.execClass || ''}`, pageW - mR, 11, { align: 'right' });
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(190, 190, 195);
-    doc.text(`Rev ${data.rev || '01'}  ·  ${data.issueDate || ''}`, pageW - mR, 16.5, { align: 'right' });
-    y = 27;
   };
 
   // Intervention key — an ITP is useless if the reader can't decode H/W/S/R
@@ -52530,14 +52682,9 @@ function drawItpPDF(jsPDF, data, logoDataUri) {
   doc.text('Name / signature / date', mL, y + 16);
   doc.text('Name / signature / date', mL + 100, y + 16);
 
-  // Footer on every page
-  const total = doc.getNumberOfPages();
-  for (let p = 1; p <= total; p++) {
-    doc.setPage(p);
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5); doc.setTextColor(140, 140, 145);
-    doc.text('BAMA Fabrication Ltd  ·  Inspection & Test Plan  ·  generated from the live inspection plan', mL, pageH - 6);
-    doc.text(`Page ${p} of ${total}`, pageW - mR, pageH - 6, { align: 'right' });
-  }
+  // Footer on every page (house style)
+  bamaDocFooter(doc, { pageW, pageH, marginL: mL, marginR: mR, size: 7,
+    caption: `Inspection & Test Plan  \u00b7  ${data.jobNumber || ''}  \u00b7  generated from the live inspection plan` });
   return doc;
 }
 
@@ -52894,26 +53041,27 @@ function drawCocPDF(jsPDF, d, logoDataUri) {
   const accent = [255, 107, 0];
   let y = 0;
 
+  // House style: full letterhead on page 1, slim continuation strip after.
+  let _firstPage = true;
   const header = () => {
-    doc.setFillColor(24, 24, 27); doc.rect(0, 0, pageW, 26, 'F');
-    let tx = mL;
-    if (logoDataUri) {
-      try {
-        const props = doc.getImageProperties(logoDataUri);
-        const h = 13, w = h * (props.width / props.height);
-        doc.addImage(logoDataUri, mL, 6.5, w, h);
-        tx = mL + w + 6;
-      } catch (e) { /* logo optional */ }
+    if (_firstPage) {
+      _firstPage = false;
+      y = bamaDocHeader(doc, logoDataUri, {
+        title: docTitle, marginL: mL, marginR: mR,
+        meta: [
+          { label: 'Ref:',    value: d.certRef || '' },
+          { label: 'Scope:',  value: supplyOnly ? 'Supply only' : 'Supply and installation' },
+          { label: 'Rev:',    value: String(d.revision || 1) },
+          { label: 'Issued:', value: d.issueDate || '' }
+        ]
+      }).y;
+    } else {
+      y = bamaDocContinuation(doc, {
+        title: docTitle,
+        ref: `${d.certRef || ''}  ·  Rev ${d.revision || 1}`,
+        marginL: mL, marginR: mR
+      }).y;
     }
-    doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(14);
-    doc.text(docTitle, tx, 13);
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(190, 190, 195);
-    doc.text(`BAMA Fabrication Ltd  ·  structural steelwork  ·  ${supplyOnly ? 'supply only' : 'supply and installation'}`, tx, 19.5);
-    doc.setTextColor(...accent); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
-    doc.text(d.certRef || '', pageW - mR, 13, { align: 'right' });
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(190, 190, 195);
-    doc.text(`Rev ${d.revision || 1}  ·  ${d.issueDate || ''}`, pageW - mR, 19, { align: 'right' });
-    y = 33;
   };
 
   const need = h => { if (y + h > pageH - mB) { doc.addPage(); header(); } };
@@ -53051,13 +53199,8 @@ function drawCocPDF(jsPDF, d, logoDataUri) {
   doc.text('Name and position', mL + 96, y + 18);
   if (d.issuedBy) { doc.setFontSize(8); doc.setTextColor(40, 40, 45); doc.text(String(d.issuedBy), mL + 96, y + 12); }
 
-  const total = doc.getNumberOfPages();
-  for (let p = 1; p <= total; p++) {
-    doc.setPage(p);
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5); doc.setTextColor(140, 140, 145);
-    doc.text(`${docTitleTc}  ·  ${d.certRef || ''}  ·  BAMA Fabrication Ltd`, mL, pageH - 8);
-    doc.text(`Page ${p} of ${total}`, pageW - mR, pageH - 8, { align: 'right' });
-  }
+  bamaDocFooter(doc, { marginL: mL, marginR: mR, size: 7,
+    caption: `${docTitleTc}  \u00b7  ${d.certRef || ''}  \u00b7  BAMA Fabrication Ltd` });
   return doc;
 }
 
@@ -53426,26 +53569,28 @@ function drawDopPDF(jsPDF, d, logoDataUri) {
   const accent = [255, 107, 0];
   let y = 0;
 
+  // House style: full letterhead on page 1, slim continuation strip after.
+  let _firstPage = true;
   const header = () => {
-    doc.setFillColor(24, 24, 27); doc.rect(0, 0, pageW, 26, 'F');
-    let tx = mL;
-    if (logoDataUri) {
-      try {
-        const props = doc.getImageProperties(logoDataUri);
-        const h = 13, w = h * (props.width / props.height);
-        doc.addImage(logoDataUri, mL, 6.5, w, h);
-        tx = mL + w + 6;
-      } catch (e) { /* logo optional */ }
+    if (_firstPage) {
+      _firstPage = false;
+      y = bamaDocHeader(doc, logoDataUri, {
+        title: 'DECLARATION OF PERFORMANCE', marginL: mL, marginR: mR,
+        meta: [
+          { label: 'No.:',      value: d.dopNo || '' },
+          { label: 'Standard:', value: d.standard || '' },
+          { label: 'Marking:',  value: d.marking ? `${d.marking} marking` : '' },
+          { label: 'Rev:',      value: String(d.revision || 1) },
+          { label: 'Issued:',   value: d.issueDate || '' }
+        ]
+      }).y;
+    } else {
+      y = bamaDocContinuation(doc, {
+        title: 'DECLARATION OF PERFORMANCE',
+        ref: `No. ${d.dopNo || ''}  ·  Rev ${d.revision || 1}`,
+        marginL: mL, marginR: mR
+      }).y;
     }
-    doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
-    doc.text('DECLARATION OF PERFORMANCE', tx, 12.5);
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(190, 190, 195);
-    doc.text(`${d.standard || ''}${d.marking ? '  ·  ' + d.marking + ' marking' : ''}`, tx, 19);
-    doc.setTextColor(...accent); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
-    doc.text(`No. ${d.dopNo || ''}`, pageW - mR, 12.5, { align: 'right' });
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(190, 190, 195);
-    doc.text(`Rev ${d.revision || 1}  ·  ${d.issueDate || ''}`, pageW - mR, 18.5, { align: 'right' });
-    y = 33;
   };
   const need = h => { if (y + h > pageH - mB) { doc.addPage(); header(); } };
 
@@ -53535,13 +53680,8 @@ function drawDopPDF(jsPDF, d, logoDataUri) {
   doc.text('Name, position and signature', mL, y + 21);
   doc.text('Place and date of issue', mL + 100, y + 21);
 
-  const total = doc.getNumberOfPages();
-  for (let p = 1; p <= total; p++) {
-    doc.setPage(p);
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5); doc.setTextColor(140, 140, 145);
-    doc.text(`Declaration of Performance  ·  No. ${d.dopNo || ''}  ·  ${d.manufacturer || ''}`, mL, pageH - 8);
-    doc.text(`Page ${p} of ${total}`, pageW - mR, pageH - 8, { align: 'right' });
-  }
+  bamaDocFooter(doc, { marginL: mL, marginR: mR, size: 7,
+    caption: `Declaration of Performance  \u00b7  No. ${d.dopNo || ''}  \u00b7  ${d.manufacturer || ''}` });
   return doc;
 }
 
@@ -53881,22 +54021,37 @@ function drawOmFrontMatter(jsPDF, d, logoDataUri) {
   const usableW = pageW - mL - mR;
   const accent = [255, 107, 0];
 
-  // ── Cover ──
-  doc.setFillColor(24, 24, 27); doc.rect(0, 0, pageW, 92, 'F');
+  // ── Cover (house family: white, logo + company block, accent italic title) ──
+  const g = _houseGlobal();
+  let logoBottom = 20;
   if (logoDataUri) {
     try {
       const p = doc.getImageProperties(logoDataUri);
-      const h = 18, w = h * (p.width / p.height);
-      doc.addImage(logoDataUri, mL, 22, w, h);
+      const w = 58, h = w / (p.width / p.height);
+      doc.addImage(logoDataUri, p.fileType || 'PNG', mL, 20, w, h, undefined, 'FAST');
+      logoBottom = 20 + h;
     } catch (e) { /* logo optional */ }
   }
-  doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(24);
-  doc.text('OPERATION &', mL, 62);
-  doc.text('MAINTENANCE MANUAL', mL, 74);
-  doc.setTextColor(...accent); doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
-  doc.text('Structural steelwork handover pack', mL, 84);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+  doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+  const coLines = [];
+  if (g.address) String(g.address).split('\n').forEach(l => coLines.push(l));
+  if (g.phone) coLines.push('Tel: ' + g.phone);
+  if (g.email) coLines.push(g.email);
+  let coY = 24;
+  coLines.forEach(l => { doc.text(String(l), pageW - mR, coY, { align: 'right' }); coY += 3.8; });
+  const coverRuleY = Math.max(logoBottom, coY - 3.8) + 5;
+  doc.setDrawColor(HOUSE_INK[0], HOUSE_INK[1], HOUSE_INK[2]); doc.setLineWidth(0.5);
+  doc.line(mL, coverRuleY, pageW - mR, coverRuleY);
 
-  let y = 112;
+  doc.setTextColor(...accent); doc.setFont('helvetica', 'bolditalic'); doc.setFontSize(26);
+  doc.text('OPERATION &', mL, 74);
+  doc.text('MAINTENANCE MANUAL', mL, 86);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+  doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+  doc.text('Structural steelwork handover pack', mL, 95);
+
+  let y = 116;
   const row = (k, v) => {
     if (v === null || v === undefined || String(v).trim() === '') return;
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(120, 120, 125);
@@ -53928,12 +54083,11 @@ function drawOmFrontMatter(jsPDF, d, logoDataUri) {
   // ── Contents ──
   const contentsHeader = () => {
     doc.addPage();
-    doc.setFillColor(24, 24, 27); doc.rect(0, 0, pageW, 22, 'F');
-    doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
-    doc.text('CONTENTS', mL, 14);
-    doc.setTextColor(...accent); doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
-    doc.text(`${d.jobNumber || ''}${d.jobName ? '  ·  ' + d.jobName : ''}`, pageW - mR, 14, { align: 'right' });
-    y = 34;
+    y = bamaDocContinuation(doc, {
+      title: 'CONTENTS',
+      ref: `${d.jobNumber || ''}${d.jobName ? '  ·  ' + d.jobName : ''}`,
+      marginL: mL, marginR: mR
+    }).y + 5;
     doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(120, 120, 125);
     doc.text('SECTION', mL, y); doc.text('PAGE', pageW - mR, y, { align: 'right' });
     doc.setDrawColor(210, 210, 215); doc.setLineWidth(0.2); doc.line(mL, y + 2, pageW - mR, y + 2);
@@ -53963,17 +54117,21 @@ function drawOmFrontMatter(jsPDF, d, logoDataUri) {
 // One divider page per section.
 function drawOmDivider(jsPDF, section, index, logoDataUri) {
   const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
-  const pageW = 210, pageH = 297, mL = 20;
-  const accent = [255, 107, 0];
-  doc.setFillColor(24, 24, 27); doc.rect(0, 0, pageW, 58, 'F');
-  doc.setTextColor(...accent); doc.setFont('helvetica', 'bold'); doc.setFontSize(34);
-  doc.text(String(index + 1).padStart(2, '0'), mL, 40);
-  doc.setTextColor(255, 255, 255); doc.setFontSize(16);
-  doc.text(doc.splitTextToSize(String(section.title || ''), pageW - mL - 40), mL + 26, 36);
+  const pageW = 210, pageH = 297, mL = 20, mR = 20;
+  const accent = _houseAccent();
+  // House family: white page, big accent index, ink title, accent rule.
+  doc.setTextColor(...accent); doc.setFont('helvetica', 'bolditalic'); doc.setFontSize(36);
+  doc.text(String(index + 1).padStart(2, '0'), mL, 42);
+  doc.setTextColor(HOUSE_INK[0], HOUSE_INK[1], HOUSE_INK[2]);
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(16);
+  doc.text(doc.splitTextToSize(String(section.title || ''), pageW - mL - 46), mL + 26, 38);
   if (section.subtitle) {
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(190, 190, 195);
-    doc.text(doc.splitTextToSize(String(section.subtitle), pageW - mL - 40)[0], mL + 26, 46);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+    doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+    doc.text(doc.splitTextToSize(String(section.subtitle), pageW - mL - 46)[0], mL + 26, 46);
   }
+  doc.setDrawColor(...accent); doc.setLineWidth(0.8);
+  doc.line(mL, 54, pageW - mR, 54);
   if (section.note) {
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(80, 80, 85);
     doc.text(doc.splitTextToSize(String(section.note), pageW - mL * 2), mL, 74);
@@ -54440,22 +54598,28 @@ function drawTracePDF(jsPDF, d, logoDataUri) {
   const accent = [255, 107, 0];
   let y = 0;
 
+  // House style: full letterhead on page 1, slim continuation strip after.
+  let _firstPage = true;
   const header = () => {
-    doc.setFillColor(24, 24, 27); doc.rect(0, 0, pageW, 22, 'F');
-    let tx = mL;
-    if (logoDataUri) {
-      try { const p = doc.getImageProperties(logoDataUri); const h = 12, w = h * (p.width / p.height);
-        doc.addImage(logoDataUri, mL, 5, w, h); tx = mL + w + 5; } catch (e) {}
+    if (_firstPage) {
+      _firstPage = false;
+      y = bamaDocHeader(doc, logoDataUri, {
+        title: 'MATERIAL TRACEABILITY', pageW, marginL: mL, marginR: mR,
+        meta: [
+          { label: 'Job:',          value: [d.jobNumber, d.jobName].filter(Boolean).join(' — ') },
+          { label: 'Client:',       value: d.client || '' },
+          { label: 'Traceability:', value: (TRACE_LEVELS[d.overallLevel] || {}).label || '' },
+          { label: 'Exec class:',   value: d.execClass || '' },
+          { label: 'Issued:',       value: d.issueDate || '' }
+        ]
+      }).y;
+    } else {
+      y = bamaDocContinuation(doc, {
+        title: 'MATERIAL TRACEABILITY',
+        ref: `${d.jobNumber || ''}  ·  ${(TRACE_LEVELS[d.overallLevel] || {}).label || ''}`,
+        pageW, marginL: mL, marginR: mR
+      }).y;
     }
-    doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
-    doc.text('MATERIAL TRACEABILITY', tx, 11);
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(190, 190, 195);
-    doc.text([d.jobNumber, d.jobName, d.client].filter(Boolean).join('  ·  '), tx, 17);
-    doc.setTextColor(...accent); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
-    doc.text(`${(TRACE_LEVELS[d.overallLevel] || {}).label || ''}`, pageW - mR, 11, { align: 'right' });
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(190, 190, 195);
-    doc.text(`${d.execClass || ''}  ·  ${d.issueDate || ''}`, pageW - mR, 16.5, { align: 'right' });
-    y = 27;
   };
   header();
 
@@ -54520,13 +54684,8 @@ function drawTracePDF(jsPDF, d, logoDataUri) {
       d.unallocated.map(h => [h.heat, h.section, h.grade, h.supplier]));
   }
 
-  const total = doc.getNumberOfPages();
-  for (let p = 1; p <= total; p++) {
-    doc.setPage(p);
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5); doc.setTextColor(140, 140, 145);
-    doc.text(`Material traceability  ·  ${d.jobNumber || ''}  ·  BAMA Fabrication Ltd`, mL, pageH - 6);
-    doc.text(`Page ${p} of ${total}`, pageW - mR, pageH - 6, { align: 'right' });
-  }
+  bamaDocFooter(doc, { pageW, pageH, marginL: mL, marginR: mR, size: 7,
+    caption: `Material traceability  \u00b7  ${d.jobNumber || ''}  \u00b7  BAMA Fabrication Ltd` });
   return doc;
 }
 
@@ -55416,20 +55575,26 @@ function drawConsSheetPDF(jsPDF, d, logoDataUri) {
   // Columns: item, then tally boxes to tick, then who / job
   const wItem = 74, wTally = 62, wWho = 30, wJob = usableW - wItem - wTally - wWho;
 
+  // House style: full letterhead on page 1, slim continuation strip after.
+  let _firstPage = true;
   const header = () => {
-    doc.setFillColor(24, 24, 27); doc.rect(0, 0, pageW, 22, 'F');
-    let tx = mL;
-    if (logoDataUri) {
-      try { const p = doc.getImageProperties(logoDataUri); const h = 11, w = h * (p.width / p.height);
-        doc.addImage(logoDataUri, mL, 5.5, w, h); tx = mL + w + 5; } catch (e) {}
+    if (_firstPage) {
+      _firstPage = false;
+      y = bamaDocHeader(doc, logoDataUri, {
+        title: 'CONSUMABLES', marginL: mL, marginR: mR,
+        meta: [{ label: 'Week beginning:', value: d.weekOf || '____________' }]
+      }).y;
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
+      doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+      doc.text('One line per item taken. Tally the quantity, initial it, and put the job number on if it is for a job.', mL, y);
+      y += 6;
+    } else {
+      y = bamaDocContinuation(doc, {
+        title: 'CONSUMABLES',
+        ref: `Week beginning ${d.weekOf || '____________'}`,
+        marginL: mL, marginR: mR
+      }).y;
     }
-    doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
-    doc.text('CONSUMABLES — WHAT YOU TOOK', tx, 11);
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(190, 190, 195);
-    doc.text('One line per item taken. Tally the quantity, initial it, and put the job number on if it is for a job.', tx, 17);
-    doc.setTextColor(...accent); doc.setFont('helvetica', 'bold'); doc.setFontSize(8);
-    doc.text(`Week beginning ${d.weekOf || '____________'}`, pageW - mR, 11, { align: 'right' });
-    y = 28;
   };
   const drawHead = () => {
     doc.setFillColor(240, 240, 242); doc.rect(mL, y, usableW, 6.5, 'F');
@@ -55493,13 +55658,8 @@ function drawConsSheetPDF(jsPDF, d, logoDataUri) {
     y += rowH;
   }
 
-  const total = doc.getNumberOfPages();
-  for (let p = 1; p <= total; p++) {
-    doc.setPage(p);
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5); doc.setTextColor(140, 140, 145);
-    doc.text('Hand the finished sheet to the office — it gets typed in and keeps the stock figures honest.', mL, pageH - 6);
-    doc.text(`Page ${p} of ${total}`, pageW - mR, pageH - 6, { align: 'right' });
-  }
+  bamaDocFooter(doc, { marginL: mL, marginR: mR, size: 7,
+    caption: 'Hand the finished sheet to the office \u2014 it gets typed in and keeps the stock figures honest.' });
   return doc;
 }
 
