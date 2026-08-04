@@ -54,7 +54,7 @@ app.http('doc-ack-create', {
             const b = await request.json();
             if (!b.doc_type || !b.signer_name) return badRequest('doc_type and signer_name are required', request);
             const dt = String(b.doc_type).toLowerCase();
-            if (!['rams', 'sdn', 'dn', 'policy'].includes(dt)) return badRequest('doc_type must be rams, sdn, dn or policy', request);
+            if (!['rams', 'sdn', 'dn', 'policy', 'policy_director'].includes(dt)) return badRequest('doc_type must be rams, sdn, dn, policy or policy_director', request);
             const res = await query(
                 `INSERT INTO DocumentAcknowledgements
                     (doc_type, doc_ref, doc_file_id, doc_web_url, project_number, job_id,

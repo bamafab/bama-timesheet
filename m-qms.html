@@ -202,7 +202,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" data-jspdf-loaded="1"></script>
 <script>window.CURRENT_PAGE = 'm-qms';</script>
-<script src="shared.js?v=20260804c"></script>
+<script src="shared.js?v=20260804d"></script>
 <script src="steel-match.js?v=20260801e"></script>
 
 <script>
@@ -734,81 +734,12 @@ function mPolSignOpen(i) {
   });
 }
 
-// Rebuild the policy signature register PDF from every signature on file for
-// this exact file version and file it in the SAME SharePoint folder as the
-// policy. Stable filename → overwrites on each save.
+// Register building + filing lives in shared.js (polBuildRegisterDoc /
+// polFileRegister) so office and mobile render the SAME document, including
+// the director-authorisation block.
 async function mPolBuildRegister(d) {
-  const all = (await api.get('/api/acknowledgements?doc_type=policy&doc_file_id=' + encodeURIComponent(d.fileId)) || []);
-  if (!all.length) return;
-  all.sort((a, b) => new Date(a.acknowledged_at) - new Date(b.acknowledged_at));
-  for (const a of all) {
-    try { const r = await api.get('/api/acknowledgements/' + a.id + '/signature'); a._sig = r && r.signature; }
-    catch (_) { a._sig = null; }
-  }
-
-  const JsPDF = await resolveJsPDFCtor();
-  await (typeof loadLogoDataUri === 'function' ? loadLogoDataUri() : Promise.resolve());
-  const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
-  const doc = new JsPDF({ unit: 'mm', format: 'a4' });
-  const W = 210, M = 14, accent = _houseAccent();
-  const h = bamaDocHeader(doc, logo, {
-    title: 'POLICY ACKNOWLEDGEMENT', accent, marginL: M, marginR: M,
-    meta: [
-      { label: 'Document:', value: d.name || d.fileName || 'Policy' },
-      { label: 'Printed:', value: new Date().toLocaleDateString('en-GB') }
-    ]
-  });
-  let y = h.y;
-  y = bamaSectionHeading(doc, y, 'SIGNATURE REGISTER', { accent, marginL: M, usableW: W - 2 * M });
-  doc.setFont('helvetica', 'italic'); doc.setFontSize(9); doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
-  const intro = doc.splitTextToSize('The persons listed below confirm that they have read and understood the above company policy/document and will comply with it. Signatures apply to this version of the document.', W - 2 * M);
-  doc.text(intro, M, y); y += intro.length * 4.4 + 4;
-
-  const cols = [
-    { x: M,        w: 52, label: 'Name' },
-    { x: M + 52,   w: 46, label: 'Company' },
-    { x: M + 98,   w: 48, label: 'Signature' },
-    { x: M + 146,  w: W - M - (M + 146), label: 'Date' }
-  ];
-  const drawHead = () => {
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(HOUSE_INK[0], HOUSE_INK[1], HOUSE_INK[2]);
-    cols.forEach(c => doc.text(c.label.toUpperCase(), c.x, y));
-    y += 3; doc.setDrawColor(200); doc.line(M, y, W - M, y); y += 4;
-  };
-  drawHead();
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
-  const rowH = 16;
-  for (const a of all) {
-    if (y + rowH > 275) { doc.addPage(); y = bamaDocContinuation(doc, { title: 'POLICY ACKNOWLEDGEMENT', ref: d.name || '', marginL: M, marginR: M }).y; drawHead(); doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); }
-    const cy = y;
-    doc.setTextColor(HOUSE_INK[0], HOUSE_INK[1], HOUSE_INK[2]);
-    doc.text(doc.splitTextToSize(String(a.signer_name || ''), cols[0].w - 2), cols[0].x, cy + 4);
-    doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
-    doc.text(doc.splitTextToSize(String(a.signer_company || 'BAMA Fabrication'), cols[1].w - 2), cols[1].x, cy + 4);
-    if (a._sig) { try { doc.addImage(a._sig, 'PNG', cols[2].x, cy - 1, 40, 13); } catch (_) {} }
-    doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
-    doc.text(new Date(a.acknowledged_at).toLocaleDateString('en-GB'), cols[3].x, cy + 4);
-    y += rowH; doc.setDrawColor(230); doc.line(M, y - 3, W - M, y - 3);
-  }
-  y += 4;
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
-  doc.text(`${all.length} signature${all.length !== 1 ? 's' : ''} on record. Register generated via BAMA ERP on ${new Date().toLocaleString('en-GB')}.`, M, y);
-  bamaDocFooter(doc, { marginL: M, marginR: M, caption: 'Policy Acknowledgement  \u00b7  BAMA Fabrication Ltd' });
-
-  // File next to the policy: the register lives in the same folder as the
-  // document it belongs to. Stable filename → overwrites on each rebuild.
-  const blob = doc.output('blob');
-  const drive = d.driveId || BAMA_DRIVE_ID;
-  const token = await getToken();
-  const metaRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${drive}/items/${d.fileId}`,
-    { headers: { Authorization: 'Bearer ' + token } });
-  if (!metaRes.ok) throw new Error('policy file lookup ' + metaRes.status);
-  const meta = await metaRes.json();
-  const parentId = meta.parentReference && meta.parentReference.id;
-  if (!parentId) throw new Error('policy file has no parent folder');
-  const base = (d.name || d.fileName || 'Policy').replace(/\.pdf$/i, '');
-  const regName = `${base} - Signature Register.pdf`.replace(/[~"#%&*:<>?{|}/\\]/g, '-');
-  await uploadFileToFolder(parentId, regName, await blob.arrayBuffer(), 'application/pdf', drive);
+  const p = (_polDocs || []).find(x => x.sharepoint_file_id === d.fileId);
+  await polFileRegister({ name: d.name, fileName: d.fileName, fileId: d.fileId, driveId: d.driveId || null, docRef: (p && p.doc_ref) || '' });
 }
 
 // ── SNAGGING (per-photo, AI-drafted snag descriptions) ──────────────────────

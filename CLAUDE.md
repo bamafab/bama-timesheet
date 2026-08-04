@@ -1615,6 +1615,29 @@ The DocumentAcknowledgements engine now covers company policies:
   uploads a NEW file, so the new version starts with zero signatures and
   everyone shows outstanding again. No extra clock needed.
 
+**Director authorisation (2026-08-04b):** `doc_type: 'policy_director'` —
+the director e-signs a policy to authorise it for issue / confirm annual
+review. Signed inside the office ✍ Signatures modal (inline pad, name
+prefilled from Graph /me, `POLICY_DIRECTOR_STATEMENT`). The ✍ button on the
+Company Docs table is green when the current file version carries a director
+signature, amber when not (bulk-loaded once per table render via
+`?doc_type=policy_director`). Re-sign button for annual reviews.
+**One register builder for everything:** `polBuildRegisterDoc` /
+`polFileRegister` in shared.js — office print, office filing after director
+sign, and the mobile app all render the SAME PDF (director authorisation
+block above the signature register). Renewing a policy = new file id = both
+the staff register AND the director authorisation reset together.
+
+**Phase-C report packs restyled (2026-08-04b):** exportJobCostingPDF,
+exportCvrPDF (landscape) and exportLabourPayPDF dropped the navy
+[26,26,46]/blue/foreign palette for the house family (bamaDocHeader with
+logo, HOUSE_HEAD table heads with ink text, bamaDocContinuation on page
+breaks, bamaDocFooter). Semantic colours kept: RED/GREEN variance, AMBER
+WIP, PURPLE CIS. Remaining deliberate non-house PDFs: Babcock quote
+(client-facing navy #1F3552 by design), invoices/remittance/AFP/RAMS/Site
+Pack/Job Sheet (untouched per standing scope), drawHealthPDF in
+dashboard.html (page doesn't load shared.js — internal diagnostic).
+
 ## Modal → Page mapping
 
 Every `id=…Modal` element in the HTML, by page. Handy when tracing an

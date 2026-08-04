@@ -28375,18 +28375,22 @@ async function exportJobCostingPDF() {
   const est = _jcEstimates();
   const actPo = _projectPoNetTotal, actLab = _projectLabourCostLogged || 0;
   const contract = _sumLineItems();
+  await (typeof loadLogoDataUri === 'function' ? loadLogoDataUri() : Promise.resolve());
+  const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
   const doc = new JsPDFCtor({ unit: 'mm', format: 'a4', orientation: 'portrait' });
-  const pageW = 210, mL = 14, W = pageW - 28;
-  const NAVY = [26,26,46], TEXT = [34,34,34], MUTED = [110,110,110], RED = [208,2,27], GREEN = [22,140,80], RULE = [215,218,224];
+  const pageW = 210, mL = 14, mR = 14, W = pageW - 28;
+  const accent = _houseAccent();
+  const TEXT = HOUSE_INK, MUTED = HOUSE_MUTED, RED = [208,2,27], GREEN = [22,140,80], RULE = HOUSE_RULE, HEAD = HOUSE_HEAD;
   const sT = c => doc.setTextColor(c[0],c[1],c[2]);
   const money = v => v == null ? '\u2014' : '\u00A3' + Math.round(v).toLocaleString('en-GB');
-  let y = 16;
-  doc.setFillColor(26,26,46); doc.rect(0, 0, pageW, 26, 'F');
-  sT([255,255,255]); doc.setFont('helvetica','bold'); doc.setFontSize(15);
-  doc.text('Job Costing \u2014 Estimate vs Actual', mL, 11);
-  doc.setFont('helvetica','normal'); doc.setFontSize(9);
-  doc.text(`${proj.project_number || ''}  ${proj.project_name || ''}  \u00B7  ${new Date().toLocaleDateString('en-GB')}`, mL, 19);
-  y = 36;
+  let y = bamaDocHeader(doc, logo, {
+    title: 'JOB COSTING', accent, marginL: mL, marginR: mR,
+    meta: [
+      { label: 'Project:',  value: `${proj.project_number || ''}${proj.project_name ? ' \u2014 ' + proj.project_name : ''}` },
+      { label: 'Prepared:', value: new Date().toLocaleDateString('en-GB') }
+    ]
+  }).y;
+  y = bamaSectionHeading(doc, y, 'ESTIMATE VS ACTUAL', { accent, marginL: mL, usableW: W });
   const rows = [
     ['Labour', est.any ? est.labour : null, actLab,
      `${(_sumLabourHoursScheduled()||0).toFixed(0)}h est \u00B7 ${(_projectLabourHoursLogged||0).toFixed(0)}h logged`],
@@ -28394,9 +28398,10 @@ async function exportJobCostingPDF() {
      `${_projectPoCount} active POs (nett committed)`],
     ['TOTAL COST', est.any ? est.total : null, actPo == null ? null : actLab + actPo, '']
   ];
-  doc.setFontSize(8); sT([255,255,255]);
-  doc.setFillColor(26,26,46); doc.rect(mL, y, W, 7, 'F');
-  doc.setFont('helvetica','bold');
+  doc.setFontSize(8);
+  doc.setFillColor(HEAD[0],HEAD[1],HEAD[2]); doc.rect(mL, y, W, 7, 'F');
+  doc.setDrawColor(RULE[0],RULE[1],RULE[2]); doc.setLineWidth(0.2); doc.rect(mL, y, W, 7);
+  sT(TEXT); doc.setFont('helvetica','bold');
   doc.text('CATEGORY', mL + 2, y + 4.7);
   doc.text('ESTIMATED', mL + W - 78, y + 4.7, { align: 'right' });
   doc.text('ACTUAL', mL + W - 42, y + 4.7, { align: 'right' });
@@ -28427,8 +28432,8 @@ async function exportJobCostingPDF() {
   y += 8;
   sT(MUTED); doc.setFontSize(7.5);
   doc.splitTextToSize('Estimated = QB net cost buckets published on quote save. Actual labour = kiosk hours \u00D7 basic rate (S000 excluded, CIS included, no OT uplift). Actual bought-in = nett committed on active POs \u2014 commitments, not supplier invoices, so this leads cash. Contract \u2212 cost to date is not final margin until the job closes.', W).forEach(l => { doc.text(l, mL, y); y += 3.6; });
-  sT([150,150,150]); doc.setFontSize(7.5);
-  doc.text('BAMA Fabrication ERP \u00B7 Job Costing \u00B7 Page 1 of 1', mL, 289);
+  bamaDocFooter(doc, { marginL: mL, marginR: mR, size: 7,
+    caption: `Job Costing  \u00b7  ${proj.project_number || ''}  \u00b7  BAMA Fabrication Ltd` });
   const blob = doc.output('blob');
   console.log('[JobCosting PDF] blob size:', blob.size);
   doc.save(`Job-Costing-${proj.project_number || 'project'}-${new Date().toISOString().slice(0,10)}.pdf`);
@@ -29695,21 +29700,25 @@ function exportCvrCsv() {
 async function exportCvrPDF() {
   if (!_cvrRows) { toast('Refresh first', 'error'); return; }
   const JsPDFCtor = await resolveJsPDFCtor();
+  await (typeof loadLogoDataUri === 'function' ? loadLogoDataUri() : Promise.resolve());
+  const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
   const doc = new JsPDFCtor({ unit: 'mm', format: 'a4', orientation: 'landscape' });
-  const pageW = 297, pageH = 210, mL = 12, W = pageW - 24;
-  const NAVY = [26,26,46], TEXT = [34,34,34], MUTED = [110,110,110], RED = [208,2,27], GREEN = [22,140,80], AMBER = [200,110,0], RULE = [215,218,224];
+  const pageW = 297, pageH = 210, mL = 12, mR = 12, W = pageW - 24;
+  const accent = _houseAccent();
+  const TEXT = HOUSE_INK, MUTED = HOUSE_MUTED, RED = [208,2,27], GREEN = [22,140,80], AMBER = [200,110,0], RULE = HOUSE_RULE, HEAD = HOUSE_HEAD;
   const sT = c => doc.setTextColor(c[0],c[1],c[2]);
   const money = v => v == null ? '\u2014' : '\u00A3' + Math.round(v).toLocaleString('en-GB');
   const rows = (_cvrRows || []).map(r => ({ ...r, _d: _cvrDerive(r) })).sort((a, b) => (b._d.value || 0) - (a._d.value || 0));
   const sum = k => rows.reduce((s, r) => s + (r._d[k] || 0), 0);
   const sumRaw = k => rows.reduce((s, r) => s + (+r[k] || 0), 0);
 
-  doc.setFillColor(26,26,46); doc.rect(0, 0, pageW, 24, 'F');
-  sT([255,255,255]); doc.setFont('helvetica','bold'); doc.setFontSize(15);
-  doc.text('CVR / WIP \u2014 Cost & Value Reconciliation', mL, 10.5);
-  doc.setFont('helvetica','normal'); doc.setFontSize(8.5);
-  doc.text(`${rows.length} project${rows.length !== 1 ? 's' : ''} \u00B7 ${new Date().toLocaleDateString('en-GB')} \u00B7 BAMA Fabrication Ltd`, mL, 17.5);
-  let y = 31;
+  let y = bamaDocHeader(doc, logo, {
+    title: 'CVR / WIP', pageW, accent, marginL: mL, marginR: mR,
+    meta: [
+      { label: 'Projects:', value: String(rows.length) },
+      { label: 'Prepared:', value: new Date().toLocaleDateString('en-GB') }
+    ]
+  }).y;
 
   // KPI band
   const kpis = [
@@ -29721,11 +29730,12 @@ async function exportCvrPDF() {
   const kw = W / kpis.length;
   kpis.forEach((k, i) => {
     const x = mL + i * kw;
-    doc.setDrawColor(215,218,224); doc.setLineWidth(0.2); doc.roundedRect(x + 1, y, kw - 2, 14, 1.5, 1.5, 'S');
+    doc.setFillColor(HEAD[0],HEAD[1],HEAD[2]); doc.setDrawColor(RULE[0],RULE[1],RULE[2]); doc.setLineWidth(0.2); doc.roundedRect(x + 1, y, kw - 2, 14, 1.5, 1.5, 'FD');
     sT(MUTED); doc.setFontSize(5.8); doc.setFont('helvetica','bold'); doc.text(k[0], x + 3.5, y + 5);
     sT(k[2]); doc.setFontSize(10); doc.text(k[1], x + 3.5, y + 11);
   });
-  y += 20;
+  y += 19;
+  y = bamaSectionHeading(doc, y, 'COST & VALUE RECONCILIATION', { accent, pageW, marginL: mL, usableW: W });
 
   const cols = [
     ['PROJECT', 62, 'left'], ['CONTRACT', 24], ['VALUE', 26], ['%', 10],
@@ -29733,8 +29743,9 @@ async function exportCvrPDF() {
   ];
   const xs = []; let acc = mL; cols.forEach(c => { xs.push(acc); acc += c[1]; });
   const head = () => {
-    doc.setFillColor(26,26,46); doc.rect(mL, y, W, 6.5, 'F');
-    sT([255,255,255]); doc.setFont('helvetica','bold'); doc.setFontSize(6.5);
+    doc.setFillColor(HEAD[0],HEAD[1],HEAD[2]); doc.rect(mL, y, W, 6.5, 'F');
+    doc.setDrawColor(RULE[0],RULE[1],RULE[2]); doc.setLineWidth(0.2); doc.rect(mL, y, W, 6.5);
+    sT(TEXT); doc.setFont('helvetica','bold'); doc.setFontSize(6.5);
     cols.forEach((c, i) => doc.text(c[0], c[2] === 'left' ? xs[i] + 2 : xs[i] + c[1] - 2, y + 4.4, { align: c[2] === 'left' ? 'left' : 'right' }));
     y += 6.5;
   };
@@ -29745,7 +29756,7 @@ async function exportCvrPDF() {
     doc.text(String(txt), cols[i][2] === 'left' ? xs[i] + 2 : xs[i] + cols[i][1] - 2, y + 4.2, { align: cols[i][2] === 'left' ? 'left' : 'right' });
   };
   for (const r of rows) {
-    if (y + 6 > pageH - 14) { doc.addPage(); y = 12; head(); doc.setFontSize(7.6); }
+    if (y + 6 > pageH - 14) { doc.addPage(); y = bamaDocContinuation(doc, { title: 'CVR / WIP', ref: new Date().toLocaleDateString('en-GB'), pageW, marginL: mL, marginR: mR }).y; head(); doc.setFontSize(7.6); }
     const d = r._d;
     cell(0, `${r.project_number}  ${(r.project_name || '').slice(0, 30)}`, TEXT, true);
     cell(1, money(d.contract || null));
@@ -29764,13 +29775,8 @@ async function exportCvrPDF() {
   y += 6;
   sT(MUTED); doc.setFont('helvetica','normal'); doc.setFontSize(6.5);
   doc.splitTextToSize('Value = certified AFP value to date (* = applied, awaiting certification). Cost = kiosk labour at basic rates + nett PO commitments (leads supplier invoices; excludes overheads). Margin = value \u2212 cost. Billing position = value \u2212 invoiced (positive = under-billed WIP being funded by BAMA). Figures are live from the ERP at time of printing.', W).forEach(l => { doc.text(l, mL, y); y += 3.2; });
-  const pages = doc.getNumberOfPages();
-  for (let i = 1; i <= pages; i++) {
-    doc.setPage(i);
-    sT([150,150,150]); doc.setFontSize(7);
-    doc.text('BAMA Fabrication ERP \u00B7 CVR / WIP pack', mL, pageH - 6);
-    doc.text(`Page ${i} of ${pages}`, pageW - mL, pageH - 6, { align: 'right' });
-  }
+  bamaDocFooter(doc, { pageW, pageH, marginL: mL, marginR: mR, size: 7,
+    caption: 'CVR / WIP pack  \u00b7  BAMA Fabrication Ltd' });
   const blob = doc.output('blob');
   console.log('[CVR PDF] blob size:', blob.size);
   doc.save(`CVR-WIP-${new Date().toISOString().slice(0, 10)}.pdf`);
@@ -30323,24 +30329,28 @@ async function exportLabourPayPDF() {
   const { rows, total, cisRetained, subTotal, agencyTotal, count, groupBy, from, to, unpaidOnly } = _lprData();
   if (!rows.length) { toast('Nothing to export', 'error'); return; }
   const JsPDFCtor = await resolveJsPDFCtor();
+  await (typeof loadLogoDataUri === 'function' ? loadLogoDataUri() : Promise.resolve());
+  const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
   const doc = new JsPDFCtor({ unit: 'mm', format: 'a4', orientation: 'portrait' });
-  const pageW = 210, pageH = 297, mL = 12, W = pageW - 24;
-  const NAVY = [26,26,46], TEXT = [34,34,34], MUTED = [110,110,110], PURPLE = [128,90,180], ACCENT = [22,110,180], RULE = [215,218,224];
+  const pageW = 210, pageH = 297, mL = 12, mR = 12, W = pageW - 24;
+  const accent = _houseAccent();
+  const TEXT = HOUSE_INK, MUTED = HOUSE_MUTED, PURPLE = [128,90,180], RULE = HOUSE_RULE, HEAD = HOUSE_HEAD;
   const sT = c => doc.setTextColor(c[0],c[1],c[2]);
   const money = v => v == null ? '\u2014' : gbp2(v);
   const fmtD = iso => iso ? new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }) : '\u2014';
 
-  doc.setFillColor(NAVY[0],NAVY[1],NAVY[2]); doc.rect(0, 0, pageW, 24, 'F');
-  sT([255,255,255]); doc.setFont('helvetica','bold'); doc.setFontSize(15);
-  doc.text('Labour & Subcontractor Payments', mL, 10.5);
-  doc.setFont('helvetica','normal'); doc.setFontSize(8.5);
   const period = (from ? fmtD(from) : 'start') + ' \u2013 ' + (to ? fmtD(to) : 'today');
-  const sub = `${period} \u00B7 ${count} invoice${count !== 1 ? 's' : ''}${unpaidOnly ? ' (unpaid only)' : ''} \u00B7 ${new Date().toLocaleDateString('en-GB')} \u00B7 BAMA Fabrication Ltd`;
-  doc.text(sub, mL, 17.5);
-  let y = 31;
+  let y = bamaDocHeader(doc, logo, {
+    title: 'LABOUR PAYMENTS', accent, marginL: mL, marginR: mR,
+    meta: [
+      { label: 'Period:',   value: period },
+      { label: 'Invoices:', value: `${count}${unpaidOnly ? ' (unpaid only)' : ''}` },
+      { label: 'Prepared:', value: new Date().toLocaleDateString('en-GB') }
+    ]
+  }).y;
 
   const kpis = [
-    ['TOTAL LABOUR SPEND', money(total), ACCENT],
+    ['TOTAL LABOUR SPEND', money(total), accent],
     ['AGENCIES', money(agencyTotal), TEXT],
     ['SUBCONTRACTORS', money(subTotal), TEXT],
     ['CIS RETAINED', money(cisRetained), cisRetained > 0.005 ? PURPLE : MUTED],
@@ -30349,23 +30359,25 @@ async function exportLabourPayPDF() {
   const kw = W / kpis.length;
   kpis.forEach((k, i) => {
     const x = mL + i * kw;
-    doc.setDrawColor(RULE[0],RULE[1],RULE[2]); doc.setLineWidth(0.2); doc.roundedRect(x + 1, y, kw - 2, 14, 1.5, 1.5, 'S');
+    doc.setFillColor(HEAD[0],HEAD[1],HEAD[2]); doc.setDrawColor(RULE[0],RULE[1],RULE[2]); doc.setLineWidth(0.2); doc.roundedRect(x + 1, y, kw - 2, 14, 1.5, 1.5, 'FD');
     sT(MUTED); doc.setFontSize(5.6); doc.setFont('helvetica','bold'); doc.text(k[0], x + 3, y + 5);
     sT(k[2]); doc.setFontSize(9.5); doc.text(k[1], x + 3, y + 11);
   });
-  y += 21;
+  y += 20;
+  y = bamaSectionHeading(doc, y, 'LABOUR & SUBCONTRACTOR PAYMENTS', { accent, marginL: mL, usableW: W });
 
   const cols = [[groupBy === 'week' ? 'WEEK ENDING / INVOICE' : 'SUPPLIER / INVOICE', 70, 'left'], ['TYPE', 22, 'left'], ['PROJECT', 30, 'left'], ['DATE', 20], ['CIS', 20], ['GROSS', 24]];
   const xs = []; let acc = mL; cols.forEach(c => { xs.push(acc); acc += c[1]; });
   const head = () => {
-    doc.setFillColor(NAVY[0],NAVY[1],NAVY[2]); doc.rect(mL, y, W, 6.5, 'F');
-    sT([255,255,255]); doc.setFont('helvetica','bold'); doc.setFontSize(6.6);
+    doc.setFillColor(HEAD[0],HEAD[1],HEAD[2]); doc.rect(mL, y, W, 6.5, 'F');
+    doc.setDrawColor(RULE[0],RULE[1],RULE[2]); doc.setLineWidth(0.2); doc.rect(mL, y, W, 6.5);
+    sT(TEXT); doc.setFont('helvetica','bold'); doc.setFontSize(6.6);
     cols.forEach((c, i) => doc.text(c[0], c[2] === 'left' ? xs[i] + 2 : xs[i] + c[1] - 2, y + 4.4, { align: c[2] === 'left' ? 'left' : 'right' }));
     y += 6.5;
   };
   head();
 
-  const ensure = h => { if (y + h > pageH - 16) { doc.addPage(); y = 12; head(); } };
+  const ensure = h => { if (y + h > pageH - 16) { doc.addPage(); y = bamaDocContinuation(doc, { title: 'LABOUR PAYMENTS', ref: period, marginL: mL, marginR: mR }).y; head(); } };
   for (const r of rows) {
     ensure(7);
     const label = groupBy === 'week' ? ('w/e ' + fmtD(r.key)) : r.key;
@@ -30393,23 +30405,18 @@ async function exportLabourPayPDF() {
   }
   ensure(9);
   y += 2;
-  doc.setDrawColor(NAVY[0],NAVY[1],NAVY[2]); doc.setLineWidth(0.4); doc.line(mL, y, mL + W, y);
+  doc.setDrawColor(TEXT[0],TEXT[1],TEXT[2]); doc.setLineWidth(0.4); doc.line(mL, y, mL + W, y);
   y += 5;
   sT(TEXT); doc.setFont('helvetica','bold'); doc.setFontSize(10);
   doc.text('TOTAL LABOUR SPEND', xs[0] + 2, y);
   if (cisRetained > 0.005) { sT(PURPLE); doc.setFontSize(8); doc.text('CIS ' + money(cisRetained), xs[4] + cols[4][1] - 2, y, { align: 'right' }); }
-  sT(ACCENT); doc.setFontSize(10); doc.text(money(total), xs[5] + cols[5][1] - 2, y, { align: 'right' });
+  sT(accent); doc.setFontSize(10); doc.text(money(total), xs[5] + cols[5][1] - 2, y, { align: 'right' });
   y += 8;
   sT(MUTED); doc.setFont('helvetica','normal'); doc.setFontSize(6.5);
   doc.splitTextToSize('Gross (amount payable) labour invoices by invoice date. "Agency" = a labour-supplier-tagged company (e.g. WPS) supplying workers; "CIS sub" = a subcontractor invoice with the CIS deduction retained for HMRC. ' + (unpaidOnly ? 'Unpaid invoices only. ' : 'Paid and unpaid invoices. ') + 'Materials suppliers are excluded. Figures are live from the ERP at time of printing.', W).forEach(l => { doc.text(l, mL, y); y += 3.2; });
 
-  const pages = doc.getNumberOfPages();
-  for (let i = 1; i <= pages; i++) {
-    doc.setPage(i);
-    sT([150,150,150]); doc.setFontSize(7);
-    doc.text('BAMA Fabrication ERP \u00B7 Labour & Subcontractor Payments', mL, pageH - 6);
-    doc.text(`Page ${i} of ${pages}`, pageW - mL, pageH - 6, { align: 'right' });
-  }
+  bamaDocFooter(doc, { marginL: mL, marginR: mR, size: 7,
+    caption: 'Labour & Subcontractor Payments  \u00b7  BAMA Fabrication Ltd' });
   const blob = doc.output('blob');
   console.log('[Labour Pay PDF] blob size:', blob.size);
   doc.save(`labour-payments-${from || ''}_${to || ''}.pdf`);
@@ -47782,6 +47789,12 @@ async function loadCompanyDocs() {
   try {
     const showAll = document.getElementById('docShowArchived')?.checked;
     _docRows = await api.get('/api/company-documents' + (showAll ? '?all=true' : ''));
+    // One bulk query: which file versions carry a director authorisation.
+    try {
+      const dirs = await api.get('/api/acknowledgements?doc_type=policy_director');
+      _docDirAuth = {};
+      (dirs || []).forEach(a => { if (a.doc_file_id) _docDirAuth[a.doc_file_id] = a; });
+    } catch (_) { _docDirAuth = {}; }
     renderDocChips(); renderDocTable();
   } catch (e) {
     body.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--red)">Failed to load: ${escapeHtml(e.message)}<br><span style="color:var(--muted);font-size:11.5px">Fresh deploy? Run api/sql/create-company-documents.sql first.</span></td></tr>`;
@@ -47835,7 +47848,7 @@ function renderDocTable() {
       <td style="padding:7px 10px;border-bottom:1px solid var(--border);font-size:11.5px">${d.expiry_date || '—'}</td>
       <td style="padding:7px 10px;border-bottom:1px solid var(--border)">${exp.badge}</td>
       <td style="padding:7px 10px;border-bottom:1px solid var(--border);text-align:right;white-space:nowrap">
-        ${DOC_SIGNABLE.includes(d.category) && d.sharepoint_file_id ? `<button class="btn btn-ghost btn-sm" onclick="openDocSignatures(${d.id})" title="Signature register — who has signed, who hasn't">✍</button>` : ''}
+        ${DOC_SIGNABLE.includes(d.category) && d.sharepoint_file_id ? `<button class="btn btn-ghost btn-sm" onclick="openDocSignatures(${d.id})" title="${_docDirAuth[d.sharepoint_file_id] ? 'Director-authorised — signature register' : 'NOT director-authorised — signature register'}" style="${_docDirAuth[d.sharepoint_file_id] ? 'color:#3ecf8e' : 'color:#eab308'}">✍</button>` : ''}
         ${d.is_archived
           ? `<button class="btn btn-ghost btn-sm" onclick="unarchiveDoc(${d.id})" title="Restore">↩</button>`
           : `<button class="btn btn-ghost btn-sm" onclick="renewDoc(${d.id})" title="Renew — new version in, this one archived">🔁</button>
@@ -47868,10 +47881,130 @@ function updateDocAlertUi(alertDocs) {
   strip.innerHTML = `⚠ ${bits.join(' · ')}`;
 }
 
+// ── Policy register PDF: ONE builder for office print, office filing and
+// the mobile Sign Policies tile. d: { name, fileName, fileId, driveId,
+// docRef }. Returns a jsPDF doc built from every acknowledgement on file for
+// that exact file version, with the director authorisation block on top.
+const POLICY_DIRECTOR_STATEMENT = 'I authorise this policy/document for issue, and confirm it has been reviewed and remains current, for and on behalf of BAMA Fabrication Ltd.';
+
+async function polBuildRegisterDoc(d) {
+  const fid = encodeURIComponent(d.fileId);
+  const [sigs, dirs] = await Promise.all([
+    api.get('/api/acknowledgements?doc_type=policy&doc_file_id=' + fid).catch(() => []),
+    api.get('/api/acknowledgements?doc_type=policy_director&doc_file_id=' + fid).catch(() => [])
+  ]);
+  const all = (sigs || []).slice().sort((a, b) => new Date(a.acknowledged_at) - new Date(b.acknowledged_at));
+  const dir = (dirs || []).slice().sort((a, b) => new Date(b.acknowledged_at) - new Date(a.acknowledged_at))[0] || null;
+  for (const a of all) {
+    try { const r = await api.get('/api/acknowledgements/' + a.id + '/signature'); a._sig = r && r.signature; }
+    catch (_) { a._sig = null; }
+  }
+  if (dir) {
+    try { const r = await api.get('/api/acknowledgements/' + dir.id + '/signature'); dir._sig = r && r.signature; }
+    catch (_) { dir._sig = null; }
+  }
+
+  const JsPDF = await resolveJsPDFCtor();
+  await (typeof loadLogoDataUri === 'function' ? loadLogoDataUri() : Promise.resolve());
+  const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
+  const doc = new JsPDF({ unit: 'mm', format: 'a4' });
+  const W = 210, M = 14, accent = _houseAccent();
+  let y = bamaDocHeader(doc, logo, {
+    title: 'POLICY ACKNOWLEDGEMENT', accent, marginL: M, marginR: M,
+    meta: [
+      { label: 'Document:', value: d.name || d.fileName || 'Policy' },
+      { label: 'Ref:', value: d.docRef || '' },
+      { label: 'Printed:', value: new Date().toLocaleDateString('en-GB') }
+    ]
+  }).y;
+
+  // Director authorisation — the "is this policy in date" evidence.
+  y = bamaSectionHeading(doc, y, 'DIRECTOR AUTHORISATION', { accent, marginL: M, usableW: W - 2 * M });
+  if (dir) {
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+    doc.setTextColor(HOUSE_INK[0], HOUSE_INK[1], HOUSE_INK[2]);
+    const authLines = doc.splitTextToSize(String(dir.statement || POLICY_DIRECTOR_STATEMENT), W - 2 * M - 52);
+    doc.text(authLines, M, y + 1);
+    if (dir._sig) { try { doc.addImage(dir._sig, 'PNG', W - M - 48, y - 3, 44, 15); } catch (_) {} }
+    let ay = y + authLines.length * 4.2 + 4;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+    doc.text(String(dir.signer_name || ''), M, ay);
+    doc.setFont('helvetica', 'normal'); doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+    doc.text(`Director  \u00b7  ${new Date(dir.acknowledged_at).toLocaleDateString('en-GB')}`, M + doc.getTextWidth(String(dir.signer_name || '')) + 4, ay);
+    y = Math.max(ay, y + 14) + 8;
+  } else {
+    doc.setFont('helvetica', 'italic'); doc.setFontSize(9);
+    doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+    doc.text('Not yet authorised by a director \u2014 sign in the ERP Company Docs register.', M, y + 1);
+    y += 10;
+  }
+
+  y = bamaSectionHeading(doc, y, 'SIGNATURE REGISTER', { accent, marginL: M, usableW: W - 2 * M });
+  doc.setFont('helvetica', 'italic'); doc.setFontSize(9); doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+  const intro = doc.splitTextToSize('The persons listed below confirm that they have read and understood the above company policy/document and will comply with it. Signatures apply to this version of the document.', W - 2 * M);
+  doc.text(intro, M, y); y += intro.length * 4.4 + 4;
+
+  const cols = [
+    { x: M,       w: 52, label: 'Name' },
+    { x: M + 52,  w: 46, label: 'Company' },
+    { x: M + 98,  w: 48, label: 'Signature' },
+    { x: M + 146, w: W - M - (M + 146), label: 'Date' }
+  ];
+  const drawHead = () => {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(HOUSE_INK[0], HOUSE_INK[1], HOUSE_INK[2]);
+    cols.forEach(c => doc.text(c.label.toUpperCase(), c.x, y));
+    y += 3; doc.setDrawColor(200); doc.line(M, y, W - M, y); y += 4;
+  };
+  drawHead();
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
+  const rowH = 16;
+  if (!all.length) {
+    doc.setFont('helvetica', 'italic'); doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+    doc.text('No signatures on record for this version yet.', M, y + 2); y += 8;
+  }
+  for (const a of all) {
+    if (y + rowH > 275) { doc.addPage(); y = bamaDocContinuation(doc, { title: 'POLICY ACKNOWLEDGEMENT', ref: d.name || '', marginL: M, marginR: M }).y; drawHead(); doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); }
+    const cy = y;
+    doc.setTextColor(HOUSE_INK[0], HOUSE_INK[1], HOUSE_INK[2]);
+    doc.text(doc.splitTextToSize(String(a.signer_name || ''), cols[0].w - 2), cols[0].x, cy + 4);
+    doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+    doc.text(doc.splitTextToSize(String(a.signer_company || 'BAMA Fabrication'), cols[1].w - 2), cols[1].x, cy + 4);
+    if (a._sig) { try { doc.addImage(a._sig, 'PNG', cols[2].x, cy - 1, 40, 13); } catch (_) {} }
+    doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+    doc.text(new Date(a.acknowledged_at).toLocaleDateString('en-GB'), cols[3].x, cy + 4);
+    y += rowH; doc.setDrawColor(230); doc.line(M, y - 3, W - M, y - 3);
+  }
+  y += 4;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
+  doc.text(`${all.length} signature${all.length !== 1 ? 's' : ''} on record. Register generated via BAMA ERP on ${new Date().toLocaleString('en-GB')}.`, M, y);
+  bamaDocFooter(doc, { marginL: M, marginR: M, caption: 'Policy Acknowledgement  \u00b7  BAMA Fabrication Ltd' });
+  return doc;
+}
+
+// Rebuild the register and file it in the SAME SharePoint folder as the
+// policy. Stable filename \u2192 overwrites on each rebuild.
+async function polFileRegister(d) {
+  const doc = await polBuildRegisterDoc(d);
+  const blob = doc.output('blob');
+  console.log('[Policy register PDF] blob size:', blob.size, 'bytes');
+  const drive = d.driveId || BAMA_DRIVE_ID;
+  const token = await getToken();
+  const metaRes = await fetch(`https://graph.microsoft.com/v1.0/drives/${drive}/items/${d.fileId}`,
+    { headers: { Authorization: 'Bearer ' + token } });
+  if (!metaRes.ok) throw new Error('policy file lookup ' + metaRes.status);
+  const meta = await metaRes.json();
+  const parentId = meta.parentReference && meta.parentReference.id;
+  if (!parentId) throw new Error('policy file has no parent folder');
+  const base = (d.name || d.fileName || 'Policy').replace(/\.pdf$/i, '');
+  const regName = `${base} - Signature Register.pdf`.replace(/[~"#%&*:<>?{|}/\\]/g, '-');
+  await uploadFileToFolder(parentId, regName, await blob.arrayBuffer(), 'application/pdf', drive);
+  return blob;
+}
+
 // ── Signature register (read-and-sign, mobile Sign Policies tile) ──────────
 // Signatures are recorded against the SharePoint FILE id, so renewing a policy
 // (new file) resets the register: everyone is outstanding on the new version.
-let _docSigDoc = null, _docSigRows = [];
+let _docSigDoc = null, _docSigRows = [], _docDirAuth = {}, _docDirSigData = null;
 
 async function openDocSignatures(id) {
   const d = (_docRows || []).find(r => r.id === id);
@@ -47897,10 +48030,12 @@ async function openDocSignatures(id) {
   body.innerHTML = '<div style="color:var(--muted);padding:20px 0">Loading…</div>';
   document.getElementById('docSigModal').style.display = 'flex';
   try {
-    const [acks, emps] = await Promise.all([
+    const [acks, emps, dirs] = await Promise.all([
       api.get('/api/acknowledgements?doc_type=policy&doc_file_id=' + encodeURIComponent(d.sharepoint_file_id)),
-      api.get('/api/employees').catch(() => [])
+      api.get('/api/employees').catch(() => []),
+      api.get('/api/acknowledgements?doc_type=policy_director&doc_file_id=' + encodeURIComponent(d.sharepoint_file_id)).catch(() => [])
     ]);
+    const dirAuth = (dirs || []).slice().sort((a, b) => new Date(b.acknowledged_at) - new Date(a.acknowledged_at))[0] || null;
     _docSigRows = (acks || []).slice().sort((a, b) => new Date(a.acknowledged_at) - new Date(b.acknowledged_at));
     const signedLc = new Set(_docSigRows.map(a => String(a.signer_name || '').trim().toLowerCase()));
     const outstanding = (emps || []).filter(e => !signedLc.has(String(e.name || '').trim().toLowerCase()));
@@ -47915,7 +48050,30 @@ async function openDocSignatures(id) {
     const outHtml = outstanding.length
       ? outstanding.map(e => `<span style="display:inline-block;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:3px 11px;margin:0 6px 6px 0;font-size:12px">${escapeHtml(e.name)}</span>`).join('')
       : '<div style="color:#3ecf8e;padding:4px 0">✓ Every active employee has signed this version.</div>';
-    body.innerHTML = `
+    const authHtml = dirAuth
+      ? `<div style="display:flex;align-items:center;gap:10px;background:rgba(62,207,142,.08);border:1px solid #3ecf8e;border-radius:8px;padding:10px 14px;margin-bottom:14px">
+           <span style="font-size:18px">✅</span>
+           <div style="flex:1"><div style="font-weight:700;color:#3ecf8e">Authorised for issue</div>
+           <div style="font-size:12px;color:var(--muted)">Signed by <strong>${escapeHtml(dirAuth.signer_name)}</strong> (Director) on ${new Date(dirAuth.acknowledged_at).toLocaleDateString('en-GB')} — applies to this file version.</div></div>
+           <button class="btn btn-ghost btn-sm" onclick="docDirSignStart()" title="Re-sign, e.g. after annual review">↻ Re-sign</button>
+         </div>`
+      : `<div style="background:rgba(234,179,8,.08);border:1px solid #eab308;border-radius:8px;padding:10px 14px;margin-bottom:14px">
+           <div style="font-weight:700;color:#eab308;margin-bottom:4px">⚠ Not authorised for issue</div>
+           <div style="font-size:12px;color:var(--muted);margin-bottom:8px">No director signature on this version. Sign below to authorise it and confirm it remains current.</div>
+           <button class="btn btn-sm" style="background:var(--accent);color:#111;font-weight:700" onclick="docDirSignStart()">✍ Sign as director</button>
+         </div>`;
+    body.innerHTML = authHtml + `
+      <div id="docDirPad" style="display:none;border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:14px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:8px;font-style:italic">${escapeHtml(POLICY_DIRECTOR_STATEMENT)}</div>
+        <input id="docDirName" placeholder="Full name" style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);box-sizing:border-box;margin-bottom:8px">
+        <canvas id="docDirCanvas" width="560" height="140" style="width:100%;height:120px;background:#fff;border:1px solid var(--border);border-radius:8px;touch-action:none"></canvas>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="btn btn-ghost btn-sm" onclick="docDirPadInit()">Clear</button>
+          <button class="btn btn-sm" style="flex:1;background:var(--accent);color:#111;font-weight:700" onclick="docDirSignSave()">✍ Authorise this policy</button>
+          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('docDirPad').style.display='none'">Cancel</button>
+        </div>
+        <div id="docDirStatus" style="font-size:12px;color:var(--muted);margin-top:6px;min-height:14px"></div>
+      </div>
       <div style="display:flex;gap:12px;margin-bottom:14px">${chip('Signed', _docSigRows.length, '#3ecf8e')}${chip('Outstanding (active employees)', outstanding.length, outstanding.length ? '#eab308' : '#3ecf8e')}</div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:14px">Signatures apply to this file version — renewing the document starts a fresh register. Staff sign from the mobile app → Sign Policies. Outstanding matches active employees by name against the signatures on file.</div>
       <div style="font-weight:700;font-size:12px;letter-spacing:.4px;color:var(--accent);margin-bottom:6px">SIGNED</div>
@@ -47927,65 +48085,62 @@ async function openDocSignatures(id) {
   }
 }
 
-// House-style register PDF, generated locally for print/save. The mobile app
-// files the authoritative copy next to the policy on every save; this one is
-// for "the auditor is standing here" moments.
+// ── Director authorisation signing (inside the register modal) ─────────────
+async function docDirSignStart() {
+  const pad = document.getElementById('docDirPad'); if (!pad) return;
+  pad.style.display = 'block';
+  const me = await getCurrentMicrosoftUser().catch(() => null);
+  const nameEl = document.getElementById('docDirName');
+  if (nameEl && !nameEl.value) nameEl.value = (me && me.name) || '';
+  docDirPadInit();
+}
+
+function docDirPadInit() {
+  const c = document.getElementById('docDirCanvas'); if (!c) return;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.strokeStyle = '#111'; ctx.lineWidth = 2.2; ctx.lineCap = 'round';
+  let drawing = false, touched = false;
+  const pos = e => { const r = c.getBoundingClientRect(); const p = e.touches ? e.touches[0] : e; return [(p.clientX - r.left) * (c.width / r.width), (p.clientY - r.top) * (c.height / r.height)]; };
+  const start = e => { e.preventDefault(); drawing = true; touched = true; const [x, y] = pos(e); ctx.beginPath(); ctx.moveTo(x, y); };
+  const move = e => { if (!drawing) return; e.preventDefault(); const [x, y] = pos(e); ctx.lineTo(x, y); ctx.stroke(); };
+  const end = () => { drawing = false; _docDirSigData = touched ? c.toDataURL('image/png') : null; };
+  c.onmousedown = start; c.onmousemove = move; c.onmouseup = end; c.onmouseleave = end;
+  c.ontouchstart = start; c.ontouchmove = move; c.ontouchend = end;
+  _docDirSigData = null;
+}
+
+async function docDirSignSave() {
+  const d = _docSigDoc; if (!d) return;
+  const status = document.getElementById('docDirStatus');
+  const name = (document.getElementById('docDirName').value || '').trim();
+  if (!name) { status.textContent = 'Enter your name.'; return; }
+  if (!_docDirSigData) { status.textContent = 'Sign in the box first.'; return; }
+  status.textContent = 'Recording authorisation…';
+  try {
+    await api.post('/api/acknowledgements', {
+      doc_type: 'policy_director', doc_ref: d.title,
+      doc_file_id: d.sharepoint_file_id, doc_web_url: d.web_url || null,
+      signer_name: name, signer_company: 'BAMA Fabrication Ltd — Director',
+      statement: POLICY_DIRECTOR_STATEMENT, signature: _docDirSigData
+    });
+    status.textContent = 'Filing the register PDF…';
+    try {
+      await polFileRegister({ name: d.title, fileName: d.file_name, fileId: d.sharepoint_file_id, driveId: d.drive_id || null, docRef: d.doc_ref || '' });
+    } catch (regErr) { console.warn('register filing failed (signature is safe):', regErr.message); }
+    toast('Policy authorised', 'success');
+    _docDirSigData = null;
+    await loadCompanyDocs();               // refresh the green/amber ✍ markers
+    openDocSignatures(d.id);               // reload the modal with the new state
+  } catch (e) { status.textContent = 'Failed: ' + e.message; }
+}
+
+// Print the register: delegates to the shared builder so office print,
+// office filing and the mobile app all render the SAME document.
 async function printDocSignatureRegister() {
   const d = _docSigDoc; if (!d) return;
   try {
-    const all = _docSigRows.slice();
-    if (!all.length) { toast('Nobody has signed this version yet', 'error'); return; }
-    for (const a of all) {
-      try { const r = await api.get('/api/acknowledgements/' + a.id + '/signature'); a._sig = r && r.signature; }
-      catch (_) { a._sig = null; }
-    }
-    const JsPDF = await resolveJsPDFCtor();
-    await (typeof loadLogoDataUri === 'function' ? loadLogoDataUri() : Promise.resolve());
-    const logo = (typeof _logoDataUriCache !== 'undefined' && _logoDataUriCache) || '';
-    const doc = new JsPDF({ unit: 'mm', format: 'a4' });
-    const W = 210, M = 14, accent = _houseAccent();
-    let y = bamaDocHeader(doc, logo, {
-      title: 'POLICY ACKNOWLEDGEMENT', accent, marginL: M, marginR: M,
-      meta: [
-        { label: 'Document:', value: d.title },
-        { label: 'Ref:', value: d.doc_ref || '' },
-        { label: 'Printed:', value: new Date().toLocaleDateString('en-GB') }
-      ]
-    }).y;
-    y = bamaSectionHeading(doc, y, 'SIGNATURE REGISTER', { accent, marginL: M, usableW: W - 2 * M });
-    doc.setFont('helvetica', 'italic'); doc.setFontSize(9); doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
-    const intro = doc.splitTextToSize('The persons listed below confirm that they have read and understood the above company policy/document and will comply with it. Signatures apply to this version of the document.', W - 2 * M);
-    doc.text(intro, M, y); y += intro.length * 4.4 + 4;
-    const cols = [
-      { x: M,       w: 52, label: 'Name' },
-      { x: M + 52,  w: 46, label: 'Company' },
-      { x: M + 98,  w: 48, label: 'Signature' },
-      { x: M + 146, w: W - M - (M + 146), label: 'Date' }
-    ];
-    const drawHead = () => {
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(HOUSE_INK[0], HOUSE_INK[1], HOUSE_INK[2]);
-      cols.forEach(c => doc.text(c.label.toUpperCase(), c.x, y));
-      y += 3; doc.setDrawColor(200); doc.line(M, y, W - M, y); y += 4;
-    };
-    drawHead();
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
-    const rowH = 16;
-    for (const a of all) {
-      if (y + rowH > 275) { doc.addPage(); y = bamaDocContinuation(doc, { title: 'POLICY ACKNOWLEDGEMENT', ref: d.title, marginL: M, marginR: M }).y; drawHead(); doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); }
-      const cy = y;
-      doc.setTextColor(HOUSE_INK[0], HOUSE_INK[1], HOUSE_INK[2]);
-      doc.text(doc.splitTextToSize(String(a.signer_name || ''), cols[0].w - 2), cols[0].x, cy + 4);
-      doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
-      doc.text(doc.splitTextToSize(String(a.signer_company || 'BAMA Fabrication'), cols[1].w - 2), cols[1].x, cy + 4);
-      if (a._sig) { try { doc.addImage(a._sig, 'PNG', cols[2].x, cy - 1, 40, 13); } catch (_) {} }
-      doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
-      doc.text(new Date(a.acknowledged_at).toLocaleDateString('en-GB'), cols[3].x, cy + 4);
-      y += rowH; doc.setDrawColor(230); doc.line(M, y - 3, W - M, y - 3);
-    }
-    y += 4;
-    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(HOUSE_MUTED[0], HOUSE_MUTED[1], HOUSE_MUTED[2]);
-    doc.text(`${all.length} signature${all.length !== 1 ? 's' : ''} on record. Register generated via BAMA ERP on ${new Date().toLocaleString('en-GB')}.`, M, y);
-    bamaDocFooter(doc, { marginL: M, marginR: M, caption: 'Policy Acknowledgement  \u00b7  BAMA Fabrication Ltd' });
+    const doc = await polBuildRegisterDoc({ name: d.title, fileName: d.file_name, fileId: d.sharepoint_file_id, driveId: d.drive_id || null, docRef: d.doc_ref || '' });
     const blob = doc.output('blob');
     console.log('[Policy register PDF] blob size:', blob.size, 'bytes');
     window.open(URL.createObjectURL(blob), '_blank');
